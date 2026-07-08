@@ -1,0 +1,272 @@
+# MoneyApp — Data Schema (v2, pending approval)
+
+This is the single shared schema every module reads and writes. Nothing is built until this
+document is approved. SQLite via Drizzle ORM + better-sqlite3.
+v2 incorporates the adversarial-review fixes (investment reconciliation, dedupe stability,
+import lifecycle, anchor precedence, ownership takeover semantics).
+
+## Global conventions
+
+- **IDs**: `TEXT` UUIDv7, generated in app code. Chosen over autoincrement so a future
+  sync/hosted mode can merge databases without key collisions (no rewrite later).
+- **Ledger money**: `INTEGER` cents. Never floats for money.
+- **Market data** (prices): `REAL`. Prices are observations, not ledger entries; computed
+  values are rounded to cents at the edge.
+- **Quantities** (shares/crypto): `INTEGER` in 1e-8 units — exact, covers fractional shares and ETH.
+- **Dates**: `TEXT 'YYYY-MM-DD'` for financial dates. Timestamps: ISO-8601 UTC. All tables
+  carry `created_at`/`updated_at` (not repeated below) — exemptions: `daily_balances`
+  (rebuildable cache, no timestamps), `ai_calls` (append-only, `created_at` only),
+  `app_settings` (`updated_at` only).
+- **Enums** are enforced at the application level (Drizzle column enums + Zod at every
+  boundary), not as SQL CHECK constraints — non-app writes to the DB file are out of contract.
+- **Weeks**: ISO (Monday start). A transaction belongs to the period containing `posted_on`, full stop.
+- **Sign convention**: every amount and balance is signed from the **net-worth perspective**.
+  Positive = increases net worth; negative = decreases. Credit-card balances stored
+  **negative**; a card purchase is negative; a card payment is `+X` on the card, `−X` on
+  checking. Parsers normalize each institution's convention at the boundary.
+
+## Reconciliation identities (scoped by account type)
+
+- **Cash & credit accounts**: `beginning_balance + Σ(transactions in period) = ending_balance`,
+  to the cent. Failure ⇒ `gap` ⇒ quarantine.
+- **Investment accounts**: market movement is not a transaction, so the cash formula can
+  never close. Instead: `beginning_value + Σ(cash-flow txns: contributions, withdrawals,
+  dividends, interest, fees) + market_change = ending_value`, where `market_change` is
+  **computed and stored** (`statement_periods.market_change_cents`) and displayed — never
+  treated as a gap. Investment statement periods are primarily **value anchors**; their
+  transactions (dividends, interest, transfers) flow to income/transfer analytics normally.
+  Buys/sells are internal (net-worth-neutral) and never enter balance replay.
+
+## Entity relationship overview
+
+```
+institutions 1─* accounts 1─* transactions ── * merchants ── categories (tree)
+                     │            │                │
+                     │            │            merchant_aliases
+                     │            ├── transfer_group_id (pairs legs)
+                     │            └── recurring_series
+                     ├─* balance_anchors ──── statement_periods ──── import_files
+                     ├─* daily_balances (derived cache)
+                     └─* holdings ──── price_cache (by symbol + asset_type)
+budgets ── categories        rules (ordered)        ai_calls        app_settings
+```
+
+## Tables
+
+### institutions
+`id PK` · `name UNIQUE` (Chase, Discover, Capital One, SoFi, Robinhood)
+
+### accounts
+| field | type | notes |
+|---|---|---|
+| id | TEXT PK | |
+| institution_id | FK | |
+| name | TEXT | "Chase Checking" |
+| type | enum | `checking` \| `savings` \| `credit` \| `investment` |
+| subtype | enum nullable | `brokerage` \| `crypto`. Robinhood = **two** accounts |
+| last4 | TEXT nullable | matches files to accounts |
+| currency | TEXT | `USD` |
+| is_active / display_order | | |
+
+Liability status **derived** from `type='credit'`. Debit cards are intentionally not accounts.
+
+### import_files — with an explicit lifecycle
+| field | type | notes |
+|---|---|---|
+| id | TEXT PK | |
+| file_name / file_sha256 / storage_path | | files copied to `data/originals/` |
+| format | enum | `csv` \| `ofx` \| `qfx` \| `pdf` (archives, e.g. Robinhood "Download my data" ZIPs, are unpacked **before** sniffing; members become individual import_files) |
+| institution_id | FK | |
+| parser_profile | TEXT nullable | e.g. `chase-card-csv`; null until format sniffing assigns one |
+| parser_version | INTEGER default 1 | bumped when a profile's logic changes; drives the re-parse lifecycle |
+| status | enum | `parsed` \| `failed` \| `needs_claude` \| `parsed_with_claude` \| `superseded` |
+| superseded_by | FK nullable | re-parse lineage |
+| error / imported_at | | |
+
+**Lifecycle rules** (the quarantine repair loop must never dead-end):
+- The idempotency no-op applies per **(file_sha256, parser_version)** — a fixed parser can
+  always re-parse the same file. Re-parse = delete-and-replace all child rows in **one
+  synchronous transaction**, migrating user-set attributes (category where
+  `categorization_source='user'`, notes, transfer/recurring links) onto content-matched new rows;
+  the old import_file row becomes `superseded`.
+- **Un-import** is a first-class operation: removes the file's transactions, periods, and
+  anchors atomically (user attributes preserved for re-attachment where content-matchable).
+- Imported transactions are **immutable** in amount/date/description. Corrections happen via
+  re-parse or an explicit manual-adjustment transaction — never in-place edits (in-place
+  edits would silently break dedupe and reconciliation).
+
+### statement_periods
+| field | type | notes |
+|---|---|---|
+| id / import_file_id / account_id | | UNIQUE(import_file_id, account_id) |
+| period_start / period_end | date | |
+| beginning_balance_cents / ending_balance_cents | INTEGER nullable | net-worth-signed |
+| market_change_cents | INTEGER nullable | investment accounts: the computed plug (see identity above) |
+| reconciliation | enum | `reconciled` \| `gap` \| `accepted` (user override) \| `value_anchor` (investment) \| `not_applicable` (no balances in file) |
+| gap_cents | INTEGER nullable | shown to user when ≠ 0 |
+
+**Period membership is by date-range** — reconciliation sums active transactions with
+`posted_on` in [period_start, period_end] for the account, regardless of which file
+contributed them. `transactions.statement_period_id` is **provenance-only**.
+**Boundary-drift rule**: when a gap exactly equals the sum of transactions within ±1 day of
+a period boundary contributed by a different source, the importer proposes re-dating them —
+**statements are the date authority** for period membership.
+
+### transactions
+| field | type | notes |
+|---|---|---|
+| id / account_id / import_file_id (nullable) / statement_period_id (nullable, provenance) | | |
+| posted_on / transacted_on (nullable) | date | |
+| amount_cents | INTEGER | net-worth-signed |
+| raw_description | TEXT | byte-exact from the file, never modified |
+| normalized_description | TEXT | normalizer output (versioned; used for matching, **not** dedupe) |
+| bank_category | TEXT nullable | Chase/Discover/CapOne CSVs ship a category column — kept as a cheap prior for the categorization pipeline |
+| merchant_id / category_id | FK nullable | |
+| categorization_source | enum nullable | `user` \| `rule` \| `merchant_map` \| `claude` \| `transfer_detect` \| `credit_match` |
+| categorization_confidence | REAL nullable | |
+| needs_review | bool | |
+| status | enum | `active` \| `quarantined` \| `excluded` \| `superseded` (replaced during source takeover/re-parse; kept for audit) |
+| transfer_group_id | TEXT nullable | |
+| recurring_series_id | FK nullable | |
+| fitid | TEXT nullable | corroborator only — unstable across channels, absent for Discover/SoFi |
+| occurrence_index | INTEGER | see algorithm below |
+| dedupe_hash | TEXT | sha256 over (account_id, posted_on, amount_cents, **raw_description**, occurrence_index) in a length-prefixed canonical encoding — field boundaries cannot be forged by descriptions containing the separator |
+| notes | TEXT nullable | |
+
+UNIQUE(account_id, dedupe_hash) among non-superseded. Indexes: (account_id, posted_on),
+(category_id, posted_on), (merchant_id), (transfer_group_id).
+
+**Why raw_description in the hash**: raw text is byte-stable across exports of the same
+format, which is the only case content-hash dedupe is trusted for. The normalizer will
+evolve constantly; hashing its output would duplicate history on the next overlapping
+import (review finding). Cross-format matching is the ownership policy's job, not the hash's.
+
+**occurrence_index algorithm** (deterministic, documented, tested): within the incoming
+file, identical `(account_id, posted_on, amount_cents, raw_description)` rows are numbered
+0..n−1 in file-row order. On insert, collide-and-skip per index. When two sources disagree
+on the count of identical rows, the higher count wins and the discrepancy is flagged;
+reconciliation is the backstop.
+
+**Cross-format ownership policy** (same purchase worded differently in QFX vs CSV vs PDF):
+- Fidelity priority: `OFX/QFX > CSV > PDF`. Transactions import only from the primary
+  source covering a range; lower-priority files contribute balances/anchors, validation,
+  and gap-fill only.
+- **Covered range** per format: OFX = declared DTSTART/DTEND; CSV/PDF = [min, max] observed
+  row dates — never the range the user requested (silent truncation defense; row counts are
+  also cross-checked against statement periods).
+- **Demotion rule**: if a period owned by a higher-priority source fails reconciliation and
+  a lower-priority source covers it, ownership for that period falls through so (e.g.) PDF
+  rows can fill the hole — subject to the fuzzy review queue.
+- **Takeover rule** (files arrive in any order): when a higher-priority file later covers an
+  owned range, its rows are content-matched (date ±1, amount, description similarity)
+  against existing ones; user-set attributes migrate to the new rows; unmatched old rows go
+  to the fuzzy review queue; replaced rows become `superseded`. **Invariant: importing the
+  same file set in any order permutation yields an equivalent database.**
+- Residual fuzzy pass (same account, amount, date ±1) flags probable duplicates for review —
+  never silently deletes.
+
+### balance_anchors
+| field | type | notes |
+|---|---|---|
+| id / account_id | | |
+| anchored_on | date | |
+| balance_cents | INTEGER | net-worth-signed |
+| source | enum | `statement` \| `ofx_ledger` \| `manual` \| `live` |
+| statement_period_id | FK nullable | |
+
+UNIQUE(account_id, anchored_on, source).
+**Precedence on the same date: `statement > ofx_ledger > manual > live`.** Only the winning
+anchor is a chain endpoint; lower-precedence same-date anchors become validation-only, and a
+conflict above a small cent-threshold surfaces in the review queue (e.g. your Phase-1
+hand-entered balance vs the statement that later covers that date). `ofx_ledger` and `live`
+anchors are **moments, not end-of-day values** — they are excluded from exact chain-closure
+checks (tolerance = that day's activity) and `live` is only ever written for *today*.
+
+### daily_balances (derived cache — rebuildable at any time)
+| field | type | notes |
+|---|---|---|
+| account_id / day | PK | |
+| balance_cents | INTEGER | |
+| basis | enum | `anchored` \| `derived` (replay between two anchors, chain verified) \| `derived_unverified` (backward replay before the earliest anchor — no closure guarantee; upgraded when an earlier anchor arrives) \| `carried` (step-hold between sparse anchors, styled as approximate) \| `gap` (no coverage — rendered as a gap, never invented) |
+
+Derivation: between consecutive winning anchors, replay transactions and verify closure;
+before the earliest anchor, replay backward (`derived_unverified`). Transaction segments
+unreachable from any anchor render as `gap` for **balances** while their transactions remain
+fully visible in analytics. Cash/credit accounts use replay; **brokerage** accounts step-hold
+between statement anchors (v2: holdings × historical prices); the **crypto** account derives
+directly from the ETH quantity timeline × cached daily closes (v1 — see master plan Phase 7).
+
+**Net worth series**: a day's total is **complete** only when every active account has
+non-gap coverage; incomplete days render as a dashed/partial segment annotated
+"partial (N of M accounts)" — the total never silently drops an account (review finding).
+
+### categories (tree, subcategories on)
+`id · name · parent_id (one level, enforced in code) · kind (expense|income|transfer|rewards|investment|system) · icon · color · is_system · is_archived · sort_order` — UNIQUE(parent_id, name) **plus** a partial unique index on (name) WHERE parent_id IS NULL (SQLite treats NULLs as distinct, so root categories need their own guard).
+
+**Archive semantics** (enforced at archive time): archiving deactivates budgets on the
+category, flags merchant defaults and rules targeting it for re-pointing, removes it from
+categorization suggestions and Claude's taxonomy — while history keeps rendering and rolling up.
+
+### merchants
+`id · canonical_name UNIQUE · default_category_id · mapping_source (user|claude|seed)` — user wins, permanently.
+
+**Direction guard** (refund-poisoning defense): a user correction on a transaction whose
+sign opposes the merchant's dominant sign updates **that transaction only** — the merchant's
+default mapping changes only on explicit confirmation. Merchant refunds stay in the
+merchant's expense category as negative spend; `Income > Refunds & Reimbursements` is
+reserved for genuinely category-less reimbursements.
+
+### merchant_aliases
+`id · merchant_id · pattern · match_type (exact|prefix|contains) · priority` — UNIQUE(pattern, match_type). Grows with every import; why Claude calls decay to zero.
+
+### rules
+`id · name UNIQUE · priority · is_enabled · conditions JSON {descriptionContains?, descriptionRegex?, accountIds?, amountMinCents?, amountMaxCents?, direction?} · actions JSON {categoryId?, merchantId?, markTransfer?, exclude?} · times_applied` — Zod-validated.
+Precedence: **explicit user set > rules > merchant map > Claude**.
+The seeded ATM-salary rule assigns a synthetic merchant **"Employer (cash)"** so the weekly
+salary is visible to merchant-grouped recurring detection (review finding).
+
+### budgets
+`id · category_id · period (daily|weekly|monthly|annual) · amount_cents · starts_on · ends_on? · is_active` — UNIQUE(category_id, period) among active.
+
+No rollover; leftover/overrun displayed informationally. **Overlap semantics**: child spend
+rolls into a parent's budget by design; alerts fire independently per budget row; any
+"total budgeted" aggregate excludes budgets whose category is a descendant of another
+budgeted category (no double-count).
+
+### recurring_series
+`id · name · merchant_id? · account_id? · kind (income|bill|subscription|transfer|other) · cadence (weekly|biweekly|semimonthly|monthly|quarterly|annual) · interval_days_avg · amount_cents_avg · amount_cents_stddev · tolerance_days · next_expected_on · next_expected_amount_cents · status (detected|confirmed|dismissed|ended) · confidence · last_matched_on`
+Detection groups by merchant, plus by `(account_id, normalized_description)` for
+merchant-less transactions. Statistics are stored so the forecast math stays inspectable.
+
+### holdings
+`id · account_id (investment only) · symbol · asset_type (stock|etf|crypto) · quantity_e8 · avg_cost_cents? · is_active` — UNIQUE(account_id, symbol). Avg cost feeds P/L display only, never net worth.
+
+### price_cache
+`id · symbol · asset_type · quoted_on · close REAL · source (yahoo|coinbase|coingecko|stooq|manual) · fetched_at`
+**UNIQUE(symbol, asset_type, quoted_on)** and every provider lookup is keyed by
+(symbol, asset_type) — crypto routes only to Coinbase/CoinGecko, equities only to
+Yahoo/Stooq. (Review finding: bare `ETH` is both Ethereum and a NYSE ticker; a bare-symbol
+lookup could silently price your crypto with an equity quote.)
+
+### ai_calls
+`id · purpose (categorize|pdf_extract|annotate) · model · input_tokens · output_tokens · est_cost_usd · batch_size` — surfaces monthly AI spend; settings cap warns before exceeding.
+
+### app_settings
+`key PK · value JSON` — AI budget cap, review thresholds, price staleness, backup config, week-start override.
+
+## Invariants the test suite enforces
+
+1. Every `reconciled` **cash/credit** statement period: `beginning + Σ(active txns in
+   date-range) = ending`, exactly. Every **investment** period:
+   `beginning + Σ(cash flows) + market_change = ending` with `market_change` stored, never a gap.
+2. Every replayed chain between consecutive winning anchors closes exactly, or the span is
+   `gap`/`derived_unverified` — levels are never invented.
+3. Re-importing any file under the same parser_version adds 0 rows; re-parse under a newer
+   version supersedes atomically and preserves user-set attributes.
+4. **Import-order independence**: any permutation of the same file set yields an equivalent database.
+5. Net-worth total on a complete day = assets − liabilities; incomplete days are marked
+   partial, never silently understated.
+6. Every `transfer_group_id` has ≥1 counterpart leg.
+7. Spending/income analytics never include `transfer`/`investment`/`rewards` kinds or
+   `quarantined`/`excluded`/`superseded` statuses — but investment-account dividends and
+   interest **do** appear in income (they are income-kind transactions, not market movement).

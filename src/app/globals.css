@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Ledger design tokens ─────────────────────────────────────────────
+   Editorial finance: warm paper surfaces, ink text, one confident green
+   used semantically for money-in, restrained red for money-out.
+   Both themes share this single token contract. */
+:root {
+  --surface: oklch(0.977 0.005 85);
+  --surface-raised: oklch(0.996 0.002 85);
+  --surface-sunken: oklch(0.955 0.006 85);
+  --ink: oklch(0.22 0.015 75);
+  --ink-muted: oklch(0.46 0.014 75);
+  --ink-faint: oklch(0.52 0.012 78); /* ≥4.5:1 on all three surfaces (WCAG AA) */
+  --line: oklch(0.9 0.008 85);
+  --line-strong: oklch(0.82 0.01 85);
+  --accent: oklch(0.45 0.095 165);
+  --accent-soft: oklch(0.94 0.028 165);
+  --positive: oklch(0.5 0.11 160);
+  --negative: oklch(0.53 0.15 30);
+  --warning: oklch(0.66 0.13 75);
+  --chart-1: oklch(0.45 0.095 165);
+  --chart-2: oklch(0.62 0.08 160);
+  --chart-3: oklch(0.55 0.06 75);
+  --chart-4: oklch(0.5 0.05 250);
+  --chart-5: oklch(0.6 0.1 30);
+  --chart-6: oklch(0.7 0.06 110);
+}
+
+.dark {
+  --surface: oklch(0.19 0.012 75);
+  --surface-raised: oklch(0.23 0.013 75);
+  --surface-sunken: oklch(0.165 0.011 75);
+  --ink: oklch(0.93 0.009 85);
+  --ink-muted: oklch(0.7 0.011 80);
+  --ink-faint: oklch(0.64 0.011 80); /* ≥4.5:1 on all three surfaces (WCAG AA) */
+  --line: oklch(0.31 0.013 75);
+  --line-strong: oklch(0.4 0.014 75);
+  --accent: oklch(0.73 0.105 165);
+  --accent-soft: oklch(0.29 0.04 165);
+  --positive: oklch(0.73 0.115 160);
+  --negative: oklch(0.68 0.14 30);
+  --warning: oklch(0.75 0.12 75);
+  --chart-1: oklch(0.73 0.105 165);
+  --chart-2: oklch(0.6 0.08 160);
+  --chart-3: oklch(0.65 0.06 75);
+  --chart-4: oklch(0.62 0.05 250);
+  --chart-5: oklch(0.66 0.1 30);
+  --chart-6: oklch(0.75 0.06 110);
+}
+
+@theme inline {
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-positive: var(--positive);
+  --color-negative: var(--negative);
+  --color-warning: var(--warning);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --radius-card: 0.75rem;
+  --duration-fast: 150ms;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body {
+  background-color: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* money never wiggles */
+.figures {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

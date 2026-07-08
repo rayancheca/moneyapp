@@ -1,0 +1,21 @@
+# dependencies / build
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# local data — statements, database, backups NEVER enter git
+data/
+
+# env
+.env*
+!.env.example
+
+# test artifacts
+coverage/
+playwright-report/
+test-results/
+
+# os
+.DS_Store
