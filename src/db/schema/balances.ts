@@ -1,7 +1,7 @@
 import { integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { id, timestamps } from "./common";
 import { accounts } from "./accounts";
-import { statementPeriods } from "./imports";
+import { importFiles, statementPeriods } from "./imports";
 
 export const ANCHOR_SOURCES = ["statement", "ofx_ledger", "manual", "live"] as const;
 export type AnchorSource = (typeof ANCHOR_SOURCES)[number];
@@ -23,6 +23,8 @@ export const balanceAnchors = sqliteTable(
     balanceCents: integer("balance_cents").notNull(),
     source: text("source", { enum: ANCHOR_SOURCES }).notNull(),
     statementPeriodId: text("statement_period_id").references(() => statementPeriods.id),
+    // provenance for the un-import lifecycle: anchors die with their file
+    importFileId: text("import_file_id").references(() => importFiles.id),
     ...timestamps(),
   },
   (table) => [

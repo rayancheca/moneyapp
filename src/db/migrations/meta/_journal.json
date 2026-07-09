@@ -15,6 +15,20 @@
       "when": 1783553650854,
       "tag": "0001_review_backstops",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1783555770890,
+      "tag": "0002_holding_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1783556209271,
+      "tag": "0003_anchor_provenance",
+      "breakpoints": true
     }
   ]
 }

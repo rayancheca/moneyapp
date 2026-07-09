@@ -1,0 +1,32 @@
+{
+  "generatedFrom": {
+    "start": "2024-07-01",
+    "end": "2026-07-05"
+  },
+  "endBalances": {
+    "chase-checking": 3173952,
+    "chase-savings": 2000324,
+    "chase-card": -104129,
+    "discover-card": -8689,
+    "capone-checking": 1078024,
+    "capone-venturex": -28651,
+    "sofi-checking": 815000,
+    "sofi-savings": 2007853,
+    "robinhood-brokerage": 1762492
+  },
+  "robinhoodLastStatementValueCents": 1772583,
+  "txnCounts": {
+    "chase-checking": 322,
+    "chase-savings": 49,
+    "chase-card": 676,
+    "discover-card": 184,
+    "capone-checking": 48,
+    "capone-venturex": 191,
+    "sofi-checking": 73,
+    "sofi-savings": 49,
+    "robinhood-brokerage": 81
+  },
+  "periods": 217,
+  "pdfCount": 193,
+  "corruptedGapCents": 19550
+}

@@ -1,0 +1,1 @@
+ALTER TABLE `balance_anchors` ADD `import_file_id` text REFERENCES import_files(id);

@@ -1,7 +1,9 @@
-# MoneyApp — Data Schema (v2, pending approval)
+# MoneyApp — Data Schema (v2 — approved 2026-07-08; implemented in src/db/schema)
 
-This is the single shared schema every module reads and writes. Nothing is built until this
-document is approved. SQLite via Drizzle ORM + better-sqlite3.
+This is the single shared schema every module reads and writes.
+SQLite via Drizzle ORM + better-sqlite3.
+Post-approval addenda (documented below, shipped as migrations): `holding_events` (Phase 7
+crypto quantity timeline) and `balance_anchors.import_file_id` (un-import lifecycle provenance).
 v2 incorporates the adversarial-review fixes (investment reconciliation, dedupe stability,
 import lifecycle, anchor precedence, ownership takeover semantics).
 
@@ -247,6 +249,20 @@ merchant-less transactions. Statistics are stored so the forecast math stays ins
 (symbol, asset_type) — crypto routes only to Coinbase/CoinGecko, equities only to
 Yahoo/Stooq. (Review finding: bare `ETH` is both Ethereum and a NYSE ticker; a bare-symbol
 lookup could silently price your crypto with an equity quote.)
+
+### holding_events (Phase 7 addendum)
+`id · account_id FK→accounts (investment only) · symbol · asset_type (stock|etf|crypto) ·
+occurred_on date · quantity_delta_e8 INTEGER signed (buys positive, sells negative) ·
+cost_cents INTEGER nullable (event cost, P/L display only) · note nullable` — indexed on
+(account_id, symbol, occurred_on).
+
+The quantity timeline behind **crypto history v1** (master plan Phase 7): the cumulative
+sum of deltas per (account, symbol) × cached daily closes derives the crypto account's
+`daily_balances` (basis `derived` where a close exists that day, `carried` when the last
+known close is stepped forward) — closing the Phase 2b crypto exemption. `upsertHolding`
+appends a delta event for every quantity change on any holding, so the timeline is
+maintained as a side effect of normal holdings CRUD. Like all market-derived values,
+computed balances are rounded to cents at the edge; quantities stay exact 1e-8 integers.
 
 ### ai_calls
 `id · purpose (categorize|pdf_extract|annotate) · model · input_tokens · output_tokens · est_cost_usd · batch_size` — surfaces monthly AI spend; settings cap warns before exceeding.

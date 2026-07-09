@@ -19,7 +19,7 @@
   --accent-soft: oklch(0.94 0.028 165);
   --positive: oklch(0.5 0.11 160);
   --negative: oklch(0.53 0.15 30);
-  --warning: oklch(0.66 0.13 75);
+  --warning: oklch(0.52 0.115 70); /* ≥4.5:1 on all surfaces — used as text */
   --chart-1: oklch(0.45 0.095 165);
   --chart-2: oklch(0.62 0.08 160);
   --chart-3: oklch(0.55 0.06 75);

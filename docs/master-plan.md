@@ -1,4 +1,4 @@
-# MoneyApp — Master Plan (v2, pending approval)
+# MoneyApp — Master Plan (v2 — approved 2026-07-08; all phases 0–7 shipped)
 
 Local-first personal-finance and net-worth app. Rocket Money feature parity minus bill
 negotiation and credit score. Runs on the user's Mac; statements never leave the machine;

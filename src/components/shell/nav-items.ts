@@ -1,12 +1,22 @@
 export interface NavItem {
   href: string;
   label: string;
-  icon: "dashboard" | "accounts" | "transactions" | "spending" | "budgets" | "recurring" | "investments" | "settings";
+  icon:
+    | "dashboard"
+    | "accounts"
+    | "imports"
+    | "transactions"
+    | "spending"
+    | "budgets"
+    | "recurring"
+    | "investments"
+    | "settings";
 }
 
 export const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard", icon: "dashboard" },
   { href: "/accounts", label: "Accounts", icon: "accounts" },
+  { href: "/imports", label: "Imports", icon: "imports" },
   { href: "/transactions", label: "Transactions", icon: "transactions" },
   { href: "/spending", label: "Spending", icon: "spending" },
   { href: "/budgets", label: "Budgets", icon: "budgets" },

@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 describe("migrations from zero", () => {
-  test("all 17 tables exist", () => {
+  test("all 18 tables exist", () => {
     const rows = bundle.sqlite
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__drizzle%'")
       .all() as { name: string }[];
@@ -39,6 +39,7 @@ describe("migrations from zero", () => {
         "budgets",
         "categories",
         "daily_balances",
+        "holding_events",
         "holdings",
         "import_files",
         "institutions",
@@ -63,7 +64,7 @@ describe("seed", () => {
   test("is idempotent", () => {
     const first = seedDatabase(bundle.db);
     expect(first.institutions).toBe(5);
-    expect(first.merchants).toBe(1);
+    expect(first.merchants).toBeGreaterThan(30); // Employer (cash) + starter map
     expect(first.rules).toBe(2);
     const expectedCategories = TAXONOMY.length + TAXONOMY.reduce((n, t) => n + t.subs.length, 0);
     expect(first.categories).toBe(expectedCategories);

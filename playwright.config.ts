@@ -3,7 +3,9 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
+  workers: 1, // specs share one database; the golden-path spec mutates it last
   retries: 0,
+  globalSetup: "./e2e/global-setup.ts",
   reporter: [["list"]],
   use: {
     baseURL: "http://localhost:3111",
@@ -18,7 +20,7 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: "pnpm start --port 3111",
+    command: "MONEYAPP_DB_PATH=data/e2e.db MONEYAPP_FAKE_PRICES=1 pnpm start --port 3111",
     url: "http://localhost:3111",
     // never baseline against a stale or foreign server
     reuseExistingServer: false,

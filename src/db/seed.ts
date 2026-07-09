@@ -2,9 +2,10 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { AppDatabase } from "./client";
 import { categories, type CategoryKind } from "./schema/categories";
 import { institutions } from "./schema/institutions";
-import { merchants } from "./schema/merchants";
+import { merchantAliases, merchants } from "./schema/merchants";
 import { rules, type RuleActions, type RuleConditions } from "./schema/rules";
 import { appSettings } from "./schema/settings";
+import { SEED_MERCHANTS } from "./seed-merchants";
 
 type SeedExecutor = Parameters<Parameters<AppDatabase["transaction"]>[0]>[0];
 
@@ -120,6 +121,51 @@ function seedWithin(tx: SeedExecutor): SeedSummary {
     .values({ canonicalName: "Employer (cash)", defaultCategoryId: salary.id, mappingSource: "seed" })
     .onConflictDoNothing()
     .run().changes;
+
+  // Starter merchant→category map (mapping_source='seed') — the base the
+  // learning layer grows from; user mappings always override.
+  const categoryIdByPath = (path: string): string => {
+    const [parentName, subName] = path.split(" > ");
+    const parent = tx
+      .select({ id: categories.id })
+      .from(categories)
+      .where(and(eq(categories.name, parentName!), isNull(categories.parentId)))
+      .get();
+    if (!parent) throw new Error(`Seed failure: missing category ${parentName}`);
+    if (!subName) return parent.id;
+    const sub = tx
+      .select({ id: categories.id })
+      .from(categories)
+      .where(and(eq(categories.name, subName), eq(categories.parentId, parent.id)))
+      .get();
+    if (!sub) throw new Error(`Seed failure: missing category ${path}`);
+    return sub.id;
+  };
+
+  for (const sm of SEED_MERCHANTS) {
+    const inserted = tx
+      .insert(merchants)
+      .values({
+        canonicalName: sm.name,
+        defaultCategoryId: categoryIdByPath(sm.category),
+        mappingSource: "seed",
+      })
+      .onConflictDoNothing()
+      .run().changes;
+    summary.merchants += inserted;
+    const merchantRow = tx
+      .select({ id: merchants.id })
+      .from(merchants)
+      .where(eq(merchants.canonicalName, sm.name))
+      .get();
+    if (!merchantRow) throw new Error(`Seed failure: merchant ${sm.name} missing`);
+    for (const pattern of sm.aliases) {
+      tx.insert(merchantAliases)
+        .values({ merchantId: merchantRow.id, pattern, matchType: "contains" })
+        .onConflictDoNothing()
+        .run();
+    }
+  }
 
   const employer = tx
     .select({ id: merchants.id })
