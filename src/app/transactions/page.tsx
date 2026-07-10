@@ -173,11 +173,17 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
     .where(and(...common, viewCondition(filters.view)))
     // content-column tiebreaks: stable across re-imports/reseeds (ids encode
     // insertion time and dedupeHash embeds the per-seed account id — both
-    // shuffle same-day rows between otherwise identical databases)
+    // shuffle same-day rows between otherwise identical databases). rawDescription
+    // alone doesn't disambiguate two same-day/same-amount rows that differ by
+    // account or occurrence, so account name + occurrenceIndex carry the order;
+    // id is only an absolute fallback for rows that are otherwise byte-identical
+    // (and therefore render identically, so it never moves a pixel).
     .orderBy(
       desc(transactions.postedOn),
       desc(transactions.amountCents),
       desc(transactions.rawDescription),
+      asc(accounts.name),
+      asc(transactions.occurrenceIndex),
       desc(transactions.id),
     )
     .limit(PAGE_SIZE)
