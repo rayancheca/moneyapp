@@ -100,10 +100,29 @@ export function monthKey(date: string): string {
   return `${y.toString().padStart(4, "0")}-${m.toString().padStart(2, "0")}`;
 }
 
-/** Today's date in the machine's local timezone (banks post in local days). */
-export function todayIso(now: Date = new Date()): string {
-  const y = now.getFullYear().toString().padStart(4, "0");
-  const m = (now.getMonth() + 1).toString().padStart(2, "0");
-  const d = now.getDate().toString().padStart(2, "0");
+/**
+ * Today's date in the machine's local timezone (banks post in local days).
+ * MONEYAPP_FAKE_TODAY (validated 'YYYY-MM-DD', ignored otherwise — never a
+ * runtime throw) pins ONLY the zero-argument path, mirroring the
+ * MONEYAPP_FAKE_PRICES idiom; an explicitly passed `now` always wins.
+ *
+ * SERVER-ONLY CONTRACT: never call todayIso() (or `new Date()` for a
+ * rendering date) inside a 'use client' component. Next.js inlines only
+ * NEXT_PUBLIC_* env vars into client bundles, so in the browser the
+ * MONEYAPP_FAKE_TODAY branch is dead code and the real wall clock leaks
+ * through — SSR (pinned) and hydration (real) disagree, e2e baselines drift
+ * with the machine date. Clients receive dates as PROPS from a server
+ * component (RSC serializes the pinned value as data across the boundary),
+ * e.g. `<CalendarGrid today={todayIso()} …>` from the RSC parent.
+ */
+export function todayIso(now?: Date): string {
+  if (now === undefined) {
+    const fake = process.env.MONEYAPP_FAKE_TODAY;
+    if (fake !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(fake)) return fake;
+  }
+  const clock = now ?? new Date();
+  const y = clock.getFullYear().toString().padStart(4, "0");
+  const m = (clock.getMonth() + 1).toString().padStart(2, "0");
+  const d = clock.getDate().toString().padStart(2, "0");
   return `${y}-${m}-${d}`;
 }

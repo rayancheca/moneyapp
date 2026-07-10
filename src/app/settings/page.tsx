@@ -3,15 +3,13 @@ import path from "node:path";
 import type { Metadata } from "next";
 import { getDb } from "@/db/client";
 import { aiSpend, readSettings } from "@/services/settings";
+import { Field, Input } from "@/components/ui/Field";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { updateSettingsAction } from "./actions";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
-
-const FIELD =
-  "w-full rounded-md border border-line bg-surface-raised px-3 py-2 text-sm figures transition-colors duration-(--duration-fast) hover:border-line-strong focus:border-accent";
 
 function listBackups(): { name: string; sizeKb: number }[] {
   const dir = path.join(process.cwd(), "data", "backups");
@@ -42,22 +40,18 @@ export default function SettingsPage() {
         <SurfaceCard>
           <h2 className="mb-4 text-sm font-medium">Thresholds</h2>
           <form action={updateSettingsAction} className="grid gap-4 sm:grid-cols-2">
-            <label className="grid gap-1 text-xs font-medium text-ink-muted">
-              AI monthly cap (USD)
-              <input name="aiMonthlyCapUsd" type="number" step="0.5" min="0" defaultValue={settings.aiMonthlyCapUsd} className={FIELD} />
-            </label>
-            <label className="grid gap-1 text-xs font-medium text-ink-muted">
-              Price staleness (hours)
-              <input name="priceStalenessHours" type="number" min="1" max="168" defaultValue={settings.priceStalenessHours} className={FIELD} />
-            </label>
-            <label className="grid gap-1 text-xs font-medium text-ink-muted">
-              Review deposits above (USD)
-              <input name="reviewCreditThresholdUsd" type="number" min="0" step="10" defaultValue={settings.reviewCreditThresholdCents / 100} className={FIELD} />
-            </label>
-            <label className="grid gap-1 text-xs font-medium text-ink-muted">
-              Claude confidence minimum (0–1)
-              <input name="categorizationConfidenceMin" type="number" min="0" max="1" step="0.05" defaultValue={settings.categorizationConfidenceMin} className={FIELD} />
-            </label>
+            <Field label="AI monthly cap (USD)">
+              <Input name="aiMonthlyCapUsd" type="number" step="0.5" min="0" defaultValue={settings.aiMonthlyCapUsd} className="figures" />
+            </Field>
+            <Field label="Price staleness (hours)">
+              <Input name="priceStalenessHours" type="number" min="1" max="168" defaultValue={settings.priceStalenessHours} className="figures" />
+            </Field>
+            <Field label="Review deposits above (USD)">
+              <Input name="reviewCreditThresholdUsd" type="number" min="0" step="10" defaultValue={settings.reviewCreditThresholdCents / 100} className="figures" />
+            </Field>
+            <Field label="Claude confidence minimum (0–1)">
+              <Input name="categorizationConfidenceMin" type="number" min="0" max="1" step="0.05" defaultValue={settings.categorizationConfidenceMin} className="figures" />
+            </Field>
             <div className="sm:col-span-2">
               <button
                 type="submit"

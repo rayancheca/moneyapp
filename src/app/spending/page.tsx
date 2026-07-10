@@ -199,7 +199,6 @@ function SpendingView({
       <EmptyState
         title="No spending to analyze yet"
         description="Spending analytics unlock once transactions are imported and categorized. Uncategorized outflows will still show up — as their own explicit bucket."
-        phase="Phase 4 · Analytics"
       />
     );
   }
@@ -347,7 +346,6 @@ function IncomeView({
       <EmptyState
         title="No income recorded yet"
         description="Income tracks positive transactions in Income categories — salary, interest, and dividends (including from investment accounts) appear here once categorized."
-        phase="Phase 4 · Analytics"
       />
     );
   }

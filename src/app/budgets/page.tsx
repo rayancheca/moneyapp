@@ -68,7 +68,6 @@ export default async function BudgetsPage({
           <EmptyState
             title="No budgets yet"
             description="Create one below — actuals come straight from the spending analytics, so a budget's number always matches its transaction list."
-            phase="Phase 5 · Budgets"
           />
         ) : (
           sections.map((section) => (

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   DateParseError,
   addDays,
@@ -142,5 +142,31 @@ describe("monthKey / todayIso", () => {
   test("todayIso formats a provided clock in local time", () => {
     expect(todayIso(new Date(2026, 6, 8, 23, 59))).toBe("2026-07-08");
     expect(todayIso(new Date(2026, 0, 1, 0, 0))).toBe("2026-01-01");
+  });
+});
+
+describe("MONEYAPP_FAKE_TODAY (frozen e2e clock)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test("a valid pinned date wins on the zero-argument path", () => {
+    vi.stubEnv("MONEYAPP_FAKE_TODAY", "2026-07-08");
+    expect(todayIso()).toBe("2026-07-08");
+  });
+
+  test("an invalid format is ignored, never thrown", () => {
+    vi.stubEnv("MONEYAPP_FAKE_TODAY", "2026-7-8");
+    expect(todayIso()).toBe(todayIso(new Date()));
+  });
+
+  test("unset env keeps the real clock", () => {
+    vi.stubEnv("MONEYAPP_FAKE_TODAY", undefined);
+    expect(todayIso()).toBe(todayIso(new Date()));
+  });
+
+  test("an explicit now beats the env", () => {
+    vi.stubEnv("MONEYAPP_FAKE_TODAY", "2026-07-08");
+    expect(todayIso(new Date(2025, 0, 2, 12, 0))).toBe("2025-01-02");
   });
 });

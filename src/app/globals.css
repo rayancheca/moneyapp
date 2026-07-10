@@ -26,6 +26,46 @@
   --chart-4: oklch(0.5 0.05 250);
   --chart-5: oklch(0.6 0.1 30);
   --chart-6: oklch(0.7 0.06 110);
+
+  /* ── Category identity ramp ──────────────────────────────────────────
+     12 hues; solids carry icons/borders/dots (≥3:1 on all surfaces),
+     -soft carries chip tints (text on tint is always --ink, ≥4.5:1).
+     Values mirror src/lib/category-palette.ts — enforced by unit test. */
+  --cat-red: oklch(0.53 0.13 25);
+  --cat-red-soft: oklch(0.94 0.028 25);
+  --cat-orange: oklch(0.52 0.11 55);
+  --cat-orange-soft: oklch(0.94 0.03 55);
+  --cat-amber: oklch(0.5 0.1 80);
+  --cat-amber-soft: oklch(0.945 0.035 80);
+  --cat-lime: oklch(0.5 0.1 120);
+  --cat-lime-soft: oklch(0.945 0.035 120);
+  --cat-green: oklch(0.5 0.1 155);
+  --cat-green-soft: oklch(0.94 0.03 155);
+  --cat-teal: oklch(0.5 0.08 185);
+  --cat-teal-soft: oklch(0.94 0.028 185);
+  --cat-cyan: oklch(0.51 0.09 215);
+  --cat-cyan-soft: oklch(0.94 0.028 215);
+  --cat-blue: oklch(0.52 0.1 245);
+  --cat-blue-soft: oklch(0.94 0.028 245);
+  --cat-indigo: oklch(0.52 0.1 275);
+  --cat-indigo-soft: oklch(0.938 0.028 275);
+  --cat-violet: oklch(0.52 0.11 300);
+  --cat-violet-soft: oklch(0.938 0.028 300);
+  --cat-pink: oklch(0.53 0.12 345);
+  --cat-pink-soft: oklch(0.94 0.028 345);
+  --cat-brown: oklch(0.5 0.06 60);
+  --cat-brown-soft: oklch(0.94 0.02 60);
+
+  /* ── State + gain/loss + elevation ─────────────────────────────────── */
+  --info: oklch(0.5 0.1 245);
+  --info-soft: oklch(0.937 0.03 245);
+  --warning-soft: oklch(0.94 0.045 70);
+  --negative-soft: oklch(0.936 0.03 30);
+  --gain: var(--positive);
+  --loss: var(--negative);
+  --surface-overlay: oklch(0.996 0.002 85);
+  --shadow-overlay: 0 4px 16px oklch(0% 0 0 / 0.1), 0 1px 3px oklch(0% 0 0 / 0.06);
+  --shadow-sheet: 0 8px 40px oklch(0% 0 0 / 0.18);
 }
 
 .dark {
@@ -48,6 +88,42 @@
   --chart-4: oklch(0.62 0.05 250);
   --chart-5: oklch(0.66 0.1 30);
   --chart-6: oklch(0.75 0.06 110);
+
+  /* Category identity ramp — dark theme (mirrors src/lib/category-palette.ts) */
+  --cat-red: oklch(0.72 0.13 25);
+  --cat-red-soft: oklch(0.3 0.05 25);
+  --cat-orange: oklch(0.73 0.12 55);
+  --cat-orange-soft: oklch(0.3 0.05 55);
+  --cat-amber: oklch(0.75 0.12 80);
+  --cat-amber-soft: oklch(0.3 0.05 80);
+  --cat-lime: oklch(0.74 0.12 120);
+  --cat-lime-soft: oklch(0.3 0.05 120);
+  --cat-green: oklch(0.73 0.11 155);
+  --cat-green-soft: oklch(0.3 0.045 155);
+  --cat-teal: oklch(0.73 0.1 185);
+  --cat-teal-soft: oklch(0.3 0.045 185);
+  --cat-cyan: oklch(0.73 0.1 215);
+  --cat-cyan-soft: oklch(0.3 0.045 215);
+  --cat-blue: oklch(0.72 0.1 245);
+  --cat-blue-soft: oklch(0.3 0.045 245);
+  --cat-indigo: oklch(0.72 0.1 275);
+  --cat-indigo-soft: oklch(0.3 0.045 275);
+  --cat-violet: oklch(0.72 0.11 300);
+  --cat-violet-soft: oklch(0.3 0.048 300);
+  --cat-pink: oklch(0.73 0.12 345);
+  --cat-pink-soft: oklch(0.3 0.05 345);
+  --cat-brown: oklch(0.72 0.07 60);
+  --cat-brown-soft: oklch(0.3 0.03 60);
+
+  --info: oklch(0.72 0.1 245);
+  --info-soft: oklch(0.3 0.045 245);
+  --warning-soft: oklch(0.3 0.05 75);
+  --negative-soft: oklch(0.3 0.05 30);
+  --gain: var(--positive);
+  --loss: var(--negative);
+  --surface-overlay: oklch(0.26 0.014 75);
+  --shadow-overlay: 0 4px 16px oklch(0% 0 0 / 0.4), 0 1px 3px oklch(0% 0 0 / 0.3);
+  --shadow-sheet: 0 8px 40px oklch(0% 0 0 / 0.55);
 }
 
 @theme inline {
@@ -70,12 +146,47 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
   --color-chart-6: var(--chart-6);
+  --color-cat-red: var(--cat-red);
+  --color-cat-red-soft: var(--cat-red-soft);
+  --color-cat-orange: var(--cat-orange);
+  --color-cat-orange-soft: var(--cat-orange-soft);
+  --color-cat-amber: var(--cat-amber);
+  --color-cat-amber-soft: var(--cat-amber-soft);
+  --color-cat-lime: var(--cat-lime);
+  --color-cat-lime-soft: var(--cat-lime-soft);
+  --color-cat-green: var(--cat-green);
+  --color-cat-green-soft: var(--cat-green-soft);
+  --color-cat-teal: var(--cat-teal);
+  --color-cat-teal-soft: var(--cat-teal-soft);
+  --color-cat-cyan: var(--cat-cyan);
+  --color-cat-cyan-soft: var(--cat-cyan-soft);
+  --color-cat-blue: var(--cat-blue);
+  --color-cat-blue-soft: var(--cat-blue-soft);
+  --color-cat-indigo: var(--cat-indigo);
+  --color-cat-indigo-soft: var(--cat-indigo-soft);
+  --color-cat-violet: var(--cat-violet);
+  --color-cat-violet-soft: var(--cat-violet-soft);
+  --color-cat-pink: var(--cat-pink);
+  --color-cat-pink-soft: var(--cat-pink-soft);
+  --color-cat-brown: var(--cat-brown);
+  --color-cat-brown-soft: var(--cat-brown-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-warning-soft: var(--warning-soft);
+  --color-negative-soft: var(--negative-soft);
+  --color-gain: var(--gain);
+  --color-loss: var(--loss);
+  --color-surface-overlay: var(--surface-overlay);
+  --shadow-overlay: var(--shadow-overlay);
+  --shadow-sheet: var(--shadow-sheet);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --radius-card: 0.75rem;
+  --radius-overlay: 1rem;
   --duration-fast: 150ms;
   --duration-normal: 300ms;
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
 }
 
 body {

@@ -44,7 +44,6 @@ export default function RecurringPage() {
           <EmptyState
             title="Nothing detected yet"
             description="Detection needs transaction history: stable cadence plus stable amount, at least three occurrences. Run “Detect now” after importing or categorizing."
-            phase="Phase 6 · Recurring + Forecasting"
           />
         ) : (
           <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">

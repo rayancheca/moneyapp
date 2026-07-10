@@ -1,10 +1,36 @@
+import { CommandPalette, type CommandPaletteGroup } from "@/components/ui/CommandPalette";
+import { KeyScopeProvider } from "@/components/ui/KeyScopeProvider";
+import { ToastHost } from "@/components/ui/Toast";
+import { NAV_ITEMS } from "./nav-items";
 import { SideNav } from "./SideNav";
 import { MobileNav } from "./MobileNav";
 import { ThemeToggle } from "./ThemeToggle";
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+interface AppShellProps {
+  children: React.ReactNode;
+  /** Unreviewed active transactions — badges the Transactions nav item. */
+  reviewCount: number;
+}
+
+/** ⌘K page index — entity groups (accounts, categories, merchants) join in Stage 1. */
+const PALETTE_GROUPS: CommandPaletteGroup[] = [
+  {
+    label: "Pages",
+    items: NAV_ITEMS.map((item) => ({
+      id: `page-${item.href}`,
+      label: item.label,
+      icon: item.icon,
+      href: item.href,
+    })),
+  },
+];
+
+export function AppShell({ children, reviewCount }: AppShellProps) {
   return (
-    <div className="min-h-dvh md:grid md:grid-cols-[13.5rem_1fr]">
+    <KeyScopeProvider>
+      <CommandPalette groups={PALETTE_GROUPS} />
+      <ToastHost />
+      <div className="min-h-dvh md:grid md:grid-cols-[13.5rem_1fr]">
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:border focus:border-line-strong focus:bg-surface-raised focus:px-3 focus:py-2 focus:text-sm"
@@ -16,7 +42,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <span className="inline-block size-2.5 rounded-full bg-accent" aria-hidden />
           <span className="text-sm font-semibold tracking-tight">MoneyApp</span>
         </div>
-        <SideNav />
+        <SideNav reviewCount={reviewCount} />
         <p className="border-t border-line px-5 py-3 text-[11px] leading-relaxed text-ink-faint">
           Local-first · your data never leaves this Mac
         </p>
@@ -33,7 +59,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <ThemeToggle />
         </header>
-        <MobileNav />
+        <MobileNav reviewCount={reviewCount} />
         <main
           id="main"
           tabIndex={-1}
@@ -42,6 +68,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
-    </div>
+      </div>
+    </KeyScopeProvider>
   );
 }

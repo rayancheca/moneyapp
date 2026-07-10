@@ -1,4 +1,5 @@
 import { and, eq, isNull } from "drizzle-orm";
+import { resolveCategoryIdentity } from "@/lib/category-identity";
 import type { AppDatabase } from "./client";
 import { categories, type CategoryKind } from "./schema/categories";
 import { institutions } from "./schema/institutions";
@@ -100,6 +101,35 @@ function seedWithin(tx: SeedExecutor): SeedSummary {
         .onConflictDoNothing()
         .run().changes;
     }
+  }
+
+  // Category identity backfill (UX overhaul Stage 0): assign icon + hue to
+  // system rows that still lack them. Idempotent; user edits are never
+  // overwritten (only-null guard); custom categories pick identity in the UI.
+  const identityRows = tx
+    .select({
+      id: categories.id,
+      name: categories.name,
+      parentId: categories.parentId,
+      icon: categories.icon,
+      color: categories.color,
+    })
+    .from(categories)
+    .where(eq(categories.isSystem, true))
+    .all();
+  const rootNameById = new Map(
+    identityRows.filter((c) => c.parentId === null).map((c) => [c.id, c.name]),
+  );
+  for (const cat of identityRows) {
+    if (cat.icon !== null && cat.color !== null) continue;
+    const identity =
+      cat.parentId === null
+        ? resolveCategoryIdentity(cat.name)
+        : resolveCategoryIdentity(cat.name, rootNameById.get(cat.parentId));
+    tx.update(categories)
+      .set({ icon: cat.icon ?? identity.icon, color: cat.color ?? identity.hue })
+      .where(eq(categories.id, cat.id))
+      .run();
   }
 
   const salary = tx

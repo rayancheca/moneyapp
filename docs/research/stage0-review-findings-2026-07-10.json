@@ -1,0 +1,307 @@
+{
+ "total": 37,
+ "bySeverity": {
+  "critical": 1,
+  "high": 18,
+  "medium": 14,
+  "low": 4
+ },
+ "findings": [
+  {
+   "severity": "CRITICAL",
+   "file": "src/components/ui/Toast.tsx",
+   "title": "Toast stack is inert (dead to mouse AND keyboard) whenever a modal Sheet is open \u2014 the code comment claiming otherwise is false",
+   "detail": "Toast.tsx:169-173 says the popover=\"manual\" stack is \"visible and clickable above modal sheets\". That is only half true. Sheet.tsx:41 uses dialog.showModal(), which per the HTML spec makes every node NOT in the dialog's subtree inert \u2014 including elements later promoted to the top layer via showPopover(). ToastHost is mounted in AppShell.tsx:32, outside any dialog, so while a Sheet is open the toasts PAINT above the sheet (top layer stacking) but are inert: unclickable, unfocusable, unselectable. Concrete Stage-1 failure: the plan's core flow (\u00a71.7/\u00a73.4, plan line 132) fires the \"Create rule \u2014 applies to N existing\" toast after a recategorize made INSIDE the transaction sheet, with the sheet staying open. The Create-rule button will be visible and completely dead for every user \u2014 mouse clicks pass nowhere, Tab can never reach it (inert), and the `A` mnemonic planned for Stage 1 will also be swallowed because KeyScope listeners fire on a document whose handlers still run, but the action itself lives on an inert element the user cannot verify or click. Same applies to the Dismiss IconButton (Toast.tsx:157-163): action toasts never auto-dismiss (line 98), so an undismissable, unclickable toast sits over the sheet until the sheet closes.",
+   "fix": "Pick one and verify with a Playwright test that clicks a toast action while a Sheet is open: (a) have Sheet register its open <dialog> node in a module store and have ToastHost portal the stack (createPortal) into the top-most open modal dialog when one exists, falling back to the shell region otherwise; or (b) stop using showModal() in Sheet \u2014 use dialog.show() (or popover) plus explicit `inert` on the app-shell content wrapper and a small focus trap, so the toast region is never inside a blocked document. Also correct the comment either way.",
+   "lens": "a11y"
+  },
+  {
+   "severity": "HIGH",
+   "file": "src/components/ui/Toast.tsx",
+   "title": "Max-3 eviction silently destroys action toasts, violating the plan's own no-auto-dismiss contract",
+   "detail": "toast() at line 48 does `update([...items, {...}].slice(-MAX_VISIBLE))`. Eviction is instant (no exit transition) and blind to `action`. Plan \u00a72.5 contract: the Toast is 'action-capable; does not auto-dismiss while its action is available'. Stage 1's designed flow (\u00a73.4) fires a post-edit rule-prompt toast per correction during keyboard triage; three quick corrections evict the earlier actionable 'Create rule \u2014 applies to N existing' prompt with zero animation and zero trace. Exiting toasts also still count toward the cap, so a burst of 3 toasts within the 300\u2013400ms exit window evicts cards mid-animation. The affordance the whole rules feature hangs on disappears silently in normal use.",
+   "fix": "In toast(), when over MAX_VISIBLE, evict the oldest toast that has no action (fall back to allowing the stack to exceed 3 when all have actions, or queue overflow toasts); evict via the exiting flag (reuse dismissToast) so removal animates; exclude `exiting` items when counting against MAX_VISIBLE.",
+   "lens": "correctness"
+  },
+  {
+   "severity": "HIGH",
+   "file": "src/components/ui/Sheet.tsx",
+   "title": "Sheet never participates in the KeyScope stack \u2014 'palette > sheet > list' precedence is unenforceable and Esc double-fires",
+   "detail": "The plan (\u00a71.7/\u00a72.5) fixes the contract 'One KeyScope stack (palette > sheet > list) owns precedence; Esc pops the top scope only'. CommandPalette wires itself into the stack (lines 75-76), but Sheet.tsx pushes nothing while open \u2014 Esc is handled only by the native dialog cancel (line 52). Failure scenario in Stage 1: a page keeps its 'list' scope active (mnemonics x/c/r/e per \u00a71.7) and opens a Sheet. Keydown events from focus inside the modal dialog still bubble to the window listener in KeyScopeProvider, and the top scope is still 'list' \u2014 pressing 'x' while focused on the sheet's 'Transfer' checkbox label area (a non-editable target) selects a background row invisibly. Worse, if the list scope binds 'escape' (clear selection), pressing Esc with the sheet open dispatches list's escape handler AND the provider's preventDefault (KeyScopeProvider.tsx:42) cancels the dialog's close watcher \u2014 the sheet stays open while the selection underneath is cleared. Esc is routed to the wrong scope, the exact bug the stack exists to prevent.",
+   "fix": "Have Sheet push a scope while open: call useKeyScope(`sheet-${id}`, {}, open) inside Sheet (empty bindings still shadow the list scope because dispatch consults only the top scope and never falls through), and let consumers pass extra sheet bindings via a prop. Route Esc through that scope (binding 'escape' to onClose) instead of relying solely on native cancel, so 'Esc pops the top scope only' holds by construction.",
+   "lens": "correctness"
+  },
+  {
+   "severity": "HIGH",
+   "file": "src/components/ui/KeyScopeProvider.tsx",
+   "title": "useKeyScope re-push on binding-key change reorders the stack \u2014 a lower scope jumps above the palette/sheet",
+   "detail": "useKeyScope's effect (lines 71-82) re-runs whenever the joined combo-key string changes, and keyscope.ts push() (line 119) explicitly 'replaces its bindings and moves it to the top'. Handlers are ref-proxied so plain re-renders are safe, but any *conditional binding* re-pushes the scope on top of everything. Concrete Stage-1 scenario baked into the plan (\u00a73.4): the list scope registers the 'a' (accept rule) mnemonic only while a rule-prompt toast is actionable. User opens the \u2318K palette (scope 'palette' on top), an edit's rule toast lands, the list scope re-renders with 'a' added \u2192 combos changes \u2192 pop+push moves 'list' above 'palette'. Now Escape and mod+k dispatch to the list scope (or nothing), the palette can't be closed by keyboard, and list mnemonics fire while a modal surface is open.",
+   "fix": "In createKeyScopeStack.push(), when the id already exists, replace its bindings in place (preserve stack position) instead of filter+append; only append when the id is new. Alternatively give scopes an explicit numeric priority (palette=3, sheet=2, list=1) and sort dispatch by priority rather than insertion order.",
+   "lens": "correctness"
+  },
+  {
+   "severity": "HIGH",
+   "file": "src/components/ui/CommandPalette.tsx",
+   "title": "Closing the palette unmounts an open modal dialog without close() \u2014 keyboard focus is dropped to <body>",
+   "detail": "Line 111: `if (!isOpen) return null;`. close() only flips state, so the open modal <dialog> is removed from the document while still open. Per the HTML spec, removing an open dialog skips the dialog close steps \u2014 the 'previously focused element' is never restored and the close watcher is destroyed; focus falls to <body>. Failure scenario: keyboard user on the transactions ledger presses \u2318K, then Esc \u2014 instead of returning to the row/control they were on, focus resets to the top of the document and they must Tab back through the entire shell. This defeats the keyboard grammar the palette anchors (\u00a71.7), and contrasts with Sheet.tsx which correctly stays mounted and calls dialog.close() (lines 37-45) to get native focus return.",
+   "fix": "Keep the dialog mounted while closed (render conditionally only its children if needed) and mirror Sheet's effect: call dialog.close() when !isOpen && dialog.open, letting the native close steps restore focus. If unmounting must stay, capture document.activeElement in open() and manually .focus() it in a cleanup/close path before unmount.",
+   "lens": "correctness"
+  },
+  {
+   "severity": "HIGH",
+   "file": "src/components/ui/Toast.tsx",
+   "title": "ToastHost only enters the top layer on 0\u2192n; a Sheet opened while a toast persists paints its backdrop over the actionable toast",
+   "detail": "The effect at lines 178-186 calls showPopover() only when the region transitions from empty to non-empty. Top-layer paint order is insertion order, so any modal dialog shown *after* the region is already open (Sheet.showModal, CommandPalette.showModal) stacks above it, and the full-viewport ::backdrop dims the toast; clicks in the toast's area hit the backdrop and \u2014 via Sheet's backdrop-click handler (Sheet.tsx:66) \u2014 close the sheet instead of activating the toast. This directly contradicts the component's own claim ('visible and clickable above modal sheets', line 170-172). The workaround comment in src/app/design/stage-0a/preview-client.tsx:43-45 ('the rule toast must enter the top layer AFTER the dialog') proves the fragility is known but only handled by lucky ordering in the preview. Stage-1 flow that breaks it: rule toast appears from an edit in sheet A (never dismisses \u2014 it has an action), user closes A and opens row B's sheet \u2192 the persistent toast is now under B's backdrop, dimmed and un-clickable.",
+   "fix": "Export a promoteToastRegion() that hides and re-shows the popover region (hidePopover(); showPopover(); order in the top layer is re-insertion), and call it from Sheet and CommandPalette immediately after showModal(); or in ToastHost, re-promote on every toasts-array change AND observe top-layer entries (e.g. a shared 'overlay opened' event from Sheet/Palette) to re-promote.",
+   "lens": "correctness"
+  },
+  {
+   "severity": "HIGH",
+   "file": "src/lib/keyscope.ts",
+   "title": "KeyScope stack orders by push recency, not the plan's precedence \u2014 \u2318K goes dead the moment any other scope registers",
+   "detail": "dispatch() consults ONLY the top scope and 'nothing falls through' (lines 14-19, 128-133), and push() orders scopes by push time (line 119, re-push moves to top). CommandPalette registers 'palette-trigger' (mod+k) at shell mount, so any scope registered later sits above it. Failure scenario: Stage 1's ledger registers a list scope ('r', 'c', 'j/k') on page mount \u2014 it lands on top, and pressing \u2318K on /transactions does nothing, violating plan \u00a72.5 ('CommandPalette \u2026 context actions when a sheet is open' and 'palette > sheet > list' precedence). Worse, the order thrashes: after the user opens and closes the palette once, useKeyScope re-pushes 'palette-trigger' ABOVE the list scope, and now the list mnemonics are the dead ones. Effective precedence depends on mount/toggle history, not the declared grammar. Nothing bites today only because the palette is the sole registrant.",
+   "fix": "Give scopes an explicit priority (palette=3, sheet=2, list=1) or a `global: true` flag for always-reachable bindings like mod+k, and make dispatch() resolve by priority (highest-priority scope wins conflicts; a modal scope may still block plain mnemonics below it, but global combos such as mod+k must always be reachable). Add a keyscope unit test that registers list-then-trigger and asserts mod+k still fires.",
+   "lens": "idioms"
+  },
+  {
+   "severity": "HIGH",
+   "file": "src/components/ui/CommandPalette.tsx",
+   "title": "Palette closes by unmounting an open <dialog> \u2014 browser never restores focus, keyboard user is dropped on <body>",
+   "detail": "Line 111: `if (!isOpen) return null;`. close() flips state and the open modal dialog is removed from the DOM without dialog.close() ever running. The native focus-restoration in the dialog close algorithm only runs on close(); on removal, focus falls to <body> (Chromium). Failure scenario: in Stage-1 triage a keyboard user is focused on a ledger row, presses \u2318K, then Esc \u2014 focus is now on <body>, the roving-tabindex position is lost, and the next Tab restarts from the top of the page. This contradicts the Sheet's own carefully-documented pattern (Sheet.tsx lines 37-62 keeps the dialog mounted exactly so close() runs) and undermines the \u00a72.9 'keyboard walkthrough of Sheet/Menu/Palette' gate. It also makes an exit transition impossible.",
+   "fix": "Mirror Sheet.tsx: keep the <dialog> mounted, drive it with an open-prop effect that calls showModal()/close(), and render null only for the never-opened case if desired. Reset query/activeIndex in open() as today. Then verify with a Playwright test: focus a button, \u2318K, Esc, expect focus back on that button.",
+   "lens": "idioms"
+  },
+  {
+   "severity": "HIGH",
+   "file": "src/components/ui/Field.tsx",
+   "title": "Canonical FIELD drifted from the 6 forms it must replace, and none adopted it \u2014 guarantees the cross-tab baseline churn Stage 0 exists to prevent",
+   "detail": "Plan \u00a72.5: Field/Input/Select 'replaces the FIELD const copy-pasted across 6 files'. All 6 consts still exist (settings/page.tsx:13, AnchorForm.tsx:5, AccountForm.tsx:11, BudgetForm.tsx:4, FiltersBar.tsx:20, HoldingForm.tsx:11) and the new canonical style is a DIFFERENT geometry: `px-2.5 py-1.5` (Field.tsx line 4) vs the existing `px-3 py-2` (settings' variant also adds `figures`). Meanwhile this diff already regenerated all 64 visual baselines against the OLD field geometry. Failure scenario: Stage 1+ adopts Input/Select form-by-form; every form control shrinks ~5px in height, churning accounts/budgets/investments/settings baselines in later stages \u2014 exactly what \u00a710's 'shared-primitive freeze in Stage 0 is what guarantees stages don't churn other tabs' forbids \u2014 or the sweep is skipped and two field heights coexist permanently.",
+   "fix": "Before the Stage-0 baseline regen is finalized: either (a) sweep the 6 files to import Input/Select/Field now, with FIELD set to the intended final geometry, or (b) make Field.tsx's FIELD byte-match the existing `px-3 py-2` style so later adoption is pixel-neutral. Add the `figures` need (settings) as an explicit className at that call site.",
+   "lens": "idioms"
+  },
+  {
+   "severity": "HIGH",
+   "file": "src/lib/dates.ts",
+   "title": "MONEYAPP_FAKE_TODAY never reaches client bundles \u2014 todayIso() in client components diverges from SSR under the pinned e2e clock",
+   "detail": "todayIso() reads process.env.MONEYAPP_FAKE_TODAY at call time (lines 110-112). Next.js only inlines NEXT_PUBLIC_* into client bundles, so in the browser the env is always undefined and the real wall clock is used \u2014 the env branch is dead code client-side. CalendarGrid ('use client') calls todayIso() in its useState initializer and emphasis fallback (CalendarGrid.tsx lines 31-32, 58). Failure scenario (Stage 2, first calendar consumer): under the harness the server renders July 2026 with tabIndex=0 on the pinned 2026-07-08, the client hydrates computing real today (e.g. 2026-07-15) \u2014 hydration mismatch on tabIndex, and the roving target/today ring drifts with the machine date, making the \u00a72.7 'all calendar/pace/upcoming baselines are only valid under it' guarantee false for any client-side today derivation. No e2e spec pins the browser clock (no page.clock usage anywhere in e2e/).",
+   "fix": "Never derive 'today' in client components: give CalendarGrid a required `today: string` prop supplied by the server page (consistent with getCellLabel being data-driven), and lint/grep-gate todayIso() out of 'use client' files. Alternatively (defense in depth) pin the browser clock with Playwright's clock API in openThemed().",
+   "lens": "idioms"
+  },
+  {
+   "severity": "HIGH",
+   "file": "e2e/interaction-states.spec.ts",
+   "title": "Interaction-states harness ships without the promised states or per-state axe \u2014 every overlay primitive has zero browser-level verification",
+   "detail": "Plan \u00a72.7.3 (a Stage-0 deliverable): the interaction-states spec 'opens the transaction sheet, \u2318K, rule toast, bulk mode, calendar day sheet \u2014 screenshots \u00d7 both themes and AxeBuilder runs in each state'. The shipped file is 54 lines with ONE test (seeded ledger screenshot), takeStateShots() contains no AxeBuilder call, and a11y.spec.ts's ROUTES list omits /design/stage-0a. Consequence: Sheet, CommandPalette, Toast, Menu, Popover and Tooltip \u2014 the entire new overlay layer, including its focus traps, aria-activedescendant combobox, role=menu keyboard loop, and live-region \u2014 are verified only by unit tests; the 'axe + 86 e2e green' signal does not cover any of them, so \u00a72.9's 'axe \u2026 incl. interaction states' gate is currently vacuous and Stage 1 inherits an untested pattern to copy.",
+   "fix": "Before sign-off: add state tests against the existing stage-0a route (open the preview sheet, open \u2318K, fire the rule toast) and run AxeBuilder inside takeStateShots (or a takeStateShotsWithAxe sibling) so every future state gets axe for free. Add /design/stage-0a to the a11y route list while the route exists.",
+   "lens": "idioms"
+  },
+  {
+   "severity": "HIGH",
+   "file": "src/components/ui/Toast.tsx",
+   "title": "MAX_VISIBLE eviction silently destroys action toasts \u2014 violates the 'never auto-dismiss while action is available' contract",
+   "detail": "toast() does `[...items, newItem].slice(-MAX_VISIBLE)` (line 48): when a 4th toast arrives, the oldest is removed instantly \u2014 no exit transition, and crucially even if it carries a pending action. Plan \u00a72.5's Toast contract: 'does not auto-dismiss while its action is available'. The per-card timer honors that (startTimer bails on hasAction, line 98) but the store-level eviction bypasses it. Failure scenario (Stage 1 triage, \u00a73.0): user categorizes three rows quickly \u2014 each fires a 'Create rule / Undo' toast \u2014 the fourth evicts the first user's undo affordance before they could act on it; the undoPatch is unreachable and the correction is silently permanent. Exiting toasts also still count toward the cap, tightening the window further.",
+   "fix": "Cap rendering, not the store: keep all items, render the newest MAX_VISIBLE actionless toasts but NEVER evict a toast whose action is still available (or queue overflow toasts and promote them as slots free up). At minimum, exclude action-bearing toasts from the slice.",
+   "lens": "idioms"
+  },
+  {
+   "severity": "HIGH",
+   "file": "src/components/ui/NumberRoll.tsx",
+   "title": "aria-label on a generic <span> with all-aria-hidden children \u2014 money values can be silent/ignored by screen readers",
+   "detail": "NumberRoll.tsx:39-40: the container is `<span aria-label={value}>` and its only child subtree is `aria-hidden=\"true\"`. ARIA 1.2 explicitly PROHIBITS aria-label on role=generic (span/div without a role); browsers/AT combos handle it inconsistently \u2014 VoiceOver+Safari commonly ignores it, and accessibility-tree name computation may expose an element with no role, no name, and hidden children, i.e. nothing. Since NumberRoll is the designated odometer for every stat card and money value from Stage 1 on (plan \u00a72.5), the practical failure is: a VoiceOver user reading the dashboard hears the label \"Net worth\" followed by nothing, for every figure in the app. Axe passes today because the preview route is the only consumer and axe does not flag prohibited-role naming.",
+   "fix": "Give the container a role that supports naming, or use real text: either `<span role=\"img\" aria-label={value}>` (simplest, matches the 'one accessible name' contract in the plan), or render `<span className=\"sr-only\">{value}</span>` as a sibling of the aria-hidden strip wrapper. Add a unit assertion that the rendered container has an accessible name equal to `value`.",
+   "lens": "a11y"
+  },
+  {
+   "severity": "HIGH",
+   "file": "src/components/ui/CommandPalette.tsx",
+   "title": "Closing the palette via Esc or backdrop unmounts the open <dialog> without close() \u2014 keyboard focus is dropped to <body>",
+   "detail": "CommandPalette.tsx:111 (`if (!isOpen) return null;`) unmounts the dialog whenever state flips closed. The Esc path (onCancel at 157-161) calls event.preventDefault() then close(), and the backdrop path (162-164) calls close() \u2014 neither ever calls dialogRef.current.close(). Native focus restoration to the previously-focused element happens only inside the dialog close algorithm; removing an open modal dialog from the DOM skips it. Failure scenario: user is mid-triage focused on row 37 of the transactions table, presses \u2318K, changes their mind, presses Esc \u2014 focus lands on <body>, and the next Tab restarts from the top of the document (ToastHost region, then skip link). Every palette open/close round-trip destroys the user's place. Sheet.tsx gets this right by keeping the dialog mounted and calling dialog.close() from the open-prop effect; CommandPalette diverges.",
+   "fix": "Keep the <dialog> mounted like Sheet does: render it unconditionally, drive showModal()/close() from an effect on isOpen (the existing effect at 78-80 already half-does this \u2014 add the `else dialog.close()` branch and remove the early return at line 111, gating only the rows computation on isOpen). Alternatively capture document.activeElement on open() and refocus it in close(). Add an e2e assertion: open \u2318K from a focused element, Esc, expect focus back on that element.",
+   "lens": "a11y"
+  },
+  {
+   "severity": "HIGH",
+   "file": "src/components/ui/Toast.tsx",
+   "title": "Toast live region never announces that an action exists, and the Stage-0 keyboard path to the action button is a full-document traversal",
+   "detail": "Two halves. (1) Announcement: Toast.tsx:189-193 builds `title. description` only \u2014 item.action.label is never in the live region. A screen-reader user who triggers a recategorize hears \"Category updated\" and has no way to know a Create-rule button appeared, what it does, or that the toast is waiting on them (action toasts never auto-dismiss, line 98). The action is functionally invisible to non-sighted users. (2) Reachability: ToastHost is the FIRST tabbable region in the DOM (AppShell.tsx:32, before the skip link at 34). Popover top-layer promotion does not change tab order. So in Stage 0 a keyboard user focused in <main> must either Shift+Tab backwards through the entire main content, header, and nav, or Tab forward through all remaining page tabbables and the browser chrome to wrap around to the toast. There is no `A` mnemonic yet (that is plan \u00a73.4, Stage 1) and no F6-style region hotkey. The plan's Toast contract (\u00a72.5 line 61: \"action-capable \u2026 never steals focus\") is met only in the sense that the action is technically in the tab order; it is not practically reachable, and per finding 1 it is NOT reachable at all when a Sheet is open.",
+   "fix": "(1) Append the action to the announcement: `${title}. ${description}. ${action.label} action available` (Toast.tsx:189-193). (2) Move <ToastHost /> to the END of the AppShell JSX so the stack is the next Tab stop after main content rather than the wrap-around point, and note in the component doc that Stage 1 MUST ship the scoped `A` accept key (KeyScope 'toast' scope) before any action toast ships to a real flow \u2014 reaching it by Tab alone is not an acceptable steady state.",
+   "lens": "a11y"
+  },
+  {
+   "severity": "HIGH",
+   "file": "src/components/ui/DataTable.tsx",
+   "title": "Every row-selection checkbox has the identical accessible name \"Select row\"",
+   "detail": "DataTable.tsx:226: `aria-label=\"Select row\"` is hardcoded for all rows. In Stage 1's bulk-triage flow (plan \u00a73), a screen-reader user tabbing or using form-controls navigation through a 50-row transactions table hears \"Select row, checkbox, not checked\" fifty times with no indication of WHICH transaction each controls \u2014 selecting the wrong rows before a bulk category change silently miscategorizes real ledger data. WCAG 2.4.6/1.3.1 failure that axe cannot flag (identical labels are not an axe rule) and that only manifests with real multi-row data, which Stage 0's preview route barely exercises.",
+   "fix": "Add a required-when-selectable prop `rowLabel: (row: Row) => string` to DataTableProps and render `aria-label={`Select ${rowLabel(row)}`}` at line 226 (e.g. \"Select Netflix, Jul 3, $15.99\"). Also consider `aria-label={`Select all ${caption}`}` for the header checkbox at line 70 so tables on the same page are distinguishable.",
+   "lens": "a11y"
+  },
+  {
+   "severity": "HIGH",
+   "file": "e2e/interaction-states.spec.ts",
+   "title": "takeStateShots' theme flip is incompatible with every transient state it is documented to capture in Stage 1",
+   "detail": "The file's own header says Stage 1 appends states here: 'open sheet, \u2318K, bulk mode, \u2026 then call takeStateShots'. But ensureTheme (lines 29-37) flips theme by CLICKING the header ThemeToggle, and that breaks for all three overlay mechanisms Stage 0 just shipped: (1) Sheet and CommandPalette use <dialog>.showModal() (src/components/ui/Sheet.tsx:41, CommandPalette.tsx:79) \u2014 while open, the header is outside the top layer, so Playwright's actionability check sees the ::backdrop intercepting the click and the test times out; if anyone 'fixes' it with force:true, the click hits the dialog's backdrop handler (Sheet.tsx:66) and CLOSES the sheet, so the remaining 3 of 4 sweep shots silently baseline a closed state. (2) Menu/Popover use popover=\"auto\" \u2014 the toggle click's pointerdown light-dismisses them before the screenshot, again silently capturing the closed state (no failure, just a meaningless baseline). (3) Toasts auto-dismiss after 5s (Toast.tsx:8) and the 4-shot sweep (2 widths \u00d7 2 themes, each with toHaveScreenshot's stability retries) takes longer than that, so later shots capture a vanished/mid-exit toast \u2014 the exact 'first run fails, reruns differ' flake shape. Note there is no persistent-toast escape hatch: startTimer passes durationMs into setTimeout, and a non-finite/overflow delay fires immediately (Toast.tsx:100).",
+   "fix": "Make ensureTheme pointer-free: `await page.evaluate((t) => { localStorage.setItem('theme', t); window.dispatchEvent(new StorageEvent('storage', { key: 'theme', newValue: t })); }, theme)` then keep the existing toHaveClass assertions \u2014 next-themes registers a window 'storage' listener keyed on the storageKey, so this flips the live theme without touching the DOM and works under showModal/inert and without light-dismissing popovers. For toast states, add explicit persistent support in Toast.tsx (treat durationMs <= 0 or !Number.isFinite as 'no auto-dismiss' by returning early in startTimer) and have state tests use it.",
+   "lens": "integration"
+  },
+  {
+   "severity": "HIGH",
+   "file": "src/components/ui/CalendarGrid.tsx",
+   "title": "MONEYAPP_FAKE_TODAY never reaches client components \u2014 CalendarGrid computes 'today' from the real browser clock",
+   "detail": "CalendarGrid is 'use client' and calls todayIso() (line 31 via initialFocus) which reads process.env.MONEYAPP_FAKE_TODAY (src/lib/dates.ts:111). Next.js only inlines NEXT_PUBLIC_* vars into client bundles, so in the browser the fake-clock branch is dead code and todayIso() returns the REAL date. Under the e2e harness the server renders with 2026-07-08 while the browser hydrates with the real date: the roving tabIndex=0 target differs between SSR HTML and the client render (hydration mismatch), Tab lands on a day that drifts with the wall clock, and when the real month rolls past the fixture month initialFocus flips to `${monthKey}-01` \u2014 so Stage-1 calendar keyboard/a11y tests and any today-ring driven by client-side todayIso() will pass today and flake on a date boundary. This directly breaks the plan's promise that calendar/pace surfaces are deterministic under MONEYAPP_FAKE_TODAY (\u00a72.7); dates.test.ts coverage can't catch it because vitest runs in Node where the env IS visible.",
+   "fix": "Remove the todayIso() call from the client component: add a required `today: string` prop to CalendarGrid (server components pass todayIso() down, so the pinned value crosses the RSC boundary as data), and delete the initialFocus fallback to the env-dependent clock. Add a lint guard (eslint no-restricted-imports of lib/dates' todayIso from 'use client' files, or a unit test greping client components) so the next client surface can't reopen the hole.",
+   "lens": "integration"
+  },
+  {
+   "severity": "HIGH",
+   "file": "e2e/global-setup.ts",
+   "title": "E2E harness writes synthetic statement originals into the user's REAL data/originals archive",
+   "detail": "importStatementFiles persists every imported file to MONEYAPP_ORIGINALS_DIR ?? data/originals (src/services/import/service.ts:191, 273-274). global-setup.ts sets MONEYAPP_DB_PATH/MONEYAPP_FAKE_PRICES/MONEYAPP_FAKE_TODAY (lines 19-21) but NOT MONEYAPP_ORIGINALS_DIR, and the webServer command in playwright.config.ts:26 omits it too. So both the seeding pass (~30 set-A fixtures) and zz-golden-path's browser uploads (set B + the corrupted PDF) write into the same data/originals directory that holds the user's real Chase/Robinhood statement originals \u2014 data/originals currently contains 220 files mixing real 'Chase4321_Activity' exports with synthetic fixtures. This violates the harness's own contract ('E2E runs against a dedicated, freshly-built database \u2014 never dev data'): the e2e db is wiped every run but its droppings in the real archive are permanent, the e2e importFiles.storagePath rows point at files in the dev store, and in the real-statement era a cleanup of 'test junk' in that folder risks deleting real originals.",
+   "fix": "Introduce a dedicated originals dir for the harness: in global-setup, `fs.rmSync(e2eOriginals, { recursive: true, force: true })` then `process.env.MONEYAPP_ORIGINALS_DIR = e2eOriginals` (before seedE2eDatabase), and add `MONEYAPP_ORIGINALS_DIR=data/e2e-originals` to the webServer command string so server-side uploads land there too. One-time: sweep the sha-prefixed synthetic fixture files out of data/originals.",
+   "lens": "integration"
+  },
+  {
+   "severity": "MEDIUM",
+   "file": "src/components/ui/Sheet.tsx",
+   "title": "Backdrop detection via click target closes the sheet when a text-selection drag ends on the backdrop",
+   "detail": "Sheet.tsx:63-67 (and identically CommandPalette.tsx:162-164) closes when `event.target === dialogRef.current`. The DOM click event fires on the nearest common ancestor of mousedown and mouseup targets. Failure scenario: user selects text in the sheet's Notes input (or the palette's search input), drags, and releases with the pointer over the backdrop \u2014 mousedown target is the input, mouseup target is the dialog, so the click target IS the dialog \u2192 the sheet/palette closes mid-edit and the typed note/query is lost. This gets worse in Stage 1 when the multi-field edit Sheet ships (\u00a73.2).",
+   "fix": "Track where the interaction started: record event.target in an onPointerDown handler on the dialog and only call onClose when BOTH the pointerdown target and the click target are the dialog element itself. Apply the same guard in CommandPalette.",
+   "lens": "correctness"
+  },
+  {
+   "severity": "MEDIUM",
+   "file": "src/components/ui/KeyScopeProvider.tsx",
+   "title": "No IME composition guard \u2014 Escape during CJK composition closes the palette/sheet and loses the composition",
+   "detail": "The window keydown handler (lines 29-45) never checks event.isComposing. keyscope.dispatch deliberately lets 'escape' and 'mod+\u2026' fire on editable targets (keyscope.ts:139-151). Failure scenario: a Japanese/Chinese/Korean user typing in the \u2318K search input presses Escape to cancel the active IME conversion \u2014 the keydown carries isComposing=true, but the 'palette' scope's escape binding fires and closes the whole palette (CommandPalette.tsx:76), destroying both the composition and the query. On some platforms the composition keydown arrives as key='Process' and could also mis-match or pollute chord state.",
+   "fix": "At the top of onKeyDown, return early when `event.isComposing || event.key === \"Process\"` before calling keyScopeStack.dispatch.",
+   "lens": "correctness"
+  },
+  {
+   "severity": "MEDIUM",
+   "file": "src/components/ui/Popover.tsx",
+   "title": "Popover position goes stale when its content resizes while open \u2014 repositioning only runs on open/scroll/resize",
+   "detail": "reposition() runs once on open plus window scroll/resize listeners (lines 93-109). Nothing observes the popover's own size. The flip decision and clamp were computed against the initial offsetWidth/offsetHeight. Failure scenario for Stage 1's category-picker popover (\u00a73.2, 'popover, not a modal' with search): the item list filters as the user types \u2014 the panel grows past the viewport bottom that the initial flip check said it fit within (sideFits in positioning.ts:67-85 was evaluated against the old height), so options render off-screen; or it shrinks and sits detached from the anchor after a flip. Async-loaded menu content hits the same staleness on first data arrival.",
+   "fix": "In the open effect, attach a ResizeObserver to the popover element (and the anchor) that calls reposition(), disconnecting it in the cleanup alongside the scroll/resize listeners.",
+   "lens": "correctness"
+  },
+  {
+   "severity": "MEDIUM",
+   "file": "src/components/ui/DataTable.tsx",
+   "title": "Stretched-link row overlay will cover every interactive element in non-first cells \u2014 only the checkbox got the z-index escape hatch",
+   "detail": "primaryCellContent (lines 129-150) renders an `after:absolute after:inset-0` overlay (positioned, z-auto) spanning the whole `tr.relative`, which paints above all non-positioned cell content. The selection checkbox is explicitly rescued with `relative z-10` (line 222, with a comment acknowledging the mechanism), but the component offers consumers no equivalent for their own cell content. Plan \u00a73.2's row anatomy puts a *tappable* CategoryChip and a `\u22ef` menu inside rows that also have row activation \u2014 with rowHref/onRowClick set, clicks on the chip or menu will hit the stretched overlay and navigate/open the sheet instead. Every Stage-1 ledger row hits this on day one.",
+   "fix": "Make the contract explicit and usable: export a constant/class (e.g. ROW_CONTROL = 'relative z-10') or a <DataTable.RowControl> wrapper documented on the Column.render prop, and apply it inside CategoryChip/Menu usage guidance; alternatively scope the overlay with `pointer-events:none` on ::after plus making the whole first-cell link the sole hit target via an explicit z-layering scheme.",
+   "lens": "correctness"
+  },
+  {
+   "severity": "MEDIUM",
+   "file": "src/components/ui/NumberRoll.tsx",
+   "title": "aria-label on a generic <span> is prohibited ARIA \u2014 the odometer's accessible-name contract silently fails and will trip the axe gate once used on real routes",
+   "detail": "Line 39 puts `aria-label={value}` on a plain <span> (role generic) whose entire visible content is aria-hidden (line 40). aria-label is prohibited on generic roles (ARIA 1.2); axe-core flags this as aria-prohibited-attr with impact 'serious' \u2014 exactly what e2e/a11y.spec.ts:28-33 gates on. It passes today only because NumberRoll is used solely on /design/stage-0a, which is not in the axe ROUTES list. The moment Stage 4/5 puts NumberRoll on dashboard StatCards, the suite goes red; worse, at runtime screen readers that honor the prohibition ignore the label and the aria-hidden strips leave the value unannounced \u2014 violating \u00a72.5's 'container carrying the full value as one accessible name'.",
+   "fix": "Keep the digit strips aria-hidden but give the container a real accessible name path: render a visually-hidden text node with the formatted value inside the outer span (e.g. <span className=\"sr-only\">{value}</span>) and drop aria-label, or set role=\"img\" (which permits aria-label) on the container. Add /design/stage-0a to the axe ROUTES so preview-only primitives are gated too.",
+   "lens": "correctness"
+  },
+  {
+   "severity": "MEDIUM",
+   "file": "src/components/ui/DataTable.tsx",
+   "title": "Sticky header is dead code: thead sticks to the overflow-x-auto wrapper, which never scrolls vertically",
+   "detail": "The wrapper div is `overflow-x-auto` (line 157) and the thead is `sticky top-0` (line 161). position:sticky binds to the nearest ancestor scroll container; `overflow-x: auto` makes the wrapper that container, and since it has no fixed height it never scrolls vertically \u2014 so the header simply scrolls away with the page. The plan's DataTable row promises 'sortable, selectable, sticky head' (\u00a72.5). Failure scenario: Stage 1's date-grouped ledger renders hundreds of rows; scrolling loses the column headers (and the select-all checkbox) immediately, on every viewport. Unit tests can't see this; the current interaction-state screenshot is above the fold, so it passes green.",
+   "fix": "Don't create the horizontal scroll context on the element that needs viewport-sticky: e.g. keep the rounded/border wrapper overflow-visible and apply `overflow-x-auto` only below a breakpoint where columns actually overflow, or make the wrapper the intended vertical scroller (max-h + overflow-y-auto) so sticky works within it. Verify with a full-page-scroll screenshot state in interaction-states.spec.ts.",
+   "lens": "idioms"
+  },
+  {
+   "severity": "MEDIUM",
+   "file": "src/app/layout.tsx",
+   "title": "Root-layout DB read executes at build time (static /_not-found) and bakes a dev-database badge count into the production build",
+   "detail": "safeReviewCount() (lines 16-22) runs whenever RootLayout renders. All app pages are force-dynamic, but the default /_not-found segment is statically prerendered during `next build` \u2014 at that moment getDb() opens the developer's real data/app.db and the current needs-review count is frozen into the built 404 shell (the try/catch only masks errors, not stale success). Failure scenario: build while 37 transactions need review \u2192 every future 404 page shows a '37' badge regardless of reality; on a machine with no data dir, the build itself creates a database as a side effect. Secondarily, the badge only refreshes on full-route renders (hard load, or revalidatePath from an action) \u2014 soft navigation between pages reuses the cached layout, so counts changed outside the current route can lag.",
+   "fix": "Fetch the count request-time only: move it into a small async server component (e.g. <ReviewBadgeCount/>) that calls `await connection()` (or unstable_noStore()) before querying, and pass it into SideNav/MobileNav; RootLayout stays data-free. This also removes the build-time DB side effect.",
+   "lens": "idioms"
+  },
+  {
+   "severity": "MEDIUM",
+   "file": "src/components/ui/CommandPalette.tsx",
+   "title": "Combobox gives zero feedback on result count, empty state, or group membership to screen-reader users",
+   "detail": "Three conformance gaps, all invisible to axe because they are interaction-gated: (1) No live region for results \u2014 as the user types, results.length changes silently; the \"No results\" li (190-192) is role=\"presentation\" inside the listbox and focus never leaves the input, so a blind user typing a typo hears nothing and Enter does nothing with no explanation. (2) Group headers (118-126) are role=\"presentation\" list items \u2014 aria-activedescendant navigation reads only the option node, so \"Pages\" / future \"Accounts\" / \"Actions\" group context (plan \u00a72.5: palette spans pages, accounts, categories, merchants, context actions) is never conveyed; two options named \"Chase Checking\" (page vs. account action) become indistinguishable. (3) The input (168-184) lacks aria-autocomplete=\"list\" \u2014 SRs won't announce that suggestions appear as you type.",
+   "fix": "(1) Add a singleton sr-only `aria-live=\"polite\"` div announcing `${results.length} results` (debounced/replaced, mirroring the Toast pattern), including \"No results\". (2) Restructure the list as `role=\"group\"` elements with `aria-labelledby` pointing at a header element inside each group (groups are valid listbox children), or set `aria-describedby` on each option to its group-header id. (3) Add `aria-autocomplete=\"list\"` to the input.",
+   "lens": "a11y"
+  },
+  {
+   "severity": "MEDIUM",
+   "file": "src/components/ui/Menu.tsx",
+   "title": "Disabled menu items are undiscoverable: native disabled + exclusion from the arrow-nav selector removes them from the menu entirely for keyboard/SR users",
+   "detail": "Menu.tsx:35 (`MENUITEM_SELECTOR = '[role=\"menuitem\"]:not(:disabled)'`) plus the native `disabled` attribute at line 101 means a disabled item can never receive focus and is skipped by ArrowUp/Down. The APG menu pattern requires disabled items to remain perceivable (focusable, announced as dimmed/unavailable) so users learn the command exists and is currently unavailable. Failure scenario (Stage 1): the \u22ef menu on a transaction row disables \"Undo categorization\" when there is nothing to undo \u2014 a keyboard user arrowing through the menu never encounters the item at all and concludes the feature does not exist; a sighted mouse user sees it grayed out. Two audiences get different menus.",
+   "fix": "Replace `disabled={item.disabled}` with `aria-disabled={item.disabled || undefined}`, change MENUITEM_SELECTOR to '[role=\"menuitem\"]:not([aria-disabled=\"true\"])' ONLY if you deliberately keep skip behavior \u2014 the APG-conformant fix is to keep disabled items in the arrow cycle (selector matches all menuitems), guard the onClick at 102-105 with `if (item.disabled) return;`, and keep the dimmed styling keyed off aria-disabled instead of the :disabled pseudo-class.",
+   "lens": "a11y"
+  },
+  {
+   "severity": "MEDIUM",
+   "file": "src/components/ui/Menu.tsx",
+   "title": "Tab does not close the menu \u2014 focus escapes behind the open popover while the trigger still reports aria-expanded=true",
+   "detail": "handleKeyDown (Menu.tsx:53-65) handles only ArrowDown/ArrowUp. Pressing Tab from a focused menuitem moves focus to the next tabbable in document order (the popover div is positioned but its buttons stay in normal tab order \u2014 actually focus leaves the popover subtree to whatever follows the trigger in the DOM), while popover=\"auto\" light-dismiss does NOT fire on focus change \u2014 only on pointerdown outside or Esc. Result: menu stays visually open, floating over the page, trigger still says expanded, and the user is now interacting with content underneath/behind it. APG requires Tab inside a menu to close it and move focus per the natural sequence. Also missing: Home/End (jump to first/last item), which the same keydown handler should own.",
+   "fix": "In the menu list's onKeyDown (line 53): on `Tab`, call close() (do not preventDefault \u2014 the browser will move focus; native popover focus-restoration only applies when focus is inside, so explicitly refocus the trigger first for Shift+Tab correctness or simply close and let focus proceed). Add `Home`/`End` cases focusing enabled[0] / enabled[enabled.length-1].",
+   "lens": "a11y"
+  },
+  {
+   "severity": "MEDIUM",
+   "file": "src/components/ui/CalendarGrid.tsx",
+   "title": "Month paging is silent: activating Previous/Next month gives a screen-reader user no announcement of the new month",
+   "detail": "CalendarGrid.tsx:119-135: paging deliberately keeps DOM focus on the IconButton (good \u2014 no focus yank), but nothing announces the change. The month label (line 121) is a plain span and the grid's aria-label (line 136) updates invisibly. A screen-reader user pressing \"Next month\" hears only their own keypress; to learn where they are they must leave the button and hunt for the heading \u2014 and repeated presses (jumping back 6 months to find a transaction, the exact Stage-2 spending-calendar flow) are completely blind. The buttons' labels are static (\"Previous month\"/\"Next month\"), so even re-reading the focused control reveals nothing.",
+   "fix": "Make the month label a polite live region: `<span aria-live=\"polite\" className=\"text-sm font-medium\">{label}</span>` at line 121 (content replacement announces \"August 2026\" on each page), and/or enrich the nav button labels dynamically: aria-label={`Previous month, ${monthLabel(addMonths(monthKey,-1))}`}. The live-region approach also covers month changes driven from outside (controlled monthKey).",
+   "lens": "a11y"
+  },
+  {
+   "severity": "MEDIUM",
+   "file": "src/components/ui/Sheet.tsx",
+   "title": "Initial focus lands on the Close button, and the scrollable body is not keyboard-scrollable in Safari when content has no focusables",
+   "detail": "Sheet.tsx:74: the header Close IconButton is the first focusable descendant, so showModal()'s focus delegation lands there \u2014 a screen-reader user opening a transaction detail sheet is greeted with \"Close, button\" before hearing any content, and Enter-happy users close the sheet they just opened. Compounding it, the body (line 76, `overflow-y-auto` div, no tabIndex) relies on the browser making scroll containers focusable: Chrome 127+ and Firefox do this automatically, Safari does NOT. Failure scenario: a read-only detail sheet (long merchant history, Stage 1) on Safari \u2014 keyboard focus sits on Close, arrow keys scroll nothing, content below the fold is unreachable without a pointer. Axe cannot see either issue because the sheet is unmounted/closed during route scans.",
+   "fix": "Two one-line changes: (1) give the body div `tabIndex={-1}`\u2192 no; use `tabIndex={0}` plus `role=\"region\"` and `aria-labelledby={titleId}` on the scroll container (focusable scroll regions need a role+name to pass axe's scrollable-region-focusable rule, which WILL start firing once the interaction-states spec runs axe with the sheet open); (2) steer initial focus at the content, e.g. add `autoFocus` support (Sheet prop `initialFocusRef`) or set `autofocus` on the body region so showModal's delegation prefers it over the Close button.",
+   "lens": "a11y"
+  },
+  {
+   "severity": "MEDIUM",
+   "file": "playwright.config.ts",
+   "title": "First-full-run failure is baseline lifecycle, not runtime flake \u2014 and the gate has no defense against it (or against a stale .next build)",
+   "detail": "Root cause hypothesis for 'interaction-states + golden-path failed on the FIRST full run, passed on all reruns': (a) interaction-states.spec.ts was brand new with no committed baselines (its snapshot dir is still untracked) \u2014 Playwright's default updateSnapshots:'missing' writes the actuals AND fails the test ('snapshot doesn't exist, writing actual'), which is a guaranteed, deterministic first-run failure that self-heals on rerun; (b) zz-golden-path's pre-existing baselines (accounts-expanded, account-detail \u2014 all 'M' in git status) were stale after the Icon rewrite and institution-grouped account cards, failing until regenerated. Neither is nondeterminism, but the stage gate cannot distinguish 'expected baseline churn' from a real regression, so gates WILL 'flake' every time a stage legitimately changes pixels. Compounding it, webServer runs bare `pnpm start` (line 26): it serves whatever .next exists, so a forgotten rebuild silently baselines OLD code (or times out cryptically after 60s on a machine with no .next at all).",
+   "fix": "Three-part hardening: (1) add a `test:e2e:update` script (`playwright test --update-snapshots`) as the sanctioned baseline-regen step and require regenerated baselines committed with the UI change; (2) in the config set `updateSnapshots: process.env.E2E_GATE ? 'none' : 'missing'` so gate runs turn a missing baseline into an explicit named error instead of a silent write+fail; (3) in global-setup, preflight build freshness \u2014 fail fast with a clear message if `.next/BUILD_ID` is missing or older than the newest mtime under src/ (or change the gate entrypoint to `pnpm build && playwright test`).",
+   "lens": "integration"
+  },
+  {
+   "severity": "MEDIUM",
+   "file": "src/lib/category-palette.test.ts",
+   "title": "cssBlock extraction silently over-captures the wrong CSS block under plausible globals.css refactors",
+   "detail": "cssBlock (lines 22-27) finds the block via `css.indexOf(`${selector} {`)` and ends it at the first `\\n}`. This is a load-bearing gate (the CSS-mirror sync + WCAG contrast contract), and its failure mode is SILENT over-capture, not a loud failure: if the token blocks are ever moved inside `@layer base { :root { \u2026 } }` or an `@media` wrapper \u2014 a routine Tailwind v4 refactor \u2014 the block's own closer becomes `\\n  }` (indented), so indexOf('\\n}') skips past it and the returned 'light' slice swallows every following rule up to the wrapper's close, including the `.dark` block. parseOklchToken's match() then returns whichever definition appears FIRST in that oversized slice, so depending on source order the light-theme contrast assertions can validate dark values (or vice versa) while everything stays green. Same class of problem if a second `:root {` block appears earlier in the file (indexOf takes the first) or a selector like `.dark .something {` precedes the real `.dark {`. Prettier's current flat 2-space formatting is the only thing making this correct today.",
+   "fix": "Replace the string scan with a brace-counting extractor (walk from the matched `selector + ' {'` counting { / } to find the true close, and assert the match is at nesting depth 0), or bound the blocks with explicit sentinel comments (`/* tokens:light:start */ \u2026 /* tokens:light:end */`) that the test anchors on; either way add a negative assertion that the extracted :root slice does NOT contain '.dark {'.",
+   "lens": "integration"
+  },
+  {
+   "severity": "LOW",
+   "file": "src/components/ui/CalendarGrid.tsx",
+   "title": "weekStartsOn defaults to Sunday while the app's seeded setting is weekStartsOn: 'monday'",
+   "detail": "CalendarGrid.tsx line 49 defaults `weekStartsOn = 0`, but src/db/seed.ts DEFAULT_SETTINGS ships `weekStartsOn: \"monday\"`. Failure scenario: the first Stage-2 consumer that forgets to plumb the setting renders a Sunday-start grid that contradicts the user's configured Monday weeks (and any Monday-based pace/recurring math), and the mistake is invisible because the default silently works.",
+   "fix": "Make `weekStartsOn` a required prop (the settings read is one call away in the RSC parent), or flip the default to 1 to match DEFAULT_SETTINGS and document that consumers must pass the user setting.",
+   "lens": "idioms"
+  },
+  {
+   "severity": "LOW",
+   "file": "src/app/design/stage-0a/page.tsx",
+   "title": "Preview route ships unguarded in the production build with fabricated stats and a hardcoded date floor",
+   "detail": "/design/stage-0a is reachable in `pnpm start` production. The StatCards are hardcoded ('$2,184.09', '$95,576.77' \u2014 lines 137-143) under a header claiming 'rendered from REAL data', and the busiest-merchant query hardcodes `gte(postedOn, \"2026-01-01\")` (line 82). Empty-DB paths are safe (verified: empty rows/undefined busy/null subject all degrade gracefully), so this is exposure and honesty, not a crash: sign-off screenshots of the stat row are approving invented numbers, and a stakeholder wandering to the route post-Stage-1 sees a stale duplicate transactions page. Acceptable for a \u00a72.8 checkpoint, but cheap to contain.",
+   "fix": "Gate the route (`if (process.env.NODE_ENV === \"production\" && !process.env.MONEYAPP_DESIGN_PREVIEW) notFound()`), compute the three stat values from the same real queries (a month sum is ~5 lines), and derive the merchant window from todayIso() instead of a literal. Delete the route at Stage-1 merge as the plan already promises.",
+   "lens": "idioms"
+  },
+  {
+   "severity": "LOW",
+   "file": "src/app/layout.tsx",
+   "title": "safeReviewCount swallows every error forever, and getDb() in RootLayout makes `next build` create/migrate a database as a side effect",
+   "detail": "safeReviewCount catches ALL exceptions and returns 0, so any post-boot regression (schema drift, corrupted db, wrong MONEYAPP_DB_PATH) renders a permanently-zero review badge with no signal anywhere \u2014 the badge is the feature Stage 0 added, and its only failure mode is 'silently looks like nothing needs review'. Separately, because RootLayout calls getDb() and Next prerenders /_not-found at build time, `next build` on a clean machine now creates data/moneyapp.db and runs all migrations as a side effect (createDatabase mkdirSync's data/); a build run in an environment with a stale or wrong MONEYAPP_DB_PATH will migrate that file. Build won't fail (verified: mkdirSync recursive + the catch), but the side effect is surprising in CI and the blanket catch hides real defects.",
+   "fix": "Narrow the catch: only return 0 for the expected boot-time class (better-sqlite3 open failure / 'no such table' before first migration) and `console.error` anything else so it surfaces in server logs; optionally move the count into the shell as a dynamic segment. If build-time db creation is unwanted, guard with `process.env.NEXT_PHASE === 'phase-production-build'` returning 0 before touching getDb().",
+   "lens": "integration"
+  },
+  {
+   "severity": "LOW",
+   "file": "e2e/zz-golden-path.spec.ts",
+   "title": "waitForTimeout(400) for the expand animation is the suite's only wall-clock wait and violates the repo's own deterministic-wait rule",
+   "detail": "Line 52 waits a fixed 400ms for the institution-card expand animation before the fullPage accounts-expanded screenshot. toHaveScreenshot's animations:'disabled' only freezes CSS animations/transitions at capture time; if the expansion is height/JS-driven, 400ms is a race on a loaded machine (a slow first run produces a mid-expand frame \u2014 a plausible contributor to the golden-path first-run failure), and if it is pure CSS the wait is dead weight. The user-level testing rules explicitly ban flaky timeout-based waits.",
+   "fix": "Replace with a deterministic condition: assert the disclosure's `aria-expanded=\"true\"` plus `await expect(page.getByRole('link', { name: /360 Checking/ })).toBeVisible()` (already implied) and then rely on toHaveScreenshot's built-in consecutive-frame stability instead of the sleep; or poll the expanded region's boundingBox until stable across two frames.",
+   "lens": "integration"
+  }
+ ]
+}

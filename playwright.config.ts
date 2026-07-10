@@ -1,5 +1,20 @@
 import { defineConfig, devices } from "@playwright/test";
+import { E2E_FAKE_TODAY } from "./e2e/seed-helpers";
 
+/**
+ * Baseline lifecycle (stage-gate flow) — the webServer below runs `pnpm
+ * start`, which serves whatever `.next` build already exists. A stale build
+ * silently baselines OLD code, and a brand-new spec with no committed
+ * baseline fails its first run by design (Playwright writes the actual and
+ * fails). Neither is runtime flake; both are lifecycle. The sanctioned flow:
+ *
+ * - Regenerating baselines after an intentional UI change:
+ *     `pnpm build && pnpm e2e:update`   (fresh build, --update-snapshots)
+ *   Commit the regenerated snapshots WITH the UI change that caused them.
+ * - Verifying a stage gate:
+ *     `pnpm e2e:fresh`                  (next build && playwright test)
+ *   Never gate against an old `.next`; a gate run must not write snapshots.
+ */
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
@@ -20,7 +35,11 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: "MONEYAPP_DB_PATH=data/e2e.db MONEYAPP_FAKE_PRICES=1 pnpm start --port 3111",
+    // MONEYAPP_FAKE_TODAY pins server-side "today" (RSC renders on the
+    // server) to the same date global-setup seeded with — see seed-helpers.ts.
+    // MONEYAPP_ORIGINALS_DIR keeps browser-driven uploads (zz-golden-path)
+    // out of the user's real data/originals archive — must match global-setup.
+    command: `MONEYAPP_DB_PATH=data/e2e.db MONEYAPP_ORIGINALS_DIR=data/e2e-originals MONEYAPP_FAKE_PRICES=1 MONEYAPP_FAKE_TODAY=${E2E_FAKE_TODAY} pnpm start --port 3111`,
     url: "http://localhost:3111",
     // never baseline against a stale or foreign server
     reuseExistingServer: false,

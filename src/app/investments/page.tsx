@@ -41,7 +41,6 @@ export default function InvestmentsPage() {
         <EmptyState
           title="No investment accounts yet"
           description="Holdings attach to an investment account (brokerage or crypto). Add one under Accounts first — then enter positions here and refresh prices."
-          phase="Phase 7 · Holdings & Prices"
         />
         <p className="mt-4 text-sm">
           <Link

@@ -171,7 +171,15 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
     .from(transactions)
     .innerJoin(accounts, eq(transactions.accountId, accounts.id))
     .where(and(...common, viewCondition(filters.view)))
-    .orderBy(desc(transactions.postedOn), desc(transactions.id))
+    // content-column tiebreaks: stable across re-imports/reseeds (ids encode
+    // insertion time and dedupeHash embeds the per-seed account id — both
+    // shuffle same-day rows between otherwise identical databases)
+    .orderBy(
+      desc(transactions.postedOn),
+      desc(transactions.amountCents),
+      desc(transactions.rawDescription),
+      desc(transactions.id),
+    )
     .limit(PAGE_SIZE)
     .offset((filters.page - 1) * PAGE_SIZE)
     .all();
@@ -225,7 +233,6 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
         <EmptyState
           title="Nothing imported yet"
           description="Statement ingestion (CSV, OFX/QFX, then PDF) arrives with the trust layer: begin + transactions must equal end, or the statement is flagged with its exact gap. Once transactions land, the engine categorizes them here."
-          phase="Phase 2 · Ingestion"
         />
       ) : (
         <div className="space-y-4">

@@ -1,8 +1,35 @@
 import fs from "node:fs";
 import path from "node:path";
+import { E2E_FAKE_TODAY, seedE2eDatabase } from "./seed-helpers";
 
-/** E2E runs against a dedicated, freshly-created database — never dev data. */
-export default function globalSetup(): void {
+/**
+ * E2E runs against a dedicated, freshly-built database — never dev data.
+ * The base is seeded through the REAL import pipeline (fixture set A, see
+ * seed-helpers.ts) so visual/a11y/interaction specs see populated pages;
+ * capital-one (set B) stays reserved for zz-golden-path's upload flow.
+ * The clock is pinned to E2E_FAKE_TODAY here AND in playwright.config.ts's
+ * webServer command so seed-time derivation and server renders agree.
+ */
+export default async function globalSetup(): Promise<void> {
   const dbPath = path.join(process.cwd(), "data", "e2e.db");
   for (const suffix of ["", "-wal", "-shm"]) fs.rmSync(`${dbPath}${suffix}`, { force: true });
+  // originals archived by the import pipeline follow the database: the e2e
+  // harness must NEVER write into data/originals, where the user's REAL
+  // statement originals live. Wiped like the db — droppings are not state.
+  const originalsDir = path.join(process.cwd(), "data", "e2e-originals");
+  fs.rmSync(originalsDir, { recursive: true, force: true });
+
+  // set BEFORE the app modules load: rebuildAccount calls todayIso() while
+  // deriving balances, and its output must match what the server renders
+  process.env.MONEYAPP_DB_PATH = dbPath;
+  process.env.MONEYAPP_ORIGINALS_DIR = originalsDir;
+  process.env.MONEYAPP_FAKE_PRICES = "1";
+  process.env.MONEYAPP_FAKE_TODAY = E2E_FAKE_TODAY;
+
+  const summary = await seedE2eDatabase(dbPath);
+  // one-line audit trail so a bad seed is debuggable from CI output
+  console.log(
+    `[e2e setup] seeded ${summary.txns} txns from ${summary.files} files — ` +
+      `${summary.coveragePct}% categorized, ${summary.gapPeriods} open gaps, fake today ${E2E_FAKE_TODAY}`,
+  );
 }

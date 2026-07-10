@@ -1,67 +1,156 @@
-import type { NavItem } from "./nav-items";
+import type { LucideIcon } from "lucide-react";
+import {
+  ArrowDownUp,
+  ArrowLeftRight,
+  ArrowUpRight,
+  Banknote,
+  Bed,
+  Calendar,
+  Car,
+  ChartBar,
+  ChartPie,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  CircleAlert,
+  CircleCheck,
+  Code,
+  Coffee,
+  Download,
+  Dumbbell,
+  Ellipsis,
+  ExternalLink,
+  Fuel,
+  Gift,
+  GraduationCap,
+  HeartPulse,
+  House,
+  Info,
+  KeyRound,
+  Landmark,
+  LayoutDashboard,
+  LoaderCircle,
+  Medal,
+  Moon,
+  Pencil,
+  Pill,
+  Plane,
+  Plug,
+  Plus,
+  Receipt,
+  RefreshCw,
+  Repeat,
+  Search,
+  Settings,
+  ShoppingBag,
+  ShoppingCart,
+  SlidersHorizontal,
+  Smartphone,
+  Smile,
+  Sparkles,
+  Sun,
+  Tag,
+  Ticket,
+  TrendingUp,
+  TriangleAlert,
+  Trash2,
+  Tv,
+  Undo2,
+  Utensils,
+  Wallet,
+  Wifi,
+  X,
+  Zap,
+} from "lucide-react";
 
-const PATHS: Record<NavItem["icon"] | "sun" | "moon", React.ReactNode> = {
-  dashboard: <path d="M3 13h8V3H3v10Zm0 8h8v-6H3v6Zm10 0h8V11h-8v10Zm0-18v6h8V3h-8Z" />,
-  accounts: (
-    <>
-      <rect x="3" y="6" width="18" height="13" rx="2" />
-      <path d="M3 10h18M7 15h4" />
-    </>
-  ),
-  transactions: <path d="M7 4v13m0 3-3-3m3 3 3-3M17 20V7m0-3 3 3m-3-3-3 3" />,
-  imports: (
-    <>
-      <path d="M12 3v12m0 0-4-4m4 4 4-4" />
-      <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
-    </>
-  ),
-  spending: (
-    <>
-      <path d="M21 12A9 9 0 1 1 12 3" />
-      <path d="M12 3a9 9 0 0 1 9 9h-9V3Z" />
-    </>
-  ),
-  budgets: (
-    <>
-      <path d="M4 19V5" />
-      <path d="M4 17h10M4 12h14M4 7h7" />
-    </>
-  ),
-  recurring: <path d="M3 12a9 9 0 0 1 15.5-6.2L21 8M21 4v4h-4M21 12a9 9 0 0 1-15.5 6.2L3 16m0 4v-4h4" />,
-  investments: <path d="M3 17l6-6 4 4 8-8M15 7h6v6" />,
-  settings: (
-    <>
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.65 8.85a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01A1.7 1.7 0 0 0 10.05 3V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01c.26.63.87 1.04 1.56 1.04H21a2 2 0 1 1 0 4h-.09c-.69 0-1.3.41-1.51 1.03Z" />
-    </>
-  ),
-  sun: (
-    <>
-      <circle cx="12" cy="12" r="4" />
-      <path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.3 11.3 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
-    </>
-  ),
-  moon: <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />,
-};
+/**
+ * The app's single icon surface: semantic names → lucide glyphs (1.5px-stroke
+ * family, tree-shaken). Call sites never import lucide directly — adding an
+ * icon means adding one row here.
+ */
+const ICONS = {
+  // navigation
+  dashboard: LayoutDashboard,
+  accounts: Landmark,
+  imports: Download,
+  transactions: ArrowDownUp,
+  spending: ChartPie,
+  budgets: ChartBar,
+  recurring: RefreshCw,
+  investments: TrendingUp,
+  settings: Settings,
+  sun: Sun,
+  moon: Moon,
+  // category identity
+  banknote: Banknote,
+  house: House,
+  plug: Plug,
+  utensils: Utensils,
+  car: Car,
+  plane: Plane,
+  "shopping-bag": ShoppingBag,
+  repeat: Repeat,
+  "heart-pulse": HeartPulse,
+  ticket: Ticket,
+  smile: Smile,
+  "graduation-cap": GraduationCap,
+  gift: Gift,
+  wallet: Wallet,
+  receipt: Receipt,
+  medal: Medal,
+  "arrow-left-right": ArrowLeftRight,
+  tag: Tag,
+  "shopping-cart": ShoppingCart,
+  coffee: Coffee,
+  tv: Tv,
+  code: Code,
+  fuel: Fuel,
+  key: KeyRound,
+  bed: Bed,
+  dumbbell: Dumbbell,
+  pill: Pill,
+  wifi: Wifi,
+  smartphone: Smartphone,
+  zap: Zap,
+  // interface
+  check: Check,
+  close: X,
+  "chevron-down": ChevronDown,
+  "chevron-left": ChevronLeft,
+  "chevron-right": ChevronRight,
+  plus: Plus,
+  search: Search,
+  filter: SlidersHorizontal,
+  calendar: Calendar,
+  more: Ellipsis,
+  sparkles: Sparkles,
+  "arrow-up-right": ArrowUpRight,
+  undo: Undo2,
+  "external-link": ExternalLink,
+  edit: Pencil,
+  delete: Trash2,
+  warning: TriangleAlert,
+  info: Info,
+  "circle-check": CircleCheck,
+  "circle-alert": CircleAlert,
+  spinner: LoaderCircle,
+} satisfies Record<string, LucideIcon>;
 
-interface IconProps {
-  name: keyof typeof PATHS;
-  className?: string;
+export type IconName = keyof typeof ICONS;
+
+/** Runtime guard for icon names arriving from the database. */
+export function isIconName(value: string | null | undefined): value is IconName {
+  return typeof value === "string" && value in ICONS;
 }
 
-export function Icon({ name, className }: IconProps) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className={className ?? "size-4"}
-    >
-      {PATHS[name]}
-    </svg>
-  );
+interface IconProps {
+  name: IconName;
+  className?: string;
+  strokeWidth?: number;
+}
+
+export function Icon({ name, className, strokeWidth = 1.75 }: IconProps) {
+  const Glyph = ICONS[name];
+  return <Glyph aria-hidden className={className ?? "size-4"} strokeWidth={strokeWidth} />;
 }

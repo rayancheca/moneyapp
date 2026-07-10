@@ -14,6 +14,7 @@ import { accountSeries } from "@/services/derivation";
 import { formatQuantityE8, listAccountHoldings } from "@/services/holdings";
 import { AnchorForm } from "@/components/accounts/AnchorForm";
 import { BalanceChart } from "@/components/accounts/BalanceChart";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { Money } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
@@ -103,6 +104,10 @@ export default async function AccountDetailPage({
 
   return (
     <>
+      <Breadcrumbs
+        className="mb-3"
+        items={[{ label: "Accounts", href: "/accounts" }, { label: account.name }]}
+      />
       <PageHeader
         title={account.name}
         description={`${TYPE_LABEL[account.type] ?? account.type}${account.subtype ? ` · ${account.subtype}` : ""}${account.last4 ? ` · ····${account.last4}` : ""}${account.isActive ? "" : " · archived"}`}

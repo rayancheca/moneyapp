@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { count, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
-import { importFiles, statementPeriods } from "@/db/schema/imports";
+import { importFiles, statementPeriods, type ImportStatus } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Money } from "@/components/ui/Money";
@@ -13,12 +13,12 @@ import { acceptGapAction, unimportFileAction, uploadStatementsAction } from "./a
 export const metadata: Metadata = { title: "Imports" };
 export const dynamic = "force-dynamic";
 
-const STATUS_TONE: Record<string, string> = {
-  parsed: "text-positive",
-  parsed_with_claude: "text-positive",
-  failed: "text-negative",
-  needs_claude: "text-warning",
-  superseded: "text-ink-faint",
+const STATUS_META: Record<ImportStatus, { label: string; tone: string }> = {
+  parsed: { label: "Parsed", tone: "bg-positive" },
+  parsed_with_claude: { label: "Parsed (Claude assisted)", tone: "bg-positive" },
+  needs_claude: { label: "Waiting for Claude", tone: "bg-warning" },
+  failed: { label: "Failed", tone: "bg-negative" },
+  superseded: { label: "Superseded", tone: "bg-ink-faint" },
 };
 
 const RECONCILIATION_LABEL: Record<string, { label: string; tone: string }> = {
@@ -158,7 +158,6 @@ export default function ImportsPage() {
           <EmptyState
             title="Nothing imported yet"
             description="Statement ingestion is the trust layer: structured exports (OFX/QFX preferred, then CSV) carry transactions; monthly statement PDFs carry the printed balances that anchor reconciliation and the 2-year backfill."
-            phase="Phase 2 · Ingestion"
           />
         ) : (
           <SurfaceCard>
@@ -184,8 +183,14 @@ export default function ImportsPage() {
                       </td>
                       <td className="py-1.5 pr-2 text-xs text-ink-muted">{f.parserProfile ?? "—"}</td>
                       <td className="figures py-1.5 pr-2 text-right text-xs">{f.txnCount}</td>
-                      <td className={`py-1.5 pr-2 text-xs ${STATUS_TONE[f.status] ?? ""}`} title={f.error ?? undefined}>
-                        {f.status}
+                      <td className="py-1.5 pr-2 text-xs" title={f.error ?? undefined}>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span
+                            aria-hidden
+                            className={`size-1.5 rounded-full ${STATUS_META[f.status].tone}`}
+                          />
+                          {STATUS_META[f.status].label}
+                        </span>
                       </td>
                       <td className="py-1.5 text-right">
                         <form action={unimportFileAction} className="inline">
