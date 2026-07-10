@@ -21,6 +21,11 @@ export default defineConfig({
   workers: 1, // specs share one database; the golden-path spec mutates it last
   retries: 0,
   globalSetup: "./e2e/global-setup.ts",
+  // A gate run (E2E_GATE=1) must never silently write a missing baseline and
+  // pass on the rewrite: turn absence into an explicit error so "expected
+  // churn" can't masquerade as "no regression". Local dev keeps the default
+  // 'missing' (write-then-fail) so a brand-new spec self-heals on rerun.
+  updateSnapshots: process.env.E2E_GATE ? "none" : "missing",
   reporter: [["list"]],
   use: {
     baseURL: "http://localhost:3111",
@@ -39,7 +44,10 @@ export default defineConfig({
     // server) to the same date global-setup seeded with — see seed-helpers.ts.
     // MONEYAPP_ORIGINALS_DIR keeps browser-driven uploads (zz-golden-path)
     // out of the user's real data/originals archive — must match global-setup.
-    command: `MONEYAPP_DB_PATH=data/e2e.db MONEYAPP_ORIGINALS_DIR=data/e2e-originals MONEYAPP_FAKE_PRICES=1 MONEYAPP_FAKE_TODAY=${E2E_FAKE_TODAY} pnpm start --port 3111`,
+    // MONEYAPP_PREVIEW=1 un-gates /design/stage-0a (else notFound in a
+    // production `next start`) so the overlay a11y + keyboard specs can reach
+    // the only surface that mounts the Sheet/Toast before Stage 1.
+    command: `MONEYAPP_DB_PATH=data/e2e.db MONEYAPP_ORIGINALS_DIR=data/e2e-originals MONEYAPP_FAKE_PRICES=1 MONEYAPP_FAKE_TODAY=${E2E_FAKE_TODAY} MONEYAPP_PREVIEW=1 pnpm start --port 3111`,
     url: "http://localhost:3111",
     // never baseline against a stale or foreign server
     reuseExistingServer: false,

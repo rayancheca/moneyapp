@@ -238,6 +238,14 @@ export function CommandPalette({ groups }: CommandPaletteProps) {
               </li>
             )}
           </ul>
+          {/* Polite count so a screen-reader user hears results narrow as they
+              type (and "No results" instead of silence). Replaced, not stacked,
+              so rapid typing throttles to the latest count. */}
+          <div aria-live="polite" className="sr-only">
+            {results.length === 0
+              ? "No results"
+              : `${results.length} result${results.length === 1 ? "" : "s"}`}
+          </div>
         </>
       ) : null}
     </dialog>

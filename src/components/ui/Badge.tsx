@@ -1,11 +1,11 @@
 type BadgeTone = "neutral" | "accent" | "positive" | "negative" | "warning" | "info";
 
-/* -soft bg + solid tone text; positive has no -soft token so /12 tint
-   matches SeriesTable's STATUS_STYLE idiom */
+/* -soft bg + solid tone text — every tone meets AA on its own tint
+   (src/lib/state-contrast.test.ts), matching SeriesTable's STATUS_STYLE idiom */
 const TONE: Record<BadgeTone, string> = {
   neutral: "bg-surface-sunken text-ink-muted",
   accent: "bg-accent-soft text-accent",
-  positive: "bg-positive/12 text-positive",
+  positive: "bg-positive-soft text-positive",
   negative: "bg-negative-soft text-negative",
   warning: "bg-warning-soft text-warning",
   info: "bg-info-soft text-info",

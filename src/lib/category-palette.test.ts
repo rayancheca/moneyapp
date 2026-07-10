@@ -122,6 +122,32 @@ describe("contrast contract", () => {
   });
 });
 
+/**
+ * State badges (Badge, SeriesTable) render `text-{tone}` on `bg-{tone}-soft` at
+ * 10px — AA small text, ≥ 4.5:1. This is the route-independent guard: axe only
+ * catches it if a badge of that tone happens to render on a scanned page, and
+ * `positive` shipped at 4.45:1 (a /12 tint borrowed for a missing -soft token)
+ * until this test existed to prove every tone-on-its-own-tint clears the bar.
+ */
+describe("state badge tints meet AA", () => {
+  const TONES = ["positive", "negative", "warning", "info"] as const;
+  for (const [label, block] of [
+    ["light", light],
+    ["dark", dark],
+  ] as const) {
+    for (const tone of TONES) {
+      // Contrast only: the tone TEXT tokens are intentionally saturated and can
+      // sit just outside sRGB (the browser gamut-maps them); contrastRatio
+      // clamps channels the same way, so the ratio matches the rendered color.
+      test(`${label}/${tone}: --${tone} on --${tone}-soft ≥ 4.5`, () => {
+        const text = parseOklchToken(block, `--${tone}`);
+        const soft = parseOklchToken(block, `--${tone}-soft`);
+        expect(contrastRatio(text, soft), "badge text on its own tint").toBeGreaterThanOrEqual(4.5);
+      });
+    }
+  }
+});
+
 describe("helpers", () => {
   test("isCategoryHueName accepts every palette name and rejects junk", () => {
     for (const name of CATEGORY_HUE_NAMES) expect(isCategoryHueName(name)).toBe(true);

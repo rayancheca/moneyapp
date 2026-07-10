@@ -61,6 +61,9 @@
   --info-soft: oklch(0.937 0.03 245);
   --warning-soft: oklch(0.94 0.045 70);
   --negative-soft: oklch(0.936 0.03 30);
+  /* completes the -soft family (positive previously borrowed a /12 tint that
+     landed at 4.45:1 — a hair under AA on small badge text); 4.81:1 here */
+  --positive-soft: oklch(0.94 0.03 160);
   --gain: var(--positive);
   --loss: var(--negative);
   --surface-overlay: oklch(0.996 0.002 85);
@@ -119,6 +122,7 @@
   --info-soft: oklch(0.3 0.045 245);
   --warning-soft: oklch(0.3 0.05 75);
   --negative-soft: oklch(0.3 0.05 30);
+  --positive-soft: oklch(0.3 0.045 160); /* 5.88:1 on --positive text */
   --gain: var(--positive);
   --loss: var(--negative);
   --surface-overlay: oklch(0.26 0.014 75);
@@ -174,6 +178,7 @@
   --color-info-soft: var(--info-soft);
   --color-warning-soft: var(--warning-soft);
   --color-negative-soft: var(--negative-soft);
+  --color-positive-soft: var(--positive-soft);
   --color-gain: var(--gain);
   --color-loss: var(--loss);
   --color-surface-overlay: var(--surface-overlay);

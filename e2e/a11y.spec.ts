@@ -14,6 +14,10 @@ const ROUTES = [
   "/recurring",
   "/investments",
   "/settings",
+  // preview surface for the Stage-0 primitives (un-gated by MONEYAPP_PREVIEW
+  // in the harness); replaced by the real /transactions rebuild in Stage 1.
+  // Overlay-open axe lives in keyboard.spec.ts — this scans the closed page.
+  "/design/stage-0a",
 ] as const;
 const THEMES = ["light", "dark"] as const;
 
@@ -22,7 +26,11 @@ for (const theme of THEMES) {
     test(`axe: ${route} (${theme})`, async ({ page }) => {
       await page.addInitScript((t) => window.localStorage.setItem("theme", t), theme);
       await page.goto(route);
-      await expect(page.locator("header button svg")).toBeVisible(); // hydrated
+      // hydrated — target the theme toggle by name, not `header button svg`
+      // (a mounted Sheet has its own <header> + close button, two svgs)
+      await expect(
+        page.getByRole("button", { name: /Switch to (light|dark) theme/ }),
+      ).toBeVisible();
 
       const results = await new AxeBuilder({ page }).analyze();
       const gating = results.violations.filter(

@@ -6,7 +6,7 @@ import { CADENCE_LABEL, KIND_LABEL, STATUS_LABEL, shortDate } from "./labels";
 
 const STATUS_STYLE: Record<SeriesStatus, string> = {
   detected: "bg-accent-soft text-accent",
-  confirmed: "bg-positive/12 text-positive",
+  confirmed: "bg-positive-soft text-positive",
   dismissed: "bg-surface-sunken text-ink-faint",
   ended: "bg-surface-sunken text-ink-faint",
 };
