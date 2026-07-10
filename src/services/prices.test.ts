@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { and, eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { balanceAnchors } from "@/db/schema/balances";
@@ -27,6 +27,19 @@ import {
 
 // NO network in tests — the fake provider is active for any routed lookup
 process.env.MONEYAPP_FAKE_PRICES = "1";
+
+// yahoo-finance2 v3 exports a CLASS — methods only exist on instances. A v2
+// regression (calling .chart/.quote on the default export itself) fails here.
+const { yahooChartMock, yahooQuoteMock } = vi.hoisted(() => ({
+  yahooChartMock: vi.fn(),
+  yahooQuoteMock: vi.fn(),
+}));
+vi.mock("yahoo-finance2", () => ({
+  default: class {
+    chart = yahooChartMock;
+    quote = yahooQuoteMock;
+  },
+}));
 
 const NOW = new Date("2026-07-08T12:00:00");
 const TODAY = todayIso(NOW);
@@ -77,6 +90,24 @@ describe("provider routing", () => {
     expect(getProvider("stock")).toBe(fakeProvider);
     expect(getProvider("etf")).toBe(fakeProvider);
     expect(getProvider("crypto")).toBe(fakeProvider);
+  });
+
+  test("yahooProvider drives the v3 instance API (chart + quote)", async () => {
+    yahooChartMock.mockResolvedValueOnce({
+      quotes: [{ date: new Date("2026-07-08T00:00:00Z"), close: 123.45 }],
+    });
+    const closes = await yahooProvider.getDailyCloses("AAPL", "stock", "2026-07-08", "2026-07-08");
+    expect(closes).toEqual([{ day: "2026-07-08", close: 123.45 }]);
+    expect(yahooChartMock).toHaveBeenCalledWith("AAPL", {
+      period1: "2026-07-08",
+      period2: "2026-07-09", // chart period2 is exclusive
+      interval: "1d",
+    });
+
+    yahooQuoteMock.mockResolvedValueOnce([{ symbol: "AAPL", regularMarketPrice: 111.5 }]);
+    const quotes = await yahooProvider.getQuotes([{ symbol: "AAPL", assetType: "stock" }]);
+    expect(quotes).toHaveLength(1);
+    expect(quotes[0]?.price).toBe(111.5);
   });
 
   test("yahoo refuses crypto; coinbase refuses equities (keyed lookups)", async () => {

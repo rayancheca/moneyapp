@@ -59,12 +59,35 @@ const yahooQuoteSchema = z.array(
   z.object({ symbol: z.string(), regularMarketPrice: z.number().optional() }).loose(),
 );
 
+type YahooFinanceInstance = InstanceType<(typeof import("yahoo-finance2"))["default"]>;
+
+let yahooSingleton: Promise<YahooFinanceInstance> | undefined;
+
+/**
+ * yahoo-finance2 v3 exports a class, not a ready instance (v2 did). One
+ * shared instance keeps the cookie/crumb handshake to a single round-trip
+ * across a multi-symbol backfill. Lazy so fake mode never loads the module;
+ * promise-memoized so concurrent refreshes share one instance; reset on
+ * failure so one bad load never poisons later refreshes.
+ */
+async function loadYahoo(): Promise<YahooFinanceInstance> {
+  yahooSingleton ??= import("yahoo-finance2").then(
+    ({ default: YahooFinance }) => new YahooFinance({ suppressNotices: ["yahooSurvey"] }),
+  );
+  try {
+    return await yahooSingleton;
+  } catch (error: unknown) {
+    yahooSingleton = undefined;
+    throw error;
+  }
+}
+
 export const yahooProvider: PriceProvider = {
   source: "yahoo",
 
   async getDailyCloses(symbol, assetType, fromDay, toDay) {
     assertEquity(assetType, symbol);
-    const { default: yahooFinance } = await import("yahoo-finance2");
+    const yahooFinance = await loadYahoo();
     const result: unknown = await yahooFinance.chart(symbol, {
       period1: fromDay,
       // chart period2 is exclusive — include toDay itself
@@ -81,7 +104,7 @@ export const yahooProvider: PriceProvider = {
   async getQuotes(items) {
     for (const i of items) assertEquity(i.assetType, i.symbol);
     if (items.length === 0) return [];
-    const { default: yahooFinance } = await import("yahoo-finance2");
+    const yahooFinance = await loadYahoo();
     const result: unknown = await yahooFinance.quote(items.map((i) => i.symbol));
     const parsed = yahooQuoteSchema.parse(result);
     const bySymbol = new Map(parsed.map((q) => [q.symbol, q.regularMarketPrice]));
