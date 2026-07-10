@@ -11,6 +11,7 @@ import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import {
+  accountSeries,
   deriveDailyRows,
   latestBalances,
   netWorthSeries,
@@ -233,6 +234,34 @@ describe("integration: rebuild + net worth against a real database", () => {
     if (!row) throw new Error(`missing institution ${name}`);
     return row.id;
   }
+
+  test("accountSeries returns one account's covered days oldest-first", () => {
+    const checking = createAccount(bundle.db, {
+      institutionId: institutionId("Chase"),
+      name: "Chase Checking",
+      type: "checking",
+    });
+    const other = createAccount(bundle.db, {
+      institutionId: institutionId("Chase"),
+      name: "Chase Savings",
+      type: "savings",
+    });
+    addManualAnchor(bundle.db, { accountId: checking, anchoredOn: "2026-07-07", enteredCents: 100_00 });
+    addManualAnchor(bundle.db, { accountId: checking, anchoredOn: TODAY, enteredCents: 150_00 });
+    addManualAnchor(bundle.db, { accountId: other, anchoredOn: TODAY, enteredCents: 999_00 });
+
+    const series = accountSeries(bundle.db, checking);
+
+    // anchored days first, then carried forward to the wall-clock today
+    expect(series[0]).toEqual({ day: "2026-07-07", balanceCents: 100_00, basis: "anchored" });
+    expect(series[1]).toEqual({ day: TODAY, balanceCents: 150_00, basis: "anchored" });
+    for (const p of series.slice(2)) {
+      expect(p.basis).toBe("carried");
+      expect(p.balanceCents).toBe(150_00);
+    }
+    // the sibling account's balance never leaks in
+    expect(series.some((p) => p.balanceCents === 999_00)).toBe(false);
+  });
 
   test("net worth = assets − liabilities with credit stored negative", () => {
     const checking = createAccount(bundle.db, {

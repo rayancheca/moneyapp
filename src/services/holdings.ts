@@ -153,6 +153,81 @@ export function upsertHolding(db: AppDatabase, input: HoldingInput): string {
   });
 }
 
+/* ── Per-account holdings view (account detail page) ────────────────── */
+
+export interface AccountHoldingRow {
+  symbol: string;
+  assetType: AssetType;
+  quantityE8: number;
+  avgCostCents: number | null;
+  latestClose: number | null;
+  quotedOn: string | null;
+  valueCents: number | null;
+  /** value move vs the previous cached close × quantity */
+  dayChangeCents: number | null;
+  dayChangePct: number | null;
+  plCents: number | null;
+  plPct: number | null;
+  /** share of THIS account's priced value (not the whole portfolio) */
+  allocationPct: number | null;
+}
+
+/** Active holdings of one account with day change and within-account allocation. */
+export function listAccountHoldings(db: AppDatabase, accountId: string): AccountHoldingRow[] {
+  const rows = db
+    .select()
+    .from(holdings)
+    .where(and(eq(holdings.accountId, accountId), eq(holdings.isActive, true)))
+    .orderBy(asc(holdings.symbol))
+    .all();
+
+  const priced = rows.map((r) => {
+    const closes = db
+      .select()
+      .from(priceCache)
+      .where(and(eq(priceCache.symbol, r.symbol), eq(priceCache.assetType, r.assetType)))
+      .orderBy(desc(priceCache.quotedOn))
+      .limit(2)
+      .all();
+    const latest = closes[0] ?? null;
+    const previous = closes[1] ?? null;
+
+    const valueCents = latest ? valueCentsOf(r.quantityE8, latest.close) : null;
+    const prevValueCents = previous ? valueCentsOf(r.quantityE8, previous.close) : null;
+    const dayChangeCents =
+      valueCents !== null && prevValueCents !== null ? valueCents - prevValueCents : null;
+    const dayChangePct =
+      dayChangeCents !== null && prevValueCents !== null && prevValueCents !== 0
+        ? (dayChangeCents / prevValueCents) * 100
+        : null;
+    const costCents =
+      r.avgCostCents != null ? Math.round((r.avgCostCents * r.quantityE8) / 1e8) : null;
+    const plCents = valueCents !== null && costCents !== null ? valueCents - costCents : null;
+    const plPct =
+      plCents !== null && costCents !== null && costCents !== 0 ? (plCents / costCents) * 100 : null;
+
+    return {
+      symbol: r.symbol,
+      assetType: r.assetType,
+      quantityE8: r.quantityE8,
+      avgCostCents: r.avgCostCents,
+      latestClose: latest?.close ?? null,
+      quotedOn: latest?.quotedOn ?? null,
+      valueCents,
+      dayChangeCents,
+      dayChangePct,
+      plCents,
+      plPct,
+    };
+  });
+
+  const totalValue = priced.reduce((sum, r) => sum + (r.valueCents ?? 0), 0);
+  return priced.map((r) => ({
+    ...r,
+    allocationPct: r.valueCents !== null && totalValue > 0 ? (r.valueCents / totalValue) * 100 : null,
+  }));
+}
+
 /* ── Portfolio view ─────────────────────────────────────────────────── */
 
 export interface PortfolioRow {

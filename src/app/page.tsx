@@ -2,6 +2,8 @@ import Link from "next/link";
 import { getDb } from "@/db/client";
 import { listAccounts } from "@/services/accounts";
 import { netWorthSeries } from "@/services/derivation";
+import { institutionGroups } from "@/services/institution-groups";
+import { InstitutionCard } from "@/components/accounts/InstitutionCard";
 import { NetWorthChart } from "@/components/dashboard/NetWorthChart";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
@@ -30,6 +32,7 @@ const SETUP_STEPS = [
 export default function DashboardPage() {
   const db = getDb();
   const accounts = listAccounts(db).filter((a) => a.isActive);
+  const groups = institutionGroups(db);
   const series = netWorthSeries(db);
   const latest = series.at(-1);
 
@@ -80,7 +83,11 @@ export default function DashboardPage() {
             Assets <Money cents={assets} className="font-medium text-ink" />
           </span>
           <span>
-            Liabilities <Money cents={-liabilities} className="font-medium text-negative" />
+            Liabilities{" "}
+            <Money
+              cents={liabilities === 0 ? 0 : -liabilities}
+              className={`font-medium ${liabilities === 0 ? "text-ink" : "text-negative"}`}
+            />
           </span>
           {latest && !latest.complete && (
             <span className="text-warning">
@@ -105,28 +112,9 @@ export default function DashboardPage() {
             Manage →
           </Link>
         </div>
-        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {accounts.map((a) => (
-            <Link
-              key={a.id}
-              href={`/accounts/${a.id}`}
-              className="group flex items-baseline justify-between gap-3 rounded-(--radius-card) border border-line bg-surface-raised px-4 py-3 transition-colors duration-(--duration-fast) hover:border-line-strong"
-            >
-              <div className="min-w-0">
-                <div className="truncate text-[13px] font-medium group-hover:text-accent">
-                  {a.name}
-                </div>
-                <div className="text-[11px] text-ink-faint">{a.institutionName}</div>
-              </div>
-              {a.balance ? (
-                <Money
-                  cents={a.isLiability ? -a.balance.balanceCents! : a.balance.balanceCents!}
-                  className={`text-[13px] ${a.isLiability ? "text-negative" : ""}`}
-                />
-              ) : (
-                <span className="text-[11px] text-ink-faint">—</span>
-              )}
-            </Link>
+        <div className="space-y-3">
+          {groups.map((g) => (
+            <InstitutionCard key={g.institutionName} group={g} />
           ))}
         </div>
       </section>

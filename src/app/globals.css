@@ -74,6 +74,7 @@
   --font-mono: var(--font-geist-mono);
   --radius-card: 0.75rem;
   --duration-fast: 150ms;
+  --duration-normal: 300ms;
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
 

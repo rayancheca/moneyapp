@@ -11,6 +11,7 @@ import { institutions } from "@/db/schema/institutions";
 import { createAccount } from "./accounts";
 import {
   formatQuantityE8,
+  listAccountHoldings,
   listPortfolio,
   parseQuantityToE8,
   upsertHolding,
@@ -241,5 +242,64 @@ describe("holdings service against a real database", () => {
     expect(row.valueCents).toBeNull();
     expect(row.plCents).toBeNull();
     expect(row.allocationPct).toBeNull();
+  });
+
+  test("listAccountHoldings: day change from the two latest closes, allocation within the account", () => {
+    // Arrange: 10 AAPL @ $100 avg; closed $110 yesterday, $121 today
+    upsertHolding(bundle.db, {
+      accountId: brokerageId,
+      symbol: "AAPL",
+      assetType: "stock",
+      quantityE8: 10 * 1e8,
+      avgCostCents: 100_00,
+    });
+    cachePrice("AAPL", "stock", "2026-07-09", 110);
+    cachePrice("AAPL", "stock", "2026-07-10", 121);
+
+    // Act
+    const [row] = listAccountHoldings(bundle.db, brokerageId);
+
+    // Assert
+    expect(row!.latestClose).toBe(121);
+    expect(row!.quotedOn).toBe("2026-07-10");
+    expect(row!.valueCents).toBe(121_000); // 10 × $121
+    expect(row!.dayChangeCents).toBe(11_000); // 10 × ($121 − $110)
+    expect(row!.dayChangePct).toBeCloseTo(10, 5);
+    expect(row!.plCents).toBe(21_000); // vs $1,000 cost basis
+    expect(row!.allocationPct).toBe(100);
+  });
+
+  test("listAccountHoldings: single cached day yields null day change; other accounts excluded", () => {
+    const robinhood = bundle.db
+      .select()
+      .from(institutions)
+      .where(eq(institutions.name, "Robinhood"))
+      .get()!;
+    const cryptoId = createAccount(bundle.db, {
+      institutionId: robinhood.id,
+      name: "Robinhood Crypto",
+      type: "investment",
+      subtype: "crypto",
+    });
+    upsertHolding(bundle.db, {
+      accountId: cryptoId,
+      symbol: "ETH",
+      assetType: "crypto",
+      quantityE8: parseQuantityToE8("2"),
+    });
+    upsertHolding(bundle.db, {
+      accountId: brokerageId,
+      symbol: "MSFT",
+      assetType: "stock",
+      quantityE8: 1e8,
+    });
+    cachePrice("ETH", "crypto", "2026-07-10", 1800);
+
+    const rows = listAccountHoldings(bundle.db, cryptoId);
+    expect(rows).toHaveLength(1); // MSFT belongs to the other account
+    expect(rows[0]!.symbol).toBe("ETH");
+    expect(rows[0]!.valueCents).toBe(360_000);
+    expect(rows[0]!.dayChangeCents).toBeNull();
+    expect(rows[0]!.plCents).toBeNull(); // no avg cost recorded
   });
 });

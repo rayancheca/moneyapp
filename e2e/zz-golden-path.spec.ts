@@ -31,10 +31,26 @@ test("upload statements through the UI and watch the trust layer work", async ({
     .locator("xpath=following-sibling::p");
   await expect(reconciledCount).toHaveText(/[1-9]/);
 
-  // accounts were auto-created from the files
+  // accounts were auto-created from the files, grouped under their
+  // institution card — expanding reveals the per-account sub-cards
   await page.goto("/accounts");
-  await expect(page.getByText("Capital One 360 Checking")).toBeVisible();
+  const capOneCard = page.getByRole("region", { name: "Capital One" });
+  await expect(capOneCard).toBeVisible();
+  await capOneCard.getByRole("button", { name: /Capital One/ }).click();
+  await expect(page.getByText("360 Checking")).toBeVisible();
   await expect(page.getByText("Venture X")).toBeVisible();
+  await page.waitForTimeout(400); // expand animation settles
+  await expect(page).toHaveScreenshot("accounts-expanded-light.png", { fullPage: true });
+
+  // sub-cards link into the enriched account detail page
+  await capOneCard.getByRole("link", { name: /360 Checking/ }).click();
+  await expect(page.getByRole("heading", { level: 1, name: /360 Checking/ })).toBeVisible();
+  await expect(page.getByText("Balance history")).toBeVisible();
+  await expect(page).toHaveScreenshot("account-detail-light.png", { fullPage: true });
+  await page.getByRole("button", { name: /switch to dark theme/i }).click();
+  await expect(page.locator("html")).toHaveClass(/dark/);
+  await expect(page).toHaveScreenshot("account-detail-dark.png", { fullPage: true });
+  await page.getByRole("button", { name: /switch to light theme/i }).click();
 
   // transactions imported and categorized by the seed merchant map
   await page.goto("/transactions");

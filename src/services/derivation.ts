@@ -289,6 +289,24 @@ export function netWorthSeries(db: AppDatabase): NetWorthPoint[] {
     }));
 }
 
+export interface AccountSeriesPoint {
+  day: string;
+  balanceCents: number;
+  basis: BalanceBasis;
+}
+
+/** One account's covered daily balances, oldest first (gap days excluded). */
+export function accountSeries(db: AppDatabase, accountId: string): AccountSeriesPoint[] {
+  return db
+    .select()
+    .from(dailyBalances)
+    .where(eq(dailyBalances.accountId, accountId))
+    .orderBy(asc(dailyBalances.day))
+    .all()
+    .filter((r) => r.basis !== "gap")
+    .map((r) => ({ day: r.day, balanceCents: r.balanceCents, basis: r.basis }));
+}
+
 export interface AccountBalance {
   accountId: string;
   balanceCents: number | null;
