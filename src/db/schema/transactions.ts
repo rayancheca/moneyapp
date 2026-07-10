@@ -11,6 +11,7 @@ export const CATEGORIZATION_SOURCES = [
   "user",
   "rule",
   "merchant_map",
+  "bank_category",
   "claude",
   "transfer_detect",
   "credit_match",

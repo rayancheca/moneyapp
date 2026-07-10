@@ -20,6 +20,7 @@ export interface CategorizeStats {
   processed: number;
   byRule: number;
   byMerchantMap: number;
+  byBankCategory: number;
   byCreditMatch: number;
   uncategorized: number;
 }
@@ -33,6 +34,48 @@ interface TxnRow {
   merchantId: string | null;
   categoryId: string | null;
   categorizationSource: string | null;
+  bankCategory?: string | null;
+}
+
+/**
+ * Bank-supplied category buckets → taxonomy paths (Chase spending-report
+ * and card-CSV slugs). Deliberately conservative: ambiguous buckets
+ * (PROFESSIONAL_SERVICES, MISCELLANEOUS) stay unmapped and fall through
+ * to Claude. Runs AFTER the merchant map, so a known merchant's precise
+ * subcategory always beats the bank's coarse bucket.
+ */
+const BANK_CATEGORY_MAP: Record<string, string> = {
+  AUTOMOTIVE: "Transport",
+  BILLS_AND_UTILITIES: "Utilities",
+  ENTERTAINMENT: "Entertainment",
+  FEES_AND_ADJUSTMENTS: "Fees",
+  FOOD_AND_DRINK: "Food > Dining",
+  GAS: "Transport > Gas",
+  GROCERIES: "Food > Groceries",
+  HEALTH_AND_WELLNESS: "Health",
+  HOME: "Housing",
+  PERSONAL: "Personal Care",
+  SHOPPING: "Shopping",
+  TRAVEL: "Travel",
+  EDUCATION: "Education",
+  GIFTS_AND_DONATIONS: "Gifts & Donations",
+};
+
+/** Resolve "Parent > Sub" (or bare parent) taxonomy paths to category ids. */
+function bankCategoryIds(db: AppDatabase): Map<string, string> {
+  const rows = db.select().from(categories).all();
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const byPath = new Map<string, string>();
+  for (const r of rows) {
+    const path = r.parentId ? `${byId.get(r.parentId)?.name} > ${r.name}` : r.name;
+    byPath.set(path, r.id);
+  }
+  const out = new Map<string, string>();
+  for (const [bucket, path] of Object.entries(BANK_CATEGORY_MAP)) {
+    const id = byPath.get(path);
+    if (id) out.set(bucket, id);
+  }
+  return out;
 }
 
 function loadRules(db: AppDatabase) {
@@ -89,8 +132,9 @@ function settingNumber(db: AppDatabase, key: string, fallback: number): number {
 
 /** Runs the deterministic pipeline over every active, user-untouched, uncategorized txn. */
 export function categorizeAll(db: AppDatabase): CategorizeStats {
-  const stats: CategorizeStats = { processed: 0, byRule: 0, byMerchantMap: 0, byCreditMatch: 0, uncategorized: 0 };
+  const stats: CategorizeStats = { processed: 0, byRule: 0, byMerchantMap: 0, byBankCategory: 0, byCreditMatch: 0, uncategorized: 0 };
   const activeRules = loadRules(db);
+  const bankCatIds = bankCategoryIds(db);
   const aliases = db.select().from(merchantAliases).all();
   const merchantDefaults = new Map(
     db.select().from(merchants).all().map((m) => [m.id, m.defaultCategoryId]),
@@ -115,6 +159,7 @@ export function categorizeAll(db: AppDatabase): CategorizeStats {
       merchantId: transactions.merchantId,
       categoryId: transactions.categoryId,
       categorizationSource: transactions.categorizationSource,
+      bankCategory: transactions.bankCategory,
     })
     .from(transactions)
     .where(
@@ -167,6 +212,23 @@ export function categorizeAll(db: AppDatabase): CategorizeStats {
       }
       if (merchantId) {
         tx.update(transactions).set({ merchantId }).where(eq(transactions.id, txn.id)).run();
+      }
+
+      // bank-supplied bucket (Chase spending report / card CSV) — coarser
+      // than the merchant map but far better than uncategorized
+      const bankCategoryId = txn.bankCategory ? bankCatIds.get(txn.bankCategory) : undefined;
+      if (bankCategoryId) {
+        tx.update(transactions)
+          .set({
+            categoryId: bankCategoryId,
+            categorizationSource: "bank_category",
+            categorizationConfidence: 0.75,
+            needsReview: false,
+          })
+          .where(eq(transactions.id, txn.id))
+          .run();
+        stats.byBankCategory += 1;
+        continue;
       }
 
       if (txn.amountCents > 0) {
