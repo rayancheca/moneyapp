@@ -29,7 +29,6 @@ export function AppShell({ children, reviewCount }: AppShellProps) {
   return (
     <KeyScopeProvider>
       <CommandPalette groups={PALETTE_GROUPS} />
-      <ToastHost />
       <div className="min-h-dvh md:grid md:grid-cols-[13.5rem_1fr]">
       <a
         href="#main"
@@ -69,6 +68,11 @@ export function AppShell({ children, reviewCount }: AppShellProps) {
         </main>
       </div>
       </div>
+      {/* Last in the shell so the action-toast stack is the NEXT Tab stop after
+          main content, not the wrap-around point (a toast is otherwise the
+          first tabbable region). Stage 1 adds the scoped `A` mnemonic
+          (focusNewestToastAction, KeyScope `toast` tier) as the primary reach. */}
+      <ToastHost />
     </KeyScopeProvider>
   );
 }

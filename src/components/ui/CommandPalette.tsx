@@ -41,6 +41,13 @@ function optionId(item: SearchableItem): string {
   return `palette-option-${item.id}`;
 }
 
+/** Stable id for a group's header, referenced by each option's aria-describedby
+ * so activedescendant navigation conveys "Pages" / "Accounts" group context —
+ * essential once Stage 1 adds same-named options across groups. */
+function groupHeaderId(group: string): string {
+  return `palette-group-${group.replace(/\s+/g, "-").toLowerCase()}`;
+}
+
 /**
  * ⌘K palette on native <dialog> (plan §1.7/§2.5). While closed it registers
  * only the "palette-trigger" scope — non-modal but at the palette tier, so
@@ -136,6 +143,7 @@ export function CommandPalette({ groups }: CommandPaletteProps) {
         rows.push(
           <li
             key={`header-${item.group}-${index}`}
+            id={groupHeaderId(item.group)}
             role="presentation"
             className="px-4 pt-3 pb-1 text-[11px] font-medium tracking-[0.08em] uppercase text-ink-faint"
           >
@@ -150,6 +158,7 @@ export function CommandPalette({ groups }: CommandPaletteProps) {
           id={optionId(item)}
           role="option"
           aria-selected={isActive}
+          aria-describedby={groupHeaderId(item.group)}
           className={`flex cursor-default items-center gap-3 px-4 py-2 text-sm ${
             isActive ? "bg-accent-soft text-ink" : "text-ink-muted"
           }`}
@@ -202,6 +211,7 @@ export function CommandPalette({ groups }: CommandPaletteProps) {
               role="combobox"
               aria-expanded="true"
               aria-controls={LISTBOX_ID}
+              aria-autocomplete="list"
               aria-activedescendant={activeItem === undefined ? undefined : optionId(activeItem)}
               aria-label="Search commands"
               placeholder="Search pages, accounts, actions…"

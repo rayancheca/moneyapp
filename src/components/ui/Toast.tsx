@@ -152,6 +152,14 @@ function ToastCard({ item }: { item: ToastItem }) {
   const startedAtRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasAction = item.action !== undefined;
+  // Persistent = never auto-dismisses. Action toasts qualify (their affordance
+  // must survive), and so does an explicit durationMs <= 0 / non-finite —
+  // the escape hatch Stage-1 interaction states use for actionless-but-pinned
+  // toasts. Without this guard a 0/Infinity duration flows into setTimeout and
+  // fires on the next tick (Math.max(0, …)), the opposite of "persistent".
+  const persistent =
+    hasAction ||
+    (item.durationMs !== undefined && (!Number.isFinite(item.durationMs) || item.durationMs <= 0));
 
   const pauseTimer = useCallback(() => {
     if (timerRef.current === null || startedAtRef.current === null) return;
@@ -162,10 +170,10 @@ function ToastCard({ item }: { item: ToastItem }) {
   }, []);
 
   const startTimer = useCallback(() => {
-    if (hasAction || item.exiting || timerRef.current !== null) return;
+    if (persistent || item.exiting || timerRef.current !== null) return;
     startedAtRef.current = Date.now();
     timerRef.current = setTimeout(() => dismissToast(item.id), Math.max(0, remainingRef.current));
-  }, [hasAction, item.exiting, item.id]);
+  }, [persistent, item.exiting, item.id]);
 
   useEffect(() => {
     startTimer();
