@@ -5,6 +5,7 @@ import type { AppDatabase } from "@/db/client";
 import { aiCalls } from "@/db/schema/ai";
 import { categories } from "@/db/schema/categories";
 import { merchantAliases, merchants } from "@/db/schema/merchants";
+import { appSettings } from "@/db/schema/settings";
 import { transactions } from "@/db/schema/transactions";
 
 /**
@@ -39,6 +40,57 @@ export interface ClaudeRunResult {
   estCostUsd: number;
   /** the monthly AI cap stopped the run early */
   capReached?: boolean;
+  /** the user pressed Stop — run ended between batches */
+  stopped?: boolean;
+}
+
+/** display-only estimate for the queue (≈ actuals from real runs) */
+export const EST_USD_PER_MERCHANT = 0.0005;
+
+/* ── Run state (visibility + the Stop button) ───────────────────────── */
+
+const RUNNING_KEY = "claudeRunStartedAt";
+const STOP_KEY = "claudeStopRequested";
+const LAST_RUN_KEY = "claudeLastRun";
+/** a running flag older than this is a crashed run, not a live one */
+const STALE_RUN_MS = 15 * 60_000;
+
+function readStateKey(db: AppDatabase, key: string): string | null {
+  const row = db.select().from(appSettings).where(eq(appSettings.key, key)).get();
+  return row ? (JSON.parse(row.value) as string) : null;
+}
+
+function writeStateKey(db: AppDatabase, key: string, value: string | null): void {
+  if (value === null) {
+    db.delete(appSettings).where(eq(appSettings.key, key)).run();
+    return;
+  }
+  db.insert(appSettings)
+    .values({ key, value: JSON.stringify(value) })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value: JSON.stringify(value) } })
+    .run();
+}
+
+export interface ClaudeRunState {
+  /** a run is live right now (started < 15 min ago and not finished) */
+  isRunning: boolean;
+  lastRun: (ClaudeRunResult & { at: string }) | null;
+}
+
+export function claudeRunState(db: AppDatabase, now: Date = new Date()): ClaudeRunState {
+  const startedAt = readStateKey(db, RUNNING_KEY);
+  const isRunning =
+    startedAt !== null && now.getTime() - Date.parse(startedAt) < STALE_RUN_MS;
+  const lastRaw = readStateKey(db, LAST_RUN_KEY);
+  return {
+    isRunning,
+    lastRun: lastRaw ? (JSON.parse(lastRaw) as ClaudeRunResult & { at: string }) : null,
+  };
+}
+
+/** Takes effect between batches — at most one in-flight batch completes after. */
+export function requestClaudeStop(db: AppDatabase): void {
+  writeStateKey(db, STOP_KEY, "1");
 }
 
 export function pendingMerchantQueue(db: AppDatabase): { description: string; count: number }[] {
@@ -80,13 +132,28 @@ export async function classifyPendingMerchants(
   if (!apiKey || queue.length === 0) {
     return { ran: false, queued: queue.length, classified: 0, needsReview: 0, estCostUsd: 0 };
   }
+  // re-entrancy guard: a second click/tab must never double-spend the API
+  // or clobber the live run's stop/run state
+  if (claudeRunState(db).isRunning) {
+    return { ran: false, queued: queue.length, classified: 0, needsReview: 0, estCostUsd: 0 };
+  }
 
   const confidenceMin = options.confidenceMin ?? 0.8;
   const anthropic = new Anthropic({ apiKey });
   const paths = taxonomyPaths(db);
   const result: ClaudeRunResult = { ran: true, queued: queue.length, classified: 0, needsReview: 0, estCostUsd: 0 };
 
+  writeStateKey(db, STOP_KEY, null);
+  writeStateKey(db, RUNNING_KEY, new Date().toISOString());
+  try {
   for (let i = 0; i < queue.length; i += BATCH_SIZE) {
+    // heartbeat: long runs must keep reading as live past the stale window
+    writeStateKey(db, RUNNING_KEY, new Date().toISOString());
+    // the user's Stop button — honored between batches
+    if (readStateKey(db, STOP_KEY) !== null) {
+      result.stopped = true;
+      break;
+    }
     // the monthly cap is a hard stop, not a display nicety
     const { aiSpend } = await import("./settings");
     if (aiSpend(db).overCap) {
@@ -206,6 +273,13 @@ export async function classifyPendingMerchants(
         if (lowConfidence) result.needsReview += updated.changes;
       }
     });
+  }
+  } finally {
+    // always release the running flag and record the outcome — a crashed
+    // run must not leave the UI showing "classifying…" forever
+    writeStateKey(db, RUNNING_KEY, null);
+    writeStateKey(db, STOP_KEY, null);
+    writeStateKey(db, LAST_RUN_KEY, JSON.stringify({ ...result, at: new Date().toISOString() }));
   }
 
   return result;

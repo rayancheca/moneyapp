@@ -5,7 +5,8 @@ import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { transactions } from "@/db/schema/transactions";
 import { coverageStats } from "@/services/categorize";
-import { pendingMerchantQueue } from "@/services/claude-categorize";
+import { claudeRunState, pendingMerchantQueue } from "@/services/claude-categorize";
+import { aiSpend } from "@/services/settings";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import type { CategoryOption } from "@/components/transactions/CategoryCell";
@@ -194,6 +195,8 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
 
   const coverage = coverageStats(db);
   const pendingMerchants = pendingMerchantQueue(db).length;
+  const spend = aiSpend(db);
+  const runState = claudeRunState(db);
 
   const returnQuery = filtersToQuery(filters);
   const rootCategories = allCategories
@@ -210,7 +213,13 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
 
       {notice ? <NoticeBanner notice={notice} dismissHref={`/transactions${returnQuery}`} /> : null}
 
-      <HeaderStrip coverage={coverage} pendingMerchants={pendingMerchants} returnQuery={returnQuery} />
+      <HeaderStrip
+        coverage={coverage}
+        pendingMerchants={pendingMerchants}
+        spend={{ monthUsd: spend.monthUsd, capUsd: spend.capUsd, overCap: spend.overCap }}
+        runState={runState}
+        returnQuery={returnQuery}
+      />
 
       {totalInLedger === 0 ? (
         <EmptyState

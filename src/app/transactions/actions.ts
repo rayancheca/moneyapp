@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { applyCorrection, categorizeAll, detectTransfers } from "@/services/categorize";
-import { classifyPendingMerchants } from "@/services/claude-categorize";
+import { classifyPendingMerchants, requestClaudeStop } from "@/services/claude-categorize";
 import type { TxnNotice } from "@/components/transactions/query";
 
 /**
@@ -75,6 +75,15 @@ export async function runCategorizationAction(formData: FormData): Promise<void>
 
   revalidatePath("/transactions");
   revalidatePath("/");
+  redirect(transactionsPath(parsed.returnTo));
+}
+
+export async function stopClassifyAction(formData: FormData): Promise<void> {
+  const parsed = returnOnlyFormSchema.parse({
+    returnTo: safeReturnQuery(formData.get("returnTo")),
+  });
+  requestClaudeStop(getDb());
+  revalidatePath("/transactions");
   redirect(transactionsPath(parsed.returnTo));
 }
 
