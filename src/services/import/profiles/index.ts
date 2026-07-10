@@ -8,8 +8,10 @@ import {
   robinhoodActivityCsv,
   sofiCsv,
 } from "./csv-profiles";
+import { capitalOneStatementPdf } from "./capitalone-statement-profile";
 import { ofxProfile } from "./ofx-profile";
 import { statementPdf } from "./pdf-profile";
+import { chaseSpendingReportPdf } from "./spending-report-profile";
 
 /** Ordered registry — most specific matchers first. */
 export const PROFILES: ParserProfile[] = [
@@ -21,5 +23,7 @@ export const PROFILES: ParserProfile[] = [
   sofiCsv,
   robinhoodActivityCsv,
   ofxProfile,
+  chaseSpendingReportPdf,
+  capitalOneStatementPdf,
   statementPdf,
 ];

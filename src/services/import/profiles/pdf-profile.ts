@@ -13,13 +13,14 @@ import { ParseError, type CanonicalTxn, type ParsedStatement, type ParserProfile
  * quarantined gap, not a parse failure.
  */
 
-interface Line {
+export interface Line {
   y: number;
   text: string;
   tokens: { str: string; x: number }[];
 }
 
-async function extractLines(buffer: Buffer): Promise<Line[]> {
+/** Shared PDF plumbing: positional text → y-clustered reading-order lines. */
+export async function extractLines(buffer: Buffer): Promise<Line[]> {
   const pdf = await getDocumentProxy(new Uint8Array(buffer));
   const lines: Line[] = [];
   for (let pageNo = 1; pageNo <= pdf.numPages; pageNo++) {

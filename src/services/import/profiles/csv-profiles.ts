@@ -45,35 +45,42 @@ function last4FromFilename(name: string): string | undefined {
 }
 
 /**
- * Validates a running-balance column: sorted oldest-first, each balance must
- * equal the previous plus the amount — a broken chain means dropped rows
- * (e.g. Chase's reported silent truncation) and fails the parse.
+ * Validates a running-balance column: sorted oldest-first, each printed
+ * balance must equal the last printed balance plus every amount since — a
+ * broken chain means dropped rows (e.g. Chase's reported silent truncation)
+ * and fails the parse. Real Chase exports leave the balance BLANK on
+ * pending/same-day rows, so blanks are carried across, never fatal.
  */
 function validateRunningBalance(
   profileId: string,
-  rows: { postedOn: string; amountCents: number; balanceCents: number }[],
-): { cents: number; asOf: string } {
+  rows: { postedOn: string; amountCents: number; balanceCents: number | null }[],
+): { cents: number; asOf: string } | undefined {
+  if (rows.length === 0) throw new ParseError(profileId, "No rows");
   const chronological = [...rows].reverse(); // files are newest-first
-  for (let i = 1; i < chronological.length; i++) {
-    const prev = chronological[i - 1]!;
-    const cur = chronological[i]!;
-    if (prev.balanceCents + cur.amountCents !== cur.balanceCents) {
+  let lastPrinted: number | null = null;
+  let sumSincePrinted = 0;
+  let ledger: { cents: number; asOf: string } | undefined;
+  for (const cur of chronological) {
+    sumSincePrinted += cur.amountCents;
+    if (cur.balanceCents === null) continue;
+    if (lastPrinted !== null && lastPrinted + sumSincePrinted !== cur.balanceCents) {
       throw new ParseError(
         profileId,
-        `Running balance breaks at ${cur.postedOn}: ${prev.balanceCents} + ${cur.amountCents} != ${cur.balanceCents} — file may be truncated`,
+        `Running balance breaks at ${cur.postedOn}: ${lastPrinted} + ${sumSincePrinted} != ${cur.balanceCents} — file may be truncated`,
       );
     }
+    lastPrinted = cur.balanceCents;
+    sumSincePrinted = 0;
+    ledger = { cents: cur.balanceCents, asOf: cur.postedOn };
   }
-  const newest = chronological.at(-1);
-  if (!newest) throw new ParseError(profileId, "No rows");
-  return { cents: newest.balanceCents, asOf: newest.postedOn };
+  return ledger;
 }
 
 const CHASE_DEPOSIT_HEADER = "Details,Posting Date,Description,Amount,Type,Balance,Check or Slip #";
 
 export const chaseDepositCsv: ParserProfile = {
   id: "chase-deposit-csv",
-  version: 1,
+  version: 2,
   matches: (f) =>
     f.format === "csv" && /^Chase\d{4}_Activity/i.test(f.name) && f.text.startsWith("Details,"),
   parse: (f): ParsedStatement[] => {
@@ -81,7 +88,8 @@ export const chaseDepositCsv: ParserProfile = {
     const rows = parseCsv(f, "chase-deposit-csv").map((r) => ({
       postedOn: mdyToIso("chase-deposit-csv", r["Posting Date"] ?? ""),
       amountCents: parseAmountToCents(r.Amount ?? ""),
-      balanceCents: parseAmountToCents(r.Balance ?? ""),
+      // pending/same-day rows print no balance — tolerated, never anchored
+      balanceCents: (r.Balance ?? "").trim() === "" ? null : parseAmountToCents(r.Balance!),
       rawDescription: r.Description ?? "",
     }));
     const ledger = validateRunningBalance("chase-deposit-csv", rows);
@@ -94,7 +102,7 @@ export const chaseDepositCsv: ParserProfile = {
       {
         accountHint: { institution: "Chase", last4: last4FromFilename(f.name) },
         txns,
-        ledger,
+        ...(ledger ? { ledger } : {}),
       },
     ];
   },
@@ -198,29 +206,57 @@ export const capOne360Csv: ParserProfile = {
 
 const SOFI_HEADER = "Date,Description,Type,Amount,Current balance,Status";
 
+/** SoFi Type → direct taxonomy assignment where the intent is unambiguous */
+function sofiCategoryPath(type: string, amountCents: number): string | undefined {
+  if (type === "INTEREST_EARNED") return "Income > Interest";
+  // positive ATM rows are cash deposits (the seed rule maps those to Salary)
+  if (type === "ATM" && amountCents < 0) return "Cash & ATM > ATM Withdrawals";
+  return undefined;
+}
+
 export const sofiCsv: ParserProfile = {
   id: "sofi-csv",
-  version: 1,
+  version: 2,
   matches: (f) => f.format === "csv" && f.text.startsWith("Date,Description,Type,Amount,Current balance"),
   parse: (f): ParsedStatement[] => {
     requireHeader(f, "sofi-csv", SOFI_HEADER);
-    const rows = parseCsv(f, "sofi-csv").map((r) => ({
-      postedOn: isoDate("sofi-csv", r.Date ?? ""),
-      amountCents: parseAmountToCents(r.Amount ?? ""),
-      balanceCents: parseAmountToCents(r["Current balance"] ?? ""),
-      rawDescription: r.Description ?? "",
-    }));
+    const rows = parseCsv(f, "sofi-csv")
+      // pending rows re-export as Posted later with a different shape — never import them
+      .filter((r) => (r.Status ?? "Posted").trim() === "Posted")
+      // "Canceled deposit from …" rows are informational: the money never
+      // moved, the amount never joins the running balance, and the printed
+      // balance is a meaningless 0 — real exports prove all three
+      .filter((r) => !/^Canceled\b/i.test((r.Description ?? "").trim()))
+      .map((r) => {
+        const description = (r.Description ?? "").trim();
+        const printedCents = parseAmountToCents(r.Amount ?? "");
+        // "Reversal of deposit from …" prints the ORIGINAL's magnitude, but
+        // the balance column proves the effect is the opposite sign
+        const amountCents = /^Reversal of\b/i.test(description) ? -printedCents : printedCents;
+        const type = (r.Type ?? "").trim();
+        return {
+          postedOn: isoDate("sofi-csv", r.Date ?? ""),
+          amountCents,
+          balanceCents: parseAmountToCents(r["Current balance"] ?? ""),
+          rawDescription: description,
+          bankCategory: type || undefined,
+          categoryPath: sofiCategoryPath(type, amountCents),
+        };
+      });
     const ledger = validateRunningBalance("sofi-csv", rows);
     const isSavings = /savings/i.test(f.name);
+    // real exports carry the account number in the name: "SOFI-Checking•9067-…"
+    const last4 = /(?:•|%E2%80%A2)(\d{4})/.exec(f.name)?.[1];
     return [
       {
         accountHint: {
           institution: "SoFi",
           type: isSavings ? "savings" : "checking",
           name: isSavings ? "SoFi Savings" : "SoFi Checking",
+          ...(last4 ? { last4 } : {}),
         },
         txns: rows.map(({ balanceCents: _b, ...t }) => t),
-        ledger,
+        ...(ledger ? { ledger } : {}),
       },
     ];
   },
@@ -234,15 +270,23 @@ const RH_CODE_CATEGORY: Record<string, string | null> = {
   Sell: "Investments > Sells",
   CDIV: "Income > Dividends",
   INT: "Income > Interest",
-  GOLD: "Fees > Bank Fees",
-  SLIP: "Income > Other Income",
+  GOLD: "Fees > Bank Fees", // Gold subscription
+  SLIP: "Income > Other Income", // stock lending
   ACH: null, // transfer detection pairs the legs
+  RTP: null, // instant bank transfer — paired like ACH
+  DCF: null, // external debit-card transfer — paired like ACH
+  ITRF: null, // brokerage-to-brokerage transfer (counter-account may be untracked)
+  FUTSWP: null, // event-contracts inter-entity sweep — cash effect real, intent unknown
+  SPL: null, // stock splits carry no cash amount; kept for completeness
   OTHER: null,
 };
 
+/** real exports don't zero-pad ("6/5/2026") — strict MM/DD silently drops 80%+ of rows */
+const RH_DATE_RE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+
 export const robinhoodActivityCsv: ParserProfile = {
   id: "robinhood-activity-csv",
-  version: 1,
+  version: 2,
   matches: (f) => f.format === "csv" && f.text.startsWith('"Activity Date"'),
   parse: (f): ParsedStatement[] => {
     requireHeader(f, "robinhood-activity-csv", RH_HEADER);
@@ -250,7 +294,16 @@ export const robinhoodActivityCsv: ParserProfile = {
     const txns: CanonicalTxn[] = [];
     for (const r of rows) {
       const date = (r["Activity Date"] ?? "").trim();
-      if (!/^\d{2}\/\d{2}\/\d{4}$/.test(date)) continue; // trailing disclaimer row
+      const dm = RH_DATE_RE.exec(date);
+      if (!dm) {
+        // trailing disclaimer rows are amount-less (text lands in whichever
+        // column, varies by export) — but a bad date WITH an amount is
+        // silent-data-loss territory and must fail loudly
+        if ((r.Amount ?? "").trim() !== "") {
+          throw new ParseError("robinhood-activity-csv", `Bad Activity Date "${date}"`);
+        }
+        continue;
+      }
       const code = (r["Trans Code"] ?? "OTHER").trim();
       if (!(code in RH_CODE_CATEGORY)) {
         throw new ParseError("robinhood-activity-csv", `Unknown Trans Code "${code}" — refusing to guess`);
@@ -258,12 +311,20 @@ export const robinhoodActivityCsv: ParserProfile = {
       const amountRaw = (r.Amount ?? "").trim();
       if (amountRaw === "") continue; // non-cash rows (e.g. splits)
       const instrument = (r.Instrument ?? "").trim();
+      // multi-line quoted descriptions ("Marvell Technology\nCUSIP: …") flatten
+      const description = (r.Description ?? "").replace(/\s+/g, " ").trim();
+      // transfer fee riders ("Instant bank transfer - withdrawal fee") are
+      // spend, not transfer legs — categorize deterministically
+      const isTransferFee = RH_CODE_CATEGORY[code] === null && /\bfee\b/i.test(description);
       txns.push({
-        postedOn: mdyToIso("robinhood-activity-csv", date),
+        postedOn: mdyToIso(
+          "robinhood-activity-csv",
+          `${dm[1]!.padStart(2, "0")}/${dm[2]!.padStart(2, "0")}/${dm[3]}`,
+        ),
         amountCents: parseAmountToCents(amountRaw),
-        rawDescription: instrument !== "" ? `${r.Description} (${instrument})` : (r.Description ?? ""),
+        rawDescription: instrument !== "" ? `${description} (${instrument})` : description,
         bankCategory: code,
-        categoryPath: RH_CODE_CATEGORY[code] ?? undefined,
+        categoryPath: isTransferFee ? "Fees > Bank Fees" : (RH_CODE_CATEGORY[code] ?? undefined),
       });
     }
     return [
