@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import { z } from "zod";
 import { getDb } from "@/db/client";
-import { todayIso } from "@/lib/dates";
+import { monthKey, todayIso } from "@/lib/dates";
 import { forecastCurrentMonth } from "@/services/forecast";
 import { listSeries, upcomingOccurrences } from "@/services/recurring";
+import { recurringCalendar } from "@/services/recurring-calendar";
 import { AllSeriesView } from "@/components/recurring/AllSeriesView";
 import { ForecastCard } from "@/components/recurring/ForecastCard";
+import { RecurringCalendar } from "@/components/recurring/RecurringCalendar";
 import { RecurringTabs, type RecurringTab } from "@/components/recurring/RecurringTabs";
 import { UpcomingList } from "@/components/recurring/UpcomingList";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -15,7 +17,7 @@ import { detectNowAction } from "./actions";
 export const metadata: Metadata = { title: "Recurring" };
 export const dynamic = "force-dynamic";
 
-const searchSchema = z.object({ tab: z.enum(["upcoming", "all"]).catch("upcoming") });
+const searchSchema = z.object({ tab: z.enum(["upcoming", "all", "calendar"]).catch("upcoming") });
 
 export default async function RecurringPage({
   searchParams,
@@ -30,10 +32,12 @@ export default async function RecurringPage({
   const series = listSeries(db, today);
   const upcoming = upcomingOccurrences(db, today, 30);
   const forecast = forecastCurrentMonth(db, today);
+  const calendarMonth = recurringCalendar(db, monthKey(today), today);
 
   const counts: Record<RecurringTab, number> = {
     upcoming: upcoming.length,
     all: series.filter((s) => s.status !== "dismissed" && s.status !== "ended").length,
+    calendar: calendarMonth.entryCount,
   };
   const hasSeries = series.length > 0;
 
@@ -67,8 +71,10 @@ export default async function RecurringPage({
             <RecurringTabs tab={tab} counts={counts} />
             {tab === "upcoming" ? (
               <UpcomingList occurrences={upcoming} />
-            ) : (
+            ) : tab === "all" ? (
               <AllSeriesView series={series} />
+            ) : (
+              <RecurringCalendar initialMonth={calendarMonth} today={today} />
             )}
           </div>
         )}

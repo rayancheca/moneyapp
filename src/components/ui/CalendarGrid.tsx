@@ -179,7 +179,7 @@ export function CalendarGrid({
                   }}
                   onKeyDown={handleKeyDown(day.iso)}
                   className={`flex aspect-square w-full flex-col items-start gap-0.5 rounded-md p-1 transition-colors duration-(--duration-fast) hover:bg-surface-sunken ${
-                    day.inMonth ? "" : "text-ink-faint opacity-60"
+                    day.inMonth ? "" : "text-ink-faint"
                   } ${emphasizeDay(day.iso) ? "ring-1 ring-accent" : ""}`.trim()}
                 >
                   <span aria-hidden className="text-xs">

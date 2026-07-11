@@ -479,14 +479,21 @@ export function detectRecurringSeries(
 export function setSeriesStatus(
   db: AppDatabase,
   seriesId: string,
-  status: Extract<SeriesStatus, "confirmed" | "dismissed">,
+  status: Extract<SeriesStatus, "confirmed" | "dismissed" | "ended">,
 ): void {
-  const result = db
-    .update(recurringSeries)
-    .set({ status })
+  const series = db
+    .select({ mergedIntoId: recurringSeries.mergedIntoId })
+    .from(recurringSeries)
     .where(eq(recurringSeries.id, seriesId))
-    .run();
-  if (result.changes === 0) throw new Error(`Unknown recurring series ${seriesId}`);
+    .get();
+  if (!series) throw new Error(`Unknown recurring series ${seriesId}`);
+  // A merged-away series owns zero rows (they moved to the target) but keeps its
+  // detected stats. Re-confirming it would resurrect it into the forecast/calendar
+  // with phantom money that double-books the target's charges (§4.3). It is dead.
+  if (status === "confirmed" && series.mergedIntoId !== null) {
+    throw new Error("Cannot re-confirm a merged series");
+  }
+  db.update(recurringSeries).set({ status }).where(eq(recurringSeries.id, seriesId)).run();
 }
 
 export interface SeriesView {
@@ -524,7 +531,7 @@ const OCCURRENCES_PER_YEAR: Record<Cadence, number> = {
   annual: 1,
 };
 
-function annualizedCentsOf(eff: EffectiveSeries): number | null {
+export function annualizedCentsOf(eff: EffectiveSeries): number | null {
   if (eff.nextExpectedAmountCents === null) return null;
   return Math.abs(eff.nextExpectedAmountCents) * OCCURRENCES_PER_YEAR[eff.cadence];
 }
@@ -604,7 +611,7 @@ interface ProjectableSeries {
 }
 
 /** Nominal step when a series predates interval stats (should not happen). */
-const CADENCE_NOMINAL_DAYS: Record<Cadence, number> = {
+export const CADENCE_NOMINAL_DAYS: Record<Cadence, number> = {
   weekly: 7,
   biweekly: 14,
   semimonthly: 15,

@@ -129,6 +129,13 @@ export function mergeSeries(
     // the target may itself have been merged onward — follow to the live one
     finalTarget = resolveMergeTarget(targetId, mergedById);
     if (finalTarget === sourceId) throw new Error("Cannot merge a series into itself");
+    // The target must be LIVE. Relinking onto a dismissed/ended series would move
+    // the source's charges to a series the forecast/calendar/upcoming views all
+    // exclude (status IN detected|confirmed) — the money would silently vanish.
+    const targetStatus = statusById.get(finalTarget);
+    if (targetStatus !== "detected" && targetStatus !== "confirmed") {
+      throw new Error("Cannot merge into an inactive series");
+    }
 
     const res = tx
       .update(transactions)

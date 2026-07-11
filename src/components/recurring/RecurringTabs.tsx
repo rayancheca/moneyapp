@@ -1,9 +1,9 @@
 import Link from "next/link";
 
-export const RECURRING_TABS = ["upcoming", "all"] as const;
+export const RECURRING_TABS = ["upcoming", "all", "calendar"] as const;
 export type RecurringTab = (typeof RECURRING_TABS)[number];
 
-const LABELS: Record<RecurringTab, string> = { upcoming: "Upcoming", all: "All" };
+const LABELS: Record<RecurringTab, string> = { upcoming: "Upcoming", all: "All", calendar: "Calendar" };
 
 interface RecurringTabsProps {
   tab: RecurringTab;

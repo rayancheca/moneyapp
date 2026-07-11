@@ -17,6 +17,7 @@ import {
   effectiveSeries,
   isSeriesActive,
   projectOccurrences,
+  setSeriesStatus,
   toProjectable,
   type SeriesOverrides,
 } from "./recurring";
@@ -336,5 +337,29 @@ describe("isSeriesActive (Active/Inactive split, §4.1)", () => {
     expect(isSeriesActive(s({ status: "dismissed" }), "2026-07-08")).toBe(false);
     expect(isSeriesActive(s({ status: "ended" }), "2026-07-08")).toBe(false);
     expect(isSeriesActive(s({ lastMatchedOn: null }), "2026-07-08")).toBe(false);
+  });
+});
+
+describe("merge/confirm guards (§4.3 money-integrity)", () => {
+  test("merging into a dismissed/ended target is rejected (would vanish the money)", () => {
+    const netflix = seriesFor(netflixId);
+    const spotify = seriesFor(spotifyId);
+    setSeriesStatus(bundle.db, netflix.id, "dismissed");
+    expect(() => mergeSeries(bundle.db, spotify.id, netflix.id, TODAY)).toThrow(
+      /Cannot merge into an inactive series/,
+    );
+    // spotify's rows stayed put — nothing stranded
+    expect(taggedIds(spotify.id)).toHaveLength(6);
+  });
+
+  test("a merged-away series cannot be re-confirmed (would resurrect phantom money)", () => {
+    const netflix = seriesFor(netflixId);
+    const spotify = seriesFor(spotifyId);
+    mergeSeries(bundle.db, spotify.id, netflix.id, TODAY); // spotify → ended, merged
+    expect(() => setSeriesStatus(bundle.db, spotify.id, "confirmed")).toThrow(
+      /Cannot re-confirm a merged series/,
+    );
+    // dismiss is still allowed on a merged series (it is already dead)
+    expect(() => setSeriesStatus(bundle.db, spotify.id, "dismissed")).not.toThrow();
   });
 });
