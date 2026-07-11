@@ -73,6 +73,12 @@ export function CategoryPicker({
     return [...suggested, ...rest];
   }, [options, query, suggestedIds]);
 
+  // clamp the cursor into range (filtering can shrink results below `active`)
+  const activeIndex = results.length === 0 ? -1 : Math.min(active, results.length - 1);
+  const activeOption = activeIndex === -1 ? undefined : results[activeIndex];
+  const listboxId = `category-listbox-${scopeId}`;
+  const optionDomId = (o: CategoryPickerOption): string => `category-opt-${scopeId}-${o.id}`;
+
   function pick(id: string): void {
     onPick(id);
     close();
@@ -88,8 +94,7 @@ export function CategoryPicker({
       setActive((a) => Math.max(a - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const opt = results[active];
-      if (opt) pick(opt.id);
+      if (activeOption) pick(activeOption.id);
     }
   }
 
@@ -124,6 +129,11 @@ export function CategoryPicker({
             ref={inputRef}
             autoFocus
             type="text"
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={listboxId}
+            aria-autocomplete="list"
+            aria-activedescendant={activeOption ? optionDomId(activeOption) : undefined}
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -135,30 +145,33 @@ export function CategoryPicker({
             className="w-full bg-transparent text-sm outline-none placeholder:text-ink-faint"
           />
         </div>
-        <ul role="listbox" aria-label="Categories" className="max-h-64 overflow-y-auto">
+        <ul id={listboxId} role="listbox" aria-label="Categories" className="max-h-64 overflow-y-auto">
           {results.length === 0 ? (
             <li className="px-2 py-3 text-center text-xs text-ink-faint">No matching category</li>
           ) : (
             results.map((o, i) => {
               const isSuggested = query.trim() === "" && suggestedIds.includes(o.id);
+              // the <li> IS the option (aria-selected tracks the arrow cursor, not
+              // the committed category) — no nested button, matching CommandPalette
               return (
-                <li key={o.id} role="option" aria-selected={o.id === currentId}>
-                  <button
-                    type="button"
-                    onClick={() => pick(o.id)}
-                    onMouseMove={() => setActive(i)}
-                    style={{ paddingLeft: `${0.5 + o.depth * 0.75}rem` }}
-                    className={`flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-sm transition-colors duration-(--duration-fast) ${
-                      i === active ? "bg-accent-soft text-ink" : "text-ink-muted"
-                    }`}
-                  >
-                    <CategoryChip label={o.name} hue={o.hue} icon={o.icon} compact />
-                    <span className="truncate">{o.name}</span>
-                    {o.id === currentId ? <Icon name="check" className="ml-auto size-3.5 text-accent" /> : null}
-                    {isSuggested ? (
-                      <span className="ml-auto shrink-0 text-[10px] font-medium text-accent">Claude</span>
-                    ) : null}
-                  </button>
+                <li
+                  key={o.id}
+                  id={optionDomId(o)}
+                  role="option"
+                  aria-selected={i === activeIndex}
+                  onClick={() => pick(o.id)}
+                  onMouseMove={() => setActive(i)}
+                  style={{ paddingLeft: `${0.5 + o.depth * 0.75}rem` }}
+                  className={`flex cursor-default items-center gap-1.5 rounded-md py-1 pr-2 text-sm transition-colors duration-(--duration-fast) ${
+                    i === activeIndex ? "bg-accent-soft text-ink" : "text-ink-muted"
+                  }`}
+                >
+                  <CategoryChip label={o.name} hue={o.hue} icon={o.icon} compact />
+                  <span className="truncate">{o.name}</span>
+                  {o.id === currentId ? <Icon name="check" className="ml-auto size-3.5 text-accent" /> : null}
+                  {isSuggested ? (
+                    <span className="ml-auto shrink-0 text-[10px] font-medium text-accent">Claude</span>
+                  ) : null}
                 </li>
               );
             })

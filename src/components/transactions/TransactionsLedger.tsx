@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { LetterBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -13,7 +13,8 @@ import { bulkApplyAction, bulkApplyByFilterAction } from "@/app/transactions/act
 import type { TxnPatch } from "@/app/transactions/action-types";
 import type { TransactionStatus } from "@/db/schema/transactions";
 import { BulkActionBar } from "./BulkActionBar";
-import type { CategoryPickerOption } from "./CategoryPicker";
+import { CategoryPicker, type CategoryPickerOption } from "./CategoryPicker";
+import { runCategoryCorrection } from "./correct-category";
 import type { SearchParams } from "./query";
 import { TransactionSheet } from "./TransactionSheet";
 import { offerUndoToast } from "./undo-toast";
@@ -119,6 +120,21 @@ export function TransactionsLedger({
     setAllMatching(false);
   }, [paramsKey]);
 
+  // After an inline recategorize that removes the row from a filtered view, the
+  // focused chip trigger unmounts and focus falls to <body>. Hand focus to the
+  // neighbor row's chip — but only if focus was actually lost, so the unfiltered
+  // "all" view (where the row survives and keeps focus) is untouched.
+  const focusNeighborRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = focusNeighborRef.current;
+    if (id === null) return;
+    focusNeighborRef.current = null;
+    if (document.activeElement !== document.body) return;
+    document
+      .querySelector<HTMLElement>(`[data-row-chip="${CSS.escape(id)}"] button`)
+      ?.focus();
+  }, [rows]);
+
   function flip(delta: -1 | 1): void {
     if (openIndex < 0) return;
     const next = rows[openIndex + delta];
@@ -149,6 +165,20 @@ export function TransactionsLedger({
   function rowClick(row: LedgerRow): void {
     if (selectionMode) toggleRow(row.id);
     else setOpenId(row.id);
+  }
+
+  /** Inline recategorize from the row chip — no sheet needed (§3.2). */
+  function recategorizeRow(row: LedgerRow, categoryId: string): void {
+    const option = categories.find((c) => c.id === categoryId);
+    // remember the neighbor to catch focus if this row leaves a filtered view
+    const i = rows.findIndex((r) => r.id === row.id);
+    focusNeighborRef.current = rows[i + 1]?.id ?? rows[i - 1]?.id ?? null;
+    runCategoryCorrection({
+      transactionId: row.id,
+      categoryId,
+      categoryName: option?.name ?? "category",
+      onChanged: refresh,
+    });
   }
 
   function refresh(): void {
@@ -220,13 +250,27 @@ export function TransactionsLedger({
                       className="size-3.5 accent-accent"
                     />
                   </label>
+                  {/* inline chip picker — recategorize without opening the sheet
+                      (§3.2). A plain chip in selection mode, where the row's job
+                      is selecting, not editing. */}
+                  <div data-row-chip={r.id} className="shrink-0 py-2.5">
+                    {selectionMode ? (
+                      <CategoryChip label={r.categoryName ?? "Uncategorized"} hue={r.hue} icon={r.icon} />
+                    ) : (
+                      <CategoryPicker
+                        options={categories}
+                        currentId={r.categoryId}
+                        suggestedIds={r.suggestedCategoryIds}
+                        onPick={(cid) => recategorizeRow(r, cid)}
+                      />
+                    )}
+                  </div>
                   <button
                     type="button"
                     onClick={() => rowClick(r)}
                     aria-haspopup={selectionMode ? undefined : "dialog"}
-                    className="flex min-w-0 flex-1 items-center gap-3 py-2.5 pr-4 text-left"
+                    className="flex min-w-0 flex-1 items-center gap-3 py-2.5 pr-4 pl-3 text-left"
                   >
-                    <CategoryChip label={r.categoryName ?? "Uncategorized"} hue={r.hue} icon={r.icon} />
                     <span className="min-w-0 flex-1 truncate text-sm">{r.normalizedDescription}</span>
                     <span className="hidden items-center gap-1 sm:flex">
                       {r.isTransfer ? <LetterBadge letter="T" /> : null}

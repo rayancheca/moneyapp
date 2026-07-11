@@ -1,6 +1,7 @@
 import { CommandPalette, type CommandPaletteGroup } from "@/components/ui/CommandPalette";
 import { KeyScopeProvider } from "@/components/ui/KeyScopeProvider";
 import { ToastHost } from "@/components/ui/Toast";
+import { ToastMnemonic } from "@/components/ui/ToastMnemonic";
 import { NAV_ITEMS } from "./nav-items";
 import { SideNav } from "./SideNav";
 import { MobileNav } from "./MobileNav";
@@ -72,6 +73,7 @@ export function AppShell({ children, reviewCount, entityGroups }: AppShellProps)
           first tabbable region). Stage 1 adds the scoped `A` mnemonic
           (focusNewestToastAction, KeyScope `toast` tier) as the primary reach. */}
       <ToastHost />
+      <ToastMnemonic />
     </KeyScopeProvider>
   );
 }

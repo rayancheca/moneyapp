@@ -4,22 +4,16 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, LetterBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { CategoryChip } from "@/components/ui/CategoryChip";
 import { Checkbox, Field, Input } from "@/components/ui/Field";
 import { Money } from "@/components/ui/Money";
 import { Sheet } from "@/components/ui/Sheet";
-import { toast, dismissToast, focusNewestToastAction } from "@/components/ui/Toast";
+import { toast } from "@/components/ui/Toast";
 import { Icon } from "@/components/shell/Icon";
-import {
-  correctCategory,
-  createRuleAction,
-  renameMerchantAction,
-  retroApplyRuleAction,
-  setFlagsAction,
-} from "@/app/transactions/actions";
+import { renameMerchantAction, setFlagsAction } from "@/app/transactions/actions";
 import { loadSheetPanel, type SheetPanel } from "@/app/transactions/sheet-actions";
 import type { UndoPatch } from "@/app/transactions/action-types";
 import { CategoryPicker, type CategoryPickerOption } from "./CategoryPicker";
+import { runCategoryCorrection } from "./correct-category";
 import type { LedgerRow } from "./TransactionsLedger";
 import { offerUndoToast } from "./undo-toast";
 
@@ -70,41 +64,11 @@ export function TransactionSheet({ txn, categories, onClose, onFlip, onRowChange
 
   function pickCategory(categoryId: string): void {
     const option = categories.find((c) => c.id === categoryId);
-    void correctCategory({ transactionId: txn.id, categoryId }).then((r) => {
-      if (!r.ok) {
-        toast({ title: r.error, tone: "negative" });
-        return;
-      }
-      afterMutation();
-      const { rulePrompt, undo } = r.data;
-      // the correction toast doubles as the rule prompt (§3.4) — Undo reverts
-      // the categorize AND, if the rule was created, the rule itself
-      if (rulePrompt && rulePrompt.matchCount > 0) {
-        const id = toast({
-          title: `Categorized as ${option?.name ?? "category"}`,
-          description: `Always ${rulePrompt.merchantName} → ${rulePrompt.categoryLabel}? Applies to ${rulePrompt.matchCount} existing.`,
-          action: {
-            label: `Create rule (${rulePrompt.matchCount})`,
-            onAction: () =>
-              void createRuleAction({ merchantId: rulePrompt.merchantId, categoryId }).then((rr) => {
-                if (!rr.ok) {
-                  toast({ title: rr.error, tone: "negative" });
-                  return;
-                }
-                void retroApplyRuleAction(rr.data.ruleId).then((applied) => {
-                  if (applied.ok) {
-                    afterMutation();
-                    offerUndo(`Rule created · ${applied.data.affected} recategorized`, applied.data.undo, { deleteRuleId: rr.data.ruleId });
-                  }
-                });
-              }),
-          },
-        });
-        // let Stage-0's A mnemonic path reach it; also expose Undo separately
-        void id;
-      } else {
-        offerUndo(`Categorized as ${option?.name ?? "category"}`, undo);
-      }
+    runCategoryCorrection({
+      transactionId: txn.id,
+      categoryId,
+      categoryName: option?.name ?? "category",
+      onChanged: afterMutation,
     });
   }
 
@@ -258,6 +222,3 @@ export function TransactionSheet({ txn, categories, onClose, onFlip, onRowChange
     </Sheet>
   );
 }
-
-// re-export so the ledger and sheet share the toast focus helper wiring
-export { dismissToast, focusNewestToastAction };
