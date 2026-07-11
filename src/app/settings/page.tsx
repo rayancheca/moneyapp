@@ -3,9 +3,11 @@ import path from "node:path";
 import type { Metadata } from "next";
 import { defaultBackupsDir, getDb } from "@/db/client";
 import { aiSpend, readSettings } from "@/services/settings";
+import { listRules } from "@/services/rules-manager";
 import { Field, Input } from "@/components/ui/Field";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
+import { RulesManager } from "@/components/settings/RulesManager";
 import { updateSettingsAction } from "./actions";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -28,6 +30,7 @@ export default function SettingsPage() {
   const settings = readSettings(db);
   const spend = aiSpend(db);
   const backups = listBackups();
+  const rules = listRules(db);
   const hasApiKey = Boolean(process.env.ANTHROPIC_API_KEY);
 
   return (
@@ -65,6 +68,17 @@ export default function SettingsPage() {
             Weeks start Monday (ISO). Backups keep {settings.backupRetention.keepDaily} daily +{" "}
             {settings.backupRetention.keepMonthly} monthly snapshots.
           </p>
+        </SurfaceCard>
+
+        <SurfaceCard>
+          <div className="mb-3">
+            <h2 className="text-sm font-medium">Rules</h2>
+            <p className="mt-0.5 text-xs text-ink-muted">
+              Automatic categorization, in precedence order — the first rule a transaction matches
+              wins. Correcting a category on a transaction offers to create one.
+            </p>
+          </div>
+          <RulesManager rules={rules} />
         </SurfaceCard>
 
         <div className="grid gap-6 md:grid-cols-2">
