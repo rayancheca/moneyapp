@@ -81,7 +81,8 @@ test("upload statements through the UI and watch the trust layer work", async ({
 
   // transactions imported and categorized by the seed merchant map
   await page.goto("/transactions");
-  await expect(page.getByRole("table")).toBeVisible();
+  // the Stage-1 ledger is date-grouped rows (buttons that open the sheet), not a table
+  await expect(page.locator('button[aria-haspopup="dialog"]').first()).toBeVisible();
   await expect(page.getByText(/coverage/i).first()).toBeVisible();
 
   // the dashboard now shows a real net worth

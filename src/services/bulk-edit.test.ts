@@ -280,6 +280,7 @@ describe("bulkApplyByFilter", () => {
       view: "review",
       account: cardId,
       category: null,
+      merchant: null,
       from: null,
       to: null,
       q: null,

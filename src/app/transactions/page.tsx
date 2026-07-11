@@ -9,12 +9,12 @@ import { claudeRunState, pendingMerchantQueue } from "@/services/claude-categori
 import { aiSpend } from "@/services/settings";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
-import type { CategoryOption } from "@/components/transactions/CategoryCell";
+import type { CategoryPickerOption } from "@/components/transactions/CategoryPicker";
 import { FiltersBar } from "@/components/transactions/FiltersBar";
 import { HeaderStrip } from "@/components/transactions/HeaderStrip";
 import { NoticeBanner } from "@/components/transactions/NoticeBanner";
 import { Pagination } from "@/components/transactions/Pagination";
-import { TransactionsTable, type TxnRowView } from "@/components/transactions/TransactionsTable";
+import { TransactionsLedger, type LedgerRow } from "@/components/transactions/TransactionsLedger";
 import { ViewTabs } from "@/components/transactions/ViewTabs";
 import {
   filtersToQuery,
@@ -49,6 +49,7 @@ function viewCondition(view: TxnView): SQL {
 function filterConditions(filters: TxnFilters, allCategories: readonly CategoryRow[]): SQL[] {
   const conds: SQL[] = [];
   if (filters.account) conds.push(eq(transactions.accountId, filters.account));
+  if (filters.merchant) conds.push(eq(transactions.merchantId, filters.merchant));
   if (filters.category) {
     const subtreeIds = allCategories
       .filter((c) => c.id === filters.category || c.parentId === filters.category)
@@ -82,28 +83,25 @@ function byHierarchy(a: CategoryRow, b: CategoryRow): number {
   return a.sortOrder - b.sortOrder || a.name.localeCompare(b.name);
 }
 
-/** Flat select options: each root followed by its children as "Parent > Sub". */
-function buildCategoryOptions(allCategories: readonly CategoryRow[]): CategoryOption[] {
+/** Flat picker options: each root then its children (indented), each carrying
+ * the category identity (hue/icon; children inherit the root's when unset). */
+function buildCategoryPickerOptions(allCategories: readonly CategoryRow[]): CategoryPickerOption[] {
   const live = allCategories.filter((c) => !c.isArchived);
   const roots = live.filter((c) => c.parentId === null).sort(byHierarchy);
   return roots.flatMap((root) => [
-    { id: root.id, label: root.name },
+    { id: root.id, name: root.name, label: root.name, hue: root.color, icon: root.icon, depth: 0 },
     ...live
       .filter((c) => c.parentId === root.id)
       .sort(byHierarchy)
-      .map((c) => ({ id: c.id, label: `${root.name} > ${c.name}` })),
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        label: `${root.name} > ${c.name}`,
+        hue: c.color ?? root.color,
+        icon: c.icon ?? root.icon,
+        depth: 1,
+      })),
   ]);
-}
-
-/** "Parent > Sub" labels for display — includes archived so history still renders. */
-function buildCategoryLabels(allCategories: readonly CategoryRow[]): Map<string, string> {
-  const byId = new Map(allCategories.map((c) => [c.id, c]));
-  return new Map(
-    allCategories.map((c) => {
-      const parent = c.parentId ? byId.get(c.parentId) : undefined;
-      return [c.id, parent ? `${parent.name} > ${c.name}` : c.name];
-    }),
-  );
 }
 
 const EMPTY_FILTERED_COPY: Record<TxnView, { title: string; description: string }> = {
@@ -166,6 +164,9 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
       transferGroupId: transactions.transferGroupId,
       recurringSeriesId: transactions.recurringSeriesId,
       categorizationConfidence: transactions.categorizationConfidence,
+      needsReview: transactions.needsReview,
+      status: transactions.status,
+      notes: transactions.notes,
       accountName: accounts.name,
     })
     .from(transactions)
@@ -190,22 +191,33 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
     .offset((filters.page - 1) * PAGE_SIZE)
     .all();
 
-  const categoryLabels = buildCategoryLabels(allCategories);
-  const tableRows: TxnRowView[] = rows.map((r) => ({
-    id: r.id,
-    postedOn: r.postedOn,
-    rawDescription: r.rawDescription,
-    normalizedDescription: r.normalizedDescription,
-    accountName: r.accountName,
-    amountCents: r.amountCents,
-    categoryId: r.categoryId,
-    categoryLabel: r.categoryId ? (categoryLabels.get(r.categoryId) ?? null) : null,
-    hasMerchant: r.merchantId !== null,
-    isTransfer: r.transferGroupId !== null,
-    isRecurring: r.recurringSeriesId !== null,
-    lowConfidence:
-      r.categorizationConfidence !== null && r.categorizationConfidence < LOW_CONFIDENCE_THRESHOLD,
-  }));
+  const catById = new Map(allCategories.map((c) => [c.id, c]));
+  const ledgerRows: LedgerRow[] = rows.map((r) => {
+    const cat = r.categoryId ? catById.get(r.categoryId) : undefined;
+    // children inherit the parent hue/icon where their own is unset (§2.3)
+    const parent = cat?.parentId ? catById.get(cat.parentId) : undefined;
+    return {
+      id: r.id,
+      postedOn: r.postedOn,
+      rawDescription: r.rawDescription,
+      normalizedDescription: r.normalizedDescription,
+      accountName: r.accountName,
+      amountCents: r.amountCents,
+      categoryId: r.categoryId,
+      categoryName: cat ? cat.name : null,
+      hue: cat?.color ?? parent?.color ?? null,
+      icon: cat?.icon ?? parent?.icon ?? null,
+      merchantId: r.merchantId,
+      isTransfer: r.transferGroupId !== null,
+      isRecurring: r.recurringSeriesId !== null,
+      needsReview: r.needsReview,
+      status: r.status,
+      notes: r.notes,
+      lowConfidence:
+        r.categorizationConfidence !== null && r.categorizationConfidence < LOW_CONFIDENCE_THRESHOLD,
+      suggestedCategoryIds: [],
+    };
+  });
 
   const coverage = coverageStats(db);
   const pendingMerchants = pendingMerchantQueue(db).length;
@@ -244,17 +256,13 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
         <div className="space-y-4">
           <ViewTabs filters={filters} counts={counts} />
           <FiltersBar filters={filters} accounts={accountRows} rootCategories={rootCategories} />
-          {tableRows.length === 0 ? (
+          {ledgerRows.length === 0 ? (
             <EmptyState
               title={EMPTY_FILTERED_COPY[filters.view].title}
               description={EMPTY_FILTERED_COPY[filters.view].description}
             />
           ) : (
-            <TransactionsTable
-              rows={tableRows}
-              categoryOptions={buildCategoryOptions(allCategories)}
-              returnQuery={returnQuery}
-            />
+            <TransactionsLedger rows={ledgerRows} categories={buildCategoryPickerOptions(allCategories)} />
           )}
           <Pagination filters={filters} totalRows={totalRows} pageSize={PAGE_SIZE} />
         </div>

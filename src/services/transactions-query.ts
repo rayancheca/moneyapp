@@ -37,6 +37,7 @@ export function filterConditions(
 ): SQL[] {
   const conds: SQL[] = [];
   if (filters.account) conds.push(eq(transactions.accountId, filters.account));
+  if (filters.merchant) conds.push(eq(transactions.merchantId, filters.merchant));
   if (filters.category) {
     const subtreeIds = allCategories
       .filter((c) => c.id === filters.category || c.parentId === filters.category)

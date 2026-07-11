@@ -90,6 +90,7 @@ function filters(overrides: Partial<TxnFilters> = {}): TxnFilters {
     view: "all",
     account: null,
     category: null,
+    merchant: null,
     from: null,
     to: null,
     q: null,

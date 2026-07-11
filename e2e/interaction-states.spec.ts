@@ -76,6 +76,7 @@ defineStateTests({
   name: "transactions-seeded",
   path: "/transactions",
   prepare: async (page) => {
-    await expect(page.getByRole("table")).toBeVisible(); // seeded rows, not the empty state
+    // Stage-1 ledger rows are buttons that open the transaction sheet
+    await expect(page.locator('button[aria-haspopup="dialog"]').first()).toBeVisible();
   },
 });

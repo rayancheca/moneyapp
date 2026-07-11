@@ -18,6 +18,7 @@ export interface TxnFilters {
   view: TxnView;
   account: string | null;
   category: string | null;
+  merchant: string | null;
   from: string | null;
   to: string | null;
   q: string | null;
@@ -57,6 +58,7 @@ export function parseFilters(params: SearchParams): TxnFilters {
     view: view && isTxnView(view) ? view : "all",
     account: first(params.account),
     category: first(params.category),
+    merchant: first(params.merchant),
     from: from && isValidIsoDate(from) ? from : null,
     to: to && isValidIsoDate(to) ? to : null,
     q: q === "" ? null : q,
@@ -79,7 +81,7 @@ export function filtersToQuery(filters: TxnFilters, overrides: Partial<TxnFilter
   const merged = { ...filters, ...overrides };
   const parts: string[] = [];
   if (merged.view !== "all") parts.push(`view=${merged.view}`);
-  for (const key of ["account", "category", "from", "to", "q"] as const) {
+  for (const key of ["account", "category", "merchant", "from", "to", "q"] as const) {
     const value = merged[key];
     if (value) parts.push(`${key}=${encodeURIComponent(value)}`);
   }
