@@ -16,12 +16,12 @@ import {
   renameMerchantAction,
   retroApplyRuleAction,
   setFlagsAction,
-  undoAction,
 } from "@/app/transactions/actions";
 import { loadSheetPanel, type SheetPanel } from "@/app/transactions/sheet-actions";
 import type { UndoPatch } from "@/app/transactions/action-types";
 import { CategoryPicker, type CategoryPickerOption } from "./CategoryPicker";
 import type { LedgerRow } from "./TransactionsLedger";
+import { offerUndoToast } from "./undo-toast";
 
 interface TransactionSheetProps {
   txn: LedgerRow;
@@ -65,16 +65,7 @@ export function TransactionSheet({ txn, categories, onClose, onFlip, onRowChange
   }
 
   function offerUndo(title: string, undo: UndoPatch, extra?: { deleteRuleId?: string }): void {
-    toast({
-      title,
-      action: {
-        label: "Undo",
-        onAction: () =>
-          void undoAction(undo, extra).then((r) => {
-            if (r.ok) afterMutation();
-          }),
-      },
-    });
+    offerUndoToast(title, undo, afterMutation, extra);
   }
 
   function pickCategory(categoryId: string): void {

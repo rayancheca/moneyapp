@@ -241,6 +241,24 @@ describe("bulkApply — superseded rows are never resurrected", () => {
     expect(txn(active).status).toBe("excluded");
     expect(txn(superseded).status).toBe("superseded");
   });
+
+  test("applyUndoPatch honors the invariant against a crafted patch (client boundary)", () => {
+    // undoPatchSchema validates shape, not business rules — the undo action is
+    // client-callable, so applyUndoPatch must enforce the superseded invariant.
+    const active = insertTxn({});
+    const superseded = insertSupersededTwinOf(active);
+
+    // a crafted undo targeting the superseded row is skipped by the WHERE guard
+    expect(
+      applyUndoPatch(bundle.db, { rows: [{ id: superseded, prev: { needsReview: true } }] }),
+    ).toBe(0);
+    expect(txn(superseded).status).toBe("superseded");
+
+    // a crafted undo trying to retire the active twin drops the status write
+    // (else it would trip the partial unique dedupe index)
+    applyUndoPatch(bundle.db, { rows: [{ id: active, prev: { status: "superseded" } }] });
+    expect(txn(active).status).toBe("active");
+  });
 });
 
 describe("bulkApply — chunked id-select over a large ledger", () => {

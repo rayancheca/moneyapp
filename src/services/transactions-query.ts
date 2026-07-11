@@ -6,10 +6,10 @@ import type { TxnFilters, TxnView } from "@/components/transactions/query";
 
 /**
  * The transactions filter/view SQL, extracted as a service (ux-overhaul-plan
- * §3.5) so bulk "select all matching filter" and blast-radius counts share
- * ONE predicate with the page. The page keeps its local copy until the
- * Stage-1 UI package consumes this — the duplication is deliberate and
- * lives for exactly one package-cycle.
+ * §3.5) so the page's tab counts, the ledger rows, bulk "select all matching",
+ * and blast-radius counts all share ONE predicate. The page consumes these
+ * directly (its former local copy is gone), so the displayed count is exactly
+ * the set a bulk-by-filter action mutates.
  */
 
 export interface CategoryRef {

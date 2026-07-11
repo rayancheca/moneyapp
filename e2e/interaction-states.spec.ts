@@ -91,3 +91,18 @@ defineStateTests({
     await expect(page.getByRole("button", { name: /before .* reviewed/ })).toBeVisible();
   },
 });
+
+defineStateTests({
+  name: "bulk-selection",
+  path: "/transactions",
+  prepare: async (page) => {
+    // §3.5 selection mode: enter it, pick two rows, and the bottom action bar
+    // states the blast radius with category / reviewed / exclude / transfer
+    await page.getByRole("button", { name: "Select", exact: true }).click();
+    const checks = page.getByRole("checkbox", { name: /^Select / });
+    await checks.nth(0).check();
+    await checks.nth(1).check();
+    await expect(page.getByRole("region", { name: "Bulk actions" })).toBeVisible();
+    await expect(page.getByText("2 selected")).toBeVisible();
+  },
+});

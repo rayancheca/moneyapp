@@ -16,11 +16,10 @@ import {
   confirmClusterAction,
   markAllReviewedBeforeAction,
   recategorizeClusterAction,
-  undoAction,
 } from "@/app/transactions/actions";
-import type { UndoPatch } from "@/app/transactions/action-types";
 import type { ReviewCluster, ReviewInboxSummary } from "@/services/review-inbox";
 import { CategoryPicker, type CategoryPickerOption } from "./CategoryPicker";
+import { offerUndoToast } from "./undo-toast";
 
 /**
  * The review inbox (ux-overhaul-plan §3.3): the needsReview backlog as a
@@ -51,19 +50,6 @@ export function ReviewInbox({ data, categories }: ReviewInboxProps) {
     startTransition(() => router.refresh());
   }
 
-  function offerUndo(title: string, undo: UndoPatch): void {
-    toast({
-      title,
-      action: {
-        label: "Undo",
-        onAction: () =>
-          void undoAction(undo).then((r) => {
-            if (r.ok) afterMutation();
-          }),
-      },
-    });
-  }
-
   function confirm(cluster: ReviewCluster): void {
     void confirmClusterAction(cluster.ref).then((r) => {
       if (!r.ok) {
@@ -72,7 +58,7 @@ export function ReviewInbox({ data, categories }: ReviewInboxProps) {
       }
       if (r.data.affected === 0) return; // already cleared by a prior click
       afterMutation();
-      offerUndo(`Confirmed ${r.data.affected} · ${cluster.label}`, r.data.undo);
+      offerUndoToast(`Confirmed ${r.data.affected} · ${cluster.label}`, r.data.undo, afterMutation);
     });
   }
 
@@ -85,7 +71,7 @@ export function ReviewInbox({ data, categories }: ReviewInboxProps) {
       }
       if (r.data.affected === 0) return; // already cleared by a prior click
       afterMutation();
-      offerUndo(`${r.data.affected} → ${option?.name ?? "category"}`, r.data.undo);
+      offerUndoToast(`${r.data.affected} → ${option?.name ?? "category"}`, r.data.undo, afterMutation);
     });
   }
 
@@ -97,7 +83,7 @@ export function ReviewInbox({ data, categories }: ReviewInboxProps) {
       }
       if (r.data.affected === 0) return;
       afterMutation();
-      offerUndo(`Marked ${r.data.affected} reviewed`, r.data.undo);
+      offerUndoToast(`Marked ${r.data.affected} reviewed`, r.data.undo, afterMutation);
     });
   }
 
@@ -110,7 +96,7 @@ export function ReviewInbox({ data, categories }: ReviewInboxProps) {
         }
         if (r.data.affected === 0) return;
         afterMutation();
-        offerUndo(`Marked ${r.data.affected} reviewed`, r.data.undo);
+        offerUndoToast(`Marked ${r.data.affected} reviewed`, r.data.undo, afterMutation);
       },
     );
   }

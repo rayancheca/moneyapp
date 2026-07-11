@@ -176,7 +176,14 @@ export function bulkApplyByFilter(
   return bulkApply(db, matchingTransactionIds(db, filters, view), patch);
 }
 
-/** Lossless inverse of a bulk operation. Returns rows restored. */
+/**
+ * Lossless inverse of a bulk operation. Returns rows restored. Enforces the
+ * same superseded invariant as its forward siblings even though the patch is
+ * client-supplied (undoPatchSchema validates shape, not business rules): a
+ * superseded row is never mutated (WHERE guard), and status is never SET to
+ * 'superseded' — a crafted patch must not resurrect a phantom or retire an
+ * active twin, which would break the partial unique dedupe index.
+ */
 export function applyUndoPatch(db: AppDatabase, undo: UndoPatch): number {
   const parsed = undoPatchSchema.parse(undo);
   let restored = 0;
@@ -189,14 +196,19 @@ export function applyUndoPatch(db: AppDatabase, undo: UndoPatch): number {
       if (row.prev.categorizationConfidence !== undefined)
         set.categorizationConfidence = row.prev.categorizationConfidence;
       if (row.prev.needsReview !== undefined) set.needsReview = row.prev.needsReview;
-      if (row.prev.status !== undefined) set.status = row.prev.status;
+      if (row.prev.status !== undefined && row.prev.status !== "superseded")
+        set.status = row.prev.status;
       if (row.prev.transferGroupId !== undefined) set.transferGroupId = row.prev.transferGroupId;
       if (row.prev.merchantId !== undefined) set.merchantId = row.prev.merchantId;
       if (row.prev.recurringSeriesId !== undefined)
         set.recurringSeriesId = row.prev.recurringSeriesId;
       if (row.prev.notes !== undefined) set.notes = row.prev.notes;
       if (Object.keys(set).length === 0) continue;
-      restored += tx.update(transactions).set(set).where(eq(transactions.id, row.id)).run().changes;
+      restored += tx
+        .update(transactions)
+        .set(set)
+        .where(and(eq(transactions.id, row.id), ne(transactions.status, "superseded")))
+        .run().changes;
     }
   });
   return restored;

@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { and, asc, count, desc, eq, gte, inArray, like, lte, or, type SQL } from "drizzle-orm";
-import { getDb, type AppDatabase } from "@/db/client";
+import { and, asc, count, desc, eq } from "drizzle-orm";
+import { getDb } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { transactions } from "@/db/schema/transactions";
 import { coverageStats } from "@/services/categorize";
+import { countMatching, filterConditions, viewCondition } from "@/services/transactions-query";
 import { claudeRunState, pendingMerchantQueue } from "@/services/claude-categorize";
 import { aiSpend } from "@/services/settings";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -34,52 +35,12 @@ const LOW_CONFIDENCE_THRESHOLD = 0.8;
 
 type CategoryRow = typeof categories.$inferSelect;
 
-function viewCondition(view: TxnView): SQL {
-  switch (view) {
-    case "review":
-      return and(eq(transactions.status, "active"), eq(transactions.needsReview, true)) as SQL;
-    case "quarantined":
-      return eq(transactions.status, "quarantined");
-    case "excluded":
-      return eq(transactions.status, "excluded");
-    case "all":
-      return eq(transactions.status, "active");
-  }
-}
-
-/** Shared filter conditions (everything except the view tab). */
-function filterConditions(filters: TxnFilters, allCategories: readonly CategoryRow[]): SQL[] {
-  const conds: SQL[] = [];
-  if (filters.account) conds.push(eq(transactions.accountId, filters.account));
-  if (filters.merchant) conds.push(eq(transactions.merchantId, filters.merchant));
-  if (filters.category) {
-    const subtreeIds = allCategories
-      .filter((c) => c.id === filters.category || c.parentId === filters.category)
-      .map((c) => c.id);
-    if (subtreeIds.length > 0) conds.push(inArray(transactions.categoryId, subtreeIds));
-  }
-  if (filters.from) conds.push(gte(transactions.postedOn, filters.from));
-  if (filters.to) conds.push(lte(transactions.postedOn, filters.to));
-  if (filters.q) {
-    const pattern = `%${filters.q}%`;
-    const clause = or(
-      like(transactions.rawDescription, pattern),
-      like(transactions.normalizedDescription, pattern),
-    );
-    if (clause) conds.push(clause);
-  }
-  return conds;
-}
-
-function countTransactions(db: AppDatabase, conds: readonly SQL[]): number {
-  return (
-    db
-      .select({ n: count() })
-      .from(transactions)
-      .where(and(...conds))
-      .get()?.n ?? 0
-  );
-}
+// countMatching / filterConditions / viewCondition all come from the
+// transactions-query service (ux-overhaul-plan §3.5): the page's tab counts,
+// the ledger rows, and bulk "select all matching" share ONE predicate — the
+// displayed blast radius is exactly the set a bulk-by-filter action mutates.
+// (The service predicate also honors amountMin/Max and escapes LIKE wildcards,
+// which the page's old local copy did not.)
 
 function byHierarchy(a: CategoryRow, b: CategoryRow): number {
   return a.sortOrder - b.sortOrder || a.name.localeCompare(b.name);
@@ -146,13 +107,13 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
 
   const common = filterConditions(filters, allCategories);
   const counts: Record<TxnView, number> = {
-    all: countTransactions(db, [...common, viewCondition("all")]),
-    review: countTransactions(db, [...common, viewCondition("review")]),
-    quarantined: countTransactions(db, [...common, viewCondition("quarantined")]),
-    excluded: countTransactions(db, [...common, viewCondition("excluded")]),
+    all: countMatching(db, filters, "all"),
+    review: countMatching(db, filters, "review"),
+    quarantined: countMatching(db, filters, "quarantined"),
+    excluded: countMatching(db, filters, "excluded"),
   };
   const totalRows = counts[filters.view];
-  const totalInLedger = countTransactions(db, []);
+  const totalInLedger = db.select({ n: count() }).from(transactions).get()?.n ?? 0;
 
   const rows = db
     .select({
@@ -272,7 +233,12 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
                   description={EMPTY_FILTERED_COPY[filters.view].description}
                 />
               ) : (
-                <TransactionsLedger rows={ledgerRows} categories={pickerOptions} />
+                <TransactionsLedger
+                  rows={ledgerRows}
+                  categories={pickerOptions}
+                  selectionParams={params}
+                  totalMatching={totalRows}
+                />
               )}
               <Pagination filters={filters} totalRows={totalRows} pageSize={PAGE_SIZE} />
             </>

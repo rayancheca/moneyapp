@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { CategoryChip } from "@/components/ui/CategoryChip";
 import { Popover, usePopover } from "@/components/ui/Popover";
+import { useKeyScope } from "@/components/ui/KeyScopeProvider";
 import { Icon } from "@/components/shell/Icon";
+import { PRIORITIES } from "@/lib/keyscope";
 
 /** Flat, pre-ordered category option — parents then their children (indented). */
 export interface CategoryPickerOption {
@@ -46,6 +48,16 @@ export function CategoryPicker({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const scopeId = useId();
+
+  // While open, the picker owns Escape at a tier ABOVE the sheet and the ledger
+  // list scope, and swallows it (modal) — so Esc closes THIS popover, never the
+  // sheet it sits in or the bulk selection it acts on (native popover=auto also
+  // light-dismisses; both resolve to the same close).
+  useKeyScope(`category-picker-${scopeId}`, { escape: close }, open, {
+    priority: PRIORITIES.toast,
+    modal: true,
+  });
 
   const current = options.find((o) => o.id === currentId) ?? null;
 
