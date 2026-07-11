@@ -43,6 +43,11 @@ vi.mock("yahoo-finance2", () => ({
 
 const NOW = new Date("2026-07-08T12:00:00");
 const TODAY = todayIso(NOW);
+// Pin the no-arg clock to NOW: upsertHolding stamps holding_events with
+// todayIso() by default, and investment balances now derive from the
+// events x closes timeline (rebuildAccount delegates), so the event date must
+// land inside the refresh window rather than the real wall clock.
+process.env.MONEYAPP_FAKE_TODAY = TODAY;
 
 describe("fake provider — deterministic synthetic prices", () => {
   test("same (symbol, day) yields the same close across calls", () => {

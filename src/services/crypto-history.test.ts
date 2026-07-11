@@ -11,7 +11,7 @@ import { institutions } from "@/db/schema/institutions";
 import { createAccount } from "./accounts";
 import { netWorthSeries } from "./derivation";
 import { upsertHolding } from "./holdings";
-import { rebuildCryptoHistory } from "./crypto-history";
+import { rebuildInvestmentHistory } from "./crypto-history";
 
 process.env.MONEYAPP_FAKE_PRICES = "1";
 
@@ -85,7 +85,7 @@ function seedEthTimeline(): void {
   });
 }
 
-describe("rebuildCryptoHistory — quantity timeline × cached closes", () => {
+describe("rebuildInvestmentHistory — quantity timeline × cached closes", () => {
   test("values step with quantity and follow daily closes", () => {
     seedEthTimeline();
     cacheEthClose("2026-07-01", 3000);
@@ -94,7 +94,7 @@ describe("rebuildCryptoHistory — quantity timeline × cached closes", () => {
     cacheEthClose("2026-07-04", 3200);
     // 07-05 (today) missing — carried from 07-04
 
-    rebuildCryptoHistory(bundle.db, cryptoId, TODAY);
+    rebuildInvestmentHistory(bundle.db, cryptoId, TODAY);
 
     expect(balanceRows()).toEqual([
       ["2026-07-01", 150_000, "derived"], // 0.5 × 3000
@@ -109,7 +109,7 @@ describe("rebuildCryptoHistory — quantity timeline × cached closes", () => {
     seedEthTimeline();
     cacheEthClose("2026-07-03", 3100); // closes only start on 07-03
 
-    rebuildCryptoHistory(bundle.db, cryptoId, TODAY);
+    rebuildInvestmentHistory(bundle.db, cryptoId, TODAY);
 
     expect(balanceRows()).toEqual([
       ["2026-07-03", 248_000, "derived"], // 0.8 × 3100
@@ -128,7 +128,7 @@ describe("rebuildCryptoHistory — quantity timeline × cached closes", () => {
     });
     cacheEthClose("2026-06-30", 2900); // last close BEFORE the buy
 
-    rebuildCryptoHistory(bundle.db, cryptoId, "2026-07-03");
+    rebuildInvestmentHistory(bundle.db, cryptoId, "2026-07-03");
     expect(balanceRows()).toEqual([
       ["2026-07-02", 290_000, "carried"],
       ["2026-07-03", 290_000, "carried"],
@@ -140,9 +140,9 @@ describe("rebuildCryptoHistory — quantity timeline × cached closes", () => {
     cacheEthClose("2026-07-01", 3000);
     cacheEthClose("2026-07-04", 3200);
 
-    rebuildCryptoHistory(bundle.db, cryptoId, TODAY);
+    rebuildInvestmentHistory(bundle.db, cryptoId, TODAY);
     const first = balanceRows();
-    rebuildCryptoHistory(bundle.db, cryptoId, TODAY);
+    rebuildInvestmentHistory(bundle.db, cryptoId, TODAY);
     expect(balanceRows()).toEqual(first);
   });
 
@@ -152,11 +152,27 @@ describe("rebuildCryptoHistory — quantity timeline × cached closes", () => {
       .insert(dailyBalances)
       .values({ accountId: cryptoId, day: "2026-07-01", balanceCents: 1, basis: "derived" })
       .run();
-    rebuildCryptoHistory(bundle.db, cryptoId, TODAY);
+    rebuildInvestmentHistory(bundle.db, cryptoId, TODAY);
     expect(balanceRows()).toEqual([]);
   });
 
-  test("refuses non-crypto accounts", () => {
+  test("refuses non-investment accounts", () => {
+    const robinhood = bundle.db
+      .select()
+      .from(institutions)
+      .where(eq(institutions.name, "Robinhood"))
+      .get()!;
+    const checking = createAccount(bundle.db, {
+      institutionId: robinhood.id,
+      name: "Cash",
+      type: "checking",
+    });
+    expect(() => rebuildInvestmentHistory(bundle.db, checking, TODAY)).toThrow(
+      /not an investment account/,
+    );
+  });
+
+  test("works for an equity brokerage account, priced under each symbol's asset_type", () => {
     const robinhood = bundle.db
       .select()
       .from(institutions)
@@ -168,16 +184,39 @@ describe("rebuildCryptoHistory — quantity timeline × cached closes", () => {
       type: "investment",
       subtype: "brokerage",
     });
-    expect(() => rebuildCryptoHistory(bundle.db, brokerage, TODAY)).toThrow(
-      /not a crypto investment account/,
-    );
+    // 2 AAPL (stock) bought 07-01; a same-named "AAPL" crypto close must be ignored
+    upsertHolding(bundle.db, {
+      accountId: brokerage,
+      symbol: "AAPL",
+      assetType: "stock",
+      quantityE8: 200_000_000,
+      occurredOn: "2026-07-01",
+    });
+    bundle.db
+      .insert(priceCache)
+      .values([
+        { symbol: "AAPL", assetType: "stock", quotedOn: "2026-07-01", close: 200, source: "yahoo", fetchedAt: "2026-07-01T20:00:00.000Z" },
+        { symbol: "AAPL", assetType: "crypto", quotedOn: "2026-07-01", close: 999999, source: "coinbase", fetchedAt: "2026-07-01T20:00:00.000Z" },
+      ])
+      .run();
+
+    rebuildInvestmentHistory(bundle.db, brokerage, "2026-07-01");
+    const rows = bundle.db
+      .select()
+      .from(dailyBalances)
+      .where(eq(dailyBalances.accountId, brokerage))
+      .all();
+    // 2 × $200 = $400, NOT priced off the same-named crypto row
+    expect(rows).toEqual([
+      expect.objectContaining({ day: "2026-07-01", balanceCents: 40_000, basis: "derived" }),
+    ]);
   });
 
   test("the crypto curve feeds the net-worth series (Phase 2b exemption closed)", () => {
     seedEthTimeline();
     cacheEthClose("2026-07-01", 3000);
     cacheEthClose("2026-07-04", 3200);
-    rebuildCryptoHistory(bundle.db, cryptoId, TODAY);
+    rebuildInvestmentHistory(bundle.db, cryptoId, TODAY);
 
     const series = netWorthSeries(bundle.db);
     const jul4 = series.find((p) => p.day === "2026-07-04");

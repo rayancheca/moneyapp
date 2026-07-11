@@ -8,22 +8,24 @@ import { addDays, compareDates, todayIso } from "@/lib/dates";
 import { valueCentsOf } from "./holdings";
 
 /**
- * Crypto history v1 (master-plan Phase 7, closing the Phase 2b exemption):
- * the crypto account's daily_balances derive from the quantity timeline
- * (holding_events cumulative sum) × cached daily closes. Basis is 'derived'
- * on days where every held symbol has a real close, 'carried' where the
- * last known close is stepped forward. Days before any close exists are
- * skipped — levels are never invented (schema.md daily_balances).
+ * Investment daily_balances from the quantity timeline (Stage 4a, generalizing
+ * the Phase-7 crypto path to equities): cumulative-sum(holding_events) × cached
+ * daily closes, per held symbol, keyed by each symbol's OWN asset_type
+ * (stock/etf/crypto — "ETH" the coin vs a ticker never collide). Basis is
+ * 'derived' on days where every held symbol has a real close, 'carried' where
+ * the last known close is stepped forward. Days before any close exists are
+ * skipped — levels are never invented (schema.md daily_balances). Works for any
+ * investment account with holding_events (crypto OR brokerage).
  */
-export function rebuildCryptoHistory(
+export function rebuildInvestmentHistory(
   db: AppDatabase,
   accountId: string,
   today: string = todayIso(),
 ): void {
   const account = db.select().from(accounts).where(eq(accounts.id, accountId)).get();
-  if (!account) throw new Error(`rebuildCryptoHistory: unknown account ${accountId}`);
-  if (account.type !== "investment" || account.subtype !== "crypto") {
-    throw new Error(`rebuildCryptoHistory: ${accountId} is not a crypto investment account`);
+  if (!account) throw new Error(`rebuildInvestmentHistory: unknown account ${accountId}`);
+  if (account.type !== "investment") {
+    throw new Error(`rebuildInvestmentHistory: ${accountId} is not an investment account`);
   }
 
   const events = db
@@ -39,11 +41,16 @@ export function rebuildCryptoHistory(
 
     const firstDay = events[0]!.occurredOn;
     const symbols = [...new Set(events.map((e) => e.symbol))];
+    // each symbol resolves prices under its own asset_type
+    const assetOf = new Map<string, (typeof events)[number]["assetType"]>();
+    for (const e of events) assetOf.set(e.symbol, e.assetType);
 
-    // daily closes per symbol across the window, one query
+    // daily closes per symbol across the window, one query; filter to the
+    // matching asset_type so a ticker never picks up a same-named coin's close
     const closes = tx
       .select({
         symbol: priceCache.symbol,
+        assetType: priceCache.assetType,
         quotedOn: priceCache.quotedOn,
         close: priceCache.close,
       })
@@ -51,14 +58,16 @@ export function rebuildCryptoHistory(
       .where(
         and(
           inArray(priceCache.symbol, symbols),
-          eq(priceCache.assetType, "crypto"),
           gte(priceCache.quotedOn, firstDay),
           lte(priceCache.quotedOn, today),
         ),
       )
       .all();
     const closeBySymbolDay = new Map<string, number>();
-    for (const c of closes) closeBySymbolDay.set(`${c.symbol}|${c.quotedOn}`, c.close);
+    for (const c of closes) {
+      if (c.assetType !== assetOf.get(c.symbol)) continue;
+      closeBySymbolDay.set(`${c.symbol}|${c.quotedOn}`, c.close);
+    }
 
     // seed carry-forward with the last close at or before the first event day
     const lastClose = new Map<string, number>();
@@ -69,7 +78,7 @@ export function rebuildCryptoHistory(
         .where(
           and(
             eq(priceCache.symbol, symbol),
-            eq(priceCache.assetType, "crypto"),
+            eq(priceCache.assetType, assetOf.get(symbol)!),
             lte(priceCache.quotedOn, firstDay),
           ),
         )

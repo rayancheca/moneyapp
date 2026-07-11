@@ -2,8 +2,10 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors, dailyBalances, type AnchorSource, type BalanceBasis } from "@/db/schema/balances";
+import { holdingEvents } from "@/db/schema/holding-events";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
+import { rebuildInvestmentHistory } from "./crypto-history";
 
 /**
  * The balance-derivation engine (schema.md daily_balances):
@@ -193,6 +195,24 @@ function deriveForward(
 export function rebuildAccount(db: AppDatabase, accountId: string, today: string = todayIso()): void {
   const account = db.select().from(accounts).where(eq(accounts.id, accountId)).get();
   if (!account) throw new Error(`rebuildAccount: unknown account ${accountId}`);
+
+  // Investment accounts with a quantity timeline derive value from
+  // holding_events × daily closes (Stage 4a) — NOT value-anchor step-hold, which
+  // only knows the seed day. Delegating here also stops an import/anchor rebuild
+  // from wiping a computed crypto/equity curve. Accounts with no events (a bare
+  // value-anchored holding) keep the anchor path below.
+  if (account.type === "investment") {
+    const hasEvents = db
+      .select({ id: holdingEvents.id })
+      .from(holdingEvents)
+      .where(eq(holdingEvents.accountId, accountId))
+      .limit(1)
+      .get();
+    if (hasEvents) {
+      rebuildInvestmentHistory(db, accountId, today);
+      return;
+    }
+  }
 
   const anchors = db
     .select({

@@ -8,7 +8,6 @@ import { appSettings } from "@/db/schema/settings";
 import { addDays, compareDates, fromEpochDay, toEpochDay, todayIso } from "@/lib/dates";
 import { fakeDailyClose } from "@/lib/fake-prices";
 import { rebuildAccount } from "./derivation";
-import { rebuildCryptoHistory } from "./crypto-history";
 import { valueCentsOf } from "./holdings";
 
 /**
@@ -288,8 +287,8 @@ function upsertClose(
  * The live-value flow (master-plan Phase 7): backfill missing daily closes
  * (2y once, then only the gap since the last cached day), refresh quotes
  * unless fresh per priceStalenessHours, upsert a source='live' anchor dated
- * today on every investment account, rebuild derived balances, and rebuild
- * the crypto quantity-timeline curve for crypto-subtype accounts.
+ * today on every investment account, and rebuild derived balances (accounts
+ * with a holding_events timeline derive the full quantity x closes curve).
  */
 export async function refreshPrices(
   db: AppDatabase,
@@ -407,10 +406,10 @@ export async function refreshPrices(
       })
       .run();
 
+    // rebuildAccount delegates any investment account WITH a holding_events
+    // timeline (crypto or equity) to the events x closes curve; the live anchor
+    // above still carries bare value-anchored holdings that have no events.
     rebuildAccount(db, account.id, today);
-    if (account.subtype === "crypto") {
-      rebuildCryptoHistory(db, account.id, today);
-    }
     result.anchoredAccounts += 1;
   }
 
