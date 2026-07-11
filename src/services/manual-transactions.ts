@@ -5,6 +5,7 @@ import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { statementPeriods } from "@/db/schema/imports";
+import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { isValidIsoDate } from "@/lib/dates";
 import { dedupeHash } from "@/lib/hash";
@@ -34,17 +35,39 @@ export const manualTxnInputSchema = z
   .strict();
 export type ManualTxnInput = z.infer<typeof manualTxnInputSchema>;
 
+/** The institution every intentional cash wallet lives under. */
+export const CASH_INSTITUTION_NAME = "Cash";
+
+/** The "Cash" institution's id, or null if none exists yet. */
+export function cashWalletInstitutionId(db: AppDatabase): string | null {
+  return (
+    db
+      .select({ id: institutions.id })
+      .from(institutions)
+      .where(eq(institutions.name, CASH_INSTITUTION_NAME))
+      .get()?.id ?? null
+  );
+}
+
 /**
- * A cash wallet is an account with NO external ground truth: no statement
- * periods, no non-manual anchors (statement/ofx_ledger imports or a real-time
- * `live` connection balance), and no imported transactions. The transaction
- * check matters for activity-CSV accounts (Robinhood) that carry imported rows
- * but no period records. A `live`-anchored connection account is authoritative
- * on its own balance, so a manual row there would fight that ground truth.
+ * A cash wallet is an INTENTIONAL manual wallet — one created under the "Cash"
+ * institution — that also has NO external ground truth: no statement periods,
+ * no import anchors (statement/ofx_ledger/live), and no imported transactions.
+ * The institution marker is load-bearing: a structural-only check would
+ * misclassify any freshly-created, not-yet-imported REGULAR bank account as a
+ * cash wallet and let a manual row land on it, which would later break that
+ * account's to-the-cent statement reconciliation. The structural checks then
+ * stay as defense-in-depth (a "Cash" account never legitimately has imports).
  */
 export function isCashWallet(db: AppDatabase, accountId: string): boolean {
-  const account = db.select({ id: accounts.id }).from(accounts).where(eq(accounts.id, accountId)).get();
+  const account = db
+    .select({ id: accounts.id, institutionId: accounts.institutionId })
+    .from(accounts)
+    .where(eq(accounts.id, accountId))
+    .get();
   if (!account) return false;
+  const cashInstId = cashWalletInstitutionId(db);
+  if (cashInstId === null || account.institutionId !== cashInstId) return false;
 
   const period = db
     .select({ id: statementPeriods.id })

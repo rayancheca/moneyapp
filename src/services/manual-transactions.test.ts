@@ -22,12 +22,17 @@ import {
 let dir: string;
 let bundle: DbBundle;
 let chaseId: string;
+let cashInstId: string;
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-manual-"));
   bundle = createDatabase(path.join(dir, "t.db"));
   seedDatabase(bundle.db);
   chaseId = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!.id;
+  // cash wallets live under the "Cash" institution — the positive marker
+  // isCashWallet requires (a structural-only check would misclassify empty
+  // regular accounts). Create it once for the helpers below.
+  cashInstId = bundle.db.insert(institutions).values({ name: "Cash" }).returning({ id: institutions.id }).get().id;
 });
 
 afterEach(() => {
@@ -36,7 +41,7 @@ afterEach(() => {
 });
 
 function makeCashWallet(name = "Wallet"): string {
-  return createAccount(bundle.db, { institutionId: chaseId, name, type: "checking" });
+  return createAccount(bundle.db, { institutionId: cashInstId, name, type: "checking" });
 }
 
 function anyCategoryId(): string {
@@ -198,6 +203,26 @@ describe("addManualTransaction — cash-wallet gate", () => {
         postedOn: "2026-07-02",
         amountCents: -2_000,
         description: "Nope",
+      }),
+    ).toThrow(/cash-wallet/);
+  });
+
+  test("a not-yet-imported REGULAR account is NOT a cash wallet (institution marker)", () => {
+    // the danger: a brand-new bank account with no imports yet would pass a
+    // structural-only check and later break its reconciliation. The "Cash"
+    // institution marker excludes it.
+    const regular = createAccount(bundle.db, {
+      institutionId: chaseId,
+      name: "Empty Checking",
+      type: "checking",
+    });
+    expect(isCashWallet(bundle.db, regular)).toBe(false);
+    expect(() =>
+      addManualTransaction(bundle.db, {
+        accountId: regular,
+        postedOn: "2026-06-15",
+        amountCents: -500,
+        description: "cash tip",
       }),
     ).toThrow(/cash-wallet/);
   });

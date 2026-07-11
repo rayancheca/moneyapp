@@ -1,10 +1,15 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { getDb } from "@/db/client";
+import { categories } from "@/db/schema/categories";
 import { listAccounts, listInstitutions } from "@/services/accounts";
+import { listCashWallets } from "@/services/cash-wallets";
 import { institutionGroups } from "@/services/institution-groups";
+import { todayIso } from "@/lib/dates";
 import { AccountForm } from "@/components/accounts/AccountForm";
+import { CashWallets } from "@/components/accounts/CashWallets";
 import { InstitutionCard } from "@/components/accounts/InstitutionCard";
+import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { PageHeader } from "@/components/ui/PageHeader";
 
@@ -16,6 +21,12 @@ export default function AccountsPage() {
   const groups = institutionGroups(db);
   const institutions = listInstitutions(db);
   const archived = listAccounts(db).filter((a) => !a.isActive);
+  const cashWallets = listCashWallets(db).map((w) => ({
+    id: w.id,
+    name: w.name,
+    balanceCents: w.balance?.balanceCents ?? null,
+  }));
+  const categoryOptions = buildCategoryPickerOptions(db.select().from(categories).all());
 
   return (
     <>
@@ -51,6 +62,17 @@ export default function AccountsPage() {
             </ul>
           </section>
         )}
+
+        <SurfaceCard>
+          <div className="mb-3">
+            <h2 className="text-sm font-medium">Cash wallets</h2>
+            <p className="mt-0.5 text-xs text-ink-muted">
+              Track cash the statements never see — add transactions by hand. Balances derive from
+              those entries; they don&apos;t need a bank connection.
+            </p>
+          </div>
+          <CashWallets wallets={cashWallets} categories={categoryOptions} today={todayIso()} />
+        </SurfaceCard>
 
         <SurfaceCard>
           <h2 className="mb-4 text-sm font-medium">Add an account</h2>

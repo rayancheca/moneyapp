@@ -10,7 +10,7 @@ import { claudeRunState, pendingMerchantQueue } from "@/services/claude-categori
 import { aiSpend } from "@/services/settings";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
-import type { CategoryPickerOption } from "@/components/transactions/CategoryPicker";
+import { buildCategoryPickerOptions, byHierarchy } from "@/components/transactions/category-options";
 import { FiltersBar } from "@/components/transactions/FiltersBar";
 import { HeaderStrip } from "@/components/transactions/HeaderStrip";
 import { NoticeBanner } from "@/components/transactions/NoticeBanner";
@@ -41,31 +41,6 @@ type CategoryRow = typeof categories.$inferSelect;
 // displayed blast radius is exactly the set a bulk-by-filter action mutates.
 // (The service predicate also honors amountMin/Max and escapes LIKE wildcards,
 // which the page's old local copy did not.)
-
-function byHierarchy(a: CategoryRow, b: CategoryRow): number {
-  return a.sortOrder - b.sortOrder || a.name.localeCompare(b.name);
-}
-
-/** Flat picker options: each root then its children (indented), each carrying
- * the category identity (hue/icon; children inherit the root's when unset). */
-function buildCategoryPickerOptions(allCategories: readonly CategoryRow[]): CategoryPickerOption[] {
-  const live = allCategories.filter((c) => !c.isArchived);
-  const roots = live.filter((c) => c.parentId === null).sort(byHierarchy);
-  return roots.flatMap((root) => [
-    { id: root.id, name: root.name, label: root.name, hue: root.color, icon: root.icon, depth: 0 },
-    ...live
-      .filter((c) => c.parentId === root.id)
-      .sort(byHierarchy)
-      .map((c) => ({
-        id: c.id,
-        name: c.name,
-        label: `${root.name} > ${c.name}`,
-        hue: c.color ?? root.color,
-        icon: c.icon ?? root.icon,
-        depth: 1,
-      })),
-  ]);
-}
 
 const EMPTY_FILTERED_COPY: Record<TxnView, { title: string; description: string }> = {
   all: {
