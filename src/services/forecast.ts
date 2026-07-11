@@ -7,7 +7,7 @@ import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { formatCents } from "@/lib/money";
 import { latestBalances, netWorthSeries } from "./derivation";
-import { projectOccurrences, type SeriesOccurrence } from "./recurring";
+import { projectOccurrences, toProjectable, type SeriesOccurrence } from "./recurring";
 
 /**
  * Current-month forecast (master-plan Phase 6) — every number traceable:
@@ -88,9 +88,10 @@ function fixedComponents(db: AppDatabase, today: string, monthEnd: string): Fore
   const components: { component: ForecastComponent; firstDate: string }[] = [];
   for (const series of active) {
     if (series.kind === "transfer") continue;
-    const occurrences: SeriesOccurrence[] = projectOccurrences(series, today, monthEnd);
+    // forecast reads user overrides first (§4.4): amount, cadence, next-expected
+    const occurrences: SeriesOccurrence[] = projectOccurrences(toProjectable(series), today, monthEnd);
     if (occurrences.length === 0) continue;
-    const perOccurrence = series.nextExpectedAmountCents ?? 0;
+    const perOccurrence = occurrences[0]!.amountCents;
     const cents = occurrences.length * perOccurrence;
     components.push({
       firstDate: occurrences[0]!.date,

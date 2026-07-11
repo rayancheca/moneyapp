@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, lte } from "drizzle-orm";
+import { and, asc, eq, inArray, lte, ne } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { merchants } from "@/db/schema/merchants";
@@ -10,6 +10,15 @@ import {
 } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, diffDays, todayIso } from "@/lib/dates";
+
+/**
+ * A drizzle transaction handle. Detection and the user-link services
+ * (recurring-links.ts) share `recomputeSeriesStats` inside one transaction, so
+ * a series' stored statistics always settle to the exact value a fresh
+ * detection run would compute — the invariant that makes attach/unlink/merge
+ * survive the next `detectRecurringSeries` untouched (§4.3).
+ */
+export type Tx = Parameters<Parameters<AppDatabase["transaction"]>[0]>[0];
 
 /**
  * Recurring-series detection (master-plan Phase 6): statistics, not a black
@@ -199,7 +208,7 @@ interface CategoryInfo {
  * income — the analytics semantics excluding transfer kinds are authoritative.
  */
 function classifyKind(
-  txns: readonly GroupTxn[],
+  txns: readonly { categoryId: string | null }[],
   meanCents: number,
   merchantDefaultRoot: string | null,
   categoryById: ReadonlyMap<string, CategoryInfo>,
@@ -229,12 +238,112 @@ function rootCategoryName(
   return categoryById.get(cat.parentId)?.name ?? null;
 }
 
+export interface RecomputeCtx {
+  categoryById: ReadonlyMap<string, CategoryInfo>;
+  merchantById: ReadonlyMap<string, { canonicalName: string; defaultCategoryId: string | null }>;
+}
+
+/** The small lookup maps recompute and detection share (categories, merchants). */
+export function loadRecomputeCtx(db: AppDatabase): RecomputeCtx {
+  const categoryById = new Map<string, CategoryInfo>(
+    db
+      .select({ id: categories.id, kind: categories.kind, parentId: categories.parentId, name: categories.name })
+      .from(categories)
+      .all()
+      .map((c) => [c.id, { kind: c.kind, parentId: c.parentId, name: c.name }]),
+  );
+  const merchantById = new Map(
+    db
+      .select({ id: merchants.id, canonicalName: merchants.canonicalName, defaultCategoryId: merchants.defaultCategoryId })
+      .from(merchants)
+      .all()
+      .map((m) => [m.id, { canonicalName: m.canonicalName, defaultCategoryId: m.defaultCategoryId }]),
+  );
+  return { categoryById, merchantById };
+}
+
 /**
- * Detection job. Idempotent upsert keyed by merchantId (merchant groups) or
- * (accountId, name) (description-fallback groups). Re-runs preserve user
- * status — dismissed stays dismissed, confirmed stays confirmed; only the
- * statistics and next-expected fields refresh. Matched transactions are
- * tagged with recurringSeriesId inside the same synchronous transaction.
+ * Re-derives a series' stored statistics from its FULL current set of active,
+ * non-future tagged rows (recurring_series_id = seriesId) and writes the
+ * detected stat columns. This is the single settling point shared by detection
+ * (Phase B) and every user-link action (attach/unlink/merge) — so after any of
+ * them the stored stats already equal what a fresh detection run would compute,
+ * and detection therefore changes nothing (§4.3). Leaves the last good stats in
+ * place when the set is now too small/unstable to analyze (stable across runs).
+ */
+export function recomputeSeriesStats(
+  tx: Tx,
+  seriesId: string,
+  today: string,
+  ctx: RecomputeCtx,
+): void {
+  const rows = tx
+    .select({
+      id: transactions.id,
+      postedOn: transactions.postedOn,
+      amountCents: transactions.amountCents,
+      categoryId: transactions.categoryId,
+    })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.recurringSeriesId, seriesId),
+        eq(transactions.status, "active"),
+        lte(transactions.postedOn, today),
+      ),
+    )
+    .all();
+  const stats = analyzeGroup(rows);
+  if (!stats) return;
+  const series = tx.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get();
+  if (!series) return;
+  const merchantRoot = rootCategoryName(
+    series.merchantId ? ctx.merchantById.get(series.merchantId)?.defaultCategoryId ?? null : null,
+    ctx.categoryById,
+  );
+  const kind = classifyKind(rows, stats.amountCentsAvg, merchantRoot, ctx.categoryById);
+  tx.update(recurringSeries)
+    .set({
+      kind,
+      cadence: stats.cadence,
+      intervalDaysAvg: stats.intervalDaysAvg,
+      amountCentsAvg: stats.amountCentsAvg,
+      amountCentsStddev: stats.amountCentsStddev,
+      toleranceDays: stats.toleranceDays,
+      nextExpectedOn: stats.nextExpectedOn,
+      nextExpectedAmountCents: stats.nextExpectedAmountCents,
+      confidence: stats.confidence,
+      lastMatchedOn: stats.lastMatchedOn,
+    })
+    .where(eq(recurringSeries.id, seriesId))
+    .run();
+}
+
+/** Follows a merge chain to the live target series (cycle-guarded). */
+export function resolveMergeTarget(
+  seriesId: string,
+  mergedById: ReadonlyMap<string, string | null>,
+): string {
+  const seen = new Set<string>();
+  let current = seriesId;
+  while (!seen.has(current)) {
+    seen.add(current);
+    const next = mergedById.get(current);
+    if (!next) return current;
+    current = next;
+  }
+  return current; // cycle — stop where we started looping
+}
+
+/**
+ * Detection job. Groups only the rows detection is allowed to own — rows the
+ * user attached/unlinked (series_link_source='user') are sacrosanct and never
+ * grouped, re-tagged, or untagged. Series are resolved by merchantId / (account,
+ * name) and forward-mapped through any merge, so a merged-away identity routes
+ * to the live target and is never resurrected. After tagging, each touched
+ * series' stats settle via recomputeSeriesStats over its FULL tagged set — so a
+ * merge target keeps the stats it derived over both merchants' occurrences, and
+ * a second detection run after any user action changes nothing (§4.3).
  */
 export function detectRecurringSeries(
   db: AppDatabase,
@@ -252,30 +361,20 @@ export function detectRecurringSeries(
       merchantId: transactions.merchantId,
       categoryId: transactions.categoryId,
       normalizedDescription: transactions.normalizedDescription,
+      seriesLinkSource: transactions.seriesLinkSource,
     })
     .from(transactions)
     .where(and(eq(transactions.status, "active"), lte(transactions.postedOn, today)))
     .orderBy(asc(transactions.postedOn))
     .all();
 
-  const categoryById = new Map<string, CategoryInfo>(
-    db
-      .select({ id: categories.id, kind: categories.kind, parentId: categories.parentId, name: categories.name })
-      .from(categories)
-      .all()
-      .map((c) => [c.id, { kind: c.kind, parentId: c.parentId, name: c.name }]),
-  );
-  const merchantById = new Map(
-    db
-      .select({ id: merchants.id, canonicalName: merchants.canonicalName, defaultCategoryId: merchants.defaultCategoryId })
-      .from(merchants)
-      .all()
-      .map((m) => [m.id, m]),
-  );
+  const ctx = loadRecomputeCtx(db);
   const existingSeries = db.select().from(recurringSeries).all();
+  const mergedById = new Map(existingSeries.map((s) => [s.id, s.mergedIntoId]));
 
   const groups = new Map<string, GroupTxn[]>();
   for (const t of activeTxns) {
+    if (t.seriesLinkSource === "user") continue; // the user owns this row's link
     const key = t.merchantId
       ? `m:${t.merchantId}`
       : t.normalizedDescription !== ""
@@ -287,77 +386,90 @@ export function detectRecurringSeries(
     else groups.set(key, [t]);
   }
 
+  const tagGroup = (tx: Tx, ids: readonly string[], seriesId: string): number =>
+    tx
+      .update(transactions)
+      .set({ recurringSeriesId: seriesId, seriesLinkSource: "detected" })
+      .where(inArray(transactions.id, [...ids]))
+      .run().changes;
+
   db.transaction((tx) => {
+    const touched = new Set<string>();
     for (const [key, txns] of groups) {
-      if (txns.length < MIN_OCCURRENCES) continue;
-      summary.scannedGroups += 1;
-
-      const stats = analyzeGroup(txns);
-      if (!stats) continue;
-
       const isMerchantGroup = key.startsWith("m:");
-      const merchant = isMerchantGroup ? merchantById.get(txns[0]!.merchantId!) : undefined;
+      const merchantId = isMerchantGroup ? txns[0]!.merchantId! : null;
+      const merchant = merchantId ? ctx.merchantById.get(merchantId) : undefined;
       const name = merchant ? merchant.canonicalName : txns[0]!.normalizedDescription;
       const accountIds = new Set(txns.map((t) => t.accountId));
       const accountId = accountIds.size === 1 ? txns[0]!.accountId : null;
-      const kind = classifyKind(
-        txns,
-        stats.amountCentsAvg,
-        rootCategoryName(merchant?.defaultCategoryId ?? null, categoryById),
-        categoryById,
-      );
 
       const existing = isMerchantGroup
-        ? existingSeries.find((s) => s.merchantId === txns[0]!.merchantId)
+        ? existingSeries.find((s) => s.merchantId === merchantId)
         : existingSeries.find(
             (s) => s.merchantId === null && s.accountId === accountId && s.name === name,
           );
 
-      const statColumns = {
-        kind,
-        cadence: stats.cadence,
-        intervalDaysAvg: stats.intervalDaysAvg,
-        amountCentsAvg: stats.amountCentsAvg,
-        amountCentsStddev: stats.amountCentsStddev,
-        toleranceDays: stats.toleranceDays,
-        nextExpectedOn: stats.nextExpectedOn,
-        nextExpectedAmountCents: stats.nextExpectedAmountCents,
-        confidence: stats.confidence,
-        lastMatchedOn: stats.lastMatchedOn,
-      };
+      // A merged-away identity forward-maps to its live target at ANY group
+      // size — a single fresh charge of a merged merchant still attaches to the
+      // target, and the source is never resurrected (§4.3).
+      if (existing) {
+        const target = resolveMergeTarget(existing.id, mergedById);
+        if (target !== existing.id) {
+          summary.taggedTransactions += tagGroup(tx, txns.map((t) => t.id), target);
+          touched.add(target);
+          continue;
+        }
+      }
+
+      // A brand-new pattern needs the full evidence bar; an existing series just
+      // absorbs another occurrence of an already-known pattern.
+      if (txns.length < MIN_OCCURRENCES) continue;
+      summary.scannedGroups += 1;
+      const stats = analyzeGroup(txns);
+      if (!stats) continue;
 
       let seriesId: string;
       if (existing) {
-        // stats/next date only — user status is never overwritten on re-run
-        tx.update(recurringSeries).set(statColumns).where(eq(recurringSeries.id, existing.id)).run();
         seriesId = existing.id;
         summary.updated += 1;
       } else {
+        const kind = classifyKind(
+          txns,
+          stats.amountCentsAvg,
+          rootCategoryName(merchant?.defaultCategoryId ?? null, ctx.categoryById),
+          ctx.categoryById,
+        );
         seriesId = tx
           .insert(recurringSeries)
           .values({
             name,
-            merchantId: isMerchantGroup ? txns[0]!.merchantId : null,
+            merchantId,
             accountId,
             status: "detected",
-            ...statColumns,
+            kind,
+            cadence: stats.cadence,
+            intervalDaysAvg: stats.intervalDaysAvg,
+            amountCentsAvg: stats.amountCentsAvg,
+            amountCentsStddev: stats.amountCentsStddev,
+            toleranceDays: stats.toleranceDays,
+            nextExpectedOn: stats.nextExpectedOn,
+            nextExpectedAmountCents: stats.nextExpectedAmountCents,
+            confidence: stats.confidence,
+            lastMatchedOn: stats.lastMatchedOn,
           })
           .returning({ id: recurringSeries.id })
           .get().id;
         summary.created += 1;
       }
 
-      const result = tx
-        .update(transactions)
-        .set({ recurringSeriesId: seriesId })
-        .where(
-          inArray(
-            transactions.id,
-            txns.map((t) => t.id),
-          ),
-        )
-        .run();
-      summary.taggedTransactions += result.changes;
+      // group rows are all detection-owned by construction (user rows skipped)
+      summary.taggedTransactions += tagGroup(tx, txns.map((t) => t.id), seriesId);
+      touched.add(seriesId);
+    }
+
+    // settle each touched series' stats over its FULL tagged set (post-tag)
+    for (const seriesId of touched) {
+      recomputeSeriesStats(tx, seriesId, today, ctx);
     }
   });
 
@@ -475,6 +587,64 @@ const CADENCE_NOMINAL_DAYS: Record<Cadence, number> = {
   annual: 365,
 };
 
+/** The user-override columns that shadow detection's values (§4.4). */
+export interface SeriesOverrides {
+  cadence: Cadence;
+  userCadence: Cadence | null;
+  intervalDaysAvg: number | null;
+  nextExpectedOn: string | null;
+  userNextExpectedOn: string | null;
+  nextExpectedAmountCents: number | null;
+  userAmountCents: number | null;
+}
+
+/** Effective values the UI and forecast read: user override first, else detected. */
+export interface EffectiveSeries {
+  cadence: Cadence;
+  intervalDaysAvg: number | null;
+  nextExpectedOn: string | null;
+  nextExpectedAmountCents: number | null;
+}
+
+export function effectiveSeries(s: SeriesOverrides): EffectiveSeries {
+  return {
+    cadence: s.userCadence ?? s.cadence,
+    // a user cadence override abandons the detected interval — step by the
+    // override's nominal cadence length instead of the old detected gap
+    intervalDaysAvg: s.userCadence ? null : s.intervalDaysAvg,
+    nextExpectedOn: s.userNextExpectedOn ?? s.nextExpectedOn,
+    nextExpectedAmountCents: s.userAmountCents ?? s.nextExpectedAmountCents,
+  };
+}
+
+/** Maps a series row (with overrides) to the effective projection input. */
+export function toProjectable(
+  s: SeriesOverrides & { id: string; name: string; kind: SeriesKind },
+): ProjectableSeries {
+  const eff = effectiveSeries(s);
+  return { id: s.id, name: s.name, kind: s.kind, ...eff };
+}
+
+const INACTIVE_MISS_LIMIT = 1.5;
+
+/**
+ * Active/Inactive split for the "All" sub-view (§4.1): a detected/confirmed
+ * series is inactive once its last charge is older than ~1.5 cadence intervals
+ * plus grace — a new charge (re-detection updates lastMatchedOn) auto-restores
+ * it. dismissed/ended series are never active.
+ */
+export function isSeriesActive(
+  s: SeriesOverrides & { status: SeriesStatus; lastMatchedOn: string | null },
+  today: string = todayIso(),
+): boolean {
+  if (s.status === "dismissed" || s.status === "ended") return false;
+  if (!s.lastMatchedOn) return false;
+  const cadence = s.userCadence ?? s.cadence;
+  const step = s.userCadence ? CADENCE_NOMINAL_DAYS[cadence] : s.intervalDaysAvg ?? CADENCE_NOMINAL_DAYS[cadence];
+  const grace = CADENCE_TOLERANCE_DAYS[cadence];
+  return diffDays(s.lastMatchedOn, today) <= step * INACTIVE_MISS_LIMIT + grace;
+}
+
 /**
  * Projects a series' expected occurrences inside [from, to] (inclusive),
  * stepping from next_expected_on by the rounded average interval. Overdue
@@ -521,6 +691,6 @@ export function upcomingOccurrences(
 
   const to = addDays(today, windowDays);
   return active
-    .flatMap((s) => projectOccurrences(s, today, to))
+    .flatMap((s) => projectOccurrences(toProjectable(s), today, to))
     .sort((a, b) => compareDates(a.date, b.date) || a.name.localeCompare(b.name));
 }

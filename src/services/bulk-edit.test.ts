@@ -262,7 +262,9 @@ describe("bulkApply — superseded rows are never resurrected", () => {
 });
 
 describe("bulkApply — chunked id-select over a large ledger", () => {
-  test("applies to every id past the SQL-variable cap with a full undo", () => {
+  // Inserts 33k rows to exceed SQLITE_MAX_VARIABLE_NUMBER — inherently slow, and
+  // it races vitest's 5s default when the full suite loads every worker at once.
+  test("applies to every id past the SQL-variable cap with a full undo", { timeout: 30_000 }, () => {
     // A single IN(...) binds one host parameter per id, and SQLite caps that at
     // 32766 (SQLITE_MAX_VARIABLE_NUMBER). The list must exceed the cap to
     // actually exercise the chunking fix — at counts below it the pre-fix code

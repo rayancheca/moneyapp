@@ -39,5 +39,14 @@ export const recurringSeries = sqliteTable("recurring_series", {
   status: text("status", { enum: SERIES_STATUSES }).notNull().default("detected"),
   confidence: real("confidence"),
   lastMatchedOn: text("last_matched_on"),
+  // User overrides (ux-overhaul-plan §4.4): detection keeps writing its own
+  // columns above; the UI and the forecast read user-first. Null = no override.
+  userAmountCents: integer("user_amount_cents"),
+  userCadence: text("user_cadence", { enum: CADENCES }),
+  userNextExpectedOn: text("user_next_expected_on"),
+  // Set when this series is merged INTO another: it becomes `ended` and its
+  // occurrences relink to the target. Detection forward-maps through this so a
+  // merged-away identity is never resurrected (§4.3).
+  mergedIntoId: text("merged_into_id"),
   ...timestamps(),
 });

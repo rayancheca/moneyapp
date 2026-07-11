@@ -29,6 +29,13 @@
       "when": 1783556209271,
       "tag": "0003_anchor_provenance",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1783560000000,
+      "tag": "0004_recurring_link_ownership",
+      "breakpoints": true
     }
   ]
 }

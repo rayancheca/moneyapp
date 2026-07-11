@@ -22,6 +22,16 @@ export const TRANSACTION_STATUSES = ["active", "quarantined", "excluded", "super
 export type TransactionStatus = (typeof TRANSACTION_STATUSES)[number];
 
 /**
+ * Who owns a row's recurring-series link (ux-overhaul-plan §4.3). null =
+ * detection owns it (may re-tag/untag freely). 'user' = the user attached or
+ * unlinked this row by hand, and detection must never touch its
+ * recurring_series_id again — the guard that stops merge/unlink/attach from
+ * being silently reverted on the next detection run.
+ */
+export const SERIES_LINK_SOURCES = ["detected", "user"] as const;
+export type SeriesLinkSource = (typeof SERIES_LINK_SOURCES)[number];
+
+/**
  * Immutable ledger rows (amount/date/description never edited in place —
  * corrections happen via re-parse or manual adjustment transactions).
  * amount_cents is net-worth-signed. dedupe_hash covers RAW description +
@@ -50,6 +60,7 @@ export const transactions = sqliteTable(
     status: text("status", { enum: TRANSACTION_STATUSES }).notNull().default("active"),
     transferGroupId: text("transfer_group_id"),
     recurringSeriesId: text("recurring_series_id").references(() => recurringSeries.id),
+    seriesLinkSource: text("series_link_source", { enum: SERIES_LINK_SOURCES }),
     fitid: text("fitid"),
     occurrenceIndex: integer("occurrence_index").notNull().default(0),
     dedupeHash: text("dedupe_hash").notNull(),
