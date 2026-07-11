@@ -495,22 +495,43 @@ export interface SeriesView {
   merchantName: string | null;
   accountId: string | null;
   kind: SeriesKind;
+  /** effective cadence (user override first) */
   cadence: Cadence;
   intervalDaysAvg: number | null;
   amountCentsAvg: number | null;
   amountCentsStddev: number | null;
   toleranceDays: number;
+  /** effective next-expected (user override first) */
   nextExpectedOn: string | null;
   nextExpectedAmountCents: number | null;
   status: SeriesStatus;
   confidence: number | null;
   lastMatchedOn: string | null;
   matchedCount: number;
+  /** derived: within cadence+grace of its last charge (§4.1 Active/Inactive) */
+  isActive: boolean;
+  /** effective per-occurrence amount × occurrences/year (magnitude) */
+  annualizedCents: number | null;
+}
+
+/** Occurrences per year by cadence — annualized-cost basis. */
+const OCCURRENCES_PER_YEAR: Record<Cadence, number> = {
+  weekly: 52,
+  biweekly: 26,
+  semimonthly: 24,
+  monthly: 12,
+  quarterly: 4,
+  annual: 1,
+};
+
+function annualizedCentsOf(eff: EffectiveSeries): number | null {
+  if (eff.nextExpectedAmountCents === null) return null;
+  return Math.abs(eff.nextExpectedAmountCents) * OCCURRENCES_PER_YEAR[eff.cadence];
 }
 
 const STATUS_ORDER: Record<SeriesStatus, number> = { confirmed: 0, detected: 1, dismissed: 2, ended: 3 };
 
-export function listSeries(db: AppDatabase): SeriesView[] {
+export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesView[] {
   const rows = db
     .select({
       series: recurringSeries,
@@ -532,24 +553,29 @@ export function listSeries(db: AppDatabase): SeriesView[] {
   }
 
   return rows
-    .map(({ series: s, merchantName }) => ({
-      id: s.id,
-      name: s.name,
-      merchantName,
-      accountId: s.accountId,
-      kind: s.kind,
-      cadence: s.cadence,
-      intervalDaysAvg: s.intervalDaysAvg,
-      amountCentsAvg: s.amountCentsAvg,
-      amountCentsStddev: s.amountCentsStddev,
-      toleranceDays: s.toleranceDays,
-      nextExpectedOn: s.nextExpectedOn,
-      nextExpectedAmountCents: s.nextExpectedAmountCents,
-      status: s.status,
-      confidence: s.confidence,
-      lastMatchedOn: s.lastMatchedOn,
-      matchedCount: countBySeries.get(s.id) ?? 0,
-    }))
+    .map(({ series: s, merchantName }) => {
+      const eff = effectiveSeries(s);
+      return {
+        id: s.id,
+        name: s.name,
+        merchantName,
+        accountId: s.accountId,
+        kind: s.kind,
+        cadence: eff.cadence,
+        intervalDaysAvg: s.intervalDaysAvg,
+        amountCentsAvg: s.amountCentsAvg,
+        amountCentsStddev: s.amountCentsStddev,
+        toleranceDays: s.toleranceDays,
+        nextExpectedOn: eff.nextExpectedOn,
+        nextExpectedAmountCents: eff.nextExpectedAmountCents,
+        status: s.status,
+        confidence: s.confidence,
+        lastMatchedOn: s.lastMatchedOn,
+        matchedCount: countBySeries.get(s.id) ?? 0,
+        isActive: isSeriesActive(s, today),
+        annualizedCents: annualizedCentsOf(eff),
+      } satisfies SeriesView;
+    })
     .sort(
       (a, b) =>
         STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||

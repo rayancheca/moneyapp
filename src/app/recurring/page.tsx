@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
+import { z } from "zod";
 import { getDb } from "@/db/client";
 import { todayIso } from "@/lib/dates";
 import { forecastCurrentMonth } from "@/services/forecast";
 import { listSeries, upcomingOccurrences } from "@/services/recurring";
+import { AllSeriesView } from "@/components/recurring/AllSeriesView";
 import { ForecastCard } from "@/components/recurring/ForecastCard";
-import { SeriesTable } from "@/components/recurring/SeriesTable";
+import { RecurringTabs, type RecurringTab } from "@/components/recurring/RecurringTabs";
 import { UpcomingList } from "@/components/recurring/UpcomingList";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -13,12 +15,27 @@ import { detectNowAction } from "./actions";
 export const metadata: Metadata = { title: "Recurring" };
 export const dynamic = "force-dynamic";
 
-export default function RecurringPage() {
+const searchSchema = z.object({ tab: z.enum(["upcoming", "all"]).catch("upcoming") });
+
+export default async function RecurringPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const raw = await searchParams;
+  const { tab } = searchSchema.parse({ tab: raw.tab }) as { tab: RecurringTab };
+
   const db = getDb();
   const today = todayIso();
-  const series = listSeries(db);
+  const series = listSeries(db, today);
   const upcoming = upcomingOccurrences(db, today, 30);
   const forecast = forecastCurrentMonth(db, today);
+
+  const counts: Record<RecurringTab, number> = {
+    upcoming: upcoming.length,
+    all: series.filter((s) => s.status !== "dismissed" && s.status !== "ended").length,
+  };
+  const hasSeries = series.length > 0;
 
   return (
     <>
@@ -40,25 +57,19 @@ export default function RecurringPage() {
       <div className="space-y-6">
         <ForecastCard forecast={forecast} />
 
-        {series.length === 0 ? (
+        {!hasSeries ? (
           <EmptyState
             title="Nothing detected yet"
             description="Detection needs transaction history: stable cadence plus stable amount, at least three occurrences. Run “Detect now” after importing or categorizing."
           />
         ) : (
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-            <section aria-label="Recurring series">
-              <h2 className="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
-                Series
-              </h2>
-              <SeriesTable series={series} />
-            </section>
-            <section aria-label="Upcoming occurrences">
-              <h2 className="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
-                Calendar
-              </h2>
+          <div className="space-y-4">
+            <RecurringTabs tab={tab} counts={counts} />
+            {tab === "upcoming" ? (
               <UpcomingList occurrences={upcoming} />
-            </section>
+            ) : (
+              <AllSeriesView series={series} />
+            )}
           </div>
         )}
       </div>
