@@ -2,11 +2,48 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { getDb } from "@/db/client";
+import { getDb, type AppDatabase } from "@/db/client";
+import { categories } from "@/db/schema/categories";
+import { merchants } from "@/db/schema/merchants";
+import { transactions } from "@/db/schema/transactions";
+import {
+  bulkApply,
+  bulkApplyByFilter,
+  applyUndoPatch,
+  markAllReviewedBefore,
+  setTransactionFlags,
+  txnFlagsSchema,
+  txnPatchSchema,
+  undoPatchSchema,
+  type TxnFlags,
+  type TxnPatch,
+  type UndoPatch,
+} from "@/services/bulk-edit";
 import { applyCorrection, categorizeAll, detectTransfers } from "@/services/categorize";
 import { classifyPendingMerchants, requestClaudeStop } from "@/services/claude-categorize";
-import type { TxnNotice } from "@/components/transactions/query";
+import {
+  addManualTransaction,
+  manualTxnInputSchema,
+  type ManualTxnInput,
+} from "@/services/manual-transactions";
+import { renameMerchant } from "@/services/merchants";
+import {
+  conditionsForCorrection,
+  countRuleMatches,
+  deleteRule,
+  retroApplyRule,
+  ruleFromCorrection,
+} from "@/services/rule-corrections";
+import { parseFilters, type SearchParams, type TxnNotice } from "@/components/transactions/query";
+import type {
+  ActionResult,
+  BulkMutationData,
+  CorrectCategoryData,
+  CreatedRuleData,
+  RulePromptPreview,
+} from "./action-types";
 
 /**
  * Thin server actions over the Phase 3 services — no categorization logic
@@ -101,4 +138,254 @@ export async function classifyMerchantsAction(formData: FormData): Promise<void>
     redirect(transactionsPath(parsed.returnTo, "no-api-key"));
   }
   redirect(transactionsPath(parsed.returnTo));
+}
+
+/* -------------------------------------------------------------------------
+ * Stage-1 value-returning actions (ux-overhaul-plan §3.0): every mutation
+ * returns {ok, data|error} for toasts/undo/live counts, revalidates
+ * /transactions and / (nav badge), and NEVER redirects. The redirect-style
+ * actions above stay until the page rewrite consumes these.
+ * ---------------------------------------------------------------------- */
+
+function failure(error: unknown): { ok: false; error: string } {
+  return { ok: false, error: error instanceof Error ? error.message : "Unexpected error" };
+}
+
+function revalidateTransactions(): void {
+  revalidatePath("/transactions");
+  revalidatePath("/");
+}
+
+function categoryLabelFor(db: AppDatabase, categoryId: string): string {
+  const all = db.select().from(categories).all();
+  const cat = all.find((c) => c.id === categoryId);
+  if (!cat) return "Uncategorized";
+  const parent = cat.parentId ? all.find((c) => c.id === cat.parentId) : undefined;
+  return parent ? `${parent.name} > ${cat.name}` : cat.name;
+}
+
+/** Rule-prompt preview: same conditions + predicate the rule will use. */
+function rulePromptPreview(
+  db: AppDatabase,
+  transactionId: string,
+  categoryId: string,
+): RulePromptPreview | null {
+  const txn = db
+    .select({ merchantId: transactions.merchantId })
+    .from(transactions)
+    .where(eq(transactions.id, transactionId))
+    .get();
+  if (!txn?.merchantId) return null;
+  const merchant = db.select().from(merchants).where(eq(merchants.id, txn.merchantId)).get();
+  if (!merchant) return null;
+  const conditions = conditionsForCorrection(db, { merchantId: txn.merchantId });
+  return {
+    merchantId: txn.merchantId,
+    merchantName: merchant.canonicalName,
+    categoryLabel: categoryLabelFor(db, categoryId),
+    matchCount: countRuleMatches(db, conditions, { excludeUserSet: true }),
+  };
+}
+
+const correctCategorySchema = z.object({
+  transactionId: z.string().min(1),
+  categoryId: z.string().min(1),
+});
+
+export async function correctCategory(input: {
+  transactionId: string;
+  categoryId: string;
+}): Promise<ActionResult<CorrectCategoryData>> {
+  try {
+    const parsed = correctCategorySchema.parse(input);
+    const db = getDb();
+    const { affected, undo } = bulkApply(db, [parsed.transactionId], {
+      categoryId: parsed.categoryId,
+    });
+    if (affected === 0) throw new Error("Unknown transaction");
+    const rulePrompt = rulePromptPreview(db, parsed.transactionId, parsed.categoryId);
+    revalidateTransactions();
+    return { ok: true, data: { rulePrompt, undo } };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+const bulkApplySchema = z.object({
+  ids: z.array(z.string().min(1)).min(1),
+  patch: txnPatchSchema,
+});
+
+export async function bulkApplyAction(input: {
+  ids: string[];
+  patch: TxnPatch;
+}): Promise<ActionResult<BulkMutationData>> {
+  try {
+    const parsed = bulkApplySchema.parse(input);
+    const result = bulkApply(getDb(), parsed.ids, parsed.patch);
+    revalidateTransactions();
+    return { ok: true, data: result };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+// the filter set travels as raw searchParams — parseFilters is the same
+// defensive boundary the page itself uses, so URL and action can never drift
+const searchParamsSchema = z.record(
+  z.string(),
+  z.union([z.string(), z.array(z.string()), z.undefined()]),
+);
+
+const bulkApplyByFilterSchema = z.object({
+  params: searchParamsSchema,
+  patch: txnPatchSchema,
+});
+
+export async function bulkApplyByFilterAction(input: {
+  params: SearchParams;
+  patch: TxnPatch;
+}): Promise<ActionResult<BulkMutationData>> {
+  try {
+    const parsed = bulkApplyByFilterSchema.parse(input);
+    const filters = parseFilters(parsed.params);
+    const result = bulkApplyByFilter(getDb(), filters, filters.view, parsed.patch);
+    revalidateTransactions();
+    return { ok: true, data: result };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+const setFlagsSchema = z.object({
+  transactionId: z.string().min(1),
+  flags: txnFlagsSchema,
+});
+
+export async function setFlagsAction(input: {
+  transactionId: string;
+  flags: TxnFlags;
+}): Promise<ActionResult<BulkMutationData>> {
+  try {
+    const parsed = setFlagsSchema.parse(input);
+    const result = setTransactionFlags(getDb(), parsed.transactionId, parsed.flags);
+    revalidateTransactions();
+    return { ok: true, data: result };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+export async function markAllReviewedBeforeAction(
+  date: string,
+): Promise<ActionResult<BulkMutationData>> {
+  try {
+    const parsed = z.string().min(1).parse(date);
+    const result = markAllReviewedBefore(getDb(), parsed);
+    revalidateTransactions();
+    return { ok: true, data: result };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+const createRuleSchema = z
+  .object({
+    merchantId: z.string().min(1).optional(),
+    descriptionContains: z.string().min(1).optional(),
+    categoryId: z.string().min(1),
+  })
+  .refine((v) => v.merchantId !== undefined || v.descriptionContains !== undefined, {
+    message: "A merchant or a description fragment is required",
+  });
+
+export async function createRuleAction(input: {
+  merchantId?: string;
+  descriptionContains?: string;
+  categoryId: string;
+}): Promise<ActionResult<CreatedRuleData>> {
+  try {
+    const parsed = createRuleSchema.parse(input);
+    const db = getDb();
+    const rule = ruleFromCorrection(db, parsed);
+    const matchCount = countRuleMatches(db, rule.conditions, { excludeUserSet: true });
+    revalidateTransactions();
+    return {
+      ok: true,
+      data: { ruleId: rule.id, name: rule.name, priority: rule.priority, matchCount },
+    };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+export async function retroApplyRuleAction(
+  ruleId: string,
+): Promise<ActionResult<BulkMutationData>> {
+  try {
+    const parsed = z.string().min(1).parse(ruleId);
+    const result = retroApplyRule(getDb(), parsed);
+    revalidateTransactions();
+    return { ok: true, data: result };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+const undoOptionsSchema = z
+  .object({ deleteRuleId: z.string().min(1).optional() })
+  .strict()
+  .optional();
+
+export async function undoAction(
+  undo: UndoPatch,
+  options?: { deleteRuleId?: string },
+): Promise<ActionResult<{ restored: number; ruleDeleted: boolean }>> {
+  try {
+    const parsedUndo = undoPatchSchema.parse(undo);
+    const parsedOptions = undoOptionsSchema.parse(options);
+    const db = getDb();
+    const restored = applyUndoPatch(db, parsedUndo);
+    // undoing an accepted rule prompt reverts the rule itself too (§3.0)
+    const ruleDeleted = parsedOptions?.deleteRuleId
+      ? deleteRule(db, parsedOptions.deleteRuleId)
+      : false;
+    revalidateTransactions();
+    return { ok: true, data: { restored, ruleDeleted } };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+const renameMerchantSchema = z.object({
+  merchantId: z.string().min(1),
+  newName: z.string().min(1).max(80),
+});
+
+export async function renameMerchantAction(input: {
+  merchantId: string;
+  newName: string;
+}): Promise<ActionResult<{ id: string; name: string }>> {
+  try {
+    const parsed = renameMerchantSchema.parse(input);
+    const result = renameMerchant(getDb(), parsed.merchantId, parsed.newName);
+    revalidateTransactions();
+    return { ok: true, data: { id: result.id, name: result.name } };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+export async function addManualTransactionAction(
+  input: ManualTxnInput,
+): Promise<ActionResult<{ transactionId: string }>> {
+  try {
+    const parsed = manualTxnInputSchema.parse(input);
+    const transactionId = addManualTransaction(getDb(), parsed);
+    revalidateTransactions();
+    revalidatePath("/accounts");
+    return { ok: true, data: { transactionId } };
+  } catch (error: unknown) {
+    return failure(error);
+  }
 }

@@ -35,6 +35,9 @@ export const ruleActionsSchema = z
     merchantId: z.string().optional(),
     markTransfer: z.boolean().optional(),
     exclude: z.boolean().optional(),
+    // Stage-1 additions (ux-overhaul-plan §3.4) — JSON column, no migration
+    renameTo: z.string().min(1).optional(),
+    markRecurringSeriesId: z.string().min(1).optional(),
   })
   .strict();
 

@@ -21,6 +21,9 @@ export interface TxnFilters {
   from: string | null;
   to: string | null;
   q: string | null;
+  /** magnitude filter (abs of amount_cents), URL params amountMin/amountMax in cents */
+  amountMinCents: number | null;
+  amountMaxCents: number | null;
   page: number;
 }
 
@@ -33,6 +36,14 @@ function first(value: string | string[] | undefined): string | null {
 
 function isTxnView(s: string): s is TxnView {
   return (TXN_VIEWS as readonly string[]).includes(s);
+}
+
+/** non-negative integer cents, or null for anything malformed */
+function parseCents(value: string | string[] | undefined): number | null {
+  const s = first(value);
+  if (s === null) return null;
+  const n = Number(s);
+  return Number.isInteger(n) && n >= 0 ? n : null;
 }
 
 export function parseFilters(params: SearchParams): TxnFilters {
@@ -49,6 +60,8 @@ export function parseFilters(params: SearchParams): TxnFilters {
     from: from && isValidIsoDate(from) ? from : null,
     to: to && isValidIsoDate(to) ? to : null,
     q: q === "" ? null : q,
+    amountMinCents: parseCents(params.amountMin),
+    amountMaxCents: parseCents(params.amountMax),
     page: Number.isInteger(page) && page >= 1 ? page : 1,
   };
 }
@@ -70,6 +83,8 @@ export function filtersToQuery(filters: TxnFilters, overrides: Partial<TxnFilter
     const value = merged[key];
     if (value) parts.push(`${key}=${encodeURIComponent(value)}`);
   }
+  if (typeof merged.amountMinCents === "number") parts.push(`amountMin=${merged.amountMinCents}`);
+  if (typeof merged.amountMaxCents === "number") parts.push(`amountMax=${merged.amountMaxCents}`);
   if (merged.page > 1) parts.push(`page=${merged.page}`);
   return parts.length > 0 ? `?${parts.join("&")}` : "";
 }

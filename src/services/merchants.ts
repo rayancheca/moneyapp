@@ -1,0 +1,184 @@
+import { and, desc, eq, isNull, ne } from "drizzle-orm";
+import type { AppDatabase } from "@/db/client";
+import { accounts } from "@/db/schema/accounts";
+import { merchantAliases, merchants } from "@/db/schema/merchants";
+import { transactions } from "@/db/schema/transactions";
+import { strippedDescriptionKey } from "@/lib/description-key";
+import { todayIso } from "@/lib/dates";
+
+/**
+ * Merchant surfaces for the transaction sheet (ux-overhaul-plan §3.2):
+ * the same-merchant panel, the stripped-key fallback for the 47% of rows
+ * without a merchant, and rename with alias preservation.
+ */
+
+const RECENT_LIMIT = 5;
+
+export interface MerchantTxnRow {
+  id: string;
+  postedOn: string;
+  rawDescription: string;
+  normalizedDescription: string;
+  amountCents: number;
+  categoryId: string | null;
+}
+
+export interface MerchantSummary {
+  id: string;
+  name: string;
+  txnCount: number;
+  /** signed net of this calendar year's active rows — UI formats magnitude */
+  totalCentsThisYear: number;
+  recent: MerchantTxnRow[];
+}
+
+const TXN_ROW_COLUMNS = {
+  id: transactions.id,
+  postedOn: transactions.postedOn,
+  rawDescription: transactions.rawDescription,
+  normalizedDescription: transactions.normalizedDescription,
+  amountCents: transactions.amountCents,
+  categoryId: transactions.categoryId,
+} as const;
+
+export function merchantSummary(
+  db: AppDatabase,
+  merchantId: string,
+  today: string = todayIso(),
+): MerchantSummary {
+  const merchant = db.select().from(merchants).where(eq(merchants.id, merchantId)).get();
+  if (!merchant) throw new Error("Unknown merchant");
+
+  const rows = db
+    .select(TXN_ROW_COLUMNS)
+    .from(transactions)
+    .where(and(eq(transactions.merchantId, merchantId), eq(transactions.status, "active")))
+    .orderBy(desc(transactions.postedOn), desc(transactions.id))
+    .all();
+
+  const year = today.slice(0, 4);
+  const totalCentsThisYear = rows
+    .filter((r) => r.postedOn.slice(0, 4) === year)
+    .reduce((sum, r) => sum + r.amountCents, 0);
+
+  return {
+    id: merchant.id,
+    name: merchant.canonicalName,
+    txnCount: rows.length,
+    totalCentsThisYear,
+    recent: rows.slice(0, RECENT_LIMIT),
+  };
+}
+
+/**
+ * Sibling rows for the sheet's same-merchant panel. Merchantless rows fall
+ * back to stripped-key matching (against other merchantless rows only —
+ * merchant-linked rows already have a better identity). Investment-account
+ * transactions return [] — trades aren't merchants (§3.2.5).
+ */
+export function similarTransactions(
+  db: AppDatabase,
+  transactionId: string,
+  limit: number,
+): MerchantTxnRow[] {
+  if (limit <= 0) return [];
+  const txn = db
+    .select({
+      id: transactions.id,
+      merchantId: transactions.merchantId,
+      normalizedDescription: transactions.normalizedDescription,
+      accountType: accounts.type,
+    })
+    .from(transactions)
+    .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+    .where(eq(transactions.id, transactionId))
+    .get();
+  if (!txn) throw new Error("Unknown transaction");
+  if (txn.accountType === "investment") return [];
+
+  if (txn.merchantId) {
+    return db
+      .select(TXN_ROW_COLUMNS)
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.merchantId, txn.merchantId),
+          eq(transactions.status, "active"),
+          ne(transactions.id, txn.id),
+        ),
+      )
+      .orderBy(desc(transactions.postedOn), desc(transactions.id))
+      .limit(limit)
+      .all();
+  }
+
+  const key = strippedDescriptionKey(txn.normalizedDescription);
+  if (key === "") return [];
+  return db
+    .select(TXN_ROW_COLUMNS)
+    .from(transactions)
+    .where(
+      and(
+        isNull(transactions.merchantId),
+        eq(transactions.status, "active"),
+        ne(transactions.id, txn.id),
+      ),
+    )
+    .orderBy(desc(transactions.postedOn), desc(transactions.id))
+    .all()
+    .filter((c) => strippedDescriptionKey(c.normalizedDescription) === key)
+    .slice(0, limit);
+}
+
+export interface RenameMerchantResult {
+  id: string;
+  name: string;
+  /** false when the old-name alias already existed (unique pattern+type) */
+  aliasCreated: boolean;
+}
+
+/**
+ * Rename preserves categorization: the OLD canonical name becomes a
+ * 'contains' alias so future imports whose descriptions carry it still
+ * resolve to this merchant (alias matching runs on uppercase normalized
+ * text — see matchAlias in categorize.ts).
+ */
+export function renameMerchant(
+  db: AppDatabase,
+  merchantId: string,
+  newName: string,
+): RenameMerchantResult {
+  const name = newName.trim();
+  if (name === "") throw new Error("Merchant name cannot be empty");
+
+  const merchant = db.select().from(merchants).where(eq(merchants.id, merchantId)).get();
+  if (!merchant) throw new Error("Unknown merchant");
+  if (name === merchant.canonicalName) {
+    return { id: merchant.id, name, aliasCreated: false };
+  }
+
+  const clash = db
+    .select({ id: merchants.id })
+    .from(merchants)
+    .where(and(eq(merchants.canonicalName, name), ne(merchants.id, merchantId)))
+    .get();
+  if (clash) throw new Error(`A merchant named "${name}" already exists`);
+
+  let aliasCreated = false;
+  db.transaction((tx) => {
+    const inserted = tx
+      .insert(merchantAliases)
+      .values({
+        merchantId: merchant.id,
+        pattern: merchant.canonicalName.toUpperCase(),
+        matchType: "contains",
+        priority: 0,
+      })
+      .onConflictDoNothing()
+      .run();
+    aliasCreated = inserted.changes > 0;
+    tx.update(merchants).set({ canonicalName: name }).where(eq(merchants.id, merchant.id)).run();
+  });
+
+  return { id: merchant.id, name, aliasCreated };
+}
