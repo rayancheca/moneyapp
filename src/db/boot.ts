@@ -1,5 +1,4 @@
-import path from "node:path";
-import { getDbBundle } from "./client";
+import { defaultBackupsDir, getDbBundle } from "./client";
 import { maybeSnapshot } from "./backup";
 import { seedDatabase } from "./seed";
 
@@ -14,8 +13,11 @@ export async function bootDatabase(): Promise<void> {
   seedDatabase(bundle.db);
 
   // A failed snapshot must degrade, never prevent boot (review finding).
+  // MONEYAPP_SKIP_BACKUP=1 turns it off for the e2e harness so the Settings
+  // backup list stays a deterministic empty state across reseeds.
+  if (process.env.MONEYAPP_SKIP_BACKUP === "1") return;
   try {
-    await maybeSnapshot(bundle.sqlite, path.join(process.cwd(), "data", "backups"));
+    await maybeSnapshot(bundle.sqlite, defaultBackupsDir());
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`[moneyapp] daily backup failed (app continues): ${message}\n`);

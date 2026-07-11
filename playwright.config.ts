@@ -47,7 +47,7 @@ export default defineConfig({
     // MONEYAPP_PREVIEW=1 un-gates /design/stage-0a (else notFound in a
     // production `next start`) so the overlay a11y + keyboard specs can reach
     // the only surface that mounts the Sheet/Toast before Stage 1.
-    command: `MONEYAPP_DB_PATH=data/e2e.db MONEYAPP_ORIGINALS_DIR=data/e2e-originals MONEYAPP_FAKE_PRICES=1 MONEYAPP_FAKE_TODAY=${E2E_FAKE_TODAY} MONEYAPP_PREVIEW=1 pnpm start --port 3111`,
+    command: `MONEYAPP_DB_PATH=data/e2e.db MONEYAPP_ORIGINALS_DIR=data/e2e-originals MONEYAPP_BACKUPS_DIR=data/e2e-backups MONEYAPP_SKIP_BACKUP=1 MONEYAPP_FAKE_PRICES=1 MONEYAPP_FAKE_TODAY=${E2E_FAKE_TODAY} MONEYAPP_PREVIEW=1 pnpm start --port 3111`,
     url: "http://localhost:3111",
     // never baseline against a stale or foreign server
     reuseExistingServer: false,

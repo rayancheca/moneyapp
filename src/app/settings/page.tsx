@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Metadata } from "next";
-import { getDb } from "@/db/client";
+import { defaultBackupsDir, getDb } from "@/db/client";
 import { aiSpend, readSettings } from "@/services/settings";
 import { Field, Input } from "@/components/ui/Field";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -12,7 +12,7 @@ export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
 
 function listBackups(): { name: string; sizeKb: number }[] {
-  const dir = path.join(process.cwd(), "data", "backups");
+  const dir = defaultBackupsDir();
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)

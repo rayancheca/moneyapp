@@ -16,6 +16,16 @@ export function defaultDbPath(): string {
   return process.env.MONEYAPP_DB_PATH ?? path.join(process.cwd(), "data", "moneyapp.db");
 }
 
+/**
+ * Backups live beside the db by default; MONEYAPP_BACKUPS_DIR relocates them so
+ * the e2e harness never reads (or pollutes) the real archive — the Settings
+ * page lists this dir, so a shared one makes the settings baseline drift every
+ * time a backup lands.
+ */
+export function defaultBackupsDir(): string {
+  return process.env.MONEYAPP_BACKUPS_DIR ?? path.join(process.cwd(), "data", "backups");
+}
+
 export function defaultMigrationsFolder(): string {
   return path.join(process.cwd(), "src", "db", "migrations");
 }

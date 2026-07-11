@@ -18,11 +18,17 @@ export default async function globalSetup(): Promise<void> {
   // statement originals live. Wiped like the db — droppings are not state.
   const originalsDir = path.join(process.cwd(), "data", "e2e-originals");
   fs.rmSync(originalsDir, { recursive: true, force: true });
+  // Settings lists the backups dir; a dedicated (empty) one keeps that list a
+  // deterministic empty state and out of the user's real backup archive.
+  const backupsDir = path.join(process.cwd(), "data", "e2e-backups");
+  fs.rmSync(backupsDir, { recursive: true, force: true });
 
   // set BEFORE the app modules load: rebuildAccount calls todayIso() while
   // deriving balances, and its output must match what the server renders
   process.env.MONEYAPP_DB_PATH = dbPath;
   process.env.MONEYAPP_ORIGINALS_DIR = originalsDir;
+  process.env.MONEYAPP_BACKUPS_DIR = backupsDir;
+  process.env.MONEYAPP_SKIP_BACKUP = "1";
   process.env.MONEYAPP_FAKE_PRICES = "1";
   process.env.MONEYAPP_FAKE_TODAY = E2E_FAKE_TODAY;
 
