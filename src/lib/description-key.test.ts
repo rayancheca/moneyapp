@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { strippedDescriptionKey } from "./description-key";
+import { humanizeDescriptionKey, strippedDescriptionKey } from "./description-key";
 
 describe("strippedDescriptionKey — brokerage ticker keying", () => {
   test("cash dividend rows for the same ticker share one key across dates and amounts", () => {
@@ -144,5 +144,35 @@ describe("strippedDescriptionKey — retail stripping", () => {
     expect(strippedDescriptionKey("   ")).toBe("");
     // everything stripped away also yields the empty key
     expect(strippedDescriptionKey("2026-04-24 $5.00")).toBe("");
+  });
+});
+
+describe("humanizeDescriptionKey — readable label for the snackbar", () => {
+  test("ticker keys become '<SYMBOL> <activity words>' across every class", () => {
+    expect(humanizeDescriptionKey("ticker:COKE:DIV")).toBe("COKE dividends");
+    expect(humanizeDescriptionKey("ticker:COKE:REINVEST")).toBe("COKE reinvestments");
+    expect(humanizeDescriptionKey("ticker:COKE:RECURRING")).toBe("COKE recurring buys");
+    expect(humanizeDescriptionKey("ticker:MRVL:TRADE")).toBe("MRVL trades");
+    // dotted share classes survive
+    expect(humanizeDescriptionKey("ticker:BRK.B:DIV")).toBe("BRK.B dividends");
+  });
+
+  test("retail keys are already the descriptor core and pass through unchanged", () => {
+    expect(humanizeDescriptionKey("STARBUCKS STORE")).toBe("STARBUCKS STORE");
+    expect(humanizeDescriptionKey("NETFLIX.COM")).toBe("NETFLIX.COM");
+    // a 'ticker:'-prefixed string that is NOT the exact ticker shape is literal
+    expect(humanizeDescriptionKey("ticker:lowercase")).toBe("ticker:lowercase");
+  });
+
+  test("empty and whitespace-only keys humanize to the empty label", () => {
+    expect(humanizeDescriptionKey("")).toBe("");
+    expect(humanizeDescriptionKey("   ")).toBe("");
+  });
+
+  test("round-trips the stripped key of a real brokerage dividend", () => {
+    const key = strippedDescriptionKey(
+      "CASH DIV: R/D 2026-04-24 P/D 2026-05-08 - 32. SHARES AT 0.25 (COKE)",
+    );
+    expect(humanizeDescriptionKey(key)).toBe("COKE dividends");
   });
 });

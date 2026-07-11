@@ -11,6 +11,7 @@ import {
   type RuleActions,
   type RuleConditions,
 } from "@/db/schema/rules";
+import { humanizeDescriptionKey } from "@/lib/description-key";
 import { countRuleMatches } from "./rule-corrections";
 
 /**
@@ -67,6 +68,7 @@ function conditionsPhrase(cond: RuleConditions, ctx: SentenceContext): string {
   if (cond.direction === "in") parts.push("is money in");
   if (cond.direction === "out") parts.push("is money out");
   if (cond.descriptionContains) parts.push(`contains "${cond.descriptionContains}"`);
+  if (cond.descriptionKey) parts.push(`is named "${humanizeDescriptionKey(cond.descriptionKey)}"`);
   if (cond.descriptionRegex) parts.push(`matches /${cond.descriptionRegex}/`);
   if (cond.amountMinCents !== undefined && cond.amountMaxCents !== undefined) {
     parts.push(`is between ${moneyPhrase(cond.amountMinCents)} and ${moneyPhrase(cond.amountMaxCents)}`);

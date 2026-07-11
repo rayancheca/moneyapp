@@ -130,6 +130,49 @@ export function similarTransactions(
     .slice(0, limit);
 }
 
+/**
+ * Every active transaction id in the same "name" group as `transactionId`,
+ * INCLUDING the row itself — the server-recomputed blast radius for the sheet's
+ * "Recategorize all N" action (never trust client-held ids, ux-overhaul-plan
+ * §3.0). Groups by linked merchant when present, else by stripped description
+ * key (the merchantless identity). Investment-account rows and rows whose name
+ * strips to nothing return [] — there is no honest group to recategorize.
+ */
+export function similarGroupIds(db: AppDatabase, transactionId: string): string[] {
+  const txn = db
+    .select({
+      id: transactions.id,
+      merchantId: transactions.merchantId,
+      normalizedDescription: transactions.normalizedDescription,
+      accountType: accounts.type,
+    })
+    .from(transactions)
+    .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+    .where(eq(transactions.id, transactionId))
+    .get();
+  if (!txn) throw new Error("Unknown transaction");
+  if (txn.accountType === "investment") return [];
+
+  if (txn.merchantId) {
+    return db
+      .select({ id: transactions.id })
+      .from(transactions)
+      .where(and(eq(transactions.merchantId, txn.merchantId), eq(transactions.status, "active")))
+      .all()
+      .map((r) => r.id);
+  }
+
+  const key = strippedDescriptionKey(txn.normalizedDescription);
+  if (key === "") return [];
+  return db
+    .select({ id: transactions.id, normalizedDescription: transactions.normalizedDescription })
+    .from(transactions)
+    .where(and(isNull(transactions.merchantId), eq(transactions.status, "active")))
+    .all()
+    .filter((r) => strippedDescriptionKey(r.normalizedDescription) === key)
+    .map((r) => r.id);
+}
+
 export interface RenameMerchantResult {
   id: string;
   name: string;

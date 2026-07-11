@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import { getDb } from "@/db/client";
-import { merchantSummary, similarTransactions } from "@/services/merchants";
+import { merchantSummary, similarGroupIds, similarTransactions } from "@/services/merchants";
 import type { ActionResult } from "./action-types";
 
 /**
@@ -25,6 +25,12 @@ export interface SheetPanel {
   merchant: { id: string; name: string; txnCount: number; totalCentsThisYear: number } | null;
   /** siblings (same merchant, else stripped-key match); [] on investment rows */
   siblings: SheetPanelRow[];
+  /**
+   * Total active rows in this row's name group INCLUDING itself — the "N" the
+   * "Recategorize all N" button acts on. 0/1 means there is nothing to bulk
+   * (investment rows, empty name key, or a one-off) and the button is hidden.
+   */
+  similarCount: number;
 }
 
 export async function loadSheetPanel(
@@ -61,7 +67,11 @@ export async function loadSheetPanel(
           })()
         : null;
 
-    return { ok: true, data: { merchant, siblings } };
+    // server-recomputed group size for "Recategorize all N" (merchant or
+    // stripped-key; [] for investment rows / empty keys)
+    const similarCount = similarGroupIds(db, id).length;
+
+    return { ok: true, data: { merchant, siblings, similarCount } };
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : "Failed to load panel" };
   }

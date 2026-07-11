@@ -7,6 +7,7 @@ import { rules, ruleActionsSchema, ruleConditionsSchema, type RuleConditions } f
 import { appSettings } from "@/db/schema/settings";
 import { transactions } from "@/db/schema/transactions";
 import { diffDays } from "@/lib/dates";
+import { strippedDescriptionKey } from "@/lib/description-key";
 
 /**
  * The categorization pipeline (master-plan §3). Precedence:
@@ -95,6 +96,10 @@ function loadRules(db: AppDatabase) {
 export function ruleMatches(cond: RuleConditions, txn: Pick<TxnRow, "accountId" | "amountCents" | "normalizedDescription">): boolean {
   if (cond.descriptionContains && !txn.normalizedDescription.includes(cond.descriptionContains.toUpperCase())) return false;
   if (cond.descriptionRegex && !new RegExp(cond.descriptionRegex, "i").test(txn.normalizedDescription)) return false;
+  // Name-key equality: the merchantless "apply to this exact name" identity.
+  // An empty stripped key would match every other empty-key row, so a rule can
+  // never carry one (ruleConditionsSchema requires min(1)); guard anyway.
+  if (cond.descriptionKey && strippedDescriptionKey(txn.normalizedDescription) !== cond.descriptionKey) return false;
   if (cond.accountIds && !cond.accountIds.includes(txn.accountId)) return false;
   if (cond.direction === "in" && txn.amountCents <= 0) return false;
   if (cond.direction === "out" && txn.amountCents >= 0) return false;

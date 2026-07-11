@@ -12,7 +12,12 @@ import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
 import { categorizeAll } from "./categorize";
-import { merchantSummary, renameMerchant, similarTransactions } from "./merchants";
+import {
+  merchantSummary,
+  renameMerchant,
+  similarGroupIds,
+  similarTransactions,
+} from "./merchants";
 
 let dir: string;
 let bundle: DbBundle;
@@ -178,6 +183,55 @@ describe("similarTransactions", () => {
     expect(similarTransactions(bundle.db, target, 5)).toEqual([]);
     expect(() => similarTransactions(bundle.db, "nope", 5)).toThrow(/Unknown transaction/);
     expect(similarTransactions(bundle.db, target, 0)).toEqual([]);
+  });
+});
+
+describe("similarGroupIds (server-recomputed 'Recategorize all N' blast radius)", () => {
+  test("merchant rows: every active row in the group, INCLUDING self; excluded rows out", () => {
+    // Arrange
+    const self = insertTxn({ merchantId: netflixId, postedOn: "2026-06-01" });
+    const sibling = insertTxn({ merchantId: netflixId, postedOn: "2026-05-01" });
+    insertTxn({ merchantId: netflixId, status: "excluded" });
+    insertTxn({ merchantId: null, rawDescription: "UNRELATED" });
+
+    // Act
+    const ids = similarGroupIds(bundle.db, self);
+
+    // Assert: self is included, the excluded row and the unrelated row are not
+    expect(new Set(ids)).toEqual(new Set([self, sibling]));
+  });
+
+  test("merchantless rows: the whole stripped-key group, including self", () => {
+    // Arrange: two COKE dividends (different dates) + one MSFT
+    const self = insertTxn({
+      rawDescription: "CASH DIV: R/D 2026-04-24 P/D 2026-05-08 - 32. SHARES AT 0.25 (COKE)",
+    });
+    const sibling = insertTxn({
+      rawDescription: "CASH DIV: R/D 2026-01-16 P/D 2026-02-02 - 30. SHARES AT 0.24 (COKE)",
+      postedOn: "2026-02-02",
+    });
+    insertTxn({
+      rawDescription: "CASH DIV: R/D 2026-05-21 P/D 2026-06-11 - 24. SHARES AT 0.91 (MSFT)",
+    });
+
+    // Act
+    const ids = similarGroupIds(bundle.db, self);
+
+    // Assert
+    expect(new Set(ids)).toEqual(new Set([self, sibling]));
+  });
+
+  test("investment rows, empty keys, and unknown ids never produce a group", () => {
+    const invest = insertTxn({
+      accountId: investmentId,
+      rawDescription: "CASH DIV: R/D 2026-04-24 - 32. SHARES AT 0.25 (COKE)",
+    });
+    expect(similarGroupIds(bundle.db, invest)).toEqual([]);
+
+    const emptyKey = insertTxn({ rawDescription: "12345678" }); // normalizes to ""
+    expect(similarGroupIds(bundle.db, emptyKey)).toEqual([]);
+
+    expect(() => similarGroupIds(bundle.db, "nope")).toThrow(/Unknown transaction/);
   });
 });
 

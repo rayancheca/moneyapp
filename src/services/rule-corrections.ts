@@ -13,6 +13,7 @@ import {
   type CategorizationSource,
   type TransactionStatus,
 } from "@/db/schema/transactions";
+import { humanizeDescriptionKey } from "@/lib/description-key";
 import { ruleMatches } from "./categorize";
 import type { UndoFields, UndoPatch } from "./bulk-edit";
 
@@ -27,6 +28,8 @@ import type { UndoFields, UndoPatch } from "./bulk-edit";
 export interface CorrectionRuleInput {
   merchantId?: string;
   descriptionContains?: string;
+  /** stripped-key equality — the merchantless "this exact name" identity */
+  descriptionKey?: string;
   categoryId: string;
 }
 
@@ -48,15 +51,18 @@ const ALIAS_TYPE_RANK: Record<string, number> = { contains: 0, prefix: 1, exact:
  */
 export function conditionsForCorrection(
   db: AppDatabase,
-  input: { merchantId?: string; descriptionContains?: string },
+  input: { merchantId?: string; descriptionContains?: string; descriptionKey?: string },
 ): RuleConditions {
   if (input.descriptionContains !== undefined) {
     return ruleConditionsSchema.parse({
       descriptionContains: input.descriptionContains.toUpperCase(),
     });
   }
+  if (input.descriptionKey !== undefined) {
+    return ruleConditionsSchema.parse({ descriptionKey: input.descriptionKey });
+  }
   if (!input.merchantId) {
-    throw new Error("A merchant or a description fragment is required");
+    throw new Error("A merchant, a name key, or a description fragment is required");
   }
   const merchant = db.select().from(merchants).where(eq(merchants.id, input.merchantId)).get();
   if (!merchant) throw new Error("Unknown merchant");
@@ -108,7 +114,11 @@ export function ruleFromCorrection(db: AppDatabase, input: CorrectionRuleInput):
   const merchant = input.merchantId
     ? db.select().from(merchants).where(eq(merchants.id, input.merchantId)).get()
     : undefined;
-  const subject = merchant?.canonicalName ?? conditions.descriptionContains ?? "match";
+  const subject =
+    merchant?.canonicalName ??
+    (conditions.descriptionKey ? humanizeDescriptionKey(conditions.descriptionKey) : undefined) ??
+    conditions.descriptionContains ??
+    "match";
   const name = uniqueRuleName(db, `Always: ${subject} → ${category.name}`);
   const priority = topPriority(db);
 

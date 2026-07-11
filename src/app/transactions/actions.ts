@@ -28,7 +28,7 @@ import {
   manualTxnInputSchema,
   type ManualTxnInput,
 } from "@/services/manual-transactions";
-import { renameMerchant } from "@/services/merchants";
+import { renameMerchant, similarGroupIds } from "@/services/merchants";
 import {
   clusterRefSchema,
   confirmCluster,
@@ -42,12 +42,14 @@ import {
   retroApplyRule,
   ruleFromCorrection,
 } from "@/services/rule-corrections";
+import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/description-key";
 import { parseFilters, type SearchParams, type TxnNotice } from "@/components/transactions/query";
 import type {
   ActionResult,
   BulkMutationData,
   CorrectCategoryData,
   CreatedRuleData,
+  RecategorizeGroupData,
   RulePromptPreview,
 } from "./action-types";
 
@@ -170,24 +172,48 @@ function categoryLabelFor(db: AppDatabase, categoryId: string): string {
   return parent ? `${parent.name} > ${cat.name}` : cat.name;
 }
 
-/** Rule-prompt preview: same conditions + predicate the rule will use. */
+/**
+ * Rule-prompt preview: builds the SAME conditions + predicate the rule will use
+ * so the toast's count is exactly the retro-apply blast radius. Keys on the
+ * linked merchant when present, else the row's stripped name key — so the
+ * "apply to every transaction with this name" offer reaches the ~47% of rows
+ * that carry no merchant (brokerage strings, unlinked charges). Returns null
+ * only when there is no usable identity (merchantless row whose name strips to
+ * nothing — e.g. a pure reference number).
+ */
 function rulePromptPreview(
   db: AppDatabase,
   transactionId: string,
   categoryId: string,
 ): RulePromptPreview | null {
   const txn = db
-    .select({ merchantId: transactions.merchantId })
+    .select({
+      merchantId: transactions.merchantId,
+      normalizedDescription: transactions.normalizedDescription,
+    })
     .from(transactions)
     .where(eq(transactions.id, transactionId))
     .get();
-  if (!txn?.merchantId) return null;
-  const merchant = db.select().from(merchants).where(eq(merchants.id, txn.merchantId)).get();
-  if (!merchant) return null;
-  const conditions = conditionsForCorrection(db, { merchantId: txn.merchantId });
+  if (!txn) return null;
+
+  if (txn.merchantId) {
+    const merchant = db.select().from(merchants).where(eq(merchants.id, txn.merchantId)).get();
+    if (!merchant) return null;
+    const conditions = conditionsForCorrection(db, { merchantId: txn.merchantId });
+    return {
+      target: { kind: "merchant", merchantId: txn.merchantId },
+      subjectLabel: merchant.canonicalName,
+      categoryLabel: categoryLabelFor(db, categoryId),
+      matchCount: countRuleMatches(db, conditions, { excludeUserSet: true }),
+    };
+  }
+
+  const key = strippedDescriptionKey(txn.normalizedDescription);
+  if (key === "") return null;
+  const conditions = conditionsForCorrection(db, { descriptionKey: key });
   return {
-    merchantId: txn.merchantId,
-    merchantName: merchant.canonicalName,
+    target: { kind: "name", descriptionKey: key },
+    subjectLabel: humanizeDescriptionKey(key),
     categoryLabel: categoryLabelFor(db, categoryId),
     matchCount: countRuleMatches(db, conditions, { excludeUserSet: true }),
   };
@@ -212,6 +238,59 @@ export async function correctCategory(input: {
     const rulePrompt = rulePromptPreview(db, parsed.transactionId, parsed.categoryId);
     revalidateTransactions();
     return { ok: true, data: { rulePrompt, undo } };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+/** The rule-able identity of a row: its merchant, else its stripped name key. */
+function resolveCorrectionTarget(
+  db: AppDatabase,
+  transactionId: string,
+): { merchantId: string } | { descriptionKey: string } | null {
+  const txn = db
+    .select({
+      merchantId: transactions.merchantId,
+      normalizedDescription: transactions.normalizedDescription,
+    })
+    .from(transactions)
+    .where(eq(transactions.id, transactionId))
+    .get();
+  if (!txn) return null;
+  if (txn.merchantId) return { merchantId: txn.merchantId };
+  const key = strippedDescriptionKey(txn.normalizedDescription);
+  return key === "" ? null : { descriptionKey: key };
+}
+
+const recategorizeGroupSchema = z.object({
+  transactionId: z.string().min(1),
+  categoryId: z.string().min(1),
+});
+
+/**
+ * "Recategorize all N" from the sheet panel: recategorize every row in the
+ * server-recomputed name group (past — locked as a user decision) AND create
+ * the forward rule (future) in one gesture. The group is recomputed here from
+ * the transaction's identity, never taken from the client, so the blast radius
+ * is always honest.
+ */
+export async function recategorizeGroupAction(input: {
+  transactionId: string;
+  categoryId: string;
+}): Promise<ActionResult<RecategorizeGroupData>> {
+  try {
+    const parsed = recategorizeGroupSchema.parse(input);
+    const db = getDb();
+    const ids = similarGroupIds(db, parsed.transactionId);
+    if (ids.length === 0) throw new Error("No matching transactions to recategorize");
+    const { affected, undo } = bulkApply(db, ids, { categoryId: parsed.categoryId });
+    // future imports of this same name should land here too
+    const target = resolveCorrectionTarget(db, parsed.transactionId);
+    const ruleId = target
+      ? ruleFromCorrection(db, { ...target, categoryId: parsed.categoryId }).id
+      : null;
+    revalidateTransactions();
+    return { ok: true, data: { affected, undo, ruleId } };
   } catch (error: unknown) {
     return failure(error);
   }
@@ -335,15 +414,21 @@ const createRuleSchema = z
   .object({
     merchantId: z.string().min(1).optional(),
     descriptionContains: z.string().min(1).optional(),
+    descriptionKey: z.string().min(1).optional(),
     categoryId: z.string().min(1),
   })
-  .refine((v) => v.merchantId !== undefined || v.descriptionContains !== undefined, {
-    message: "A merchant or a description fragment is required",
-  });
+  .refine(
+    (v) =>
+      v.merchantId !== undefined ||
+      v.descriptionContains !== undefined ||
+      v.descriptionKey !== undefined,
+    { message: "A merchant, a name key, or a description fragment is required" },
+  );
 
 export async function createRuleAction(input: {
   merchantId?: string;
   descriptionContains?: string;
+  descriptionKey?: string;
   categoryId: string;
 }): Promise<ActionResult<CreatedRuleData>> {
   try {

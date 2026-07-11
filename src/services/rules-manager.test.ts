@@ -128,6 +128,12 @@ describe("renderRuleSentence", () => {
     );
     expect(s).toBe('When a transaction is between $10 and $60, rename the merchant to "Corner Deli".');
   });
+
+  test("renders a name-key condition with its humanized subject", () => {
+    expect(
+      renderRuleSentence({ descriptionKey: "ticker:COKE:DIV" }, { categoryId: "c1" }, ctx),
+    ).toBe('When a transaction is named "COKE dividends", categorize it as Food > Groceries.');
+  });
 });
 
 describe("previewRuleMatches (fixes the row-less over-report)", () => {

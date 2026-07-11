@@ -140,6 +140,88 @@ describe("conditionsForCorrection", () => {
       /Unknown merchant/,
     );
   });
+
+  test("a name key becomes a descriptionKey condition verbatim", () => {
+    expect(conditionsForCorrection(bundle.db, { descriptionKey: "ticker:COKE:DIV" })).toEqual({
+      descriptionKey: "ticker:COKE:DIV",
+    });
+  });
+});
+
+describe("name-key corrections (merchantless 'apply to this exact name')", () => {
+  test("ruleFromCorrection names the rule from the humanized subject, with no merchant action", () => {
+    const streaming = catId("Subscriptions > Streaming");
+    const created = ruleFromCorrection(bundle.db, {
+      descriptionKey: "ticker:COKE:DIV",
+      categoryId: streaming,
+    });
+    const row = bundle.db.select().from(rules).where(eq(rules.id, created.id)).get()!;
+    expect(created.name).toBe("Always: COKE dividends → Streaming");
+    expect(JSON.parse(row.conditions)).toEqual({ descriptionKey: "ticker:COKE:DIV" });
+    // no merchantId — a merchantless correction sets only the category
+    expect(JSON.parse(row.actions)).toEqual({ categoryId: streaming });
+  });
+
+  test("retro-applies to every row sharing the stripped key; count agrees; user rows spared", () => {
+    // Arrange: three COKE dividends (different dates → same ticker key) + one MSFT
+    const streaming = catId("Subscriptions > Streaming");
+    const dining = catId("Food > Dining");
+    const uncategorized = insertTxn({
+      rawDescription: "CASH DIV: R/D 2026-04-24 - 32. SHARES AT 0.25 (COKE)",
+    });
+    const claudeSet = insertTxn({
+      rawDescription: "CASH DIV: R/D 2026-01-16 - 30. SHARES AT 0.24 (COKE)",
+      categoryId: dining,
+      categorizationSource: "claude",
+    });
+    const userSet = insertTxn({
+      rawDescription: "CASH DIV: R/D 2025-11-10 - 28. SHARES AT 0.23 (COKE)",
+      categoryId: dining,
+      categorizationSource: "user",
+    });
+    insertTxn({ rawDescription: "CASH DIV: R/D 2026-05-21 - 24. SHARES AT 0.91 (MSFT)" });
+    const created = ruleFromCorrection(bundle.db, {
+      descriptionKey: "ticker:COKE:DIV",
+      categoryId: streaming,
+    });
+
+    // Act
+    const count = countRuleMatches(bundle.db, created.conditions, { excludeUserSet: true });
+    const { affected, undo } = retroApplyRule(bundle.db, created.id);
+
+    // Assert: the MSFT row (different key) and the user row are both untouched
+    expect(count).toBe(2);
+    expect(affected).toBe(2);
+    expect(txn(uncategorized).categoryId).toBe(streaming);
+    expect(txn(uncategorized).categorizationSource).toBe("rule");
+    expect(txn(claudeSet).categoryId).toBe(streaming);
+    expect(txn(userSet).categoryId).toBe(dining);
+
+    // Undo restores both changed rows exactly
+    applyUndoPatch(bundle.db, undo);
+    expect(txn(uncategorized).categoryId).toBeNull();
+    expect(txn(claudeSet).categoryId).toBe(dining);
+    expect(txn(claudeSet).categorizationSource).toBe("claude");
+  });
+
+  test("future imports matching the name key auto-categorize through the engine", () => {
+    // this exercises ruleMatches' descriptionKey branch via the real pipeline
+    const streaming = catId("Subscriptions > Streaming");
+    ruleFromCorrection(bundle.db, { descriptionKey: "ticker:COKE:DIV", categoryId: streaming });
+    const future = insertTxn({
+      rawDescription: "CASH DIV: R/D 2026-08-01 - 41. SHARES AT 0.26 (COKE)",
+    });
+    const otherTicker = insertTxn({
+      rawDescription: "CASH DIV: R/D 2026-08-01 - 12. SHARES AT 0.30 (AAPL)",
+    });
+
+    categorizeAll(bundle.db);
+
+    expect(txn(future).categoryId).toBe(streaming);
+    expect(txn(future).categorizationSource).toBe("rule");
+    // a different ticker never matches this rule
+    expect(txn(otherTicker).categoryId).not.toBe(streaming);
+  });
 });
 
 describe("ruleFromCorrection", () => {

@@ -13,12 +13,16 @@ import {
   type IncomeCell,
   type SpendingCell,
 } from "@/services/analytics";
+import { categories } from "@/db/schema/categories";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Money } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
+import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
+import type { CategoryPickerOption } from "@/components/transactions/CategoryPicker";
 import { SpendDelta } from "@/components/spending/SpendDelta";
 import { StackedMonthChart, type ChartRow, type ChartSeries } from "@/components/spending/StackedMonthChart";
+import { WhereItWent } from "@/components/spending/WhereItWent";
 
 export const metadata: Metadata = { title: "Spending" };
 export const dynamic = "force-dynamic";
@@ -124,6 +128,7 @@ export default async function SpendingPage({
 
   const spendingCells = monthlySpending(db, { months: monthCount, refDate });
   const incomeCells = incomeByMonth(db, { months: monthCount, refDate });
+  const pickerOptions = buildCategoryPickerOptions(db.select().from(categories).all());
 
   return (
     <>
@@ -171,6 +176,7 @@ export default async function SpendingPage({
           refDate={refDate}
           rangeFrom={rangeFrom}
           rangeTo={rangeTo}
+          pickerOptions={pickerOptions}
         />
       ) : (
         <IncomeView cells={incomeCells} monthKeys={monthKeys} rangeFrom={rangeFrom} rangeTo={rangeTo} />
@@ -186,6 +192,7 @@ function SpendingView({
   refDate,
   rangeFrom,
   rangeTo,
+  pickerOptions,
 }: {
   db: ReturnType<typeof getDb>;
   cells: SpendingCell[];
@@ -193,6 +200,7 @@ function SpendingView({
   refDate: string;
   rangeFrom: string;
   rangeTo: string;
+  pickerOptions: CategoryPickerOption[];
 }) {
   if (cells.length === 0) {
     return (
@@ -265,68 +273,14 @@ function SpendingView({
         </table>
       </SurfaceCard>
 
-      <SurfaceCard>
-        <h2 className="mb-1 text-sm font-medium">Where it went</h2>
-        <p className="mb-3 text-xs text-ink-muted">
-          Full {monthKeys.length}-month range · every line links to its exact transactions.
-        </p>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-line">
-              <th scope="col" className={TH}>Category</th>
-              <th scope="col" className={TH_NUM}>Transactions</th>
-              <th scope="col" className={TH_NUM}>Spent</th>
-            </tr>
-          </thead>
-          <tbody>
-            {breakdown.map((row) => (
-              <BreakdownRows key={row.categoryId ?? "uncategorized"} row={row} rangeFrom={rangeFrom} rangeTo={rangeTo} />
-            ))}
-          </tbody>
-        </table>
-      </SurfaceCard>
+      <WhereItWent
+        breakdown={breakdown}
+        categories={pickerOptions}
+        rangeFrom={rangeFrom}
+        rangeTo={rangeTo}
+        monthCount={monthKeys.length}
+      />
     </div>
-  );
-}
-
-function BreakdownRows({
-  row,
-  rangeFrom,
-  rangeTo,
-}: {
-  row: ReturnType<typeof categoryBreakdown>[number];
-  rangeFrom: string;
-  rangeTo: string;
-}) {
-  return (
-    <>
-      <tr className="border-b border-line">
-        <td className="py-2 font-medium">
-          <Link
-            href={transactionsHref({ categoryId: row.categoryId, from: rangeFrom, to: rangeTo })}
-            className="hover:text-accent hover:underline"
-          >
-            {row.name}
-          </Link>
-        </td>
-        <td className="py-2 text-right text-ink-muted">{row.txnCount}</td>
-        <td className="py-2 text-right"><Money cents={row.spentCents} /></td>
-      </tr>
-      {row.children.map((child) => (
-        <tr key={child.categoryId} className="border-b border-line last:border-0">
-          <td className="py-1.5 pl-5 text-ink-muted">
-            <Link
-              href={transactionsHref({ categoryId: child.categoryId, from: rangeFrom, to: rangeTo })}
-              className="hover:text-accent hover:underline"
-            >
-              {child.name}
-            </Link>
-          </td>
-          <td className="py-1.5 text-right text-ink-faint">{child.txnCount}</td>
-          <td className="py-1.5 text-right"><Money cents={child.spentCents} className="text-ink-muted" /></td>
-        </tr>
-      ))}
-    </>
   );
 }
 

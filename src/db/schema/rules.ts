@@ -22,6 +22,15 @@ export const ruleConditionsSchema = z
   .object({
     descriptionContains: z.string().min(1).optional(),
     descriptionRegex: z.string().min(1).optional(),
+    /**
+     * Stripped-description-key equality (ux-overhaul-plan §3.2/§3.4). The engine
+     * matches when `strippedDescriptionKey(normalizedDescription) === this` — the
+     * SAME grouping key the sheet's same-merchant panel uses for the ~47% of rows
+     * with no linked merchant, so "apply to every transaction with this name"
+     * (past AND future) works name-first, not merchant-only. JSON column, no
+     * migration.
+     */
+    descriptionKey: z.string().min(1).optional(),
     accountIds: z.array(z.string()).nonempty().optional(),
     amountMinCents: z.number().int().optional(),
     amountMaxCents: z.number().int().optional(),

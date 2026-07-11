@@ -43,6 +43,31 @@ function activityClass(body: string): BrokerageActivityClass {
   return "TRADE";
 }
 
+const TICKER_CLASS_WORD: Record<BrokerageActivityClass, string> = {
+  DIV: "dividends",
+  REINVEST: "reinvestments",
+  RECURRING: "recurring buys",
+  TRADE: "trades",
+};
+
+/**
+ * Readable label for a stripped key — the subject shown in the "apply to every
+ * transaction named X" snackbar and in an auto-created rule's name. Ticker keys
+ * (`ticker:COKE:DIV`) humanize to "COKE dividends"; retail keys are already the
+ * descriptor core ("STARBUCKS STORE 1234") and pass through unchanged. Returns
+ * "" for an empty key so callers can gate the prompt.
+ */
+export function humanizeDescriptionKey(key: string): string {
+  const trimmed = key.trim();
+  if (trimmed === "") return "";
+  const ticker = /^ticker:([A-Z0-9.]+):(REINVEST|RECURRING|DIV|TRADE)$/.exec(trimmed);
+  if (ticker) {
+    const word = TICKER_CLASS_WORD[ticker[2] as BrokerageActivityClass];
+    return `${ticker[1]} ${word}`;
+  }
+  return trimmed;
+}
+
 export function strippedDescriptionKey(normalizedDescription: string): string {
   const s = normalizedDescription.toUpperCase().trim();
   if (s === "") return "";

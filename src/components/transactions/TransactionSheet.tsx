@@ -9,7 +9,11 @@ import { Money } from "@/components/ui/Money";
 import { Sheet } from "@/components/ui/Sheet";
 import { toast } from "@/components/ui/Toast";
 import { Icon } from "@/components/shell/Icon";
-import { renameMerchantAction, setFlagsAction } from "@/app/transactions/actions";
+import {
+  recategorizeGroupAction,
+  renameMerchantAction,
+  setFlagsAction,
+} from "@/app/transactions/actions";
 import { loadSheetPanel, type SheetPanel } from "@/app/transactions/sheet-actions";
 import type { UndoPatch } from "@/app/transactions/action-types";
 import { CategoryPicker, type CategoryPickerOption } from "./CategoryPicker";
@@ -69,6 +73,25 @@ export function TransactionSheet({ txn, categories, onClose, onFlip, onRowChange
       categoryId,
       categoryName: option?.name ?? "category",
       onChanged: afterMutation,
+    });
+  }
+
+  /** "Recategorize all N" — the whole same-name group, past & future (§3.2.5). */
+  function recategorizeAll(categoryId: string): void {
+    const option = categories.find((c) => c.id === categoryId);
+    void recategorizeGroupAction({ transactionId: txn.id, categoryId }).then((r) => {
+      if (!r.ok) {
+        toast({ title: r.error, tone: "negative" });
+        return;
+      }
+      afterMutation();
+      const { affected, ruleId } = r.data;
+      const name = option?.name ?? "category";
+      offerUndo(
+        ruleId ? `${affected} set to ${name} · rule created` : `${affected} set to ${name}`,
+        r.data.undo,
+        ruleId ? { deleteRuleId: ruleId } : undefined,
+      );
     });
   }
 
@@ -174,14 +197,20 @@ export function TransactionSheet({ txn, categories, onClose, onFlip, onRowChange
           <Input value={notes} onChange={(e) => setNotes(e.target.value)} onBlur={saveNotes} placeholder="Add a note…" />
         </Field>
 
-        {/* same-merchant panel — the headline ask (§3.2) */}
-        {panel?.merchant ? (
+        {/* same-name panel — the headline ask (§3.2.5): the merchant (or the
+            merchantless stripped-key group) and the one-gesture "Recategorize
+            all N" that fixes the whole group's past AND future. */}
+        {panel && (panel.merchant || panel.siblings.length > 0) ? (
           <section className="rounded-(--radius-card) border border-line bg-surface-sunken/50 p-3">
             <div className="flex items-baseline justify-between gap-2">
               <h3 className="text-xs font-medium">
-                At {panel.merchant.name} · {panel.merchant.txnCount} txns
+                {panel.merchant
+                  ? `At ${panel.merchant.name} · ${panel.merchant.txnCount} txns`
+                  : `Similar transactions · ${panel.similarCount}`}
               </h3>
-              <Money cents={panel.merchant.totalCentsThisYear} className="figures text-xs text-ink-muted" />
+              {panel.merchant ? (
+                <Money cents={panel.merchant.totalCentsThisYear} className="figures text-xs text-ink-muted" />
+              ) : null}
             </div>
             {panel.siblings.length > 0 ? (
               <ul className="mt-2 space-y-1.5">
@@ -194,14 +223,23 @@ export function TransactionSheet({ txn, categories, onClose, onFlip, onRowChange
                 ))}
               </ul>
             ) : null}
-            <div className="mt-3">
-              <Button variant="ghost" onClick={() => router.push(`/merchants/${panel!.merchant!.id}`)}>
-                View merchant →
-              </Button>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {panel.similarCount > 1 ? (
+                <CategoryPicker options={categories} currentId={txn.categoryId} onPick={recategorizeAll}>
+                  <span className="inline-flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs font-medium transition-colors duration-(--duration-fast) hover:border-line-strong">
+                    <Icon name="tag" className="size-3.5" /> Recategorize all {panel.similarCount} →
+                  </span>
+                </CategoryPicker>
+              ) : null}
+              {panel.merchant ? (
+                <Button variant="ghost" onClick={() => router.push(`/merchants/${panel!.merchant!.id}`)}>
+                  View merchant →
+                </Button>
+              ) : null}
             </div>
           </section>
         ) : panel ? null : (
-          <p className="text-xs text-ink-faint">Loading merchant history…</p>
+          <p className="text-xs text-ink-faint">Loading similar transactions…</p>
         )}
 
         {/* raw audit detail — present, not shouting (§3.2.6) */}
