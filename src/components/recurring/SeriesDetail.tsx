@@ -135,7 +135,7 @@ export function SeriesDetail({ data }: { data: SeriesDetailData }) {
               </Link>
             ) : null}
             {data.category ? (
-              <Link href={`/spending?category=${data.category.id}`} aria-label={`Category ${data.category.name}`}>
+              <Link href={`/categories/${data.category.id}`} aria-label={`Category ${data.category.name}`}>
                 <CategoryChip label={data.category.name} hue={data.category.hue} icon={data.category.icon} compact />
               </Link>
             ) : null}

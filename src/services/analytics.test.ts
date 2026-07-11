@@ -321,8 +321,10 @@ describe("exact reconciliation: every aggregate is a visitable transaction list"
     expect(transactionsHref({ categoryId: "abc", from: "2026-07-01", to: "2026-07-31" })).toBe(
       "/transactions?category=abc&from=2026-07-01&to=2026-07-31",
     );
+    // the null (Uncategorized) bucket is negatives-only in spendingTransactions,
+    // so its link scopes to outflows — the drill-down reconciles to the count
     expect(transactionsHref({ categoryId: null, from: "2026-07-01", to: "2026-07-31" })).toBe(
-      "/transactions?category=uncategorized&from=2026-07-01&to=2026-07-31",
+      "/transactions?category=uncategorized&from=2026-07-01&to=2026-07-31&flow=out",
     );
   });
 });

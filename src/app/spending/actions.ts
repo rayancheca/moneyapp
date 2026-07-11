@@ -7,6 +7,7 @@ import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { transactions } from "@/db/schema/transactions";
 import { spendingTransactions, transactionsHref } from "@/services/analytics";
+import { dailySpendHeatmap, type SpendHeatmap } from "@/services/spending";
 import { isValidIsoDate } from "@/lib/dates";
 import type { ActionResult } from "@/app/transactions/action-types";
 
@@ -77,6 +78,18 @@ export async function loadSpendingCategoryTxns(input: {
 
     const rows = hydrateRows(db, page);
     return { ok: true, data: { rows, total, href: transactionsHref(filter) } };
+  } catch (error: unknown) {
+    return { ok: false, error: error instanceof Error ? error.message : "Failed to load" };
+  }
+}
+
+const MONTH_KEY_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/** Heatmap data for a month — the SpendHeatmap component's ‹ › paging loader. */
+export async function loadSpendHeatmap(monthKey: string): Promise<ActionResult<SpendHeatmap>> {
+  try {
+    if (!MONTH_KEY_RE.test(monthKey)) return { ok: false, error: "Invalid month" };
+    return { ok: true, data: dailySpendHeatmap(getDb(), monthKey) };
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : "Failed to load" };
   }

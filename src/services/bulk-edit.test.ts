@@ -306,6 +306,7 @@ describe("bulkApplyByFilter", () => {
       q: null,
       amountMinCents: null,
       amountMaxCents: null,
+      flow: null,
       page: 1,
     };
 

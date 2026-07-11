@@ -113,7 +113,7 @@ export interface AnalyticsTxn {
   categoryId: string | null;
 }
 
-function activeTxnsInRange(db: AppDatabase, from: string, to: string): AnalyticsTxn[] {
+export function activeTxnsInRange(db: AppDatabase, from: string, to: string): AnalyticsTxn[] {
   return db
     .select({
       id: transactions.id,
@@ -135,13 +135,13 @@ function activeTxnsInRange(db: AppDatabase, from: string, to: string): Analytics
     .all();
 }
 
-interface SpendingBucket {
+export interface SpendingBucket {
   categoryId: string | null;
   categoryName: string;
 }
 
 /** Which spending bucket a transaction belongs to, or null if excluded. */
-function spendingBucket(idx: CategoryIndex, txn: AnalyticsTxn): SpendingBucket | null {
+export function spendingBucket(idx: CategoryIndex, txn: AnalyticsTxn): SpendingBucket | null {
   if (txn.categoryId === null) {
     // only negatives — uncategorized credits belong to the review queue
     return txn.amountCents < 0 ? { categoryId: null, categoryName: "Uncategorized" } : null;
@@ -359,6 +359,12 @@ export interface TxnFilter {
   to: string;
 }
 
+/** A shared inclusive [from, to] date window. */
+export interface DateRange {
+  from: string;
+  to: string;
+}
+
 /**
  * The exact transactions behind a spending cell. A top-level categoryId
  * includes its whole subtree; null lists uncategorized negatives.
@@ -398,12 +404,50 @@ export function categorySpending(
   };
 }
 
-/** /transactions link carrying the identical filter params as the aggregate. */
+/**
+ * /transactions link carrying the identical filter params as the aggregate.
+ * The Uncategorized bucket (categoryId null) is negatives-only in the aggregate
+ * (spendingTransactions), so its link adds flow=out — the drill-down then lists
+ * exactly the rows behind the number (drill-down contract).
+ */
 export function transactionsHref(filter: TxnFilter): string {
   const params = new URLSearchParams({
     category: filter.categoryId ?? "uncategorized",
     from: filter.from,
     to: filter.to,
   });
+  if (filter.categoryId === null) params.set("flow", "out");
   return `/transactions?${params.toString()}`;
+}
+
+export interface LedgerHrefParams {
+  /** category id, `null` for the Uncategorized bucket, or omit for any category */
+  category?: string | null;
+  merchant?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+  view?: "excluded";
+  /** direction: 'out' = money out, 'in' = money in */
+  flow?: "in" | "out";
+}
+
+/**
+ * Flexible /transactions deep link for the Spending tab's drill-downs
+ * (ux-overhaul-plan §5): any subset of filters, day precision via from===to.
+ * Mirrors the transactions query parser's param names exactly so the
+ * destination shows precisely the rows behind the number clicked.
+ */
+export function ledgerHref(params: LedgerHrefParams): string {
+  const sp = new URLSearchParams();
+  if (params.view) sp.set("view", params.view);
+  if (params.category === null) sp.set("category", "uncategorized");
+  else if (params.category !== undefined) sp.set("category", params.category);
+  if (params.merchant) sp.set("merchant", params.merchant);
+  if (params.from) sp.set("from", params.from);
+  if (params.to) sp.set("to", params.to);
+  if (params.q) sp.set("q", params.q);
+  if (params.flow) sp.set("flow", params.flow);
+  const query = sp.toString();
+  return query ? `/transactions?${query}` : "/transactions";
 }

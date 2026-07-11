@@ -1,6 +1,6 @@
-import { and, count, eq, gte, inArray, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, count, eq, gt, gte, inArray, isNull, lt, lte, or, sql, type SQL } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
-import { categories } from "@/db/schema/categories";
+import { categories, type CategoryKind } from "@/db/schema/categories";
 import { transactions } from "@/db/schema/transactions";
 import type { TxnFilters, TxnView } from "@/components/transactions/query";
 
@@ -15,6 +15,19 @@ import type { TxnFilters, TxnView } from "@/components/transactions/query";
 export interface CategoryRef {
   id: string;
   parentId: string | null;
+  kind: CategoryKind;
+}
+
+/** Ids whose TOP-LEVEL category has the given kind (walks the one-deep tree). */
+function idsWithTopKind(allCategories: readonly CategoryRef[], kind: CategoryKind): string[] {
+  const byId = new Map(allCategories.map((c) => [c.id, c]));
+  return allCategories
+    .filter((c) => {
+      let node: CategoryRef | undefined = c;
+      while (node?.parentId) node = byId.get(node.parentId);
+      return node?.kind === kind;
+    })
+    .map((c) => c.id);
 }
 
 export function viewCondition(view: TxnView): SQL {
@@ -38,7 +51,33 @@ export function filterConditions(
   const conds: SQL[] = [];
   if (filters.account) conds.push(eq(transactions.accountId, filters.account));
   if (filters.merchant) conds.push(eq(transactions.merchantId, filters.merchant));
-  if (filters.category) {
+  if (filters.category === "uncategorized") {
+    // The explicit Uncategorized honesty bucket (Spending §5.4 / analytics
+    // ledgerHref): land on the category-less rows, never on an empty ledger.
+    conds.push(isNull(transactions.categoryId));
+  } else if (filters.category === "spending" || filters.category === "income") {
+    // Kind-scoped StatCard drill-downs (Spending §5.1). These EXACTLY mirror
+    // analytics' spending / income classification so the Spent / Earned cards'
+    // numbers reconcile to the list they open: spending = expense-kind rows of
+    // either sign (refunds net) PLUS uncategorized outflows; income = income-kind
+    // positive rows.
+    if (filters.category === "spending") {
+      const expenseIds = idsWithTopKind(allCategories, "expense");
+      conds.push(
+        or(
+          expenseIds.length > 0 ? inArray(transactions.categoryId, expenseIds) : sql`0 = 1`,
+          and(isNull(transactions.categoryId), lt(transactions.amountCents, 0)),
+        ) as SQL,
+      );
+    } else {
+      const incomeIds = idsWithTopKind(allCategories, "income");
+      conds.push(
+        incomeIds.length > 0
+          ? (and(inArray(transactions.categoryId, incomeIds), gt(transactions.amountCents, 0)) as SQL)
+          : sql`0 = 1`,
+      );
+    }
+  } else if (filters.category) {
     const subtreeIds = allCategories
       .filter((c) => c.id === filters.category || c.parentId === filters.category)
       .map((c) => c.id);
@@ -72,11 +111,18 @@ export function filterConditions(
   if (filters.amountMaxCents !== null) {
     conds.push(sql`abs(${transactions.amountCents}) <= ${filters.amountMaxCents}`);
   }
+  // direction filter — makes negatives-only aggregates (uncategorized outflows,
+  // positive-only income segments) reconcile to their exact drill-down list
+  if (filters.flow === "out") conds.push(lt(transactions.amountCents, 0));
+  else if (filters.flow === "in") conds.push(gt(transactions.amountCents, 0));
   return conds;
 }
 
 function loadCategoryRefs(db: AppDatabase): CategoryRef[] {
-  return db.select({ id: categories.id, parentId: categories.parentId }).from(categories).all();
+  return db
+    .select({ id: categories.id, parentId: categories.parentId, kind: categories.kind })
+    .from(categories)
+    .all();
 }
 
 /** Server-computed blast radius for bulk confirms and the select-all copy. */

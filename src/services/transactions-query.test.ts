@@ -96,6 +96,7 @@ function filters(overrides: Partial<TxnFilters> = {}): TxnFilters {
     q: null,
     amountMinCents: null,
     amountMaxCents: null,
+    flow: null,
     page: 1,
     ...overrides,
   };
@@ -132,6 +133,45 @@ describe("countMatching — filter conditions", () => {
     expect(
       countMatching(bundle.db, filters({ category: catId("Food > Dining") }), "all"),
     ).toBe(1);
+  });
+
+  test("the 'uncategorized' honesty bucket lands on category-less rows, not an empty ledger", () => {
+    insertTxn({ categoryId: catId("Food > Groceries") });
+    insertTxn({ categoryId: null });
+    insertTxn({ categoryId: null });
+    const f = filters({ category: "uncategorized" });
+    expect(countMatching(bundle.db, f, "all")).toBe(2);
+    expect(matchingTransactionIds(bundle.db, f, "all")).toHaveLength(2);
+  });
+
+  test("the 'spending' StatCard token = expense rows (either sign) + uncategorized outflows", () => {
+    insertTxn({ categoryId: catId("Food > Dining"), amountCents: -5_000 }); // expense purchase
+    insertTxn({ categoryId: catId("Food > Dining"), amountCents: 2_000 }); // expense refund (nets, still spending)
+    insertTxn({ categoryId: null, amountCents: -3_000 }); // uncategorized outflow → spending
+    insertTxn({ categoryId: null, amountCents: 9_000 }); // uncategorized credit → NOT spending (review queue)
+    insertTxn({ categoryId: catId("Income > Salary"), amountCents: 500_000 }); // income → NOT spending
+    insertTxn({ categoryId: catId("Transfers > Internal Transfer"), amountCents: -1_000 }); // transfer → NOT spending
+    expect(countMatching(bundle.db, filters({ category: "spending" }), "all")).toBe(3);
+  });
+
+  test("the 'income' StatCard token = income-kind positive rows only", () => {
+    insertTxn({ categoryId: catId("Income > Salary"), amountCents: 500_000 });
+    insertTxn({ categoryId: catId("Income > Interest"), amountCents: 1_200 });
+    insertTxn({ categoryId: catId("Income > Salary"), amountCents: -50 }); // negative income row → excluded
+    insertTxn({ categoryId: catId("Food > Dining"), amountCents: -5_000 }); // expense → excluded
+    expect(countMatching(bundle.db, filters({ category: "income" }), "all")).toBe(2);
+  });
+
+  test("the flow filter scopes by direction — 'out' keeps outflows, 'in' keeps inflows", () => {
+    insertTxn({ categoryId: null, amountCents: -400 }); // uncategorized outflow
+    insertTxn({ categoryId: null, amountCents: 48 }); // uncategorized inflow (interest)
+    // uncategorized honesty drill: category-less AND money-out only
+    expect(countMatching(bundle.db, filters({ category: "uncategorized", flow: "out" }), "all")).toBe(1);
+    expect(countMatching(bundle.db, filters({ category: "uncategorized", flow: "in" }), "all")).toBe(1);
+    // a zero-amount row is neither in nor out
+    insertTxn({ categoryId: null, amountCents: 0 });
+    expect(countMatching(bundle.db, filters({ category: "uncategorized" }), "all")).toBe(3);
+    expect(countMatching(bundle.db, filters({ category: "uncategorized", flow: "out" }), "all")).toBe(1);
   });
 
   test("date range is inclusive on both ends", () => {

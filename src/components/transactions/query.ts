@@ -25,6 +25,8 @@ export interface TxnFilters {
   /** magnitude filter (abs of amount_cents), URL params amountMin/amountMax in cents */
   amountMinCents: number | null;
   amountMaxCents: number | null;
+  /** direction filter: 'out' = money out (amount<0), 'in' = money in (amount>0) */
+  flow: "in" | "out" | null;
   page: number;
 }
 
@@ -52,6 +54,7 @@ export function parseFilters(params: SearchParams): TxnFilters {
   const from = first(params.from);
   const to = first(params.to);
   const q = first(params.q)?.trim().slice(0, MAX_SEARCH_LENGTH) ?? null;
+  const flow = first(params.flow);
   const page = Number(first(params.page) ?? "1");
 
   return {
@@ -64,6 +67,7 @@ export function parseFilters(params: SearchParams): TxnFilters {
     q: q === "" ? null : q,
     amountMinCents: parseCents(params.amountMin),
     amountMaxCents: parseCents(params.amountMax),
+    flow: flow === "in" || flow === "out" ? flow : null,
     page: Number.isInteger(page) && page >= 1 ? page : 1,
   };
 }
@@ -87,6 +91,7 @@ export function filtersToQuery(filters: TxnFilters, overrides: Partial<TxnFilter
   }
   if (typeof merged.amountMinCents === "number") parts.push(`amountMin=${merged.amountMinCents}`);
   if (typeof merged.amountMaxCents === "number") parts.push(`amountMax=${merged.amountMaxCents}`);
+  if (merged.flow) parts.push(`flow=${merged.flow}`);
   if (merged.page > 1) parts.push(`page=${merged.page}`);
   return parts.length > 0 ? `?${parts.join("&")}` : "";
 }

@@ -1,0 +1,541 @@
+import { and, eq, gte, lte } from "drizzle-orm";
+import type { AppDatabase } from "@/db/client";
+import { accounts } from "@/db/schema/accounts";
+import { categories } from "@/db/schema/categories";
+import { merchants } from "@/db/schema/merchants";
+import { transactions } from "@/db/schema/transactions";
+import { compareDates, diffDays, monthKey, periodBounds } from "@/lib/dates";
+import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/description-key";
+import { subBuckets, type ResolvedPeriod } from "@/lib/period";
+import {
+  activeTxnsInRange,
+  ledgerHref,
+  loadCategoryIndex,
+  spendingBucket,
+  type AnalyticsTxn,
+  type CategoryIndex,
+  type DateRange,
+} from "./analytics";
+
+/**
+ * Spending-tab aggregates (ux-overhaul-plan §5.5). Every function shares the
+ * analytics classification (spendingBucket / income-kind positives) so the
+ * StatCards, the mirrored cash-flow chart, the heatmap, and every drill-down
+ * reconcile to the same rows the ledger shows — a displayed number is always a
+ * visitable list. No schema change.
+ *
+ * Sign convention (matching analytics.ts): spending is displayed as positive
+ * "money out" cents; merchant refunds (positive amounts in expense categories)
+ * net against purchases inside a bucket. Income is positive amounts in
+ * income-kind categories.
+ */
+
+const TOP_SPENDING_SERIES = 7;
+const OTHER_KEY = "__other";
+const UNCAT_KEY = "__uncat";
+
+export type { DateRange };
+
+// ── Period totals (the StatCards) ────────────────────────────────────
+
+export interface PeriodTotals {
+  /** income (money in) over the period, positive */
+  earnedCents: number;
+  /** spending (money out) over the period, positive */
+  spentCents: number;
+  /** earned − spent (can be negative) */
+  netCents: number;
+  /** net ÷ earned as a percentage, or null when there was no income */
+  savingsRatePct: number | null;
+}
+
+function isIncome(idx: CategoryIndex, txn: AnalyticsTxn): boolean {
+  return (
+    txn.categoryId !== null &&
+    txn.amountCents > 0 &&
+    idx.topLevelOf(txn.categoryId).kind === "income"
+  );
+}
+
+export function periodTotals(db: AppDatabase, range: DateRange): PeriodTotals {
+  const idx = loadCategoryIndex(db);
+  let earnedCents = 0;
+  let spentCents = 0;
+  for (const txn of activeTxnsInRange(db, range.from, range.to)) {
+    if (spendingBucket(idx, txn)) {
+      spentCents += -txn.amountCents;
+      continue;
+    }
+    if (isIncome(idx, txn)) earnedCents += txn.amountCents;
+  }
+  const netCents = earnedCents - spentCents;
+  return {
+    earnedCents,
+    spentCents,
+    netCents,
+    savingsRatePct: earnedCents > 0 ? Math.round((netCents / earnedCents) * 1000) / 10 : null,
+  };
+}
+
+// ── Combined cash-flow (mirrored bars + net line + pace) ─────────────
+
+export interface CashFlowSeries {
+  key: string;
+  label: string;
+  /** category id, or null for the Other / Uncategorized aggregates */
+  categoryId: string | null;
+  /** category hue name (categories.color), null for neutral aggregates */
+  hue: string | null;
+}
+
+export interface CashFlowBucket {
+  key: string;
+  label: string;
+  from: string;
+  to: string;
+  /** income series key → cents (positive, above axis) */
+  income: Record<string, number>;
+  /** spending series key → cents (positive magnitude, below axis) */
+  spending: Record<string, number>;
+  incomeCents: number;
+  spendingCents: number;
+  /** income − spending for the bucket */
+  netCents: number;
+}
+
+export interface PaceInfo {
+  /** fraction of the period elapsed as of today, 0..1 */
+  elapsedFraction: number;
+  /** spending from the period start through today */
+  actualToDateCents: number;
+  /** linear projection of the full-period spend */
+  projectedCents: number;
+  /** typical spend per elapsed bucket — the dotted "ideal pace" reference */
+  avgPerBucketCents: number;
+}
+
+export interface CashFlow {
+  buckets: CashFlowBucket[];
+  incomeSeries: CashFlowSeries[];
+  spendingSeries: CashFlowSeries[];
+  totals: PeriodTotals;
+  /** present only for the in-progress period */
+  pace: PaceInfo | null;
+}
+
+function categoryColors(db: AppDatabase): Map<string, string | null> {
+  return new Map(
+    db.select({ id: categories.id, color: categories.color }).from(categories).all().map((c) => [c.id, c.color]),
+  );
+}
+
+/** month buckets have 7-char keys ("YYYY-MM"); day buckets have 10-char ISO keys. */
+function bucketKeyFor(postedOn: string, byMonth: boolean): string {
+  return byMonth ? monthKey(postedOn) : postedOn;
+}
+
+export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today: string): CashFlow {
+  const idx = loadCategoryIndex(db);
+  const colorOf = categoryColors(db);
+  const buckets = subBuckets(period);
+  const byMonth = (buckets[0]?.key.length ?? 10) === 7;
+  const bucketIndex = new Map(buckets.map((b, i) => [b.key, i]));
+  const rows = activeTxnsInRange(db, period.from, period.to);
+
+  const shells: CashFlowBucket[] = buckets.map((b) => ({
+    key: b.key,
+    label: b.label,
+    from: b.from,
+    to: b.to,
+    income: {},
+    spending: {},
+    incomeCents: 0,
+    spendingCents: 0,
+    netCents: 0,
+  }));
+
+  interface Classified {
+    bucket: number;
+    kind: "spend" | "income";
+    /** spending: top-level id or "∅"; income: subcategory id */
+    catKey: string;
+    name: string;
+    /** spending magnitude (positive) or income amount (positive) */
+    cents: number;
+  }
+  const classified: Classified[] = [];
+  const spendTotals = new Map<string, { name: string; cents: number }>();
+  const incomeTotals = new Map<string, { name: string; cents: number }>();
+  let earnedCents = 0;
+  let spentCents = 0;
+  let actualToDateCents = 0;
+
+  for (const txn of rows) {
+    const bucket = bucketIndex.get(bucketKeyFor(txn.postedOn, byMonth));
+    if (bucket === undefined) continue;
+    const sb = spendingBucket(idx, txn);
+    if (sb) {
+      const out = -txn.amountCents;
+      spentCents += out;
+      if (compareDates(txn.postedOn, today) <= 0) actualToDateCents += out;
+      const catKey = sb.categoryId ?? "∅";
+      const total = spendTotals.get(catKey) ?? { name: sb.categoryName, cents: 0 };
+      spendTotals.set(catKey, { name: sb.categoryName, cents: total.cents + out });
+      classified.push({ bucket, kind: "spend", catKey, name: sb.categoryName, cents: out });
+    } else if (isIncome(idx, txn)) {
+      const node = idx.byId.get(txn.categoryId!)!;
+      earnedCents += txn.amountCents;
+      const total = incomeTotals.get(node.id) ?? { name: node.name, cents: 0 };
+      incomeTotals.set(node.id, { name: node.name, cents: total.cents + txn.amountCents });
+      classified.push({ bucket, kind: "income", catKey: node.id, name: node.name, cents: txn.amountCents });
+    }
+  }
+
+  // spending series: top N by total + Other + Uncategorized (always explicit)
+  const rankedSpend = [...spendTotals.entries()]
+    .filter(([k]) => k !== "∅")
+    .sort((a, b) => b[1].cents - a[1].cents || a[1].name.localeCompare(b[1].name));
+  const topKeys = new Set(rankedSpend.slice(0, TOP_SPENDING_SERIES).map(([k]) => k));
+  const spendingSeries: CashFlowSeries[] = rankedSpend
+    .filter(([k]) => topKeys.has(k))
+    .map(([k, v]) => ({ key: k, label: v.name, categoryId: k, hue: colorOf.get(k) ?? null }));
+  if (rankedSpend.length > topKeys.size) spendingSeries.push({ key: OTHER_KEY, label: "Other", categoryId: null, hue: null });
+  if (spendTotals.has("∅")) spendingSeries.push({ key: UNCAT_KEY, label: "Uncategorized", categoryId: null, hue: null });
+
+  const incomeSeries: CashFlowSeries[] = [...incomeTotals.entries()]
+    .sort((a, b) => b[1].cents - a[1].cents || a[1].name.localeCompare(b[1].name))
+    .map(([id, v]) => ({ key: id, label: v.name, categoryId: id, hue: colorOf.get(id) ?? null }));
+
+  for (const c of classified) {
+    const shell = shells[c.bucket]!;
+    if (c.kind === "spend") {
+      const seriesKey = c.catKey === "∅" ? UNCAT_KEY : topKeys.has(c.catKey) ? c.catKey : OTHER_KEY;
+      shell.spending[seriesKey] = (shell.spending[seriesKey] ?? 0) + c.cents;
+      shell.spendingCents += c.cents;
+      shell.netCents -= c.cents;
+    } else {
+      shell.income[c.catKey] = (shell.income[c.catKey] ?? 0) + c.cents;
+      shell.incomeCents += c.cents;
+      shell.netCents += c.cents;
+    }
+  }
+
+  const netCents = earnedCents - spentCents;
+  const totals: PeriodTotals = {
+    earnedCents,
+    spentCents,
+    netCents,
+    savingsRatePct: earnedCents > 0 ? Math.round((netCents / earnedCents) * 1000) / 10 : null,
+  };
+  const pace = period.isCurrent ? computePace(period, buckets, actualToDateCents, today) : null;
+
+  return { buckets: shells, incomeSeries, spendingSeries, totals, pace };
+}
+
+function computePace(
+  period: ResolvedPeriod,
+  buckets: readonly { from: string }[],
+  actualToDateCents: number,
+  today: string,
+): PaceInfo {
+  const totalDays = diffDays(period.from, period.to) + 1;
+  const cappedToday = compareDates(today, period.to) > 0 ? period.to : today;
+  const elapsedDays = Math.min(totalDays, Math.max(1, diffDays(period.from, cappedToday) + 1));
+  const elapsedFraction = elapsedDays / totalDays;
+  const elapsedBuckets = buckets.filter((b) => compareDates(b.from, today) <= 0).length || 1;
+  return {
+    elapsedFraction,
+    actualToDateCents,
+    projectedCents: elapsedFraction > 0 ? Math.round(actualToDateCents / elapsedFraction) : 0,
+    avgPerBucketCents: Math.round(actualToDateCents / elapsedBuckets),
+  };
+}
+
+/**
+ * The exact ledger link behind a clicked chart segment. A real category (income
+ * or spending) drills to that category + bucket window; the Uncategorized
+ * aggregate drills to the category-less bucket rows; Other (an aggregate of
+ * many small categories) drills to the whole bucket window.
+ */
+export function cashFlowSegmentHref(
+  seriesKey: string,
+  categoryId: string | null,
+  bucket: DateRange,
+  /** 'in' for income segments (positive-only), so the drill matches the bar */
+  flow?: "in" | "out",
+): string {
+  // Uncategorized spending is negatives-only → drill to outflows so it reconciles
+  if (seriesKey === UNCAT_KEY) return ledgerHref({ category: null, from: bucket.from, to: bucket.to, flow: "out" });
+  // Other is an aggregate of many small categories with no single exact filter —
+  // it is not clickable in the chart, so this path is unused; kept honest anyway.
+  if (seriesKey === OTHER_KEY) return ledgerHref({ from: bucket.from, to: bucket.to });
+  return ledgerHref({ category: categoryId ?? undefined, from: bucket.from, to: bucket.to, flow });
+}
+
+// ── Day-level heatmap ────────────────────────────────────────────────
+
+export interface HeatDay {
+  iso: string;
+  /** gross money out this day, positive */
+  spentCents: number;
+  /** gross money in this day, positive */
+  incomeCents: number;
+}
+
+export interface SpendHeatmap {
+  monthKey: string;
+  /** only days with activity — the grid defaults the rest to zero */
+  days: HeatDay[];
+  /** largest single-day outflow — the tint-saturation denominator */
+  maxOutflowCents: number;
+}
+
+export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap {
+  const from = `${month}-01`;
+  const to = periodBounds(from, "monthly").end;
+  const idx = loadCategoryIndex(db);
+  const byDay = new Map<string, { spentCents: number; incomeCents: number }>();
+
+  for (const txn of activeTxnsInRange(db, from, to)) {
+    const cell = byDay.get(txn.postedOn) ?? { spentCents: 0, incomeCents: 0 };
+    if (spendingBucket(idx, txn)) cell.spentCents += -txn.amountCents;
+    else if (isIncome(idx, txn)) cell.incomeCents += txn.amountCents;
+    byDay.set(txn.postedOn, cell);
+  }
+
+  const days: HeatDay[] = [...byDay.entries()]
+    .map(([iso, c]) => ({ iso, spentCents: c.spentCents, incomeCents: c.incomeCents }))
+    .sort((a, b) => a.iso.localeCompare(b.iso));
+  const maxOutflowCents = days.reduce((m, d) => Math.max(m, d.spentCents), 0);
+  return { monthKey: month, days, maxOutflowCents };
+}
+
+/** `/transactions?from=D&to=D` — the literal "tap any day" destination. */
+export function dayLedgerHref(iso: string): string {
+  return ledgerHref({ from: iso, to: iso });
+}
+
+// ── Spending rows (shared by top-merchants + largest) ────────────────
+
+interface SpendRow {
+  id: string;
+  postedOn: string;
+  amountCents: number;
+  rawDescription: string;
+  normalizedDescription: string;
+  merchantId: string | null;
+  categoryId: string | null;
+  accountName: string;
+}
+
+/**
+ * Active rows classified as spending (both signs — refunds net), joined with
+ * account name. An optional `subtreeIds` scopes to one category subtree (the
+ * category page); without it, all spending rows including uncategorized.
+ */
+function spendingRowsInRange(
+  db: AppDatabase,
+  idx: CategoryIndex,
+  range: DateRange,
+  subtreeIds?: ReadonlySet<string>,
+): SpendRow[] {
+  const rows = db
+    .select({
+      id: transactions.id,
+      accountId: transactions.accountId,
+      postedOn: transactions.postedOn,
+      amountCents: transactions.amountCents,
+      rawDescription: transactions.rawDescription,
+      normalizedDescription: transactions.normalizedDescription,
+      merchantId: transactions.merchantId,
+      categoryId: transactions.categoryId,
+      accountName: accounts.name,
+    })
+    .from(transactions)
+    .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+    .where(
+      and(
+        eq(transactions.status, "active"),
+        gte(transactions.postedOn, range.from),
+        lte(transactions.postedOn, range.to),
+      ),
+    )
+    .all();
+  return rows.filter((r) => {
+    if (subtreeIds) return r.categoryId !== null && subtreeIds.has(r.categoryId);
+    return spendingBucket(idx, r as AnalyticsTxn) !== null;
+  });
+}
+
+// ── Top merchants (merchant + stripped-key, coverage %) ──────────────
+
+export interface MerchantEntry {
+  kind: "merchant" | "unlinked";
+  /** merchant id, or null for a stripped-key group */
+  id: string | null;
+  name: string;
+  /** net money out for the group, positive */
+  spentCents: number;
+  txnCount: number;
+  href: string;
+}
+
+export interface TopMerchants {
+  entries: MerchantEntry[];
+  /** share of spending rows that carry a merchant link, 0..100 */
+  coveragePct: number;
+  linkedCount: number;
+  unlinkedCount: number;
+}
+
+export function topMerchants(
+  db: AppDatabase,
+  range: DateRange,
+  limit = 8,
+  opts: { categoryId?: string } = {},
+): TopMerchants {
+  const idx = loadCategoryIndex(db);
+  const subtreeIds = opts.categoryId ? new Set(idx.subtreeIds(opts.categoryId)) : undefined;
+  const rows = spendingRowsInRange(db, idx, range, subtreeIds);
+  const merchantName = new Map(
+    db.select({ id: merchants.id, name: merchants.canonicalName }).from(merchants).all().map((m) => [m.id, m.name]),
+  );
+
+  interface Group {
+    kind: "merchant" | "unlinked";
+    id: string | null;
+    name: string;
+    spentCents: number;
+    txnCount: number;
+    /** a representative descriptor for the unlinked-group search link */
+    query: string | null;
+  }
+  const groups = new Map<string, Group>();
+  let linkedCount = 0;
+
+  for (const r of rows) {
+    const out = -r.amountCents;
+    if (r.merchantId) {
+      linkedCount += 1;
+      const key = `m:${r.merchantId}`;
+      const g = groups.get(key) ?? {
+        kind: "merchant" as const,
+        id: r.merchantId,
+        name: merchantName.get(r.merchantId) ?? "Unknown merchant",
+        spentCents: 0,
+        txnCount: 0,
+        query: null,
+      };
+      groups.set(key, { ...g, spentCents: g.spentCents + out, txnCount: g.txnCount + 1 });
+      continue;
+    }
+    const strippedKey = strippedDescriptionKey(r.normalizedDescription);
+    if (strippedKey === "") continue; // nothing to group by — omit, don't invent
+    const key = `k:${strippedKey}`;
+    const label = humanizeDescriptionKey(strippedKey);
+    const g = groups.get(key) ?? {
+      kind: "unlinked" as const,
+      id: null,
+      name: label,
+      spentCents: 0,
+      txnCount: 0,
+      query: label,
+    };
+    groups.set(key, { ...g, spentCents: g.spentCents + out, txnCount: g.txnCount + 1 });
+  }
+
+  const entries: MerchantEntry[] = [...groups.values()]
+    .sort((a, b) => b.spentCents - a.spentCents || a.name.localeCompare(b.name))
+    .slice(0, limit)
+    .map((g) => ({
+      kind: g.kind,
+      id: g.id,
+      name: g.name,
+      spentCents: g.spentCents,
+      txnCount: g.txnCount,
+      href:
+        g.kind === "merchant"
+          ? ledgerHref({ merchant: g.id!, from: range.from, to: range.to })
+          : ledgerHref({ q: g.query!, from: range.from, to: range.to }),
+    }));
+
+  const total = rows.length;
+  return {
+    entries,
+    coveragePct: total === 0 ? 100 : Math.round((linkedCount / total) * 1000) / 10,
+    linkedCount,
+    unlinkedCount: total - linkedCount,
+  };
+}
+
+// ── Largest purchases ────────────────────────────────────────────────
+
+export interface LargestTxn {
+  id: string;
+  postedOn: string;
+  rawDescription: string;
+  amountCents: number;
+  categoryId: string | null;
+  merchantId: string | null;
+  accountName: string;
+}
+
+export function largestTransactions(db: AppDatabase, range: DateRange, limit = 5): LargestTxn[] {
+  const idx = loadCategoryIndex(db);
+  return spendingRowsInRange(db, idx, range)
+    .filter((r) => r.amountCents < 0) // actual outflows, not refunds
+    .sort((a, b) => a.amountCents - b.amountCents || a.id.localeCompare(b.id)) // most negative first
+    .slice(0, limit)
+    .map((r) => ({
+      id: r.id,
+      postedOn: r.postedOn,
+      rawDescription: r.rawDescription,
+      amountCents: r.amountCents,
+      categoryId: r.categoryId,
+      merchantId: r.merchantId,
+      accountName: r.accountName,
+    }));
+}
+
+// ── Honesty buckets (Uncategorized + Excluded) ───────────────────────
+
+export interface HonestyBuckets {
+  uncategorized: { spentCents: number; txnCount: number; href: string };
+  excluded: { txnCount: number; href: string };
+}
+
+export function honestyBuckets(db: AppDatabase, range: DateRange): HonestyBuckets {
+  const idx = loadCategoryIndex(db);
+  let uncatSpent = 0;
+  let uncatCount = 0;
+  for (const txn of activeTxnsInRange(db, range.from, range.to)) {
+    if (txn.categoryId === null && txn.amountCents < 0) {
+      uncatSpent += -txn.amountCents;
+      uncatCount += 1;
+    }
+  }
+  const excludedCount = db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.status, "excluded"),
+        gte(transactions.postedOn, range.from),
+        lte(transactions.postedOn, range.to),
+      ),
+    )
+    .all().length;
+
+  return {
+    uncategorized: {
+      spentCents: uncatSpent,
+      txnCount: uncatCount,
+      // negatives-only aggregate → outflow-scoped drill (drill-down contract)
+      href: ledgerHref({ category: null, from: range.from, to: range.to, flow: "out" }),
+    },
+    excluded: {
+      txnCount: excludedCount,
+      href: ledgerHref({ view: "excluded", from: range.from, to: range.to }),
+    },
+  };
+}
