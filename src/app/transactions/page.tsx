@@ -14,8 +14,10 @@ import { FiltersBar } from "@/components/transactions/FiltersBar";
 import { HeaderStrip } from "@/components/transactions/HeaderStrip";
 import { NoticeBanner } from "@/components/transactions/NoticeBanner";
 import { Pagination } from "@/components/transactions/Pagination";
+import { ReviewInbox } from "@/components/transactions/ReviewInbox";
 import { TransactionsLedger, type LedgerRow } from "@/components/transactions/TransactionsLedger";
 import { ViewTabs } from "@/components/transactions/ViewTabs";
+import { reviewInbox } from "@/services/review-inbox";
 import {
   filtersToQuery,
   parseFilters,
@@ -229,6 +231,10 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
     .filter((c) => c.parentId === null && !c.isArchived)
     .sort(byHierarchy)
     .map((c) => ({ id: c.id, name: c.name }));
+  const pickerOptions = buildCategoryPickerOptions(allCategories);
+  // Review is a distinct surface (§3.3): the whole backlog clustered by
+  // merchant, not the filtered/paginated ledger — so it skips FiltersBar.
+  const inbox = filters.view === "review" ? reviewInbox(db) : null;
 
   return (
     <>
@@ -255,16 +261,22 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
       ) : (
         <div className="space-y-4">
           <ViewTabs filters={filters} counts={counts} />
-          <FiltersBar filters={filters} accounts={accountRows} rootCategories={rootCategories} />
-          {ledgerRows.length === 0 ? (
-            <EmptyState
-              title={EMPTY_FILTERED_COPY[filters.view].title}
-              description={EMPTY_FILTERED_COPY[filters.view].description}
-            />
+          {inbox ? (
+            <ReviewInbox data={inbox} categories={pickerOptions} />
           ) : (
-            <TransactionsLedger rows={ledgerRows} categories={buildCategoryPickerOptions(allCategories)} />
+            <>
+              <FiltersBar filters={filters} accounts={accountRows} rootCategories={rootCategories} />
+              {ledgerRows.length === 0 ? (
+                <EmptyState
+                  title={EMPTY_FILTERED_COPY[filters.view].title}
+                  description={EMPTY_FILTERED_COPY[filters.view].description}
+                />
+              ) : (
+                <TransactionsLedger rows={ledgerRows} categories={pickerOptions} />
+              )}
+              <Pagination filters={filters} totalRows={totalRows} pageSize={PAGE_SIZE} />
+            </>
           )}
-          <Pagination filters={filters} totalRows={totalRows} pageSize={PAGE_SIZE} />
         </div>
       )}
     </>

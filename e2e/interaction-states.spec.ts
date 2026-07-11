@@ -80,3 +80,14 @@ defineStateTests({
     await expect(page.locator('button[aria-haspopup="dialog"]').first()).toBeVisible();
   },
 });
+
+defineStateTests({
+  name: "review-inbox",
+  path: "/transactions?view=review",
+  prepare: async (page) => {
+    // the seeded clustered backlog (§3.3): merchant "Confirm all" cards + one
+    // uncategorized "Categorize all" card, above the amnesty drain control
+    await expect(page.getByRole("button", { name: /Confirm all/ }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: /before .* reviewed/ })).toBeVisible();
+  },
+});

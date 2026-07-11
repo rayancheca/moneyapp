@@ -30,6 +30,12 @@ import {
 } from "@/services/manual-transactions";
 import { renameMerchant } from "@/services/merchants";
 import {
+  clusterRefSchema,
+  confirmCluster,
+  recategorizeCluster,
+  type ClusterRef,
+} from "@/services/review-inbox";
+import {
   conditionsForCorrection,
   countRuleMatches,
   deleteRule,
@@ -282,6 +288,42 @@ export async function markAllReviewedBeforeAction(
   try {
     const parsed = z.string().min(1).parse(date);
     const result = markAllReviewedBefore(getDb(), parsed);
+    revalidateTransactions();
+    return { ok: true, data: result };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * Review inbox (§3.3): cluster confirm/recategorize. The ref is an opaque
+ * handle — the service recomputes the live id set from it, so the blast
+ * radius stays honest even if the queue shifted between load and click.
+ * ---------------------------------------------------------------------- */
+
+export async function confirmClusterAction(ref: ClusterRef): Promise<ActionResult<BulkMutationData>> {
+  try {
+    const parsed = clusterRefSchema.parse(ref);
+    const result = confirmCluster(getDb(), parsed);
+    revalidateTransactions();
+    return { ok: true, data: result };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+const recategorizeClusterSchema = z.object({
+  ref: clusterRefSchema,
+  categoryId: z.string().min(1),
+});
+
+export async function recategorizeClusterAction(input: {
+  ref: ClusterRef;
+  categoryId: string;
+}): Promise<ActionResult<BulkMutationData>> {
+  try {
+    const parsed = recategorizeClusterSchema.parse(input);
+    const result = recategorizeCluster(getDb(), parsed.ref, parsed.categoryId);
     revalidateTransactions();
     return { ok: true, data: result };
   } catch (error: unknown) {

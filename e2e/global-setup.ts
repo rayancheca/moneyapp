@@ -12,7 +12,10 @@ import { E2E_FAKE_TODAY, seedE2eDatabase } from "./seed-helpers";
  */
 export default async function globalSetup(): Promise<void> {
   const dbPath = path.join(process.cwd(), "data", "e2e.db");
-  for (const suffix of ["", "-wal", "-shm"]) fs.rmSync(`${dbPath}${suffix}`, { force: true });
+  // NB: the db file is deliberately NOT unlinked — seedE2eDatabase wipes its
+  // data in place so the webServer's open connection keeps the same inode and
+  // reads this run's seed (see resetAllData). Deleting the file here would
+  // strand the server on the previous run's data.
   // originals archived by the import pipeline follow the database: the e2e
   // harness must NEVER write into data/originals, where the user's REAL
   // statement originals live. Wiped like the db — droppings are not state.
@@ -36,6 +39,7 @@ export default async function globalSetup(): Promise<void> {
   // one-line audit trail so a bad seed is debuggable from CI output
   console.log(
     `[e2e setup] seeded ${summary.txns} txns from ${summary.files} files — ` +
-      `${summary.coveragePct}% categorized, ${summary.gapPeriods} open gaps, fake today ${E2E_FAKE_TODAY}`,
+      `${summary.coveragePct}% categorized, ${summary.gapPeriods} open gaps, ` +
+      `${summary.reviewBacklog} flagged for review, fake today ${E2E_FAKE_TODAY}`,
   );
 }

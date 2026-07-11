@@ -88,7 +88,12 @@ export function CategoryPicker({
         {...triggerProps}
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label={`Category: ${current?.name ?? "Uncategorized"}. Change`}
+        // When the caller supplies visible children (e.g. "Recategorize",
+        // "Categorize all"), THAT text is the accessible name — overriding it
+        // with aria-label would drop the visible label (WCAG 2.5.3 Label in
+        // Name). Only the default chip trigger, whose visible label is the
+        // category name, gets the descriptive "Category: X. Change" label.
+        aria-label={children ? undefined : `Category: ${current?.name ?? "Uncategorized"}. Change`}
         className={`inline-flex max-w-full items-center rounded-full outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${className ?? ""}`}
       >
         {children ?? <CategoryChip label={current?.name ?? "Uncategorized"} hue={current?.hue ?? null} icon={current?.icon ?? null} />}
