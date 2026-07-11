@@ -4,8 +4,10 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { ThemeProvider } from "next-themes";
 import { getDb } from "@/db/client";
+import { commandEntityGroups } from "@/services/command-index";
 import { needsReviewCount } from "@/services/review-count";
 import { AppShell } from "@/components/shell/AppShell";
+import type { CommandPaletteGroup } from "@/components/ui/CommandPalette";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -30,12 +32,29 @@ function safeReviewCount(): number {
   }
 }
 
+let paletteErrorReported = false;
+
+/** Defensive: a bad entity query must never take the whole shell down. */
+function safeEntityGroups(): CommandPaletteGroup[] {
+  try {
+    return commandEntityGroups(getDb());
+  } catch (error: unknown) {
+    if (!paletteErrorReported) {
+      paletteErrorReported = true;
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[layout] ⌘K entity index fell back to empty: ${message}\n`);
+    }
+    return [];
+  }
+}
+
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   // request-time only: without this, `next build` prerenders /_not-found,
   // opening (or even CREATING) the database as a build side effect and
   // freezing a stale badge count into the built shell
   await connection();
   const reviewCount = safeReviewCount();
+  const entityGroups = safeEntityGroups();
   return (
     <html
       lang="en"
@@ -44,7 +63,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     >
       <body>
         <ThemeProvider attribute="class" defaultTheme="light" disableTransitionOnChange>
-          <AppShell reviewCount={reviewCount}>{children}</AppShell>
+          <AppShell reviewCount={reviewCount} entityGroups={entityGroups}>
+            {children}
+          </AppShell>
         </ThemeProvider>
       </body>
     </html>

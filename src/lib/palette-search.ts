@@ -54,3 +54,20 @@ export function paletteSearch<T extends PaletteItem>(
 
   return [...labelPrefix, ...wordPrefix, ...labelSubstring, ...keywordSubstring].slice(0, limit);
 }
+
+/**
+ * Reorders results so each group's items are contiguous (group order = first
+ * appearance; item order preserved within a group). paletteSearch ranks by
+ * match TIER across all groups, so a query matching items from several groups
+ * in different tiers would otherwise interleave them — which makes a grouped
+ * renderer emit the same group header (and its DOM id) more than once.
+ */
+export function groupContiguous<T extends { group: string }>(items: readonly T[]): T[] {
+  const byGroup = new Map<string, T[]>();
+  for (const item of items) {
+    const bucket = byGroup.get(item.group);
+    if (bucket) bucket.push(item);
+    else byGroup.set(item.group, [item]);
+  }
+  return [...byGroup.values()].flat();
+}

@@ -10,7 +10,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { Icon, type IconName } from "@/components/shell/Icon";
-import { paletteSearch } from "@/lib/palette-search";
+import { groupContiguous, paletteSearch } from "@/lib/palette-search";
 import { useKeyScope } from "@/components/ui/KeyScopeProvider";
 import { PRIORITIES } from "@/lib/keyscope";
 
@@ -72,7 +72,11 @@ export function CommandPalette({ groups }: CommandPaletteProps) {
     () => groups.flatMap((group) => group.items.map((item) => ({ ...item, group: group.label }))),
     [groups],
   );
-  const results = useMemo(() => paletteSearch(searchable, query), [searchable, query]);
+  // group-contiguous so headers stay unique and no group splits across tiers
+  const results = useMemo(
+    () => groupContiguous(paletteSearch(searchable, query)),
+    [searchable, query],
+  );
 
   const clampedIndex = results.length === 0 ? -1 : Math.min(activeIndex, results.length - 1);
   const activeItem = clampedIndex === -1 ? undefined : results[clampedIndex];

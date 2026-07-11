@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { paletteSearch, type PaletteItem } from "./palette-search";
+import { groupContiguous, paletteSearch, type PaletteItem } from "./palette-search";
 
 function item(id: string, label: string, keywords?: string[]): PaletteItem {
   return { id, label, keywords, group: "test" };
@@ -113,5 +113,24 @@ describe("word-boundary detail", () => {
       item("word", "Auto Pay"),
     ];
     expect(ids(paletteSearch(items, "pay"))).toEqual(["word", "mid"]);
+  });
+});
+
+describe("groupContiguous", () => {
+  const item = (id: string, group: string) => ({ id, label: id, group });
+
+  test("makes each group's items contiguous, preserving first-appearance order", () => {
+    // tier-interleaved input: Accounts, Categories, Accounts, Merchants
+    const input = [item("a1", "Accounts"), item("c1", "Categories"), item("a2", "Accounts"), item("m1", "Merchants")];
+    const out = groupContiguous(input);
+    expect(out.map((i) => i.id)).toEqual(["a1", "a2", "c1", "m1"]);
+    // group order = first appearance; items keep their relative order within
+    expect(out.map((i) => i.group)).toEqual(["Accounts", "Accounts", "Categories", "Merchants"]);
+  });
+
+  test("is a no-op for already-contiguous or empty input", () => {
+    expect(groupContiguous([])).toEqual([]);
+    const contiguous = [item("a1", "Accounts"), item("a2", "Accounts"), item("m1", "Merchants")];
+    expect(groupContiguous(contiguous).map((i) => i.id)).toEqual(["a1", "a2", "m1"]);
   });
 });

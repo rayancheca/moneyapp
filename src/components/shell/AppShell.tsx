@@ -10,25 +10,24 @@ interface AppShellProps {
   children: React.ReactNode;
   /** Unreviewed active transactions — badges the Transactions nav item. */
   reviewCount: number;
+  /** ⌘K entity index (accounts, categories, merchants) — §3.8. */
+  entityGroups: CommandPaletteGroup[];
 }
 
-/** ⌘K page index — entity groups (accounts, categories, merchants) join in Stage 1. */
-const PALETTE_GROUPS: CommandPaletteGroup[] = [
-  {
-    label: "Pages",
-    items: NAV_ITEMS.map((item) => ({
-      id: `page-${item.href}`,
-      label: item.label,
-      icon: item.icon,
-      href: item.href,
-    })),
-  },
-];
+const PAGES_GROUP: CommandPaletteGroup = {
+  label: "Pages",
+  items: NAV_ITEMS.map((item) => ({
+    id: `page-${item.href}`,
+    label: item.label,
+    icon: item.icon,
+    href: item.href,
+  })),
+};
 
-export function AppShell({ children, reviewCount }: AppShellProps) {
+export function AppShell({ children, reviewCount, entityGroups }: AppShellProps) {
   return (
     <KeyScopeProvider>
-      <CommandPalette groups={PALETTE_GROUPS} />
+      <CommandPalette groups={[PAGES_GROUP, ...entityGroups]} />
       <div className="min-h-dvh md:grid md:grid-cols-[13.5rem_1fr]">
       <a
         href="#main"
