@@ -1,13 +1,13 @@
-import { and, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
-import { transactions } from "@/db/schema/transactions";
 import { monthKey, periodBounds } from "@/lib/dates";
 import {
   categorySpending,
   ledgerHref,
   loadCategoryIndex,
   monthKeysBack,
+  recurringSeriesIdsForCategory,
   type DateRange,
 } from "./analytics";
 import { budgetStatuses } from "./budgets";
@@ -139,19 +139,7 @@ export interface CategorySeriesRow {
  * column), so this is derived from the ledger.
  */
 export function seriesInCategory(db: AppDatabase, categoryId: string, today: string): CategorySeriesRow[] {
-  const subtreeIds = loadCategoryIndex(db).subtreeIds(categoryId);
-  const linked = db
-    .selectDistinct({ seriesId: transactions.recurringSeriesId })
-    .from(transactions)
-    .where(
-      and(
-        eq(transactions.status, "active"),
-        isNotNull(transactions.recurringSeriesId),
-        inArray(transactions.categoryId, subtreeIds),
-      ),
-    )
-    .all();
-  const ids = new Set(linked.map((r) => r.seriesId).filter((v): v is string => v !== null));
+  const ids = recurringSeriesIdsForCategory(db, categoryId);
   if (ids.size === 0) return [];
 
   return listSeries(db, today)

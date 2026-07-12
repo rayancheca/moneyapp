@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { todayIso } from "@/lib/dates";
+import { formatCents } from "@/lib/money";
 import { resolvePeriod } from "@/lib/period";
 import { categorySpending } from "@/services/analytics";
 import {
@@ -150,7 +151,9 @@ export default async function CategoryPage({
                         : "text-positive"
                   }
                 >
-                  {budget.remainingCents >= 0 ? `${formatRemaining(budget.remainingCents)} left` : `${formatRemaining(-budget.remainingCents)} over`}
+                  {budget.remainingCents >= 0
+                    ? `${formatCents(budget.remainingCents)} left`
+                    : `${formatCents(-budget.remainingCents)} over`}
                 </span>
                 <Link href={budget.href} className="text-accent hover:underline">Budgets →</Link>
               </div>
@@ -202,8 +205,4 @@ export default async function CategoryPage({
       </div>
     </>
   );
-}
-
-function formatRemaining(cents: number): string {
-  return `$${Math.round(cents / 100)}`;
 }

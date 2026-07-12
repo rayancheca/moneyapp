@@ -9,14 +9,22 @@ import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
+import { recurringSeries } from "@/db/schema/recurring";
+import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import { createAccount } from "./accounts";
-import { categorySpending } from "./analytics";
+import { categorySpending, recurringSeriesIdsForCategory } from "./analytics";
 import {
+  budgetGuidanceCents,
+  budgetPaceStatuses,
   budgetStatuses,
+  budgetTail,
   computeAlert,
+  computePace,
   createBudget,
   deactivateBudget,
+  hasOverlappingChildBudget,
   listBudgetableCategories,
+  projectSpend,
   totalBudgetedCents,
   updateBudget,
 } from "./budgets";
@@ -76,6 +84,58 @@ function spend(postedOn: string, amountCents: number, categoryPath: string): voi
         rawDescription,
         occurrenceIndex: 0,
       }),
+    })
+    .run();
+}
+
+function createSeries(opts: {
+  name: string;
+  nextExpectedOn: string;
+  nextExpectedAmountCents: number;
+  kind?: SeriesKind;
+  cadence?: Cadence;
+  intervalDaysAvg?: number;
+  status?: SeriesStatus;
+}): string {
+  return bundle.db
+    .insert(recurringSeries)
+    .values({
+      name: opts.name,
+      kind: opts.kind ?? "bill",
+      cadence: opts.cadence ?? "monthly",
+      intervalDaysAvg: opts.intervalDaysAvg ?? 30,
+      amountCentsAvg: opts.nextExpectedAmountCents,
+      nextExpectedOn: opts.nextExpectedOn,
+      nextExpectedAmountCents: opts.nextExpectedAmountCents,
+      status: opts.status ?? "confirmed",
+      lastMatchedOn: opts.nextExpectedOn,
+    })
+    .returning({ id: recurringSeries.id })
+    .get().id;
+}
+
+/** A spend row linked to a recurring series (and optionally superseded). */
+function spendLinked(
+  postedOn: string,
+  amountCents: number,
+  categoryPath: string,
+  seriesId: string,
+  status: "active" | "superseded" = "active",
+): void {
+  seq += 1;
+  const rawDescription = `LINKED ${seq}`;
+  bundle.db
+    .insert(transactions)
+    .values({
+      accountId: cardId,
+      postedOn,
+      amountCents,
+      rawDescription,
+      normalizedDescription: rawDescription,
+      categoryId: catId(categoryPath),
+      recurringSeriesId: seriesId,
+      status,
+      dedupeHash: dedupeHash({ accountId: cardId, postedOn, amountCents, rawDescription, occurrenceIndex: 0 }),
     })
     .run();
 }
@@ -262,6 +322,36 @@ describe("parent/child overlap semantics", () => {
     expect(statuses[0]?.isDescendantOfBudgeted).toBe(false);
     expect(totalBudgetedCents(statuses)).toBe(20_000);
   });
+
+  test("a child budgeted in a DIFFERENT period than its parent is not dropped from its own period total", () => {
+    createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 100_000,
+      startsOn: "2026-07-01",
+    });
+    createBudget(bundle.db, {
+      categoryId: catId("Food > Dining"),
+      period: "weekly",
+      amountCents: 10_000,
+      startsOn: "2026-07-01",
+    });
+    const statuses = budgetStatuses(bundle.db, "2026-07-15");
+    const monthly = statuses.filter((s) => s.budget.period === "monthly");
+    const weekly = statuses.filter((s) => s.budget.period === "weekly");
+
+    // per period (how the page totals): Dining's parent is budgeted MONTHLY, never
+    // summed with the weekly section, so the weekly total keeps its full 10k and
+    // shows no "overlap excluded" note.
+    expect(totalBudgetedCents(monthly)).toBe(100_000);
+    expect(totalBudgetedCents(weekly)).toBe(10_000);
+    expect(hasOverlappingChildBudget(weekly)).toBe(false);
+    expect(hasOverlappingChildBudget(monthly)).toBe(false);
+
+    // summed into ONE set, the same-set double-count rule DOES exclude the child
+    expect(totalBudgetedCents(statuses)).toBe(100_000);
+    expect(hasOverlappingChildBudget(statuses)).toBe(true);
+  });
 });
 
 describe("alert thresholds — integer math, exact at the boundaries", () => {
@@ -331,5 +421,231 @@ describe("listBudgetableCategories", () => {
     expect(foodIdx).toBeGreaterThanOrEqual(0);
     expect(diningIdx).toBeGreaterThan(foodIdx);
     expect(list[diningIdx]).toEqual({ id: catId("Food > Dining"), name: "Dining", depth: 1, parentName: "Food" });
+  });
+});
+
+// ── §8 pace, projection, tail, guidance ──────────────────────────────
+
+describe("computePace — green→amber→red by projected pace", () => {
+  test("over the moment spend meets budget; amber when only the projection overruns", () => {
+    expect(computePace(10_000, 10_000, 10_000)).toBe("over"); // spent == budget
+    expect(computePace(10_001, 20_000, 10_000)).toBe("over"); // spent past budget dominates
+    expect(computePace(5_000, 12_000, 10_000)).toBe("at-risk"); // projection lands over
+    expect(computePace(5_000, 10_000, 10_000)).toBe("at-risk"); // projection exactly at budget
+    expect(computePace(5_000, 8_000, 10_000)).toBe("under"); // projected to finish under
+    expect(computePace(0, 0, 10_000)).toBe("under");
+  });
+});
+
+describe("projectSpend — the components ARE the math, no double count", () => {
+  const base = { recurringPostedCents: 0, expectedTailCents: 0, elapsedDays: 10, totalDays: 30 };
+
+  test("linearly extrapolates variable spend across the remaining days", () => {
+    expect(projectSpend({ ...base, spentCents: 10_000 })).toBe(30_000); // 10k in 10/30 days → 30k
+  });
+
+  test("recurring already posted is NOT extrapolated (no double count with its tail)", () => {
+    // 6k rent posted + 4k variable in 10 days; only the 4k variable extends
+    expect(projectSpend({ ...base, spentCents: 10_000, recurringPostedCents: 6_000 })).toBe(18_000);
+  });
+
+  test("the tail is added exactly once, never smeared by pace", () => {
+    // all 6k spent is recurring; the 1.8k tail is added flat, variable remainder is 0
+    expect(
+      projectSpend({ ...base, spentCents: 6_000, recurringPostedCents: 6_000, expectedTailCents: 1_800 }),
+    ).toBe(7_800);
+  });
+
+  test("a net-refund month never projects below what is already spent", () => {
+    expect(projectSpend({ ...base, spentCents: -500 })).toBe(-500);
+  });
+
+  test("guards elapsedDays 0 and a fully-elapsed period", () => {
+    expect(projectSpend({ ...base, spentCents: 10_000, elapsedDays: 0 })).toBe(10_000);
+    expect(projectSpend({ ...base, spentCents: 10_000, elapsedDays: 30, expectedTailCents: 500 })).toBe(10_500);
+  });
+});
+
+describe("recurringSeriesIdsForCategory — the shared series↔category bridge", () => {
+  test("maps a series by its linked ACTIVE rows in the subtree, nothing else", () => {
+    const rent = createSeries({ name: "Rent", nextExpectedOn: "2026-07-20", nextExpectedAmountCents: -180_000 });
+    spendLinked("2026-06-20", -180_000, "Food > Dining", rent);
+    // a superseded link and an out-of-subtree link must not map
+    const gym = createSeries({ name: "Gym", nextExpectedOn: "2026-07-20", nextExpectedAmountCents: -5_000 });
+    spendLinked("2026-06-20", -5_000, "Food > Dining", gym, "superseded");
+    const flights = createSeries({ name: "Flights", nextExpectedOn: "2026-07-20", nextExpectedAmountCents: -20_000 });
+    spendLinked("2026-06-20", -20_000, "Travel > Flights", flights);
+
+    expect(recurringSeriesIdsForCategory(bundle.db, catId("Food"))).toEqual(new Set([rent]));
+    expect(recurringSeriesIdsForCategory(bundle.db, catId("Food > Dining"))).toEqual(new Set([rent]));
+    expect(recurringSeriesIdsForCategory(bundle.db, catId("Travel"))).toEqual(new Set([flights]));
+    expect(recurringSeriesIdsForCategory(bundle.db, catId("Food > Groceries"))).toEqual(new Set());
+  });
+});
+
+describe("budgetTail — expected-but-unposted recurring", () => {
+  test("sums future money-out occurrences strictly after today, per series, sorted", () => {
+    const rent = createSeries({ name: "Rent", nextExpectedOn: "2026-07-20", nextExpectedAmountCents: -180_000 });
+    spendLinked("2026-06-20", -180_000, "Food > Dining", rent); // establishes category = Food
+    const weekly = createSeries({
+      name: "Cleaner",
+      nextExpectedOn: "2026-07-10",
+      nextExpectedAmountCents: -5_000,
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    spendLinked("2026-06-19", -5_000, "Food > Dining", weekly);
+
+    const tail = budgetTail(bundle.db, catId("Food"), "2026-07-31", "2026-07-08");
+    // Cleaner: 07-10, 07-17, 07-24, 07-31 = 4×5k; Rent: 07-20 = 18k
+    expect(tail.totalCents).toBe(20_000 + 180_000);
+    expect(tail.series.map((s) => [s.name, s.nextDate, s.amountCents, s.occurrenceCount])).toEqual([
+      ["Cleaner", "2026-07-10", 20_000, 4],
+      ["Rent", "2026-07-20", 180_000, 1],
+    ]);
+    expect(tail.series[0]!.href).toBe(`/recurring/${weekly}`);
+  });
+
+  test("excludes today's own date, income (money-in), and non-live series", () => {
+    const onToday = createSeries({ name: "OnToday", nextExpectedOn: "2026-07-08", nextExpectedAmountCents: -3_000 });
+    spendLinked("2026-06-08", -3_000, "Food > Dining", onToday);
+    const income = createSeries({
+      name: "SideGig",
+      nextExpectedOn: "2026-07-15",
+      nextExpectedAmountCents: 90_000,
+      kind: "income",
+    });
+    spendLinked("2026-06-15", 90_000, "Food > Dining", income);
+    const dismissed = createSeries({
+      name: "OldBox",
+      nextExpectedOn: "2026-07-16",
+      nextExpectedAmountCents: -2_000,
+      status: "dismissed",
+    });
+    spendLinked("2026-06-16", -2_000, "Food > Dining", dismissed);
+
+    const tail = budgetTail(bundle.db, catId("Food"), "2026-07-31", "2026-07-08");
+    // OnToday's only in-window occurrence is 07-08 (== today, excluded); its next
+    // monthly step (08-07) is outside the period. Income and dismissed excluded.
+    expect(tail).toEqual({ totalCents: 0, series: [] });
+  });
+});
+
+describe("budgetGuidanceCents — 6-month daily rate, period-agnostic", () => {
+  test("expresses trailing spend at the budget period's length; refunds clamp to 0", () => {
+    // 18,100 over 181 days (Jan–Jun 2026) = 100/day exactly
+    spend("2026-01-15", -18_100, "Food > Dining");
+    expect(budgetGuidanceCents(bundle.db, catId("Food"), "monthly", "2026-07-15")).toBe(3_100); // 100 × 31
+    expect(budgetGuidanceCents(bundle.db, catId("Food"), "weekly", "2026-07-15")).toBe(700); // 100 × 7
+    expect(budgetGuidanceCents(bundle.db, catId("Food"), "daily", "2026-07-15")).toBe(100); // 100 × 1
+
+    // a net-refund history never suggests a negative budget
+    spend("2026-02-10", 30_000, "Travel > Flights");
+    expect(budgetGuidanceCents(bundle.db, catId("Travel"), "monthly", "2026-07-15")).toBe(0);
+  });
+});
+
+describe("budgetPaceStatuses — end-to-end pace, projection, and tail", () => {
+  test("wires elapsed days, projection, pace tier, and the tail onto each status", () => {
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 60_000,
+      startsOn: "2026-07-01",
+    });
+    spend("2026-07-03", -12_000, "Food > Dining"); // variable
+    const rent = createSeries({ name: "Rent", nextExpectedOn: "2026-07-20", nextExpectedAmountCents: -18_000 });
+    spendLinked("2026-06-20", -18_000, "Food > Dining", rent); // June link → category only, not July spend
+
+    const status = budgetPaceStatuses(bundle.db, "2026-07-08").find((s) => s.budget.id === id)!;
+    expect(status.totalDays).toBe(31);
+    expect(status.elapsedDays).toBe(8);
+    expect(status.spentCents).toBe(12_000); // June link is outside July
+    expect(status.recurringPostedCents).toBe(0);
+    expect(status.expectedTailCents).toBe(18_000);
+    // variable remainder = round(12_000 × 23/8) = 34_500 → projected 12k+18k+34.5k
+    expect(status.projectedCents).toBe(64_500);
+    expect(status.pace).toBe("at-risk"); // under today (12k<60k) but projection overruns
+    expect(status.tail.map((t) => t.name)).toEqual(["Rent"]);
+    expect(status.elapsedFraction).toBeCloseTo(8 / 31, 10);
+  });
+
+  test("pace reads 'over' the instant spend meets budget, regardless of projection", () => {
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 10_000,
+      startsOn: "2026-07-01",
+    });
+    spend("2026-07-02", -10_000, "Food > Dining");
+    const status = budgetPaceStatuses(bundle.db, "2026-07-08").find((s) => s.budget.id === id)!;
+    expect(status.pace).toBe("over");
+  });
+
+  test("a recurring charge already posted this period is not double-counted (no tail, not extrapolated)", () => {
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 60_000,
+      startsOn: "2026-07-01",
+    });
+    // Rent already posted on the 5th; its next step (Aug) is outside the period
+    const rent = createSeries({ name: "Rent", nextExpectedOn: "2026-07-05", nextExpectedAmountCents: -18_000 });
+    spendLinked("2026-07-05", -18_000, "Food > Dining", rent);
+    spend("2026-07-03", -12_000, "Food > Dining"); // variable
+
+    const status = budgetPaceStatuses(bundle.db, "2026-07-08").find((s) => s.budget.id === id)!;
+    expect(status.spentCents).toBe(30_000);
+    expect(status.recurringPostedCents).toBe(18_000);
+    expect(status.expectedTailCents).toBe(0); // already posted → no phantom tail
+    // only the 12k variable extrapolates: 12k × 23/8 = 34_500 → 30k + 0 + 34.5k
+    expect(status.projectedCents).toBe(64_500);
+    expect(status.pace).toBe("at-risk");
+  });
+
+  test("a future-dated recurring posting is counted once (spend-to-date base, not spent+tail)", () => {
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Housing"),
+      period: "monthly",
+      amountCents: 200_000,
+      startsOn: "2026-07-01",
+    });
+    // Rent series projects 07-25. A matching charge is ALSO already posted with
+    // that FUTURE in-period date (a bill logged early). recomputeSeriesStats
+    // ignores postedOn > today, so the series still projects 07-25 — the exact
+    // trap where a naive full-period base would count the 180k in BOTH spent and
+    // the tail (→ a fabricated 360k projection).
+    const rent = createSeries({ name: "Rent", nextExpectedOn: "2026-07-25", nextExpectedAmountCents: -180_000 });
+    spendLinked("2026-06-25", -180_000, "Housing > Rent", rent); // June link maps the series to Housing
+    spendLinked("2026-07-25", -180_000, "Housing > Rent", rent); // future-dated in-period posting
+
+    const status = budgetPaceStatuses(bundle.db, "2026-07-08").find((s) => s.budget.id === id)!;
+    expect(status.spentCents).toBe(180_000); // the future-dated charge has posted this period
+    expect(status.expectedTailCents).toBe(180_000); // the series still projects 07-25
+    // counted ONCE: spend-to-date is 0 (07-25 > today) so projected = tail only,
+    // floored at the 180k already posted — never 360k.
+    expect(status.projectedCents).toBe(180_000);
+    expect(status.pace).toBe("under");
+  });
+
+  test("a daily budget has a single-day period and no forward tail", () => {
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "daily",
+      amountCents: 3_000,
+      startsOn: "2026-07-01",
+    });
+    // a linked series exists, but today IS the last day → nothing left to post
+    const rent = createSeries({ name: "Rent", nextExpectedOn: "2026-07-20", nextExpectedAmountCents: -18_000 });
+    spendLinked("2026-06-20", -18_000, "Food > Dining", rent);
+    spend("2026-07-08", -1_000, "Food > Coffee");
+
+    const status = budgetPaceStatuses(bundle.db, "2026-07-08").find((s) => s.budget.id === id)!;
+    expect(status.totalDays).toBe(1);
+    expect(status.elapsedDays).toBe(1);
+    expect(status.elapsedFraction).toBe(1);
+    expect(status.expectedTailCents).toBe(0);
+    expect(status.spentCents).toBe(1_000);
+    expect(status.pace).toBe("under");
   });
 });

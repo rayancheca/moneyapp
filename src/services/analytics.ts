@@ -1,4 +1,4 @@
-import { and, eq, gte, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import { transactions } from "@/db/schema/transactions";
@@ -86,6 +86,30 @@ export function loadCategoryIndex(db: AppDatabase): CategoryIndex {
   };
 
   return { byId, topLevelOf, subtreeIds };
+}
+
+/**
+ * The recurring series whose linked ACTIVE transactions fall in a category's
+ * subtree. A series carries no category column — its category IS the category
+ * of its linked rows (schema.md). This is the ONE bridge used by both the
+ * category page's "Recurring series" list and the budget "expected tail", so a
+ * series can never appear in a budget's forecast without also appearing on its
+ * category page (drill-down contract).
+ */
+export function recurringSeriesIdsForCategory(db: AppDatabase, categoryId: string): Set<string> {
+  const subtree = loadCategoryIndex(db).subtreeIds(categoryId);
+  const rows = db
+    .selectDistinct({ seriesId: transactions.recurringSeriesId })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.status, "active"),
+        isNotNull(transactions.recurringSeriesId),
+        inArray(transactions.categoryId, subtree),
+      ),
+    )
+    .all();
+  return new Set(rows.map((r) => r.seriesId).filter((v): v is string => v !== null));
 }
 
 // ── Month helpers ────────────────────────────────────────────────────

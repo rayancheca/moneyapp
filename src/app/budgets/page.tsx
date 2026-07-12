@@ -1,12 +1,15 @@
 import type { Metadata } from "next";
 import { getDb } from "@/db/client";
 import { todayIso } from "@/lib/dates";
+import { formatDayShort } from "@/lib/format-date";
 import type { BudgetPeriodKind } from "@/db/schema/budgets";
 import {
-  budgetStatuses,
+  budgetGuidanceCents,
+  budgetPaceStatuses,
+  hasOverlappingChildBudget,
   listBudgetableCategories,
   totalBudgetedCents,
-  type BudgetStatus,
+  type BudgetPaceStatus,
 } from "@/services/budgets";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Money } from "@/components/ui/Money";
@@ -25,9 +28,9 @@ const PERIOD_SECTIONS: { period: BudgetPeriodKind; label: string }[] = [
   { period: "annual", label: "Annual" },
 ];
 
-function formatBounds(status: BudgetStatus): string {
+function formatBounds(status: BudgetPaceStatus): string {
   const { start, end } = status.bounds;
-  return start === end ? start : `${start} → ${end}`;
+  return start === end ? formatDayShort(start) : `${formatDayShort(start)} – ${formatDayShort(end)}`;
 }
 
 export default async function BudgetsPage({
@@ -39,8 +42,14 @@ export default async function BudgetsPage({
   const error = typeof raw.error === "string" ? raw.error : null;
 
   const db = getDb();
-  const statuses = budgetStatuses(db, todayIso());
+  const today = todayIso();
+  const statuses = budgetPaceStatuses(db, today);
   const categories = listBudgetableCategories(db);
+
+  // one 6-month spend guide per budget, for the inline editor
+  const guidance = new Map(
+    statuses.map((s) => [s.budget.id, budgetGuidanceCents(db, s.budget.categoryId, s.budget.period, today)]),
+  );
 
   const sections = PERIOD_SECTIONS.map((s) => ({
     ...s,
@@ -82,14 +91,18 @@ export default async function BudgetsPage({
                 <span className="text-xs text-ink-muted">
                   Total budgeted{" "}
                   <Money cents={totalBudgetedCents(section.statuses)} className="font-medium" />
-                  {section.statuses.some((s) => s.isDescendantOfBudgeted) && (
+                  {hasOverlappingChildBudget(section.statuses) && (
                     <span className="text-ink-faint"> · overlapping child budgets excluded</span>
                   )}
                 </span>
               </div>
               <ul className="grid gap-3 md:grid-cols-2">
                 {section.statuses.map((status) => (
-                  <BudgetRow key={status.budget.id} status={status} />
+                  <BudgetRow
+                    key={status.budget.id}
+                    status={status}
+                    guidanceCents={guidance.get(status.budget.id) ?? 0}
+                  />
                 ))}
               </ul>
             </section>

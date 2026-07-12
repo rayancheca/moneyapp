@@ -327,6 +327,49 @@ async function seedRecurring(db: AppDatabase): Promise<void> {
     .run();
 }
 
+/**
+ * A deterministic budget set for the §8 pace bars: Food (under → green),
+ * Subscriptions (off-pace → amber, WITH an expected-recurring tail), and Housing
+ * (already over → red). Categories are resolved BY NAME because ids are random
+ * per reseed. The tail is made non-empty by linking the seeded Netflix series to
+ * ONE old (2024-07) Streaming row: that row is off the recent ledger page and
+ * outside both the July and the 2026 windows, so it maps Netflix into
+ * Subscriptions for the tail without touching any other tab's baseline (matched
+ * counts only render on the un-baselined Recurring "all" sub-view).
+ */
+async function seedBudgets(db: AppDatabase): Promise<void> {
+  const { createBudget } = await import("../src/services/budgets");
+  const { categories } = await import("../src/db/schema/categories");
+  const { recurringSeries } = await import("../src/db/schema/recurring");
+  const { transactions } = await import("../src/db/schema/transactions");
+  const { and, asc, eq, isNull, like } = await import("drizzle-orm");
+
+  const topLevel = (name: string): string => {
+    const row = db
+      .select({ id: categories.id })
+      .from(categories)
+      .where(and(eq(categories.name, name), isNull(categories.parentId)))
+      .get();
+    if (!row) throw new Error(`seedBudgets: missing category ${name}`);
+    return row.id;
+  };
+
+  createBudget(db, { categoryId: topLevel("Food"), period: "monthly", amountCents: 80_000, startsOn: "2026-07-01" });
+  createBudget(db, { categoryId: topLevel("Subscriptions"), period: "monthly", amountCents: 4_000, startsOn: "2026-07-01" });
+  createBudget(db, { categoryId: topLevel("Housing"), period: "monthly", amountCents: 200_000, startsOn: "2026-07-01" });
+
+  const netflix = db.select({ id: recurringSeries.id }).from(recurringSeries).where(eq(recurringSeries.name, "Netflix")).get();
+  const oldRow = db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(like(transactions.rawDescription, "NETFLIX%"))
+    .orderBy(asc(transactions.postedOn))
+    .get();
+  if (netflix && oldRow) {
+    db.update(transactions).set({ recurringSeriesId: netflix.id }).where(eq(transactions.id, oldRow.id)).run();
+  }
+}
+
 /** Day count from `from` (inclusive) up to `to` (exclusive) for the price walk. */
 function dayCount(
   from: string,
@@ -397,6 +440,9 @@ export async function seedE2eDatabase(dbPath: string): Promise<SeedSummary> {
     // §7 Dashboard: a fixed set of recurring series so the upcoming-bills strip,
     // the "before your next paycheck" line, and the pace forecast have content
     await seedRecurring(db);
+
+    // §8 Budgets: pace bars in all three tones + one expected-recurring tail
+    await seedBudgets(db);
 
     // the synthetic corpus categorizes too cleanly to leave a review queue;
     // seed a deterministic clustered backlog so the §3.3 inbox + drain render
