@@ -3,6 +3,12 @@
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { merchantSummary, similarGroupIds, similarTransactions } from "@/services/merchants";
+import {
+  categorizeContext,
+  type CategorySuggestion,
+  type MatchingRule,
+  type TxnHistory,
+} from "@/services/txn-detail";
 import type { ActionResult } from "./action-types";
 
 /**
@@ -31,6 +37,12 @@ export interface SheetPanel {
    * (investment rows, empty name key, or a one-off) and the button is hidden.
    */
   similarCount: number;
+  /** the learning loop (§3.2): a one-tap category suggestion, or null */
+  suggestion: CategorySuggestion | null;
+  /** merchant / same-name spend history, or null for investment rows */
+  history: TxnHistory | null;
+  /** enabled rules that already fire on this exact row */
+  matchingRules: MatchingRule[];
 }
 
 export async function loadSheetPanel(
@@ -71,7 +83,10 @@ export async function loadSheetPanel(
     // stripped-key; [] for investment rows / empty keys)
     const similarCount = similarGroupIds(db, id).length;
 
-    return { ok: true, data: { merchant, siblings, similarCount } };
+    // the categorize learning loop: suggestion + history + matching rules
+    const { suggestion, history, matchingRules } = categorizeContext(db, id);
+
+    return { ok: true, data: { merchant, siblings, similarCount, suggestion, history, matchingRules } };
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : "Failed to load panel" };
   }

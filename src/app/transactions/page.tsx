@@ -11,6 +11,7 @@ import { aiSpend } from "@/services/settings";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { buildCategoryPickerOptions, byHierarchy } from "@/components/transactions/category-options";
+import { CategorizeMode } from "@/components/transactions/CategorizeMode";
 import { FiltersBar } from "@/components/transactions/FiltersBar";
 import { HeaderStrip } from "@/components/transactions/HeaderStrip";
 import { NoticeBanner } from "@/components/transactions/NoticeBanner";
@@ -90,41 +91,44 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
   const totalRows = counts[filters.view];
   const totalInLedger = db.select({ n: count() }).from(transactions).get()?.n ?? 0;
 
+  const ledgerColumns = {
+    id: transactions.id,
+    postedOn: transactions.postedOn,
+    rawDescription: transactions.rawDescription,
+    normalizedDescription: transactions.normalizedDescription,
+    amountCents: transactions.amountCents,
+    categoryId: transactions.categoryId,
+    merchantId: transactions.merchantId,
+    transferGroupId: transactions.transferGroupId,
+    recurringSeriesId: transactions.recurringSeriesId,
+    categorizationConfidence: transactions.categorizationConfidence,
+    needsReview: transactions.needsReview,
+    status: transactions.status,
+    notes: transactions.notes,
+    accountName: accounts.name,
+  } as const;
+
+  // content-column tiebreaks: stable across re-imports/reseeds (see below).
+  const ledgerOrder = [
+    desc(transactions.postedOn),
+    desc(transactions.amountCents),
+    desc(transactions.rawDescription),
+    asc(accounts.name),
+    asc(transactions.occurrenceIndex),
+    desc(transactions.id),
+  ] as const;
+
   const rows = db
-    .select({
-      id: transactions.id,
-      postedOn: transactions.postedOn,
-      rawDescription: transactions.rawDescription,
-      normalizedDescription: transactions.normalizedDescription,
-      amountCents: transactions.amountCents,
-      categoryId: transactions.categoryId,
-      merchantId: transactions.merchantId,
-      transferGroupId: transactions.transferGroupId,
-      recurringSeriesId: transactions.recurringSeriesId,
-      categorizationConfidence: transactions.categorizationConfidence,
-      needsReview: transactions.needsReview,
-      status: transactions.status,
-      notes: transactions.notes,
-      accountName: accounts.name,
-    })
+    .select(ledgerColumns)
     .from(transactions)
     .innerJoin(accounts, eq(transactions.accountId, accounts.id))
     .where(and(...common, viewCondition(filters.view)))
-    // content-column tiebreaks: stable across re-imports/reseeds (ids encode
-    // insertion time and dedupeHash embeds the per-seed account id — both
-    // shuffle same-day rows between otherwise identical databases). rawDescription
-    // alone doesn't disambiguate two same-day/same-amount rows that differ by
-    // account or occurrence, so account name + occurrenceIndex carry the order;
-    // id is only an absolute fallback for rows that are otherwise byte-identical
-    // (and therefore render identically, so it never moves a pixel).
-    .orderBy(
-      desc(transactions.postedOn),
-      desc(transactions.amountCents),
-      desc(transactions.rawDescription),
-      asc(accounts.name),
-      asc(transactions.occurrenceIndex),
-      desc(transactions.id),
-    )
+    // content-column tiebreaks (ledgerOrder): stable across re-imports/reseeds —
+    // ids encode insertion time and dedupeHash embeds the per-seed account id,
+    // both of which shuffle same-day rows between otherwise identical databases;
+    // account name + occurrenceIndex carry the order, id is the byte-identical
+    // fallback (which renders identically, so it never moves a pixel).
+    .orderBy(...ledgerOrder)
     .limit(PAGE_SIZE)
     .offset((filters.page - 1) * PAGE_SIZE)
     .all();
@@ -146,6 +150,23 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
   // Review is a distinct surface (§3.3): the whole backlog clustered by
   // merchant, not the filtered/paginated ledger — so it skips FiltersBar.
   const inbox = filters.view === "review" ? reviewInbox(db) : null;
+
+  // The guided one-by-one Categorize walk (§3.2) gets the WHOLE flagged backlog
+  // (capped) as ledger rows, ordered like the ledger — so a category set on the
+  // card runs the same shared correction flow.
+  const CATEGORIZE_CAP = 200;
+  const categorizeRows: LedgerRow[] =
+    filters.view === "review"
+      ? db
+          .select(ledgerColumns)
+          .from(transactions)
+          .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+          .where(and(eq(transactions.status, "active"), eq(transactions.needsReview, true)))
+          .orderBy(...ledgerOrder)
+          .limit(CATEGORIZE_CAP)
+          .all()
+          .map((r) => toLedgerRow(r, catById))
+      : [];
 
   return (
     <>
@@ -173,7 +194,12 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
         <div className="space-y-4">
           <ViewTabs filters={filters} counts={counts} />
           {inbox ? (
-            <ReviewInbox data={inbox} categories={pickerOptions} />
+            <>
+              {/* CategorizeMode renders its own launcher when there is a backlog,
+                  and keeps an in-progress walk alive even if the backlog empties */}
+              <CategorizeMode rows={categorizeRows} categories={pickerOptions} />
+              <ReviewInbox data={inbox} categories={pickerOptions} />
+            </>
           ) : (
             <>
               <FiltersBar filters={filters} accounts={accountRows} rootCategories={rootCategories} />

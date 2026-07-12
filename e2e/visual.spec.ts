@@ -10,6 +10,7 @@ const ROUTES = [
   { path: "/", name: "dashboard" },
   { path: "/accounts", name: "accounts" },
   { path: "/transactions", name: "transactions" },
+  { path: "/transactions?view=review", name: "transactions-review" }, // the categorize walk launcher + inbox
   { path: "/spending", name: "spending" },
   { path: "/spending?period=2026", name: "spending-year" },
   { path: "/budgets", name: "budgets" },

@@ -9,6 +9,7 @@ const ROUTES = [
   "/",
   "/accounts",
   "/transactions",
+  "/transactions?view=review", // categorize-walk launcher + review inbox
   "/spending",
   "/spending?period=2026",
   "/budgets",

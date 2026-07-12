@@ -79,7 +79,8 @@ function bankCategoryIds(db: AppDatabase): Map<string, string> {
   return out;
 }
 
-function loadRules(db: AppDatabase) {
+/** Enabled rules in precedence (priority asc), with parsed conditions/actions. */
+export function loadRules(db: AppDatabase) {
   return db
     .select()
     .from(rules)

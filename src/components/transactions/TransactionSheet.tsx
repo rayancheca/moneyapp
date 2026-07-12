@@ -1,25 +1,36 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, LetterBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Checkbox, Field, Input } from "@/components/ui/Field";
 import { Money } from "@/components/ui/Money";
 import { Sheet } from "@/components/ui/Sheet";
+import { Sparkline } from "@/components/ui/Sparkline";
 import { toast } from "@/components/ui/Toast";
 import { Icon } from "@/components/shell/Icon";
+import { formatCents } from "@/lib/money";
 import {
   recategorizeGroupAction,
   renameMerchantAction,
   setFlagsAction,
 } from "@/app/transactions/actions";
 import { loadSheetPanel, type SheetPanel } from "@/app/transactions/sheet-actions";
+import type { CategorySuggestion } from "@/services/txn-detail";
 import type { UndoPatch } from "@/app/transactions/action-types";
 import { CategoryPicker, type CategoryPickerOption } from "./CategoryPicker";
 import { runCategoryCorrection } from "./correct-category";
 import type { LedgerRow } from "./TransactionsLedger";
 import { offerUndoToast } from "./undo-toast";
+
+/** How the suggestion was reached — the "why you can trust this" half-sentence. */
+function suggestionReason(s: CategorySuggestion): string {
+  if (s.reason === "rule") return "matches a rule";
+  if (s.reason === "merchant") return "usual for this merchant";
+  return `${s.support ?? 0} like it before`;
+}
 
 interface TransactionSheetProps {
   txn: LedgerRow;
@@ -29,6 +40,11 @@ interface TransactionSheetProps {
   onFlip?: (delta: -1 | 1) => void;
   /** notifies the ledger to patch a row after a mutation (optimistic) */
   onRowChanged: () => void;
+  /** position in a guided walk ("3 of 40") — the Categorize mode header */
+  progress?: { index: number; total: number };
+  /** fired after a category is set (accept / pick / recategorize-all) — the
+   * Categorize mode uses it to auto-advance, so flag/notes edits don't move on */
+  onCategorized?: () => void;
 }
 
 /**
@@ -37,7 +53,15 @@ interface TransactionSheetProps {
  * stay read-only. Every mutation is a value-returning action → a Toast with a
  * lossless Undo, and a category correction offers "Create rule → applies to N".
  */
-export function TransactionSheet({ txn, categories, onClose, onFlip, onRowChanged }: TransactionSheetProps) {
+export function TransactionSheet({
+  txn,
+  categories,
+  onClose,
+  onFlip,
+  onRowChanged,
+  progress,
+  onCategorized,
+}: TransactionSheetProps) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [panel, setPanel] = useState<SheetPanel | null>(null);
@@ -72,7 +96,10 @@ export function TransactionSheet({ txn, categories, onClose, onFlip, onRowChange
       transactionId: txn.id,
       categoryId,
       categoryName: option?.name ?? "category",
-      onChanged: afterMutation,
+      onChanged: () => {
+        afterMutation();
+        onCategorized?.();
+      },
     });
   }
 
@@ -85,6 +112,7 @@ export function TransactionSheet({ txn, categories, onClose, onFlip, onRowChange
         return;
       }
       afterMutation();
+      onCategorized?.();
       const { affected, ruleId } = r.data;
       const name = option?.name ?? "category";
       offerUndo(
@@ -133,6 +161,11 @@ export function TransactionSheet({ txn, categories, onClose, onFlip, onRowChange
     <Sheet open onClose={onClose} title={panel?.merchant?.name ?? txn.normalizedDescription}>
       <div className="space-y-5">
         <header>
+          {progress ? (
+            <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-accent">
+              {progress.index + 1} of {progress.total}
+            </p>
+          ) : null}
           <div className="flex items-start justify-between gap-3">
             <Money cents={txn.amountCents} flow className="figures text-3xl font-semibold" />
             {onFlip ? (
@@ -153,6 +186,20 @@ export function TransactionSheet({ txn, categories, onClose, onFlip, onRowChange
             {txn.status !== "active" ? <Badge tone="warning">{txn.status}</Badge> : null}
           </p>
         </header>
+
+        {/* one-tap suggestion — the learning loop's fast path (§3.2) */}
+        {panel?.suggestion ? (
+          <div className="flex items-center justify-between gap-3 rounded-(--radius-card) border border-accent/40 bg-accent-soft/50 px-3 py-2">
+            <div className="min-w-0 text-sm">
+              <span className="text-ink-muted">Suggested </span>
+              <span className="font-medium">{panel.suggestion.categoryLabel}</span>
+              <span className="block text-[11px] text-ink-faint">{suggestionReason(panel.suggestion)}</span>
+            </div>
+            <Button size="sm" onClick={() => pickCategory(panel!.suggestion!.categoryId)}>
+              Accept
+            </Button>
+          </div>
+        ) : null}
 
         {/* merchant rename (§3.2) */}
         {txn.merchantId ? (
@@ -241,6 +288,60 @@ export function TransactionSheet({ txn, categories, onClose, onFlip, onRowChange
         ) : panel ? null : (
           <p className="text-xs text-ink-faint">Loading similar transactions…</p>
         )}
+
+        {/* spend history for the merchant / same-name group — context to decide */}
+        {panel?.history && panel.history.count > 1 ? (
+          <section className="rounded-(--radius-card) border border-line p-3">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-xs font-medium">History</h3>
+              <Sparkline values={panel.history.monthly.map((m) => m.cents)} tone="neutral" width={72} height={22} />
+            </div>
+            <p className="mt-1 text-xs text-ink-muted">
+              {panel.history.count} transactions · avg {formatCents(panel.history.avgCents)} ·{" "}
+              {formatCents(panel.history.totalCents)} total
+            </p>
+            {panel.history.byAccount.length > 1 ? (
+              <ul className="mt-2 space-y-1">
+                {panel.history.byAccount.map((a) => (
+                  <li key={a.accountName} className="flex items-center justify-between gap-2 text-xs text-ink-muted">
+                    <span className="min-w-0 truncate">
+                      {a.accountName} · {a.count}
+                    </span>
+                    <span className="shrink-0">{formatCents(a.cents)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
+        ) : null}
+
+        {/* rules whose conditions match this row (§3.4). Framed as "matching",
+            not "auto-categorized": the engine is first-match-wins and only runs
+            on uncategorized non-user rows, so a match here is what WOULD fire if
+            this row were re-run, not necessarily what set its current category.
+            The first (highest-precedence) rule is the one that would win. */}
+        {panel && panel.matchingRules.length > 0 ? (
+          <section className="rounded-(--radius-card) border border-line p-3">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-xs font-medium">
+                {panel.matchingRules.length === 1 ? "Matching rule" : "Matching rules"}
+              </h3>
+              <Link href="/settings" className="text-xs text-accent hover:underline">
+                Manage →
+              </Link>
+            </div>
+            <ul className="mt-2 space-y-1">
+              {panel.matchingRules.map((r, i) => (
+                <li key={r.id} className="text-xs text-ink-muted">
+                  {r.sentence}
+                  {i === 0 && panel.matchingRules.length > 1 ? (
+                    <span className="text-ink-faint"> · applies first</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
 
         {/* raw audit detail — present, not shouting (§3.2.6) */}
         <details className="text-xs text-ink-faint">

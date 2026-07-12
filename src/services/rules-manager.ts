@@ -49,7 +49,7 @@ function hasRowAction(act: RuleActions): boolean {
   );
 }
 
-interface SentenceContext {
+export interface SentenceContext {
   categoryLabel: (id: string) => string;
   merchantName: (id: string) => string;
   accountName: (id: string) => string;
@@ -100,7 +100,7 @@ export function renderRuleSentence(
   return `When a transaction ${conditionsPhrase(cond, ctx)}, ${actionsPhrase(act, ctx)}.`;
 }
 
-function sentenceContext(db: AppDatabase): SentenceContext {
+export function sentenceContext(db: AppDatabase): SentenceContext {
   const cats = db
     .select({ id: categories.id, name: categories.name, parentId: categories.parentId })
     .from(categories)
