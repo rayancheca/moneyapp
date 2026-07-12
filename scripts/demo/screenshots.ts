@@ -51,7 +51,10 @@ async function newPage(browser: Browser, base: string): Promise<Page> {
 
 async function shoot(page: Page, route: string, file: string, fullPage = true): Promise<void> {
   await page.goto(route);
-  await page.locator("header button svg").waitFor(); // hydrated
+  // hydrated — wait on the theme toggle BY NAME, not `header button svg`: pages
+  // with a CalendarGrid (spending heatmap, recurring calendar) or a mounted Sheet
+  // put more than one svg under a <header>, which trips strict mode.
+  await page.getByRole("button", { name: /Switch to (light|dark) theme/ }).waitFor();
   await page.waitForTimeout(350); // charts settle
   await page.screenshot({ path: path.join(OUT, file), fullPage });
   process.stdout.write(`  ${file}\n`);
@@ -101,17 +104,41 @@ async function main(): Promise<void> {
   for (const s of ["", "-wal", "-shm"]) fs.rmSync(`${freshDb}${s}`, { force: true });
 
   // ── Act 2: the fully-loaded demo database (2 years, 256 files) ────────
-  const serverB = startServer(path.join(process.cwd(), "data", "moneyapp.db"), 3220);
+  // SAFETY: never serve the app's real db. Default to a throwaway demo db built
+  // with `MONEYAPP_DB_PATH=data/demo-shots.db pnpm demo:load`; overridable via env.
+  const shotsDb = process.env.MONEYAPP_SHOTS_DB ?? path.join(process.cwd(), "data", "demo-shots.db");
+  if (!fs.existsSync(shotsDb)) {
+    throw new Error(
+      `No demo db at ${shotsDb}. Build one first (kept OUT of your real data):\n` +
+        `  MONEYAPP_DB_PATH=data/demo-shots.db MONEYAPP_FAKE_PRICES=1 pnpm tsx scripts/demo/load-demo.ts`,
+    );
+  }
+  const serverB = startServer(shotsDb, 3220);
   await waitForServer("http://localhost:3220/");
   const pageB = await newPage(browser, "http://localhost:3220");
 
   await shoot(pageB, "/", "04-networth-two-years.png");
   await shoot(pageB, "/transactions", "05-transactions-coverage.png", false);
+
+  // the categorize learning loop — open the guided walk on the first flagged row
+  await pageB.goto("/transactions?view=review");
+  await pageB.getByRole("button", { name: /Switch to (light|dark) theme/ }).waitFor();
+  const startWalk = pageB.getByRole("button", { name: /Start · \d+/ });
+  if (await startWalk.isVisible().catch(() => false)) {
+    await startWalk.click();
+    const dialog = pageB.getByRole("dialog");
+    await dialog.waitFor({ state: "visible" });
+    await pageB.waitForTimeout(450); // the panel (suggestion/history/rules) loads
+    await dialog.screenshot({ path: path.join(OUT, "05b-categorize-card.png") });
+    process.stdout.write("  05b-categorize-card.png\n");
+    await pageB.keyboard.press("Escape");
+  }
+
   await shoot(pageB, "/spending", "06-spending-analytics.png");
   await shoot(pageB, "/budgets", "07-budgets-alerts.png");
 
   await pageB.goto("/recurring");
-  await pageB.locator("header button svg").waitFor();
+  await pageB.getByRole("button", { name: /Switch to (light|dark) theme/ }).waitFor();
   const math = pageB.locator("details summary").first();
   if (await math.isVisible()) await math.click();
   await pageB.waitForTimeout(250);

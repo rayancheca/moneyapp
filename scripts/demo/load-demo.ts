@@ -38,6 +38,21 @@ async function main(): Promise<void> {
   if (process.env.MONEYAPP_FAKE_PRICES !== "1") {
     throw new Error("Run with MONEYAPP_FAKE_PRICES=1 so demo prices match the fixture statements");
   }
+  // SAFETY: demo:load DELETES the target before rebuilding, and DB_PATH defaults
+  // to the app's real database. Refuse to clobber an existing db unless the caller
+  // explicitly forces it or points at a throwaway path — a lost financial db is
+  // never worth a convenience default.
+  if (fs.existsSync(DB_PATH) && process.env.MONEYAPP_DEMO_FORCE !== "1") {
+    const isDefaultDb =
+      path.resolve(DB_PATH) === path.resolve(process.cwd(), "data", "moneyapp.db");
+    throw new Error(
+      `Refusing to overwrite the existing database at ${DB_PATH}` +
+        (isDefaultDb ? " — this is the app's default db (likely your REAL financial data)." : ".") +
+        `\ndemo:load rebuilds from scratch and would delete it. Either:` +
+        `\n  • build into a throwaway path:  MONEYAPP_DB_PATH=data/demo-shots.db pnpm demo:load` +
+        `\n  • or force overwrite on purpose: MONEYAPP_DEMO_FORCE=1 pnpm demo:load`,
+    );
+  }
   for (const suffix of ["", "-wal", "-shm"]) fs.rmSync(`${DB_PATH}${suffix}`, { force: true });
   const { db, sqlite } = createDatabase(DB_PATH);
   seedDatabase(db);
@@ -121,9 +136,12 @@ async function main(): Promise<void> {
   // budgets tuned to show every alert state in the demo
   const catId = (name: string): string =>
     db.select().from(categories).where(eq(categories.name, name)).get()!.id;
-  createBudget(db, { categoryId: catId("Food"), period: "monthly", amountCents: 70_000 });
+  // amounts tuned so the §8 pace bars show every tone: Food projects OVER its
+  // cap (amber/at-risk) while still under today; Housing is already OVER (red);
+  // the rest finish comfortably under (green).
+  createBudget(db, { categoryId: catId("Food"), period: "monthly", amountCents: 25_000 });
   createBudget(db, { categoryId: catId("Coffee"), period: "monthly", amountCents: 2_000 });
-  createBudget(db, { categoryId: catId("Housing"), period: "monthly", amountCents: 220_000 });
+  createBudget(db, { categoryId: catId("Housing"), period: "monthly", amountCents: 200_000 });
   createBudget(db, { categoryId: catId("Transport"), period: "weekly", amountCents: 6_000 });
   createBudget(db, { categoryId: catId("Travel"), period: "annual", amountCents: 300_000 });
   createBudget(db, { categoryId: catId("Subscriptions"), period: "monthly", amountCents: 4_000 });

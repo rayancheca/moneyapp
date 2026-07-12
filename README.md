@@ -50,6 +50,16 @@ permanently — with a direction guard so a one-off refund can never silently fl
 
 ![Transactions and coverage](docs/screenshots/05-transactions-coverage.png)
 
+**5b — Categorize the backlog one card at a time.** The review queue opens a focused card per
+flagged transaction, with a progress counter as you sweep. Each card carries a one-tap category
+suggestion (a matching rule → the merchant's default → what similar transactions were called), the
+merchant's spend history (sparkline, count, average, total, and a by-account split when it spans
+accounts), the same-merchant group with a one-gesture "recategorize all past & future," and the
+auto-rules that already fire on it. Setting a category auto-advances — the engine learns your intent
+as you go, no bulk-editing spreadsheet required.
+
+![Categorize card](docs/screenshots/05b-categorize-card.png)
+
 **6 — Spending analytics that reconcile exactly.** Stacked monthly categories, trends, and an income
 view; every number on screen links to the filterable transaction list that produces it. Transfers,
 rewards, and investment flows are excluded by construction — uncategorized spending is shown as its
@@ -57,9 +67,12 @@ own explicit bucket, never hidden.
 
 ![Spending analytics](docs/screenshots/06-spending-analytics.png)
 
-**7 — Budgets at four cadences with real alert states.** Daily, weekly, monthly, and annual budgets
-per category (subcategory spending rolls into parent budgets without double-counting the totals).
-Leftover is visible but never rolls over.
+**7 — Budgets that pace, not just alert.** Daily, weekly, monthly, and annual budgets per category,
+each bar coloured green → amber → red by its *projected* end-of-period pace — spend-to-date, plus the
+recurring charges still to post (the hollow tail), plus an extrapolated variable remainder — with a
+"today" tick so you read ahead-or-behind at a glance. Housing here is already over; Food is on pace
+to overrun. Edit the amount inline against a 6-month average; subcategory spend rolls into parent
+budgets without double-counting the totals, and leftover is visible but never rolls over.
 
 ![Budgets](docs/screenshots/07-budgets-alerts.png)
 
@@ -161,11 +174,14 @@ pnpm db:migrate                    # create + migrate + seed data/moneyapp.db
 pnpm dev                           # http://localhost:3000
 ```
 
-Try it with the full synthetic demo (2 years, 10 accounts, 256 statement files):
+Try it with the full synthetic demo (2 years, 10 accounts, 256 statement files). `demo:load` rebuilds
+its target from scratch (deleting it first), so it **refuses to clobber an existing database** — build
+it into a throwaway file and point the app there, keeping any real data untouched:
 
 ```bash
-pnpm demo:load                     # rebuilds data/moneyapp.db through the real import pipeline
-pnpm dev
+MONEYAPP_DB_PATH=data/demo.db pnpm demo:load   # 256 fixtures → the real import pipeline
+MONEYAPP_DB_PATH=data/demo.db pnpm dev          # http://localhost:3000
+# (to overwrite the default db on purpose: MONEYAPP_DEMO_FORCE=1 pnpm demo:load)
 ```
 
 Use it with your real statements: export CSV/OFX/QFX activity **and monthly statement PDFs** from
