@@ -1,13 +1,27 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { z } from "zod";
 import { getDb } from "@/db/client";
-import { todayIso } from "@/lib/dates";
+import { CHART_RANGES } from "@/lib/chart-range";
+import { monthKey, todayIso } from "@/lib/dates";
+import { formatMonthYear } from "@/lib/format-date";
 import { listAccounts } from "@/services/accounts";
-import { listPortfolio } from "@/services/holdings";
+import {
+  allocationSlices,
+  holdingRows,
+  pnlCalendarMonth,
+  portfolioOverview,
+  portfolioReturnDays,
+  portfolioSeries,
+  topMovers,
+} from "@/services/portfolio";
 import { AllocationDonut } from "@/components/investments/AllocationDonut";
-import { HoldingForm } from "@/components/investments/HoldingForm";
-import { HoldingsTable } from "@/components/investments/HoldingsTable";
-import { RefreshPricesButton } from "@/components/investments/RefreshPricesButton";
+import { HoldingActionsMenu } from "@/components/investments/HoldingActionsMenu";
+import { PnlCalendar } from "@/components/investments/PnlCalendar";
+import { PortfolioChartPanel } from "@/components/investments/PortfolioChartPanel";
+import { PortfolioHoldingsTable } from "@/components/investments/PortfolioHoldingsTable";
+import { PortfolioStats } from "@/components/investments/PortfolioStats";
+import { TopMovers } from "@/components/investments/TopMovers";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
@@ -15,20 +29,17 @@ import { SurfaceCard } from "@/components/ui/SurfaceCard";
 export const metadata: Metadata = { title: "Investments" };
 export const dynamic = "force-dynamic";
 
-const STAMP_FORMAT = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
+const rangeSchema = z.enum(CHART_RANGES).catch("ALL");
 
-function formatStamp(iso: string): string {
-  const t = Date.parse(iso);
-  return Number.isNaN(t) ? iso : STAMP_FORMAT.format(new Date(t));
-}
-
-export default function InvestmentsPage() {
+export default async function InvestmentsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const raw = await searchParams;
+  const range = rangeSchema.parse(Array.isArray(raw.range) ? raw.range[0] : raw.range);
   const db = getDb();
+  const today = todayIso();
   const investmentAccounts = listAccounts(db).filter((a) => a.type === "investment" && a.isActive);
 
   if (investmentAccounts.length === 0) {
@@ -54,62 +65,66 @@ export default function InvestmentsPage() {
     );
   }
 
-  const portfolio = listPortfolio(db);
-  const slices = portfolio.rows
-    .filter((r) => r.valueCents !== null && r.allocationPct !== null)
-    .map((r) => ({
-      symbol: r.symbol,
-      valueCents: r.valueCents!,
-      allocationPct: r.allocationPct!,
-    }))
-    .sort((a, b) => b.valueCents - a.valueCents);
+  const overview = portfolioOverview(db);
+  const points = portfolioSeries(db).map((p) => ({ day: p.day, valueCents: p.valueCents }));
+  const returnDays = portfolioReturnDays(db);
+  const rows = holdingRows(db);
+  const movers = topMovers(db);
+  const allocation = allocationSlices(db);
+  const calendarMonth = pnlCalendarMonth(db, monthKey(overview.asOf ?? today), today);
 
   return (
     <>
-      <PageHeader
-        title="Investments"
-        description="Holdings, live prices, gain/loss, and allocation. Market value drives net worth; average cost is for P/L only."
-      />
-      <div className="space-y-6">
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
-          <SurfaceCard>
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-sm font-medium">Portfolio</h2>
-              <div className="flex items-center gap-3">
-                <span className="text-[11px] text-ink-faint">
-                  {portfolio.latestFetchedAt
-                    ? `as of ${formatStamp(portfolio.latestFetchedAt)}`
-                    : "no prices cached yet"}
-                </span>
-                <RefreshPricesButton />
-              </div>
-            </div>
-            <HoldingsTable portfolio={portfolio} />
-          </SurfaceCard>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <PageHeader
+          title="Investments"
+          description={
+            overview.asOf
+              ? `Time-weighted return since ${overview.twrAnchor ? formatMonthYear(overview.twrAnchor) : "inception"}. Market value drives net worth; average cost is for P/L only.`
+              : "Holdings, live prices, gain/loss, and allocation."
+          }
+        />
+        <HoldingActionsMenu
+          accounts={investmentAccounts.map((a) => ({ id: a.id, name: a.name, subtype: a.subtype }))}
+          defaultDate={today}
+        />
+      </div>
 
+      <div className="space-y-6">
+        <SurfaceCard>
+          {points.length >= 2 ? (
+            <PortfolioChartPanel points={points} returnDays={returnDays} today={today} defaultRange={range} />
+          ) : (
+            <p className="py-6 text-sm text-ink-muted">
+              A portfolio chart appears once holdings have at least two days of cached prices.
+            </p>
+          )}
+          <PortfolioStats overview={overview} />
+        </SurfaceCard>
+
+        {(movers.winners.length > 0 || movers.losers.length > 0) && (
+          <SurfaceCard>
+            <TopMovers winners={movers.winners} losers={movers.losers} />
+          </SurfaceCard>
+        )}
+
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
+          <SurfaceCard>
+            <h2 className="mb-4 text-sm font-medium">Holdings</h2>
+            <PortfolioHoldingsTable rows={rows} />
+          </SurfaceCard>
           <SurfaceCard className="h-fit">
             <h2 className="mb-4 text-sm font-medium">Allocation</h2>
-            {slices.length > 0 ? (
-              <AllocationDonut slices={slices} totalCents={portfolio.totals.valueCents} />
-            ) : (
-              <p className="text-sm text-ink-muted">
-                Allocation appears once holdings have cached prices.
-              </p>
-            )}
+            <AllocationDonut slices={allocation.slices} totalCents={allocation.totalCents} />
           </SurfaceCard>
         </div>
 
-        <SurfaceCard>
-          <h2 className="mb-4 text-sm font-medium">Add or update a holding</h2>
-          <HoldingForm
-            accounts={investmentAccounts.map((a) => ({
-              id: a.id,
-              name: a.name,
-              subtype: a.subtype,
-            }))}
-            defaultDate={todayIso()}
-          />
-        </SurfaceCard>
+        <section aria-labelledby="pnl-heading">
+          <h2 id="pnl-heading" className="mb-3 text-sm font-medium">
+            Profit &amp; loss calendar
+          </h2>
+          <PnlCalendar initialMonth={calendarMonth} today={today} />
+        </section>
       </div>
     </>
   );

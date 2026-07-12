@@ -14,7 +14,8 @@ const ROUTES = [
   { path: "/spending?period=2026", name: "spending-year" },
   { path: "/budgets", name: "budgets" },
   { path: "/recurring", name: "recurring" },
-  { path: "/investments", name: "investments" },
+  { path: "/investments", name: "investments" }, // ALL range → a gain (green) accent
+  { path: "/investments?range=1M", name: "investments-loss" }, // 1M → a loss (red) accent
   { path: "/settings", name: "settings" },
 ] as const;
 
@@ -26,6 +27,16 @@ async function resolveCategoryUrl(page: Page): Promise<string> {
   const href = await page.locator('a[href^="/categories/"]').first().getAttribute("href");
   if (!href) throw new Error("no category link on /spending?period=2026");
   return `${href}?period=2026`;
+}
+
+/** Resolve the first holding-detail URL from /investments (the largest holding
+ *  by value — stable across reseeds since the fixture prices are fixed). */
+async function resolveInvestmentUrl(page: Page): Promise<string> {
+  await page.goto("/investments");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  const href = await page.locator('a[href^="/investments/"]').first().getAttribute("href");
+  if (!href) throw new Error("no holding link on /investments");
+  return href;
 }
 
 async function openHydrated(page: Page, path: string, theme: string, width: number) {
@@ -60,6 +71,17 @@ for (const theme of THEMES) {
       const url = await resolveCategoryUrl(page);
       await openHydrated(page, url, theme, width);
       await expect(page).toHaveScreenshot(`category-${theme}-${width}.png`, { fullPage: true });
+    });
+  }
+}
+
+// holding detail (`/investments/[assetType]/[symbol]`) — resolved dynamically
+for (const theme of THEMES) {
+  for (const width of WIDTHS) {
+    test(`holding ${theme} @${width}`, async ({ page }) => {
+      const url = await resolveInvestmentUrl(page);
+      await openHydrated(page, url, theme, width);
+      await expect(page).toHaveScreenshot(`holding-${theme}-${width}.png`, { fullPage: true });
     });
   }
 }

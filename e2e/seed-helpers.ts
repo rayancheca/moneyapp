@@ -173,6 +173,138 @@ export async function seedReviewBacklog(db: AppDatabase): Promise<number> {
 }
 
 /**
+ * Deterministic investment fixture for the §6 Investments surfaces. The synthetic
+ * brokerage is value-anchored (no per-symbol holdings or events), so the holdings
+ * table / allocation / movers / holding pages would render blank. This seeds a
+ * fully controlled, position-based portfolio with fixed prices (no randomness):
+ *   - three equities that rise over the window (gains), with a last-day move
+ *     shaped per symbol so movers has a winner AND losers, and
+ *   - an ETH crypto position that rises over the window but dips the last 30 days
+ *     — so the portfolio's ALL range is a gain (green accent) while 1M is a loss
+ *     (red accent), giving both accent-state baselines from one seed.
+ * Every value is fixed, so every run — and every baseline over it — is identical.
+ */
+interface SeedSecurity {
+  symbol: string;
+  assetType: "stock" | "etf" | "crypto";
+  startPrice: number;
+  peakPrice: number;
+  /** override the final day's close vs the prior day, cents (movers direction) */
+  lastDayDeltaCents: number;
+  /** dip the last 30 days from peak to this price (crypto weekend/loss shape) */
+  dipToPrice: number | null;
+  qtyE8: number;
+  openingE8: number;
+  avgCostCents: number;
+}
+
+const SEED_SECURITIES: readonly SeedSecurity[] = [
+  { symbol: "AAPL", assetType: "stock", startPrice: 120, peakPrice: 235, lastDayDeltaCents: 340, dipToPrice: null, qtyE8: 30_00000000, openingE8: 20_00000000, avgCostCents: 15000 },
+  { symbol: "MSFT", assetType: "stock", startPrice: 300, peakPrice: 415, lastDayDeltaCents: -520, dipToPrice: null, qtyE8: 45_00000000, openingE8: 30_00000000, avgCostCents: 34000 },
+  { symbol: "WMT", assetType: "etf", startPrice: 60, peakPrice: 96, lastDayDeltaCents: 0, dipToPrice: null, qtyE8: 120_00000000, openingE8: 90_00000000, avgCostCents: 7000 },
+  { symbol: "ETH", assetType: "crypto", startPrice: 1000, peakPrice: 3000, lastDayDeltaCents: -0, dipToPrice: 2300, qtyE8: 8_00000000, openingE8: 5_00000000, avgCostCents: 137500 },
+];
+
+export async function seedInvestments(db: AppDatabase, today: string): Promise<void> {
+  const { accounts } = await import("../src/db/schema/accounts");
+  const { institutions } = await import("../src/db/schema/institutions");
+  const { holdings, priceCache } = await import("../src/db/schema/holdings");
+  const { holdingEvents } = await import("../src/db/schema/holding-events");
+  const { createAccount } = await import("../src/services/accounts");
+  const { rebuildInvestmentHistory } = await import("../src/services/crypto-history");
+  const { addDays, compareDates } = await import("../src/lib/dates");
+  const { and, eq } = await import("drizzle-orm");
+
+  const firstDay = "2024-07-01";
+  const totalDays = dayCount(firstDay, today, addDays, compareDates); // exclusive of today
+  const dipStart = addDays(today, -30);
+  const mid = addDays(firstDay, Math.floor(totalDays / 2));
+
+  const brokerage = db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(and(eq(accounts.type, "investment"), eq(accounts.subtype, "brokerage")))
+    .get();
+  const robinhood = db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get();
+  if (!brokerage || !robinhood) return;
+
+  const cryptoId = createAccount(db, {
+    institutionId: robinhood.id,
+    name: "Robinhood Crypto",
+    type: "investment",
+    subtype: "crypto",
+  });
+
+  // fresh, controlled positions replace any (empty) synthetic ones
+  db.delete(holdings).where(eq(holdings.accountId, brokerage.id)).run();
+
+  for (const s of SEED_SECURITIES) {
+    const accountId = s.assetType === "crypto" ? cryptoId : brokerage.id;
+    const source = s.assetType === "crypto" ? ("coinbase" as const) : ("yahoo" as const);
+
+    // build a deterministic close series: linear rise to the peak, an optional
+    // 30-day dip, and a fixed last-day delta to set the day-change direction
+    const closes: { quotedOn: string; close: number }[] = [];
+    const riseDays = Math.max(1, dayCount(firstDay, s.dipToPrice !== null ? dipStart : today, addDays, compareDates));
+    let i = 0;
+    let prevClose = s.startPrice;
+    for (let day = firstDay; compareDates(day, today) <= 0; day = addDays(day, 1)) {
+      let close: number;
+      if (s.dipToPrice !== null && compareDates(day, dipStart) >= 0) {
+        const j = dayCount(dipStart, day, addDays, compareDates);
+        close = s.peakPrice - (s.peakPrice - s.dipToPrice) * (j / 30);
+      } else {
+        close = s.startPrice + (s.peakPrice - s.startPrice) * (i / riseDays);
+      }
+      if (day === today) close = prevClose + s.lastDayDeltaCents / 100;
+      const rounded = Math.round(close * 100) / 100;
+      closes.push({ quotedOn: day, close: rounded });
+      prevClose = rounded;
+      i += 1;
+    }
+    for (let k = 0; k < closes.length; k += 400) {
+      db.insert(priceCache)
+        .values(
+          closes.slice(k, k + 400).map((c) => ({
+            symbol: s.symbol,
+            assetType: s.assetType,
+            quotedOn: c.quotedOn,
+            close: c.close,
+            source,
+            fetchedAt: `${c.quotedOn}T20:00:00.000Z`,
+          })),
+        )
+        .run();
+    }
+
+    db.insert(holdingEvents)
+      .values([
+        { accountId, symbol: s.symbol, assetType: s.assetType, occurredOn: firstDay, quantityDeltaE8: s.openingE8, costCents: Math.round((s.avgCostCents * s.openingE8) / 1e8) },
+        { accountId, symbol: s.symbol, assetType: s.assetType, occurredOn: mid, quantityDeltaE8: s.qtyE8 - s.openingE8, costCents: Math.round((s.avgCostCents * (s.qtyE8 - s.openingE8)) / 1e8) },
+      ])
+      .run();
+    db.insert(holdings)
+      .values({ accountId, symbol: s.symbol, assetType: s.assetType, quantityE8: s.qtyE8, avgCostCents: s.avgCostCents, isActive: true })
+      .run();
+  }
+
+  rebuildInvestmentHistory(db, brokerage.id, today);
+  rebuildInvestmentHistory(db, cryptoId, today);
+}
+
+/** Day count from `from` (inclusive) up to `to` (exclusive) for the price walk. */
+function dayCount(
+  from: string,
+  to: string,
+  addDays: (s: string, n: number) => string,
+  compareDates: (a: string, b: string) => number,
+): number {
+  let n = 0;
+  for (let day = from; compareDates(day, to) < 0; day = addDays(day, 1)) n += 1;
+  return n;
+}
+
+/**
  * Empties every data table on the live connection (schema + migration ledger
  * kept) so the file's inode is stable for the webServer's open connection.
  * FK enforcement is toggled off for the delete sweep so table order is moot.
@@ -222,6 +354,10 @@ export async function seedE2eDatabase(dbPath: string): Promise<SeedSummary> {
     // explicit final deterministic pass — category chips/coverage must exist
     // before the visual/a11y/interaction specs render
     categorizeAll(db);
+
+    // §6 Investments: derive brokerage holdings + a controlled crypto position so
+    // the portfolio table/allocation/movers/holding pages render deterministically
+    await seedInvestments(db, E2E_FAKE_TODAY);
 
     // the synthetic corpus categorizes too cleanly to leave a review queue;
     // seed a deterministic clustered backlog so the §3.3 inbox + drain render

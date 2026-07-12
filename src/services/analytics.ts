@@ -420,34 +420,7 @@ export function transactionsHref(filter: TxnFilter): string {
   return `/transactions?${params.toString()}`;
 }
 
-export interface LedgerHrefParams {
-  /** category id, `null` for the Uncategorized bucket, or omit for any category */
-  category?: string | null;
-  merchant?: string;
-  from?: string;
-  to?: string;
-  q?: string;
-  view?: "excluded";
-  /** direction: 'out' = money out, 'in' = money in */
-  flow?: "in" | "out";
-}
-
-/**
- * Flexible /transactions deep link for the Spending tab's drill-downs
- * (ux-overhaul-plan §5): any subset of filters, day precision via from===to.
- * Mirrors the transactions query parser's param names exactly so the
- * destination shows precisely the rows behind the number clicked.
- */
-export function ledgerHref(params: LedgerHrefParams): string {
-  const sp = new URLSearchParams();
-  if (params.view) sp.set("view", params.view);
-  if (params.category === null) sp.set("category", "uncategorized");
-  else if (params.category !== undefined) sp.set("category", params.category);
-  if (params.merchant) sp.set("merchant", params.merchant);
-  if (params.from) sp.set("from", params.from);
-  if (params.to) sp.set("to", params.to);
-  if (params.q) sp.set("q", params.q);
-  if (params.flow) sp.set("flow", params.flow);
-  const query = sp.toString();
-  return query ? `/transactions?${query}` : "/transactions";
-}
+// The pure /transactions deep-link builder lives in @/lib/ledger-href so client
+// components can import it without pulling this DB-coupled module. Re-exported
+// here for the many server-side callers that already import it from analytics.
+export { ledgerHref, type LedgerHrefParams } from "@/lib/ledger-href";

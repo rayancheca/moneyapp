@@ -1,6 +1,7 @@
 import { StatCard } from "@/components/ui/StatCard";
 import { Money } from "@/components/ui/Money";
-import { ledgerHref, type DateRange } from "@/services/analytics";
+import { ledgerHref } from "@/lib/ledger-href";
+import type { DateRange } from "@/services/analytics";
 import type { PeriodTotals } from "@/services/spending";
 
 /**

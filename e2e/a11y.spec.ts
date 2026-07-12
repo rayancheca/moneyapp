@@ -14,6 +14,7 @@ const ROUTES = [
   "/budgets",
   "/recurring",
   "/investments",
+  "/investments?range=1M", // the loss (red) accent state
   "/settings",
   // preview surface for the Stage-0 primitives (un-gated by MONEYAPP_PREVIEW
   // in the harness); replaced by the real /transactions rebuild in Stage 1.
@@ -52,6 +53,18 @@ for (const theme of THEMES) {
     const href = await page.locator('a[href^="/categories/"]').first().getAttribute("href");
     if (!href) throw new Error("no category link on /spending?period=2026");
     await page.goto(`${href}?period=2026`);
+    await expectHydrated(page);
+    const results = await new AxeBuilder({ page }).analyze();
+    expect(gatingViolations(results)).toEqual([]);
+  });
+
+  // holding detail (`/investments/[assetType]/[symbol]`) — resolved dynamically
+  test(`axe: /investments/[holding] (${theme})`, async ({ page }) => {
+    await page.addInitScript((t) => window.localStorage.setItem("theme", t), theme);
+    await page.goto("/investments");
+    const href = await page.locator('a[href^="/investments/"]').first().getAttribute("href");
+    if (!href) throw new Error("no holding link on /investments");
+    await page.goto(href);
     await expectHydrated(page);
     const results = await new AxeBuilder({ page }).analyze();
     expect(gatingViolations(results)).toEqual([]);

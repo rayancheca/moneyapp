@@ -2,6 +2,7 @@ import { asc, eq } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
+import { holdings } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
 import { isIconName, type IconName } from "@/components/shell/Icon";
@@ -86,6 +87,34 @@ export function commandEntityGroups(db: AppDatabase): CommandPaletteGroup[] {
         hint: "Merchant",
         icon: "tag" as IconName,
         href: `/merchants/${m.id}`,
+      })),
+    });
+  }
+
+  // Holdings become searchable, opening the aggregated holding page. Deduped by
+  // (assetType, symbol) since the same symbol can be held in more than one account.
+  const holdingRows = db
+    .select({ symbol: holdings.symbol, assetType: holdings.assetType })
+    .from(holdings)
+    .where(eq(holdings.isActive, true))
+    .orderBy(asc(holdings.symbol))
+    .all();
+  const seen = new Set<string>();
+  const uniqueHoldings = holdingRows.filter((h) => {
+    const key = `${h.assetType}/${h.symbol}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if (uniqueHoldings.length > 0) {
+    groups.push({
+      label: "Holdings",
+      items: uniqueHoldings.map((h) => ({
+        id: `holding-${h.assetType}-${h.symbol}`,
+        label: h.symbol,
+        hint: "Holding",
+        icon: "investments" as IconName,
+        href: `/investments/${h.assetType}/${h.symbol}`,
       })),
     });
   }

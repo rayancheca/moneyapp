@@ -14,7 +14,7 @@ import {
 } from "recharts";
 import { categoryHueVar, isCategoryHueName } from "@/lib/category-palette";
 import { formatCents, formatCentsSigned } from "@/lib/money";
-import { ledgerHref } from "@/services/analytics";
+import { ledgerHref } from "@/lib/ledger-href";
 import { cashFlowSegmentHref, type CashFlow, type CashFlowSeries } from "@/services/spending";
 
 /**

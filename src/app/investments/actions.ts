@@ -7,7 +7,14 @@ import { ASSET_TYPES } from "@/db/schema/holdings";
 import { isValidIsoDate } from "@/lib/dates";
 import { parseAmountToCents } from "@/lib/money";
 import { parseQuantityToE8, upsertHolding } from "@/services/holdings";
+import {
+  pnlCalendarMonth,
+  pnlDayDetail,
+  type PnlCalendarMonth,
+  type PnlDayDetail,
+} from "@/services/portfolio";
 import { refreshPrices } from "@/services/prices";
+import type { ActionResult } from "@/app/transactions/action-types";
 
 const addHoldingFormSchema = z.object({
   accountId: z.string().min(1, "Pick an account"),
@@ -58,4 +65,32 @@ export async function refreshPricesAction(): Promise<void> {
   await refreshPrices(getDb());
   revalidatePath("/");
   revalidatePath("/investments");
+}
+
+// ─── P/L calendar (read-only slice loaders, §6.3) ──────────────────────────
+
+const monthSchema = z.object({ monthKey: z.string().regex(/^\d{4}-\d{2}$/, "Expected YYYY-MM") });
+
+export async function loadPnlMonthAction(
+  input: z.input<typeof monthSchema>,
+): Promise<ActionResult<PnlCalendarMonth>> {
+  try {
+    const { monthKey } = monthSchema.parse(input);
+    return { ok: true, data: pnlCalendarMonth(getDb(), monthKey) };
+  } catch (error: unknown) {
+    return { ok: false, error: error instanceof Error ? error.message : "Failed to load month" };
+  }
+}
+
+const daySchema = z.object({ day: z.string().refine(isValidIsoDate, "Expected a valid date") });
+
+export async function loadPnlDayAction(
+  input: z.input<typeof daySchema>,
+): Promise<ActionResult<PnlDayDetail>> {
+  try {
+    const { day } = daySchema.parse(input);
+    return { ok: true, data: pnlDayDetail(getDb(), day) };
+  } catch (error: unknown) {
+    return { ok: false, error: error instanceof Error ? error.message : "Failed to load day" };
+  }
 }

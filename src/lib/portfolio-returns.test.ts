@@ -1,0 +1,163 @@
+import { describe, expect, test } from "vitest";
+import {
+  aggregateReturn,
+  dailyReturns,
+  simpleReturnPct,
+  totalReturn,
+  type PortfolioDay,
+} from "./portfolio-returns";
+
+/** Terse builder: a day with an exact flow by default. */
+function d(day: string, navCents: number, flowCents = 0, exact = true): PortfolioDay {
+  return { day, navCents, flowCents, exact };
+}
+
+describe("dailyReturns", () => {
+  test("the first point is the anchor and yields no return", () => {
+    const returns = dailyReturns([d("2026-01-01", 10_000)]);
+    expect(returns).toEqual([]);
+  });
+
+  test("a pure market move: return is the whole NAV delta, factor is the ratio", () => {
+    const returns = dailyReturns([d("2026-01-01", 10_000), d("2026-01-02", 10_500)]);
+    expect(returns).toHaveLength(1);
+    expect(returns[0]).toMatchObject({
+      day: "2026-01-02",
+      returnCents: 500,
+      prevNavCents: 10_000,
+      flowCents: 0,
+    });
+    expect(returns[0]!.factor).toBeCloseTo(1.05, 10);
+  });
+
+  test("a mid-period deposit is NOT a gain (deposit ≠ gain)", () => {
+    // NAV jumps 100 → 200 but 100 of it was bought, not earned
+    const returns = dailyReturns([
+      d("2026-01-01", 10_000),
+      d("2026-01-02", 10_000), // flat market
+      d("2026-01-03", 20_000, 10_000), // +$100 of new stock bought
+    ]);
+    expect(returns[1]!.returnCents).toBe(0);
+    expect(returns[1]!.factor).toBeCloseTo(1, 10); // 20000 / (10000 + 10000)
+    // whole-window TWR is flat despite NAV doubling
+    expect(aggregateReturn(returns).twrPct).toBeCloseTo(0, 10);
+  });
+
+  test("phantom seed-day opening: a position appearing mid-series is not a gain", () => {
+    // an existing $1,000 book, then a $5,000 position appears (neutralized by an
+    // equal opening flow) → 0 return that day, then a real +$100 market gain chains
+    const returns = dailyReturns([
+      d("2026-01-01", 100_000, 0), // existing book
+      d("2026-01-02", 600_000, 500_000), // a $5,000 position appears, flow == its value
+      d("2026-01-03", 610_000, 0), // real +$100 market gain
+    ]);
+    expect(returns[0]!.returnCents).toBe(0); // the appearance is not a gain
+    expect(returns[0]!.factor).toBeCloseTo(1, 10); // 600000 / (100000 + 500000)
+    expect(returns[1]!.returnCents).toBe(10_000);
+    // TWR reflects only the real move, never the ~+510% the raw NAV jump implies
+    expect(aggregateReturn(returns).twrPct).toBeCloseTo((610_000 / 600_000 - 1) * 100, 8);
+  });
+
+  test("a carried close is a flat day (missing-close carry-forward)", () => {
+    const returns = dailyReturns([
+      d("2026-01-01", 10_000),
+      d("2026-01-02", 10_000), // close carried forward → NAV unchanged
+      d("2026-01-03", 10_300),
+    ]);
+    expect(returns[0]!.returnCents).toBe(0);
+    expect(returns[0]!.factor).toBe(1);
+    expect(returns[1]!.returnCents).toBe(300);
+  });
+
+  test("mixed stock+crypto weekend: only what moved contributes", () => {
+    // Sat/Sun the equity book is flat (carried), only crypto ticks up — the
+    // portfolio NAV moves by exactly the crypto move, flow 0
+    const returns = dailyReturns([
+      d("2026-01-02", 100_000), // Fri
+      d("2026-01-03", 100_250), // Sat: only crypto up $2.50
+      d("2026-01-04", 100_100), // Sun: crypto down
+    ]);
+    expect(returns[0]!.returnCents).toBe(250);
+    expect(returns[1]!.returnCents).toBe(-150);
+  });
+
+  test("a net sell (negative flow) does not read as a loss", () => {
+    // sold $3,000 of stock; NAV falls 10,000 → 7,050 but $50 of that is a gain
+    const returns = dailyReturns([d("2026-01-01", 10_000), d("2026-01-02", 7_050, -3_000)]);
+    expect(returns[0]!.returnCents).toBe(50); // 7050 - 10000 - (-3000)
+    // +$0.50 gain on the $100 that stayed invested → +0.5%, measured on prevNav
+    expect(returns[0]!.factor).toBeCloseTo(1.005, 10); // (7050 - (-3000)) / 10000
+  });
+
+  test("an empty invested base (prevNav 0, no flow) yields a flat factor, not a divide-by-zero", () => {
+    const flat = dailyReturns([d("2026-01-01", 0), d("2026-01-02", 0, 0)]);
+    expect(flat[0]!.factor).toBe(1);
+    expect(flat[0]!.returnCents).toBe(0);
+  });
+
+  test("carries the per-day exact flag through", () => {
+    const returns = dailyReturns([
+      d("2026-01-01", 10_000),
+      d("2026-01-02", 10_500, 0, false), // approximate day
+    ]);
+    expect(returns[0]!.exact).toBe(false);
+  });
+});
+
+describe("aggregateReturn", () => {
+  test("empty window is a flat, exact zero", () => {
+    expect(aggregateReturn([])).toEqual({
+      twrPct: 0,
+      gainCents: 0,
+      netFlowCents: 0,
+      startNavCents: 0,
+      endNavCents: 0,
+      exact: true,
+    });
+  });
+
+  test("chains factors and sums dollar gains + flows", () => {
+    const returns = dailyReturns([
+      d("2026-01-01", 10_000),
+      d("2026-01-02", 11_000, 500), // +$5 market on a $5 buy
+      d("2026-01-03", 12_100),
+    ]);
+    const agg = aggregateReturn(returns);
+    expect(agg.startNavCents).toBe(10_000);
+    expect(agg.endNavCents).toBe(12_100);
+    expect(agg.netFlowCents).toBe(500);
+    expect(agg.gainCents).toBe(returns[0]!.returnCents + returns[1]!.returnCents);
+    expect(agg.twrPct).toBeCloseTo((returns[0]!.factor * returns[1]!.factor - 1) * 100, 10);
+  });
+
+  test("any inexact day makes the whole window inexact", () => {
+    const returns = dailyReturns([
+      d("2026-01-01", 10_000),
+      d("2026-01-02", 10_500),
+      d("2026-01-03", 11_000, 200, false),
+    ]);
+    expect(aggregateReturn(returns).exact).toBe(false);
+  });
+
+  test("an all-exact window stays exact", () => {
+    const returns = dailyReturns([d("2026-01-01", 10_000), d("2026-01-02", 10_500)]);
+    expect(aggregateReturn(returns).exact).toBe(true);
+  });
+});
+
+describe("simpleReturnPct", () => {
+  test("gain over opening capital", () => {
+    expect(simpleReturnPct(10_000, 500)).toBeCloseTo(5, 10);
+  });
+  test("null when there is no opening capital", () => {
+    expect(simpleReturnPct(0, 500)).toBeNull();
+    expect(simpleReturnPct(-100, 500)).toBeNull();
+  });
+});
+
+describe("totalReturn", () => {
+  test("is aggregateReturn over the whole series", () => {
+    const days = [d("2026-01-01", 10_000), d("2026-01-02", 10_200), d("2026-01-03", 10_400)];
+    expect(totalReturn(days)).toEqual(aggregateReturn(dailyReturns(days)));
+  });
+});
