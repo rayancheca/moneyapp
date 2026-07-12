@@ -13,6 +13,7 @@ import {
 import { CHART_RANGES, rangeLabel, rangeStartDay, type ChartRange } from "@/lib/chart-range";
 import { compareDates } from "@/lib/dates";
 import { clampIndex, ratioToIndex, stepScrubIndex } from "@/lib/scrub";
+import { hasPartialCoverage, splitCoverageSeries } from "@/lib/scrub-series";
 
 /**
  * The reusable scrub chart (ux-overhaul-plan §6.3): range pills, a press/drag
@@ -28,6 +29,12 @@ export interface ScrubPoint {
   day: string;
   /** cents; null = no data that day (partial coverage) — the line breaks */
   valueCents: number | null;
+  /**
+   * false = a partial/estimated day (net worth: not every account covered;
+   * balance: a carried/unverified basis) → drawn dashed. Defaults to true
+   * (solid). Omitted entirely by the portfolio/holding charts, which are exact.
+   */
+  complete?: boolean;
 }
 
 export interface ScrubMark {
@@ -107,7 +114,11 @@ export function ScrubChart({
   const accent: Accent = summary ? accentOf(summary) : "flat";
   const stroke = ACCENT_STROKE[accent];
 
-  const chartData = slice.map((p) => ({ day: p.day, v: p.valueCents }));
+  // split into a solid (exact) and a dashed (partial) line so coverage reads
+  // honestly; an all-exact series (portfolio/holding) leaves `soft` all-null and
+  // renders identically to a single solid line.
+  const chartData = splitCoverageSeries(slice);
+  const showSoft = hasPartialCoverage(slice);
   const baselineCents = slice[0]?.valueCents ?? null;
   const domain = useMemo(() => yDomain(slice, marks, refLine, baselineCents), [slice, marks, refLine, baselineCents]);
 
@@ -182,7 +193,7 @@ export function ScrubChart({
             )}
             <Area
               type="monotone"
-              dataKey="v"
+              dataKey="solid"
               stroke={stroke}
               strokeWidth={2}
               fill={`url(#${gradientId})`}
@@ -191,6 +202,21 @@ export function ScrubChart({
               dot={false}
               activeDot={false}
             />
+            {showSoft && (
+              <Area
+                type="monotone"
+                dataKey="soft"
+                stroke={stroke}
+                strokeWidth={1.75}
+                strokeDasharray="4 4"
+                strokeOpacity={0.6}
+                fill="none"
+                isAnimationActive={false}
+                connectNulls={false}
+                dot={false}
+                activeDot={false}
+              />
+            )}
             {(marks ?? []).map((m, i) => (
               <ReferenceDot
                 key={`${m.day}-${i}`}

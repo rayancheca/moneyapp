@@ -41,35 +41,18 @@ test("upload statements through the UI and watch the trust layer work", async ({
     .poll(async () => Number(await reconciledCount.innerText()))
     .toBeGreaterThan(reconciledBefore);
 
-  // accounts were auto-created from the files, grouped under their
-  // institution card — expanding reveals the per-account sub-cards
+  // accounts were auto-created from the files, grouped under their institution
+  // section (§7.2 manage view: rows are always visible, editable, reorderable)
   await page.goto("/accounts");
   const capOneCard = page.getByRole("region", { name: "Capital One" });
   await expect(capOneCard).toBeVisible();
-  const capOneToggle = capOneCard.getByRole("button", { name: /Capital One/ });
-  await capOneToggle.click();
-  await expect(capOneToggle).toHaveAttribute("aria-expanded", "true");
-  await expect(page.getByText("360 Checking")).toBeVisible();
-  await expect(page.getByText("Venture X")).toBeVisible();
-  // deterministic settle (repo rule: no wall-clock waits): the disclosure's
-  // grid-rows expansion is done when the aria-controls region's height is
-  // non-zero and stable across two rAF frames
-  const regionId = await capOneToggle.getAttribute("aria-controls");
-  const expandedRegion = page.locator(`[id="${regionId}"]`);
-  await expect
-    .poll(() =>
-      expandedRegion.evaluate(async (el) => {
-        const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
-        const before = el.getBoundingClientRect().height;
-        await nextFrame();
-        await nextFrame();
-        return before > 0 && el.getBoundingClientRect().height === before;
-      }),
-    )
-    .toBe(true);
-  await expect(page).toHaveScreenshot("accounts-expanded-light.png", { fullPage: true });
+  await expect(capOneCard.getByText("360 Checking")).toBeVisible();
+  await expect(capOneCard.getByText("Venture X")).toBeVisible();
+  // each account row exposes its edit + reorder affordances
+  await expect(capOneCard.getByRole("button", { name: /Edit 360 Checking/ })).toBeVisible();
+  await expect(page).toHaveScreenshot("accounts-managed-light.png", { fullPage: true });
 
-  // sub-cards link into the enriched account detail page
+  // rows link into the enriched account detail page
   await capOneCard.getByRole("link", { name: /360 Checking/ }).click();
   await expect(page.getByRole("heading", { level: 1, name: /360 Checking/ })).toBeVisible();
   await expect(page.getByText("Balance history")).toBeVisible();

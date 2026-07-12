@@ -6,6 +6,7 @@ import { holdings } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
 import { compareDates } from "@/lib/dates";
 import { formatQuantityE8 } from "./holdings";
+import { unreviewedByAccount } from "./review-count";
 
 /**
  * Institution-grouped account cards (dashboard + accounts pages): one
@@ -25,6 +26,7 @@ export interface SparkPoint {
 
 export interface AccountCard {
   id: string;
+  institutionId: string;
   name: string;
   /** name minus a leading institution prefix — sub-cards say "Brokerage", not "Robinhood Brokerage" */
   shortName: string;
@@ -39,6 +41,8 @@ export interface AccountCard {
   spark: SparkPoint[];
   /** e.g. "8 positions · MSFT SPY AMZN…" or "14.619066 ETH"; null for non-investment */
   holdingsSummary: string | null;
+  /** active transactions awaiting review in this account — drives the §7.2 dot */
+  unreviewedCount: number;
 }
 
 export interface InstitutionGroup {
@@ -87,6 +91,7 @@ export function institutionGroups(db: AppDatabase): InstitutionGroup[] {
   const accountRows = db
     .select({
       id: accounts.id,
+      institutionId: accounts.institutionId,
       institutionName: institutions.name,
       name: accounts.name,
       type: accounts.type,
@@ -142,12 +147,15 @@ export function institutionGroups(db: AppDatabase): InstitutionGroup[] {
           .all()
           .filter((h) => h.quantityE8 > 0);
 
+  const unreviewed = unreviewedByAccount(db);
+
   const groups = new Map<string, InstitutionGroup>();
   for (const a of accountRows) {
     const series = seriesByAccount.get(a.id) ?? [];
     const latest = series.at(-1) ?? null;
     const card: AccountCard = {
       id: a.id,
+      institutionId: a.institutionId,
       name: a.name,
       shortName: shortNameOf(a.name, a.institutionName),
       type: a.type,
@@ -162,6 +170,7 @@ export function institutionGroups(db: AppDatabase): InstitutionGroup[] {
         a.type === "investment"
           ? summarizeHoldings(holdingRows.filter((h) => h.accountId === a.id))
           : null,
+      unreviewedCount: unreviewed.get(a.id) ?? 0,
     };
 
     const group = groups.get(a.institutionName) ?? {

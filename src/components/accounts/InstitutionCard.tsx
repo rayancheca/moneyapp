@@ -46,8 +46,16 @@ function SubCard({ account }: { account: AccountCardData }) {
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-[13px] font-medium group-hover/sub:text-accent">
-            {account.shortName}
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-[13px] font-medium group-hover/sub:text-accent">
+              {account.shortName}
+            </span>
+            {account.unreviewedCount > 0 && (
+              <span
+                className="inline-block size-1.5 shrink-0 rounded-full bg-info"
+                aria-label={`${account.unreviewedCount} to review`}
+              />
+            )}
           </div>
           <div className="mt-0.5 truncate text-[11px] text-ink-faint">{meta}</div>
         </div>

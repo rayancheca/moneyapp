@@ -39,6 +39,20 @@ async function resolveInvestmentUrl(page: Page): Promise<string> {
   return href;
 }
 
+/** Resolve the Robinhood Brokerage account detail (holdings table + balance
+ *  ScrubChart + ledger rows) — the richest account, and stable by the service's
+ *  institution/displayOrder/name ordering. */
+async function resolveAccountUrl(page: Page): Promise<string> {
+  await page.goto("/accounts");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  const href = await page
+    .locator('section[aria-label="Robinhood"] a[href^="/accounts/"]')
+    .first()
+    .getAttribute("href");
+  if (!href) throw new Error("no account link in the Robinhood section on /accounts");
+  return href;
+}
+
 async function openHydrated(page: Page, path: string, theme: string, width: number) {
   await page.addInitScript((t) => window.localStorage.setItem("theme", t), theme);
   await page.setViewportSize({ width, height: 900 });
@@ -82,6 +96,17 @@ for (const theme of THEMES) {
       const url = await resolveInvestmentUrl(page);
       await openHydrated(page, url, theme, width);
       await expect(page).toHaveScreenshot(`holding-${theme}-${width}.png`, { fullPage: true });
+    });
+  }
+}
+
+// account detail (`/accounts/[id]`) — resolved dynamically, fixed snapshot name
+for (const theme of THEMES) {
+  for (const width of WIDTHS) {
+    test(`account-detail ${theme} @${width}`, async ({ page }) => {
+      const url = await resolveAccountUrl(page);
+      await openHydrated(page, url, theme, width);
+      await expect(page).toHaveScreenshot(`account-detail-${theme}-${width}.png`, { fullPage: true });
     });
   }
 }

@@ -292,6 +292,41 @@ export async function seedInvestments(db: AppDatabase, today: string): Promise<v
   rebuildInvestmentHistory(db, cryptoId, today);
 }
 
+/**
+ * Deterministic recurring series for the §7 dashboard teasers (upcoming-bills
+ * strip, "before your next paycheck", spending pace's fixed components) and a
+ * live /recurring/[id] drill target. Detection is NOT run in the seed (it would
+ * tag fixture transactions and churn the transactions/spending baselines), so we
+ * insert a small, fixed set of series with NO linked rows — every date is
+ * relative to E2E_FAKE_TODAY (2026-07-08), so the strip, the paycheck line, and
+ * the forecast are identical every run. Income precedes the paycheck-adjacent
+ * bill so "$X due before your next paycheck" resolves to exactly Rent.
+ */
+async function seedRecurring(db: AppDatabase): Promise<void> {
+  const { recurringSeries } = await import("../src/db/schema/recurring");
+  const rows = [
+    { name: "Paycheck", kind: "income" as const, cadence: "biweekly" as const, nextExpectedOn: "2026-07-10", nextExpectedAmountCents: 3_200_00, lastMatchedOn: "2026-06-26", intervalDaysAvg: 14 },
+    { name: "Rent", kind: "bill" as const, cadence: "monthly" as const, nextExpectedOn: "2026-07-09", nextExpectedAmountCents: -1_800_00, lastMatchedOn: "2026-06-09", intervalDaysAvg: 30 },
+    { name: "Netflix", kind: "subscription" as const, cadence: "monthly" as const, nextExpectedOn: "2026-07-16", nextExpectedAmountCents: -15_99, lastMatchedOn: "2026-06-16", intervalDaysAvg: 30 },
+    { name: "Gym Membership", kind: "subscription" as const, cadence: "monthly" as const, nextExpectedOn: "2026-07-20", nextExpectedAmountCents: -49_00, lastMatchedOn: "2026-06-20", intervalDaysAvg: 30 },
+  ];
+  db.insert(recurringSeries)
+    .values(
+      rows.map((r) => ({
+        name: r.name,
+        kind: r.kind,
+        cadence: r.cadence,
+        intervalDaysAvg: r.intervalDaysAvg,
+        amountCentsAvg: r.nextExpectedAmountCents,
+        nextExpectedOn: r.nextExpectedOn,
+        nextExpectedAmountCents: r.nextExpectedAmountCents,
+        lastMatchedOn: r.lastMatchedOn,
+        status: "confirmed" as const,
+      })),
+    )
+    .run();
+}
+
 /** Day count from `from` (inclusive) up to `to` (exclusive) for the price walk. */
 function dayCount(
   from: string,
@@ -358,6 +393,10 @@ export async function seedE2eDatabase(dbPath: string): Promise<SeedSummary> {
     // §6 Investments: derive brokerage holdings + a controlled crypto position so
     // the portfolio table/allocation/movers/holding pages render deterministically
     await seedInvestments(db, E2E_FAKE_TODAY);
+
+    // §7 Dashboard: a fixed set of recurring series so the upcoming-bills strip,
+    // the "before your next paycheck" line, and the pace forecast have content
+    await seedRecurring(db);
 
     // the synthetic corpus categorizes too cleanly to leave a review queue;
     // seed a deterministic clustered backlog so the §3.3 inbox + drain render

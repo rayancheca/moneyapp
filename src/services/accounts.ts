@@ -107,3 +107,64 @@ export function updateAccount(db: AppDatabase, id: string, input: Partial<Accoun
     .where(eq(accounts.id, id))
     .run();
 }
+
+/**
+ * Edit-account sheet (§7.2): rename, re-home to another institution, fix the
+ * last4 — the three fields the user could not change before without SQL. Type
+ * and subtype are deliberately NOT editable here: changing an account's type
+ * flips its liability/derivation semantics and would silently rewrite its
+ * balance curve, so it stays out of a casual rename flow.
+ */
+export const accountEditSchema = z
+  .object({
+    name: z.string().trim().min(1).max(80),
+    institutionId: z.string().min(1),
+    last4: z
+      .string()
+      .trim()
+      .regex(/^\d{4}$/)
+      .nullable(),
+  })
+  .strict();
+export type AccountEditInput = z.infer<typeof accountEditSchema>;
+
+export function editAccount(db: AppDatabase, id: string, input: AccountEditInput): void {
+  const parsed = accountEditSchema.parse(input);
+  const existing = getAccount(db, id);
+  if (!existing) throw new Error(`Unknown account ${id}`);
+  db.update(accounts)
+    .set({ name: parsed.name, institutionId: parsed.institutionId, last4: parsed.last4 })
+    .where(eq(accounts.id, id))
+    .run();
+}
+
+const institutionNameSchema = z.string().trim().min(1).max(80);
+
+/** Find-or-create an institution by name — the accounts page's inline "add". */
+export function createInstitution(db: AppDatabase, name: string): string {
+  const parsed = institutionNameSchema.parse(name);
+  const existing = db
+    .select({ id: institutions.id })
+    .from(institutions)
+    .where(eq(institutions.name, parsed))
+    .get();
+  if (existing) return existing.id;
+  return db.insert(institutions).values({ name: parsed }).returning({ id: institutions.id }).get().id;
+}
+
+/**
+ * Persists a drag-reorder (§7.2): the given account ids get displayOrder 0..n in
+ * the order supplied. Ordering is scoped within an institution by the account
+ * list's sort (institution, then displayOrder), so the caller passes one
+ * institution's ids in their new order. Unknown ids are ignored — a stale drag
+ * can never renumber an account the caller didn't mean to touch.
+ */
+export function reorderAccounts(db: AppDatabase, orderedIds: readonly string[]): void {
+  const known = new Set(db.select({ id: accounts.id }).from(accounts).all().map((a) => a.id));
+  db.transaction((tx) => {
+    orderedIds.forEach((id, index) => {
+      if (!known.has(id)) return;
+      tx.update(accounts).set({ displayOrder: index }).where(eq(accounts.id, id)).run();
+    });
+  });
+}

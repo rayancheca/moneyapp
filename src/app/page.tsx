@@ -1,14 +1,25 @@
 import Link from "next/link";
 import { getDb } from "@/db/client";
-import { listAccounts } from "@/services/accounts";
-import { netWorthSeries } from "@/services/derivation";
+import { categories } from "@/db/schema/categories";
+import { todayIso } from "@/lib/dates";
+import { dashboardData } from "@/services/dashboard";
+import { recentLedgerRows } from "@/services/ledger-rows";
 import { institutionGroups } from "@/services/institution-groups";
+import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
+import { RecentTransactions } from "@/components/transactions/RecentTransactions";
 import { InstitutionCard } from "@/components/accounts/InstitutionCard";
-import { NetWorthChart } from "@/components/dashboard/NetWorthChart";
+import { InvestmentsTeaser } from "@/components/dashboard/InvestmentsTeaser";
+import { NetWorthChartPanel } from "@/components/dashboard/NetWorthChartPanel";
+import { SpendingPaceWidget } from "@/components/dashboard/SpendingPaceWidget";
+import { ToReviewCard } from "@/components/dashboard/ToReviewCard";
+import { UpcomingBillsStrip } from "@/components/dashboard/UpcomingBillsStrip";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 
 export const dynamic = "force-dynamic";
+
+const RECENT_TXN_LIMIT = 5;
+const REVIEW_PREVIEW_LIMIT = 3;
 
 const SETUP_STEPS = [
   {
@@ -31,25 +42,15 @@ const SETUP_STEPS = [
 
 export default function DashboardPage() {
   const db = getDb();
-  const accounts = listAccounts(db).filter((a) => a.isActive);
-  const groups = institutionGroups(db);
-  const series = netWorthSeries(db);
-  const latest = series.at(-1);
+  const today = todayIso();
+  const data = dashboardData(db, today);
+  const { netWorth } = data;
 
-  const assets = accounts
-    .filter((a) => !a.isLiability && a.balance)
-    .reduce((sum, a) => sum + (a.balance?.balanceCents ?? 0), 0);
-  const liabilities = accounts
-    .filter((a) => a.isLiability && a.balance)
-    .reduce((sum, a) => sum + (a.balance?.balanceCents ?? 0), 0);
-
-  if (accounts.length === 0) {
+  if (netWorth.totalAccounts === 0) {
     return (
       <div className="space-y-8">
         <header>
-          <h1 className="text-xs font-medium uppercase tracking-[0.14em] text-ink-faint">
-            Net worth
-          </h1>
+          <h1 className="text-xs font-medium uppercase tracking-[0.14em] text-ink-faint">Net worth</h1>
           <p aria-hidden className="figures mt-2 text-5xl font-semibold tracking-tight text-ink-faint">
             $&thinsp;—
           </p>
@@ -71,41 +72,69 @@ export default function DashboardPage() {
     );
   }
 
+  const groups = institutionGroups(db);
+  const pickerOptions = buildCategoryPickerOptions(db.select().from(categories).all());
+  const reviewRows = recentLedgerRows(db, { limit: REVIEW_PREVIEW_LIMIT, needsReviewOnly: true });
+  const recentRows = recentLedgerRows(db, { limit: RECENT_TXN_LIMIT });
+
   return (
     <div className="space-y-8">
-      <header>
-        <h1 className="text-xs font-medium uppercase tracking-[0.14em] text-ink-faint">Net worth</h1>
-        <p className="figures mt-2 text-5xl font-semibold tracking-tight">
-          <Money cents={latest?.totalCents ?? 0} />
-        </p>
-        <p className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-ink-muted">
-          <span>
-            Assets <Money cents={assets} className="font-medium text-ink" />
-          </span>
-          <span>
-            Liabilities{" "}
-            <Money
-              cents={liabilities === 0 ? 0 : -liabilities}
-              className={`font-medium ${liabilities === 0 ? "text-ink" : "text-negative"}`}
-            />
-          </span>
-          {latest && !latest.complete && (
-            <span className="text-warning">
-              partial · {latest.coveredAccounts}/{latest.totalAccounts} accounts covered
+      {/* 1 · net worth hero */}
+      <section aria-labelledby="net-worth-heading">
+        <header>
+          <h1 id="net-worth-heading" className="text-xs font-medium uppercase tracking-[0.14em] text-ink-faint">
+            Net worth
+          </h1>
+          <p className="figures mt-2 text-5xl font-semibold tracking-tight">
+            <Money cents={netWorth.latestCents} />
+          </p>
+          <p className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-ink-muted">
+            <span>
+              Assets <Money cents={netWorth.assetsCents} className="font-medium text-ink" />
             </span>
-          )}
-        </p>
-      </header>
+            <span>
+              Liabilities{" "}
+              <Money
+                cents={netWorth.liabilitiesCents === 0 ? 0 : -netWorth.liabilitiesCents}
+                className={`font-medium ${netWorth.liabilitiesCents === 0 ? "text-ink" : "text-negative"}`}
+              />
+            </span>
+            {!netWorth.complete && (
+              <span className="text-warning">
+                partial · {netWorth.coveredAccounts}/{netWorth.totalAccounts} accounts covered
+              </span>
+            )}
+          </p>
+        </header>
 
-      {series.length > 1 && (
-        <SurfaceCard>
-          <NetWorthChart points={series} />
-        </SurfaceCard>
-      )}
+        {netWorth.series.length > 1 && (
+          <SurfaceCard className="mt-4">
+            <NetWorthChartPanel points={netWorth.series} today={today} />
+          </SurfaceCard>
+        )}
+      </section>
 
-      <section aria-label="Accounts overview">
+      {/* 2 · teaser bento: review (list) beside the pace + investments stack */}
+      <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
+        <ToReviewCard
+          count={data.reviewCount}
+          href={data.reviewHref}
+          rows={reviewRows}
+          categories={pickerOptions}
+        />
+        <div className="space-y-6">
+          {data.pace && <SpendingPaceWidget pace={data.pace} />}
+          {data.investments && <InvestmentsTeaser data={data.investments} />}
+        </div>
+      </div>
+
+      {/* 3 · upcoming bills rail */}
+      <UpcomingBillsStrip data={data.upcoming} />
+
+      {/* 4 · accounts */}
+      <section aria-labelledby="accounts-overview-heading">
         <div className="mb-2 flex items-baseline justify-between">
-          <h2 className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
+          <h2 id="accounts-overview-heading" className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
             Accounts
           </h2>
           <Link href="/accounts" className="text-xs text-ink-muted hover:text-ink">
@@ -118,6 +147,24 @@ export default function DashboardPage() {
           ))}
         </div>
       </section>
+
+      {/* 5 · recent transactions */}
+      {recentRows.length > 0 && (
+        <section aria-labelledby="recent-txns-heading">
+          <div className="mb-2 flex items-baseline justify-between">
+            <h2 id="recent-txns-heading" className="text-sm font-medium">
+              Recent transactions
+            </h2>
+            <Link
+              href="/transactions"
+              className="text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:text-ink"
+            >
+              All →
+            </Link>
+          </div>
+          <RecentTransactions rows={recentRows} categories={pickerOptions} />
+        </section>
+      )}
     </div>
   );
 }

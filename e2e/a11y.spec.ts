@@ -69,4 +69,19 @@ for (const theme of THEMES) {
     const results = await new AxeBuilder({ page }).analyze();
     expect(gatingViolations(results)).toEqual([]);
   });
+
+  // account detail (`/accounts/[id]`) — resolved dynamically (holdings + charts)
+  test(`axe: /accounts/[id] (${theme})`, async ({ page }) => {
+    await page.addInitScript((t) => window.localStorage.setItem("theme", t), theme);
+    await page.goto("/accounts");
+    const href = await page
+      .locator('section[aria-label="Robinhood"] a[href^="/accounts/"]')
+      .first()
+      .getAttribute("href");
+    if (!href) throw new Error("no account link in the Robinhood section on /accounts");
+    await page.goto(href);
+    await expectHydrated(page);
+    const results = await new AxeBuilder({ page }).analyze();
+    expect(gatingViolations(results)).toEqual([]);
+  });
 }

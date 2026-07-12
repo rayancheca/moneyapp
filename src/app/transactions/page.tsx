@@ -19,6 +19,7 @@ import { ReviewInbox } from "@/components/transactions/ReviewInbox";
 import { TransactionsLedger, type LedgerRow } from "@/components/transactions/TransactionsLedger";
 import { ViewTabs } from "@/components/transactions/ViewTabs";
 import { reviewInbox } from "@/services/review-inbox";
+import { toLedgerRow } from "@/services/ledger-rows";
 import {
   filtersToQuery,
   parseFilters,
@@ -31,7 +32,6 @@ export const metadata: Metadata = { title: "Transactions" };
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 50;
-const LOW_CONFIDENCE_THRESHOLD = 0.8;
 
 type CategoryRow = typeof categories.$inferSelect;
 
@@ -130,32 +130,7 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
     .all();
 
   const catById = new Map(allCategories.map((c) => [c.id, c]));
-  const ledgerRows: LedgerRow[] = rows.map((r) => {
-    const cat = r.categoryId ? catById.get(r.categoryId) : undefined;
-    // children inherit the parent hue/icon where their own is unset (§2.3)
-    const parent = cat?.parentId ? catById.get(cat.parentId) : undefined;
-    return {
-      id: r.id,
-      postedOn: r.postedOn,
-      rawDescription: r.rawDescription,
-      normalizedDescription: r.normalizedDescription,
-      accountName: r.accountName,
-      amountCents: r.amountCents,
-      categoryId: r.categoryId,
-      categoryName: cat ? cat.name : null,
-      hue: cat?.color ?? parent?.color ?? null,
-      icon: cat?.icon ?? parent?.icon ?? null,
-      merchantId: r.merchantId,
-      isTransfer: r.transferGroupId !== null,
-      isRecurring: r.recurringSeriesId !== null,
-      needsReview: r.needsReview,
-      status: r.status,
-      notes: r.notes,
-      lowConfidence:
-        r.categorizationConfidence !== null && r.categorizationConfidence < LOW_CONFIDENCE_THRESHOLD,
-      suggestedCategoryIds: [],
-    };
-  });
+  const ledgerRows: LedgerRow[] = rows.map((r) => toLedgerRow(r, catById));
 
   const coverage = coverageStats(db);
   const pendingMerchants = pendingMerchantQueue(db).length;
