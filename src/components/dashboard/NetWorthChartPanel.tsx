@@ -102,6 +102,12 @@ export function NetWorthChartPanel({ points, today, defaultRange = "1Y" }: NetWo
           if (w) windowCtx.push(w, source);
           else windowCtx.reset();
         },
+        history: {
+          canGoBack: windowCtx.canGoBack,
+          canGoForward: windowCtx.canGoForward,
+          onBack: windowCtx.back,
+          onForward: windowCtx.forward,
+        },
       }
     : {};
 

@@ -19,13 +19,18 @@ import { TransactionSheet } from "./TransactionSheet";
 export function RecentTransactions({
   rows,
   categories,
+  onRowChanged,
 }: {
   rows: readonly LedgerRow[];
   categories: readonly CategoryPickerOption[];
+  /** override the after-change refresh (default: router.refresh) — the dashboard
+   *  period panel passes one that also re-fetches its windowed rows */
+  onRowChanged?: () => void;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [openId, setOpenId] = useState<string | null>(null);
+  const handleRowChanged = onRowChanged ?? (() => startTransition(() => router.refresh()));
 
   const openIndex = openId === null ? -1 : rows.findIndex((r) => r.id === openId);
   const openRow = openIndex >= 0 ? rows[openIndex]! : null;
@@ -80,7 +85,7 @@ export function RecentTransactions({
           categories={categories}
           onClose={() => setOpenId(null)}
           onFlip={rows.length > 1 ? flip : undefined}
-          onRowChanged={() => startTransition(() => router.refresh())}
+          onRowChanged={handleRowChanged}
         />
       ) : null}
     </div>

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -100,13 +100,19 @@ export interface RecentLedgerOptions {
   limit: number;
   /** when true, only rows still awaiting review (the dashboard To-Review teaser) */
   needsReviewOnly?: boolean;
+  /** inclusive lower bound on postedOn (dashboard period-activity panel) */
+  from?: string;
+  /** inclusive upper bound on postedOn */
+  to?: string;
 }
 
-/** The N newest active LedgerRows, optionally scoped to an account / review queue. */
+/** The N newest active LedgerRows, optionally scoped to an account / review queue / date window. */
 export function recentLedgerRows(db: AppDatabase, options: RecentLedgerOptions): LedgerRow[] {
   const conditions = [eq(transactions.status, "active")];
   if (options.accountId) conditions.push(eq(transactions.accountId, options.accountId));
   if (options.needsReviewOnly) conditions.push(eq(transactions.needsReview, true));
+  if (options.from) conditions.push(gte(transactions.postedOn, options.from));
+  if (options.to) conditions.push(lte(transactions.postedOn, options.to));
 
   const rows = db
     .select(LEDGER_SELECT)

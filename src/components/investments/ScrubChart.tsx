@@ -121,6 +121,17 @@ interface ScrubChartProps {
    */
   activeWindow?: { start: string; end: string } | null;
   onWindowChange?: (window: { start: string; end: string } | null, source: WindowSource) => void;
+  /**
+   * Timeframe back/forward controls (dashboard net worth, §4). When passed, a
+   * "← Back / →" cluster renders in the control row and steps through the shared
+   * window history. Omitted by the sibling charts, so they render no chips.
+   */
+  history?: {
+    canGoBack: boolean;
+    canGoForward: boolean;
+    onBack: () => void;
+    onForward: () => void;
+  };
 }
 
 const ACCENT_STROKE: Record<Accent, string> = {
@@ -153,6 +164,7 @@ export function ScrubChart({
   vivid = false,
   activeWindow,
   onWindowChange,
+  history,
 }: ScrubChartProps) {
   const [range, setRange] = useState<ChartRange>(defaultRange);
   const [internalWindow, setInternalWindow] = useState<{ start: string; end: string } | null>(null);
@@ -666,6 +678,28 @@ export function ScrubChart({
 
       {selectable ? (
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+        {history && (history.canGoBack || history.canGoForward) && (
+          <div role="group" aria-label="Timeframe history" className="flex items-center gap-1">
+            <button
+              type="button"
+              aria-label="Previous timeframe"
+              aria-disabled={!history.canGoBack}
+              onClick={() => history.canGoBack && history.onBack()}
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-ink-muted transition-[color,background-color,transform] duration-(--duration-fast) hover:bg-surface-sunken hover:text-ink active:scale-95 aria-disabled:pointer-events-none aria-disabled:opacity-40"
+            >
+              <span aria-hidden>←</span> Back
+            </button>
+            <button
+              type="button"
+              aria-label="Next timeframe"
+              aria-disabled={!history.canGoForward}
+              onClick={() => history.canGoForward && history.onForward()}
+              className="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium text-ink-muted transition-[color,background-color,transform] duration-(--duration-fast) hover:bg-surface-sunken hover:text-ink active:scale-95 aria-disabled:pointer-events-none aria-disabled:opacity-40"
+            >
+              <span aria-hidden>→</span>
+            </button>
+          </div>
+        )}
         <div role="group" aria-label="Chart range" className="flex flex-wrap gap-1.5">
           {CHART_RANGES.map((r) => pill(r, customWindow ? null : range, selectRange, vivid))}
         </div>

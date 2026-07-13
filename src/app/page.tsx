@@ -11,6 +11,7 @@ import { InstitutionCard } from "@/components/accounts/InstitutionCard";
 import { DashboardWindowProvider } from "@/components/dashboard/DashboardWindowContext";
 import { InvestmentsTeaser } from "@/components/dashboard/InvestmentsTeaser";
 import { NetWorthChartPanel } from "@/components/dashboard/NetWorthChartPanel";
+import { PeriodActivityPanel } from "@/components/dashboard/PeriodActivityPanel";
 import { SpendingPaceWidget } from "@/components/dashboard/SpendingPaceWidget";
 import { ToReviewCard } from "@/components/dashboard/ToReviewCard";
 import { UpcomingBillsStrip } from "@/components/dashboard/UpcomingBillsStrip";
@@ -110,9 +111,12 @@ export default function DashboardPage() {
         </header>
 
         {netWorth.series.length > 1 && (
-          <SurfaceCard className="mt-4">
-            <NetWorthChartPanel points={netWorth.series} today={today} />
-          </SurfaceCard>
+          <>
+            <SurfaceCard className="mt-4">
+              <NetWorthChartPanel points={netWorth.series} today={today} />
+            </SurfaceCard>
+            <PeriodActivityPanel categories={pickerOptions} />
+          </>
         )}
       </section>
 
