@@ -123,9 +123,11 @@ transfers transfer-kind); the problem is (a) fragile netting + (b) categorizatio
   −$12,260 → **+$4,808** ($17,068 refunds surfaced). Per-category breakdown (analytics.ts) stays netted
   (separate view, UI-clamped). Follow-up: surface `refundsCents` in the StatCards UI (currently tracked
   but not shown); the inflated savings-rate for the Fordham months normalizes once Part B lands.
-- [ ] **Part B — recategorize the miscategorized inflows (REAL-DB, user decisions captured).** Not yet
-  done — real-db mutation, do under the safety protocol (backup → dry-run on copy → reconcile → verify
-  net worth @2026-07-10 Δ=0 [categorization doesn't touch balances] → apply). Clusters + targets:
+- [x] **Part B — recategorized the miscategorized inflows (REAL-DB, done 2026-07-13).** 134 rows
+  recategorized via `data/recategorize-inflows.ts` (backup `data/backups/pre-recategorize-2026-07-13.db`,
+  in-txn Δ=0 + integrity guards). VERIFIED on the real db: **0 negative-spent months** (was 9-10),
+  net worth @2026-07-10 unchanged ($94,144.53), integrity ok, 9040 active txns, 52 import_files.
+  Jan 2026 now: spent $4,808 · earned $17,776 (aid counted as income) · savings 73%. Clusters + targets:
   - **Fordham "…INVOICE" lumps** (6 rows, checking, +$51,872, currently Education) → **Income › Financial
     Aid** (NEW subcat). User's words: dad pays tuition from his (untracked) account, aid is deducted and
     the balance refunded to the user — net-new money IN from outside, not the user's own money (so not a
