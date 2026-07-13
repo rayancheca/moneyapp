@@ -3,7 +3,7 @@
 > Living backlog. **Every working pass must expand + polish this list and tick off
 > what shipped.** Newest thinking near the top of each section. Dates are absolute.
 
-Last updated: 2026-07-13.
+Last updated: 2026-07-13 (pass 2).
 
 ---
 
@@ -11,10 +11,11 @@ Last updated: 2026-07-13.
 
 - [x] **Dynamic dashboard §1** — shared window-history reducer + lifted ScrubChart brush state (commit `7a97003`).
 - [x] **Dynamic dashboard §2/§4** — brush the net-worth chart → linked activity panel + ← Back/→ timeframe history (commit `913a090`).
-- [ ] **Per-account coverage report** — done as analysis (see "Data coverage" below); no code artifact.
-- [ ] **Chart: show WHICH accounts are covered at each point** (not just "5/9"). Same single line. Scrub/tooltip should name the exact covered + missing accounts for that day. *In progress.*
-- [ ] **Account name editable on the detail page** (`/accounts/[id]`) — first slice of "nothing read-only".
-- [ ] **Import Chase ····3522 statements 2022-09 → 2024-07** into the real db (extends history back from the current 2024-07 floor). *See "Statement import" below.*
+- [x] **Per-account coverage report** — done as analysis (see "Data coverage" below).
+- [x] **Chart names WHICH accounts are missing** at each partial day (tooltip "● Partial · no Robinhood Crypto, Venture X", header, hero, aria) — commit `194477d`.
+- [x] **Account editable from its detail page** (name / institution / last4) — commit `8b66cda`. First slice of "nothing read-only".
+- [ ] **Import Chase ····3522 statements 2022-09 → 2024-07** — DEFERRED to a fresh session (user's call); needs a new Chase-checking PDF parser. Fully staged + spec'd below.
+- [ ] **Chart: also name the COVERED accounts** (not just missing) — maybe an expandable "coverage" line, or list covered when few are covered. Low priority; missing is the useful direction.
 
 ## 🧭 The big vision: "nothing read-only — everything editable, linkable, movable"
 
@@ -69,26 +70,59 @@ and derived backward.
   data has **no statement_periods** (came from a CSV/QFX or a rebuild).
 - **Discover last4 is unknown ("????")** — a name to fix once a Discover statement is on hand.
 
-## 🧾 Statement import — Chase ····3522 (2022-09 → 2024-07)
+## 🧾 Statement import — Chase ····3522 (2022-09 → 2024-07) — NEEDS A REAL PARSER (fresh session)
 
-21 monthly Chase checking PDFs provided (gaps at 2023-07 and 2023-11 — likely just the
-statement-cycle cadence; confirm with the user or from the next-statement's opening balance).
+**Decision 2026-07-13:** do this in a **fresh focused session** (real financial data + a new
+parser = its own careful unit). Everything below is staged and ready.
 
-Pipeline: `src/services/import/service.ts` + `profiles/pdf-profile.ts` (generic
-`statementPdf` handles deposit/checking statements with a balance column). Registry in
-`profiles/index.ts`. UI action: `src/app/imports/actions.ts` `uploadStatementsAction`.
+**Why a parser (not "Claude reads it"):** the app's PDF parser (`profiles/pdf-profile.ts`,
+`statementPdf`) only matches the app's SYNTHETIC fixture header (`PERIOD_RE =
+/Statement Period:\s*MM/DD/YYYY\s*-\s*MM/DD/YYYY/`). Real Chase statements use a different
+layout, so all 21 fail with "No statement period found". A deterministic + reconcilable
+parser is the correct standard for money (vs. one-off LLM hand-parsing, which isn't
+reproducible). Build a new `chaseCheckingStatementPdf` profile and register it in
+`profiles/index.ts` (before the generic `statementPdf`).
 
-Plan (STRICT — real financial data):
-1. Move + dedupe PDFs (SHA-256) into the repo import storage; discard byte-dupes.
-2. **Back up** `data/moneyapp.db` → `data/backups/`.
-3. Dry-run parse each via the real profile; verify it extracts txns + begin/end balances
-   for the Chase checking format (may need a small Chase-checking tweak to the generic
-   PDF profile).
-4. Dedup against existing 2024-07+ rows (the 2024-07 statement overlaps the current floor).
-5. Apply; each statement's ending balance becomes a **verified anchor**; reconcile to the
-   cent (mismatch → quarantined gap, per the trust layer — never fabricate).
-6. Re-derive; verify net worth **today** unchanged (interior extends earlier).
-7. Verify visually on real data; commit code (parser tweaks) — db stays gitignored.
+**Already done (staged, all gitignored under data/):**
+- 21 unique statements deduped by statement-date → `data/incoming-3522/YYYYMMDD-3522.pdf`
+  (dropped a same-date re-download `20230810 (1)` — the pipeline's SHA-dedup wouldn't catch
+  a byte-different re-download of the same statement, so dedupe by date).
+- DB backed up → `data/backups/pre-3522-import-2026-07-13.db`.
+- Dry-run harness → `data/import-3522.ts` (`node --import tsx data/import-3522.ts` = dry on a
+  copy; `--apply` = real db). **Bug to fix in the harness:** also set `MONEYAPP_DB_PATH=<copy>`
+  in the dry env so any stray `getDb()` can't touch the real db.
+
+**Decoded real Chase College Checking format** (from `extractLines`):
+- Period header line: `August 25, 2022 through September 13, 2022` →
+  `/^([A-Z][a-z]+) (\d{1,2}), (\d{4}) through ([A-Z][a-z]+) (\d{1,2}), (\d{4})$/`.
+- `Account Number: 000000889063522` (endsWith 3522 → owns this account).
+- Summary section between `*start*summary` / `*end*summary`: `Beginning Balance $0.00`,
+  `Ending Balance $2,923.30` (labeled amounts).
+- Transaction detail between `*start*transaction detail` / `*end*transaction detail`, header
+  `DATE DESCRIPTION AMOUNT BALANCE`, then rows:
+  `MM/DD <description...> <amount> <running-balance>`
+  - **Date is MM/DD (NO year)** → infer year from the period (period spans a year boundary for
+    Dec→Jan statements: if the row month < period-start month, it's the period-END year).
+  - **Amounts:** commas; **negatives sometimes have a space after the minus**: `- 2.08`,
+    `- 5.98`. Normalize `-\s*` → `-`.
+  - **Wrapped rows:** a trailing token like `7782` (or a continued description) can wrap to the
+    NEXT line — the amount + balance are on the FIRST line; fold the orphan line into the prior
+    row's description. Detect a "real" row by the leading `MM/DD` + a trailing amount+balance pair.
+- **Reconciliation is exact:** each row's printed running balance = prev balance + amount, and
+  the last row's balance = `Ending Balance`. Use this to validate every row (a mismatch =
+  quarantined gap, never a fabricated number).
+
+**Plan:**
+1. TDD `chaseCheckingStatementPdf` against the real `data/incoming-3522/*.pdf` text (fixtures can
+   be small hand-made line arrays; keep the real PDFs out of git). Register it.
+2. Dry-run `data/import-3522.ts` on a COPY (with `MONEYAPP_DB_PATH=copy`, `MONEYAPP_FAKE_TODAY=2026-07-10`
+   so ONLY early history changes). Confirm: 21 parsed, each period reconciles to the cent, the
+   2024-07 statement dedups cleanly against the existing 2024-07-12+ rows, and the July/Nov-2023
+   cadence gaps surface honestly (quarantined, not fabricated).
+3. Verify net worth @2026-07-10 DELTA = 0 (today unchanged; only 2022→2024 interior added).
+4. `--apply` on the real db (already backed up). Re-verify. Commit the parser code (db gitignored).
+- Gaps: 2023-07 and 2023-11 statement dates are absent — likely just the Chase cycle (confirm from
+  each neighbor's opening balance == prior ending balance during reconciliation).
 
 ## 🎬 Deferred feature track (original items 3–5 of docs/dashboard-dynamic-and-animations-plan.md)
 
