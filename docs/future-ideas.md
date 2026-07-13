@@ -125,6 +125,23 @@ reproducible). Build a new `chaseCheckingStatementPdf` profile and register it i
 - Gaps: 2023-07 and 2023-11 statement dates are absent — likely just the Chase cycle (confirm from
   each neighbor's opening balance == prior ending balance during reconciliation).
 
+## 🗂️ Statement files — organized under `data/statements/<institution>/` (2026-07-13)
+
+Real uploads copied (not moved — `data/originals` is the app's archive the DB links to) from
+`~/Downloads` + `data/originals` into `data/statements/` (gitignored, deduped by sha256):
+`chase/` 22 (21 historical 3522 PDFs + Chase3522_Activity.CSV), `capital-one/` 5 (Venture X
+ending 4147), `sofi/` 4, `discover/` 2, `robinhood/` 2, `_unsorted/` 5.
+
+- **`_unsorted/` needs the user's ID:** `3333_transaction_download.ofx`, `4444_transaction_download.csv`,
+  `Spending Report PDF.pdf` (×2), `19f645c5-…uuid.csv`. (3333 likely matches the synthetic capone ****3333.)
+- **Data-hygiene finding:** `data/originals` (223 files) is a MIX — ~19 real uploads + **204 SYNTHETIC
+  fixtures** (fake accounts ****4321/2222/3333/7777/5555, `"Statement Period:"` template, names like
+  `chase-checking-*.pdf`, `sofi-combined-*.pdf`, `Chase8721/4321/1111_Activity`). These are leftover
+  demo/dev artifacts, NOT the user's statements, and are NOT in the real db (real accounts are
+  3522/Sapphire/VentureX-4147/Discover/Robinhood/SoFi-9067,5791). **TODO: offer to prune the 204
+  synthetic files from `data/originals`** (but first confirm none are referenced by the 13 real
+  `import_files` rows). Classifier logic lived in `data/organize.mjs` (deleted; re-derive from this note).
+
 ## 🎬 Deferred feature track (original items 3–5 of docs/dashboard-dynamic-and-animations-plan.md)
 
 - [ ] **§3 Focus mode** — click the chart → expand to a focus modal via the View
