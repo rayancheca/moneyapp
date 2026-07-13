@@ -16,9 +16,13 @@ Last updated: 2026-07-13 (pass 4 — session roadmap + loose-end follow-ups).
 > relevant session. Deployment (Turso/libSQL + auth, then iOS) stays gated until the end.
 
 **Track 4 — Loose ends (option 4)**
-- [ ] **S1 (current)** — covered-accounts chart phrasing; Robinhood Crypto `last4`=8474 + archive
-  folder migration; import the 4 orphan alt-export CSVs (they extend Discover/SoFi/RH ledgers ~1mo
-  toward the anchor, not pure subsets). Closes option 4.
+- [x] **S1 — covered-accounts chart phrasing** shipped (commit `2e26bc3`): adaptive "only …"/"missing …"
+  labels via `src/lib/coverage-label.ts`. See "Active priorities".
+- [ ] **S1b — data hygiene (DEFERRED, needs care + a decision)** — the two remaining option-4 items
+  turned out to need more than a tidy: the orphan-CSV import is UNSAFE as-is (double-counts +$28k — see
+  "Active priorities") and needs a dedup-aligned / new-rows-only reconciliation; the Robinhood last4
+  needs a slug-vs-folder decision. Both are real-db mutations → their own careful pass. Not blocking
+  Track 3.
 
 **Track 3 — "Nothing read-only" (option 3, ~6 sessions)** — the north star; each a shippable slice.
 - [ ] **S2** — shared `<InlineEditableText>` + `<InlineEditableAmount>` primitives (click→input→save on
@@ -82,10 +86,23 @@ financial data; then iOS.
   `src/lib/coverage-label.ts` helper — "only Chase ····3522" on 2022 days (1/9 covered), "missing
   Robinhood Brokerage, Robinhood Crypto +2 more" when most accounts are covered. One canonical verb
   (`kind`) across all four surfaces so wording can't drift. Verified on real data.
-- [ ] **Robinhood Crypto last4** — its statements carry account number 311070628474 (last4 8474);
-  left NULL for now (slug stays `robinhood-crypto`, per the confirmed layout). Populate if wanted.
-- [ ] **4 orphan alt-export CSVs** still in `data/originals/` (Discover-RecentActivity, robinhood_activity_report,
-  the short SoFi Checking/Savings exports) — not tracked (subsets of already-imported data). Import to track, or delete.
+- [ ] **Robinhood Crypto last4 — DEFERRED (needs a decision, cosmetic).** Statements carry account
+  311070628474 (last4 8474). Populating `accounts.last4` is trivially safe for balances, BUT
+  `accountSlug()` appends last4 → the archive slug would become `robinhood-crypto-8474`, contradicting
+  the user-confirmed `robinhood-crypto` folder layout. Options: (a) special-case the slug so the folder
+  name stays `robinhood-crypto`; (b) accept the rename + migrate the folder + repoint its 8
+  `storage_path` rows; (c) leave last4 NULL. Purely cosmetic (UI shows "····8474"); no rush.
+- [ ] **4 orphan alt-export CSVs — DEFERRED (import is UNSAFE as-is).** Discover-RecentActivity,
+  robinhood_activity_report, short SoFi Checking/Savings exports, still in `data/originals/`, untracked.
+  **Dry-run finding (2026-07-13):** they are NOT clean subsets — they overlap the existing ledger
+  (e.g. Discover-RecentActivity spans 2025-12→2026-07, over the imported Discover through 2026-06-23)
+  AND their alt-export dedupe hashes do NOT match the primary exports → importing inserts 294 txns
+  with **0 deduped**, double-counting the overlap and moving net worth @2026-07-10 by **+$28,173.87**
+  (≈ SoFi Savings $20,078 + SoFi Checking $8,150). Δ must be 0. **To import safely:** either align the
+  dedupe hash across export formats, or import ONLY the genuinely-new rows (dates newer than each
+  account's current last txn: Discover >2026-06-23, SoFi >2026-05-31, RH-brokerage the >2026-07-07
+  tail + the 2024-07→08 head), then reconcile. Staged dry/apply harness: `data/import-orphans.ts`
+  (gitignored). Real db verified untouched by the dry-run (integrity ok · 9040 txns · 52 files · $94,144.53).
 
 ## 🔁 BIG FEATURE — Recurring charges as MULTI-EPISODE (start/end, historical vs active, intermittent)
 
