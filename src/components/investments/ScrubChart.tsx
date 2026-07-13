@@ -317,6 +317,7 @@ export function ScrubChart({
   }
 
   const scrubDay = slice[effectiveIdx]!.day;
+  const scrubValueCents = slice[effectiveIdx]?.valueCents ?? null;
   // label only CLEARLY-INTERIOR peaks/troughs: an extreme within a few percent
   // of either end crowds the axis labels in the corner (and a trough near $0 sits
   // right on the x-axis), so it keeps its dot but drops its text.
@@ -405,8 +406,8 @@ export function ScrubChart({
               {vivid && (
                 <>
                   <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={stroke} stopOpacity={0.26} />
-                    <stop offset="45%" stopColor={stroke} stopOpacity={0.08} />
+                    <stop offset="0%" stopColor={stroke} stopOpacity={0.36} />
+                    <stop offset="45%" stopColor={stroke} stopOpacity={0.13} />
                     <stop offset="100%" stopColor={stroke} stopOpacity={0} />
                   </linearGradient>
                   {/* 0% stop stays ≥0.8 so the oldest (leftmost) segment clears
@@ -606,6 +607,17 @@ export function ScrubChart({
             )}
             {scrubbing && (
               <ReferenceLine x={scrubDay} stroke="var(--ink-muted)" strokeWidth={1} strokeDasharray={vivid ? "3 3" : undefined} />
+            )}
+            {/* vivid: complete the crosshair with a horizontal line at the scrubbed
+                value so it reads cleanly against the right-hand money axis */}
+            {vivid && scrubbing && scrubValueCents !== null && (
+              <ReferenceLine
+                y={scrubValueCents}
+                stroke="var(--ink-muted)"
+                strokeWidth={1}
+                strokeOpacity={0.5}
+                strokeDasharray="3 3"
+              />
             )}
             {showTooltip && (
               <Tooltip

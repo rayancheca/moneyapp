@@ -110,11 +110,11 @@ export function NetWorthChartPanel({ points, today, defaultRange = "1Y" }: NetWo
             {scrubbing && (
               <NumberRoll value={formatCents(summary.valueCents)} className="text-ink" />
             )}
-            <span className={`figures ${ACCENT_TEXT[accent]}`}>
-              <span aria-hidden>{arrow} </span>
-              {formatCentsSigned(summary.deltaCents)}
+            <span className={`inline-flex items-center gap-1 ${ACCENT_TEXT[accent]}`}>
+              <span aria-hidden>{arrow}</span>
+              <NumberRoll value={formatCentsSigned(summary.deltaCents)} />
               {summary.deltaPct !== null && (
-                <span> ({summary.deltaPct >= 0 ? "+" : ""}{summary.deltaPct.toFixed(1)}%)</span>
+                <span className="figures">({summary.deltaPct >= 0 ? "+" : ""}{summary.deltaPct.toFixed(1)}%)</span>
               )}
             </span>
             <span className="font-normal text-ink-faint">· {context}</span>
