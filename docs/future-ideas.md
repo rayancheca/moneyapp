@@ -84,9 +84,10 @@ reproducible). Build a new `chaseCheckingStatementPdf` profile and register it i
 `profiles/index.ts` (before the generic `statementPdf`).
 
 **Already done (staged, all gitignored under data/):**
-- 21 unique statements deduped by statement-date → `data/incoming-3522/YYYYMMDD-3522.pdf`
-  (dropped a same-date re-download `20230810 (1)` — the pipeline's SHA-dedup wouldn't catch
-  a byte-different re-download of the same statement, so dedupe by date).
+- 21 unique statements deduped by statement-date → `data/statements/chase/YYYYMMDD-statements-3522-.pdf`
+  (original filenames; dropped a same-date re-download `20230810 (1)` — the pipeline's SHA-dedup
+  wouldn't catch a byte-different re-download of the same statement, so dedupe by date). Moved out
+  of ~/Downloads. Institution-organized under `data/statements/<institution>/` for browsing.
 - DB backed up → `data/backups/pre-3522-import-2026-07-13.db`.
 - Dry-run harness → `data/import-3522.ts` (`node --import tsx data/import-3522.ts` = dry on a
   copy; `--apply` = real db). **Bug to fix in the harness:** also set `MONEYAPP_DB_PATH=<copy>`
