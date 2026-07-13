@@ -14,6 +14,7 @@ import { discoverItStatementPdf } from "./discover-statement-profile";
 import { ofxProfile } from "./ofx-profile";
 import { statementPdf } from "./pdf-profile";
 import { robinhoodCryptoStatementPdf } from "./robinhood-crypto-statement-profile";
+import { sofiCombinedStatementPdf } from "./sofi-statement-profile";
 import { chaseSpendingReportPdf } from "./spending-report-profile";
 
 /** Ordered registry — most specific matchers first. */
@@ -32,5 +33,6 @@ export const PROFILES: ParserProfile[] = [
   chaseCheckingStatementPdf,
   discoverItStatementPdf,
   robinhoodCryptoStatementPdf,
+  sofiCombinedStatementPdf,
   statementPdf,
 ];
