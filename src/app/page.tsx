@@ -8,6 +8,7 @@ import { institutionGroups } from "@/services/institution-groups";
 import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
 import { RecentTransactions } from "@/components/transactions/RecentTransactions";
 import { InstitutionCard } from "@/components/accounts/InstitutionCard";
+import { DashboardWindowProvider } from "@/components/dashboard/DashboardWindowContext";
 import { InvestmentsTeaser } from "@/components/dashboard/InvestmentsTeaser";
 import { NetWorthChartPanel } from "@/components/dashboard/NetWorthChartPanel";
 import { SpendingPaceWidget } from "@/components/dashboard/SpendingPaceWidget";
@@ -78,6 +79,7 @@ export default function DashboardPage() {
   const recentRows = recentLedgerRows(db, { limit: RECENT_TXN_LIMIT });
 
   return (
+    <DashboardWindowProvider>
     <div className="space-y-8">
       {/* 1 · net worth hero */}
       <section aria-labelledby="net-worth-heading">
@@ -166,5 +168,6 @@ export default function DashboardPage() {
         </section>
       )}
     </div>
+    </DashboardWindowProvider>
   );
 }

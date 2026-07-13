@@ -32,6 +32,7 @@ import {
   splitCoverageSeries,
 } from "@/lib/scrub-series";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
+import type { WindowSource } from "@/lib/window-history";
 import { ScrubTooltip, type VividChartRow } from "./ScrubTooltip";
 
 /**
@@ -110,6 +111,16 @@ interface ScrubChartProps {
   showExtremes?: boolean;
   /** premium net-worth visuals: glow line, gradient fill, reveal, tooltip, live dot */
   vivid?: boolean;
+  /**
+   * Lifts the brush/zoom window to a parent (dashboard-dynamic §1). When
+   * `onWindowChange` is passed the chart is CONTROLLED: it renders `activeWindow`
+   * and reports every window change instead of holding it in local state, so a
+   * shared history stack (back/forward) and linked panels can drive it. Both are
+   * omitted by the portfolio/holding/account charts, which stay uncontrolled and
+   * byte-identical.
+   */
+  activeWindow?: { start: string; end: string } | null;
+  onWindowChange?: (window: { start: string; end: string } | null, source: WindowSource) => void;
 }
 
 const ACCENT_STROKE: Record<Accent, string> = {
@@ -140,9 +151,15 @@ export function ScrubChart({
   selectable = false,
   showExtremes = false,
   vivid = false,
+  activeWindow,
+  onWindowChange,
 }: ScrubChartProps) {
   const [range, setRange] = useState<ChartRange>(defaultRange);
-  const [customWindow, setCustomWindow] = useState<{ start: string; end: string } | null>(null);
+  const [internalWindow, setInternalWindow] = useState<{ start: string; end: string } | null>(null);
+  // controlled when a parent supplies the change handler; otherwise the chart
+  // owns the window locally exactly as before (sibling charts stay uncontrolled)
+  const controlled = onWindowChange !== undefined;
+  const customWindow = controlled ? (activeWindow ?? null) : internalWindow;
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
   const [selection, setSelection] = useState<{ a: number; b: number } | null>(null);
   const [revealed, setRevealed] = useState(false);
@@ -237,17 +254,24 @@ export function ScrubChart({
     setScrubIndex(next);
   }
 
+  // routes a window change to the parent (controlled) or to local state — the one
+  // seam through which the brush/zoom state is lifted out of the chart
+  function setWindow(next: { start: string; end: string } | null, source: WindowSource): void {
+    if (controlled) onWindowChange!(next, source);
+    else setInternalWindow(next);
+  }
+
   function selectRange(range: ChartRange): void {
     setRange(range);
-    setCustomWindow(null);
+    setWindow(null, "pill");
     setScrubIndex(null);
     setSelection(null);
   }
 
-  function applyWindow(startDay: string, endDay: string): void {
+  function applyWindow(startDay: string, endDay: string, source: WindowSource): void {
     const lo = compareDates(startDay, endDay) <= 0 ? startDay : endDay;
     const hi = compareDates(startDay, endDay) <= 0 ? endDay : startDay;
-    setCustomWindow({ start: lo, end: hi });
+    setWindow({ start: lo, end: hi }, source);
     setScrubIndex(null);
     setSelection(null);
   }
@@ -301,7 +325,7 @@ export function ScrubChart({
     if (selectable && press?.moved && selection) {
       const a = Math.min(selection.a, selection.b);
       const b = Math.max(selection.a, selection.b);
-      if (b - a >= 1) applyWindow(slice[a]!.day, slice[b]!.day);
+      if (b - a >= 1) applyWindow(slice[a]!.day, slice[b]!.day, "brush");
       else setSelection(null);
     }
     setScrubIndex(null); // release snaps the header back to the window summary
@@ -662,7 +686,7 @@ export function ScrubChart({
               value={customWindow?.start ?? slice[0]!.day}
               min={seriesFirst}
               max={customWindow?.end ?? slice[lastIdx]!.day}
-              onChange={(e) => e.target.value && applyWindow(e.target.value, customWindow?.end ?? seriesLast)}
+              onChange={(e) => e.target.value && applyWindow(e.target.value, customWindow?.end ?? seriesLast, "input")}
               className="figures rounded-md border border-line bg-surface-raised px-1.5 py-0.5 text-xs transition-colors duration-(--duration-fast) hover:border-line-strong focus:border-accent"
             />
             <span aria-hidden>–</span>
@@ -672,7 +696,7 @@ export function ScrubChart({
               value={customWindow?.end ?? slice[lastIdx]!.day}
               min={customWindow?.start ?? slice[0]!.day}
               max={seriesLast}
-              onChange={(e) => e.target.value && applyWindow(customWindow?.start ?? seriesFirst, e.target.value)}
+              onChange={(e) => e.target.value && applyWindow(customWindow?.start ?? seriesFirst, e.target.value, "input")}
               className="figures rounded-md border border-line bg-surface-raised px-1.5 py-0.5 text-xs transition-colors duration-(--duration-fast) hover:border-line-strong focus:border-accent"
             />
           </div>
