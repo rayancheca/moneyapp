@@ -24,10 +24,14 @@ import {
  * reconcile to the same rows the ledger shows — a displayed number is always a
  * visitable list. No schema change.
  *
- * Sign convention (matching analytics.ts): spending is displayed as positive
- * "money out" cents; merchant refunds (positive amounts in expense categories)
- * net against purchases inside a bucket. Income is positive amounts in
- * income-kind categories.
+ * Sign convention: "Spent" is GROSS money out — only expense-category DEBITS
+ * (and uncategorized outflows) count, matching period-activity.ts. A positive
+ * amount in an expense category (a refund / statement credit / miscategorized
+ * inflow) is NOT spending and never nets the outflow down — it is surfaced as
+ * `refundsCents` so a big cross-period credit can't drag "Spent" nonsensically
+ * negative. Net still reconciles: netCents = earned + refunds − spent (a refund
+ * is money in). Income is positive amounts in income-kind categories.
+ * (Per-category breakdown in analytics.ts stays netted — a separate view.)
  */
 
 const TOP_SPENDING_SERIES = 7;
@@ -41,9 +45,11 @@ export type { DateRange };
 export interface PeriodTotals {
   /** income (money in) over the period, positive */
   earnedCents: number;
-  /** spending (money out) over the period, positive */
+  /** GROSS spending (expense-category debits + uncategorized outflows), positive, always ≥ 0 */
   spentCents: number;
-  /** earned − spent (can be negative) */
+  /** refunds/credits in expense categories over the period, positive — money back, not spending */
+  refundsCents: number;
+  /** true net cash flow: earned + refunds − spent (can be negative) */
   netCents: number;
   /** net ÷ earned as a percentage, or null when there was no income */
   savingsRatePct: number | null;
@@ -61,17 +67,21 @@ export function periodTotals(db: AppDatabase, range: DateRange): PeriodTotals {
   const idx = loadCategoryIndex(db);
   let earnedCents = 0;
   let spentCents = 0;
+  let refundsCents = 0;
   for (const txn of activeTxnsInRange(db, range.from, range.to)) {
     if (spendingBucket(idx, txn)) {
-      spentCents += -txn.amountCents;
+      // gross: only outflows are "spent"; a credit in an expense category is a refund
+      if (txn.amountCents < 0) spentCents += -txn.amountCents;
+      else refundsCents += txn.amountCents;
       continue;
     }
     if (isIncome(idx, txn)) earnedCents += txn.amountCents;
   }
-  const netCents = earnedCents - spentCents;
+  const netCents = earnedCents + refundsCents - spentCents;
   return {
     earnedCents,
     spentCents,
+    refundsCents,
     netCents,
     savingsRatePct: earnedCents > 0 ? Math.round((netCents / earnedCents) * 1000) / 10 : null,
   };
@@ -98,8 +108,11 @@ export interface CashFlowBucket {
   /** spending series key → cents (positive magnitude, below axis) */
   spending: Record<string, number>;
   incomeCents: number;
+  /** GROSS spending (debits only) for the bucket */
   spendingCents: number;
-  /** income − spending for the bucket */
+  /** refunds/credits in expense categories for the bucket, positive */
+  refundsCents: number;
+  /** income + refunds − spending for the bucket */
   netCents: number;
 }
 
@@ -151,16 +164,17 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
     spending: {},
     incomeCents: 0,
     spendingCents: 0,
+    refundsCents: 0,
     netCents: 0,
   }));
 
   interface Classified {
     bucket: number;
-    kind: "spend" | "income";
+    kind: "spend" | "income" | "refund";
     /** spending: top-level id or "∅"; income: subcategory id */
     catKey: string;
     name: string;
-    /** spending magnitude (positive) or income amount (positive) */
+    /** spending magnitude (positive), income amount (positive), or refund (positive) */
     cents: number;
   }
   const classified: Classified[] = [];
@@ -168,6 +182,7 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
   const incomeTotals = new Map<string, { name: string; cents: number }>();
   let earnedCents = 0;
   let spentCents = 0;
+  let refundsCents = 0;
   let actualToDateCents = 0;
 
   for (const txn of rows) {
@@ -175,6 +190,12 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
     if (bucket === undefined) continue;
     const sb = spendingBucket(idx, txn);
     if (sb) {
+      // gross: only outflows are spending; a credit in an expense category is a refund
+      if (txn.amountCents >= 0) {
+        refundsCents += txn.amountCents;
+        classified.push({ bucket, kind: "refund", catKey: sb.categoryId ?? "∅", name: sb.categoryName, cents: txn.amountCents });
+        continue;
+      }
       const out = -txn.amountCents;
       spentCents += out;
       if (compareDates(txn.postedOn, today) <= 0) actualToDateCents += out;
@@ -213,6 +234,10 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
       shell.spending[seriesKey] = (shell.spending[seriesKey] ?? 0) + c.cents;
       shell.spendingCents += c.cents;
       shell.netCents -= c.cents;
+    } else if (c.kind === "refund") {
+      // a refund is money in — it lifts net but is NOT charted as spending
+      shell.refundsCents += c.cents;
+      shell.netCents += c.cents;
     } else {
       shell.income[c.catKey] = (shell.income[c.catKey] ?? 0) + c.cents;
       shell.incomeCents += c.cents;
@@ -220,10 +245,11 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
     }
   }
 
-  const netCents = earnedCents - spentCents;
+  const netCents = earnedCents + refundsCents - spentCents;
   const totals: PeriodTotals = {
     earnedCents,
     spentCents,
+    refundsCents,
     netCents,
     savingsRatePct: earnedCents > 0 ? Math.round((netCents / earnedCents) * 1000) / 10 : null,
   };
@@ -298,7 +324,8 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
 
   for (const txn of activeTxnsInRange(db, from, to)) {
     const cell = byDay.get(txn.postedOn) ?? { spentCents: 0, incomeCents: 0 };
-    if (spendingBucket(idx, txn)) cell.spentCents += -txn.amountCents;
+    // gross: a refund (positive in an expense category) is not a day's spending
+    if (spendingBucket(idx, txn) && txn.amountCents < 0) cell.spentCents += -txn.amountCents;
     else if (isIncome(idx, txn)) cell.incomeCents += txn.amountCents;
     byDay.set(txn.postedOn, cell);
   }

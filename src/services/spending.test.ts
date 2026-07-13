@@ -101,21 +101,33 @@ function insertTxn(spec: TxnSpec): string {
 const JULY = resolvePeriod({ period: "2026-07" }, TODAY);
 
 describe("periodTotals", () => {
-  test("earned/spent/net/savings, with refund netting and exclusions", () => {
+  test("earned / GROSS spent / refunds / net / savings, with exclusions", () => {
     insertTxn({ postedOn: "2026-07-01", amountCents: 500_000, category: "Income > Salary", accountId: checkingId });
     insertTxn({ postedOn: "2026-07-03", amountCents: -5_000, category: "Food > Dining" });
     insertTxn({ postedOn: "2026-07-10", amountCents: -10_000, category: "Food > Groceries" });
-    insertTxn({ postedOn: "2026-07-12", amountCents: 2_000, category: "Food > Dining" }); // refund nets
+    insertTxn({ postedOn: "2026-07-12", amountCents: 2_000, category: "Food > Dining" }); // refund — NOT netted into spent
     insertTxn({ postedOn: "2026-07-15", amountCents: -3_000, category: null }); // uncategorized spend
     insertTxn({ postedOn: "2026-07-16", amountCents: 9_999, category: null }); // uncat credit — review queue, excluded
     insertTxn({ postedOn: "2026-07-05", amountCents: -50_000, category: "Transfers > Internal Transfer" }); // excluded
 
     expect(periodTotals(bundle.db, JULY)).toEqual({
       earnedCents: 500_000,
-      spentCents: 5_000 + 10_000 - 2_000 + 3_000, // 16_000
-      netCents: 500_000 - 16_000,
-      savingsRatePct: Math.round(((500_000 - 16_000) / 500_000) * 1000) / 10, // 96.8
+      spentCents: 5_000 + 10_000 + 3_000, // 18_000 GROSS debits — the +2_000 refund does NOT reduce it
+      refundsCents: 2_000,
+      netCents: 500_000 + 2_000 - 18_000, // 484_000 — a refund is money in, so net is unchanged
+      savingsRatePct: Math.round(((500_000 + 2_000 - 18_000) / 500_000) * 1000) / 10, // 96.8
     });
+  });
+
+  test("a big expense-category credit never drags Spent negative (gross floor)", () => {
+    // the real "FORDHAM UNIVERSI INVOICE" shape: a large inflow miscategorized as expense
+    insertTxn({ postedOn: "2026-07-03", amountCents: -4_000, category: "Food > Dining" }); // small real spend
+    insertTxn({ postedOn: "2026-07-10", amountCents: 1_600_000, category: "Food > Groceries" }); // huge credit in an expense cat
+
+    const t = periodTotals(bundle.db, JULY);
+    expect(t.spentCents).toBe(4_000); // gross outflow only — never negative
+    expect(t.refundsCents).toBe(1_600_000);
+    expect(t.netCents).toBe(1_596_000); // 0 earned + 1_600_000 refund − 4_000 spent
   });
 
   test("no income → null savings rate", () => {

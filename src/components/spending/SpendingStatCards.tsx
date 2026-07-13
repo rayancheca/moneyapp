@@ -23,8 +23,8 @@ export function SpendingStatCards({ totals, range }: { totals: PeriodTotals; ran
       <StatCard
         label="Spent"
         value={<Money cents={spentCents} />}
-        href={ledgerHref({ category: "spending", from: range.from, to: range.to })}
-        ariaLabel={`Spent this period. ${spentCents / 100} dollars. View spending transactions.`}
+        href={ledgerHref({ category: "spending", from: range.from, to: range.to, flow: "out" })}
+        ariaLabel={`Spent this period, gross. ${spentCents / 100} dollars. View spending transactions.`}
       />
       <StatCard
         label="Net"
