@@ -1,3 +1,4 @@
+import { coverageLabel } from "@/lib/coverage-label";
 import { formatDayLong } from "@/lib/format-date";
 import { formatCentsSigned } from "@/lib/money";
 
@@ -20,12 +21,8 @@ export interface VividChartRow {
   prevValue: number | null;
   /** accounts with no coverage that day — named so "partial" says exactly which */
   missingAccounts?: string[];
-}
-
-/** "SoFi Savings, Discover" or "SoFi Savings, Discover +2 more" — a compact list. */
-export function formatMissingAccounts(names: readonly string[], max = 2): string {
-  if (names.length <= max) return names.join(", ");
-  return `${names.slice(0, max).join(", ")} +${names.length - max} more`;
+  /** accounts WITH coverage that day — lets an early day say "only Chase ····3522" */
+  coveredAccountNames?: string[];
 }
 
 interface TooltipPayloadEntry {
@@ -69,6 +66,8 @@ export function ScrubTooltip({
         ? "text-positive"
         : "text-negative";
   const arrow = deltaStart === null || deltaStart === 0 ? "•" : deltaStart > 0 ? "▲" : "▼";
+  // partial days: name whichever list is more concise (covered vs missing)
+  const coverage = coverageLabel(row.coveredAccountNames ?? [], row.missingAccounts ?? []);
 
   return (
     <div className="animate-fade-rise w-[200px] rounded-lg border border-line bg-surface-raised px-3 py-2 shadow-(--shadow-overlay)">
@@ -94,8 +93,8 @@ export function ScrubTooltip({
       {!row.complete && (
         <p className="mt-1 text-[11px] text-warning">
           ● Partial
-          {row.missingAccounts && row.missingAccounts.length > 0 && (
-            <span className="text-ink-faint"> · no {formatMissingAccounts(row.missingAccounts)}</span>
+          {coverage && (
+            <span className="text-ink-faint"> · {coverage.kind} {coverage.text}</span>
           )}
         </p>
       )}

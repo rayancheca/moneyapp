@@ -271,6 +271,9 @@ export interface NetWorthPoint {
   /** names of active accounts with NO coverage that day (empty when complete) —
    *  so a partial day can say exactly which accounts it's missing, not just N/M */
   missingAccounts: string[];
+  /** names of active accounts WITH coverage that day — lets an early-history day
+   *  say "only Chase ····3522" instead of listing everything else as missing */
+  coveredAccountNames: string[];
 }
 
 /**
@@ -313,6 +316,7 @@ export function netWorthSeries(db: AppDatabase): NetWorthPoint[] {
       totalAccounts: activeIds.length,
       complete: covered.size === activeIds.length,
       missingAccounts: activeIds.filter((id) => !covered.has(id)).map((id) => nameById.get(id)!),
+      coveredAccountNames: activeIds.filter((id) => covered.has(id)).map((id) => nameById.get(id)!),
     }));
 }
 

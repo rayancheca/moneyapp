@@ -3,7 +3,64 @@
 > Living backlog. **Every working pass must expand + polish this list and tick off
 > what shipped.** Newest thinking near the top of each section. Dates are absolute.
 
-Last updated: 2026-07-13 (pass 3 — statement ingestion + per-account storage).
+Last updated: 2026-07-13 (pass 4 — session roadmap + loose-end follow-ups).
+
+---
+
+## 🗺️ Session roadmap — how the remaining work splits into sessions
+
+> User decision (2026-07-13): tackle the four tracks in priority order **4 → 3 → 2 → 1**
+> (loose ends → nothing-read-only → motion/focus → multi-episode recurring), one focused
+> session at a time, each ending with a handoff prompt for the next. Sizes are estimates —
+> sessions can merge or split. Polish items (see "Known small issues") fold into the nearest
+> relevant session. Deployment (Turso/libSQL + auth, then iOS) stays gated until the end.
+
+**Track 4 — Loose ends (option 4)**
+- [ ] **S1 (current)** — covered-accounts chart phrasing; Robinhood Crypto `last4`=8474 + archive
+  folder migration; import the 4 orphan alt-export CSVs (they extend Discover/SoFi/RH ledgers ~1mo
+  toward the anchor, not pure subsets). Closes option 4.
+
+**Track 3 — "Nothing read-only" (option 3, ~6 sessions)** — the north star; each a shippable slice.
+- [ ] **S2** — shared `<InlineEditableText>` + `<InlineEditableAmount>` primitives (click→input→save on
+  blur/enter, Esc cancels, optimistic + Toast-undo). First use: account name inline on the detail
+  page + breadcrumb. TDD the pure edit-state hook.
+- [ ] **S3** — inline-rename everywhere a name shows (merchants, categories, recurring series) via the
+  primitive + value-returning server actions + optimistic/undo. Account institution/type/subtype/last4
+  editable from the detail page with a "this re-derives history" confirm.
+- [ ] **S4** — inline transaction fields in the ledger-row expander: notes, date, amount (manual txns),
+  merchant (not only in the sheet).
+- [ ] **S5** — linkable: link txns↔txns (transfer pairs) by drag/affordance; link a txn→recurring
+  series by drag (attach) + merge series by drag. Needs the pointer-based drag hook (reduced-motion-safe,
+  keyboard alternative per a11y).
+- [ ] **S6** — linkable cont.: link merchants→categories (a merchant-default rule) inline; link accounts
+  (card ↔ payment source) for smarter transfer inference.
+- [ ] **S7** — movable: drag-reorder dashboard sections (persist `dashboard_layout` in `app_settings`);
+  drag-reorder accounts on the dashboard cards; drag a txn between categories (kanban); move/merge
+  categories (re-parent) with re-derivation.
+
+**Track 2 — Motion + focus (option 2, ~3 sessions)** — all compositor-only + reduced-motion-gated.
+- [ ] **S8** — §3 Focus mode: click the chart → expand to a focus modal via the View Transitions API
+  (shared-element morph, CSS fallback); reuse the `Sheet.tsx` native-`<dialog>` focus-trap; lazy-load.
+- [ ] **S9** — §5 Activity-hub redesign: kill the "To review / Upcoming" dead gap; bento/segmented
+  composition; everything clickable/expandable (overlaps the editability vision).
+- [ ] **S10** — §7 app-wide bold-&-playful motion: page/route transitions, card-entrance stagger, hover
+  depth, NumberRoll everywhere, spring micro-interactions, categorize checkmark-draw + confetti. May
+  split S10a (transitions + stagger) / S10b (micro-interactions).
+
+**Track 1 — Multi-episode recurring (option 1, ~4 sessions)** — schema + detection + projection + UI.
+- [ ] **S11** — `recurring_episodes` table + migration (each existing series → one open episode,
+  behavior-preserving); episode-aware `isSeriesActive` + projection (`toProjectable`/`forecast`). TDD
+  the projection math (pure, 100%).
+- [ ] **S12** — auto-detect episodes: gap-analysis split in `recurring.ts` (gap > ~2× local cadence →
+  new episode; infer per-episode cadence + day). TDD (StephanCodes→1 closed, Netflix→several).
+- [ ] **S13** — calendar + list: episode-aware day-state grammar (active solid/accent vs past-episode
+  muted/outlined); series list groups/labels active vs historical; fixes the wrong "Next expected" on
+  ended series.
+- [ ] **S14** — per-episode editor UI on the series detail page (add/remove, set start/end, cadence +
+  day, amount, one-click "mark ended"); per-episode cadence sentence. Ties into "nothing read-only".
+
+**Then (gated):** deployment — Turso/libSQL migration + auth before any public deploy of real
+financial data; then iOS.
 
 ---
 
@@ -20,7 +77,11 @@ Last updated: 2026-07-13 (pass 3 — statement ingestion + per-account storage).
   is now tracked in `import_files` (52 rows, was 13); 36 periods reconcile to the cent, 8 crypto
   value-anchors, 0 gaps; net worth @2026-07-10 unchanged (Δ=0); Chase 3522 history back to 2022-08-25;
   Discover last4 learned = 4741. See the (now historical) plan sections below. Details: [[moneyapp-statement-ingestion-2026-07-13]].
-- [ ] **Chart: also name the COVERED accounts** (not just missing) — maybe an expandable "coverage" line, or list covered when few are covered. Low priority; missing is the useful direction.
+- [x] **Chart: also name the COVERED accounts** (not just missing) — shipped as adaptive phrasing:
+  on a partial day the tooltip/header/hero/aria now name whichever list is more concise via the pure
+  `src/lib/coverage-label.ts` helper — "only Chase ····3522" on 2022 days (1/9 covered), "missing
+  Robinhood Brokerage, Robinhood Crypto +2 more" when most accounts are covered. One canonical verb
+  (`kind`) across all four surfaces so wording can't drift. Verified on real data.
 - [ ] **Robinhood Crypto last4** — its statements carry account number 311070628474 (last4 8474);
   left NULL for now (slug stays `robinhood-crypto`, per the confirmed layout). Populate if wanted.
 - [ ] **4 orphan alt-export CSVs** still in `data/originals/` (Discover-RecentActivity, robinhood_activity_report,

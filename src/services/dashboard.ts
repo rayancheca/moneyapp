@@ -36,6 +36,8 @@ export interface NetWorthSummary {
   totalAccounts: number;
   /** names of accounts missing coverage on the latest day (empty when complete) */
   missingAccounts: string[];
+  /** names of accounts WITH coverage on the latest day */
+  coveredAccountNames: string[];
 }
 
 export interface UpcomingBillItem {
@@ -125,6 +127,7 @@ function netWorthSummary(db: AppDatabase): NetWorthSummary {
     coveredAccounts: latest?.coveredAccounts ?? 0,
     totalAccounts: latest?.totalAccounts ?? 0,
     missingAccounts: latest?.missingAccounts ?? [],
+    coveredAccountNames: latest?.coveredAccountNames ?? [],
   };
 }
 

@@ -16,7 +16,7 @@ import {
   type ScrubPoint,
   type ScrubSummary,
 } from "@/components/investments/ScrubChart";
-import { formatMissingAccounts } from "@/components/investments/ScrubTooltip";
+import { coverageLabel } from "@/lib/coverage-label";
 
 /**
  * Net worth adoption of the ScrubChart (ux-overhaul-plan §7.1). The Stage-4
@@ -54,6 +54,7 @@ export function NetWorthChartPanel({ points, today, defaultRange = "1Y" }: NetWo
         valueCents: p.totalCents,
         complete: p.complete,
         missingAccounts: p.missingAccounts,
+        coveredAccountNames: p.coveredAccountNames,
       })),
     [points],
   );
@@ -82,11 +83,12 @@ export function NetWorthChartPanel({ points, today, defaultRange = "1Y" }: NetWo
     (summary: ScrubSummary): string => {
       const base = scrubValueText(formatDayLong(summary.day), formatCents(summary.valueCents), summary.deltaPct);
       const cov = coverageByDay.get(summary.day);
-      return cov && !cov.complete
-        ? `${base} — partial, ${cov.coveredAccounts} of ${cov.totalAccounts} accounts covered${
-            cov.missingAccounts.length > 0 ? `; missing ${cov.missingAccounts.join(", ")}` : ""
-          }`
-        : base;
+      if (!cov || cov.complete) return base;
+      // untruncated (no "+N more") so the spoken description names every account
+      const label = coverageLabel(cov.coveredAccountNames, cov.missingAccounts, Number.MAX_SAFE_INTEGER);
+      // "; only X" / "; missing X" — no trailing "covered" (the base already said it)
+      const suffix = label ? `; ${label.kind} ${label.text}` : "";
+      return `${base} — partial, ${cov.coveredAccounts} of ${cov.totalAccounts} accounts covered${suffix}`;
     },
     [coverageByDay],
   );
@@ -147,6 +149,7 @@ export function NetWorthChartPanel({ points, today, defaultRange = "1Y" }: NetWo
               ? "all time"
               : range;
         const cov = coverageByDay.get(summary.day);
+        const covLabel = cov && !cov.complete ? coverageLabel(cov.coveredAccountNames, cov.missingAccounts) : null;
         return (
           <header className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium">
             {scrubbing && (
@@ -163,8 +166,8 @@ export function NetWorthChartPanel({ points, today, defaultRange = "1Y" }: NetWo
             {cov && !cov.complete && (
               <span className="font-normal text-warning">
                 · partial {cov.coveredAccounts}/{cov.totalAccounts}
-                {cov.missingAccounts.length > 0 && (
-                  <span className="text-ink-faint"> · no {formatMissingAccounts(cov.missingAccounts)}</span>
+                {covLabel && (
+                  <span className="text-ink-faint"> · {covLabel.kind} {covLabel.text}</span>
                 )}
               </span>
             )}

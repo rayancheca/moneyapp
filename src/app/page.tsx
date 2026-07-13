@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { todayIso } from "@/lib/dates";
+import { coverageLabel } from "@/lib/coverage-label";
 import { dashboardData } from "@/services/dashboard";
 import { recentLedgerRows } from "@/services/ledger-rows";
 import { institutionGroups } from "@/services/institution-groups";
@@ -47,6 +48,8 @@ export default function DashboardPage() {
   const today = todayIso();
   const data = dashboardData(db, today);
   const { netWorth } = data;
+  // on a partial "today", name whichever list is more concise (covered vs missing)
+  const heroCoverage = coverageLabel(netWorth.coveredAccountNames, netWorth.missingAccounts);
 
   if (netWorth.totalAccounts === 0) {
     return (
@@ -105,8 +108,10 @@ export default function DashboardPage() {
             {!netWorth.complete && (
               <span className="text-warning">
                 partial · {netWorth.coveredAccounts}/{netWorth.totalAccounts} covered
-                {netWorth.missingAccounts.length > 0 && (
-                  <span className="text-ink-faint"> · missing {netWorth.missingAccounts.join(", ")}</span>
+                {heroCoverage && (
+                  <span className="text-ink-faint">
+                    {" "}· {heroCoverage.kind} {heroCoverage.text}
+                  </span>
                 )}
               </span>
             )}

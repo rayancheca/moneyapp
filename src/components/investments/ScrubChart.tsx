@@ -68,6 +68,9 @@ export interface ScrubPoint {
   /** net worth only: names of accounts with no coverage that day, so the readout
    *  can name exactly which are missing (not just N/M). */
   missingAccounts?: string[];
+  /** net worth only: names of accounts WITH coverage that day, so an early day
+   *  can say "only Chase ····3522" instead of a long missing list. */
+  coveredAccountNames?: string[];
 }
 
 export interface ScrubMark {
@@ -227,6 +230,7 @@ export function ScrubChart({
       complete: slice[i]?.complete !== false,
       prevValue: i > 0 ? (slice[i - 1]?.valueCents ?? null) : null,
       missingAccounts: slice[i]?.missingAccounts,
+      coveredAccountNames: slice[i]?.coveredAccountNames,
     }));
   }, [vivid, slice]);
   // recharts infers one ChartData<T> from `data`; the two series shapes (vivid
