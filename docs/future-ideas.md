@@ -17,6 +17,59 @@ Last updated: 2026-07-13 (pass 2).
 - [ ] **Import Chase ····3522 statements 2022-09 → 2024-07** — DEFERRED to a fresh session (user's call); needs a new Chase-checking PDF parser. Fully staged + spec'd below.
 - [ ] **Chart: also name the COVERED accounts** (not just missing) — maybe an expandable "coverage" line, or list covered when few are covered. Low priority; missing is the useful direction.
 
+## 🔁 BIG FEATURE — Recurring charges as MULTI-EPISODE (start/end, historical vs active, intermittent)
+
+User ask (2026-07-13, verbatim intent): a recurring charge is NOT always "one cadence forever."
+It recurs in EPISODES. Examples the user gave:
+- **StephanCodes** (Discover, $40): charged Aug 3 / Sep 3 / Oct 3 2025, then STOPPED. It was
+  recurring only for that 3-month window. The user must be able to say "these 3 dates, then done"
+  → it becomes a HISTORICAL (previously-recurring) series, not a currently-active one.
+- **Netflix**: 5th of the month for 5 months → stop for a year → restart on the 13th for 2 months
+  → stop → start again… SAME merchant/series, but MULTIPLE recurrence episodes, each with its own
+  date range + cadence (even a different day-of-month per episode).
+
+Requirements:
+1. **Multiple episodes per series.** A recurring series owns 1..N episodes; each episode has a
+   `start_on`, `end_on` (nullable = still open/active), a cadence (day-of-month OR weekday +
+   interval like monthly/biweekly), and optionally its own amount. StephanCodes = 1 closed episode
+   (2025-08 → 2025-10, monthly on the 3rd). Netflix = several episodes with different days.
+2. **Active vs historical, everywhere.** "Currently recurring" = has an episode with `end_on` null
+   (or ≥ today) whose cadence still produces charges near today. "Previously recurring" = all
+   episodes ended in the past. The **calendar** must VISUALLY distinguish the two (e.g. active
+   occurrences solid/accent, past-episode occurrences muted/outlined) and the series list should
+   group/label them. The recurring-detail page (screenshot 2026-07-13) shows one series
+   (StephanCodes, "Detected · Bill · Inactive", amount history Aug/Sep/Oct, "Next expected" Jul/Aug
+   2026) — that "Next expected" is WRONG for a series that ended in Oct 2025; episodes fix this
+   (a closed episode projects nothing forward).
+3. **Fully editable.** On the series detail page: an EPISODES editor — list episodes, add/remove,
+   set each episode's start/end, change its cadence + day, set/override amount, and a one-click
+   "mark ended" (sets `end_on` to the last real charge). The editable cadence sentence
+   ("charges monthly around the 3rd") becomes PER-EPISODE. Nothing read-only.
+4. **Auto-detect episodes (the "AI/engine" part).** The detection engine
+   (`src/services/recurring.ts`) should, for each detected series, SPLIT its linked-charge history
+   into episodes by gap analysis: sort the charges, and when a gap between consecutive charges
+   exceeds ~2× the local cadence interval, start a new episode; infer each episode's cadence +
+   day-of-month/weekday from its own charges. So StephanCodes auto-splits into one closed episode;
+   Netflix into several. The user then refines by hand what the engine got wrong (their words:
+   "do it yourself with an engine like AI, and whatever you can't do, I'll do it").
+
+Implementation notes (for whoever builds this):
+- CURRENT model (single-cadence): `recurring_series` has `cadence`, `next_expected_on`,
+  `status` (detected/confirmed/dismissed/merged), and user overrides (`user_amount_cents`,
+  `user_cadence`, `user_next_expected_on`, `merged_into_id`); `transactions.recurring_series_id` +
+  `series_link_source` (detected/user). Projection + isActive derive from the single cadence.
+  Files: `src/services/recurring.ts` (detection), `recurring-links.ts` (attach/merge/detach),
+  `recurring-detail.ts` + `recurring-calendar.ts`, `src/components/recurring/*`
+  (SeriesDetail, CadenceSentence, RecurringCalendar, AmountHistoryChart).
+- NEW model: add a **`recurring_episodes`** table (migration): `{id, series_id, start_on,
+  end_on|null, cadence, day_spec, amount_cents|null, source: detected|user}`. Migrate each existing
+  series to a single open episode (behavior-preserving). Rework projection (`toProjectable`/
+  `forecast`) + `isSeriesActive` + the calendar day-state grammar to be EPISODE-aware. Keep the
+  money-integrity guards (a closed episode never projects; merged series forward-map).
+- This is a SCHEMA + detection + projection + calendar + UI change — its own multi-commit project.
+  TDD the episode-split + projection math (pure, 100% src/lib). Real financial data: never
+  fabricate a charge; a detected episode is a hypothesis the user confirms.
+
 ## 🧭 The big vision: "nothing read-only — everything editable, linkable, movable"
 
 User's north star (2026-07-13): *"I don't want jack shit to be read only. I want to
