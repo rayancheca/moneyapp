@@ -104,6 +104,41 @@ financial data; then iOS.
   tail + the 2024-07→08 head), then reconcile. Staged dry/apply harness: `data/import-orphans.ts`
   (gitignored). Real db verified untouched by the dry-run (integrity ok · 9040 txns · 52 files · $94,144.53).
 
+## 🧮 Spending math — review + fix (2026-07-13, pass 5)
+
+User asked "why is Spent negative in Jan 2026?" + review the math for credit/debit/investment.
+Adversarially verified (2 review workflows) against the real db.
+
+**Root cause of negative Spent:** `periodTotals` netted positive amounts in expense categories
+(refunds/credits) against outflows with NO floor → 9 months went negative (2024-09 = −$14,439,
+2026-01 = −$12,260, …). Dominated by ~$86k of INFLOWS miscategorized as expense (see clusters below).
+The per-account-TYPE sign math is otherwise sound (investment buys/sells excluded, dividends→income,
+transfers transfer-kind); the problem is (a) fragile netting + (b) categorization.
+
+- [x] **Part A — gross debit-only "Spent" (commit `0614faf`).** `periodTotals`/`cashFlowByPeriod`/
+  `dailySpendHeatmap` now count only expense-category DEBITS as Spent (mirrors `period-activity.ts`,
+  which the dashboard already used — the two surfaces now agree). Positive expense-category amounts →
+  a new `refundsCents` field, never netted into Spent; `netCents = earned + refunds − spent` (net
+  unchanged, nothing dropped). Spent StatCard drill-down gained `flow=out`. Real-data: Jan 2026 Spent
+  −$12,260 → **+$4,808** ($17,068 refunds surfaced). Per-category breakdown (analytics.ts) stays netted
+  (separate view, UI-clamped). Follow-up: surface `refundsCents` in the StatCards UI (currently tracked
+  but not shown); the inflated savings-rate for the Fordham months normalizes once Part B lands.
+- [ ] **Part B — recategorize the miscategorized inflows (REAL-DB, user decisions captured).** Not yet
+  done — real-db mutation, do under the safety protocol (backup → dry-run on copy → reconcile → verify
+  net worth @2026-07-10 Δ=0 [categorization doesn't touch balances] → apply). Clusters + targets:
+  - **Fordham "…INVOICE" lumps** (6 rows, checking, +$51,872, currently Education) → **Income › Financial
+    Aid** (NEW subcat). User's words: dad pays tuition from his (untracked) account, aid is deducted and
+    the balance refunded to the user — net-new money IN from outside, not the user's own money (so not a
+    Transfer) and not a refund of the user's own spend. Income is the honest treatment; a distinct
+    "Financial Aid" bucket keeps it separate from earned wages (rename to "Papa money" if wanted).
+  - **Fordham biweekly** (46 rows, savings, +$30,716, currently Education) → **Income › Wages** (work-study).
+  - **"HOUSE RENT" received** (1 row, checking, +$3,505, from REZAUL KARIM KHATUN, currently Housing/Rent) → **Income**.
+  - **Brokerage "ACH Deposit"** (79 rows, investment acct, +$7,103, currently Other Income) → **Transfers**
+    (the user's own cash moving INTO Robinhood; matches checking-side −$7,016 "ROBINHOOD" outflows).
+  - **CC statement credits** ($41 "CREDIT NOT PROCESSED", $100 statement credit) → **Rewards** (consistent).
+  - Predicates + a staged dry/apply harness basis live in `data/audit-spend-math.ts` + `data/diag-jan2026.ts`
+    (gitignored). After Part B: 0 negative months, income correctly includes the aid/wages, savings-rate normal.
+
 ## 🔁 BIG FEATURE — Recurring charges as MULTI-EPISODE (start/end, historical vs active, intermittent)
 
 User ask (2026-07-13, verbatim intent): a recurring charge is NOT always "one cadence forever."
