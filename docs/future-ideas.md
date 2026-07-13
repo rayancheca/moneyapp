@@ -125,22 +125,25 @@ reproducible). Build a new `chaseCheckingStatementPdf` profile and register it i
 - Gaps: 2023-07 and 2023-11 statement dates are absent — likely just the Chase cycle (confirm from
   each neighbor's opening balance == prior ending balance during reconciliation).
 
-## 🗂️ Statement files — organized under `data/statements/<institution>/` (2026-07-13)
+## 🗂️ Statement files — CLEANED + organized (2026-07-13)
 
-Real uploads copied (not moved — `data/originals` is the app's archive the DB links to) from
-`~/Downloads` + `data/originals` into `data/statements/` (gitignored, deduped by sha256):
-`chase/` 22 (21 historical 3522 PDFs + Chase3522_Activity.CSV), `capital-one/` 5 (Venture X
-ending 4147), `sofi/` 4, `discover/` 2, `robinhood/` 2, `_unsorted/` 5.
+The DB is 100% real: 9 real accounts (VentureX-4147, Chase-3522, Sapphire-9805, Discover,
+Robinhood Brokerage-3525/Crypto/Cash, SoFi-9067/5791), 0 synthetic. `import_files` tracks 13
+real uploads; the rest of the 7296-txn data came via the `data/*rebuild*.ts` scripts (no
+`import_files` rows), which is why the DB "doesn't track every statement".
 
-- **`_unsorted/` needs the user's ID:** `3333_transaction_download.ofx`, `4444_transaction_download.csv`,
-  `Spending Report PDF.pdf` (×2), `19f645c5-…uuid.csv`. (3333 likely matches the synthetic capone ****3333.)
-- **Data-hygiene finding:** `data/originals` (223 files) is a MIX — ~19 real uploads + **204 SYNTHETIC
-  fixtures** (fake accounts ****4321/2222/3333/7777/5555, `"Statement Period:"` template, names like
-  `chase-checking-*.pdf`, `sofi-combined-*.pdf`, `Chase8721/4321/1111_Activity`). These are leftover
-  demo/dev artifacts, NOT the user's statements, and are NOT in the real db (real accounts are
-  3522/Sapphire/VentureX-4147/Discover/Robinhood/SoFi-9067,5791). **TODO: offer to prune the 204
-  synthetic files from `data/originals`** (but first confirm none are referenced by the 13 real
-  `import_files` rows). Classifier logic lived in `data/organize.mjs` (deleted; re-derive from this note).
+**Cleanup done (user directive "delete all synthetic, keep only what I uploaded"):**
+- `data/originals` (was 223) → **17 real files** (206 SYNTHETIC fixtures DELETED — fake accounts
+  ****4321/2222/3333/7777/5555, `"Statement Period:"` template, e.g. `chase-checking-*.pdf`,
+  `sofi-combined-*.pdf`, `Chase8721/4321/1111_Activity`, `3333/4444_transaction_download`; none
+  DB-referenced). Backed up to a scratch tarball before deleting. The app only reads
+  `data/originals` (`MONEYAPP_ORIGINALS_DIR`); `data/statements` is a browse-only copy.
+- `data/statements/<institution>/` = the real uploads only: `chase/` 25 (21 historical 2022-24
+  3522 statement PDFs + Chase3522_Activity.CSV + a uuid-named Chase CSV + 2 Chase "Spending Report"
+  PDFs), `capital-one/` 5 (VentureX), `sofi/` 4, `discover/` 2, `robinhood/` 2. No `_unsorted`.
+- The 17 kept in `data/originals` = 13 DB-tracked + 4 untracked-real alternate exports
+  (Discover-RecentActivity, SoFi-Checking/Savings-transactions, robinhood_activity_report).
+- DB verified intact after cleanup: `integrity_check ok`, 7296 active txns.
 
 ## 🎬 Deferred feature track (original items 3–5 of docs/dashboard-dynamic-and-animations-plan.md)
 
