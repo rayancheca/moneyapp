@@ -13,6 +13,7 @@ import { normalizeDescription } from "@/lib/normalize";
 import { sumCents } from "@/lib/money";
 import { categorizeAll, detectTransfers } from "../categorize";
 import { rebuildAccount } from "../derivation";
+import { accountSlug, institutionSlug } from "./account-slug";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
 import { ParseError, type AccountHint, type CanonicalTxn, type ParsedStatement } from "./types";
@@ -187,8 +188,91 @@ function categoryIdForPath(db: AppDatabase, pathStr: string): string | null {
   );
 }
 
-function originalsDir(): string {
-  return process.env.MONEYAPP_ORIGINALS_DIR ?? path.join(process.cwd(), "data", "originals");
+/**
+ * Root of the per-account statement archive. MONEYAPP_ORIGINALS_DIR stays the
+ * override (keeps the e2e harness + unit tests off the user's real archive); the
+ * default relocated from data/originals to data/statements, and every original
+ * now lives under a per-account subfolder (data/statements/<account-slug>/).
+ */
+function statementsRoot(): string {
+  return process.env.MONEYAPP_ORIGINALS_DIR ?? path.join(process.cwd(), "data", "statements");
+}
+
+/** Writes an original into <root>/<folder>/, deduping on the content-hashed name. */
+function archiveTo(folder: string, archiveName: string, buffer: Buffer): string {
+  const dir = path.join(statementsRoot(), folder);
+  fs.mkdirSync(dir, { recursive: true });
+  const dest = path.join(dir, archiveName);
+  if (!fs.existsSync(dest)) fs.writeFileSync(dest, buffer);
+  return dest;
+}
+
+/**
+ * Rename, falling back to copy+unlink across filesystems: renameSync throws
+ * EXDEV when the archive root (MONEYAPP_ORIGINALS_DIR) sits on a different device
+ * than the source, and an uncaught throw here would abort the whole import batch.
+ */
+function moveFile(src: string, dest: string): void {
+  try {
+    fs.renameSync(src, dest);
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+    fs.copyFileSync(src, dest);
+    fs.rmSync(src);
+  }
+}
+
+/** Moves an already-archived original into its resolved per-account folder. */
+function relocateArchive(src: string, folder: string, archiveName: string): string {
+  const dest = path.join(statementsRoot(), folder, archiveName);
+  if (dest === src) return dest;
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  if (!fs.existsSync(dest)) {
+    if (fs.existsSync(src)) moveFile(src, dest);
+  } else if (fs.existsSync(src)) {
+    fs.rmSync(src); // dest already holds this content hash — drop the transient dup
+  }
+  // sweep the transient institution staging dir if the relocation emptied it
+  const srcDir = path.dirname(src);
+  if (
+    srcDir !== path.dirname(dest) &&
+    srcDir.startsWith(statementsRoot()) &&
+    fs.existsSync(srcDir) &&
+    fs.readdirSync(srcDir).length === 0
+  ) {
+    fs.rmdirSync(srcDir);
+  }
+  return dest;
+}
+
+function accountWithInstitution(
+  db: AppDatabase,
+  accountId: string,
+): { account: typeof accounts.$inferSelect; institutionName: string } {
+  const account = db.select().from(accounts).where(eq(accounts.id, accountId)).get()!;
+  const inst = db
+    .select({ name: institutions.name })
+    .from(institutions)
+    .where(eq(institutions.id, account.institutionId))
+    .get()!;
+  return { account, institutionName: inst.name };
+}
+
+/**
+ * The archive folder for a parsed file: the per-account slug for a single-account
+ * file (the norm), an <institution>-combined bucket for a multi-account file
+ * (SoFi combined, multi-account QFX), or the institution bucket as a fallback.
+ */
+function resolveArchiveFolder(db: AppDatabase, accountIds: string[], fallbackInstitution: string): string {
+  if (accountIds.length === 1) {
+    const { account, institutionName } = accountWithInstitution(db, accountIds[0]!);
+    return accountSlug(account, institutionName);
+  }
+  if (accountIds.length > 1) {
+    const { institutionName } = accountWithInstitution(db, accountIds[0]!);
+    return `${institutionSlug(institutionName)}-combined`;
+  }
+  return institutionSlug(fallbackInstitution);
 }
 
 export interface ImportInput {
@@ -263,15 +347,21 @@ async function importOneFile(
     for (const old of stale) supersedeFileContribution(db, old.id);
   }
 
-  fs.mkdirSync(originalsDir(), { recursive: true });
+  const institution = guessInstitution(db, file);
   // basename neutralizes traversal; truncation + control-strip neutralizes
   // pathological names (ENAMETOOLONG would abort the batch)
   const safeName = path
     .basename(file.name)
     .replaceAll(/[\p{Cc}\p{Cf}]/gu, "")
     .slice(0, 80);
-  const storagePath = path.join(originalsDir(), `${sha.slice(0, 16)}-${safeName}`);
-  if (!fs.existsSync(storagePath)) fs.writeFileSync(storagePath, file.buffer);
+  const archiveName = `${sha.slice(0, 16)}-${safeName}`;
+  // archive into the institution bucket first — the correct resting place for a
+  // parse failure; a successful single-account parse relocates it to the
+  // per-account folder once the account is known. A re-parse keeps the physical
+  // file wherever the prior import left it.
+  const currentPath = existing
+    ? existing.storagePath
+    : archiveTo(institutionSlug(institution.name), archiveName, file.buffer);
 
   const fileRow =
     existing ??
@@ -281,11 +371,11 @@ async function importOneFile(
         fileName: file.name,
         fileSha256: sha,
         format: file.format,
-        institutionId: guessInstitutionId(db, file),
+        institutionId: institution.id,
         parserProfile: profile?.id ?? null,
         parserVersion: profile?.version ?? 0,
         status: "failed",
-        storagePath,
+        storagePath: currentPath,
         importedAt: new Date().toISOString(),
       })
       .returning()
@@ -311,10 +401,12 @@ async function importOneFile(
     return { ...outcome, status: "failed", error: message };
   }
 
+  const fileAccountIds = new Set<string>();
   try {
     for (const statement of statements) {
       const accountId = resolveAccount(db, statement.accountHint);
       touchedAccounts.add(accountId);
+      fileAccountIds.add(accountId);
       const ranges = coveredRanges(db, accountId).filter((r) => r.importFileId !== fileRow.id);
       const myPriority = FORMAT_PRIORITY[file.format];
 
@@ -434,8 +526,19 @@ async function importOneFile(
     return { ...outcome, status: "failed", error: message };
   }
 
+  // relocate the archived original from the institution bucket into its resolved
+  // per-account folder — the per-account storage the DB now points at
+  const finalFolder = resolveArchiveFolder(db, [...fileAccountIds], institution.name);
+  const finalPath = relocateArchive(currentPath, finalFolder, archiveName);
+
   db.update(importFiles)
-    .set({ status: "parsed", error: null, parserProfile: profile.id, parserVersion: profile.version })
+    .set({
+      status: "parsed",
+      error: null,
+      parserProfile: profile.id,
+      parserVersion: profile.version,
+      storagePath: finalPath,
+    })
     .where(eq(importFiles.id, fileRow.id))
     .run();
   return outcome;
@@ -583,7 +686,7 @@ function supersedeFileContribution(db: AppDatabase, oldFileId: string): void {
   });
 }
 
-function guessInstitutionId(db: AppDatabase, file: { name: string; text: string }): string {
+function guessInstitution(db: AppDatabase, file: { name: string; text: string }): { id: string; name: string } {
   const haystack = `${file.name} ${file.text.slice(0, 400)}`.toLowerCase();
   const name = haystack.includes("chase")
     ? "Chase"
@@ -596,7 +699,8 @@ function guessInstitutionId(db: AppDatabase, file: { name: string; text: string 
           : haystack.includes("robinhood")
             ? "Robinhood"
             : "Chase";
-  return db.select({ id: institutions.id }).from(institutions).where(eq(institutions.name, name)).get()!.id;
+  const id = db.select({ id: institutions.id }).from(institutions).where(eq(institutions.name, name)).get()!.id;
+  return { id, name };
 }
 
 /**
@@ -688,6 +792,70 @@ function flagFuzzyDuplicates(db: AppDatabase): void {
     .set({ needsReview: true })
     .where(inArray(transactions.id, dupes.map((d) => d.id)))
     .run();
+}
+
+export interface StorageMigration {
+  importFileId: string;
+  fileName: string;
+  from: string;
+  to: string;
+  moved: boolean;
+}
+
+/**
+ * Relocates already-imported originals into the per-account archive
+ * (data/statements/<account-slug>/), for files ingested before per-account
+ * storage existed. Each file's folder is derived from the account(s) its
+ * transactions/periods resolve to — the real account, not the file's guessed
+ * institution. With move: false it only rewrites storage_path (dry validation);
+ * with move: true it also relocates the physical file. Idempotent.
+ */
+export function migrateStorageLayout(db: AppDatabase, opts: { move: boolean }): StorageMigration[] {
+  const rows = db.select().from(importFiles).all();
+  const results: StorageMigration[] = [];
+  for (const row of rows) {
+    const fromTxns = db
+      .selectDistinct({ accountId: transactions.accountId })
+      .from(transactions)
+      .where(eq(transactions.importFileId, row.id))
+      .all()
+      .map((r) => r.accountId);
+    const fromPeriods = db
+      .selectDistinct({ accountId: statementPeriods.accountId })
+      .from(statementPeriods)
+      .where(eq(statementPeriods.importFileId, row.id))
+      .all()
+      .map((r) => r.accountId);
+    const accountIds = [...new Set([...fromTxns, ...fromPeriods])];
+
+    const fallback = db
+      .select({ name: institutions.name })
+      .from(institutions)
+      .where(eq(institutions.id, row.institutionId))
+      .get()!.name;
+    const folder = resolveArchiveFolder(db, accountIds, fallback);
+    const dest = path.join(statementsRoot(), folder, path.basename(row.storagePath));
+    if (dest === row.storagePath) continue;
+
+    let moved = false;
+    if (opts.move) {
+      if (fs.existsSync(dest)) {
+        // dest already holds this content — drop a stale source dup
+        if (fs.existsSync(row.storagePath) && row.storagePath !== dest) fs.rmSync(row.storagePath);
+        moved = true;
+      } else if (fs.existsSync(row.storagePath)) {
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        moveFile(row.storagePath, dest);
+        moved = true;
+      }
+      // only repoint the DB when the file actually lives at dest now — never
+      // leave storage_path dangling at a path with no file (dry runs preview
+      // the mapping via the returned results without touching disk-of-record)
+      if (moved) db.update(importFiles).set({ storagePath: dest }).where(eq(importFiles.id, row.id)).run();
+    }
+    results.push({ importFileId: row.id, fileName: row.fileName, from: row.storagePath, to: dest, moved });
+  }
+  return results;
 }
 
 /** Un-import: removes a file's contributions atomically; derived state rebuilt. */

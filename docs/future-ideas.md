@@ -3,7 +3,7 @@
 > Living backlog. **Every working pass must expand + polish this list and tick off
 > what shipped.** Newest thinking near the top of each section. Dates are absolute.
 
-Last updated: 2026-07-13 (pass 2).
+Last updated: 2026-07-13 (pass 3 — statement ingestion + per-account storage).
 
 ---
 
@@ -14,8 +14,17 @@ Last updated: 2026-07-13 (pass 2).
 - [x] **Per-account coverage report** — done as analysis (see "Data coverage" below).
 - [x] **Chart names WHICH accounts are missing** at each partial day (tooltip "● Partial · no Robinhood Crypto, Venture X", header, hero, aria) — commit `194477d`.
 - [x] **Account editable from its detail page** (name / institution / last4) — commit `8b66cda`. First slice of "nothing read-only".
-- [ ] **Import Chase ····3522 statements 2022-09 → 2024-07** — DEFERRED to a fresh session (user's call); needs a new Chase-checking PDF parser. Fully staged + spec'd below.
+- [x] **Statement ingestion + per-account storage (PRIMARY MISSION)** — built 3 real-bank PDF
+  parsers (Chase College Checking, Discover it, Robinhood Crypto), re-architected the archive to
+  per-account folders the DB references, and imported ALL 52 real files in `data/inbox`. Every file
+  is now tracked in `import_files` (52 rows, was 13); 36 periods reconcile to the cent, 8 crypto
+  value-anchors, 0 gaps; net worth @2026-07-10 unchanged (Δ=0); Chase 3522 history back to 2022-08-25;
+  Discover last4 learned = 4741. See the (now historical) plan sections below. Details: [[moneyapp-statement-ingestion-2026-07-13]].
 - [ ] **Chart: also name the COVERED accounts** (not just missing) — maybe an expandable "coverage" line, or list covered when few are covered. Low priority; missing is the useful direction.
+- [ ] **Robinhood Crypto last4** — its statements carry account number 311070628474 (last4 8474);
+  left NULL for now (slug stays `robinhood-crypto`, per the confirmed layout). Populate if wanted.
+- [ ] **4 orphan alt-export CSVs** still in `data/originals/` (Discover-RecentActivity, robinhood_activity_report,
+  the short SoFi Checking/Savings exports) — not tracked (subsets of already-imported data). Import to track, or delete.
 
 ## 🔁 BIG FEATURE — Recurring charges as MULTI-EPISODE (start/end, historical vs active, intermittent)
 
@@ -100,33 +109,35 @@ This is a program of work, broken into shippable slices:
 > for every drag per a11y); value-returning server actions + optimistic UI + undo
 > (the established Toast+undo pattern); persistence of user layout/order in `app_settings`.
 
-## 📊 Data coverage (as of 2026-07-13, real db)
+## 📊 Data coverage (as of 2026-07-13, real db — POST statement ingestion)
 
-Transactions per account (active): the whole ledger currently **floors at mid-2024** —
-that's why history "only goes to 2024". Balances are anchored at **today (2026-07-10)**
-and derived backward.
+Transactions per account (active). After ingesting the historical PDF statements the ledger
+now reaches back to **2022-08** (Chase 3522). Balances are still anchored at **today (2026-07-10)**
+and derived backward; net worth @2026-07-10 is unchanged.
 
 | Account | Type | Txns | First txn | Last txn |
 |---|---|---|---|---|
-| Chase ····3522 | checking | 1114 | 2024-07-12 | 2026-07-10 |
+| Chase ····3522 | checking | 2395 | 2022-08-25 | 2026-07-10 |
 | Chase Sapphire | credit | 1736 | 2025-02-04 | 2026-07-09 |
 | Capital One Venture X | credit | 670 | 2026-01-16 | 2026-06-13 |
-| Discover ····???? | credit | 625 | 2024-07-21 | 2026-06-23 |
+| Discover ····4741 | credit | 1024 | 2023-10-11 | 2026-06-23 |
 | Robinhood Brokerage | investment | 2181 | 2024-08-15 | 2026-07-07 |
-| Robinhood Cash | checking | 0 | (derived from statements) | |
-| Robinhood Crypto | investment | 0 | (derived) | |
+| Robinhood Cash | checking | 0 | — | |
+| Robinhood Crypto | investment | 64 | 2025-11-04 | 2026-06-23 |
 | SoFi Checking | checking | 505 | 2024-09-15 | 2026-05-31 |
 | SoFi Savings | savings | 465 | 2024-07-15 | 2026-05-31 |
 
-- Only Chase Sapphire (2) + Venture X (5) have `statement_periods` rows — most accounts
-  were built from CSV/OFX/rebuild scripts, not PDF statements. Chase 3522's existing
-  data has **no statement_periods** (came from a CSV/QFX or a rebuild).
-- **Discover last4 is unknown ("????")** — a name to fix once a Discover statement is on hand.
+- `statement_periods` now: 36 reconciled-to-the-cent + 8 crypto value-anchors + 2 declared-range
+  (Chase Sapphire spending reports), **0 gaps**. Chase 3522 + Discover gained full monthly periods.
+- **Discover last4 is now 4741** — learned from the Discover it statement header on import.
+- Robinhood Crypto's balance curve still comes from `holding_events × priceCache` (Stage 4a); the
+  imported crypto statements add the activity ledger + tracking, not the balance.
 
-## 🧾 Statement import — Chase ····3522 (2022-09 → 2024-07) — NEEDS A REAL PARSER (fresh session)
+## 🧾 Statement import — Chase ····3522 (2022-09 → 2024-07) — ✅ DONE (parser shipped)
 
-**Decision 2026-07-13:** do this in a **fresh focused session** (real financial data + a new
-parser = its own careful unit). Everything below is staged and ready.
+**Shipped 2026-07-13:** `chaseCheckingStatementPdf` parser built + TDD'd + validated (21/21
+statements reconcile to the cent on the printed running balance) and imported. The decoded-format
+notes below are kept as reference. (Original staging plan follows.)
 
 **Why a parser (not "Claude reads it"):** the app's PDF parser (`profiles/pdf-profile.ts`,
 `statementPdf`) only matches the app's SYNTHETIC fixture header (`PERIOD_RE =
@@ -178,9 +189,20 @@ reproducible). Build a new `chaseCheckingStatementPdf` profile and register it i
 - Gaps: 2023-07 and 2023-11 statement dates are absent — likely just the Chase cycle (confirm from
   each neighbor's opening balance == prior ending balance during reconciliation).
 
-## 🏗️ NEXT SESSION'S PRIMARY MISSION: clean per-account statement storage + ingest ALL real statements
+## 🏗️ PRIMARY MISSION — clean per-account statement storage + ingest ALL real statements — ✅ DONE (2026-07-13)
 
-User goal: ONE clean `data/` with **per-account subfolders**, each holding that account's
+**Shipped:** archive re-architected to `data/statements/<account-slug>/` (root env
+`MONEYAPP_ORIGINALS_DIR`, default moved to data/statements); the DB's `import_files.storage_path`
+points there; new uploads auto-store into the resolved account's folder (single-account → per-account
+slug, multi-account → `<institution>-combined/`, parse-fail → institution bucket); the 13 legacy flat
+files were migrated (`migrateStorageLayout`). Confirmed slugs: chase-checking-3522, chase-sapphire-9805,
+capital-one-venturex-4147, discover-4741, robinhood-brokerage-3525, robinhood-crypto, robinhood-cash,
+sofi-checking-9067, sofi-savings-5791. All 52 `data/inbox` files imported + tracked; 3 new parsers
+(Chase checking, Discover it, Robinhood crypto) built + TDD'd. Key decode wins below (kept as reference):
+the Discover statement prints only the TRANS date but bills by POST date → each txn's postedOn is clamped
+into its statement's `[start,end]` (transactedOn keeps the real date) so date-range reconciliation is exact.
+
+_Original goal (for reference):_ User goal: ONE clean `data/` with **per-account subfolders**, each holding that account's
 statements; **the DB references those paths** (`import_files.storage_path`); **auto-store on
 upload** into the right account folder; **every statement the user gave is tracked** (currently
 only 13 of ~60 are). No fake data (done — see cleanup below).

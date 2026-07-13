@@ -9,7 +9,7 @@ import { accounts } from "@/db/schema/accounts";
 import { statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { latestBalances, netWorthSeries } from "@/services/derivation";
-import { importStatementFiles, unimportFile, acceptGap, type ImportInput } from "./service";
+import { importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, type ImportInput } from "./service";
 import { importFiles as importFilesTable } from "@/db/schema/imports";
 
 const FIXTURES = path.join(process.cwd(), "tests", "fixtures", "synthetic");
@@ -179,6 +179,48 @@ describe("structured imports", () => {
     expect(shell).toHaveLength(1);
     expect(shell[0]!.status).toBe("active");
     expect(starbucks.map((r) => r.status).sort()).toEqual(["active", "superseded"]);
+  });
+
+  test("a single-account file is archived under its per-account folder", async () => {
+    await importStatementFiles(bundle.db, [load("chase", "Chase4321_Activity_2024-07-01_2024-09-30.QFX")]);
+    const file = bundle.db.select().from(importFilesTable).all()[0]!;
+    const rel = path.relative(path.join(dir, "originals"), file.storagePath);
+    expect(rel.startsWith("chase-checking-4321" + path.sep)).toBe(true);
+    expect(fs.existsSync(file.storagePath)).toBe(true);
+  });
+
+  test("a multi-account combined file is archived under the institution-combined bucket", async () => {
+    const combined = loadDir("sofi", "statements").slice(0, 1);
+    await importStatementFiles(bundle.db, combined);
+    const file = bundle.db.select().from(importFilesTable).all().find((f) => f.format === "pdf")!;
+    const rel = path.relative(path.join(dir, "originals"), file.storagePath);
+    expect(rel.startsWith("sofi-combined" + path.sep)).toBe(true);
+    expect(fs.existsSync(file.storagePath)).toBe(true);
+  });
+
+  test("migrateStorageLayout relocates a legacy flat archive into the per-account folder", async () => {
+    await importStatementFiles(bundle.db, [load("chase", "Chase4321_Activity_2024-07-01_2024-09-30.QFX")]);
+    const root = path.join(dir, "originals");
+    // simulate a pre-migration flat archive: move the file to the root and point
+    // the row at it (as legacy data/originals/<sha>-<name> rows do)
+    const file = bundle.db.select().from(importFilesTable).all()[0]!;
+    const legacyPath = path.join(root, path.basename(file.storagePath));
+    fs.renameSync(file.storagePath, legacyPath);
+    bundle.db
+      .update(importFilesTable)
+      .set({ storagePath: legacyPath })
+      .where(eq(importFilesTable.id, file.id))
+      .run();
+
+    const migrations = migrateStorageLayout(bundle.db, { move: true });
+    expect(migrations).toHaveLength(1);
+    const after = bundle.db.select().from(importFilesTable).all()[0]!;
+    expect(path.relative(root, after.storagePath).startsWith("chase-checking-4321" + path.sep)).toBe(true);
+    expect(fs.existsSync(after.storagePath)).toBe(true);
+    expect(fs.existsSync(legacyPath)).toBe(false); // physically moved
+
+    // idempotent: a second run finds nothing to relocate
+    expect(migrateStorageLayout(bundle.db, { move: true })).toHaveLength(0);
   });
 
   test("un-import removes a file's transactions and anchors atomically", async () => {
