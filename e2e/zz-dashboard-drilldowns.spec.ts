@@ -81,6 +81,21 @@ test("Manage → the accounts management surface", async ({ page }) => {
   await expect(page).toHaveURL(/\/accounts$/);
 });
 
+test("the account detail page can edit the account (name is not read-only)", async ({ page }) => {
+  await page.goto("/");
+  const robinhood = page.locator('section[aria-label="Robinhood"]');
+  await robinhood.getByRole("button", { name: /Robinhood/ }).first().click();
+  await robinhood.locator('a[href^="/accounts/"]').first().click();
+  await expect(page).toHaveURL(/\/accounts\/[^/]+$/);
+  // the detail header exposes an edit affordance — the name isn't read-only here either
+  await page.getByRole("button", { name: "Edit account" }).click();
+  const sheet = page.getByRole("dialog");
+  await expect(sheet.getByLabel("Account name")).toBeVisible();
+  // cancel — this test does not mutate the shared seed
+  await sheet.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
 // ── Account editing (mutates then restores the shared seed) ───────────────────
 
 /** The ordered account short-names inside one institution section on /accounts. */

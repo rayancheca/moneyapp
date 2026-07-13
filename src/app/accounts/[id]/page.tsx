@@ -6,7 +6,7 @@ import { isLiability } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
 import { formatCentsSigned } from "@/lib/money";
-import { getAccount } from "@/services/accounts";
+import { getAccount, listInstitutions } from "@/services/accounts";
 import { listAnchors } from "@/services/anchors";
 import { accountSeries } from "@/services/derivation";
 import { listAccountHoldings } from "@/services/holdings";
@@ -14,6 +14,7 @@ import { recentLedgerRows } from "@/services/ledger-rows";
 import { AccountHoldingsTable } from "@/components/accounts/AccountHoldingsTable";
 import { AnchorForm } from "@/components/accounts/AnchorForm";
 import { BalanceChartPanel } from "@/components/accounts/BalanceChartPanel";
+import { EditAccountButton } from "@/components/accounts/EditAccountButton";
 import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
 import { RecentTransactions } from "@/components/transactions/RecentTransactions";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
@@ -100,10 +101,24 @@ export default async function AccountDetailPage({
         className="mb-3"
         items={[{ label: "Accounts", href: "/accounts" }, { label: account.name }]}
       />
-      <PageHeader
-        title={account.name}
-        description={`${TYPE_LABEL[account.type] ?? account.type}${account.subtype ? ` · ${account.subtype}` : ""}${account.last4 ? ` · ····${account.last4}` : ""}${account.isActive ? "" : " · archived"}`}
-      />
+      <div className="flex items-start justify-between gap-4">
+        <PageHeader
+          title={account.name}
+          description={`${TYPE_LABEL[account.type] ?? account.type}${account.subtype ? ` · ${account.subtype}` : ""}${account.last4 ? ` · ····${account.last4}` : ""}${account.isActive ? "" : " · archived"}`}
+        />
+        <div className="mt-1">
+          <EditAccountButton
+            account={{
+              id: account.id,
+              name: account.name,
+              institutionId: account.institutionId,
+              last4: account.last4,
+              typeLabel: TYPE_LABEL[account.type] ?? account.type,
+            }}
+            institutions={listInstitutions(db)}
+          />
+        </div>
+      </div>
       <div className="space-y-6">
         <header>
           <div className="text-xs font-medium uppercase tracking-[0.14em] text-ink-faint">
