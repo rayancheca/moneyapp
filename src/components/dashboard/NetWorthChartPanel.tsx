@@ -2,8 +2,9 @@
 
 import { useCallback, useMemo } from "react";
 import { Icon } from "@/components/shell/Icon";
+import { NumberRoll } from "@/components/ui/NumberRoll";
 import type { ChartRange } from "@/lib/chart-range";
-import { formatDayLong } from "@/lib/format-date";
+import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { scrubValueText } from "@/lib/scrub";
 import type { NetWorthPoint } from "@/services/derivation";
@@ -83,21 +84,31 @@ export function NetWorthChartPanel({ points, today, defaultRange = "1Y" }: NetWo
       points={scrubPoints}
       today={today}
       defaultRange={defaultRange}
+      showAxes
+      selectable
+      showExtremes
+      vivid
       summarize={summarize}
       accentOf={accentOf}
       valueText={valueText}
       formatValue={formatCents}
-      ariaLabel="Net worth over time — scrub to inspect a day"
-      heightClass="h-56 sm:h-64"
-      renderHeader={(summary, scrubbing, range) => {
+      ariaLabel="Net worth over time — scrub to inspect a day, drag to zoom a range"
+      heightClass="h-64 sm:h-72"
+      renderHeader={(summary, scrubbing, range, customWindow) => {
         const accent = accentOf(summary);
         const arrow = accent === "gain" ? "▲" : accent === "loss" ? "▼" : "•";
-        const context = scrubbing ? formatDayLong(summary.day) : range === "ALL" ? "all time" : range;
+        const context = scrubbing
+          ? formatDayLong(summary.day)
+          : customWindow
+            ? `${formatDayShort(customWindow.start)} – ${formatDayShort(customWindow.end)}`
+            : range === "ALL"
+              ? "all time"
+              : range;
         const cov = coverageByDay.get(summary.day);
         return (
           <header className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium">
             {scrubbing && (
-              <span className="figures text-ink">{formatCents(summary.valueCents)}</span>
+              <NumberRoll value={formatCents(summary.valueCents)} className="text-ink" />
             )}
             <span className={`figures ${ACCENT_TEXT[accent]}`}>
               <span aria-hidden>{arrow} </span>

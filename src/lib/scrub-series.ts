@@ -63,3 +63,45 @@ export function splitCoverageSeries(points: readonly CoveragePoint[]): CoverageS
 export function hasPartialCoverage(points: readonly CoveragePoint[]): boolean {
   return points.some((p) => p.valueCents !== null && p.complete === false);
 }
+
+// ── Vivid net-worth series (dashboard §7.1) ──────────────────────────
+//
+// The vivid chart drops the dashed `soft` line entirely: it draws ONE continuous
+// lit accent line across the whole window and instead marks the estimated early
+// history with a calm shaded band + boundary. To do that the fill must vanish
+// before coverage began while the stroke stays unbroken — so we shape a two-key
+// series where `fillValue` is null before the boundary and `lineValue` is null
+// only on genuine no-data days.
+
+export interface ChartSeriesPoint {
+  day: string;
+  /** the continuous stroke value; null ONLY on a real no-data day (hard break) */
+  lineValue: number | null;
+  /** the gradient-fill value; null before the coverage boundary (estimated zone) */
+  fillValue: number | null;
+}
+
+/** First day whose coverage is complete (every account covered); null if none. */
+export function firstCompleteDay(points: readonly CoveragePoint[]): string | null {
+  for (const p of points) {
+    if (p.valueCents !== null && p.complete !== false) return p.day;
+  }
+  return null;
+}
+
+/**
+ * Shapes a net-worth slice into the vivid two-key series. The stroke is
+ * continuous (`lineValue` = value everywhere, `null` only where data is truly
+ * absent); the fill is present on `complete` days ONLY, so any estimated day —
+ * a leading pre-coverage span, an interior gap between manual anchors, or a
+ * partial tail — carries no area and reads as estimated. Coverage is per-day and
+ * NOT guaranteed monotonic, so the fill is gated on each point's own `complete`
+ * flag rather than a single boundary. Pure, unit-testable to 100%.
+ */
+export function netWorthChartSeries(points: readonly CoveragePoint[]): ChartSeriesPoint[] {
+  return points.map((p) => ({
+    day: p.day,
+    lineValue: p.valueCents,
+    fillValue: p.valueCents !== null && p.complete !== false ? p.valueCents : null,
+  }));
+}

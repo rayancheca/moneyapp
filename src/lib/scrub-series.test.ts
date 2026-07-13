@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { hasPartialCoverage, splitCoverageSeries, type CoveragePoint } from "./scrub-series";
+import {
+  firstCompleteDay,
+  hasPartialCoverage,
+  netWorthChartSeries,
+  splitCoverageSeries,
+  type CoveragePoint,
+} from "./scrub-series";
 
 describe("splitCoverageSeries", () => {
   test("all-complete points stay on the solid line, dashed empty", () => {
@@ -98,5 +104,87 @@ describe("hasPartialCoverage", () => {
 
   test("a null-valued incomplete day is not partial coverage (it is a break)", () => {
     expect(hasPartialCoverage([{ day: "d0", valueCents: null, complete: false }])).toBe(false);
+  });
+});
+
+describe("firstCompleteDay", () => {
+  test("returns the first fully-covered day", () => {
+    const pts: CoveragePoint[] = [
+      { day: "2026-01-01", valueCents: 10, complete: false },
+      { day: "2026-01-02", valueCents: 20, complete: false },
+      { day: "2026-01-03", valueCents: 30, complete: true },
+      { day: "2026-01-04", valueCents: 40, complete: true },
+    ];
+    expect(firstCompleteDay(pts)).toBe("2026-01-03");
+  });
+
+  test("defaults (no complete flag) count as complete", () => {
+    expect(firstCompleteDay([{ day: "d0", valueCents: 5 }])).toBe("d0");
+  });
+
+  test("null when every day is partial (or has no data)", () => {
+    expect(
+      firstCompleteDay([
+        { day: "d0", valueCents: 5, complete: false },
+        { day: "d1", valueCents: null, complete: false },
+      ]),
+    ).toBeNull();
+  });
+});
+
+describe("netWorthChartSeries", () => {
+  test("draws one continuous line and fills complete days only (leading partial prefix bare)", () => {
+    const pts: CoveragePoint[] = [
+      { day: "2026-01-01", valueCents: 10, complete: false },
+      { day: "2026-01-02", valueCents: 20, complete: false },
+      { day: "2026-01-03", valueCents: 30, complete: true },
+      { day: "2026-01-04", valueCents: 40, complete: true },
+    ];
+    const out = netWorthChartSeries(pts);
+    // the stroke is unbroken across the whole window
+    expect(out.map((p) => p.lineValue)).toEqual([10, 20, 30, 40]);
+    // the fill only exists on the fully-covered days (estimated prefix bare)
+    expect(out.map((p) => p.fillValue)).toEqual([null, null, 30, 40]);
+  });
+
+  test("an INTERIOR partial gap is unfilled even though the window starts complete", () => {
+    // coverage is not monotonic: complete → partial → complete. The gap must NOT
+    // be filled (honesty), and the line stays continuous across it.
+    const pts: CoveragePoint[] = [
+      { day: "2026-01-01", valueCents: 10, complete: true },
+      { day: "2026-01-02", valueCents: 20, complete: false },
+      { day: "2026-01-03", valueCents: 30, complete: true },
+    ];
+    const out = netWorthChartSeries(pts);
+    expect(out.map((p) => p.lineValue)).toEqual([10, 20, 30]);
+    expect(out.map((p) => p.fillValue)).toEqual([10, null, 30]);
+  });
+
+  test("a genuine no-data day is a hard break in the line, never filled", () => {
+    const pts: CoveragePoint[] = [
+      { day: "2026-01-01", valueCents: 10, complete: true },
+      { day: "2026-01-02", valueCents: null },
+      { day: "2026-01-03", valueCents: 30, complete: true },
+    ];
+    const out = netWorthChartSeries(pts);
+    expect(out.map((p) => p.lineValue)).toEqual([10, null, 30]);
+    expect(out.map((p) => p.fillValue)).toEqual([10, null, 30]);
+  });
+
+  test("all-complete window fills the whole area", () => {
+    const out = netWorthChartSeries([
+      { day: "2026-01-01", valueCents: 10 },
+      { day: "2026-01-02", valueCents: 20 },
+    ]);
+    expect(out.map((p) => p.fillValue)).toEqual([10, 20]);
+  });
+
+  test("all-partial window → no fill anywhere, line still continuous", () => {
+    const out = netWorthChartSeries([
+      { day: "2026-01-01", valueCents: 10, complete: false },
+      { day: "2026-01-02", valueCents: 20, complete: false },
+    ]);
+    expect(out.map((p) => p.lineValue)).toEqual([10, 20]);
+    expect(out.map((p) => p.fillValue)).toEqual([null, null]);
   });
 });
