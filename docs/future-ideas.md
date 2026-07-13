@@ -125,25 +125,63 @@ reproducible). Build a new `chaseCheckingStatementPdf` profile and register it i
 - Gaps: 2023-07 and 2023-11 statement dates are absent — likely just the Chase cycle (confirm from
   each neighbor's opening balance == prior ending balance during reconciliation).
 
-## 🗂️ Statement files — CLEANED + organized (2026-07-13)
+## 🏗️ NEXT SESSION'S PRIMARY MISSION: clean per-account statement storage + ingest ALL real statements
+
+User goal: ONE clean `data/` with **per-account subfolders**, each holding that account's
+statements; **the DB references those paths** (`import_files.storage_path`); **auto-store on
+upload** into the right account folder; **every statement the user gave is tracked** (currently
+only 13 of ~60 are). No fake data (done — see cleanup below).
+
+Why this is the fresh session's job (not a tail-end change): it's coupled + trust-critical.
+The parser resolves which account each statement belongs to → that drives the per-account
+folder → so the storage change must happen AFTER parsing. And "track all files" REQUIRES
+importing them, which needs the real-statement parsers. Doing it piecemeal leaves a
+half-migrated pipeline on real financial data. Do it as ONE reconciled unit.
+
+Current storage code (localized — the change is bounded): `src/services/import/service.ts`
+`originalsDir()` (line ~190) + the archive step (line ~266-288) writes
+`data/originals/<sha16>-<safeName>` and records `storage_path`. Change: after account
+resolution, write to `data/statements/<account-slug>/<name>` and store THAT path. Migrate the
+17 existing files + UPDATE their 13 `import_files.storage_path` rows. Multi-account statements
+(e.g. a SoFi combined, a multi-account QFX) need a rule — recommend per-INSTITUTION folder as
+the fallback, or the primary account. (Honest design note: per-institution is simpler and
+handles combined statements; per-account is what the user asked — offer both, default to the
+user's per-account with an institution-level bucket for combined files.)
+
+**What to ingest (all real, currently scattered — consolidate + import + reconcile to the cent):**
+- `data/inbox/` — 52 real statements the user gave that are NOT yet imported: chase 24 (the 21
+  historical 3522 checking PDFs 2022-24 + Chase3522_Activity.CSV + 2 Chase Sapphire-9805 spending
+  reports), discover 11 (real Discover it ****4741 statement PDFs 2023-24 + CSVs), robinhood 10
+  (brokerage activity CSVs + crypto statement PDFs 2025-11/12), capital-one 5 (VentureX-4147
+  statement PDFs), sofi 2 (Checking-9067 / Savings-5791 CSVs).
+- `data/originals/` — 17 real ALREADY imported (13 tracked import_files + 4 untracked alt exports).
+- Parsers needed (real formats, not the synthetic "Statement Period:" template): **Chase checking
+  PDF** ("… through …" — decoded, see below), **Discover it PDF** ("DISCOVER IT CARD ENDING IN
+  4741 | … | MM/DD/YYYY - MM/DD/YYYY"), **Robinhood crypto/brokerage PDF**, **Capital One VentureX
+  PDF** ("Venture X Card | Visa Infinite ending in 4147 | <mon d> - <mon d>"). CSV/OFX parsers for
+  Chase deposit / Discover / SoFi / Robinhood likely already exist (chaseDepositCsv etc.) — verify.
+- Reconcile every statement (running balance / begin-end) to the cent; gaps quarantine, never fake.
+  Pin MONEYAPP_FAKE_TODAY=2026-07-10 so only history extends, "today" stays put.
+
+## 🗂️ Statement files — CLEANED (2026-07-13)
 
 The DB is 100% real: 9 real accounts (VentureX-4147, Chase-3522, Sapphire-9805, Discover,
 Robinhood Brokerage-3525/Crypto/Cash, SoFi-9067/5791), 0 synthetic. `import_files` tracks 13
 real uploads; the rest of the 7296-txn data came via the `data/*rebuild*.ts` scripts (no
 `import_files` rows), which is why the DB "doesn't track every statement".
 
-**Cleanup done (user directive "delete all synthetic, keep only what I uploaded"):**
-- `data/originals` (was 223) → **17 real files** (206 SYNTHETIC fixtures DELETED — fake accounts
-  ****4321/2222/3333/7777/5555, `"Statement Period:"` template, e.g. `chase-checking-*.pdf`,
-  `sofi-combined-*.pdf`, `Chase8721/4321/1111_Activity`, `3333/4444_transaction_download`; none
-  DB-referenced). Backed up to a scratch tarball before deleting. The app only reads
-  `data/originals` (`MONEYAPP_ORIGINALS_DIR`); `data/statements` is a browse-only copy.
-- `data/statements/<institution>/` = the real uploads only: `chase/` 25 (21 historical 2022-24
-  3522 statement PDFs + Chase3522_Activity.CSV + a uuid-named Chase CSV + 2 Chase "Spending Report"
-  PDFs), `capital-one/` 5 (VentureX), `sofi/` 4, `discover/` 2, `robinhood/` 2. No `_unsorted`.
-- The 17 kept in `data/originals` = 13 DB-tracked + 4 untracked-real alternate exports
-  (Discover-RecentActivity, SoFi-Checking/Savings-transactions, robinhood_activity_report).
-- DB verified intact after cleanup: `integrity_check ok`, 7296 active txns.
+**Cleanup done (user directive "delete every fake seed, keep only what I uploaded"):**
+- DELETED **206 synthetic fixtures** from `data/originals` (223→17; fake accts
+  ****4321/2222/3333/7777/5555, `"Statement Period:"` template; none DB-referenced; backed up to
+  scratch tgz first). DELETED **`data/demo/`** (9.2M fake demo-seed db; regeneratable via
+  `pnpm demo:load`). REMOVED redundant `data/statements/` browse copy. Real DB verified intact
+  (`integrity_check ok`, 7296 txns; 9 real accounts, 0 synthetic).
+- NOT deleted (isolated test infra, auto-regenerated, never touches real data): `data/e2e.db`,
+  `data/e2e-originals` (the e2e suite rebuilds these every run). The app's `seedDatabase` only
+  seeds the category taxonomy + institutions (reference data), not fake transactions.
+- **Clean 2-folder state:** `data/inbox/` = 52 real statements TO IMPORT (per-institution);
+  `data/originals/` = 17 real ALREADY imported (DB-linked archive). The app reads only
+  `data/originals` (`MONEYAPP_ORIGINALS_DIR`).
 
 ## 🎬 Deferred feature track (original items 3–5 of docs/dashboard-dynamic-and-animations-plan.md)
 
