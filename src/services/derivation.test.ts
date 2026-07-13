@@ -308,8 +308,11 @@ describe("integration: rebuild + net worth against a real database", () => {
     expect(early?.complete).toBe(false);
     expect(early?.coveredAccounts).toBe(1);
     expect(early?.totalCents).toBe(100_000);
+    // a partial day names EXACTLY which account is missing, not just the count
+    expect(early?.missingAccounts).toEqual(["B"]);
     expect(late?.complete).toBe(true);
     expect(late?.totalCents).toBe(150_000);
+    expect(late?.missingAccounts).toEqual([]);
   });
 
   test("rebuild replays active transactions and ignores quarantined ones", () => {

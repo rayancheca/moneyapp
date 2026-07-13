@@ -16,6 +16,7 @@ import {
   type ScrubPoint,
   type ScrubSummary,
 } from "@/components/investments/ScrubChart";
+import { formatMissingAccounts } from "@/components/investments/ScrubTooltip";
 
 /**
  * Net worth adoption of the ScrubChart (ux-overhaul-plan §7.1). The Stage-4
@@ -47,7 +48,13 @@ const ACCENT_TEXT: Record<Accent, string> = {
 export function NetWorthChartPanel({ points, today, defaultRange = "1Y" }: NetWorthChartPanelProps) {
   const windowCtx = useDashboardWindow();
   const scrubPoints: ScrubPoint[] = useMemo(
-    () => points.map((p) => ({ day: p.day, valueCents: p.totalCents, complete: p.complete })),
+    () =>
+      points.map((p) => ({
+        day: p.day,
+        valueCents: p.totalCents,
+        complete: p.complete,
+        missingAccounts: p.missingAccounts,
+      })),
     [points],
   );
   const coverageByDay = useMemo(
@@ -76,7 +83,9 @@ export function NetWorthChartPanel({ points, today, defaultRange = "1Y" }: NetWo
       const base = scrubValueText(formatDayLong(summary.day), formatCents(summary.valueCents), summary.deltaPct);
       const cov = coverageByDay.get(summary.day);
       return cov && !cov.complete
-        ? `${base} — partial, ${cov.coveredAccounts} of ${cov.totalAccounts} accounts covered`
+        ? `${base} — partial, ${cov.coveredAccounts} of ${cov.totalAccounts} accounts covered${
+            cov.missingAccounts.length > 0 ? `; missing ${cov.missingAccounts.join(", ")}` : ""
+          }`
         : base;
     },
     [coverageByDay],
@@ -152,7 +161,12 @@ export function NetWorthChartPanel({ points, today, defaultRange = "1Y" }: NetWo
             </span>
             <span className="font-normal text-ink-faint">· {context}</span>
             {cov && !cov.complete && (
-              <span className="font-normal text-warning">· partial {cov.coveredAccounts}/{cov.totalAccounts}</span>
+              <span className="font-normal text-warning">
+                · partial {cov.coveredAccounts}/{cov.totalAccounts}
+                {cov.missingAccounts.length > 0 && (
+                  <span className="text-ink-faint"> · no {formatMissingAccounts(cov.missingAccounts)}</span>
+                )}
+              </span>
             )}
             {scrubbing && (
               <span className="text-ink-faint" aria-hidden>

@@ -268,21 +268,25 @@ export interface NetWorthPoint {
   coveredAccounts: number;
   totalAccounts: number;
   complete: boolean;
+  /** names of active accounts with NO coverage that day (empty when complete) —
+   *  so a partial day can say exactly which accounts it's missing, not just N/M */
+  missingAccounts: string[];
 }
 
 /**
  * Net-worth series with honest completeness: a day is complete only when
- * every active account has non-gap coverage — partial days are annotated,
- * never silently understated (schema.md net worth series).
+ * every active account has non-gap coverage — partial days are annotated with
+ * the exact missing accounts, never silently understated (schema.md net worth series).
  */
 export function netWorthSeries(db: AppDatabase): NetWorthPoint[] {
   const activeAccounts = db
-    .select({ id: accounts.id })
+    .select({ id: accounts.id, name: accounts.name })
     .from(accounts)
     .where(eq(accounts.isActive, true))
     .all();
   if (activeAccounts.length === 0) return [];
   const activeIds = activeAccounts.map((a) => a.id);
+  const nameById = new Map(activeAccounts.map((a) => [a.id, a.name] as const));
 
   const rows = db
     .select()
@@ -291,11 +295,13 @@ export function netWorthSeries(db: AppDatabase): NetWorthPoint[] {
     .orderBy(asc(dailyBalances.day))
     .all();
 
-  const byDay = new Map<string, { total: number; covered: number }>();
+  const byDay = new Map<string, { total: number; covered: Set<string> }>();
   for (const r of rows) {
     if (r.basis === "gap") continue;
-    const entry = byDay.get(r.day) ?? { total: 0, covered: 0 };
-    byDay.set(r.day, { total: entry.total + r.balanceCents, covered: entry.covered + 1 });
+    const entry = byDay.get(r.day) ?? { total: 0, covered: new Set<string>() };
+    entry.total += r.balanceCents;
+    entry.covered.add(r.accountId);
+    byDay.set(r.day, entry);
   }
 
   return [...byDay.entries()]
@@ -303,9 +309,10 @@ export function netWorthSeries(db: AppDatabase): NetWorthPoint[] {
     .map(([day, { total, covered }]) => ({
       day,
       totalCents: total,
-      coveredAccounts: covered,
+      coveredAccounts: covered.size,
       totalAccounts: activeIds.length,
-      complete: covered === activeIds.length,
+      complete: covered.size === activeIds.length,
+      missingAccounts: activeIds.filter((id) => !covered.has(id)).map((id) => nameById.get(id)!),
     }));
 }
 

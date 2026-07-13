@@ -65,6 +65,9 @@ export interface ScrubPoint {
    * (solid). Omitted entirely by the portfolio/holding charts, which are exact.
    */
   complete?: boolean;
+  /** net worth only: names of accounts with no coverage that day, so the readout
+   *  can name exactly which are missing (not just N/M). */
+  missingAccounts?: string[];
 }
 
 export interface ScrubMark {
@@ -223,6 +226,7 @@ export function ScrubChart({
       ...row,
       complete: slice[i]?.complete !== false,
       prevValue: i > 0 ? (slice[i - 1]?.valueCents ?? null) : null,
+      missingAccounts: slice[i]?.missingAccounts,
     }));
   }, [vivid, slice]);
   // recharts infers one ChartData<T> from `data`; the two series shapes (vivid

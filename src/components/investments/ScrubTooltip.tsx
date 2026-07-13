@@ -18,6 +18,14 @@ export interface VividChartRow {
   complete: boolean;
   /** the prior day's value, for the day-over-day delta; null at the window start */
   prevValue: number | null;
+  /** accounts with no coverage that day — named so "partial" says exactly which */
+  missingAccounts?: string[];
+}
+
+/** "SoFi Savings, Discover" or "SoFi Savings, Discover +2 more" — a compact list. */
+export function formatMissingAccounts(names: readonly string[], max = 2): string {
+  if (names.length <= max) return names.join(", ");
+  return `${names.slice(0, max).join(", ")} +${names.length - max} more`;
 }
 
 interface TooltipPayloadEntry {
@@ -84,7 +92,12 @@ export function ScrubTooltip({
         </p>
       )}
       {!row.complete && (
-        <p className="mt-1 text-[11px] text-warning">● Partial coverage</p>
+        <p className="mt-1 text-[11px] text-warning">
+          ● Partial
+          {row.missingAccounts && row.missingAccounts.length > 0 && (
+            <span className="text-ink-faint"> · no {formatMissingAccounts(row.missingAccounts)}</span>
+          )}
+        </p>
       )}
     </div>
   );

@@ -104,7 +104,10 @@ export default function DashboardPage() {
             </span>
             {!netWorth.complete && (
               <span className="text-warning">
-                partial · {netWorth.coveredAccounts}/{netWorth.totalAccounts} accounts covered
+                partial · {netWorth.coveredAccounts}/{netWorth.totalAccounts} covered
+                {netWorth.missingAccounts.length > 0 && (
+                  <span className="text-ink-faint"> · missing {netWorth.missingAccounts.join(", ")}</span>
+                )}
               </span>
             )}
           </p>
