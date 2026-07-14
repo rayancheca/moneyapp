@@ -42,7 +42,7 @@ function SubCard({ account }: { account: AccountCardData }) {
   return (
     <Link
       href={`/accounts/${account.id}`}
-      className="group/sub rounded-(--radius-card) border border-line bg-surface p-4 transition-colors duration-(--duration-fast) hover:border-line-strong"
+      className="group/sub rounded-(--radius-card) border border-line bg-surface p-4 transition-[color,border-color,transform] duration-(--duration-fast) hover:-translate-y-0.5 hover:border-line-strong motion-reduce:hover:translate-y-0"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">

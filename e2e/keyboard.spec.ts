@@ -1,5 +1,5 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
+import { analyzeSettled } from "./axe-helpers";
 
 /**
  * Keyboard + focus walkthrough of the Stage-0 overlay layer (ux-overhaul-plan
@@ -28,7 +28,7 @@ async function openHydrated(page: Page): Promise<void> {
   ).toBeVisible();
 }
 
-function gatingViolations(results: Awaited<ReturnType<AxeBuilder["analyze"]>>) {
+function gatingViolations(results: Awaited<ReturnType<typeof analyzeSettled>>) {
   return results.violations
     .filter((v) => v.impact === "critical" || v.impact === "serious")
     .map((v) => ({ id: v.id, impact: v.impact, nodes: v.nodes.length }));
@@ -66,7 +66,7 @@ test("toast action stays operable and a11y-clean while a modal sheet is open", a
   await expect(action).toBeVisible();
 
   // axe the live sheet + toast state (route scans never see open overlays)
-  expect(gatingViolations(await new AxeBuilder({ page }).analyze())).toEqual([]);
+  expect(gatingViolations(await analyzeSettled(page))).toEqual([]);
 
   await action.click();
   await expect(action).toHaveCount(0); // acting dismissed the toast
@@ -86,7 +86,7 @@ test("palette: ⌘K opens from anywhere and Esc restores focus to the trigger", 
   await expect(palette).toBeVisible();
 
   // browser-level axe on the combobox/listbox while it is open
-  expect(gatingViolations(await new AxeBuilder({ page }).analyze())).toEqual([]);
+  expect(gatingViolations(await analyzeSettled(page))).toEqual([]);
 
   // the dialog stays mounted and closes via dialog.close(), so the browser's
   // dialog-close steps restore focus to the pre-⌘K element — not <body>

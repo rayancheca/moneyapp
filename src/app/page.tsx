@@ -3,6 +3,7 @@ import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { todayIso } from "@/lib/dates";
 import { coverageLabel } from "@/lib/coverage-label";
+import { formatCents } from "@/lib/money";
 import { dashboardData } from "@/services/dashboard";
 import { recentLedgerRows } from "@/services/ledger-rows";
 import { institutionGroups } from "@/services/institution-groups";
@@ -14,12 +15,13 @@ import { RecentTransactions } from "@/components/transactions/RecentTransactions
 import { InstitutionCard } from "@/components/accounts/InstitutionCard";
 import { DashboardWindowProvider } from "@/components/dashboard/DashboardWindowContext";
 import { InvestmentsTeaser } from "@/components/dashboard/InvestmentsTeaser";
-import { NetWorthChartPanel } from "@/components/dashboard/NetWorthChartPanel";
+import { ChartFocus } from "@/components/dashboard/ChartFocus";
 import { PeriodActivityPanel } from "@/components/dashboard/PeriodActivityPanel";
 import { SpendingPaceWidget } from "@/components/dashboard/SpendingPaceWidget";
 import { ToReviewCard } from "@/components/dashboard/ToReviewCard";
 import { UpcomingBillsStrip } from "@/components/dashboard/UpcomingBillsStrip";
 import { Money } from "@/components/ui/Money";
+import { NumberRoll } from "@/components/ui/NumberRoll";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 
 export const dynamic = "force-dynamic";
@@ -95,7 +97,8 @@ export default function DashboardPage() {
             Net worth
           </h1>
           <p className="figures mt-2 text-5xl font-semibold tracking-tight">
-            <Money cents={netWorth.latestCents} />
+            {/* S10: the headline number rolls when it changes (never on first paint) */}
+            <NumberRoll value={formatCents(netWorth.latestCents)} />
           </p>
           <p className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-ink-muted">
             <span>
@@ -123,31 +126,37 @@ export default function DashboardPage() {
 
         {netWorth.series.length > 1 && (
           <>
-            <SurfaceCard className="mt-4">
-              <NetWorthChartPanel points={netWorth.series} today={today} />
-            </SurfaceCard>
+            <ChartFocus points={netWorth.series} today={today} />
             <PeriodActivityPanel categories={pickerOptions} />
           </>
         )}
       </section>
   );
 
+  // S9: one activity HUB — review, pace, investments, and the upcoming rail
+  // compose as a bento with tight internal rhythm (no dead gap between them)
   const activitySection = (
-      <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
-        <ToReviewCard
-          count={data.reviewCount}
-          href={data.reviewHref}
-          rows={reviewRows}
-          categories={pickerOptions}
-        />
-        <div className="space-y-6">
-          {data.pace && <SpendingPaceWidget pace={data.pace} />}
-          {data.investments && <InvestmentsTeaser data={data.investments} />}
+      <section aria-labelledby="activity-hub-heading">
+        <h2 id="activity-hub-heading" className="sr-only">
+          Activity
+        </h2>
+        <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
+          <ToReviewCard
+            count={data.reviewCount}
+            href={data.reviewHref}
+            rows={reviewRows}
+            categories={pickerOptions}
+          />
+          <div className="space-y-4">
+            {data.pace && <SpendingPaceWidget pace={data.pace} />}
+            {data.investments && <InvestmentsTeaser data={data.investments} />}
+          </div>
         </div>
-      </div>
+        <div className="mt-4">
+          <UpcomingBillsStrip data={data.upcoming} />
+        </div>
+      </section>
   );
-
-  const upcomingSection = <UpcomingBillsStrip data={data.upcoming} />;
 
   const accountsSection = (
       <section aria-labelledby="accounts-overview-heading">
@@ -187,8 +196,7 @@ export default function DashboardPage() {
 
   const sectionsById: Record<DashboardSectionId, { label: string; node: React.ReactNode }> = {
     hero: { label: "Net worth", node: heroSection },
-    activity: { label: "To review & pace", node: activitySection },
-    upcoming: { label: "Upcoming bills", node: upcomingSection },
+    activity: { label: "Activity", node: activitySection },
     accounts: { label: "Accounts", node: accountsSection },
     recent: { label: "Recent transactions", node: recentSection },
   };

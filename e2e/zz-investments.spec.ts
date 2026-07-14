@@ -1,5 +1,5 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
+import { analyzeSettled } from "./axe-helpers";
 
 /**
  * Investments interaction contract (ux-overhaul-plan §6.5). READ-ONLY — it only
@@ -67,7 +67,7 @@ test("the P/L calendar opens a day sheet with per-holding detail", async ({ page
   await expect(sheet.getByText("Portfolio P/L")).toBeVisible();
 
   // the open sheet must be axe-clean too (critical/serious only)
-  const results = await new AxeBuilder({ page }).analyze();
+  const results = await analyzeSettled(page);
   const gating = results.violations.filter((v) => v.impact === "critical" || v.impact === "serious");
   expect(gating.map((v) => ({ id: v.id, nodes: v.nodes.length }))).toEqual([]);
 });

@@ -24,6 +24,12 @@ export function ArrangeableSections({ sections }: { sections: readonly Arrangeab
   const [order, setOrder] = useState<string[]>(sections.map((s) => s.id));
   const [arranging, setArranging] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
+  // the entrance cascade must play ONCE: React reorders keyed children via
+  // insertBefore, which RESTARTS a CSS animation on the moved node — with the
+  // class left on, every arrange-mode move flashed the moved section invisible
+  // (fill-mode both holds the opacity-0 frame through its stagger delay).
+  // After the last section's entrance ends the classes come off for good.
+  const [entered, setEntered] = useState(false);
 
   const byId = new Map(sections.map((s) => [s.id, s]));
   // reconcile state with the CURRENT props every render — a section that
@@ -78,12 +84,25 @@ export function ArrangeableSections({ sections }: { sections: readonly Arrangeab
           {arranging ? "Done arranging" : "Arrange"}
         </Button>
       </div>
-      {ordered.map((section) => (
+      {ordered.map((section, index) => (
         <div
           key={section.id}
           onDragOver={arranging ? (e) => e.preventDefault() : undefined}
           onDrop={arranging ? (e) => drop(e, section.id) : undefined}
-          className={arranging ? "rounded-(--radius-card) outline-dashed outline-1 outline-line" : undefined}
+          // S10: entrance cascade — sections rise in reading order on mount,
+          // then the animation is removed (see `entered`); child animationend
+          // events bubble, so only the wrapper's own animation flips the state
+          style={entered ? undefined : { animationDelay: `${index * 60}ms` }}
+          className={`${entered ? "" : "animate-fade-rise [animation-fill-mode:both] "}${
+            arranging ? "rounded-(--radius-card) outline-dashed outline-1 outline-line" : ""
+          }`}
+          onAnimationEnd={
+            !entered && index === ordered.length - 1
+              ? (e) => {
+                  if (e.target === e.currentTarget) setEntered(true);
+                }
+              : undefined
+          }
         >
           {arranging ? (
             <div

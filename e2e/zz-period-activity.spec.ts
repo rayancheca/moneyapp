@@ -1,5 +1,5 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
+import { analyzeSettled } from "./axe-helpers";
 
 /**
  * The linked period-activity panel (dashboard-dynamic §2, §4): brushing the
@@ -51,7 +51,7 @@ test("brushing the chart cross-filters the activity panel", async ({ page }) => 
   await page.waitForLoadState("networkidle");
   await expect(panel.getByText(/spent$/)).toBeVisible();
   // and it passes axe in this new state (nothing critical/serious)
-  const results = await new AxeBuilder({ page }).analyze();
+  const results = await analyzeSettled(page);
   const gating = results.violations.filter((v) => v.impact === "critical" || v.impact === "serious");
   expect(gating.map((v) => ({ id: v.id, nodes: v.nodes.length }))).toEqual([]);
 });

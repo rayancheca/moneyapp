@@ -1,5 +1,5 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
+import { analyzeSettled } from "./axe-helpers";
 
 /**
  * Interaction-state baselines + in-state axe (ux-overhaul-plan §2.7.3/.4):
@@ -60,7 +60,7 @@ export function defineStateTests(state: InteractionState): void {
           fullPage: true,
         });
         // axe runs IN the prepared state — the coverage a route scan can't give
-        const results = await new AxeBuilder({ page }).analyze();
+        const results = await analyzeSettled(page);
         const gating = results.violations.filter(
           (v) => v.impact === "critical" || v.impact === "serious",
         );

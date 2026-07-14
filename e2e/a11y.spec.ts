@@ -1,5 +1,5 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
+import { analyzeSettled } from "./axe-helpers";
 
 /**
  * Phase gate: zero critical a11y violations on every screen (master-plan §4).
@@ -42,7 +42,7 @@ for (const theme of THEMES) {
       await page.addInitScript((t) => window.localStorage.setItem("theme", t), theme);
       await page.goto(route);
       await expectHydrated(page);
-      const results = await new AxeBuilder({ page }).analyze();
+      const results = await analyzeSettled(page);
       expect(gatingViolations(results)).toEqual([]);
     });
   }
@@ -55,7 +55,7 @@ for (const theme of THEMES) {
     if (!href) throw new Error("no category link on /spending?period=2026");
     await page.goto(`${href}?period=2026`);
     await expectHydrated(page);
-    const results = await new AxeBuilder({ page }).analyze();
+    const results = await analyzeSettled(page);
     expect(gatingViolations(results)).toEqual([]);
   });
 
@@ -67,7 +67,7 @@ for (const theme of THEMES) {
     if (!href) throw new Error("no holding link on /investments");
     await page.goto(href);
     await expectHydrated(page);
-    const results = await new AxeBuilder({ page }).analyze();
+    const results = await analyzeSettled(page);
     expect(gatingViolations(results)).toEqual([]);
   });
 
@@ -82,7 +82,7 @@ for (const theme of THEMES) {
     if (!href) throw new Error("no account link in the Robinhood section on /accounts");
     await page.goto(href);
     await expectHydrated(page);
-    const results = await new AxeBuilder({ page }).analyze();
+    const results = await analyzeSettled(page);
     expect(gatingViolations(results)).toEqual([]);
   });
 }

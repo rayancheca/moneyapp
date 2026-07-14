@@ -243,6 +243,10 @@ body {
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    /* delays too: an entrance with fill-mode both holds the invisible first
+       frame through its (inline, per-index) stagger delay — zero duration
+       alone would still blank staggered sections for up to ~300ms */
+    animation-delay: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
 }

@@ -1,5 +1,5 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
+import { analyzeSettled } from "./axe-helpers";
 
 /**
  * Series detail + calendar sub-view (ux-overhaul-plan §4.2/§4.1.3). Runs LAST
@@ -32,7 +32,7 @@ test("detail page renders the editable cadence sentence and passes axe", async (
   await expect(page.getByText(/charges|deposits|moves/).first()).toBeVisible();
   await expect(page.getByRole("button", { name: /^Series name:/ })).toBeVisible();
 
-  const results = await new AxeBuilder({ page }).analyze();
+  const results = await analyzeSettled(page);
   const gating = results.violations.filter((v) => v.impact === "critical" || v.impact === "serious");
   expect(gating.map((v) => ({ id: v.id, nodes: v.nodes.length }))).toEqual([]);
 });
@@ -89,7 +89,7 @@ test("calendar day sheet lists the day's recurring activity and passes axe", asy
     return !!d && getComputedStyle(d).opacity === "1";
   });
 
-  const results = await new AxeBuilder({ page }).analyze();
+  const results = await analyzeSettled(page);
   const gating = results.violations.filter((v) => v.impact === "critical" || v.impact === "serious");
   expect(gating.map((v) => ({ id: v.id, nodes: v.nodes.length }))).toEqual([]);
 });
