@@ -12,6 +12,7 @@ import { accountSeries } from "@/services/derivation";
 import { listAccountHoldings } from "@/services/holdings";
 import { recentLedgerRows } from "@/services/ledger-rows";
 import { AccountHoldingsTable } from "@/components/accounts/AccountHoldingsTable";
+import { AccountNameHeading } from "@/components/accounts/AccountNameHeading";
 import { AnchorForm } from "@/components/accounts/AnchorForm";
 import { BalanceChartPanel } from "@/components/accounts/BalanceChartPanel";
 import { EditAccountButton } from "@/components/accounts/EditAccountButton";
@@ -19,7 +20,6 @@ import { buildCategoryPickerOptions } from "@/components/transactions/category-o
 import { RecentTransactions } from "@/components/transactions/RecentTransactions";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { Money } from "@/components/ui/Money";
-import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { deleteAnchorAction, setAccountActiveAction } from "../actions";
 
@@ -102,8 +102,9 @@ export default async function AccountDetailPage({
         items={[{ label: "Accounts", href: "/accounts" }, { label: account.name }]}
       />
       <div className="flex items-start justify-between gap-4">
-        <PageHeader
-          title={account.name}
+        <AccountNameHeading
+          accountId={account.id}
+          name={account.name}
           description={`${TYPE_LABEL[account.type] ?? account.type}${account.subtype ? ` · ${account.subtype}` : ""}${account.last4 ? ` · ····${account.last4}` : ""}${account.isActive ? "" : " · archived"}`}
         />
         <div className="mt-1">

@@ -3,7 +3,7 @@
 > Living backlog. **Every working pass must expand + polish this list and tick off
 > what shipped.** Newest thinking near the top of each section. Dates are absolute.
 
-Last updated: 2026-07-13 (pass 8 — data-correctness review: opaque income triaged, SoFi backfill categorized).
+Last updated: 2026-07-13 (pass 9 — S2 inline-edit primitive shipped: account name editable in place).
 
 ---
 
@@ -25,9 +25,20 @@ Last updated: 2026-07-13 (pass 8 — data-correctness review: opaque income tria
   Track 3.
 
 **Track 3 — "Nothing read-only" (option 3, ~6 sessions)** — the north star; each a shippable slice.
-- [ ] **S2** — shared `<InlineEditableText>` + `<InlineEditableAmount>` primitives (click→input→save on
-  blur/enter, Esc cancels, optimistic + Toast-undo). First use: account name inline on the detail
-  page + breadcrumb. TDD the pure edit-state hook.
+- [x] **S2 — inline-edit primitive shipped (pass 9).** Built the pure edit-state core
+  `src/lib/inline-edit.ts` (reducer + `keyToIntent` + `resolveTextCommit`/`resolveAmountCommit` →
+  save/noop/invalid; TDD'd, src/lib 100%), the `useInlineEdit` hook (optimistic display + rollback,
+  generation guard against overlapping saves, try/catch on a thrown/rejected save, Toast+Undo, keyboard
+  focus return, Enter/Escape/blur grammar), and `<InlineEditableText>` (a role=button span that flows/wraps
+  like the surrounding text, click→input in place, no layout jump). **First use: the account detail `<h1>`**
+  is now editable in place via `renameAccountAction` (value-returning; reuses `updateAccount`). `StatCard`
+  gained an optional `className`. e2e `zz-account-rename` (Escape cancels · Enter saves · Undo restores ·
+  reload persists); adversarial 4-lens review → 5 findings fixed (2 high: save-rejection swallow, keyboard
+  focus loss; 1 med: overlapping-save race; 2 low). Verified on real data (hover affordance, edit-in-place
+  input, no jump) at desktop + mobile; net worth untouched.
+  - NOTE: `<InlineEditableAmount>` component **deferred to S4** (its first real wiring = manual-txn
+    amounts). The hard part is already done + tested here: `resolveAmountCommit` (cents via the ledger's
+    string-math parser) and the shared hook are generic, so S4 is a thin renderer.
 - [ ] **S3** — inline-rename everywhere a name shows (merchants, categories, recurring series) via the
   primitive + value-returning server actions + optimistic/undo. Account institution/type/subtype/last4
   editable from the detail page with a "this re-derives history" confirm.
@@ -244,7 +255,9 @@ be able to play around with everything and link everything and move things aroun
 This is a program of work, broken into shippable slices:
 
 ### Editable everywhere
-- [ ] Account **name** editable inline on the detail page (and breadcrumb) — not just the /accounts manage sheet. *(next)*
+- [x] Account **name** editable inline on the detail page `<h1>` (pass 9, S2) — via the shared
+  `<InlineEditableText>` primitive. (The breadcrumb reflects the saved name after refresh; it's a static
+  mirror, not a second editor — one editing surface per value avoids double-edit confusion.)
 - [ ] Account **institution / type / subtype / last4** editable from the detail page too (type/subtype currently deliberately locked because they reshape the balance curve — offer it with a clear "this re-derives history" confirm instead of hiding it).
 - [ ] **Inline-rename anywhere a name is shown** (merchants, categories, recurring series, budgets) via a shared `<InlineEditableText>` primitive (click → input → save on blur/enter, Esc cancels, optimistic + undo).
 - [ ] **Every number that's an input should be editable in place** (balances-as-anchors, budget amounts [done], category names, merchant display names).

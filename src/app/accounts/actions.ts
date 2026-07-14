@@ -139,6 +139,35 @@ export async function editAccountAction(input: {
   return { ok: true, data: { id: parsed.data.accountId } };
 }
 
+const renameAccountActionSchema = z.object({
+  accountId: z.string().min(1),
+  name: z.string().trim().min(1, "Name the account").max(80, "Keep it to 80 characters or fewer"),
+});
+
+/**
+ * Value-returning rename for the inline <InlineEditableText> on the account
+ * detail page (the "nothing read-only" primitive). Name-only — institution and
+ * last4 stay with the edit sheet. Reuses updateAccount's validated partial set.
+ */
+export async function renameAccountAction(input: {
+  accountId: string;
+  name: string;
+}): Promise<ActionResult<{ id: string; name: string }>> {
+  const parsed = renameAccountActionSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid name" };
+  }
+  try {
+    updateAccount(getDb(), parsed.data.accountId, { name: parsed.data.name });
+  } catch (error: unknown) {
+    return { ok: false, error: error instanceof Error ? error.message : "Could not rename account" };
+  }
+  revalidatePath("/");
+  revalidatePath("/accounts");
+  revalidatePath(`/accounts/${parsed.data.accountId}`);
+  return { ok: true, data: { id: parsed.data.accountId, name: parsed.data.name } };
+}
+
 /** Find-or-create an institution inline, returning its id for the select. */
 export async function createInstitutionAction(name: string): Promise<ActionResult<{ id: string }>> {
   const trimmed = typeof name === "string" ? name.trim() : "";
