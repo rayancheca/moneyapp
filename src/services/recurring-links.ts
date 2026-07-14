@@ -3,6 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { todayIso } from "@/lib/dates";
+import type { UndoPatch } from "./bulk-edit";
 import { loadRecomputeCtx, recomputeSeriesStats, resolveMergeTarget } from "./recurring";
 
 /**
@@ -13,16 +14,23 @@ import { loadRecomputeCtx, recomputeSeriesStats, resolveMergeTarget } from "./re
  * nothing. All work happens in one synchronous transaction.
  */
 
-/** Attaches transactions to a series by hand (a user-owned link). Returns the count moved. */
+export interface AttachResult {
+  attached: number;
+  /** lossless inverse — restores each row's prior series AND link ownership */
+  undo: UndoPatch;
+}
+
+/** Attaches transactions to a series by hand (a user-owned link). */
 export function attachTransactions(
   db: AppDatabase,
   seriesId: string,
   transactionIds: readonly string[],
   today: string = todayIso(),
-): number {
-  if (transactionIds.length === 0) return 0;
+): AttachResult {
+  if (transactionIds.length === 0) return { attached: 0, undo: { rows: [] } };
   const ctx = loadRecomputeCtx(db);
   let attached = 0;
+  const undo: UndoPatch = { rows: [] };
   db.transaction((tx) => {
     const mergedById = new Map(
       tx
@@ -36,12 +44,21 @@ export function attachTransactions(
     // never strand on a dead (ended) series (mirrors mergeSeries/detection)
     const target = resolveMergeTarget(seriesId, mergedById);
 
-    // capture the series these rows are leaving, so their stats settle too
+    // capture the series these rows are leaving (stats settle) AND each row's
+    // prior link state (lossless undo — ownership must not drift to 'user')
     const rows = tx
-      .select({ id: transactions.id, recurringSeriesId: transactions.recurringSeriesId })
+      .select({
+        id: transactions.id,
+        recurringSeriesId: transactions.recurringSeriesId,
+        seriesLinkSource: transactions.seriesLinkSource,
+      })
       .from(transactions)
       .where(and(inArray(transactions.id, [...transactionIds]), eq(transactions.status, "active")))
       .all();
+    undo.rows = rows.map((r) => ({
+      id: r.id,
+      prev: { recurringSeriesId: r.recurringSeriesId, seriesLinkSource: r.seriesLinkSource },
+    }));
     const formerSeriesIds = new Set(
       rows
         .map((r) => r.recurringSeriesId)
@@ -58,32 +75,46 @@ export function attachTransactions(
     recomputeSeriesStats(tx, target, today, ctx);
     for (const former of formerSeriesIds) recomputeSeriesStats(tx, former, today, ctx);
   });
-  return attached;
+  return { attached, undo };
 }
 
-/** Unlinks a transaction from its series (a user-owned decision). Returns the former series id. */
+export interface DetachResult {
+  formerSeriesId: string | null;
+  /** lossless inverse — restores the prior series AND link ownership */
+  undo: UndoPatch;
+}
+
+/** Unlinks a transaction from its series (a user-owned decision). */
 export function detachTransaction(
   db: AppDatabase,
   transactionId: string,
   today: string = todayIso(),
-): string | null {
+): DetachResult {
   const ctx = loadRecomputeCtx(db);
   let formerSeriesId: string | null = null;
+  const undo: UndoPatch = { rows: [] };
   db.transaction((tx) => {
     const row = tx
-      .select({ id: transactions.id, recurringSeriesId: transactions.recurringSeriesId })
+      .select({
+        id: transactions.id,
+        recurringSeriesId: transactions.recurringSeriesId,
+        seriesLinkSource: transactions.seriesLinkSource,
+      })
       .from(transactions)
       .where(eq(transactions.id, transactionId))
       .get();
     if (!row) throw new Error(`Unknown transaction ${transactionId}`);
     formerSeriesId = row.recurringSeriesId;
+    undo.rows = [
+      { id: row.id, prev: { recurringSeriesId: row.recurringSeriesId, seriesLinkSource: row.seriesLinkSource } },
+    ];
     tx.update(transactions)
       .set({ recurringSeriesId: null, seriesLinkSource: "user" })
       .where(eq(transactions.id, transactionId))
       .run();
     if (formerSeriesId) recomputeSeriesStats(tx, formerSeriesId, today, ctx);
   });
-  return formerSeriesId;
+  return { formerSeriesId, undo };
 }
 
 export interface MergeResult {

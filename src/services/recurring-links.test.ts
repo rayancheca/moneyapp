@@ -21,6 +21,7 @@ import {
   toProjectable,
   type SeriesOverrides,
 } from "./recurring";
+import { applyUndoPatch } from "./bulk-edit";
 import { attachTransactions, detachTransaction, mergeSeries } from "./recurring-links";
 
 const TODAY = "2026-07-08";
@@ -143,7 +144,7 @@ describe("detection respects user decisions (§4.3): a re-run changes nothing", 
     const netflix = seriesFor(netflixId);
     const target = taggedIds(netflix.id).sort()[0]!;
 
-    const former = detachTransaction(bundle.db, target, TODAY);
+    const former = detachTransaction(bundle.db, target, TODAY).formerSeriesId;
     expect(former).toBe(netflix.id);
     const row = bundle.db.select().from(transactions).where(eq(transactions.id, target)).get()!;
     expect(row.recurringSeriesId).toBeNull();
@@ -159,7 +160,7 @@ describe("detection respects user decisions (§4.3): a re-run changes nothing", 
     const netflix = seriesFor(netflixId);
     const foreign = insertTxn({ postedOn: "2026-06-20", amountCents: -742, rawDescription: "CORNER COFFEE" });
 
-    expect(attachTransactions(bundle.db, netflix.id, [foreign], TODAY)).toBe(1);
+    expect(attachTransactions(bundle.db, netflix.id, [foreign], TODAY).attached).toBe(1);
     const row = bundle.db.select().from(transactions).where(eq(transactions.id, foreign)).get()!;
     expect(row.recurringSeriesId).toBe(netflix.id);
     expect(row.seriesLinkSource).toBe("user");
@@ -253,7 +254,7 @@ describe("merge mechanics + error guards", () => {
     mergeSeries(bundle.db, spotify.id, netflix.id, TODAY);
     const fresh = insertTxn({ postedOn: "2026-07-02", amountCents: -1200, rawDescription: "ONE OFF" });
 
-    expect(attachTransactions(bundle.db, spotify.id, [fresh], TODAY)).toBe(1);
+    expect(attachTransactions(bundle.db, spotify.id, [fresh], TODAY).attached).toBe(1);
     const row = bundle.db.select().from(transactions).where(eq(transactions.id, fresh)).get()!;
     expect(row.recurringSeriesId).toBe(netflix.id); // NOT the ended Spotify series
     expect(row.seriesLinkSource).toBe("user");
@@ -270,7 +271,7 @@ describe("merge mechanics + error guards", () => {
 
   test("attaching zero transactions is a no-op", () => {
     const netflix = seriesFor(netflixId);
-    expect(attachTransactions(bundle.db, netflix.id, [], TODAY)).toBe(0);
+    expect(attachTransactions(bundle.db, netflix.id, [], TODAY).attached).toBe(0);
   });
 });
 
@@ -361,5 +362,43 @@ describe("merge/confirm guards (§4.3 money-integrity)", () => {
     );
     // dismiss is still allowed on a merged series (it is already dead)
     expect(() => setSeriesStatus(bundle.db, spotify.id, "dismissed")).not.toThrow();
+  });
+});
+
+describe("lossless link-ownership undo (S5 hardening)", () => {
+  function txnRow(id: string) {
+    return bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+  }
+
+  test("attach → undo restores BOTH the series id and the link ownership", () => {
+    const netflix = seriesFor(netflixId);
+    const spotify = seriesFor(spotifyId);
+    const target = taggedIds(netflix.id)[0]!;
+    const before = txnRow(target);
+    expect(before.seriesLinkSource).toBe("detected"); // detector-owned
+
+    const result = attachTransactions(bundle.db, spotify.id, [target], TODAY);
+    expect(txnRow(target).seriesLinkSource).toBe("user");
+    expect(txnRow(target).recurringSeriesId).toBe(spotify.id);
+
+    applyUndoPatch(bundle.db, result.undo);
+    const after = txnRow(target);
+    expect(after.recurringSeriesId).toBe(before.recurringSeriesId);
+    expect(after.seriesLinkSource).toBe("detected"); // detection owns it again
+  });
+
+  test("detach → undo restores the link without stamping user ownership", () => {
+    const netflix = seriesFor(netflixId);
+    const target = taggedIds(netflix.id)[0]!;
+    const before = txnRow(target);
+
+    const result = detachTransaction(bundle.db, target, TODAY);
+    expect(txnRow(target).recurringSeriesId).toBeNull();
+    expect(txnRow(target).seriesLinkSource).toBe("user");
+
+    applyUndoPatch(bundle.db, result.undo);
+    const after = txnRow(target);
+    expect(after.recurringSeriesId).toBe(before.recurringSeriesId);
+    expect(after.seriesLinkSource).toBe(before.seriesLinkSource);
   });
 });

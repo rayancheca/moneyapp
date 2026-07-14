@@ -4,9 +4,11 @@ import type { AppDatabase } from "@/db/client";
 import {
   transactions,
   CATEGORIZATION_SOURCES,
+  SERIES_LINK_SOURCES,
   TRANSACTION_STATUSES,
 } from "@/db/schema/transactions";
-import { isValidIsoDate } from "@/lib/dates";
+import { isValidIsoDate, todayIso } from "@/lib/dates";
+import { loadRecomputeCtx, recomputeSeriesStats } from "./recurring";
 import { matchingTransactionIds } from "./transactions-query";
 import type { TxnFilters, TxnView } from "@/components/transactions/query";
 
@@ -42,6 +44,7 @@ const undoFieldsSchema = z
     transferGroupId: z.string().nullable().optional(),
     merchantId: z.string().nullable().optional(),
     recurringSeriesId: z.string().nullable().optional(),
+    seriesLinkSource: z.enum(SERIES_LINK_SOURCES).nullable().optional(),
     notes: z.string().nullable().optional(),
   })
   .strict();
@@ -187,6 +190,9 @@ export function bulkApplyByFilter(
 export function applyUndoPatch(db: AppDatabase, undo: UndoPatch): number {
   const parsed = undoPatchSchema.parse(undo);
   let restored = 0;
+  // restoring a series link must also settle that series' stats — collect
+  // every id the patch moves rows INTO plus the ids rows currently sit ON
+  const touchedSeriesIds = new Set<string>();
   db.transaction((tx) => {
     for (const row of parsed.rows) {
       const set: TxnUpdate = {};
@@ -200,8 +206,17 @@ export function applyUndoPatch(db: AppDatabase, undo: UndoPatch): number {
         set.status = row.prev.status;
       if (row.prev.transferGroupId !== undefined) set.transferGroupId = row.prev.transferGroupId;
       if (row.prev.merchantId !== undefined) set.merchantId = row.prev.merchantId;
-      if (row.prev.recurringSeriesId !== undefined)
+      if (row.prev.recurringSeriesId !== undefined) {
         set.recurringSeriesId = row.prev.recurringSeriesId;
+        if (row.prev.recurringSeriesId) touchedSeriesIds.add(row.prev.recurringSeriesId);
+        const current = tx
+          .select({ recurringSeriesId: transactions.recurringSeriesId })
+          .from(transactions)
+          .where(eq(transactions.id, row.id))
+          .get();
+        if (current?.recurringSeriesId) touchedSeriesIds.add(current.recurringSeriesId);
+      }
+      if (row.prev.seriesLinkSource !== undefined) set.seriesLinkSource = row.prev.seriesLinkSource;
       if (row.prev.notes !== undefined) set.notes = row.prev.notes;
       if (Object.keys(set).length === 0) continue;
       restored += tx
@@ -209,6 +224,11 @@ export function applyUndoPatch(db: AppDatabase, undo: UndoPatch): number {
         .set(set)
         .where(and(eq(transactions.id, row.id), ne(transactions.status, "superseded")))
         .run().changes;
+    }
+    if (touchedSeriesIds.size > 0) {
+      const ctx = loadRecomputeCtx(db);
+      const today = todayIso();
+      for (const seriesId of touchedSeriesIds) recomputeSeriesStats(tx, seriesId, today, ctx);
     }
   });
   return restored;

@@ -7,6 +7,7 @@ import { Badge, LetterBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Checkbox, Field, Input } from "@/components/ui/Field";
 import { InlineEditableText } from "@/components/ui/InlineEditableText";
+import { SeriesLinkPanel, TransferLinkPanel } from "./LinkPanels";
 import { Money } from "@/components/ui/Money";
 import { Sheet } from "@/components/ui/Sheet";
 import { Sparkline } from "@/components/ui/Sparkline";
@@ -229,6 +230,11 @@ export function TransactionSheet({
         <Field label="Notes">
           <Input value={notes} onChange={(e) => setNotes(e.target.value)} onBlur={saveNotes} placeholder="Add a note…" />
         </Field>
+
+        {/* S5 linkable: pair with the transfer counterpart / attach to a series
+            — right where the transaction is shown, candidates load on demand */}
+        <TransferLinkPanel txnId={txn.id} isTransfer={txn.isTransfer} onChanged={afterMutation} />
+        <SeriesLinkPanel txnId={txn.id} isRecurring={txn.isRecurring} onChanged={afterMutation} />
 
         {/* same-name panel — the headline ask (§3.2.5): the merchant (or the
             merchantless stripped-key group) and the one-gesture "Recategorize

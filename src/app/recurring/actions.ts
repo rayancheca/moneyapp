@@ -17,6 +17,7 @@ import {
   type AttachCandidate,
 } from "@/services/recurring-detail";
 import { attachTransactions, detachTransaction, mergeSeries } from "@/services/recurring-links";
+import type { UndoPatch } from "@/services/bulk-edit";
 import type { ActionResult } from "@/app/transactions/action-types";
 
 const seriesFormSchema = z.object({ seriesId: z.string().min(1) });
@@ -112,12 +113,12 @@ const attachSchema = z.object({
 
 export async function attachToSeriesAction(
   input: z.input<typeof attachSchema>,
-): Promise<ActionResult<{ attached: number }>> {
+): Promise<ActionResult<{ attached: number; undo: UndoPatch }>> {
   try {
     const { seriesId, transactionIds } = attachSchema.parse(input);
-    const attached = attachTransactions(getDb(), seriesId, transactionIds);
+    const result = attachTransactions(getDb(), seriesId, transactionIds);
     revalidateRecurring(seriesId);
-    return { ok: true, data: { attached } };
+    return { ok: true, data: { attached: result.attached, undo: result.undo } };
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : "Failed to attach" };
   }
@@ -127,12 +128,12 @@ const detachSchema = z.object({ transactionId: z.string().min(1) });
 
 export async function detachFromSeriesAction(
   input: z.input<typeof detachSchema>,
-): Promise<ActionResult<{ formerSeriesId: string | null }>> {
+): Promise<ActionResult<{ formerSeriesId: string | null; undo: UndoPatch }>> {
   try {
     const { transactionId } = detachSchema.parse(input);
-    const formerSeriesId = detachTransaction(getDb(), transactionId);
-    revalidateRecurring(formerSeriesId ?? undefined);
-    return { ok: true, data: { formerSeriesId } };
+    const result = detachTransaction(getDb(), transactionId);
+    revalidateRecurring(result.formerSeriesId ?? undefined);
+    return { ok: true, data: { formerSeriesId: result.formerSeriesId, undo: result.undo } };
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : "Failed to detach" };
   }

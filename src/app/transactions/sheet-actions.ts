@@ -4,6 +4,11 @@ import { z } from "zod";
 import { getDb } from "@/db/client";
 import { merchantSummary, similarGroupIds, similarTransactions } from "@/services/merchants";
 import {
+  transferCandidates,
+  transferCounterparts,
+  type TransferCandidate,
+} from "@/services/transfer-links";
+import {
   categorizeContext,
   type CategorySuggestion,
   type MatchingRule,
@@ -89,5 +94,96 @@ export async function loadSheetPanel(
     return { ok: true, data: { merchant, siblings, similarCount, suggestion, history, matchingRules } };
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : "Failed to load panel" };
+  }
+}
+
+// ── S5 "linkable" panels — loaded lazily on disclosure, never on sheet open ──
+
+export interface TransferLinkPanelData {
+  /** present when the row is already in a transfer group */
+  counterparts: { groupId: string; legs: TransferCandidate[] } | null;
+  /** pairing candidates when it is not */
+  candidates: TransferCandidate[];
+}
+
+export async function loadTransferLinkPanel(
+  transactionId: string,
+): Promise<ActionResult<TransferLinkPanelData>> {
+  try {
+    const id = z.string().min(1).parse(transactionId);
+    const db = getDb();
+    const counterparts = transferCounterparts(db, id);
+    return {
+      ok: true,
+      data: {
+        counterparts,
+        candidates: counterparts === null ? transferCandidates(db, id) : [],
+      },
+    };
+  } catch (error: unknown) {
+    return { ok: false, error: error instanceof Error ? error.message : "Failed to load transfer panel" };
+  }
+}
+
+export interface SeriesLinkCandidate {
+  id: string;
+  name: string;
+  /** cadence + typical amount, e.g. "monthly · ~$11.99" */
+  detail: string;
+}
+
+export interface SeriesLinkPanelData {
+  /** the series this row is attached to, when any */
+  linked: { id: string; name: string } | null;
+  candidates: SeriesLinkCandidate[];
+}
+
+const SERIES_CANDIDATE_LIMIT = 12;
+
+export async function loadSeriesLinkPanel(
+  transactionId: string,
+): Promise<ActionResult<SeriesLinkPanelData>> {
+  try {
+    const id = z.string().min(1).parse(transactionId);
+    const db = getDb();
+    const { transactions } = await import("@/db/schema/transactions");
+    const { recurringSeries } = await import("@/db/schema/recurring");
+    const { eq } = await import("drizzle-orm");
+    const row = db
+      .select({ recurringSeriesId: transactions.recurringSeriesId, merchantId: transactions.merchantId })
+      .from(transactions)
+      .where(eq(transactions.id, id))
+      .get();
+    if (!row) throw new Error("Unknown transaction");
+
+    if (row.recurringSeriesId) {
+      const series = db
+        .select({ id: recurringSeries.id, name: recurringSeries.name })
+        .from(recurringSeries)
+        .where(eq(recurringSeries.id, row.recurringSeriesId))
+        .get();
+      return { ok: true, data: { linked: series ?? null, candidates: [] } };
+    }
+
+    const { listSeries } = await import("@/services/recurring");
+    const { formatCents } = await import("@/lib/money");
+    const merchantName = row.merchantId ? merchantSummary(db, row.merchantId).name : null;
+    const candidates = listSeries(db)
+      .filter((s) => s.status === "detected" || s.status === "confirmed")
+      .sort((a, b) => {
+        // same-merchant series first — the likeliest attach target
+        const aMatch = merchantName !== null && a.merchantName === merchantName ? 0 : 1;
+        const bMatch = merchantName !== null && b.merchantName === merchantName ? 0 : 1;
+        return aMatch - bMatch || a.name.localeCompare(b.name);
+      })
+      .slice(0, SERIES_CANDIDATE_LIMIT)
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        detail: `${s.cadence}${s.amountCentsAvg !== null ? ` · ~${formatCents(Math.abs(s.amountCentsAvg))}` : ""}`,
+      }));
+    return { ok: true, data: { linked: null, candidates } };
+  } catch (error: unknown) {
+    return { ok: false, error: error instanceof Error ? error.message : "Failed to load series panel" };
   }
 }

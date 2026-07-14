@@ -32,6 +32,7 @@ import {
   type ManualTxnInput,
 } from "@/services/manual-transactions";
 import { renameMerchant, similarGroupIds } from "@/services/merchants";
+import { linkTransferPair, unlinkTransferGroup } from "@/services/transfer-links";
 import {
   clusterRefSchema,
   confirmCluster,
@@ -515,6 +516,37 @@ export async function addManualTransactionAction(
     revalidateTransactions();
     revalidatePath("/accounts");
     return { ok: true, data: { transactionId } };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+const linkTransferSchema = z.object({ aId: z.string().min(1), bId: z.string().min(1) });
+
+/** Pair two transactions as one transfer (S5) — lossless undo via the shared patch. */
+export async function linkTransferAction(input: {
+  aId: string;
+  bId: string;
+}): Promise<ActionResult<BulkMutationData>> {
+  try {
+    const parsed = linkTransferSchema.parse(input);
+    const result = linkTransferPair(getDb(), parsed.aId, parsed.bId);
+    revalidateTransactions();
+    return { ok: true, data: { affected: result.affected, undo: result.undo } };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+/** Dissolve a transfer group (S5) — legs keep their category, only the link clears. */
+export async function unlinkTransferAction(input: {
+  groupId: string;
+}): Promise<ActionResult<BulkMutationData>> {
+  try {
+    if (!input.groupId) throw new Error("Unknown transfer group");
+    const result = unlinkTransferGroup(getDb(), input.groupId);
+    revalidateTransactions();
+    return { ok: true, data: { affected: result.affected, undo: result.undo } };
   } catch (error: unknown) {
     return failure(error);
   }
