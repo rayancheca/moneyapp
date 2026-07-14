@@ -6,8 +6,9 @@
 > **Every working pass must expand + polish this list and tick off what shipped.**
 > One focused item per session; end each session with a handoff prompt. Dates absolute.
 
-Last updated: 2026-07-14 (pass 10 — Tracks 4 AND 3 closed [S1–S7], Track 2 shipped [S8–S10a],
-P0 data investigations completed and written up below).
+Last updated: 2026-07-14 (pass 11 — Track 2 [S8–S10a] gate closed + committed: S8 follow-ups
+fixed, a11y axe race solved (settle-before-scan helper), 4 adversarial-review findings fixed.
+Pass 10 closed Tracks 4+3 [S1–S7] and wrote up the P0 data investigations below).
 
 ---
 
@@ -272,16 +273,34 @@ Use this to VALIDATE every chart/number. Money mechanics, in the user's own word
   fill-mode both); the hero net-worth headline now `NumberRoll`s on change (never on first paint);
   institution sub-cards hover-lift (`-translate-y-0.5`, `motion-reduce` guarded). All
   compositor-only; the globals.css reduced-motion guard zeroes everything.
-- [ ] **S8 follow-ups (review-CONFIRMED 2026-07-14, not yet fixed — do before S10b):**
-  (a) the view-transition morph is a timing race: wrap the setState in
-  `flushSync` inside the `startViewTransition` callback AND move `showModal()`/`close()` from
-  `useEffect` to `useLayoutEffect` in `src/components/dashboard/ChartFocus.tsx` (otherwise the
-  browser snapshots before React commits / before the dialog is visible → morph silently degrades
-  to a pop-in; both changes are needed).
-  (b) the focus modal opens at defaultRange 1Y instead of the pill the user was inspecting — the
-  range pill is per-instance state (`ScrubChart.tsx:175`); lift range into ChartFocus (or the
-  window context) so the modal is "the same chart, bigger"; also a pill click inside the modal
-  fires `windowCtx.reset()` and wipes the shared Back/Forward history — fix together.
+- [x] **S8 follow-ups (fixed, pass 11 2026-07-14):**
+  (a) morph timing: `flushSync` inside the `startViewTransition` callback + `useLayoutEffect`
+  for `showModal()`/`close()`. **Doctrine change discovered live-testing in real Chromium:
+  Escape must close NATIVELY** — intercepting `cancel` (preventDefault → morph-close) consumes
+  the close-watcher's user-activation grant (the next Escape fires no `cancel` at all) and a
+  view-transition callback scheduled from inside close-request processing was observed never
+  running → modal stranded open. Now: no `onCancel`; `onClose` syncs React state after any
+  native close; the morph plays on expand/X/backdrop only. Headless e2e can't catch this class
+  (no VT support there — it green-lights the fallback path), hence the live-browser check.
+  (b) range pill lifted into `ChartFocus` (controlled `activeRange`/`onRangeChange` on
+  ScrubChart/NetWorthChartPanel, mirroring `activeWindow`) — the modal opens on the pill being
+  inspected, both directions e2e'd; and a pill click now NAVIGATES the shared history to base
+  (`PUSH_BASE` — nullable stack entries in `window-history.ts`, unit-tested) instead of
+  `reset()`-wiping the Back/Forward trail.
+  (c) adversarial review (4 lenses × 3 refuters) confirmed + fixed 4 more: date-input windows
+  with <2 chartable points are now ignored like hair-thin drags (was: ALL-series fallback
+  mislabeled with a one-day caption — an all-time delta under a single-day label);
+  ChartFocus got Sheet.tsx's pointerdown-origin backdrop guard (drag-release over backdrop no
+  longer closes); the open focus modal is axe-swept in its e2e (overlay-open doctrine);
+  the dashboard entrance cascade plays ONCE (classes removed on animationend — keyed reorders
+  restart CSS animations, so arrange-mode moves flashed the moved section invisible; the global
+  reduced-motion guard also zeroes `animation-delay` now, killing the fill-mode-both blank
+  window inline delays created).
+  (d) `e2e/axe-helpers.ts analyzeSettled()` — ALL axe scans (7 specs) settle every finite
+  animation first (Web-Animations `finished`, not timeouts): the S10a route fade-rise made axe
+  read mid-animation BLENDED colors (ink-faint scanned at 4.2:1 mid-fade, clean settled) —
+  that was the whole "/investments/[holding] dark" gate failure; there was never a real
+  contrast violation.
 - [ ] **S10b — micro-interactions (remaining):** categorize checkmark-draw + (tasteful) confetti on
   clearing a review cluster; spring hover states on chips/buttons; NumberRoll in more stat surfaces
   (StatCards, account balances); consider the txn-kanban drag here where motion carries the meaning.
