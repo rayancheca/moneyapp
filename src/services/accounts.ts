@@ -2,8 +2,9 @@ import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import type { AppDatabase } from "@/db/client";
 import { accounts, ACCOUNT_TYPES, ACCOUNT_SUBTYPES, isLiability } from "@/db/schema/accounts";
+import { holdingEvents } from "@/db/schema/holding-events";
 import { institutions } from "@/db/schema/institutions";
-import { latestBalances, type AccountBalance } from "./derivation";
+import { latestBalances, rebuildAccount, type AccountBalance } from "./derivation";
 
 export const accountInputSchema = z.object({
   institutionId: z.string().min(1),
@@ -109,11 +110,11 @@ export function updateAccount(db: AppDatabase, id: string, input: Partial<Accoun
 }
 
 /**
- * Edit-account sheet (§7.2): rename, re-home to another institution, fix the
- * last4 — the three fields the user could not change before without SQL. Type
- * and subtype are deliberately NOT editable here: changing an account's type
- * flips its liability/derivation semantics and would silently rewrite its
- * balance curve, so it stays out of a casual rename flow.
+ * Edit-account sheet (§7.2, extended by S3): rename, re-home to another
+ * institution, fix the last4 — plus type/subtype, which flip the account's
+ * liability/derivation semantics and therefore re-derive its balance history.
+ * The action layer requires an explicit confirmation before a type/subtype
+ * change reaches here — it is never a casual edit.
  */
 export const accountEditSchema = z
   .object({
@@ -124,18 +125,73 @@ export const accountEditSchema = z
       .trim()
       .regex(/^\d{4}$/)
       .nullable(),
+    type: z.enum(ACCOUNT_TYPES).optional(),
+    subtype: z.enum(ACCOUNT_SUBTYPES).nullable().optional(),
   })
   .strict();
 export type AccountEditInput = z.infer<typeof accountEditSchema>;
 
-export function editAccount(db: AppDatabase, id: string, input: AccountEditInput): void {
+export interface AccountEditResult {
+  /** true when a type/subtype change re-derived the balance history */
+  rederived: boolean;
+}
+
+export function editAccount(db: AppDatabase, id: string, input: AccountEditInput): AccountEditResult {
   const parsed = accountEditSchema.parse(input);
   const existing = getAccount(db, id);
   if (!existing) throw new Error(`Unknown account ${id}`);
-  db.update(accounts)
-    .set({ name: parsed.name, institutionId: parsed.institutionId, last4: parsed.last4 })
-    .where(eq(accounts.id, id))
-    .run();
+
+  // subtype is meaningful only on investment accounts — enforce against the
+  // EFFECTIVE type (a hand-crafted call must not sneak `checking`+`crypto` in),
+  // and normalize it away when the account leaves the investment type
+  const effectiveType = parsed.type ?? existing.type;
+  if (parsed.subtype != null && effectiveType !== "investment") {
+    throw new Error("Subtype applies only to investment accounts");
+  }
+  const nextSubtype =
+    effectiveType === "investment" ? (parsed.subtype !== undefined ? parsed.subtype : existing.subtype) : null;
+
+  const typeChanged = effectiveType !== existing.type;
+  const subtypeChanged = nextSubtype !== existing.subtype;
+
+  // an investment account whose curve comes from holdings × prices would LOSE
+  // that history on a type flip (the anchor path has nothing to replay) —
+  // refuse instead of silently discarding a derived balance curve
+  if (typeChanged && existing.type === "investment") {
+    const hasHoldings = db
+      .select({ id: holdingEvents.id })
+      .from(holdingEvents)
+      .where(eq(holdingEvents.accountId, id))
+      .get();
+    if (hasHoldings) {
+      throw new Error(
+        "This account's balance history is derived from its holdings — changing its type would discard that history",
+      );
+    }
+  }
+
+  // one transaction: the semantic flip and the re-derivation commit together —
+  // a rebuild failure must never leave the new type with the old curve
+  return db.transaction(() => {
+    db.update(accounts)
+      .set({
+        name: parsed.name,
+        institutionId: parsed.institutionId,
+        last4: parsed.last4,
+        ...(parsed.type !== undefined && { type: parsed.type }),
+        subtype: nextSubtype,
+      })
+      .where(eq(accounts.id, id))
+      .run();
+    if (typeChanged || subtypeChanged) {
+      // the balance curve derives differently per type (investment =
+      // holding-events × prices; cash = anchors + txn replay) — re-derive now so
+      // the stored daily balances never disagree with the new semantics
+      rebuildAccount(db, id);
+      return { rederived: true };
+    }
+    return { rederived: false };
+  });
 }
 
 const institutionNameSchema = z.string().trim().min(1).max(80);

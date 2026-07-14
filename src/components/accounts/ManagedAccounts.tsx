@@ -184,7 +184,8 @@ export function ManagedAccounts({
                         name: a.name,
                         institutionId: a.institutionId,
                         last4: a.last4,
-                        typeLabel: TYPE_LABEL[a.type],
+                        type: a.type,
+                        subtype: a.subtype,
                       })
                     }
                   />

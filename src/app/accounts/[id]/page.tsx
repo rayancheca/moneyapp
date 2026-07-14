@@ -114,7 +114,8 @@ export default async function AccountDetailPage({
               name: account.name,
               institutionId: account.institutionId,
               last4: account.last4,
-              typeLabel: TYPE_LABEL[account.type] ?? account.type,
+              type: account.type,
+              subtype: account.subtype,
             }}
             institutions={listInstitutions(db)}
           />

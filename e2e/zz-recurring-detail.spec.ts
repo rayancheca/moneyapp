@@ -30,7 +30,7 @@ test("detail page renders the editable cadence sentence and passes axe", async (
 
   // the cadence sentence states the schedule in words with editable tokens
   await expect(page.getByText(/charges|deposits|moves/).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Rename series" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Series name:/ })).toBeVisible();
 
   const results = await new AxeBuilder({ page }).analyze();
   const gating = results.violations.filter((v) => v.impact === "critical" || v.impact === "serious");

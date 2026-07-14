@@ -2,7 +2,7 @@
 
 import type { KeyboardEvent } from "react";
 import { useInlineEdit, type InlineSaveResult } from "@/hooks/useInlineEdit";
-import { resolveTextCommit } from "@/lib/inline-edit";
+import { resolveTextCommit, type CommitOutcome } from "@/lib/inline-edit";
 
 interface InlineEditableTextProps {
   value: string;
@@ -20,6 +20,9 @@ interface InlineEditableTextProps {
   /** typography/classes applied to BOTH the display trigger and the input so
    *  the field reads identically in view and edit mode (no size jump) */
   className?: string;
+  /** override the commit decision (e.g. resolveDateCommit for ISO dates);
+   *  defaults to the plain text resolver with required/maxLength */
+  resolve?: (original: string, draft: string) => CommitOutcome<string>;
 }
 
 /**
@@ -39,11 +42,12 @@ export function InlineEditableText({
   placeholder,
   describe,
   className,
+  resolve,
 }: InlineEditableTextProps) {
   const edit = useInlineEdit<string>({
     value,
     format: (v) => v,
-    resolve: (original, draft) => resolveTextCommit(original, draft, { required, maxLength }),
+    resolve: resolve ?? ((original, draft) => resolveTextCommit(original, draft, { required, maxLength })),
     onSave,
     label,
     describe: describe ?? ((v) => `Renamed to “${v}”`),
@@ -95,7 +99,7 @@ export function InlineEditableText({
       data-inline-edit="trigger"
       aria-label={`${label}: ${empty ? "empty" : edit.display}. Click to edit.`}
       aria-busy={edit.pending || undefined}
-      className={`group/ie cursor-text rounded-[3px] underline-offset-[6px] outline-none transition-[text-decoration-color] duration-(--duration-fast) hover:underline hover:decoration-line-strong hover:decoration-dotted focus-visible:underline focus-visible:decoration-accent focus-visible:decoration-dotted ${empty ? "text-ink-faint" : ""} ${shared}`}
+      className={`group/ie cursor-text break-words rounded-[3px] underline-offset-[6px] outline-none transition-[text-decoration-color] duration-(--duration-fast) hover:underline hover:decoration-line-strong hover:decoration-dotted focus-visible:underline focus-visible:decoration-accent focus-visible:decoration-dotted ${empty ? "text-ink-faint" : ""} ${shared}`}
     >
       {empty ? placeholder ?? "—" : edit.display}
       <PencilGlyph />

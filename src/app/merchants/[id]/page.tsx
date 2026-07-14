@@ -4,8 +4,8 @@ import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
 import { merchantSummary } from "@/services/merchants";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
+import { MerchantNameHeading } from "@/components/merchants/MerchantNameHeading";
 import { Money } from "@/components/ui/Money";
-import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 
 export const metadata: Metadata = { title: "Merchant" };
@@ -33,7 +33,11 @@ export default async function MerchantPage({ params }: { params: Promise<{ id: s
         className="mb-3"
         items={[{ label: "Transactions", href: "/transactions" }, { label: summary.name }]}
       />
-      <PageHeader title={summary.name} description={`${summary.txnCount} transactions`} />
+      <MerchantNameHeading
+        merchantId={id}
+        name={summary.name}
+        description={`${summary.txnCount} transactions`}
+      />
 
       <div className="space-y-6">
         <header>

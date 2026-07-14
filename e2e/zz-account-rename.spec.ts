@@ -45,7 +45,10 @@ test("account name edits inline — Escape cancels, Enter saves, Undo restores",
 
   // Undo restores the original name (and keeps the seed pristine for siblings)
   await page.getByRole("button", { name: "Undo" }).click();
-  await expect(page.getByRole("button", { name: rest(original), exact: true })).toBeVisible();
+  const restored = page.getByRole("button", { name: rest(original), exact: true });
+  await expect(restored).toBeVisible();
+  // wait for the undo save to settle — reload must prove persistence, not race it
+  await expect(restored).not.toHaveAttribute("aria-busy", "true");
 
   // the restore is persisted, not just optimistic
   await page.reload();

@@ -15,6 +15,7 @@ import {
   listAccounts,
   reorderAccounts,
 } from "./accounts";
+import { upsertHolding } from "./holdings";
 
 let dir: string;
 let bundle: DbBundle;
@@ -123,5 +124,58 @@ describe("reorderAccounts", () => {
     reorderAccounts(bundle.db, ["ghost-1", "ghost-2"]);
     const after = bundle.db.select({ o: accounts.displayOrder }).from(accounts).where(eq(accounts.id, a)).get()!.o;
     expect(after).toBe(before);
+  });
+});
+
+describe("editAccount — type/subtype (S3, guarded)", () => {
+  test("a type change re-derives and normalizes subtype away from non-investment types", () => {
+    const id = createAccount(bundle.db, {
+      institutionId: instId,
+      name: "Flex",
+      type: "investment",
+      subtype: "brokerage",
+    });
+    const result = editAccount(bundle.db, id, {
+      name: "Flex",
+      institutionId: instId,
+      last4: null,
+      type: "savings",
+    });
+    expect(result.rederived).toBe(true);
+    const row = getAccount(bundle.db, id)!;
+    expect(row.type).toBe("savings");
+    expect(row.subtype).toBeNull(); // normalized — subtype is investment-only
+  });
+
+  test("rejects a subtype on a non-investment effective type", () => {
+    const id = createAccount(bundle.db, { institutionId: instId, name: "Chk", type: "checking" });
+    expect(() =>
+      editAccount(bundle.db, id, { name: "Chk", institutionId: instId, last4: null, subtype: "crypto" }),
+    ).toThrow(/only to investment accounts/);
+  });
+
+  test("refuses to flip an investment account with holdings to a cash type (history would vanish)", () => {
+    const id = createAccount(bundle.db, {
+      institutionId: instId,
+      name: "Holdings",
+      type: "investment",
+      subtype: "brokerage",
+    });
+    upsertHolding(bundle.db, { accountId: id, symbol: "VOO", assetType: "etf", quantityE8: 5_0000_0000 });
+    expect(() =>
+      editAccount(bundle.db, id, { name: "Holdings", institutionId: instId, last4: null, type: "checking" }),
+    ).toThrow(/derived from its holdings/);
+    expect(getAccount(bundle.db, id)!.type).toBe("investment"); // nothing committed
+  });
+
+  test("an unchanged type/subtype does not re-derive", () => {
+    const id = createAccount(bundle.db, { institutionId: instId, name: "Same", type: "checking" });
+    const result = editAccount(bundle.db, id, {
+      name: "Same",
+      institutionId: instId,
+      last4: null,
+      type: "checking",
+    });
+    expect(result.rederived).toBe(false);
   });
 });

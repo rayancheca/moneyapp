@@ -18,6 +18,7 @@ import {
 import { topMerchants } from "@/services/spending";
 import { loadSpendingCategoryTxns } from "@/app/spending/actions";
 import { CategoryChip } from "@/components/ui/CategoryChip";
+import { CategoryNameHeading } from "@/components/categories/CategoryNameHeading";
 import { Icon } from "@/components/shell/Icon";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
@@ -105,7 +106,11 @@ export default async function CategoryPage({
         <div className="flex items-center gap-3">
           <CategoryChip label={header.name} hue={header.hue} icon={header.icon} />
           <div>
-            <h1 className="text-2xl font-semibold">{header.name}</h1>
+            <CategoryNameHeading
+              categoryId={header.id}
+              name={header.name}
+              editable={header.kind !== "transfer" && header.kind !== "system"}
+            />
             <p className="text-xs text-ink-faint">
               {header.isSubcategory ? `${header.parentName} · ` : ""}
               {header.kind}

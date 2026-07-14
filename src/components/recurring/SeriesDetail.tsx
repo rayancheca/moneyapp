@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { renameSeriesAction, setSeriesStatusAction } from "@/app/recurring/actions";
 import { Badge } from "@/components/ui/Badge";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { CategoryChip } from "@/components/ui/CategoryChip";
-import { Field, Input } from "@/components/ui/Field";
+import { InlineEditableText } from "@/components/ui/InlineEditableText";
 import { Menu } from "@/components/ui/Menu";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
@@ -44,27 +44,9 @@ const STATUS_TONE: Record<SeriesStatus, "info" | "positive" | "neutral"> = {
 export function SeriesDetail({ data }: { data: SeriesDetailData }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const [renaming, setRenaming] = useState(false);
 
   function onChanged(): void {
     startTransition(() => router.refresh());
-  }
-
-  function submitRename(next: string): void {
-    const name = next.trim();
-    if (name === "" || name === data.name) {
-      setRenaming(false);
-      return;
-    }
-    void renameSeriesAction({ seriesId: data.id, name }).then((r) => {
-      if (!r.ok) {
-        toast({ title: r.error, tone: "negative" });
-        return;
-      }
-      setRenaming(false);
-      onChanged();
-      toast({ title: `Renamed to ${r.data.name}` });
-    });
   }
 
   // A merged-away series is dead — it owns no rows and must never be resurrected
@@ -94,31 +76,19 @@ export function SeriesDetail({ data }: { data: SeriesDetailData }) {
             <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-surface-sunken text-ink-muted">
               <Icon name={KIND_ICON[data.kind]} className="size-5" />
             </span>
-            {renaming ? (
-              <Field label="Series name" className="w-64">
-                <Input
-                  autoFocus
-                  defaultValue={data.name}
-                  onBlur={(e) => submitRename(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") submitRename((e.target as HTMLInputElement).value);
-                    if (e.key === "Escape") setRenaming(false);
-                  }}
-                />
-              </Field>
-            ) : (
-              <h1 className="flex min-w-0 items-center gap-2 text-2xl font-semibold tracking-tight">
-                <span className="truncate">{data.name}</span>
-                <button
-                  type="button"
-                  onClick={() => setRenaming(true)}
-                  aria-label="Rename series"
-                  className="shrink-0 text-ink-faint transition-colors duration-(--duration-fast) hover:text-ink"
-                >
-                  <Icon name="edit" className="size-4" />
-                </button>
-              </h1>
-            )}
+            <h1 className="min-w-0 text-2xl font-semibold tracking-tight">
+              <InlineEditableText
+                value={data.name}
+                label="Series name"
+                maxLength={120}
+                className="text-2xl font-semibold tracking-tight"
+                onSave={async (next) => {
+                  const result = await renameSeriesAction({ seriesId: data.id, name: next });
+                  if (result.ok) onChanged();
+                  return { ok: result.ok, error: result.ok ? undefined : result.error };
+                }}
+              />
+            </h1>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <Badge tone={STATUS_TONE[data.status]}>{STATUS_LABEL[data.status]}</Badge>

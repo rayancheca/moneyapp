@@ -4,12 +4,13 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/db/client";
-import { ACCOUNT_TYPES } from "@/db/schema/accounts";
+import { ACCOUNT_TYPES, ACCOUNT_SUBTYPES } from "@/db/schema/accounts";
 import { parseAmountToCents } from "@/lib/money";
 import {
   createAccount,
   createInstitution,
   editAccount,
+  getAccount,
   reorderAccounts,
   updateAccount,
 } from "@/services/accounts";
@@ -104,18 +105,25 @@ export async function setAccountActiveAction(formData: FormData): Promise<void> 
 
 const editAccountActionSchema = z.object({
   accountId: z.string().min(1),
-  name: z.string().trim().min(1, "Name the account"),
+  name: z.string().trim().min(1, "Name the account").max(80, "Keep it to 80 characters or fewer"),
   institutionId: z.string().min(1, "Pick an institution"),
   last4: z.string().trim().optional(),
+  type: z.enum(ACCOUNT_TYPES).optional(),
+  subtype: z.enum(ACCOUNT_SUBTYPES).nullable().optional(),
+  /** required true when type/subtype change — the "re-derives history" gate */
+  confirmRederive: z.boolean().optional(),
 });
 
-/** Edit an account's name / institution / last4 (the edit sheet). */
+/** Edit an account's name / institution / last4 / type / subtype (the edit sheet). */
 export async function editAccountAction(input: {
   accountId: string;
   name: string;
   institutionId: string;
   last4?: string;
-}): Promise<ActionResult<{ id: string }>> {
+  type?: (typeof ACCOUNT_TYPES)[number];
+  subtype?: (typeof ACCOUNT_SUBTYPES)[number] | null;
+  confirmRederive?: boolean;
+}): Promise<ActionResult<{ id: string; rederived: boolean }>> {
   const parsed = editAccountActionSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid account details" };
@@ -124,19 +132,34 @@ export async function editAccountAction(input: {
   if (last4 !== null && !/^\d{4}$/.test(last4)) {
     return { ok: false, error: "Last 4 must be four digits (or blank)" };
   }
+  const db = getDb();
+  if (parsed.data.type !== undefined || parsed.data.subtype !== undefined) {
+    const current = getAccount(db, parsed.data.accountId);
+    if (!current) return { ok: false, error: "Unknown account" };
+    const changesSemantics =
+      (parsed.data.type !== undefined && parsed.data.type !== current.type) ||
+      (parsed.data.subtype !== undefined && parsed.data.subtype !== current.subtype);
+    if (changesSemantics && parsed.data.confirmRederive !== true) {
+      return { ok: false, error: "Changing the type re-derives this account's balance history — confirm first" };
+    }
+  }
+  let rederived = false;
   try {
-    editAccount(getDb(), parsed.data.accountId, {
+    const result = editAccount(db, parsed.data.accountId, {
       name: parsed.data.name,
       institutionId: parsed.data.institutionId,
       last4,
+      ...(parsed.data.type !== undefined && { type: parsed.data.type }),
+      ...(parsed.data.subtype !== undefined && { subtype: parsed.data.subtype }),
     });
+    rederived = result.rederived;
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : "Could not save account" };
   }
   revalidatePath("/");
   revalidatePath("/accounts");
   revalidatePath(`/accounts/${parsed.data.accountId}`);
-  return { ok: true, data: { id: parsed.data.accountId } };
+  return { ok: true, data: { id: parsed.data.accountId, rederived } };
 }
 
 const renameAccountActionSchema = z.object({

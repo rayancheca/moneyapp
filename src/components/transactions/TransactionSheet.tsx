@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Badge, LetterBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Checkbox, Field, Input } from "@/components/ui/Field";
+import { InlineEditableText } from "@/components/ui/InlineEditableText";
 import { Money } from "@/components/ui/Money";
 import { Sheet } from "@/components/ui/Sheet";
 import { Sparkline } from "@/components/ui/Sparkline";
@@ -65,7 +66,6 @@ export function TransactionSheet({
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [panel, setPanel] = useState<SheetPanel | null>(null);
-  const [renaming, setRenaming] = useState(false);
   const [notes, setNotes] = useState(txn.notes ?? "");
 
   // one debounced round-trip per settle for the same-merchant panel
@@ -141,22 +141,6 @@ export function TransactionSheet({
     });
   }
 
-  function submitRename(newName: string): void {
-    if (!txn.merchantId || newName.trim() === "" || newName === panel?.merchant?.name) {
-      setRenaming(false);
-      return;
-    }
-    void renameMerchantAction({ merchantId: txn.merchantId, newName: newName.trim() }).then((r) => {
-      if (!r.ok) {
-        toast({ title: r.error, tone: "negative" });
-        return;
-      }
-      setRenaming(false);
-      afterMutation();
-      toast({ title: `Renamed to ${r.data.name}` });
-    });
-  }
-
   return (
     <Sheet open onClose={onClose} title={panel?.merchant?.name ?? txn.normalizedDescription}>
       <div className="space-y-5">
@@ -201,29 +185,31 @@ export function TransactionSheet({
           </div>
         ) : null}
 
-        {/* merchant rename (§3.2) */}
-        {txn.merchantId ? (
-          renaming ? (
-            <Field label="Merchant name">
-              <Input
-                autoFocus
-                defaultValue={panel?.merchant?.name ?? ""}
-                onBlur={(e) => submitRename(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") submitRename((e.target as HTMLInputElement).value);
-                  if (e.key === "Escape") setRenaming(false);
+        {/* merchant rename (§3.2) — inline where the name shows, S3 primitive */}
+        {txn.merchantId && panel?.merchant ? (
+          <div className="space-y-1.5">
+            <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-ink-faint">Merchant</span>
+            <p className="text-sm">
+              <InlineEditableText
+                value={panel.merchant.name}
+                label="Merchant name"
+                maxLength={80}
+                className="text-sm font-medium"
+                onSave={async (next) => {
+                  const result = await renameMerchantAction({ merchantId: txn.merchantId!, newName: next });
+                  if (result.ok) {
+                    // the panel loads once per txn — patch it with the
+                    // server-canonical name so the title + "At …" header track truth
+                    setPanel((p) =>
+                      p && p.merchant ? { ...p, merchant: { ...p.merchant, name: result.data.name } } : p,
+                    );
+                    afterMutation();
+                  }
+                  return { ok: result.ok, error: result.ok ? undefined : result.error };
                 }}
               />
-            </Field>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setRenaming(true)}
-              className="inline-flex items-center gap-1 text-xs text-ink-muted hover:text-ink"
-            >
-              <Icon name="edit" className="size-3" /> Rename merchant
-            </button>
-          )
+            </p>
+          </div>
         ) : null}
 
         <div className="space-y-1.5">
