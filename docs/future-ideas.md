@@ -91,9 +91,18 @@ exposed as synthetic fixtures + deleted, Knack → Income › Tutoring, RH-crypt
   crashed boot; LESSON: hand-written migrations must also hand-write their snapshot), Edit-sheet
   "Payment source" select (credit-only, cash-account target, never self), and `detectTransfers`
   treats the linked pair as hinted → card payments auto-pair without a descriptor match.
-- [ ] **S7** — movable: drag-reorder dashboard sections (persist `dashboard_layout` in `app_settings`);
-  drag-reorder accounts on the dashboard cards; drag a txn between categories (kanban); move/merge
-  categories (re-parent) with re-derivation.
+- [x] **S7 — movable (pass 10, `a5aae4e`).** Dashboard **Arrange mode**: sections drag-reorder (HTML5
+  drag + keyboard Move up/down — every drag has a keyboard equivalent) persisted to a new
+  `dashboardLayout` key in `app_settings`, normalized via pure `src/lib/reorder.ts` so a stale layout
+  can never hide or duplicate a section. **Category re-parent**: `moveCategory` + a Menu of VALID
+  destinations on the category page (same-kind roots + top level; depth/kind/clash/hint guards;
+  parentId pointer only — history untouched; Undo). Review-hardened (7 confirmed findings fixed:
+  Firefox dataTransfer, prop-desync reconciliation, duplicate-id dedupe + schema refine,
+  aria-disabled edge buttons, undo-result checks). DEFERRED with reasons: **txn kanban drag** (the
+  inline chip picker already covers recategorization — kanban is motion sugar, revisit with S10),
+  **dashboard institution-card drag** (accounts reorder lives on /accounts; adding a second surface
+  duplicates state), **category MERGE** (deep referential surface — budgets, rules JSON, merchant
+  defaults, suggestions — needs its own guarded data-pass like the S1b/dedupe work).
 
 **Track 2 — Motion + focus (option 2, ~3 sessions)** — all compositor-only + reduced-motion-gated.
 - [ ] **S8** — §3 Focus mode: click the chart → expand to a focus modal via the View Transitions API
