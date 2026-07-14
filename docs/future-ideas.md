@@ -73,11 +73,24 @@ exposed as synthetic fixtures + deleted, Knack → Income › Tutoring, RH-crypt
   `editManualTransaction` service recomputes the row's dedupe identity (occurrence index + hash) and
   rebuilds derived balances; 3 service tests + e2e `zz-zz-txn-expander` (manual edit round-trip +
   imported-row immutability).
-- [ ] **S5** — linkable: link txns↔txns (transfer pairs) by drag/affordance; link a txn→recurring
-  series by drag (attach) + merge series by drag. Needs the pointer-based drag hook (reduced-motion-safe,
-  keyboard alternative per a11y).
-- [ ] **S6** — linkable cont.: link merchants→categories (a merchant-default rule) inline; link accounts
-  (card ↔ payment source) for smarter transfer inference.
+- [x] **S5 — linkable (pass 10).** Transaction sheet gains two lazy-disclosure panels:
+  **"Link as transfer…"** pairs a row with its counterpart (opposite sign, other account, ±14d,
+  nearest amount first — the human override for fee-shaved/date-drifted pairs the detector can't
+  match; outflow id keys the group, detector category conventions) + **Unlink** (keeps categories);
+  **"Attach to recurring series…"/Detach** wires recurring-links into the ledger. Review-hardened
+  (12 verified agents): stale-counterpart detach on group-key re-mint, zero-amount guard, link-only
+  unlink undo, and **lossless series-link undo** — `undoFieldsSchema` grew `seriesLinkSource`,
+  `applyUndoPatch` restores link ownership + re-settles series stats, so undo can't strand rows
+  detector-invisible. `src/services/transfer-links.ts` (11 tests) + e2e `zz-zz-linking`.
+  NOTE: link-by-DRAG deliberately deferred to S7's pointer-drag hook — the affordance version is the
+  keyboard-accessible baseline a11y requires anyway.
+- [x] **S6 — linkable cont. (pass 10).** **Merchant→category default rule** editable on the merchant
+  page (picker + Undo; explicit "Apply to N uncategorized" backfill that never overwrites, lossless
+  undo). **Card↔payment-source account link**: `accounts.payment_source_account_id` (migration 0005 —
+  trimmed by hand: 0004 lacked a snapshot so drizzle-kit tried to re-add its columns, which would have
+  crashed boot; LESSON: hand-written migrations must also hand-write their snapshot), Edit-sheet
+  "Payment source" select (credit-only, cash-account target, never self), and `detectTransfers`
+  treats the linked pair as hinted → card payments auto-pair without a descriptor match.
 - [ ] **S7** — movable: drag-reorder dashboard sections (persist `dashboard_layout` in `app_settings`);
   drag-reorder accounts on the dashboard cards; drag a txn between categories (kanban); move/merge
   categories (re-parent) with re-derivation.
