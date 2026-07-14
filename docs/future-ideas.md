@@ -53,11 +53,26 @@ exposed as synthetic fixtures + deleted, Knack → Income › Tutoring, RH-crypt
   - NOTE: `<InlineEditableAmount>` component **deferred to S4** (its first real wiring = manual-txn
     amounts). The hard part is already done + tested here: `resolveAmountCommit` (cents via the ledger's
     string-math parser) and the shared hook are generic, so S4 is a thin renderer.
-- [ ] **S3** — inline-rename everywhere a name shows (merchants, categories, recurring series) via the
-  primitive + value-returning server actions + optimistic/undo. Account institution/type/subtype/last4
-  editable from the detail page with a "this re-derives history" confirm.
-- [ ] **S4** — inline transaction fields in the ledger-row expander: notes, date, amount (manual txns),
-  merchant (not only in the sheet).
+- [x] **S3 — inline-rename everywhere (pass 10).** Every name edits where it's shown via the shared
+  `<InlineEditableText>`: **category detail `<h1>`** (net-new `renameCategory` service in
+  `src/services/category-edit.ts` — guards sibling-name uniqueness with a readable error and BLOCKS
+  transfer/system kinds because transfer detection matches on their names; 6 unit tests) +
+  `renameCategoryAction`; **merchant detail header** (`MerchantNameHeading`, old name becomes a
+  contains-alias so imports keep resolving); **series detail `<h1>`** and the **sheet's merchant row**
+  (both bespoke toggle-inputs replaced by the primitive). **Account type/subtype now editable** in the
+  edit sheet behind an explicit "re-derives history" checkbox: `editAccount` re-runs `rebuildAccount`
+  on a semantics change, and the action rejects unconfirmed changes. e2e `zz-inline-renames` (series /
+  category / merchant, each Undo-restored + reload-proven).
+- [x] **S4 — inline txn fields in the ledger-row expander (pass 10).** Each ledger row gains a chevron
+  expander (no sheet needed): **notes** edit on every row; **date / amount / description** edit ONLY on
+  manual rows (`importFileId IS NULL` threaded through `LEDGER_SELECT`/`toLedgerRow` as
+  `LedgerRow.isManual`) — imported rows render their facts read-only with an explicit "audit trail"
+  note; **merchant** renames inline (lazy-loaded via the sheet's panel action). Built
+  **`<InlineEditableAmount>`** (formats cents, edits through the string-math parser — no floats) and
+  `resolveDateCommit` (pure, 100%); `InlineEditableText` gained a `resolve` override for dates. New
+  `editManualTransaction` service recomputes the row's dedupe identity (occurrence index + hash) and
+  rebuilds derived balances; 3 service tests + e2e `zz-zz-txn-expander` (manual edit round-trip +
+  imported-row immutability).
 - [ ] **S5** — linkable: link txns↔txns (transfer pairs) by drag/affordance; link a txn→recurring
   series by drag (attach) + merge series by drag. Needs the pointer-based drag hook (reduced-motion-safe,
   keyboard alternative per a11y).
@@ -267,10 +282,16 @@ This is a program of work, broken into shippable slices:
 - [x] Account **name** editable inline on the detail page `<h1>` (pass 9, S2) — via the shared
   `<InlineEditableText>` primitive. (The breadcrumb reflects the saved name after refresh; it's a static
   mirror, not a second editor — one editing surface per value avoids double-edit confusion.)
-- [ ] Account **institution / type / subtype / last4** editable from the detail page too (type/subtype currently deliberately locked because they reshape the balance curve — offer it with a clear "this re-derives history" confirm instead of hiding it).
-- [ ] **Inline-rename anywhere a name is shown** (merchants, categories, recurring series, budgets) via a shared `<InlineEditableText>` primitive (click → input → save on blur/enter, Esc cancels, optimistic + undo).
-- [ ] **Every number that's an input should be editable in place** (balances-as-anchors, budget amounts [done], category names, merchant display names).
-- [ ] Transaction fields beyond category: **notes, date, amount (manual txns), merchant** — inline in the ledger row expander, not only in the sheet.
+- [x] Account **institution / type / subtype / last4** editable from the detail page (pass 10, S3):
+  type/subtype unlocked behind an explicit "re-derives history" confirm; `editAccount` re-derives via
+  `rebuildAccount` when the semantics change.
+- [x] **Inline-rename anywhere a name is shown** (pass 10, S3): merchants (detail header + sheet),
+  categories (detail `<h1>`, transfer/system kinds excluded — detection matches on their names),
+  recurring series (detail `<h1>`), accounts (S2). Budgets already edited in place.
+- [~] **Every number that's an input should be editable in place** — budget amounts [done],
+  manual-txn amounts [done, S4 via `<InlineEditableAmount>`]; balances-as-anchors still via AnchorForm.
+- [x] Transaction fields beyond category: **notes, date, amount (manual txns), merchant** — inline in
+  the ledger row expander (pass 10, S4); imported rows stay the immutable audit trail.
 
 ### Linkable
 - [ ] **Link transactions ↔ transactions** (transfer pairs) by drag or a "link" affordance, beyond the auto transfer-detection.
