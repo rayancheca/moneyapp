@@ -1,14 +1,127 @@
-# MoneyApp — Ideas & Future Implementation
+# MoneyApp — MASTER GUIDE (the one living backlog)
 
-> Living backlog. **Every working pass must expand + polish this list and tick off
-> what shipped.** Newest thinking near the top of each section. Dates are absolute.
+> **THE single source of truth for all future work.** Every other planning doc
+> (master-plan, ux-overhaul-plan, dashboard-dynamic plan) is fully shipped and
+> historical — consolidated here 2026-07-14; nothing unchecked lives anywhere else.
+> **Every working pass must expand + polish this list and tick off what shipped.**
+> One focused item per session; end each session with a handoff prompt. Dates absolute.
 
-Last updated: 2026-07-14 (pass 10 — Track 4 CLOSED: cross-format dedupe shipped, "orphan CSVs"
-exposed as synthetic fixtures + deleted, Knack → Income › Tutoring, RH-crypto last4 + folder migrated).
+Last updated: 2026-07-14 (pass 10 — Tracks 4 AND 3 closed [S1–S7], Track 2 shipped [S8–S10a],
+P0 data investigations completed and written up below).
 
 ---
 
-## 🗺️ Session roadmap — how the remaining work splits into sessions
+## 🧠 GROUND TRUTH — the user's financial story (2026-07-14, verbatim intent)
+
+Use this to VALIDATE every chart/number. Money mechanics, in the user's own words:
+
+1. **2022**: arrived in the US, opened **Chase student checking (····3522)** — spent on its
+   debit card for ~a year.
+2. Got a **Discover card** — from then on spent ONLY on Discover, paid it off from Chase.
+3. Opened **SoFi Savings (4.6% APY, Oct 2023)** — moved essentially ALL money there for APY.
+4. ~A year after Discover, got **Chase Sapphire Preferred** (Feb 2025) — used both cards.
+5. SoFi APY dropped → **moved everything to Robinhood** (higher APY on brokerage cash):
+   parked the cash there earning APY, and ran **~$20/day recurring DCA buys** into selected
+   stocks **until the cash ran out** (the buys then auto-stopped).
+6. Standing pattern: **spends ONLY on credit cards** → sells stock when needed → transfers
+   Robinhood→bank → pays the card. Debit basically unused post-2023.
+7. **SoFi overdraft mechanics**: SoFi card/checking spends pull from Checking; Checking
+   usually sits at $0, so Savings auto-covers each spend via an overdraft PAIR —
+   `OVERDRAFT FROM SAVINGS - 5791` (+ into Checking) mirrored by `OVERDRAFT TO CHECKING - 9067`
+   (− out of Savings). **240 pairs, $81,446.95 each way — pure internal moves, never income
+   or spending.** Money "always searching for higher APY, then investing".
+
+---
+
+## 🚨 P0 — DATA CORRECTNESS (investigated 2026-07-14 on a db copy; do these FIRST)
+
+- [ ] **P0.1 — Robinhood Brokerage CASH is missing from the balance model** (the "75k→18k
+  Feb–Oct 2025" scare — CONFIRMED, no data is missing, the MODEL under-counts).
+  **Evidence (copy queries, 2026-07-14):** SoFi Savings $51,970 (2025-06-01) → **$2,021**
+  (2025-08-01) — ~$48k moved to Robinhood — but Robinhood Brokerage only shows $19,731 →
+  $20,127 across the same window, then "slowly climbs" $49,077 (Oct) → $59,097 (Dec). The
+  climb is the user's **$20/day DCA converting invisible CASH into visible holdings**. The
+  brokerage curve tracks securities value, NOT the cash sweep balance the user parked there
+  for APY. Also: brokerage `daily_balances` only start **2025-02-20** even though brokerage
+  txns exist from 2024-08 — the pre-anchor cash era is entirely uncounted.
+  **Fix plan:** model brokerage cash as a replayed ledger (deposits − buys + sells +
+  dividends + interest = cash-over-time, exactly like a checking account — the activity
+  CSV/statements already carry every flow), then `brokerage total = cash + holdings×prices`.
+  Cross-check each statement month: parsed statement "account value" (Robinhood prints
+  cash + securities totals — extend `robinhood` parsers to capture BOTH as anchors) must
+  reconcile to the replayed cash + valued holdings to the cent; gaps quarantine, never guess.
+  Also backfill the 2024-08→2025-02 pre-anchor era from the activity ledger. THIS IS A
+  REAL-DB DATA PASS: backup + dry-run on a copy + Δ-guards + the session playbook below.
+- [ ] **P0.2 — missing Chase statement, cycle 2023-10-13 → 2023-11-10** (the "Oct–Nov 2023
+  drop to $0 / −$106" scare — CONFIRMED coverage gap, not lost money). `statement_periods`
+  jump 2023-09-14..10-12 → 2023-11-11..12-12; the days between carry `basis=gap` and are
+  EXCLUDED from the covered sum, so the chart line collapsed to ≈ SoFi Checking alone (the
+  −$106 min is a real, brief SoFi Checking overdraft day). Chase held ~$9,792 before the gap
+  and ~$972 after — that's the move into brand-new SoFi Savings (opened 2023-10-26), matching
+  the user's story. **Action: the user downloads the missing Chase 3522 statement (Oct 13 –
+  Nov 10, 2023) from Chase; import closes the gap.** (2023-07 cycle was previously noted
+  absent too — check both while at it.)
+- [ ] **P0.3 — y-axis −$5k padding bug** (CONFIRMED, exact mechanism): with window min
+  −$106 / max ≈ $13.1k, `niceLinearTicks` (src/lib/chart-axis.ts:40) picks step $5,000 and
+  floors the bottom OUT a full step: `floor(−106/5000)×5000 = −5000` — a tiny overdraft
+  drags the axis a third of the chart below zero. **Fix (pure lib, 100% covered):** when
+  `lo < 0` and `|lo|` is small vs the range (mirror the existing `lo > 0 && lo < hi*0.15`
+  pull-to-zero rule at ScrubChart.tsx:248), bound the bottom at a nice number scaled to
+  `|lo|` (e.g. `-niceStep(|lo|·2)` → −$106 becomes −$250), not the range step; keep 0 as a
+  tick. TDD cases: (−106, 13_100) → bottom −250-ish; (−4_800, 13_100) → unchanged behavior;
+  all-positive and all-negative windows unchanged. Chart e2e baselines will regen.
+- [ ] **P0.4 — SoFi OVERDRAFT pairs: verify + auto-pair + clear from review.** The 241+241
+  `OVERDRAFT FROM SAVINGS - 5791` / `OVERDRAFT TO CHECKING - 9067` rows ($81,446.95 each
+  way) are internal Savings→Checking covers (ground truth §7). They're categorized
+  Transfers › Internal Transfer but sit in the REVIEW INBOX as two 240-item clusters.
+  VERIFIED 2026-07-14: 241↔241 rows mirror exactly by (date, amount) — zero unmatched. Plan: (a) add `OVERDRAFT` to `TRANSFER_HINT_RE` (src/services/categorize.ts:305) so
+  detection pairs each same-day ± pair into a transferGroup; (b) verify the two clusters
+  net EXACTLY to $0 against each other by (date, amount) multiset; (c) guarded real-db
+  pass clears `needsReview` on verified pairs — **mechanically resolves ~480 of the 2232
+  review items** without guessing anything.
+
+## 🔧 P1 — REVIEW-INBOX CLUSTER UX (the user's active workflow, 2232 items)
+
+- [ ] **P1.1 — cluster cards must support partial, informed decisions** (user, 2026-07-14:
+  "I don't want to accept all 240 at once… I can't even expand to see the data… what if I
+  want to confirm specific ones and not others"). Spec:
+  - **Expand a cluster** to the FULL member list (virtualized/paginated beyond ~50 rows,
+    not a `+236 more` dead end); each row shows date · description · account · amount and
+    opens the txn sheet on click (full context: counterpart, history, notes).
+  - **Per-row confirm/reject**: checkboxes + "Confirm selected (N)" / "Leave in review";
+    row-level quick actions (recategorize just this row → splits it from the cluster).
+  - **Within-cluster filters/sort**: by amount, date range, account — so "confirm all the
+    small ones, inspect the 3 big ones" is one gesture.
+  - **Safety affordance**: cluster header shows sum + count + date span; for transfer-kind
+    clusters show the NET against the counterpart cluster (the two SoFi overdraft clusters
+    should visibly net $0.00) so "Confirm all" becomes an informed act, not a leap.
+  - Files: review-inbox service (`src/services/review-inbox.ts`), the review page cluster
+    cards (`src/components/**/review*`), `confirmClusterAction`/`recategorizeClusterAction`
+    (src/app/transactions/actions.ts:383/399) — add `confirmSelectedAction(ids)` reusing
+    bulk-edit's undo plumbing.
+
+## 📊 P2 — CHART & COVERAGE TRANSPARENCY
+
+- [ ] **P2.1 — "+2 more" must be expandable** (user: "it says SoFi Checking +2 more but I
+  can't expand to actually see which accounts aren't being counted"). Everywhere a coverage
+  label truncates (hero, chart header, tooltip via `src/lib/coverage-label.ts` callers):
+  make it a popover/disclosure listing EVERY covered and missing account by name for that
+  day/window; in the S8 focus modal show the full list inline (space is no longer scarce).
+- [ ] **P2.2 — name the CAUSE of a coverage gap on the chart.** Where `basis=gap` spans
+  exist (P0.2), annotate the dashed span: "Chase ····3522 uncovered — statement
+  2023-10-13→11-10 missing" (derive from the statement_periods hole). Turns a scary dip
+  into an actionable to-do. Consider a "Data health" card listing every gap + the exact
+  statement to fetch.
+- [ ] **P2.3 — focus/expand EVERY dashboard card** (user asked 2026-07-14; the chart got it
+  in S8). Generalize the `ChartFocus` pattern (always-mounted card + view-transition-name
+  hop into a native `<dialog>`) into a `FocusableCard` wrapper and apply to the activity
+  hub, accounts, and recent sections. (Dashboard REORDER shipped in S7 the same day.)
+
+## 🧭 P3 — REMAINING ROADMAP (Tracks; user order 4→3→2→1 — 4 and 3 are DONE)
+
+---
+
+### 🗺️ Session roadmap — how the remaining work splits into sessions
 
 > User decision (2026-07-13): tackle the four tracks in priority order **4 → 3 → 2 → 1**
 > (loose ends → nothing-read-only → motion/focus → multi-episode recurring), one focused
@@ -104,14 +217,37 @@ exposed as synthetic fixtures + deleted, Knack → Income › Tutoring, RH-crypt
   duplicates state), **category MERGE** (deep referential surface — budgets, rules JSON, merchant
   defaults, suggestions — needs its own guarded data-pass like the S1b/dedupe work).
 
-**Track 2 — Motion + focus (option 2, ~3 sessions)** — all compositor-only + reduced-motion-gated.
-- [ ] **S8** — §3 Focus mode: click the chart → expand to a focus modal via the View Transitions API
-  (shared-element morph, CSS fallback); reuse the `Sheet.tsx` native-`<dialog>` focus-trap; lazy-load.
-- [ ] **S9** — §5 Activity-hub redesign: kill the "To review / Upcoming" dead gap; bento/segmented
-  composition; everything clickable/expandable (overlaps the editability vision).
-- [ ] **S10** — §7 app-wide bold-&-playful motion: page/route transitions, card-entrance stagger, hover
-  depth, NumberRoll everywhere, spring micro-interactions, categorize checkmark-draw + confetti. May
-  split S10a (transitions + stagger) / S10b (micro-interactions).
+**Track 2 — Motion + focus (option 2)** — all compositor-only + reduced-motion-gated.
+- [x] **S8 — chart focus mode (pass 10).** `ChartFocus` wraps the net-worth chart: an expand button
+  opens a native `<dialog>` (focus trap, Escape, focus return — the card stays MOUNTED so the opener
+  survives for focus return) with the same scrub chart rendered at `h-[55vh]`; both instances share
+  the dashboard window context so a zoom made in focus survives closing. The
+  `view-transition-name` hops between card and dialog → real shared-element morph via
+  `document.startViewTransition`, skipped under `usePrefersReducedMotion` and where unsupported.
+  e2e `zz-zz-chart-focus`.
+- [x] **S9 — activity hub merged (pass 10).** ToReviewCard + pace/investments bento + the
+  UpcomingBillsStrip now compose ONE `Activity` section with tight internal rhythm (gap-4) — the
+  dead gap is gone. `DASHBOARD_SECTION_IDS` dropped `upcoming`; the layout setting became
+  read-tolerant (`z.array(z.string())` + normalize-on-use) so a saved layout can never crash
+  `readSettings` after a section rename/removal.
+- [x] **S10a — motion, first slice (pass 10).** Route-level fade-rise via `src/app/template.tsx`
+  (re-mounts per navigation); dashboard section entrance CASCADE (per-index `animationDelay`,
+  fill-mode both); the hero net-worth headline now `NumberRoll`s on change (never on first paint);
+  institution sub-cards hover-lift (`-translate-y-0.5`, `motion-reduce` guarded). All
+  compositor-only; the globals.css reduced-motion guard zeroes everything.
+- [ ] **S8 follow-ups (review-CONFIRMED 2026-07-14, not yet fixed — do before S10b):**
+  (a) the view-transition morph is a timing race: wrap the setState in
+  `flushSync` inside the `startViewTransition` callback AND move `showModal()`/`close()` from
+  `useEffect` to `useLayoutEffect` in `src/components/dashboard/ChartFocus.tsx` (otherwise the
+  browser snapshots before React commits / before the dialog is visible → morph silently degrades
+  to a pop-in; both changes are needed).
+  (b) the focus modal opens at defaultRange 1Y instead of the pill the user was inspecting — the
+  range pill is per-instance state (`ScrubChart.tsx:175`); lift range into ChartFocus (or the
+  window context) so the modal is "the same chart, bigger"; also a pill click inside the modal
+  fires `windowCtx.reset()` and wipes the shared Back/Forward history — fix together.
+- [ ] **S10b — micro-interactions (remaining):** categorize checkmark-draw + (tasteful) confetti on
+  clearing a review cluster; spring hover states on chips/buttons; NumberRoll in more stat surfaces
+  (StatCards, account balances); consider the txn-kanban drag here where motion carries the meaning.
 
 **Track 1 — Multi-episode recurring (option 1, ~4 sessions)** — schema + detection + projection + UI.
 - [ ] **S11** — `recurring_episodes` table + migration (each existing series → one open episode,
