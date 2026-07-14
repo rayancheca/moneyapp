@@ -5,11 +5,14 @@
  * This pure reducer backs the browser-like back / forward through those
  * selections so the user can step through the timeframes they've inspected.
  *
- * The model is a stack of pushed windows plus a cursor `index`. `index === -1`
- * is the BASE view — no custom window, the range pills drive the chart — so the
- * first BACK from a brush lands back on the default range, and RESET clears the
- * whole stack back to base. Pure (no React, no DOM) so the history algebra is
- * unit-tested to 100%.
+ * The model is a stack of pushed VIEWS plus a cursor `index`. A view is either
+ * a custom window or `null` — the base view, where the range pills drive the
+ * chart. `index === -1` is the initial base (nothing inspected yet), so the
+ * first BACK from a brush lands back on the default range. A pill click while
+ * zoomed is a NAVIGATION to the base view (PUSH_BASE) — it joins the trail so
+ * Back returns to the window that was being inspected instead of wiping it;
+ * RESET alone clears the whole stack. Pure (no React, no DOM) so the history
+ * algebra is unit-tested to 100%.
  */
 
 export type WindowSource = "pill" | "brush" | "input" | "reset";
@@ -24,13 +27,16 @@ export interface DashboardWindow {
 }
 
 export interface WindowHistoryState {
-  stack: readonly DashboardWindow[];
-  /** cursor into `stack`; -1 = the base (no custom window) view */
+  /** each entry is a view: a custom window, or `null` for the base view */
+  stack: readonly (DashboardWindow | null)[];
+  /** cursor into `stack`; -1 = the initial base (no custom window) view */
   index: number;
 }
 
 export type WindowHistoryAction =
   | { type: "PUSH"; window: DashboardWindow }
+  /** navigate to the base view (a pill click while zoomed) — keeps the trail */
+  | { type: "PUSH_BASE" }
   | { type: "BACK" }
   | { type: "FORWARD" }
   | { type: "RESET" };
@@ -60,6 +66,13 @@ export function windowHistoryReducer(
       const stack = [...state.stack.slice(0, state.index + 1), action.window];
       return { stack, index: stack.length - 1 };
     }
+    case "PUSH_BASE": {
+      // Already showing the base view (initial cursor, or a base entry) — a
+      // repeated pill click must not mint a dead Back step.
+      if (currentWindow(state) === null) return state;
+      const stack = [...state.stack.slice(0, state.index + 1), null];
+      return { stack, index: stack.length - 1 };
+    }
     case "BACK":
       return state.index < 0 ? state : { ...state, index: state.index - 1 };
     case "FORWARD":
@@ -71,9 +84,9 @@ export function windowHistoryReducer(
   }
 }
 
-/** The active window, or null when parked at the base (pills drive the chart). */
+/** The active window, or null on any base view (pills drive the chart). */
 export function currentWindow(state: WindowHistoryState): DashboardWindow | null {
-  return state.index >= 0 ? state.stack[state.index]! : null;
+  return state.index >= 0 ? (state.stack[state.index] ?? null) : null;
 }
 
 /** True when BACK would change the view (step toward, or to, the base). */

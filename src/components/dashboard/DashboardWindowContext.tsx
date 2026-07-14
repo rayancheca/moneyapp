@@ -26,6 +26,8 @@ export interface DashboardWindowValue {
   canGoBack: boolean;
   canGoForward: boolean;
   push: (window: { start: string; end: string }, source: WindowSource) => void;
+  /** navigate to the base view (pill click) — joins the trail, Back returns */
+  toBase: () => void;
   back: () => void;
   forward: () => void;
   reset: () => void;
@@ -41,6 +43,7 @@ export function DashboardWindowProvider({ children }: { children: ReactNode }) {
       canGoBack: canGoBackOf(state),
       canGoForward: canGoForwardOf(state),
       push: (window, source) => dispatch({ type: "PUSH", window: { ...window, source } }),
+      toBase: () => dispatch({ type: "PUSH_BASE" }),
       back: () => dispatch({ type: "BACK" }),
       forward: () => dispatch({ type: "FORWARD" }),
       reset: () => dispatch({ type: "RESET" }),

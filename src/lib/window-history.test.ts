@@ -42,7 +42,7 @@ describe("PUSH", () => {
       { type: "PUSH", window: w("a1", "a2") },
       { type: "PUSH", window: w("b1", "b2") },
     );
-    expect(s.stack.map((x) => x.start)).toEqual(["a1", "b1"]);
+    expect(s.stack.map((x) => x?.start)).toEqual(["a1", "b1"]);
     expect(s.index).toBe(1);
   });
 
@@ -86,7 +86,7 @@ describe("PUSH", () => {
       { type: "BACK" },
       { type: "PUSH", window: w("d1", "d2") },
     );
-    expect(s.stack.map((x) => x.start)).toEqual(["a1", "d1"]);
+    expect(s.stack.map((x) => x?.start)).toEqual(["a1", "d1"]);
     expect(s.index).toBe(1);
     expect(canGoForward(s)).toBe(false);
   });
@@ -132,6 +132,73 @@ describe("BACK / FORWARD", () => {
     const back = windowHistoryReducer(two, { type: "BACK" });
     expect(canGoBack(back)).toBe(true);
     expect(canGoForward(back)).toBe(true);
+  });
+});
+
+describe("PUSH_BASE", () => {
+  test("navigates to the base view while KEEPING the trail (Back returns to the window)", () => {
+    const s = run(
+      { type: "PUSH", window: w("a1", "a2") },
+      { type: "PUSH_BASE" }, // a pill click while zoomed
+    );
+    expect(currentWindow(s)).toBeNull(); // base view — pills drive the chart
+    expect(canGoBack(s)).toBe(true); // the trail survives
+    const back = windowHistoryReducer(s, { type: "BACK" });
+    expect(currentWindow(back)).toEqual(w("a1", "a2"));
+  });
+
+  test("FORWARD after BACK re-applies the pill click (base is a real history entry)", () => {
+    const s = run(
+      { type: "PUSH", window: w("a1", "a2") },
+      { type: "PUSH_BASE" },
+      { type: "BACK" },
+      { type: "FORWARD" },
+    );
+    expect(currentWindow(s)).toBeNull();
+  });
+
+  test("is a no-op at the fresh base (pill click with no window active)", () => {
+    const s = windowHistoryReducer(initialWindowHistory, { type: "PUSH_BASE" });
+    expect(s).toBe(initialWindowHistory);
+  });
+
+  test("is a no-op when the current entry is already the base view", () => {
+    const once = run(
+      { type: "PUSH", window: w("a1", "a2") },
+      { type: "PUSH_BASE" },
+    );
+    const twice = windowHistoryReducer(once, { type: "PUSH_BASE" });
+    expect(twice).toBe(once); // no dead Back step from repeated pill clicks
+  });
+
+  test("is a no-op after BACK lands on the base cursor", () => {
+    const s0 = run({ type: "PUSH", window: w("a1", "a2") }, { type: "BACK" });
+    const s = windowHistoryReducer(s0, { type: "PUSH_BASE" });
+    expect(s).toBe(s0); // index -1 is already the base view
+  });
+
+  test("truncates forward history like any navigation", () => {
+    // A, B → back to A → pill click should drop B
+    const s = run(
+      { type: "PUSH", window: w("a1", "a2") },
+      { type: "PUSH", window: w("b1", "b2") },
+      { type: "BACK" },
+      { type: "PUSH_BASE" },
+    );
+    expect(s.stack.map((x) => x?.start)).toEqual(["a1", undefined]);
+    expect(currentWindow(s)).toBeNull();
+    expect(canGoForward(s)).toBe(false);
+  });
+
+  test("a PUSH after PUSH_BASE extends the trail through the base entry", () => {
+    const s = run(
+      { type: "PUSH", window: w("a1", "a2") },
+      { type: "PUSH_BASE" },
+      { type: "PUSH", window: w("b1", "b2") },
+    );
+    expect(s.stack.map((x) => x?.start)).toEqual(["a1", undefined, "b1"]);
+    const back = windowHistoryReducer(s, { type: "BACK" });
+    expect(currentWindow(back)).toBeNull(); // base view sits between the two zooms
   });
 });
 

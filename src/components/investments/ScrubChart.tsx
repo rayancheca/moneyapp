@@ -128,6 +128,15 @@ interface ScrubChartProps {
   activeWindow?: { start: string; end: string } | null;
   onWindowChange?: (window: { start: string; end: string } | null, source: WindowSource) => void;
   /**
+   * Lifts the range-pill selection to a parent, same contract as
+   * `activeWindow`/`onWindowChange`: when `onRangeChange` is passed the pills
+   * are CONTROLLED (the S8 focus modal shares one range with the inline card,
+   * so the modal opens on the pill the user was inspecting). Omitted
+   * everywhere else, where the chart keeps its own range exactly as before.
+   */
+  activeRange?: ChartRange;
+  onRangeChange?: (range: ChartRange) => void;
+  /**
    * Timeframe back/forward controls (dashboard net worth, §4). When passed, a
    * "← Back / →" cluster renders in the control row and steps through the shared
    * window history. Omitted by the sibling charts, so they render no chips.
@@ -170,9 +179,14 @@ export function ScrubChart({
   vivid = false,
   activeWindow,
   onWindowChange,
+  activeRange,
+  onRangeChange,
   history,
 }: ScrubChartProps) {
-  const [range, setRange] = useState<ChartRange>(defaultRange);
+  const [internalRange, setInternalRange] = useState<ChartRange>(defaultRange);
+  // controlled when a parent supplies the change handler (mirrors the window)
+  const rangeControlled = onRangeChange !== undefined;
+  const range = rangeControlled ? (activeRange ?? defaultRange) : internalRange;
   const [internalWindow, setInternalWindow] = useState<{ start: string; end: string } | null>(null);
   // controlled when a parent supplies the change handler; otherwise the chart
   // owns the window locally exactly as before (sibling charts stay uncontrolled)
@@ -281,8 +295,9 @@ export function ScrubChart({
     else setInternalWindow(next);
   }
 
-  function selectRange(range: ChartRange): void {
-    setRange(range);
+  function selectRange(next: ChartRange): void {
+    if (rangeControlled) onRangeChange!(next);
+    else setInternalRange(next);
     setWindow(null, "pill");
     setScrubIndex(null);
     setSelection(null);
@@ -291,6 +306,15 @@ export function ScrubChart({
   function applyWindow(startDay: string, endDay: string, source: WindowSource): void {
     const lo = compareDates(startDay, endDay) <= 0 ? startDay : endDay;
     const hi = compareDates(startDay, endDay) <= 0 ? endDay : startDay;
+    // The date inputs need the brush's minimum-span guard too: a window with
+    // fewer than 2 chartable points would trip the ALL fallback in `slice`
+    // while the header still labels the custom window — an all-time delta
+    // captioned with a one-day range. Ignore it, like a hair-thin drag.
+    let inRange = 0;
+    for (const p of points) {
+      if (compareDates(p.day, lo) >= 0 && compareDates(p.day, hi) <= 0 && ++inRange >= 2) break;
+    }
+    if (inRange < 2) return;
     setWindow({ start: lo, end: hi }, source);
     setScrubIndex(null);
     setSelection(null);

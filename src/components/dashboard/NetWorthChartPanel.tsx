@@ -31,6 +31,12 @@ interface NetWorthChartPanelProps {
   points: readonly NetWorthPoint[];
   today: string;
   defaultRange?: ChartRange;
+  /** override the chart height (the S8 focus modal renders it taller) */
+  heightClass?: string;
+  /** lift the range pills to a parent (ChartFocus shares one range between the
+   * inline card and the focus modal) — optional, pass-through to ScrubChart */
+  activeRange?: ChartRange;
+  onRangeChange?: (range: ChartRange) => void;
 }
 
 function accentOf(summary: ScrubSummary): Accent {
@@ -45,7 +51,14 @@ const ACCENT_TEXT: Record<Accent, string> = {
   flat: "text-ink-muted",
 };
 
-export function NetWorthChartPanel({ points, today, defaultRange = "1Y" }: NetWorthChartPanelProps) {
+export function NetWorthChartPanel({
+  points,
+  today,
+  defaultRange = "1Y",
+  heightClass = "h-64 sm:h-72",
+  activeRange,
+  onRangeChange,
+}: NetWorthChartPanelProps) {
   const windowCtx = useDashboardWindow();
   const scrubPoints: ScrubPoint[] = useMemo(
     () =>
@@ -111,7 +124,9 @@ export function NetWorthChartPanel({ points, today, defaultRange = "1Y" }: NetWo
         activeWindow,
         onWindowChange: (w: { start: string; end: string } | null, source: WindowSource) => {
           if (w) windowCtx.push(w, source);
-          else windowCtx.reset();
+          // a pill click NAVIGATES to the base view — it must join the history
+          // trail (Back returns to the window being inspected), never wipe it
+          else windowCtx.toBase();
         },
         history: {
           canGoBack: windowCtx.canGoBack,
@@ -128,6 +143,8 @@ export function NetWorthChartPanel({ points, today, defaultRange = "1Y" }: NetWo
       points={scrubPoints}
       today={today}
       defaultRange={defaultRange}
+      activeRange={activeRange}
+      onRangeChange={onRangeChange}
       showAxes
       selectable
       showExtremes
@@ -137,7 +154,7 @@ export function NetWorthChartPanel({ points, today, defaultRange = "1Y" }: NetWo
       valueText={valueText}
       formatValue={formatCents}
       ariaLabel="Net worth over time — scrub to inspect a day, drag to zoom a range"
-      heightClass="h-64 sm:h-72"
+      heightClass={heightClass}
       renderHeader={(summary, scrubbing, range, customWindow) => {
         const accent = accentOf(summary);
         const arrow = accent === "gain" ? "▲" : accent === "loss" ? "▼" : "•";
