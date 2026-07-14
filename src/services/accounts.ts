@@ -127,6 +127,8 @@ export const accountEditSchema = z
       .nullable(),
     type: z.enum(ACCOUNT_TYPES).optional(),
     subtype: z.enum(ACCOUNT_SUBTYPES).nullable().optional(),
+    /** S6: the credit card's funding account — checking/savings, never self */
+    paymentSourceAccountId: z.string().min(1).nullable().optional(),
   })
   .strict();
 export type AccountEditInput = z.infer<typeof accountEditSchema>;
@@ -154,6 +156,25 @@ export function editAccount(db: AppDatabase, id: string, input: AccountEditInput
   const typeChanged = effectiveType !== existing.type;
   const subtypeChanged = nextSubtype !== existing.subtype;
 
+  // payment-source link (S6): only a credit card has a funding account, the
+  // target must be a cash account, and an account can never fund itself
+  if (parsed.paymentSourceAccountId != null) {
+    if (effectiveType !== "credit") throw new Error("Only a credit card has a payment source");
+    if (parsed.paymentSourceAccountId === id) throw new Error("An account cannot fund itself");
+    const source = getAccount(db, parsed.paymentSourceAccountId);
+    if (!source) throw new Error("Unknown payment-source account");
+    if (source.type !== "checking" && source.type !== "savings") {
+      throw new Error("The payment source must be a checking or savings account");
+    }
+  }
+  // leaving the credit type clears the link — a checking account has no source
+  const nextPaymentSource =
+    effectiveType !== "credit"
+      ? null
+      : parsed.paymentSourceAccountId !== undefined
+        ? parsed.paymentSourceAccountId
+        : existing.paymentSourceAccountId;
+
   // an investment account whose curve comes from holdings × prices would LOSE
   // that history on a type flip (the anchor path has nothing to replay) —
   // refuse instead of silently discarding a derived balance curve
@@ -180,6 +201,7 @@ export function editAccount(db: AppDatabase, id: string, input: AccountEditInput
         last4: parsed.last4,
         ...(parsed.type !== undefined && { type: parsed.type }),
         subtype: nextSubtype,
+        paymentSourceAccountId: nextPaymentSource,
       })
       .where(eq(accounts.id, id))
       .run();

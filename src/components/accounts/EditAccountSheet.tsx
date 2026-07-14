@@ -16,6 +16,13 @@ export interface EditableAccount {
   last4: string | null;
   type: AccountType;
   subtype: AccountSubtype | null;
+  /** S6: the credit card's funding account — pairs card payments without a hint */
+  paymentSourceAccountId: string | null;
+}
+
+export interface FundingCandidate {
+  id: string;
+  name: string;
 }
 
 const TYPE_LABELS: Record<AccountType, string> = {
@@ -39,10 +46,13 @@ const SUBTYPE_LABELS: Record<AccountSubtype, string> = {
 export function EditAccountSheet({
   account,
   institutions,
+  fundingCandidates = [],
   onClose,
 }: {
   account: EditableAccount;
   institutions: readonly { id: string; name: string }[];
+  /** checking/savings accounts this card could be funded from (excludes self) */
+  fundingCandidates?: readonly FundingCandidate[];
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -52,6 +62,7 @@ export function EditAccountSheet({
   const [last4, setLast4] = useState(account.last4 ?? "");
   const [type, setType] = useState<AccountType>(account.type);
   const [subtype, setSubtype] = useState<AccountSubtype | "">(account.subtype ?? "");
+  const [paymentSource, setPaymentSource] = useState(account.paymentSourceAccountId ?? "");
   const [confirmRederive, setConfirmRederive] = useState(false);
 
   const [saving, setSaving] = useState(false);
@@ -73,6 +84,7 @@ export function EditAccountSheet({
       last4,
       type,
       subtype: effectiveSubtype,
+      paymentSourceAccountId: type === "credit" && paymentSource !== "" ? paymentSource : null,
       confirmRederive,
     }).then((r) => {
       setSaving(false);
@@ -149,6 +161,21 @@ export function EditAccountSheet({
             ))}
           </Select>
         </Field>
+        {type === "credit" && fundingCandidates.length > 0 ? (
+          <Field
+            label="Payment source"
+            hint="Card payments to/from this account pair automatically."
+          >
+            <Select value={paymentSource} onChange={(e) => setPaymentSource(e.target.value)}>
+              <option value="">—</option>
+              {fundingCandidates.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ) : null}
         {type === "investment" ? (
           <Field label="Subtype">
             <Select

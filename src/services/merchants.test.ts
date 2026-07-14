@@ -6,17 +6,21 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { institutions } from "@/db/schema/institutions";
+import { categories } from "@/db/schema/categories";
 import { merchantAliases, merchants } from "@/db/schema/merchants";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
+import { applyUndoPatch } from "./bulk-edit";
 import { categorizeAll } from "./categorize";
 import {
   merchantSummary,
   renameMerchant,
   similarGroupIds,
   similarTransactions,
+  applyMerchantDefaultToUncategorized,
+  setMerchantDefaultCategory,
 } from "./merchants";
 
 let dir: string;
@@ -284,5 +288,59 @@ describe("renameMerchant", () => {
     const result = renameMerchant(bundle.db, netflixId, "Netflix");
     expect(result).toEqual({ id: netflixId, name: "Netflix", aliasCreated: false });
     expect(bundle.db.select().from(merchantAliases).all().length).toBe(before);
+  });
+});
+
+describe("merchant default category (S6)", () => {
+  test("sets, validates, and clears the default", () => {
+    const food = bundle.db.select().from(categories).where(eq(categories.name, "Food")).all()[0]!;
+    const result = setMerchantDefaultCategory(bundle.db, netflixId, food.id);
+    expect(result.categoryId).toBe(food.id);
+    expect(
+      bundle.db.select().from(merchants).where(eq(merchants.id, netflixId)).get()!.defaultCategoryId,
+    ).toBe(food.id);
+
+    expect(() => setMerchantDefaultCategory(bundle.db, netflixId, "nope")).toThrow(/Unknown category/);
+    expect(() => setMerchantDefaultCategory(bundle.db, "nope", food.id)).toThrow(/Unknown merchant/);
+
+    const cleared = setMerchantDefaultCategory(bundle.db, netflixId, null);
+    expect(cleared.categoryId).toBeNull();
+    expect(
+      bundle.db.select().from(merchants).where(eq(merchants.id, netflixId)).get()!.defaultCategoryId,
+    ).toBeNull();
+  });
+
+  test("backfills only UNCATEGORIZED active rows, with a lossless undo", () => {
+    const food = bundle.db.select().from(categories).where(eq(categories.name, "Food")).all()[0]!;
+    const other = bundle.db.select().from(categories).where(eq(categories.name, "Shopping")).all()[0]!;
+    const bare = insertTxn({ merchantId: netflixId });
+    const kept = insertTxn({ merchantId: netflixId });
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: other.id, categorizationSource: "user" })
+      .where(eq(transactions.id, kept))
+      .run();
+
+    setMerchantDefaultCategory(bundle.db, netflixId, food.id);
+    const result = applyMerchantDefaultToUncategorized(bundle.db, netflixId);
+    expect(result.affected).toBe(1);
+
+    const bareRow = bundle.db.select().from(transactions).where(eq(transactions.id, bare)).get()!;
+    expect(bareRow.categoryId).toBe(food.id);
+    expect(bareRow.categorizationSource).toBe("merchant_map");
+    // the user-categorized sibling is untouched
+    expect(bundle.db.select().from(transactions).where(eq(transactions.id, kept)).get()!.categoryId).toBe(other.id);
+
+    applyUndoPatch(bundle.db, result.undo);
+    expect(bundle.db.select().from(transactions).where(eq(transactions.id, bare)).get()!.categoryId).toBeNull();
+  });
+
+  test("backfill without a default is rejected", () => {
+    const bare = bundle.db
+      .insert(merchants)
+      .values({ canonicalName: "No Default Coffee" })
+      .returning({ id: merchants.id })
+      .get();
+    expect(() => applyMerchantDefaultToUncategorized(bundle.db, bare.id)).toThrow(/Set a default category first/);
   });
 });

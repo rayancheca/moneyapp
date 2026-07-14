@@ -33,6 +33,8 @@ export interface AccountCard {
   type: AccountType;
   subtype: AccountSubtype | null;
   last4: string | null;
+  /** S6: the credit card's funding account, when linked */
+  paymentSourceAccountId: string | null;
   isLiability: boolean;
   balanceCents: number | null;
   asOf: string | null;
@@ -97,6 +99,7 @@ export function institutionGroups(db: AppDatabase): InstitutionGroup[] {
       type: accounts.type,
       subtype: accounts.subtype,
       last4: accounts.last4,
+      paymentSourceAccountId: accounts.paymentSourceAccountId,
       displayOrder: accounts.displayOrder,
     })
     .from(accounts)
@@ -161,6 +164,7 @@ export function institutionGroups(db: AppDatabase): InstitutionGroup[] {
       type: a.type,
       subtype: a.subtype,
       last4: a.last4,
+      paymentSourceAccountId: a.paymentSourceAccountId,
       isLiability: isLiability(a.type),
       balanceCents: latest?.cents ?? null,
       asOf: latest?.day ?? null,

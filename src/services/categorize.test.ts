@@ -5,6 +5,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
@@ -206,5 +207,29 @@ describe("applyCorrection", () => {
     const c = insertTxn(cardId, "2026-06-15", -1_250, "BLUE BOTTLE COFFEE NYC");
     categorizeAll(bundle.db);
     expect(categoryOf(c).name).toBe("Dining");
+  });
+});
+
+describe("detectTransfers — linked payment source (S6)", () => {
+  test("an unhinted equal-amount pair auto-pairs when the accounts are linked", () => {
+    // no descriptor hint on either leg — normally flagged ambiguous, not paired
+    const out = insertTxn(checkingId, "2026-06-10", -75_000, "WITHDRAWAL 8842");
+    const inn = insertTxn(cardId, "2026-06-11", 75_000, "CREDIT ADJUSTMENT");
+    detectTransfers(bundle.db);
+    let outRow = bundle.db.select().from(transactions).where(eq(transactions.id, out)).get()!;
+    expect(outRow.transferGroupId).toBeNull(); // unlinked accounts: humans decide
+
+    // link the card to its funding account and re-run: the pair is now hinted
+    bundle.db
+      .update(accounts)
+      .set({ paymentSourceAccountId: checkingId })
+      .where(eq(accounts.id, cardId))
+      .run();
+    detectTransfers(bundle.db);
+    outRow = bundle.db.select().from(transactions).where(eq(transactions.id, out)).get()!;
+    const innRow = bundle.db.select().from(transactions).where(eq(transactions.id, inn)).get()!;
+    expect(outRow.transferGroupId).toBe(out);
+    expect(innRow.transferGroupId).toBe(out);
+    expect(categoryOf(out).name).toBe("Credit Card Payment");
   });
 });

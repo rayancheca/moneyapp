@@ -1,8 +1,10 @@
 import { and, desc, eq, isNull, ne } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
+import { categories } from "@/db/schema/categories";
 import { merchantAliases, merchants } from "@/db/schema/merchants";
 import { transactions } from "@/db/schema/transactions";
+import type { BulkResult } from "./bulk-edit";
 import { strippedDescriptionKey } from "@/lib/description-key";
 import { todayIso } from "@/lib/dates";
 
@@ -30,6 +32,10 @@ export interface MerchantSummary {
   /** signed net of this calendar year's active rows — UI formats magnitude */
   totalCentsThisYear: number;
   recent: MerchantTxnRow[];
+  /** the merchant→category rule (S6) — future imports categorize to this */
+  defaultCategoryId: string | null;
+  /** active rows still uncategorized — the backfill button's blast radius */
+  uncategorizedCount: number;
 }
 
 const TXN_ROW_COLUMNS = {
@@ -67,7 +73,79 @@ export function merchantSummary(
     txnCount: rows.length,
     totalCentsThisYear,
     recent: rows.slice(0, RECENT_LIMIT),
+    defaultCategoryId: merchant.defaultCategoryId,
+    uncategorizedCount: rows.filter((r) => r.categoryId === null).length,
   };
+}
+
+/**
+ * The merchant→category rule (S6): every future import of this merchant
+ * auto-categorizes to the default (categorize.ts merchant-map precedence).
+ * Passing null clears the rule. Existing rows are untouched — use
+ * applyMerchantDefaultToUncategorized for the explicit backfill.
+ */
+export function setMerchantDefaultCategory(
+  db: AppDatabase,
+  merchantId: string,
+  categoryId: string | null,
+): { id: string; categoryId: string | null } {
+  const merchant = db.select().from(merchants).where(eq(merchants.id, merchantId)).get();
+  if (!merchant) throw new Error("Unknown merchant");
+  if (categoryId !== null) {
+    const category = db.select({ id: categories.id }).from(categories).where(eq(categories.id, categoryId)).get();
+    if (!category) throw new Error("Unknown category");
+  }
+  db.update(merchants)
+    .set({ defaultCategoryId: categoryId, mappingSource: categoryId === null ? null : "user" })
+    .where(eq(merchants.id, merchantId))
+    .run();
+  return { id: merchantId, categoryId };
+}
+
+/**
+ * Backfill the merchant's UNCATEGORIZED active rows with its default category
+ * — never overwrites an existing categorization. Lossless undo.
+ */
+export function applyMerchantDefaultToUncategorized(db: AppDatabase, merchantId: string): BulkResult {
+  const merchant = db.select().from(merchants).where(eq(merchants.id, merchantId)).get();
+  if (!merchant) throw new Error("Unknown merchant");
+  if (merchant.defaultCategoryId === null) throw new Error("Set a default category first");
+  const rows = db
+    .select()
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.merchantId, merchantId),
+        eq(transactions.status, "active"),
+        isNull(transactions.categoryId),
+      ),
+    )
+    .all();
+  const undo = {
+    rows: rows.map((r) => ({
+      id: r.id,
+      prev: {
+        categoryId: r.categoryId,
+        categorizationSource: r.categorizationSource,
+        categorizationConfidence: r.categorizationConfidence,
+        needsReview: r.needsReview,
+      },
+    })),
+  };
+  db.transaction((tx) => {
+    for (const row of rows) {
+      tx.update(transactions)
+        .set({
+          categoryId: merchant.defaultCategoryId,
+          categorizationSource: "merchant_map",
+          categorizationConfidence: 1,
+          needsReview: false,
+        })
+        .where(eq(transactions.id, row.id))
+        .run();
+    }
+  });
+  return { affected: rows.length, undo };
 }
 
 /**

@@ -6,7 +6,7 @@ import { isLiability } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
 import { formatCentsSigned } from "@/lib/money";
-import { getAccount, listInstitutions } from "@/services/accounts";
+import { getAccount, listAccounts, listInstitutions } from "@/services/accounts";
 import { listAnchors } from "@/services/anchors";
 import { accountSeries } from "@/services/derivation";
 import { listAccountHoldings } from "@/services/holdings";
@@ -116,8 +116,12 @@ export default async function AccountDetailPage({
               last4: account.last4,
               type: account.type,
               subtype: account.subtype,
+              paymentSourceAccountId: account.paymentSourceAccountId,
             }}
             institutions={listInstitutions(db)}
+            fundingCandidates={listAccounts(db)
+              .filter((a) => (a.type === "checking" || a.type === "savings") && a.id !== account.id)
+              .map((a) => ({ id: a.id, name: a.name }))}
           />
         </div>
       </div>

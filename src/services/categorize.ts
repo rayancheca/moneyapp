@@ -335,7 +335,19 @@ function categoryIdByPath(db: AppDatabase, path: string): string {
  */
 export function detectTransfers(db: AppDatabase): TransferStats {
   const stats: TransferStats = { paired: 0, flaggedAmbiguous: 0 };
-  const accountTypes = new Map(db.select().from(accounts).all().map((a) => [a.id, a.type]));
+  const accountRows = db.select().from(accounts).all();
+  const accountTypes = new Map(accountRows.map((a) => [a.id, a.type]));
+
+  // S6: a user-declared card↔funding-account link counts as a hint — payments
+  // between the linked pair auto-pair even without a descriptor match
+  const linkedPairs = new Set<string>();
+  for (const a of accountRows) {
+    if (a.paymentSourceAccountId) {
+      linkedPairs.add(`${a.id}\x1f${a.paymentSourceAccountId}`);
+      linkedPairs.add(`${a.paymentSourceAccountId}\x1f${a.id}`);
+    }
+  }
+  const isLinkedPair = (x: string, y: string): boolean => linkedPairs.has(`${x}\x1f${y}`);
 
   const candidates = db
     .select()
@@ -363,7 +375,10 @@ export function detectTransfers(db: AppDatabase): TransferStats {
       if (matches.length === 0) continue;
 
       const hinted = matches.filter(
-        (b) => TRANSFER_HINT_RE.test(a.rawDescription) || TRANSFER_HINT_RE.test(b.rawDescription),
+        (b) =>
+          TRANSFER_HINT_RE.test(a.rawDescription) ||
+          TRANSFER_HINT_RE.test(b.rawDescription) ||
+          isLinkedPair(a.accountId, b.accountId),
       );
       if (hinted.length !== 1) {
         if (matches.length > 0) {

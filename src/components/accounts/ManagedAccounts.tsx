@@ -186,6 +186,7 @@ export function ManagedAccounts({
                         last4: a.last4,
                         type: a.type,
                         subtype: a.subtype,
+                        paymentSourceAccountId: a.paymentSourceAccountId,
                       })
                     }
                   />
@@ -197,7 +198,15 @@ export function ManagedAccounts({
       ))}
 
       {editing && (
-        <EditAccountSheet account={editing} institutions={institutions} onClose={() => setEditing(null)} />
+        <EditAccountSheet
+          account={editing}
+          institutions={institutions}
+          fundingCandidates={groups
+            .flatMap((g) => g.accounts)
+            .filter((a) => (a.type === "checking" || a.type === "savings") && a.id !== editing.id)
+            .map((a) => ({ id: a.id, name: a.name }))}
+          onClose={() => setEditing(null)}
+        />
       )}
     </div>
   );

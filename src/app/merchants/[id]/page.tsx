@@ -3,10 +3,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
 import { merchantSummary } from "@/services/merchants";
+import { categories } from "@/db/schema/categories";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
+import { MerchantDefaultCategory } from "@/components/merchants/MerchantDefaultCategory";
 import { MerchantNameHeading } from "@/components/merchants/MerchantNameHeading";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
+import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
 
 export const metadata: Metadata = { title: "Merchant" };
 export const dynamic = "force-dynamic";
@@ -46,6 +49,13 @@ export default async function MerchantPage({ params }: { params: Promise<{ id: s
             <Money cents={summary.totalCentsThisYear} flow />
           </p>
         </header>
+
+        <MerchantDefaultCategory
+          merchantId={id}
+          defaultCategoryId={summary.defaultCategoryId}
+          uncategorizedCount={summary.uncategorizedCount}
+          categories={buildCategoryPickerOptions(db.select().from(categories).all())}
+        />
 
         <SurfaceCard>
           <div className="mb-3 flex items-baseline justify-between">

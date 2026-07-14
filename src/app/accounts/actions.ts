@@ -110,6 +110,7 @@ const editAccountActionSchema = z.object({
   last4: z.string().trim().optional(),
   type: z.enum(ACCOUNT_TYPES).optional(),
   subtype: z.enum(ACCOUNT_SUBTYPES).nullable().optional(),
+  paymentSourceAccountId: z.string().min(1).nullable().optional(),
   /** required true when type/subtype change — the "re-derives history" gate */
   confirmRederive: z.boolean().optional(),
 });
@@ -122,6 +123,7 @@ export async function editAccountAction(input: {
   last4?: string;
   type?: (typeof ACCOUNT_TYPES)[number];
   subtype?: (typeof ACCOUNT_SUBTYPES)[number] | null;
+  paymentSourceAccountId?: string | null;
   confirmRederive?: boolean;
 }): Promise<ActionResult<{ id: string; rederived: boolean }>> {
   const parsed = editAccountActionSchema.safeParse(input);
@@ -151,6 +153,9 @@ export async function editAccountAction(input: {
       last4,
       ...(parsed.data.type !== undefined && { type: parsed.data.type }),
       ...(parsed.data.subtype !== undefined && { subtype: parsed.data.subtype }),
+      ...(parsed.data.paymentSourceAccountId !== undefined && {
+        paymentSourceAccountId: parsed.data.paymentSourceAccountId,
+      }),
     });
     rederived = result.rederived;
   } catch (error: unknown) {

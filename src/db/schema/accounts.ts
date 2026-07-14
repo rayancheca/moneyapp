@@ -24,6 +24,12 @@ export const accounts = sqliteTable("accounts", {
   currency: text("currency").notNull().default("USD"),
   isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
   displayOrder: integer("display_order").notNull().default(0),
+  /**
+   * S6: a credit card's funding account (checking/savings). Lets transfer
+   * detection pair card payments between the linked accounts without a
+   * descriptor hint. Service-validated (credit accounts only, never self).
+   */
+  paymentSourceAccountId: text("payment_source_account_id"),
   ...timestamps(),
 });
 

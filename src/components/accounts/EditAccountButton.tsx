@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { EditAccountSheet, type EditableAccount } from "./EditAccountSheet";
+import { EditAccountSheet, type EditableAccount, type FundingCandidate } from "./EditAccountSheet";
 
 /**
  * Opens the edit-account sheet from the account detail page — so the name (and
@@ -11,9 +11,11 @@ import { EditAccountSheet, type EditableAccount } from "./EditAccountSheet";
 export function EditAccountButton({
   account,
   institutions,
+  fundingCandidates = [],
 }: {
   account: EditableAccount;
   institutions: readonly { id: string; name: string }[];
+  fundingCandidates?: readonly FundingCandidate[];
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -26,7 +28,12 @@ export function EditAccountButton({
         Edit account
       </button>
       {open && (
-        <EditAccountSheet account={account} institutions={institutions} onClose={() => setOpen(false)} />
+        <EditAccountSheet
+          account={account}
+          institutions={institutions}
+          fundingCandidates={fundingCandidates}
+          onClose={() => setOpen(false)}
+        />
       )}
     </>
   );
