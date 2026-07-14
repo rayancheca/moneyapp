@@ -70,6 +70,17 @@ financial data; then iOS.
 
 ## 🎯 Active priorities (this thread)
 
+- [x] **SoFi statement ingestion (2026-07-13, pass 6)** — built `sofiCombinedStatementPdf` parser
+  (combined Checking-9067 + Savings-5791 sections per PDF; commit `611e6c7`, 66/66 sections reconcile
+  to the cent). User uploaded 33 monthly combined statements (Oct 2023→Jun 2026). The statements
+  OVERLAP the CSV-sourced SoFi data and use different raw descriptions (would double-count), so user
+  chose **Replace**: superseded the 970 CSV txns + 2 CSV import_files, imported 1290 statement txns,
+  **preserved 960 categories** by (account,date,amount) match (so only the pre-2024-07 backfill is
+  uncategorized → review queue), re-applied Fordham→Salary. Real db: net worth $94,144.53 unchanged,
+  0 negative months, 102 periods reconciled, integrity ok. Harness `data/replace-sofi.ts`, backup
+  `data/backups/pre-sofi-replace-2026-07-13.db`. Note: `categorizeAll` recovered 0 (SoFi's 100% cat
+  was not rule-based) — the ~282 backfill txns categorize via the review queue over time.
+
 - [x] **Dynamic dashboard §1** — shared window-history reducer + lifted ScrubChart brush state (commit `7a97003`).
 - [x] **Dynamic dashboard §2/§4** — brush the net-worth chart → linked activity panel + ← Back/→ timeframe history (commit `913a090`).
 - [x] **Per-account coverage report** — done as analysis (see "Data coverage" below).
@@ -239,8 +250,8 @@ and derived backward; net worth @2026-07-10 is unchanged.
 | Robinhood Brokerage | investment | 2181 | 2024-08-15 | 2026-07-07 |
 | Robinhood Cash | checking | 0 | — | |
 | Robinhood Crypto | investment | 64 | 2025-11-04 | 2026-06-23 |
-| SoFi Checking | checking | 505 | 2024-09-15 | 2026-05-31 |
-| SoFi Savings | savings | 465 | 2024-07-15 | 2026-05-31 |
+| SoFi Checking | checking | 670 | 2023-10-30 | 2026-05-31 |
+| SoFi Savings | savings | 620 | 2023-10-27 | 2026-05-31 |
 
 - `statement_periods` now: 36 reconciled-to-the-cent + 8 crypto value-anchors + 2 declared-range
   (Chase Sapphire spending reports), **0 gaps**. Chase 3522 + Discover gained full monthly periods.
