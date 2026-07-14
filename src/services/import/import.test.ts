@@ -11,6 +11,7 @@ import { transactions } from "@/db/schema/transactions";
 import { latestBalances, netWorthSeries } from "@/services/derivation";
 import { importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, type ImportInput } from "./service";
 import { importFiles as importFilesTable } from "@/db/schema/imports";
+import { dedupeHash } from "@/lib/hash";
 
 const FIXTURES = path.join(process.cwd(), "tests", "fixtures", "synthetic");
 
@@ -230,6 +231,112 @@ describe("structured imports", () => {
     unimportFile(bundle.db, file.id);
     expect(activeTxnStats("4321").count).toBe(0);
     expect(bundle.db.select().from(importFilesTable).all()).toHaveLength(0);
+  });
+});
+
+describe("cross-format reconciliation dedupe (the DB is master)", () => {
+  const cardCsv = (rows: string[]): string =>
+    ["Card,Transaction Date,Post Date,Description,Category,Type,Amount,Memo", ...rows].join("\n");
+
+  test("an overlapping alt-export with different raw text dedupes against the DB instead of double-counting", async () => {
+    // primary export: two real charges
+    const primary = cardCsv([
+      "6001,06/01/2026,06/01/2026,STARBUCKS STORE 00123 SEATTLE WA,Food & Drink,Sale,-5.75,",
+      "6001,06/02/2026,06/02/2026,AMAZON MKTPL*AB1CD23,Shopping,Sale,-25.00,",
+    ]);
+    await importStatementFiles(bundle.db, [{ name: "Chase6001_Activity_a.CSV", buffer: Buffer.from(primary) }]);
+    const before = activeTxnStats("6001");
+    expect(before.count).toBe(2);
+
+    // alt export of the SAME period: same money, reformatted descriptions →
+    // the exact dedupe hash misses, but the DB already records this money
+    const alt = cardCsv([
+      "6001,06/01/2026,06/01/2026,STARBUCKS #123,Food & Drink,Sale,-5.75,",
+      "6001,06/02/2026,06/02/2026,AMZN Mktp US,Shopping,Sale,-25.00,",
+    ]);
+    const [outcome] = await importStatementFiles(bundle.db, [
+      { name: "Chase6001_Activity_b.CSV", buffer: Buffer.from(alt) },
+    ]);
+    expect(outcome!.status).toBe("parsed");
+    expect(outcome!.inserted).toBe(0);
+    expect(outcome!.dedupedCrossFormat).toBe(2);
+    expect(activeTxnStats("6001")).toEqual(before); // count AND sum unchanged
+  });
+
+  test("multiset matching: a second same-day equal-amount row that is genuinely new still imports", async () => {
+    const primary = cardCsv([
+      "6002,06/01/2026,06/01/2026,STARBUCKS STORE 00123 SEATTLE WA,Food & Drink,Sale,-5.75,",
+    ]);
+    await importStatementFiles(bundle.db, [{ name: "Chase6002_Activity_a.CSV", buffer: Buffer.from(primary) }]);
+
+    // alt export knows about TWO -5.75 charges that day: one is the known
+    // Starbucks charge (reformatted), the other is a real second purchase
+    const alt = cardCsv([
+      "6002,06/01/2026,06/01/2026,STARBUCKS #123,Food & Drink,Sale,-5.75,",
+      "6002,06/01/2026,06/01/2026,PETES COFFEE 42,Food & Drink,Sale,-5.75,",
+    ]);
+    const [outcome] = await importStatementFiles(bundle.db, [
+      { name: "Chase6002_Activity_b.CSV", buffer: Buffer.from(alt) },
+    ]);
+    expect(outcome!.inserted).toBe(1);
+    expect(outcome!.dedupedCrossFormat).toBe(1);
+    expect(activeTxnStats("6002").count).toBe(2);
+    expect(activeTxnStats("6002").sumCents).toBe(-1150);
+  });
+
+  test("byte-identical rows across different files stay plain hash dedupes, not cross-format", async () => {
+    const rows = ["6003,06/01/2026,06/01/2026,SHELL OIL 111,Gas,Sale,-40.00,"];
+    await importStatementFiles(bundle.db, [
+      { name: "Chase6003_Activity_a.CSV", buffer: Buffer.from(cardCsv(rows)) },
+    ]);
+    // same row text, different file bytes (extra memo on a second, distinct row)
+    const second = cardCsv([...rows, "6003,06/03/2026,06/03/2026,COSTCO GAS,Gas,Sale,-30.00,"]);
+    const [outcome] = await importStatementFiles(bundle.db, [
+      { name: "Chase6003_Activity_b.CSV", buffer: Buffer.from(second) },
+    ]);
+    expect(outcome!.deduped).toBe(1); // exact hash match — the honest classification
+    expect(outcome!.dedupedCrossFormat).toBe(0);
+    expect(outcome!.inserted).toBe(1); // the genuinely new Costco row
+    expect(activeTxnStats("6003").count).toBe(2);
+  });
+
+  test("rows without an import file (legacy rebuild scripts) also dedupe overlapping uploads", async () => {
+    // create the account via a first import, then plant a legacy row by hand
+    await importStatementFiles(bundle.db, [
+      {
+        name: "Chase6004_Activity_a.CSV",
+        buffer: Buffer.from(cardCsv(["6004,05/01/2026,05/01/2026,SEED ROW,Misc,Sale,-1.00,"])),
+      },
+    ]);
+    const account = bundle.db.select().from(accounts).all().find((a) => a.last4 === "6004")!;
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId: account.id,
+        importFileId: null, // rebuild-script provenance
+        postedOn: "2026-06-05",
+        amountCents: -1234,
+        rawDescription: "LEGACY VENDOR PAYMENT",
+        normalizedDescription: "legacy vendor payment",
+        occurrenceIndex: 0,
+        dedupeHash: dedupeHash({
+          accountId: account.id,
+          postedOn: "2026-06-05",
+          amountCents: -1234,
+          rawDescription: "LEGACY VENDOR PAYMENT",
+          occurrenceIndex: 0,
+        }),
+      })
+      .run();
+
+    const [outcome] = await importStatementFiles(bundle.db, [
+      {
+        name: "Chase6004_Activity_b.CSV",
+        buffer: Buffer.from(cardCsv(["6004,06/05/2026,06/05/2026,Legacy Vendor Pmt Alt Text,Misc,Sale,-12.34,"])),
+      },
+    ]);
+    expect(outcome!.inserted).toBe(0);
+    expect(outcome!.dedupedCrossFormat).toBe(1);
   });
 });
 

@@ -43,6 +43,12 @@ export interface FileOutcome {
   error?: string;
   inserted: number;
   deduped: number;
+  /**
+   * rows whose exact hash missed (different raw text across export formats)
+   * but whose money the DB already records from another source — matched by
+   * (account, posted_on, amount) with multiset consumption, never inserted
+   */
+  dedupedCrossFormat: number;
   /** rows not inserted because a higher-fidelity source owns their date range */
   skippedOwned: number;
   supersededTakeover: number;
@@ -55,6 +61,49 @@ interface CoveredRange {
   priority: number;
   minDay: string;
   maxDay: string;
+}
+
+/**
+ * Cross-format reconciliation dedupe (the DB is master): count the account's
+ * balance-affecting rows from OTHER sources by (posted_on, amount). An incoming
+ * row whose exact hash misses still dedupes when this pool holds an unconsumed
+ * match — the same money described with different raw text by another export
+ * format. Multiset consumption keeps two genuinely identical same-day charges
+ * distinct: each existing row absorbs at most one incoming row.
+ * Quarantined rows stay out of the pool (they don't affect balances, so an
+ * incoming balance-affecting row must not vanish against one), and superseded
+ * rows are history.
+ */
+function existingIdentityPool(db: AppDatabase, accountId: string, excludeFileId: string): Map<string, number> {
+  const rows = db
+    .select({
+      postedOn: transactions.postedOn,
+      amountCents: transactions.amountCents,
+      n: sql<number>`COUNT(*)`,
+    })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.accountId, accountId),
+        inArray(transactions.status, ["active", "excluded"]),
+        sql`(${transactions.importFileId} IS NULL OR ${transactions.importFileId} != ${excludeFileId})`,
+      ),
+    )
+    .groupBy(transactions.postedOn, transactions.amountCents)
+    .all();
+  return new Map(rows.map((r) => [identityKey(r.postedOn, r.amountCents), r.n]));
+}
+
+function identityKey(postedOn: string, amountCents: number): string {
+  return `${postedOn}\x1f${amountCents}`;
+}
+
+/** Consume one unit from the pool; false when nothing is left to match. */
+function consumeIdentity(pool: Map<string, number>, key: string): boolean {
+  const remaining = pool.get(key) ?? 0;
+  if (remaining <= 0) return false;
+  pool.set(key, remaining - 1);
+  return true;
 }
 
 function coveredRanges(db: AppDatabase, accountId: string): CoveredRange[] {
@@ -320,6 +369,7 @@ async function importOneFile(
     status: "parsed",
     inserted: 0,
     deduped: 0,
+    dedupedCrossFormat: 0,
     skippedOwned: 0,
     supersededTakeover: 0,
     quarantined: 0,
@@ -417,6 +467,8 @@ async function importOneFile(
         rawDescription: t.rawDescription,
       }));
 
+      const identityPool = existingIdentityPool(db, accountId, fileRow.id);
+
       db.transaction((tx) => {
         for (const { row: t, occurrenceIndex } of indexed) {
           const coveredBy = ranges.filter((r) => t.postedOn >= r.minDay && t.postedOn <= r.maxDay);
@@ -424,6 +476,15 @@ async function importOneFile(
             outcome.skippedOwned += 1; // owned by higher fidelity — visible, never silent
             continue;
           }
+
+          const hash = dedupeHash({
+            accountId,
+            postedOn: t.postedOn,
+            amountCents: t.amountCents,
+            rawDescription: t.rawDescription,
+            occurrenceIndex,
+          });
+          const poolKey = identityKey(t.postedOn, t.amountCents);
 
           // takeover: a lower-fidelity source owns this day — replace its
           // best-matching row (schema.md: date, amount, description similarity)
@@ -433,14 +494,36 @@ async function importOneFile(
             if (victim) {
               tx.update(transactions).set({ status: "superseded" }).where(eq(transactions.id, victim.id)).run();
               outcome.supersededTakeover += 1;
-              const inserted = insertTxn(tx, db, accountId, fileRow.id, t, occurrenceIndex, victim);
+              // the victim leaves the ledger — release its identity so a later
+              // same-day equal-amount row can't consume the superseded slot
+              if (victim.status !== "quarantined") consumeIdentity(identityPool, poolKey);
+              const inserted = insertTxn(tx, db, accountId, fileRow.id, t, hash, occurrenceIndex, victim);
               if (inserted) outcome.inserted += 1;
               else outcome.deduped += 1;
               continue;
             }
           }
 
-          const inserted = insertTxn(tx, db, accountId, fileRow.id, t, occurrenceIndex, null);
+          if (consumeIdentity(identityPool, poolKey)) {
+            // another source already records this money movement — classify by
+            // whether the raw text matched exactly (visible, never silent)
+            const exact = tx
+              .select({ id: transactions.id })
+              .from(transactions)
+              .where(
+                and(
+                  eq(transactions.accountId, accountId),
+                  eq(transactions.dedupeHash, hash),
+                  sql`${transactions.status} != 'superseded'`,
+                ),
+              )
+              .get();
+            if (exact) outcome.deduped += 1;
+            else outcome.dedupedCrossFormat += 1;
+            continue;
+          }
+
+          const inserted = insertTxn(tx, db, accountId, fileRow.id, t, hash, occurrenceIndex, null);
           if (inserted) outcome.inserted += 1;
           else outcome.deduped += 1;
         }
@@ -592,16 +675,10 @@ function insertTxn(
   accountId: string,
   importFileId: string,
   t: CanonicalTxn,
+  hash: string,
   occurrenceIndex: number,
   carryFrom: { categoryId: string | null; categorizationSource: string | null; notes: string | null; transferGroupId: string | null; recurringSeriesId: string | null } | null,
 ): boolean {
-  const hash = dedupeHash({
-    accountId,
-    postedOn: t.postedOn,
-    amountCents: t.amountCents,
-    rawDescription: t.rawDescription,
-    occurrenceIndex,
-  });
   const categoryId = t.categoryPath ? categoryIdForPath(db, t.categoryPath) : null;
   const carryUserCategory = carryFrom?.categorizationSource === "user" ? carryFrom.categoryId : null;
   const result = tx
