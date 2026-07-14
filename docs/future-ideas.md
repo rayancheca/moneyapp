@@ -3,7 +3,8 @@
 > Living backlog. **Every working pass must expand + polish this list and tick off
 > what shipped.** Newest thinking near the top of each section. Dates are absolute.
 
-Last updated: 2026-07-13 (pass 9 — S2 inline-edit primitive shipped: account name editable in place).
+Last updated: 2026-07-14 (pass 10 — Track 4 CLOSED: cross-format dedupe shipped, "orphan CSVs"
+exposed as synthetic fixtures + deleted, Knack → Income › Tutoring, RH-crypto last4 + folder migrated).
 
 ---
 
@@ -15,14 +16,27 @@ Last updated: 2026-07-13 (pass 9 — S2 inline-edit primitive shipped: account n
 > sessions can merge or split. Polish items (see "Known small issues") fold into the nearest
 > relevant session. Deployment (Turso/libSQL + auth, then iOS) stays gated until the end.
 
-**Track 4 — Loose ends (option 4)**
+**Track 4 — Loose ends (option 4)** — ✅ CLOSED 2026-07-14 (pass 10)
 - [x] **S1 — covered-accounts chart phrasing** shipped (commit `2e26bc3`): adaptive "only …"/"missing …"
   labels via `src/lib/coverage-label.ts`. See "Active priorities".
-- [ ] **S1b — data hygiene (DEFERRED, needs care + a decision)** — the two remaining option-4 items
-  turned out to need more than a tidy: the orphan-CSV import is UNSAFE as-is (double-counts +$28k — see
-  "Active priorities") and needs a dedup-aligned / new-rows-only reconciliation; the Robinhood last4
-  needs a slug-vs-folder decision. Both are real-db mutations → their own careful pass. Not blocking
-  Track 3.
+- [x] **S1b — data hygiene (RESOLVED 2026-07-14, pass 10).** Three closures:
+  1. **Cross-format reconciliation dedupe shipped** (`feat(import)` commit): when an incoming row's
+     exact hash misses (different raw text across export formats), it now dedupes against existing
+     balance-affecting rows from other sources by (account, posted_on, amount) with **multiset
+     consumption** (two genuinely identical same-day charges still both count). New visible
+     `FileOutcome.dedupedCrossFormat` counter. This is the user's stated model: files are parsed once,
+     the DB is master, overlapping uploads are harmless by design. TDD'd (4 new tests, 17/17 import
+     suite, 1034 unit total).
+  2. **The 4 "orphan alt-export CSVs" were NOT user data** — byte-identical to
+     `tests/fixtures/synthetic/` files (fake SoFi balances $20,078.53 + $8,150.00 explain the old
+     +$28k double-count finding exactly; the "SoFi savings" rows had arithmetic-perfect fake interest).
+     Deleted from `data/originals/` (now removed, archive lives in `data/statements/`) per the standing
+     "no fake data" directive; scratch backup kept one session. Real db untouched.
+  3. **Robinhood Crypto last4 + archive folder** (user chose rename+migrate): `last4=8474` set, folder
+     → `data/statements/robinhood-crypto-8474/`, 8 `storage_path` rows repointed + verified on disk
+     (`data/db-ops-2026-07-14.ts`, backup `data/backups/pre-dbops-2026-07-14.db`, Δ net worth = 0).
+  Also: **Knack Payout → NEW Income › Tutoring** (60 rows, $10,023.00; 45 from Other Income + 15 from
+  the review queue — all literal "Knack Payout" direct deposits; review queue 2255 → 2232).
 
 **Track 3 — "Nothing read-only" (option 3, ~6 sessions)** — the north star; each a shippable slice.
 - [x] **S2 — inline-edit primitive shipped (pass 9).** Built the pure edit-state core
@@ -131,23 +145,18 @@ financial data; then iOS.
   `src/lib/coverage-label.ts` helper — "only Chase ····3522" on 2022 days (1/9 covered), "missing
   Robinhood Brokerage, Robinhood Crypto +2 more" when most accounts are covered. One canonical verb
   (`kind`) across all four surfaces so wording can't drift. Verified on real data.
-- [ ] **Robinhood Crypto last4 — DEFERRED (needs a decision, cosmetic).** Statements carry account
-  311070628474 (last4 8474). Populating `accounts.last4` is trivially safe for balances, BUT
-  `accountSlug()` appends last4 → the archive slug would become `robinhood-crypto-8474`, contradicting
-  the user-confirmed `robinhood-crypto` folder layout. Options: (a) special-case the slug so the folder
-  name stays `robinhood-crypto`; (b) accept the rename + migrate the folder + repoint its 8
-  `storage_path` rows; (c) leave last4 NULL. Purely cosmetic (UI shows "····8474"); no rush.
-- [ ] **4 orphan alt-export CSVs — DEFERRED (import is UNSAFE as-is).** Discover-RecentActivity,
-  robinhood_activity_report, short SoFi Checking/Savings exports, still in `data/originals/`, untracked.
-  **Dry-run finding (2026-07-13):** they are NOT clean subsets — they overlap the existing ledger
-  (e.g. Discover-RecentActivity spans 2025-12→2026-07, over the imported Discover through 2026-06-23)
-  AND their alt-export dedupe hashes do NOT match the primary exports → importing inserts 294 txns
-  with **0 deduped**, double-counting the overlap and moving net worth @2026-07-10 by **+$28,173.87**
-  (≈ SoFi Savings $20,078 + SoFi Checking $8,150). Δ must be 0. **To import safely:** either align the
-  dedupe hash across export formats, or import ONLY the genuinely-new rows (dates newer than each
-  account's current last txn: Discover >2026-06-23, SoFi >2026-05-31, RH-brokerage the >2026-07-07
-  tail + the 2024-07→08 head), then reconcile. Staged dry/apply harness: `data/import-orphans.ts`
-  (gitignored). Real db verified untouched by the dry-run (integrity ok · 9040 txns · 52 files · $94,144.53).
+- [x] **Robinhood Crypto last4 — RESOLVED 2026-07-14 (user chose rename+migrate).** `last4=8474`,
+  folder migrated to `data/statements/robinhood-crypto-8474/`, 8 `storage_path` rows repointed and
+  verified on disk. Future uploads land in the new folder via the unchanged `accountSlug()`.
+- [x] **4 orphan alt-export CSVs — RESOLVED 2026-07-14: they were FAKE.** Byte-identical to
+  `tests/fixtures/synthetic/` fixtures (leftover demo seeds that survived the 2026-07-13 purge because
+  they sat in `data/originals/` disguised as untracked "alt exports"). The old +$28,173.87 dry-run
+  delta ≈ the fixtures' fake SoFi balances ($20,078.53 + $8,150.00) — it was never a dedupe-hash
+  problem alone. Deleted (with a one-session scratch backup); `data/originals/` removed (empty; the
+  real archive is `data/statements/`). The REAL fix that came out of it: cross-format reconciliation
+  dedupe in the import pipeline (see S1b above), so any future overlapping re-export dedupes against
+  the DB by design. Lesson recorded: **synthetic-looking patterns (arithmetic-perfect interest, rigid
+  monthly transfers) are a data-authenticity smell — check `tests/fixtures` before importing.**
 
 ## 🧮 Spending math — review + fix (2026-07-13, pass 5)
 
