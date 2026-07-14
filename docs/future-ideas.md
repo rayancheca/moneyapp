@@ -3,7 +3,7 @@
 > Living backlog. **Every working pass must expand + polish this list and tick off
 > what shipped.** Newest thinking near the top of each section. Dates are absolute.
 
-Last updated: 2026-07-13 (pass 7 — refunds surfaced on the /spending stat cards).
+Last updated: 2026-07-13 (pass 8 — data-correctness review: opaque income triaged, SoFi backfill categorized).
 
 ---
 
@@ -69,6 +69,29 @@ financial data; then iOS.
 ---
 
 ## 🎯 Active priorities (this thread)
+
+- [x] **Data-correctness review (2026-07-13, pass 8)** — user-directed triage of the opaque income
+  + the SoFi backfill. Applied via `data/categorize-review-2026-07-13.ts` (backup
+  `data/backups/pre-catreview-2026-07-13.db`; in-txn net-worth/integrity/count guards → rollback on
+  anomaly). 428 rows touched; **net worth $94,144.53 unchanged**, integrity ok, 9360 active txns, 83
+  import_files. Total income 2022–2026 **$205,266 → $116,380** (−$88,886 — an honest correction, see below).
+  - **DEPOSIT ID NUMBER (5 rows, $30,413)** → Transfers › Internal Transfer. User: their dad gave them
+    euros in Spain → converted to USD → deposited (these inflows) → wired back to dad (the already-Transfers
+    "CONSUMER ONLINE INTERNATIONAL WIRE" outflows −$25k/−$3.3k on Mar 4–5). A currency pass-through/wash,
+    NOT the user's income. Both legs now Transfers → nets ~0, out of income.
+  - **SoFi backfill (282 uncategorized, Oct 2023→Jul 2024)** auto-categorized per user's choice: 168
+    internal sweeps + Chase moves → Transfers › Internal Transfer; 19 Discover e-payments → Transfers ›
+    Credit Card Payment; 12 Interest Earned → Income › Interest; 13 rewards/promo → Rewards › Cash Back;
+    the remaining **70** (debit-card purchases + misc, e.g. Fordham WEBCHECK) → **review queue** (flagged,
+    left uncategorized) for normal categorization.
+  - **ATM cash deposits (49 rows, $53,948, mislabeled "Salary")** + **Zelle-from-individuals (92 rows,
+    $6,194, "Other Income")** → **reset to uncategorized + review queue** (+190 items total). User's call:
+    these are heterogeneous (cash income / gambling / dad currency-exchange / a friend's tuition money;
+    Zelle = reimbursement-vs-income unknown) and they want to tag each ONE BY ONE in the app's review UI
+    (this is a concrete pull for the "nothing read-only" review-cards workflow). Income is now a known
+    FLOOR ($116k) that grows back as the queue is tagged. Nothing fabricated; raw descriptions intact.
+  - FOLLOW-UP: the +190 review-queue items are the user's to categorize. Knack Payout ($10k, tutoring
+    platform) was LEFT as Income › Other Income (clearly income; user can move to a dedicated bucket).
 
 - [x] **SoFi statement ingestion (2026-07-13, pass 6)** — built `sofiCombinedStatementPdf` parser
   (combined Checking-9067 + Savings-5791 sections per PDF; commit `611e6c7`, 66/66 sections reconcile
