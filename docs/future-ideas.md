@@ -80,6 +80,43 @@ Use this to VALIDATE every chart/number. Money mechanics, in the user's own word
   pass clears `needsReview` on verified pairs — **mechanically resolves ~480 of the 2232
   review items** without guessing anything.
 
+- [ ] **P0.5 — IN-TRANSIT TRANSFER BRIDGING** (user insight, 2026-07-14, verbatim intent): *"when I
+  transfer all my money from Chase to SoFi I had to do it in chunks, and whenever I transfer, the
+  money is in the air for 3–5 business days — it leaves Chase and takes 3–9 days to enter SoFi.
+  Same when I moved everything from SoFi to Robinhood. That's why the chart goes to 0 then back up…
+  it knows the money left one account and it knows where it went and when, so the chart can stay
+  accurate: I had 30k in Chase, moved 5k to SoFi on Jan 3, from Jan 3–8 the money wasn't in Chase
+  OR SoFi, but on Jan 8 it was in SoFi — it should bridge that. It knows the money is mine, it's
+  just being transferred."* This is a THIRD confirmed dip mechanism, alongside (not replacing)
+  P0.1 (RH cash model) and P0.2 (missing statement): settlement float during the chunked
+  Chase→SoFi (Oct–Nov 2023) and SoFi→RH (2025) migrations produces real V-dips.
+  **Spec:**
+  - **(a) Pairing prerequisite — widen the match window.** `detectTransfers`
+    (src/services/categorize.ts) pairs opposite equal-cent legs only within **±4 days** — too
+    narrow for 3–9-business-day ACH settlement, so many of these legs are UNPAIRED today and
+    cannot be bridged. Widen to ~±10 calendar days for hinted pairs (hint = descriptor regex OR
+    the S6 linked card↔source pair OR both legs categorized Transfers); keep the ambiguity
+    flagging for multiple candidates. S5's manual "Link as transfer…" (already ±14d) covers the rest.
+  - **(b) Derivation — an explicit "in transit" component.** For every transfer group whose two
+    legs live in different accounts with `outflow.postedOn < inflow.postedOn`, add `|amountCents|`
+    to a new `inTransitCents` bucket for days `[outflow.postedOn, inflow.postedOn)`. Surface it as
+    its own series component in `netWorthSeries` (src/services/derivation.ts) — **never silently
+    smooth the account lines themselves**; the per-account curves stay bank-true.
+  - **(c) UI honesty.** Chart renders the bridge visibly (e.g. the total line includes in-transit,
+    with the tooltip/scrub text saying "includes $5,000.00 in transit — Chase → SoFi, sent Jan 3,
+    landed Jan 8"); the hero/net-worth figure on such days shows the same note. Legend/coverage
+    grammar gains "in transit" alongside "partial".
+  - **(d) Guards + edges.** Bridge ONLY verified pairs (transferGroupId with exactly 2 legs, both
+    present in the ledger — never bridge into a P0.2 coverage gap or from an unpaired leg);
+    unequal legs (wire fees) bridge the OUTFLOW amount and the tooltip names the difference;
+    same-day pairs are a no-op; chunked migrations = many overlapping bridges that must sum
+    correctly (TDD: the Jan-3/5k-Jan-8 example, overlapping chunks, fee-shaved pair, unpaired leg
+    NOT bridged). Pure math 100% covered; real-data validation = the Oct–Nov 2023 and mid-2025
+    windows must visibly flatten while every statement still reconciles to the cent.
+  - **Order note:** do the pairing widen (a) BEFORE or WITH P0.4's OVERDRAFT hint work (same file,
+    same detector), and expect P0.1's cash model to interact — a SoFi→RH "dip" is part float (this
+    item) and part uncounted RH cash (P0.1). Reconcile both against the GROUND TRUTH story.
+
 ## 🔧 P1 — REVIEW-INBOX CLUSTER UX (the user's active workflow, 2232 items)
 
 - [ ] **P1.1 — cluster cards must support partial, informed decisions** (user, 2026-07-14:
