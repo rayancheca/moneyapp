@@ -1,48 +1,43 @@
 import { StatCard } from "@/components/ui/StatCard";
 import { Money } from "@/components/ui/Money";
-import { ledgerHref } from "@/lib/ledger-href";
+import { spendingStatCards } from "@/lib/spending-stat-cards";
 import type { DateRange } from "@/services/analytics";
 import type { PeriodTotals } from "@/services/spending";
 
 /**
- * The four tappable summary cards (ux-overhaul-plan §5.1). Earned and Spent
- * drill to their EXACT kind-scoped ledger (the `income` / `spending` filter
- * tokens reconcile to these very numbers); Net and Savings-rate drill to the
- * whole period. Every card is a link — nothing is view-only.
+ * The tappable summary cards (ux-overhaul-plan §5.1). Earned/Spent/Refunds each
+ * drill to their EXACT kind-scoped ledger (the filter tokens reconcile to these
+ * very numbers); Net and Savings-rate drill to the whole period. Every card is a
+ * link — nothing is view-only. Refunds appears only in periods with expense-
+ * category credits, so Net reads as Earned + Refunds − Spent right on the row.
+ * The card set + aria live in the pure `spendingStatCards` helper.
  */
 export function SpendingStatCards({ totals, range }: { totals: PeriodTotals; range: DateRange }) {
-  const { earnedCents, spentCents, netCents, savingsRatePct } = totals;
+  const cards = spendingStatCards(totals, range);
+  const cols = cards.length >= 5 ? "lg:grid-cols-5" : "lg:grid-cols-4";
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      <StatCard
-        label="Earned"
-        value={<Money cents={earnedCents} />}
-        href={ledgerHref({ category: "income", from: range.from, to: range.to })}
-        ariaLabel={`Earned this period. ${earnedCents / 100} dollars. View income transactions.`}
-      />
-      <StatCard
-        label="Spent"
-        value={<Money cents={spentCents} />}
-        href={ledgerHref({ category: "spending", from: range.from, to: range.to, flow: "out" })}
-        ariaLabel={`Spent this period, gross. ${spentCents / 100} dollars. View spending transactions.`}
-      />
-      <StatCard
-        label="Net"
-        value={<Money cents={netCents} flow />}
-        href={ledgerHref({ from: range.from, to: range.to })}
-        ariaLabel={`Net this period. ${netCents < 0 ? "negative " : ""}${Math.abs(netCents) / 100} dollars. View all transactions.`}
-      />
-      <StatCard
-        label="Savings rate"
-        value={savingsRatePct === null ? <span className="text-ink-faint">—</span> : `${savingsRatePct}%`}
-        delta={savingsRatePct === null ? "no income yet" : netCents >= 0 ? "kept" : "overspent"}
-        href={ledgerHref({ from: range.from, to: range.to })}
-        ariaLabel={
-          savingsRatePct === null
-            ? "Savings rate unavailable without income."
-            : `Savings rate ${savingsRatePct} percent.`
-        }
-      />
+    <div className={`grid grid-cols-2 gap-3 ${cols}`}>
+      {cards.map((card) => (
+        <StatCard
+          key={card.key}
+          label={card.label}
+          value={
+            card.text !== undefined ? (
+              card.muted ? (
+                <span className="text-ink-faint">{card.text}</span>
+              ) : (
+                card.text
+              )
+            ) : (
+              <Money cents={card.cents ?? 0} flow={card.flow} />
+            )
+          }
+          delta={card.delta}
+          href={card.href}
+          ariaLabel={card.ariaLabel}
+          className={card.mobileFull ? "col-span-2 lg:col-span-1" : undefined}
+        />
+      ))}
     </div>
   );
 }

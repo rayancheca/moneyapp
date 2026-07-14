@@ -3,7 +3,7 @@
 > Living backlog. **Every working pass must expand + polish this list and tick off
 > what shipped.** Newest thinking near the top of each section. Dates are absolute.
 
-Last updated: 2026-07-13 (pass 4 — session roadmap + loose-end follow-ups).
+Last updated: 2026-07-13 (pass 7 — refunds surfaced on the /spending stat cards).
 
 ---
 
@@ -132,8 +132,17 @@ transfers transfer-kind); the problem is (a) fragile netting + (b) categorizatio
   a new `refundsCents` field, never netted into Spent; `netCents = earned + refunds − spent` (net
   unchanged, nothing dropped). Spent StatCard drill-down gained `flow=out`. Real-data: Jan 2026 Spent
   −$12,260 → **+$4,808** ($17,068 refunds surfaced). Per-category breakdown (analytics.ts) stays netted
-  (separate view, UI-clamped). Follow-up: surface `refundsCents` in the StatCards UI (currently tracked
-  but not shown); the inflated savings-rate for the Fordham months normalizes once Part B lands.
+  (separate view, UI-clamped). The inflated savings-rate for the Fordham months normalized once Part B landed.
+  - [x] **Part A follow-up — refunds surfaced (pass 7, this commit).** `refundsCents` now shows as a
+    conditional 5th "Refunds" stat card on /spending (only when > 0, so refund-free periods keep the clean
+    4-card grid; 19/48 real months have refunds, $4.76-$1,959.74 after Part B). It links to
+    `category=spending, flow=in` — the EXACT rows summed into `refundsCents` (verified: uncategorized
+    positives excluded from both) — so the number reconciles to the list it opens. Net now reads as
+    "earned + refunds - spent" right on the row (derivable on-screen, was the gap). On the 2-col mobile grid
+    the card spans full width (`col-span-2 lg:col-span-1`) so it's a divider band, not an orphan. Pure logic
+    lives in `src/lib/spending-stat-cards.ts` (9 unit tests, 100%); `StatCard` gained an optional
+    `className` (additive, reusable for S2). Verified on real data (Jul 2026 $150, Mar 2026 $1,248.80 both
+    reconcile) at desktop + mobile; adversarial 4-lens review -> 0 findings.
 - [x] **Part B — recategorized the miscategorized inflows (REAL-DB, done 2026-07-13).** 134 rows
   recategorized via `data/recategorize-inflows.ts` (backup `data/backups/pre-recategorize-2026-07-13.db`,
   in-txn Δ=0 + integrity guards). VERIFIED on the real db: **0 negative-spent months** (was 9-10),

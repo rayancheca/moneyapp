@@ -8,6 +8,8 @@ interface StatCardProps {
   /** with an href the whole card becomes a drill-down link */
   href?: string;
   ariaLabel?: string;
+  /** extra classes on the outer element (e.g. a grid-span for mobile layout) */
+  className?: string;
 }
 
 const CARD = "rounded-(--radius-card) border border-line bg-surface-raised p-4";
@@ -24,10 +26,10 @@ function StatBody({ label, value, delta }: Pick<StatCardProps, "label" | "value"
   );
 }
 
-export function StatCard({ label, value, delta, href, ariaLabel }: StatCardProps) {
+export function StatCard({ label, value, delta, href, ariaLabel, className }: StatCardProps) {
   if (!href) {
     return (
-      <section aria-label={ariaLabel} className={CARD}>
+      <section aria-label={ariaLabel} className={`${CARD} ${className ?? ""}`.trim()}>
         <StatBody label={label} value={value} delta={delta} />
       </section>
     );
@@ -36,7 +38,7 @@ export function StatCard({ label, value, delta, href, ariaLabel }: StatCardProps
     <Link
       href={href}
       aria-label={ariaLabel}
-      className={`group relative block ${CARD} transition-colors duration-(--duration-fast) hover:border-line-strong hover:bg-surface-sunken`}
+      className={`group relative block ${CARD} transition-colors duration-(--duration-fast) hover:border-line-strong hover:bg-surface-sunken ${className ?? ""}`.trim()}
     >
       <span
         aria-hidden
