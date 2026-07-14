@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getDb } from "@/db/client";
-import { renameCategory } from "@/services/category-edit";
+import { moveCategory, renameCategory } from "@/services/category-edit";
 import type { ActionResult } from "@/app/transactions/action-types";
 
 const renameCategoryActionSchema = z.object({
@@ -32,5 +32,30 @@ export async function renameCategoryAction(input: {
     return { ok: true, data: result };
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : "Could not rename category" };
+  }
+}
+
+const moveCategoryActionSchema = z.object({
+  categoryId: z.string().min(1),
+  newParentId: z.string().min(1).nullable(),
+});
+
+/** Re-parent a category (S7 "movable") — value-returning for optimistic UI + Undo. */
+export async function moveCategoryAction(input: {
+  categoryId: string;
+  newParentId: string | null;
+}): Promise<ActionResult<{ id: string; parentId: string | null }>> {
+  const parsed = moveCategoryActionSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Invalid destination" };
+  try {
+    const result = moveCategory(getDb(), parsed.data.categoryId, parsed.data.newParentId);
+    revalidatePath("/");
+    revalidatePath("/spending");
+    revalidatePath("/budgets");
+    revalidatePath("/transactions");
+    revalidatePath(`/categories/${result.id}`);
+    return { ok: true, data: result };
+  } catch (error: unknown) {
+    return { ok: false, error: error instanceof Error ? error.message : "Could not move category" };
   }
 }

@@ -18,7 +18,9 @@ import {
 import { topMerchants } from "@/services/spending";
 import { loadSpendingCategoryTxns } from "@/app/spending/actions";
 import { CategoryChip } from "@/components/ui/CategoryChip";
+import { CategoryMoveMenu } from "@/components/categories/CategoryMoveMenu";
 import { CategoryNameHeading } from "@/components/categories/CategoryNameHeading";
+import { moveDestinations as categoryMoveDestinations } from "@/services/category-edit";
 import { Icon } from "@/components/shell/Icon";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
@@ -58,6 +60,7 @@ export default async function CategoryPage({
   } catch {
     notFound();
   }
+  const moveDestinations = categoryMoveDestinations(db, header.id);
 
   const period = resolvePeriod(
     { period: firstParam(raw.period), from: firstParam(raw.from), to: firstParam(raw.to) },
@@ -106,11 +109,18 @@ export default async function CategoryPage({
         <div className="flex items-center gap-3">
           <CategoryChip label={header.name} hue={header.hue} icon={header.icon} />
           <div>
-            <CategoryNameHeading
-              categoryId={header.id}
-              name={header.name}
-              editable={header.kind !== "transfer" && header.kind !== "system"}
-            />
+            <div className="flex items-center gap-1.5">
+              <CategoryNameHeading
+                categoryId={header.id}
+                name={header.name}
+                editable={header.kind !== "transfer" && header.kind !== "system"}
+              />
+              <CategoryMoveMenu
+                categoryId={header.id}
+                currentParentId={header.parentId}
+                destinations={moveDestinations}
+              />
+            </div>
             <p className="text-xs text-ink-faint">
               {header.isSubcategory ? `${header.parentName} · ` : ""}
               {header.kind}

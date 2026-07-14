@@ -1,5 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  ArrowUpDown,
+  GripVertical,
   ArrowDownUp,
   ArrowLeftRight,
   ArrowUpRight,
@@ -128,6 +130,8 @@ const ICONS = {
   more: Ellipsis,
   sparkles: Sparkles,
   "arrow-up-right": ArrowUpRight,
+  "arrow-up-down": ArrowUpDown,
+  "grip-vertical": GripVertical,
   undo: Undo2,
   "external-link": ExternalLink,
   edit: Pencil,

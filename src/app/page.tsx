@@ -6,6 +6,9 @@ import { coverageLabel } from "@/lib/coverage-label";
 import { dashboardData } from "@/services/dashboard";
 import { recentLedgerRows } from "@/services/ledger-rows";
 import { institutionGroups } from "@/services/institution-groups";
+import { DASHBOARD_SECTION_IDS, readSettings, type DashboardSectionId } from "@/services/settings";
+import { normalizeOrder } from "@/lib/reorder";
+import { ArrangeableSections } from "@/components/dashboard/ArrangeableSections";
 import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
 import { RecentTransactions } from "@/components/transactions/RecentTransactions";
 import { InstitutionCard } from "@/components/accounts/InstitutionCard";
@@ -82,10 +85,10 @@ export default function DashboardPage() {
   const reviewRows = recentLedgerRows(db, { limit: REVIEW_PREVIEW_LIMIT, needsReviewOnly: true });
   const recentRows = recentLedgerRows(db, { limit: RECENT_TXN_LIMIT });
 
-  return (
-    <DashboardWindowProvider>
-    <div className="space-y-8">
-      {/* 1 · net worth hero */}
+  // named, reorderable sections (S7 "movable") in the user's saved order
+  const layout = normalizeOrder(readSettings(db).dashboardLayout, DASHBOARD_SECTION_IDS);
+
+  const heroSection = (
       <section aria-labelledby="net-worth-heading">
         <header>
           <h1 id="net-worth-heading" className="text-xs font-medium uppercase tracking-[0.14em] text-ink-faint">
@@ -127,8 +130,9 @@ export default function DashboardPage() {
           </>
         )}
       </section>
+  );
 
-      {/* 2 · teaser bento: review (list) beside the pace + investments stack */}
+  const activitySection = (
       <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
         <ToReviewCard
           count={data.reviewCount}
@@ -141,11 +145,11 @@ export default function DashboardPage() {
           {data.investments && <InvestmentsTeaser data={data.investments} />}
         </div>
       </div>
+  );
 
-      {/* 3 · upcoming bills rail */}
-      <UpcomingBillsStrip data={data.upcoming} />
+  const upcomingSection = <UpcomingBillsStrip data={data.upcoming} />;
 
-      {/* 4 · accounts */}
+  const accountsSection = (
       <section aria-labelledby="accounts-overview-heading">
         <div className="mb-2 flex items-baseline justify-between">
           <h2 id="accounts-overview-heading" className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
@@ -161,25 +165,40 @@ export default function DashboardPage() {
           ))}
         </div>
       </section>
+  );
 
-      {/* 5 · recent transactions */}
-      {recentRows.length > 0 && (
-        <section aria-labelledby="recent-txns-heading">
-          <div className="mb-2 flex items-baseline justify-between">
-            <h2 id="recent-txns-heading" className="text-sm font-medium">
-              Recent transactions
-            </h2>
-            <Link
-              href="/transactions"
-              className="text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:text-ink"
-            >
-              All →
-            </Link>
-          </div>
-          <RecentTransactions rows={recentRows} categories={pickerOptions} />
-        </section>
-      )}
-    </div>
+  const recentSection =
+    recentRows.length > 0 ? (
+      <section aria-labelledby="recent-txns-heading">
+        <div className="mb-2 flex items-baseline justify-between">
+          <h2 id="recent-txns-heading" className="text-sm font-medium">
+            Recent transactions
+          </h2>
+          <Link
+            href="/transactions"
+            className="text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:text-ink"
+          >
+            All →
+          </Link>
+        </div>
+        <RecentTransactions rows={recentRows} categories={pickerOptions} />
+      </section>
+    ) : null;
+
+  const sectionsById: Record<DashboardSectionId, { label: string; node: React.ReactNode }> = {
+    hero: { label: "Net worth", node: heroSection },
+    activity: { label: "To review & pace", node: activitySection },
+    upcoming: { label: "Upcoming bills", node: upcomingSection },
+    accounts: { label: "Accounts", node: accountsSection },
+    recent: { label: "Recent transactions", node: recentSection },
+  };
+  const sections = layout
+    .map((id) => ({ id, ...sectionsById[id as DashboardSectionId] }))
+    .filter((s) => s.node !== null);
+
+  return (
+    <DashboardWindowProvider>
+      <ArrangeableSections sections={sections} />
     </DashboardWindowProvider>
   );
 }

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { categories } from "@/db/schema/categories";
-import { renameCategory } from "./category-edit";
+import { moveCategory, renameCategory } from "./category-edit";
 
 let dir: string;
 let bundle: DbBundle;
@@ -105,5 +105,52 @@ describe("import-hint name guard", () => {
       .where(and(eq(categories.parentId, income.id), eq(categories.name, "Salary")))
       .get()!;
     expect(renameCategory(bundle.db, salary.id, "Wages").name).toBe("Wages");
+  });
+});
+
+describe("moveCategory (S7)", () => {
+  test("a subcategory moves to another same-kind root, and to top level", () => {
+    const food = byName("Food")!;
+    const shopping = byName("Shopping")!;
+    const dining = bundle.db
+      .select()
+      .from(categories)
+      .where(and(eq(categories.parentId, food.id), eq(categories.name, "Dining")))
+      .get()!;
+
+    expect(moveCategory(bundle.db, dining.id, shopping.id).parentId).toBe(shopping.id);
+    expect(moveCategory(bundle.db, dining.id, null).parentId).toBeNull();
+  });
+
+  test("guards: depth, kind, self, clash, hints, transfer", () => {
+    const food = byName("Food")!;
+    const income = byName("Income")!;
+    const transfers = byName("Transfers")!;
+    const dining = bundle.db
+      .select()
+      .from(categories)
+      .where(and(eq(categories.parentId, food.id), eq(categories.name, "Dining")))
+      .get()!;
+
+    // a root WITH children cannot become a child
+    expect(() => moveCategory(bundle.db, food.id, byName("Shopping")!.id)).toThrow(/one level deep/);
+    // cross-kind move blocked (expense → income)
+    expect(() => moveCategory(bundle.db, dining.id, income.id)).toThrow(/same kind/);
+    // self-parenting blocked
+    expect(() => moveCategory(bundle.db, dining.id, dining.id)).toThrow(/under itself/);
+    // hint-protected categories stay put
+    const interest = bundle.db
+      .select()
+      .from(categories)
+      .where(and(eq(categories.parentId, income.id), eq(categories.name, "Interest")))
+      .get()!;
+    expect(() => moveCategory(bundle.db, interest.id, null)).toThrow(/auto-categorize/);
+    // transfer kind blocked
+    expect(() => moveCategory(bundle.db, transfers.id, null)).toThrow(/stay put/);
+    // destination sibling clash: make a root named Dining, then try moving the sub to top level
+    renameCategory(bundle.db, byName("Personal Care")!.id, "Dining");
+    expect(() => moveCategory(bundle.db, dining.id, null)).toThrow(/already exists/);
+    // moving to the current parent is a no-op
+    expect(moveCategory(bundle.db, dining.id, food.id).parentId).toBe(food.id);
   });
 });

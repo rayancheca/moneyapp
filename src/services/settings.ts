@@ -7,6 +7,10 @@ import { monthKey, todayIso } from "@/lib/dates";
 
 /** Typed access to app_settings — every value Zod-validated on read AND write. */
 
+/** Dashboard section ids in their canonical (default) order — S7 "movable". */
+export const DASHBOARD_SECTION_IDS = ["hero", "activity", "upcoming", "accounts", "recent"] as const;
+export type DashboardSectionId = (typeof DASHBOARD_SECTION_IDS)[number];
+
 export const settingsSchema = z.object({
   aiMonthlyCapUsd: z.number().min(0).max(1_000),
   priceStalenessHours: z.number().int().min(1).max(168),
@@ -14,6 +18,8 @@ export const settingsSchema = z.object({
   categorizationConfidenceMin: z.number().min(0).max(1),
   weekStartsOn: z.literal("monday"),
   backupRetention: z.object({ keepDaily: z.number().int().min(1), keepMonthly: z.number().int().min(1) }),
+  /** persisted dashboard section order (S7); normalized against the canonical ids on read */
+  dashboardLayout: z.array(z.enum(DASHBOARD_SECTION_IDS)).default([...DASHBOARD_SECTION_IDS]),
 });
 export type AppSettingsShape = z.infer<typeof settingsSchema>;
 
