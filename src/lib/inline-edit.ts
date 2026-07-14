@@ -1,3 +1,4 @@
+import { isValidIsoDate } from "@/lib/dates";
 import { parseAmountToCents } from "@/lib/money";
 
 /**
@@ -95,4 +96,19 @@ export function resolveAmountCommit(originalCents: number, draft: string): Commi
   }
   if (cents === originalCents) return { kind: "noop" };
   return { kind: "save", value: cents };
+}
+
+/**
+ * Resolve a calendar-date edit to an ISO YYYY-MM-DD string. Blank is a silent
+ * cancel (a transaction date is never optional); a malformed or impossible
+ * date is invalid; unchanged is a no-op.
+ */
+export function resolveDateCommit(original: string, draft: string): CommitOutcome<string> {
+  const trimmed = draft.trim();
+  if (trimmed === "") return { kind: "noop" };
+  if (!isValidIsoDate(trimmed)) {
+    return { kind: "invalid", error: "Use a real date, YYYY-MM-DD" };
+  }
+  if (trimmed === original) return { kind: "noop" };
+  return { kind: "save", value: trimmed };
 }

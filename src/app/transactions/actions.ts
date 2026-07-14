@@ -25,7 +25,10 @@ import { applyCorrection, categorizeAll, detectTransfers } from "@/services/cate
 import { classifyPendingMerchants, requestClaudeStop } from "@/services/claude-categorize";
 import {
   addManualTransaction,
+  editManualTransaction,
+  manualTxnEditSchema,
   manualTxnInputSchema,
+  type ManualTxnEdit,
   type ManualTxnInput,
 } from "@/services/manual-transactions";
 import { renameMerchant, similarGroupIds } from "@/services/merchants";
@@ -512,6 +515,24 @@ export async function addManualTransactionAction(
     revalidateTransactions();
     revalidatePath("/accounts");
     return { ok: true, data: { transactionId } };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+/** Edit a MANUAL row's date / amount / description inline (S4) — rebuilds balances. */
+export async function editManualTransactionAction(input: {
+  transactionId: string;
+  patch: ManualTxnEdit;
+}): Promise<ActionResult<{ transactionId: string }>> {
+  try {
+    const patch = manualTxnEditSchema.parse(input.patch);
+    if (!input.transactionId) throw new Error("Unknown transaction");
+    editManualTransaction(getDb(), input.transactionId, patch);
+    revalidateTransactions();
+    revalidatePath("/accounts");
+    revalidatePath("/");
+    return { ok: true, data: { transactionId: input.transactionId } };
   } catch (error: unknown) {
     return failure(error);
   }

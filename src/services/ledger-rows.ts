@@ -34,6 +34,7 @@ interface RawLedgerRow {
   needsReview: boolean;
   status: LedgerRow["status"];
   notes: string | null;
+  importFileId: string | null;
 }
 
 /** Maps one joined transaction row to a LedgerRow, inheriting parent hue/icon. */
@@ -58,6 +59,7 @@ export function toLedgerRow(row: RawLedgerRow, catById: ReadonlyMap<string, Cate
     needsReview: row.needsReview,
     status: row.status,
     notes: row.notes,
+    isManual: row.importFileId === null,
     lowConfidence:
       row.categorizationConfidence !== null &&
       row.categorizationConfidence < LOW_CONFIDENCE_THRESHOLD,
@@ -80,6 +82,7 @@ const LEDGER_SELECT = {
   needsReview: transactions.needsReview,
   status: transactions.status,
   notes: transactions.notes,
+  importFileId: transactions.importFileId,
   accountName: accounts.name,
 } as const;
 

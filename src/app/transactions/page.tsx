@@ -105,6 +105,7 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
     needsReview: transactions.needsReview,
     status: transactions.status,
     notes: transactions.notes,
+    importFileId: transactions.importFileId,
     accountName: accounts.name,
   } as const;
 

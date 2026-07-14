@@ -16,6 +16,7 @@ import { addManualAnchor } from "./anchors";
 import {
   addManualTransaction,
   deleteManualTransaction,
+  editManualTransaction,
   isCashWallet,
 } from "./manual-transactions";
 
@@ -335,5 +336,59 @@ describe("manual mutations rebuild derived balances", () => {
     deleteManualTransaction(bundle.db, id);
     // rebuildAccount ran on delete: the day reverts to the carried anchor level
     expect(dailyRow(acct, "2026-07-02")?.balanceCents).toBe(100_000);
+  });
+});
+
+describe("editManualTransaction — user-authored rows are correctable", () => {
+  test("edits amount + date + description, recomputes identity, and rebuilds balances", () => {
+    const acct = makeCashWallet();
+    addManualAnchor(bundle.db, { accountId: acct, anchoredOn: "2026-07-01", enteredCents: 100_000 });
+    const id = addManualTransaction(bundle.db, {
+      accountId: acct,
+      postedOn: "2026-07-02",
+      amountCents: -5_000,
+      description: "Cash coffee",
+    });
+    const before = bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+
+    editManualTransaction(bundle.db, id, { amountCents: -7_500, postedOn: "2026-07-03", description: "Cash lunch" });
+
+    const after = bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+    expect(after.amountCents).toBe(-7_500);
+    expect(after.postedOn).toBe("2026-07-03");
+    expect(after.rawDescription).toBe("Cash lunch");
+    expect(after.dedupeHash).not.toBe(before.dedupeHash);
+    // balances rebuilt: the -$50 left 07-02, the -$75 landed on 07-03
+    expect(dailyRow(acct, "2026-07-02")?.balanceCents).toBe(100_000);
+    expect(dailyRow(acct, "2026-07-03")?.balanceCents).toBe(92_500);
+  });
+
+  test("an identical-tuple edit takes the next occurrence index (no unique-hash collision)", () => {
+    const acct = makeCashWallet();
+    const base = { accountId: acct, postedOn: "2026-07-02", amountCents: -2_000, description: "Cash snack" };
+    addManualTransaction(bundle.db, base);
+    const id = addManualTransaction(bundle.db, { ...base, amountCents: -2_500 });
+    // editing the second row onto the first row's exact tuple must not collide
+    editManualTransaction(bundle.db, id, { amountCents: -2_000 });
+    const row = bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+    expect(row.occurrenceIndex).toBe(1);
+  });
+
+  test("a no-change patch is a no-op; imported rows and bad patches are rejected", () => {
+    const acct = makeCashWallet();
+    const id = addManualTransaction(bundle.db, {
+      accountId: acct,
+      postedOn: "2026-07-02",
+      amountCents: -5_000,
+      description: "Cash coffee",
+    });
+    const before = bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+    editManualTransaction(bundle.db, id, { amountCents: -5_000 });
+    expect(bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()).toEqual(before);
+
+    expect(() => editManualTransaction(bundle.db, id, {} as never)).toThrow(/Nothing to change/);
+    expect(() => editManualTransaction(bundle.db, id, { amountCents: 0 })).toThrow(/cannot be zero/);
+    expect(() => editManualTransaction(bundle.db, id, { postedOn: "2026-13-40" })).toThrow(/valid YYYY-MM-DD/);
+    expect(() => editManualTransaction(bundle.db, "nope", { amountCents: -1 })).toThrow(/Unknown transaction/);
   });
 });

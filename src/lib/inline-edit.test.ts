@@ -4,6 +4,7 @@ import {
   inlineEditReducer,
   keyToIntent,
   resolveAmountCommit,
+  resolveDateCommit,
   resolveTextCommit,
 } from "./inline-edit";
 
@@ -102,5 +103,24 @@ describe("resolveAmountCommit", () => {
     const out = resolveAmountCommit(0, "abc");
     expect(out.kind).toBe("invalid");
     expect(out).toHaveProperty("error");
+  });
+});
+
+describe("resolveDateCommit", () => {
+  it("saves a changed valid ISO date, trimming whitespace", () => {
+    expect(resolveDateCommit("2026-07-01", " 2026-07-04 ")).toEqual({ kind: "save", value: "2026-07-04" });
+  });
+
+  it("treats blank and unchanged drafts as silent no-ops", () => {
+    expect(resolveDateCommit("2026-07-01", "")).toEqual({ kind: "noop" });
+    expect(resolveDateCommit("2026-07-01", "   ")).toEqual({ kind: "noop" });
+    expect(resolveDateCommit("2026-07-01", "2026-07-01")).toEqual({ kind: "noop" });
+  });
+
+  it("rejects malformed and impossible dates", () => {
+    for (const bad of ["07/04/2026", "2026-13-01", "2026-02-30", "yesterday"]) {
+      const out = resolveDateCommit("2026-07-01", bad);
+      expect(out.kind).toBe("invalid");
+    }
   });
 });

@@ -171,6 +171,83 @@ export function addManualTransaction(db: AppDatabase, input: ManualTxnInput): st
   return id;
 }
 
+export const manualTxnEditSchema = z
+  .object({
+    postedOn: z.string().refine(isValidIsoDate, "postedOn must be a valid YYYY-MM-DD date").optional(),
+    amountCents: z
+      .number()
+      .int()
+      .refine((n) => n !== 0, "Amount cannot be zero")
+      .optional(),
+    description: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict()
+  .refine((p) => p.postedOn !== undefined || p.amountCents !== undefined || p.description !== undefined, {
+    message: "Nothing to change",
+  });
+export type ManualTxnEdit = z.infer<typeof manualTxnEditSchema>;
+
+/**
+ * Edits a manual row's imported-fact fields (date / amount / description) —
+ * the S4 "nothing read-only" slice. Imported rows stay immutable (the audit
+ * trail); manual rows are user-authored, so the user may correct them. The
+ * row's dedupe identity (occurrence index + hash) is recomputed for the new
+ * tuple, and the wallet's derived balances rebuild.
+ */
+export function editManualTransaction(db: AppDatabase, id: string, patch: ManualTxnEdit): void {
+  const parsed = manualTxnEditSchema.parse(patch);
+  const txn = db.select().from(transactions).where(eq(transactions.id, id)).get();
+  if (!txn) throw new Error("Unknown transaction");
+  if (txn.importFileId !== null) {
+    throw new Error("Only manual transactions can be edited — imported rows are the audit trail");
+  }
+
+  const postedOn = parsed.postedOn ?? txn.postedOn;
+  const amountCents = parsed.amountCents ?? txn.amountCents;
+  const rawDescription = parsed.description ?? txn.rawDescription;
+  const identityChanged =
+    postedOn !== txn.postedOn || amountCents !== txn.amountCents || rawDescription !== txn.rawDescription;
+  if (!identityChanged) return;
+
+  // same-tuple occurrence counter as addManualTransaction, excluding this row
+  const maxIndex =
+    db
+      .select({ m: max(transactions.occurrenceIndex) })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.accountId, txn.accountId),
+          eq(transactions.postedOn, postedOn),
+          eq(transactions.amountCents, amountCents),
+          eq(transactions.rawDescription, rawDescription),
+          ne(transactions.status, "superseded"),
+          ne(transactions.id, id),
+        ),
+      )
+      .get()?.m ?? null;
+  const occurrenceIndex = maxIndex === null ? 0 : maxIndex + 1;
+
+  db.update(transactions)
+    .set({
+      postedOn,
+      amountCents,
+      rawDescription,
+      normalizedDescription: normalizeDescription(rawDescription),
+      occurrenceIndex,
+      dedupeHash: dedupeHash({
+        accountId: txn.accountId,
+        postedOn,
+        amountCents,
+        rawDescription,
+        occurrenceIndex,
+      }),
+    })
+    .where(eq(transactions.id, id))
+    .run();
+
+  rebuildAccount(db, txn.accountId);
+}
+
 /** Deletes a manual row only — imported rows are the audit trail. */
 export function deleteManualTransaction(db: AppDatabase, id: string): void {
   const txn = db.select().from(transactions).where(eq(transactions.id, id)).get();

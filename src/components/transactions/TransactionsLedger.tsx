@@ -12,9 +12,11 @@ import { PRIORITIES } from "@/lib/keyscope";
 import { bulkApplyAction, bulkApplyByFilterAction } from "@/app/transactions/actions";
 import type { TxnPatch } from "@/app/transactions/action-types";
 import type { TransactionStatus } from "@/db/schema/transactions";
+import { Icon } from "@/components/shell/Icon";
 import { BulkActionBar } from "./BulkActionBar";
 import { CategoryPicker, type CategoryPickerOption } from "./CategoryPicker";
 import { runCategoryCorrection } from "./correct-category";
+import { LedgerRowExpander } from "./LedgerRowExpander";
 import type { SearchParams } from "./query";
 import { TransactionSheet } from "./TransactionSheet";
 import { offerUndoToast } from "./undo-toast";
@@ -37,6 +39,8 @@ export interface LedgerRow {
   needsReview: boolean;
   status: TransactionStatus;
   notes: string | null;
+  /** importFileId IS NULL — a user-authored row whose facts are correctable */
+  isManual: boolean;
   lowConfidence: boolean;
   suggestedCategoryIds: readonly string[];
 }
@@ -100,6 +104,7 @@ export function TransactionsLedger({
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [openId, setOpenId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [allMatching, setAllMatching] = useState(false);
@@ -233,10 +238,11 @@ export function TransactionsLedger({
             </div>
             {group.rows.map((r) => {
               const sel = isSelected(r.id);
+              const expanded = expandedId === r.id;
               return (
+                <div key={r.id} className="border-b border-line last:border-b-0">
                 <div
-                  key={r.id}
-                  className={`group/row flex items-center border-b border-line transition-colors duration-(--duration-fast) last:border-b-0 ${
+                  className={`group/row flex items-center transition-colors duration-(--duration-fast) ${
                     sel ? "bg-accent-soft" : "hover:bg-surface-sunken"
                   }`}
                 >
@@ -282,6 +288,23 @@ export function TransactionsLedger({
                     ) : null}
                     <Money cents={r.amountCents} flow className="whitespace-nowrap text-sm" />
                   </button>
+                  {/* inline expander (S4) — fields edit in place, no sheet */}
+                  {!selectionMode ? (
+                    <button
+                      type="button"
+                      onClick={() => setExpandedId(expanded ? null : r.id)}
+                      aria-expanded={expanded}
+                      aria-label={`${expanded ? "Collapse" : "Expand"} details for ${r.normalizedDescription}`}
+                      className={`self-stretch pr-3 pl-1 text-ink-faint transition-colors duration-(--duration-fast) hover:text-ink ${expanded ? "" : REVEAL}`}
+                    >
+                      <Icon
+                        name="chevron-down"
+                        className={`size-3.5 transition-transform duration-(--duration-fast) ${expanded ? "rotate-180" : ""}`}
+                      />
+                    </button>
+                  ) : null}
+                </div>
+                {expanded && !selectionMode ? <LedgerRowExpander row={r} onChanged={refresh} /> : null}
                 </div>
               );
             })}
