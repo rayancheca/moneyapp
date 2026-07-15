@@ -318,6 +318,31 @@ describe("integration: rebuild + net worth against a real database", () => {
     expect(late?.coveredAccountNames).toEqual(["A", "B"]);
   });
 
+  test("a fresher account's trailing days carry the others forward (net worth stays assets − liabilities)", () => {
+    // regression for the "only Venture X" bug: one account's statement runs past the
+    // others', so the tail must still sum ALL accounts (carried forward), not collapse
+    // to the single fresh account.
+    const a = createAccount(bundle.db, { institutionId: institutionId("Chase"), name: "A", type: "checking" });
+    const b = createAccount(bundle.db, { institutionId: institutionId("SoFi"), name: "B", type: "savings" });
+    const put = (accountId: string, day: string, cents: number) =>
+      bundle.db.insert(dailyBalances).values({ accountId, day, balanceCents: cents, basis: "carried" }).run();
+    // A's data ends 2026-07-10; B's fresher statement runs to 2026-07-14
+    for (const d of ["2026-07-08", "2026-07-09", "2026-07-10"]) put(a, d, 30_000);
+    for (const d of ["2026-07-08", "2026-07-09", "2026-07-10", "2026-07-11", "2026-07-12", "2026-07-13", "2026-07-14"])
+      put(b, d, 80_000);
+
+    const series = netWorthSeries(bundle.db);
+    const tail = series.find((p) => p.day === "2026-07-14");
+    expect(tail?.totalCents).toBe(110_000); // A (30k carried) + B (80k), NOT just 80k
+    expect(tail?.complete).toBe(true);
+    expect(tail?.coveredAccounts).toBe(2);
+    expect(tail?.missingAccounts).toEqual([]);
+    // and the whole tail is stable at the full sum
+    for (const day of ["2026-07-11", "2026-07-12", "2026-07-13", "2026-07-14"]) {
+      expect(series.find((p) => p.day === day)?.totalCents).toBe(110_000);
+    }
+  });
+
   test("rebuild replays active transactions and ignores quarantined ones", () => {
     const a = createAccount(bundle.db, {
       institutionId: institutionId("Chase"),

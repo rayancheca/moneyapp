@@ -299,17 +299,40 @@ export function netWorthSeries(db: AppDatabase): NetWorthPoint[] {
     .all();
 
   const byDay = new Map<string, { total: number; covered: Set<string> }>();
+  // each account's most-recent known (non-gap) balance, for the trailing carry-forward below
+  const lastKnown = new Map<string, { day: string; cents: number }>();
   for (const r of rows) {
     if (r.basis === "gap") continue;
     const entry = byDay.get(r.day) ?? { total: 0, covered: new Set<string>() };
     entry.total += r.balanceCents;
     entry.covered.add(r.accountId);
     byDay.set(r.day, entry);
+    const prev = lastKnown.get(r.accountId);
+    if (!prev || compareDates(r.day, prev.day) > 0) lastKnown.set(r.accountId, { day: r.day, cents: r.balanceCents });
+  }
+  if (byDay.size === 0) return [];
+
+  // TRAILING CARRY-FORWARD: an account whose latest statement predates a fresher one on
+  // another account has NOT vanished — its balance is known and carries forward until it
+  // is restated. Add each account's last-known balance to every day AFTER its own last
+  // day, so the current value always sums assets − liabilities across ALL accounts and
+  // never collapses to a single fresher statement's tail (the "only Venture X" bug). This
+  // fills ONLY the trailing edge; an account missing data BEFORE its first day stays
+  // honestly "partial", matching latestBalances' carry-forward semantics.
+  const days = [...byDay.keys()].sort((a, b) => compareDates(a, b));
+  for (const [accountId, last] of lastKnown) {
+    for (const day of days) {
+      if (compareDates(day, last.day) <= 0) continue;
+      const entry = byDay.get(day)!;
+      if (entry.covered.has(accountId)) continue;
+      entry.total += last.cents;
+      entry.covered.add(accountId);
+    }
   }
 
-  return [...byDay.entries()]
-    .sort(([a], [b]) => compareDates(a, b))
-    .map(([day, { total, covered }]) => ({
+  return days.map((day) => {
+    const { total, covered } = byDay.get(day)!;
+    return {
       day,
       totalCents: total,
       coveredAccounts: covered.size,
@@ -317,7 +340,8 @@ export function netWorthSeries(db: AppDatabase): NetWorthPoint[] {
       complete: covered.size === activeIds.length,
       missingAccounts: activeIds.filter((id) => !covered.has(id)).map((id) => nameById.get(id)!),
       coveredAccountNames: activeIds.filter((id) => covered.has(id)).map((id) => nameById.get(id)!),
-    }));
+    };
+  });
 }
 
 export interface AccountSeriesPoint {
