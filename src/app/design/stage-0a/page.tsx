@@ -209,6 +209,7 @@ export default function StageZeroAPreview() {
                 </span>
                 {r.needsReview ? (
                   <span
+                    role="img"
                     aria-label="Needs review"
                     className="inline-block size-1.5 shrink-0 rounded-full bg-info"
                   />
