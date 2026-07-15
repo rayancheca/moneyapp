@@ -6,9 +6,14 @@
 > **Every working pass must expand + polish this list and tick off what shipped.**
 > One focused item per session; end each session with a handoff prompt. Dates absolute.
 
-Last updated: 2026-07-14 (pass 11 — Track 2 [S8–S10a] gate closed + committed: S8 follow-ups
-fixed, a11y axe race solved (settle-before-scan helper), 4 adversarial-review findings fixed.
-Pass 10 closed Tracks 4+3 [S1–S7] and wrote up the P0 data investigations below).
+Last updated: 2026-07-15 (pass 12 — P0.2 + P0.4 + P0.5a SHIPPED. User dropped 4 Chase 3522 2023
+statements + a July Venture X statement; imported to the real db (backup + guards): Chase 2023
+gaps closed (P0.2), Venture X merged as 4208 (card reissued from 4147), and the transfer detector
+— rewritten over FOUR adversarial review rounds to pair only on two-sided/structural evidence,
+never a single-sided hint — cleared the 240 SoFi overdraft pairs (P0.4) + widened the hinted window
+(P0.5a). Review inbox 2232→1170. **Net worth honestly restated $94,144.53 → $83,014.51**: the
+Venture X card carried ~$11.1k of real June–July spend that was invisible until its statement
+landed. Pass 11 [S8–S10a] + pass 10 [S1–S7] below.).
 
 ---
 
@@ -53,15 +58,12 @@ Use this to VALIDATE every chart/number. Money mechanics, in the user's own word
   reconcile to the replayed cash + valued holdings to the cent; gaps quarantine, never guess.
   Also backfill the 2024-08→2025-02 pre-anchor era from the activity ledger. THIS IS A
   REAL-DB DATA PASS: backup + dry-run on a copy + Δ-guards + the session playbook below.
-- [ ] **P0.2 — missing Chase statement, cycle 2023-10-13 → 2023-11-10** (the "Oct–Nov 2023
-  drop to $0 / −$106" scare — CONFIRMED coverage gap, not lost money). `statement_periods`
-  jump 2023-09-14..10-12 → 2023-11-11..12-12; the days between carry `basis=gap` and are
-  EXCLUDED from the covered sum, so the chart line collapsed to ≈ SoFi Checking alone (the
-  −$106 min is a real, brief SoFi Checking overdraft day). Chase held ~$9,792 before the gap
-  and ~$972 after — that's the move into brand-new SoFi Savings (opened 2023-10-26), matching
-  the user's story. **Action: the user downloads the missing Chase 3522 statement (Oct 13 –
-  Nov 10, 2023) from Chase; import closes the gap.** (2023-07 cycle was previously noted
-  absent too — check both while at it.)
+- [x] **P0.2 — missing Chase statement, cycle 2023-10-13 → 2023-11-10 — SHIPPED (pass 12).** The
+  user provided it (+ the 2023-06-13→07-13 July cycle that was also absent, + Aug/Oct which
+  deduped). Imported to the real db 2026-07-15: Chase 3522 now has 7 continuous 2023 periods
+  (May→Dec), gap days in 2023-06-13..11-10 went 58 → 0, all reconciled to the cent. The
+  "Oct–Nov 2023 drop to $0/−$106" dip on the chart is resolved (begin $9,792.80 → end $972.47,
+  matching the move into brand-new SoFi Savings). Was: CONFIRMED coverage gap, not lost money.
 - [ ] **P0.3 — y-axis −$5k padding bug** (CONFIRMED, exact mechanism): with window min
   −$106 / max ≈ $13.1k, `niceLinearTicks` (src/lib/chart-axis.ts:40) picks step $5,000 and
   floors the bottom OUT a full step: `floor(−106/5000)×5000 = −5000` — a tiny overdraft
@@ -71,15 +73,18 @@ Use this to VALIDATE every chart/number. Money mechanics, in the user's own word
   `|lo|` (e.g. `-niceStep(|lo|·2)` → −$106 becomes −$250), not the range step; keep 0 as a
   tick. TDD cases: (−106, 13_100) → bottom −250-ish; (−4_800, 13_100) → unchanged behavior;
   all-positive and all-negative windows unchanged. Chart e2e baselines will regen.
-- [ ] **P0.4 — SoFi OVERDRAFT pairs: verify + auto-pair + clear from review.** The 241+241
-  `OVERDRAFT FROM SAVINGS - 5791` / `OVERDRAFT TO CHECKING - 9067` rows ($81,446.95 each
-  way) are internal Savings→Checking covers (ground truth §7). They're categorized
-  Transfers › Internal Transfer but sit in the REVIEW INBOX as two 240-item clusters.
-  VERIFIED 2026-07-14: 241↔241 rows mirror exactly by (date, amount) — zero unmatched. Plan: (a) add `OVERDRAFT` to `TRANSFER_HINT_RE` (src/services/categorize.ts:305) so
-  detection pairs each same-day ± pair into a transferGroup; (b) verify the two clusters
-  net EXACTLY to $0 against each other by (date, amount) multiset; (c) guarded real-db
-  pass clears `needsReview` on verified pairs — **mechanically resolves ~480 of the 2232
-  review items** without guessing anything.
+- [x] **P0.4 — SoFi OVERDRAFT pairs auto-paired + cleared — SHIPPED (pass 12, commit `c185d6d`).**
+  The 240+240 same-day `OVERDRAFT FROM SAVINGS - 5791` / `OVERDRAFT TO CHECKING - 9067` mirror
+  pairs (ground truth §7) now auto-pair (they're same-day descriptor-symmetric mirrors —
+  structural evidence) and clear from the review inbox: OVERDRAFT-in-review went 480 → 0, total
+  review 2232 → 1170. **The detector was rewritten over FOUR adversarial review rounds** because
+  the naive "descriptor hint + proximity" approach kept silently mislabeling coincidences (a real
+  Investments›Buys row → Transfer; a wine purchase / paycheck / landlord check vs. an unrelated
+  external transfer). Final doctrine: auto-pair ONLY on evidence tying the two SPECIFIC rows —
+  structural (same-day internal mirror, S6 linked pair, both-already-Transfers) OR a hint on BOTH
+  descriptors — AND mutually unique-nearest; a single-sided hint always goes to review. On the real
+  9360-row ledger this preserved every legitimate pair (single-sided pairing was pure coincidence
+  risk with zero benefit). 43 categorize tests (a regression for every finding).
 
 - [ ] **P0.5 — IN-TRANSIT TRANSFER BRIDGING** (user insight, 2026-07-14, verbatim intent): *"when I
   transfer all my money from Chase to SoFi I had to do it in chunks, and whenever I transfer, the
@@ -92,12 +97,17 @@ Use this to VALIDATE every chart/number. Money mechanics, in the user's own word
   P0.1 (RH cash model) and P0.2 (missing statement): settlement float during the chunked
   Chase→SoFi (Oct–Nov 2023) and SoFi→RH (2025) migrations produces real V-dips.
   **Spec:**
-  - **(a) Pairing prerequisite — widen the match window.** `detectTransfers`
-    (src/services/categorize.ts) pairs opposite equal-cent legs only within **±4 days** — too
-    narrow for 3–9-business-day ACH settlement, so many of these legs are UNPAIRED today and
-    cannot be bridged. Widen to ~±10 calendar days for hinted pairs (hint = descriptor regex OR
-    the S6 linked card↔source pair OR both legs categorized Transfers); keep the ambiguity
-    flagging for multiple candidates. S5's manual "Link as transfer…" (already ±14d) covers the rest.
+  - [x] **(a) Pairing prerequisite — widen the match window — SHIPPED (pass 12, commit `c185d6d`).**
+    `detectTransfers` now pairs auto-pairable legs within **±10 calendar days** (ACH float).
+    IMPORTANT REFINEMENT from the 4-round review: "auto-pairable" = TWO-SIDED/structural evidence
+    only (same-day mirror, S6 linked pair, both-in-Transfers, OR both descriptors hinted). A
+    SINGLE-sided hint (e.g. "ONLINE TRANSFER TO SOFI" out ↔ a generic "DEPOSIT" in) no longer
+    auto-pairs — it FLAGS for review, because it silently mislabels coincidences when the true
+    partner is absent. **Consequence for (b–d):** in-transit bridging now runs on VERIFIED pairs
+    only, which includes auto-paired both-hinted ACH legs AND user-confirmed single-sided ones
+    (via S5 "Link as transfer…" / the P1.1 cluster confirm). Many Chase→SoFi/SoFi→RH legs whose
+    inflow descriptor is generic will surface in review for one-click confirm rather than
+    auto-pairing — consistent with the app's "never guess, surface for review" philosophy.
   - **(b) Derivation — an explicit "in transit" component.** For every transfer group whose two
     legs live in different accounts with `outflow.postedOn < inflow.postedOn`, add `|amountCents|`
     to a new `inTransitCents` bucket for days `[outflow.postedOn, inflow.postedOn)`. Surface it as
@@ -306,6 +316,23 @@ Use this to VALIDATE every chart/number. Money mechanics, in the user's own word
   (StatCards, account balances); consider the txn-kanban drag here where motion carries the meaning.
 
 **Track 1 — Multi-episode recurring (option 1, ~4 sessions)** — schema + detection + projection + UI.
+> **User intent (2026-07-15, verbatim):** *"when I click a transaction I should be able to say okay
+> this was recurring for this period, sporadically… Netflix on the 3rd for 5 months, then I stopped,
+> signed up again at a different price. I have to be able to categorise everything."* So S11–S14
+> below must also deliver, on top of the schema/detection/UI:
+> - **A from-the-transaction attach flow.** Click a txn → "Recurring…" → create a new series or
+>   attach to an existing one; define THIS episode (cadence | sporadic, anchor day, amount±tolerance,
+>   start, end|ongoing); PREVIEW every matching existing txn (same merchant/description key + amount
+>   within tolerance + cadence window) → confirm to attach + categorize them ALL in one gesture. This
+>   is the "categorise everything" lever — one confirm tags a whole recurring history. Reuses the S2
+>   inline-edit + P1.1 cluster-confirm plumbing.
+> - **Sporadic episodes** (no fixed cadence; occurrences are the attached txns) and **explicit
+>   cancelled gaps** between episodes, both rendered on the calendar.
+> - **Precedence guard:** attaching applies the episode category to matched txns but never overwrites
+>   a `user` category — the same eligibility doctrine as the transfer detector (P0.4).
+> This is Track 1 in the user's own 4→3→2→1 order — intentionally LAST, after P0 data correctness
+> (a recurring editor is only as good as the reconciled ledger under it). Pure-first TDD: episode
+> match, annualized-cost-across-episodes, gap detection, sporadic enumeration, split/merge — 100%.
 - [ ] **S11** — `recurring_episodes` table + migration (each existing series → one open episode,
   behavior-preserving); episode-aware `isSeriesActive` + projection (`toProjectable`/`forecast`). TDD
   the projection math (pure, 100%).
