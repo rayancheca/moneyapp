@@ -305,6 +305,49 @@ function findCreditMatch(db: AppDatabase, credit: TxnRow, merchantId: string | n
 const TRANSFER_HINT_RE =
   /PAYMENT THANK YOU|AUTOPAY|ONLINE PYMT|DIRECTPAY|ONLINE TRANSFER|TRANSFER TO|TRANSFER FROM|BANK TRANSFER|ROBINHOOD|CRD EPAY|CARDMEMBER SERV/i;
 
+/**
+ * Pairing windows (P0.5a). HINTED pairs stretch to ±10 calendar days — ACH
+ * settlement floats 3–9 business days, so the chunked Chase→SoFi / SoFi→RH
+ * migration legs sit further apart than the old ±4. UNHINTED coincidences
+ * keep the original ±4 ambiguity flagging: a bare equal-cent match 5–10 days
+ * out is ignored, exactly as before the widen (no new review noise).
+ */
+const HINTED_PAIR_WINDOW_DAYS = 10;
+const AMBIGUITY_WINDOW_DAYS = 4;
+
+/**
+ * SoFi's internal savings↔checking movements (overdraft covers, manual
+ * moves) are same-day, descriptor-symmetric mirrors (ground truth §7; the
+ * verified 241↔241 overdraft set matches by exact date). A one-sided hint
+ * must never let a foreign row claim one of these legs — the real-data
+ * dry-run showed AAPL buys, subscription fees, and third-party Zelle rows
+ * doing exactly that. A family leg is pair-eligible ONLY with a same-day
+ * family mirror (which is itself the hint); everything else falls through
+ * to the ambiguity/review path.
+ */
+const INTERNAL_MIRROR_RE = /(OVERDRAFT|WITHDRAWAL|DEPOSIT)\s+(TO|FROM)\s+(SAVINGS|CHECKING)/i;
+
+/**
+ * Zelle and ATM rows are RESERVED for the user: they asked (2026-07-13) to
+ * tag every one of them themselves, one by one — so the detector neither
+ * pairs them nor adds them to ambiguity flags, even for perfect mirrors.
+ * The S5 manual "Link as transfer…" flow covers them.
+ */
+const RESERVED_FOR_USER_RE = /ZELLE|\bATM\b/i;
+
+/**
+ * Card-payment descriptors (autopay, e-payment, thank-you postings) describe
+ * money moving to a CREDIT CARD — a pair carrying one may only join a leg in
+ * a credit-type account. Without this, SoFi's "CHASE CREDIT CRD EPAY" legs
+ * (whose true mirror lives in the not-yet-imported Sapphire card) grabbed
+ * equal-cent checking transfers in the real-data dry-run.
+ */
+const CARD_PAYMENT_RE =
+  /PAYMENT THANK YOU|AUTOPAY|ONLINE PYMT|DIRECTPAY|E-PAYMENT|MOBILE PMT|MOBILE PYMT|CRD EPAY|CARDMEMBER SERV/i;
+
+/** A ROBINHOOD descriptor names an institution — the pair must touch it. */
+const ROBINHOOD_RE = /ROBINHOOD|\bRH\b|\bRHS\b/i;
+
 export interface TransferStats {
   paired: number;
   flaggedAmbiguous: number;
@@ -329,9 +372,29 @@ function categoryIdByPath(db: AppDatabase, path: string): string {
 }
 
 /**
- * Transfer pairing: opposite equal-cent amounts across two accounts within
- * ±4 days. Auto-pairs ONLY with a descriptor hint on either leg — coincidental
- * equal amounts go to review instead (Phase 3 acceptance criterion).
+ * Transfer pairing: opposite equal-cent amounts across two accounts. Pairs
+ * ONLY with a hint — a descriptor match, the S6 card↔source link, or both
+ * legs already categorized under Transfers; coincidental equal amounts go to
+ * review instead (Phase 3 acceptance criterion). Hinted pairs match within
+ * ±10 days (ACH float).
+ *
+ * Resolved so EVIDENCE, not proximity, drives every auto-pair (four adversarial
+ * review rounds, 2026-07-15). A pair auto-commits only when it is AUTO-PAIRABLE —
+ * structural evidence (a same-day internal mirror, the S6 card↔source link, or
+ * both legs already in Transfers) OR a hint on BOTH descriptors — AND the two are
+ * MUTUALLY unique-nearest (each is the other's unique nearest eligible leg). A
+ * hint on only ONE leg is never enough: it says "this row is a transfer" but not
+ * WHICH counterpart is its partner, so single-sided pairs (an ACH bridge with a
+ * generic other leg, or a coincidental equal-cent match) go to REVIEW, not an
+ * auto-pair. Two passes:
+ *   1. Pair every auto-pairable, mutually-nearest match (fixpoint so consuming one
+ *      leg unlocks another's now-unique match); the same-day OVERDRAFT mirror
+ *      multiset resolves deterministically by id.
+ *   2. Flag the rest for review — a hinted outflow with equal-cent candidates
+ *      surfaces all of them; an unhinted outflow surfaces only a ±4d coincidence.
+ * ELIGIBILITY: a leg already categorized OUTSIDE the Transfers subtree (by any
+ * source — a real Buy/Dividend/Reward, a rule/merchant map, or the user) is
+ * off-limits and never relabeled a transfer.
  */
 export function detectTransfers(db: AppDatabase): TransferStats {
   const stats: TransferStats = { paired: 0, flaggedAmbiguous: 0 };
@@ -360,63 +423,206 @@ export function detectTransfers(db: AppDatabase): TransferStats {
   const internalCat = categoryIdByPath(db, "Transfers > Internal Transfer");
   const investmentCat = categoryIdByPath(db, "Transfers > Investment Contribution");
 
+  // the Transfers subtree: both legs already carrying one of these categories
+  // is itself a hint (P0.5a) — and the boundary of the user-decision guard
+  const transfersParent = db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.name, "Transfers"), isNull(categories.parentId)))
+    .get();
+  const transferCatIds = new Set<string>(transfersParent ? [transfersParent.id] : []);
+  if (transfersParent) {
+    for (const c of db.select().from(categories).where(eq(categories.parentId, transfersParent.id)).all()) {
+      transferCatIds.add(c.id);
+    }
+  }
+  const inTransfers = (categoryId: string | null): boolean => categoryId !== null && transferCatIds.has(categoryId);
+
+  // A leg may enter pairing only if it is UNKNOWN (uncategorized, and not a row the
+  // user explicitly cleared) or already believed to be a transfer (categorized within
+  // the Transfers subtree). A leg already categorized OUTSIDE Transfers — by ANY source:
+  // a real Buy / Dividend / Reward / bill, a rule or merchant map, or the user — is
+  // off-limits. Transfer detection must never silently relabel a genuine categorization
+  // as a transfer (2026-07-15 review: a real "Investments › Buys" row was overwritten
+  // because only categorizationSource==='user' was protected).
+  const ineligible = (t: (typeof candidates)[number]): boolean =>
+    RESERVED_FOR_USER_RE.test(t.rawDescription) ||
+    (t.categoryId !== null && !transferCatIds.has(t.categoryId)) ||
+    (t.categorizationSource === "user" && t.categoryId === null);
+
+  const mirrorCompatible = (x: (typeof candidates)[number], y: (typeof candidates)[number]): boolean => {
+    const xm = INTERNAL_MIRROR_RE.test(x.rawDescription);
+    const ym = INTERNAL_MIRROR_RE.test(y.rawDescription);
+    if (!xm && !ym) return true;
+    return xm && ym && x.postedOn === y.postedOn;
+  };
+  const semanticsCompatible = (x: (typeof candidates)[number], y: (typeof candidates)[number]): boolean => {
+    const types = [accountTypes.get(x.accountId), accountTypes.get(y.accountId)];
+    if ((CARD_PAYMENT_RE.test(x.rawDescription) || CARD_PAYMENT_RE.test(y.rawDescription)) && !types.includes("credit"))
+      return false;
+    if ((ROBINHOOD_RE.test(x.rawDescription) || ROBINHOOD_RE.test(y.rawDescription)) && !types.includes("investment"))
+      return false;
+    return true;
+  };
+
+  const anchorHinted = (a: (typeof candidates)[number]): boolean => TRANSFER_HINT_RE.test(a.rawDescription);
+  // AUTO-PAIRABLE: the two SPECIFIC rows carry MUTUAL evidence of being a pair. Four
+  // adversarial review rounds (2026-07-15) established that a descriptor hint on only ONE
+  // leg is never sufficient — it says "this row is a transfer" but not WHICH counterpart is
+  // its partner, so among equal-cent candidates it silently pairs coincidences (a wine
+  // purchase vs an external wire; a paycheck vs an external transfer; a landlord check vs an
+  // incoming transfer), especially when the hinted leg's true partner isn't in the ledger.
+  // Only STRUCTURAL evidence (a same-day internal mirror, the S6 card↔source link, or both
+  // legs already in Transfers) or a hint on BOTH descriptors auto-pairs; a single-sided hint
+  // goes to review. (mirrorCompatible already forces same-day for any mirror leg.)
+  const autoPairable = (a: (typeof candidates)[number], b: (typeof candidates)[number]): boolean =>
+    (INTERNAL_MIRROR_RE.test(a.rawDescription) && INTERNAL_MIRROR_RE.test(b.rawDescription)) ||
+    isLinkedPair(a.accountId, b.accountId) ||
+    (inTransfers(a.categoryId) && inTransfers(b.categoryId)) ||
+    (TRANSFER_HINT_RE.test(a.rawDescription) && TRANSFER_HINT_RE.test(b.rawDescription));
+
+  const dist = (a: (typeof candidates)[number], b: (typeof candidates)[number]): number =>
+    Math.abs(diffDays(a.postedOn, b.postedOn));
+
+  // index inflows by exact cents so matching is O(bucket), not O(all-candidates)
+  const inflowsByAmount = new Map<number, (typeof candidates)[number][]>();
+  for (const c of candidates) {
+    if (c.amountCents <= 0) continue;
+    const bucket = inflowsByAmount.get(c.amountCents);
+    if (bucket) bucket.push(c);
+    else inflowsByAmount.set(c.amountCents, [c]);
+  }
+
   const used = new Set<string>();
+  const eligibleOutflow = (a: (typeof candidates)[number]): boolean =>
+    !used.has(a.id) && a.amountCents < 0 && !ineligible(a);
+  const matchesFor = (a: (typeof candidates)[number]): (typeof candidates)[number][] =>
+    (inflowsByAmount.get(-a.amountCents) ?? []).filter(
+      (b) =>
+        !used.has(b.id) &&
+        b.accountId !== a.accountId &&
+        !ineligible(b) &&
+        mirrorCompatible(a, b) &&
+        semanticsCompatible(a, b) &&
+        dist(a, b) <= HINTED_PAIR_WINDOW_DAYS,
+    );
+  const nearestOf = (a: (typeof candidates)[number], ms: (typeof candidates)[number][]) => {
+    const minDist = Math.min(...ms.map((m) => dist(a, m)));
+    return { minDist, nearest: ms.filter((m) => dist(a, m) === minDist) };
+  };
+
+  // Reverse index: an inflow's eligible outflow candidates. A confident pair may commit
+  // only when it is MUTUALLY nearest — the inflow's OWN nearest outflow is this anchor —
+  // so an earlier or unrelated outflow can never steal an inflow from its true partner
+  // merely by being reached first in the loop (2026-07-15 re-review: an unhinted "CHECK
+  // TO LANDLORD" was stealing a hinted inflow from the real ACH transfer, whose evidence
+  // — the inflow's hint — said nothing about which outflow was the partner).
+  const outflowsByAmount = new Map<number, (typeof candidates)[number][]>();
+  for (const c of candidates) {
+    if (c.amountCents >= 0) continue;
+    const bucket = outflowsByAmount.get(c.amountCents);
+    if (bucket) bucket.push(c);
+    else outflowsByAmount.set(c.amountCents, [c]);
+  }
+  const outflowMatchesForInflow = (b: (typeof candidates)[number]): (typeof candidates)[number][] =>
+    (outflowsByAmount.get(-b.amountCents) ?? []).filter(
+      (o) =>
+        !used.has(o.id) &&
+        o.accountId !== b.accountId &&
+        !ineligible(o) &&
+        mirrorCompatible(o, b) &&
+        semanticsCompatible(o, b) &&
+        dist(o, b) <= HINTED_PAIR_WINDOW_DAYS,
+    );
+  // true when `a` is `b`'s UNIQUE nearest eligible outflow — the inflow's own vote for `a`
+  const isNearestOutflow = (b: (typeof candidates)[number], a: (typeof candidates)[number]): boolean => {
+    const os = outflowMatchesForInflow(b);
+    if (os.length === 0) return false;
+    const { nearest } = nearestOf(b, os);
+    return nearest.length === 1 && nearest[0]!.id === a.id;
+  };
+
   db.transaction((tx) => {
-    for (const a of candidates) {
-      if (used.has(a.id) || a.amountCents >= 0) continue;
-      const matches = candidates.filter(
-        (b) =>
-          !used.has(b.id) &&
-          b.id !== a.id &&
-          b.accountId !== a.accountId &&
-          b.amountCents === -a.amountCents &&
-          Math.abs(diffDays(a.postedOn, b.postedOn)) <= 4,
-      );
-      if (matches.length === 0) continue;
-
-      const hinted = matches.filter(
-        (b) =>
-          TRANSFER_HINT_RE.test(a.rawDescription) ||
-          TRANSFER_HINT_RE.test(b.rawDescription) ||
-          isLinkedPair(a.accountId, b.accountId),
-      );
-      if (hinted.length !== 1) {
-        if (matches.length > 0) {
-          // coincidental or ambiguous equal amounts — humans decide; flag
-          // every leg of the ambiguity, not just the outflow
-          tx.update(transactions)
-            .set({ needsReview: true })
-            .where(inArray(transactions.id, [a.id, ...matches.map((m) => m.id)]))
-            .run();
-          stats.flaggedAmbiguous += 1;
-        }
-        continue;
-      }
-
-      const b = hinted[0]!;
+    const commitPair = (a: (typeof candidates)[number], b: (typeof candidates)[number]): void => {
       const groupId = a.id; // deterministic group key: the outflow leg's id
       const types = [accountTypes.get(a.accountId), accountTypes.get(b.accountId)];
-      const category = types.includes("credit")
+      const computed = types.includes("credit")
         ? cardPaymentCat
         : types.includes("investment")
           ? investmentCat
           : internalCat;
-
+      // if exactly one leg is user-tagged, the whole group adopts that leg's category so
+      // both sides of a transferGroupId always agree; otherwise use the account-type category
+      const userLeg = [a, b].find((l) => l.categorizationSource === "user" && l.categoryId !== null);
+      const groupCategory = userLeg ? userLeg.categoryId! : computed;
       for (const leg of [a, b]) {
-        tx.update(transactions)
-          .set({
-            transferGroupId: groupId,
-            categoryId: category,
-            categorizationSource: "transfer_detect",
-            categorizationConfidence: 0.95,
-            needsReview: false,
-          })
-          .where(eq(transactions.id, leg.id))
-          .run();
+        const set =
+          leg.categorizationSource === "user"
+            ? { transferGroupId: groupId, needsReview: false }
+            : {
+                transferGroupId: groupId,
+                categoryId: groupCategory,
+                categorizationSource: "transfer_detect" as const,
+                categorizationConfidence: 0.95,
+                needsReview: false,
+              };
+        tx.update(transactions).set(set).where(eq(transactions.id, leg.id)).run();
       }
       used.add(a.id);
       used.add(b.id);
       stats.paired += 1;
+    };
+
+    // PASS 1 (fixpoint): the ONLY auto-pairing pass. Commit a pair when it is AUTO-PAIRABLE
+    // (structural evidence or both descriptors hinted) AND mutually unique-nearest — the
+    // outflow's unique nearest inflow, and that inflow's unique nearest outflow — so no leg
+    // is claimed by a coincidence or stolen by a rival. Iterated so consuming one leg can
+    // unlock another's now-unique match; the same-day OVERDRAFT mirror multiset resolves
+    // deterministically by id. No single-sided-hint pairing exists — those go to review.
+    let progress = true;
+    while (progress) {
+      progress = false;
+      for (const a of candidates) {
+        if (!eligibleOutflow(a)) continue;
+        const ms = matchesFor(a);
+        if (ms.length === 0) continue;
+        const { minDist, nearest } = nearestOf(a, ms);
+        if (nearest.length === 1 && autoPairable(a, nearest[0]!) && isNearestOutflow(nearest[0]!, a)) {
+          commitPair(a, nearest[0]!);
+          progress = true;
+        } else if (
+          nearest.length > 1 &&
+          minDist === 0 &&
+          INTERNAL_MIRROR_RE.test(a.rawDescription) &&
+          nearest.every((m) => m.postedOn === a.postedOn && INTERNAL_MIRROR_RE.test(m.rawDescription))
+        ) {
+          commitPair(a, [...nearest].sort((x, y) => (x.id < y.id ? -1 : 1))[0]!);
+          progress = true;
+        }
+      }
+    }
+
+    // PASS 2: flag the ambiguous/single-sided remainder for human review. Any outflow that
+    // carries a transfer hint but still holds equal-cent candidate(s) — a single-sided ACH
+    // bridge, competing chunks, or a hint-only coincidence — surfaces ALL its candidates;
+    // an unhinted outflow surfaces only a NEAR (±4d) coincidence (far bare matches ignored,
+    // no review noise). Non-consuming: every contended outflow is surfaced, none dropped
+    // (re-review finding: a hinted outflow that lost a shared candidate must still be seen).
+    const flag = (a: (typeof candidates)[number], legs: (typeof candidates)[number][]): void => {
+      const ids = [...new Set([a.id, ...legs.map((m) => m.id)])];
+      tx.update(transactions).set({ needsReview: true }).where(inArray(transactions.id, ids)).run();
+      stats.flaggedAmbiguous += 1;
+    };
+    for (const a of candidates) {
+      if (!eligibleOutflow(a)) continue;
+      const ms = matchesFor(a);
+      if (ms.length === 0) continue;
+      if (anchorHinted(a)) {
+        flag(a, ms);
+      } else {
+        const near = ms.filter((m) => dist(a, m) <= AMBIGUITY_WINDOW_DAYS);
+        if (near.length > 0) flag(a, near);
+      }
     }
   });
   return stats;

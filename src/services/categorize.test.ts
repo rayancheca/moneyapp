@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
@@ -136,7 +136,8 @@ describe("detectTransfers", () => {
   });
 
   test("adversarial: coincidental equal amounts with no hint produce 0 auto-pairs", () => {
-    const atm = insertTxn(checkingId, "2026-06-05", -20_000, "ATM WITHDRAWAL 100 BROADWAY");
+    // (non-ATM descriptor: ATM rows are reserved for the user and never even flagged)
+    const atm = insertTxn(checkingId, "2026-06-05", -20_000, "CHECK WITHDRAWAL 100 BROADWAY");
     const credit = insertTxn(cardId, "2026-06-06", 20_000, "MERCHANDISE CREDIT ADJUSTMENT");
     const stats = detectTransfers(bundle.db);
     expect(stats.paired).toBe(0);
@@ -231,5 +232,493 @@ describe("detectTransfers — linked payment source (S6)", () => {
     expect(outRow.transferGroupId).toBe(out);
     expect(innRow.transferGroupId).toBe(out);
     expect(categoryOf(out).name).toBe("Credit Card Payment");
+  });
+});
+
+describe("detectTransfers — OVERDRAFT hint + widened hinted window (P0.4 / P0.5a)", () => {
+  let savingsId: string;
+
+  beforeEach(() => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    savingsId = createAccount(bundle.db, { institutionId: chase.id, name: "Savings", type: "savings" });
+  });
+
+  function row(id: string) {
+    return bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+  }
+
+  test("same-day OVERDRAFT mirror pairs as Internal Transfer and leaves review", () => {
+    const out = insertTxn(savingsId, "2026-06-05", -2_150, "OVERDRAFT TO CHECKING - 9067");
+    const inn = insertTxn(checkingId, "2026-06-05", 2_150, "OVERDRAFT FROM SAVINGS - 5791");
+    bundle.db.update(transactions).set({ needsReview: true }).run();
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(1);
+    expect(row(out).transferGroupId).toBe(out);
+    expect(row(inn).transferGroupId).toBe(out);
+    expect(row(out).needsReview).toBe(false);
+    expect(row(inn).needsReview).toBe(false);
+    expect(categoryOf(out).name).toBe("Internal Transfer");
+  });
+
+  test("both-hinted pair 8 days apart pairs (ACH settlement float)", () => {
+    // BOTH descriptors hinted → auto-pairable across the ±10d float window
+    const out = insertTxn(checkingId, "2026-06-03", -500_000, "ONLINE TRANSFER TO SOFI SAVINGS");
+    const inn = insertTxn(savingsId, "2026-06-11", 500_000, "ACH TRANSFER FROM CHASE 1234");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(1);
+    expect(row(inn).transferGroupId).toBe(row(out).transferGroupId);
+  });
+
+  test("single-sided hint (only one leg) does NOT auto-pair — it flags for review", () => {
+    // the outflow is a transfer, but the inflow is a generic deposit whose true source
+    // may be unrelated (a coincidental equal-cent credit) — humans confirm, never guessed
+    const out = insertTxn(checkingId, "2026-06-03", -500_000, "ONLINE TRANSFER TO SOFI SAVINGS");
+    const inn = insertTxn(savingsId, "2026-06-06", 500_000, "DEPOSIT RECEIVED"); // generic, dist 3
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(stats.flaggedAmbiguous).toBe(1);
+    expect(row(inn).transferGroupId).toBeNull();
+    expect(row(out).needsReview).toBe(true);
+    expect(row(inn).needsReview).toBe(true);
+  });
+
+  test("both-hinted pair 11 days apart does NOT pair (outside the window)", () => {
+    insertTxn(checkingId, "2026-06-03", -500_000, "ONLINE TRANSFER TO SOFI SAVINGS");
+    const inn = insertTxn(savingsId, "2026-06-14", 500_000, "ACH TRANSFER FROM CHASE");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(row(inn).transferGroupId).toBeNull();
+  });
+
+  test("distinct-amount both-hinted chunks each pair via their sole in-window partner", () => {
+    // both legs hinted + different amounts → each outflow has exactly one partner → pair
+    const a1 = insertTxn(checkingId, "2026-06-03", -500_000, "ONLINE TRANSFER TO SOFI");
+    const a2 = insertTxn(checkingId, "2026-06-05", -300_000, "ONLINE TRANSFER TO SOFI");
+    const b1 = insertTxn(savingsId, "2026-06-08", 500_000, "ACH TRANSFER FROM CHASE");
+    const b2 = insertTxn(savingsId, "2026-06-10", 300_000, "ACH TRANSFER FROM CHASE");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(2);
+    expect(row(b1).transferGroupId).toBe(a1);
+    expect(row(b2).transferGroupId).toBe(a2);
+  });
+
+  test("equal-amount chunks in one window are flagged for review, not FIFO-guessed", () => {
+    // two same-amount outflows + two same-amount generic inflows: which pairs which is
+    // genuinely ambiguous (a nearer one could be a coincidence), so the detector surfaces
+    // them for human confirmation instead of guessing a FIFO order (re-review hardening)
+    insertTxn(checkingId, "2026-06-03", -500_000, "ONLINE TRANSFER TO SOFI 1/2");
+    insertTxn(checkingId, "2026-06-05", -500_000, "ONLINE TRANSFER TO SOFI 2/2");
+    const b1 = insertTxn(savingsId, "2026-06-08", 500_000, "DEPOSIT RECEIVED");
+    const b2 = insertTxn(savingsId, "2026-06-10", 500_000, "DEPOSIT RECEIVED");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(stats.flaggedAmbiguous).toBeGreaterThanOrEqual(1);
+    expect(row(b1).transferGroupId).toBeNull();
+    expect(row(b2).transferGroupId).toBeNull();
+  });
+
+  test("same-day duplicate mirrors (the OVERDRAFT multiset) pair deterministically", () => {
+    const o1 = insertTxn(savingsId, "2026-06-05", -2_000, "OVERDRAFT TO CHECKING - 9067");
+    const o2 = insertTxn(savingsId, "2026-06-05", -2_000, "OVERDRAFT TO CHECKING - 9067");
+    const i1 = insertTxn(checkingId, "2026-06-05", 2_000, "OVERDRAFT FROM SAVINGS - 5791");
+    const i2 = insertTxn(checkingId, "2026-06-05", 2_000, "OVERDRAFT FROM SAVINGS - 5791");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(2);
+    expect(stats.flaggedAmbiguous).toBe(0);
+    const groups = [o1, o2, i1, i2].map((id) => row(id).transferGroupId);
+    expect(groups.every((g) => g !== null)).toBe(true);
+    expect(new Set(groups.slice(0, 2)).size).toBe(2); // two distinct pairs
+  });
+
+  test("a symmetric different-day tie stays ambiguous (flagged, not paired)", () => {
+    const out = insertTxn(checkingId, "2026-06-10", -30_000, "ONLINE TRANSFER REF 1");
+    const before = insertTxn(savingsId, "2026-06-05", 30_000, "ONLINE TRANSFER REF 2");
+    const after = insertTxn(savingsId, "2026-06-15", 30_000, "ONLINE TRANSFER REF 3");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(stats.flaggedAmbiguous).toBe(1);
+    for (const id of [out, before, after]) {
+      expect(row(id).transferGroupId).toBeNull();
+      expect(row(id).needsReview).toBe(true);
+    }
+  });
+
+  test("an UNHINTED equal-cent match 7 days out is ignored entirely (no new review noise)", () => {
+    const out = insertTxn(checkingId, "2026-06-03", -42_000, "CHECK 1044");
+    const inn = insertTxn(savingsId, "2026-06-10", 42_000, "MISC CREDIT");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(stats.flaggedAmbiguous).toBe(0);
+    expect(row(out).needsReview).toBe(false);
+    expect(row(inn).needsReview).toBe(false);
+  });
+
+  test("both legs already categorized under Transfers counts as a hint", () => {
+    const out = insertTxn(checkingId, "2026-06-04", -60_000, "WITHDRAWAL 2210");
+    const inn = insertTxn(savingsId, "2026-06-10", 60_000, "CREDIT 8814");
+    const internal = bundle.db
+      .select()
+      .from(categories)
+      .where(eq(categories.name, "Internal Transfer"))
+      .get()!;
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: internal.id })
+      .where(inArray(transactions.id, [out, inn]))
+      .run();
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(1);
+    expect(row(inn).transferGroupId).toBe(out);
+  });
+
+  test("user guard: a leg the user tagged OUTSIDE Transfers is never auto-paired", () => {
+    const out = insertTxn(savingsId, "2026-06-05", -2_150, "OVERDRAFT TO CHECKING - 9067");
+    const inn = insertTxn(checkingId, "2026-06-05", 2_150, "OVERDRAFT FROM SAVINGS - 5791");
+    const dining = bundle.db.select().from(categories).where(eq(categories.name, "Dining")).get()!;
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: dining.id, categorizationSource: "user" })
+      .where(eq(transactions.id, inn))
+      .run();
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(row(out).transferGroupId).toBeNull();
+    expect(categoryOf(inn).name).toBe("Dining"); // untouched
+  });
+
+  test("user guard: a leg the user tagged WITHIN Transfers pairs but keeps the user's category", () => {
+    const out = insertTxn(savingsId, "2026-06-05", -2_150, "OVERDRAFT TO CHECKING - 9067");
+    const inn = insertTxn(checkingId, "2026-06-05", 2_150, "OVERDRAFT FROM SAVINGS - 5791");
+    const internal = bundle.db
+      .select()
+      .from(categories)
+      .where(eq(categories.name, "Internal Transfer"))
+      .get()!;
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: internal.id, categorizationSource: "user" })
+      .where(eq(transactions.id, inn))
+      .run();
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(1);
+    expect(row(inn).transferGroupId).toBe(out);
+    const innRow = row(inn);
+    expect(innRow.categorizationSource).toBe("user"); // provenance preserved
+    expect(categoryOf(inn).name).toBe("Internal Transfer");
+  });
+});
+
+describe("detectTransfers — OVERDRAFT symmetry guard (P0.4 mis-pair prevention)", () => {
+  let savingsId2: string;
+  let brokerageId: string;
+
+  beforeEach(() => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    savingsId2 = createAccount(bundle.db, { institutionId: chase.id, name: "Savings2", type: "savings" });
+    brokerageId = createAccount(bundle.db, { institutionId: chase.id, name: "Brokerage", type: "investment" });
+  });
+
+  function row2(id: string) {
+    return bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+  }
+
+  test("an OVERDRAFT leg never pairs with a non-overdraft counterpart (AAPL-buy mis-pair class)", () => {
+    // real-data shape: an intra-brokerage stock buy 2 days before an unrelated
+    // overdraft cover of the same amount — one-sided OVERDRAFT hint must NOT pair
+    const buy = insertTxn(brokerageId, "2026-06-14", -20_000, "Apple CUSIP: 037833100 (AAPL)");
+    const cover = insertTxn(checkingId, "2026-06-16", 20_000, "OVERDRAFT FROM SAVINGS - 5791");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(row2(buy).transferGroupId).toBeNull();
+    expect(row2(cover).transferGroupId).toBeNull();
+  });
+
+  test("overdraft mirrors on DIFFERENT days are not hint-paired (verified set is same-day)", () => {
+    const out = insertTxn(savingsId2, "2026-06-05", -2_150, "OVERDRAFT TO CHECKING - 9067");
+    const inn = insertTxn(checkingId, "2026-06-07", 2_150, "OVERDRAFT FROM SAVINGS - 5791");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(row2(out).transferGroupId).toBeNull();
+    expect(row2(inn).transferGroupId).toBeNull();
+  });
+
+  test("a chained same-amount flow pairs the true hops, not across the chain", () => {
+    // Savings -100 (overdraft to checking) + Checking +100 (overdraft from
+    // savings) SAME DAY, then Checking -100 → Brokerage +100 (ROBINHOOD hint):
+    // two true pairs; the Savings leg must not grab the brokerage deposit
+    const s = insertTxn(savingsId2, "2026-06-10", -10_000, "OVERDRAFT TO CHECKING - 9067");
+    const c1 = insertTxn(checkingId, "2026-06-10", 10_000, "OVERDRAFT FROM SAVINGS - 5791");
+    const c2 = insertTxn(checkingId, "2026-06-10", -10_000, "DEBIT CARD ROBINHOOD SECURITIES");
+    const b = insertTxn(brokerageId, "2026-06-12", 10_000, "ACH Deposit ROBINHOOD");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(2);
+    expect(row2(c1).transferGroupId).toBe(s); // overdraft mirror pair
+    expect(row2(b).transferGroupId).toBe(c2); // funding hop pair
+  });
+});
+
+describe("detectTransfers — Zelle reservation + internal-mirror symmetry (P0.4 dry-run findings)", () => {
+  let savingsId3: string;
+
+  beforeEach(() => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    savingsId3 = createAccount(bundle.db, { institutionId: chase.id, name: "Savings3", type: "savings" });
+  });
+
+  function row3(id: string) {
+    return bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+  }
+
+  test("Zelle legs are reserved for the user — never auto-paired, never newly flagged", () => {
+    // even a perfect self-Zelle mirror stays untouched: the user asked to tag
+    // every Zelle row themselves (2026-07-13 decision)
+    const out = insertTxn(checkingId, "2026-06-10", -15_000, "Zelle payment from Rayan Karim Checa 0PE0X");
+    const inn = insertTxn(savingsId3, "2026-06-10", 15_000, "Direct Payment Zelle® Payment to Rayan");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(stats.flaggedAmbiguous).toBe(0);
+    expect(row3(out).transferGroupId).toBeNull();
+    expect(row3(inn).transferGroupId).toBeNull();
+    expect(row3(out).needsReview).toBe(false); // no NEW review noise either
+  });
+
+  test("a third-party Zelle payment cannot claim an internal savings↔checking leg", () => {
+    const zelle = insertTxn(checkingId, "2026-06-10", -8_000, "Zelle payment to Oliver Fontaine 123");
+    const internal = insertTxn(savingsId3, "2026-06-11", 8_000, "Deposit From Savings - 5791");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(row3(zelle).transferGroupId).toBeNull();
+    expect(row3(internal).transferGroupId).toBeNull();
+  });
+
+  test("internal savings↔checking mirrors pair same-day (Deposit From ↔ Withdrawal To)", () => {
+    const out = insertTxn(savingsId3, "2026-06-05", -16_800, "Withdrawal To Checking - 9067");
+    const inn = insertTxn(checkingId, "2026-06-05", 16_800, "Deposit From Savings - 5791");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(1);
+    expect(row3(inn).transferGroupId).toBe(out);
+  });
+
+  test("an internal-mirror leg is not claimed by a foreign row even when both are categorized Transfers", () => {
+    const internal = insertTxn(savingsId3, "2026-06-05", -16_800, "Withdrawal To Checking - 9067");
+    const foreign = insertTxn(checkingId, "2026-06-07", 16_800, "MISC CREDIT 4411");
+    const internalCat = bundle.db
+      .select()
+      .from(categories)
+      .where(eq(categories.name, "Internal Transfer"))
+      .get()!;
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: internalCat.id })
+      .where(inArray(transactions.id, [internal, foreign]))
+      .run();
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(row3(internal).transferGroupId).toBeNull();
+  });
+});
+
+describe("detectTransfers — ATM reservation + semantic compatibility (P0.4 dry-run findings, round 2)", () => {
+  let brokerage2: string;
+
+  beforeEach(() => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    brokerage2 = createAccount(bundle.db, { institutionId: chase.id, name: "Brokerage2", type: "investment" });
+  });
+
+  function row4(id: string) {
+    return bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+  }
+
+  test("ATM rows are reserved for the user — never auto-paired, never newly flagged", () => {
+    const atm = insertTxn(checkingId, "2026-06-10", -20_000, "ATM CASH DEPOSIT 06/10 100 ARTHUR AVE");
+    const rh = insertTxn(brokerage2, "2026-06-11", 20_000, "Debit Card ROBINHOOD SECURITIES");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(stats.flaggedAmbiguous).toBe(0);
+    expect(row4(atm).transferGroupId).toBeNull();
+    expect(row4(rh).transferGroupId).toBeNull();
+  });
+
+  test("a card-payment descriptor never pairs two non-credit accounts (missing-card mis-pair class)", () => {
+    // real shape: SoFi Savings pays the (un-imported) Sapphire card; the leg
+    // must NOT grab an equal-cent checking transfer 2 days out
+    const epay = insertTxn(savingsSemId(), "2026-06-10", -50_000, "Direct Payment CHASE CREDIT CRD EPAY");
+    const xfer = insertTxn(checkingId, "2026-06-12", 50_000, "SOFI BANK TRANSFER RKARIM");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(row4(epay).transferGroupId).toBeNull();
+    expect(row4(xfer).transferGroupId).toBeNull();
+  });
+
+  test("a ROBINHOOD-token hint requires an investment-account leg", () => {
+    const sofiLeg = insertTxn(checkingId, "2026-06-10", -10_000, "Debit Card ROBINHOOD SECURITIES");
+    const chaseLeg = insertTxn(savingsSemId(), "2026-06-11", 10_000, "MOBILE CHECK DEPOSIT");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(row4(sofiLeg).transferGroupId).toBeNull();
+  });
+
+  // lazily create one savings account shared by the tests above
+  let savingsMemo: string | null = null;
+  function savingsSemId(): string {
+    if (savingsMemo) return savingsMemo;
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    savingsMemo = createAccount(bundle.db, { institutionId: chase.id, name: "SavingsSem", type: "savings" });
+    return savingsMemo;
+  }
+
+  afterEach(() => {
+    savingsMemo = null;
+  });
+});
+
+describe("detectTransfers — 2026-07-15 review hardening (preservation · proximity · sticky)", () => {
+  let savingsR: string;
+  let brokerageR: string;
+
+  beforeEach(() => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    savingsR = createAccount(bundle.db, { institutionId: chase.id, name: "SavingsR", type: "savings" });
+    brokerageR = createAccount(bundle.db, { institutionId: chase.id, name: "BrokerageR", type: "investment" });
+  });
+
+  function rowR(id: string) {
+    return bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+  }
+  function catId(name: string): string {
+    return bundle.db.select().from(categories).where(eq(categories.name, name)).get()!.id;
+  }
+
+  test("a leg categorized OUTSIDE Transfers (non-user source) is never claimed or overwritten", () => {
+    // the exact real-ledger bug: a -$200 'Debit Card ROBINHOOD SECURITIES' that is
+    // Investments › Buys must NOT be relabeled a transfer despite a hinted counterpart
+    const out = insertTxn(checkingId, "2026-06-10", -20_000, "Debit Card ROBINHOOD SECURITIES");
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: catId("Buys"), categorizationSource: "rule" })
+      .where(eq(transactions.id, out))
+      .run();
+    insertTxn(brokerageR, "2026-06-12", 20_000, "ACH Deposit ROBINHOOD");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(rowR(out).transferGroupId).toBeNull();
+    expect(categoryOf(out).name).toBe("Buys"); // preserved
+    expect(rowR(out).categorizationSource).toBe("rule");
+  });
+
+  test("an already-categorized decoy is skipped; the true both-hinted partner still pairs", () => {
+    const out = insertTxn(checkingId, "2026-06-10", -30_000, "ONLINE TRANSFER TO SOFI");
+    const decoy = insertTxn(savingsR, "2026-06-10", 30_000, "STATEMENT CREDIT"); // same-day but categorized
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: catId("Cash Back"), categorizationSource: "merchant_map" })
+      .where(eq(transactions.id, decoy))
+      .run();
+    const truePartner = insertTxn(savingsR, "2026-06-14", 30_000, "ACH TRANSFER FROM CHASE"); // hinted
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(1);
+    expect(rowR(truePartner).transferGroupId).toBe(out);
+    expect(rowR(decoy).transferGroupId).toBeNull();
+    expect(categoryOf(decoy).name).toBe("Cash Back"); // untouched
+  });
+
+  test("a distant hinted match never beats a nearer unhinted coincidence — the coincidence is flagged", () => {
+    const out = insertTxn(checkingId, "2026-06-10", -30_000, "CHECK WITHDRAWAL 4412"); // no hint
+    const nearCoin = insertTxn(savingsR, "2026-06-10", 30_000, "MISC CREDIT"); // same day, no hint
+    const farHint = insertTxn(brokerageR, "2026-06-18", 30_000, "ONLINE TRANSFER FROM ACME LLC"); // dist 8, hinted
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(stats.flaggedAmbiguous).toBe(1);
+    expect(rowR(out).needsReview).toBe(true);
+    expect(rowR(nearCoin).needsReview).toBe(true);
+    expect(rowR(farHint).transferGroupId).toBeNull(); // the distant hint is NOT paired
+    expect(rowR(farHint).needsReview).toBe(false);
+  });
+
+  test("confident pairs settle before ambiguity: a's tie does not strand b2's true partner a2", () => {
+    // a1 is equidistant to b1/b2, but a2 is a UNIQUE, corroborated (b-hinted) match for b2.
+    // The fixpoint must resolve a2↔b2 first, then a1↔b1 — not flag a1's tie and strand a2.
+    const a1 = insertTxn(checkingId, "2026-06-10", -30_000, "ONLINE TRANSFER OUT");
+    const b1 = insertTxn(savingsR, "2026-06-07", 30_000, "ONLINE TRANSFER IN A"); // dist 3 from a1
+    const b2 = insertTxn(savingsR, "2026-06-13", 30_000, "ONLINE TRANSFER IN B"); // dist 3 from a1, dist 0 from a2
+    const a2 = insertTxn(brokerageR, "2026-06-13", -30_000, "ONLINE TRANSFER OUT 2");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(2);
+    expect(stats.flaggedAmbiguous).toBe(0);
+    expect(rowR(b2).transferGroupId).toBe(a2); // a2 gets its unique nearest, not stranded
+    expect(rowR(b1).transferGroupId).toBe(a1);
+  });
+
+  test("a hinted outflow does NOT auto-pair a nearer coincidence over the true farther partner", () => {
+    // the exact residual the re-review caught: anchor-only hint + a nearer unrelated
+    // uncategorized credit + the true farther ACH leg → flag all, mislabel none
+    const out = insertTxn(checkingId, "2026-06-01", -50_000, "ONLINE TRANSFER TO SOFI SAVINGS"); // hinted
+    const interest = insertTxn(savingsR, "2026-06-03", 50_000, "INTEREST PAYMENT"); // dist 2, unrelated income
+    const truePartner = insertTxn(savingsR, "2026-06-08", 50_000, "DEPOSIT RECEIVED"); // dist 7, real ACH leg
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0); // proximity alone is not evidence when a rival is in the window
+    expect(rowR(interest).transferGroupId).toBeNull();
+    expect(rowR(interest).categorizationSource).not.toBe("transfer_detect"); // NOT relabeled
+    expect(rowR(interest).needsReview).toBe(true); // surfaced for review
+    expect(rowR(truePartner).needsReview).toBe(true); // the true partner is surfaced too
+  });
+
+  test("an earlier unrelated outflow does NOT steal a hinted inflow from the true later transfer", () => {
+    // C is reached first by the loop but is a real landlord check; S is hinted and is
+    // really D's ACH partner (nearer to D). Mutual-nearest must give S to D, not C.
+    const c = insertTxn(checkingId, "2026-06-01", -50_000, "CHECK 1122 TO LANDLORD"); // unhinted, dist 4 from S
+    const d = insertTxn(checkingId, "2026-06-03", -50_000, "ONLINE TRANSFER TO SOFI SAVINGS"); // the real transfer, dist 2
+    const s = insertTxn(savingsR, "2026-06-05", 50_000, "ONLINE TRANSFER FROM CHASE 1234"); // hinted inflow
+    detectTransfers(bundle.db);
+    expect(rowR(s).transferGroupId).toBe(d); // S pairs its true (mutually-nearest) partner
+    expect(rowR(c).transferGroupId).toBeNull(); // the landlord check is NOT mislabeled
+    expect(rowR(c).categorizationSource).not.toBe("transfer_detect");
+  });
+
+  test("two both-hinted outflows competing for one inflow: the nearer pairs, the farther is not mislabeled", () => {
+    const d1 = insertTxn(checkingId, "2026-06-01", -50_000, "ONLINE TRANSFER TO SOFI"); // dist 4, farther
+    const d2 = insertTxn(checkingId, "2026-06-03", -50_000, "ONLINE TRANSFER TO SOFI"); // dist 2, nearer
+    const s = insertTxn(savingsR, "2026-06-05", 50_000, "ACH TRANSFER FROM CHASE"); // hinted → both-hinted pairs
+    detectTransfers(bundle.db);
+    expect(rowR(s).transferGroupId).toBe(d2); // the nearer (mutually-nearest), not loop order
+    expect(rowR(d1).transferGroupId).toBeNull(); // the farther is not silently mislabeled
+  });
+
+  test("R4: a single INFLOW-side hint never relabels an unrelated purchase as a transfer", () => {
+    // a real local-merchant purchase coincidentally equals a hinted external wire whose
+    // true source is not in the ledger — the purchase must NOT be relabeled a transfer
+    const purchase = insertTxn(checkingId, "2026-04-02", -73_200, "SQ *UPTOWN WINE & SPIRITS NYC");
+    const wire = insertTxn(savingsR, "2026-04-05", 73_200, "ONLINE TRANSFER FROM EXTERNAL ACCT 4471"); // dist 3, hinted
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(rowR(purchase).transferGroupId).toBeNull();
+    expect(rowR(purchase).categorizationSource).not.toBe("transfer_detect"); // real spend preserved
+  });
+
+  test("R4: a nearer unhinted decoy never gets mislabeled, even blocking the true both-hinted pair", () => {
+    // the decoy c is CLOSER to s than the true partner d — neither auto-pairs (c is not
+    // auto-pairable; d↔s is not mutually-nearest because c is s's nearest) → all flag, none mislabel
+    const c = insertTxn(checkingId, "2026-06-04", -50_000, "CHECK 1122 TO LANDLORD"); // dist 1, unhinted
+    const d = insertTxn(checkingId, "2026-06-01", -50_000, "ONLINE TRANSFER TO SOFI SAVINGS"); // dist 4, hinted
+    const s = insertTxn(savingsR, "2026-06-05", 50_000, "ONLINE TRANSFER FROM CHASE 1234"); // hinted
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(0);
+    expect(rowR(c).transferGroupId).toBeNull();
+    expect(rowR(c).categorizationSource).not.toBe("transfer_detect"); // the landlord check is safe
+  });
+
+  test("a pair with one user-tagged leg gives BOTH legs the user's category", () => {
+    const out = insertTxn(savingsR, "2026-06-05", -2_150, "OVERDRAFT TO CHECKING - 9067");
+    const inn = insertTxn(checkingId, "2026-06-05", 2_150, "OVERDRAFT FROM SAVINGS - 5791");
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: catId("Investment Contribution"), categorizationSource: "user" })
+      .where(eq(transactions.id, inn))
+      .run();
+    const stats = detectTransfers(bundle.db);
+    expect(stats.paired).toBe(1);
+    expect(categoryOf(inn).name).toBe("Investment Contribution"); // user leg kept
+    expect(categoryOf(out).name).toBe("Investment Contribution"); // other leg adopts it (coherence)
   });
 });
