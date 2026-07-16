@@ -6,7 +6,8 @@ import { merchants } from "@/db/schema/merchants";
 import { transactions } from "@/db/schema/transactions";
 import { compareDates, diffDays, monthKey, periodBounds } from "@/lib/dates";
 import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/description-key";
-import { subBuckets, type ResolvedPeriod } from "@/lib/period";
+import { resolvePeriod, stepPeriodParams, subBuckets, type ResolvedPeriod } from "@/lib/period";
+import { projectPace, reindexByPosition } from "@/lib/projection";
 import {
   activeTxnsInRange,
   ledgerHref,
@@ -275,6 +276,90 @@ function computePace(
     projectedCents: elapsedFraction > 0 ? Math.round(actualToDateCents / elapsedFraction) : 0,
     avgPerBucketCents: Math.round(actualToDateCents / elapsedBuckets),
   };
+}
+
+// ── Projection overlay (North Star #2, Pillar 1) ─────────────────────
+
+/**
+ * The estimate companion for the cash-flow chart: "you've spent $X; at this
+ * pace $Y by period-end; last period you spent $Z." The math is the shared,
+ * unit-tested projection engine (`@/lib/projection`) — this is the DB-coupled
+ * wiring only. Honest by construction: the pace figure carries its visible-math
+ * `basis` + a `confidence` the UI renders fainter when thin; the prior period is
+ * a historical fact drawn as a faint ghost, never dressed up as a forecast.
+ */
+export interface SpendingProjection {
+  /** projected full-period GROSS spend at the current pace; null unless the period is in progress */
+  projectedSpendCents: number | null;
+  /** the pace method's visible-math basis (e.g. "pace from 8 of 31 days elapsed"); null unless in progress */
+  paceBasis: string | null;
+  /** 0..1 pace confidence — low ⇒ render fainter + say so; null unless in progress */
+  paceConfidence: number | null;
+  /** the comparable prior period — the "last {period}" total + per-bucket ghost; null when it had no spend */
+  prior: {
+    label: string;
+    /** prior period GROSS spend total, integer cents */
+    spentCents: number;
+    /** prior gross spend per bucket, re-indexed to the CURRENT bucket count so it overlays 1:1 */
+    ghost: number[];
+  } | null;
+}
+
+/**
+ * Build the projection overlay for a period. `currentPace` is the already-
+ * computed pace from `cashFlowByPeriod` (its `actualToDateCents` is the pace
+ * basis) — passed in so we don't re-scan the current period. `fullPeriodSpentCents`
+ * is the whole-period GROSS spend (`cashFlow.totals.spentCents`), used to FLOOR
+ * the projection: a period can contain future-dated-but-active charges (posted
+ * after today, still ≤ period end) that the bars + StatCards already show, so the
+ * pace estimate must never read below what's already committed. The prior period
+ * is the same window one step earlier (`stepPeriodParams(period, -1)`), whose
+ * gross spend curve becomes the ghost.
+ */
+export function spendingProjection(
+  db: AppDatabase,
+  period: ResolvedPeriod,
+  today: string,
+  currentPace: PaceInfo | null,
+  fullPeriodSpentCents: number,
+): SpendingProjection {
+  let projectedSpendCents: number | null = null;
+  let paceBasis: string | null = null;
+  let paceConfidence: number | null = null;
+  // pace only means something for an in-progress period (a past period is done —
+  // its "projection" would just be its actual, so we don't fabricate one).
+  if (period.isCurrent && currentPace) {
+    const proj = projectPace({
+      from: period.from,
+      to: period.to,
+      today,
+      actualToDateCents: currentPace.actualToDateCents,
+      // never project below the full-period spend already booked + displayed
+      // (mirrors budgets.ts's Math.max(spent, forecast)).
+      floorCents: fullPeriodSpentCents,
+    });
+    projectedSpendCents = proj.expectedTotalCents;
+    paceBasis = proj.basis;
+    paceConfidence = proj.confidence;
+  }
+
+  // the comparable prior period — the ghost + "last {period}" total
+  const prevPeriod = resolvePeriod(stepPeriodParams(period, -1), today);
+  const prevFlow = cashFlowByPeriod(db, prevPeriod, today);
+  const bucketCount = subBuckets(period).length;
+  const prior =
+    prevFlow.totals.spentCents > 0
+      ? {
+          label: prevPeriod.label,
+          spentCents: prevFlow.totals.spentCents,
+          ghost: reindexByPosition(
+            prevFlow.buckets.map((b) => b.spendingCents),
+            bucketCount,
+          ),
+        }
+      : null;
+
+  return { projectedSpendCents, paceBasis, paceConfidence, prior };
 }
 
 /**

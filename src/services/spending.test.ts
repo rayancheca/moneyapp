@@ -20,6 +20,7 @@ import {
   honestyBuckets,
   largestTransactions,
   periodTotals,
+  spendingProjection,
   topMerchants,
 } from "./spending";
 
@@ -288,5 +289,60 @@ describe("honestyBuckets", () => {
     );
     expect(h.excluded).toMatchObject({ txnCount: 1 });
     expect(h.excluded.href).toBe("/transactions?view=excluded&from=2026-07-01&to=2026-07-31");
+  });
+});
+
+describe("spendingProjection", () => {
+  test("in-progress period: pace projection with a visible basis + a prior-period ghost", () => {
+    // July spends (today = 2026-07-08 → two before it, one after)
+    insertTxn({ postedOn: "2026-07-01", amountCents: -10_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-05", amountCents: -20_000, category: "Food > Groceries" });
+    insertTxn({ postedOn: "2026-07-20", amountCents: -5_000, category: "Food > Dining" }); // after today
+    // June spends → the prior-period ghost
+    insertTxn({ postedOn: "2026-06-10", amountCents: -12_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-06-25", amountCents: -18_000, category: "Food > Groceries" });
+
+    const flow = cashFlowByPeriod(bundle.db, JULY, TODAY);
+    const proj = spendingProjection(bundle.db, JULY, TODAY, flow.pace, flow.totals.spentCents);
+
+    // actual-to-date = 30_000 (Jul 1 + Jul 5); pace × 31/8 = 116_250 (matches the chart readout)
+    expect(proj.projectedSpendCents).toBe(116_250);
+    expect(proj.paceBasis).toBe("pace from 8 of 31 days elapsed");
+    expect(proj.paceConfidence).toBe(0.52);
+
+    expect(proj.prior).not.toBeNull();
+    expect(proj.prior!.label).toBe("June 2026");
+    expect(proj.prior!.spentCents).toBe(30_000); // reconciles to June's gross spend
+    expect(proj.prior!.ghost).toHaveLength(31); // re-indexed onto July's 31 day-buckets
+    expect(Math.max(...proj.prior!.ghost)).toBe(18_000); // the June 25 peak survives the resample
+  });
+
+  test("a completed (past) period gets no fabricated pace projection", () => {
+    insertTxn({ postedOn: "2026-06-10", amountCents: -12_000, category: "Food > Dining" });
+    const june = resolvePeriod({ period: "2026-06" }, TODAY);
+    const flow = cashFlowByPeriod(bundle.db, june, TODAY);
+    const proj = spendingProjection(bundle.db, june, TODAY, flow.pace, flow.totals.spentCents);
+    expect(proj.projectedSpendCents).toBeNull();
+    expect(proj.paceBasis).toBeNull();
+    expect(proj.paceConfidence).toBeNull();
+  });
+
+  test("a prior period with no spend yields no ghost (never a flat-zero line)", () => {
+    insertTxn({ postedOn: "2026-07-05", amountCents: -20_000, category: "Food > Groceries" });
+    const flow = cashFlowByPeriod(bundle.db, JULY, TODAY);
+    const proj = spendingProjection(bundle.db, JULY, TODAY, flow.pace, flow.totals.spentCents);
+    expect(proj.prior).toBeNull();
+  });
+
+  test("the projection is floored at the full-period committed spend (future-dated charges)", () => {
+    // small to-date spend, then a large ACTIVE charge dated after today (still in July)
+    insertTxn({ postedOn: "2026-07-01", amountCents: -1_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-25", amountCents: -50_000, category: "Housing > Rent" }); // future-dated
+    const flow = cashFlowByPeriod(bundle.db, JULY, TODAY);
+    // to-date pace alone would project ~round(1_000 × 31/8) = 3_875, well BELOW the
+    // 51_000 already booked for the period; the floor keeps it honest.
+    expect(flow.totals.spentCents).toBe(51_000);
+    const proj = spendingProjection(bundle.db, JULY, TODAY, flow.pace, flow.totals.spentCents);
+    expect(proj.projectedSpendCents).toBe(51_000); // floored at committed, never below the visible "Spent"
   });
 });

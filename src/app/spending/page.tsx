@@ -14,6 +14,7 @@ import {
   dayLedgerHref,
   honestyBuckets,
   largestTransactions,
+  spendingProjection,
   topMerchants,
 } from "@/services/spending";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -51,6 +52,7 @@ export default async function SpendingPage({
 
   const db = getDb();
   const cashFlow = cashFlowByPeriod(db, period, today);
+  const projection = spendingProjection(db, period, today, cashFlow.pace, cashFlow.totals.spentCents);
   const merchants = topMerchants(db, range);
   const honesty = honestyBuckets(db, range);
   const heatMonth = heatmapInitialMonth(period, today);
@@ -131,7 +133,7 @@ export default async function SpendingPage({
 
           <SurfaceCard>
             <h2 className="mb-1 text-sm font-medium">Cash flow — {period.label}</h2>
-            <CashFlowChart data={cashFlow} />
+            <CashFlowChart data={cashFlow} projection={projection} />
           </SurfaceCard>
 
           <div className="grid gap-6 lg:grid-cols-5">

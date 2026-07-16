@@ -1,5 +1,6 @@
 "use client";
 
+import { type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   Bar,
@@ -15,7 +16,12 @@ import {
 import { categoryHueVar, isCategoryHueName } from "@/lib/category-palette";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { ledgerHref } from "@/lib/ledger-href";
-import { cashFlowSegmentHref, type CashFlow, type CashFlowSeries } from "@/services/spending";
+import {
+  cashFlowSegmentHref,
+  type CashFlow,
+  type CashFlowSeries,
+  type SpendingProjection,
+} from "@/services/spending";
 
 /**
  * The combined cash-flow chart (ux-overhaul-plan §5.2): income stacked ABOVE the
@@ -51,21 +57,33 @@ interface Row {
   from: string;
   to: string;
   net: number;
-  [seriesKey: string]: number | string;
+  /** last period's gross spend for this bucket, drawn below the axis (faint ghost) */
+  ghost?: number | null;
+  [seriesKey: string]: number | string | null | undefined;
 }
+
+const GHOST_KEY = "__ghost";
 
 interface CashFlowChartProps {
   data: CashFlow;
+  /** the estimate companion (North Star #2): pace + prior-period ghost. */
+  projection?: SpendingProjection | null;
 }
 
-export function CashFlowChart({ data }: CashFlowChartProps) {
+export function CashFlowChart({ data, projection }: CashFlowChartProps) {
   const router = useRouter();
   const { buckets, incomeSeries, spendingSeries, pace } = data;
 
-  const rows: Row[] = buckets.map((b) => {
+  // the prior-period ghost aligns 1:1 to the current buckets (already re-indexed
+  // server-side); only draw it when every bucket has a value to plot.
+  const ghost = projection?.prior?.ghost ?? null;
+  const hasGhost = ghost !== null && ghost.length === buckets.length;
+
+  const rows: Row[] = buckets.map((b, i) => {
     const row: Row = { key: b.key, label: b.label, from: b.from, to: b.to, net: b.netCents };
     for (const s of incomeSeries) row[s.key] = b.income[s.key] ?? 0; // above axis
     for (const s of spendingSeries) row[s.key] = -(b.spending[s.key] ?? 0); // below axis
+    if (hasGhost) row[GHOST_KEY] = -(ghost![i] ?? 0); // last period's spend, below axis
     return row;
   });
 
@@ -89,13 +107,52 @@ export function CashFlowChart({ data }: CashFlowChartProps) {
   const hasData = incomeSeries.length > 0 || spendingSeries.length > 0;
   if (!hasData) return null;
 
+  const ghostByKey = new Map(buckets.map((b, i) => [b.key, hasGhost ? (ghost![i] ?? 0) : null]));
+  const priorLabel = projection?.prior?.label ?? null;
+
+  // The honest projection readout: "on pace for ~$Y · $X so far · $Z last period".
+  // A low-confidence pace (early in the period) reads muted and says so.
+  const projected = projection?.projectedSpendCents ?? null;
+  const lowConfidence = projection?.paceConfidence != null && projection.paceConfidence < 0.5;
+  const readoutParts: ReactNode[] = [];
+  if (projected !== null) {
+    readoutParts.push(
+      <>
+        On pace for{" "}
+        {/* the ~ + dotted underline mark it an estimate; the method/basis is on
+            demand via hover (title) and always available to screen readers (sr-only). */}
+        <span
+          className={`figures font-medium underline decoration-dotted underline-offset-2 cursor-help ${lowConfidence ? "text-ink-muted" : "text-ink"}`}
+          title={projection?.paceBasis ?? undefined}
+        >
+          ~{formatCents(projected)}
+        </span>
+        {projection?.paceBasis ? <span className="sr-only"> — {projection.paceBasis}</span> : null} spent
+        this period{lowConfidence ? " (early estimate)" : ""}
+      </>,
+    );
+  }
+  if (pace) {
+    readoutParts.push(<span className="text-ink-faint">{formatCents(pace.actualToDateCents)} so far</span>);
+  }
+  if (projection?.prior) {
+    readoutParts.push(
+      <span className="text-ink-faint">
+        {formatCents(projection.prior.spentCents)} in {projection.prior.label}
+      </span>,
+    );
+  }
+
   return (
     <figure className="m-0" aria-label="Income above the axis and spending below, by period">
-      {pace && (
+      {readoutParts.length > 0 && (
         <p className="mb-2 text-xs text-ink-muted">
-          On pace for{" "}
-          <span className="figures font-medium text-ink">{formatCents(pace.projectedCents)}</span> this period
-          <span className="text-ink-faint"> · {formatCents(pace.actualToDateCents)} so far</span>
+          {readoutParts.map((node, i) => (
+            <span key={i}>
+              {i > 0 ? " · " : ""}
+              {node}
+            </span>
+          ))}
         </p>
       )}
       <div className="h-72 md:h-80">
@@ -154,6 +211,14 @@ export function CashFlowChart({ data }: CashFlowChartProps) {
                       <span>Net</span>
                       <span className="figures">{formatCentsSigned(b.netCents)}</span>
                     </div>
+                    {ghostByKey.get(String(label)) != null && (
+                      <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 text-ink-faint">
+                        {/* a single re-indexed bucket of the prior period — NOT its whole-period
+                            total (that lives in the readout as "$Z in {label}"). */}
+                        <span>Prior period, this point</span>
+                        <span className="figures">{formatCents(ghostByKey.get(String(label))!)}</span>
+                      </div>
+                    )}
                   </div>
                 );
               }}
@@ -199,6 +264,19 @@ export function CashFlowChart({ data }: CashFlowChartProps) {
                 />
               );
             })}
+            {hasGhost && (
+              <Line
+                type="monotone"
+                dataKey={GHOST_KEY}
+                name={`Spent in ${priorLabel ?? "the prior period"}`}
+                stroke="var(--ink-faint)"
+                strokeWidth={1.5}
+                strokeOpacity={0.6}
+                strokeDasharray="2 4"
+                dot={false}
+                isAnimationActive={false}
+              />
+            )}
             <Line
               type="monotone"
               dataKey="net"
@@ -222,6 +300,15 @@ export function CashFlowChart({ data }: CashFlowChartProps) {
           <span aria-hidden className="inline-block h-0.5 w-3 bg-accent" />
           Net
         </span>
+        {hasGhost && (
+          <span className="flex items-center gap-1.5">
+            <span
+              aria-hidden
+              className="inline-block h-0 w-3 border-t border-dashed border-ink-faint"
+            />
+            Spent in {priorLabel}
+          </span>
+        )}
       </figcaption>
     </figure>
   );
