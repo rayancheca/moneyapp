@@ -48,10 +48,22 @@ export function niceLinearTicks(min: number, max: number, targetCount = 5): Line
   }
   const count = Math.max(2, targetCount);
   const step = niceStep((hi - lo) / (count - 1));
-  const niceMin = Math.floor(lo / step) * step;
+  const rangeFloor = Math.floor(lo / step) * step;
   const niceMax = Math.ceil(hi / step) * step;
+
+  // A window that only DIPS slightly below zero (a tiny overdraft under a large
+  // positive range) must not drag the axis a full range-step below 0:
+  // floor(-106/5000)*5000 buries a −$106 blip at −$5,000, a third of the chart
+  // wasted under a balance that's essentially $0. Instead bound the bottom at a
+  // nice number scaled to the DIP itself (−niceStep(2·|lo|), always ≤ lo so the
+  // line never clips) and anchor the ticks at 0, keeping a clean zero-based
+  // scale. Mirrors ScrubChart's positive `lo < hi*0.15` pull-to-zero rule.
+  const dipsSlightlyBelowZero = lo < 0 && hi > 0 && -lo < hi * 0.15;
+  const niceMin = dipsSlightlyBelowZero ? Math.max(rangeFloor, -niceStep(-lo * 2)) : rangeFloor;
+  const tickStart = dipsSlightlyBelowZero ? 0 : niceMin;
+
   const ticks: number[] = [];
-  for (let v = niceMin, i = 0; v <= niceMax + step * 1e-6 && i < 200; v += step, i += 1) {
+  for (let v = tickStart, i = 0; v <= niceMax + step * 1e-6 && i < 200; v += step, i += 1) {
     ticks.push(Math.round(v));
   }
   return { domain: [Math.round(niceMin), Math.round(niceMax)], ticks };

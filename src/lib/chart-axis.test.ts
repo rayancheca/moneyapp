@@ -45,6 +45,35 @@ describe("niceLinearTicks", () => {
     expect(niceLinearTicks(0, 6).ticks).toEqual([0, 2, 4, 6]); // rough 1.5 → step 2
     expect(niceLinearTicks(0, 28).ticks).toEqual([0, 10, 20, 30]); // rough 7 → step 10
   });
+
+  test("a tiny sub-zero dip binds the bottom to the dip, not a full range-step below 0 (P0.3)", () => {
+    // real bug: a −$106 Chase overdraft under a $13.1k window (cents) made the
+    // range-step ($5,000) floor the axis to −$5,000 — a third of the chart wasted
+    // below an invisible balance. The bottom should snug to the dip (≈ −$250) and
+    // the scale stay anchored at 0.
+    const { domain, ticks } = niceLinearTicks(-10_600, 1_310_000);
+    expect(domain).toEqual([-25_000, 1_500_000]); // −$250 … $15k, not −$5,000
+    expect(ticks).toEqual([0, 500_000, 1_000_000, 1_500_000]); // 0 is a tick, clean multiples
+    expect(ticks[0]).toBe(0); // zero-anchored
+    expect(domain[0]).toBeLessThanOrEqual(-10_600); // the dip is never clipped
+    expect(domain[0]).toBeGreaterThan(-500_000); // and never a full range-step down
+  });
+
+  test("a dip that is a large fraction of the range keeps the range-step floor", () => {
+    // −$4,800 under $13.1k is a real slice of the window — floor to −$5,000 as
+    // before (the snug rule is only for a NEGLIGIBLE dip).
+    const { domain, ticks } = niceLinearTicks(-480_000, 1_310_000);
+    expect(domain[0]).toBe(-500_000);
+    expect(ticks).toContain(0);
+    expect(ticks).toContain(-500_000);
+  });
+
+  test("an all-negative window is unchanged (the snug rule needs a positive top)", () => {
+    const { domain, ticks } = niceLinearTicks(-1_310_000, -10_600);
+    const norm = (n: number) => n + 0; // normalize -0 → 0 for stable equality
+    expect(domain.map(norm)).toEqual([-1_500_000, 0]);
+    expect(ticks.map(norm)).toEqual([-1_500_000, -1_000_000, -500_000, 0]);
+  });
 });
 
 describe("dateAxisTicks", () => {
