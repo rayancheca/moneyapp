@@ -51,3 +51,39 @@ test("cash-flow view switches chart↔table, updates the URL, and persists", asy
   await page.goto("/spending");
   await expect(page.getByRole("figure", { name: /Income above the axis/ })).toBeVisible();
 });
+
+async function invPillPressed(page: Page, name: "Value" | "Return"): Promise<boolean> {
+  const btn = page.getByRole("group", { name: "Portfolio chart view" }).getByRole("button", { name });
+  return (await btn.getAttribute("aria-pressed")) === "true";
+}
+
+test("portfolio chart switches value↔return, updates the URL, and persists", async ({ page }) => {
+  await page.goto("/investments");
+  const valueChart = page.getByRole("slider", { name: /Portfolio value over time/ });
+  const returnChart = page.getByRole("slider", { name: /Portfolio return over time/ });
+
+  // default view is the value line
+  await expect(valueChart).toBeVisible();
+  expect(await invPillPressed(page, "Value")).toBe(true);
+
+  // switch to return: the URL carries it, the slider relabels to the return line
+  await page.getByRole("group", { name: "Portfolio chart view" }).getByRole("button", { name: "Return" }).click();
+  await expect(page).toHaveURL(/[?&]view=returns\b/);
+  await expect(returnChart).toBeVisible();
+  expect(await invPillPressed(page, "Return")).toBe(true);
+  await expect(valueChart).toHaveCount(0);
+
+  // the return view is accessible (scan the new state)
+  expect(gating(await analyzeSettled(page))).toEqual([]);
+
+  // sticky: a fresh visit with NO view param still shows the return line
+  await page.goto("/investments");
+  await expect(page.getByRole("slider", { name: /Portfolio return over time/ })).toBeVisible();
+  expect(await invPillPressed(page, "Return")).toBe(true);
+
+  // restore the default so sibling specs see the value chart
+  await page.getByRole("group", { name: "Portfolio chart view" }).getByRole("button", { name: "Value" }).click();
+  await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
+  await page.goto("/investments");
+  await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
+});

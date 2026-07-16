@@ -142,3 +142,53 @@ export function simpleReturnPct(startNavCents: number, gainCents: number): numbe
 export function totalReturn(days: readonly PortfolioDay[]): WindowReturn {
   return aggregateReturn(dailyReturns(days));
 }
+
+/** One point on the cumulative-return line (the Robinhood-style "returns" graph). */
+export interface CumulativeReturnPoint {
+  day: string;
+  /** cumulative flow-adjusted $ P/L since the series baseline, in cents (0 at the baseline) */
+  cumGainCents: number;
+  /** cumulative time-weighted return since the baseline, as a percentage (0 at the baseline) */
+  cumTwrPct: number;
+  /** the day's NAV (positions value), in cents — for tooltips / the value overlay */
+  navCents: number;
+  /** cumulative net capital that flowed in since the baseline, in cents */
+  cumNetFlowCents: number;
+  /** true only when every day up to AND including this one had a cent-verified flow */
+  exact: boolean;
+}
+
+/**
+ * The cumulative-return SERIES for a Robinhood-style performance line: one point
+ * per input day, aligned 1:1 with the value series. The first day is the
+ * baseline (0 gain, 0%); each later day chains the same flow-adjusted daily
+ * factor as {@link aggregateReturn}, so deposits never step the line up and the
+ * final point reconciles exactly to {@link totalReturn} (cumGainCents ==
+ * gainCents, cumTwrPct == twrPct). `exact` latches false from the first
+ * approximate day onward, so the tail can be drawn as "estimated".
+ */
+export function cumulativeReturns(days: readonly PortfolioDay[]): CumulativeReturnPoint[] {
+  if (days.length === 0) return [];
+  const out: CumulativeReturnPoint[] = [
+    { day: days[0]!.day, cumGainCents: 0, cumTwrPct: 0, navCents: days[0]!.navCents, cumNetFlowCents: 0, exact: true },
+  ];
+  let product = 1;
+  let gainCents = 0;
+  let netFlowCents = 0;
+  let exact = true;
+  for (const r of dailyReturns(days)) {
+    product *= r.factor;
+    gainCents += r.returnCents;
+    netFlowCents += r.flowCents;
+    if (!r.exact) exact = false;
+    out.push({
+      day: r.day,
+      cumGainCents: gainCents,
+      cumTwrPct: (product - 1) * 100,
+      navCents: r.navCents,
+      cumNetFlowCents: netFlowCents,
+      exact,
+    });
+  }
+  return out;
+}

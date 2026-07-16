@@ -6,7 +6,9 @@ import { CHART_RANGES } from "@/lib/chart-range";
 import { monthKey, todayIso } from "@/lib/dates";
 import { formatMonthYear } from "@/lib/format-date";
 import { carryForwardTo } from "@/lib/price-series";
+import { resolveViewState } from "@/lib/view-state";
 import { listAccounts } from "@/services/accounts";
+import { readSettings } from "@/services/settings";
 import {
   allocationSlices,
   holdingRows,
@@ -20,6 +22,10 @@ import { AllocationDonut } from "@/components/investments/AllocationDonut";
 import { HoldingActionsMenu } from "@/components/investments/HoldingActionsMenu";
 import { PnlCalendar } from "@/components/investments/PnlCalendar";
 import { PortfolioChartPanel } from "@/components/investments/PortfolioChartPanel";
+import {
+  INVESTMENTS_SURFACE,
+  PORTFOLIO_VIEW_SPEC,
+} from "@/components/investments/investments-view-spec";
 import { PortfolioHoldingsTable } from "@/components/investments/PortfolioHoldingsTable";
 import { PortfolioStats } from "@/components/investments/PortfolioStats";
 import { TopMovers } from "@/components/investments/TopMovers";
@@ -40,6 +46,14 @@ export default async function InvestmentsPage({
   const raw = await searchParams;
   const range = rangeSchema.parse(Array.isArray(raw.range) ? raw.range[0] : raw.range);
   const db = getDb();
+  // switchable-view state (NS#2 Pillar 2): URL > persisted preference > default.
+  const portfolioView = resolveViewState(
+    PORTFOLIO_VIEW_SPEC,
+    { view: Array.isArray(raw.view) ? raw.view[0] : raw.view },
+    readSettings(db).viewPreferences[INVESTMENTS_SURFACE],
+  );
+  // preserve a non-default range across a view switch (ALL is the clean default)
+  const viewBaseParams: Record<string, string> = range === "ALL" ? {} : { range };
   const today = todayIso();
   const investmentAccounts = listAccounts(db).filter((a) => a.type === "investment" && a.isActive);
 
@@ -100,7 +114,14 @@ export default async function InvestmentsPage({
       <div className="space-y-6">
         <SurfaceCard>
           {points.length >= 2 ? (
-            <PortfolioChartPanel points={points} returnDays={returnDays} today={today} defaultRange={range} />
+            <PortfolioChartPanel
+              points={points}
+              returnDays={returnDays}
+              today={today}
+              defaultRange={range}
+              viewState={portfolioView}
+              baseParams={viewBaseParams}
+            />
           ) : (
             <p className="py-6 text-sm text-ink-muted">
               A portfolio chart appears once holdings have at least two days of cached prices.

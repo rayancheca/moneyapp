@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   aggregateReturn,
+  cumulativeReturns,
   dailyReturns,
   simpleReturnPct,
   totalReturn,
@@ -159,5 +160,67 @@ describe("totalReturn", () => {
   test("is aggregateReturn over the whole series", () => {
     const days = [d("2026-01-01", 10_000), d("2026-01-02", 10_200), d("2026-01-03", 10_400)];
     expect(totalReturn(days)).toEqual(aggregateReturn(dailyReturns(days)));
+  });
+});
+
+describe("cumulativeReturns", () => {
+  test("empty series → empty line", () => {
+    expect(cumulativeReturns([])).toEqual([]);
+  });
+
+  test("a single day is the baseline: zero gain, zero %, aligned to the day", () => {
+    expect(cumulativeReturns([d("2026-01-01", 10_000)])).toEqual([
+      { day: "2026-01-01", cumGainCents: 0, cumTwrPct: 0, navCents: 10_000, cumNetFlowCents: 0, exact: true },
+    ]);
+  });
+
+  test("one point per input day (1:1 with the value series)", () => {
+    const days = [d("2026-01-01", 10_000), d("2026-01-02", 10_500), d("2026-01-03", 10_600)];
+    expect(cumulativeReturns(days).map((p) => p.day)).toEqual(days.map((x) => x.day));
+  });
+
+  test("accumulates flow-adjusted $ gain across a pure market series", () => {
+    const line = cumulativeReturns([d("2026-01-01", 10_000), d("2026-01-02", 10_500), d("2026-01-03", 10_600)]);
+    expect(line.map((p) => p.cumGainCents)).toEqual([0, 500, 600]);
+  });
+
+  test("a mid-period deposit does not step the line up (deposit ≠ gain)", () => {
+    // NAV doubles on a $100 buy — the returns line must stay flat that day
+    const line = cumulativeReturns([
+      d("2026-01-01", 10_000),
+      d("2026-01-02", 10_000),
+      d("2026-01-03", 20_000, 10_000),
+    ]);
+    expect(line.map((p) => p.cumGainCents)).toEqual([0, 0, 0]);
+    expect(line.at(-1)!.cumTwrPct).toBeCloseTo(0, 10);
+    expect(line.at(-1)!.cumNetFlowCents).toBe(10_000);
+  });
+
+  test("the final point reconciles exactly to totalReturn", () => {
+    const days = [
+      d("2026-01-01", 10_000),
+      d("2026-01-02", 11_000, 500),
+      d("2026-01-03", 12_100),
+    ];
+    const total = totalReturn(days);
+    const last = cumulativeReturns(days).at(-1)!;
+    expect(last.cumGainCents).toBe(total.gainCents);
+    expect(last.cumTwrPct).toBeCloseTo(total.twrPct, 10);
+  });
+
+  test("cumulative TWR chains the daily factors", () => {
+    const days = [d("2026-01-01", 10_000), d("2026-01-02", 11_000), d("2026-01-03", 12_100)];
+    const line = cumulativeReturns(days);
+    expect(line[1]!.cumTwrPct).toBeCloseTo(10, 10); // +10%
+    expect(line[2]!.cumTwrPct).toBeCloseTo(21, 10); // 1.1 * 1.1 - 1 = 21%
+  });
+
+  test("`exact` latches false from the first approximate day onward", () => {
+    const line = cumulativeReturns([
+      d("2026-01-01", 10_000),
+      d("2026-01-02", 10_500, 0, false), // approximate
+      d("2026-01-03", 10_800),
+    ]);
+    expect(line.map((p) => p.exact)).toEqual([true, false, false]);
   });
 });
