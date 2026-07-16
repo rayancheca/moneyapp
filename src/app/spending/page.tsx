@@ -133,7 +133,7 @@ export default async function SpendingPage({
       />
 
       <div className="mb-6">
-        <PeriodSelector period={period} todayMonthKey={today.slice(0, 7)} />
+        <PeriodSelector period={period} today={today} />
       </div>
 
       {!hasActivity ? (

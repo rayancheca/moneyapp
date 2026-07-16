@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/shell/Icon";
 import {
+  currentPeriodLabel,
+  currentPeriodParams,
   stepPeriodParams,
   switchGranularityParams,
   type PeriodGranularity,
@@ -13,13 +15,17 @@ import {
 } from "@/lib/period";
 
 /**
- * The Spending tab's period control (ux-overhaul-plan §5.1): a month ⇄ quarter ⇄
- * year segmented switch, ‹ › paging, a "This month" reset, and a custom
- * from/to range — all URL state, so every view is shareable and the back button
- * works. Pure `@/lib/period` helpers build the hrefs client-side.
+ * The Spending tab's period control (ux-overhaul-plan §5.1): a day ⇄ week ⇄
+ * month ⇄ quarter ⇄ year segmented switch, ‹ › paging, a contextual reset
+ * ("Today" / "This week" / …), and a custom from/to range — all URL state, so
+ * every view is shareable and the back button works. Pure `@/lib/period`
+ * helpers build the hrefs client-side. The bar spans its container: switch
+ * left, pager center, reset + custom right.
  */
 
 const GRANULARITIES: { key: Exclude<PeriodGranularity, "custom">; label: string }[] = [
+  { key: "day", label: "Day" },
+  { key: "week", label: "Week" },
   { key: "month", label: "Month" },
   { key: "quarter", label: "Quarter" },
   { key: "year", label: "Year" },
@@ -35,13 +41,13 @@ function periodHref(basePath: string, params: PeriodParams): string {
 
 interface PeriodSelectorProps {
   period: ResolvedPeriod;
-  /** monthKey of `today` — the "This month" target */
-  todayMonthKey: string;
+  /** today's full ISO date — the contextual reset anchors on it */
+  today: string;
   /** where the period links point (default the Spending tab) */
   basePath?: string;
 }
 
-export function PeriodSelector({ period, todayMonthKey, basePath = "/spending" }: PeriodSelectorProps) {
+export function PeriodSelector({ period, today, basePath = "/spending" }: PeriodSelectorProps) {
   const router = useRouter();
   const [customOpen, setCustomOpen] = useState(false);
   const [from, setFrom] = useState(period.from);
@@ -50,7 +56,10 @@ export function PeriodSelector({ period, todayMonthKey, basePath = "/spending" }
   const triggerRef = useRef<HTMLButtonElement>(null);
   const href = (params: PeriodParams) => periodHref(basePath, params);
 
-  const isThisMonth = period.granularity === "month" && period.key === todayMonthKey;
+  // the reset targets TODAY's period at the ACTIVE granularity (custom → month);
+  // hidden while already looking at it
+  const resetGranularity = period.granularity === "custom" ? "month" : period.granularity;
+  const isOnCurrent = period.granularity !== "custom" && period.isCurrent;
 
   // Dismiss the custom-range panel on Escape (from anywhere) or a click outside
   // it — the expected disclosure affordance regardless of where focus sits.
@@ -82,7 +91,7 @@ export function PeriodSelector({ period, todayMonthKey, basePath = "/spending" }
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-2">
       {/* granularity switch */}
       <nav aria-label="Period granularity" className="flex gap-1 rounded-full bg-surface-sunken p-1">
         {GRANULARITIES.map((g) => {
@@ -92,7 +101,7 @@ export function PeriodSelector({ period, todayMonthKey, basePath = "/spending" }
               key={g.key}
               href={href(switchGranularityParams(period, g.key))}
               aria-current={active ? "true" : undefined}
-              className={`rounded-full px-3 py-1 text-xs transition-colors duration-(--duration-fast) ${
+              className={`rounded-full px-3.5 py-1.5 text-xs transition-colors duration-(--duration-fast) ${
                 active ? "bg-surface-raised font-medium shadow-sm" : "text-ink-muted hover:text-ink"
               }`}
             >
@@ -102,8 +111,8 @@ export function PeriodSelector({ period, todayMonthKey, basePath = "/spending" }
         })}
       </nav>
 
-      {/* pager */}
-      <div className="flex items-center gap-1">
+      {/* pager — centered in the remaining space */}
+      <div className="order-last flex w-full items-center justify-center gap-1 sm:order-none sm:w-auto sm:flex-1">
         <Link
           href={href(stepPeriodParams(period, -1))}
           aria-label="Previous period"
@@ -111,7 +120,7 @@ export function PeriodSelector({ period, todayMonthKey, basePath = "/spending" }
         >
           <Icon name="chevron-left" className="size-4" />
         </Link>
-        <span className="min-w-[8ch] text-center text-sm font-medium tabular-nums" aria-live="polite">
+        <span className="min-w-[12ch] text-center text-sm font-medium tabular-nums" aria-live="polite">
           {period.label}
         </span>
         <Link
@@ -123,17 +132,18 @@ export function PeriodSelector({ period, todayMonthKey, basePath = "/spending" }
         </Link>
       </div>
 
-      {!isThisMonth && (
-        <Link
-          href={href({ period: todayMonthKey })}
-          className="rounded-full px-2.5 py-1 text-xs text-accent transition-colors duration-(--duration-fast) hover:bg-accent-soft"
-        >
-          This month
-        </Link>
-      )}
+      <div className="flex items-center gap-2">
+        {!isOnCurrent && (
+          <Link
+            href={href(currentPeriodParams(resetGranularity, today))}
+            className="rounded-full px-2.5 py-1 text-xs text-accent transition-colors duration-(--duration-fast) hover:bg-accent-soft"
+          >
+            {currentPeriodLabel(resetGranularity)}
+          </Link>
+        )}
 
-      {/* custom range */}
-      <div className="relative">
+        {/* custom range */}
+        <div className="relative">
         <button
           ref={triggerRef}
           type="button"
@@ -188,6 +198,7 @@ export function PeriodSelector({ period, todayMonthKey, basePath = "/spending" }
             </form>
           </div>
         )}
+        </div>
       </div>
     </div>
   );

@@ -137,7 +137,7 @@ export default async function CategoryPage({
       </header>
 
       <div className="mb-6">
-        <PeriodSelector period={period} todayMonthKey={today.slice(0, 7)} basePath={`/categories/${id}`} />
+        <PeriodSelector period={period} today={today} basePath={`/categories/${id}`} />
       </div>
 
       <div className="space-y-6">

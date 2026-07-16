@@ -10,7 +10,7 @@
 import { addDays, compareDates, diffDays, isValidIsoDate, monthKey, periodBounds } from "./dates";
 import { addMonths, monthLabel } from "./calendar-math";
 
-export type PeriodGranularity = "month" | "quarter" | "year" | "custom";
+export type PeriodGranularity = "day" | "week" | "month" | "quarter" | "year" | "custom";
 
 export interface ResolvedPeriod {
   granularity: PeriodGranularity;
@@ -49,6 +49,9 @@ const MONTH_ABBREVS = [
 const MONTH_RE = /^(\d{4})-(\d{2})$/;
 const QUARTER_RE = /^(\d{4})-Q([1-4])$/;
 const YEAR_RE = /^(\d{4})$/;
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** `W2026-07-13` — any in-week date normalizes to its Monday (weekStartsOn: monday) */
+const WEEK_RE = /^W(\d{4}-\d{2}-\d{2})$/;
 
 /** Longest span (days) a custom window buckets by DAY before switching to months. */
 const CUSTOM_DAY_BUCKET_MAX = 45;
@@ -127,6 +130,30 @@ function within(day: string, from: string, to: string): boolean {
   return compareDates(day, from) >= 0 && compareDates(day, to) <= 0;
 }
 
+function dayPeriod(day: string, today: string): ResolvedPeriod {
+  return {
+    granularity: "day",
+    key: day,
+    from: day,
+    to: day,
+    label: customLabel(day, day),
+    isCurrent: day === today,
+  };
+}
+
+/** Monday→Sunday around ANY in-week anchor (periodBounds owns the week math). */
+function weekPeriod(anchor: string, today: string): ResolvedPeriod {
+  const { start, end } = periodBounds(anchor, "weekly");
+  return {
+    granularity: "week",
+    key: `W${start}`,
+    from: start,
+    to: end,
+    label: customLabel(start, end),
+    isCurrent: within(today, start, end),
+  };
+}
+
 /**
  * Resolve the raw URL params into a concrete period. A valid custom `from&to`
  * window wins; otherwise `period` is matched as month → quarter → year;
@@ -149,6 +176,9 @@ export function resolvePeriod(params: PeriodParams, today: string): ResolvedPeri
     if (q) return quarterPeriod(Number(q[1]), Number(q[2]), today);
     const y = YEAR_RE.exec(period);
     if (y) return yearPeriod(Number(y[1]), today);
+    const w = WEEK_RE.exec(period);
+    if (w && isValidIsoDate(w[1]!)) return weekPeriod(w[1]!, today);
+    if (DAY_RE.test(period) && isValidIsoDate(period)) return dayPeriod(period, today);
   }
 
   const [ty, tm] = monthKey(today).split("-").map(Number) as [number, number];
@@ -158,6 +188,10 @@ export function resolvePeriod(params: PeriodParams, today: string): ResolvedPeri
 /** ‹ › paging within the same granularity. Returns fresh URL params. */
 export function stepPeriodParams(period: ResolvedPeriod, delta: number): PeriodParams {
   switch (period.granularity) {
+    case "day":
+      return { period: addDays(period.key!, delta) };
+    case "week":
+      return { period: `W${addDays(period.from, delta * 7)}` };
     case "month":
       return { period: addMonths(period.key!, delta) };
     case "quarter": {
@@ -186,12 +220,53 @@ export function switchGranularityParams(
 ): PeriodParams {
   const [y, m] = period.from.split("-").map(Number) as [number, number, number];
   switch (target) {
+    case "day":
+      return { period: period.from };
+    case "week":
+      return { period: `W${periodBounds(period.from, "weekly").start}` };
     case "month":
       return { period: `${pad(y, 4)}-${pad(m, 2)}` };
     case "quarter":
       return { period: `${pad(y, 4)}-Q${quarterOfMonth(m)}` };
     case "year":
       return { period: pad(y, 4) };
+  }
+}
+
+/** The reset target: TODAY's period at a granularity ("This week" → this week). */
+export function currentPeriodParams(
+  granularity: Exclude<PeriodGranularity, "custom">,
+  today: string,
+): PeriodParams {
+  switch (granularity) {
+    case "day":
+      return { period: today };
+    case "week":
+      return { period: `W${periodBounds(today, "weekly").start}` };
+    case "month":
+      return { period: monthKey(today) };
+    case "quarter": {
+      const [y, m] = today.split("-").map(Number) as [number, number];
+      return { period: `${pad(y, 4)}-Q${quarterOfMonth(m)}` };
+    }
+    case "year":
+      return { period: today.slice(0, 4) };
+  }
+}
+
+/** The reset link's label per granularity ("Today", "This week", …). */
+export function currentPeriodLabel(granularity: Exclude<PeriodGranularity, "custom">): string {
+  switch (granularity) {
+    case "day":
+      return "Today";
+    case "week":
+      return "This week";
+    case "month":
+      return "This month";
+    case "quarter":
+      return "This quarter";
+    case "year":
+      return "This year";
   }
 }
 
@@ -208,6 +283,8 @@ function clamp(day: string, from: string, to: string): string {
  */
 export function subBuckets(period: ResolvedPeriod): PeriodBucket[] {
   const byDay =
+    period.granularity === "day" ||
+    period.granularity === "week" ||
     period.granularity === "month" ||
     (period.granularity === "custom" && diffDays(period.from, period.to) + 1 <= CUSTOM_DAY_BUCKET_MAX);
 

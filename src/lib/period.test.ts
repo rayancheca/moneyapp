@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
+  currentPeriodLabel,
+  currentPeriodParams,
   heatmapInitialMonth,
   quarterBounds,
   quarterOfMonth,
@@ -180,6 +182,76 @@ describe("subBuckets", () => {
         expect(new Date(b[i]!.from).getTime()).toBe(new Date(b[i - 1]!.to).getTime() + 86_400_000);
       }
     }
+  });
+});
+
+describe("week + day granularities (user ask: Week/Day views)", () => {
+  test("a day key resolves to a one-day period", () => {
+    const r = resolvePeriod({ period: "2026-07-16" }, TODAY);
+    expect(r.granularity).toBe("day");
+    expect(r.from).toBe("2026-07-16");
+    expect(r.to).toBe("2026-07-16");
+    expect(r.key).toBe("2026-07-16");
+    expect(r.label).toBe("Jul 16, 2026");
+  });
+
+  test("a week key resolves Monday→Sunday and normalizes any in-week anchor", () => {
+    const monday = resolvePeriod({ period: "W2026-07-13" }, TODAY);
+    expect(monday.granularity).toBe("week");
+    expect(monday.from).toBe("2026-07-13");
+    expect(monday.to).toBe("2026-07-19");
+    expect(monday.key).toBe("W2026-07-13");
+    // a mid-week anchor lands on the SAME canonical week
+    const thursday = resolvePeriod({ period: "W2026-07-16" }, TODAY);
+    expect(thursday.key).toBe("W2026-07-13");
+    expect(thursday.from).toBe("2026-07-13");
+  });
+
+  test("an invalid day/week key falls back to the current month", () => {
+    expect(resolvePeriod({ period: "2026-13-45" }, TODAY).granularity).toBe("month");
+    expect(resolvePeriod({ period: "W2026-99-99" }, TODAY).granularity).toBe("month");
+  });
+
+  test("paging steps a day by 1 and a week by 7", () => {
+    expect(stepPeriodParams(resolvePeriod({ period: "2026-07-16" }, TODAY), 1)).toEqual({ period: "2026-07-17" });
+    expect(stepPeriodParams(resolvePeriod({ period: "2026-07-16" }, TODAY), -1)).toEqual({ period: "2026-07-15" });
+    expect(stepPeriodParams(resolvePeriod({ period: "W2026-07-13" }, TODAY), 1)).toEqual({ period: "W2026-07-20" });
+    expect(stepPeriodParams(resolvePeriod({ period: "W2026-07-13" }, TODAY), -1)).toEqual({ period: "W2026-07-06" });
+  });
+
+  test("switching granularity anchors on the period start", () => {
+    const july = resolvePeriod({ period: "2026-07" }, TODAY);
+    expect(switchGranularityParams(july, "day")).toEqual({ period: "2026-07-01" });
+    // 2026-07-01 is a Wednesday — its week starts Monday 2026-06-29
+    expect(switchGranularityParams(july, "week")).toEqual({ period: "W2026-06-29" });
+    const week = resolvePeriod({ period: "W2026-07-13" }, TODAY);
+    expect(switchGranularityParams(week, "month")).toEqual({ period: "2026-07" });
+  });
+
+  test("subBuckets: a week tiles 7 day buckets, a day is a single bucket", () => {
+    const week = subBuckets(resolvePeriod({ period: "W2026-07-13" }, TODAY));
+    expect(week).toHaveLength(7);
+    expect(week[0]!.from).toBe("2026-07-13");
+    expect(week[6]!.to).toBe("2026-07-19");
+    const day = subBuckets(resolvePeriod({ period: "2026-07-16" }, TODAY));
+    expect(day).toHaveLength(1);
+    expect(day[0]).toMatchObject({ from: "2026-07-16", to: "2026-07-16" });
+  });
+
+  test("currentPeriodParams targets today's period at each granularity", () => {
+    expect(currentPeriodParams("day", "2026-07-16")).toEqual({ period: "2026-07-16" });
+    expect(currentPeriodParams("week", "2026-07-16")).toEqual({ period: "W2026-07-13" });
+    expect(currentPeriodParams("month", "2026-07-16")).toEqual({ period: "2026-07" });
+    expect(currentPeriodParams("quarter", "2026-07-16")).toEqual({ period: "2026-Q3" });
+    expect(currentPeriodParams("year", "2026-07-16")).toEqual({ period: "2026" });
+  });
+
+  test("currentPeriodLabel names each reset", () => {
+    expect(currentPeriodLabel("day")).toBe("Today");
+    expect(currentPeriodLabel("week")).toBe("This week");
+    expect(currentPeriodLabel("month")).toBe("This month");
+    expect(currentPeriodLabel("quarter")).toBe("This quarter");
+    expect(currentPeriodLabel("year")).toBe("This year");
   });
 });
 
