@@ -6,7 +6,16 @@
 > **Every working pass must expand + polish this list and tick off what shipped.**
 > One focused item per session; end each session with a handoff prompt. Dates absolute.
 
-Last updated: 2026-07-15 (pass 14 — **NORTH STAR #2 STARTED.** Pillar 1 (predictions) shipped end-to-end:
+Last updated: 2026-07-16 (pass 15 — **INCOME GROUND TRUTH** established from the user's own
+`Finances 2026.xlsx` hand-tracking. New reference: **[`docs/income-ground-truth.md`](income-ground-truth.md)**
+— the authoritative definition of what counts as income (Fordham DD wages + Knack tutoring + interest;
+aid/dad/cash/transfers excluded). Reconciled + adversarially verified: the app's earned income matches the
+user's own to **1.56%** ✓, but exposed a CONFIRMED regression — a seed rule (`src/db/seed.ts:212`
+"ATM/cash deposit → Salary") re-labels **36 ATM cash rows = $52,625** as wages on every import, inflating
+app income to ~$175k (3.18× the true earned $55,128). Correction proposed, NOT yet applied (needs
+backup + dry-run + user OK). Pass 14 below.)
+
+Prior update: 2026-07-15 (pass 14 — **NORTH STAR #2 STARTED.** Pillar 1 (predictions) shipped end-to-end:
 the pure **`src/lib/projection.ts`** method registry (`2450ea8`) + the **`/spending` projection overlay**
 (`5d3dd1c`) — "On pace for ~$Y · $X so far · $Z last {period}" + a faint prior-period ghost line. Pillar 2
 (switchable views) foundation + first proof: pure **`src/lib/view-state.ts`** (`bc93a91`) + the
