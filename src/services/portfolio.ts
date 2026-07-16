@@ -352,13 +352,29 @@ export function portfolioOverview(db: AppDatabase): PortfolioOverview {
   };
 }
 
+/** The per-leg key of a realized walk — matches a holdingRows row exactly. */
+export function realizedLegKey(accountId: string, assetType: string, symbol: string): string {
+  return `${accountId}|${assetType}|${symbol}`;
+}
+
+export interface PortfolioRealizedPl extends RealizedPnl {
+  /** each (account, assetType, symbol) leg's own walk, keyed by realizedLegKey */
+  byLeg: Map<string, RealizedPnl>;
+}
+
 /**
  * Realized P/L across the whole portfolio: an average-cost walk per
  * (account, symbol) over every holding event, valued at daily closes (the same
  * valuation the NAV/flow engine uses). Estimated — execution prices are not
- * recorded — and flagged inexact when any trade had no close at all.
+ * recorded — and flagged inexact when any trade had no close at all. The
+ * summed shape is unchanged for existing callers; `byLeg` carries each leg's
+ * own figure for the holdings table.
  */
-export function portfolioRealizedPl(db: AppDatabase): RealizedPnl {
+export function portfolioRealizedPl(db: AppDatabase): PortfolioRealizedPl {
+  // (createdAt, id) is the deterministic same-day tiebreak — the avg-cost walk
+  // is intra-day order-sensitive (a same-day buy+sell realizes differently
+  // depending on which runs first), and holdingDetail must provably walk the
+  // SAME sequence so the header, the table, and the holding page reconcile.
   const events = db
     .select({
       accountId: holdingEvents.accountId,
@@ -368,16 +384,57 @@ export function portfolioRealizedPl(db: AppDatabase): RealizedPnl {
       deltaE8: holdingEvents.quantityDeltaE8,
     })
     .from(holdingEvents)
-    .orderBy(asc(holdingEvents.occurredOn))
+    .orderBy(asc(holdingEvents.occurredOn), asc(holdingEvents.createdAt), asc(holdingEvents.id))
     .all();
+  // one ascending close series per symbol (not one query per event); each trade
+  // is valued at the latest close on/before its day, close × 100 UNROUNDED so
+  // the walk's product-rounding matches valueCentsOf to the cent
+  const closesFor = new Map<string, { day: string; close: number }[]>();
+  const seriesOf = (assetType: AssetType, symbol: string): { day: string; close: number }[] => {
+    const key = `${assetType}|${symbol}`;
+    let series = closesFor.get(key);
+    if (!series) {
+      series = db
+        .select({ day: priceCache.quotedOn, close: priceCache.close })
+        .from(priceCache)
+        .where(and(eq(priceCache.symbol, symbol), eq(priceCache.assetType, assetType)))
+        .orderBy(asc(priceCache.quotedOn))
+        .all();
+      closesFor.set(key, series);
+    }
+    return series;
+  };
   const byHolding = new Map<string, ValuedTrade[]>();
   for (const e of events) {
-    const key = `${e.accountId}|${e.assetType}|${e.symbol}`;
+    const key = realizedLegKey(e.accountId, e.assetType, e.symbol);
     const list = byHolding.get(key) ?? [];
-    list.push({ day: e.day, qtyE8: e.deltaE8, closeCents: closeOn(db, e.symbol, e.assetType, e.day) });
+    const close = latestCloseOnOrBefore(seriesOf(e.assetType, e.symbol), e.day);
+    list.push({ day: e.day, qtyE8: e.deltaE8, closeCents: close === null ? null : close * 100 });
     byHolding.set(key, list);
   }
-  return sumRealized([...byHolding.values()].map((trades) => realizedPnl(trades)));
+  const byLeg = new Map<string, RealizedPnl>();
+  for (const [key, trades] of byHolding) byLeg.set(key, realizedPnl(trades));
+  return { ...sumRealized([...byLeg.values()]), byLeg };
+}
+
+/** Binary search: the latest close (dollars) quoted on/before `day`, or null. */
+function latestCloseOnOrBefore(
+  series: readonly { day: string; close: number }[],
+  day: string,
+): number | null {
+  let lo = 0;
+  let hi = series.length - 1;
+  let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (series[mid]!.day <= day) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return found >= 0 ? series[found]!.close : null;
 }
 
 /** Cost-basis (avg-cost) P/L across all priced active holdings — display only. */
@@ -406,6 +463,10 @@ export interface HoldingRow {
   dayChangePct: number | null;
   plCents: number | null;
   plPct: number | null;
+  /** realized P/L locked in by this leg's sells (avg-cost at daily closes); null when no sells */
+  realizedCents: number | null;
+  realizedSellCount: number;
+  realizedExact: boolean;
   allocationPct: number | null;
   /** recent per-day market values (qty × close) for a row sparkline */
   sparkline: number[];
@@ -415,6 +476,7 @@ const SPARK_DAYS = 30;
 
 /** Active holdings across the whole portfolio, with day change, P/L, allocation, sparkline. */
 export function holdingRows(db: AppDatabase): HoldingRow[] {
+  const realizedByLeg = portfolioRealizedPl(db).byLeg;
   const rows = db
     .select({
       accountId: holdings.accountId,
@@ -453,6 +515,7 @@ export function holdingRows(db: AppDatabase): HoldingRow[] {
     const plCents = valueCents !== null && costCents !== null ? valueCents - costCents : null;
     const plPct =
       plCents !== null && costCents !== null && costCents !== 0 ? (plCents / costCents) * 100 : null;
+    const realized = realizedByLeg.get(realizedLegKey(r.accountId, r.assetType, r.symbol));
     const sparkline = closes
       .slice()
       .reverse()
@@ -472,6 +535,9 @@ export function holdingRows(db: AppDatabase): HoldingRow[] {
       dayChangePct,
       plCents,
       plPct,
+      realizedCents: realized && realized.sellCount > 0 ? realized.realizedCents : null,
+      realizedSellCount: realized?.sellCount ?? 0,
+      realizedExact: realized?.exact ?? true,
       sparkline,
     };
   });

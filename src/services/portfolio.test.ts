@@ -16,8 +16,10 @@ import {
   pnlCalendarMonth,
   pnlDayDetail,
   portfolioOverview,
+  portfolioRealizedPl,
   portfolioReturnDays,
   portfolioSeries,
+  realizedLegKey,
   topMovers,
 } from "./portfolio";
 
@@ -179,6 +181,32 @@ describe("holdingRows + topMovers", () => {
     const { winners, losers } = topMovers(bundle.db);
     expect(winners.map((w) => w.symbol)).toContain("AAPL");
     expect(losers).toEqual([]); // ETH flat day3, AAPL up
+  });
+
+  test("realized P/L surfaces per leg and on the holding row after a sell", () => {
+    seedMixedBook();
+    // sell 1 of the 2 AAPL on D3 at the $120 close: avg basis (100+120)/2 = $110
+    upsertHolding(bundle.db, { accountId: brokerage, symbol: "AAPL", assetType: "stock", quantityE8: 100_000_000, avgCostCents: 11_000, occurredOn: D3 });
+
+    const realized = portfolioRealizedPl(bundle.db);
+    expect(realized.realizedCents).toBe(1_000); // $120 − $110 avg basis
+    expect(realized.sellCount).toBe(1);
+    const aaplLeg = realized.byLeg.get(realizedLegKey(brokerage, "stock", "AAPL"))!;
+    expect(aaplLeg.realizedCents).toBe(1_000);
+    expect(aaplLeg.sellCount).toBe(1);
+    // the byLeg parts sum to the portfolio figure
+    const legSum = [...realized.byLeg.values()].reduce((s, p) => s + p.realizedCents, 0);
+    expect(legSum).toBe(realized.realizedCents);
+
+    const rows = holdingRows(bundle.db);
+    const aapl = rows.find((r) => r.symbol === "AAPL")!;
+    expect(aapl.realizedCents).toBe(1_000);
+    expect(aapl.realizedSellCount).toBe(1);
+    expect(aapl.realizedExact).toBe(true);
+    // ETH has no sells → the column reads "—"
+    const eth = rows.find((r) => r.symbol === "ETH")!;
+    expect(eth.realizedCents).toBeNull();
+    expect(eth.realizedSellCount).toBe(0);
   });
 });
 

@@ -18,7 +18,10 @@ export interface ValuedTrade {
   day: string;
   /** signed quantity change × 1e8 — buys positive, sells negative */
   qtyE8: number;
-  /** the day's close in cents per whole unit, or null when unpriced */
+  /** the day's close in cents per whole unit, or null when unpriced. MAY carry
+   *  fractional cents (close × 100 unrounded) — the walk rounds the qty × close
+   *  PRODUCT once, exactly like the NAV's valueCentsOf, so the two conventions
+   *  agree to the cent and a sub-$0.005 asset never fabricates a $0 "exact" walk */
   closeCents: number | null;
 }
 
@@ -34,23 +37,38 @@ export interface RealizedPnl {
   exact: boolean;
 }
 
+/** One realized sale from the average-cost walk — the drill-down row. */
+export interface RealizedSale {
+  day: string;
+  /** quantity actually realized × 1e8 (positive; clamped to what was held) */
+  qtyE8: number;
+  /** proceeds at the sell day's close, in cents */
+  proceedsCents: number;
+  /** the average-cost basis attributed to the sold units, in cents */
+  basisCents: number;
+  /** proceeds − basis, in cents */
+  gainCents: number;
+  /** false when an earlier unpriced trade made the running basis partial */
+  exact: boolean;
+  /** true when the sell exceeded the held quantity (import gap) and was clamped */
+  clamped: boolean;
+}
+
 const centsOf = (qtyE8: number, closeCents: number): number =>
   Math.round((qtyE8 * closeCents) / 1e8);
 
 /**
- * Average-cost realized P/L for ONE holding's chronological trades. Buys grow
- * the basis at their close; each sell realizes proceeds − avg basis of the sold
+ * The average-cost walk over ONE holding's chronological trades. Buys grow the
+ * basis at their close; each sell realizes proceeds − avg basis of the sold
  * units. A sell of more than is held (import gap) is clamped to the held
- * quantity; zero-quantity and unpriced trades are skipped (unpriced ⇒ inexact).
+ * quantity; zero-quantity and unpriced trades are skipped (unpriced ⇒ inexact
+ * from that point on — the running basis is partial).
  */
-export function realizedPnl(trades: readonly ValuedTrade[]): RealizedPnl {
+function walkTrades(trades: readonly ValuedTrade[]): { sales: RealizedSale[]; exact: boolean } {
   let heldE8 = 0;
   let basisCents = 0;
-  let realizedCents = 0;
-  let proceedsCents = 0;
-  let soldBasisCents = 0;
-  let sellCount = 0;
   let exact = true;
+  const sales: RealizedSale[] = [];
 
   for (const t of trades) {
     if (t.qtyE8 === 0) continue;
@@ -65,18 +83,47 @@ export function realizedPnl(trades: readonly ValuedTrade[]): RealizedPnl {
     }
     // sell: realize against the average cost of what is actually held
     const sellE8 = Math.min(-t.qtyE8, heldE8);
-    if (sellE8 <= 0) continue; // selling from an empty book (import gap) — nothing to realize
+    if (sellE8 <= 0) {
+      // selling from an empty book proves buy history is MISSING (an import
+      // gap) — nothing to realize, and the figures are partial, never "exact"
+      exact = false;
+      continue;
+    }
     const basisOut = Math.round((basisCents * sellE8) / heldE8);
     const proceeds = centsOf(sellE8, t.closeCents);
-    realizedCents += proceeds - basisOut;
-    proceedsCents += proceeds;
-    soldBasisCents += basisOut;
+    sales.push({
+      day: t.day,
+      qtyE8: sellE8,
+      proceedsCents: proceeds,
+      basisCents: basisOut,
+      gainCents: proceeds - basisOut,
+      exact,
+      clamped: sellE8 < -t.qtyE8,
+    });
     basisCents -= basisOut;
     heldE8 -= sellE8;
-    sellCount += 1;
   }
 
-  return { realizedCents, proceedsCents, basisCents: soldBasisCents, sellCount, exact };
+  return { sales, exact };
+}
+
+/** Aggregate realized P/L for one holding's trades (see {@link walkTrades}). */
+export function realizedPnl(trades: readonly ValuedTrade[]): RealizedPnl {
+  const { sales, exact } = walkTrades(trades);
+  let realizedCents = 0;
+  let proceedsCents = 0;
+  let soldBasisCents = 0;
+  for (const s of sales) {
+    realizedCents += s.gainCents;
+    proceedsCents += s.proceedsCents;
+    soldBasisCents += s.basisCents;
+  }
+  return { realizedCents, proceedsCents, basisCents: soldBasisCents, sellCount: sales.length, exact };
+}
+
+/** Every realized sale, in trade order — the per-sale drill-down rows. */
+export function realizedSales(trades: readonly ValuedTrade[]): RealizedSale[] {
+  return walkTrades(trades).sales;
 }
 
 /** Sum several holdings' realized P/L into one portfolio figure. */

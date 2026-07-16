@@ -7,10 +7,11 @@ import {
 } from "./holding-cycle";
 
 describe("nextHoldingMetric", () => {
-  test("cycles day % → day $ → total P/L → back", () => {
+  test("cycles day % → day $ → unrealized P/L → realized P/L → back", () => {
     expect(nextHoldingMetric("dayPct")).toBe("dayDollar");
     expect(nextHoldingMetric("dayDollar")).toBe("totalPl");
-    expect(nextHoldingMetric("totalPl")).toBe("dayPct");
+    expect(nextHoldingMetric("totalPl")).toBe("realized");
+    expect(nextHoldingMetric("realized")).toBe("dayPct");
   });
 
   test("cycling the length of the list returns to the start", () => {
@@ -24,6 +25,7 @@ describe("holdingMetricLabel", () => {
   test("labels every metric", () => {
     expect(holdingMetricLabel("dayPct")).toBe("Day %");
     expect(holdingMetricLabel("dayDollar")).toBe("Day change");
-    expect(holdingMetricLabel("totalPl")).toBe("Total P/L");
+    expect(holdingMetricLabel("totalPl")).toBe("Unrealized P/L");
+    expect(holdingMetricLabel("realized")).toBe("Realized P/L");
   });
 });

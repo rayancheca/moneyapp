@@ -10,6 +10,7 @@ import { readSettings } from "@/services/settings";
 import { HoldingChartPanel } from "@/components/investments/HoldingChartPanel";
 import { HoldingEventsList } from "@/components/investments/HoldingEventsList";
 import { PositionCard } from "@/components/investments/PositionCard";
+import { RealizedSalesList } from "@/components/investments/RealizedSalesList";
 import {
   HOLDING_SURFACE,
   HOLDING_VIEW_SPEC,
@@ -98,6 +99,9 @@ export default async function HoldingPage({
         </SurfaceCard>
 
         <PositionCard detail={detail} />
+        {detail.realized.sellCount > 0 && (
+          <RealizedSalesList sales={detail.realizedSales} totals={detail.realized} />
+        )}
         <HoldingEventsList
           events={detail.events}
           eventsTotal={detail.eventsTotal}

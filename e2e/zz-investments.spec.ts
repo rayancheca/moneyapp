@@ -44,6 +44,20 @@ test("keyboard scrub moves the hairline and announces the point", async ({ page 
   expect(afterText).toMatch(/\$[\d,]+/); // still a money value text
 });
 
+test("the metric column cycles to Realized P/L ('—' until a sell exists)", async ({ page }) => {
+  await gotoInvestments(page);
+  // tap the cycling header: Day % → Day change → Unrealized P/L → Realized P/L
+  const cycle = () => page.getByRole("button", { name: /Tap to cycle metric/ }).click();
+  await cycle();
+  await cycle();
+  await expect(page.getByRole("button", { name: /Unrealized P\/L/ })).toBeVisible();
+  await cycle();
+  await expect(page.getByRole("button", { name: /Realized P\/L/ })).toBeVisible();
+  // the fixture book has no sells — every row honestly reads "—"
+  const table = page.getByRole("table");
+  await expect(table.getByTitle(/No sells yet/).first()).toBeVisible();
+});
+
 test("a holding page renders trade marks on the price chart", async ({ page }) => {
   await gotoInvestments(page);
   const href = await page.locator('a[href^="/investments/"]').first().getAttribute("href");

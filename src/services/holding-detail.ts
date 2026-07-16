@@ -8,6 +8,14 @@ import { compareDates, todayIso } from "@/lib/dates";
 import { holdingReturnDays } from "@/lib/holding-returns";
 import type { PortfolioDay } from "@/lib/portfolio-returns";
 import { carryForwardTo } from "@/lib/price-series";
+import {
+  realizedPnl,
+  realizedSales,
+  sumRealized,
+  type RealizedPnl,
+  type RealizedSale,
+  type ValuedTrade,
+} from "@/lib/realized-pnl";
 import { ledgerHref } from "./analytics";
 import { holdingRows } from "./portfolio";
 import { valueCentsOf } from "./holdings";
@@ -82,6 +90,10 @@ export interface HoldingDetail {
   /** flow-adjusted daily series for THIS holding (aggregated across accounts) —
    *  feeds the Return view exactly like portfolioReturnDays feeds the hero */
   returnDays: PortfolioDay[];
+  /** realized P/L locked in by sells — avg-cost walk PER ACCOUNT at daily closes */
+  realized: RealizedPnl;
+  /** every realized sale across accounts, ascending by day (the drill-down rows) */
+  realizedSales: RealizedSale[];
   /** most recent trades (capped); `eventsTotal` is the full count */
   events: HoldingEventRow[];
   eventsTotal: number;
@@ -134,11 +146,13 @@ export function holdingDetail(
     .where(and(eq(holdings.symbol, symbol), eq(holdings.assetType, assetType)))
     .all();
 
+  // (createdAt, id) tiebreak matches portfolioRealizedPl exactly — the avg-cost
+  // walk is same-day order-sensitive, and this page must reconcile with the header
   const events = db
     .select()
     .from(holdingEvents)
     .where(and(eq(holdingEvents.symbol, symbol), eq(holdingEvents.assetType, assetType)))
-    .orderBy(asc(holdingEvents.occurredOn), asc(holdingEvents.createdAt))
+    .orderBy(asc(holdingEvents.occurredOn), asc(holdingEvents.createdAt), asc(holdingEvents.id))
     .all();
 
   if (holdingLegs.length === 0 && events.length === 0) {
@@ -209,6 +223,37 @@ export function holdingDetail(
       ? ((latest.close - previous.close) / previous.close) * 100
       : null;
 
+  // realized P/L: an avg-cost walk PER ACCOUNT (each account keeps its own basis
+  // book, matching portfolioRealizedPl), every trade valued at the latest close
+  // on/before its day — so this card reconciles with the portfolio header.
+  const carriedCloseCents = (day: string): number | null => {
+    let lo = 0;
+    let hi = closes.length - 1;
+    let found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (closes[mid]!.quotedOn <= day) {
+        found = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    // × 100 UNROUNDED — the walk rounds the qty × close product once (valueCentsOf)
+    return found >= 0 ? closes[found]!.close * 100 : null;
+  };
+  const tradesByAccount = new Map<string, ValuedTrade[]>();
+  for (const e of events) {
+    const list = tradesByAccount.get(e.accountId) ?? [];
+    list.push({ day: e.occurredOn, qtyE8: e.quantityDeltaE8, closeCents: carriedCloseCents(e.occurredOn) });
+    tradesByAccount.set(e.accountId, list);
+  }
+  const accountWalks = [...tradesByAccount.values()];
+  const realized = sumRealized(accountWalks.map((trades) => realizedPnl(trades)));
+  const allSales = accountWalks
+    .flatMap((trades) => realizedSales(trades))
+    .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+
   const marks: HoldingEventMark[] = events.map((e) => ({
     day: e.occurredOn,
     kind: e.quantityDeltaE8 >= 0 ? "buy" : "sell",
@@ -275,6 +320,8 @@ export function holdingDetail(
       events.map((e) => ({ day: e.occurredOn, deltaE8: e.quantityDeltaE8 })),
       closes.map((c) => ({ day: c.quotedOn, close: c.close })),
     ),
+    realized,
+    realizedSales: allSales,
     events: eventRows,
     eventsTotal: events.length,
     allTradesHref: linkEvents ? ledgerHref({ account: singleAccount, q: symbol }) : null,

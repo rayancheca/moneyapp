@@ -101,6 +101,55 @@ describe("holdingDetail", () => {
     expect(d.valueCents).toBe(24_000); // 2 × $120, unchanged by the carry-forward
   });
 
+  test("no sells → an empty realized book (the drill-down card stays hidden)", () => {
+    const d = holdingDetail(bundle.db, "stock", "AAPL", "2026-03-04");
+    expect(d.realized.sellCount).toBe(0);
+    expect(d.realizedSales).toEqual([]);
+  });
+
+  test("a sell realizes proceeds − avg-cost basis at the day's close, with a drill-down row", () => {
+    // sell 1 of the 2 shares on 2026-03-04 (close $120); basis = ($100+$120)/2
+    upsertHolding(bundle.db, { accountId: brokerage, symbol: "AAPL", assetType: "stock", quantityE8: 100_000_000, avgCostCents: 11_000, occurredOn: "2026-03-04" });
+    const d = holdingDetail(bundle.db, "stock", "AAPL", "2026-03-04");
+    expect(d.realized.realizedCents).toBe(1_000);
+    expect(d.realized.sellCount).toBe(1);
+    expect(d.realized.exact).toBe(true);
+    expect(d.realizedSales).toEqual([
+      {
+        day: "2026-03-04",
+        qtyE8: 100_000_000,
+        proceedsCents: 12_000,
+        basisCents: 11_000,
+        gainCents: 1_000,
+        exact: true,
+        clamped: false,
+      },
+    ]);
+  });
+
+  test("a symbol held in TWO accounts keeps a basis book per account (never blended)", () => {
+    // second brokerage: buy 1 AAPL on 03-02 (close $100), sell it on 03-04 ($120)
+    const second = createAccount(bundle.db, {
+      institutionId: bundle.db.select().from(institutions).get()!.id,
+      name: "Second Brokerage",
+      type: "investment",
+      subtype: "brokerage",
+    });
+    upsertHolding(bundle.db, { accountId: second, symbol: "AAPL", assetType: "stock", quantityE8: 100_000_000, avgCostCents: 10_000, occurredOn: "2026-03-02" });
+    upsertHolding(bundle.db, { accountId: second, symbol: "AAPL", assetType: "stock", quantityE8: 0, avgCostCents: 10_000, occurredOn: "2026-03-04" });
+    // first account: sell 1 of its 2 on 03-04 (avg basis (100+120)/2 = $110)
+    upsertHolding(bundle.db, { accountId: brokerage, symbol: "AAPL", assetType: "stock", quantityE8: 100_000_000, avgCostCents: 11_000, occurredOn: "2026-03-04" });
+
+    const d = holdingDetail(bundle.db, "stock", "AAPL", "2026-03-04");
+    // account A: $120 − $110 avg = +$10; account B: $120 − ITS OWN $100 basis =
+    // +$20 → +$30 total. A blended single book (basis (100+100+120)/3 ≈ $106.67
+    // per sale) would report ≈$26.67 — this pins the per-account invariant.
+    expect(d.realized.sellCount).toBe(2);
+    expect(d.realized.realizedCents).toBe(3_000);
+    expect(d.realizedSales.map((s) => s.day)).toEqual(["2026-03-04", "2026-03-04"]);
+    expect(d.realizedSales.map((s) => s.basisCents).sort((a, b) => a - b)).toEqual([10_000, 11_000]);
+  });
+
   test("throws on an unknown symbol or asset type (→ notFound)", () => {
     expect(() => holdingDetail(bundle.db, "stock", "ZZZZ")).toThrow(UnknownHoldingError);
     expect(() => holdingDetail(bundle.db, "bogus", "AAPL")).toThrow(UnknownHoldingError);

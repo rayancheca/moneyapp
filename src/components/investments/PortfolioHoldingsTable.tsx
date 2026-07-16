@@ -50,6 +50,37 @@ export function PortfolioHoldingsTable({ rows }: { rows: HoldingRow[] }) {
     if (metric === "dayDollar") {
       return r.dayChangeCents !== null ? <Money cents={r.dayChangeCents} flow /> : <span className="text-ink-faint">—</span>;
     }
+    if (metric === "realized") {
+      // avg-cost P/L locked in by this leg's sells, at daily closes; ≈ marks a
+      // walk that skipped an unpriced trade
+      return r.realizedCents !== null ? (
+        <span className="inline-flex flex-col items-end">
+          <Money cents={r.realizedCents} flow />
+          <span
+            className="text-[11px] text-ink-faint"
+            title={
+              r.realizedExact
+                ? "Locked in by sells — estimated at daily closes"
+                : "Estimated at daily closes — some trades lack a cached price or predate the recorded buys"
+            }
+          >
+            {r.realizedExact ? "" : "≈ "}
+            {r.realizedSellCount} sell{r.realizedSellCount === 1 ? "" : "s"}
+          </span>
+        </span>
+      ) : (
+        <span
+          className="text-ink-faint"
+          title={
+            r.realizedExact
+              ? "No sells yet — realized P/L appears after a sale"
+              : "Realized P/L unavailable — recorded sells predate their buys or lack a cached price"
+          }
+        >
+          —
+        </span>
+      );
+    }
     return r.plCents !== null ? (
       <span className="inline-flex flex-col items-end">
         <Money cents={r.plCents} flow />
@@ -133,7 +164,7 @@ export function PortfolioHoldingsTable({ rows }: { rows: HoldingRow[] }) {
       columns={columns}
       rows={sorted}
       rowKey={(r) => `${r.accountId}-${r.symbol}`}
-      caption="Portfolio holdings with price, day change or profit and loss, and allocation"
+      caption="Portfolio holdings with price, day change, unrealized or realized profit and loss, and allocation"
       sort={sort}
       onSortChange={setSort}
       rowHref={(r) => `/investments/${r.assetType}/${r.symbol}`}
