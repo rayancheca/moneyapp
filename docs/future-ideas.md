@@ -6,7 +6,14 @@
 > **Every working pass must expand + polish this list and tick off what shipped.**
 > One focused item per session; end each session with a handoff prompt. Dates absolute.
 
-Last updated: 2026-07-15 (pass 12 — P0.2 + P0.4 + P0.5a SHIPPED. User dropped 4 Chase 3522 2023
+Last updated: 2026-07-15 (pass 13 — **P0.3 y-axis fix SHIPPED**; **investment charts now carry
+prices forward to today** (per-holding price + portfolio value, dashed estimated tail) and the
+**"Refresh prices" button pulls a live quote at press time** (force + toast + "as of" stamp);
+**Deployment & Hosted-DB plan researched + written** (see the 🚀 section — the crux: a Turso move
+forces an async rewrite of ~68 files, so it is NOT a drop-in; Path B persistent-disk host is the
+lower-risk alternative). Next: Monarch Money deep-dive doc (in progress). Pass 12 below.
+
+Pass 12 — P0.2 + P0.4 + P0.5a SHIPPED. User dropped 4 Chase 3522 2023
 statements + a July Venture X statement; imported to the real db (backup + guards): Chase 2023
 gaps closed (P0.2), Venture X merged as 4208 (card reissued from 4147), and the transfer detector
 — rewritten over FOUR adversarial review rounds to pair only on two-sided/structural evidence,
@@ -64,15 +71,13 @@ Use this to VALIDATE every chart/number. Money mechanics, in the user's own word
   (May→Dec), gap days in 2023-06-13..11-10 went 58 → 0, all reconciled to the cent. The
   "Oct–Nov 2023 drop to $0/−$106" dip on the chart is resolved (begin $9,792.80 → end $972.47,
   matching the move into brand-new SoFi Savings). Was: CONFIRMED coverage gap, not lost money.
-- [ ] **P0.3 — y-axis −$5k padding bug** (CONFIRMED, exact mechanism): with window min
-  −$106 / max ≈ $13.1k, `niceLinearTicks` (src/lib/chart-axis.ts:40) picks step $5,000 and
-  floors the bottom OUT a full step: `floor(−106/5000)×5000 = −5000` — a tiny overdraft
-  drags the axis a third of the chart below zero. **Fix (pure lib, 100% covered):** when
-  `lo < 0` and `|lo|` is small vs the range (mirror the existing `lo > 0 && lo < hi*0.15`
-  pull-to-zero rule at ScrubChart.tsx:248), bound the bottom at a nice number scaled to
-  `|lo|` (e.g. `-niceStep(|lo|·2)` → −$106 becomes −$250), not the range step; keep 0 as a
-  tick. TDD cases: (−106, 13_100) → bottom −250-ish; (−4_800, 13_100) → unchanged behavior;
-  all-positive and all-negative windows unchanged. Chart e2e baselines will regen.
+- [x] **P0.3 — y-axis −$5k padding bug — SHIPPED (pass 13, commit `97b4636`).** `niceLinearTicks`
+  (src/lib/chart-axis.ts) floored the domain a full range-step below 0 when a window dipped just
+  under $0 (a −$106 Chase overdraft under a $13.1k window picked step $5,000 → bottom −$5,000). Fix:
+  when `lo < 0 && hi > 0 && |lo| < hi*0.15`, the bottom binds to `-niceStep(2·|lo|)` (always ≤ lo so
+  the line never clips) and the ticks anchor at 0 — a clean zero-based scale. Larger dips and
+  all-positive/all-negative windows are byte-identical. 3 new unit tests; **no e2e baseline change**
+  (the fixture's charted windows stay above zero — the fix only bites the real Chase-overdraft data).
 - [x] **P0.4 — SoFi OVERDRAFT pairs auto-paired + cleared — SHIPPED (pass 12, commit `c185d6d`).**
   The 240+240 same-day `OVERDRAFT FROM SAVINGS - 5791` / `OVERDRAFT TO CHECKING - 9067` mirror
   pairs (ground truth §7) now auto-pair (they're same-day descriptor-symmetric mirrors —
@@ -351,6 +356,28 @@ financial data; then iOS.
 
 ## 🎯 Active priorities (this thread)
 
+- [x] **Investments — daily price carry-forward to today (pass 13, commit `5890c14`).** The
+  per-holding price chart + the portfolio value chart were built straight from the price
+  cache / daily balances, so they FROZE at the last quoted/rebuilt day ("the ETH price graph
+  ends July 10"). New pure lib `src/lib/price-series.ts` `carryForwardTo(points, today)` extends
+  a series flat to today: real points stay solid, the tail past the last real day repeats the last
+  value tagged `complete:false` → drawn dashed ("estimated — no fresher price"). Wired into
+  `holdingDetail.priceSeries` (today param) + the portfolio value series on /investments. Header
+  stats / TWR stay on the REAL series. Derivation (`rebuildInvestmentHistory`) already extends
+  daily_balances to today when rebuilt, so no change there. No e2e churn (fixture prices reach the
+  pinned today). FOLLOW-UP: the investment ACCOUNT-detail chart (accounts/[id]) still stops at the
+  last cached day — `accountSeries` feeds `buildPortfolio`, so extend it at the page layer only if
+  wanted (not the named complaint).
+- [x] **Investments — live "Refresh prices" button (pass 13, commit next).** `refreshPrices`
+  gained `force` (bypasses the priceStalenessHours skip so a manual press pulls a LIVE quote at the
+  exact press time) + `asOf` (the fetch timestamp). `refreshPricesAction` now returns a structured
+  `ActionResult<RefreshPricesSummary>`; the button is a client component (`useTransition`) with a
+  spinner, an "Updated <time>" stamp, and an outcome toast (positive / neutral-partial / negative /
+  up-to-date). Provider outages still degrade to cached prices (no partial writes — quotes are
+  written in a per-provider transaction after the fetch). Adversarial review (4 lenses) → fixed 1
+  low finding (the partial toast overcounted a single provider outage as "N sources" — now says
+  "some sources were unreachable", no misleading count). `MONEYAPP_FAKE_PRICES` still serves
+  dev/e2e; the live path hits Yahoo/Coinbase. +1 `force` unit test.
 - [x] **Data-correctness review (2026-07-13, pass 8)** — user-directed triage of the opaque income
   + the SoFi backfill. Applied via `data/categorize-review-2026-07-13.ts` (backup
   `data/backups/pre-catreview-2026-07-13.db`; in-txn net-worth/integrity/count guards → rollback on
@@ -724,7 +751,176 @@ real uploads; the rest of the 7296-txn data came via the `data/*rebuild*.ts` scr
   3-month-ago derived balance was ~$7). Consider suppressing/soft-capping the % when the
   baseline is below a threshold (same honesty spirit as the net-worth partial-% suppression).
 
+## 🚀 DEPLOYMENT & HOSTED-DB — the plan (researched pass 13, 2026-07-15; **IMPLEMENT next pass**)
+
+> **User goal (verbatim intent):** host the DB on a free online database as the SINGLE
+> SOURCE OF TRUTH; every uploaded statement gets parsed and stored in the hosted DB
+> (originals kept in the same per-account "folder" structure); the dashboard always reads
+> the hosted DB; accessible at all times from any device incl. phone (ties into
+> `docs/phone-remote-access-plan.md`). Security: the user "doesn't care" — but they SHOULD
+> (see §Auth). This section is the researched plan; **do NOT implement it until it's chosen.**
+
+### ⚠️ The one finding that reshapes everything — this is NOT a "near-drop-in"
+
+The app is built **entirely on synchronous `better-sqlite3`** (via `drizzle-orm/better-sqlite3`).
+A hosted Turso/libSQL DB is reachable only through `@libsql/client` + `drizzle-orm/libsql`,
+whose driver is **Promise-based end to end** — every `.get()/.all()/.run()` and every
+`db.transaction(cb)` returns a Promise. Moving to remote Turso therefore forces an
+**async rewrite of the entire data layer**, measured on this repo (pass-13 audit):
+- **68 non-test files** call `.get()/.all()/.run()` (≈305 / 152 / 98 raw call sites); 32 of
+  them are RSC pages / server actions under `src/app`.
+- **27 `db.transaction((tx) => {…})` sites in 15 files** use a *synchronous* callback (the
+  only kind better-sqlite3 supports) — each must become `async (tx) => { await tx… }`. Some
+  loop `tx.get()`/`tx.run()` inside one atomic block (categorize.ts pairing commit,
+  bulk-edit undo batches, derivation rebuilds) and need careful await-ing to stay atomic.
+- Every plain-sync service helper that returns a db result must become `async`, and every
+  caller up the chain awaits it. Mechanical but invasive; **the largest single cost of Path A.**
+
+So `src/db/client.ts` is a small change; the **68-file async ripple is the real work.** Two
+honest paths follow — pick one before implementing.
+
+### Path A — Turso + Vercel + Blob (the user's stated architecture) — HIGH effort
+
+**A1. DB → Turso (hosted libSQL, free tier).** Free tier = **5 GB storage · 500M row
+reads/mo · 10M row writes/mo** (turso.tech/pricing) — a single-user ledger (~10k txns) uses a
+sliver of that. Changes:
+- `src/db/client.ts`: replace `new Database(path)` + `drizzle-orm/better-sqlite3` with
+  ```ts
+  import { createClient } from "@libsql/client";
+  import { drizzle } from "drizzle-orm/libsql";
+  const client = createClient({ url: process.env.TURSO_DATABASE_URL!, authToken: process.env.TURSO_AUTH_TOKEN });
+  export const db = drizzle(client, { schema });
+  ```
+- Drop the `journal_mode=WAL` / `busy_timeout` / `foreign_keys` pragmas + `fs.mkdirSync` (no
+  local file). **Move `migrate()` OUT of the boot/request path** into a deploy-time CI step
+  (`drizzle-kit push`, or `drizzle-orm/libsql/migrator` run once) — running it per cold start
+  against a remote DB has no lock and races concurrent invocations.
+- The `globalThis.__moneyappDb` singleton can stay (harmless) but gives no cross-invocation
+  guarantee on serverless.
+- **Then: the 68-file async rewrite** (above). This is the bulk of Path A.
+- Keep the local-file better-sqlite3 path for **dev/e2e/tests** (they must stay offline +
+  synchronous + deterministic under `MONEYAPP_FAKE_TODAY`/`MONEYAPP_FAKE_PRICES`). A remote
+  Turso in the e2e harness would be non-deterministic and slow — so this is a driver *switch by
+  env*, not a wholesale replacement: local file (better-sqlite3, sync) for dev/test, libsql
+  (async) for prod. **The sync/async split is the hard part** — the app code must be async
+  everywhere and better-sqlite3 also has a sync API, so the cleanest route is: rewrite to async,
+  and back dev/e2e with libsql's *local file* mode (`createClient({ url: "file:data/e2e.db" })`)
+  which IS async too — so ONE async code path serves both. (Embedded replicas are also async;
+  same conclusion.) Verify determinism/perf of libsql-local in the e2e harness early.
+
+**A2. Original statement files → Vercel Blob (private).** Serverless has **no writable
+persistent disk** (only per-instance, wiped `/tmp`). The archive today is local-fs only —
+`src/services/import/service.ts`: `statementsRoot()` → `archiveTo(folder, name, buf)` (writes
+`data/statements/<slug>/<sha16>-<name>`) → `relocateArchive()` into the per-account folder
+resolved by `resolveArchiveFolder()` (1 acct → `accountSlug`, >1 → `<institution>-combined`,
+parse-fail → institution bucket) → `importFiles.storagePath` persisted. **Good news from the
+audit: `storage_path` is WRITE-ONLY** — no route/page ever reads the bytes back (no download
+route exists), so there is no "serve to browser" path to rewire; only the write/relocate path
+needs abstracting. Plan:
+- New `src/services/storage/archive-storage.ts` — an `ArchiveStorage` interface keyed by the
+  SAME backend-agnostic string `<slug>/<sha16>-<name>` (forward-slash joined, NOT `path.join`):
+  `put(key, buf)`, `exists(key)`, `move(from, to)`, `remove(key)`, `read(key)` (read unused
+  today — keep for a future download route). `resolveArchiveFolder()` + `archiveName` are
+  UNCHANGED; only the fs calls move behind the interface. `migrateStorageLayout()` (currently
+  sync, test-only) becomes async.
+- `LocalDiskArchiveStorage(root=statementsRoot())` wraps today's fs logic 1:1 → dev/e2e/tests
+  keep working via `MONEYAPP_ORIGINALS_DIR` unchanged, and `storage_path = path.join(root, key)`
+  keeps existing DB rows + tests byte-identical.
+- `VercelBlobArchiveStorage` uses `@vercel/blob` (new dep) with a **PRIVATE** store
+  (`put(key, buf, { access: "private", addRandomSuffix: false })`) — financial PII must never
+  be a guessable public URL. Auth via injected OIDC on Vercel, or `BLOB_READ_WRITE_TOKEN` off-box.
+  Uploads through a server action are fine for small PDFs, but the **function body limit is
+  4.5 MB** (413 `FUNCTION_PAYLOAD_TOO_LARGE`) — for large statements use Blob **client uploads**
+  (browser → Blob directly) to bypass it. If a download/view feature is ever added, read the
+  bytes in an **authenticated route handler** next to `get(key, { access: "private" })` with
+  `Cache-Control: private, no-store` — never a shared-CDN cache, never middleware-only auth.
+- **DB backups** (`src/db/backup.ts` nightly `sqlite.backup()` → `data/backups/`) also assume
+  local disk — on Turso, drop the local snapshot and rely on Turso's own backups / a scheduled
+  `turso db dump` (or a cron `--from-db` snapshot). Un-gate its Settings UI accordingly.
+
+**A3. App → Vercel (Hobby, free).** RSC + server actions + `force-dynamic` map cleanly to
+Vercel Functions (each request = one invocation; Fluid compute). Hobby limits are ample:
+300 s max duration, 2 GB / 1 vCPU, single region `iad1`. Personal-but-financial single-user
+use fits Hobby's non-commercial terms. **Deploy-blocker to fix first (see A5).** Env:
+`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `BLOB_READ_WRITE_TOKEN` (or OIDC), the auth secret(s).
+
+**A4. AUTH — non-negotiable; recommend a single-user passcode + signed-cookie middleware.**
+Options weighed (pass-13 research):
+- ❌ **Vercel Password Protection** — a real password wall is **Pro add-on ($150/mo) or
+  Enterprise**, not free on Hobby. Vercel *Authentication* (free) ties access to a Vercel login
+  and Hobby allows only one external user, and Standard Protection may leave the production
+  alias publicly reachable. Awkward + doesn't cleanly lock the prod URL.
+- ✅ **Single-user middleware guard (RECOMMENDED)** — `middleware.ts` checks a signed httpOnly
+  session cookie; absent → redirect to `/login`, which compares the passcode against an
+  argon2/scrypt/bcrypt hash in an env var, then sets `httpOnly; Secure; SameSite=Lax` HMAC-signed
+  cookie (or `iron-session`). ~20 lines, $0, no third party, fully yours. (Plain HTTP Basic is the
+  minimum variant but has no logout + clunky UX — the passcode-cookie is the sweet spot.)
+- ⚖️ **Passkey/magic-link (Auth.js)** — most robust, but overkill for one user (adds a dep +
+  session table + WebAuthn/email plumbing). Choose only for account-grade/multi-device auth.
+- **WHY it's non-negotiable even though the user "doesn't care":** this app exposes bank
+  balances, account/last-4s, full transaction history, and downloadable statements — a complete
+  financial-identity dossier. "Nobody knows the URL" is NOT a control: every TLS cert Vercel
+  issues is published in public Certificate Transparency logs and scraped within minutes,
+  `*.vercel.app` hosts are continuously enumerated, and URLs leak via Referer/history/sync. One
+  unauthenticated endpoint returning a statement = irreversible PII disclosure (identity theft,
+  ATO, targeted phishing). The fix costs ~20 lines + one env hash; the downside is unbounded.
+  **The owner's indifference doesn't lower the third-party risk — ship auth or don't ship.**
+
+**A5. 🚨 Deploy-blocker: `src/middleware.ts` rejects any non-localhost `Host`.** Today it
+hard-403s any `Host` header that isn't `localhost`/`127.0.0.1` (a DNS-rebinding defense for a
+deliberately loopback-only, unauthenticated app; `dev`/`start` even bind `-H 127.0.0.1`). On
+Vercel this **403s 100% of production traffic** regardless of any DB/blob work. It must be
+replaced by the A4 auth guard (allow the real prod host + require the session cookie). Keep the
+existing security headers (HSTS/nosniff/frame-deny/referrer/permissions) — they're already good.
+
+**A6. One-time MIGRATION (reversible + verified).**
+1. Back up first: `data/backups/pre-turso-migration.db` (copy the live file).
+2. Create the Turso DB from the local file in one shot (≤2 GB):
+   `turso db create moneyapp --from-file ./data/moneyapp.db` (or `--from-dump ./dump.sql` from
+   `sqlite3 data/moneyapp.db .dump`). `turso db tokens create moneyapp` → `TURSO_AUTH_TOKEN`.
+3. Upload `data/statements/*` to the Blob store under the SAME `<slug>/<sha16>-<name>` keys;
+   `UPDATE import_files SET storage_path = <blob-key>` (a one-off script; keys are identical so
+   it's a prefix swap, not a re-derivation).
+4. **Verify to the cent:** row counts per table, net worth @ today, `PRAGMA integrity_check`,
+   statement-period reconciliation, and a spot-read of a few blob keys — Turso vs the local
+   backup must match before flipping DNS.
+5. **Rollback:** keep the local file + `pre-turso-migration.db`; `turso db create` a
+   `--from-db` snapshot before each risky change; the app can point back at the local file by
+   env in minutes. Blob objects are additive (never deleted on rollback).
+
+**A7. Cost check + rollback story.** All free: Turso free tier (5 GB / 500M reads / 10M writes),
+Vercel Hobby, Vercel Blob free allotment (or Cloudflare R2 — ~10 GB + zero egress — as a
+portable, egress-free alternative). Rollback = revert env to the local-file driver + keep the
+pre-migration backup; nothing is destructive if the local file is preserved.
+
+### Path B — persistent-disk host (Fly.io / Railway / a small VPS) — LOW-MEDIUM effort, **recommended to consider first**
+
+Because Path A's async rewrite touches 68 files, the honest lower-risk alternative is to deploy
+the app **essentially as-is** on a host with a **persistent volume**, keeping the entire
+synchronous `better-sqlite3` data layer + the local statement archive + local backups untouched:
+- Fly.io / Railway (both have free/cheap tiers) or a $5 VPS, with a mounted volume for
+  `data/` (the DB file + `data/statements/` + `data/backups/`). Zero data-layer code change.
+- Add the **same A4 auth** + fix the **A5 middleware Host guard** (allow the deployed host).
+- Off-box durability: **Litestream** (continuous SQLite replication to S3/R2) or a Turso
+  **embedded replica** for backup — without rewriting the app to async.
+- Tradeoff: it's a single always-on instance (not serverless autoscale), and you manage the
+  volume — but it ships the "hosted, single source of truth, any device incl. phone" goal with a
+  fraction of Path A's code risk. iOS/phone access works the same (it's just a URL).
+
+**Recommendation:** the user's premise ("libSQL is a near-drop-in") is not true for this
+codebase — Path A is a real project (the 68-file async rewrite), Path B ships the same
+user-visible goal far faster. **Present both to the user and let them choose next pass.** If
+they specifically want Vercel serverless / the cloud-native shape, do Path A; if they want it
+hosted-and-private soonest, do Path B (then Path A can follow later without urgency). Either
+way: **AUTH + the middleware Host fix are mandatory before any public exposure**, and the
+per-account "folder" structure is preserved in both (local volume in B, Blob keys in A).
+
+**Env vars summary (Path A):** `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `BLOB_READ_WRITE_TOKEN`
+(or OIDC), `SESSION_SECRET` + `AUTH_PASSCODE_HASH`. Keep all `MONEYAPP_*` (DB_PATH, ORIGINALS_DIR,
+BACKUPS_DIR, SKIP_BACKUP, FAKE_PRICES, FAKE_TODAY, PREVIEW) for the local dev/e2e path.
+
 ## 🚀 Standing roadmap (unchanged)
 
-- [ ] **Deployment**: Turso/libSQL migration + **auth** before any public deploy of real
-  financial data. Then **iOS**.
+- [x] **Deployment plan** — researched + written above (pass 13). Choose Path A vs B, then build.
+- [ ] **Deployment**: execute the chosen path (Turso/libSQL OR persistent-disk host) + **auth**
+  + the middleware Host fix before any public deploy of real financial data. Then **iOS**.
