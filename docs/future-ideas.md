@@ -11,7 +11,9 @@ prices forward to today** (per-holding price + portfolio value, dashed estimated
 **"Refresh prices" button pulls a live quote at press time** (force + toast + "as of" stamp);
 **Deployment & Hosted-DB plan researched + written** (see the 🚀 section — the crux: a Turso move
 forces an async rewrite of ~68 files, so it is NOT a drop-in; Path B persistent-disk host is the
-lower-risk alternative). Next: Monarch Money deep-dive doc (in progress). Pass 12 below.
+lower-risk alternative). Monarch Money deep-dive written (`docs/monarch-money-deep-dive.md`). **User
+then defined NORTH STAR #2 — "predictions everywhere + switchable views everywhere" (🔮 section below):
+their real Monarch takeaway is the forecast overlays + view flexibility, NOT the look.** Pass 12 below.
 
 Pass 12 — P0.2 + P0.4 + P0.5a SHIPPED. User dropped 4 Chase 3522 2023
 statements + a July Venture X statement; imported to the real db (backup + guards): Chase 2023
@@ -45,6 +47,119 @@ Use this to VALIDATE every chart/number. Money mechanics, in the user's own word
    or spending.** Money "always searching for higher APY, then investing".
 
 ---
+
+## 🔮 NORTH STAR #2 — "PREDICTIONS EVERYWHERE + SWITCHABLE VIEWS EVERYWHERE" (user's stated top want, 2026-07-15)
+
+> **User intent (verbatim, pass 13):** *"I actually liked the predictions part of [Monarch].
+> Every graph, you can see the estimate of your spending, the estimate of everything on every graph
+> for everything. I want it to be able to give me predictions: 'Oh, I should be spending this. This is
+> what I spent last month.' I have to be able to change between a million different kinds of views on
+> every page of the site."* (They explicitly do NOT care about Monarch's look — it's the **forecast
+> overlays** and the **view flexibility** they want.)
+
+This is a program of work on the scale of the "nothing read-only" north star (below). It has TWO
+cross-cutting pillars, each delivered as a **shared primitive** applied to every surface, plus an
+**honesty doctrine** that keeps it MoneyApp (predictions are always marked estimates with visible
+method — never dressed up as fact). Build the two primitives once (pure-first TDD), then light up
+every page.
+
+### Pillar 1 — Projections/estimates on EVERY graph and stat
+
+Every chart and every number gets an **estimate companion** answering "what should this be?":
+- **Pace / run-rate to end of period** — "you've spent $X; at this pace you'll spend **$Y** by month-end."
+- **Prior-period ghost** — "last month you spent **$Z**" rendered as a faint reference line/area behind
+  the current series (the "this is what I spent last month" ask).
+- **Budget/target reference** — "your budget is **$W**" line, with over/under projected.
+- **Forward forecast series** — a dashed/hollow continuation of the line to the period end (or a chosen
+  horizon), so every time-series shows where it's heading, not just where it's been.
+- **Expected-next** — recurring-driven ("$1,800 rent expected Aug 1"), already half-built in `recurring.ts`.
+
+**We already have most of the engine — this GENERALIZES it, doesn't invent it:**
+- `src/services/forecast.ts` — month-end forecast = **fixed (recurring still-expected) + variable
+  (extrapolated from trailing full months)**, with *visible math* (it exposes `trailingFullMonths`,
+  the fixed vs variable split — not a black box). This is the template for every projection.
+- Budgets already compute a **pace projection** (spend-to-date + expected-recurring "hollow tail" +
+  extrapolated variable remainder) with a "today" tick and green/amber/red — `budgets.ts`.
+- The **dashed "estimated" convention** already exists (pass 13 carried-price tail; the coverage
+  bands; `scrub-series.ts` `complete:false` → dashed). Reuse it as THE visual language for "projected."
+- `/spending` already shows a **delta vs the prior period**. Extend that into a full ghost overlay.
+- `netWorthSeries`/`portfolioSeries`/`accountSeries` are the series to extend forward.
+
+**The shared primitive: a `Projection` layer.**
+- Pure lib `src/lib/projection.ts` (TDD, 100%): given actuals + a chosen **method**, return a
+  `{ projectedSeries, expectedTotal, priorPeriodSeries, targetCents, basis }` bundle. Methods (a small
+  registry, each pure + testable):
+  - `pace` (spend-to-date ÷ days-elapsed × days-in-period, + expected recurring),
+  - `trailingAverage` (N-month mean per category),
+  - `priorPeriod` (same period last month/quarter/year — the ghost),
+  - `recurringDriven` (from `recurring.ts` next-expected),
+  - `runRate` (linear extrapolation of the current series),
+  - `budgetTarget` (the set budget line).
+- A chart-side overlay component that renders a projection bundle on any `ScrubChart`/bar/area:
+  the projected continuation is **dashed**, the prior-period ghost is a **faint** line/area, the target
+  is a **reference line**, and the readout annotates "actual $X · projected $Y · last period $Z · budget $W."
+- **Honesty doctrine (non-negotiable — this is what separates us from a toy):**
+  1. A projection is ALWAYS visually distinct from actuals (dashed/faint/labeled "projected/estimated").
+  2. A projection ALWAYS states its method + basis on demand ("pace from 12 days" / "avg of last 6
+     months" / "same month last year"), mirroring `forecast.ts`'s visible-math rule.
+  3. **Never predict what can't be honestly predicted** — do NOT forecast stock/crypto PRICES (market
+     movement isn't extrapolable); for investments, project *contributions/DCA continuation* and show
+     prior-period comparison, not a fabricated price path. (Consistent with the pass-13 carry-forward:
+     we carry the last close flat + dashed, we don't invent a trend.)
+  4. Low-confidence projections (thin data, high variance — reuse `recurring.ts`'s CV/confidence idea)
+     render fainter and say so; never a false-precision number.
+
+### Pillar 2 — Switchable views on EVERY page ("a million kinds of views")
+
+Every data surface exposes a **view switcher** so the user flips the SAME data between many lenses,
+persisted (URL + per-user `app_settings`) so a chosen view is shareable and sticky:
+- **Chart type** — line / area / stacked-area / bar / grouped-bar / stacked-bar / donut / **Sankey** /
+  calendar-heatmap / **table** (the same numbers, different renderer). (Monarch's "Breakdown vs Trends"
+  is a 2-view subset of this — we want the full set.)
+- **Slice/group-by** — by category / group / merchant / account / tag (once tags land).
+- **Time granularity** — daily / weekly / monthly / quarterly / yearly.
+- **Framing** — absolute $ vs **percent** vs vs-prior-period vs vs-budget; cumulative vs per-period.
+- **Comparison on/off** — overlay the prior-period ghost (ties to Pillar 1).
+
+**The shared primitive: a `ViewSwitcher` + a per-surface view registry.**
+- A headless `useViewState` hook (URL-param + `app_settings` persistence, same pattern as the window
+  history + dashboard layout) + a `<ViewSwitcher>` control (segmented/menu, keyboard + a11y, reduced-
+  motion-safe), analogous to how `<InlineEditableText>` standardized editing everywhere.
+- Each surface declares a **view registry**: the set of `{ chartType, groupBy, granularity, framing }`
+  its data supports, and a common data adapter so the interchangeable renderers (reuse `ScrubChart`,
+  the spending bars/donut/heatmap, the future Sankey, a generic `<DataTable>`) all read one shape.
+- A **`<DataTable>`** renderer is part of this (every chart should be viewable as the raw numbers —
+  also an accessibility win and the honest "show me the data" escape hatch).
+
+### Where each lights up (application matrix — build the primitives, then walk this list)
+
+| Surface | Projections (Pillar 1) | Switchable views (Pillar 2) |
+|---|---|---|
+| Dashboard net-worth chart | forward forecast to horizon + prior-period ghost; "projected net worth" hero stat | line/area/table; filter-by-account-type; granularity; % vs $ |
+| `/spending` (cash flow) | pace-to-month-end + last-month ghost + "you should be spending $Y"; per-category expected | bar/stacked/donut/**Sankey**/heatmap/table; by category/group/merchant; granularity; abs/%/vs-prior |
+| `/budgets` | already pace-projected — add the last-month ghost + projected over/under per row | table/bars; by category/group; this-vs-last; %/$ |
+| `/investments` | DCA-continuation projection + prior-period compare (NOT price prediction); projected contributions | value/return/allocation views; line/area/donut/table; by holding/asset-class; granularity |
+| `/recurring` | already predicts next — surface projected monthly total + calendar of expected | calendar/list/table; upcoming/all; by cadence |
+| `/accounts` + account detail | per-account forward projection + prior-period ghost | line/area/table; granularity |
+| Category / merchant detail | expected spend vs actual + trailing-average line + last-period ghost | bars/line/table; granularity; abs/% |
+
+### Build sequence (pure-first, honest, incremental)
+1. `src/lib/projection.ts` — the method registry (pace/trailingAverage/priorPeriod/recurringDriven/
+   runRate/budgetTarget), pure + TDD 100%. Reuse `forecast.ts`'s trailing-months + fixed/variable split.
+2. The chart-side projection overlay (dashed projected + faint ghost + target line + annotated readout),
+   proven first on **`/spending`** (the surface the user named — "you should be spending this / last month").
+3. `useViewState` + `<ViewSwitcher>` + a `<DataTable>` renderer; prove on `/spending` (chart-type +
+   group-by + granularity + abs/% + comparison), persisted to URL + `app_settings`.
+4. Roll both across the matrix, surface by surface, regenerating e2e baselines per surface. The **Sankey**
+   (Monarch steal, see `docs/monarch-money-deep-dive.md` §8 A3) is one of the switchable views.
+5. Honesty pass: every projection labels its method; every chart has a table view; no price prediction.
+
+> **Relationship to the Monarch deep-dive doc:** this section is the user's REAL takeaway from Monarch —
+> the forecast overlays + view flexibility, not the visual style. The Monarch steal-list
+> (`docs/monarch-money-deep-dive.md`) still applies (Sankey/splits/tags/reports/goals), but THIS is the
+> lens to prioritize it through: favor the items that add predictions or views (Sankey, Reports
+> Breakdown/Trends, chart-as-filter) over cosmetic ones. Cross-links to the "nothing read-only" north star
+> below — same "shared-primitive, apply-everywhere" playbook.
 
 ## 🚨 P0 — DATA CORRECTNESS (investigated 2026-07-14 on a db copy; do these FIRST)
 

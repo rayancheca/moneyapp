@@ -8,6 +8,13 @@
 > repo. Each Monarch claim is tagged **[doc]** (official), **[rev]** (reviews), or
 > **[inf]** (inferred). Sources at the bottom.
 >
+> **⚠️ UPDATE (user, 2026-07-15, after reading this):** the user does **NOT** like Monarch's *look*.
+> What they actually want is **(1) predictions/estimates on EVERY graph** ("you should be spending
+> this / this is what I spent last month") and **(2) the ability to switch between many kinds of views
+> on every page.** That's now spec'd as **North Star #2** in `docs/future-ideas.md` — read it first.
+> Through that lens, prioritize the steal-list below by "does it add a prediction or a view?" (Sankey,
+> Reports Breakdown/Trends, chart-as-filter) over anything cosmetic.
+
 > **One-line framing:** Monarch is a **hosted, multi-user, aggregator-fed SaaS** whose
 > superpower is *presentation + breadth*. MoneyApp is a **local-first, single-user,
 > statement-fed** app whose superpower is *data-correctness rigor + total editability*.
