@@ -22,15 +22,14 @@ export default async function HoldingPage({
 }) {
   const { assetType, symbol } = await params;
   const db = getDb();
+  const today = todayIso();
   const detail = (() => {
     try {
-      return holdingDetail(db, assetType, decodeURIComponent(symbol).toUpperCase());
+      return holdingDetail(db, assetType, decodeURIComponent(symbol).toUpperCase(), today);
     } catch {
       notFound();
     }
   })();
-
-  const today = todayIso();
   const marks = detail.marks
     .filter((m): m is typeof m & { closeCents: number } => m.closeCents !== null)
     .map((m) => ({ day: m.day, valueCents: m.closeCents, kind: m.kind }));

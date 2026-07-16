@@ -15,7 +15,8 @@ import { ScrubChart, type Accent, type ScrubMark, type ScrubPoint, type ScrubSum
  */
 
 interface HoldingChartPanelProps {
-  priceSeries: { day: string; closeCents: number }[];
+  /** `complete: false` on days carried forward past the last quoted close (dashed) */
+  priceSeries: { day: string; closeCents: number; complete: boolean }[];
   today: string;
   marks: ScrubMark[];
   avgCostCents: number | null;
@@ -35,7 +36,11 @@ const ACCENT_TEXT: Record<Accent, string> = {
 };
 
 export function HoldingChartPanel({ priceSeries, today, marks, avgCostCents, symbol }: HoldingChartPanelProps) {
-  const points: ScrubPoint[] = priceSeries.map((p) => ({ day: p.day, valueCents: p.closeCents }));
+  const points: ScrubPoint[] = priceSeries.map((p) => ({
+    day: p.day,
+    valueCents: p.closeCents,
+    complete: p.complete,
+  }));
 
   const summarize = useCallback((startIdx: number, endIdx: number, slice: readonly ScrubPoint[]): ScrubSummary => {
     const start = slice[startIdx]!.valueCents ?? 0;

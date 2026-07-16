@@ -58,7 +58,7 @@ afterEach(() => {
 
 describe("holdingDetail", () => {
   test("aggregates the position across accounts with price, P/L, and diversity", () => {
-    const d = holdingDetail(bundle.db, "stock", "AAPL");
+    const d = holdingDetail(bundle.db, "stock", "AAPL", "2026-03-04");
     expect(d.symbol).toBe("AAPL");
     expect(d.name).toBe("Apple Inc"); // parsed from the trade description
     expect(d.quantityE8).toBe(200_000_000);
@@ -70,15 +70,32 @@ describe("holdingDetail", () => {
   });
 
   test("returns the rebuilt trade timeline as marks + events, newest event first", () => {
-    const d = holdingDetail(bundle.db, "stock", "AAPL");
+    const d = holdingDetail(bundle.db, "stock", "AAPL", "2026-03-04");
     expect(d.marks).toHaveLength(2);
     expect(d.priceSeries).toHaveLength(3);
+    expect(d.priceSeries.every((p) => p.complete)).toBe(true); // no carried tail at today = last close
     expect(d.events.map((e) => e.kind)).toEqual(["buy", "buy"]);
     expect(d.events[0]!.day).toBe("2026-03-04"); // newest first
     expect(d.events[0]!.ledgerHref).toContain("q=AAPL");
     expect(d.events[0]!.ledgerHref).toContain("from=2026-03-04");
     expect(d.eventsTotal).toBe(2);
     expect(d.allTradesHref).toContain("q=AAPL"); // equity links out to the ledger
+  });
+
+  test("carries the last close forward to today as a dashed (estimated) tail", () => {
+    // today is 3 days past the last quoted close (2026-03-04 @ $120)
+    const d = holdingDetail(bundle.db, "stock", "AAPL", "2026-03-07");
+    expect(d.priceSeries).toHaveLength(6); // 3 real + 3 carried
+    expect(d.priceSeries.slice(0, 3).every((p) => p.complete)).toBe(true);
+    expect(d.priceSeries.slice(3)).toEqual([
+      { day: "2026-03-05", closeCents: 12_000, complete: false },
+      { day: "2026-03-06", closeCents: 12_000, complete: false },
+      { day: "2026-03-07", closeCents: 12_000, complete: false },
+    ]);
+    // header stats stay on the REAL latest close, not the carried tail
+    expect(d.latestClose).toBe(120);
+    expect(d.quotedOn).toBe("2026-03-04");
+    expect(d.valueCents).toBe(24_000); // 2 × $120, unchanged by the carry-forward
   });
 
   test("throws on an unknown symbol or asset type (→ notFound)", () => {

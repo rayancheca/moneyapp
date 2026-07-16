@@ -4,6 +4,8 @@ import { accounts } from "@/db/schema/accounts";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings, priceCache, ASSET_TYPES, type AssetType } from "@/db/schema/holdings";
 import { transactions } from "@/db/schema/transactions";
+import { todayIso } from "@/lib/dates";
+import { carryForwardTo } from "@/lib/price-series";
 import { ledgerHref } from "./analytics";
 import { holdingRows } from "./portfolio";
 import { valueCentsOf } from "./holdings";
@@ -70,8 +72,9 @@ export interface HoldingDetail {
   totalPlPct: number | null;
   diversityPct: number | null;
   legs: HoldingAccountLeg[];
-  // chart
-  priceSeries: { day: string; closeCents: number }[];
+  // chart — carried forward to `today`: real closes are `complete`, the flat
+  // tail after the last quoted day is `complete: false` (drawn dashed)
+  priceSeries: { day: string; closeCents: number; complete: boolean }[];
   avgCostLineCents: number | null;
   marks: HoldingEventMark[];
   /** most recent trades (capped); `eventsTotal` is the full count */
@@ -103,7 +106,12 @@ function displayName(db: AppDatabase, symbol: string): string | null {
   return name && name !== symbol ? name : null;
 }
 
-export function holdingDetail(db: AppDatabase, assetTypeInput: string, symbol: string): HoldingDetail {
+export function holdingDetail(
+  db: AppDatabase,
+  assetTypeInput: string,
+  symbol: string,
+  today: string = todayIso(),
+): HoldingDetail {
   if (!isAssetType(assetTypeInput)) throw new UnknownHoldingError(assetTypeInput, symbol);
   const assetType = assetTypeInput;
 
@@ -238,7 +246,13 @@ export function holdingDetail(db: AppDatabase, assetTypeInput: string, symbol: s
         avgCostCents: l.avgCostCents,
         valueCents: latest ? valueCentsOf(l.quantityE8, latest.close) : null,
       })),
-    priceSeries: closes.map((c) => ({ day: c.quotedOn, closeCents: Math.round(c.close * 100) })),
+    // carry the last quoted close forward to today so the chart reaches the
+    // present instead of freezing at the last fetch; the tail is marked
+    // estimated (dashed). Header stats above stay on the real latest close.
+    priceSeries: carryForwardTo(
+      closes.map((c) => ({ day: c.quotedOn, closeCents: Math.round(c.close * 100) })),
+      today,
+    ),
     avgCostLineCents: avgCostCents,
     marks,
     events: eventRows,

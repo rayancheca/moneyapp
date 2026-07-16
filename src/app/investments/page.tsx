@@ -5,6 +5,7 @@ import { getDb } from "@/db/client";
 import { CHART_RANGES } from "@/lib/chart-range";
 import { monthKey, todayIso } from "@/lib/dates";
 import { formatMonthYear } from "@/lib/format-date";
+import { carryForwardTo } from "@/lib/price-series";
 import { listAccounts } from "@/services/accounts";
 import {
   allocationSlices,
@@ -66,7 +67,13 @@ export default async function InvestmentsPage({
   }
 
   const overview = portfolioOverview(db);
-  const points = portfolioSeries(db).map((p) => ({ day: p.day, valueCents: p.valueCents }));
+  // carry the value line forward to today (dashed tail) so the chart reaches the
+  // present when prices haven't been refreshed since the last cached day; the
+  // return/day-change math (overview, returnDays) stays on the real series.
+  const points = carryForwardTo(
+    portfolioSeries(db).map((p) => ({ day: p.day, valueCents: p.valueCents })),
+    today,
+  );
   const returnDays = portfolioReturnDays(db);
   const rows = holdingRows(db);
   const movers = topMovers(db);
