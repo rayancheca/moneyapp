@@ -13,7 +13,7 @@ function gating(results: { violations: { impact?: string | null }[] }) {
   return results.violations.filter((v) => GATING.has(v.impact ?? ""));
 }
 
-async function pillPressed(page: Page, name: "Chart" | "Table"): Promise<boolean> {
+async function pillPressed(page: Page, name: "Chart" | "Graph" | "Table"): Promise<boolean> {
   const btn = page.getByRole("group", { name: "Cash flow view" }).getByRole("button", { name });
   return (await btn.getAttribute("aria-pressed")) === "true";
 }
@@ -40,10 +40,18 @@ test("cash-flow view switches chart↔table, updates the URL, and persists", asy
   // the table view is accessible (overlay-open doctrine: scan the new state)
   expect(gating(await analyzeSettled(page))).toEqual([]);
 
-  // the choice is sticky: a fresh visit with NO cash param still shows the table
+  // the GRAPH view: the same data as cumulative running-total lines
+  await page.getByRole("group", { name: "Cash flow view" }).getByRole("button", { name: "Graph" }).click();
+  await expect(page).toHaveURL(/[?&]cash=graph\b/);
+  await expect(page.getByRole("figure", { name: /Running totals for the period/ })).toBeVisible();
+  expect(await pillPressed(page, "Graph")).toBe(true);
+  await expect(page.getByText("Earned, running total")).toBeVisible();
+  expect(gating(await analyzeSettled(page))).toEqual([]);
+
+  // the choice is sticky: a fresh visit with NO cash param keeps the graph
   await page.goto("/spending");
-  await expect(page.getByRole("table")).toBeVisible();
-  expect(await pillPressed(page, "Table")).toBe(true);
+  await expect(page.getByRole("figure", { name: /Running totals for the period/ })).toBeVisible();
+  expect(await pillPressed(page, "Graph")).toBe(true);
 
   // restore the default so sibling specs see the chart
   await page.getByRole("group", { name: "Cash flow view" }).getByRole("button", { name: "Chart" }).click();

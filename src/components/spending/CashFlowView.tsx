@@ -6,6 +6,7 @@ import { formatCents, formatCentsSigned } from "@/lib/money";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { CashFlowChart } from "./CashFlowChart";
+import { CashFlowGraph } from "./CashFlowGraph";
 import { CASH_VIEW_LABELS, CASH_VIEW_SPEC, SPENDING_SURFACE } from "./spending-view-spec";
 import type { CashFlow, CashFlowBucket, SpendingProjection } from "@/services/spending";
 
@@ -98,6 +99,8 @@ export function CashFlowView({ cashFlow, projection, viewState, baseParams, peri
           }.`}
           emptyState="No activity in this period."
         />
+      ) : active === "graph" ? (
+        <CashFlowGraph data={cashFlow} projection={projection} />
       ) : (
         <CashFlowChart data={cashFlow} projection={projection} />
       )}
