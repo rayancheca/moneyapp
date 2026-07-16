@@ -6,14 +6,16 @@
 > **Every working pass must expand + polish this list and tick off what shipped.**
 > One focused item per session; end each session with a handoff prompt. Dates absolute.
 
-Last updated: 2026-07-16 (pass 15 — **INCOME GROUND TRUTH** established from the user's own
-`Finances 2026.xlsx` hand-tracking. New reference: **[`docs/income-ground-truth.md`](income-ground-truth.md)**
-— the authoritative definition of what counts as income (Fordham DD wages + Knack tutoring + interest;
-aid/dad/cash/transfers excluded). Reconciled + adversarially verified: the app's earned income matches the
-user's own to **1.56%** ✓, but exposed a CONFIRMED regression — a seed rule (`src/db/seed.ts:212`
-"ATM/cash deposit → Salary") re-labels **36 ATM cash rows = $52,625** as wages on every import, inflating
-app income to ~$175k (3.18× the true earned $55,128). Correction proposed, NOT yet applied (needs
-backup + dry-run + user OK). Pass 14 below.)
+Last updated: 2026-07-16 (pass 15, THREE workstreams. **(A) INCOME GROUND TRUTH** from the user's own
+`Finances 2026.xlsx`: new reference **[`docs/income-ground-truth.md`](income-ground-truth.md)** (earnings =
+Fordham DD wages + Knack tutoring + interest; aid/dad/cash/transfers excluded); reconciled to **1.56%** ✓;
+found + **FIXED a CONFIRMED regression** — the seed rule "ATM/cash deposit → Salary" had re-labeled 36 ATM
+cash rows = $52,625 as wages on every import (income ~$175k → **$122,054** after the applied real-DB
+correction, backup `pre-income-fix-2026-07-16.db`; rule disabled in the live DB; 36 rows → review queue as
+user-owned). **(B) ROBINHOOD-PARITY RETURNS** on `/investments` — see the new 📈 section: value⇄return
+toggle, $/% framing, drag-select live windows, axes, peak/trough + best/worst/drawdown stats,
+contributions decomposition, SPY benchmark (You +4.24% vs S&P +23.20%), realized/unrealized P/L split.
+**(C)** dashboard activity-gap fix. Pass 14 below.)
 
 Prior update: 2026-07-15 (pass 14 — **NORTH STAR #2 STARTED.** Pillar 1 (predictions) shipped end-to-end:
 the pure **`src/lib/projection.ts`** method registry (`2450ea8`) + the **`/spending` projection overlay**
@@ -147,7 +149,7 @@ persisted (URL + per-user `app_settings`) so a chosen view is shareable and stic
 | Dashboard net-worth chart | forward forecast to horizon + prior-period ghost; "projected net worth" hero stat | line/area/table; filter-by-account-type; granularity; % vs $ |
 | `/spending` (cash flow) | pace-to-month-end + last-month ghost + "you should be spending $Y"; per-category expected | bar/stacked/donut/**Sankey**/heatmap/table; by category/group/merchant; granularity; abs/%/vs-prior |
 | `/budgets` | already pace-projected — add the last-month ghost + projected over/under per row | table/bars; by category/group; this-vs-last; %/$ |
-| `/investments` | DCA-continuation projection + prior-period compare (NOT price prediction); projected contributions | value/return/allocation views; line/area/donut/table; by holding/asset-class; granularity |
+| `/investments` | DCA-continuation projection + prior-period compare (NOT price prediction); projected contributions | ✅ **value/return toggle SHIPPED (pass 15)** + $/% framing + SPY benchmark + drag-select — see the 📈 Robinhood-parity section below for the rest (allocation-over-time, per-holding, donut/table) |
 | `/recurring` | already predicts next — surface projected monthly total + calendar of expected | calendar/list/table; upcoming/all; by cadence |
 | `/accounts` + account detail | per-account forward projection + prior-period ghost | line/area/table; granularity |
 | Category / merchant detail | expected spend vs actual + trailing-average line + last-period ghost | bars/line/table; granularity; abs/% |
@@ -194,6 +196,87 @@ persisted (URL + per-user `app_settings`) so a chosen view is shareable and stic
 > lens to prioritize it through: favor the items that add predictions or views (Sankey, Reports
 > Breakdown/Trends, chart-as-filter) over cosmetic ones. Cross-links to the "nothing read-only" north star
 > below — same "shared-primitive, apply-everywhere" playbook.
+
+## 📈 ROBINHOOD-PARITY INVESTMENTS PROGRAM (user ask 2026-07-16, with real RH screenshots)
+
+> **User intent (pass 15, verbatim spirit):** the investments graph "only goes up because it counts my
+> transfers of cash into Robinhood as money up." They want the Robinhood experience: a returns graph
+> (deposits stripped), drag-the-mouse live window stats with no navigation, realized + unrealized P/L,
+> "basically try to copy the Robinhood app — all the features you think are valuable."
+
+**The researched Robinhood model (verified against the user's own numbers):** RH's headline is a
+**simple deposit-adjusted return** (Modified-Dietz-influenced), NOT true TWR: `Return$ = V(now) − V(start)
+− NetDeposits(window)`; `%  = Return$ / (V(start) + weighted NetDeposits)`. On ALL, V(start)≈0 so the
+graph's left edge = **lifetime net deposits** (the user's $88,754.26; 97,408.63 − 88,754.26 = 8,654.37 =
+9.75% ✓). MoneyApp's engine is *stronger* (true chained daily TWR, flow-adjusted at closes) — we show the
+same deposit-stripped truth with better math. RH's separate "Returns comparison" feature IS true TWR +
+annualized ≥1Y.
+
+### ✅ SHIPPED (pass 15, commits `3b85fea` → `40f13c2`)
+- **Value ⇄ Return toggle** on the `/investments` hero (NS#2 ViewSwitcher; URL + persisted): Return =
+  pure `cumulativeReturns()` line (chains the tested daily factors; reconciles exactly to `totalReturn`).
+- **$ ⇄ % framing** (`unit` dimension, Return view only): dollars = cumulative flow-adjusted P/L;
+  percent = compounding TWR. `formatExtreme` opt-in on ScrubChart keeps %-labels honest everywhere.
+- **Drag-select any window LIVE** (`selectable`): drag on the chart → the header shows that window's
+  return $/% in place (custom windows label `start → end`), hover-to-inspect, From/To inputs, Reset —
+  no navigation, exactly the RH scrub ask. Plus **visible axes + gridlines** (`showAxes`).
+- **Peak/trough markers** + **best day / worst day / max drawdown** stats (pure `returnStats()`).
+- **Contributions-vs-returns decomposition**: Value = contributed + market gains stacked bar; reconciles
+  to the cent ($87,093.73 = $81,722.99 + $5,370.74).
+- **SPY benchmark overlay** ("you vs the market", %-framing only for a fair %-vs-% read): pure
+  `benchmarkReturns()` + guarded ScrubChart `compareLine`; legend shows "You / S&P 500 +X%".
+  Real data: **You +4.24% vs S&P 500 +23.20% since Feb 2025** — the honest underperformance read.
+- **Realized vs Unrealized P/L** stats: new pure `src/lib/realized-pnl.ts` (average-cost walk valued at
+  daily closes — the NAV's own valuation; clamps over-sells; ≈-flags unpriced trades);
+  `portfolioRealizedPl()` per (account,symbol). Real data: Unrealized +$4,354.83 (+5.26%), Realized
+  +$30.14 across 88 sells. Cost-basis stat relabeled "Unrealized P/L · open positions · avg cost".
+- Dashboard activity-grid gap fixed (review preview 3 → 6 rows).
+
+### 🗺️ THE IDEA BACKLOG (each = one focused item; keep the honesty doctrine — no price prediction)
+Ordered roughly by value ÷ effort:
+1. **Per-holding Return view** — the same value↔return toggle + benchmark on each
+   `/investments/[assetType]/[symbol]` page (per-holding `PortfolioDay` series already derivable from
+   `holding_events` × closes; HoldingChartPanel mirrors PortfolioChartPanel). Answers "is ETH or MSFT
+   my problem?" (given the SPY gap, likely THE next most valuable view).
+2. **Per-holding realized/unrealized columns** in the holdings table (realizedPnl per symbol is already
+   computed per-key inside `portfolioRealizedPl` — surface it) + a P/L drill-down sheet listing each
+   sell's realized gain (day, qty, proceeds, basis, gain).
+3. **"What if I'd just bought SPY?" simulation** — replay the user's EXACT deposit flows as SPY buys at
+   that day's close → a dashed counterfactual line + end-value delta. Fully derivable (flows + SPY
+   closes exist), brutally honest, the natural completion of the benchmark overlay.
+4. **Benchmark picker** — SPY default; QQQ/VTI/BTC/custom symbol (any priced symbol); persisted per the
+   view-state pattern. Needs a price-history backfill for symbols not held (provider fetch on pick).
+5. **Money-weighted return (XIRR)** alongside TWR — "the growth rate of YOUR dollars" (Newton solve on
+   the dated flows; pure lib + tests). RH shows simple deposit-adjusted; we can show both TWR and IRR
+   with a one-line explainer of the difference.
+6. **Dividends & income panel** — dividends/interest/stock-lending collected (the data is already
+   categorized income in transactions): monthly bars, per-holding totals, TTM yield-on-value. RH has a
+   dividend history screen; ours can reconcile to the income categories.
+7. **Allocation over time** — stacked-area of holding weights (qty × close per day / NAV per day — all
+   derivable) as a switchable view on the allocation donut; catches concentration drift (ETH 30%!).
+8. **Buy/sell trade markers toggle** on the portfolio + holding charts (`ScrubMark` support already
+   exists in ScrubChart; holding events supply the marks).
+9. **Underwater/drawdown view** — the cumulative-return line's distance below its high-water mark as a
+   shaded area (the `returnStats` walk already computes it per day; expose the series) — a switchable
+   view option.
+10. **Returns-comparison panel** (RH's dedicated feature): a small table of your TWR vs benchmark over
+    1M/3M/YTD/1Y/ALL side by side, annualized where ≥1Y (label the annualization).
+11. **Risk stats expander** — daily-return stddev (volatility), beta/correlation vs SPY (needs a
+    regression over aligned daily returns — pure + testable), up/down-day counts (calendar has them).
+    Label every stat's basis; skip Sharpe until a risk-free-rate source is chosen.
+12. **1W range pill + LIVE intraday** — 1W is a trivial `chart-range.ts` addition (regen ALL chart
+    baselines, so batch it with another visual change); LIVE/1D needs intraday quotes (the Yahoo
+    provider serves them) + an RH-style "prior 4PM close" baseline — bigger, provider-dependent.
+13. **Chart-as-filter** (Monarch steal §8 A5) — click a holdings row → the chart highlights that
+    holding's contribution; click an allocation slice → same.
+14. **Cost-basis lots** (Monarch Tier B) — lot-level realized P/L (FIFO vs avg-cost toggle) once
+    statement lots are ingested; today's avg-cost walk is the honest approximation and says so.
+15. **Export escape hatches** — copy the return series as CSV (the DataTable view already gives the
+    numbers on /spending; add the return table view here too).
+16. **PREREQ that unlocks true RH parity: P0.1 Robinhood CASH modeling** (below) — until the ~$7.2k
+    buying power is modeled, MoneyApp's "value" ($87k) reads below RH's ($97.4k) and net deposits can't
+    be shown as a gray "net funded" line like RH's ALL view. Doing P0.1 also enables the "net funded
+    amount" baseline line (RH's gray line) on the Value view — a great honesty overlay.
 
 ## 🚨 P0 — DATA CORRECTNESS (investigated 2026-07-14 on a db copy; do these FIRST)
 
