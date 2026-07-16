@@ -49,7 +49,10 @@ export default async function InvestmentsPage({
   // switchable-view state (NS#2 Pillar 2): URL > persisted preference > default.
   const portfolioView = resolveViewState(
     PORTFOLIO_VIEW_SPEC,
-    { view: Array.isArray(raw.view) ? raw.view[0] : raw.view },
+    {
+      view: Array.isArray(raw.view) ? raw.view[0] : raw.view,
+      unit: Array.isArray(raw.unit) ? raw.unit[0] : raw.unit,
+    },
     readSettings(db).viewPreferences[INVESTMENTS_SURFACE],
   );
   // preserve a non-default range across a view switch (ALL is the clean default)

@@ -98,6 +98,10 @@ interface ScrubChartProps {
   accentOf: (summary: ScrubSummary) => Accent;
   valueText: (summary: ScrubSummary, scrubbing: boolean) => string;
   formatValue: (cents: number) => string;
+  /** compact label for the peak/trough extreme dots; defaults to compactMoney so
+   *  every existing consumer is byte-identical. The %-framed return line passes a
+   *  percent formatter here so its markers read "13.00%" not "$13". */
+  formatExtreme?: (cents: number) => string;
   renderHeader: (
     summary: ScrubSummary,
     scrubbing: boolean,
@@ -167,6 +171,7 @@ export function ScrubChart({
   accentOf,
   valueText,
   formatValue,
+  formatExtreme = compactMoney,
   renderHeader,
   ariaLabel,
   marks,
@@ -639,7 +644,7 @@ export function ScrubChart({
                   fill={vivid ? "none" : "var(--positive)"}
                   stroke={vivid ? "var(--ink-muted)" : "var(--surface-raised)"}
                   strokeWidth={1.5}
-                  label={labelMax ? { value: `▲ ${compactMoney(extremes.max.cents)}`, position: "top", fontSize: 10, fill: "var(--ink-muted)" } : undefined}
+                  label={labelMax ? { value: `▲ ${formatExtreme(extremes.max.cents)}`, position: "top", fontSize: 10, fill: "var(--ink-muted)" } : undefined}
                 />
                 <ReferenceDot
                   x={extremes.min.day}
@@ -648,7 +653,7 @@ export function ScrubChart({
                   fill={vivid ? "none" : "var(--negative)"}
                   stroke={vivid ? "var(--ink-muted)" : "var(--surface-raised)"}
                   strokeWidth={1.5}
-                  label={labelMin ? { value: `▼ ${compactMoney(extremes.min.cents)}`, position: "bottom", fontSize: 10, fill: "var(--ink-muted)" } : undefined}
+                  label={labelMin ? { value: `▼ ${formatExtreme(extremes.min.cents)}`, position: "bottom", fontSize: 10, fill: "var(--ink-muted)" } : undefined}
                 />
               </>
             )}

@@ -143,6 +143,59 @@ export function totalReturn(days: readonly PortfolioDay[]): WindowReturn {
   return aggregateReturn(dailyReturns(days));
 }
 
+/** A single standout day on the return line. */
+export interface ReturnDayStat {
+  day: string;
+  /** flow-adjusted market P/L that day, in cents */
+  returnCents: number;
+  /** that day's return as a percentage of the prior NAV, or null on an empty base */
+  pct: number | null;
+}
+
+/** Headline stats for the return view: the best/worst day and the worst drawdown. */
+export interface ReturnStats {
+  bestDay: ReturnDayStat | null;
+  worstDay: ReturnDayStat | null;
+  /**
+   * The deepest peak-to-trough decline of the cumulative TWR index over the
+   * series, as a NEGATIVE percentage (0 when the line only ever rose). This is
+   * "max drawdown" — how far the portfolio fell from a high-water mark.
+   */
+  maxDrawdownPct: number;
+}
+
+/**
+ * Best day, worst day, and max drawdown across a NAV series — the "cool stats"
+ * under the return line. Days are flow-adjusted (a deposit day is a 0 return, not
+ * a record high), so the best/worst days reflect real market moves. Max drawdown
+ * tracks a running peak of the cumulative TWR index and the deepest dip below it.
+ */
+export function returnStats(days: readonly PortfolioDay[]): ReturnStats {
+  const rs = dailyReturns(days);
+  if (rs.length === 0) return { bestDay: null, worstDay: null, maxDrawdownPct: 0 };
+  const pctOf = (r: DailyReturn): number | null =>
+    r.prevNavCents > 0 ? (r.returnCents / r.prevNavCents) * 100 : null;
+  let best = rs[0]!;
+  let worst = rs[0]!;
+  let index = 1;
+  let peak = 1;
+  let maxDrawdown = 0;
+  for (const r of rs) {
+    if (r.returnCents > best.returnCents) best = r;
+    if (r.returnCents < worst.returnCents) worst = r;
+    index *= r.factor;
+    if (index > peak) peak = index;
+    // peak starts at 1 and only ever grows, so it is always ≥ 1 (> 0 safe)
+    const drawdown = index / peak - 1;
+    if (drawdown < maxDrawdown) maxDrawdown = drawdown;
+  }
+  return {
+    bestDay: { day: best.day, returnCents: best.returnCents, pct: pctOf(best) },
+    worstDay: { day: worst.day, returnCents: worst.returnCents, pct: pctOf(worst) },
+    maxDrawdownPct: maxDrawdown * 100,
+  };
+}
+
 /** One point on the cumulative-return line (the Robinhood-style "returns" graph). */
 export interface CumulativeReturnPoint {
   day: string;

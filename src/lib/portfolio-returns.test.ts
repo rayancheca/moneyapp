@@ -3,6 +3,7 @@ import {
   aggregateReturn,
   cumulativeReturns,
   dailyReturns,
+  returnStats,
   simpleReturnPct,
   totalReturn,
   type PortfolioDay,
@@ -222,5 +223,56 @@ describe("cumulativeReturns", () => {
       d("2026-01-03", 10_800),
     ]);
     expect(line.map((p) => p.exact)).toEqual([true, false, false]);
+  });
+});
+
+describe("returnStats", () => {
+  test("empty / single-day series has no stats and zero drawdown", () => {
+    expect(returnStats([])).toEqual({ bestDay: null, worstDay: null, maxDrawdownPct: 0 });
+    expect(returnStats([d("2026-01-01", 10_000)])).toEqual({ bestDay: null, worstDay: null, maxDrawdownPct: 0 });
+  });
+
+  test("finds the best and worst market days (flow-adjusted)", () => {
+    const stats = returnStats([
+      d("2026-01-01", 10_000),
+      d("2026-01-02", 10_500), // +500 (best)
+      d("2026-01-03", 10_200), // −300 (worst)
+      d("2026-01-04", 10_300), // +100
+    ]);
+    expect(stats.bestDay).toEqual({ day: "2026-01-02", returnCents: 500, pct: 5 });
+    expect(stats.worstDay?.day).toBe("2026-01-03");
+    expect(stats.worstDay?.returnCents).toBe(-300);
+  });
+
+  test("a deposit day is never the best day (deposit ≠ gain)", () => {
+    const stats = returnStats([
+      d("2026-01-01", 10_000),
+      d("2026-01-02", 20_000, 10_000), // +$100 of NAV, all bought → 0 return
+      d("2026-01-03", 20_100), // +100 real
+    ]);
+    expect(stats.bestDay?.day).toBe("2026-01-03");
+    expect(stats.bestDay?.returnCents).toBe(100);
+  });
+
+  test("max drawdown is the deepest peak-to-trough decline of the return index", () => {
+    // rise to +10%, fall to −10% off the peak, recover a bit
+    const stats = returnStats([
+      d("2026-01-01", 10_000),
+      d("2026-01-02", 11_000), // index 1.10 (peak)
+      d("2026-01-03", 9_900), // index 0.99 → drawdown = 0.99/1.10 − 1 = −10%
+      d("2026-01-04", 10_400),
+    ]);
+    expect(stats.maxDrawdownPct).toBeCloseTo(-10, 8);
+  });
+
+  test("a monotonically rising line has zero drawdown", () => {
+    const stats = returnStats([d("2026-01-01", 10_000), d("2026-01-02", 10_500), d("2026-01-03", 11_000)]);
+    expect(stats.maxDrawdownPct).toBe(0);
+  });
+
+  test("a day entering with no invested base has a null pct (no divide-by-zero)", () => {
+    const stats = returnStats([d("2026-01-01", 0), d("2026-01-02", 0, 0)]);
+    expect(stats.bestDay).toEqual({ day: "2026-01-02", returnCents: 0, pct: null });
+    expect(stats.worstDay?.pct).toBeNull();
   });
 });
