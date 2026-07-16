@@ -4,7 +4,9 @@ import { accounts } from "@/db/schema/accounts";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings, priceCache, ASSET_TYPES, type AssetType } from "@/db/schema/holdings";
 import { transactions } from "@/db/schema/transactions";
-import { todayIso } from "@/lib/dates";
+import { compareDates, todayIso } from "@/lib/dates";
+import { holdingReturnDays } from "@/lib/holding-returns";
+import type { PortfolioDay } from "@/lib/portfolio-returns";
 import { carryForwardTo } from "@/lib/price-series";
 import { ledgerHref } from "./analytics";
 import { holdingRows } from "./portfolio";
@@ -77,6 +79,9 @@ export interface HoldingDetail {
   priceSeries: { day: string; closeCents: number; complete: boolean }[];
   avgCostLineCents: number | null;
   marks: HoldingEventMark[];
+  /** flow-adjusted daily series for THIS holding (aggregated across accounts) —
+   *  feeds the Return view exactly like portfolioReturnDays feeds the hero */
+  returnDays: PortfolioDay[];
   /** most recent trades (capped); `eventsTotal` is the full count */
   events: HoldingEventRow[];
   eventsTotal: number;
@@ -153,12 +158,23 @@ export function holdingDetail(
   const active = holdingLegs.filter((l) => l.isActive);
   const quantityE8 = active.reduce((s, l) => s + l.quantityE8, 0);
   const valueCents = latest ? valueCentsOf(quantityE8, latest.close) : null;
-  const prevValueCents = previous ? valueCentsOf(quantityE8, previous.close) : null;
+  // today's return credits only the shares held ENTERING the latest quoted day —
+  // a buy that day is a flow, not a gain (the return engine's convention), so
+  // this stat agrees with the Return view's flow-adjusted last day
+  const qtyTradedOnOrAfterLatestE8 = latest
+    ? events
+        .filter((e) => compareDates(e.occurredOn, latest.quotedOn) >= 0)
+        .reduce((s, e) => s + e.quantityDeltaE8, 0)
+    : 0;
+  const qtyEnteringE8 = Math.max(quantityE8 - qtyTradedOnOrAfterLatestE8, 0);
+  const prevEnteringValueCents = previous ? valueCentsOf(qtyEnteringE8, previous.close) : null;
   const todayReturnCents =
-    valueCents !== null && prevValueCents !== null ? valueCents - prevValueCents : null;
+    latest && prevEnteringValueCents !== null
+      ? valueCentsOf(qtyEnteringE8, latest.close) - prevEnteringValueCents
+      : null;
   const todayReturnPct =
-    todayReturnCents !== null && prevValueCents !== null && prevValueCents !== 0
-      ? (todayReturnCents / prevValueCents) * 100
+    todayReturnCents !== null && prevEnteringValueCents !== null && prevEnteringValueCents !== 0
+      ? (todayReturnCents / prevEnteringValueCents) * 100
       : null;
 
   // weighted average cost across the legs that carry one
@@ -255,6 +271,10 @@ export function holdingDetail(
     ),
     avgCostLineCents: avgCostCents,
     marks,
+    returnDays: holdingReturnDays(
+      events.map((e) => ({ day: e.occurredOn, deltaE8: e.quantityDeltaE8 })),
+      closes.map((c) => ({ day: c.quotedOn, close: c.close })),
+    ),
     events: eventRows,
     eventsTotal: events.length,
     allTradesHref: linkEvents ? ledgerHref({ account: singleAccount, q: symbol }) : null,

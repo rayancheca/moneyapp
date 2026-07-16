@@ -5,6 +5,7 @@ import { accounts } from "@/db/schema/accounts";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings, priceCache, ASSET_TYPES, type AssetType } from "@/db/schema/holdings";
 import { isValidIsoDate, todayIso } from "@/lib/dates";
+import { valueCentsOf } from "@/lib/holding-returns";
 
 /**
  * Holdings CRUD + portfolio math (master-plan Phase 7). Quantities are
@@ -55,10 +56,10 @@ export function formatQuantityE8(quantityE8: number): string {
   return frac === "" ? `${sign}${whole}` : `${sign}${whole}.${frac}`;
 }
 
-/** quantity_e8 × close (USD) → cents, rounded at the edge (schema.md). */
-export function valueCentsOf(quantityE8: number, close: number): number {
-  return Math.round(quantityE8 * close * 1e-6);
-}
+/** quantity_e8 × close (USD) → cents, rounded at the edge (schema.md).
+ *  Canonical definition lives in the pure lib so holding-returns can value
+ *  NAVs/flows with the EXACT same rounding; re-exported here for callers. */
+export { valueCentsOf };
 
 /* ── Upsert (by account + symbol) ───────────────────────────────────── */
 

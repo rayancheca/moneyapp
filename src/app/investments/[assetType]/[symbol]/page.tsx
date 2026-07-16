@@ -3,10 +3,17 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
 import { todayIso } from "@/lib/dates";
+import { resolveViewState } from "@/lib/view-state";
 import { holdingDetail } from "@/services/holding-detail";
+import { hasBenchmark, portfolioBenchmark } from "@/services/portfolio";
+import { readSettings } from "@/services/settings";
 import { HoldingChartPanel } from "@/components/investments/HoldingChartPanel";
 import { HoldingEventsList } from "@/components/investments/HoldingEventsList";
 import { PositionCard } from "@/components/investments/PositionCard";
+import {
+  HOLDING_SURFACE,
+  HOLDING_VIEW_SPEC,
+} from "@/components/investments/investments-view-spec";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 
@@ -17,10 +24,13 @@ const ASSET_LABEL: Record<string, string> = { stock: "Stock", etf: "ETF", crypto
 
 export default async function HoldingPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ assetType: string; symbol: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { assetType, symbol } = await params;
+  const raw = await searchParams;
   const db = getDb();
   const today = todayIso();
   const detail = (() => {
@@ -30,6 +40,21 @@ export default async function HoldingPage({
       notFound();
     }
   })();
+  // switchable Price ⇄ Return view (URL > persisted > default), one preference
+  // shared across every holding page (the "holding" surface)
+  const holdingView = resolveViewState(
+    HOLDING_VIEW_SPEC,
+    {
+      view: Array.isArray(raw.view) ? raw.view[0] : raw.view,
+      unit: Array.isArray(raw.unit) ? raw.unit[0] : raw.unit,
+    },
+    readSettings(db).viewPreferences[HOLDING_SURFACE],
+  );
+  // "you vs the market" overlay for the Return view (only when the benchmark is priced)
+  const benchmark =
+    detail.returnDays.length >= 2 && hasBenchmark(db)
+      ? { label: "S&P 500", pct: portfolioBenchmark(db, detail.returnDays.map((d) => d.day)) }
+      : null;
   const marks = detail.marks
     .filter((m): m is typeof m & { closeCents: number } => m.closeCents !== null)
     .map((m) => ({ day: m.day, valueCents: m.closeCents, kind: m.kind }));
@@ -59,6 +84,11 @@ export default async function HoldingPage({
               marks={marks}
               avgCostCents={detail.avgCostLineCents}
               symbol={detail.symbol}
+              returnDays={detail.returnDays}
+              viewState={holdingView}
+              basePath={`/investments/${detail.assetType}/${encodeURIComponent(detail.symbol)}`}
+              baseParams={{}}
+              benchmark={benchmark}
             />
           ) : (
             <p className="py-6 text-sm text-ink-muted">

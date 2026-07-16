@@ -87,3 +87,65 @@ test("portfolio chart switches value↔return, updates the URL, and persists", a
   await page.goto("/investments");
   await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
 });
+
+async function holdingPillPressed(page: Page, name: "Price" | "Return"): Promise<boolean> {
+  const btn = page.getByRole("group", { name: "Holding chart view" }).getByRole("button", { name });
+  return (await btn.getAttribute("aria-pressed")) === "true";
+}
+
+test("a holding chart switches price↔return, updates the URL, and persists", async ({ page }) => {
+  // resolve the first holding-detail URL from /investments (stable fixture order)
+  await page.goto("/investments");
+  const href = await page.locator('a[href^="/investments/"]').first().getAttribute("href");
+  expect(href).toBeTruthy();
+  await page.goto(href!);
+
+  const priceChart = page.getByRole("slider", { name: /price over time/ });
+  const returnChart = page.getByRole("slider", { name: /return over time/ });
+
+  // default view is the price line, with its avg-cost reference + trade marks
+  await expect(priceChart).toBeVisible();
+  expect(await holdingPillPressed(page, "Price")).toBe(true);
+
+  // switch to return: the URL carries it, the slider relabels, the stats strip appears
+  await page.getByRole("group", { name: "Holding chart view" }).getByRole("button", { name: "Return" }).click();
+  await expect(page).toHaveURL(/[?&]view=returns\b/);
+  await expect(returnChart).toBeVisible();
+  expect(await holdingPillPressed(page, "Return")).toBe(true);
+  await expect(priceChart).toHaveCount(0);
+  await expect(page.getByText("Best day")).toBeVisible();
+  await expect(page.getByText(/Value = (net contributed|contributions) \+ market/)).toBeVisible();
+  // honesty labels: the baseline is named (never "all time") + the method basis
+  await expect(page.getByText(/your return · since .+ · at daily closes/)).toBeVisible();
+
+  // the $ ⇄ % unit switch appears only in the return view; % relabels the hero
+  const unitGroup = page.getByRole("group", { name: "Return unit" });
+  await expect(unitGroup).toBeVisible();
+  await unitGroup.getByRole("button", { name: "%" }).click();
+  await expect(page).toHaveURL(/[?&]unit=percent\b/);
+  await expect(returnChart).toBeVisible();
+
+  // the return view is accessible (scan the new state)
+  expect(gating(await analyzeSettled(page))).toEqual([]);
+
+  // sticky: a fresh visit with NO params still shows the % return line
+  await page.goto(href!);
+  await expect(page.getByRole("slider", { name: /return over time/ })).toBeVisible();
+  expect(await holdingPillPressed(page, "Return")).toBe(true);
+
+  // restore the default so sibling specs (visual baselines) see the price chart
+  await page.getByRole("group", { name: "Holding chart view" }).getByRole("button", { name: "Price" }).click();
+  await expect(page.getByRole("slider", { name: /price over time/ })).toBeVisible();
+  await unitGroupRestore(page, href!);
+});
+
+/** Reset the persisted unit to $ (the default) so a later Return visit is clean. */
+async function unitGroupRestore(page: Page, href: string): Promise<void> {
+  // flip to Return (unit switcher only renders there), set $, flip back to Price
+  await page.getByRole("group", { name: "Holding chart view" }).getByRole("button", { name: "Return" }).click();
+  await page.getByRole("group", { name: "Return unit" }).getByRole("button", { name: "$" }).click();
+  await expect(page).not.toHaveURL(/unit=percent/);
+  await page.getByRole("group", { name: "Holding chart view" }).getByRole("button", { name: "Price" }).click();
+  await page.goto(href);
+  await expect(page.getByRole("slider", { name: /price over time/ })).toBeVisible();
+}

@@ -64,7 +64,10 @@ describe("holdingDetail", () => {
     expect(d.quantityE8).toBe(200_000_000);
     expect(d.valueCents).toBe(24_000); // 2 × $120
     expect(d.avgCostCents).toBe(11_000);
-    expect(d.todayReturnCents).toBe(2_000); // 2 × ($120 − $110)
+    // flow-adjusted: only the 1 share held ENTERING the latest quoted day earns
+    // the close-to-close move — the share bought that day is a flow, not a gain
+    expect(d.todayReturnCents).toBe(1_000); // 1 × ($120 − $110)
+    expect(d.todayReturnPct).toBeCloseTo((1_000 / 11_000) * 100, 8);
     expect(d.legs).toHaveLength(1);
     expect(d.diversityPct).toBeCloseTo(100, 5); // the only holding
   });

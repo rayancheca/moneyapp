@@ -4,6 +4,7 @@ import {
   benchmarkReturns,
   cumulativeReturns,
   dailyReturns,
+  decomposeValue,
   returnStats,
   simpleReturnPct,
   totalReturn,
@@ -312,5 +313,69 @@ describe("benchmarkReturns", () => {
 
   test("empty input → empty line", () => {
     expect(benchmarkReturns([])).toEqual([]);
+  });
+});
+
+describe("decomposeValue", () => {
+  test("empty series → null", () => {
+    expect(decomposeValue([])).toBeNull();
+  });
+
+  test("buys only: gross = baseline + buys, nothing withdrawn, identity holds", () => {
+    // open at $1,000, buy $500 more, market adds $200
+    const days = [d("2026-01-01", 100_000, 100_000), d("2026-01-02", 170_000, 50_000)];
+    const dec = decomposeValue(days)!;
+    expect(dec.grossContributedCents).toBe(150_000);
+    expect(dec.withdrawnCents).toBe(0);
+    expect(dec.netContributedCents).toBe(150_000);
+    expect(dec.gainsCents).toBe(20_000);
+    expect(dec.valueCents).toBe(170_000);
+    expect(dec.netContributedCents + dec.gainsCents).toBe(dec.valueCents);
+  });
+
+  test("a closed winner: withdrawn exceeds gross, net goes negative, identity still holds", () => {
+    // buy 10 sh @ $100 close, sell all @ $120 close (flows valued at closes)
+    const days = [d("2026-01-01", 100_000, 100_000), d("2026-01-02", 0, -120_000)];
+    const dec = decomposeValue(days)!;
+    expect(dec.grossContributedCents).toBe(100_000); // what was actually put in
+    expect(dec.withdrawnCents).toBe(120_000); // what the sells returned
+    expect(dec.netContributedCents).toBe(-20_000);
+    expect(dec.gainsCents).toBe(20_000);
+    expect(dec.valueCents).toBe(0);
+    expect(dec.netContributedCents + dec.gainsCents).toBe(dec.valueCents);
+  });
+
+  test("a closed loser: gross stays the real contribution, gains are negative", () => {
+    // buy 10 sh @ $100 close, sell all @ $80 close
+    const days = [d("2026-01-01", 100_000, 100_000), d("2026-01-02", 0, -80_000)];
+    const dec = decomposeValue(days)!;
+    expect(dec.grossContributedCents).toBe(100_000);
+    expect(dec.withdrawnCents).toBe(80_000);
+    expect(dec.netContributedCents).toBe(20_000);
+    expect(dec.gainsCents).toBe(-20_000);
+    expect(dec.valueCents).toBe(0);
+  });
+
+  test("a trimmed winner: net negative while the position stays open", () => {
+    // buy 10 @ $100, price to $150, sell 8 → proceeds $1,200 out of $1,000 in
+    const days = [d("2026-01-01", 100_000, 100_000), d("2026-01-02", 30_000, -120_000)];
+    const dec = decomposeValue(days)!;
+    expect(dec.grossContributedCents).toBe(100_000);
+    expect(dec.withdrawnCents).toBe(120_000);
+    expect(dec.netContributedCents).toBe(-20_000);
+    expect(dec.gainsCents).toBe(50_000); // 10 sh × $50 before the trim
+    expect(dec.valueCents).toBe(30_000);
+    expect(dec.netContributedCents + dec.gainsCents).toBe(dec.valueCents);
+  });
+
+  test("a single-day series decomposes to its opening with no gains", () => {
+    const dec = decomposeValue([d("2026-01-01", 100_000, 100_000)])!;
+    expect(dec).toEqual({
+      grossContributedCents: 100_000,
+      withdrawnCents: 0,
+      netContributedCents: 100_000,
+      gainsCents: 0,
+      valueCents: 100_000,
+    });
   });
 });

@@ -221,6 +221,49 @@ export function returnStats(days: readonly PortfolioDay[]): ReturnStats {
   };
 }
 
+/**
+ * The honest "where did this value come from" split behind the decomposition
+ * bar. `netContributed + gains == value` exactly. Gross vs net matters once
+ * sells exist: sale proceeds leave `netContributed` (they were valued at the
+ * same closes as the NAV), so a heavily-trimmed winner can hold NEGATIVE net
+ * contributed capital — the position is running entirely on market gains. The
+ * gross figure is what was actually put in; `withdrawnCents` is what sells
+ * took back out. A UI must never label the net figure "contributed".
+ */
+export interface ValueDecomposition {
+  /** capital put in: the baseline NAV + every later positive flow, in cents */
+  grossContributedCents: number;
+  /** capital taken back out by sells: −Σ negative flows after the baseline (≥ 0) */
+  withdrawnCents: number;
+  /** net capital currently in = gross − withdrawn; negative once sells exceed buys */
+  netContributedCents: number;
+  /** cumulative flow-adjusted market P/L, in cents */
+  gainsCents: number;
+  /** the final day's NAV, in cents — always exactly netContributed + gains */
+  valueCents: number;
+}
+
+/** Decompose a NAV series' final value into contributed capital vs market P/L. */
+export function decomposeValue(days: readonly PortfolioDay[]): ValueDecomposition | null {
+  if (days.length === 0) return null;
+  let inflowCents = 0;
+  let outflowCents = 0;
+  for (let i = 1; i < days.length; i += 1) {
+    const flow = days[i]!.flowCents;
+    if (flow > 0) inflowCents += flow;
+    else outflowCents -= flow;
+  }
+  const grossContributedCents = days[0]!.navCents + inflowCents;
+  const withdrawnCents = outflowCents;
+  return {
+    grossContributedCents,
+    withdrawnCents,
+    netContributedCents: grossContributedCents - withdrawnCents,
+    gainsCents: totalReturn(days).gainCents,
+    valueCents: days[days.length - 1]!.navCents,
+  };
+}
+
 /** One point on the cumulative-return line (the Robinhood-style "returns" graph). */
 export interface CumulativeReturnPoint {
   day: string;
