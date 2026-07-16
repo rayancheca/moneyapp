@@ -6,7 +6,6 @@ import { holdings, priceCache, type AssetType } from "@/db/schema/holdings";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import {
-  benchmarkReturns,
   dailyReturns,
   totalReturn,
   type BenchmarkDay,
@@ -245,22 +244,17 @@ export function portfolioReturnDays(db: AppDatabase, accountIds?: readonly strin
 }
 
 /**
- * A market benchmark's cumulative % return (buy-and-hold), rebased to its first
- * close and aligned 1:1 with `days` — the "you vs the market" overlay for the
- * return chart. Uses the latest close on/before each day (carry-forward across
- * weekends), so a benchmark with cached daily closes tracks the portfolio's dense
- * daily return series. Returns null entries where the benchmark has no price yet.
+ * The benchmark's daily closes aligned 1:1 with `days` (latest close on/before
+ * each day — carry-forward across weekends; null before its history begins).
+ * One series feeds BOTH the "you vs the market" % overlay (benchmarkReturns)
+ * and the "what if I'd just bought SPY" flow replay (replayFlows).
  */
-export function portfolioBenchmark(
+export function portfolioBenchmarkDays(
   db: AppDatabase,
   days: readonly string[],
   symbol = "SPY",
-): (number | null)[] {
-  const benchDays: BenchmarkDay[] = days.map((day) => ({
-    day,
-    close: benchmarkCloseOn(db, symbol, day),
-  }));
-  return benchmarkReturns(benchDays);
+): BenchmarkDay[] {
+  return days.map((day) => ({ day, close: benchmarkCloseOn(db, symbol, day) }));
 }
 
 /** The latest cached close on/before `day` for a benchmark symbol (any asset type). */

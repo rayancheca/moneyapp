@@ -15,6 +15,7 @@ import { ScrubChart, type Accent, type ScrubPoint, type ScrubSummary } from "./S
 import {
   BenchmarkLegend,
   DecompositionBar,
+  ReplayLegend,
   ReturnStatsList,
   pctFromScaled,
   signedPct,
@@ -85,16 +86,29 @@ export function PortfolioChartPanel({
   });
   const viewDim = PORTFOLIO_VIEW_SPEC[0]!; // "view"
   const unitDim = PORTFOLIO_VIEW_SPEC[1]!; // "unit"
-  const active = state[viewDim.key] ?? "value";
-  const isReturns = active === "returns";
+  // the return view needs at least two flow-adjusted days to draw a line; a
+  // one-day portfolio coerces back to Value (mirrors HoldingChartPanel)
+  const canShowReturns = returnDays.length >= 2;
+  const isReturns = canShowReturns && (state[viewDim.key] ?? "value") === "returns";
   const isPercent = isReturns && state[unitDim.key] === "percent";
 
   // the RETURN line: cumulative flow-adjusted P/L (deposits removed), aligned 1:1
   // with the value series so the same range slicing + scrub applies — plus the
   // benchmark overlay, stats, decomposition, and flow-adjusted window summarize
-  const { returnPoints, stats, benchmarkCompare, benchmarkTotalPct, decomposition, summarize } =
-    useReturnViewModel(returnDays, isReturns, isPercent, benchmark);
+  const {
+    returnPoints,
+    stats,
+    benchmarkCompare,
+    benchmarkTotalPct,
+    replayCompare,
+    replaySummary,
+    youSwatchClass,
+    decomposition,
+    summarize,
+  } = useReturnViewModel(returnDays, isReturns, isPercent, benchmark);
   const chartPoints = isReturns ? returnPoints : points;
+  // one overlay per framing: % → buy-and-hold TWR, $ → the flow-replay gains
+  const compareLine = benchmarkCompare ?? replayCompare;
 
   // the hero number as a string: value ($), return-dollar (±$), or return-percent (±%)
   const heroText = useCallback(
@@ -114,26 +128,36 @@ export function PortfolioChartPanel({
 
   return (
     <div>
-      <div className="mb-3 flex items-center justify-end gap-2">
-        {isReturns && (
+      {canShowReturns && (
+        <div className="mb-3 flex items-center justify-end gap-2">
+          {isReturns && (
+            <ViewSwitcher
+              dimension={unitDim}
+              value={state[unitDim.key] ?? "dollar"}
+              onSelect={(v) => setView(unitDim.key, v)}
+              labels={PORTFOLIO_UNIT_LABELS}
+              ariaLabel="Return unit"
+            />
+          )}
           <ViewSwitcher
-            dimension={unitDim}
-            value={state[unitDim.key] ?? "dollar"}
-            onSelect={(v) => setView(unitDim.key, v)}
-            labels={PORTFOLIO_UNIT_LABELS}
-            ariaLabel="Return unit"
+            dimension={viewDim}
+            value={isReturns ? "returns" : "value"}
+            onSelect={(v) => setView(viewDim.key, v)}
+            labels={PORTFOLIO_VIEW_LABELS}
+            ariaLabel="Portfolio chart view"
           />
-        )}
-        <ViewSwitcher
-          dimension={viewDim}
-          value={active}
-          onSelect={(v) => setView(viewDim.key, v)}
-          labels={PORTFOLIO_VIEW_LABELS}
-          ariaLabel="Portfolio chart view"
-        />
-      </div>
+        </div>
+      )}
       {benchmarkCompare && (
-        <BenchmarkLegend label={benchmark!.label} totalPct={benchmarkTotalPct} />
+        <BenchmarkLegend label={benchmark!.label} totalPct={benchmarkTotalPct} youSwatchClass={youSwatchClass} />
+      )}
+      {replayCompare && replaySummary && (
+        <ReplayLegend
+          label={benchmark!.label}
+          end={replaySummary}
+          sinceDay={returnDays[0]!.day}
+          youSwatchClass={youSwatchClass}
+        />
       )}
       <ScrubChart
         points={chartPoints}
@@ -144,7 +168,7 @@ export function PortfolioChartPanel({
         valueText={valueText}
         formatValue={isPercent ? pctFromScaled : isReturns ? formatCentsSigned : formatCents}
         {...(isPercent ? { formatExtreme: pctFromScaled } : {})}
-        {...(benchmarkCompare ? { compareLine: benchmarkCompare } : {})}
+        {...(compareLine ? { compareLine } : {})}
         showExtremes={isReturns}
         showAxes
         selectable

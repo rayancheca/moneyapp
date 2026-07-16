@@ -2,10 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
+import { replayFlows } from "@/lib/benchmark-replay";
 import { todayIso } from "@/lib/dates";
+import { benchmarkReturns } from "@/lib/portfolio-returns";
 import { resolveViewState } from "@/lib/view-state";
 import { holdingDetail } from "@/services/holding-detail";
-import { hasBenchmark, portfolioBenchmark } from "@/services/portfolio";
+import { hasBenchmark, portfolioBenchmarkDays } from "@/services/portfolio";
 import { readSettings } from "@/services/settings";
 import { HoldingChartPanel } from "@/components/investments/HoldingChartPanel";
 import { HoldingEventsList } from "@/components/investments/HoldingEventsList";
@@ -51,11 +53,19 @@ export default async function HoldingPage({
     },
     readSettings(db).viewPreferences[HOLDING_SURFACE],
   );
-  // "you vs the market" overlay for the Return view (only when the benchmark is priced)
-  const benchmark =
+  // Return-view overlays (only when the benchmark is priced): buy-and-hold %
+  // comparison + "what if this holding's flows had bought SPY instead" replay
+  const benchDays =
     detail.returnDays.length >= 2 && hasBenchmark(db)
-      ? { label: "S&P 500", pct: portfolioBenchmark(db, detail.returnDays.map((d) => d.day)) }
+      ? portfolioBenchmarkDays(db, detail.returnDays.map((d) => d.day))
       : null;
+  const benchmark = benchDays
+    ? {
+        label: "S&P 500",
+        pct: benchmarkReturns(benchDays),
+        replay: replayFlows(detail.returnDays, benchDays),
+      }
+    : null;
   const marks = detail.marks
     .filter((m): m is typeof m & { closeCents: number } => m.closeCents !== null)
     .map((m) => ({ day: m.day, valueCents: m.closeCents, kind: m.kind }));

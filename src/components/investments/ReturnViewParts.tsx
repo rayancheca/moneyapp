@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
+import { replayEnd, type ReplayEnd, type ReplayPoint } from "@/lib/benchmark-replay";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { formatDayLong } from "@/lib/format-date";
 import {
@@ -35,6 +36,8 @@ export interface ReturnBenchmark {
   label: string;
   /** cumulative % aligned 1:1 to the returnDays series */
   pct: (number | null)[];
+  /** "what if these flows had bought the benchmark" — aligned 1:1 (item 3) */
+  replay?: ReplayPoint[];
 }
 
 export interface ReturnViewModel {
@@ -46,6 +49,12 @@ export interface ReturnViewModel {
   /** benchmark overlay on the % line's scale, or undefined when hidden */
   benchmarkCompare: { byDay: Record<string, number | null>; label: string } | undefined;
   benchmarkTotalPct: number | null;
+  /** the flow-replay overlay on the $ return line's scale (gain vs gain) */
+  replayCompare: { byDay: Record<string, number | null>; label: string } | undefined;
+  /** "you'd have $X, Δ $Y" — the replay's ending point vs the actual NAV */
+  replaySummary: ReplayEnd | null;
+  /** legend swatch for the "You" line, matching the series' own gain/loss accent */
+  youSwatchClass: string;
   decomposition: ValueDecomposition | null;
   /** flow-adjusted window return — a mid-window buy never inflates the number */
   summarize: (startIdx: number, endIdx: number, slice: readonly ScrubPoint[]) => ScrubSummary;
@@ -93,6 +102,27 @@ export function useReturnViewModel(
     return null;
   }, [benchmark]);
 
+  // "what if these flows had bought the benchmark": the replay's cumulative
+  // GAIN rides the $ return line's scale — a money-weighted, flow-identical
+  // comparison ($-framing only; the % view carries the buy-and-hold TWR overlay)
+  const replayCompare = useMemo(() => {
+    if (!isReturns || isPercent || !benchmark?.replay) return undefined;
+    const byDay: Record<string, number | null> = {};
+    for (const p of benchmark.replay) byDay[p.day] = p.gainCents;
+    return { byDay, label: `${benchmark.label} replay` };
+  }, [isReturns, isPercent, benchmark]);
+  const replaySummary = useMemo(
+    () => (benchmark?.replay ? replayEnd(benchmark.replay, returnDays) : null),
+    [benchmark, returnDays],
+  );
+
+  // the legends' "You" swatch tracks the series' own gain/loss accent (a losing
+  // holding draws a red line — a green key would mislabel it)
+  const youSwatchClass =
+    (returnLine.length > 0 ? returnLine[returnLine.length - 1]!.cumGainCents : 0) >= 0
+      ? "bg-positive"
+      : "bg-negative";
+
   // contributions vs returns: Value = the capital you put in + the market's P/L
   // (netContributed + gains == value exactly). The pure lib keeps gross vs net
   // honest once sells exist — sale proceeds are NOT negative contributions.
@@ -115,15 +145,76 @@ export function useReturnViewModel(
     [returnDays],
   );
 
-  return { returnLine, returnPoints, stats, benchmarkCompare, benchmarkTotalPct, decomposition, summarize };
+  return {
+    returnLine,
+    returnPoints,
+    stats,
+    benchmarkCompare,
+    benchmarkTotalPct,
+    replayCompare,
+    replaySummary,
+    youSwatchClass,
+    decomposition,
+    summarize,
+  };
 }
 
-/** "You / {benchmark} +X%" line-color legend above the % return chart. */
-export function BenchmarkLegend({ label, totalPct }: { label: string; totalPct: number | null }) {
+/** "You / {benchmark} replay: you'd have $X · ahead/behind by $Y · since {day}" —
+ *  the $ return view's counterfactual legend. A SIMULATION of the recorded flows
+ *  at daily closes, from the series' own baseline day (named, never "all time");
+ *  a withdrawal the benchmark couldn't have funded is called out, never hidden. */
+export function ReplayLegend({
+  label,
+  end,
+  sinceDay,
+  youSwatchClass,
+}: {
+  label: string;
+  end: ReplayEnd;
+  /** the replay's baseline (the series' first day) — names the basis window */
+  sinceDay: string;
+  /** matches the drawn line's gain/loss accent (never a green key on a red line) */
+  youSwatchClass: string;
+}) {
+  const ahead = end.deltaVsActualCents >= 0;
   return (
     <p className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-faint">
       <span className="inline-flex items-center gap-1.5">
-        <span aria-hidden className="inline-block h-0.5 w-4 rounded bg-positive" /> You
+        <span aria-hidden className={`inline-block h-0.5 w-4 rounded ${youSwatchClass}`} /> You
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span aria-hidden className="inline-block h-0.5 w-4 rounded bg-ink-faint" />
+        {label} replay
+      </span>
+      <span className="figures">
+        you&rsquo;d have {formatCents(end.valueCents)}
+        <span className="font-normal">
+          {" "}
+          · {formatCents(Math.abs(end.deltaVsActualCents))} {ahead ? "ahead of" : "behind"} you
+          {end.shortfallCents > 0 &&
+            ` · couldn't fund ${formatCents(end.shortfallCents)} of your withdrawals`}{" "}
+          · since {formatDayLong(sinceDay)} · simulated at daily closes
+        </span>
+      </span>
+    </p>
+  );
+}
+
+/** "You / {benchmark} +X%" line-color legend above the % return chart. */
+export function BenchmarkLegend({
+  label,
+  totalPct,
+  youSwatchClass,
+}: {
+  label: string;
+  totalPct: number | null;
+  /** matches the drawn line's gain/loss accent (never a green key on a red line) */
+  youSwatchClass: string;
+}) {
+  return (
+    <p className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-faint">
+      <span className="inline-flex items-center gap-1.5">
+        <span aria-hidden className={`inline-block h-0.5 w-4 rounded ${youSwatchClass}`} /> You
       </span>
       <span className="inline-flex items-center gap-1.5">
         <span aria-hidden className="inline-block h-0.5 w-4 rounded bg-ink-faint" />

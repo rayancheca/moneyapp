@@ -14,6 +14,7 @@ import { ScrubChart, type Accent, type ScrubMark, type ScrubPoint, type ScrubSum
 import {
   BenchmarkLegend,
   DecompositionBar,
+  ReplayLegend,
   ReturnStatsList,
   pctFromScaled,
   signedPct,
@@ -114,10 +115,15 @@ export function HoldingChartPanel({
     stats,
     benchmarkCompare,
     benchmarkTotalPct,
+    replayCompare,
+    replaySummary,
+    youSwatchClass,
     decomposition,
     summarize: summarizeReturn,
   } = useReturnViewModel(returnDays, isReturns, isPercent, benchmark);
   const chartPoints = isReturns ? returnPoints : pricePoints;
+  // one overlay per framing: % → buy-and-hold TWR, $ → the flow-replay gains
+  const compareLine = benchmarkCompare ?? replayCompare;
 
   // PRICE view: the window's per-share price change (a single security's price
   // change over a window IS its return per share). RETURN view: the flow-
@@ -172,7 +178,15 @@ export function HoldingChartPanel({
         </div>
       )}
       {benchmarkCompare && (
-        <BenchmarkLegend label={benchmark!.label} totalPct={benchmarkTotalPct} />
+        <BenchmarkLegend label={benchmark!.label} totalPct={benchmarkTotalPct} youSwatchClass={youSwatchClass} />
+      )}
+      {replayCompare && replaySummary && (
+        <ReplayLegend
+          label={benchmark!.label}
+          end={replaySummary}
+          sinceDay={returnDays[0]!.day}
+          youSwatchClass={youSwatchClass}
+        />
       )}
       <ScrubChart
         // the price and return series are NOT day-aligned (price carries to
@@ -187,7 +201,7 @@ export function HoldingChartPanel({
         valueText={valueText}
         formatValue={isPercent ? pctFromScaled : isReturns ? formatCentsSigned : formatCents}
         {...(isPercent ? { formatExtreme: pctFromScaled } : {})}
-        {...(benchmarkCompare ? { compareLine: benchmarkCompare } : {})}
+        {...(compareLine ? { compareLine } : {})}
         showExtremes={isReturns}
         showAxes
         selectable

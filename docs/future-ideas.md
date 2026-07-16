@@ -232,18 +232,40 @@ annualized ≥1Y.
   +$30.14 across 88 sells. Cost-basis stat relabeled "Unrealized P/L · open positions · avg cost".
 - Dashboard activity-grid gap fixed (review preview 3 → 6 rows).
 
+### ✅ SHIPPED (pass 16: `0b9ae66` returns · `40a26a2` realized · + the SPY-replay commit)
+- **1. Per-holding Return view** (`0b9ae66`): Price ⇄ Return on every holding page — pure
+  `src/lib/holding-returns.ts` (NAV = qty × close; flows = Δvaluation at the SAME close, so the
+  per-holding TWR% telescopes to the stitched price return while held; first held+priced day
+  neutralized; no fabricated flat heads/tails), shared `ReturnViewParts` (both panels consume ONE
+  return-view implementation), "holding" view-state surface, SPY %-overlay, drag-select, axes,
+  stats, decomposition. Honesty labels: "your return · since {baseline} · at daily closes"; the
+  decomposition split into gross in / taken out / net (a sold-down winner can hold NEGATIVE net —
+  never mislabeled "contributed"); chart remounts per view (a stale drag-window can't caption
+  all-time figures as a window). Real read: **ETH −$4,597.11 (−53.86%) vs S&P 500 +10.25%**.
+- **2. Per-holding realized/unrealized + sell drill-down** (`40a26a2`): `realizedSales()` per-sale
+  rows; `portfolioRealizedPl().byLeg`; the holdings-table metric cycle gains "Realized P/L" (a 7th
+  column overflowed the desktop card); `RealizedSalesList` drill-down on the holding page
+  (proceeds − basis per sell, ≈/clamped flags, "at daily closes"). **Fixed a shipped 100× units
+  bug** (closeOn dollars fed as cents: real realized was +$3,018.13, not +$30.14) and
+  **SQLite-unspecified same-day trade ordering** (now (occurredOn, createdAt, id) on every realized
+  surface — tie order was worth ±$6 and ±1 sell on the live book). Empty-book sells flag the book ≈.
+- **3. "What if I'd just bought SPY?"** — pure `src/lib/benchmark-replay.ts` replays the EXACT flow
+  series (opening + every later flow) as benchmark buys/sells at daily closes (pre-history flows
+  wait as cash; a withdrawal the benchmark couldn't fund LIQUIDATES and carries a labeled
+  `shortfallCents` — the strategy is long-only, never a fabricated short); dashed replay-GAIN
+  overlay on the $-Return view of BOTH panels + legend "you'd have $X · $Y ahead of/behind you ·
+  since {baseline} · simulated at daily closes". Legend swatches track the line's real gain/loss
+  accent. Real read: portfolio replay **$94,550.81 (+$7,457.08 ahead of the real $87,093.73)
+  since Feb 20, 2025**; ETH's flows into SPY: **~$33.5k (+$7.4k ahead)**.
+- KNOWN GAP (deliberate): the e2e fixture has no sells and no SPY, so the populated
+  RealizedSalesList/replay overlays render only on real data (browser-verified). Seeding a fixture
+  sell/benchmark churns every investments baseline — batch it with the next visual change.
+
 ### 🗺️ THE IDEA BACKLOG (each = one focused item; keep the honesty doctrine — no price prediction)
 Ordered roughly by value ÷ effort:
-1. **Per-holding Return view** — the same value↔return toggle + benchmark on each
-   `/investments/[assetType]/[symbol]` page (per-holding `PortfolioDay` series already derivable from
-   `holding_events` × closes; HoldingChartPanel mirrors PortfolioChartPanel). Answers "is ETH or MSFT
-   my problem?" (given the SPY gap, likely THE next most valuable view).
-2. **Per-holding realized/unrealized columns** in the holdings table (realizedPnl per symbol is already
-   computed per-key inside `portfolioRealizedPl` — surface it) + a P/L drill-down sheet listing each
-   sell's realized gain (day, qty, proceeds, basis, gain).
-3. **"What if I'd just bought SPY?" simulation** — replay the user's EXACT deposit flows as SPY buys at
-   that day's close → a dashed counterfactual line + end-value delta. Fully derivable (flows + SPY
-   closes exist), brutally honest, the natural completion of the benchmark overlay.
+1. ✅ **Per-holding Return view** — SHIPPED pass 16 (`0b9ae66`), see above.
+2. ✅ **Per-holding realized/unrealized + sell drill-down** — SHIPPED pass 16 (`40a26a2`), see above.
+3. ✅ **"What if I'd just bought SPY?" simulation** — SHIPPED pass 16, see above.
 4. **Benchmark picker** — SPY default; QQQ/VTI/BTC/custom symbol (any priced symbol); persisted per the
    view-state pattern. Needs a price-history backfill for symbols not held (provider fetch on pick).
 5. **Money-weighted return (XIRR)** alongside TWR — "the growth rate of YOUR dollars" (Newton solve on

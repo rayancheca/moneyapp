@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { z } from "zod";
 import { getDb } from "@/db/client";
+import { replayFlows } from "@/lib/benchmark-replay";
 import { CHART_RANGES } from "@/lib/chart-range";
 import { monthKey, todayIso } from "@/lib/dates";
 import { formatMonthYear } from "@/lib/format-date";
+import { benchmarkReturns } from "@/lib/portfolio-returns";
 import { carryForwardTo } from "@/lib/price-series";
 import { resolveViewState } from "@/lib/view-state";
 import { listAccounts } from "@/services/accounts";
@@ -14,7 +16,7 @@ import {
   hasBenchmark,
   holdingRows,
   pnlCalendarMonth,
-  portfolioBenchmark,
+  portfolioBenchmarkDays,
   portfolioOverview,
   portfolioReturnDays,
   portfolioSeries,
@@ -94,9 +96,19 @@ export default async function InvestmentsPage({
     today,
   );
   const returnDays = portfolioReturnDays(db);
-  // "you vs the market" overlay for the Return view (only when the benchmark is priced)
-  const benchmark = hasBenchmark(db)
-    ? { label: "S&P 500", pct: portfolioBenchmark(db, returnDays.map((d) => d.day)) }
+  // one aligned benchmark close series feeds both Return-view overlays: the
+  // buy-and-hold % comparison and the "what if these flows bought SPY" replay.
+  // Gated like the holding page: no overlays without a chartable return series.
+  const benchDays =
+    returnDays.length >= 2 && hasBenchmark(db)
+      ? portfolioBenchmarkDays(db, returnDays.map((d) => d.day))
+      : null;
+  const benchmark = benchDays
+    ? {
+        label: "S&P 500",
+        pct: benchmarkReturns(benchDays),
+        replay: replayFlows(returnDays, benchDays),
+      }
     : null;
   const rows = holdingRows(db);
   const movers = topMovers(db);
