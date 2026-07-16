@@ -250,3 +250,40 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* a modal dialog owns the viewport — the page behind it must not scroll
+   (native <dialog>.showModal() does NOT lock scroll on its own) */
+body:has(dialog[open]) {
+  overflow: hidden;
+}
+
+/* chart focus mode (S8): a decisive, springy expand. The shared element's
+   morph gets a longer, overshooting curve, and both snapshots stretch to the
+   group box so the chart scales as one surface instead of crossfading in
+   mid-air. Reduced motion never gets here — the component skips the
+   view transition entirely. */
+::view-transition-group(chart-focus) {
+  animation-duration: 440ms;
+  animation-timing-function: cubic-bezier(0.34, 1.2, 0.3, 1);
+}
+::view-transition-old(chart-focus),
+::view-transition-new(chart-focus) {
+  animation-duration: 440ms;
+  height: 100%;
+}
+
+/* the focus dialog's backdrop fades + blurs in behind the morph */
+.chart-focus-dialog::backdrop {
+  background: rgb(0 0 0 / 0.55);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  opacity: 1;
+  transition:
+    opacity 320ms ease,
+    backdrop-filter 320ms ease;
+}
+@starting-style {
+  .chart-focus-dialog[open]::backdrop {
+    opacity: 0;
+  }
+}

@@ -17,6 +17,8 @@ test("chart focus mode opens as a modal, closes on Escape, returns focus", async
   const dialog = page.getByRole("dialog", { name: "Net worth chart — focus view" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Net worth — focus")).toBeVisible();
+  // the page behind a modal must not scroll (body locks while any dialog is open)
+  expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).toBe("hidden");
   // the focus view renders the interactive scrub chart
   await expect(
     dialog.getByRole("application", { name: /Net worth over time/ }).or(
@@ -34,6 +36,8 @@ test("chart focus mode opens as a modal, closes on Escape, returns focus", async
   await expect(dialog).not.toBeVisible();
   // native dialog returns focus to the opener
   await expect(expand).toBeFocused();
+  // and the scroll lock releases with it
+  expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).not.toBe("hidden");
 });
 
 test("the close button also dismisses the focus view", async ({ page }) => {

@@ -98,7 +98,9 @@ export function ChartFocus({ points, today }: { points: readonly NetWorthPoint[]
           }
         }}
         aria-label="Net worth chart — focus view"
-        className="m-auto w-[min(96vw,1100px)] rounded-(--radius-card) border border-line bg-surface-raised p-0 shadow-xl backdrop:bg-black/50"
+        // backdrop styling lives in globals.css (.chart-focus-dialog::backdrop):
+        // a blurred fade-in behind the morph, with an @starting-style entrance
+        className="chart-focus-dialog m-auto w-[min(96vw,1100px)] rounded-(--radius-card) border border-line bg-surface-raised p-0 shadow-xl"
       >
         {open ? (
           <div className="p-5" style={open ? chartName : undefined}>
