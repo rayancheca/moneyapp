@@ -12,6 +12,7 @@ import {
   type BenchmarkDay,
   type PortfolioDay,
 } from "@/lib/portfolio-returns";
+import { realizedPnl, sumRealized, type RealizedPnl, type ValuedTrade } from "@/lib/realized-pnl";
 import { accountSeries } from "./derivation";
 import { valueCentsOf } from "./holdings";
 
@@ -298,9 +299,13 @@ export interface PortfolioOverview {
   twrPct: number | null;
   twrGainCents: number;
   twrAnchor: string | null;
-  /** cost-basis P/L across priced holdings (display; avg cost) */
+  /** cost-basis P/L across priced holdings (display; avg cost) — the UNREALIZED leg */
   costBasisPlCents: number | null;
   costBasisPlPct: number | null;
+  /** realized P/L locked in by sells (avg-cost walk at daily closes); null when no sells */
+  realizedPlCents: number | null;
+  realizedPlExact: boolean;
+  realizedSellCount: number;
   hasCrypto: boolean;
 }
 
@@ -326,6 +331,7 @@ export function portfolioOverview(db: AppDatabase): PortfolioOverview {
   const twr = totalReturn(days);
 
   const cost = costBasisPl(db);
+  const realized = portfolioRealizedPl(db);
 
   return {
     valueCents: last?.navCents ?? 0,
@@ -339,8 +345,39 @@ export function portfolioOverview(db: AppDatabase): PortfolioOverview {
     twrAnchor: days[0]?.day ?? null,
     costBasisPlCents: cost?.plCents ?? null,
     costBasisPlPct: cost?.plPct ?? null,
+    realizedPlCents: realized.sellCount > 0 ? realized.realizedCents : null,
+    realizedPlExact: realized.exact,
+    realizedSellCount: realized.sellCount,
     hasCrypto: infos.some((a) => a.isCrypto),
   };
+}
+
+/**
+ * Realized P/L across the whole portfolio: an average-cost walk per
+ * (account, symbol) over every holding event, valued at daily closes (the same
+ * valuation the NAV/flow engine uses). Estimated — execution prices are not
+ * recorded — and flagged inexact when any trade had no close at all.
+ */
+export function portfolioRealizedPl(db: AppDatabase): RealizedPnl {
+  const events = db
+    .select({
+      accountId: holdingEvents.accountId,
+      symbol: holdingEvents.symbol,
+      assetType: holdingEvents.assetType,
+      day: holdingEvents.occurredOn,
+      deltaE8: holdingEvents.quantityDeltaE8,
+    })
+    .from(holdingEvents)
+    .orderBy(asc(holdingEvents.occurredOn))
+    .all();
+  const byHolding = new Map<string, ValuedTrade[]>();
+  for (const e of events) {
+    const key = `${e.accountId}|${e.assetType}|${e.symbol}`;
+    const list = byHolding.get(key) ?? [];
+    list.push({ day: e.day, qtyE8: e.deltaE8, closeCents: closeOn(db, e.symbol, e.assetType, e.day) });
+    byHolding.set(key, list);
+  }
+  return sumRealized([...byHolding.values()].map((trades) => realizedPnl(trades)));
 }
 
 /** Cost-basis (avg-cost) P/L across all priced active holdings — display only. */

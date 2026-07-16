@@ -21,7 +21,7 @@ function toneClass(value: number | null): string {
 
 export function PortfolioStats({ overview }: { overview: PortfolioOverview }) {
   return (
-    <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-4 border-t border-line pt-4 sm:grid-cols-3">
+    <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-4 border-t border-line pt-4 sm:grid-cols-4">
       <div>
         <dt className="text-xs font-medium uppercase tracking-[0.08em] text-ink-faint">
           Today{overview.dayChangeVsDay ? "" : ""}
@@ -59,17 +59,48 @@ export function PortfolioStats({ overview }: { overview: PortfolioOverview }) {
       </div>
 
       <div>
-        <dt className="text-xs font-medium uppercase tracking-[0.08em] text-ink-faint">Cost-basis P/L</dt>
-        <dd className="mt-1 flex items-baseline gap-1.5">
-          {overview.costBasisPlCents !== null ? (
-            <>
-              <Money cents={overview.costBasisPlCents} flow className="text-sm font-medium" />
-              <span className={`figures text-xs ${toneClass(overview.costBasisPlCents)}`}>
-                {pctText(overview.costBasisPlPct)}
-              </span>
-            </>
-          ) : (
-            <span className="text-sm text-ink-faint">—</span>
+        <dt className="text-xs font-medium uppercase tracking-[0.08em] text-ink-faint">Unrealized P/L</dt>
+        <dd className="mt-1">
+          <span className="flex items-baseline gap-1.5">
+            {overview.costBasisPlCents !== null ? (
+              <>
+                <Money cents={overview.costBasisPlCents} flow className="text-sm font-medium" />
+                <span className={`figures text-xs ${toneClass(overview.costBasisPlCents)}`}>
+                  {pctText(overview.costBasisPlPct)}
+                </span>
+              </>
+            ) : (
+              <span className="text-sm text-ink-faint">—</span>
+            )}
+          </span>
+          <span className="mt-0.5 block text-[11px] font-normal text-ink-faint">open positions · avg cost</span>
+        </dd>
+      </div>
+
+      <div>
+        <dt className="text-xs font-medium uppercase tracking-[0.08em] text-ink-faint">Realized P/L</dt>
+        <dd className="mt-1">
+          <span className="flex items-baseline gap-1.5">
+            {overview.realizedPlCents !== null ? (
+              <>
+                <Money cents={overview.realizedPlCents} flow className="text-sm font-medium" />
+                {!overview.realizedPlExact && (
+                  <span
+                    className="text-[11px] text-ink-faint"
+                    title="Some trades had no cached price — estimated at daily closes"
+                  >
+                    ≈
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-sm text-ink-faint">—</span>
+            )}
+          </span>
+          {overview.realizedPlCents !== null && (
+            <span className="mt-0.5 block text-[11px] font-normal text-ink-faint">
+              {overview.realizedSellCount} sell{overview.realizedSellCount === 1 ? "" : "s"} · at daily closes
+            </span>
           )}
         </dd>
       </div>

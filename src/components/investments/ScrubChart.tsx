@@ -545,7 +545,7 @@ export function ScrubChart({
                 orientation="right"
                 domain={domain}
                 ticks={niceY.ticks}
-                tickFormatter={(v: number) => compactMoney(v)}
+                tickFormatter={(v: number) => formatExtreme(v)}
                 tick={{ fontSize: vivid ? 11 : 10, fill: "var(--ink-faint)" }}
                 tickLine={false}
                 axisLine={false}

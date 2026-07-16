@@ -223,15 +223,23 @@ export function PortfolioChartPanel({
         {...(isPercent ? { formatExtreme: pctFromScaled } : {})}
         {...(benchmarkCompare ? { compareLine: benchmarkCompare } : {})}
         showExtremes={isReturns}
+        showAxes
+        selectable
         ariaLabel={
           isReturns
             ? "Portfolio return over time — scrub to inspect a day"
             : "Portfolio value over time — scrub to inspect a day"
         }
-        renderHeader={(summary, scrubbing, range) => {
+        renderHeader={(summary, scrubbing, range, customWindow) => {
           const accent = accentOf(summary);
           const arrow = accent === "gain" ? "▲" : accent === "loss" ? "▼" : "•";
-          const context = scrubbing ? formatDayLong(summary.day) : range === "ALL" ? "all time" : range;
+          const context = scrubbing
+            ? formatDayLong(summary.day)
+            : customWindow
+              ? `${customWindow.start} → ${customWindow.end}`
+              : range === "ALL"
+                ? "all time"
+                : range;
           // the SECONDARY metric (whatever the hero isn't): value→±$ +(%); return-$→(%); return-%→±$
           const secondary =
             !isReturns
