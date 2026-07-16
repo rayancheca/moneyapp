@@ -11,7 +11,14 @@ import {
   type BenchmarkDay,
   type PortfolioDay,
 } from "@/lib/portfolio-returns";
-import { realizedPnl, sumRealized, type RealizedPnl, type ValuedTrade } from "@/lib/realized-pnl";
+import {
+  realizedPnl,
+  realizedSales,
+  sumRealized,
+  type RealizedPnl,
+  type RealizedSale,
+  type ValuedTrade,
+} from "@/lib/realized-pnl";
 import { accountSeries } from "./derivation";
 import { valueCentsOf } from "./holdings";
 
@@ -364,11 +371,23 @@ export interface PortfolioRealizedPl extends RealizedPnl {
  * summed shape is unchanged for existing callers; `byLeg` carries each leg's
  * own figure for the holdings table.
  */
-export function portfolioRealizedPl(db: AppDatabase): PortfolioRealizedPl {
-  // (createdAt, id) is the deterministic same-day tiebreak — the avg-cost walk
-  // is intra-day order-sensitive (a same-day buy+sell realizes differently
-  // depending on which runs first), and holdingDetail must provably walk the
-  // SAME sequence so the header, the table, and the holding page reconcile.
+interface LegTrades {
+  symbol: string;
+  assetType: AssetType;
+  trades: ValuedTrade[];
+}
+
+/**
+ * Every (account, assetType, symbol) leg's close-valued trades, ready for the
+ * avg-cost walk. (createdAt, id) is the deterministic same-day tiebreak — the
+ * walk is intra-day order-sensitive (a same-day buy+sell realizes differently
+ * depending on which runs first), and every realized surface must provably
+ * walk the SAME sequence so the header, table, calendar, and holding page
+ * reconcile. One ascending close series per symbol (not one query per event);
+ * each trade is valued at the latest close on/before its day, close × 100
+ * UNROUNDED so the walk's product-rounding matches valueCentsOf to the cent.
+ */
+function realizedTradesByLeg(db: AppDatabase): Map<string, LegTrades> {
   const events = db
     .select({
       accountId: holdingEvents.accountId,
@@ -380,9 +399,6 @@ export function portfolioRealizedPl(db: AppDatabase): PortfolioRealizedPl {
     .from(holdingEvents)
     .orderBy(asc(holdingEvents.occurredOn), asc(holdingEvents.createdAt), asc(holdingEvents.id))
     .all();
-  // one ascending close series per symbol (not one query per event); each trade
-  // is valued at the latest close on/before its day, close × 100 UNROUNDED so
-  // the walk's product-rounding matches valueCentsOf to the cent
   const closesFor = new Map<string, { day: string; close: number }[]>();
   const seriesOf = (assetType: AssetType, symbol: string): { day: string; close: number }[] => {
     const key = `${assetType}|${symbol}`;
@@ -398,17 +414,51 @@ export function portfolioRealizedPl(db: AppDatabase): PortfolioRealizedPl {
     }
     return series;
   };
-  const byHolding = new Map<string, ValuedTrade[]>();
+  const byHolding = new Map<string, LegTrades>();
   for (const e of events) {
     const key = realizedLegKey(e.accountId, e.assetType, e.symbol);
-    const list = byHolding.get(key) ?? [];
+    const leg = byHolding.get(key) ?? { symbol: e.symbol, assetType: e.assetType, trades: [] };
     const close = latestCloseOnOrBefore(seriesOf(e.assetType, e.symbol), e.day);
-    list.push({ day: e.day, qtyE8: e.deltaE8, closeCents: close === null ? null : close * 100 });
-    byHolding.set(key, list);
+    leg.trades.push({ day: e.day, qtyE8: e.deltaE8, closeCents: close === null ? null : close * 100 });
+    byHolding.set(key, leg);
   }
+  return byHolding;
+}
+
+export function portfolioRealizedPl(db: AppDatabase): PortfolioRealizedPl {
   const byLeg = new Map<string, RealizedPnl>();
-  for (const [key, trades] of byHolding) byLeg.set(key, realizedPnl(trades));
+  for (const [key, leg] of realizedTradesByLeg(db)) byLeg.set(key, realizedPnl(leg.trades));
   return { ...sumRealized([...byLeg.values()]), byLeg };
+}
+
+/** One sale attributed to its symbol — the calendar/day-sheet realized rows. */
+export interface RealizedDaySale {
+  symbol: string;
+  assetType: AssetType;
+  qtyE8: number;
+  gainCents: number;
+  exact: boolean;
+  clamped: boolean;
+}
+
+/** Every realized sale across the portfolio, grouped by day. */
+function realizedSalesByDay(db: AppDatabase): Map<string, RealizedDaySale[]> {
+  const byDay = new Map<string, RealizedDaySale[]>();
+  for (const leg of realizedTradesByLeg(db).values()) {
+    for (const s of realizedSales(leg.trades)) {
+      const list = byDay.get(s.day) ?? [];
+      list.push({
+        symbol: leg.symbol,
+        assetType: leg.assetType,
+        qtyE8: s.qtyE8,
+        gainCents: s.gainCents,
+        exact: s.exact,
+        clamped: s.clamped,
+      });
+      byDay.set(s.day, list);
+    }
+  }
+  return byDay;
 }
 
 /** Binary search: the latest close (dollars) quoted on/before `day`, or null. */
@@ -589,6 +639,9 @@ export interface PnlDayCell {
   exact: boolean;
   /** the equity book's close was carried this day (weekend/holiday) */
   marketsClosed: boolean;
+  /** P/L locked in by that day's sells (avg-cost at daily closes); 0 = no sells */
+  realizedCents: number;
+  realizedSellCount: number;
 }
 
 export interface PnlCalendarMonth {
@@ -600,6 +653,11 @@ export interface PnlCalendarMonth {
   scaleCents: number;
   upDays: number;
   downDays: number;
+  /** P/L locked in by the month's sells — a separate fact from monthPnlCents
+   *  (sells crystallize gains earned over many prior days), never an additive split */
+  realizedMonthCents: number;
+  realizedSellCount: number;
+  realizedExact: boolean;
 }
 
 /** One month of whole-portfolio flow-adjusted daily P/L for the calendar. */
@@ -613,28 +671,50 @@ export function pnlCalendarMonth(
   const returns = dailyReturns(built.days);
   // map day → equityCarried from meta (aligned to built.days; returns skip index 0)
   const carriedByDay = new Map(built.days.map((d, i) => [d.day, built.meta[i]!.equityCarried]));
+  const salesByDay = realizedSalesByDay(db);
 
   const cellsByDay: Record<string, PnlDayCell> = {};
   let monthPnlCents = 0;
   let scaleCents = 0;
   let upDays = 0;
   let downDays = 0;
+  let realizedMonthCents = 0;
+  let realizedSellCount = 0;
+  let realizedExact = true;
   for (const r of returns) {
     if (compareDates(r.day, start) < 0 || compareDates(r.day, end) > 0) continue;
     if (compareDates(r.day, today) > 0) continue; // never show future days
+    const sales = salesByDay.get(r.day) ?? [];
+    const realizedCents = sales.reduce((s, x) => s + x.gainCents, 0);
     cellsByDay[r.day] = {
       pnlCents: r.returnCents,
       pct: r.prevNavCents > 0 ? (r.returnCents / r.prevNavCents) * 100 : null,
       exact: r.exact,
       marketsClosed: carriedByDay.get(r.day) ?? false,
+      realizedCents,
+      realizedSellCount: sales.length,
     };
     monthPnlCents += r.returnCents;
     scaleCents = Math.max(scaleCents, Math.abs(r.returnCents));
     if (r.returnCents > 0) upDays += 1;
     else if (r.returnCents < 0) downDays += 1;
+    realizedMonthCents += realizedCents;
+    realizedSellCount += sales.length;
+    if (sales.some((s) => !s.exact)) realizedExact = false;
   }
 
-  return { monthKey: month, today, cellsByDay, monthPnlCents, scaleCents, upDays, downDays };
+  return {
+    monthKey: month,
+    today,
+    cellsByDay,
+    monthPnlCents,
+    scaleCents,
+    upDays,
+    downDays,
+    realizedMonthCents,
+    realizedSellCount,
+    realizedExact,
+  };
 }
 
 export interface PnlHoldingDelta {
@@ -648,6 +728,9 @@ export interface PnlDayDetail {
   pnlCents: number;
   exact: boolean;
   holdings: PnlHoldingDelta[];
+  /** P/L locked in by that day's sells (avg-cost at daily closes) */
+  realizedCents: number;
+  realizedSales: RealizedDaySale[];
   /** that day's investment transactions, newest-value first */
   transactions: { id: string; accountId: string; description: string; amountCents: number }[];
 }
@@ -664,6 +747,12 @@ export function pnlDayDetail(db: AppDatabase, day: string): PnlDayDetail {
   // per-holding value delta vs the prior day (qty held that day × close move)
   const prevDay = prev?.day ?? null;
   const perHolding = prevDay ? holdingDeltasBetween(db, prevDay, day) : [];
+
+  // that day's realized sells, biggest locked-in gain/loss first
+  const daySales = (realizedSalesByDay(db).get(day) ?? [])
+    .slice()
+    .sort((a, b) => Math.abs(b.gainCents) - Math.abs(a.gainCents));
+  const realizedCents = daySales.reduce((s, x) => s + x.gainCents, 0);
 
   const invAccounts = investmentAccounts(db).map((a) => a.id);
   const txns =
@@ -687,7 +776,15 @@ export function pnlDayDetail(db: AppDatabase, day: string): PnlDayDetail {
           .all()
       : [];
 
-  return { day, pnlCents, exact, holdings: perHolding, transactions: txns };
+  return {
+    day,
+    pnlCents,
+    exact,
+    holdings: perHolding,
+    realizedCents,
+    realizedSales: daySales,
+    transactions: txns,
+  };
 }
 
 /**

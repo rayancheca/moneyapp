@@ -78,7 +78,11 @@ export function PnlCalendar({ initialMonth, today }: { initialMonth: PnlCalendar
         : `${dir === "up" ? "up" : "down"} ${formatCents(Math.abs(cell.pnlCents))}${cell.pct !== null ? ` (${cell.pct >= 0 ? "+" : ""}${cell.pct.toFixed(1)}%)` : ""}`;
     const closed = cell.marketsClosed ? ", markets closed" : "";
     const approx = cell.exact ? "" : ", approximate";
-    return `${formatDayLong(iso)}: portfolio ${move}${closed}${approx}`;
+    const realized =
+      cell.realizedSellCount > 0
+        ? `, realized ${formatCentsSigned(cell.realizedCents)} by ${cell.realizedSellCount} sell${cell.realizedSellCount === 1 ? "" : "s"}`
+        : "";
+    return `${formatDayLong(iso)}: portfolio ${move}${realized}${closed}${approx}`;
   }
 
   function renderCell(day: CalendarDay): React.ReactNode {
@@ -92,10 +96,15 @@ export function PnlCalendar({ initialMonth, today }: { initialMonth: PnlCalendar
     return (
       <span
         aria-hidden
-        className="flex h-full w-full items-center justify-center rounded-[3px]"
+        className="relative flex h-full w-full items-center justify-center rounded-[3px]"
         style={{ backgroundColor: cellFill(cell, month.scaleCents) }}
       >
         {!cell.exact && <span className="text-[9px] font-bold leading-none text-ink-faint">!</span>}
+        {/* a sell locked in P/L this day — the amount lives in the aria-label
+            and the day sheet; the dot just says "something was realized here" */}
+        {cell.realizedSellCount > 0 && (
+          <span className="absolute right-0.5 top-0.5 size-1 rounded-full bg-ink-muted" />
+        )}
       </span>
     );
   }
@@ -159,7 +168,9 @@ function DaySheetBody({ detail }: { detail: PnlDayDetail }) {
 
       {detail.holdings.length > 0 && (
         <div>
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-[0.1em] text-ink">By holding</h3>
+          <h3 className="mb-2 text-xs font-medium uppercase tracking-[0.1em] text-ink">
+            Market move by holding
+          </h3>
           <ul className="divide-y divide-line">
             {detail.holdings.map((h) => (
               <li key={`${h.assetType}-${h.symbol}`} className="flex items-center justify-between py-2">
@@ -170,6 +181,34 @@ function DaySheetBody({ detail }: { detail: PnlDayDetail }) {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {detail.realizedSales.length > 0 && (
+        <div>
+          <h3 className="mb-2 text-xs font-medium uppercase tracking-[0.1em] text-ink">
+            Realized by sells
+            <span className="ml-2 font-normal normal-case tracking-normal text-ink-faint">
+              at daily closes
+            </span>
+          </h3>
+          <ul className="divide-y divide-line">
+            {detail.realizedSales.map((s, i) => (
+              <li key={`${s.assetType}-${s.symbol}-${i}`} className="flex items-center justify-between py-2">
+                <Link href={`/investments/${s.assetType}/${s.symbol}`} className="text-sm font-medium hover:text-accent">
+                  {s.symbol}
+                  {(!s.exact || s.clamped) && (
+                    <span className="ml-1.5 text-[11px] font-normal text-ink-muted">≈</span>
+                  )}
+                </Link>
+                <SignedAmount cents={s.gainCents} />
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 flex items-center justify-between border-t border-line pt-2 text-xs text-ink-muted">
+            <span>Locked in this day</span>
+            <SignedAmount cents={detail.realizedCents} />
+          </p>
         </div>
       )}
 
@@ -202,6 +241,20 @@ function CalendarFooter({ month }: { month: PnlCalendarMonth }) {
         <span className="text-xs font-medium uppercase tracking-[0.1em] text-ink-faint">Month P/L</span>
         <Money cents={month.monthPnlCents} flow className="font-medium" />
       </span>
+      {/* a SEPARATE fact, never an additive split: sells crystallize gains
+          earned over many prior days, so realized ≠ a slice of month P/L */}
+      {month.realizedSellCount > 0 && (
+        <span className="inline-flex items-baseline gap-1.5">
+          <span className="text-xs font-medium uppercase tracking-[0.1em] text-ink-faint">
+            Realized by sells
+          </span>
+          <Money cents={month.realizedMonthCents} flow className="font-medium" />
+          <span className="text-xs text-ink-faint">
+            {month.realizedExact ? "" : "≈ "}
+            {month.realizedSellCount} sell{month.realizedSellCount === 1 ? "" : "s"} · at daily closes
+          </span>
+        </span>
+      )}
       <span className="text-xs text-ink-faint">
         {month.upDays} up · {month.downDays} down
       </span>

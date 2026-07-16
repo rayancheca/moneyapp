@@ -208,6 +208,35 @@ describe("holdingRows + topMovers", () => {
     expect(eth.realizedCents).toBeNull();
     expect(eth.realizedSellCount).toBe(0);
   });
+
+  test("the P/L calendar and day sheet carry the day's realized sells", () => {
+    seedMixedBook();
+    // sell 1 of the 2 AAPL on D3 at the $120 close (avg basis $110 → +$10)
+    upsertHolding(bundle.db, { accountId: brokerage, symbol: "AAPL", assetType: "stock", quantityE8: 100_000_000, avgCostCents: 11_000, occurredOn: D3 });
+
+    const month = pnlCalendarMonth(bundle.db, "2026-03", TODAY);
+    expect(month.cellsByDay[D3]).toMatchObject({ realizedCents: 1_000, realizedSellCount: 1 });
+    expect(month.cellsByDay[D2]).toMatchObject({ realizedCents: 0, realizedSellCount: 0 });
+    expect(month.realizedMonthCents).toBe(1_000);
+    expect(month.realizedSellCount).toBe(1);
+    expect(month.realizedExact).toBe(true);
+
+    const detail = pnlDayDetail(bundle.db, D3);
+    expect(detail.realizedCents).toBe(1_000);
+    expect(detail.realizedSales).toEqual([
+      {
+        symbol: "AAPL",
+        assetType: "stock",
+        qtyE8: 100_000_000,
+        gainCents: 1_000,
+        exact: true,
+        clamped: false,
+      },
+    ]);
+    // a sell-free day carries an empty book
+    expect(pnlDayDetail(bundle.db, D2).realizedSales).toEqual([]);
+    expect(pnlDayDetail(bundle.db, D2).realizedCents).toBe(0);
+  });
 });
 
 describe("pnl calendar + day detail", () => {
