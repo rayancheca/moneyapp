@@ -25,6 +25,7 @@ import {
   hasOverlappingChildBudget,
   listBudgetableCategories,
   projectSpend,
+  suggestBudgets,
   totalBudgetedCents,
   updateBudget,
 } from "./budgets";
@@ -649,3 +650,31 @@ describe("budgetPaceStatuses — end-to-end pace, projection, and tail", () => {
     expect(status.pace).toBe("under");
   });
 });
+
+describe("suggestBudgets — budgets from spending history", () => {
+  test("suggests the trailing-3-month average for unbudgeted top-level categories", () => {
+    // spending across Apr–Jun (today = 2026-07-16 → the 3 complete months)
+    spend("2026-04-10", -80_000, "Food");
+    spend("2026-05-10", -92_000, "Food");
+    spend("2026-06-10", -86_300, "Food");
+    spend("2026-06-12", -86_300, "Food > Groceries"); // subtree rolls up
+    const out = suggestBudgets(bundle.db, "2026-07-16");
+    const food = out.find((s) => s.label === "Food")!;
+    // avg of (800, 920, 863+863) = $1,148.67 → up to $1,150
+    expect(food.avgCents).toBe(114_867);
+    expect(food.amountCents).toBe(115_000);
+    expect(food.activeMonths).toBe(3);
+    expect(food.windowLabel).toBe("April 2026 – June 2026");
+  });
+
+  test("a category with an active budget is never re-suggested; one-offs skipped", () => {
+    spend("2026-04-10", -80_000, "Food");
+    spend("2026-05-10", -92_000, "Food");
+    createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 100_000 });
+    spend("2026-06-20", -50_000, "Travel"); // a single active month
+    const out = suggestBudgets(bundle.db, "2026-07-16");
+    expect(out.find((s) => s.label === "Food")).toBeUndefined();
+    expect(out.find((s) => s.label === "Travel")).toBeUndefined();
+  });
+});
+

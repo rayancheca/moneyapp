@@ -45,6 +45,13 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
   const { budget, tail } = status;
   const tone = PACE[status.pace];
   const pctDisplay = Math.round(status.pct * 100);
+  // the headline % must say WHAT it measures: 108% of a budget is "over BY 8%",
+  // never "over budget · 108%" (which reads as 108% over)
+  const overPct = (status.pct - 1) * 100;
+  const headline =
+    status.pace === "over"
+      ? `Over budget by ${overPct < 1 ? "<1" : Math.round(overPct)}%`
+      : `${tone.label} · ${pctDisplay}% used`;
 
   const spentPct = clampPct(status.pct * 100);
   const tailEndPct = clampPct(((status.spentCents + status.expectedTailCents) / budget.amountCents) * 100);
@@ -56,7 +63,7 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
 
   const valueText = `${status.categoryPath}: ${formatCents(status.spentCents)} of ${formatCents(
     budget.amountCents,
-  )} (${pctDisplay}%). ${paceSentence(status)}.${
+  )} (${pctDisplay}% of budget). ${paceSentence(status)}.${
     status.expectedTailCents > 0
       ? ` ${formatCents(status.expectedTailCents)} in recurring still expected this period.`
       : ""
@@ -76,9 +83,7 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
             <span className="ml-2 text-[11px] text-ink-faint">also counts toward its parent&apos;s budget</span>
           )}
         </div>
-        <div className={`text-xs font-medium ${tone.text}`}>
-          {tone.label} · {pctDisplay}%
-        </div>
+        <div className={`text-xs font-medium ${tone.text}`}>{headline}</div>
       </div>
 
       <div

@@ -7,7 +7,13 @@ import type { ActionResult } from "@/app/transactions/action-types";
 import { getDb } from "@/db/client";
 import { BUDGET_PERIODS } from "@/db/schema/budgets";
 import { MoneyParseError, parseAmountToCents } from "@/lib/money";
-import { createBudget, deactivateBudget, updateBudget } from "@/services/budgets";
+import {
+  createBudget,
+  deactivateBudget,
+  suggestBudgets,
+  updateBudget,
+  type SuggestedBudget,
+} from "@/services/budgets";
 
 const createBudgetFormSchema = z.object({
   categoryId: z.string().min(1, "Pick a category"),
@@ -96,4 +102,45 @@ export async function deactivateBudgetAction(formData: FormData): Promise<void> 
   }
   revalidatePath("/budgets");
   redirect(message ? `/budgets?error=${encodeURIComponent(message)}` : "/budgets");
+}
+
+/** Load monthly budget suggestions from the last 3 complete months of spending. */
+export async function suggestBudgetsAction(): Promise<ActionResult<SuggestedBudget[]>> {
+  try {
+    return { ok: true, data: suggestBudgets(getDb()) };
+  } catch (error: unknown) {
+    return { ok: false, error: friendlyMessage(error) };
+  }
+}
+
+const createSuggestedSchema = z
+  .array(z.object({ categoryId: z.string().min(1), amountCents: z.number().int().positive() }))
+  .min(1, "Pick at least one suggestion");
+
+/**
+ * Create the picked suggestions as MONTHLY budgets — each through the same
+ * createBudget path the form uses (expense-only + one-active-per-period
+ * enforced). Per-item failures are reported, never silently dropped.
+ */
+export async function createSuggestedBudgetsAction(
+  input: { categoryId: string; amountCents: number }[],
+): Promise<ActionResult<{ created: number; errors: string[] }>> {
+  const parsed = createSuggestedSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: friendlyMessage(parsed.error) };
+  const db = getDb();
+  let created = 0;
+  const errors: string[] = [];
+  for (const s of parsed.data) {
+    try {
+      createBudget(db, { categoryId: s.categoryId, period: "monthly", amountCents: s.amountCents });
+      created += 1;
+    } catch (error: unknown) {
+      errors.push(friendlyMessage(error));
+    }
+  }
+  if (created > 0) {
+    revalidatePath("/budgets");
+    revalidatePath("/");
+  }
+  return { ok: true, data: { created, errors } };
 }

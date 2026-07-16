@@ -95,3 +95,32 @@ test("a budget row links reciprocally to its category page", async ({ page }) =>
   await expect(page).toHaveURL(/\/categories\/[^/]+/);
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
 });
+
+test("Suggest budgets reviews history-based amounts, creates one, and restores", async ({ page }) => {
+  await page.goto("/budgets");
+  await page.getByRole("button", { name: "Suggest budgets" }).click();
+
+  const sheet = page.getByRole("dialog");
+  await expect(sheet.getByText("Suggested budgets")).toBeVisible();
+  // every suggestion names its basis — an average, never a prediction
+  await expect(sheet.getByText(/average month over .* rounded up/)).toBeVisible();
+  const boxes = sheet.getByRole("checkbox");
+  const count = await boxes.count();
+  expect(count).toBeGreaterThan(0);
+
+  // keep only the FIRST suggestion checked, remember its category name
+  for (let i = 1; i < count; i += 1) await boxes.nth(i).uncheck();
+  const firstLabel = (await sheet.locator("li").first().locator("span.font-medium").innerText()).trim();
+  await sheet.getByRole("button", { name: /Create 1 monthly budget/ }).click();
+
+  // the new budget appears as a live pace row…
+  const row = page
+    .locator("li")
+    .filter({ has: page.getByRole("link", { name: firstLabel, exact: true }) })
+    .first();
+  await expect(row.getByRole("progressbar")).toBeVisible();
+
+  // …and is deactivated again so sibling specs see the seeded three budgets
+  await row.getByRole("button", { name: "Deactivate" }).click();
+  await expect(page.getByRole("progressbar")).toHaveCount(3);
+});

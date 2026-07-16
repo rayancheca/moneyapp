@@ -14,6 +14,8 @@ import {
   todayIso,
   type PeriodBounds,
 } from "@/lib/dates";
+import { suggestBudgetAmounts, type BudgetSuggestion } from "@/lib/budget-suggest";
+import { monthLabel } from "@/lib/calendar-math";
 import { categorySpending, loadCategoryIndex, recurringSeriesIdsForCategory } from "./analytics";
 import { trailingFullMonths } from "./forecast";
 import { projectOccurrences, toProjectable } from "./recurring";
@@ -265,6 +267,42 @@ export function listBudgetableCategories(db: AppDatabase): BudgetableCategory[] 
     }
   }
   return out;
+}
+
+// ── Suggestions from spending history ────────────────────────────────
+
+export interface SuggestedBudget extends BudgetSuggestion {
+  /** the complete-months window the average came from, e.g. "April 2026 – June 2026" */
+  windowLabel: string;
+}
+
+/**
+ * Monthly budget suggestions from the last 3 COMPLETE months of subtree
+ * spending (the same rollup a budget tracks), for top-level expense categories
+ * that don't already carry an active budget. A suggestion DESCRIBES recent
+ * behavior — the average, rounded up to the nearest $10, with its window
+ * named — never a prediction of what next month will cost.
+ */
+export function suggestBudgets(db: AppDatabase, today: string = todayIso()): SuggestedBudget[] {
+  const months = trailingFullMonths(today, 3);
+  if (months.length === 0) return [];
+  const activelyBudgeted = new Set(
+    db.select().from(budgets).where(eq(budgets.isActive, true)).all().map((b) => b.categoryId),
+  );
+  const rows = listBudgetableCategories(db)
+    .filter((c) => c.depth === 0 && !activelyBudgeted.has(c.id))
+    .map((c) => ({
+      categoryId: c.id,
+      label: c.name,
+      monthly: months.map(
+        (m) => categorySpending(db, { categoryId: c.id, from: m.start, to: m.end }).spentCents,
+      ),
+    }));
+  const windowLabel =
+    months.length > 1
+      ? `${monthLabel(months[0]!.key)} – ${monthLabel(months[months.length - 1]!.key)}`
+      : monthLabel(months[0]!.key);
+  return suggestBudgetAmounts(rows).map((s) => ({ ...s, windowLabel }));
 }
 
 // ── Pace, projection, and the expected-but-unposted tail (§8) ─────────
