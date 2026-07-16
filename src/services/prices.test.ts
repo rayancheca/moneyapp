@@ -239,6 +239,33 @@ describe("refreshPrices against a real database", () => {
     expect(counts.quotes).toBe(1);
   });
 
+  test("force bypasses the freshness skip so a manual press quotes live now", async () => {
+    upsertHolding(bundle.db, {
+      accountId: brokerageId,
+      symbol: "VOO",
+      assetType: "etf",
+      quantityE8: 10 * 1e8,
+    });
+    const { provider, counts } = countingProvider();
+    const first = await refreshPrices(bundle.db, { now: NOW, providers: () => provider });
+    expect(counts.quotes).toBe(1);
+    expect(first.asOf).toBe(NOW.toISOString()); // "prices as of …" stamp = the fetch time
+
+    // +1h is well inside the 4h default window → the implicit path would skip,
+    // but force re-quotes anyway (a manual press must pull the live price NOW)
+    const later = new Date(NOW.getTime() + 3_600_000);
+    const forced = await refreshPrices(bundle.db, {
+      now: later,
+      providers: () => provider,
+      force: true,
+    });
+    expect(forced.skippedFresh).toBe(0);
+    expect(forced.quotedSymbols).toBe(1);
+    expect(counts.quotes).toBe(2); // re-fetched despite the fresh cache
+    expect(counts.closes).toBe(1); // history still served from cache (only the gap)
+    expect(forced.asOf).toBe(later.toISOString());
+  });
+
   test("next-day refresh fetches only the missing gap", async () => {
     upsertHolding(bundle.db, {
       accountId: brokerageId,

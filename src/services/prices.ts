@@ -238,6 +238,12 @@ export interface RefreshOptions {
   now?: Date;
   /** dependency injection for tests (call counting, fault injection) */
   providers?: ProviderLookup;
+  /**
+   * Bypass the priceStalenessHours skip so a MANUAL "Refresh prices" press pulls
+   * a live quote at the exact press time even if the cache is still "fresh". The
+   * scheduled/implicit path leaves this off so it doesn't hammer the provider.
+   */
+  force?: boolean;
 }
 
 export interface RefreshResult {
@@ -245,6 +251,8 @@ export interface RefreshResult {
   quotedSymbols: number;
   skippedFresh: number;
   anchoredAccounts: number;
+  /** ISO timestamp of this refresh (the "prices as of …" stamp) */
+  asOf: string;
   /** provider failures degrade to cached prices — never an error page */
   errors: string[];
 }
@@ -305,6 +313,7 @@ export async function refreshPrices(
     quotedSymbols: 0,
     skippedFresh: 0,
     anchoredAccounts: 0,
+    asOf: fetchedAt,
     errors: [],
   };
 
@@ -318,7 +327,9 @@ export async function refreshPrices(
   for (const item of distinct.values()) {
     const latest = latestCacheRow(db, item.symbol, item.assetType);
     const isFresh =
-      latest !== undefined && now.getTime() - Date.parse(latest.fetchedAt) < freshWindowMs;
+      !options.force &&
+      latest !== undefined &&
+      now.getTime() - Date.parse(latest.fetchedAt) < freshWindowMs;
     if (isFresh) {
       result.skippedFresh += 1;
       continue;

@@ -57,14 +57,41 @@ export async function addHoldingAction(formData: FormData): Promise<void> {
   revalidatePath("/investments");
 }
 
+export interface RefreshPricesSummary {
+  /** symbols that got a live quote at press time */
+  quotedSymbols: number;
+  /** new daily-close rows fetched to fill the gap since the last cached day */
+  backfilledRows: number;
+  /** ISO timestamp of the fetch — the "prices as of …" stamp */
+  asOf: string;
+  /** provider failures that degraded to cached prices (never fatal) */
+  errors: string[];
+}
+
 /**
- * Provider outages degrade to cached prices with the "as of" stamp —
- * a refresh must never take the page down (Phase 7 acceptance).
+ * The manual "Refresh prices" press: `force` bypasses the staleness window so it
+ * pulls a LIVE quote at the exact press time, then revalidates the dashboard +
+ * investments. Provider outages degrade to cached prices (reported in `errors`),
+ * so a refresh never takes the page down (Phase 7 acceptance); only an
+ * unexpected failure returns `{ ok: false }`.
  */
-export async function refreshPricesAction(): Promise<void> {
-  await refreshPrices(getDb());
-  revalidatePath("/");
-  revalidatePath("/investments");
+export async function refreshPricesAction(): Promise<ActionResult<RefreshPricesSummary>> {
+  try {
+    const result = await refreshPrices(getDb(), { force: true });
+    revalidatePath("/");
+    revalidatePath("/investments");
+    return {
+      ok: true,
+      data: {
+        quotedSymbols: result.quotedSymbols,
+        backfilledRows: result.backfilledRows,
+        asOf: result.asOf,
+        errors: result.errors,
+      },
+    };
+  } catch (error: unknown) {
+    return { ok: false, error: error instanceof Error ? error.message : "Refresh failed" };
+  }
 }
 
 // ─── P/L calendar (read-only slice loaders, §6.3) ──────────────────────────
