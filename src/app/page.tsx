@@ -27,7 +27,9 @@ import { SurfaceCard } from "@/components/ui/SurfaceCard";
 export const dynamic = "force-dynamic";
 
 const RECENT_TXN_LIMIT = 5;
-const REVIEW_PREVIEW_LIMIT = 3;
+// 6 rows ≈ the height of the right column (pace + investments + top mover), so
+// the activity grid reads as two full columns instead of a teaser and a gap
+const REVIEW_PREVIEW_LIMIT = 6;
 
 const SETUP_STEPS = [
   {
