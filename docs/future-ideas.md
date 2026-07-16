@@ -6,14 +6,14 @@
 > **Every working pass must expand + polish this list and tick off what shipped.**
 > One focused item per session; end each session with a handoff prompt. Dates absolute.
 
-Last updated: 2026-07-15 (pass 13 — **P0.3 y-axis fix SHIPPED**; **investment charts now carry
-prices forward to today** (per-holding price + portfolio value, dashed estimated tail) and the
-**"Refresh prices" button pulls a live quote at press time** (force + toast + "as of" stamp);
-**Deployment & Hosted-DB plan researched + written** (see the 🚀 section — the crux: a Turso move
-forces an async rewrite of ~68 files, so it is NOT a drop-in; Path B persistent-disk host is the
-lower-risk alternative). Monarch Money deep-dive written (`docs/monarch-money-deep-dive.md`). **User
-then defined NORTH STAR #2 — "predictions everywhere + switchable views everywhere" (🔮 section below):
-their real Monarch takeaway is the forecast overlays + view flexibility, NOT the look.** Pass 12 below.
+Last updated: 2026-07-15 (pass 14 — **NORTH STAR #2 STARTED.** Pillar 1 (predictions) shipped end-to-end:
+the pure **`src/lib/projection.ts`** method registry (`2450ea8`) + the **`/spending` projection overlay**
+(`5d3dd1c`) — "On pace for ~$Y · $X so far · $Z last {period}" + a faint prior-period ghost line. Pillar 2
+(switchable views) foundation + first proof: pure **`src/lib/view-state.ts`** (`bc93a91`) + the
+`useViewState`/`<ViewSwitcher>`/`<DataTable>` primitives + a **`/spending` chart↔table toggle** (URL +
+per-surface `app_settings` persisted, adversarially reviewed). See the 🔮 build-sequence checklist — items
+1-2 done, item 3 started (richer view types remain). Pass 13 below: P0.3 y-axis fix; investment
+carry-forward + live Refresh-prices; Deployment plan; Monarch deep-dive. Pass 12 further below.
 
 Pass 12 — P0.2 + P0.4 + P0.5a SHIPPED. User dropped 4 Chase 3522 2023
 statements + a July Venture X statement; imported to the real db (backup + guards): Chase 2023
@@ -144,15 +144,40 @@ persisted (URL + per-user `app_settings`) so a chosen view is shareable and stic
 | Category / merchant detail | expected spend vs actual + trailing-average line + last-period ghost | bars/line/table; granularity; abs/% |
 
 ### Build sequence (pure-first, honest, incremental)
-1. `src/lib/projection.ts` — the method registry (pace/trailingAverage/priorPeriod/recurringDriven/
-   runRate/budgetTarget), pure + TDD 100%. Reuse `forecast.ts`'s trailing-months + fixed/variable split.
-2. The chart-side projection overlay (dashed projected + faint ghost + target line + annotated readout),
-   proven first on **`/spending`** (the surface the user named — "you should be spending this / last month").
-3. `useViewState` + `<ViewSwitcher>` + a `<DataTable>` renderer; prove on `/spending` (chart-type +
-   group-by + granularity + abs/% + comparison), persisted to URL + `app_settings`.
+1. [x] **`src/lib/projection.ts` — SHIPPED (pass 14, commit `2450ea8`).** The pure method registry
+   (pace/trailingAverage/priorPeriod/recurringDriven/runRate/budgetTarget) + `periodProgress` day-math +
+   `buildForwardSeries` (dashed cumulative continuation) + `reindexByPosition` (resample a prior series to
+   overlay unequal-length periods). Generalizes budgets.ts `projectSpend` (Engine A) / forecast.ts trailing
+   avg+trend (Engine B) / spending.ts `computePace` (Engine C). Every point tail `complete:false` → dashed;
+   every result carries a visible `basis` + a `confidence`; NO price method (honesty doctrine). 46 tests,
+   src/lib 100%. Adversarially reviewed (3 lenses × verify) → fixed 2 basis-grammar defects.
+2. [x] **Projection overlay on `/spending` — SHIPPED (pass 14, commit `5d3dd1c`).** The cash-flow chart now
+   reads "On pace for ~$Y spent this period · $X so far · $Z in {prior period}" (the user's exact ask) +
+   a faint dashed prior-period GHOST line (last period's gross spend, re-indexed 1:1) + a legend swatch +
+   tooltip row. New `spendingProjection` service (pace floored at the full-period committed spend so the
+   estimate never reads below the visible "Spent"). Low-confidence early pace reads muted + "(early estimate)";
+   the pace basis has a dotted-underline + hover + screen-reader affordance. 4 service tests; 12 baselines
+   regenerated. Adversarially reviewed (3 lenses × verify) → fixed all 3 confirmed (floor, tooltip label, basis a11y).
+3. [~] **`useViewState` + `<ViewSwitcher>` + `<DataTable>` — STARTED (pass 14).** Pure `src/lib/view-state.ts`
+   (URL > persisted `app_settings` > spec-default resolution; clean URLs omit defaults; 19 tests, src/lib
+   100%; commit `bc93a91`). Then the hook (`src/hooks/useViewState.ts` — navigates via the proven
+   `router.push(href)` + fire-and-forget persist via `saveViewPreferenceAction`), the a11y `<ViewSwitcher>`
+   pill group, the reused generic `<DataTable>`, and a `/spending` **chart ↔ table** proof (the honest
+   "show me the raw numbers" escape hatch; the table carries a prior-period column). URL-shareable + Back +
+   per-surface sticky. Adversarially reviewed → the switch-to-default race + unhandled-rejection + isPending
+   all fixed (await persist before navigate, inside the transition). **REMAINING for this item:** the richer
+   view set on `/spending` — chart-type (stacked/donut/**Sankey**/heatmap), group-by (category/group/merchant),
+   framing (abs/%/vs-prior), comparison toggle. The plumbing (spec registry + hook + switcher + table +
+   persistence) is now proven; each new view is a renderer + a spec option.
 4. Roll both across the matrix, surface by surface, regenerating e2e baselines per surface. The **Sankey**
    (Monarch steal, see `docs/monarch-money-deep-dive.md` §8 A3) is one of the switchable views.
 5. Honesty pass: every projection labels its method; every chart has a table view; no price prediction.
+
+> **Pre-hosting hardening notes (from the pass-14 view-switcher review, non-blocking on localhost):** the
+> shared `viewPreferences` blob has no cap on surface/dimension count (bounded in practice — only the app's
+> own known surfaces are ever written), and its read-modify-write merge could lose a concurrent
+> cross-surface update once the data layer is async (Turso) — both are single-user-local non-issues today;
+> revisit with the deploy work.
 
 > **Relationship to the Monarch deep-dive doc:** this section is the user's REAL takeaway from Monarch —
 > the forecast overlays + view flexibility, not the visual style. The Monarch steal-list
