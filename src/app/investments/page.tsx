@@ -11,8 +11,10 @@ import { listAccounts } from "@/services/accounts";
 import { readSettings } from "@/services/settings";
 import {
   allocationSlices,
+  hasBenchmark,
   holdingRows,
   pnlCalendarMonth,
+  portfolioBenchmark,
   portfolioOverview,
   portfolioReturnDays,
   portfolioSeries,
@@ -92,6 +94,10 @@ export default async function InvestmentsPage({
     today,
   );
   const returnDays = portfolioReturnDays(db);
+  // "you vs the market" overlay for the Return view (only when the benchmark is priced)
+  const benchmark = hasBenchmark(db)
+    ? { label: "S&P 500", pct: portfolioBenchmark(db, returnDays.map((d) => d.day)) }
+    : null;
   const rows = holdingRows(db);
   const movers = topMovers(db);
   const allocation = allocationSlices(db);
@@ -124,6 +130,7 @@ export default async function InvestmentsPage({
               defaultRange={range}
               viewState={portfolioView}
               baseParams={viewBaseParams}
+              benchmark={benchmark}
             />
           ) : (
             <p className="py-6 text-sm text-ink-muted">

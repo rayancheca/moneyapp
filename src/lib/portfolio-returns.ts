@@ -143,6 +143,31 @@ export function totalReturn(days: readonly PortfolioDay[]): WindowReturn {
   return aggregateReturn(dailyReturns(days));
 }
 
+/** One day of a benchmark's close (null when it had no price on/before that day). */
+export interface BenchmarkDay {
+  day: string;
+  close: number | null;
+}
+
+/**
+ * A buy-and-hold benchmark's cumulative % return, rebased to its first available
+ * close and aligned 1:1 with the given days — the "you vs the market" overlay for
+ * the return line. Each point is (close(t) / firstClose − 1) × 100; points before
+ * the benchmark has any close (or with a non-positive close) are null so the line
+ * simply starts where the data does.
+ */
+export function benchmarkReturns(days: readonly BenchmarkDay[]): (number | null)[] {
+  let base: number | null = null;
+  return days.map((d) => {
+    if (d.close === null || d.close <= 0) return null;
+    if (base === null) {
+      base = d.close;
+      return 0;
+    }
+    return (d.close / base - 1) * 100;
+  });
+}
+
 /** A single standout day on the return line. */
 export interface ReturnDayStat {
   day: string;

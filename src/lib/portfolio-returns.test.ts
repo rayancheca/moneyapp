@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   aggregateReturn,
+  benchmarkReturns,
   cumulativeReturns,
   dailyReturns,
   returnStats,
@@ -274,5 +275,42 @@ describe("returnStats", () => {
     const stats = returnStats([d("2026-01-01", 0), d("2026-01-02", 0, 0)]);
     expect(stats.bestDay).toEqual({ day: "2026-01-02", returnCents: 0, pct: null });
     expect(stats.worstDay?.pct).toBeNull();
+  });
+});
+
+describe("benchmarkReturns", () => {
+  test("rebases to the first close: cumulative % from 0", () => {
+    const pct = benchmarkReturns([
+      { day: "2026-01-01", close: 10_000 },
+      { day: "2026-01-02", close: 10_500 }, // +5%
+      { day: "2026-01-03", close: 11_000 }, // +10%
+    ]);
+    expect(pct[0]).toBe(0);
+    expect(pct[1]).toBeCloseTo(5, 10);
+    expect(pct[2]).toBeCloseTo(10, 10);
+  });
+
+  test("days before the benchmark has a close are null, then it rebases to the first real close", () => {
+    const pct = benchmarkReturns([
+      { day: "2026-01-01", close: null },
+      { day: "2026-01-02", close: null },
+      { day: "2026-01-03", close: 200 }, // first available → base
+      { day: "2026-01-04", close: 210 }, // +5%
+    ]);
+    expect(pct.slice(0, 2)).toEqual([null, null]);
+    expect(pct[2]).toBe(0);
+    expect(pct[3]).toBeCloseTo(5, 10);
+  });
+
+  test("a non-positive close is treated as no data (null)", () => {
+    const pct = benchmarkReturns([
+      { day: "2026-01-01", close: 0 },
+      { day: "2026-01-02", close: 100 },
+    ]);
+    expect(pct).toEqual([null, 0]);
+  });
+
+  test("empty input → empty line", () => {
+    expect(benchmarkReturns([])).toEqual([]);
   });
 });

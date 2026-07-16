@@ -53,6 +53,8 @@ interface PortfolioChartPanelProps {
   viewState: ViewState;
   /** URL params to preserve across a view switch (the range) */
   baseParams: Record<string, string>;
+  /** optional "you vs the market" benchmark: cumulative % aligned 1:1 to returnDays */
+  benchmark?: { label: string; pct: (number | null)[] } | null;
 }
 
 function accentOf(summary: ScrubSummary): Accent {
@@ -79,6 +81,7 @@ export function PortfolioChartPanel({
   defaultRange,
   viewState,
   baseParams,
+  benchmark,
 }: PortfolioChartPanelProps) {
   const { state, setView } = useViewState({
     surface: INVESTMENTS_SURFACE,
@@ -109,6 +112,27 @@ export function PortfolioChartPanel({
 
   // best/worst day + worst drawdown (all-time) — the "cool stats" under the line
   const stats = useMemo(() => (isReturns ? returnStats(returnDays) : null), [isReturns, returnDays]);
+
+  // "you vs the market": overlay the benchmark's cumulative % on the % line (fair
+  // %-vs-% comparison — a $ benchmark needs an assumed matching investment, so we
+  // only draw it in percent framing). Same scale as the % line (pct × 100).
+  const benchmarkCompare = useMemo(() => {
+    if (!isPercent || !benchmark) return undefined;
+    const byDay: Record<string, number | null> = {};
+    returnLine.forEach((p, i) => {
+      const v = benchmark.pct[i];
+      byDay[p.day] = v === null || v === undefined ? null : Math.round(v * 100);
+    });
+    return { byDay, label: benchmark.label };
+  }, [isPercent, benchmark, returnLine]);
+  const benchmarkTotalPct = useMemo(() => {
+    if (!benchmark) return null;
+    for (let i = benchmark.pct.length - 1; i >= 0; i -= 1) {
+      const v = benchmark.pct[i];
+      if (v !== null && v !== undefined) return v;
+    }
+    return null;
+  }, [benchmark]);
 
   // contributions vs returns: Value = the capital you put in + the market's P/L.
   // contributed = the baseline NAV + every later net flow; gains = cumulative P/L;
@@ -176,6 +200,18 @@ export function PortfolioChartPanel({
           ariaLabel="Portfolio chart view"
         />
       </div>
+      {benchmarkCompare && (
+        <p className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-faint">
+          <span className="inline-flex items-center gap-1.5">
+            <span aria-hidden className="inline-block h-0.5 w-4 rounded bg-positive" /> You
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span aria-hidden className="inline-block h-0.5 w-4 rounded bg-ink-faint" />
+            {benchmark!.label}
+            {benchmarkTotalPct !== null && <span className="figures"> {signedPct(benchmarkTotalPct)}</span>}
+          </span>
+        </p>
+      )}
       <ScrubChart
         points={chartPoints}
         today={today}
@@ -185,6 +221,7 @@ export function PortfolioChartPanel({
         valueText={valueText}
         formatValue={isPercent ? pctFromScaled : isReturns ? formatCentsSigned : formatCents}
         {...(isPercent ? { formatExtreme: pctFromScaled } : {})}
+        {...(benchmarkCompare ? { compareLine: benchmarkCompare } : {})}
         showExtremes={isReturns}
         ariaLabel={
           isReturns

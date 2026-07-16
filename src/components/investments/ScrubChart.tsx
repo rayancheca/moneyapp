@@ -102,6 +102,10 @@ interface ScrubChartProps {
    *  every existing consumer is byte-identical. The %-framed return line passes a
    *  percent formatter here so its markers read "13.00%" not "$13". */
   formatExtreme?: (cents: number) => string;
+  /** optional second (benchmark) line — a dashed muted overlay keyed by day, on
+   *  the SAME scale as the main line. Omitted everywhere except the return view's
+   *  "you vs the market" comparison, so all other charts are byte-identical. */
+  compareLine?: { byDay: Record<string, number | null>; label: string };
   renderHeader: (
     summary: ScrubSummary,
     scrubbing: boolean,
@@ -172,6 +176,7 @@ export function ScrubChart({
   valueText,
   formatValue,
   formatExtreme = compactMoney,
+  compareLine,
   renderHeader,
   ariaLabel,
   marks,
@@ -255,9 +260,25 @@ export function ScrubChart({
   // recharts infers one ChartData<T> from `data`; the two series shapes (vivid
   // two-key vs coverage-split) differ, so widen to a plain record array — every
   // series reads its own string dataKey, so the concrete shape is irrelevant here
-  const chartData = (vivid ? vividData : splitData) as unknown as Record<string, unknown>[];
+  const chartDataBase = (vivid ? vividData : splitData) as unknown as Record<string, unknown>[];
+  const chartData = useMemo(
+    () =>
+      compareLine
+        ? chartDataBase.map((row) => ({ ...row, cmp: compareLine.byDay[row.day as string] ?? null }))
+        : chartDataBase,
+    [chartDataBase, compareLine],
+  );
 
-  const values = useMemo(() => collectValues(slice, marks, refLine, baselineCents), [slice, marks, refLine, baselineCents]);
+  const values = useMemo(() => {
+    const base = collectValues(slice, marks, refLine, baselineCents);
+    if (compareLine) {
+      for (const p of slice) {
+        const c = compareLine.byDay[p.day];
+        if (c !== null && c !== undefined) base.push(c);
+      }
+    }
+    return base;
+  }, [slice, marks, refLine, baselineCents, compareLine]);
   const niceY = useMemo(() => {
     if (!showAxes || values.length === 0) return null;
     let lo = Math.min(...values);
@@ -568,6 +589,20 @@ export function ScrubChart({
                 stroke="var(--ink-faint)"
                 strokeDasharray="4 3"
                 label={{ value: refLine.label, position: "insideTopLeft", fontSize: 10, fill: "var(--ink-faint)" }}
+              />
+            )}
+
+            {compareLine && (
+              <Line
+                type="monotone"
+                dataKey="cmp"
+                stroke="var(--ink-faint)"
+                strokeWidth={1.5}
+                strokeDasharray="5 4"
+                dot={false}
+                activeDot={false}
+                connectNulls
+                isAnimationActive={false}
               />
             )}
 

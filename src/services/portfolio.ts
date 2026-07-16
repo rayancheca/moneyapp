@@ -5,7 +5,13 @@ import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings, priceCache, type AssetType } from "@/db/schema/holdings";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, monthKey, periodBounds, todayIso } from "@/lib/dates";
-import { dailyReturns, totalReturn, type PortfolioDay } from "@/lib/portfolio-returns";
+import {
+  benchmarkReturns,
+  dailyReturns,
+  totalReturn,
+  type BenchmarkDay,
+  type PortfolioDay,
+} from "@/lib/portfolio-returns";
 import { accountSeries } from "./derivation";
 import { valueCentsOf } from "./holdings";
 
@@ -235,6 +241,48 @@ export function portfolioSeries(db: AppDatabase, accountIds?: readonly string[])
 /** Flow-adjusted daily points for the whole portfolio (return math + calendar). */
 export function portfolioReturnDays(db: AppDatabase, accountIds?: readonly string[]): PortfolioDay[] {
   return buildPortfolio(db, accountIds).days;
+}
+
+/**
+ * A market benchmark's cumulative % return (buy-and-hold), rebased to its first
+ * close and aligned 1:1 with `days` — the "you vs the market" overlay for the
+ * return chart. Uses the latest close on/before each day (carry-forward across
+ * weekends), so a benchmark with cached daily closes tracks the portfolio's dense
+ * daily return series. Returns null entries where the benchmark has no price yet.
+ */
+export function portfolioBenchmark(
+  db: AppDatabase,
+  days: readonly string[],
+  symbol = "SPY",
+): (number | null)[] {
+  const benchDays: BenchmarkDay[] = days.map((day) => ({
+    day,
+    close: benchmarkCloseOn(db, symbol, day),
+  }));
+  return benchmarkReturns(benchDays);
+}
+
+/** The latest cached close on/before `day` for a benchmark symbol (any asset type). */
+function benchmarkCloseOn(db: AppDatabase, symbol: string, day: string): number | null {
+  const row = db
+    .select({ close: priceCache.close })
+    .from(priceCache)
+    .where(and(eq(priceCache.symbol, symbol), sql`${priceCache.quotedOn} <= ${day}`))
+    .orderBy(desc(priceCache.quotedOn))
+    .limit(1)
+    .get();
+  return row?.close ?? null;
+}
+
+/** Is a benchmark symbol priced at all? (gate the overlay when the data is absent) */
+export function hasBenchmark(db: AppDatabase, symbol = "SPY"): boolean {
+  const row = db
+    .select({ close: priceCache.close })
+    .from(priceCache)
+    .where(eq(priceCache.symbol, symbol))
+    .limit(1)
+    .get();
+  return row !== undefined;
 }
 
 export interface PortfolioOverview {
