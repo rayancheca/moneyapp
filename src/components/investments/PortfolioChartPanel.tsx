@@ -110,6 +110,18 @@ export function PortfolioChartPanel({
   // best/worst day + worst drawdown (all-time) — the "cool stats" under the line
   const stats = useMemo(() => (isReturns ? returnStats(returnDays) : null), [isReturns, returnDays]);
 
+  // contributions vs returns: Value = the capital you put in + the market's P/L.
+  // contributed = the baseline NAV + every later net flow; gains = cumulative P/L;
+  // the two sum to today's value — the literal "returns in relation to the value".
+  const decomposition = useMemo(() => {
+    if (!isReturns || returnLine.length === 0) return null;
+    const first = returnLine[0]!;
+    const last = returnLine.at(-1)!;
+    const contributedCents = first.navCents + last.cumNetFlowCents;
+    const gainsCents = last.cumGainCents;
+    return { contributedCents, gainsCents, valueCents: last.navCents };
+  }, [isReturns, returnLine]);
+
   // window return: compound the flow-adjusted daily returns between the window's
   // first day (baseline) and the scrubbed/last day. View-independent — the header
   // shows the SAME honest window return whichever line is drawn.
@@ -241,6 +253,41 @@ export function PortfolioChartPanel({
           </div>
         </dl>
       )}
+      {decomposition &&
+        (() => {
+          const gain = decomposition.gainsCents;
+          const up = gain >= 0;
+          const base = up ? decomposition.contributedCents : decomposition.valueCents;
+          const extra = Math.abs(gain);
+          const total = base + extra;
+          const basePct = total > 0 ? (base / total) * 100 : 100;
+          return (
+            <div className="mt-4 border-t border-line pt-3">
+              <div className="flex items-baseline justify-between text-xs">
+                <span className="text-ink-faint">
+                  Value = contributions + market {up ? "gains" : "losses"}
+                </span>
+                <span className="figures font-medium">{formatCents(decomposition.valueCents)}</span>
+              </div>
+              <div
+                className="mt-2 flex h-2 overflow-hidden rounded-full bg-surface-sunken"
+                role="img"
+                aria-label={`Of ${formatCents(decomposition.valueCents)}, ${formatCents(
+                  decomposition.contributedCents,
+                )} is contributed capital and ${formatCentsSigned(gain)} is market ${up ? "gains" : "losses"}.`}
+              >
+                <div className="bg-ink-muted" style={{ width: `${basePct}%` }} />
+                <div className={up ? "bg-positive" : "bg-negative"} style={{ width: `${100 - basePct}%` }} />
+              </div>
+              <div className="mt-1.5 flex justify-between text-xs figures">
+                <span className="text-ink-muted">Contributed {formatCents(decomposition.contributedCents)}</span>
+                <span className={up ? "text-positive" : "text-negative"}>
+                  Market {up ? "gains" : "losses"} {formatCentsSigned(gain)}
+                </span>
+              </div>
+            </div>
+          );
+        })()}
     </div>
   );
 }
