@@ -5,12 +5,14 @@ import { Icon } from "@/components/shell/Icon";
 import { NumberRoll } from "@/components/ui/NumberRoll";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { useViewState } from "@/hooks/useViewState";
-import { type ViewState } from "@/lib/view-state";
+import { viewHrefQuery, type ViewState } from "@/lib/view-state";
+import { DEFAULT_BENCHMARK } from "@/lib/benchmark-symbol";
 import { formatDayLong } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import type { ChartRange } from "@/lib/chart-range";
 import { type PortfolioDay } from "@/lib/portfolio-returns";
 import { scrubValueText } from "@/lib/scrub";
+import { BenchmarkPicker } from "./BenchmarkPicker";
 import { ScrubChart, type Accent, type ScrubPoint, type ScrubSummary } from "./ScrubChart";
 import {
   BenchmarkLegend,
@@ -54,6 +56,8 @@ interface PortfolioChartPanelProps {
   baseParams: Record<string, string>;
   /** optional "you vs the market" benchmark: cumulative % aligned 1:1 to returnDays */
   benchmark?: ReturnBenchmark | null;
+  /** the resolved benchmark SYMBOL (may lack data — the picker still shows it) */
+  benchmarkSymbol: string;
 }
 
 function accentOf(summary: ScrubSummary): Accent {
@@ -76,6 +80,7 @@ export function PortfolioChartPanel({
   viewState,
   baseParams,
   benchmark,
+  benchmarkSymbol,
 }: PortfolioChartPanelProps) {
   const { state, setView } = useViewState({
     surface: INVESTMENTS_SURFACE,
@@ -110,6 +115,17 @@ export function PortfolioChartPanel({
   // one overlay per framing: % → buy-and-hold TWR, $ → the flow-replay gains
   const compareLine = benchmarkCompare ?? replayCompare;
 
+  // the picker's target href: keep the view dims + preserved params, swap the
+  // bench param (dropped at the SPY default so shared links stay clean)
+  const hrefForBenchmark = useCallback(
+    (symbol: string): string => {
+      const { bench: _bench, ...rest } = baseParams;
+      const params = symbol === DEFAULT_BENCHMARK ? rest : { ...rest, bench: symbol };
+      return `/investments${viewHrefQuery(PORTFOLIO_VIEW_SPEC, state, params)}`;
+    },
+    [baseParams, state],
+  );
+
   // the hero number as a string: value ($), return-dollar (±$), or return-percent (±%)
   const heroText = useCallback(
     (summary: ScrubSummary): string => {
@@ -130,6 +146,9 @@ export function PortfolioChartPanel({
     <div>
       {canShowReturns && (
         <div className="mb-3 flex items-center justify-end gap-2">
+          {isReturns && (
+            <BenchmarkPicker value={benchmarkSymbol} hrefFor={hrefForBenchmark} hasData={benchmark != null} />
+          )}
           {isReturns && (
             <ViewSwitcher
               dimension={unitDim}

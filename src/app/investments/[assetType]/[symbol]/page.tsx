@@ -3,6 +3,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
 import { replayFlows } from "@/lib/benchmark-replay";
+import {
+  DEFAULT_BENCHMARK,
+  benchmarkLabel,
+  resolveBenchmarkSymbol,
+} from "@/lib/benchmark-symbol";
 import { todayIso } from "@/lib/dates";
 import { benchmarkReturns } from "@/lib/portfolio-returns";
 import { resolveViewState } from "@/lib/view-state";
@@ -45,23 +50,29 @@ export default async function HoldingPage({
   })();
   // switchable Price ⇄ Return view (URL > persisted > default), one preference
   // shared across every holding page (the "holding" surface)
+  const settings = readSettings(db);
   const holdingView = resolveViewState(
     HOLDING_VIEW_SPEC,
     {
       view: Array.isArray(raw.view) ? raw.view[0] : raw.view,
       unit: Array.isArray(raw.unit) ? raw.unit[0] : raw.unit,
     },
-    readSettings(db).viewPreferences[HOLDING_SURFACE],
+    settings.viewPreferences[HOLDING_SURFACE],
+  );
+  // the comparison benchmark (item 4): URL > persisted > SPY
+  const benchmarkSymbol = resolveBenchmarkSymbol(
+    Array.isArray(raw.bench) ? raw.bench[0] : raw.bench,
+    settings.benchmarkSymbol,
   );
   // Return-view overlays (only when the benchmark is priced): buy-and-hold %
-  // comparison + "what if this holding's flows had bought SPY instead" replay
+  // comparison + "what if this holding's flows had bought it instead" replay
   const benchDays =
-    detail.returnDays.length >= 2 && hasBenchmark(db)
-      ? portfolioBenchmarkDays(db, detail.returnDays.map((d) => d.day))
+    detail.returnDays.length >= 2 && hasBenchmark(db, benchmarkSymbol)
+      ? portfolioBenchmarkDays(db, detail.returnDays.map((d) => d.day), benchmarkSymbol)
       : null;
   const benchmark = benchDays
     ? {
-        label: "S&P 500",
+        label: benchmarkLabel(benchmarkSymbol),
         pct: benchmarkReturns(benchDays),
         replay: replayFlows(detail.returnDays, benchDays),
       }
@@ -98,8 +109,11 @@ export default async function HoldingPage({
               returnDays={detail.returnDays}
               viewState={holdingView}
               basePath={`/investments/${detail.assetType}/${encodeURIComponent(detail.symbol)}`}
-              baseParams={{}}
+              baseParams={
+                benchmarkSymbol === DEFAULT_BENCHMARK ? {} : { bench: benchmarkSymbol }
+              }
               benchmark={benchmark}
+              benchmarkSymbol={benchmarkSymbol}
             />
           ) : (
             <p className="py-6 text-sm text-ink-muted">

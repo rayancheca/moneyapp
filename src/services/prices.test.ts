@@ -14,7 +14,9 @@ import { createAccount } from "./accounts";
 import { addManualAnchor } from "./anchors";
 import { netWorthSeries } from "./derivation";
 import { upsertHolding } from "./holdings";
+import { writeSetting } from "./settings";
 import {
+  backfillSymbolHistory,
   coinbaseProvider,
   fakeCloseFor,
   fakeProvider,
@@ -381,5 +383,56 @@ describe("refreshPrices against a real database", () => {
         .where(eq(balanceAnchors.accountId, brokerageId))
         .all(),
     ).toEqual([]);
+  });
+});
+
+describe("backfillSymbolHistory — an unheld benchmark symbol", () => {
+  let dir: string;
+  let bundle: DbBundle;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-benchfill-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("backfills 2 years of closes for a symbol with no cache and no holding", async () => {
+    const result = await backfillSymbolHistory(bundle.db, "QQQ", "etf", { now: NOW });
+    expect(result.backfilledRows).toBe(731); // 730 back + today, fake provider prices every day
+    const rows = bundle.db
+      .select()
+      .from(priceCache)
+      .where(and(eq(priceCache.symbol, "QQQ"), eq(priceCache.assetType, "etf")))
+      .all();
+    expect(rows).toHaveLength(731);
+    expect(rows.every((r) => r.close === fakeCloseFor("QQQ", r.quotedOn))).toBe(true);
+  });
+
+  test("refreshPrices keeps the PICKED benchmark current even when unheld", async () => {
+    // pick QQQ (no holding, no cache) → the ordinary refresh loop now owns it,
+    // so the overlay never goes stale the day after the pick
+    writeSetting(bundle.db, "benchmarkSymbol", "QQQ");
+    const result = await refreshPrices(bundle.db, { now: NOW });
+    expect(result.errors).toEqual([]);
+    const rows = bundle.db
+      .select()
+      .from(priceCache)
+      .where(and(eq(priceCache.symbol, "QQQ"), eq(priceCache.assetType, "etf")))
+      .all();
+    expect(rows.length).toBeGreaterThan(700); // 2y backfilled + today's quote
+  });
+
+  test("a second call only fills the gap since the last cached close", async () => {
+    await backfillSymbolHistory(bundle.db, "QQQ", "etf", { now: NOW });
+    const later = new Date(NOW.getTime() + 3 * 24 * 3_600_000);
+    const second = await backfillSymbolHistory(bundle.db, "QQQ", "etf", { now: later });
+    expect(second.backfilledRows).toBe(3); // just the three new days
+    const third = await backfillSymbolHistory(bundle.db, "QQQ", "etf", { now: later });
+    expect(third.backfilledRows).toBe(0); // already current — a clean no-op
   });
 });

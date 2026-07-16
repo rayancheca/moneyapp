@@ -5,6 +5,7 @@ import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors } from "@/db/schema/balances";
 import { holdings, priceCache, type AssetType, type PriceSource } from "@/db/schema/holdings";
 import { appSettings } from "@/db/schema/settings";
+import { benchmarkAssetType, normalizeBenchmarkSymbol } from "@/lib/benchmark-symbol";
 import { addDays, compareDates, fromEpochDay, toEpochDay, todayIso } from "@/lib/dates";
 import { fakeDailyClose } from "@/lib/fake-prices";
 import { rebuildAccount } from "./derivation";
@@ -259,6 +260,13 @@ export interface RefreshResult {
 
 const MS_PER_HOUR = 3_600_000;
 
+/** The persisted benchmark symbol (validated), or null when unset/invalid. */
+function benchmarkSetting(db: AppDatabase): string | null {
+  const row = db.select().from(appSettings).where(eq(appSettings.key, "benchmarkSymbol")).get();
+  if (!row) return null;
+  return normalizeBenchmarkSymbol(JSON.parse(row.value));
+}
+
 function stalenessHours(db: AppDatabase): number {
   const row = db.select().from(appSettings).where(eq(appSettings.key, "priceStalenessHours")).get();
   if (!row) return 4;
@@ -320,7 +328,15 @@ export async function refreshPrices(
   const activeHoldings = db.select().from(holdings).where(eq(holdings.isActive, true)).all();
   const distinct = new Map<string, QuoteItem>();
   for (const h of activeHoldings) {
-    distinct.set(`${h.symbol} ${h.assetType}`, { symbol: h.symbol, assetType: h.assetType });
+    distinct.set(`${h.symbol} ${h.assetType}`, { symbol: h.symbol, assetType: h.assetType });
+  }
+
+  // the picked comparison benchmark refreshes with the book — without this an
+  // UNHELD benchmark (QQQ picked once) silently goes stale the day after the pick
+  const bench = benchmarkSetting(db);
+  if (bench !== null) {
+    const benchType = benchmarkAssetType(bench);
+    distinct.set(`${bench} ${benchType}`, { symbol: bench, assetType: benchType });
   }
 
   const toQuote: QuoteItem[] = [];
@@ -429,4 +445,40 @@ export async function refreshPrices(
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Backfill daily-close history for a symbol the user does NOT hold — a picked
+ * comparison benchmark (Robinhood-parity item 4). Same gap logic as
+ * refreshPrices (2y once, then only the days since the last cached close),
+ * same provider routing (MONEYAPP_FAKE_PRICES swaps the deterministic fake).
+ * Throws on provider failure — the caller surfaces the error instead of
+ * persisting an unpriceable benchmark.
+ */
+export async function backfillSymbolHistory(
+  db: AppDatabase,
+  symbol: string,
+  assetType: AssetType,
+  options: Pick<RefreshOptions, "now" | "providers"> = {},
+): Promise<{ backfilledRows: number }> {
+  const now = options.now ?? new Date();
+  const providers = options.providers ?? getProvider;
+  const today = todayIso(now);
+  const latest = latestCacheRow(db, symbol, assetType);
+  const from = latest ? addDays(latest.quotedOn, 1) : addDays(today, -BACKFILL_DAYS);
+  if (compareDates(from, today) > 0) return { backfilledRows: 0 };
+  const provider = providers(assetType);
+  const closes = await provider.getDailyCloses(symbol, assetType, from, today);
+  const fetchedAt = now.toISOString();
+  db.transaction((tx) => {
+    for (const c of closes) {
+      upsertClose(
+        tx as unknown as AppDatabase,
+        { symbol, assetType, quotedOn: c.day, close: c.close },
+        provider.source,
+        fetchedAt,
+      );
+    }
+  });
+  return { backfilledRows: closes.length };
 }

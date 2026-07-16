@@ -3,6 +3,11 @@ import Link from "next/link";
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { replayFlows } from "@/lib/benchmark-replay";
+import {
+  DEFAULT_BENCHMARK,
+  benchmarkLabel,
+  resolveBenchmarkSymbol,
+} from "@/lib/benchmark-symbol";
 import { CHART_RANGES } from "@/lib/chart-range";
 import { monthKey, todayIso } from "@/lib/dates";
 import { formatMonthYear } from "@/lib/format-date";
@@ -50,6 +55,7 @@ export default async function InvestmentsPage({
   const raw = await searchParams;
   const range = rangeSchema.parse(Array.isArray(raw.range) ? raw.range[0] : raw.range);
   const db = getDb();
+  const settings = readSettings(db);
   // switchable-view state (NS#2 Pillar 2): URL > persisted preference > default.
   const portfolioView = resolveViewState(
     PORTFOLIO_VIEW_SPEC,
@@ -57,10 +63,18 @@ export default async function InvestmentsPage({
       view: Array.isArray(raw.view) ? raw.view[0] : raw.view,
       unit: Array.isArray(raw.unit) ? raw.unit[0] : raw.unit,
     },
-    readSettings(db).viewPreferences[INVESTMENTS_SURFACE],
+    settings.viewPreferences[INVESTMENTS_SURFACE],
   );
-  // preserve a non-default range across a view switch (ALL is the clean default)
-  const viewBaseParams: Record<string, string> = range === "ALL" ? {} : { range };
+  // the Return views' comparison benchmark (item 4): URL > persisted > SPY
+  const benchmarkSymbol = resolveBenchmarkSymbol(
+    Array.isArray(raw.bench) ? raw.bench[0] : raw.bench,
+    settings.benchmarkSymbol,
+  );
+  // preserve a non-default range + benchmark across a view switch
+  const viewBaseParams: Record<string, string> = {
+    ...(range === "ALL" ? {} : { range }),
+    ...(benchmarkSymbol === DEFAULT_BENCHMARK ? {} : { bench: benchmarkSymbol }),
+  };
   const today = todayIso();
   const investmentAccounts = listAccounts(db).filter((a) => a.type === "investment" && a.isActive);
 
@@ -100,12 +114,12 @@ export default async function InvestmentsPage({
   // buy-and-hold % comparison and the "what if these flows bought SPY" replay.
   // Gated like the holding page: no overlays without a chartable return series.
   const benchDays =
-    returnDays.length >= 2 && hasBenchmark(db)
-      ? portfolioBenchmarkDays(db, returnDays.map((d) => d.day))
+    returnDays.length >= 2 && hasBenchmark(db, benchmarkSymbol)
+      ? portfolioBenchmarkDays(db, returnDays.map((d) => d.day), benchmarkSymbol)
       : null;
   const benchmark = benchDays
     ? {
-        label: "S&P 500",
+        label: benchmarkLabel(benchmarkSymbol),
         pct: benchmarkReturns(benchDays),
         replay: replayFlows(returnDays, benchDays),
       }
@@ -143,6 +157,7 @@ export default async function InvestmentsPage({
               viewState={portfolioView}
               baseParams={viewBaseParams}
               benchmark={benchmark}
+              benchmarkSymbol={benchmarkSymbol}
             />
           ) : (
             <p className="py-6 text-sm text-ink-muted">

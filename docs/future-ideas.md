@@ -266,6 +266,16 @@ Ordered roughly by value ÷ effort:
 1. ✅ **Per-holding Return view** — SHIPPED pass 16 (`0b9ae66`), see above.
 2. ✅ **Per-holding realized/unrealized + sell drill-down** — SHIPPED pass 16 (`40a26a2`), see above.
 3. ✅ **"What if I'd just bought SPY?" simulation** — SHIPPED pass 16, see above.
+4. ✅ **Benchmark picker** — SHIPPED pass 16: SPY/QQQ/VTI/BTC presets + custom ticker on both Return
+   views. Pure `src/lib/benchmark-symbol.ts` (validated symbol, URL > persisted `benchmarkSymbol`
+   setting > SPY; custom symbols route to the equity provider — documented); `setBenchmarkAction`
+   backfills 2y of closes for UNHELD symbols via `backfillSymbolHistory` and REJECTS unpriceable
+   tickers (never a silently blank overlay); `refreshPrices` now keeps the picked benchmark current
+   (it refreshes with the book); a no-data state offers a one-click "fetch 2 years of closes" heal.
+   Real read: you +4.24% vs **Nasdaq 100 +35.05%** (live Yahoo backfill verified). NOTE: the item-4
+   adversarial review's verify phase was cut by a session rate limit (9 raised, 0 verified) — the
+   raised-but-unverified findings live in the wf_ad2d901c journal; the provably-real one (stale
+   unheld benchmark) is fixed.
 4. **Benchmark picker** — SPY default; QQQ/VTI/BTC/custom symbol (any priced symbol); persisted per the
    view-state pattern. Needs a price-history backfill for symbols not held (provider fetch on pick).
 5. **Money-weighted return (XIRR)** alongside TWR — "the growth rate of YOUR dollars" (Newton solve on

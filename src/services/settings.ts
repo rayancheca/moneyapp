@@ -37,6 +37,13 @@ export const settingsSchema = z.object({
    * use time (URL > this > spec default). Absent from DEFAULT_SETTINGS on purpose.
    */
   viewPreferences: z.record(z.string(), z.record(z.string(), z.string())).default({}),
+  /**
+   * the Return views' comparison benchmark (Robinhood-parity item 4) — one
+   * global choice across the investments + holding surfaces. Read-tolerant
+   * plain string; the save action validates the ticker shape and that price
+   * history actually exists before writing.
+   */
+  benchmarkSymbol: z.string().default("SPY"),
 });
 export type AppSettingsShape = z.infer<typeof settingsSchema>;
 

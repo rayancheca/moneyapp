@@ -13,7 +13,10 @@ import {
   type PnlCalendarMonth,
   type PnlDayDetail,
 } from "@/services/portfolio";
-import { refreshPrices } from "@/services/prices";
+import { backfillSymbolHistory, refreshPrices } from "@/services/prices";
+import { hasBenchmark } from "@/services/portfolio";
+import { readSettings, writeSetting } from "@/services/settings";
+import { benchmarkAssetType, normalizeBenchmarkSymbol } from "@/lib/benchmark-symbol";
 import type { ActionResult } from "@/app/transactions/action-types";
 
 const addHoldingFormSchema = z.object({
@@ -92,6 +95,37 @@ export async function refreshPricesAction(): Promise<ActionResult<RefreshPricesS
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : "Refresh failed" };
   }
+}
+
+/**
+ * Pick the Return views' comparison benchmark (Robinhood-parity item 4).
+ * Validates the ticker shape, backfills 2y of daily closes for a symbol the
+ * user doesn't hold (fake provider under MONEYAPP_FAKE_PRICES), and persists
+ * ONLY when price history actually exists — a typo'd or unpriceable symbol is
+ * rejected with the reason, never silently saved as a blank overlay.
+ */
+export async function setBenchmarkAction(symbolInput: string): Promise<ActionResult<{ symbol: string }>> {
+  const symbol = normalizeBenchmarkSymbol(symbolInput);
+  if (symbol === null) {
+    return { ok: false, error: "Symbols are 1–12 letters, digits, dots, or dashes" };
+  }
+  const db = getDb();
+  try {
+    if (!hasBenchmark(db, symbol)) {
+      await backfillSymbolHistory(db, symbol, benchmarkAssetType(symbol));
+    }
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: `Couldn't fetch price history for ${symbol}: ${detail}` };
+  }
+  if (!hasBenchmark(db, symbol)) {
+    return { ok: false, error: `No price history found for ${symbol}` };
+  }
+  if (readSettings(db).benchmarkSymbol !== symbol) {
+    writeSetting(db, "benchmarkSymbol", symbol);
+  }
+  revalidatePath("/investments");
+  return { ok: true, data: { symbol } };
 }
 
 // ─── P/L calendar (read-only slice loaders, §6.3) ──────────────────────────

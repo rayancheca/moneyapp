@@ -139,6 +139,43 @@ test("a holding chart switches price↔return, updates the URL, and persists", a
   await unitGroupRestore(page, href!);
 });
 
+test("the benchmark picker fetches history for an unheld symbol and persists", async ({ page }) => {
+  // this test backfills (fake) closes into price_cache and runs LAST in the
+  // suite; the db is reseeded from scratch on every run, so nothing leaks
+  await page.goto("/investments?view=returns");
+  const picker = page.getByRole("combobox", { name: "Benchmark" });
+  await expect(picker).toBeVisible();
+  // the fixture has no cached SPY — the picker says so instead of a blank overlay
+  await expect(page.getByText(/No price history for SPY yet/)).toBeVisible();
+
+  // pick Nasdaq 100: the action backfills 2y of closes, then navigates with ?bench
+  await picker.selectOption("QQQ");
+  await expect(page).toHaveURL(/[?&]bench=QQQ\b/);
+  await expect(page.getByText(/Nasdaq 100 replay/)).toBeVisible();
+  await expect(page.getByText(/simulated at daily closes/)).toBeVisible();
+
+  // sticky: a fresh visit with NO bench param keeps the persisted pick
+  await page.goto("/investments?view=returns");
+  await expect(page.getByText(/Nasdaq 100 replay/)).toBeVisible();
+
+  // the % framing swaps to the buy-and-hold comparison for the same benchmark
+  await page.getByRole("group", { name: "Return unit" }).getByRole("button", { name: "%" }).click();
+  await expect(page.getByText(/all time/).first()).toBeVisible();
+  expect(gating(await analyzeSettled(page))).toEqual([]);
+
+  // restore: $ framing, the SPY default (which backfills SPY — last test), Value view
+  await page.getByRole("group", { name: "Return unit" }).getByRole("button", { name: "$" }).click();
+  // wait for the $ navigation to settle before picking (the picker's href
+  // carries the ACTIVE view state — selecting mid-transition would keep %)
+  await expect(page.getByText(/Nasdaq 100 replay/)).toBeVisible();
+  await expect(page).not.toHaveURL(/unit=percent/);
+  await page.getByRole("combobox", { name: "Benchmark" }).selectOption("SPY");
+  await expect(page).not.toHaveURL(/bench=/);
+  await expect(page.getByText(/S&P 500 replay/)).toBeVisible();
+  await page.getByRole("group", { name: "Portfolio chart view" }).getByRole("button", { name: "Value" }).click();
+  await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
+});
+
 /** Reset the persisted unit to $ (the default) so a later Return visit is clean. */
 async function unitGroupRestore(page: Page, href: string): Promise<void> {
   // flip to Return (unit switcher only renders there), set $, flip back to Price
