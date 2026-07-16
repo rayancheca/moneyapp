@@ -29,6 +29,14 @@ export const settingsSchema = z.object({
    * The save action still enforces the strict enum on write.
    */
   dashboardLayout: z.array(z.string()).default([...DASHBOARD_SECTION_IDS]),
+  /**
+   * persisted per-surface view choices (NS#2 Pillar 2), keyed surface → (dimension
+   * → value), e.g. { spending: { cash: "table" } }. Read-tolerant plain strings +
+   * .default({}) so a preference saved before a surface/dimension existed can never
+   * crash readSettings — resolveViewState drops values not in the current spec at
+   * use time (URL > this > spec default). Absent from DEFAULT_SETTINGS on purpose.
+   */
+  viewPreferences: z.record(z.string(), z.record(z.string(), z.string())).default({}),
 });
 export type AppSettingsShape = z.infer<typeof settingsSchema>;
 

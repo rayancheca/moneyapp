@@ -7,7 +7,9 @@ import {
   resolvePeriod,
   stepPeriodParams,
 } from "@/lib/period";
+import { resolveViewState } from "@/lib/view-state";
 import { categoryBreakdown } from "@/services/analytics";
+import { readSettings } from "@/services/settings";
 import {
   cashFlowByPeriod,
   dailySpendHeatmap,
@@ -20,7 +22,8 @@ import {
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
-import { CashFlowChart } from "@/components/spending/CashFlowChart";
+import { CashFlowView } from "@/components/spending/CashFlowView";
+import { CASH_VIEW_SPEC, SPENDING_SURFACE } from "@/components/spending/spending-view-spec";
 import { HonestyBucketsCard } from "@/components/spending/HonestyBucketsCard";
 import { LargestPurchases, type LargestPurchaseRow } from "@/components/spending/LargestPurchases";
 import { PeriodSelector } from "@/components/spending/PeriodSelector";
@@ -54,6 +57,17 @@ export default async function SpendingPage({
   const cashFlow = cashFlowByPeriod(db, period, today);
   const projection = spendingProjection(db, period, today, cashFlow.pace, cashFlow.totals.spentCents);
   const merchants = topMerchants(db, range);
+
+  // switchable-view state (NS#2 Pillar 2): URL > persisted preference > default.
+  const cashView = resolveViewState(
+    CASH_VIEW_SPEC,
+    { cash: firstParam(raw.cash) ?? undefined },
+    readSettings(db).viewPreferences[SPENDING_SURFACE],
+  );
+  // params to preserve when switching views: the current period
+  const baseParams: Record<string, string> = period.key
+    ? { period: period.key }
+    : { from: period.from, to: period.to };
   const honesty = honestyBuckets(db, range);
   const heatMonth = heatmapInitialMonth(period, today);
   const heatmap = dailySpendHeatmap(db, heatMonth);
@@ -133,7 +147,13 @@ export default async function SpendingPage({
 
           <SurfaceCard>
             <h2 className="mb-1 text-sm font-medium">Cash flow — {period.label}</h2>
-            <CashFlowChart data={cashFlow} projection={projection} />
+            <CashFlowView
+              cashFlow={cashFlow}
+              projection={projection}
+              viewState={cashView}
+              baseParams={baseParams}
+              periodLabel={period.label}
+            />
           </SurfaceCard>
 
           <div className="grid gap-6 lg:grid-cols-5">
