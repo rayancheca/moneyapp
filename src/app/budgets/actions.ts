@@ -7,13 +7,8 @@ import type { ActionResult } from "@/app/transactions/action-types";
 import { getDb } from "@/db/client";
 import { BUDGET_PERIODS } from "@/db/schema/budgets";
 import { MoneyParseError, parseAmountToCents } from "@/lib/money";
-import {
-  createBudget,
-  deactivateBudget,
-  suggestBudgets,
-  updateBudget,
-  type SuggestedBudget,
-} from "@/services/budgets";
+import { createBudget, deactivateBudget, updateBudget } from "@/services/budgets";
+import { predictBudgets, type PredictedBudget } from "@/services/category-forecast";
 
 const createBudgetFormSchema = z.object({
   categoryId: z.string().min(1, "Pick a category"),
@@ -104,28 +99,28 @@ export async function deactivateBudgetAction(formData: FormData): Promise<void> 
   redirect(message ? `/budgets?error=${encodeURIComponent(message)}` : "/budgets");
 }
 
-/** Load monthly budget suggestions from the last 3 complete months of spending. */
-export async function suggestBudgetsAction(): Promise<ActionResult<SuggestedBudget[]>> {
+/** Load next-month budget PREDICTIONS (recurring bills + trend/seasonal estimate). */
+export async function predictBudgetsAction(): Promise<ActionResult<PredictedBudget[]>> {
   try {
-    return { ok: true, data: suggestBudgets(getDb()) };
+    return { ok: true, data: predictBudgets(getDb()) };
   } catch (error: unknown) {
     return { ok: false, error: friendlyMessage(error) };
   }
 }
 
-const createSuggestedSchema = z
+const createPredictedSchema = z
   .array(z.object({ categoryId: z.string().min(1), amountCents: z.number().int().positive() }))
-  .min(1, "Pick at least one suggestion");
+  .min(1, "Pick at least one prediction");
 
 /**
- * Create the picked suggestions as MONTHLY budgets — each through the same
+ * Create the picked predictions as MONTHLY budgets — each through the same
  * createBudget path the form uses (expense-only + one-active-per-period
  * enforced). Per-item failures are reported, never silently dropped.
  */
-export async function createSuggestedBudgetsAction(
+export async function createPredictedBudgetsAction(
   input: { categoryId: string; amountCents: number }[],
 ): Promise<ActionResult<{ created: number; errors: string[] }>> {
-  const parsed = createSuggestedSchema.safeParse(input);
+  const parsed = createPredictedSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: friendlyMessage(parsed.error) };
   const db = getDb();
   let created = 0;

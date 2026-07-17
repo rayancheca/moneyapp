@@ -16,7 +16,7 @@ import { Money } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { BudgetForm } from "@/components/budgets/BudgetForm";
-import { SuggestBudgets } from "@/components/budgets/SuggestBudgets";
+import { PredictBudgets } from "@/components/budgets/PredictBudgets";
 import { BudgetRow } from "@/components/budgets/BudgetRow";
 
 export const metadata: Metadata = { title: "Budgets" };
@@ -64,7 +64,7 @@ export default async function BudgetsPage({
           title="Budgets"
           description="Daily, weekly, monthly, and annual budgets per category. Child spending rolls into parent budgets; leftover is visible but never rolls over."
         />
-        <SuggestBudgets />
+        <PredictBudgets />
       </div>
 
       {error && (

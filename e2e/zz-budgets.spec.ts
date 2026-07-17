@@ -96,19 +96,24 @@ test("a budget row links reciprocally to its category page", async ({ page }) =>
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
 });
 
-test("Suggest budgets reviews history-based amounts, creates one, and restores", async ({ page }) => {
+test("Predict budgets reviews forecast amounts, creates one, and restores", async ({ page }) => {
   await page.goto("/budgets");
-  await page.getByRole("button", { name: "Suggest budgets" }).click();
+  await page.getByRole("button", { name: "Predict budgets" }).click();
 
   const sheet = page.getByRole("dialog");
-  await expect(sheet.getByText("Suggested budgets")).toBeVisible();
-  // every suggestion names its basis — an average, never a prediction
-  await expect(sheet.getByText(/average month over .* rounded up/)).toBeVisible();
+  await expect(sheet.getByText("Predicted budgets")).toBeVisible();
+  // it's a forecast of next month, not a description of the past
+  await expect(sheet.getByText(/forecast of your .* spending/)).toBeVisible();
+  // every prediction names its basis: the predicted total + a confidence
+  await expect(sheet.getByText(/predicts .* for /).first()).toBeVisible();
+  await expect(sheet.getByText(/% confidence/).first()).toBeVisible();
   const boxes = sheet.getByRole("checkbox");
   const count = await boxes.count();
   expect(count).toBeGreaterThan(0);
 
-  // keep only the FIRST suggestion checked, remember its category name
+  // keep only the FIRST prediction checked (low-confidence rows default OFF, so
+  // check it explicitly), remember its category name
+  await boxes.first().check();
   for (let i = 1; i < count; i += 1) await boxes.nth(i).uncheck();
   const firstLabel = (await sheet.locator("li").first().locator("span.font-medium").innerText()).trim();
   await sheet.getByRole("button", { name: /Create 1 monthly budget/ }).click();
