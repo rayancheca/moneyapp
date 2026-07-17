@@ -166,9 +166,11 @@ test("the benchmark picker fetches history for an unheld symbol and persists", a
   await page.goto("/investments?view=returns");
   await expect(page.getByText(/Nasdaq 100 replay/)).toBeVisible();
 
-  // the % framing swaps to the buy-and-hold comparison for the same benchmark
+  // the % framing swaps to the buy-and-hold comparison for the same benchmark;
+  // honesty: the benchmark's % names its OWN basis day (its 2y backfill window can
+  // be shorter than the You line's), never the literally-false "all time"
   await page.getByRole("group", { name: "Return unit" }).getByRole("button", { name: "%" }).click();
-  await expect(page.getByText(/all time/).first()).toBeVisible();
+  await expect(page.getByText(/Nasdaq 100.*% since /).first()).toBeVisible();
   expect(gating(await analyzeSettled(page))).toEqual([]);
 
   // restore: $ framing, the SPY default (which backfills SPY — last test), Value view

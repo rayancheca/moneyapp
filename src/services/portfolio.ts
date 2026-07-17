@@ -4,6 +4,7 @@ import { accounts } from "@/db/schema/accounts";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings, priceCache, type AssetType } from "@/db/schema/holdings";
 import { transactions } from "@/db/schema/transactions";
+import { benchmarkAssetType } from "@/lib/benchmark-symbol";
 import { addDays, compareDates, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import {
   dailyReturns,
@@ -261,27 +262,49 @@ export function portfolioBenchmarkDays(
   days: readonly string[],
   symbol = "SPY",
 ): BenchmarkDay[] {
-  return days.map((day) => ({ day, close: benchmarkCloseOn(db, symbol, day) }));
+  // The price cache is keyed by (symbol, asset_type) — resolve the asset type the
+  // SAME way the write path does (setBenchmarkAction/refreshPrices route backfill
+  // + quotes through benchmarkAssetType), so a custom ticker that collides with a
+  // held symbol under a different asset type (e.g. custom "ETH" as an etf vs the
+  // user's crypto ETH) never reads the wrong asset's closes.
+  const assetType = benchmarkAssetType(symbol);
+  return days.map((day) => ({ day, close: benchmarkCloseOn(db, symbol, assetType, day) }));
 }
 
-/** The latest cached close on/before `day` for a benchmark symbol (any asset type). */
-function benchmarkCloseOn(db: AppDatabase, symbol: string, day: string): number | null {
+/** The latest cached close on/before `day` for a benchmark (symbol, asset_type). */
+function benchmarkCloseOn(
+  db: AppDatabase,
+  symbol: string,
+  assetType: AssetType,
+  day: string,
+): number | null {
   const row = db
     .select({ close: priceCache.close })
     .from(priceCache)
-    .where(and(eq(priceCache.symbol, symbol), sql`${priceCache.quotedOn} <= ${day}`))
+    .where(
+      and(
+        eq(priceCache.symbol, symbol),
+        eq(priceCache.assetType, assetType),
+        sql`${priceCache.quotedOn} <= ${day}`,
+      ),
+    )
     .orderBy(desc(priceCache.quotedOn))
     .limit(1)
     .get();
   return row?.close ?? null;
 }
 
-/** Is a benchmark symbol priced at all? (gate the overlay when the data is absent) */
+/**
+ * Is a benchmark symbol priced at all? (gate the overlay when the data is absent).
+ * Keyed by (symbol, asset_type) via benchmarkAssetType — so it agrees with the
+ * backfill gate in setBenchmarkAction: a custom "ETH" (etf) reads false even when
+ * the user holds ETH as crypto, so its etf history is actually fetched.
+ */
 export function hasBenchmark(db: AppDatabase, symbol = "SPY"): boolean {
   const row = db
     .select({ close: priceCache.close })
     .from(priceCache)
-    .where(eq(priceCache.symbol, symbol))
+    .where(and(eq(priceCache.symbol, symbol), eq(priceCache.assetType, benchmarkAssetType(symbol))))
     .limit(1)
     .get();
   return row !== undefined;

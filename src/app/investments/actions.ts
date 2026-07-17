@@ -112,20 +112,27 @@ export async function setBenchmarkAction(symbolInput: string): Promise<ActionRes
   const db = getDb();
   try {
     if (!hasBenchmark(db, symbol)) {
-      await backfillSymbolHistory(db, symbol, benchmarkAssetType(symbol));
+      try {
+        await backfillSymbolHistory(db, symbol, benchmarkAssetType(symbol));
+      } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : String(error);
+        return { ok: false, error: `Couldn't fetch price history for ${symbol}: ${detail}` };
+      }
     }
+    if (!hasBenchmark(db, symbol)) {
+      return { ok: false, error: `No price history found for ${symbol}` };
+    }
+    // the persist path (readSettings/writeSetting) can throw too — keep it inside
+    // the guard so a write failure returns {ok:false} the picker can surface,
+    // never a rejected transition that silently does nothing.
+    if (readSettings(db).benchmarkSymbol !== symbol) {
+      writeSetting(db, "benchmarkSymbol", symbol);
+    }
+    revalidatePath("/investments");
+    return { ok: true, data: { symbol } };
   } catch (error: unknown) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return { ok: false, error: `Couldn't fetch price history for ${symbol}: ${detail}` };
+    return { ok: false, error: error instanceof Error ? error.message : "Couldn't set the benchmark" };
   }
-  if (!hasBenchmark(db, symbol)) {
-    return { ok: false, error: `No price history found for ${symbol}` };
-  }
-  if (readSettings(db).benchmarkSymbol !== symbol) {
-    writeSetting(db, "benchmarkSymbol", symbol);
-  }
-  revalidatePath("/investments");
-  return { ok: true, data: { symbol } };
 }
 
 // ─── P/L calendar (read-only slice loaders, §6.3) ──────────────────────────

@@ -49,6 +49,10 @@ export interface ReturnViewModel {
   /** benchmark overlay on the % line's scale, or undefined when hidden */
   benchmarkCompare: { byDay: Record<string, number | null>; label: string } | undefined;
   benchmarkTotalPct: number | null;
+  /** the benchmark's first PRICED day — its cumulative % is measured since here,
+   *  which can be LATER than the You line's baseline (2y backfill cap); the legend
+   *  names this day instead of claiming "all time". null when the benchmark has no data. */
+  benchmarkSinceDay: string | null;
   /** the flow-replay overlay on the $ return line's scale (gain vs gain) */
   replayCompare: { byDay: Record<string, number | null>; label: string } | undefined;
   /** "you'd have $X, Δ $Y" — the replay's ending point vs the actual NAV */
@@ -101,6 +105,16 @@ export function useReturnViewModel(
     }
     return null;
   }, [benchmark]);
+  // the benchmark's baseline day — its % is rebased to its FIRST available close,
+  // which (via the 2y backfill cap) can start later than the You line's window.
+  const benchmarkSinceDay = useMemo(() => {
+    if (!benchmark) return null;
+    for (let i = 0; i < benchmark.pct.length; i += 1) {
+      const v = benchmark.pct[i];
+      if (v !== null && v !== undefined) return returnLine[i]?.day ?? null;
+    }
+    return null;
+  }, [benchmark, returnLine]);
 
   // "what if these flows had bought the benchmark": the replay's cumulative
   // GAIN rides the $ return line's scale — a money-weighted, flow-identical
@@ -151,6 +165,7 @@ export function useReturnViewModel(
     stats,
     benchmarkCompare,
     benchmarkTotalPct,
+    benchmarkSinceDay,
     replayCompare,
     replaySummary,
     youSwatchClass,
@@ -200,14 +215,21 @@ export function ReplayLegend({
   );
 }
 
-/** "You / {benchmark} +X%" line-color legend above the % return chart. */
+/** "You / {benchmark} +X% since {day}" line-color legend above the % return chart.
+ *  The benchmark's % is rebased to its first PRICED day (`sinceDay`), which the
+ *  2-year backfill cap can push LATER than the You line's window — so the legend
+ *  names that basis day instead of claiming "all time" (which would be literally
+ *  false and read as a same-window comparison it is not). */
 export function BenchmarkLegend({
   label,
   totalPct,
+  sinceDay,
   youSwatchClass,
 }: {
   label: string;
   totalPct: number | null;
+  /** the benchmark's first-priced day; names the basis window (never "all time") */
+  sinceDay: string | null;
   /** matches the drawn line's gain/loss accent (never a green key on a red line) */
   youSwatchClass: string;
 }) {
@@ -222,7 +244,10 @@ export function BenchmarkLegend({
         {totalPct !== null && (
           <span className="figures">
             {" "}
-            {signedPct(totalPct)} <span className="font-normal">all time</span>
+            {signedPct(totalPct)}{" "}
+            <span className="font-normal">
+              {sinceDay ? `since ${formatDayLong(sinceDay)}` : "all time"}
+            </span>
           </span>
         )}
       </span>

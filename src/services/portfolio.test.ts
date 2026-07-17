@@ -12,9 +12,11 @@ import { createAccount } from "./accounts";
 import { rebuildInvestmentHistory } from "./crypto-history";
 import { upsertHolding } from "./holdings";
 import {
+  hasBenchmark,
   holdingRows,
   pnlCalendarMonth,
   pnlDayDetail,
+  portfolioBenchmarkDays,
   portfolioOverview,
   portfolioRealizedPl,
   portfolioReturnDays,
@@ -59,7 +61,7 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function cache(symbol: string, assetType: "stock" | "crypto", day: string, close: number): void {
+function cache(symbol: string, assetType: "stock" | "etf" | "crypto", day: string, close: number): void {
   bundle.db
     .insert(priceCache)
     .values({
@@ -281,5 +283,44 @@ describe("pnl calendar + day detail", () => {
     const d2 = days.find((d) => d.day === D2)!;
     // NEWB's $100 appearance is fully offset by its rolled-forward flow → 0 return
     expect(d3.navCents - d2.navCents - d3.flowCents).toBe(0);
+  });
+});
+
+describe("benchmark reads honor (symbol, asset_type)", () => {
+  // Regression: the benchmark READ path (hasBenchmark / portfolioBenchmarkDays)
+  // must resolve the asset type the SAME way the write path does
+  // (benchmarkAssetType: presets by table, any custom ticker → "etf"), so a
+  // custom benchmark ticker that collides with a HELD crypto symbol never reads
+  // the wrong asset's closes (nor skips its own backfill).
+  test('a custom "ETH" benchmark (→ etf) does NOT match the held crypto ETH rows', () => {
+    cache("SPY", "etf", D1, 500);
+    cache("ETH", "crypto", D1, 2000);
+    cache("ETH", "crypto", D2, 2100);
+
+    // SPY resolves to etf and has etf rows → present
+    expect(hasBenchmark(bundle.db, "SPY")).toBe(true);
+    // "ETH" resolves to etf (custom, non-preset); only crypto ETH exists → absent,
+    // so setBenchmarkAction's gate fetches the etf history instead of silently
+    // reusing the crypto closes. (Before the fix this returned true.)
+    expect(hasBenchmark(bundle.db, "ETH")).toBe(false);
+  });
+
+  test("BTC preset resolves to crypto and reads its crypto closes", () => {
+    cache("BTC", "crypto", D1, 60_000);
+    cache("BTC", "crypto", D2, 61_000);
+    expect(hasBenchmark(bundle.db, "BTC")).toBe(true);
+    const closes = portfolioBenchmarkDays(bundle.db, [D1, D2], "BTC").map((d) => d.close);
+    expect(closes).toEqual([60_000, 61_000]);
+  });
+
+  test("portfolioBenchmarkDays reads the etf SPY series, never a same-symbol crypto row", () => {
+    cache("SPY", "etf", D1, 500);
+    cache("SPY", "etf", D2, 510);
+    // a decoy crypto row under the same symbol must never leak into an etf benchmark
+    cache("SPY", "crypto", D1, 999);
+    cache("SPY", "crypto", D2, 999);
+    const closes = portfolioBenchmarkDays(bundle.db, [D1, D2, D3], "SPY").map((d) => d.close);
+    // D1/D2 = etf closes; D3 carries forward the latest etf close (510), not 999
+    expect(closes).toEqual([500, 510, 510]);
   });
 });

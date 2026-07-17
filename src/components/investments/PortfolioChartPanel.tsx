@@ -105,6 +105,7 @@ export function PortfolioChartPanel({
     stats,
     benchmarkCompare,
     benchmarkTotalPct,
+    benchmarkSinceDay,
     replayCompare,
     replaySummary,
     youSwatchClass,
@@ -168,7 +169,12 @@ export function PortfolioChartPanel({
         </div>
       )}
       {benchmarkCompare && (
-        <BenchmarkLegend label={benchmark!.label} totalPct={benchmarkTotalPct} youSwatchClass={youSwatchClass} />
+        <BenchmarkLegend
+          label={benchmark!.label}
+          totalPct={benchmarkTotalPct}
+          sinceDay={benchmarkSinceDay}
+          youSwatchClass={youSwatchClass}
+        />
       )}
       {replayCompare && replaySummary && (
         <ReplayLegend
