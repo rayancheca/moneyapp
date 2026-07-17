@@ -37,6 +37,115 @@ landed. Pass 11 [S8–S10a] + pass 10 [S1–S7] below.).
 
 ---
 
+## 📉📈 PASS-17 USER ASKS — charts everywhere + income/clarification (2026-07-17, verbatim intent)
+
+> The user shared two screenshots (a **Venture X "AMOUNT OWED" balance-history** line with NO axes, and the
+> **investments Allocation donut** in near-identical muted greens) and asked, verbatim spirit:
+> *"the graph for the accounts should be just like the dashboard one. same functionalities. add axes cause i
+> can't tell any data, I'm just seeing a line. allocation should be more readable — colours are too similar,
+> stocks are hard to differentiate. in the dashboard I want more variability for the graph: toggles to view
+> assets only, liabilities only, assets+liabilities combined (the default — keep it), and another option with
+> two lines (one assets, one liabilities, same graph). make the graph so I can select which accounts to show
+> and each account has its own colour. I was looking at the Venture X graph and realised I'd like to see the
+> lines for my other cards layered on top to compare — that's why I said do it in the dashboard. Think about
+> this deeply and write it into ideas; we'll go through it on another pass."*
+> Also: *"what's up with the projected income, why is it $0.01? I make $1,047 every Thursday starting ~2 months
+> ago — think about this too."* And: *"in the next-chat prompt, have Claude compile a list of ALL the questions
+> it has for me + everything it needs. I want to clarify all my transactions — ask me a lot of questions."*
+
+**Resolved side-mystery:** the pass-16 handoff's "net worth −$11,020.45" was actually the **Venture X card's
+AMOUNT OWED $11,020.45** (a liability balance), not net worth. Real net worth on the live clock/prices is
+~**$86,013** (assets $98,466 − liabilities $12,453). No action needed; just correcting the record.
+
+### A. Account balance-history chart → dashboard-chart PARITY + axes  `[/accounts/[id]]`
+The account-detail "Balance history" chart is a bare line — no axes, no gridlines, no scrub/range/focus — so
+"you can't tell any data." The dashboard net-worth chart (`ChartFocus` + `ScrubChart`, shipped `ae091bc`) has
+all of it: vivid animated line, glow, coverage band, live dot, **axes + gridlines** (the investments Return
+view already added `showAxes`), 1M/3M/YTD/1Y/ALL range pills, drag-select window stats, tap-to-focus modal.
+- **Task:** render the account's daily balance through the SAME chart component the dashboard/investments use,
+  with axes on by default. y-axis = balance (for a **liability** account like Venture X, that's AMOUNT OWED —
+  label the axis accordingly and keep the "debt goes up = bad" accent honest); x-axis = dates.
+- Reuse `chart-axis.ts` `niceLinearTicks` (already used elsewhere) + the ScrubChart `showAxes` path.
+- Data already exists: `dailyBalances` per account → the same series the account page draws today, just fed
+  through the richer component. Regenerate the account-detail visual baselines.
+- This is the small, self-contained first slice — do it BEFORE the big dashboard multi-series work below.
+
+### B. Allocation donut readability  `[/investments]`
+Slices are near-monochrome greens → holdings are indistinguishable. Adopt a **categorical, colourblind-safe,
+high-contrast palette** (the `dataviz` skill ships a validated one; or an OKLCH-spaced hue ramp) so ETH vs MSFT
+vs SPY vs AMZN vs UNH vs COKE vs AAPL vs META vs WMT each read as a distinct hue. Legend swatches must match
+the slices exactly. Nice-to-haves that compose with existing backlog items: sort slices by weight (done?),
+group a "· others" tail below N%, and **hover/tap a slice → highlight it + its legend row** (this is the
+"chart-as-filter" item #13 in the 📈 backlog — the donut is a natural first home for it).
+
+### C. Dashboard net-worth chart → VIEW TOGGLES + per-account layered lines  `[/ · the big one]`
+The killer ask: the user wants to **layer their credit cards' balance lines on one chart to compare** (born
+from staring at the Venture X graph alone). Generalise the single aggregate net-worth line into a **switchable,
+multi-series, per-account-coloured chart** — this is NS#2 Pillar 2 (switchable views) applied to the hero chart.
+- **View modes** (a `<ViewSwitcher>` segmented control, persisted via `view-state.ts` URL+`app_settings`):
+  1. **Combined** — net worth = assets − liabilities (the CURRENT default; keep it as the default option).
+  2. **Assets only** — Σ asset-type accounts.
+  3. **Liabilities only** — Σ liability accounts (decide sign convention + label; "amount owed" positive is
+     most intuitive for cards).
+  4. **Split (two lines)** — an assets line + a liabilities line on the same axes (positive/negative or two
+     colours), so the user sees the two forces that make net worth.
+  5. **By account (N coloured lines)** — a multi-select of accounts; each selected account draws its own line
+     in its own colour, layered for comparison (the "all my cards on one chart" use-case). Legend maps
+     colour→account; colours from the same categorical palette as B.
+- **Engineering shape (for another pass — non-trivial):**
+  - Per-account daily series already exist (`dailyBalances`); need a `netWorthSeriesByAccount`/`accountSeries`
+    aggregator that returns aligned per-account series over the range (carry-forward gaps like the net-worth
+    series already does), plus asset/liability rollups.
+  - `ScrubChart` today draws one main line + one optional `compareLine`. Generalise to **N series** with
+    per-series colour + a legend, WITHOUT breaking the existing single-line drag-select/scrub/window-stats
+    (the window readout needs a per-series or aggregate rule — decide: net of shown accounts? each series'
+    own delta in the tooltip?). This is the biggest lift — likely a `series: {key,label,color,points}[]` prop
+    with the current single-line path as the 1-series case.
+  - A new **account multi-select** control (reuse the managed-accounts / category-picker patterns; a11y +
+    reduced-motion). Persist the selected set + view mode in view-state (URL-shareable + sticky).
+  - `ChartFocus` modal must carry the same view state (parity with the inline chart, like the range pill does).
+  - Regenerate ALL dashboard chart baselines; the axes work from A is a prerequisite (every mode needs axes).
+- Sequence suggestion: **A (account chart + axes)** → generalise `ScrubChart` to N-series → **C modes 1-4**
+  (asset/liability rollups, no account-select yet) → **C mode 5** (account multi-select + colours) → **B**
+  palette (shared colour system falls out of C mode 5).
+
+### D. Projected income = $0.01 — DIAGNOSED (2026-07-17, real-db read-only)
+**Why it's $0.01:** `forecast.ts` computes "projected income" from **recurring income SERIES only** (`fixed
+Components`) — it has NO variable/trailing income component (spending has one; income doesn't). The only
+recurring income series that project into the current month are two **STOCK LENDING** rows at **$0.01/mo**
+(SPY + COKE); only SPY's $0.01 lands in July → projected income = **$0.01**.
+**Why the real income isn't there:**
+- **The user's belief ("$1,047 every Thursday") doesn't match the data.** The ATM cash deposits are IRREGULAR:
+  $1,400 (Tue 5/12), $300 (Fri 5/15), $1,500 (Mon 5/18), **$1,047 (Thu 6/4)**, $400 (Fri 6/5), $730 (Thu 6/11),
+  $1,000 (Fri 6/12) — only ONE is exactly $1,047 on a Thursday. They sit **uncategorised in the review queue,
+  `source='user'`** (reserved in pass 15 because we couldn't tell cash-income from mixed cash), so they're
+  neither income-categorised nor a recurring series → invisible to the forecast.
+- **Fordham payroll** last posted **2026-05-13 ($615.13)** and is NOT modelled as a recurring series (and hasn't
+  recurred in 2 months — did work-study pause for summer?). Knack tutoring is small + irregular, no series.
+- A LOT of real inflow is parked in **Transfers** (MONEYGRAM remittances $1,030/$1,120, "ACH Deposit $9,000",
+  "Zelle from ROBERT COHN $2,500", "DEPOSIT ID $2,092", self-Zelles) — some may be income/loans/gifts the user
+  must disambiguate.
+**Fix = two parts (another pass):**
+1. **Data/clarification (needs the user):** the transaction-clarification workflow below — decide which cash
+   deposits / transfers are income, categorise them, and optionally confirm a paycheck as a recurring income
+   series (a "mark this as my recurring paycheck" affordance from a transaction).
+2. **Code (real gaps):** (a) give the forecast a **variable/trailing income component** (mirror spending's
+   `variableComponents`) with confidence, so categorised-but-irregular income projects; (b) **don't headline a
+   near-zero recurring income** — if the only recurring income is $0.01, say so honestly ("no regular paycheck
+   detected yet") instead of "Projected income $0.01"; (c) improve recurring-income DETECTION or let the user
+   confirm one from a txn (payroll amounts vary, so detection under-groups).
+
+### E. 🗣️ TRANSACTION-CLARIFICATION WORKFLOW — the user wants to be ASKED (top priority next)
+The user: *"I want to clarify all my transactions. Ask me a lot of questions. Work with Claude to make this
+easier — anything it's unsure of, ask me."* This is the concrete engine behind "nothing read-only": a guided,
+question-driven categorisation session. The next chat should **compile every open question** and drive it
+interactively (batch the questions, apply answers with backup + dry-run + Δ-guards). **See the compiled
+question list in `docs/transaction-questions.md`** (written this pass) — income first (it unblocks projections),
+then the big ambiguous transfers, then the review-queue tail (ATM cash, peer-Zelles). The workflow itself
+(spec for a future build): a review-inbox mode that, per ambiguous cluster, shows the rows + Claude's best
+guess + a plain-English question, the user answers once, and it applies to the whole cluster (reuses the
+existing cluster-confirm + amnesty machinery from the review triage). Every write = backup + dry-run + guards.
+
 ## 🧠 GROUND TRUTH — the user's financial story (2026-07-14, verbatim intent)
 
 Use this to VALIDATE every chart/number. Money mechanics, in the user's own words:
