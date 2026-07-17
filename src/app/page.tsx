@@ -1,3 +1,4 @@
+import { cloneElement, isValidElement } from "react";
 import Link from "next/link";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
@@ -203,7 +204,16 @@ export default function DashboardPage() {
     recent: { label: "Recent transactions", node: recentSection },
   };
   const sections = layout
-    .map((id) => ({ id, ...sectionsById[id as DashboardSectionId] }))
+    .map((id) => {
+      const entry = sectionsById[id as DashboardSectionId];
+      // Key each node before it crosses the RSC boundary as a list item. Without
+      // a key, Flight serialization warns "a child was passed from DashboardPage"
+      // for any section whose <section> wasn't statically key-validated — the hero
+      // section, whose conditional visuals block defeats the jsxs static-children
+      // marking, arrives at ArrangeableSections as an unkeyed list child.
+      const node = isValidElement(entry.node) ? cloneElement(entry.node, { key: id }) : entry.node;
+      return { id, label: entry.label, node };
+    })
     .filter((s) => s.node !== null);
 
   return (
