@@ -329,11 +329,18 @@ export const robinhoodActivityCsv: ParserProfile = {
     }
     return [
       {
+        // P0.1 (docs/inflight-dips.md): the activity CSV IS the settlement-cash
+        // ledger. Once a "Robinhood Cash" account exists (the real DB after the
+        // pass-19 move), its rows must land there — anchor+replay derives the
+        // cash curve there, and the moved ledger's dedupe hashes live under
+        // that account (targeting the brokerage would re-duplicate all of it).
+        // Without one, the brokerage fallback keeps fresh installs unchanged.
         accountHint: {
           institution: "Robinhood",
           type: "investment",
           subtype: "brokerage",
           name: "Robinhood Brokerage",
+          preferName: "Robinhood Cash",
         },
         txns,
       },

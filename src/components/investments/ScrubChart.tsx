@@ -71,6 +71,10 @@ export interface ScrubPoint {
   /** net worth only: names of accounts WITH coverage that day, so an early day
    *  can say "only Chase ····3522" instead of a long missing list. */
   coveredAccountNames?: string[];
+  /** net worth only: signed in-flight correction applied to this day's value
+   *  (docs/inflight-dips.md) — positive = "includes $X in transit", negative =
+   *  a removed double-post. The tooltip/readout state it; the line stays calm. */
+  inTransitCents?: number;
 }
 
 export interface ScrubMark {
@@ -255,6 +259,7 @@ export function ScrubChart({
       prevValue: i > 0 ? (slice[i - 1]?.valueCents ?? null) : null,
       missingAccounts: slice[i]?.missingAccounts,
       coveredAccountNames: slice[i]?.coveredAccountNames,
+      inTransitCents: slice[i]?.inTransitCents,
     }));
   }, [vivid, slice]);
   // recharts infers one ChartData<T> from `data`; the two series shapes (vivid

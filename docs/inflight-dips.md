@@ -65,3 +65,60 @@ mark** — the line doesn't dip; scrubbing a bridged day says "includes $X in tr
 market declines stay untouched. Build order: bridging layer (pure-lib TDD on netWorthSeries) → P0.1 RH-cash
 rebuild from the activity ledger → regenerate dashboard baselines → per-window before/after verification
 against statement anchors.
+
+---
+
+# 🛠️ PASS 19 — SHIPPED, and what the data actually said (2026-07-18)
+
+Both parts landed (`src/lib/in-flight.ts` + `src/services/in-flight.ts` + the chart marks; the guarded
+`data/rebuild-rh-cash-2026-07-17.ts` ledger move). The build taught us four things this doc's plan had wrong
+or didn't know — each is now a RULE:
+
+## 1. The float is usually the OTHER way round: "doubled", not "missing"
+The plan assumed the out-leg posts first and money vanishes. Reality (111 evidenced windows):
+**102 are the receiving side crediting FIRST** (Robinhood/SoFi credit instantly; Chase debits a day later)
+— the raw chart showed phantom one-day SPIKES (money in two accounts), only 9 true dips. The layer handles
+both signs: `+amount` where money is visible nowhere, `−amount` where it's visible twice.
+**RULE — the per-day law:** the pair's money must appear in the total EXACTLY ONCE. `target(D)` = 1 while
+any visible ledger claims it (or while in the air); `counted(D)` = how many visible ledgers actually show
+it; correction = `amount × (target − counted)`. Days where an account is INVISIBLE (basis `gap`, or before
+its first covered day) are coverage-honesty's job (the partial flag), never this layer's — adversarial
+review proved bridging them would double-correct.
+
+## 2. P0.1 was a MOVE, not an import — and never write daily_balances directly
+The entire activity CSV had already been imported as **2,181 transactions sitting inert on the
+investment-type Brokerage account** (investment curves are qty×close; replay never runs). The durable fix
+was to move that ledger to Robinhood Cash (checking) + mirror the 64 asset-signed crypto rows as negated
+cash legs + one labeled $3,579.67 reconciliation row, then let normal anchor+replay derive the curve.
+The pass-10 script had written daily_balances directly — **a later rebuildAccount wiped it** and RH Cash
+sat at $0-carried ever since. **RULE: daily_balances is a derived cache; durable balance truth lives only
+in transactions + anchors.** (Import routing now prefers the "Robinhood Cash" account when it exists —
+`AccountHint.preferName` — so future activity exports land on the moved ledger and dedupe correctly.)
+
+## 3. The Jun–Jul 2025 "staircase" was NOT mostly honest losses — the doc was wrong
+This doc classified 2025-06-23→07-12 (~$46k down) as "market decline + spending era; honest losses."
+With cash modeled: **up to $43.5k of it was settlement cash sitting in Robinhood** (the SoFi→RH era).
+Post-fix the same window reads ~$68k → ~$62k — a real but ~$6k decline. Aug-2025's rollercoaster
+($47k→$32k→$47k) flattens to ~$78k once the two floats correct. The tail of the chart was right all along
+(the pass-10 live anchor covered "today"); it was the HISTORY that lied.
+
+## 4. Dip-table verdicts (re-scanned post-fix, all laws machine-checked)
+- **CLOSED**: 2025-08-12 ($14.7k→−$137), 2026-03-27 (the user's example — raw drop now $339), 2025-10-27,
+  2026-07-11.
+- **STAND (honest)**: 2024-01-03 −$4,891 (recovered 01-16 — NOT a sell-window; cash modeling didn't close
+  it, so it's real), 2026-02-26, 2026-06-05, 2026-06-16, 2026-07-08 (recovered market moves, no pair/ledger
+  evidence — exactly what must not be bridged).
+- **NEVER-BRIDGE verified**: dad wires 2025-12-12/2026-03-04/2026-05-07 keep their full drops (the 12-12
+  "$2.5k difference" is a neighboring float's honest end, not the wire).
+- Machine laws: every float's |Δ| equals its pair's evidenced amount; per-day bridged−raw == Σ covering
+  floats == the point's `inTransitCents`; re-run via `data/report-dip-scan-2026-07-17.ts`.
+
+## Known maintenance edges (tracked, not silent)
+- **Crypto cash legs are one-shot**: future crypto statement imports won't auto-mirror cash legs onto
+  Robinhood Cash — the cash curve drifts by the trade amount until re-mirrored (backlog: generate the cash
+  leg in the crypto import profile).
+- **Fresh installs** keep pre-P0.1 behavior (activity rows fall back to the brokerage account until a
+  "Robinhood Cash" account exists); the fixture/e2e world models brokerage statements WITH cash included,
+  so it must not gain a separate cash account until the fixture architecture is reworked.
+- The brokerage **qty timeline** still comes from the holding-events backfill scripts, not the activity
+  import (unchanged by this pass).

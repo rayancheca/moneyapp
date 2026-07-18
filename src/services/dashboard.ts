@@ -4,7 +4,7 @@ import type { SeriesKind } from "@/db/schema/recurring";
 import { compareDates, todayIso } from "@/lib/dates";
 import { resolvePeriod } from "@/lib/period";
 import { listAccounts } from "./accounts";
-import { netWorthSeries, type NetWorthPoint } from "./derivation";
+import { bridgedNetWorthSeries, type BridgedNetWorthPoint } from "./in-flight";
 import { forecastCurrentMonth } from "./forecast";
 import { portfolioOverview, portfolioSeries, topMovers } from "./portfolio";
 import { upcomingOccurrences } from "./recurring";
@@ -26,11 +26,17 @@ const PAYCHECK_HORIZON_DAYS = 45;
 const SPARKLINE_DAYS = 30;
 
 export interface NetWorthSummary {
-  series: NetWorthPoint[];
+  /** in-flight-bridged (docs/inflight-dips.md): transfer floats never chart as
+   *  dips/spikes; bridged days carry `inTransitCents` for the chart's mark */
+  series: BridgedNetWorthPoint[];
   latestCents: number;
   assetsCents: number;
   liabilitiesCents: number;
   asOf: string | null;
+  /** the latest point's signed in-flight correction — non-zero means the
+   *  headline includes money currently in transit and the hero must SAY so
+   *  (it will not equal assets − liabilities until the transfer settles) */
+  inTransitCents: number;
   complete: boolean;
   coveredAccounts: number;
   totalAccounts: number;
@@ -108,7 +114,7 @@ export interface DashboardData {
 }
 
 function netWorthSummary(db: AppDatabase): NetWorthSummary {
-  const series = netWorthSeries(db);
+  const series = bridgedNetWorthSeries(db);
   const latest = series.at(-1) ?? null;
   const accounts = listAccounts(db).filter((a) => a.isActive);
   const assetsCents = accounts
@@ -123,6 +129,7 @@ function netWorthSummary(db: AppDatabase): NetWorthSummary {
     assetsCents,
     liabilitiesCents,
     asOf: latest?.day ?? null,
+    inTransitCents: latest?.inTransitCents ?? 0,
     complete: latest?.complete ?? true,
     coveredAccounts: latest?.coveredAccounts ?? 0,
     totalAccounts: latest?.totalAccounts ?? 0,

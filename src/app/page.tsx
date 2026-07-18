@@ -114,6 +114,15 @@ export default function DashboardPage() {
                 className={`font-medium ${netWorth.liabilitiesCents === 0 ? "text-ink" : "text-negative"}`}
               />
             </span>
+            {netWorth.inTransitCents !== 0 && (
+              // the headline is bridged (docs/inflight-dips.md) — while money is
+              // in the air it will NOT equal assets − liabilities, so say why
+              <span className="text-ink-faint">
+                {netWorth.inTransitCents > 0
+                  ? `includes ${formatCents(netWorth.inTransitCents)} in transit`
+                  : `excludes ${formatCents(-netWorth.inTransitCents)} posted twice in transit`}
+              </span>
+            )}
             {!netWorth.complete && (
               <span className="text-warning">
                 partial · {netWorth.coveredAccounts}/{netWorth.totalAccounts} covered

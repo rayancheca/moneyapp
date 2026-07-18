@@ -179,6 +179,12 @@ export function resolveAccount(db: AppDatabase, hint: AccountHint): string {
   if (!institution) throw new Error(`Unknown institution ${hint.institution}`);
 
   const all = db.select().from(accounts).where(eq(accounts.institutionId, institution.id)).all();
+  // an existing preferred account (the P0.1 settlement-cash ledger) wins over
+  // type matching; absent, the hint resolves exactly as before
+  if (hint.preferName) {
+    const preferred = all.find((a) => a.name === hint.preferName);
+    if (preferred) return preferred.id;
+  }
   const typeMatch = (a: (typeof all)[number]) =>
     hint.type !== undefined && a.type === hint.type && (hint.subtype === undefined || a.subtype === hint.subtype);
 

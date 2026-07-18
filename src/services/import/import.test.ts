@@ -9,7 +9,7 @@ import { accounts } from "@/db/schema/accounts";
 import { statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { latestBalances, netWorthSeries } from "@/services/derivation";
-import { importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, type ImportInput } from "./service";
+import { importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, resolveAccount, type ImportInput } from "./service";
 import { importFiles as importFilesTable } from "@/db/schema/imports";
 import { dedupeHash } from "@/lib/hash";
 
@@ -231,6 +231,27 @@ describe("structured imports", () => {
     unimportFile(bundle.db, file.id);
     expect(activeTxnStats("4321").count).toBe(0);
     expect(bundle.db.select().from(importFilesTable).all()).toHaveLength(0);
+  });
+});
+
+describe("resolveAccount preferName (P0.1 settlement-cash routing)", () => {
+  const hint = {
+    institution: "Robinhood",
+    type: "investment",
+    subtype: "brokerage",
+    name: "Robinhood Brokerage",
+    preferName: "Robinhood Cash",
+  } as const;
+
+  test("falls back to the type match while no settlement-cash account exists", () => {
+    const brokerage = resolveAccount(bundle.db, { ...hint, preferName: undefined });
+    expect(resolveAccount(bundle.db, hint)).toBe(brokerage);
+  });
+
+  test("routes to the existing settlement-cash account once it exists", () => {
+    resolveAccount(bundle.db, { ...hint, preferName: undefined }); // brokerage exists
+    const cash = resolveAccount(bundle.db, { institution: "Robinhood", type: "checking", name: "Robinhood Cash" });
+    expect(resolveAccount(bundle.db, hint)).toBe(cash);
   });
 });
 

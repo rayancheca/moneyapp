@@ -23,6 +23,9 @@ export interface VividChartRow {
   missingAccounts?: string[];
   /** accounts WITH coverage that day — lets an early day say "only Chase ····3522" */
   coveredAccountNames?: string[];
+  /** signed in-flight correction on this day (docs/inflight-dips.md): positive =
+   *  money in transit added back, negative = a removed transfer double-post */
+  inTransitCents?: number;
 }
 
 interface TooltipPayloadEntry {
@@ -96,6 +99,13 @@ export function ScrubTooltip({
           {coverage && (
             <span className="text-ink-faint"> · {coverage.kind} {coverage.text}</span>
           )}
+        </p>
+      )}
+      {(row.inTransitCents ?? 0) !== 0 && (
+        <p className="mt-1 text-[11px] text-ink-faint">
+          {row.inTransitCents! > 0
+            ? `⇄ Includes ${formatValue(row.inTransitCents!)} in transit`
+            : `⇄ Excludes ${formatValue(-row.inTransitCents!)} posted in two accounts`}
         </p>
       )}
     </div>

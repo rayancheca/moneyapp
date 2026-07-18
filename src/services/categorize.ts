@@ -8,6 +8,7 @@ import { appSettings } from "@/db/schema/settings";
 import { transactions } from "@/db/schema/transactions";
 import { diffDays } from "@/lib/dates";
 import { strippedDescriptionKey } from "@/lib/description-key";
+import { investmentSideAccountIds } from "./accounts";
 
 /**
  * The categorization pipeline (master-plan §3). Precedence:
@@ -400,6 +401,10 @@ export function detectTransfers(db: AppDatabase): TransferStats {
   const stats: TransferStats = { paired: 0, flaggedAmbiguous: 0 };
   const accountRows = db.select().from(accounts).all();
   const accountTypes = new Map(accountRows.map((a) => [a.id, a.type]));
+  // includes the P0.1 settlement-cash sibling ("Robinhood Cash", type checking),
+  // so RH-descriptor semantics + the contribution category survive the cash
+  // ledger living off the securities account
+  const investmentSide = investmentSideAccountIds(db);
 
   // S6: a user-declared card↔funding-account link counts as a hint — payments
   // between the linked pair auto-pair even without a descriptor match
@@ -460,7 +465,12 @@ export function detectTransfers(db: AppDatabase): TransferStats {
     const types = [accountTypes.get(x.accountId), accountTypes.get(y.accountId)];
     if ((CARD_PAYMENT_RE.test(x.rawDescription) || CARD_PAYMENT_RE.test(y.rawDescription)) && !types.includes("credit"))
       return false;
-    if ((ROBINHOOD_RE.test(x.rawDescription) || ROBINHOOD_RE.test(y.rawDescription)) && !types.includes("investment"))
+    if (
+      (ROBINHOOD_RE.test(x.rawDescription) || ROBINHOOD_RE.test(y.rawDescription)) &&
+      !types.includes("investment") &&
+      !investmentSide.has(x.accountId) &&
+      !investmentSide.has(y.accountId)
+    )
       return false;
     return true;
   };
@@ -548,7 +558,7 @@ export function detectTransfers(db: AppDatabase): TransferStats {
       const types = [accountTypes.get(a.accountId), accountTypes.get(b.accountId)];
       const computed = types.includes("credit")
         ? cardPaymentCat
-        : types.includes("investment")
+        : investmentSide.has(a.accountId) || investmentSide.has(b.accountId)
           ? investmentCat
           : internalCat;
       // if exactly one leg is user-tagged, the whole group adopts that leg's category so

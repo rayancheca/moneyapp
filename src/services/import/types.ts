@@ -20,6 +20,16 @@ export interface AccountHint {
   subtype?: AccountSubtype;
   /** proper display name when the file carries one (PDF statements do) */
   name?: string;
+  /**
+   * Route to this named account when it exists at the institution, before any
+   * type matching — P0.1 (docs/inflight-dips.md): the Robinhood activity CSV is
+   * the settlement-cash LEDGER, so once a "Robinhood Cash" account exists its
+   * rows must land there (anchor+replay derives the cash curve, and dedupe
+   * hashes live under that account). Without it the hint's type match applies —
+   * a fresh install keeps the pre-P0.1 inert-ledger behavior instead of
+   * inventing an anchor-less account that degrades every day to partial.
+   */
+  preferName?: string;
 }
 
 export interface StatementPeriodInfo {

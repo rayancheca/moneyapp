@@ -27,8 +27,12 @@ import { coverageLabel } from "@/lib/coverage-label";
  * plain value delta (net worth has no flows to adjust for).
  */
 
+/** dashboard points carry the in-flight correction (docs/inflight-dips.md);
+ *  standalone renders without it stay byte-identical (the field is optional) */
+type PanelPoint = NetWorthPoint & { inTransitCents?: number };
+
 interface NetWorthChartPanelProps {
-  points: readonly NetWorthPoint[];
+  points: readonly PanelPoint[];
   today: string;
   defaultRange?: ChartRange;
   /** override the chart height (the S8 focus modal renders it taller) */
@@ -68,6 +72,7 @@ export function NetWorthChartPanel({
         complete: p.complete,
         missingAccounts: p.missingAccounts,
         coveredAccountNames: p.coveredAccountNames,
+        inTransitCents: p.inTransitCents,
       })),
     [points],
   );
@@ -96,12 +101,20 @@ export function NetWorthChartPanel({
     (summary: ScrubSummary): string => {
       const base = scrubValueText(formatDayLong(summary.day), formatCents(summary.valueCents), summary.deltaPct);
       const cov = coverageByDay.get(summary.day);
-      if (!cov || cov.complete) return base;
+      // the in-flight note must be SPOKEN, not just drawn (docs/inflight-dips.md)
+      const transit = cov?.inTransitCents ?? 0;
+      const transitSuffix =
+        transit > 0
+          ? ` — includes ${formatCents(transit)} in transit`
+          : transit < 0
+            ? ` — excludes ${formatCents(-transit)} posted in two accounts`
+            : "";
+      if (!cov || cov.complete) return `${base}${transitSuffix}`;
       // untruncated (no "+N more") so the spoken description names every account
       const label = coverageLabel(cov.coveredAccountNames, cov.missingAccounts, Number.MAX_SAFE_INTEGER);
       // "; only X" / "; missing X" — no trailing "covered" (the base already said it)
       const suffix = label ? `; ${label.kind} ${label.text}` : "";
-      return `${base} — partial, ${cov.coveredAccounts} of ${cov.totalAccounts} accounts covered${suffix}`;
+      return `${base} — partial, ${cov.coveredAccounts} of ${cov.totalAccounts} accounts covered${suffix}${transitSuffix}`;
     },
     [coverageByDay],
   );
@@ -167,6 +180,12 @@ export function NetWorthChartPanel({
               : range;
         const cov = coverageByDay.get(summary.day);
         const covLabel = cov && !cov.complete ? coverageLabel(cov.coveredAccountNames, cov.missingAccounts) : null;
+        // spoken subtly whenever the summarized day is bridged — while
+        // scrubbing that is the scrubbed day (on touch the header IS the
+        // readout), and at rest it is the window's latest day, so an in-air
+        // transfer covering today is explained without any interaction
+        // (2026-07-18 adversarial review)
+        const transit = cov?.inTransitCents ?? 0;
         return (
           <header className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium">
             {scrubbing && (
@@ -186,6 +205,13 @@ export function NetWorthChartPanel({
                 {covLabel && (
                   <span className="text-ink-faint"> · {covLabel.kind} {covLabel.text}</span>
                 )}
+              </span>
+            )}
+            {transit !== 0 && (
+              <span className="font-normal text-ink-faint">
+                · {transit > 0
+                  ? `includes ${formatCents(transit)} in transit`
+                  : `excludes ${formatCents(-transit)} posted twice`}
               </span>
             )}
             {scrubbing && (

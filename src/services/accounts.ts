@@ -4,6 +4,7 @@ import type { AppDatabase } from "@/db/client";
 import { accounts, ACCOUNT_TYPES, ACCOUNT_SUBTYPES, isLiability } from "@/db/schema/accounts";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { institutions } from "@/db/schema/institutions";
+import { isInvestmentSide } from "@/lib/account-side";
 import { latestBalances, rebuildAccount, type AccountBalance } from "./derivation";
 
 export const accountInputSchema = z.object({
@@ -34,6 +35,32 @@ export interface AccountView {
 
 export function listInstitutions(db: AppDatabase) {
   return db.select().from(institutions).orderBy(asc(institutions.name)).all();
+}
+
+/**
+ * Accounts that count as the "investment side" of a transfer (lib/account-side):
+ * every investment-type account plus the settlement-cash sibling that P0.1
+ * models at the same institution ("Robinhood Cash"). Transfer detection and
+ * pair categorization key off this set, so a contribution keeps reading as a
+ * contribution after the cash ledger moved off the securities account.
+ */
+export function investmentSideAccountIds(db: AppDatabase): Set<string> {
+  const rows = db
+    .select({ id: accounts.id, type: accounts.type, name: accounts.name, institutionId: accounts.institutionId })
+    .from(accounts)
+    .all();
+  const investmentInstitutions = new Set(rows.filter((r) => r.type === "investment").map((r) => r.institutionId));
+  return new Set(
+    rows
+      .filter((r) =>
+        isInvestmentSide({
+          type: r.type,
+          name: r.name,
+          institutionHasInvestment: investmentInstitutions.has(r.institutionId),
+        }),
+      )
+      .map((r) => r.id),
+  );
 }
 
 export function listAccounts(db: AppDatabase): AccountView[] {

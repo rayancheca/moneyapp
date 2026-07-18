@@ -4,6 +4,7 @@ import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, diffDays } from "@/lib/dates";
+import { investmentSideAccountIds } from "./accounts";
 import type { BulkResult, UndoFields } from "./bulk-edit";
 
 /**
@@ -70,9 +71,12 @@ export function linkTransferPair(db: AppDatabase, aId: string, bId: string): Bul
   const groupId = outflow.id; // detector convention: the outflow leg keys the group
   const accountTypes = new Map(db.select().from(accounts).all().map((r) => [r.id, r.type]));
   const types = [accountTypes.get(a.accountId), accountTypes.get(b.accountId)];
+  // investment SIDE, not type: the P0.1 settlement-cash sibling receives the
+  // contributions now, and a manual link must label them like the detector would
+  const investmentSide = investmentSideAccountIds(db);
   const category = types.includes("credit")
     ? categoryIdByPath(db, "Transfers > Credit Card Payment")
-    : types.includes("investment")
+    : investmentSide.has(a.accountId) || investmentSide.has(b.accountId)
       ? categoryIdByPath(db, "Transfers > Investment Contribution")
       : categoryIdByPath(db, "Transfers > Internal Transfer");
 

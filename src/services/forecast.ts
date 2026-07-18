@@ -7,7 +7,8 @@ import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { projectOngoingIncome } from "@/lib/income-forecast";
 import { formatCents } from "@/lib/money";
-import { latestBalances, netWorthSeries } from "./derivation";
+import { latestBalances } from "./derivation";
+import { bridgedNetWorthSeries } from "./in-flight";
 import { projectOccurrences, toProjectable, type SeriesOccurrence } from "./recurring";
 
 /**
@@ -317,7 +318,9 @@ export function forecastCurrentMonth(db: AppDatabase, today: string = todayIso()
     cashCents += balances.get(a.id)?.balanceCents ?? 0;
   }
 
-  const latestNetWorth = netWorthSeries(db).at(-1)?.totalCents ?? 0;
+  // bridged, so the EOM projection starts from the same number the dashboard
+  // headline shows (docs/inflight-dips.md — one source for "latest net worth")
+  const latestNetWorth = bridgedNetWorthSeries(db).at(-1)?.totalCents ?? 0;
 
   return {
     today,

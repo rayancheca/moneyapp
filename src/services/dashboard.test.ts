@@ -11,6 +11,7 @@ import { transactions } from "@/db/schema/transactions";
 import { createAccount } from "./accounts";
 import { addManualAnchor } from "./anchors";
 import { dashboardData } from "./dashboard";
+import { rebuildAccount } from "./derivation";
 
 const TODAY = "2026-07-08";
 
@@ -169,5 +170,40 @@ describe("dashboardData: net worth summary", () => {
     expect(netWorth.liabilitiesCents).toBe(0);
     expect(netWorth.asOf).not.toBeNull();
     expect(netWorth.series.length).toBeGreaterThan(0);
+    expect(netWorth.inTransitCents).toBe(0);
+  });
+
+  test("a float covering the latest day is surfaced so the hero can explain the headline", () => {
+    // the doc's sparse-coverage case (docs/inflight-dips.md): the receiver's
+    // stale curve never restates the arrival, so the bridge reaches today —
+    // latestCents includes it while assets/liabilities (stored) do not, and
+    // inTransitCents is the number the hero must speak
+    const instId = bundle.db.select().from(institutions).where(eq(institutions.name, "SoFi")).get()!.id;
+    const receiver = createAccount(bundle.db, { institutionId: instId, name: "SoFi Savings", type: "savings" });
+    addManualAnchor(bundle.db, { accountId: receiver, anchoredOn: "2026-06-01", enteredCents: 100_00 });
+    const leg = (accountId: string, postedOn: string, amountCents: number) =>
+      bundle.db
+        .insert(transactions)
+        .values({
+          accountId,
+          postedOn,
+          amountCents,
+          rawDescription: `LEG-${amountCents}`,
+          normalizedDescription: `LEG-${amountCents}`,
+          transferGroupId: "float-1",
+          dedupeHash: `LEG-${amountCents}-${postedOn}`,
+        })
+        .run();
+    leg(checking, "2026-07-02", -50_00);
+    leg(receiver, "2026-07-20", 50_00); // posted past the receiver's coverage
+    rebuildAccount(bundle.db, checking, TODAY);
+    rebuildAccount(bundle.db, receiver, "2026-06-01"); // stale — never restates
+
+    const { netWorth } = dashboardData(bundle.db, TODAY);
+    expect(netWorth.inTransitCents).toBe(50_00);
+    const last = netWorth.series.at(-1)!;
+    expect(last.inTransitCents).toBe(50_00);
+    // bridged headline = stored assets − liabilities + the in-transit money
+    expect(netWorth.latestCents).toBe(netWorth.assetsCents - netWorth.liabilitiesCents + 50_00);
   });
 });

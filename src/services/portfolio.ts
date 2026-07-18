@@ -20,6 +20,7 @@ import {
   type RealizedSale,
   type ValuedTrade,
 } from "@/lib/realized-pnl";
+import { investmentSideAccountIds } from "./accounts";
 import { accountSeries } from "./derivation";
 import { valueCentsOf } from "./holdings";
 
@@ -777,9 +778,12 @@ export function pnlDayDetail(db: AppDatabase, day: string): PnlDayDetail {
     .sort((a, b) => Math.abs(b.gainCents) - Math.abs(a.gainCents));
   const realizedCents = daySales.reduce((s, x) => s + x.gainCents, 0);
 
-  const invAccounts = investmentAccounts(db).map((a) => a.id);
+  // the settlement-cash sibling holds the trades/dividends/deposits since P0.1,
+  // so scope by investment SIDE (securities + settlement-cash accounts) — not by
+  // category kind, which would pull in unrelated brokers' Buys from cash banks
+  const sideAccounts = [...investmentSideAccountIds(db)];
   const txns =
-    invAccounts.length > 0
+    sideAccounts.length > 0
       ? db
           .select({
             id: transactions.id,
@@ -790,7 +794,7 @@ export function pnlDayDetail(db: AppDatabase, day: string): PnlDayDetail {
           .from(transactions)
           .where(
             and(
-              inArray(transactions.accountId, invAccounts),
+              inArray(transactions.accountId, sideAccounts),
               eq(transactions.status, "active"),
               eq(transactions.postedOn, day),
             ),
