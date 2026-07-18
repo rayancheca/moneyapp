@@ -11,6 +11,15 @@ are cents-exact from `data/moneyapp.db` at the 2026-07-16 snapshot unless noted.
 
 ---
 
+> **⚠️ PASS-18 UPDATE (2026-07-18):** the user's situation changed. He **moved Bronx → Miami** in early 2026,
+> **Fordham work-study ENDED** (last 2026-05-13) and **Knack tutoring ENDED** (last 2026-05-21), and he now earns
+> from a **cash job (~$1,046/week)**. Per his instruction, the cash-job deposits were categorized `Income › Salary`,
+> so **"Salary" is no longer pure Fordham** — it is Fordham wages ($42,679.76) + the cash job. A confirmed weekly
+> paycheck series ("Cash job (weekly pay)" $1,046/wk) drives the forecast; Fordham + Knack are `ended` series. Also:
+> 92 peer Zelles were moved OUT of income (→ `Transfers › Reimbursements`), and dad's-money pass-throughs are now
+> `Transfers › Family pass-through`. Current all-time income total ≈ **$119,982.68**. The rule below still describes
+> what counts as *earned* income; treat this note as the current state.
+
 ## 1. The rule — what the user counts as "earnings"
 
 > **Earnings = Fordham work-study wages (biweekly ACH _direct deposit_)

@@ -37,6 +37,37 @@ landed. Pass 11 [S8–S10a] + pass 10 [S1–S7] below.).
 
 ---
 
+## ✅🆕 PASS-18 OUTCOMES + NEW ASKS — the transaction-clarification session (2026-07-18)
+
+The interactive "ask me a lot of questions" clarification session ran (5 themes, 5 guarded real-DB writes). What it
+**resolved** and what it **surfaced**:
+
+**Resolved (done this pass):**
+- **Projected income $0.01 → real.** Added a variable/trailing income component to the forecast (pure
+  `src/lib/income-forecast.ts` + `variableIncomeComponents`), pinned the user's **$1,046/wk cash-job paycheck**, and
+  marked **Fordham + Knack income as ended**. Forecast now projects ~$2,115/rest-of-month. (Pass-17 §D closed.)
+- **The "$1,878/mo recurring in Shopping" mystery (pass-17) = the RENT.** 8 Hoffman rent rows were miscategorized in
+  `Shopping › General`; moved to `Housing › Rent`. Housing budget now sees the rent; Shopping prediction is honest.
+- **Dad's money pass-through** correctly labeled (`Transfers › Family pass-through`), **Loans** category created,
+  peer Zelles moved out of income, stale bills ended/dismissed. Income $122,054 → $119,982.68.
+
+**NEW user ask (queued — a real feature, not built):**
+- **🆕 Transaction SPLITTING (RocketMoney-style).** Split one transaction into multiple category/amount parts.
+  Flagship case: Robert Cohn's $2,500 = $1,500 deposit refund + $1,000 bed sale; also social peer-Zelles offsetting
+  specific expenses. Needs a `transaction_splits` table (or child rows) + an editor UI + forecast/analytics that read
+  splits. High user value — he asked for it directly.
+
+**Loose ends surfaced (small, for a later pass):**
+- **Subscriptions (kind='subscription') were NOT reviewed** with the user — only kind='bill' were. Netflix ($18.12),
+  OpenAI ChatGPT ($21.78), Amazon Prime ($4.99), and a **Rocket Money duplicate** (`Rocket Money` + `Rocket Money
+  Premium`, both $6 — likely one sub detected twice) are still projecting. Confirm/cancel/merge with the user.
+- A dismissed series (`Zelle → Enrique Rodriguez`) still appears in the "Upcoming 30 days" list — check whether
+  `upcomingOccurrences` filters dismissed status (the forecast total correctly excludes it).
+- Flamingo Miami rent isn't set up as a recurring series yet (only the paycheck + ended series were created), so
+  Housing's forward projection still leans on trailing spend rather than a confirmed rent series.
+
+---
+
 ## 📉📈 PASS-17 USER ASKS — charts everywhere + income/clarification (2026-07-17, verbatim intent)
 
 > The user shared two screenshots (a **Venture X "AMOUNT OWED" balance-history** line with NO axes, and the
