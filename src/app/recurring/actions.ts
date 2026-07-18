@@ -16,7 +16,14 @@ import {
   setSeriesOverrides,
   type AttachCandidate,
 } from "@/services/recurring-detail";
-import { attachTransactions, detachTransaction, mergeSeries } from "@/services/recurring-links";
+import {
+  attachTransactions,
+  createSeriesFromTransaction,
+  detachTransaction,
+  mergeSeries,
+  undoSeriesCreation,
+  type CreateSeriesResult,
+} from "@/services/recurring-links";
 import type { UndoPatch } from "@/services/bulk-edit";
 import type { ActionResult } from "@/app/transactions/action-types";
 
@@ -136,6 +143,41 @@ export async function detachFromSeriesAction(
     return { ok: true, data: { formerSeriesId: result.formerSeriesId, undo: result.undo } };
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : "Failed to detach" };
+  }
+}
+
+const createFromTxnSchema = z.object({ transactionId: z.string().min(1) });
+
+/** The "Make recurring" button: promote a transaction into a confirmed series. */
+export async function createSeriesFromTxnAction(
+  input: z.input<typeof createFromTxnSchema>,
+): Promise<ActionResult<CreateSeriesResult>> {
+  try {
+    const { transactionId } = createFromTxnSchema.parse(input);
+    const result = createSeriesFromTransaction(getDb(), transactionId);
+    revalidateRecurring(result.seriesId);
+    revalidatePath("/transactions");
+    return { ok: true, data: result };
+  } catch (error: unknown) {
+    return { ok: false, error: error instanceof Error ? error.message : "Failed to make recurring" };
+  }
+}
+
+const undoCreateSchema = z.object({ seriesId: z.string().min(1), undo: z.unknown() });
+
+/** Inverse of createSeriesFromTxnAction's "created" mode: restore links + delete. */
+export async function undoCreateSeriesAction(
+  input: z.input<typeof undoCreateSchema>,
+): Promise<ActionResult<{ unlinked: number }>> {
+  try {
+    const { seriesId, undo } = undoCreateSchema.parse(input);
+    // the patch itself is schema-validated inside applyUndoPatch
+    const result = undoSeriesCreation(getDb(), seriesId, undo as UndoPatch);
+    revalidateRecurring();
+    revalidatePath("/transactions");
+    return { ok: true, data: { unlinked: result.unlinked } };
+  } catch (error: unknown) {
+    return { ok: false, error: error instanceof Error ? error.message : "Failed to undo" };
   }
 }
 

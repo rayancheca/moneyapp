@@ -90,3 +90,33 @@ test("attach a transaction to a recurring series from the sheet, then detach", a
   await expect(page.locator("body")).toContainText("Detached from");
   await expect(sheet.getByRole("button", { name: "Attach to recurring series…" })).toBeVisible();
 });
+
+test("make a transaction recurring from the sheet, then undo deletes the series", async ({ page }) => {
+  await makeWallet(page, "Recurring pocket");
+  await addTxn(page, "Recurring pocket", "55", "Spent", "Miami internet bill");
+
+  await page.goto("/transactions?q=Miami+internet+bill");
+  await page.locator('[aria-haspopup="dialog"]').first().click();
+  const sheet = page.getByRole("dialog");
+  await expect(sheet).toBeVisible();
+
+  // one click promotes the row into a confirmed series
+  await sheet.getByRole("button", { name: "Make recurring" }).click();
+  await expect(page.locator("body")).toContainText("as recurring");
+
+  // POSITIVE CONTROL: the toast names the created series (unique locator — the
+  // sheet title/description carry the same text)
+  await expect(
+    page.getByText('Marked "MIAMI INTERNET BILL" as recurring', { exact: true }),
+  ).toBeVisible();
+  await expect(sheet.getByRole("button", { name: "Detach" })).toBeVisible();
+  await expect(sheet.getByRole("button", { name: "Make recurring" })).toHaveCount(0);
+
+  // Undo unwinds it fully: the quick action returns
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(sheet.getByRole("button", { name: "Make recurring" })).toBeVisible();
+
+  // the series is gone from /recurring (undo deleted it, not just unlinked)
+  await page.goto("/recurring");
+  await expect(page.locator("body")).not.toContainText("miami internet bill");
+});

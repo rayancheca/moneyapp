@@ -5,6 +5,7 @@ import { asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
@@ -22,7 +23,13 @@ import {
   type SeriesOverrides,
 } from "./recurring";
 import { applyUndoPatch } from "./bulk-edit";
-import { attachTransactions, detachTransaction, mergeSeries } from "./recurring-links";
+import {
+  attachTransactions,
+  createSeriesFromTransaction,
+  detachTransaction,
+  mergeSeries,
+  undoSeriesCreation,
+} from "./recurring-links";
 
 const TODAY = "2026-07-08";
 const MONTHS = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"] as const;
@@ -400,5 +407,206 @@ describe("lossless link-ownership undo (S5 hardening)", () => {
     const after = txnRow(target);
     expect(after.recurringSeriesId).toBe(before.recurringSeriesId);
     expect(after.seriesLinkSource).toBe(before.seriesLinkSource);
+  });
+});
+
+describe("createSeriesFromTransaction — the 'Make recurring' button", () => {
+  function seriesById(id: string) {
+    return bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, id)).get()!;
+  }
+  function txnRow(id: string) {
+    return bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+  }
+
+  test("creates a confirmed series from a txn with stable siblings and links them all user-owned", () => {
+    const ids = ["2026-03-10", "2026-04-10", "2026-05-10", "2026-06-10"].map((d) =>
+      insertTxn({ postedOn: d, amountCents: -5000, rawDescription: "BREEZELINE 866-290-5400" }),
+    );
+    const result = createSeriesFromTransaction(bundle.db, ids.at(-1)!, TODAY);
+    expect(result.mode).toBe("created");
+    const series = seriesById(result.seriesId);
+    expect(series.status).toBe("confirmed");
+    expect(series.cadence).toBe("monthly");
+    expect(series.kind).toBe("bill");
+    expect(series.accountId).toBe(cardId);
+    expect(series.nextExpectedOn).toBe("2026-07-11"); // last + median gap (31d) — detection's own rule
+    expect(taggedIds(result.seriesId).sort()).toEqual([...ids].sort());
+    // detected-ownership keeps the rows in detection's grouping pool, so the
+    // series keeps absorbing its own future charges (a user stamp would freeze it)
+    for (const id of ids) expect(txnRow(id).seriesLinkSource).toBe("detected");
+
+    // §4.3 invariant: a detection re-run changes nothing
+    const after = snapshot();
+    detectRecurringSeries(bundle.db, TODAY);
+    expect(snapshot()).toEqual(after);
+  });
+
+  test("the created series ABSORBS its next charge on the following detection run", () => {
+    const ids = ["2026-03-10", "2026-04-10", "2026-05-10"].map((d) =>
+      insertTxn({ postedOn: d, amountCents: -5000, rawDescription: "BREEZELINE 866-290-5400" }),
+    );
+    const result = createSeriesFromTransaction(bundle.db, ids.at(-1)!, TODAY);
+    const next = insertTxn({ postedOn: "2026-06-10", amountCents: -5000, rawDescription: "BREEZELINE 866-290-5400" });
+    detectRecurringSeries(bundle.db, TODAY);
+    expect(txnRow(next).recurringSeriesId).toBe(result.seriesId); // no duplicate series, no orphan
+  });
+
+  test("thin pattern (below the evidence bar) → monthly fallback seeded from the txn, seed-only link", () => {
+    insertTxn({ postedOn: "2026-06-20", amountCents: -4032, rawDescription: "GYM MIAMI 001" });
+    const seed = insertTxn({ postedOn: "2026-07-05", amountCents: -5000, rawDescription: "GYM MIAMI 001" });
+    const result = createSeriesFromTransaction(bundle.db, seed, TODAY);
+    expect(result.mode).toBe("created");
+    const series = seriesById(result.seriesId);
+    expect(series.status).toBe("confirmed");
+    expect(series.cadence).toBe("monthly");
+    expect(series.amountCentsAvg).toBe(-5000);
+    expect(series.nextExpectedOn).toBe("2026-08-04"); // seed + 30
+    expect(series.nextExpectedAmountCents).toBe(-5000);
+    expect(series.confidence).toBeNull(); // honest: user-asserted, not evidenced
+    expect(taggedIds(result.seriesId)).toEqual([seed]); // sibling NOT swept in without evidence
+
+    // §4.3: a detection re-run neither dismantles the thin series nor re-groups its row
+    const after = snapshot();
+    detectRecurringSeries(bundle.db, TODAY);
+    expect(snapshot()).toEqual(after);
+  });
+
+  test("a FUTURE-dated seed still becomes the member of its own series (no phantom)", () => {
+    const seed = insertTxn({ postedOn: "2026-07-20", amountCents: -228570, rawDescription: "SCHEDULED RENT" });
+    const result = createSeriesFromTransaction(bundle.db, seed, TODAY); // TODAY = 2026-07-08
+    expect(result.mode).toBe("created");
+    expect(result.linked).toBe(1);
+    expect(taggedIds(result.seriesId)).toEqual([seed]);
+    expect(seriesById(result.seriesId).accountId).toBe(cardId); // never a null-identity phantom
+    // a second click can't mint a duplicate — the seed is already linked
+    expect(() => createSeriesFromTransaction(bundle.db, seed, TODAY)).toThrow(/already/i);
+  });
+
+  test("a transfer-categorized seed creates a transfer-kind series (never income/bill)", () => {
+    const catId = bundle.db
+      .select()
+      .from(categories)
+      .where(eq(categories.name, "Internal Transfer"))
+      .get()!.id;
+    const seed = insertTxn({ postedOn: "2026-07-01", amountCents: -90000, rawDescription: "MONTHLY VAULT SWEEP" });
+    bundle.db.update(transactions).set({ categoryId: catId }).where(eq(transactions.id, seed)).run();
+    const result = createSeriesFromTransaction(bundle.db, seed, TODAY);
+    expect(seriesById(result.seriesId).kind).toBe("transfer");
+  });
+
+  test("description-identity (no merchant) attach: a fresh charge joins the created series", () => {
+    const ids = ["2026-03-10", "2026-04-10", "2026-05-10"].map((d) =>
+      insertTxn({ postedOn: d, amountCents: -5000, rawDescription: "BREEZELINE 866-290-5400" }),
+    );
+    const first = createSeriesFromTransaction(bundle.db, ids.at(-1)!, TODAY);
+    const fresh = insertTxn({ postedOn: "2026-06-10", amountCents: -5000, rawDescription: "BREEZELINE 866-290-5400" });
+    const second = createSeriesFromTransaction(bundle.db, fresh, TODAY);
+    expect(second.mode).toBe("attached"); // account+name identity found the live series
+    expect(second.seriesId).toBe(first.seriesId);
+  });
+
+  test("a merge chain resolving to a LATER-dismissed target refuses with the revive hint", () => {
+    const netflix = seriesFor(netflixId);
+    const spotify = seriesFor(spotifyId);
+    mergeSeries(bundle.db, spotify.id, netflix.id, TODAY);
+    setSeriesStatus(bundle.db, netflix.id, "dismissed"); // the live target dies AFTER the merge
+    const fresh = insertTxn({ postedOn: "2026-07-02", amountCents: -999, rawDescription: "SPOTIFY USA", merchantId: spotifyId });
+    expect(() => createSeriesFromTransaction(bundle.db, fresh, TODAY)).toThrow(/Recurring page/i);
+  });
+
+  test("a positive seed with stable siblings creates an income-kind series", () => {
+    const ids = ["2026-04-03", "2026-05-03", "2026-06-03"].map((d) =>
+      insertTxn({ postedOn: d, amountCents: 50000, rawDescription: "SIDE GIG PAYOUT" }),
+    );
+    const result = createSeriesFromTransaction(bundle.db, ids.at(-1)!, TODAY);
+    expect(seriesById(result.seriesId).kind).toBe("income");
+  });
+
+  test("throws when the seed already belongs to a series", () => {
+    const netflix = seriesFor(netflixId);
+    const linked = taggedIds(netflix.id)[0]!;
+    expect(() => createSeriesFromTransaction(bundle.db, linked, TODAY)).toThrow(/already/i);
+  });
+
+  test("same-merchant live series exists → attaches instead of duplicating", () => {
+    const netflix = seriesFor(netflixId);
+    const fresh = insertTxn({ postedOn: "2026-07-01", amountCents: -1549, rawDescription: "NETFLIX.COM", merchantId: netflixId });
+    const before = bundle.db.select().from(recurringSeries).all().length;
+    const result = createSeriesFromTransaction(bundle.db, fresh, TODAY);
+    expect(result.mode).toBe("attached");
+    expect(result.seriesId).toBe(netflix.id);
+    expect(txnRow(fresh).recurringSeriesId).toBe(netflix.id);
+    expect(txnRow(fresh).seriesLinkSource).toBe("user");
+    expect(bundle.db.select().from(recurringSeries).all().length).toBe(before); // no new series
+  });
+
+  test("a merged-away identity forward-maps to its live target (never resurrects)", () => {
+    const netflix = seriesFor(netflixId);
+    const spotify = seriesFor(spotifyId);
+    mergeSeries(bundle.db, spotify.id, netflix.id, TODAY);
+    const fresh = insertTxn({ postedOn: "2026-07-02", amountCents: -999, rawDescription: "SPOTIFY USA", merchantId: spotifyId });
+    const result = createSeriesFromTransaction(bundle.db, fresh, TODAY);
+    expect(result.mode).toBe("attached");
+    expect(result.seriesId).toBe(netflix.id);
+  });
+
+  test("matching series exists but is dismissed → throws with a revive hint", () => {
+    const netflix = seriesFor(netflixId);
+    setSeriesStatus(bundle.db, netflix.id, "dismissed");
+    const fresh = insertTxn({ postedOn: "2026-07-03", amountCents: -1549, rawDescription: "NETFLIX.COM", merchantId: netflixId });
+    expect(() => createSeriesFromTransaction(bundle.db, fresh, TODAY)).toThrow(/Recurring page/i);
+  });
+
+  test("never steals rows already linked to another series", () => {
+    const netflix = seriesFor(netflixId);
+    const stolen = insertTxn({ postedOn: "2026-05-12", amountCents: -700, rawDescription: "CORNER BAKERY" });
+    attachTransactions(bundle.db, netflix.id, [stolen], TODAY);
+    for (const d of ["2026-04-12", "2026-06-12", "2026-07-01"]) {
+      insertTxn({ postedOn: d, amountCents: -700, rawDescription: "CORNER BAKERY" });
+    }
+    const seed = insertTxn({ postedOn: "2026-07-06", amountCents: -700, rawDescription: "CORNER BAKERY" });
+    const result = createSeriesFromTransaction(bundle.db, seed, TODAY);
+    expect(result.mode).toBe("created");
+    expect(taggedIds(result.seriesId)).not.toContain(stolen);
+    expect(txnRow(stolen).recurringSeriesId).toBe(netflix.id); // untouched
+  });
+
+  test("undoSeriesCreation restores each row's pre-creation link state and deletes the series", () => {
+    const ids = ["2026-03-10", "2026-04-10", "2026-05-10", "2026-06-10"].map((d) =>
+      insertTxn({ postedOn: d, amountCents: -5000, rawDescription: "BREEZELINE 866-290-5400" }),
+    );
+    // one row carries a PRIOR user detach-marker — undo must preserve it, not blanket-null it
+    bundle.db.update(transactions).set({ seriesLinkSource: "user" }).where(eq(transactions.id, ids[0]!)).run();
+    const result = createSeriesFromTransaction(bundle.db, ids.at(-1)!, TODAY);
+    const undone = undoSeriesCreation(bundle.db, result.seriesId, result.undo);
+    expect(undone.unlinked).toBe(4);
+    expect(undone.alreadyUndone).toBe(false);
+    expect(bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, result.seriesId)).get()).toBeUndefined();
+    for (const id of ids) expect(txnRow(id).recurringSeriesId).toBeNull();
+    expect(txnRow(ids[0]!).seriesLinkSource).toBe("user"); // the detach-marker survived
+    expect(txnRow(ids[1]!).seriesLinkSource).toBeNull(); // creation fully unwound
+
+    // a SECOND undo click is a tolerated no-op, not an error toast
+    const again = undoSeriesCreation(bundle.db, result.seriesId, result.undo);
+    expect(again).toEqual({ unlinked: 0, alreadyUndone: true });
+  });
+
+  test("undoSeriesCreation refuses when rows were attached AFTER creation", () => {
+    const ids = ["2026-03-10", "2026-04-10", "2026-05-10"].map((d) =>
+      insertTxn({ postedOn: d, amountCents: -5000, rawDescription: "BREEZELINE 866-290-5400" }),
+    );
+    const result = createSeriesFromTransaction(bundle.db, ids.at(-1)!, TODAY);
+    const later = insertTxn({ postedOn: "2026-06-25", amountCents: -742, rawDescription: "CORNER COFFEE" });
+    attachTransactions(bundle.db, result.seriesId, [later], TODAY);
+    expect(() => undoSeriesCreation(bundle.db, result.seriesId, result.undo)).toThrow(/attached/i);
+    // the attached row is untouched — its link wasn't ours to destroy
+    expect(txnRow(later).recurringSeriesId).toBe(result.seriesId);
+  });
+
+  test("undoSeriesCreation refuses a series that other series merged into", () => {
+    const netflix = seriesFor(netflixId);
+    const spotify = seriesFor(spotifyId);
+    mergeSeries(bundle.db, spotify.id, netflix.id, TODAY);
+    expect(() => undoSeriesCreation(bundle.db, netflix.id, { rows: [] })).toThrow(/merge/i);
   });
 });

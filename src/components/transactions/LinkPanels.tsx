@@ -5,7 +5,12 @@ import { Button } from "@/components/ui/Button";
 import { Money } from "@/components/ui/Money";
 import { toast } from "@/components/ui/Toast";
 import { linkTransferAction, unlinkTransferAction } from "@/app/transactions/actions";
-import { attachToSeriesAction, detachFromSeriesAction } from "@/app/recurring/actions";
+import {
+  attachToSeriesAction,
+  createSeriesFromTxnAction,
+  detachFromSeriesAction,
+  undoCreateSeriesAction,
+} from "@/app/recurring/actions";
 import {
   loadSeriesLinkPanel,
   loadTransferLinkPanel,
@@ -226,6 +231,46 @@ export function SeriesLinkPanel({
       .finally(() => setBusy(false));
   }
 
+  /** The "Make recurring" quick action: promote THIS row into a confirmed series
+   *  (or join the identity's existing live series). Undo is mode-aware: a created
+   *  series is deleted outright; an attach simply detaches. */
+  function makeRecurring(): void {
+    if (busy) return;
+    setBusy(true);
+    void createSeriesFromTxnAction({ transactionId: txnId })
+      .then((r) => {
+        if (!r.ok) {
+          toast({ title: r.error, tone: "negative" });
+          return;
+        }
+        const { mode, seriesId, name, undo } = r.data;
+        setPanel({ linked: { id: seriesId, name }, candidates: [] });
+        setOpen(false);
+        toast({
+          title: mode === "created" ? `Marked "${name}" as recurring` : `Attached to ${name}`,
+          action: {
+            label: "Undo",
+            onAction: () =>
+              void (mode === "created"
+                ? undoCreateSeriesAction({ seriesId, undo })
+                : detachFromSeriesAction({ transactionId: txnId })
+              ).then((res) => {
+                if (!res.ok) {
+                  toast({ title: res.error, tone: "negative" });
+                  return;
+                }
+                setPanel(null);
+                setOpen(false);
+                onChanged();
+              }),
+          },
+        });
+        onChanged();
+      })
+      .catch(() => toast({ title: NETWORK_ERROR, tone: "negative" }))
+      .finally(() => setBusy(false));
+  }
+
   function detach(name: string): void {
     if (busy) return;
     setBusy(true);
@@ -264,16 +309,23 @@ export function SeriesLinkPanel({
 
   return (
     <section className="space-y-1.5">
-      <Button
-        variant="ghost"
-        size="sm"
-        icon="repeat"
-        aria-expanded={open}
-        aria-controls={regionId}
-        onClick={() => (open ? setOpen(false) : void disclose())}
-      >
-        {isRecurring ? "Show recurring series…" : "Attach to recurring series…"}
-      </Button>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {!isRecurring ? (
+          <Button variant="ghost" size="sm" icon="repeat" pending={busy} onClick={makeRecurring}>
+            Make recurring
+          </Button>
+        ) : null}
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={isRecurring ? "repeat" : undefined}
+          aria-expanded={open}
+          aria-controls={regionId}
+          onClick={() => (open ? setOpen(false) : void disclose())}
+        >
+          {isRecurring ? "Show recurring series…" : "Attach to recurring series…"}
+        </Button>
+      </div>
       {open ? (
         <div id={regionId} role="status" className="space-y-1.5">
           {panel === null ? (

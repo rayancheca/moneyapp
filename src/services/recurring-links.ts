@@ -1,10 +1,15 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import { todayIso } from "@/lib/dates";
-import type { UndoPatch } from "./bulk-edit";
-import { loadRecomputeCtx, recomputeSeriesStats, resolveMergeTarget } from "./recurring";
+import { addDays, todayIso } from "@/lib/dates";
+import { applyUndoPatch, type UndoPatch } from "./bulk-edit";
+import {
+  analyzeGroup,
+  loadRecomputeCtx,
+  recomputeSeriesStats,
+  resolveMergeTarget,
+} from "./recurring";
 
 /**
  * User-owned recurring-series link actions (ux-overhaul-plan §4.2/§4.3). Each
@@ -182,4 +187,250 @@ export function mergeSeries(
     recomputeSeriesStats(tx, finalTarget, today, ctx);
   });
   return { relinked, targetId: finalTarget };
+}
+
+export interface CreateSeriesResult {
+  /** created a new series, or attached to the identity's existing live series */
+  mode: "created" | "attached";
+  seriesId: string;
+  name: string;
+  /** rows now linked to the series by this call */
+  linked: number;
+  /** per-row prior link state — the lossless inverse of the links this call made */
+  undo: UndoPatch;
+}
+
+/** Nominal monthly step for the thin-evidence fallback (the user asserted "recurring"). */
+const FALLBACK_STEP_DAYS = 30;
+
+/**
+ * The "Make recurring" button: promote a transaction into a CONFIRMED recurring
+ * series. Identity follows detection's grouping exactly (merchant, else
+ * account+normalized description), so detection later converges on this series
+ * instead of duplicating it (§4.3):
+ *   - identity already has a LIVE series (directly or via a merge chain) →
+ *     attach the row there instead of duplicating;
+ *   - identity's series is dismissed/ended → refuse with a revive hint (the
+ *     user parked it; silently resurrecting would fight that decision);
+ *   - otherwise create. Unlinked sibling rows join ONLY when the full set
+ *     passes the same evidence bar detection uses (analyzeGroup); a thin
+ *     pattern seeds a monthly series from the transaction alone — the user's
+ *     assertion carries it, honestly marked by a null confidence.
+ *
+ * The SEED is always a member — even future-dated (a scheduled charge can't be
+ * excluded from its own series; without this a phantom zero-member confirmed
+ * series would project money while the clicked row stayed unlinked). Created
+ * links are stamped `detected` ownership, NOT `user`: user-stamped rows leave
+ * detection's grouping pool, which would stop the series from absorbing its
+ * own future charges until three piled up. `detected` keeps absorption alive,
+ * and the identity lookup guarantees re-grouping can only land on this series.
+ */
+export function createSeriesFromTransaction(
+  db: AppDatabase,
+  transactionId: string,
+  today: string = todayIso(),
+): CreateSeriesResult {
+  const ctx = loadRecomputeCtx(db);
+  let result: CreateSeriesResult | null = null;
+  db.transaction((tx) => {
+    const seed = tx
+      .select({
+        id: transactions.id,
+        accountId: transactions.accountId,
+        postedOn: transactions.postedOn,
+        amountCents: transactions.amountCents,
+        merchantId: transactions.merchantId,
+        categoryId: transactions.categoryId,
+        normalizedDescription: transactions.normalizedDescription,
+        recurringSeriesId: transactions.recurringSeriesId,
+        seriesLinkSource: transactions.seriesLinkSource,
+        status: transactions.status,
+      })
+      .from(transactions)
+      .where(eq(transactions.id, transactionId))
+      .get();
+    if (!seed) throw new Error(`Unknown transaction ${transactionId}`);
+    if (seed.status !== "active") throw new Error("Only an active transaction can seed a series");
+    if (seed.recurringSeriesId !== null) {
+      throw new Error("This transaction already belongs to a recurring series");
+    }
+    if (!seed.merchantId && seed.normalizedDescription === "") {
+      throw new Error("This transaction has no description to group by");
+    }
+
+    // detection's identity rule: merchant across accounts, else account+description
+    const allSeries = tx.select().from(recurringSeries).all();
+    const mergedById = new Map(allSeries.map((s) => [s.id, s.mergedIntoId]));
+    const existing = seed.merchantId
+      ? allSeries.find((s) => s.merchantId === seed.merchantId)
+      : allSeries.find(
+          (s) =>
+            s.merchantId === null &&
+            s.accountId === seed.accountId &&
+            s.name === seed.normalizedDescription,
+        );
+    if (existing) {
+      const targetId = resolveMergeTarget(existing.id, mergedById);
+      const target = allSeries.find((s) => s.id === targetId)!;
+      if (target.status !== "detected" && target.status !== "confirmed") {
+        throw new Error(
+          `A series for this pattern ("${target.name}") was dismissed or ended — revive it from the Recurring page instead`,
+        );
+      }
+      const undo: UndoPatch = {
+        rows: [
+          {
+            id: seed.id,
+            prev: { recurringSeriesId: null, seriesLinkSource: seed.seriesLinkSource },
+          },
+        ],
+      };
+      tx.update(transactions)
+        .set({ recurringSeriesId: targetId, seriesLinkSource: "user" })
+        .where(eq(transactions.id, seed.id))
+        .run();
+      recomputeSeriesStats(tx, targetId, today, ctx);
+      result = { mode: "attached", seriesId: targetId, name: target.name, linked: 1, undo };
+      return;
+    }
+
+    // unlinked siblings of the same identity (linked rows are never stolen)
+    const siblingWhere = seed.merchantId
+      ? eq(transactions.merchantId, seed.merchantId)
+      : and(
+          isNull(transactions.merchantId),
+          eq(transactions.accountId, seed.accountId),
+          eq(transactions.normalizedDescription, seed.normalizedDescription),
+        );
+    const group = tx
+      .select({
+        id: transactions.id,
+        accountId: transactions.accountId,
+        postedOn: transactions.postedOn,
+        amountCents: transactions.amountCents,
+        categoryId: transactions.categoryId,
+        seriesLinkSource: transactions.seriesLinkSource,
+      })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.status, "active"),
+          isNull(transactions.recurringSeriesId),
+          lte(transactions.postedOn, today),
+          siblingWhere,
+        ),
+      )
+      .all();
+
+    // the full set joins only when it passes detection's own evidence bar
+    const stats = analyzeGroup(group);
+    let members = stats ? group : group.filter((t) => t.id === seed.id);
+    // the seed is ALWAYS a member — a future-dated seed falls outside the
+    // ≤today sibling window but can't be excluded from its own series
+    if (!members.some((t) => t.id === seed.id)) {
+      members = [
+        ...members,
+        {
+          id: seed.id,
+          accountId: seed.accountId,
+          postedOn: seed.postedOn,
+          amountCents: seed.amountCents,
+          categoryId: seed.categoryId,
+          seriesLinkSource: seed.seriesLinkSource,
+        },
+      ];
+    }
+    const accountIds = new Set(members.map((t) => t.accountId));
+    const name = seed.merchantId
+      ? (ctx.merchantById.get(seed.merchantId)?.canonicalName ?? seed.normalizedDescription)
+      : seed.normalizedDescription;
+    const isTransferSeed = (() => {
+      const cat = seed.categoryId ? ctx.categoryById.get(seed.categoryId) : undefined;
+      const root = cat?.parentId ? ctx.categoryById.get(cat.parentId) : cat;
+      return root?.kind === "transfer";
+    })();
+
+    const seriesId = tx
+      .insert(recurringSeries)
+      .values({
+        name,
+        merchantId: seed.merchantId,
+        accountId: accountIds.size === 1 ? members[0]!.accountId : null,
+        // user-asserted → confirmed; thin evidence stays honest via null confidence
+        status: "confirmed",
+        kind: isTransferSeed ? "transfer" : seed.amountCents > 0 ? "income" : "bill",
+        cadence: "monthly",
+        intervalDaysAvg: null,
+        amountCentsAvg: seed.amountCents,
+        toleranceDays: 3,
+        nextExpectedOn: addDays(seed.postedOn, FALLBACK_STEP_DAYS),
+        nextExpectedAmountCents: seed.amountCents,
+        confidence: null,
+        lastMatchedOn: seed.postedOn,
+      })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+
+    const undo: UndoPatch = {
+      rows: members.map((t) => ({
+        id: t.id,
+        prev: { recurringSeriesId: null, seriesLinkSource: t.seriesLinkSource },
+      })),
+    };
+    const res = tx
+      .update(transactions)
+      .set({ recurringSeriesId: seriesId, seriesLinkSource: "detected" })
+      .where(inArray(transactions.id, members.map((t) => t.id)))
+      .run();
+    if (res.changes !== members.length) {
+      throw new Error(`Series linking hit ${res.changes} rows, expected ${members.length}`);
+    }
+    // settle over the linked set — with real evidence this derives cadence,
+    // amounts, next-expected, and kind exactly as detection would (§4.3)
+    recomputeSeriesStats(tx, seriesId, today, ctx);
+    result = { mode: "created", seriesId, name, linked: members.length, undo };
+  });
+  return result!;
+}
+
+export interface UndoCreationResult {
+  unlinked: number;
+  /** true when the series was already gone (a second Undo click is a no-op) */
+  alreadyUndone: boolean;
+}
+
+/**
+ * The lossless inverse of a just-created series: restore each linked row's
+ * captured pre-creation link state (via the standard undo patch, so a prior
+ * user detach-marker survives) and delete the series row. Tolerates a repeat
+ * call (the series is already gone → no-op). Refuses when other series merged
+ * into it (deletion would strand their forward-mapping) or when rows were
+ * attached AFTER creation (those links aren't ours to destroy — detach first).
+ */
+export function undoSeriesCreation(
+  db: AppDatabase,
+  seriesId: string,
+  undo: UndoPatch,
+): UndoCreationResult {
+  const series = db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get();
+  if (!series) return { unlinked: 0, alreadyUndone: true };
+  const mergedInto = db
+    .select({ id: recurringSeries.id })
+    .from(recurringSeries)
+    .where(eq(recurringSeries.mergedIntoId, seriesId))
+    .all();
+  if (mergedInto.length > 0) {
+    throw new Error("Cannot undo — other series were merged into this one");
+  }
+  const unlinked = applyUndoPatch(db, undo);
+  const remaining = db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(eq(transactions.recurringSeriesId, seriesId))
+    .all();
+  if (remaining.length > 0) {
+    throw new Error("Rows were attached to this series since — detach them before undoing");
+  }
+  db.delete(recurringSeries).where(eq(recurringSeries.id, seriesId)).run();
+  return { unlinked, alreadyUndone: false };
 }
