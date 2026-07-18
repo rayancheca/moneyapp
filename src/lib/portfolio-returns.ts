@@ -25,6 +25,8 @@
  * it read a real −2.1% sell day as −3.0% on live data.)
  */
 
+import { xirr, type CashFlow } from "./xirr";
+
 export interface PortfolioDay {
   /** "YYYY-MM-DD" */
   day: string;
@@ -312,4 +314,41 @@ export function cumulativeReturns(days: readonly PortfolioDay[]): CumulativeRetu
     });
   }
   return out;
+}
+
+// ── Money-weighted (XIRR) return ─────────────────────────────────────
+
+export interface MoneyWeightedReturn {
+  /** annualized money-weighted (XIRR) return, as a percentage; null when undefined */
+  pct: number | null;
+  /** false when any flow day (or the terminal value) is inexact — carries the ≈ */
+  exact: boolean;
+}
+
+/**
+ * The investor cash flows implied by a NAV+flow series: each day's flow INTO
+ * positions is money the investor put IN (negative), and the final day's NAV is
+ * the "if liquidated today" value (positive). Zero-flow days carry no cash, so
+ * only genuine contributions/withdrawals plus the terminal value feed XIRR.
+ */
+export function cashFlowsFromDays(days: readonly PortfolioDay[]): CashFlow[] {
+  const flows: CashFlow[] = [];
+  for (const d of days) {
+    if (d.flowCents !== 0) flows.push({ day: d.day, amountCents: -d.flowCents });
+  }
+  const last = days.at(-1);
+  if (last) flows.push({ day: last.day, amountCents: last.navCents });
+  return flows;
+}
+
+/**
+ * Money-weighted (XIRR) return for a NAV+flow series — the growth rate of the
+ * investor's OWN dollars, weighting each dollar by how long it was in the market.
+ * It sits ALONGSIDE the time-weighted return (which strips flow timing out); the
+ * two answer different questions and should both be shown, never conflated.
+ */
+export function moneyWeightedReturn(days: readonly PortfolioDay[]): MoneyWeightedReturn {
+  const rate = xirr(cashFlowsFromDays(days));
+  const exact = days.every((d) => d.flowCents === 0 || d.exact) && (days.at(-1)?.exact ?? true);
+  return { pct: rate === null ? null : rate * 100, exact };
 }

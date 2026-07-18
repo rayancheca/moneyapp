@@ -55,6 +55,29 @@ export function PortfolioStats({ overview }: { overview: PortfolioOverview }) {
               time-weighted · since {formatMonthYear(overview.twrAnchor)}
             </span>
           )}
+          {/* money-weighted (XIRR) companion — the growth rate of YOUR dollars,
+              sensitive to when you added/removed money; shown alongside, never
+              instead of, the flow-insensitive TWR above */}
+          {overview.xirrPct !== null && (
+            <span className="mt-1.5 block border-t border-line/60 pt-1.5">
+              <span className="flex items-baseline gap-1.5">
+                <span className={`figures text-sm font-medium ${toneClass(overview.xirrPct)}`}>
+                  {pctText(overview.xirrPct)}
+                </span>
+                {!overview.xirrExact && (
+                  <span
+                    className="text-[11px] text-ink-faint"
+                    title="A crypto flow feeds this — not separable to the cent"
+                  >
+                    ≈
+                  </span>
+                )}
+              </span>
+              <span className="mt-0.5 block text-[11px] font-normal text-ink-faint">
+                money-weighted · your dollars
+              </span>
+            </span>
+          )}
         </dd>
       </div>
 

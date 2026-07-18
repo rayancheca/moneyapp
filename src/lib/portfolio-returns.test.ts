@@ -2,9 +2,11 @@ import { describe, expect, test } from "vitest";
 import {
   aggregateReturn,
   benchmarkReturns,
+  cashFlowsFromDays,
   cumulativeReturns,
   dailyReturns,
   decomposeValue,
+  moneyWeightedReturn,
   returnStats,
   simpleReturnPct,
   totalReturn,
@@ -377,5 +379,54 @@ describe("decomposeValue", () => {
       gainsCents: 0,
       valueCents: 100_000,
     });
+  });
+});
+
+describe("cashFlowsFromDays + moneyWeightedReturn", () => {
+  test("turns opening + terminal into investor-signed cash flows (contribution negative)", () => {
+    // opening $1,000 (day-1 flow = opening NAV), no other flow, worth $1,100 at end
+    const flows = cashFlowsFromDays([d("2023-01-01", 100_000, 100_000), d("2024-01-01", 110_000, 0)]);
+    expect(flows).toEqual([
+      { day: "2023-01-01", amountCents: -100_000 }, // money in → negative
+      { day: "2024-01-01", amountCents: 110_000 }, // liquidation value → positive
+    ]);
+  });
+
+  test("a mid-period contribution is its own dated negative flow", () => {
+    const flows = cashFlowsFromDays([
+      d("2023-01-01", 100_000, 100_000),
+      d("2023-07-01", 205_000, 100_000), // added $1,000 mid-year
+      d("2024-01-01", 320_000, 0),
+    ]);
+    expect(flows).toEqual([
+      { day: "2023-01-01", amountCents: -100_000 },
+      { day: "2023-07-01", amountCents: -100_000 },
+      { day: "2024-01-01", amountCents: 320_000 },
+    ]);
+  });
+
+  test("money-weighted return of a clean 10% year is ~10%, and exact", () => {
+    const mwr = moneyWeightedReturn([d("2023-01-01", 100_000, 100_000), d("2024-01-01", 110_000, 0)]);
+    expect(mwr.pct).not.toBeNull();
+    expect(mwr.pct!).toBeCloseTo(10, 3);
+    expect(mwr.exact).toBe(true);
+  });
+
+  test("carries ≈ (exact=false) when a contributing flow day is inexact", () => {
+    const mwr = moneyWeightedReturn([
+      d("2023-01-01", 100_000, 100_000, false), // inexact crypto opening
+      d("2024-01-01", 110_000, 0),
+    ]);
+    expect(mwr.exact).toBe(false);
+  });
+
+  test("a brand-new single-day position has NO money-weighted rate (not a fabricated +10%)", () => {
+    // production shape: a position's first covered day carries flow == its NAV,
+    // and here it's the ONLY day — the opening (-nav) and terminal (+nav) flows
+    // fall on the same date and cancel, so no rate is defined. This must read
+    // null (→ "—" in the UI), never the Newton seed guess.
+    expect(moneyWeightedReturn([d("2026-07-18", 100_000, 100_000)]).pct).toBeNull();
+    // magnitude-independence: it's null regardless of the amount
+    expect(moneyWeightedReturn([d("2026-07-18", 9_999_999, 9_999_999)]).pct).toBeNull();
   });
 });

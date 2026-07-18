@@ -67,6 +67,20 @@ export function PositionCard({ detail }: { detail: HoldingDetail }) {
             <span className="text-ink-faint" title="Add an average cost to see total return">—</span>
           )}
         </Stat>
+        <Stat label="Money-weighted">
+          {detail.xirrPct !== null ? (
+            <span className="flex items-baseline gap-1.5" title="XIRR — the annualized growth rate of your dollars in this holding">
+              <span className={`figures ${toneClass(detail.xirrPct)}`}>{pctText(detail.xirrPct)}</span>
+              {!detail.xirrExact && (
+                <span className="text-[11px] text-ink-faint" title="A crypto flow feeds this — not separable to the cent">
+                  ≈
+                </span>
+              )}
+            </span>
+          ) : (
+            <span className="text-ink-faint">—</span>
+          )}
+        </Stat>
         <Stat label="Portfolio diversity">
           <span className="figures">{detail.diversityPct !== null ? `${detail.diversityPct.toFixed(1)}%` : "—"}</span>
         </Stat>

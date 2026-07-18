@@ -28,6 +28,14 @@ test("range pills switch the accent: ALL is a gain, 1M is a loss", async ({ page
   await expect(slider).toHaveAttribute("aria-valuetext", /down \d/);
 });
 
+test("money-weighted (XIRR) return is shown alongside the time-weighted return", async ({ page }) => {
+  await gotoInvestments(page);
+  // the Total-return stat pairs the flow-insensitive TWR with the money-weighted
+  // (XIRR) return — both stated, never conflated
+  await expect(page.getByText(/time-weighted/)).toBeVisible();
+  await expect(page.getByText("money-weighted · your dollars")).toBeVisible();
+});
+
 test("keyboard scrub moves the hairline and announces the point", async ({ page }) => {
   await gotoInvestments(page);
   const slider = page.getByRole("slider", { name: /Portfolio value over time/ });

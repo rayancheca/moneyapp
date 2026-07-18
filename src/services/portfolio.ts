@@ -8,6 +8,7 @@ import { benchmarkAssetType } from "@/lib/benchmark-symbol";
 import { addDays, compareDates, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import {
   dailyReturns,
+  moneyWeightedReturn,
   totalReturn,
   type BenchmarkDay,
   type PortfolioDay,
@@ -324,6 +325,11 @@ export interface PortfolioOverview {
   twrPct: number | null;
   twrGainCents: number;
   twrAnchor: string | null;
+  /** money-weighted (XIRR) return — the growth rate of YOUR dollars; null when
+   *  undefined (too few flows / no sign change). Sits ALONGSIDE twr, never replaces it */
+  xirrPct: number | null;
+  /** false when a flow feeding XIRR is inexact (crypto) — carries the ≈ */
+  xirrExact: boolean;
   /** cost-basis P/L across priced holdings (display; avg cost) — the UNREALIZED leg */
   costBasisPlCents: number | null;
   costBasisPlPct: number | null;
@@ -354,6 +360,8 @@ export function portfolioOverview(db: AppDatabase): PortfolioOverview {
 
   // Whole-portfolio TWR, anchored at the first covered day.
   const twr = totalReturn(days);
+  // Money-weighted (XIRR) return — the complement to TWR (flow-timing sensitive).
+  const mwr = moneyWeightedReturn(days);
 
   const cost = costBasisPl(db);
   const realized = portfolioRealizedPl(db);
@@ -368,6 +376,8 @@ export function portfolioOverview(db: AppDatabase): PortfolioOverview {
     twrPct: days.length >= 2 ? twr.twrPct : null,
     twrGainCents: twr.gainCents,
     twrAnchor: days[0]?.day ?? null,
+    xirrPct: mwr.pct,
+    xirrExact: mwr.exact,
     costBasisPlCents: cost?.plCents ?? null,
     costBasisPlPct: cost?.plPct ?? null,
     realizedPlCents: realized.sellCount > 0 ? realized.realizedCents : null,

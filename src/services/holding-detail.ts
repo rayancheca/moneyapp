@@ -6,7 +6,7 @@ import { holdings, priceCache, ASSET_TYPES, type AssetType } from "@/db/schema/h
 import { transactions } from "@/db/schema/transactions";
 import { compareDates, todayIso } from "@/lib/dates";
 import { holdingReturnDays } from "@/lib/holding-returns";
-import type { PortfolioDay } from "@/lib/portfolio-returns";
+import { moneyWeightedReturn, type PortfolioDay } from "@/lib/portfolio-returns";
 import { carryForwardTo } from "@/lib/price-series";
 import {
   realizedPnl,
@@ -90,6 +90,10 @@ export interface HoldingDetail {
   /** flow-adjusted daily series for THIS holding (aggregated across accounts) —
    *  feeds the Return view exactly like portfolioReturnDays feeds the hero */
   returnDays: PortfolioDay[];
+  /** money-weighted (XIRR) return for this holding; null when undefined */
+  xirrPct: number | null;
+  /** false when a flow feeding XIRR is inexact (crypto) — carries the ≈ */
+  xirrExact: boolean;
   /** realized P/L locked in by sells — avg-cost walk PER ACCOUNT at daily closes */
   realized: RealizedPnl;
   /** every realized sale across accounts, ascending by day (the drill-down rows) */
@@ -280,6 +284,12 @@ export function holdingDetail(
         : null,
     }));
 
+  const returnDays = holdingReturnDays(
+    events.map((e) => ({ day: e.occurredOn, deltaE8: e.quantityDeltaE8 })),
+    closes.map((c) => ({ day: c.quotedOn, close: c.close })),
+  );
+  const holdingMwr = moneyWeightedReturn(returnDays);
+
   return {
     assetType,
     symbol,
@@ -316,10 +326,9 @@ export function holdingDetail(
     ),
     avgCostLineCents: avgCostCents,
     marks,
-    returnDays: holdingReturnDays(
-      events.map((e) => ({ day: e.occurredOn, deltaE8: e.quantityDeltaE8 })),
-      closes.map((c) => ({ day: c.quotedOn, close: c.close })),
-    ),
+    returnDays,
+    xirrPct: holdingMwr.pct,
+    xirrExact: holdingMwr.exact,
     realized,
     realizedSales: allSales,
     events: eventRows,
