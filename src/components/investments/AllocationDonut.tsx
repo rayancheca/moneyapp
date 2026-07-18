@@ -3,16 +3,20 @@
 import Link from "next/link";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { formatCents } from "@/lib/money";
+import { CATEGORY_HUE_NAMES, categoryHueVar } from "@/lib/category-palette";
 import type { AllocationSlice } from "@/services/portfolio";
 
-const CHART_VARS = [
-  "var(--chart-1)",
-  "var(--chart-2)",
-  "var(--chart-3)",
-  "var(--chart-4)",
-  "var(--chart-5)",
-  "var(--chart-6)",
-] as const;
+/**
+ * Slice colours come from the validated 12-hue categorical palette (the same
+ * colour system the category chips use), walked with a stride of 5 — coprime
+ * with 12, so all twelve hues are visited while ADJACENT slices always sit far
+ * apart on the hue wheel (red → teal → pink → lime → …). This replaces the six
+ * near-monochrome --chart-N greens that made holdings indistinguishable.
+ */
+const SLICE_STRIDE = 5;
+const SLICE_HUES = CATEGORY_HUE_NAMES.map(
+  (_, i) => CATEGORY_HUE_NAMES[(i * SLICE_STRIDE) % CATEGORY_HUE_NAMES.length]!,
+);
 
 /** Allocation donut with a legend of holding links (ux-overhaul-plan §6.3). */
 export function AllocationDonut({
@@ -25,7 +29,11 @@ export function AllocationDonut({
   if (slices.length === 0) {
     return <p className="text-sm text-ink-muted">Allocation appears once holdings have cached prices.</p>;
   }
-  const data = slices.map((s, i) => ({ ...s, value: s.valueCents / 100, color: CHART_VARS[i % CHART_VARS.length] }));
+  const data = slices.map((s, i) => ({
+    ...s,
+    value: s.valueCents / 100,
+    color: categoryHueVar(SLICE_HUES[i % SLICE_HUES.length]!),
+  }));
 
   return (
     <figure className="m-0">

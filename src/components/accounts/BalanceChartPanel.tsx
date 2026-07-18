@@ -98,6 +98,9 @@ export function BalanceChartPanel({ points, today, defaultRange = "3M" }: Balanc
       accentOf={accentOf}
       valueText={valueText}
       formatValue={formatCents}
+      showAxes
+      selectable
+      showExtremes
       ariaLabel="Balance over time — scrub to inspect a day"
       heightClass="h-52 sm:h-60"
       renderHeader={(summary, scrubbing, range) => {
