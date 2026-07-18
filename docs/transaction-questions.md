@@ -1,110 +1,163 @@
-# 🗣️ Transaction clarification — questions for the user (compiled 2026-07-17, pass 17)
+# 🗣️ Transaction clarification — questions for the user
 
-The user asked to be **asked a lot of questions** so we can clarify every ambiguous transaction and get
-income/projections right. This is the working list to drive an interactive session (next pass). Ask in
-batches, apply answers with **backup + dry-run-on-copy + Δ-guards + confirm**, never auto-guess a reserved
-row. Ordered by leverage: **income first** (it unblocks the $0.01 projected-income bug), then big ambiguous
-inflows, then the review-queue tail. Amounts/dates are from the real DB (read-only) at 2026-07-17.
+**Refreshed 2026-07-18 (pass 18)** from a read-only copy of the real DB (`/tmp/moneyapp-pass18-readonly.db`,
+byte-identical to `data/moneyapp.db`, 9,688 active txns). This is the working list driving the interactive
+clarification session. Ask in batches, **income first** (it unblocks the $0.01 projected-income bug), then big
+ambiguous inflows, then housing, then the review-queue tail. Apply answers with **backup + dry-run-on-copy +
+Δ-guards + confirm**; never auto-guess a reserved row (`source='user'`).
 
 Every name below appears in your own transaction descriptions — I'm listing them so you can identify who's who.
 
 ---
 
-## 1. INCOME — the highest priority (fixes projected income = $0.01)
+## 0. THE LIFE-EVENT CONTEXT this refresh uncovered (please confirm — it frames everything)
 
-The forecast only sees **recurring income series**, and the only ones detected are two **$0.01/mo stock-lending**
-payments — so projected income is $0.01. Your real income isn't modelled. Let's fix that:
+The data tells a story of a **move from the Bronx to Miami around Feb–Mar 2026**:
+- **Rent to "Hoffman LL" ($1,779.49/mo) STOPS at 2026-01-08** (last payment), and a **"Hoffman LLC SD refund
+  $1,375.00" arrives 2026-06-18** (security deposit back).
+- A **new rent "ETT\*…FlamingoSouthBe" ($2,285.70, tagged Rent) starts** — Flamingo South Beach is a Miami
+  building. Earlier partial charge $1,334.80 on 2026-06-16.
+- The **ATM cash deposits move to Miami locations** (474 W 41ST ST MIAMI, 3700 W FLAGLER ST) alongside NY ones.
+- **Fordham work-study stops after 2026-05-13** (consistent with leaving campus / summer).
+- A **USCIS I-765 / I-907 filing fee ($2,250, 2026-06-24)** appears — a work-permit (EAD) application.
 
-**Q1.1 — The "$1,047 every Thursday" you mentioned.** The ATM cash deposits are actually *irregular*, not a
-clean weekly $1,047:
-| date | day | amount |
-|---|---|---|
-| 2026-05-12 | Tue | $1,400.00 |
-| 2026-05-15 | Fri | $300.00 |
-| 2026-05-18 | Mon | $1,500.00 |
-| 2026-06-04 | Thu | **$1,047.00** |
-| 2026-06-05 | Fri | $400.00 |
-| 2026-06-11 | Thu | $730.00 |
-| 2026-06-12 | Fri | $1,000.00 |
-Which of these are your **income/pay** vs mixed cash (the ground-truth doc noted poker / food splits / loans
-repaid)? Is the pay actually weekly, and roughly how much? Where does the cash come from (job, tips, side work)?
-→ Once you say which are income, we categorise them `Income` and can model a recurring paycheck.
+**Q0.1 — Did you move from the Bronx to Miami in early 2026?** (Confirming this lets me treat the Hoffman rent
+as *ended*, the Flamingo charge as your *current* rent, and explains the new cash-deposit pattern.)
+**Q0.2 — Did you file for a US work permit (I-765) in June 2026?** (If yes, that $2,250 is a government fee, not
+a transfer — and it hints your income situation is about to change.)
 
-**Q1.2 — Fordham work-study.** Your last Fordham payroll deposit was **2026-05-13 ($615.13)** — nothing since.
-Is work-study **paused for the summer / ended**, or should more have arrived? (It's not modelled as recurring,
-which is part of why nothing projects.)
+---
 
-**Q1.3 — Do you want a "recurring paycheck" set up?** If you have a regular pay (Fordham when it resumes, or the
-cash pay), we can mark one transaction as your recurring income so the forecast projects it. What's the real
-cadence + amount?
+## 1. INCOME — highest priority (fixes projected income = $0.01)
 
-**Q1.4 — Knack tutoring.** Still active? (Last seen $51 on 2026-05-21.) Regular, or ad-hoc per session?
+The forecast only sees **recurring income *series*,** and the only ones detected are two **$0.01/mo stock-lending**
+payments → projected income = $0.01. Your real, current income isn't modelled at all. Current all-time income
+buckets (for reference): Financial Aid $51,872 · Salary/Fordham $42,679.76 · Tutoring/Knack $10,023 · Refunds
+$8,293 · Other Income $6,216 · Interest $2,426 · Dividends $545.
+
+**Q1.1 — The recent ATM cash deposits — which are your pay?** These are *irregular*, not a clean weekly $1,047:
+
+| date | day | amount | location |
+|---|---|---|---|
+| 2026-05-12 | Tue | **$1,400.00** (+ a separate $100) | NY (E 90th) |
+| 2026-05-15 | Fri | $300.00 | Bronx (Arthur Ave) |
+| 2026-05-18 | Mon | $1,500.00 | NY (W 57th) |
+| 2026-06-04 | Thu | **$1,047.00** | **Miami** (W 41st) |
+| 2026-06-05 | Fri | $400.00 | **Miami** (Flagler) |
+| 2026-06-11 | Thu | $730.00 | NY (E 90th) |
+| 2026-06-12 | Fri | $1,000.00 | NY (Broadway) |
+| 2026-07-06 | Mon | $150.00 | NY (E 90th) *(already auto-categorized)* |
+
+Recent (Apr 2026+): **9 rows, $6,627** (~$3.3k/mo). Which are **income/pay** vs mixed cash? Where's the cash
+from — a cash-paying job, tips, side work, or mixed (the ground-truth doc noted poker / food splits / loans
+repaid)? Roughly how much and how often is the pay?
+
+**Q1.2 — The OLDER ATM cash lumps look different.** Pre-Jun 2025: **31 rows, $43,550**, including one-off lumps
+of **$6,000, $5,600, $5,100, $5,000, $4,200, $2,700, $2,300** (2022–2024). These don't look like weekly pay.
+Were those savings/one-off cash deposits (not earned income)? (I'll tag them separately from any pay stream.)
+
+**Q1.3 — Fordham work-study.** Last payroll **2026-05-13 ($615.13)**, nothing since. Paused for summer, ended,
+or should more have arrived?
+
+**Q1.4 — Knack tutoring.** Last payout small/irregular. Still active, or wound down after the move?
+
+**Q1.5 — "Mark this as my recurring paycheck"?** If any of the above is a regular paycheck, I can pin one txn as
+your recurring income so the forecast projects it. What's the real cadence + amount (if any)?
 
 ---
 
 ## 2. BIG AMBIGUOUS INFLOWS — income, loan, gift, or your own money moving?
 
-These are large and currently in **Transfers** or uncategorised. Each needs a call:
+Currently sitting in **Transfers / Internal Transfer** (so they net ~0 in net worth). Each needs your call —
+some are large enough that a wrong label meaningfully distorts income.
 
-**Q2.1 — "ACH Deposit $9,000.00" (2026-06-23).** What is this? (Income? A loan? Moving your own money in?)
+**Q2.1 — CHIPS international wires (Standard Chartered Bank) — the biggest ones, NEW to this list:**
+| date | amount |
+|---|---|
+| 2025-05-06 | $14,100.00 |
+| 2025-08-11 | $15,500.00 |
+| 2025-12-11 | $19,500.00 |
+| 2026-05-06 | **$29,800.00** |
 
-**Q2.2 — "Zelle payment from ROBERT COHN $2,500.00" (2026-06-23).** Who is Robert Cohn — is this income, a
-loan, a repayment, or a gift?
+~$79k total, roughly **twice a year (May & Dec)** from an international bank. Is this **your father funding your
+account** (tuition/living — a gift/transfer, not earned income)? Your own money moved from abroad? Something
+else? *(Note: a **$25,000 outgoing international wire on 2026-05-07** — the day after the $29,800 in — suggests
+money passing through; is the $29,800 in → $25,000 out a pass-through you'd net to zero?)*
 
-**Q2.3 — MONEYGRAM REMITTANCE $1,030.23 + $1,120.77 (both 2026-06-22).** Who sends these? Income, family
-support, or a repayment?
+**Q2.2 — "DEPOSIT ID NUMBER" deposits:** $8,950 (3/2), $8,880 ×2 (3/3), $1,611.18 (3/3), $2,092 (6/22). ~$30k
+in early March. Prior notes flagged "DEPOSIT ID" as your dad's euros. Same thing — a transfer/gift?
 
-**Q2.4 — "DEPOSIT ID NUMBER 191705 $2,092.00" (2026-06-22).** What is a "DEPOSIT ID" deposit for you? (Prior
-notes flagged a big "DEPOSIT ID" as your dad's euros washing through — same thing?)
+**Q2.3 — MONEYGRAM REMITTANCE $1,120.77 + $1,030.23 (both 2026-06-22).** Who sends these — family support, a
+repayment, income?
 
-**Q2.5 — Self-Zelles "Zelle payment from Rayan Karim Checa $1,887.00 / $5.00" (2026-07-02).** These are from
-*your own name* — moving money between your own accounts (→ Transfers), correct?
+**Q2.4 — "Zelle payment from ROBERT COHN $2,500.00" (2026-06-23).** Who is Robert Cohn — income, loan,
+repayment, or gift?
 
-**Q2.6 — "REAL TIME TRANSFER RECD" / "Instant bank transfer" (many, $100–$3,900).** Are these you moving your
-own money between accounts, or receiving from other people? (They're all in Transfers now.)
+**Q2.5 — "REAL TIME TRANSFER RECD FROM ABA/CONTR BNK" (many, $500–$3,500; e.g. $3,504.99 on 4/15, $2,999.93 on
+5/27, $1,995.04 on 7/1).** You moving your own money between accounts, or receiving from other people? *(One,
+$3,504.99, is currently mislabeled as a **Refund** and counts as income today — see §6.)*
+
+**Q2.6 — Self-name transfers "…Rayan Karim Checa…" (e.g. Zelle $1,887 on 7/2).** Money between your own
+accounts → Transfers, correct?
 
 ---
 
-## 3. HOUSING / RENT — connects to the Housing budget + a data gap
+## 3. HOUSING — a real data gap + the move
 
-**Q3.1 — "Hoffman LL" is a detected **$1,786.46/mo bill** and there's a "Hoffman LLC SD refund $1,375.00"
-(2026-06-18).** Is Hoffman your **landlord** (so that $1,786 is **rent → Housing**)? The **SD refund** suggests a
-**security-deposit return — did you move out / change apartments?** (This matters: your Housing budget is
-$2,109 but the forecast only sees $109 there because rent isn't linked to Housing as recurring.)
+**Q3.1 — Hoffman = your old Bronx landlord?** The **$1,779.49/mo "Direct Payment Hoffman LL"** rows (Jul 2025 →
+Jan 2026) are currently miscategorized as **"General"**, not Housing — so your Housing budget ($2,109) sees
+almost nothing. If Hoffman is rent, I'll move all those rows → **Housing** and mark the series *ended* (you moved
+out). Confirm?
+
+**Q3.2 — "ETT\*…FlamingoSouthBe" ($2,285.70) = your current Miami rent?** If yes, I'll make sure it's Housing and
+set it up as your current recurring rent (so Housing projects correctly).
+
+**Q3.3 — "Hoffman LLC SD refund $1,375.00" = your security deposit back?** (Currently in Refunds — that's fine,
+just confirming it's not income.)
 
 ---
 
 ## 4. REVIEW-QUEUE TAIL — the reserved rows you wanted to tag yourself
 
-**Q4.1 — Peer Zelles (92 rows, ~$6,194) in `Other Income`.** Are these **tutoring income**, reimbursements, or
-gifts? The big senders:
-- **Melanie E Ballard** — 85 rows, ~$5,056 (incl. a $1,890 on 5/26). Who is she — a tutoring client, roommate,
-  partner? (Determines income vs reimbursement.)
-- **Louis A Soumah** — 7 rows, ~$1,138.
-- **Carson G Lama** — flagged before as a possible co-tutor (so possibly *tutoring income*). Confirm?
+**Q4.1 — Peer Zelles in `Other Income` — income (tutoring) or reimbursements/gifts?**
+- **Melanie E Ballard** — 51 inflow rows, ~$4,305 (incl. **$1,890 on 5/26**, $722 on 6/13/25). Who is she — a
+  tutoring client, roommate, partner? (Determines income vs reimbursement/gift.)
+- **Carson G Lama** — 55 rows, ~$3,592 (flagged before as a possible **co-tutor** → could be tutoring *income*).
+- **Louis A Soumah (Fernandez)** — 9 rows, ~$1,288.
+- **"other" Zelle-in** — 315 rows, ~$17,482 (many small; we can sample the big ones).
 
-**Q4.2 — ATM cash deposits (the review queue, from §1).** After Q1.1, tag the income ones `Income` and the rest
-(`Cash & ATM` / mixed) as you intend.
-
----
-
-## 5. RECURRING / BILLS — confirm the stale-looking ones
-
-Several detected series have a **next-expected date in the past** (2024–2025) — do you still pay these, or are
-they cancelled? Confirm/cancel so the forecast's fixed side is accurate:
-- **T-Mobile** ($55.64/mo, next 2025-03-11) · **YouTube Premium** ($7.99, two series — a duplicate?) ·
-  **Netflix** ($18.12) · **OpenAI ChatGPT** ($21.78, next 2025-04-26) · **Rocket Money / Rocket Money Premium**
-  ($6.00 — looks like the *same* subscription detected twice) · **Extra Space Storage** ($44) ·
-  **StephanCodes** ($40) · **Uber One** ($4.99).
-
-**Q5.1 — Which of these are still active?** Any duplicates to merge (Rocket Money ×2, YouTube ×2)?
+**Q4.2 — ATM cash (from §1).** After you say which recent ones are income, I'll tag those `Income` and the rest
+(`Cash & ATM` / mixed) as you intend. The reserved rows (`source='user'`) will only change with your explicit OK.
 
 ---
 
-## How to run this (for the next chat)
-1. Read the real DB read-only (copy to /tmp) to refresh these figures; expand the list with anything new.
-2. Ask in batches (start with §1 income). Keep it conversational — one theme at a time.
-3. Apply each batch of answers as a real-DB categorisation write: **backup → dry-run on a copy with Δ-guards
-   (net worth invariant, income totals sanity) → confirm the diff → apply.** Never auto-tag a reserved row.
-4. After income is clarified, revisit the forecast (add the variable-income component + honest headline) so
-   projected income reflects reality.
+## 5. RECURRING / BILLS — confirm the stale ones (so the "fixed" side of the forecast is honest)
+
+Detected series whose next-expected date is in the **past** (you may have cancelled after the move):
+- **Hoffman LL** ($1,786.46/mo, last 2026-01-08) — *ended, per §3.1.*
+- **T-Mobile** ($55.64/mo, last 2025-02-09) · **YouTube Premium** ($7.99, last 2025-08-22) · **Uber One**
+  ($4.99, last 2025-05-25) · **Extra Space Storage** ($44, last 2025-03-20) · **StephanCodes** ($40, last
+  2024-10-03) · **Fordham Sambazon** ($6.60 biweekly, last 2026-04-18).
+
+**Q5.1 — Which of these are still active vs cancelled?** (Cancel = drop them from the forecast's fixed side.)
+
+---
+
+## 6. INCOME-BUCKET CLEANUPS (these change your income *total*, low-risk)
+
+Found sitting in income buckets but arguably not income:
+- **`Refunds & Reimbursements` $3,504.99 (2026-04-15) = a "REAL TIME TRANSFER RECD"** — a transfer in, not a
+  refund. Likely → Transfers (see Q2.5). Two IRS TREAS 310 refunds ($1,442, $1,333) and the Hoffman SD refund
+  ($1,375) are correctly refunds.
+- **`Other Income` = almost entirely peer Zelles** (Melanie/Carson/Louis) → reimbursements/gifts, not earned
+  (pending Q4.1; Carson may be tutoring income).
+
+---
+
+## How to run this (the interactive workflow)
+1. ✅ Re-read the real DB read-only, refreshed these figures, expanded the list (done this pass).
+2. Ask in batches (start with §0/§1). One theme at a time; AskUserQuestion for the choices; keep it conversational.
+3. Apply each batch as a real-DB categorisation write: **backup → dry-run on a copy with Δ-guards (net-worth
+   invariant, income-total sanity) → show the diff → apply only after you confirm.** Never auto-tag a reserved row.
+4. After income is clarified, fix the forecast (variable-income component + honest headline) so projected income
+   reflects reality — pure-lib-first TDD, adversarial review, one gated commit.
