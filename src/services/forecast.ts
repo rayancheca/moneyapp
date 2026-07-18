@@ -5,6 +5,7 @@ import { categories } from "@/db/schema/categories";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { projectOngoingIncome } from "@/lib/income-forecast";
 import { formatCents } from "@/lib/money";
 import { latestBalances, netWorthSeries } from "./derivation";
 import { projectOccurrences, toProjectable, type SeriesOccurrence } from "./recurring";
@@ -192,6 +193,101 @@ function variableComponents(
   );
 }
 
+/**
+ * VARIABLE INCOME — the fix for a near-zero "projected income" when income is
+ * real but IRREGULAR (a cash job, tutoring) rather than a detected series. Per
+ * income subcategory, the trailing average of the last 3 FULL months of ONGOING
+ * income, scaled by remaining days. Mirrors variableComponents (spending) but
+ * with income honesty (see lib/income-forecast.ts): a bucket must appear in ≥2
+ * trailing months (one-off refunds/aid never extrapolate) and there is NO upward
+ * trend nudge. Series-tagged rows are excluded — they project via FIXED. Income
+ * is a positive inflow, so only positive-amount income-kind rows contribute.
+ */
+/**
+ * Income subcategories that are event-driven windfalls / misc one-offs, NOT
+ * ongoing earnings — never projected forward, even when they happen to cluster
+ * across months (a tax refund + a security-deposit return + a merchant refund
+ * can all land in the same 2-3 months without any of them recurring; the same
+ * goes for "Other Income", the misc catch-all where gifts/settlements/stray
+ * inflows land). The presence gate alone can't catch that, so these are
+ * excluded by name — only the deliberate earning buckets (Salary, Tutoring,
+ * Interest, Dividends) project.
+ */
+const EVENT_DRIVEN_INCOME = new Set([
+  "Financial Aid",
+  "Refunds & Reimbursements",
+  "Other Income",
+]);
+
+function variableIncomeComponents(
+  db: AppDatabase,
+  today: string,
+  remainingDays: number,
+  daysInMonth: number,
+): ForecastComponent[] {
+  const windows = trailingFullMonths(today, TRAILING_FULL_MONTHS);
+  const rangeStart = windows[0]!.start;
+  const rangeEnd = windows.at(-1)!.end;
+
+  const categoryRows = db
+    .select({ id: categories.id, name: categories.name, parentId: categories.parentId, kind: categories.kind })
+    .from(categories)
+    .all();
+  const categoryById = new Map(categoryRows.map((c) => [c.id, c]));
+  // the income subcategory a row belongs to, or null when it isn't ongoing income-kind
+  const incomeBucket = (categoryId: string): string | null => {
+    const cat = categoryById.get(categoryId);
+    if (!cat) return null;
+    const root = cat.parentId ? (categoryById.get(cat.parentId) ?? null) : cat;
+    if (!root || root.kind !== "income") return null;
+    if (EVENT_DRIVEN_INCOME.has(cat.name)) return null;
+    return cat.name;
+  };
+
+  // trailing income EXCLUDES recurring-tagged rows — those live in FIXED
+  const rows = db
+    .select({
+      postedOn: transactions.postedOn,
+      amountCents: transactions.amountCents,
+      categoryId: transactions.categoryId,
+    })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.status, "active"),
+        isNull(transactions.recurringSeriesId),
+        gte(transactions.postedOn, rangeStart),
+        lte(transactions.postedOn, rangeEnd),
+      ),
+    )
+    .all();
+
+  const buckets = new Map<string, Map<string, number>>();
+  for (const t of rows) {
+    if (t.categoryId === null || t.amountCents <= 0) continue; // income is a positive inflow
+    const label = incomeBucket(t.categoryId);
+    if (label === null) continue;
+    const perMonth = buckets.get(label) ?? new Map<string, number>();
+    const mk = monthKey(t.postedOn);
+    perMonth.set(mk, (perMonth.get(mk) ?? 0) + t.amountCents);
+    buckets.set(label, perMonth);
+  }
+
+  const trailing = [...buckets].map(([label, perMonth]) => ({
+    label,
+    monthlyTotalsCents: windows.map((w) => perMonth.get(w.key) ?? 0),
+  }));
+
+  return projectOngoingIncome(trailing)
+    .map((e) => ({
+      label: e.label,
+      kind: "variable" as const,
+      cents: Math.round((e.monthlyCents * remainingDays) / daysInMonth),
+      detail: `${e.basis}, × ${remainingDays}/${daysInMonth} days`,
+    }))
+    .filter((c) => c.cents > 0);
+}
+
 export function forecastCurrentMonth(db: AppDatabase, today: string = todayIso()): MonthForecast {
   const { start: monthStart, end: monthEnd } = periodBounds(today, "monthly");
   const daysInMonth = diffDays(monthStart, monthEnd) + 1;
@@ -199,6 +295,7 @@ export function forecastCurrentMonth(db: AppDatabase, today: string = todayIso()
 
   const components = [
     ...fixedComponents(db, today, monthEnd),
+    ...variableIncomeComponents(db, today, remainingDays, daysInMonth),
     ...variableComponents(db, today, remainingDays, daysInMonth),
   ];
 

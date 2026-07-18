@@ -335,4 +335,82 @@ describe("forecastCurrentMonth", () => {
       .all();
     expect(untagged).toHaveLength(0);
   });
+
+  test("variable income: categorized income present in ≥2 trailing months projects forward", () => {
+    insertTxn(checkingId, "2026-05-15", 200000, { categoryName: "Salary" });
+    insertTxn(checkingId, "2026-06-15", 400000, { categoryName: "Salary" });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    const salary = f.components.find((c) => c.label === "Salary");
+    // trailing [Apr 0, May 200000, Jun 400000] → mean 200000 (NO trend) × 24/31 → 154839
+    expect(salary).toMatchObject({ kind: "variable", cents: 154839 });
+    expect(f.projectedIncomeCents).toBe(154839);
+  });
+
+  test("variable income: a one-off (single trailing month) is NOT projected forward", () => {
+    insertTxn(checkingId, "2026-05-15", 200000, { categoryName: "Salary" });
+    insertTxn(checkingId, "2026-06-15", 400000, { categoryName: "Salary" });
+    // a single Dividends payout in June — one month → gated out, must not extrapolate
+    insertTxn(checkingId, "2026-06-20", 300000, { categoryName: "Dividends" });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.components.find((c) => c.label === "Dividends")).toBeUndefined();
+    expect(f.components.find((c) => c.label === "Salary")?.cents).toBe(154839);
+  });
+
+  test("variable income: event-driven income (refunds/other income) never projects even when it clusters", () => {
+    // refunds AND misc "Other Income" land in TWO trailing months (passes the presence
+    // gate) but are one-off windfalls/gifts/settlements that must not extrapolate.
+    insertTxn(checkingId, "2026-05-10", 150000, { categoryName: "Refunds & Reimbursements" });
+    insertTxn(checkingId, "2026-06-18", 300000, { categoryName: "Refunds & Reimbursements" });
+    insertTxn(checkingId, "2026-05-12", 300000, { categoryName: "Other Income" });
+    insertTxn(checkingId, "2026-06-12", 300000, { categoryName: "Other Income" });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.components.find((c) => c.label === "Refunds & Reimbursements")).toBeUndefined();
+    expect(f.components.find((c) => c.label === "Other Income")).toBeUndefined();
+    expect(f.projectedIncomeCents).toBe(0);
+  });
+
+  test("variable income: a negative row in an income category never corrupts a bucket", () => {
+    insertTxn(checkingId, "2026-05-15", 200000, { categoryName: "Salary" });
+    insertTxn(checkingId, "2026-06-15", 400000, { categoryName: "Salary" });
+    // a refund-reversal (negative amount) posted to Salary must be SKIPPED, not netted:
+    // June stays 400000 → Salary still projects 154839 (not a corrupted/gated bucket).
+    insertTxn(checkingId, "2026-06-16", -500000, { categoryName: "Salary" });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.components.find((c) => c.label === "Salary")?.cents).toBe(154839);
+  });
+
+  test("variable income: a positive row in an EXPENSE category is not projected as income", () => {
+    // a grocery refund (positive amount in an expense category) present in ≥2 months
+    // must never become "income" — it only reduces spend in variableComponents.
+    insertTxn(checkingId, "2026-05-10", 30000, { categoryName: "Groceries" });
+    insertTxn(checkingId, "2026-06-10", 40000, { categoryName: "Groceries" });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.components.find((c) => c.label === "Food")).toBeUndefined();
+    expect(f.projectedIncomeCents).toBe(0);
+  });
+
+  test("variable income: a bucket that scales to under a cent is dropped, not shown as $0", () => {
+    // tiny interest (avg ~7¢/mo) on the last day of the month → 7 × 1/31 rounds to 0
+    insertTxn(checkingId, "2026-05-10", 10, { categoryName: "Interest" });
+    insertTxn(checkingId, "2026-06-10", 10, { categoryName: "Interest" });
+    const f = forecastCurrentMonth(bundle.db, "2026-07-31"); // 1 day remaining
+    expect(f.components.find((c) => c.label === "Interest")).toBeUndefined();
+  });
+
+  test("variable income: series-linked income rows don't double-count the fixed series", () => {
+    const seriesId = insertSeries({
+      name: "Cash job",
+      kind: "income",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-08-05", // after month end → 0 fixed contribution this month
+      nextExpectedAmountCents: 200000,
+      status: "confirmed",
+    });
+    insertTxn(checkingId, "2026-05-15", 200000, { categoryName: "Salary", recurringSeriesId: seriesId });
+    insertTxn(checkingId, "2026-06-15", 400000, { categoryName: "Salary", recurringSeriesId: seriesId });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.components.find((c) => c.label === "Salary")).toBeUndefined();
+    expect(f.projectedIncomeCents).toBe(0);
+  });
 });
