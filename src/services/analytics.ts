@@ -3,6 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { activeSplitsInRange } from "./transaction-splits";
 
 /**
  * Spending & income analytics (master-plan Phase 4).
@@ -98,6 +99,12 @@ export function loadCategoryIndex(db: AppDatabase): CategoryIndex {
  */
 export function recurringSeriesIdsForCategory(db: AppDatabase, categoryId: string): Set<string> {
   const subtree = loadCategoryIndex(db).subtreeIds(categoryId);
+  // Series-to-category MEMBERSHIP keys on the parent row's (stamped) categoryId,
+  // NOT the split parts. A recurring bill split across categories (rent+utilities)
+  // must belong to ONE category — its dominant/representative one — or budgetTail
+  // and predictWith would project the WHOLE bill amount into every category the
+  // split touches (double-counting). Spend ACTUALS still follow the split parts
+  // via activeTxnsInRange/recurringPostedCents; only forecast membership does not.
   const rows = db
     .selectDistinct({ seriesId: transactions.recurringSeriesId })
     .from(transactions)
@@ -135,10 +142,20 @@ export interface AnalyticsTxn {
   rawDescription: string;
   merchantId: string | null;
   categoryId: string | null;
+  /** null = the whole transaction; set = one split part of it (its own category/amount). */
+  splitId: string | null;
 }
 
+/**
+ * The shared row source for every category/income aggregate. A SPLIT
+ * transaction is exploded into one pseudo-row per part — each carrying the
+ * part's own categoryId/amountCents (and the parent's id/date/merchant) — so
+ * the per-row classifiers (spendingBucket/isIncome) attribute each part
+ * independently. Parts sum to the parent, so grand totals are unchanged; only
+ * category attribution moves. Unsplit transactions pass through whole.
+ */
 export function activeTxnsInRange(db: AppDatabase, from: string, to: string): AnalyticsTxn[] {
-  return db
+  const rows = db
     .select({
       id: transactions.id,
       accountId: transactions.accountId,
@@ -157,6 +174,22 @@ export function activeTxnsInRange(db: AppDatabase, from: string, to: string): An
       ),
     )
     .all();
+
+  const splits = activeSplitsInRange(db, from, to);
+  if (splits.size === 0) return rows.map((r) => ({ ...r, splitId: null }));
+
+  const out: AnalyticsTxn[] = [];
+  for (const r of rows) {
+    const parts = splits.get(r.id);
+    if (!parts || parts.length === 0) {
+      out.push({ ...r, splitId: null });
+      continue;
+    }
+    for (const p of parts) {
+      out.push({ ...r, categoryId: p.categoryId, amountCents: p.amountCents, splitId: p.id });
+    }
+  }
+  return out;
 }
 
 export interface SpendingBucket {
@@ -424,7 +457,9 @@ export function categorySpending(
   const txns = spendingTransactions(db, filter);
   return {
     spentCents: txns.reduce((sum, t) => sum - t.amountCents, 0),
-    txnCount: txns.length,
+    // distinct PARENT transactions — a split row explodes into one part-row per
+    // part, so txns.length would over-count a transaction split within one subtree
+    txnCount: new Set(txns.map((t) => t.id)).size,
   };
 }
 

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { and, eq, gte, inArray, isNull, lte, max, min, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lte, max, min, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -8,6 +8,7 @@ import { balanceAnchors } from "@/db/schema/balances";
 import { importFiles, statementPeriods, type FileFormat } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
+import { migrateSplits } from "../transaction-splits";
 import { assignOccurrenceIndexes, dedupeHash, fileSha256 } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { sumCents } from "@/lib/money";
@@ -506,6 +507,22 @@ async function importOneFile(
               const inserted = insertTxn(tx, db, accountId, fileRow.id, t, hash, occurrenceIndex, victim);
               if (inserted) outcome.inserted += 1;
               else outcome.deduped += 1;
+              // move any user-entered splits off the superseded victim onto its
+              // replacement (the SAME real charge, so amounts match) — found by
+              // the replacement's own dedupe hash. Covers both the freshly-
+              // inserted and the deduped (existing active twin) branches.
+              const replacement = tx
+                .select({ id: transactions.id })
+                .from(transactions)
+                .where(
+                  and(
+                    eq(transactions.accountId, accountId),
+                    eq(transactions.dedupeHash, hash),
+                    ne(transactions.status, "superseded"),
+                  ),
+                )
+                .get();
+              if (replacement) migrateSplits(tx, victim.id, replacement.id);
               continue;
             }
           }

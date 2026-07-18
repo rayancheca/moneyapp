@@ -4,6 +4,7 @@ import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { transactions } from "@/db/schema/transactions";
 import type { LedgerRow } from "@/components/transactions/TransactionsLedger";
+import { splitCountsByTxn } from "./transaction-splits";
 
 /**
  * Shared LedgerRow assembly (ux-overhaul-plan §7.1/§7.3). The triage ledger, the
@@ -127,5 +128,6 @@ export function recentLedgerRows(db: AppDatabase, options: RecentLedgerOptions):
     .all();
 
   const catById = new Map(db.select().from(categories).all().map((c) => [c.id, c]));
-  return rows.map((r) => toLedgerRow(r, catById));
+  const splitCounts = splitCountsByTxn(db, rows.map((r) => r.id));
+  return rows.map((r) => ({ ...toLedgerRow(r, catById), splitCount: splitCounts.get(r.id) ?? 0 }));
 }

@@ -132,6 +132,65 @@ export interface SeriesLinkCandidate {
   detail: string;
 }
 
+export interface SplitPanelData {
+  /** the parent amount the parts must sum to (net-worth-signed cents) */
+  amountCents: number;
+  /** false when the row can't be split (transfer-linked or not active) */
+  canSplit: boolean;
+  /** why splitting is unavailable, when canSplit is false */
+  blockedReason: string | null;
+  /** existing split parts, ordered */
+  splits: { id: string; categoryId: string; amountCents: number; note: string | null }[];
+}
+
+export async function loadSplitPanel(
+  transactionId: string,
+): Promise<ActionResult<SplitPanelData>> {
+  try {
+    const id = z.string().min(1).parse(transactionId);
+    const db = getDb();
+    const { transactions } = await import("@/db/schema/transactions");
+    const { eq } = await import("drizzle-orm");
+    const { listSplits } = await import("@/services/transaction-splits");
+    const row = db
+      .select({
+        amountCents: transactions.amountCents,
+        transferGroupId: transactions.transferGroupId,
+        status: transactions.status,
+      })
+      .from(transactions)
+      .where(eq(transactions.id, id))
+      .get();
+    if (!row) throw new Error("Unknown transaction");
+
+    const blockedReason =
+      row.status !== "active"
+        ? "Only active transactions can be split."
+        : row.transferGroupId !== null
+          ? "Transfer-linked — unlink the transfer to split this."
+          : row.amountCents === 0
+            ? "A $0.00 transaction can't be split."
+            : null;
+
+    return {
+      ok: true,
+      data: {
+        amountCents: row.amountCents,
+        canSplit: blockedReason === null,
+        blockedReason,
+        splits: listSplits(db, id).map((s) => ({
+          id: s.id,
+          categoryId: s.categoryId,
+          amountCents: s.amountCents,
+          note: s.note,
+        })),
+      },
+    };
+  } catch (error: unknown) {
+    return { ok: false, error: error instanceof Error ? error.message : "Failed to load split panel" };
+  }
+}
+
 export interface SeriesLinkPanelData {
   /** the series this row is attached to, when any */
   linked: { id: string; name: string } | null;

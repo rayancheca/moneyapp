@@ -6,6 +6,7 @@ import { transactions } from "@/db/schema/transactions";
 import { addDays, diffDays } from "@/lib/dates";
 import { investmentSideAccountIds } from "./accounts";
 import type { BulkResult, UndoFields } from "./bulk-edit";
+import { hasSplits } from "./transaction-splits";
 
 /**
  * Manual transfer pairing (S5 of "nothing read-only"): the user links two
@@ -61,6 +62,8 @@ export function linkTransferPair(db: AppDatabase, aId: string, bId: string): Bul
   for (const leg of [a, b]) {
     if (leg.status !== "active") throw new Error("Only active transactions can be linked");
     if (leg.transferGroupId !== null) throw new Error("One of these is already part of a transfer — unlink it first");
+    // a split transaction can't be a transfer leg — its parts would be stranded
+    if (hasSplits(db, leg.id)) throw new Error("One of these is split — remove the split before linking it as a transfer");
   }
   if (a.accountId === b.accountId) throw new Error("A transfer moves money between two different accounts");
   // explicit one-negative/one-positive — a zero-amount leg must never pass

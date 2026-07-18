@@ -6,7 +6,7 @@ import { getDb } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { transactions } from "@/db/schema/transactions";
-import { spendingTransactions, transactionsHref } from "@/services/analytics";
+import { spendingTransactions, transactionsHref, type AnalyticsTxn } from "@/services/analytics";
 import { dailySpendHeatmap, type SpendHeatmap } from "@/services/spending";
 import { isValidIsoDate } from "@/lib/dates";
 import type { ActionResult } from "@/app/transactions/action-types";
@@ -25,6 +25,10 @@ const LIMIT = 100;
 
 export interface SpendingTxnRow {
   id: string;
+  /** unique per drill-down row — a split transaction contributes one row per part */
+  rowKey: string;
+  /** set when this row is one part of a split transaction (edited via the sheet, not inline) */
+  splitId: string | null;
   postedOn: string;
   description: string;
   accountName: string;
@@ -66,13 +70,14 @@ export async function loadSpendingCategoryTxns(input: {
 
     // deterministic newest-first order (mirrors the ledger's content tiebreak so
     // reseeded e2e runs are stable): date desc, largest outflow first, then
-    // description, then id
+    // description, then id, then split part (split rows share a parent id)
     const ordered = [...authoritative].sort(
       (a, b) =>
         b.postedOn.localeCompare(a.postedOn) ||
         a.amountCents - b.amountCents ||
         b.rawDescription.localeCompare(a.rawDescription) ||
-        b.id.localeCompare(a.id),
+        b.id.localeCompare(a.id) ||
+        (a.splitId ?? "").localeCompare(b.splitId ?? ""),
     );
     const page = ordered.slice(0, LIMIT);
 
@@ -95,22 +100,22 @@ export async function loadSpendHeatmap(monthKey: string): Promise<ActionResult<S
   }
 }
 
-/** Hydrate display fields (normalized name, account, category identity) for a
- *  capped id page, preserving the caller's order. */
-function hydrateRows(
-  db: ReturnType<typeof getDb>,
-  page: readonly { id: string }[],
-): SpendingTxnRow[] {
+/**
+ * Hydrate display fields (normalized name, account) for a capped page, preserving
+ * the caller's order. Split-aware: each page entry is an allocation — the AMOUNT
+ * and CATEGORY come from the entry (a split part carries its own), while only the
+ * account name + normalized description are looked up by the parent transaction
+ * id. So a split transaction renders one row per part, each at its part amount and
+ * category, and the list reconciles with the aggregate it drilled into.
+ */
+function hydrateRows(db: ReturnType<typeof getDb>, page: readonly AnalyticsTxn[]): SpendingTxnRow[] {
   if (page.length === 0) return [];
-  const ids = page.map((r) => r.id);
+  const ids = [...new Set(page.map((r) => r.id))];
   const detail = db
     .select({
       id: transactions.id,
-      postedOn: transactions.postedOn,
       rawDescription: transactions.rawDescription,
       normalizedDescription: transactions.normalizedDescription,
-      amountCents: transactions.amountCents,
-      categoryId: transactions.categoryId,
       accountName: accounts.name,
     })
     .from(transactions)
@@ -124,16 +129,18 @@ function hydrateRows(
   return page.flatMap((p) => {
     const r = byId.get(p.id);
     if (!r) return [];
-    const cat = r.categoryId ? catById.get(r.categoryId) : undefined;
+    const cat = p.categoryId ? catById.get(p.categoryId) : undefined;
     const parent = cat?.parentId ? catById.get(cat.parentId) : undefined;
     return [
       {
-        id: r.id,
-        postedOn: r.postedOn,
+        id: p.id,
+        rowKey: p.splitId ?? p.id,
+        splitId: p.splitId,
+        postedOn: p.postedOn,
         description: r.normalizedDescription || r.rawDescription,
         accountName: r.accountName,
-        amountCents: r.amountCents,
-        categoryId: r.categoryId,
+        amountCents: p.amountCents,
+        categoryId: p.categoryId,
         categoryName: cat?.name ?? null,
         hue: cat?.color ?? parent?.color ?? null,
         icon: cat?.icon ?? parent?.icon ?? null,

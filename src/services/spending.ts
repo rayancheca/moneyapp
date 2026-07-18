@@ -8,6 +8,7 @@ import { compareDates, diffDays, monthKey, periodBounds } from "@/lib/dates";
 import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/description-key";
 import { resolvePeriod, stepPeriodParams, subBuckets, type ResolvedPeriod } from "@/lib/period";
 import { projectPace, reindexByPosition } from "@/lib/projection";
+import { allocationsFor } from "@/lib/transaction-splits";
 import {
   activeTxnsInRange,
   ledgerHref,
@@ -17,6 +18,7 @@ import {
   type CategoryIndex,
   type DateRange,
 } from "./analytics";
+import { activeSplitsInRange } from "./transaction-splits";
 
 /**
  * Spending-tab aggregates (ux-overhaul-plan §5.5). Every function shares the
@@ -440,10 +442,21 @@ interface SpendRow {
   accountName: string;
 }
 
+/** Whether one category allocation counts as spending (mirrors spendingBucket). */
+function allocationIsSpending(idx: CategoryIndex, categoryId: string | null, amountCents: number): boolean {
+  if (categoryId === null) return amountCents < 0; // uncategorized outflow
+  return idx.topLevelOf(categoryId).kind === "expense";
+}
+
 /**
- * Active rows classified as spending (both signs — refunds net), joined with
- * account name. An optional `subtreeIds` scopes to one category subtree (the
- * category page); without it, all spending rows including uncategorized.
+ * Active rows classified as spending, joined with account name — split-aware.
+ *
+ * WITHOUT `subtreeIds` (largest purchases / global merchants): one WHOLE-
+ * transaction row per spend-like transaction (a transaction counts if any of
+ * its allocations is spending), keeping "largest purchases" and merchant totals
+ * at transaction granularity. WITH `subtreeIds` (a category page): one row per
+ * transaction carrying only the PORTION allocated to that subtree, so a split
+ * transaction contributes just its matching part to that category's merchants.
  */
 function spendingRowsInRange(
   db: AppDatabase,
@@ -473,10 +486,29 @@ function spendingRowsInRange(
       ),
     )
     .all();
-  return rows.filter((r) => {
-    if (subtreeIds) return r.categoryId !== null && subtreeIds.has(r.categoryId);
-    return spendingBucket(idx, r as AnalyticsTxn) !== null;
-  });
+
+  const splits = activeSplitsInRange(db, range.from, range.to);
+  const out: SpendRow[] = [];
+  for (const r of rows) {
+    const allocs = allocationsFor(r.categoryId, r.amountCents, splits.get(r.id) ?? []);
+    if (subtreeIds) {
+      const portion = allocs
+        .filter((a) => a.categoryId !== null && subtreeIds.has(a.categoryId))
+        .reduce((sum, a) => sum + a.amountCents, 0);
+      if (portion !== 0) out.push({ ...r, amountCents: portion });
+    } else {
+      // the SPENDING portion (both signs — refunds net within a merchant, the
+      // established topMerchants semantics): a split mixing an expense part with
+      // a non-spending part (Transfers/Income) reports only the expense
+      // allocation, so these widgets reconcile with the split-aware Spent total.
+      // For an unsplit / all-expense row this equals the full amount, unchanged.
+      const spendCents = allocs
+        .filter((a) => allocationIsSpending(idx, a.categoryId, a.amountCents))
+        .reduce((sum, a) => sum + a.amountCents, 0);
+      if (spendCents !== 0) out.push({ ...r, amountCents: spendCents });
+    }
+  }
+  return out;
 }
 
 // ── Top merchants (merchant + stripped-key, coverage %) ──────────────

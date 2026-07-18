@@ -5,6 +5,7 @@ export * from "./imports";
 export * from "./merchants";
 export * from "./rules";
 export * from "./transactions";
+export * from "./transaction-splits";
 export * from "./balances";
 export * from "./budgets";
 export * from "./recurring";

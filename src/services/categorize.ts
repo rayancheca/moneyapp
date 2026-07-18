@@ -9,6 +9,7 @@ import { transactions } from "@/db/schema/transactions";
 import { diffDays } from "@/lib/dates";
 import { strippedDescriptionKey } from "@/lib/description-key";
 import { investmentSideAccountIds } from "./accounts";
+import { splitTxnIdsIn } from "./transaction-splits";
 
 /**
  * The categorization pipeline (master-plan §3). Precedence:
@@ -424,6 +425,14 @@ export function detectTransfers(db: AppDatabase): TransferStats {
     .orderBy(asc(transactions.postedOn))
     .all();
 
+  // a SPLIT transaction is never auto-paired as a transfer: it has been
+  // deliberately allocated across categories, and transfer-linking it would
+  // strand those parts (splits and transfers are mutually exclusive).
+  const splitTxnIds = splitTxnIdsIn(
+    db,
+    candidates.map((c) => c.id),
+  );
+
   const cardPaymentCat = categoryIdByPath(db, "Transfers > Credit Card Payment");
   const internalCat = categoryIdByPath(db, "Transfers > Internal Transfer");
   const investmentCat = categoryIdByPath(db, "Transfers > Investment Contribution");
@@ -452,6 +461,7 @@ export function detectTransfers(db: AppDatabase): TransferStats {
   // because only categorizationSource==='user' was protected).
   const ineligible = (t: (typeof candidates)[number]): boolean =>
     RESERVED_FOR_USER_RE.test(t.rawDescription) ||
+    splitTxnIds.has(t.id) ||
     (t.categoryId !== null && !transferCatIds.has(t.categoryId)) ||
     (t.categorizationSource === "user" && t.categoryId === null);
 

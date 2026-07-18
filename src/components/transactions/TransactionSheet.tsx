@@ -24,6 +24,7 @@ import type { CategorySuggestion } from "@/services/txn-detail";
 import type { UndoPatch } from "@/app/transactions/action-types";
 import { CategoryPicker, type CategoryPickerOption } from "./CategoryPicker";
 import { runCategoryCorrection } from "./correct-category";
+import { SplitEditor } from "./SplitEditor";
 import type { LedgerRow } from "./TransactionsLedger";
 import { offerUndoToast } from "./undo-toast";
 
@@ -68,6 +69,9 @@ export function TransactionSheet({
   const [, startTransition] = useTransition();
   const [panel, setPanel] = useState<SheetPanel | null>(null);
   const [notes, setNotes] = useState(txn.notes ?? "");
+  // bumped on every mutation so the split editor reloads even when the part-count
+  // is unchanged (e.g. undoing a same-size re-split)
+  const [splitRefresh, setSplitRefresh] = useState(0);
 
   // one debounced round-trip per settle for the same-merchant panel
   useEffect(() => {
@@ -84,6 +88,7 @@ export function TransactionSheet({
 
   function afterMutation(): void {
     onRowChanged();
+    setSplitRefresh((n) => n + 1);
     startTransition(() => router.refresh());
   }
 
@@ -215,14 +220,29 @@ export function TransactionSheet({
 
         <div className="space-y-1.5">
           <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-ink-faint">Category</span>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <CategoryPicker options={categories} currentId={txn.categoryId} suggestedIds={txn.suggestedCategoryIds} onPick={pickCategory} />
-            {txn.lowConfidence ? <Badge tone="warning">low confidence</Badge> : null}
-          </div>
+          {(txn.splitCount ?? 0) > 0 ? (
+            // a split row is categorized by its parts below — a single-category
+            // picker here would silently disagree with the split analytics
+            <p className="text-xs text-ink-faint">Categorized across {txn.splitCount} parts — edit the split below.</p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <CategoryPicker options={categories} currentId={txn.categoryId} suggestedIds={txn.suggestedCategoryIds} onPick={pickCategory} />
+              {txn.lowConfidence ? <Badge tone="warning">low confidence</Badge> : null}
+            </div>
+          )}
         </div>
 
+        {/* split one transaction's amount across categories (RocketMoney-style) */}
+        <SplitEditor txnId={txn.id} refreshKey={splitRefresh} categories={categories} onChanged={afterMutation} />
+
         <div className="grid gap-2">
-          <Checkbox label="Transfer" checked={txn.isTransfer} onChange={(e) => toggleFlag("transfer", e.target.checked)} />
+          <Checkbox
+            label="Transfer"
+            checked={txn.isTransfer}
+            disabled={(txn.splitCount ?? 0) > 0}
+            title={(txn.splitCount ?? 0) > 0 ? "Remove the split to mark this a transfer" : undefined}
+            onChange={(e) => toggleFlag("transfer", e.target.checked)}
+          />
           <Checkbox label="Exclude from analytics" checked={txn.status === "excluded"} onChange={(e) => toggleFlag("exclude", e.target.checked)} />
           <Checkbox label="Reviewed" checked={!txn.needsReview} onChange={(e) => toggleFlag("reviewed", e.target.checked)} />
         </div>
@@ -232,8 +252,11 @@ export function TransactionSheet({
         </Field>
 
         {/* S5 linkable: pair with the transfer counterpart / attach to a series
-            — right where the transaction is shown, candidates load on demand */}
-        <TransferLinkPanel txnId={txn.id} isTransfer={txn.isTransfer} onChanged={afterMutation} />
+            — right where the transaction is shown, candidates load on demand. A
+            split row can't be a transfer leg, so its transfer-link panel is hidden. */}
+        {(txn.splitCount ?? 0) === 0 ? (
+          <TransferLinkPanel txnId={txn.id} isTransfer={txn.isTransfer} onChanged={afterMutation} />
+        ) : null}
         <SeriesLinkPanel txnId={txn.id} isRecurring={txn.isRecurring} onChanged={afterMutation} />
 
         {/* same-name panel — the headline ask (§3.2.5): the merchant (or the

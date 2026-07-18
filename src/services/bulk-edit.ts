@@ -9,6 +9,7 @@ import {
 } from "@/db/schema/transactions";
 import { isValidIsoDate, todayIso } from "@/lib/dates";
 import { loadRecomputeCtx, recomputeSeriesStats } from "./recurring";
+import { hasSplits, splitTxnIdsIn } from "./transaction-splits";
 import { matchingTransactionIds } from "./transactions-query";
 import type { TxnFilters, TxnView } from "@/components/transactions/query";
 
@@ -132,12 +133,21 @@ export function bulkApply(db: AppDatabase, ids: readonly string[], patch: TxnPat
     rows.push(...chunkRows);
   }
 
+  // A split row's category is driven by its parts, not the parent's stamp, and it
+  // can't become a transfer — so a bulk category-set OR transfer-mark must SKIP
+  // split rows (recategorizing the whole row from a group action would silently
+  // desync the stamp from the parts; the single-row surfaces hide the control).
+  const splitIds =
+    ops.categoryId !== undefined || ops.transfer === "mark"
+      ? splitTxnIdsIn(db, rows.map((r) => r.id))
+      : new Set<string>();
+
   const undoRows: UndoPatch["rows"] = [];
   db.transaction((tx) => {
     for (const row of rows) {
       const prev: UndoFields = {};
       const set: TxnUpdate = {};
-      if (ops.categoryId !== undefined) {
+      if (ops.categoryId !== undefined && !splitIds.has(row.id)) {
         prev.categoryId = row.categoryId;
         prev.categorizationSource = row.categorizationSource;
         prev.categorizationConfidence = row.categorizationConfidence;
@@ -155,18 +165,22 @@ export function bulkApply(db: AppDatabase, ids: readonly string[], patch: TxnPat
         prev.status = row.status;
         set.status = ops.status;
       }
-      if (ops.transfer !== undefined) {
+      if (ops.transfer !== undefined && !(ops.transfer === "mark" && splitIds.has(row.id))) {
         prev.transferGroupId = row.transferGroupId;
         // mark without a detected pair: a self-group (kept when already
         // grouped) — pairing tuning is a later stage, the flag is honest now
         set.transferGroupId = ops.transfer === "mark" ? (row.transferGroupId ?? row.id) : null;
       }
+      // a row can be a no-op (e.g. a transfer-mark skipped on a split row) — an
+      // empty .set({}) throws "No values to set" and would abort the whole batch
+      if (Object.keys(set).length === 0) continue;
       tx.update(transactions).set(set).where(eq(transactions.id, row.id)).run();
       undoRows.push({ id: row.id, prev });
     }
   });
 
-  return { affected: rows.length, undo: { rows: undoRows } };
+  // affected reflects rows actually mutated (skipped split rows don't count)
+  return { affected: undoRows.length, undo: { rows: undoRows } };
 }
 
 /** Select-all-matching-filter bulk edit — the countMatching set, exactly. */
@@ -204,7 +218,15 @@ export function applyUndoPatch(db: AppDatabase, undo: UndoPatch): number {
       if (row.prev.needsReview !== undefined) set.needsReview = row.prev.needsReview;
       if (row.prev.status !== undefined && row.prev.status !== "superseded")
         set.status = row.prev.status;
-      if (row.prev.transferGroupId !== undefined) set.transferGroupId = row.prev.transferGroupId;
+      // never restore a transfer link onto a row that has SINCE been split (a
+      // stale undo toast from before the split) — it would strand the parts and
+      // leak the whole stamped row into spend. Restoring null (unlink) is fine.
+      if (
+        row.prev.transferGroupId !== undefined &&
+        !(row.prev.transferGroupId !== null && hasSplits(tx, row.id))
+      ) {
+        set.transferGroupId = row.prev.transferGroupId;
+      }
       if (row.prev.merchantId !== undefined) set.merchantId = row.prev.merchantId;
       if (row.prev.recurringSeriesId !== undefined) {
         set.recurringSeriesId = row.prev.recurringSeriesId;
@@ -261,6 +283,10 @@ export function setTransactionFlags(
   const prev: UndoFields = {};
   const set: TxnUpdate = {};
   if (parsed.transfer !== undefined) {
+    // a split transaction can't also be a transfer (its parts would be stranded)
+    if (parsed.transfer && hasSplits(db, transactionId)) {
+      throw new Error("Remove the split before marking this transaction a transfer.");
+    }
     prev.transferGroupId = row.transferGroupId;
     set.transferGroupId = parsed.transfer ? (row.transferGroupId ?? row.id) : null;
   }

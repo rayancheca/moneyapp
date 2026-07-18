@@ -2,6 +2,7 @@ import { and, count, eq, gt, gte, inArray, isNull, lt, lte, or, sql, type SQL } 
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import { transactions } from "@/db/schema/transactions";
+import { transactionSplits } from "@/db/schema/transaction-splits";
 import type { TxnFilters, TxnView } from "@/components/transactions/query";
 
 /**
@@ -85,9 +86,25 @@ export function filterConditions(
     // If the id resolves to no rows (stale/deleted id from a bookmarked URL),
     // the scoped set is EMPTY, never the whole ledger — so force an always-false
     // predicate instead of silently dropping the condition.
-    conds.push(
-      subtreeIds.length > 0 ? inArray(transactions.categoryId, subtreeIds) : sql`0 = 1`,
-    );
+    if (subtreeIds.length === 0) {
+      conds.push(sql`0 = 1`);
+    } else {
+      // Split-aware: an UNSPLIT row matches on its own category; a SPLIT row
+      // matches only when one of its parts is in the subtree (its parent
+      // category is a stale display 'primary', ignored — mirrors analytics).
+      conds.push(
+        or(
+          and(
+            inArray(transactions.categoryId, subtreeIds),
+            sql`NOT EXISTS (SELECT 1 FROM ${transactionSplits} WHERE ${transactionSplits.transactionId} = ${transactions.id})`,
+          ),
+          sql`${transactions.transferGroupId} IS NULL AND EXISTS (SELECT 1 FROM ${transactionSplits} WHERE ${transactionSplits.transactionId} = ${transactions.id} AND ${inArray(
+            transactionSplits.categoryId,
+            subtreeIds,
+          )})`,
+        ) as SQL,
+      );
+    }
   }
   if (filters.from) conds.push(gte(transactions.postedOn, filters.from));
   if (filters.to) conds.push(lte(transactions.postedOn, filters.to));

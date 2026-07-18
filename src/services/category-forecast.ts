@@ -1,8 +1,9 @@
-import { and, asc, eq, gte, inArray, isNotNull, isNull, lte, or } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, isNull, lte, notExists, or } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { budgets } from "@/db/schema/budgets";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
+import { transactionSplits } from "@/db/schema/transaction-splits";
 import { monthLabel } from "@/lib/calendar-math";
 import { addDays, compareDates, monthKey, periodBounds, todayIso, type PeriodBounds } from "@/lib/dates";
 import {
@@ -113,7 +114,10 @@ function nonRecurringSubtreeSpend(
           inArray(transactions.recurringSeriesId, [...recoverableSeriesIds]),
         )
       : isNull(transactions.recurringSeriesId);
-  const rows = db
+  // split-aware: an unsplit row contributes its whole amount when its own
+  // category is in the subtree; a split row contributes only the parts whose
+  // category is in the subtree (its stale parent category is ignored).
+  const unsplit = db
     .select({ amountCents: transactions.amountCents })
     .from(transactions)
     .where(
@@ -123,13 +127,37 @@ function nonRecurringSubtreeSpend(
         inArray(transactions.categoryId, [...subtreeIds]),
         gte(transactions.postedOn, from),
         lte(transactions.postedOn, to),
+        notExists(
+          db
+            .select({ one: transactionSplits.id })
+            .from(transactionSplits)
+            .where(eq(transactionSplits.transactionId, transactions.id)),
+        ),
       ),
     )
     .all();
-  return Math.max(0, rows.reduce((sum, r) => sum - r.amountCents, 0));
+  const splitParts = db
+    .select({ amountCents: transactionSplits.amountCents })
+    .from(transactionSplits)
+    .innerJoin(transactions, eq(transactions.id, transactionSplits.transactionId))
+    .where(
+      and(
+        eq(transactions.status, "active"),
+        isNull(transactions.transferGroupId), // transfer-linked parts never count
+        notRecurring,
+        inArray(transactionSplits.categoryId, [...subtreeIds]),
+        gte(transactions.postedOn, from),
+        lte(transactions.postedOn, to),
+      ),
+    )
+    .all();
+  return Math.max(0, [...unsplit, ...splitParts].reduce((sum, r) => sum - r.amountCents, 0));
 }
 
-/** The recurring series ids whose active linked rows fall in a subtree. */
+/** The recurring series ids whose active linked rows fall in a subtree — keyed on
+ *  the parent's (stamped) categoryId, NOT split parts, so a recurring bill split
+ *  across categories forecasts into its ONE representative category rather than
+ *  projecting the whole amount into each (mirrors recurringSeriesIdsForCategory). */
 function seriesIdsForSubtree(db: AppDatabase, subtreeIds: readonly string[]): Set<string> {
   const rows = db
     .selectDistinct({ seriesId: transactions.recurringSeriesId })

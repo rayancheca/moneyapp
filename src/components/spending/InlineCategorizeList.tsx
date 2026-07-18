@@ -41,7 +41,7 @@ export function InlineCategorizeList({
       <ul className="space-y-0.5">
         {data.rows.map((r) => (
           <li
-            key={r.id}
+            key={r.rowKey}
             className="flex items-center gap-3 rounded-md px-1 py-1.5 transition-colors duration-(--duration-fast) hover:bg-surface-sunken"
           >
             <span className="figures w-16 shrink-0 text-xs text-ink-muted">{r.postedOn.slice(5)}</span>
@@ -49,11 +49,20 @@ export function InlineCategorizeList({
             <span className="hidden whitespace-nowrap text-xs text-ink-faint md:inline">{r.accountName}</span>
             <Money cents={r.amountCents} flow className="w-24 shrink-0 text-right text-sm" />
             <div className="shrink-0">
-              <CategoryPicker
-                options={categories}
-                currentId={r.categoryId}
-                onPick={(cid) => recategorize(r.id, cid)}
-              />
+              {r.splitId !== null ? (
+                // one part of a split — its category is edited in the transaction
+                // sheet, not inline (recategorizing here would hit the parent row)
+                <span className="inline-flex items-center gap-1 rounded-full bg-surface-sunken px-2 py-0.5 text-xs text-ink-muted">
+                  {r.categoryName ?? "Split"}
+                  <span className="text-ink-faint">· split</span>
+                </span>
+              ) : (
+                <CategoryPicker
+                  options={categories}
+                  currentId={r.categoryId}
+                  onPick={(cid) => recategorize(r.id, cid)}
+                />
+              )}
             </div>
           </li>
         ))}

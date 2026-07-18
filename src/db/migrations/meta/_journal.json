@@ -43,6 +43,13 @@
       "when": 1784046628562,
       "tag": "0005_neat_manta",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1784408478752,
+      "tag": "0006_majestic_wind_dancer",
+      "breakpoints": true
     }
   ]
 }

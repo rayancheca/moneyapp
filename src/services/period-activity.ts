@@ -108,7 +108,17 @@ export function periodActivity(
   const rows = recentLedgerRows(db, { from, to, limit: rowLimit });
 
   return {
-    summary: { from, to, inCents, outCents, txnCount: inRange.length, topCategories },
+    // count distinct parent transactions — activeTxnsInRange explodes a split
+    // into one row per part, so inRange.length would over-count split rows and
+    // diverge from the plain /transactions count this panel links to.
+    summary: {
+      from,
+      to,
+      inCents,
+      outCents,
+      txnCount: new Set(inRange.map((t) => t.id)).size,
+      topCategories,
+    },
     rows,
     href: `/transactions?${new URLSearchParams({ from, to }).toString()}`,
   };

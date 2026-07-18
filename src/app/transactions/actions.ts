@@ -7,7 +7,7 @@ import { z } from "zod";
 import { getDb, type AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { merchants } from "@/db/schema/merchants";
-import { transactions } from "@/db/schema/transactions";
+import { CATEGORIZATION_SOURCES, transactions } from "@/db/schema/transactions";
 import {
   bulkApply,
   bulkApplyByFilter,
@@ -33,6 +33,12 @@ import {
 } from "@/services/manual-transactions";
 import { renameMerchant, similarGroupIds } from "@/services/merchants";
 import { linkTransferPair, unlinkTransferGroup } from "@/services/transfer-links";
+import {
+  clearSplits,
+  restoreSplits,
+  setSplits,
+  type SplitSnapshot,
+} from "@/services/transaction-splits";
 import {
   clusterRefSchema,
   confirmCluster,
@@ -565,6 +571,88 @@ export async function editManualTransactionAction(input: {
     revalidatePath("/accounts");
     revalidatePath("/");
     return { ok: true, data: { transactionId: input.transactionId } };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+/* Transaction splitting (RocketMoney-style) ------------------------------- */
+
+/** Splits change category analytics on /spending, /budgets and /categories too. */
+function revalidateAfterSplit(): void {
+  revalidatePath("/transactions");
+  revalidatePath("/");
+  revalidatePath("/spending");
+  revalidatePath("/budgets");
+}
+
+const splitLineInputSchema = z.object({
+  categoryId: z.string().min(1),
+  amountCents: z.number().int(),
+});
+
+const setSplitsInputSchema = z.object({
+  transactionId: z.string().min(1),
+  lines: z.array(splitLineInputSchema).min(2),
+});
+
+const splitSnapshotSchema = z.object({
+  transactionId: z.string().min(1),
+  parent: z.object({
+    needsReview: z.boolean(),
+    categoryId: z.string().nullable(),
+    categorizationSource: z.enum(CATEGORIZATION_SOURCES).nullable(),
+    categorizationConfidence: z.number().nullable(),
+  }),
+  lines: z.array(
+    z.object({
+      categoryId: z.string().min(1),
+      amountCents: z.number().int(),
+      note: z.string().nullable(),
+      sortOrder: z.number().int(),
+    }),
+  ),
+});
+
+/** Replace a transaction's category-allocation splits (the invariant is enforced
+ *  in the service). Returns the prior state so the caller can offer Undo. */
+export async function setSplitsAction(input: {
+  transactionId: string;
+  lines: { categoryId: string; amountCents: number }[];
+}): Promise<ActionResult<{ snapshot: SplitSnapshot }>> {
+  try {
+    const parsed = setSplitsInputSchema.parse(input);
+    const snapshot = setSplits(getDb(), parsed.transactionId, parsed.lines);
+    revalidateAfterSplit();
+    return { ok: true, data: { snapshot } };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+/** Remove all splits from a transaction (un-split). Returns the prior state for Undo. */
+export async function clearSplitsAction(input: {
+  transactionId: string;
+}): Promise<ActionResult<{ snapshot: SplitSnapshot }>> {
+  try {
+    const id = z.string().min(1).parse(input.transactionId);
+    const snapshot = clearSplits(getDb(), id);
+    revalidateAfterSplit();
+    return { ok: true, data: { snapshot } };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+/** Restore a transaction's splits to a prior snapshot — the Undo for set/clear. */
+export async function restoreSplitsAction(
+  snapshot: SplitSnapshot,
+): Promise<ActionResult<Record<string, never>>> {
+  try {
+    const parsed = splitSnapshotSchema.parse(snapshot);
+    restoreSplits(getDb(), parsed);
+    revalidateAfterSplit();
+    return { ok: true, data: {} };
   } catch (error: unknown) {
     return failure(error);
   }

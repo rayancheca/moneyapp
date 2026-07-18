@@ -43,6 +43,9 @@ export interface LedgerRow {
   isManual: boolean;
   lowConfidence: boolean;
   suggestedCategoryIds: readonly string[];
+  /** number of category-allocation parts; 0/undefined = unsplit. When >0 the row
+   * shows a "Split · N" chip instead of a single category control (edit in sheet). */
+  splitCount?: number;
 }
 
 interface DayGroup {
@@ -260,7 +263,17 @@ export function TransactionsLedger({
                       (§3.2). A plain chip in selection mode, where the row's job
                       is selecting, not editing. */}
                   <div data-row-chip={r.id} className="shrink-0 py-2.5">
-                    {selectionMode ? (
+                    {(r.splitCount ?? 0) > 0 ? (
+                      // a split row has many categories — the single-category
+                      // control would be misleading; edit its parts in the sheet
+                      <button
+                        type="button"
+                        onClick={() => rowClick(r)}
+                        className="inline-flex items-center gap-1 rounded-full border border-line bg-surface-sunken px-2.5 py-1 text-xs font-medium text-ink-muted transition-colors duration-(--duration-fast) hover:border-line-strong"
+                      >
+                        <Icon name="tag" className="size-3" /> Split · {r.splitCount}
+                      </button>
+                    ) : selectionMode ? (
                       <CategoryChip label={r.categoryName ?? "Uncategorized"} hue={r.hue} icon={r.icon} />
                     ) : (
                       <CategoryPicker

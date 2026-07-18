@@ -21,6 +21,7 @@ import { TransactionsLedger, type LedgerRow } from "@/components/transactions/Tr
 import { ViewTabs } from "@/components/transactions/ViewTabs";
 import { reviewInbox } from "@/services/review-inbox";
 import { toLedgerRow } from "@/services/ledger-rows";
+import { splitCountsByTxn } from "@/services/transaction-splits";
 import {
   filtersToQuery,
   parseFilters,
@@ -135,7 +136,11 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
     .all();
 
   const catById = new Map(allCategories.map((c) => [c.id, c]));
-  const ledgerRows: LedgerRow[] = rows.map((r) => toLedgerRow(r, catById));
+  const ledgerSplitCounts = splitCountsByTxn(db, rows.map((r) => r.id));
+  const ledgerRows: LedgerRow[] = rows.map((r) => ({
+    ...toLedgerRow(r, catById),
+    splitCount: ledgerSplitCounts.get(r.id) ?? 0,
+  }));
 
   const coverage = coverageStats(db);
   const pendingMerchants = pendingMerchantQueue(db).length;
@@ -156,7 +161,7 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
   // (capped) as ledger rows, ordered like the ledger — so a category set on the
   // card runs the same shared correction flow.
   const CATEGORIZE_CAP = 200;
-  const categorizeRows: LedgerRow[] =
+  const categorizeSource =
     filters.view === "review"
       ? db
           .select(ledgerColumns)
@@ -166,8 +171,12 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
           .orderBy(...ledgerOrder)
           .limit(CATEGORIZE_CAP)
           .all()
-          .map((r) => toLedgerRow(r, catById))
       : [];
+  const categorizeSplitCounts = splitCountsByTxn(db, categorizeSource.map((r) => r.id));
+  const categorizeRows: LedgerRow[] = categorizeSource.map((r) => ({
+    ...toLedgerRow(r, catById),
+    splitCount: categorizeSplitCounts.get(r.id) ?? 0,
+  }));
 
   return (
     <>

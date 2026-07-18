@@ -7,9 +7,11 @@ import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { projectOngoingIncome } from "@/lib/income-forecast";
 import { formatCents } from "@/lib/money";
+import { allocationsFor } from "@/lib/transaction-splits";
 import { latestBalances } from "./derivation";
 import { bridgedNetWorthSeries } from "./in-flight";
 import { projectOccurrences, toProjectable, type SeriesOccurrence } from "./recurring";
+import { activeSplitsInRange } from "./transaction-splits";
 
 /**
  * Current-month forecast (master-plan Phase 6) — every number traceable:
@@ -28,6 +30,47 @@ import { projectOccurrences, toProjectable, type SeriesOccurrence } from "./recu
  */
 
 const TRAILING_FULL_MONTHS = 3;
+
+/** One category allocation of a trailing transaction (a split part, or a whole row). */
+interface TrailingAllocation {
+  postedOn: string;
+  amountCents: number;
+  categoryId: string | null;
+}
+
+/**
+ * Non-recurring active transactions over [from,to], exploded into per-category
+ * allocations so the trailing spend/income forecasts count each split part in
+ * its own category (recurring-tagged rows are excluded — they forecast via
+ * FIXED). Shared by variableComponents and variableIncomeComponents.
+ */
+function nonRecurringAllocations(db: AppDatabase, from: string, to: string): TrailingAllocation[] {
+  const rows = db
+    .select({
+      id: transactions.id,
+      postedOn: transactions.postedOn,
+      amountCents: transactions.amountCents,
+      categoryId: transactions.categoryId,
+    })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.status, "active"),
+        isNull(transactions.recurringSeriesId),
+        gte(transactions.postedOn, from),
+        lte(transactions.postedOn, to),
+      ),
+    )
+    .all();
+  const splits = activeSplitsInRange(db, from, to);
+  const out: TrailingAllocation[] = [];
+  for (const r of rows) {
+    for (const a of allocationsFor(r.categoryId, r.amountCents, splits.get(r.id) ?? [])) {
+      out.push({ postedOn: r.postedOn, amountCents: a.amountCents, categoryId: a.categoryId });
+    }
+  }
+  return out;
+}
 
 export interface ForecastComponent {
   label: string;
@@ -134,22 +177,7 @@ function variableComponents(
   };
 
   // trailing spend EXCLUDES recurring-tagged rows — those live in FIXED
-  const rows = db
-    .select({
-      postedOn: transactions.postedOn,
-      amountCents: transactions.amountCents,
-      categoryId: transactions.categoryId,
-    })
-    .from(transactions)
-    .where(
-      and(
-        eq(transactions.status, "active"),
-        isNull(transactions.recurringSeriesId),
-        gte(transactions.postedOn, rangeStart),
-        lte(transactions.postedOn, rangeEnd),
-      ),
-    )
-    .all();
+  const rows = nonRecurringAllocations(db, rangeStart, rangeEnd);
 
   // bucket → monthKey → net-worth-signed sum
   const buckets = new Map<string, Map<string, number>>();
@@ -246,22 +274,7 @@ function variableIncomeComponents(
   };
 
   // trailing income EXCLUDES recurring-tagged rows — those live in FIXED
-  const rows = db
-    .select({
-      postedOn: transactions.postedOn,
-      amountCents: transactions.amountCents,
-      categoryId: transactions.categoryId,
-    })
-    .from(transactions)
-    .where(
-      and(
-        eq(transactions.status, "active"),
-        isNull(transactions.recurringSeriesId),
-        gte(transactions.postedOn, rangeStart),
-        lte(transactions.postedOn, rangeEnd),
-      ),
-    )
-    .all();
+  const rows = nonRecurringAllocations(db, rangeStart, rangeEnd);
 
   const buckets = new Map<string, Map<string, number>>();
   for (const t of rows) {

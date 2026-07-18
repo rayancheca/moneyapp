@@ -1,10 +1,11 @@
-import { and, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lte, notExists } from "drizzle-orm";
 import { z } from "zod";
 import type { AppDatabase } from "@/db/client";
 import { budgets, BUDGET_PERIODS, type BudgetPeriodKind } from "@/db/schema/budgets";
 import { categories } from "@/db/schema/categories";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
+import { transactionSplits } from "@/db/schema/transaction-splits";
 import {
   addDays,
   compareDates,
@@ -387,10 +388,15 @@ export function budgetTail(
   return { totalCents, series };
 }
 
-/** Posted spend in a subtree already tagged to a recurring series, over [from,to]. */
+/**
+ * Posted spend in a subtree already tagged to a recurring series, over [from,to]
+ * — split-aware. A split recurring row contributes only the parts whose category
+ * falls in the subtree (its stale parent category is ignored, mirroring
+ * analytics' explode); an unsplit recurring row contributes its whole amount.
+ */
 function recurringPostedCents(db: AppDatabase, categoryId: string, from: string, to: string): number {
   const subtree = loadCategoryIndex(db).subtreeIds(categoryId);
-  const rows = db
+  const unsplit = db
     .select({ amountCents: transactions.amountCents })
     .from(transactions)
     .where(
@@ -400,10 +406,31 @@ function recurringPostedCents(db: AppDatabase, categoryId: string, from: string,
         inArray(transactions.categoryId, subtree),
         gte(transactions.postedOn, from),
         lte(transactions.postedOn, to),
+        notExists(
+          db
+            .select({ one: transactionSplits.id })
+            .from(transactionSplits)
+            .where(eq(transactionSplits.transactionId, transactions.id)),
+        ),
       ),
     )
     .all();
-  return rows.reduce((sum, r) => sum - r.amountCents, 0);
+  const splitParts = db
+    .select({ amountCents: transactionSplits.amountCents })
+    .from(transactionSplits)
+    .innerJoin(transactions, eq(transactions.id, transactionSplits.transactionId))
+    .where(
+      and(
+        eq(transactions.status, "active"),
+        isNull(transactions.transferGroupId), // transfer-linked parts never count
+        isNotNull(transactions.recurringSeriesId),
+        inArray(transactionSplits.categoryId, subtree),
+        gte(transactions.postedOn, from),
+        lte(transactions.postedOn, to),
+      ),
+    )
+    .all();
+  return [...unsplit, ...splitParts].reduce((sum, r) => sum - r.amountCents, 0);
 }
 
 export interface BudgetPaceStatus extends BudgetStatus {

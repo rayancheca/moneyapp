@@ -7,6 +7,7 @@ import { categories } from "@/db/schema/categories";
 import { statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
+import { transactionSplits } from "@/db/schema/transaction-splits";
 import { isValidIsoDate } from "@/lib/dates";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
@@ -208,6 +209,20 @@ export function editManualTransaction(db: AppDatabase, id: string, patch: Manual
   const identityChanged =
     postedOn !== txn.postedOn || amountCents !== txn.amountCents || rawDescription !== txn.rawDescription;
   if (!identityChanged) return;
+
+  // Changing the amount would break the split invariant (parts must sum to the
+  // parent) — the splits are enforced only at write time in setSplits, so the
+  // stale parts would silently under/over-count analytics forever. Block it.
+  if (amountCents !== txn.amountCents) {
+    const hasSplits = db
+      .select({ id: transactionSplits.id })
+      .from(transactionSplits)
+      .where(eq(transactionSplits.transactionId, id))
+      .get();
+    if (hasSplits) {
+      throw new Error("Remove the split before changing this transaction's amount.");
+    }
+  }
 
   // same-tuple occurrence counter as addManualTransaction, excluding this row
   const maxIndex =
