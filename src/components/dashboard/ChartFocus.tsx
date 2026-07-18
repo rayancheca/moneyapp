@@ -1,13 +1,11 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { Icon } from "@/components/shell/Icon";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import type { ChartRange } from "@/lib/chart-range";
-import type { NetWorthPoint } from "@/services/derivation";
-import { NetWorthChartPanel } from "./NetWorthChartPanel";
 
 /**
  * Chart focus mode (S8, Track 2): the net-worth chart expands into a
@@ -21,7 +19,24 @@ import { NetWorthChartPanel } from "./NetWorthChartPanel";
  * here too — the modal opens on the pill the user was inspecting, and a pill
  * change made in focus mode is still there when the modal closes.
  */
-export function ChartFocus({ points, today }: { points: readonly NetWorthPoint[]; today: string }) {
+export interface ChartFocusRenderOpts {
+  /** taller in the focus dialog; undefined = the panel's inline default */
+  heightClass?: string;
+  activeRange: ChartRange;
+  onRangeChange: (range: ChartRange) => void;
+}
+
+export function ChartFocus({
+  renderPanel,
+  label = "Net worth",
+}: {
+  /** renders the SAME panel (incl. any view-mode switcher) in the inline card
+   *  and the focus dialog — view parity is structural, not re-implemented */
+  renderPanel: (opts: ChartFocusRenderOpts) => ReactNode;
+  /** the current view's name — the opener/dialog/heading announce it so a
+   *  screen-reader user in Owed/Accounts mode isn't told it's "Net worth" */
+  label?: string;
+}) {
   const [open, setOpen] = useState(false);
   // one range for both instances ("the same chart, bigger") — matches the
   // panel's defaultRange so the closed state renders exactly as before
@@ -70,12 +85,12 @@ export function ChartFocus({ points, today }: { points: readonly NetWorthPoint[]
         <button
           type="button"
           onClick={() => transition(() => setOpen(true))}
-          aria-label="Focus the net worth chart"
+          aria-label={`Focus the ${label} chart`}
           className="absolute top-3 right-3 z-10 rounded-md p-1.5 text-ink-faint transition-colors duration-(--duration-fast) hover:bg-surface-sunken hover:text-ink"
         >
           <Icon name="arrow-up-right" className="size-4" />
         </button>
-        <NetWorthChartPanel points={points} today={today} activeRange={range} onRangeChange={setRange} />
+        {renderPanel({ activeRange: range, onRangeChange: setRange })}
       </SurfaceCard>
 
       <dialog
@@ -97,7 +112,7 @@ export function ChartFocus({ points, today }: { points: readonly NetWorthPoint[]
             transition(() => setOpen(false));
           }
         }}
-        aria-label="Net worth chart — focus view"
+        aria-label={`${label} chart — focus view`}
         // backdrop styling lives in globals.css (.chart-focus-dialog::backdrop):
         // a blurred fade-in behind the morph, with an @starting-style entrance
         className="chart-focus-dialog m-auto w-[min(96vw,1100px)] rounded-(--radius-card) border border-line bg-surface-raised p-0 shadow-xl"
@@ -106,7 +121,7 @@ export function ChartFocus({ points, today }: { points: readonly NetWorthPoint[]
           <div className="p-5" style={open ? chartName : undefined}>
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-xs font-medium uppercase tracking-[0.14em] text-ink-faint">
-                Net worth — focus
+                {label} — focus
               </h2>
               <button
                 type="button"
@@ -117,13 +132,7 @@ export function ChartFocus({ points, today }: { points: readonly NetWorthPoint[]
                 <Icon name="close" className="size-4" />
               </button>
             </div>
-            <NetWorthChartPanel
-              points={points}
-              today={today}
-              heightClass="h-[55vh]"
-              activeRange={range}
-              onRangeChange={setRange}
-            />
+            {renderPanel({ heightClass: "h-[55vh]", activeRange: range, onRangeChange: setRange })}
           </div>
         ) : null}
       </dialog>

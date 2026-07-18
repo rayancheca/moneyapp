@@ -7,9 +7,8 @@ import type { ChartRange } from "@/lib/chart-range";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { scrubValueText } from "@/lib/scrub";
-import type { WindowSource } from "@/lib/window-history";
 import type { NetWorthPoint } from "@/services/derivation";
-import { useDashboardWindow } from "@/components/dashboard/DashboardWindowContext";
+import { useDashboardWindowProps } from "@/components/dashboard/DashboardWindowContext";
 import {
   ScrubChart,
   type Accent,
@@ -63,7 +62,7 @@ export function NetWorthChartPanel({
   activeRange,
   onRangeChange,
 }: NetWorthChartPanelProps) {
-  const windowCtx = useDashboardWindow();
+  const windowProps = useDashboardWindowProps();
   const scrubPoints: ScrubPoint[] = useMemo(
     () =>
       points.map((p) => ({
@@ -121,35 +120,7 @@ export function NetWorthChartPanel({
 
   // When wrapped in a DashboardWindowProvider, lift the brush/zoom window to the
   // shared history stack so back/forward + the linked activity panel can drive it
-  // (dashboard-dynamic §1). Rendered standalone (no provider) the chart stays
-  // uncontrolled and byte-identical.
-  const winStart = windowCtx?.current?.start ?? null;
-  const winEnd = windowCtx?.current?.end ?? null;
-  // keep a STABLE object identity while the window is unchanged — an inline object
-  // literal would defeat ScrubChart's `slice` memo and recompute the whole series
-  // on every parent re-render while zoomed
-  const activeWindow = useMemo(
-    () => (winStart && winEnd ? { start: winStart, end: winEnd } : null),
-    [winStart, winEnd],
-  );
-  const windowProps = windowCtx
-    ? {
-        activeWindow,
-        onWindowChange: (w: { start: string; end: string } | null, source: WindowSource) => {
-          if (w) windowCtx.push(w, source);
-          // a pill click NAVIGATES to the base view — it must join the history
-          // trail (Back returns to the window being inspected), never wipe it
-          else windowCtx.toBase();
-        },
-        history: {
-          canGoBack: windowCtx.canGoBack,
-          canGoForward: windowCtx.canGoForward,
-          onBack: windowCtx.back,
-          onForward: windowCtx.forward,
-        },
-      }
-    : {};
-
+  // (dashboard-dynamic §1) — the shared hook makes every hero panel consistent.
   return (
     <ScrubChart
       {...windowProps}

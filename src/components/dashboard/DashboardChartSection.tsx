@@ -1,0 +1,189 @@
+"use client";
+
+import { useCallback, useMemo, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { saveViewPreferenceAction } from "@/app/settings/actions";
+import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
+import { CATEGORY_HUE_NAMES, categoryHueVar } from "@/lib/category-palette";
+import type { DashboardMode } from "@/lib/multi-series";
+import { viewHrefQuery, type ViewState } from "@/lib/view-state";
+import { DASHBOARD_SURFACE, DASHBOARD_VIEW_SPEC } from "./dashboard-view-spec";
+import type { NetWorthPoint } from "@/services/derivation";
+import type { DashboardAccountOption, DashboardChartData } from "@/services/dashboard-series";
+import { useViewState } from "@/hooks/useViewState";
+import { ChartFocus } from "./ChartFocus";
+import { DashboardModePanel } from "./DashboardModePanel";
+import { NetWorthChartPanel } from "./NetWorthChartPanel";
+
+/**
+ * The hero chart's view modes (pass-17 ask C): a ViewSwitcher flips the single
+ * net-worth line into assets / liabilities-owed / split / per-account layered
+ * lines. Mode "combined" renders the EXACT pre-existing NetWorthChartPanel
+ * (coverage naming, live dot, in-transit marks — byte-identical default); the
+ * other modes render the multi-series engine's output. The same panel renders
+ * inside ChartFocus's inline card AND its dialog, so focus mode carries the
+ * view structurally. Mode persists via view-state (URL > preference > default);
+ * the account selection rides a sibling `accts` param validated server-side.
+ */
+
+const MODE_LABELS: Record<string, string> = {
+  combined: "Net worth",
+  assets: "Assets",
+  liabilities: "Owed",
+  split: "Split",
+  accounts: "Accounts",
+};
+
+/** stride-5 walk over the 12-hue ramp — adjacent accounts get distant hues
+ *  (same trick as the allocation donut) */
+export function accountColor(index: number): string {
+  return categoryHueVar(CATEGORY_HUE_NAMES[(index * 5) % CATEGORY_HUE_NAMES.length]!);
+}
+
+interface DashboardChartSectionProps {
+  /** the combined-mode series (rich coverage annotations) */
+  netWorthPoints: readonly (NetWorthPoint & { inTransitCents?: number })[];
+  /** non-combined mode data; null when mode === "combined" */
+  chartData: DashboardChartData | null;
+  state: ViewState;
+  accounts: readonly DashboardAccountOption[];
+  /** the validated selection the RSC built the series with */
+  selectedAccountIds: readonly string[];
+  /** the durable account selection (URL ?? persisted), independent of mode, so
+   *  it can be carried on the URL across mode switches even from non-accounts
+   *  modes where the RSC returns no selection */
+  acctsParam: string;
+  today: string;
+}
+
+export function DashboardChartSection({
+  netWorthPoints,
+  chartData,
+  state,
+  accounts,
+  selectedAccountIds,
+  acctsParam,
+  today,
+}: DashboardChartSectionProps) {
+  const router = useRouter();
+  const [, startTransition] = useTransition();
+  const mode = (state.chart ?? "combined") as DashboardMode;
+
+  // the accts selection must SURVIVE a mode switch (it's not a spec dimension,
+  // so setView/persistence don't carry it) — thread the durable resolved value
+  // onto every mode-switch URL so returning to accounts keeps the curated set
+  const baseParams = useMemo<Record<string, string>>(() => {
+    const params: Record<string, string> = {};
+    if (acctsParam) params.accts = acctsParam;
+    return params;
+  }, [acctsParam]);
+  const { setView } = useViewState({
+    surface: DASHBOARD_SURFACE,
+    spec: DASHBOARD_VIEW_SPEC,
+    state,
+    basePath: "/",
+    baseParams,
+  });
+
+  // color identity is stable per ACCOUNT (its position in the full account
+  // list), not per selection — deselecting one never recolors the rest
+  const colorByKey = useMemo(() => {
+    const colors: Record<string, string> = {};
+    accounts.forEach((a, i) => {
+      colors[a.id] = accountColor(i);
+    });
+    // fixed hues for the rollup overlays
+    colors["liabilities"] = categoryHueVar("red");
+    colors["assets"] = categoryHueVar("teal");
+    return colors;
+  }, [accounts]);
+
+  const toggleAccount = useCallback(
+    (id: string) => {
+      const current = new Set(selectedAccountIds);
+      if (current.has(id)) current.delete(id);
+      else current.add(id);
+      if (current.size === 0) return; // an empty chart is never a valid target
+      const ordered = accounts.filter((a) => current.has(a.id)).map((a) => a.id);
+      const accts = ordered.join(",");
+      const href = `/${viewHrefQuery(DASHBOARD_VIEW_SPEC, state, { accts })}`;
+      startTransition(async () => {
+        try {
+          await saveViewPreferenceAction(DASHBOARD_SURFACE, { ...state, accts });
+        } catch {
+          /* persistence is best-effort — the URL drives the render */
+        }
+        router.push(href, { scroll: false });
+      });
+    },
+    [accounts, selectedAccountIds, state, router],
+  );
+
+  const series = chartData?.series ?? [];
+
+  return (
+    <ChartFocus
+      label={MODE_LABELS[mode] ?? "Net worth"}
+      renderPanel={({ heightClass, activeRange, onRangeChange }) => (
+        <div>
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <ViewSwitcher
+              dimension={DASHBOARD_VIEW_SPEC[0]!}
+              value={mode}
+              onSelect={(v) => setView("chart", v)}
+              labels={MODE_LABELS}
+              ariaLabel="Net worth chart view"
+            />
+            {mode === "accounts" && (
+              <div role="group" aria-label="Accounts shown" className="flex flex-wrap gap-1">
+                {accounts.map((a) => {
+                  const active = selectedAccountIds.includes(a.id);
+                  return (
+                    <button
+                      key={a.id}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => toggleAccount(a.id)}
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition-colors duration-(--duration-fast) ${
+                        active
+                          ? "border-line-strong bg-surface-raised font-medium text-ink"
+                          : "border-line text-ink-faint hover:text-ink"
+                      }`}
+                    >
+                      <span
+                        aria-hidden
+                        className="inline-block size-2 rounded-full"
+                        style={{ background: colorByKey[a.id], opacity: active ? 1 : 0.35 }}
+                      />
+                      {a.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          {mode === "combined" ? (
+            <NetWorthChartPanel
+              points={netWorthPoints}
+              today={today}
+              heightClass={heightClass}
+              activeRange={activeRange}
+              onRangeChange={onRangeChange}
+            />
+          ) : (
+            <DashboardModePanel
+              series={series}
+              colorByKey={colorByKey}
+              colorPrimary={mode === "accounts"}
+              pickLongestPrimary={mode === "accounts"}
+              today={today}
+              heightClass={heightClass}
+              activeRange={activeRange}
+              onRangeChange={onRangeChange}
+            />
+          )}
+        </div>
+      )}
+    />
+  );
+}

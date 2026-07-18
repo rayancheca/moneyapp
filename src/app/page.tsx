@@ -6,6 +6,9 @@ import { todayIso } from "@/lib/dates";
 import { coverageLabel } from "@/lib/coverage-label";
 import { formatCents } from "@/lib/money";
 import { dashboardData } from "@/services/dashboard";
+import { dashboardChartData } from "@/services/dashboard-series";
+import type { DashboardMode } from "@/lib/multi-series";
+import { resolveViewState } from "@/lib/view-state";
 import { recentLedgerRows } from "@/services/ledger-rows";
 import { institutionGroups } from "@/services/institution-groups";
 import { DASHBOARD_SECTION_IDS, readSettings, type DashboardSectionId } from "@/services/settings";
@@ -16,7 +19,8 @@ import { RecentTransactions } from "@/components/transactions/RecentTransactions
 import { InstitutionCard } from "@/components/accounts/InstitutionCard";
 import { DashboardWindowProvider } from "@/components/dashboard/DashboardWindowContext";
 import { InvestmentsTeaser } from "@/components/dashboard/InvestmentsTeaser";
-import { ChartFocus } from "@/components/dashboard/ChartFocus";
+import { DashboardChartSection } from "@/components/dashboard/DashboardChartSection";
+import { DASHBOARD_SURFACE, DASHBOARD_VIEW_SPEC } from "@/components/dashboard/dashboard-view-spec";
 import { PeriodActivityPanel } from "@/components/dashboard/PeriodActivityPanel";
 import { SpendingPaceWidget } from "@/components/dashboard/SpendingPaceWidget";
 import { ToReviewCard } from "@/components/dashboard/ToReviewCard";
@@ -51,11 +55,35 @@ const SETUP_STEPS = [
   },
 ];
 
-export default function DashboardPage() {
+function firstParam(value: string | string[] | undefined): string | null {
+  const s = Array.isArray(value) ? value[0] : value;
+  return typeof s === "string" && s !== "" ? s : null;
+}
+
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const raw = await searchParams;
   const db = getDb();
   const today = todayIso();
   const data = dashboardData(db, today);
   const { netWorth } = data;
+
+  // hero chart view mode: URL > persisted preference > combined (NS#2 Pillar 2)
+  const settings = readSettings(db);
+  const chartView = resolveViewState(
+    DASHBOARD_VIEW_SPEC,
+    { chart: firstParam(raw.chart) ?? undefined },
+    settings.viewPreferences[DASHBOARD_SURFACE],
+  );
+  const chartMode = chartView.chart as DashboardMode;
+  const acctsParam = firstParam(raw.accts) ?? settings.viewPreferences[DASHBOARD_SURFACE]?.accts ?? "";
+  const chartData =
+    chartMode === "combined"
+      ? null
+      : dashboardChartData(db, chartMode, acctsParam.split(",").filter(Boolean));
   // on a partial "today", name whichever list is more concise (covered vs missing)
   const heroCoverage = coverageLabel(netWorth.coveredAccountNames, netWorth.missingAccounts);
 
@@ -91,7 +119,7 @@ export default function DashboardPage() {
   const recentRows = recentLedgerRows(db, { limit: RECENT_TXN_LIMIT });
 
   // named, reorderable sections (S7 "movable") in the user's saved order
-  const layout = normalizeOrder(readSettings(db).dashboardLayout, DASHBOARD_SECTION_IDS);
+  const layout = normalizeOrder(settings.dashboardLayout, DASHBOARD_SECTION_IDS);
 
   const heroSection = (
       <section aria-labelledby="net-worth-heading">
@@ -138,7 +166,19 @@ export default function DashboardPage() {
 
         {netWorth.series.length > 1 && (
           <>
-            <ChartFocus points={netWorth.series} today={today} />
+            <DashboardChartSection
+              netWorthPoints={netWorth.series}
+              chartData={chartData}
+              state={chartView}
+              accounts={chartData?.accounts ?? []}
+              selectedAccountIds={chartData?.selectedAccountIds ?? []}
+              acctsParam={
+                // the durable selection: in accounts mode the RSC validated it
+                // (drops stale ids); in other modes carry the raw resolved value
+                chartData ? chartData.selectedAccountIds.join(",") : acctsParam
+              }
+              today={today}
+            />
             <PeriodActivityPanel categories={pickerOptions} />
           </>
         )}

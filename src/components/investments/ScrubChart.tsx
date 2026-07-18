@@ -83,6 +83,22 @@ export interface ScrubMark {
   kind: "buy" | "sell";
 }
 
+/**
+ * A named overlay line on the primary series' axes (dashboard view modes,
+ * pass-17 ask C). Generalizes the benchmark `compareLine` pattern: overlays
+ * never own the scrub/drag/keyboard machinery — the PRIMARY series keeps every
+ * interaction invariant — they just draw, join the y-domain, and speak in the
+ * tooltip. Each overlay honors the same coverage honesty as the primary: exact
+ * days solid, partial/estimated days dashed (splitCoverageSeries).
+ */
+export interface OverlaySeries {
+  key: string;
+  label: string;
+  /** a resolved CSS color (categorical palette var) */
+  color: string;
+  points: readonly ScrubPoint[];
+}
+
 export interface ScrubSummary {
   day: string;
   valueCents: number;
@@ -110,6 +126,16 @@ interface ScrubChartProps {
    *  the SAME scale as the main line. Omitted everywhere except the return view's
    *  "you vs the market" comparison, so all other charts are byte-identical. */
   compareLine?: { byDay: Record<string, number | null>; label: string };
+  /** named colored overlay lines (dashboard split / per-account modes) — see
+   *  OverlaySeries. Omitted by every other consumer (byte-identical). */
+  overlays?: readonly OverlaySeries[];
+  /** fixed primary-line color (accounts mode: the focus account keeps its
+   *  palette identity instead of the gain/loss accent). Omitted elsewhere. */
+  strokeColor?: string;
+  /** the "amount owed" frame (dashboard liabilities/owed modes): a positive
+   *  delta is debt GROWING (bad), so the vivid tooltip flips its tone/arrow to
+   *  match the header/accent. Omitted everywhere else (asset framing). */
+  owedFrame?: boolean;
   renderHeader: (
     summary: ScrubSummary,
     scrubbing: boolean,
@@ -181,6 +207,9 @@ export function ScrubChart({
   formatValue,
   formatExtreme = compactMoney,
   compareLine,
+  overlays,
+  strokeColor,
+  owedFrame = false,
   renderHeader,
   ariaLabel,
   marks,
@@ -242,7 +271,7 @@ export function ScrubChart({
     [slice, effectiveIdx, summarize],
   );
   const accent: Accent = summary ? accentOf(summary) : "flat";
-  const stroke = ACCENT_STROKE[accent];
+  const stroke = strokeColor ?? ACCENT_STROKE[accent];
 
   const splitData = useMemo(() => splitCoverageSeries(slice), [slice]);
   const showSoft = hasPartialCoverage(slice);
@@ -266,13 +295,37 @@ export function ScrubChart({
   // two-key vs coverage-split) differ, so widen to a plain record array — every
   // series reads its own string dataKey, so the concrete shape is irrelevant here
   const chartDataBase = (vivid ? vividData : splitData) as unknown as Record<string, unknown>[];
-  const chartData = useMemo(
-    () =>
-      compareLine
-        ? chartDataBase.map((row) => ({ ...row, cmp: compareLine.byDay[row.day as string] ?? null }))
-        : chartDataBase,
-    [chartDataBase, compareLine],
-  );
+  // each overlay aligned to the slice's day axis + coverage-split into its own
+  // solid/soft keys, exactly like the primary line's honesty convention
+  const overlayData = useMemo(() => {
+    if (!overlays || overlays.length === 0) return null;
+    return overlays.map((o) => {
+      const byDay = new Map(o.points.map((p) => [p.day, p] as const));
+      const aligned = slice.map((s) => {
+        const p = byDay.get(s.day);
+        return { day: s.day, valueCents: p?.valueCents ?? null, complete: p?.complete };
+      });
+      return { key: o.key, split: splitCoverageSeries(aligned), byDay };
+    });
+  }, [overlays, slice]);
+  const chartData = useMemo(() => {
+    let rows = chartDataBase;
+    if (compareLine) {
+      rows = rows.map((row) => ({ ...row, cmp: compareLine.byDay[row.day as string] ?? null }));
+    }
+    if (overlayData) {
+      rows = rows.map((row, i) => {
+        const extra: Record<string, unknown> = {};
+        for (const o of overlayData) {
+          const s = o.split[i];
+          extra[`ov_${o.key}_solid`] = s?.solid ?? null;
+          extra[`ov_${o.key}_soft`] = s?.soft ?? null;
+        }
+        return { ...row, ...extra };
+      });
+    }
+    return rows;
+  }, [chartDataBase, compareLine, overlayData]);
 
   const values = useMemo(() => {
     const base = collectValues(slice, marks, refLine, baselineCents);
@@ -282,8 +335,16 @@ export function ScrubChart({
         if (c !== null && c !== undefined) base.push(c);
       }
     }
+    if (overlays) {
+      const days = new Set(slice.map((p) => p.day));
+      for (const o of overlays) {
+        for (const p of o.points) {
+          if (p.valueCents !== null && days.has(p.day)) base.push(p.valueCents);
+        }
+      }
+    }
     return base;
-  }, [slice, marks, refLine, baselineCents, compareLine]);
+  }, [slice, marks, refLine, baselineCents, compareLine, overlays]);
   const niceY = useMemo(() => {
     if (!showAxes || values.length === 0) return null;
     let lo = Math.min(...values);
@@ -611,6 +672,35 @@ export function ScrubChart({
               />
             )}
 
+            {(overlays ?? []).map((o) => (
+              // two lines per overlay: exact days solid, partial/estimated days
+              // dashed — the same coverage-honesty convention as the primary
+              <g key={o.key}>
+                <Line
+                  type="monotone"
+                  dataKey={`ov_${o.key}_solid`}
+                  stroke={o.color}
+                  strokeWidth={1.75}
+                  dot={false}
+                  activeDot={false}
+                  connectNulls={false}
+                  isAnimationActive={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey={`ov_${o.key}_soft`}
+                  stroke={o.color}
+                  strokeWidth={1.5}
+                  strokeDasharray="4 4"
+                  strokeOpacity={0.65}
+                  dot={false}
+                  activeDot={false}
+                  connectNulls={false}
+                  isAnimationActive={false}
+                />
+              </g>
+            ))}
+
             {vivid ? (
               <>
                 <Area
@@ -738,15 +828,29 @@ export function ScrubChart({
                 isAnimationActive={false}
                 offset={12}
                 wrapperStyle={{ outline: "none", pointerEvents: "none" }}
-                content={(props) => (
-                  <ScrubTooltip
-                    active={props.active}
-                    payload={props.payload as unknown as readonly { payload?: VividChartRow; value?: number | null }[]}
-                    baselineCents={baselineCents}
-                    baselineComplete={baselineComplete}
-                    formatValue={formatValue}
-                  />
-                )}
+                content={(props) => {
+                  const hovered = (props.payload as unknown as { payload?: { day?: string } }[])?.[0]?.payload;
+                  const overlayRows =
+                    overlays && overlayData && hovered?.day
+                      ? overlays.map((o, i) => ({
+                          key: o.key,
+                          label: o.label,
+                          color: o.color,
+                          valueCents: overlayData[i]!.byDay.get(hovered.day!)?.valueCents ?? null,
+                        }))
+                      : undefined;
+                  return (
+                    <ScrubTooltip
+                      active={props.active}
+                      payload={props.payload as unknown as readonly { payload?: VividChartRow; value?: number | null }[]}
+                      baselineCents={baselineCents}
+                      baselineComplete={baselineComplete}
+                      formatValue={formatValue}
+                      overlayRows={overlayRows}
+                      owedFrame={owedFrame}
+                    />
+                  );
+                }}
               />
             )}
           </ComposedChart>

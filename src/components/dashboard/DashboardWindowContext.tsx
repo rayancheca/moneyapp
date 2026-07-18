@@ -11,6 +11,13 @@ import {
   type WindowSource,
 } from "@/lib/window-history";
 
+/** ScrubChart props that lift its brush/zoom window to the shared history stack. */
+export interface DashboardWindowProps {
+  activeWindow?: { start: string; end: string } | null;
+  onWindowChange?: (window: { start: string; end: string } | null, source: WindowSource) => void;
+  history?: { canGoBack: boolean; canGoForward: boolean; onBack: () => void; onForward: () => void };
+}
+
 /**
  * The dashboard's single source of truth for the active date window (dashboard-
  * dynamic plan §1). Brushing the net-worth chart PUSHes an absolute window here;
@@ -61,4 +68,41 @@ export function DashboardWindowProvider({ children }: { children: ReactNode }) {
  */
 export function useDashboardWindow(): DashboardWindowValue | null {
   return useContext(DashboardWindowCtx);
+}
+
+/**
+ * The ScrubChart brush/history props wired to the shared window — used by EVERY
+ * dashboard hero panel (net worth AND the view-mode rollups) so brushing any
+ * mode drives the same window the linked activity panel cross-filters on, and a
+ * window survives a mode switch consistently. Returns {} outside a provider so a
+ * standalone chart stays uncontrolled and byte-identical.
+ */
+export function useDashboardWindowProps(): DashboardWindowProps {
+  const windowCtx = useDashboardWindow();
+  const winStart = windowCtx?.current?.start ?? null;
+  const winEnd = windowCtx?.current?.end ?? null;
+  // stable identity while unchanged — an inline literal defeats ScrubChart's
+  // `slice` memo and recomputes the whole series on every parent re-render
+  const activeWindow = useMemo(
+    () => (winStart && winEnd ? { start: winStart, end: winEnd } : null),
+    [winStart, winEnd],
+  );
+  return useMemo<DashboardWindowProps>(() => {
+    if (!windowCtx) return {};
+    return {
+      activeWindow,
+      onWindowChange: (w, source) => {
+        if (w) windowCtx.push(w, source);
+        // a pill click NAVIGATES to base — it joins the history trail (Back
+        // returns to the inspected window), never wipes it
+        else windowCtx.toBase();
+      },
+      history: {
+        canGoBack: windowCtx.canGoBack,
+        canGoForward: windowCtx.canGoForward,
+        onBack: windowCtx.back,
+        onForward: windowCtx.forward,
+      },
+    };
+  }, [windowCtx, activeWindow]);
 }

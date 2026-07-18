@@ -52,15 +52,23 @@ export async function saveDashboardLayoutAction(
 const viewPreferenceSchema = z.object({
   surface: z.string().min(1).max(64),
   // bound the shape so a stray caller can't bloat app_settings; resolveViewState
-  // drops anything not in the current spec at read time anyway.
-  state: z.record(z.string().min(1).max(64), z.string().max(64)),
+  // drops anything not in the current spec at read time anyway. Values allow a
+  // generous length: the dashboard's `accts` selection is comma-joined account
+  // UUIDs (37 chars each) and must survive persistence even with dozens of
+  // accounts (2026-07-18 review: a 512 cap silently dropped it past 13).
+  state: z.record(z.string().min(1).max(64), z.string().max(4096)),
 });
 
 /**
  * Persist a surface's chosen view (NS#2 Pillar 2) so it's sticky on a fresh visit.
- * Value-returning; merges into the viewPreferences map. Deliberately does NOT
- * revalidate — the client already navigated via router.push, so the URL (which
- * outranks this) drives the current render; this only seeds the next cold load.
+ * MERGES at the surface level: a caller that writes only spec dimensions ({chart})
+ * must not clobber a sibling key another caller persisted ({accts}) — the two
+ * cooperate for the dashboard's mode + account-selection (2026-07-18 review: a
+ * replace-whole-record wiped `accts` on the first mode switch). Stale spec dims
+ * are dropped by resolveViewState at read; stale `accts` is revalidated against
+ * live accounts, so an over-broad merge is always safe. Deliberately does NOT
+ * revalidate — the URL (which outranks this) drives the current render; this
+ * only seeds the next cold load.
  */
 export async function saveViewPreferenceAction(
   surface: string,
@@ -71,7 +79,8 @@ export async function saveViewPreferenceAction(
   try {
     const db = getDb();
     const current = readSettings(db).viewPreferences;
-    writeSetting(db, "viewPreferences", { ...current, [parsed.data.surface]: parsed.data.state });
+    const merged = { ...(current[parsed.data.surface] ?? {}), ...parsed.data.state };
+    writeSetting(db, "viewPreferences", { ...current, [parsed.data.surface]: merged });
     return { ok: true };
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : "Could not save the view" };

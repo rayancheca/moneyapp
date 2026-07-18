@@ -41,6 +41,10 @@ interface ScrubTooltipProps {
   /** whether the window-start point is fully covered (gates the honest %) */
   baselineComplete: boolean;
   formatValue: (cents: number) => string;
+  /** overlay lines' values on this day (dashboard view modes) — color-dotted rows */
+  overlayRows?: readonly { key: string; label: string; color: string; valueCents: number | null }[];
+  /** amount-owed frame: a positive delta is debt GROWING (bad) → flip tone/arrow */
+  owedFrame?: boolean;
 }
 
 export function ScrubTooltip({
@@ -49,6 +53,8 @@ export function ScrubTooltip({
   baselineCents,
   baselineComplete,
   formatValue,
+  overlayRows,
+  owedFrame = false,
 }: ScrubTooltipProps) {
   const row = payload?.[0]?.payload;
   if (!active || !row || row.lineValue === null) return null;
@@ -62,13 +68,15 @@ export function ScrubTooltip({
       ? (deltaStart / Math.abs(baselineCents)) * 100
       : null;
   const dayOverDay = row.prevValue === null ? null : value - row.prevValue;
-  const deltaTone =
-    deltaStart === null || deltaStart === 0
-      ? "text-ink-muted"
-      : deltaStart > 0
-        ? "text-positive"
-        : "text-negative";
-  const arrow = deltaStart === null || deltaStart === 0 ? "•" : deltaStart > 0 ? "▲" : "▼";
+  // owed frame: a positive delta is debt GROWING — bad — so "good" is a shrink.
+  // `gainSign` is +1 in the asset frame, −1 in the owed frame; a delta times it
+  // being >0 means the change was good (green ▲), <0 bad (red ▼).
+  const gainSign = owedFrame ? -1 : 1;
+  const toneOf = (d: number | null): string =>
+    d === null || d === 0 ? "text-ink-muted" : d * gainSign > 0 ? "text-positive" : "text-negative";
+  const arrowOf = (d: number | null): string => (d === null || d === 0 ? "•" : d > 0 ? "▲" : "▼");
+  const deltaTone = toneOf(deltaStart);
+  const arrow = arrowOf(deltaStart);
   // partial days: name whichever list is more concise (covered vs missing)
   const coverage = coverageLabel(row.coveredAccountNames ?? [], row.missingAccounts ?? []);
 
@@ -107,6 +115,17 @@ export function ScrubTooltip({
             ? `⇄ Includes ${formatValue(row.inTransitCents!)} in transit`
             : `⇄ Excludes ${formatValue(-row.inTransitCents!)} posted in two accounts`}
         </p>
+      )}
+      {overlayRows && overlayRows.length > 0 && (
+        <div className="mt-1 border-t border-line pt-1">
+          {overlayRows.map((o) => (
+            <p key={o.key} className="figures flex items-center gap-1.5 text-[11px] text-ink-muted">
+              <span aria-hidden className="inline-block size-2 rounded-full" style={{ background: o.color }} />
+              <span className="min-w-0 flex-1 truncate">{o.label}</span>
+              <span>{o.valueCents === null ? "—" : formatValue(o.valueCents)}</span>
+            </p>
+          ))}
+        </div>
       )}
     </div>
   );
