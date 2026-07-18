@@ -58,3 +58,10 @@ left (a wire to family, a real purchase) or when the market moved — those are 
 
 Verification per window before shipping: for each bridged day, assert the bridge amount equals the evidenced
 in-flight sum and that month-end totals still reconcile to statement anchors.
+
+## ✅ USER DECISION (2026-07-18, interactive)
+Approved BOTH parts: (1) bridge paired-transfer gaps, (2) model RH brokerage cash (P0.1). Style: **subtle
+mark** — the line doesn't dip; scrubbing a bridged day says "includes $X in transit". Dad-wires-out and
+market declines stay untouched. Build order: bridging layer (pure-lib TDD on netWorthSeries) → P0.1 RH-cash
+rebuild from the activity ledger → regenerate dashboard baselines → per-window before/after verification
+against statement anchors.
