@@ -137,3 +137,31 @@ Real-DB writes require backup + dry-run-on-copy + Δ-guards + explicit user OK.
    Effect: app income $175,406 → ~$122,781; "Salary" → true Fordham wages $42,679.76 only.
 3. **Small fixes** — the 5 internal-transfer rows → `Transfers`; the NYS DTF row → expense.
 4. **Leave for the user to tag one-by-one** — the 92 peer-Zelle rows (Carson may be tutoring).
+
+---
+
+## Pass-19 update (2026-07-18) — the older ATM cash, resolved
+
+The interactive categorization session revisited the ~$47k of older ATM cash deposits
+(2022–2026-02) that pass 15 had pulled out of `Salary`. The user was asked directly whether
+this cash (dad's money from Spain + a ~$15k May-2023 summer-school cluster + scattered smaller
+deposits) counts as **income**. After I surfaced the magnitude — booking it to income would
+raise the total from **$119,462.68 to $166,390.68**, undoing most of the pass-15 correction —
+the user chose to **keep it OUT of income**.
+
+**RULE (user decision):** cash the user *receives* but did not *earn* — dad's cash, gift money,
+cash-for-a-purpose — is not income. It is booked to a new **`Transfers › Gifts received`**
+category (kind `transfer`, so it is excluded from BOTH income and spending totals; net worth
+already reflects the deposit via the account balance). This keeps the income number truthful to
+what the user actually earns (~$119k: cash job + old Fordham + interest), while the money still
+counts toward net worth.
+
+**Income kinds now, for this user:**
+- `Income › Salary` = old Fordham work-study **+ the current cash-job pay** (pass 18).
+- `Income › Interest / Dividends` = real yield.
+- **NOT income:** ATM cash received (→ `Transfers › Gifts received`), dad's in→out remittances
+  (→ `Transfers › Family pass-through`), self-Zelles and account funding (→ `Transfers ›
+  Internal Transfer`), peer reimbursements (→ `Transfers › Reimbursements`).
+
+Session tallies: review queue **1185 → 416**; income **$119,982.68 → $119,462.68** (the −$520
+was a $500 Refunds + $20 Other-Income row that were really incoming transfers).
