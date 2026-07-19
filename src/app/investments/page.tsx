@@ -147,25 +147,29 @@ export default async function InvestmentsPage({
       </div>
 
       <div className="space-y-6">
-        <SurfaceCard>
-          {points.length >= 2 ? (
-            <PortfolioChartPanel
-              points={points}
-              returnDays={returnDays}
-              today={today}
-              defaultRange={range}
-              viewState={portfolioView}
-              baseParams={viewBaseParams}
-              benchmark={benchmark}
-              benchmarkSymbol={benchmarkSymbol}
-            />
-          ) : (
+        {/* the chart panel provides its own SurfaceCard (via ChartFocus) and
+            renders the summary stats in its footer, so they show in both the
+            inline card and the focus modal; the pre-chart fallback keeps a card */}
+        {points.length >= 2 ? (
+          <PortfolioChartPanel
+            points={points}
+            returnDays={returnDays}
+            today={today}
+            defaultRange={range}
+            viewState={portfolioView}
+            baseParams={viewBaseParams}
+            benchmark={benchmark}
+            benchmarkSymbol={benchmarkSymbol}
+            footer={<PortfolioStats overview={overview} />}
+          />
+        ) : (
+          <SurfaceCard>
             <p className="py-6 text-sm text-ink-muted">
               A portfolio chart appears once holdings have at least two days of cached prices.
             </p>
-          )}
-          <PortfolioStats overview={overview} />
-        </SurfaceCard>
+            <PortfolioStats overview={overview} />
+          </SurfaceCard>
+        )}
 
         {(movers.winners.length > 0 || movers.losers.length > 0) && (
           <SurfaceCard>

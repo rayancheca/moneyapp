@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { Icon } from "@/components/shell/Icon";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
@@ -8,16 +8,24 @@ import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import type { ChartRange } from "@/lib/chart-range";
 
 /**
- * Chart focus mode (S8, Track 2): the net-worth chart expands into a
- * full-width modal for close inspection. One component owns BOTH renders so
- * the `view-transition-name` can hop from the inline card to the dialog —
- * document.startViewTransition then morphs the shared element (progressive:
- * plain open/close where unsupported, and under prefers-reduced-motion the
- * transition is skipped entirely). The dialog is a native <dialog> — free
- * focus trap, Escape, and focus return, same doctrine as Sheet.tsx. Both
- * instances share the dashboard window context, and the range pill is lifted
- * here too — the modal opens on the pill the user was inspecting, and a pill
- * change made in focus mode is still there when the modal closes.
+ * Chart focus mode (S8, Track 2 → generalized in the pass-22 chart-parity pass):
+ * any range-driven chart expands into a full-width modal for close inspection.
+ * One component owns BOTH renders so the `view-transition-name` can hop from the
+ * inline card to the dialog — document.startViewTransition then morphs the shared
+ * element (progressive: plain open/close where unsupported, and under
+ * prefers-reduced-motion the transition is skipped entirely). The dialog is a
+ * native <dialog> — free focus trap, Escape, and focus return, same doctrine as
+ * Sheet.tsx. Both instances share one lifted range, so the modal opens on the
+ * pill the user was inspecting, and a pill change made in focus mode is still
+ * there when the modal closes.
+ *
+ * Generic by construction: the caller passes `renderPanel` (the SAME panel — incl.
+ * any view-mode switcher — in the inline card and the dialog, so view parity is
+ * structural, not re-implemented) and a `label` (the view's name, announced by
+ * the opener/dialog/heading). `defaultRange` seeds the lifted range so a panel
+ * whose inline default is not "1Y" (e.g. Balance opens on "3M") starts correctly.
+ * `cardClassName` lets a caller drop the dashboard's `mt-4` when the card sits in
+ * a `space-y-*` stack instead of below the hero StatCards.
  */
 export interface ChartFocusRenderOpts {
   /** taller in the focus dialog; undefined = the panel's inline default */
@@ -29,6 +37,9 @@ export interface ChartFocusRenderOpts {
 export function ChartFocus({
   renderPanel,
   label = "Net worth",
+  defaultRange = "1Y",
+  cardClassName = "relative mt-4",
+  resetRangeKey,
 }: {
   /** renders the SAME panel (incl. any view-mode switcher) in the inline card
    *  and the focus dialog — view parity is structural, not re-implemented */
@@ -36,11 +47,34 @@ export function ChartFocus({
   /** the current view's name — the opener/dialog/heading announce it so a
    *  screen-reader user in Owed/Accounts mode isn't told it's "Net worth" */
   label?: string;
+  /** seeds the lifted range so the closed card renders on the panel's own
+   *  default pill (Balance = "3M", Portfolio/Holding = their RSC range) */
+  defaultRange?: ChartRange;
+  /** the inline SurfaceCard's className — defaults to the dashboard's `mt-4`
+   *  spacing; a stacked page passes `"relative"` (no top margin) */
+  cardClassName?: string;
+  /** an opaque identity for the underlying SERIES. When it changes, the lifted
+   *  range resets to `defaultRange`. Holding passes its Price/Return view here:
+   *  those two series are not day-aligned, so carrying a range like "1M" from
+   *  the (today-anchored) price series into a return series that ended weeks ago
+   *  would leave ScrubChart falling back to the full series while the pill still
+   *  reads "1M" (a lying caption). Omitted where the series axis is stable. */
+  resetRangeKey?: string;
 }) {
   const [open, setOpen] = useState(false);
-  // one range for both instances ("the same chart, bigger") — matches the
-  // panel's defaultRange so the closed state renders exactly as before
-  const [range, setRange] = useState<ChartRange>("1Y");
+  // one range for both instances ("the same chart, bigger") — seeded from the
+  // panel's default so the closed state renders exactly as before
+  const [range, setRange] = useState<ChartRange>(defaultRange);
+  // reset the shared range when the caller's series identity changes (see
+  // resetRangeKey). A ref-guarded effect so it NEVER fires on mount or for the
+  // (undefined) callers whose series axis is stable — those keep byte-identical.
+  const prevResetKey = useRef(resetRangeKey);
+  useEffect(() => {
+    if (resetRangeKey !== undefined && prevResetKey.current !== resetRangeKey) {
+      prevResetKey.current = resetRangeKey;
+      setRange(defaultRange);
+    }
+  }, [resetRangeKey, defaultRange]);
   const dialogRef = useRef<HTMLDialogElement>(null);
   // Backdrop close must see the FULL gesture on the backdrop (same doctrine
   // as Sheet.tsx): a drag that starts on dialog content and releases over the
@@ -81,7 +115,7 @@ export function ChartFocus({
       {/* the card stays MOUNTED while the dialog is open — the native dialog
           returns focus to its opener, which must be the same surviving node.
           The view-transition-name hops to whichever instance is visible. */}
-      <SurfaceCard className="relative mt-4" style={open ? undefined : chartName}>
+      <SurfaceCard className={cardClassName} style={open ? undefined : chartName}>
         <button
           type="button"
           onClick={() => transition(() => setOpen(true))}

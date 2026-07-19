@@ -13,7 +13,7 @@ import { DASHBOARD_SURFACE, DASHBOARD_VIEW_SPEC } from "./dashboard-view-spec";
 import type { NetWorthPoint } from "@/services/derivation";
 import type { DashboardAccountOption, DashboardChartData } from "@/services/dashboard-series";
 import { useViewState } from "@/hooks/useViewState";
-import { ChartFocus } from "./ChartFocus";
+import { ChartFocus } from "@/components/charts/ChartFocus";
 import { DashboardModePanel } from "./DashboardModePanel";
 import { NetWorthChartPanel } from "./NetWorthChartPanel";
 

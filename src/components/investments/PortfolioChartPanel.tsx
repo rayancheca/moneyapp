@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, type ReactNode } from "react";
+import { ChartFocus } from "@/components/charts/ChartFocus";
 import { Icon } from "@/components/shell/Icon";
 import { NumberRoll } from "@/components/ui/NumberRoll";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
@@ -58,6 +59,10 @@ interface PortfolioChartPanelProps {
   benchmark?: ReturnBenchmark | null;
   /** the resolved benchmark SYMBOL (may lack data — the picker still shows it) */
   benchmarkSymbol: string;
+  /** rendered below the chart in BOTH the inline card and the focus modal
+   *  (the portfolio summary stats) — server-rendered, passed from the RSC so the
+   *  stat block never enters the client bundle */
+  footer?: ReactNode;
 }
 
 function accentOf(summary: ScrubSummary): Accent {
@@ -81,6 +86,7 @@ export function PortfolioChartPanel({
   baseParams,
   benchmark,
   benchmarkSymbol,
+  footer,
 }: PortfolioChartPanelProps) {
   const { state, setView } = useViewState({
     surface: INVESTMENTS_SURFACE,
@@ -144,9 +150,17 @@ export function PortfolioChartPanel({
   );
 
   return (
+    <ChartFocus
+      label="Portfolio"
+      defaultRange={defaultRange ?? "ALL"}
+      cardClassName="relative"
+      renderPanel={(opts) => (
     <div>
+      {/* pr-9 keeps the right-aligned switchers clear of ChartFocus's top-right
+          focus affordance; flex-wrap protects the three-control return view on
+          narrow screens */}
       {canShowReturns && (
-        <div className="mb-3 flex items-center justify-end gap-2">
+        <div className="mb-3 flex flex-wrap items-center justify-end gap-2 pr-9">
           {isReturns && (
             <BenchmarkPicker value={benchmarkSymbol} hrefFor={hrefForBenchmark} hasData={benchmark != null} />
           )}
@@ -188,6 +202,9 @@ export function PortfolioChartPanel({
         points={chartPoints}
         today={today}
         defaultRange={defaultRange}
+        activeRange={opts.activeRange}
+        onRangeChange={opts.onRangeChange}
+        heightClass={opts.heightClass}
         summarize={summarize}
         accentOf={accentOf}
         valueText={valueText}
@@ -222,7 +239,10 @@ export function PortfolioChartPanel({
                   ? `(${signedPct(summary.deltaPct)})`
                   : "";
           return (
-            <header className="mb-1">
+            // pr-9 reserves clearance for ChartFocus's top-right focus button in
+            // the no-switcher state (canShowReturns === false: this header is the
+            // top element and would otherwise sit under the button)
+            <header className="mb-1 pr-9">
               <div className="text-3xl font-semibold tracking-tight sm:text-4xl">
                 <NumberRoll value={heroText(summary)} />
               </div>
@@ -244,6 +264,9 @@ export function PortfolioChartPanel({
       />
       {stats && (stats.bestDay || stats.worstDay) && <ReturnStatsList stats={stats} isPercent={isPercent} />}
       {decomposition && <DecompositionBar decomposition={decomposition} />}
+      {footer}
     </div>
+      )}
+    />
   );
 }

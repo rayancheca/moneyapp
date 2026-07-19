@@ -151,13 +151,18 @@ export default async function AccountDetailPage({
         </header>
 
         {series.length > 1 && (
-          <SurfaceCard>
-            <h2 className="mb-3 text-sm font-medium">Balance history</h2>
+          <section aria-labelledby="balance-history-heading">
+            {/* the chart panel provides its own SurfaceCard (via ChartFocus), so
+                the page no longer double-wraps it; the heading sits above the
+                card, mirroring the dashboard hero's structure */}
+            <h2 id="balance-history-heading" className="mb-2 text-sm font-medium">
+              Balance history
+            </h2>
             <BalanceChartPanel
               points={series.map((p) => ({ day: p.day, balanceCents: sign * p.balanceCents, basis: p.basis }))}
               today={today}
             />
-          </SurfaceCard>
+          </section>
         )}
 
         {holdings.length > 0 && (

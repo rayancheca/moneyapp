@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
+import { ChartFocus } from "@/components/charts/ChartFocus";
 import { Icon } from "@/components/shell/Icon";
 import { NumberRoll } from "@/components/ui/NumberRoll";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
@@ -172,9 +173,17 @@ export function HoldingChartPanel({
   );
 
   return (
+    <ChartFocus
+      label="Holding"
+      defaultRange="ALL"
+      cardClassName="relative"
+      resetRangeKey={isReturns ? "returns" : "price"}
+      renderPanel={(opts) => (
     <div>
+      {/* pr-9 keeps the right-aligned switchers clear of ChartFocus's top-right
+          focus affordance; flex-wrap protects the three-control return view */}
       {canShowReturns && (
-        <div className="mb-3 flex items-center justify-end gap-2">
+        <div className="mb-3 flex flex-wrap items-center justify-end gap-2 pr-9">
           {isReturns && (
             <BenchmarkPicker value={benchmarkSymbol} hrefFor={hrefForBenchmark} hasData={benchmark != null} />
           )}
@@ -220,6 +229,9 @@ export function HoldingChartPanel({
         key={isReturns ? "returns" : "price"}
         points={chartPoints}
         today={today}
+        activeRange={opts.activeRange}
+        onRangeChange={opts.onRangeChange}
+        heightClass={opts.heightClass}
         summarize={summarize}
         accentOf={accentOf}
         valueText={valueText}
@@ -261,7 +273,10 @@ export function HoldingChartPanel({
                   ? `(${signedPct(summary.deltaPct)})`
                   : "";
           return (
-            <header className="mb-1">
+            // pr-9 reserves clearance for ChartFocus's top-right focus button in
+            // the no-switcher state (canShowReturns === false: this header is the
+            // top element and would otherwise sit under the button)
+            <header className="mb-1 pr-9">
               <div className="text-2xl font-semibold tracking-tight sm:text-3xl">
                 <NumberRoll value={heroText(summary)} />
               </div>
@@ -286,5 +301,7 @@ export function HoldingChartPanel({
       {stats && (stats.bestDay || stats.worstDay) && <ReturnStatsList stats={stats} isPercent={isPercent} />}
       {decomposition && <DecompositionBar decomposition={decomposition} />}
     </div>
+      )}
+    />
   );
 }

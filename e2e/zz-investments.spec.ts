@@ -78,6 +78,61 @@ test("a holding page renders trade marks on the price chart", async ({ page }) =
   await expect(page.locator("svg circle").first()).toBeVisible();
 });
 
+test("the portfolio chart opens a focus modal that carries the same view + footer, Escape closes it", async ({
+  page,
+}) => {
+  await gotoInvestments(page);
+  // the inline card exposes a focus affordance (pass-22 chart-parity: focus mode
+  // everywhere) — clicking it expands the SAME chart into a labelled dialog
+  await page.getByRole("button", { name: "Focus the Portfolio chart" }).click();
+  const dialog = page.getByRole("dialog", { name: /Portfolio chart — focus/ });
+  await expect(dialog).toBeVisible();
+  // the same scrub chart renders inside (default Value view → value slider)
+  await expect(dialog.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
+  // the summary footer (TWR/XIRR/P/L) renders in the modal too — footer parity
+  await expect(dialog.getByText("money-weighted · your dollars")).toBeVisible();
+  // the open modal must be axe-clean (critical/serious only)
+  const results = await analyzeSettled(page);
+  const gating = results.violations.filter((v) => v.impact === "critical" || v.impact === "serious");
+  expect(gating.map((v) => ({ id: v.id, nodes: v.nodes.length }))).toEqual([]);
+  // Escape closes natively (no morph trap) and returns focus to the opener
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});
+
+test("switching a holding between Price and Return resets the shared range (no lying caption)", async ({
+  page,
+}) => {
+  await gotoInvestments(page);
+  const href = await page.locator('a[href^="/investments/"]').first().getAttribute("href");
+  expect(href).toBeTruthy();
+  await page.goto(href!);
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+
+  // this holding has a Return view (>= 2 flow-adjusted days)
+  const returnToggle = page.getByRole("button", { name: "Return", exact: true });
+  await expect(returnToggle).toBeVisible();
+
+  // in Price view (default), select a non-default window (default is ALL)
+  const oneMonth = page.getByRole("button", { name: "1 month" });
+  await oneMonth.click();
+  await expect(oneMonth).toHaveAttribute("aria-pressed", "true");
+
+  // switching series must RESET the range to the default: the price series is
+  // today-anchored while the return series ends at the last trade, so carrying
+  // "1M" across would leave ScrubChart falling back to the full series while the
+  // pill still read "1M" (a lying caption). The lifted range resets on switch.
+  await returnToggle.click();
+  await expect(page.getByRole("button", { name: "all time" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "1 month" })).toHaveAttribute("aria-pressed", "false");
+
+  // restore the default Price view — the holding view preference PERSISTS
+  // (saved to app_settings), so leaving it on Return would pollute sibling
+  // specs that expect the price chart (view-switcher, visual holding baselines)
+  await page.getByRole("group", { name: "Holding chart view" }).getByRole("button", { name: "Price" }).click();
+  await expect(page.getByRole("slider", { name: /price over time/ })).toBeVisible();
+});
+
 test("the P/L calendar opens a day sheet with per-holding detail", async ({ page }) => {
   await gotoInvestments(page);
   // day cells with movement carry "portfolio up/down …" in their aria-label

@@ -98,29 +98,31 @@ export default async function HoldingPage({
       </header>
 
       <div className="space-y-6">
-        <SurfaceCard>
-          {detail.priceSeries.length >= 2 ? (
-            <HoldingChartPanel
-              priceSeries={detail.priceSeries}
-              today={today}
-              marks={marks}
-              avgCostCents={detail.avgCostLineCents}
-              symbol={detail.symbol}
-              returnDays={detail.returnDays}
-              viewState={holdingView}
-              basePath={`/investments/${detail.assetType}/${encodeURIComponent(detail.symbol)}`}
-              baseParams={
-                benchmarkSymbol === DEFAULT_BENCHMARK ? {} : { bench: benchmarkSymbol }
-              }
-              benchmark={benchmark}
-              benchmarkSymbol={benchmarkSymbol}
-            />
-          ) : (
+        {/* the chart panel provides its own SurfaceCard (via ChartFocus); the
+            pre-chart fallback keeps a card */}
+        {detail.priceSeries.length >= 2 ? (
+          <HoldingChartPanel
+            priceSeries={detail.priceSeries}
+            today={today}
+            marks={marks}
+            avgCostCents={detail.avgCostLineCents}
+            symbol={detail.symbol}
+            returnDays={detail.returnDays}
+            viewState={holdingView}
+            basePath={`/investments/${detail.assetType}/${encodeURIComponent(detail.symbol)}`}
+            baseParams={
+              benchmarkSymbol === DEFAULT_BENCHMARK ? {} : { bench: benchmarkSymbol }
+            }
+            benchmark={benchmark}
+            benchmarkSymbol={benchmarkSymbol}
+          />
+        ) : (
+          <SurfaceCard>
             <p className="py-6 text-sm text-ink-muted">
               A price chart appears once this holding has at least two days of cached prices.
             </p>
-          )}
-        </SurfaceCard>
+          </SurfaceCard>
+        )}
 
         <PositionCard detail={detail} />
         {detail.realized.sellCount > 0 && (

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
+import { ChartFocus } from "@/components/charts/ChartFocus";
 import { Icon } from "@/components/shell/Icon";
 import type { ChartRange } from "@/lib/chart-range";
 import { formatDayLong } from "@/lib/format-date";
@@ -90,10 +91,17 @@ export function BalanceChartPanel({ points, today, defaultRange = "3M" }: Balanc
   );
 
   return (
-    <ScrubChart
+    <ChartFocus
+      label="Balance"
+      defaultRange={defaultRange}
+      cardClassName="relative"
+      renderPanel={(opts) => (
+        <ScrubChart
       points={scrubPoints}
       today={today}
       defaultRange={defaultRange}
+      activeRange={opts.activeRange}
+      onRangeChange={opts.onRangeChange}
       summarize={summarize}
       accentOf={accentOf}
       valueText={valueText}
@@ -102,7 +110,7 @@ export function BalanceChartPanel({ points, today, defaultRange = "3M" }: Balanc
       selectable
       showExtremes
       ariaLabel="Balance over time — scrub to inspect a day"
-      heightClass="h-52 sm:h-60"
+      heightClass={opts.heightClass ?? "h-52 sm:h-60"}
       renderHeader={(summary, scrubbing, range) => {
         const accent = accentOf(summary);
         const arrow = accent === "gain" ? "▲" : accent === "loss" ? "▼" : "•";
@@ -128,6 +136,8 @@ export function BalanceChartPanel({ points, today, defaultRange = "3M" }: Balanc
           </header>
         );
       }}
+        />
+      )}
     />
   );
 }
