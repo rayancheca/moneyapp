@@ -7,12 +7,14 @@ import { type ViewSpec } from "@/lib/view-state";
  */
 export const SPENDING_SURFACE = "spending";
 
-/** the cash-flow card: the composition chart, cumulative-line graph, or the
- *  same numbers as a table — one dataset, three lenses, always reconciling */
-export const CASH_VIEW_SPEC: ViewSpec = [{ key: "cash", options: ["chart", "graph", "table"] }];
+/** the cash-flow card: the composition chart, cumulative-line graph, a
+ *  money-flow Sankey, or the same numbers as a table — one dataset, several
+ *  lenses, always reconciling */
+export const CASH_VIEW_SPEC: ViewSpec = [{ key: "cash", options: ["chart", "graph", "sankey", "table"] }];
 
 export const CASH_VIEW_LABELS: Record<string, string> = {
   chart: "Chart",
   graph: "Graph",
+  sankey: "Sankey",
   table: "Table",
 };

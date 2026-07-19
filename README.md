@@ -67,6 +67,15 @@ own explicit bucket, never hidden.
 
 ![Spending analytics](docs/screenshots/06-spending-analytics.png)
 
+**6b — A money-flow Sankey that conserves every cent.** Flip the cash-flow card (or the dashboard hero)
+to a Sankey: income sources → a "money in" hub → spending categories, with the surplus as a *Net saved*
+leaf (or, when you overspent, a *From savings* source that makes the diagram balance). It is built on the
+exact same classifiers as the stat cards — split-aware, gross-spend, income-kind — so `in ≡ out` for every
+period and every ribbon reconciles to the ledger it links to. Hover a ribbon for its share; click any node
+to drill to those transactions.
+
+![Money-flow Sankey](docs/screenshots/06c-sankey-flow.png)
+
 **7 — Budgets that pace, not just alert.** Daily, weekly, monthly, and annual budgets per category,
 each bar coloured green → amber → red by its *projected* end-of-period pace — spend-to-date, plus the
 recurring charges still to post (the hollow tail), plus an extrapolated variable remainder — with a
@@ -148,6 +157,17 @@ overlapping files — is precisely what none of them have, and their budget-firs
 We stole their best proven pattern instead: the tolerant hand-rolled OFX parser (~150 lines,
 modeled on Actual's production `ofx2json`) because bank OFX is SGML tag soup that breaks every
 "proper" XML parser, and the npm OFX ecosystem is effectively unmaintained.
+
+**Why the money-flow Sankey is hand-rolled, not a chart library.** Recharts ships a `<Sankey>`, but it
+can't do subcategory structure, hover-highlight, click-through drill, or a table fallback — and it can't
+guarantee the one property that matters: **the diagram conserves money.** So the geometry is a pure,
+100%-tested `sankey-layout.ts` — longest-path column layering plus a single deterministic left-to-right
+barycentre ordering pass (no randomized relaxation, so the same graph lays out identically every render
+and the visual baselines never flake). Node height and ribbon width share one vertical scale, so on every
+node face the incoming and outgoing widths each sum to the node's height. The reconciliation itself lives
+one layer up in `spendingSankey`, which balances `income + refunds + drawdown ≡ spend + savings` by
+construction on the exact classifiers the stat cards use — so a ribbon can never disagree with the number
+it drills into.
 
 **Details you can't guess from the summary:** dedupe hashes are computed over the *raw* description
 (not the normalized one) with a length-prefixed canonical encoding — the normalizer must be free to

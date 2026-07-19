@@ -37,6 +37,86 @@ landed. Pass 11 [S8–S10a] + pass 10 [S1–S7] below.).
 
 ---
 
+## ✅🔀 PASS-21 — SANKEY money-flow diagram + full chart-parity review (2026-07-19)
+
+User ask (verbatim intent): *"add a sankey diagram to the dashboard graph. also review every possible graph
+and make sure they all have the same functionality and features as the dashboard and more. i want all graphs
+to be usable with all the possible functionalities."* Clarified: the Sankey is **spending-flow for the
+selected period** (income → categories, NOT accounts); wire it to the best place(s); **pragmatic parity**
+(every chart gets the *applicable* dashboard features + a universal chart-type/table switcher — time-only
+features like drag-select stay on time-series charts); **high-value slice first, then continue.**
+
+### ✅ SHIPPED this pass — the Sankey (dashboard + /spending)
+- **Pure `src/lib/sankey-layout.ts`** (100% cov, 18 tests) — deterministic layered-Sankey geometry: `{nodes,
+  links}` → positioned node rects + cubic-bezier ribbon paths. Single left→right barycentre ordering pass (no
+  randomized relaxation) so the same graph always lays out identically → **stable e2e baselines**. Link width
+  and node height share one vertical scale, so on every face the incoming widths and outgoing widths each sum
+  to the node height — money is *visibly* conserved. Longest-path column layering honours pinned columns.
+- **`src/services/sankey.ts` `spendingSankey(db, range)`** — a 3-column flow that ALWAYS balances:
+  income sources → **"Money in" hub** → spending categories, with the leftover as a **"Net saved"** leaf
+  (net>0) or a **"From savings"** drawdown source (net<0), plus a **"Refunds"** source. Built on
+  `activeTxnsInRange` with the SAME classifiers as `periodTotals`/`cashFlowByPeriod` (split-aware, GROSS
+  spend, income = positive income-kind), so every ribbon reconciles to the StatCards and the ledger. Invariant
+  (unit-tested across surplus / overspend / refund / empty): `in = earned + refunds + max(-net,0)` ≡
+  `out = spent + max(net,0)`. Nodes carry `meta.kind` + a drill `href`.
+- **`src/components/charts/SankeyChart.tsx`** — bespoke SVG (matches AllocationDonut's no-recharts approach for
+  full interaction control). Measures its own width+height (so it fills an inline card OR the taller focus
+  dialog via `heightClass`). Features: **hover a node → its ribbons light, the rest dim; hover a ribbon → a
+  floating card names the flow + amount + share; click a node → drills to the exact ledger rows** (a real
+  `<a href>` intercepted for SPA nav, so it is keyboard + screen-reader navigable); categorical hue colours
+  (distinct per category); reduced-motion-safe (opacity-only transitions); role=img + descriptive aria
+  summary; an optional **chart⇄table** toggle (the honest "show me the numbers" view).
+- **Wiring:** `/spending` — "Sankey" added to `CASH_VIEW_SPEC` (`["chart","graph","sankey","table"]`);
+  the surface's own Table view is the escape hatch, so no internal toggle there. **Dashboard hero** — a new
+  **"Flow"** mode in `DASHBOARD_VIEW_SPEC` beside combined/assets/owed/split/accounts; it carries its OWN
+  range pills (1M/3M/YTD/1Y/ALL, same windows as the chart, controlled by the ChartFocus-lifted range) and
+  precomputes the flow per range server-side (client switches with no round-trip). Verified live on the
+  seeded demo DB: /spending July flow reconciles to the StatCards to the cent; dashboard 1Y flow
+  ($72,431 in from Salary+Dividends → 11 categories + Net saved) renders with distinct colours and drill.
+
+### 🔎 THE CHART-PARITY REVIEW — every graph, its gap vs the dashboard (reviewed 2026-07-19)
+The dashboard net-worth chart is the yardstick. Its signature kit: **view-mode switcher · focus/fullscreen
+modal · vivid tooltip · scrub (pointer+keyboard) · range pills · drag-select brush + window-history ·
+peak/trough extremes · multi-series overlays.** What each other chart has, and MISSES (✅ has · ➖ n/a · ❌ gap):
+
+| Chart (file) | Route | scrub | range | focus | view-switch | chart↔table | biggest gaps |
+|---|---|---|---|---|---|---|---|
+| **Sankey** (charts/SankeyChart) | `/` + `/spending` | ➖ | ✅(dash) | ❌ | ✅ flow/table | ✅ | **focus modal** |
+| BalanceChartPanel (accounts) | `/accounts/[id]` | ✅ | ✅ | ❌ | ❌ | ❌ | **focus**, table, view-types |
+| PortfolioChartPanel (investments) | `/investments` | ✅ | ✅ | ❌ | ✅ value/return | ❌ | **focus**, table |
+| HoldingChartPanel (investments) | `/investments/[t]/[s]` | ✅ | ✅ | ❌ | ✅ price/return | ❌ | **focus**, table |
+| CashFlowChart / CashFlowGraph | `/spending` | ❌ | ➖(page) | ❌ | ✅ (view) | ✅ (view) | scrub, focus, range pills |
+| AllocationDonut | `/investments` | ❌ | ➖ | ❌ | ❌ | ❌ | **hover-highlight (chart-as-filter)**, table, focus |
+| MonthlyTrendBars | `/categories/[id]` | ❌ | ➖ | ❌ | ❌ | ❌ | everything (bare CSS bars + drill) |
+| AmountHistoryChart | `/recurring/[id]` | ❌ | ❌ | ❌ | ❌ | ❌ | scrub, range, focus, table |
+| SpendHeatmap / PnlCalendar / RecurringCalendar | `/spending` `/investments` `/recurring` | ➖ | ▲month | ❌ | ❌ | ❌ | focus, table (calendar interaction model is its own) |
+| Sparkline / HoldingSparkline / SpendingPaceWidget | cards | ➖ | ➖ | ➖ | ➖ | ➖ | decorative-by-design (drill link only) |
+
+**The one universal gap: FOCUS/FULLSCREEN — 0 of the non-dashboard charts have it** (agent-confirmed). Second:
+**no chart↔table toggle** outside cash-flow + the new Sankey. Third: the donut lacks a designed hover state.
+
+### 🗺️ PARITY ROADMAP — the "continue" pass (pragmatic parity, in priority order)
+1. **Focus-mode everywhere** (biggest win). Relocate `ChartFocus` → `src/components/charts/` (already generic:
+   a `renderPanel` render-prop + `label`; add a `defaultRange` prop), then wrap the three ScrubChart siblings
+   (Balance, Portfolio, Holding) so their range lifts to ChartFocus (inline↔modal parity). Requires the pages
+   to stop double-wrapping in `<SurfaceCard>` (ChartFocus provides its own, like the dashboard hero does) →
+   small page restructure + baseline regen on 3 surfaces. **This is the clean next slice.**
+2. **Chart↔table toggle everywhere** — the honest "show me the numbers" escape hatch on Balance / Portfolio /
+   Holding / AmountHistory (reuse `<DataTable>` + the `<ViewSwitcher>` the Sankey already uses).
+3. **AllocationDonut hover-highlight** (chart-as-filter) — hover/tap a slice → highlight it + its legend row,
+   dim the rest. Self-contained (one component, one baseline). Palette is already categorical (done pass 16).
+4. **Chart-type switchers on `/spending`** — the remaining NS#2 Pillar-2 lenses (stacked/donut/heatmap already
+   exist as separate cards; wire them + the Sankey into ONE view registry so the cash-flow card flips between
+   line / bars / donut / **Sankey** / heatmap / table from one switcher).
+5. **Account/recurring detail charts → axes + range parity** where missing (Balance already has axes ✅;
+   AmountHistoryChart + MonthlyTrendBars are bare — give them the ScrubChart treatment or a range pill).
+
+> This satisfies the "review every possible graph" ask: every chart is inventoried above with its exact gap.
+> The Sankey shipped this pass; items 1–5 are the mechanical parity follow-through (each is a renderer/wrapper
+> + a baseline regen — the plumbing now exists).
+
+---
+
 ## ✅🆕 PASS-18 OUTCOMES + NEW ASKS — the transaction-clarification session (2026-07-18)
 
 The interactive "ask me a lot of questions" clarification session ran (5 themes, 5 guarded real-DB writes). What it

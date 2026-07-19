@@ -11,5 +11,5 @@ import type { ViewSpec } from "@/lib/view-state";
 export const DASHBOARD_SURFACE = "dashboard";
 
 export const DASHBOARD_VIEW_SPEC: ViewSpec = [
-  { key: "chart", options: ["combined", "assets", "liabilities", "split", "accounts"] },
+  { key: "chart", options: ["combined", "assets", "liabilities", "split", "accounts", "sankey"] },
 ];

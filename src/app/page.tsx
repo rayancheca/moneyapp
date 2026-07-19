@@ -7,7 +7,10 @@ import { coverageLabel } from "@/lib/coverage-label";
 import { formatCents } from "@/lib/money";
 import { dashboardData } from "@/services/dashboard";
 import { dashboardChartData } from "@/services/dashboard-series";
+import { spendingSankey } from "@/services/sankey";
+import { CHART_RANGES, rangeStartDay, type ChartRange } from "@/lib/chart-range";
 import type { DashboardMode } from "@/lib/multi-series";
+import type { SankeyGraph } from "@/lib/sankey-layout";
 import { resolveViewState } from "@/lib/view-state";
 import { recentLedgerRows } from "@/services/ledger-rows";
 import { institutionGroups } from "@/services/institution-groups";
@@ -32,6 +35,9 @@ import { SurfaceCard } from "@/components/ui/SurfaceCard";
 export const dynamic = "force-dynamic";
 
 const RECENT_TXN_LIMIT = 5;
+// lower bound for the Sankey's "ALL" range window (rangeStartDay returns null);
+// activeTxnsInRange filters postedOn >= from, so any date before the data works
+const EARLIEST_DAY = "1970-01-01";
 // 6 rows ≈ the height of the right column (pace + investments + top mover), so
 // the activity grid reads as two full columns instead of a teaser and a gap
 const REVIEW_PREVIEW_LIMIT = 6;
@@ -78,12 +84,27 @@ export default async function DashboardPage({
     { chart: firstParam(raw.chart) ?? undefined },
     settings.viewPreferences[DASHBOARD_SURFACE],
   );
-  const chartMode = chartView.chart as DashboardMode;
+  const chartMode = chartView.chart ?? "combined";
+  const isSankey = chartMode === "sankey";
   const acctsParam = firstParam(raw.accts) ?? settings.viewPreferences[DASHBOARD_SURFACE]?.accts ?? "";
+  // sankey is a hero-chart view but not a net-worth SERIES mode — it draws its
+  // own flow, so skip the series build. The `as DashboardMode` cast is sound
+  // because combined + sankey are excluded first (spec options minus those two
+  // ARE DashboardMode); adding a spec option without updating DashboardMode would
+  // need updating here too.
   const chartData =
-    chartMode === "combined"
+    chartMode === "combined" || isSankey
       ? null
-      : dashboardChartData(db, chartMode, acctsParam.split(",").filter(Boolean));
+      : dashboardChartData(db, chartMode as DashboardMode, acctsParam.split(",").filter(Boolean));
+  // Precompute the flow for each range pill so the client switches pills with no
+  // round-trip (the pill is client-side ChartFocus state). Only runs in sankey
+  // mode; 5 aggregations over local SQLite is cheap for a single-user desktop
+  // app — revisit (build once + slice, or a per-range server action) if hosted.
+  const sankeyByRange = isSankey
+    ? (Object.fromEntries(
+        CHART_RANGES.map((r) => [r, spendingSankey(db, { from: rangeStartDay(r, today) ?? EARLIEST_DAY, to: today })]),
+      ) as Record<ChartRange, SankeyGraph>)
+    : null;
   // on a partial "today", name whichever list is more concise (covered vs missing)
   const heroCoverage = coverageLabel(netWorth.coveredAccountNames, netWorth.missingAccounts);
 
@@ -177,6 +198,7 @@ export default async function DashboardPage({
                 // (drops stale ids); in other modes carry the raw resolved value
                 chartData ? chartData.selectedAccountIds.join(",") : acctsParam
               }
+              sankeyByRange={sankeyByRange}
               today={today}
             />
             <PeriodActivityPanel categories={pickerOptions} />

@@ -9,6 +9,7 @@ import {
 } from "@/lib/period";
 import { resolveViewState } from "@/lib/view-state";
 import { categoryBreakdown } from "@/services/analytics";
+import { spendingSankey } from "@/services/sankey";
 import { predictBudgetableCategories } from "@/services/category-forecast";
 import { readSettings } from "@/services/settings";
 import {
@@ -57,6 +58,7 @@ export default async function SpendingPage({
   const db = getDb();
   const cashFlow = cashFlowByPeriod(db, period, today);
   const projection = spendingProjection(db, period, today, cashFlow.pace, cashFlow.totals.spentCents);
+  const sankey = spendingSankey(db, range);
   const merchants = topMerchants(db, range);
 
   // switchable-view state (NS#2 Pillar 2): URL > persisted preference > default.
@@ -202,6 +204,7 @@ export default async function SpendingPage({
             <CashFlowView
               cashFlow={cashFlow}
               projection={projection}
+              sankey={sankey}
               viewState={cashView}
               baseParams={baseParams}
               periodLabel={period.label}

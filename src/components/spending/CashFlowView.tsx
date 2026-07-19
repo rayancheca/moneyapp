@@ -5,6 +5,8 @@ import { type ViewState } from "@/lib/view-state";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
+import { SankeyChart } from "@/components/charts/SankeyChart";
+import type { SankeyGraph } from "@/lib/sankey-layout";
 import { CashFlowChart } from "./CashFlowChart";
 import { CashFlowGraph } from "./CashFlowGraph";
 import { CASH_VIEW_LABELS, CASH_VIEW_SPEC, SPENDING_SURFACE } from "./spending-view-spec";
@@ -19,6 +21,8 @@ import type { CashFlow, CashFlowBucket, SpendingProjection } from "@/services/sp
 interface CashFlowViewProps {
   cashFlow: CashFlow;
   projection: SpendingProjection | null;
+  /** money-flow graph for the same period — the Sankey lens */
+  sankey: SankeyGraph;
   /** the RSC-resolved active view (URL > persisted > default) */
   viewState: ViewState;
   /** URL params to preserve across a view switch (the period) */
@@ -29,7 +33,7 @@ interface CashFlowViewProps {
 /** a bucket augmented with its aligned prior-period ghost value */
 type CashRow = CashFlowBucket & { ghostCents: number | null };
 
-export function CashFlowView({ cashFlow, projection, viewState, baseParams, periodLabel }: CashFlowViewProps) {
+export function CashFlowView({ cashFlow, projection, sankey, viewState, baseParams, periodLabel }: CashFlowViewProps) {
   const { state, setView } = useViewState({
     surface: SPENDING_SURFACE,
     spec: CASH_VIEW_SPEC,
@@ -98,6 +102,12 @@ export function CashFlowView({ cashFlow, projection, viewState, baseParams, peri
             hasGhost && priorLabel ? `, with ${priorLabel} for comparison` : ""
           }.`}
           emptyState="No activity in this period."
+        />
+      ) : active === "sankey" ? (
+        <SankeyChart
+          graph={sankey}
+          ariaLabel={`Money flow for ${periodLabel}`}
+          emptyLabel="No money flow to chart in this period."
         />
       ) : active === "graph" ? (
         <CashFlowGraph data={cashFlow} projection={projection} />

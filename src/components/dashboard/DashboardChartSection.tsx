@@ -4,8 +4,10 @@ import { useCallback, useMemo, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { saveViewPreferenceAction } from "@/app/settings/actions";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
+import { SankeyChart } from "@/components/charts/SankeyChart";
 import { CATEGORY_HUE_NAMES, categoryHueVar } from "@/lib/category-palette";
-import type { DashboardMode } from "@/lib/multi-series";
+import { CHART_RANGES, rangeLabel, type ChartRange } from "@/lib/chart-range";
+import type { SankeyGraph } from "@/lib/sankey-layout";
 import { viewHrefQuery, type ViewState } from "@/lib/view-state";
 import { DASHBOARD_SURFACE, DASHBOARD_VIEW_SPEC } from "./dashboard-view-spec";
 import type { NetWorthPoint } from "@/services/derivation";
@@ -14,6 +16,8 @@ import { useViewState } from "@/hooks/useViewState";
 import { ChartFocus } from "./ChartFocus";
 import { DashboardModePanel } from "./DashboardModePanel";
 import { NetWorthChartPanel } from "./NetWorthChartPanel";
+
+const EMPTY_GRAPH: SankeyGraph = { nodes: [], links: [] };
 
 /**
  * The hero chart's view modes (pass-17 ask C): a ViewSwitcher flips the single
@@ -32,6 +36,7 @@ const MODE_LABELS: Record<string, string> = {
   liabilities: "Owed",
   split: "Split",
   accounts: "Accounts",
+  sankey: "Flow",
 };
 
 /** stride-5 walk over the 12-hue ramp — adjacent accounts get distant hues
@@ -53,6 +58,8 @@ interface DashboardChartSectionProps {
    *  it can be carried on the URL across mode switches even from non-accounts
    *  modes where the RSC returns no selection */
   acctsParam: string;
+  /** money-flow graphs precomputed per range pill; present only in sankey mode */
+  sankeyByRange: Record<ChartRange, SankeyGraph> | null;
   today: string;
 }
 
@@ -63,11 +70,14 @@ export function DashboardChartSection({
   accounts,
   selectedAccountIds,
   acctsParam,
+  sankeyByRange,
   today,
 }: DashboardChartSectionProps) {
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const mode = (state.chart ?? "combined") as DashboardMode;
+  // "sankey" is a hero-chart view but not a net-worth series MODE, so keep it a
+  // plain string; only the ScrubChart branch narrows to DashboardMode.
+  const mode = state.chart ?? "combined";
 
   // the accts selection must SURVIVE a mode switch (it's not a spec dimension,
   // so setView/persistence don't carry it) — thread the durable resolved value
@@ -162,7 +172,36 @@ export function DashboardChartSection({
               </div>
             )}
           </div>
-          {mode === "combined" ? (
+          {mode === "sankey" ? (
+            <div>
+              {/* the Sankey has no scrubbable time axis, so it carries its OWN
+                  range pills (same windows as the chart), controlled by the
+                  ChartFocus-lifted range so focus mode keeps the selection */}
+              <div role="group" aria-label="Flow range" className="mb-3 flex w-fit gap-1 rounded-full bg-surface-sunken p-1">
+                {CHART_RANGES.map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    aria-pressed={activeRange === r}
+                    aria-label={rangeLabel(r)}
+                    onClick={() => onRangeChange(r)}
+                    className={`rounded-full px-3 py-1 text-xs transition-colors duration-(--duration-fast) ${
+                      activeRange === r ? "bg-surface-raised font-medium shadow-sm" : "text-ink-muted hover:text-ink"
+                    }`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+              <SankeyChart
+                graph={sankeyByRange?.[activeRange] ?? EMPTY_GRAPH}
+                heightClass={heightClass}
+                ariaLabel={`Money flow · ${rangeLabel(activeRange)}`}
+                emptyLabel="No money flow in this range."
+                showTableToggle
+              />
+            </div>
+          ) : mode === "combined" ? (
             <NetWorthChartPanel
               points={netWorthPoints}
               today={today}
