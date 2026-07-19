@@ -9,6 +9,7 @@ import {
 } from "@/lib/period";
 import { resolveViewState } from "@/lib/view-state";
 import { categoryBreakdown } from "@/services/analytics";
+import { predictBudgetableCategories } from "@/services/category-forecast";
 import { readSettings } from "@/services/settings";
 import {
   cashFlowByPeriod,
@@ -92,7 +93,32 @@ export default async function SpendingPage({
   const shareBase = breakdown
     .filter((r) => r.categoryId !== null)
     .reduce((s, r) => s + Math.max(0, r.spentCents), 0);
-  const categoryRows: CategoryTableRow[] = breakdown
+  // Next-month per-category forecast (recurring baseline + trend/seasonal
+  // discretionary) — the SAME engine /budgets' Predict-budgets uses, surfaced
+  // read-only here. Only meaningful when the page is on a month (the forecast
+  // always targets the NEXT full calendar month); a 0-confidence prediction is
+  // noise, so it is dropped.
+  // Only on the CURRENT month: the engine forecasts the NEXT calendar month, so
+  // it is a "what's coming" companion to this month — showing it next to a PAST
+  // month's actuals would be confusing (an unrelated future number).
+  const predictions =
+    period.granularity === "month" && period.isCurrent ? predictBudgetableCategories(db, today) : [];
+  const forecastByCategory = new Map(
+    predictions
+      .filter((p) => p.forecast.confidence > 0)
+      .map((p) => [
+        p.categoryId,
+        {
+          cents: p.forecast.expectedTotalCents,
+          confidence: p.forecast.confidence,
+          basis: p.forecast.basis,
+          seasonal: p.seasonalApplied,
+        },
+      ]),
+  );
+  const forecastMonthLabel = predictions[0]?.periodLabel ?? null;
+
+  const spentRows: CategoryTableRow[] = breakdown
     .filter((r) => r.categoryId !== null)
     .map((r) => ({
       categoryId: r.categoryId!,
@@ -102,8 +128,34 @@ export default async function SpendingPage({
       spentCents: r.spentCents,
       sharePct: shareBase > 0 ? (Math.max(0, r.spentCents) / shareBase) * 100 : 0,
       momDeltaCents: r.spentCents - (prevById.get(r.categoryId) ?? 0),
+      forecast: forecastByCategory.get(r.categoryId!) ?? null,
       children: r.children.map((c) => ({ categoryId: c.categoryId, name: c.name, spentCents: c.spentCents })),
     }));
+
+  // Categories with a confident next-month forecast (an upcoming recurring bill,
+  // typically) but NO spend this period get no breakdown row — surface them as
+  // $0 "upcoming" rows at the end, so the most useful forecast (a charge you
+  // haven't seen yet) is not silently dropped.
+  const shownIds = new Set(spentRows.map((r) => r.categoryId));
+  const upcomingRows: CategoryTableRow[] = predictions
+    .filter((p) => p.forecast.confidence > 0 && !shownIds.has(p.categoryId))
+    .map((p) => ({
+      categoryId: p.categoryId,
+      name: p.label,
+      hue: catMeta.get(p.categoryId)?.color ?? null,
+      icon: catMeta.get(p.categoryId)?.icon ?? null,
+      spentCents: 0,
+      sharePct: 0,
+      momDeltaCents: 0,
+      forecast: {
+        cents: p.forecast.expectedTotalCents,
+        confidence: p.forecast.confidence,
+        basis: p.forecast.basis,
+        seasonal: p.seasonalApplied,
+      },
+      children: [],
+    }));
+  const categoryRows: CategoryTableRow[] = [...spentRows, ...upcomingRows];
 
   const largest: LargestPurchaseRow[] = largestTransactions(db, range).map((t) => {
     const meta = t.categoryId ? catMeta.get(t.categoryId) : undefined;
@@ -175,7 +227,11 @@ export default async function SpendingPage({
               <h2 className="text-sm font-medium">Where it went</h2>
               <span className="text-xs text-ink-faint">tap a category to open its page</span>
             </div>
-            <SpendingCategoriesTable rows={categoryRows} showDelta={period.granularity === "month"} />
+            <SpendingCategoriesTable
+              rows={categoryRows}
+              showDelta={period.granularity === "month"}
+              forecastMonthLabel={forecastMonthLabel}
+            />
           </SurfaceCard>
 
           <div className="grid gap-6 lg:grid-cols-2">
