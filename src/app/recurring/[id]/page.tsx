@@ -3,6 +3,12 @@ import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
 import { todayIso } from "@/lib/dates";
 import { seriesDetail } from "@/services/recurring-detail";
+import { readSettings } from "@/services/settings";
+import { resolveViewState } from "@/lib/view-state";
+import {
+  RECURRING_SERIES_SURFACE,
+  RECURRING_SERIES_VIEW_SPEC,
+} from "@/components/recurring/recurring-view-spec";
 import { SeriesDetail } from "@/components/recurring/SeriesDetail";
 
 export const metadata: Metadata = { title: "Recurring series" };
@@ -14,8 +20,15 @@ export const dynamic = "force-dynamic";
  * sentence, the attach/merge/detach flows, and confirm/dismiss/end — all
  * value-returning server actions that refresh this page.
  */
-export default async function RecurringSeriesPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function RecurringSeriesPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { id } = await params;
+  const raw = await searchParams;
   const db = getDb();
   const data = (() => {
     try {
@@ -25,5 +38,12 @@ export default async function RecurringSeriesPage({ params }: { params: Promise<
     }
   })();
 
-  return <SeriesDetail data={data} />;
+  // switchable-view state (NS#2 Pillar 2): URL > persisted preference > default
+  const viewState = resolveViewState(
+    RECURRING_SERIES_VIEW_SPEC,
+    { lens: Array.isArray(raw.lens) ? raw.lens[0] : raw.lens },
+    readSettings(db).viewPreferences[RECURRING_SERIES_SURFACE],
+  );
+
+  return <SeriesDetail data={data} viewState={viewState} basePath={`/recurring/${id}`} />;
 }

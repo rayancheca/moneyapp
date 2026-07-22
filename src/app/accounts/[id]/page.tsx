@@ -11,6 +11,9 @@ import { listAnchors } from "@/services/anchors";
 import { accountSeries } from "@/services/derivation";
 import { listAccountHoldings } from "@/services/holdings";
 import { recentLedgerRows } from "@/services/ledger-rows";
+import { readSettings } from "@/services/settings";
+import { resolveViewState } from "@/lib/view-state";
+import { ACCOUNT_SURFACE, ACCOUNT_VIEW_SPEC } from "@/components/accounts/accounts-view-spec";
 import { AccountHoldingsTable } from "@/components/accounts/AccountHoldingsTable";
 import { AccountNameHeading } from "@/components/accounts/AccountNameHeading";
 import { AnchorForm } from "@/components/accounts/AnchorForm";
@@ -63,13 +66,23 @@ function ChangeChip({ label, cents, liability = false }: { label: string; cents:
 
 export default async function AccountDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = await params;
+  const raw = await searchParams;
   const db = getDb();
   const account = getAccount(db, id);
   if (!account) notFound();
+
+  // switchable-view state (NS#2 Pillar 2): URL > persisted preference > default
+  const balanceView = resolveViewState(
+    ACCOUNT_VIEW_SPEC,
+    { lens: Array.isArray(raw.lens) ? raw.lens[0] : raw.lens },
+    readSettings(db).viewPreferences[ACCOUNT_SURFACE],
+  );
 
   const liability = isLiability(account.type);
   const sign = liability ? -1 : 1;
@@ -161,6 +174,8 @@ export default async function AccountDetailPage({
             <BalanceChartPanel
               points={series.map((p) => ({ day: p.day, balanceCents: sign * p.balanceCents, basis: p.basis }))}
               today={today}
+              viewState={balanceView}
+              basePath={`/accounts/${id}`}
             />
           </section>
         )}

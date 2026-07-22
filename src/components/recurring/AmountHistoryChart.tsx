@@ -11,14 +11,55 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { DataTable, type Column } from "@/components/ui/DataTable";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import type { AmountHistoryPoint } from "@/services/recurring-detail";
-import { shortDate } from "./labels";
+import { longDate, shortDate } from "./labels";
+
+interface AmountRow {
+  key: string;
+  date: string;
+  amountCents: number;
+}
+
+/** The table lens's columns: the tooltip's own facts, as a column each. */
+function AMOUNT_COLUMNS(expectedCents: number | null): Column<AmountRow>[] {
+  return [
+    { key: "date", header: "Date", render: (r) => longDate(r.date) },
+    {
+      key: "amount",
+      header: "Amount",
+      align: "right",
+      render: (r) => <span className="figures">{formatCentsSigned(r.amountCents)}</span>,
+    },
+    // only offered when there IS an expectation to compare against — a
+    // "vs expected" column full of dashes would imply a missing number
+    ...(expectedCents === null
+      ? []
+      : [
+          {
+            key: "variance",
+            header: "vs expected",
+            align: "right" as const,
+            render: (r: AmountRow) =>
+              r.amountCents === expectedCents ? (
+                <span className="text-ink-faint">on plan</span>
+              ) : (
+                <span className="figures text-ink-faint">
+                  {formatCentsSigned(Math.abs(r.amountCents) - Math.abs(expectedCents))}
+                </span>
+              ),
+          },
+        ]),
+  ];
+}
 
 interface AmountHistoryChartProps {
   points: readonly AmountHistoryPoint[];
   /** the expected per-occurrence amount — drawn as a dashed reference line */
   expectedCents: number | null;
+  /** the chart⇄table lens (chart-parity pass 23): the same occurrences as rows */
+  asTable?: boolean;
 }
 
 /**
@@ -27,17 +68,39 @@ interface AmountHistoryChartProps {
  * magnitude (charges and deposits both grow upward); the dashed line marks the
  * expected amount so drift reads at a glance. The signed value lives in the
  * tooltip, where the +/- and flow color carry the direction.
+ *
+ * The table lens (pass 23) lists the same occurrences newest-first with the
+ * signed amount and the variance the bars only imply — the tooltip's numbers,
+ * all visible at once.
  */
-export function AmountHistoryChart({ points, expectedCents }: AmountHistoryChartProps) {
+export function AmountHistoryChart({ points, expectedCents, asTable = false }: AmountHistoryChartProps) {
   const data = useMemo(
     () => points.map((p) => ({ date: p.date, magnitude: Math.abs(p.amountCents) / 100, amountCents: p.amountCents })),
     [points],
   );
 
+  // newest first — the "show me the numbers" reading order (the caption says so)
+  const rows = useMemo(() => data.map((d, i) => ({ ...d, key: `${d.date}#${i}` })).reverse(), [data]);
+  const columns = useMemo(() => AMOUNT_COLUMNS(expectedCents), [expectedCents]);
+
   // one bar can't show drift; below two, the linked list already tells the story
   if (data.length < 2) return null;
 
   const expectedMagnitude = expectedCents === null ? null : Math.abs(expectedCents) / 100;
+
+  if (asTable) {
+    return (
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.key}
+        caption={`Charge amount for each of the ${rows.length} posted occurrences, newest first${
+          expectedCents === null ? "" : `, against the expected ${formatCents(expectedCents)}`
+        }.`}
+        emptyState="No posted occurrences yet."
+      />
+    );
+  }
 
   return (
     <div className="h-44 md:h-52">

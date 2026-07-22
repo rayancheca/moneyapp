@@ -14,7 +14,9 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { CHART_RANGES, rangeLabel, rangeStartDay, type ChartRange } from "@/lib/chart-range";
+import { type ChartRange } from "@/lib/chart-range";
+import { windowPoints } from "@/lib/chart-window";
+import { ChartRangePills } from "@/components/charts/ChartRangePills";
 import {
   compactMoney,
   dateAxisTicks,
@@ -247,20 +249,12 @@ export function ScrubChart({
   const plotRef = useRef<HTMLDivElement>(null);
   const pressRef = useRef<{ startIdx: number; startX: number; moved: boolean } | null>(null);
 
-  const slice = useMemo(() => {
-    let windowed: ScrubPoint[];
-    if (customWindow) {
-      windowed = points.filter(
-        (p) => compareDates(p.day, customWindow.start) >= 0 && compareDates(p.day, customWindow.end) <= 0,
-      );
-    } else {
-      const start = rangeStartDay(range, today);
-      windowed = start ? points.filter((p) => compareDates(p.day, start) >= 0) : points.slice();
-    }
-    // a too-short window (data older than the range, or a hair-thin drag) falls
-    // back to ALL so a pill/drag never lands on an empty chart
-    return windowed.length >= 2 ? windowed : points.slice();
-  }, [points, range, today, customWindow]);
+  // the range/drag → visible-rows math lives in lib/chart-window so the table
+  // lens slices identically (incl. the <2-point fallback to the full series)
+  const slice = useMemo(
+    () => windowPoints(points, today, range, customWindow),
+    [points, range, today, customWindow],
+  );
 
   const lastIdx = slice.length - 1;
   const effectiveIdx = scrubIndex === null ? lastIdx : clampIndex(scrubIndex, slice.length);
@@ -881,9 +875,12 @@ export function ScrubChart({
             </button>
           </div>
         )}
-        <div role="group" aria-label="Chart range" className="flex flex-wrap gap-1.5">
-          {CHART_RANGES.map((r) => pill(r, customWindow ? null : range, selectRange, vivid))}
-        </div>
+        <ChartRangePills
+          active={customWindow ? null : range}
+          onSelect={selectRange}
+          className="flex flex-wrap gap-1.5"
+          press={vivid}
+        />
         {customWindow && (
           <button
             type="button"
@@ -918,9 +915,12 @@ export function ScrubChart({
         )}
       </div>
       ) : (
-        <div role="group" aria-label="Chart range" className="mt-3 flex flex-wrap gap-1.5">
-          {CHART_RANGES.map((r) => pill(r, range, selectRange, vivid))}
-        </div>
+        <ChartRangePills
+          active={range}
+          onSelect={selectRange}
+          className="mt-3 flex flex-wrap gap-1.5"
+          press={vivid}
+        />
       )}
       {/* deterministic scrubbed value for tests + a visible caption echo */}
       <figcaption className="sr-only">{valueText(summary, scrubbing)}</figcaption>
@@ -982,27 +982,6 @@ function LiveDot({
       />
       <circle cx={cx} cy={cy} r={4} fill={accent} />
     </g>
-  );
-}
-
-/** One range pill. `active` is the selected range (null under a custom window,
- * so no pill reads as pressed). `press` adds the vivid press-scale; the sibling
- * charts pass false so their pills stay byte-identical to before. */
-function pill(r: ChartRange, active: ChartRange | null, onChange: (r: ChartRange) => void, press: boolean) {
-  const isActive = r === active;
-  return (
-    <button
-      key={r}
-      type="button"
-      aria-pressed={isActive}
-      aria-label={rangeLabel(r)}
-      onClick={() => onChange(r)}
-      className={`rounded-full px-3 py-1 text-xs font-medium transition-colors duration-(--duration-fast) ${press ? "active:scale-95 " : ""}${
-        isActive ? "bg-accent-soft text-accent" : "text-ink-muted hover:bg-surface-sunken hover:text-ink"
-      }`}
-    >
-      {r}
-    </button>
   );
 }
 

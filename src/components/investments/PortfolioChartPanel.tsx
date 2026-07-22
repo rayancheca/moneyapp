@@ -2,6 +2,8 @@
 
 import { useCallback, type ReactNode } from "react";
 import { ChartFocus } from "@/components/charts/ChartFocus";
+import { isTableLens, LENS_DIMENSION, LENS_LABELS } from "@/components/charts/chart-lens";
+import { ScrubTable } from "@/components/charts/ScrubTable";
 import { Icon } from "@/components/shell/Icon";
 import { NumberRoll } from "@/components/ui/NumberRoll";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
@@ -102,6 +104,9 @@ export function PortfolioChartPanel({
   const canShowReturns = returnDays.length >= 2;
   const isReturns = canShowReturns && (state[viewDim.key] ?? "value") === "returns";
   const isPercent = isReturns && state[unitDim.key] === "percent";
+  // the chart⇄table lens — orthogonal to view/unit: the table shows whichever
+  // metric those two select, so neither switcher becomes a no-op in table mode
+  const isTable = isTableLens(state);
 
   // the RETURN line: cumulative flow-adjusted P/L (deposits removed), aligned 1:1
   // with the value series so the same range slicing + scrub applies — plus the
@@ -149,123 +154,159 @@ export function PortfolioChartPanel({
     [heroText, isPercent],
   );
 
+  // ONE header for both lenses — the table's readout IS the chart's readout
+  const renderHeader = useCallback(
+    (
+      summary: ScrubSummary,
+      scrubbing: boolean,
+      range: ChartRange,
+      customWindow: { start: string; end: string } | null,
+    ) => {
+      const accent = accentOf(summary);
+      const arrow = accent === "gain" ? "▲" : accent === "loss" ? "▼" : "•";
+      const context = scrubbing
+        ? formatDayLong(summary.day)
+        : customWindow
+          ? `${customWindow.start} → ${customWindow.end}`
+          : range === "ALL"
+            ? "all time"
+            : range;
+      // the SECONDARY metric (whatever the hero isn't): value→±$ +(%); return-$→(%); return-%→±$
+      const secondary =
+        !isReturns
+          ? `${formatCentsSigned(summary.deltaCents)}${summary.deltaPct !== null ? ` (${signedPct(summary.deltaPct)})` : ""}`
+          : isPercent
+            ? formatCentsSigned(summary.deltaCents)
+            : summary.deltaPct !== null
+              ? `(${signedPct(summary.deltaPct)})`
+              : "";
+      return (
+        <header className="mb-1">
+          <div className="text-3xl font-semibold tracking-tight sm:text-4xl">
+            <NumberRoll value={heroText(summary)} />
+          </div>
+          <p className={`mt-1 flex items-center gap-2 text-sm font-medium ${ACCENT_TEXT[accent]}`}>
+            <span className="figures">
+              <span aria-hidden>{arrow} </span>
+              {secondary}
+            </span>
+            <span className="font-normal text-ink-faint">· {isReturns ? `return · ${context}` : context}</span>
+            {scrubbing && (
+              <span className="text-ink-faint" aria-hidden>
+                <Icon name="search" className="size-3" />
+              </span>
+            )}
+          </p>
+        </header>
+      );
+    },
+    [isReturns, isPercent, heroText],
+  );
+
+  const formatValue = isPercent ? pctFromScaled : isReturns ? formatCentsSigned : formatCents;
+
   return (
     <ChartFocus
       label="Portfolio"
       defaultRange={defaultRange ?? "ALL"}
       cardClassName="relative"
       renderPanel={(opts) => (
-    <div>
-      {/* pr-9 keeps the right-aligned switchers clear of ChartFocus's top-right
-          focus affordance; flex-wrap protects the three-control return view on
-          narrow screens */}
-      {canShowReturns && (
-        <div className="mb-3 flex flex-wrap items-center justify-end gap-2 pr-9">
-          {isReturns && (
-            <BenchmarkPicker value={benchmarkSymbol} hrefFor={hrefForBenchmark} hasData={benchmark != null} />
-          )}
-          {isReturns && (
+        // rendered INSIDE renderPanel so the focus modal gets the same lens
+        <div>
+          {/* Always rendered (unlike the returns-only controls it hosts) so the
+              lens switcher never vanishes on a one-day portfolio — and so the
+              pr-9 clearance for ChartFocus's top-right focus button is
+              unconditional, which is why renderHeader no longer carries it.
+              flex-wrap protects the four-control return view on narrow screens. */}
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-2 pr-9">
+            {canShowReturns && isReturns && !isTable && (
+              <BenchmarkPicker value={benchmarkSymbol} hrefFor={hrefForBenchmark} hasData={benchmark != null} />
+            )}
+            {canShowReturns && isReturns && (
+              <ViewSwitcher
+                dimension={unitDim}
+                value={state[unitDim.key] ?? "dollar"}
+                onSelect={(v) => setView(unitDim.key, v)}
+                labels={PORTFOLIO_UNIT_LABELS}
+                ariaLabel="Return unit"
+              />
+            )}
+            {canShowReturns && (
+              <ViewSwitcher
+                dimension={viewDim}
+                value={isReturns ? "returns" : "value"}
+                onSelect={(v) => setView(viewDim.key, v)}
+                labels={PORTFOLIO_VIEW_LABELS}
+                ariaLabel="Portfolio chart view"
+              />
+            )}
             <ViewSwitcher
-              dimension={unitDim}
-              value={state[unitDim.key] ?? "dollar"}
-              onSelect={(v) => setView(unitDim.key, v)}
-              labels={PORTFOLIO_UNIT_LABELS}
-              ariaLabel="Return unit"
+              dimension={LENS_DIMENSION}
+              value={isTable ? "table" : "chart"}
+              onSelect={(v) => setView(LENS_DIMENSION.key, v)}
+              labels={LENS_LABELS}
+              ariaLabel="Portfolio lens"
+            />
+          </div>
+          {/* the legends describe overlay LINES, which the table doesn't draw */}
+          {!isTable && benchmarkCompare && (
+            <BenchmarkLegend
+              label={benchmark!.label}
+              totalPct={benchmarkTotalPct}
+              sinceDay={benchmarkSinceDay}
+              youSwatchClass={youSwatchClass}
             />
           )}
-          <ViewSwitcher
-            dimension={viewDim}
-            value={isReturns ? "returns" : "value"}
-            onSelect={(v) => setView(viewDim.key, v)}
-            labels={PORTFOLIO_VIEW_LABELS}
-            ariaLabel="Portfolio chart view"
-          />
+          {!isTable && replayCompare && replaySummary && (
+            <ReplayLegend
+              label={benchmark!.label}
+              end={replaySummary}
+              sinceDay={returnDays[0]!.day}
+              youSwatchClass={youSwatchClass}
+            />
+          )}
+          {isTable ? (
+            <ScrubTable
+              points={chartPoints}
+              today={today}
+              range={opts.activeRange}
+              onRangeChange={opts.onRangeChange}
+              summarize={summarize}
+              renderHeader={renderHeader}
+              formatValue={formatValue}
+              valueHeader={isReturns ? "Return" : "Value"}
+              subject={isReturns ? "Portfolio return by day" : "Portfolio value by day"}
+              emptyState="No portfolio history yet."
+            />
+          ) : (
+            <ScrubChart
+              points={chartPoints}
+              today={today}
+              defaultRange={defaultRange}
+              activeRange={opts.activeRange}
+              onRangeChange={opts.onRangeChange}
+              heightClass={opts.heightClass}
+              summarize={summarize}
+              accentOf={accentOf}
+              valueText={valueText}
+              formatValue={formatValue}
+              {...(isPercent ? { formatExtreme: pctFromScaled } : {})}
+              {...(compareLine ? { compareLine } : {})}
+              showExtremes={isReturns}
+              showAxes
+              selectable
+              ariaLabel={
+                isReturns
+                  ? "Portfolio return over time — scrub to inspect a day"
+                  : "Portfolio value over time — scrub to inspect a day"
+              }
+              renderHeader={renderHeader}
+            />
+          )}
+          {stats && (stats.bestDay || stats.worstDay) && <ReturnStatsList stats={stats} isPercent={isPercent} />}
+          {decomposition && <DecompositionBar decomposition={decomposition} />}
+          {footer}
         </div>
-      )}
-      {benchmarkCompare && (
-        <BenchmarkLegend
-          label={benchmark!.label}
-          totalPct={benchmarkTotalPct}
-          sinceDay={benchmarkSinceDay}
-          youSwatchClass={youSwatchClass}
-        />
-      )}
-      {replayCompare && replaySummary && (
-        <ReplayLegend
-          label={benchmark!.label}
-          end={replaySummary}
-          sinceDay={returnDays[0]!.day}
-          youSwatchClass={youSwatchClass}
-        />
-      )}
-      <ScrubChart
-        points={chartPoints}
-        today={today}
-        defaultRange={defaultRange}
-        activeRange={opts.activeRange}
-        onRangeChange={opts.onRangeChange}
-        heightClass={opts.heightClass}
-        summarize={summarize}
-        accentOf={accentOf}
-        valueText={valueText}
-        formatValue={isPercent ? pctFromScaled : isReturns ? formatCentsSigned : formatCents}
-        {...(isPercent ? { formatExtreme: pctFromScaled } : {})}
-        {...(compareLine ? { compareLine } : {})}
-        showExtremes={isReturns}
-        showAxes
-        selectable
-        ariaLabel={
-          isReturns
-            ? "Portfolio return over time — scrub to inspect a day"
-            : "Portfolio value over time — scrub to inspect a day"
-        }
-        renderHeader={(summary, scrubbing, range, customWindow) => {
-          const accent = accentOf(summary);
-          const arrow = accent === "gain" ? "▲" : accent === "loss" ? "▼" : "•";
-          const context = scrubbing
-            ? formatDayLong(summary.day)
-            : customWindow
-              ? `${customWindow.start} → ${customWindow.end}`
-              : range === "ALL"
-                ? "all time"
-                : range;
-          // the SECONDARY metric (whatever the hero isn't): value→±$ +(%); return-$→(%); return-%→±$
-          const secondary =
-            !isReturns
-              ? `${formatCentsSigned(summary.deltaCents)}${summary.deltaPct !== null ? ` (${signedPct(summary.deltaPct)})` : ""}`
-              : isPercent
-                ? formatCentsSigned(summary.deltaCents)
-                : summary.deltaPct !== null
-                  ? `(${signedPct(summary.deltaPct)})`
-                  : "";
-          return (
-            // pr-9 reserves clearance for ChartFocus's top-right focus button in
-            // the no-switcher state (canShowReturns === false: this header is the
-            // top element and would otherwise sit under the button)
-            <header className="mb-1 pr-9">
-              <div className="text-3xl font-semibold tracking-tight sm:text-4xl">
-                <NumberRoll value={heroText(summary)} />
-              </div>
-              <p className={`mt-1 flex items-center gap-2 text-sm font-medium ${ACCENT_TEXT[accent]}`}>
-                <span className="figures">
-                  <span aria-hidden>{arrow} </span>
-                  {secondary}
-                </span>
-                <span className="font-normal text-ink-faint">· {isReturns ? `return · ${context}` : context}</span>
-                {scrubbing && (
-                  <span className="text-ink-faint" aria-hidden>
-                    <Icon name="search" className="size-3" />
-                  </span>
-                )}
-              </p>
-            </header>
-          );
-        }}
-      />
-      {stats && (stats.bestDay || stats.worstDay) && <ReturnStatsList stats={stats} isPercent={isPercent} />}
-      {decomposition && <DecompositionBar decomposition={decomposition} />}
-      {footer}
-    </div>
       )}
     />
   );

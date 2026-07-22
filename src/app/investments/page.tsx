@@ -62,6 +62,7 @@ export default async function InvestmentsPage({
     {
       view: Array.isArray(raw.view) ? raw.view[0] : raw.view,
       unit: Array.isArray(raw.unit) ? raw.unit[0] : raw.unit,
+      lens: Array.isArray(raw.lens) ? raw.lens[0] : raw.lens,
     },
     settings.viewPreferences[INVESTMENTS_SURFACE],
   );

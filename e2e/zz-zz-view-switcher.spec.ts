@@ -196,3 +196,121 @@ async function unitGroupRestore(page: Page, href: string): Promise<void> {
   await page.goto(href);
   await expect(page.getByRole("slider", { name: /price over time/ })).toBeVisible();
 }
+
+/* ─────────────────────────── the chart⇄table LENS (pass 23) ───────────────────────────
+ * Roadmap #2: the honest "show me the raw numbers" escape hatch on every chart.
+ * `lens` is a THIRD view dimension (URL `?lens=table` + persisted per surface), so these
+ * tests carry the same two-step restore as their siblings above: click back to the default
+ * AND re-navigate with no param, proving app_settings rolled back too. Leaving a persisted
+ * lens=table would render a DataTable where later specs assert a chart role.
+ *
+ * Every lens table is located BY ITS CAPTION (DataTable renders it as the accessible name) —
+ * these pages already carry other tables (holdings, anchors, transactions), so a bare
+ * getByRole("table") is a strict-mode violation AND would not prove the lens rendered. */
+
+/** Restore a surface's lens to the default (Chart) — click, then prove persistence. */
+async function lensRestore(page: Page, group: string, href: string, table: RegExp): Promise<void> {
+  await page.getByRole("group", { name: group }).getByRole("button", { name: "Chart" }).click();
+  await expect(page).not.toHaveURL(/lens=table/);
+  await page.goto(href);
+  await expect(page.getByRole("table", { name: table })).toHaveCount(0);
+  expect(
+    await page.getByRole("group", { name: group }).getByRole("button", { name: "Chart" }).getAttribute("aria-pressed"),
+  ).toBe("true");
+}
+
+test("the balance chart switches chart↔table, and the table shows the chart's own window", async ({ page }) => {
+  await page.goto("/accounts");
+  await page.locator('section[aria-label="Robinhood"] a[href^="/accounts/"]').first().click();
+  await expect(page.getByRole("slider", { name: /Balance over time/ })).toBeVisible();
+  const href = page.url().split("?")[0]!;
+
+  await page.getByRole("group", { name: "Balance lens" }).getByRole("button", { name: "Table" }).click();
+  await expect(page).toHaveURL(/[?&]lens=table\b/);
+  // the caption states the window the rows actually cover — the chart's own 3M default
+  const table = page.getByRole("table", { name: /Balance by day — 3 months/ });
+  await expect(table).toBeVisible();
+  await expect(page.getByRole("slider", { name: /Balance over time/ })).toHaveCount(0);
+  // the rows carry the day, the balance, and the BASIS — the dashed-line honesty in words
+  await expect(table.getByRole("columnheader", { name: "Day" })).toBeVisible();
+  await expect(table.getByRole("columnheader", { name: "Balance" })).toBeVisible();
+  await expect(table.getByRole("columnheader", { name: "Basis" })).toBeVisible();
+  // the range pills come along, so the window is still steerable from the table
+  await expect(page.getByRole("group", { name: "Chart range" })).toBeVisible();
+  expect(gating(await analyzeSettled(page))).toEqual([]);
+
+  // changing the range re-windows the ROWS, and the caption follows honestly
+  await page.getByRole("group", { name: "Chart range" }).getByRole("button", { name: "1 year" }).click();
+  await expect(page.getByRole("table", { name: /Balance by day — 1 year/ })).toBeVisible();
+
+  // sticky across a fresh visit with no param, then restored for sibling specs
+  await page.goto(href);
+  await expect(page.getByRole("table", { name: /Balance by day/ })).toBeVisible();
+  await lensRestore(page, "Balance lens", href, /Balance by day/);
+});
+
+test("the portfolio lens tables the SAME metric the view/unit switchers select", async ({ page }) => {
+  await page.goto("/investments");
+  await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
+
+  await page.getByRole("group", { name: "Portfolio lens" }).getByRole("button", { name: "Table" }).click();
+  await expect(page).toHaveURL(/[?&]lens=table\b/);
+  const valueTable = page.getByRole("table", { name: /Portfolio value by day/ });
+  await expect(valueTable).toBeVisible();
+  await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toHaveCount(0);
+  await expect(valueTable.getByRole("columnheader", { name: "Value" })).toBeVisible();
+  expect(gating(await analyzeSettled(page))).toEqual([]);
+
+  // the lens is ORTHOGONAL to view: switching to Return re-columns the SAME table,
+  // so neither switcher becomes a no-op in table mode
+  await page.getByRole("group", { name: "Portfolio chart view" }).getByRole("button", { name: "Return" }).click();
+  await expect(page).toHaveURL(/[?&]view=returns\b/);
+  await expect(page).toHaveURL(/[?&]lens=table\b/);
+  const returnTable = page.getByRole("table", { name: /Portfolio return by day/ });
+  await expect(returnTable).toBeVisible();
+  await expect(returnTable.getByRole("columnheader", { name: "Return" })).toBeVisible();
+  await expect(page.getByRole("table", { name: /Portfolio value by day/ })).toHaveCount(0);
+
+  // back to Value + Chart, and prove the persisted layer rolled back too
+  await page.getByRole("group", { name: "Portfolio chart view" }).getByRole("button", { name: "Value" }).click();
+  await expect(page).not.toHaveURL(/view=returns/);
+  await lensRestore(page, "Portfolio lens", "/investments", /Portfolio .* by day/);
+  await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
+});
+
+test("a holding's table names its trade days, and the recurring amount history tables too", async ({ page }) => {
+  // ── the holding lens ──
+  await page.goto("/investments");
+  const holdingHref = await page.locator('a[href^="/investments/"]').first().getAttribute("href");
+  expect(holdingHref).toBeTruthy();
+  await page.goto(holdingHref!);
+  await expect(page.getByRole("slider", { name: /price over time/ })).toBeVisible();
+
+  await page.getByRole("group", { name: "Holding lens" }).getByRole("button", { name: "Table" }).click();
+  await expect(page).toHaveURL(/[?&]lens=table\b/);
+  const table = page.getByRole("table", { name: /close by day/ });
+  await expect(table).toBeVisible();
+  await expect(table.getByRole("columnheader", { name: "Close" })).toBeVisible();
+  // the price chart pins buy/sell marks; the table names them in a column
+  await expect(table.getByRole("columnheader", { name: "Trade" })).toBeVisible();
+  expect(gating(await analyzeSettled(page))).toEqual([]);
+  await lensRestore(page, "Holding lens", holdingHref!, /close by day/);
+
+  // ── the recurring amount-history lens ──
+  await page.goto("/recurring");
+  await page.getByRole("button", { name: /Detect now/ }).click();
+  await page.goto("/recurring?tab=all");
+  await page.locator('a[href^="/recurring/"]').first().click();
+  const seriesHref = page.url().split("?")[0]!;
+  const lens = page.getByRole("group", { name: "Amount history lens" });
+  // not every series has ≥2 posted occurrences — only assert where the card exists
+  if ((await lens.count()) > 0) {
+    await lens.getByRole("button", { name: "Table" }).click();
+    await expect(page).toHaveURL(/[?&]lens=table\b/);
+    const amounts = page.getByRole("table", { name: /Charge amount for each/ });
+    await expect(amounts).toBeVisible();
+    await expect(amounts.getByRole("columnheader", { name: "Amount" })).toBeVisible();
+    expect(gating(await analyzeSettled(page))).toEqual([]);
+    await lensRestore(page, "Amount history lens", seriesHref, /Charge amount for each/);
+  }
+});

@@ -1,3 +1,4 @@
+import { LENS_DIMENSION } from "@/components/charts/chart-lens";
 import { type ViewSpec } from "@/lib/view-state";
 
 /**
@@ -18,6 +19,8 @@ export const INVESTMENTS_SURFACE = "investments";
 export const PORTFOLIO_VIEW_SPEC: ViewSpec = [
   { key: "view", options: ["value", "returns"] },
   { key: "unit", options: ["dollar", "percent"] },
+  // APPENDED, never inserted: PortfolioChartPanel indexes [0]/[1] positionally
+  LENS_DIMENSION,
 ];
 
 export const PORTFOLIO_VIEW_LABELS: Record<string, string> = { value: "Value", returns: "Return" };
@@ -36,6 +39,8 @@ export const HOLDING_SURFACE = "holding";
 export const HOLDING_VIEW_SPEC: ViewSpec = [
   { key: "view", options: ["value", "returns"] },
   { key: "unit", options: ["dollar", "percent"] },
+  // APPENDED, never inserted: HoldingChartPanel indexes [0]/[1] positionally
+  LENS_DIMENSION,
 ];
 
 export const HOLDING_VIEW_LABELS: Record<string, string> = { value: "Price", returns: "Return" };

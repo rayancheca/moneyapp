@@ -4,6 +4,11 @@ import { useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { renameSeriesAction, setSeriesStatusAction } from "@/app/recurring/actions";
+import { isTableLens, LENS_DIMENSION, LENS_LABELS } from "@/components/charts/chart-lens";
+import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
+import { useViewState } from "@/hooks/useViewState";
+import type { ViewState } from "@/lib/view-state";
+import { RECURRING_SERIES_SURFACE, RECURRING_SERIES_VIEW_SPEC } from "./recurring-view-spec";
 import { Badge } from "@/components/ui/Badge";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { CategoryChip } from "@/components/ui/CategoryChip";
@@ -41,9 +46,30 @@ const STATUS_TONE: Record<SeriesStatus, "info" | "positive" | "neutral"> = {
  * membership cluster (attach / detach / merge) reshapes the series — every write
  * a value-returning action that refreshes this server-rendered page.
  */
-export function SeriesDetail({ data }: { data: SeriesDetailData }) {
+/** stable identity so useViewState's setView doesn't churn every render */
+const EMPTY_PARAMS: Record<string, string> = {};
+
+export function SeriesDetail({
+  data,
+  viewState,
+  basePath,
+}: {
+  data: SeriesDetailData;
+  /** the RSC-resolved active view (URL > persisted > default) */
+  viewState: ViewState;
+  /** this series' own route (the lens switcher navigates within it) */
+  basePath: string;
+}) {
   const router = useRouter();
   const [, startTransition] = useTransition();
+  const { state, setView } = useViewState({
+    surface: RECURRING_SERIES_SURFACE,
+    spec: RECURRING_SERIES_VIEW_SPEC,
+    state: viewState,
+    basePath,
+    baseParams: EMPTY_PARAMS,
+  });
+  const amountsAsTable = isTableLens(state);
 
   function onChanged(): void {
     startTransition(() => router.refresh());
@@ -188,8 +214,23 @@ export function SeriesDetail({ data }: { data: SeriesDetailData }) {
 
         {data.amountHistory.length >= 2 ? (
           <SurfaceCard>
-            <h2 className="mb-3 text-sm font-medium">Amount history</h2>
-            <AmountHistoryChart points={data.amountHistory} expectedCents={data.nextExpectedAmountCents} />
+            {/* the lens switcher shares the heading line — this card has no
+                ChartFocus button, so it needs no pr-9 clearance */}
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-medium">Amount history</h2>
+              <ViewSwitcher
+                dimension={LENS_DIMENSION}
+                value={amountsAsTable ? "table" : "chart"}
+                onSelect={(v) => setView(LENS_DIMENSION.key, v)}
+                labels={LENS_LABELS}
+                ariaLabel="Amount history lens"
+              />
+            </div>
+            <AmountHistoryChart
+              points={data.amountHistory}
+              expectedCents={data.nextExpectedAmountCents}
+              asTable={amountsAsTable}
+            />
           </SurfaceCard>
         ) : null}
 

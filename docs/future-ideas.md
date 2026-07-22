@@ -101,8 +101,19 @@ peak/trough extremes · multi-series overlays.** What each other chart has, and 
    (Balance, Portfolio, Holding) so their range lifts to ChartFocus (inline↔modal parity). Requires the pages
    to stop double-wrapping in `<SurfaceCard>` (ChartFocus provides its own, like the dashboard hero does) →
    small page restructure + baseline regen on 3 surfaces. **This is the clean next slice.**
-2. **Chart↔table toggle everywhere** — the honest "show me the numbers" escape hatch on Balance / Portfolio /
-   Holding / AmountHistory (reuse `<DataTable>` + the `<ViewSwitcher>` the Sankey already uses).
+2. ~~**Chart↔table toggle everywhere**~~ — ✅ **SHIPPED pass 23.** A universal `lens` view dimension
+   (`{key:"lens", options:["chart","table"]}` — URL `?lens=table` + persisted per surface) on Balance /
+   Portfolio / Holding / AmountHistory. The three ScrubChart panels share one **`ScrubTable`** that renders
+   the panel's OWN `renderHeader` + `summarize` + `formatValue`, so the table's readout IS the chart's
+   readout and cannot drift. The range→rows math moved out of ScrubChart's private memo into pure
+   **`lib/chart-window.ts`** (`windowedPoints`/`windowPoints`/`hasEstimatedDay`, 100% covered) — both lenses
+   slice identically INCLUDING the <2-point fallback to the full series, and the new `fellBack` flag lets the
+   caption say so instead of naming a window it isn't showing. Pills extracted to **`ChartRangePills`** so the
+   table can still steer the window. Estimated days (`complete:false`, drawn dashed) get a Basis column so the
+   table never launders them as exact. Deliberately a SEPARATE dimension, not another `view` option: "the
+   Return numbers, as a table" has to be representable. Known limits: the ALL-range table is unpaginated (a
+   long series is a long table), and a drag-zoom window is dropped on toggle (it lives inside the unmounting
+   ScrubChart; the range pill survives because ChartFocus owns it).
 3. **AllocationDonut hover-highlight** (chart-as-filter) — hover/tap a slice → highlight it + its legend row,
    dim the rest. Self-contained (one component, one baseline). Palette is already categorical (done pass 16).
 4. **Chart-type switchers on `/spending`** — the remaining NS#2 Pillar-2 lenses (stacked/donut/heatmap already

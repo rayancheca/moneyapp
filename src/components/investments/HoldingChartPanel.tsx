@@ -2,12 +2,16 @@
 
 import { useCallback, useMemo } from "react";
 import { ChartFocus } from "@/components/charts/ChartFocus";
+import { isTableLens, LENS_DIMENSION, LENS_LABELS } from "@/components/charts/chart-lens";
+import { ScrubTable, type ScrubTableRow } from "@/components/charts/ScrubTable";
+import type { Column } from "@/components/ui/DataTable";
 import { Icon } from "@/components/shell/Icon";
 import { NumberRoll } from "@/components/ui/NumberRoll";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { useViewState } from "@/hooks/useViewState";
 import { viewHrefQuery, type ViewState } from "@/lib/view-state";
 import { DEFAULT_BENCHMARK } from "@/lib/benchmark-symbol";
+import type { ChartRange } from "@/lib/chart-range";
 import { formatDayLong } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { type PortfolioDay } from "@/lib/portfolio-returns";
@@ -105,6 +109,11 @@ export function HoldingChartPanel({
   const canShowReturns = returnDays.length >= 2;
   const isReturns = canShowReturns && (state[viewDim.key] ?? "value") === "returns";
   const isPercent = isReturns && state[unitDim.key] === "percent";
+  // the chart⇄table lens — orthogonal to view/unit (the table shows whichever
+  // metric those select). Deliberately NOT folded into resetRangeKey or the
+  // ScrubChart key below: both must stay a pure function of isReturns, or a
+  // lens toggle would silently reset the range pill / drop the drag window.
+  const isTable = isTableLens(state);
 
   const pricePoints: ScrubPoint[] = useMemo(
     () =>
@@ -172,6 +181,87 @@ export function HoldingChartPanel({
     [heroText, isPercent],
   );
 
+  // ONE header for both lenses — the table's readout IS the chart's readout
+  const renderHeader = useCallback(
+    (
+      summary: ScrubSummary,
+      scrubbing: boolean,
+      range: ChartRange,
+      customWindow: { start: string; end: string } | null,
+    ) => {
+      const accent = accentOf(summary);
+      const arrow = accent === "gain" ? "▲" : accent === "loss" ? "▼" : "•";
+      // the return baseline is the first day the position was held AND
+      // priced — earlier appreciation is not measured, so never say "all
+      // time"; name the basis day instead
+      const context = scrubbing
+        ? formatDayLong(summary.day)
+        : customWindow
+          ? `${customWindow.start} → ${customWindow.end}`
+          : range === "ALL"
+            ? isReturns
+              ? `since ${formatDayLong(returnDays[0]!.day)}`
+              : "all time"
+            : range;
+      // the SECONDARY metric (whatever the hero isn't): price→±$ +(%); return-$→(%); return-%→±$
+      const secondary =
+        !isReturns
+          ? `${formatCentsSigned(summary.deltaCents)}${summary.deltaPct !== null ? ` (${signedPct(summary.deltaPct)})` : ""}`
+          : isPercent
+            ? formatCentsSigned(summary.deltaCents)
+            : summary.deltaPct !== null
+              ? `(${signedPct(summary.deltaPct)})`
+              : "";
+      return (
+        <header className="mb-1">
+          <div className="text-2xl font-semibold tracking-tight sm:text-3xl">
+            <NumberRoll value={heroText(summary)} />
+          </div>
+          <p className={`mt-1 flex items-center gap-2 text-sm font-medium ${ACCENT_TEXT[accent]}`}>
+            <span className="figures">
+              <span aria-hidden>{arrow} </span>
+              {secondary}
+            </span>
+            <span className="font-normal text-ink-faint">
+              · {isReturns ? `your return · ${context} · at daily closes` : context}
+            </span>
+            {scrubbing && (
+              <span className="text-ink-faint" aria-hidden>
+                <Icon name="search" className="size-3" />
+              </span>
+            )}
+          </p>
+        </header>
+      );
+    },
+    [isReturns, isPercent, heroText, returnDays],
+  );
+
+  // the price chart pins buy/sell marks on the line; the table names them in a
+  // column so a trade day is as visible in rows as it is on the plot
+  const markByDay = useMemo(() => new Map(marks.map((m) => [m.day, m.kind] as const)), [marks]);
+  const tradeColumn = useMemo<Column<ScrubTableRow>[]>(
+    () => [
+      {
+        key: "trade",
+        header: "Trade",
+        render: (r) => {
+          const kind = markByDay.get(r.point.day);
+          return kind ? (
+            <span className={kind === "buy" ? "text-positive" : "text-negative"}>
+              {kind === "buy" ? "Buy" : "Sell"}
+            </span>
+          ) : (
+            <span className="text-ink-faint">—</span>
+          );
+        },
+      },
+    ],
+    [markByDay],
+  );
+
+  const formatValue = isPercent ? pctFromScaled : isReturns ? formatCentsSigned : formatCents;
+
   return (
     <ChartFocus
       label="Holding"
@@ -179,128 +269,110 @@ export function HoldingChartPanel({
       cardClassName="relative"
       resetRangeKey={isReturns ? "returns" : "price"}
       renderPanel={(opts) => (
-    <div>
-      {/* pr-9 keeps the right-aligned switchers clear of ChartFocus's top-right
-          focus affordance; flex-wrap protects the three-control return view */}
-      {canShowReturns && (
-        <div className="mb-3 flex flex-wrap items-center justify-end gap-2 pr-9">
-          {isReturns && (
-            <BenchmarkPicker value={benchmarkSymbol} hrefFor={hrefForBenchmark} hasData={benchmark != null} />
-          )}
-          {isReturns && (
+        // rendered INSIDE renderPanel so the focus modal gets the same lens
+        <div>
+          {/* Always rendered (unlike the returns-only controls it hosts) so the
+              lens switcher never vanishes on a thin holding — and so the pr-9
+              clearance for ChartFocus's top-right focus button is unconditional,
+              which is why renderHeader no longer carries it. flex-wrap protects
+              the four-control return view on narrow screens. */}
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-2 pr-9">
+            {canShowReturns && isReturns && !isTable && (
+              <BenchmarkPicker value={benchmarkSymbol} hrefFor={hrefForBenchmark} hasData={benchmark != null} />
+            )}
+            {canShowReturns && isReturns && (
+              <ViewSwitcher
+                dimension={unitDim}
+                value={state[unitDim.key] ?? "dollar"}
+                onSelect={(v) => setView(unitDim.key, v)}
+                labels={PORTFOLIO_UNIT_LABELS}
+                ariaLabel="Return unit"
+              />
+            )}
+            {canShowReturns && (
+              <ViewSwitcher
+                dimension={viewDim}
+                value={isReturns ? "returns" : "value"}
+                onSelect={(v) => setView(viewDim.key, v)}
+                labels={HOLDING_VIEW_LABELS}
+                ariaLabel="Holding chart view"
+              />
+            )}
             <ViewSwitcher
-              dimension={unitDim}
-              value={state[unitDim.key] ?? "dollar"}
-              onSelect={(v) => setView(unitDim.key, v)}
-              labels={PORTFOLIO_UNIT_LABELS}
-              ariaLabel="Return unit"
+              dimension={LENS_DIMENSION}
+              value={isTable ? "table" : "chart"}
+              onSelect={(v) => setView(LENS_DIMENSION.key, v)}
+              labels={LENS_LABELS}
+              ariaLabel="Holding lens"
+            />
+          </div>
+          {/* the legends describe overlay LINES, which the table doesn't draw */}
+          {!isTable && benchmarkCompare && (
+            <BenchmarkLegend
+              label={benchmark!.label}
+              totalPct={benchmarkTotalPct}
+              sinceDay={benchmarkSinceDay}
+              youSwatchClass={youSwatchClass}
             />
           )}
-          <ViewSwitcher
-            dimension={viewDim}
-            value={isReturns ? "returns" : "value"}
-            onSelect={(v) => setView(viewDim.key, v)}
-            labels={HOLDING_VIEW_LABELS}
-            ariaLabel="Holding chart view"
-          />
+          {!isTable && replayCompare && replaySummary && (
+            <ReplayLegend
+              label={benchmark!.label}
+              end={replaySummary}
+              sinceDay={returnDays[0]!.day}
+              youSwatchClass={youSwatchClass}
+            />
+          )}
+          {isTable ? (
+            <ScrubTable
+              // the price/return series are not day-aligned; the range is reset
+              // by ChartFocus's resetRangeKey on a view switch, same as the chart
+              points={chartPoints}
+              today={today}
+              range={opts.activeRange}
+              onRangeChange={opts.onRangeChange}
+              summarize={summarize}
+              renderHeader={renderHeader}
+              formatValue={formatValue}
+              valueHeader={isReturns ? "Return" : "Close"}
+              subject={isReturns ? `${symbol} return by day` : `${symbol} close by day`}
+              {...(isReturns ? {} : { extraColumns: tradeColumn })}
+              emptyState="No price history yet."
+            />
+          ) : (
+            <ScrubChart
+              // the price and return series are NOT day-aligned (price carries to
+              // today; returns end at the last close / final trade), so remount on a
+              // view switch — a retained drag-window or range pill from the other
+              // series would silently fall back to ALL data captioned as that window
+              key={isReturns ? "returns" : "price"}
+              points={chartPoints}
+              today={today}
+              activeRange={opts.activeRange}
+              onRangeChange={opts.onRangeChange}
+              heightClass={opts.heightClass}
+              summarize={summarize}
+              accentOf={accentOf}
+              valueText={valueText}
+              formatValue={formatValue}
+              {...(isPercent ? { formatExtreme: pctFromScaled } : {})}
+              {...(compareLine ? { compareLine } : {})}
+              showExtremes={isReturns}
+              showAxes
+              selectable
+              marks={isReturns ? [] : marks}
+              refLine={!isReturns && avgCostCents !== null ? { cents: avgCostCents, label: "Avg cost" } : null}
+              ariaLabel={
+                isReturns
+                  ? `${symbol} return over time — scrub to inspect a day`
+                  : `${symbol} price over time — scrub to inspect a day`
+              }
+              renderHeader={renderHeader}
+            />
+          )}
+          {stats && (stats.bestDay || stats.worstDay) && <ReturnStatsList stats={stats} isPercent={isPercent} />}
+          {decomposition && <DecompositionBar decomposition={decomposition} />}
         </div>
-      )}
-      {benchmarkCompare && (
-        <BenchmarkLegend
-          label={benchmark!.label}
-          totalPct={benchmarkTotalPct}
-          sinceDay={benchmarkSinceDay}
-          youSwatchClass={youSwatchClass}
-        />
-      )}
-      {replayCompare && replaySummary && (
-        <ReplayLegend
-          label={benchmark!.label}
-          end={replaySummary}
-          sinceDay={returnDays[0]!.day}
-          youSwatchClass={youSwatchClass}
-        />
-      )}
-      <ScrubChart
-        // the price and return series are NOT day-aligned (price carries to
-        // today; returns end at the last close / final trade), so remount on a
-        // view switch — a retained drag-window or range pill from the other
-        // series would silently fall back to ALL data captioned as that window
-        key={isReturns ? "returns" : "price"}
-        points={chartPoints}
-        today={today}
-        activeRange={opts.activeRange}
-        onRangeChange={opts.onRangeChange}
-        heightClass={opts.heightClass}
-        summarize={summarize}
-        accentOf={accentOf}
-        valueText={valueText}
-        formatValue={isPercent ? pctFromScaled : isReturns ? formatCentsSigned : formatCents}
-        {...(isPercent ? { formatExtreme: pctFromScaled } : {})}
-        {...(compareLine ? { compareLine } : {})}
-        showExtremes={isReturns}
-        showAxes
-        selectable
-        marks={isReturns ? [] : marks}
-        refLine={!isReturns && avgCostCents !== null ? { cents: avgCostCents, label: "Avg cost" } : null}
-        ariaLabel={
-          isReturns
-            ? `${symbol} return over time — scrub to inspect a day`
-            : `${symbol} price over time — scrub to inspect a day`
-        }
-        renderHeader={(summary, scrubbing, range, customWindow) => {
-          const accent = accentOf(summary);
-          const arrow = accent === "gain" ? "▲" : accent === "loss" ? "▼" : "•";
-          // the return baseline is the first day the position was held AND
-          // priced — earlier appreciation is not measured, so never say "all
-          // time"; name the basis day instead
-          const context = scrubbing
-            ? formatDayLong(summary.day)
-            : customWindow
-              ? `${customWindow.start} → ${customWindow.end}`
-              : range === "ALL"
-                ? isReturns
-                  ? `since ${formatDayLong(returnDays[0]!.day)}`
-                  : "all time"
-                : range;
-          // the SECONDARY metric (whatever the hero isn't): price→±$ +(%); return-$→(%); return-%→±$
-          const secondary =
-            !isReturns
-              ? `${formatCentsSigned(summary.deltaCents)}${summary.deltaPct !== null ? ` (${signedPct(summary.deltaPct)})` : ""}`
-              : isPercent
-                ? formatCentsSigned(summary.deltaCents)
-                : summary.deltaPct !== null
-                  ? `(${signedPct(summary.deltaPct)})`
-                  : "";
-          return (
-            // pr-9 reserves clearance for ChartFocus's top-right focus button in
-            // the no-switcher state (canShowReturns === false: this header is the
-            // top element and would otherwise sit under the button)
-            <header className="mb-1 pr-9">
-              <div className="text-2xl font-semibold tracking-tight sm:text-3xl">
-                <NumberRoll value={heroText(summary)} />
-              </div>
-              <p className={`mt-1 flex items-center gap-2 text-sm font-medium ${ACCENT_TEXT[accent]}`}>
-                <span className="figures">
-                  <span aria-hidden>{arrow} </span>
-                  {secondary}
-                </span>
-                <span className="font-normal text-ink-faint">
-                  · {isReturns ? `your return · ${context} · at daily closes` : context}
-                </span>
-                {scrubbing && (
-                  <span className="text-ink-faint" aria-hidden>
-                    <Icon name="search" className="size-3" />
-                  </span>
-                )}
-              </p>
-            </header>
-          );
-        }}
-      />
-      {stats && (stats.bestDay || stats.worstDay) && <ReturnStatsList stats={stats} isPercent={isPercent} />}
-      {decomposition && <DecompositionBar decomposition={decomposition} />}
-    </div>
       )}
     />
   );
