@@ -148,3 +148,41 @@ test("the P/L calendar opens a day sheet with per-holding detail", async ({ page
   const gating = results.violations.filter((v) => v.impact === "critical" || v.impact === "serious");
   expect(gating.map((v) => ({ id: v.id, nodes: v.nodes.length }))).toEqual([]);
 });
+
+/** Every wedge's `opacity` attribute, in slice order. */
+async function wedgeOpacities(page: Page): Promise<(string | null)[]> {
+  return page.locator("path.recharts-sector").evaluateAll((els) => els.map((e) => e.getAttribute("opacity")));
+}
+
+test("the allocation donut highlights a holding from its legend, and is keyboard-reachable", async ({ page }) => {
+  await gotoInvestments(page);
+  const legend = page.getByRole("list", { name: "Allocation legend" });
+  await expect(legend).toBeVisible();
+  await legend.scrollIntoViewIfNeeded();
+
+  // RESTING: nothing highlighted, so nothing is dimmed — this is the state the
+  // visual baselines capture, and it must stay untouched by the feature
+  const rest = await wedgeOpacities(page);
+  expect(rest.length).toBeGreaterThan(1);
+  expect(rest.every((o) => o === "1")).toBe(true);
+
+  // KEYBOARD: the legend rows are the existing tab stops, so FOCUS drives the
+  // same highlight a pointer does — no second set of tab stops on the wedges
+  const rows = legend.getByRole("link");
+  await rows.nth(1).focus();
+  const focused = await wedgeOpacities(page);
+  expect(focused[1]).toBe("1"); // the focused holding stays lit
+  expect(focused.filter((o) => o === "1")).toHaveLength(1); // every other wedge recedes
+
+  // the legend swatches follow their wedge, but the LABELS never dim — text
+  // contrast is identical in every highlight state (AA can't regress here)
+  const swatches = await legend
+    .locator("span[aria-hidden]")
+    .evaluateAll((els) => els.map((e) => getComputedStyle(e).opacity));
+  expect(swatches[1]).toBe("1");
+  expect(swatches.filter((o) => o === "1")).toHaveLength(1);
+
+  // blurring restores the resting state exactly
+  await rows.nth(1).blur();
+  expect(await wedgeOpacities(page)).toEqual(rest);
+});

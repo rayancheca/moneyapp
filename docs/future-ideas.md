@@ -114,8 +114,13 @@ peak/trough extremes · multi-series overlays.** What each other chart has, and 
    Return numbers, as a table" has to be representable. Known limits: the ALL-range table is unpaginated (a
    long series is a long table), and a drag-zoom window is dropped on toggle (it lives inside the unmounting
    ScrubChart; the range pill survives because ChartFocus owns it).
-3. **AllocationDonut hover-highlight** (chart-as-filter) — hover/tap a slice → highlight it + its legend row,
-   dim the rest. Self-contained (one component, one baseline). Palette is already categorical (done pass 16).
+3. ~~**AllocationDonut hover-highlight**~~ — ✅ **SHIPPED pass 23.** Highlight-only, as decided (it never
+   filters the page, so the donut stays self-contained). Pointing at a wedge — or hovering/FOCUSING its
+   legend row — lights that holding and recedes the rest (wedges to 0.22, swatches to 0.3). Keyboard comes
+   from the legend rows, which are already `<Link>` tab stops, so there are no second, parallel tab stops on
+   the SVG wedges. Only wedges and swatches dim — legend TEXT keeps full contrast in every state, so the
+   highlight can never push a label under AA. `usePrefersReducedMotion` drops the transition. The RESTING
+   state is byte-identical, so no visual baseline moved.
 4. **Chart-type switchers on `/spending`** — the remaining NS#2 Pillar-2 lenses (stacked/donut/heatmap already
    exist as separate cards; wire them + the Sankey into ONE view registry so the cash-flow card flips between
    line / bars / donut / **Sankey** / heatmap / table from one switcher).
