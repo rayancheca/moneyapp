@@ -6,6 +6,10 @@ import { merchants } from "@/db/schema/merchants";
 import { transactions } from "@/db/schema/transactions";
 import { compareDates, diffDays, monthKey, periodBounds } from "@/lib/dates";
 import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/description-key";
+// the stored `normalizedDescription` column IS normalizeDescription(raw)
+// (manual-transactions.ts:148), so recomputing it here reproduces the value
+// topMerchants groups on — activeTxnsInRange doesn't select that column
+import { normalizeDescription } from "@/lib/normalize";
 import { resolvePeriod, stepPeriodParams, subBuckets, type ResolvedPeriod } from "@/lib/period";
 import { projectPace, reindexByPosition } from "@/lib/projection";
 import { allocationsFor } from "@/lib/transaction-splits";
@@ -387,12 +391,36 @@ export function cashFlowSegmentHref(
 
 // ── Day-level heatmap ────────────────────────────────────────────────
 
+/** A named slice of a day's spending — a category or a merchant. */
+export interface HeatDayEntry {
+  name: string;
+  /** positive money out attributed to this name */
+  cents: number;
+}
+
 export interface HeatDay {
   iso: string;
   /** gross money out this day, positive */
   spentCents: number;
   /** gross money in this day, positive */
   incomeCents: number;
+  /** how many spending rows make up spentCents (income and refunds are not rows) */
+  txnCount: number;
+  /** where the money went, biggest first — top-level categories, at most 3 */
+  topCategories: HeatDayEntry[];
+  /** who it went to, biggest first — merchant name, or the raw descriptor when
+   *  the row carries no merchant link — at most 3 */
+  topMerchants: HeatDayEntry[];
+}
+
+/** Biggest first, capped — the day cell and its sheet stay readable. */
+const TOP_PER_DAY = 3;
+function topEntries(totals: Map<string, number>): HeatDayEntry[] {
+  return topNamed([...totals.entries()].map(([name, cents]) => ({ name, cents })));
+}
+
+function topNamed(entries: HeatDayEntry[]): HeatDayEntry[] {
+  return [...entries].sort((a, b) => b.cents - a.cents || a.name.localeCompare(b.name)).slice(0, TOP_PER_DAY);
 }
 
 export interface SpendHeatmap {
@@ -407,18 +435,68 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
   const from = `${month}-01`;
   const to = periodBounds(from, "monthly").end;
   const idx = loadCategoryIndex(db);
-  const byDay = new Map<string, { spentCents: number; incomeCents: number }>();
+  interface Cell {
+    spentCents: number;
+    incomeCents: number;
+    /** distinct PARENT transaction ids — a split explodes into one row per part,
+     *  so counting rows would over-count one purchase as several and diverge from
+     *  the plain /transactions list the day sheet links to */
+    txnIds: Set<string>;
+    categories: Map<string, number>;
+    /** grouping key → { name, cents }; the key is namespaced by kind so a
+     *  merchant's canonical name can never silently merge with an unlinked row
+     *  that happens to read the same */
+    merchants: Map<string, { name: string; cents: number }>;
+  }
+  const newCell = (): Cell => ({
+    spentCents: 0,
+    incomeCents: 0,
+    txnIds: new Set(),
+    categories: new Map(),
+    merchants: new Map(),
+  });
+  const byDay = new Map<string, Cell>();
+  // one small lookup for the whole month; unlinked rows fall back to their own
+  // descriptor, the same "name it honestly or name the raw string" rule
+  // topMerchants follows
+  const merchantName = new Map(
+    db.select({ id: merchants.id, name: merchants.canonicalName }).from(merchants).all().map((m) => [m.id, m.name]),
+  );
 
   for (const txn of activeTxnsInRange(db, from, to)) {
-    const cell = byDay.get(txn.postedOn) ?? { spentCents: 0, incomeCents: 0 };
+    const cell = byDay.get(txn.postedOn) ?? newCell();
+    const bucket = spendingBucket(idx, txn);
     // gross: a refund (positive in an expense category) is not a day's spending
-    if (spendingBucket(idx, txn) && txn.amountCents < 0) cell.spentCents += -txn.amountCents;
-    else if (isIncome(idx, txn)) cell.incomeCents += txn.amountCents;
+    if (bucket && txn.amountCents < 0) {
+      const out = -txn.amountCents;
+      cell.spentCents += out;
+      cell.txnIds.add(txn.id);
+      cell.categories.set(bucket.categoryName, (cell.categories.get(bucket.categoryName) ?? 0) + out);
+      // group + name unlinked rows the SAME way topMerchants does (the card right
+      // beside this one), or the two disagree about one payee on one page: the
+      // stripped key collapses per-swipe store numbers, dates and amounts
+      const linked = txn.merchantId ? merchantName.get(txn.merchantId) : undefined;
+      const strippedKey = linked ? null : strippedDescriptionKey(normalizeDescription(txn.rawDescription));
+      const key = linked ? `m:${txn.merchantId}` : `k:${strippedKey}`;
+      const name = linked ?? humanizeDescriptionKey(strippedKey!);
+      const entry = cell.merchants.get(key) ?? { name, cents: 0 };
+      entry.cents += out;
+      cell.merchants.set(key, entry);
+    } else if (isIncome(idx, txn)) {
+      cell.incomeCents += txn.amountCents;
+    }
     byDay.set(txn.postedOn, cell);
   }
 
   const days: HeatDay[] = [...byDay.entries()]
-    .map(([iso, c]) => ({ iso, spentCents: c.spentCents, incomeCents: c.incomeCents }))
+    .map(([iso, c]) => ({
+      iso,
+      spentCents: c.spentCents,
+      incomeCents: c.incomeCents,
+      txnCount: c.txnIds.size,
+      topCategories: topEntries(c.categories),
+      topMerchants: topNamed([...c.merchants.values()]),
+    }))
     .sort((a, b) => a.iso.localeCompare(b.iso));
   const maxOutflowCents = days.reduce((m, d) => Math.max(m, d.spentCents), 0);
   return { monthKey: month, days, maxOutflowCents };

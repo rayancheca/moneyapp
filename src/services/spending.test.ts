@@ -12,6 +12,7 @@ import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { resolvePeriod } from "@/lib/period";
 import { createAccount } from "./accounts";
+import { setSplits } from "./transaction-splits";
 import {
   cashFlowByPeriod,
   cashFlowSegmentHref,
@@ -227,8 +228,94 @@ describe("dailySpendHeatmap", () => {
 
     const heat = dailySpendHeatmap(bundle.db, "2026-07");
     expect(heat.maxOutflowCents).toBe(12_000);
-    expect(heat.days.find((d) => d.iso === "2026-07-03")).toEqual({ iso: "2026-07-03", spentCents: 7_000, incomeCents: 0 });
-    expect(heat.days.find((d) => d.iso === "2026-07-01")).toEqual({ iso: "2026-07-01", spentCents: 0, incomeCents: 500_000 });
+    expect(heat.days.find((d) => d.iso === "2026-07-03")).toMatchObject({
+      iso: "2026-07-03",
+      spentCents: 7_000,
+      incomeCents: 0,
+    });
+    expect(heat.days.find((d) => d.iso === "2026-07-01")).toMatchObject({
+      iso: "2026-07-01",
+      spentCents: 0,
+      incomeCents: 500_000,
+    });
+  });
+
+  test("each day carries its spending count and top categories, biggest first", () => {
+    insertTxn({ postedOn: "2026-07-03", amountCents: -5_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-03", amountCents: -2_000, category: "Food > Coffee" }); // same top-level: Food
+    insertTxn({ postedOn: "2026-07-03", amountCents: -9_000, category: "Housing > Rent" });
+    insertTxn({ postedOn: "2026-07-03", amountCents: 400_000, category: "Income > Salary", accountId: checkingId });
+
+    const day = dailySpendHeatmap(bundle.db, "2026-07").days.find((d) => d.iso === "2026-07-03")!;
+    // the income row is not a spending row: it moves incomeCents, not the count
+    expect(day.txnCount).toBe(3);
+    expect(day.incomeCents).toBe(400_000);
+    // categories roll up to their TOP level (Dining + Coffee → Food), biggest first
+    expect(day.topCategories).toEqual([
+      { name: "Housing", cents: 9_000 },
+      { name: "Food", cents: 7_000 },
+    ]);
+  });
+
+  test("top categories are capped at three, so a busy day stays readable", () => {
+    insertTxn({ postedOn: "2026-07-04", amountCents: -1_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-04", amountCents: -2_000, category: "Housing > Rent" });
+    insertTxn({ postedOn: "2026-07-04", amountCents: -3_000, category: "Transport > Gas" });
+    insertTxn({ postedOn: "2026-07-04", amountCents: -4_000, category: "Shopping > General" });
+
+    const day = dailySpendHeatmap(bundle.db, "2026-07").days.find((d) => d.iso === "2026-07-04")!;
+    expect(day.topCategories.map((c) => c.name)).toEqual(["Shopping", "Transport", "Housing"]);
+  });
+
+  test("top merchants name the linked merchant, and fall back to the description when unlinked", () => {
+    const dunkin = makeMerchant("Dunkin'");
+    insertTxn({ postedOn: "2026-07-05", amountCents: -500, category: "Food > Coffee", merchantId: dunkin, normalized: "DUNKIN Q35" });
+    insertTxn({ postedOn: "2026-07-05", amountCents: -700, category: "Food > Coffee", merchantId: dunkin, normalized: "DUNKIN Q35" });
+    insertTxn({ postedOn: "2026-07-05", amountCents: -3_000, category: "Food > Groceries", normalized: "NEW BEST GOURMET DELI" });
+
+    const day = dailySpendHeatmap(bundle.db, "2026-07").days.find((d) => d.iso === "2026-07-05")!;
+    expect(day.topMerchants).toEqual([
+      { name: "NEW BEST GOURMET DELI", cents: 3_000 },
+      { name: "Dunkin'", cents: 1_200 }, // both linked rows group under one name
+    ]);
+  });
+
+  test("a SPLIT purchase is one transaction, not one per part (it reconciles with the ledger it links to)", () => {
+    const txnId = insertTxn({ postedOn: "2026-07-07", amountCents: -20_000, category: "Shopping > General" });
+    setSplits(bundle.db, txnId, [
+      { categoryId: catId("Food > Groceries"), amountCents: -15_000 },
+      { categoryId: catId("Housing > Home Supplies"), amountCents: -5_000 },
+    ]);
+
+    const day = dailySpendHeatmap(bundle.db, "2026-07").days.find((d) => d.iso === "2026-07-07")!;
+    // the bank recorded ONE purchase; the day sheet links to a ledger that lists one row
+    expect(day.txnCount).toBe(1);
+    // ...while the money still splits across both destinations
+    expect(day.spentCents).toBe(20_000);
+    expect(day.topCategories).toEqual([
+      { name: "Food", cents: 15_000 },
+      { name: "Housing", cents: 5_000 },
+    ]);
+  });
+
+  test("an unlinked merchant is grouped and named the way the Top merchants card names it", () => {
+    // the same payee, with a per-swipe store number — the stripped key collapses them
+    insertTxn({ postedOn: "2026-07-08", amountCents: -1_000, category: "Food > Coffee", normalized: "STARBUCKS STORE 47213 NEW YORK NY" });
+    insertTxn({ postedOn: "2026-07-08", amountCents: -1_500, category: "Food > Coffee", normalized: "STARBUCKS STORE 88104 NEW YORK NY" });
+
+    const day = dailySpendHeatmap(bundle.db, "2026-07").days.find((d) => d.iso === "2026-07-08")!;
+    // one entry, not two fragments — and the humanized label, not the raw bank string
+    expect(day.topMerchants).toHaveLength(1);
+    expect(day.topMerchants[0]!.cents).toBe(2_500);
+    expect(day.topMerchants[0]!.name).not.toContain("47213");
+  });
+
+  test("a refund is not a spending row — it neither counts nor names a category", () => {
+    insertTxn({ postedOn: "2026-07-06", amountCents: 2_500, category: "Food > Dining" }); // refund only
+    const heat = dailySpendHeatmap(bundle.db, "2026-07");
+    const day = heat.days.find((d) => d.iso === "2026-07-06");
+    // the day has no outflow and no income, so it carries no heat at all
+    expect(day === undefined || (day.txnCount === 0 && day.topCategories.length === 0)).toBe(true);
   });
 
   test("dayLedgerHref is from===to", () => {

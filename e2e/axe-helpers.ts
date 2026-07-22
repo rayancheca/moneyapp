@@ -13,6 +13,13 @@ import type { Page } from "@playwright/test";
  * never finish and only animate decorative, text-free nodes.
  */
 export async function analyzeSettled(page: Page): Promise<Awaited<ReturnType<AxeBuilder["analyze"]>>> {
+  // ...and never race the NAVIGATION either. A view switch persists through a
+  // server action and then router.push()es; scanning while that document is
+  // still being swapped in yields a torso of ~43 phantom violations led by
+  // "Document does not have a non-empty <title>" — the page isn't broken, it
+  // just isn't there yet. A real document always has a title (every route sets
+  // metadata), so that is the deterministic signal to wait on.
+  await page.waitForFunction(() => document.title.trim().length > 0);
   await page.evaluate(() =>
     Promise.all(
       document.getAnimations().map((a) => {

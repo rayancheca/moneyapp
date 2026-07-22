@@ -41,13 +41,63 @@ test("the Spent stat card drills to the kind-scoped spending ledger", async ({ p
   await expect(page.getByRole("heading", { level: 1, name: "Transactions" })).toBeVisible();
 });
 
-test("a heatmap day drills to that day's transactions", async ({ page }) => {
+test("a heatmap day opens its detail sheet, which still drills to that day's transactions", async ({ page }) => {
   await page.goto("/spending?period=2026-07");
   // the heatmap opens on July 2026 (the in-progress month under the frozen clock)
   const day = page.getByRole("button", { name: /^Jul 3\b/ });
   await expect(day).toBeVisible();
   await day.click();
+
+  // pass 23: a day now opens a DETAIL sheet rather than navigating straight off
+  // the page — the day's total, its count, and where/who the money went to
+  const sheet = page.getByRole("dialog");
+  await expect(sheet).toBeVisible();
+  await expect(sheet.getByText("Spent")).toBeVisible();
+  await expect(sheet.getByRole("heading", { name: "Where it went" })).toBeVisible();
+
+  // the ledger drill is preserved, one click further in
+  await sheet.getByRole("link", { name: /All transactions for this day/ }).click();
   await expect(page).toHaveURL("/transactions?from=2026-07-03&to=2026-07-03");
+});
+
+test("a heatmap day from the NEIGHBOURING month drills to the ledger instead of claiming nothing was posted", async ({ page }) => {
+  await page.goto("/spending?period=2026-07");
+  // July's grid pads with real June days; this month's payload holds none of
+  // them, so a sheet there would state an absence that was never queried
+  const padding = page.getByRole("button", { name: /^Jun 29\b/ });
+  await expect(padding).toBeVisible();
+  await padding.click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page).toHaveURL("/transactions?from=2026-06-29&to=2026-06-29");
+});
+
+test("the day sheet's breakdown reconciles to the day's total", async ({ page }) => {
+  await page.goto("/spending?period=2026-07");
+  await page.getByRole("button", { name: /spent across/ }).first().click();
+  const sheet = page.getByRole("dialog");
+  await expect(sheet).toBeVisible();
+
+  // the lists are capped at the top few, so a truncated one must show its
+  // residual — a partial breakdown under an exact total otherwise reads as whole
+  const text = await sheet.innerText();
+  const spent = /\$([\d,]+\.\d{2})/.exec(text)?.[1];
+  expect(spent).toBeTruthy();
+  const merchants = sheet.locator("h3", { hasText: "Who it went to" }).locator("xpath=following-sibling::ul[1]/li");
+  const amounts = (await merchants.allInnerTexts()).map(
+    (t) => Number((/\$([\d,]+\.\d{2})/.exec(t)?.[1] ?? "0").replace(/,/g, "")),
+  );
+  const sum = amounts.reduce((a, b) => a + b, 0);
+  expect(sum).toBeCloseTo(Number(spent!.replace(/,/g, "")), 2);
+});
+
+test("a heatmap cell states the day's spend, not just a colour", async ({ page }) => {
+  await page.goto("/spending?period=2026-07");
+  // the label carries the exact figure, its count, and the biggest destination —
+  // the cell is no longer a tint whose only readable form is a screen-reader hint
+  const day = page.getByRole("button", { name: /^Jul 1\b/ });
+  await expect(day).toHaveAttribute("aria-label", /spent across \d+ transactions?, mostly \w+/);
+  // and the figure is VISIBLE in the cell, compactly
+  await expect(day.getByText(/^\$/)).toBeVisible();
 });
 
 test("a category opens its page", async ({ page }) => {
