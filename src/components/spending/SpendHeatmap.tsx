@@ -48,7 +48,7 @@ export function SpendHeatmap({ initial, today }: SpendHeatmapProps) {
   const [openDay, setOpenDay] = useState<string | null>(null);
 
   const byDay = new Map(data.days.map((d) => [d.iso, d]));
-  const max = data.maxOutflowCents;
+  const scale = Math.max(data.maxOutflowCents, data.maxInflowCents);
   const detail = openDay === null ? null : (byDay.get(openDay) ?? null);
 
   async function changeMonth(monthKey: string) {
@@ -92,33 +92,23 @@ export function SpendHeatmap({ initial, today }: SpendHeatmapProps) {
         renderCell={(day) => {
           const d = byDay.get(day.iso);
           if (!d || (d.spentCents === 0 && d.incomeCents === 0)) return null;
-          // share of the month's heaviest day — the bar IS the heatmap
-          const share = d.spentCents > 0 && max > 0 ? MIN_BAR + (1 - MIN_BAR) * (d.spentCents / max) : 0;
+          // BOTH sides share one scale (the month's biggest day either way), so a
+          // longer bar always means more money — normalising each kind to its own
+          // max would let a small payday out-draw the rent
+          const bar = (cents: number) =>
+            cents > 0 && scale > 0 ? MIN_BAR + (1 - MIN_BAR) * (cents / scale) : 0;
           return (
             // grouped directly UNDER this day's number (not floated to the
             // cell's bottom edge, where it reads as belonging to the next row)
-            <span className="flex h-full w-full flex-col items-start gap-1">
-              <span className="flex w-full items-center gap-1">
-                {d.spentCents > 0 && (
-                  <span className="figures truncate text-[10px] leading-none text-ink-muted">
-                    {cellAmount(d.spentCents)}
-                  </span>
-                )}
-                {/* beside its OWN amount, not pushed to the cell's right edge —
-                    a far-right dot sits closer to the next day's figure than to
-                    the day it belongs to */}
-                {d.incomeCents > 0 && (
-                  <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-positive" />
-                )}
-              </span>
-              {/* no track behind it — an empty rail on every active day reads as
-                  a divider rule across the grid, not as a magnitude */}
-              {share > 0 && (
-                <span
-                  aria-hidden
-                  className="block h-1 rounded-full bg-negative"
-                  style={{ width: `${Math.round(share * 100)}%` }}
-                />
+            // both sides of the day, each as a signed figure over its own bar.
+            // The SIGN carries direction (not colour alone), so the numbers stay
+            // neutral ink and can never fail contrast the way 10px tinted text would
+            <span className="flex h-full w-full min-w-0 flex-col items-start gap-1 overflow-hidden">
+              {d.spentCents > 0 && (
+                <CellAmount cents={d.spentCents} sign="−" share={bar(d.spentCents)} tone="bg-negative" />
+              )}
+              {d.incomeCents > 0 && (
+                <CellAmount cents={d.incomeCents} sign="+" share={bar(d.incomeCents)} tone="bg-positive" />
               )}
             </span>
           );
@@ -127,12 +117,13 @@ export function SpendHeatmap({ initial, today }: SpendHeatmapProps) {
           <p className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-faint">
             <span className="flex items-center gap-1.5">
               <span aria-hidden className="inline-block h-1 w-5 rounded-full bg-negative" />
-              spent, relative to the busiest day
+              spent
             </span>
             <span className="flex items-center gap-1.5">
-              <span aria-hidden className="inline-block size-1.5 rounded-full bg-positive" />
-              income
+              <span aria-hidden className="inline-block h-1 w-5 rounded-full bg-positive" />
+              earned
             </span>
+            <span>bars share one scale — the month&rsquo;s biggest day</span>
             <span>Tap a day for its detail</span>
           </p>
         }
@@ -146,6 +137,37 @@ export function SpendHeatmap({ initial, today }: SpendHeatmapProps) {
         {openDay && <DaySheetBody iso={openDay} day={detail} />}
       </Sheet>
     </div>
+  );
+}
+
+/** One side of a day: the signed figure, and its bar on the shared scale. */
+function CellAmount({
+  cents,
+  sign,
+  share,
+  tone,
+}: {
+  cents: number;
+  sign: "−" | "+";
+  share: number;
+  tone: string;
+}) {
+  return (
+    <span className="flex w-full min-w-0 flex-col gap-0.5">
+      <span className="figures truncate text-[10px] leading-none text-ink-muted">
+        {sign}
+        {cellAmount(cents)}
+      </span>
+      {/* no track behind it — an empty rail on every active day reads as a
+          divider rule across the grid, not as a magnitude */}
+      {share > 0 && (
+        <span
+          aria-hidden
+          className={`hidden h-1 rounded-full sm:block ${tone}`}
+          style={{ width: `${Math.round(share * 100)}%` }}
+        />
+      )}
+    </span>
   );
 }
 
@@ -191,6 +213,19 @@ function DaySheetBody({ iso, day }: { iso: string; day: HeatDay | null }) {
           </div>
         )}
       </div>
+
+      {income > 0 && (
+        <div>
+          <span className="text-xs font-medium uppercase tracking-[0.1em] text-ink">Net</span>
+          <div className="figures mt-1 text-lg font-semibold text-ink">
+            {income - spent >= 0 ? "+" : "−"}
+            {formatCents(Math.abs(income - spent))}
+          </div>
+          <p className="mt-0.5 text-xs text-ink-faint">
+            {income - spent >= 0 ? "earned more than you spent" : "spent more than you earned"}
+          </p>
+        </div>
+      )}
 
       <EntryList title="Where it went" entries={day!.topCategories} total={spent} />
       <EntryList title="Who it went to" entries={day!.topMerchants} total={spent} />

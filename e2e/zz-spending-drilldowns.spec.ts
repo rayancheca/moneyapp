@@ -97,7 +97,30 @@ test("a heatmap cell states the day's spend, not just a colour", async ({ page }
   const day = page.getByRole("button", { name: /^Jul 1\b/ });
   await expect(day).toHaveAttribute("aria-label", /spent across \d+ transactions?, mostly \w+/);
   // and the figure is VISIBLE in the cell, compactly
-  await expect(day.getByText(/^\$/)).toBeVisible();
+  await expect(day.getByText(/^−\$/)).toBeVisible();
+});
+
+test("a cell shows what came IN as well as what went out, and the sheet gives the day a net", async ({ page }) => {
+  await page.goto("/spending?period=2026-07");
+  // Jul 2 is a payday under the frozen clock. Whether it ALSO carries spending
+  // depends on how earlier specs categorized that day, so drive the assertions
+  // off the day's actual label rather than assuming — an order-dependent
+  // hardcoded assumption is exactly what made the first version of this flake.
+  const day = page.getByRole("button", { name: /^Jul 2\b/ });
+  const label = (await day.getAttribute("aria-label")) ?? "";
+  expect(label).toMatch(/earned/);
+
+  // the sign, not colour alone, says which direction each figure is
+  await expect(day.getByText(/^\+\$/)).toBeVisible();
+  if (/spent/.test(label)) await expect(day.getByText(/^−\$/)).toBeVisible();
+
+  await day.click();
+  const sheet = page.getByRole("dialog");
+  await expect(sheet).toBeVisible();
+  await expect(sheet.getByText("Earned", { exact: true })).toBeVisible();
+  await expect(sheet.getByText("Net", { exact: true })).toBeVisible();
+  // the net is stated in words as well as by sign
+  await expect(sheet.getByText(/earned more than you spent|spent more than you earned/)).toBeVisible();
 });
 
 test("a category opens its page", async ({ page }) => {

@@ -318,6 +318,26 @@ describe("dailySpendHeatmap", () => {
     expect(day === undefined || (day.txnCount === 0 && day.topCategories.length === 0)).toBe(true);
   });
 
+  test("the month's biggest INFLOW is reported too, so spent and earned can share one bar scale", () => {
+    insertTxn({ postedOn: "2026-07-02", amountCents: 300_000, category: "Income > Salary", accountId: checkingId });
+    insertTxn({ postedOn: "2026-07-09", amountCents: 120_000, category: "Income > Salary", accountId: checkingId });
+    insertTxn({ postedOn: "2026-07-09", amountCents: -4_000, category: "Food > Dining" });
+
+    const heat = dailySpendHeatmap(bundle.db, "2026-07");
+    expect(heat.maxInflowCents).toBe(300_000);
+    expect(heat.maxOutflowCents).toBe(4_000);
+    // a day can carry both sides at once
+    expect(heat.days.find((d) => d.iso === "2026-07-09")).toMatchObject({
+      spentCents: 4_000,
+      incomeCents: 120_000,
+    });
+  });
+
+  test("a month with no income at all reports a zero inflow max (no divide-by-zero for the bar)", () => {
+    insertTxn({ postedOn: "2026-07-03", amountCents: -5_000, category: "Food > Dining" });
+    expect(dailySpendHeatmap(bundle.db, "2026-07").maxInflowCents).toBe(0);
+  });
+
   test("dayLedgerHref is from===to", () => {
     expect(dayLedgerHref("2026-07-04")).toBe("/transactions?from=2026-07-04&to=2026-07-04");
   });

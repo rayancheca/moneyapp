@@ -427,8 +427,12 @@ export interface SpendHeatmap {
   monthKey: string;
   /** only days with activity — the grid defaults the rest to zero */
   days: HeatDay[];
-  /** largest single-day outflow — the tint-saturation denominator */
+  /** largest single-day outflow */
   maxOutflowCents: number;
+  /** largest single-day inflow. The cells scale the spent AND earned bars by the
+   *  larger of the two, so a longer bar always means more money — two
+   *  independently-normalised scales would let a small income out-draw a big spend. */
+  maxInflowCents: number;
 }
 
 export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap {
@@ -499,7 +503,8 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
     }))
     .sort((a, b) => a.iso.localeCompare(b.iso));
   const maxOutflowCents = days.reduce((m, d) => Math.max(m, d.spentCents), 0);
-  return { monthKey: month, days, maxOutflowCents };
+  const maxInflowCents = days.reduce((m, d) => Math.max(m, d.incomeCents), 0);
+  return { monthKey: month, days, maxOutflowCents, maxInflowCents };
 }
 
 /** `/transactions?from=D&to=D` — the literal "tap any day" destination. */
