@@ -76,8 +76,12 @@ export function formatCents(cents: number): string {
   return USD.format(cents / 100);
 }
 
-/** "+$120.00" for positive, "-$43.64" for negative — flow displays. */
+/** "+$120.00" for positive, "-$43.64" for negative, "$0.00" for zero — flow displays. */
 export function formatCentsSigned(cents: number): string {
   const base = formatCents(Math.abs(cents));
+  // Zero is not a gain. Every flow site already tones an exact zero neutral, so
+  // a leading "+" on $0.00 is the only thing left claiming an increase happened.
+  // (-0 takes this branch too, so it can never render as "-$0.00".)
+  if (cents === 0) return base;
   return cents < 0 ? `-${base}` : `+${base}`;
 }

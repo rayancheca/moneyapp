@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { withPreMutationSnapshot } from "@/db/backup";
 import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { merchantAliases, merchants } from "@/db/schema/merchants";
@@ -209,43 +210,68 @@ export function retroApplyRule(db: AppDatabase, ruleId: string): RetroApplyResul
   const rows = matchingRows(db, conditions, { excludeUserSet: true });
   const undoRows: UndoPatch["rows"] = [];
 
-  db.transaction((tx) => {
-    for (const row of rows) {
-      const prev: UndoFields = {};
-      const set: Partial<typeof transactions.$inferInsert> = {};
-      if (actions.categoryId !== undefined) {
-        prev.categoryId = row.categoryId;
-        prev.categorizationSource = row.categorizationSource;
-        prev.categorizationConfidence = row.categorizationConfidence;
-        prev.needsReview = row.needsReview;
-        set.categoryId = actions.categoryId;
-        set.categorizationSource = "rule";
-        set.categorizationConfidence = 1;
-        set.needsReview = false;
+  const apply = () => {
+    db.transaction((tx) => {
+      for (const row of rows) {
+        const prev: UndoFields = {};
+        const set: Partial<typeof transactions.$inferInsert> = {};
+        // Every assignment is guarded on a REAL change: a row that already
+        // carries the rule's outcome has not moved, and writing it anyway
+        // inflates timesApplied and reports a blast radius ("re-applied to N")
+        // that no row actually felt. Fields are guarded individually because a
+        // row can already sit in the right category while still being flagged
+        // for review or stamped by a weaker source — settling those IS a change.
+        if (actions.categoryId !== undefined) {
+          if (row.categoryId !== actions.categoryId) {
+            prev.categoryId = row.categoryId;
+            set.categoryId = actions.categoryId;
+          }
+          if (row.categorizationSource !== "rule") {
+            prev.categorizationSource = row.categorizationSource;
+            set.categorizationSource = "rule";
+          }
+          if (row.categorizationConfidence !== 1) {
+            prev.categorizationConfidence = row.categorizationConfidence;
+            set.categorizationConfidence = 1;
+          }
+          if (row.needsReview) {
+            prev.needsReview = row.needsReview;
+            set.needsReview = false;
+          }
+        }
+        if (actions.merchantId !== undefined && row.merchantId !== actions.merchantId) {
+          prev.merchantId = row.merchantId;
+          set.merchantId = actions.merchantId;
+        }
+        if (actions.exclude && row.status !== "excluded") {
+          prev.status = row.status;
+          set.status = "excluded";
+        }
+        if (
+          actions.markRecurringSeriesId !== undefined &&
+          row.recurringSeriesId !== actions.markRecurringSeriesId
+        ) {
+          prev.recurringSeriesId = row.recurringSeriesId;
+          set.recurringSeriesId = actions.markRecurringSeriesId;
+        }
+        if (Object.keys(set).length === 0) continue;
+        tx.update(transactions).set(set).where(eq(transactions.id, row.id)).run();
+        undoRows.push({ id: row.id, prev });
       }
-      if (actions.merchantId !== undefined) {
-        prev.merchantId = row.merchantId;
-        set.merchantId = actions.merchantId;
+      if (undoRows.length > 0) {
+        tx.update(rules)
+          .set({ timesApplied: rule.timesApplied + undoRows.length })
+          .where(eq(rules.id, rule.id))
+          .run();
       }
-      if (actions.exclude) {
-        prev.status = row.status;
-        set.status = "excluded";
-      }
-      if (actions.markRecurringSeriesId !== undefined) {
-        prev.recurringSeriesId = row.recurringSeriesId;
-        set.recurringSeriesId = actions.markRecurringSeriesId;
-      }
-      if (Object.keys(set).length === 0) continue;
-      tx.update(transactions).set(set).where(eq(transactions.id, row.id)).run();
-      undoRows.push({ id: row.id, prev });
-    }
-    if (undoRows.length > 0) {
-      tx.update(rules)
-        .set({ timesApplied: rule.timesApplied + undoRows.length })
-        .where(eq(rules.id, rule.id))
-        .run();
-    }
-  });
+    });
+  };
+
+  // Retro-apply hands back an undo patch, but that patch lives only as long as
+  // the toast that holds it — one navigation and the rewrite is permanent. A
+  // rule that matches nothing rewrites nothing, so it needs no restore point.
+  if (rows.length === 0) apply();
+  else withPreMutationSnapshot(db, "retro-apply-rule", apply);
 
   return { affected: undoRows.length, undo: { rows: undoRows } };
 }

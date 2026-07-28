@@ -1,0 +1,64 @@
+import { Badge } from "@/components/ui/Badge";
+import type { SeriesStaleness } from "@/services/recurring";
+import { staleLabel, stalenessSentence, type StaleEntry } from "./labels";
+
+/**
+ * Staleness disclosure (item 13a). The forecast and the upcoming list keep
+ * every detected|confirmed series — filtering the stale ones out would silently
+ * delete the owner's weekly cash income the first time a deposit posted late.
+ * So the number stays and the age of its evidence rides next to it: say what
+ * you know and how old it is, the same contract the derivation layer honours
+ * when it stamps a `gap` instead of inventing a slope.
+ */
+
+/**
+ * Inline marker beside a projected amount. Renders nothing when fresh — an
+ * always-on marker carries no signal. The label alone ("last seen 22d ago") is
+ * the load-bearing text; the tooltip adds the why for pointer users, and the
+ * footer below repeats it in keyboard-reachable form.
+ */
+export function StaleMark({
+  staleness,
+  className,
+}: {
+  staleness?: SeriesStaleness;
+  className?: string;
+}) {
+  if (!staleness?.isStale) return null;
+  return (
+    <span title={stalenessSentence(staleness)}>
+      <Badge tone="warning" className={`whitespace-nowrap ${className ?? ""}`.trim()}>
+        {staleLabel(staleness)}
+      </Badge>
+    </span>
+  );
+}
+
+/**
+ * Collapsed footer naming every stale series and why. Renders nothing when
+ * nothing is stale — an always-present "0 stale" row would train the eye to
+ * skip the one time it matters.
+ */
+export function StaleFooter({ entries, className }: { entries: StaleEntry[]; className?: string }) {
+  if (entries.length === 0) return null;
+  return (
+    <details className={`group rounded-md border border-line bg-surface ${className ?? ""}`.trim()}>
+      <summary className="cursor-pointer select-none px-4 py-2.5 text-xs font-medium text-warning transition-colors duration-(--duration-fast) hover:text-ink">
+        {entries.length === 1
+          ? "1 series is running late — still projected"
+          : `${entries.length} series are running late — still projected`}
+        <span className="ml-2 font-normal text-ink-faint group-open:hidden">
+          why these numbers rest on old evidence
+        </span>
+      </summary>
+      <ul className="divide-y divide-line border-t border-line">
+        {entries.map((e) => (
+          <li key={e.key} className="px-4 py-2.5 text-xs">
+            <span className="font-medium">{e.name}</span>
+            <span className="text-ink-muted"> — {stalenessSentence(e.staleness)}</span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}

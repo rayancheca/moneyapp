@@ -17,6 +17,7 @@ import {
   effectiveSeries,
   isSeriesActive,
   projectOccurrences,
+  rollForwardNextExpected,
   toProjectable,
   type SeriesOccurrence,
 } from "./recurring";
@@ -69,7 +70,10 @@ export interface SeriesDetail {
   accountName: string | null;
   // effective (override-first) values the sentence reads
   cadence: Cadence;
+  /** rolled forward off a stale stored value — never a date in the past */
   nextExpectedOn: string | null;
+  /** the un-rolled stored value, so the UI can distinguish shown from saved */
+  storedNextExpectedOn: string | null;
   nextExpectedAmountCents: number | null;
   // the raw override columns, so the UI can show "detected: X" and offer reset
   userCadence: Cadence | null;
@@ -237,7 +241,15 @@ export function seriesDetail(
     category: modalCategory(linked, catById),
     accountName,
     cadence: eff.cadence,
-    nextExpectedOn: eff.nextExpectedOn,
+    // Same rule as listSeries: the detail page must not show a date in the past
+    // as "next" while the list shows the rolled-forward one. Only the statuses
+    // the forecast actually projects roll — rolling a dismissed/ended series
+    // forward would invent a future charge.
+    nextExpectedOn:
+      s.status === "detected" || s.status === "confirmed"
+        ? rollForwardNextExpected(eff, today)
+        : eff.nextExpectedOn,
+    storedNextExpectedOn: eff.nextExpectedOn,
     nextExpectedAmountCents: eff.nextExpectedAmountCents,
     userCadence: s.userCadence,
     userNextExpectedOn: s.userNextExpectedOn,

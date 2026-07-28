@@ -4,7 +4,11 @@ import {
   stopClassifyAction,
 } from "@/app/transactions/actions";
 import type { CoverageStats } from "@/services/categorize";
-import { EST_USD_PER_MERCHANT, type ClaudeRunState } from "@/services/claude-categorize";
+import {
+  EST_USD_PER_MERCHANT,
+  type ClaudeRunResult,
+  type ClaudeRunState,
+} from "@/services/claude-categorize";
 
 interface HeaderStripProps {
   coverage: CoverageStats;
@@ -29,10 +33,42 @@ function usd(n: number): string {
   return `$${n.toFixed(2)}`;
 }
 
+/** a provider error body runs to thousands of characters; the strip has to stay
+ *  readable at 440px, so the cause is clamped and the rest dropped */
+const MAX_CAUSE_CHARS = 160;
+
+/**
+ * The failed-run line. A batch that throws is recorded with `failed`, its cause,
+ * and whatever counters had already committed — so the "Last Claude run" line
+ * reads exactly like a successful no-op unless the failure is said out loud.
+ * The redirect's one-shot ?error= is long gone by the time the user comes back
+ * to the page, and this is the only surviving record. Null when nothing failed.
+ */
+export function failedRunMessage(
+  run: Pick<ClaudeRunResult, "failed" | "error" | "classified">,
+): string | null {
+  if (!run.failed) return null;
+  // a stored run from before the failure fields existed, or a throw with a blank
+  // message, still has to say something
+  const detail = (run.error ?? "").replace(/\s+/g, " ").trim().replace(/\.+$/, "");
+  const cause =
+    detail === ""
+      ? "Unexpected error"
+      : detail.length > MAX_CAUSE_CHARS
+        ? `${detail.slice(0, MAX_CAUSE_CHARS).trimEnd()}…`
+        : detail;
+  // committed batches stay committed: the counters above the line are partial
+  // progress, not a result
+  const partial = run.classified > 0 ? " · the counts above are partial progress, not a result" : "";
+  return `Claude run failed: ${cause}${partial}`;
+}
+
 /** Coverage + queue stats with the two engine triggers. Thin UI over the services. */
 export function HeaderStrip({ coverage, pendingMerchants, spend, runState, returnQuery }: HeaderStripProps) {
   const estUsd = pendingMerchants * EST_USD_PER_MERCHANT;
   const { isRunning, lastRun } = runState;
+  // a live run supersedes the last one, so a stale failure never shouts over it
+  const failure = !isRunning && lastRun ? failedRunMessage(lastRun) : null;
 
   return (
     <section
@@ -118,7 +154,15 @@ export function HeaderStrip({ coverage, pendingMerchants, spend, runState, retur
           · <span className="figures">{usd(lastRun.estCostUsd)}</span>
           {lastRun.stopped && <span className="text-warning"> · stopped early</span>}
           {lastRun.capReached && <span className="text-negative"> · monthly cap reached</span>}
+          {lastRun.failed && <span className="text-negative"> · failed</span>}
           <span className="text-ink-faint"> · {lastRun.at.slice(0, 16).replace("T", " ")}</span>
+        </p>
+      )}
+      {/* the cause gets its own line: a raw provider message wraps, and role="alert"
+          announces it on the client navigation back from the failed action */}
+      {failure && (
+        <p role="alert" className="mt-1 text-xs text-negative">
+          {failure}
         </p>
       )}
     </section>

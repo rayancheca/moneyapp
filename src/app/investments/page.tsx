@@ -47,12 +47,34 @@ export const dynamic = "force-dynamic";
 
 const rangeSchema = z.enum(CHART_RANGES).catch("ALL");
 
+/**
+ * The ?error= banner (the /budgets pattern). Rendered in BOTH page branches so
+ * the message can never land on a branch that drops it — including the
+ * pre-mutation snapshot's "Could not save a restore point, so nothing was
+ * changed", which unread renders as complete silence.
+ */
+function ErrorBanner({ message }: { message: string }) {
+  return (
+    <div
+      role="alert"
+      className="mb-6 rounded-(--radius-card) border border-negative/40 bg-surface-raised px-4 py-3 text-sm text-negative"
+    >
+      {message}
+    </div>
+  );
+}
+
 export default async function InvestmentsPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const raw = await searchParams;
+  // addHoldingAction is a `Promise<void>` form action, so its failures travel
+  // back as ?error= (actions.ts:113). Unread, an add refused by validation — or
+  // by a restore point that could not be written — was indistinguishable from
+  // one that quietly did nothing.
+  const error = typeof raw.error === "string" ? raw.error : null;
   const range = rangeSchema.parse(Array.isArray(raw.range) ? raw.range[0] : raw.range);
   const db = getDb();
   const settings = readSettings(db);
@@ -86,6 +108,7 @@ export default async function InvestmentsPage({
           title="Investments"
           description="Holdings, live prices, gain/loss, and allocation. Market value drives net worth; average cost is for P/L only."
         />
+        {error && <ErrorBanner message={error} />}
         <EmptyState
           title="No investment accounts yet"
           description="Holdings attach to an investment account (brokerage or crypto). Add one under Accounts first — then enter positions here and refresh prices."
@@ -146,6 +169,8 @@ export default async function InvestmentsPage({
           defaultDate={today}
         />
       </div>
+
+      {error && <ErrorBanner message={error} />}
 
       <div className="space-y-6">
         {/* the chart panel provides its own SurfaceCard (via ChartFocus) and

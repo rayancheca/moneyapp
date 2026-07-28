@@ -1,37 +1,53 @@
-import fs from "node:fs";
-import path from "node:path";
 import type { Metadata } from "next";
-import { defaultBackupsDir, getDb } from "@/db/client";
+import { defaultBackupsDir, defaultDbPath, getDb } from "@/db/client";
+import {
+  DEFAULT_RETENTION,
+  listSnapshots,
+  readSnapshotState,
+  SNAPSHOT_LIST_LIMIT,
+  type SnapshotState,
+} from "@/db/backup";
 import { aiSpend, readSettings } from "@/services/settings";
 import { listRules } from "@/services/rules-manager";
 import { Field, Input } from "@/components/ui/Field";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { RulesManager } from "@/components/settings/RulesManager";
+import { BackupsManager } from "@/components/settings/BackupsManager";
+import { describeState, retentionSentence, toBackupRow } from "@/components/settings/backup-rows";
 import { updateSettingsAction } from "./actions";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
 
-function listBackups(): { name: string; sizeKb: number }[] {
-  const dir = defaultBackupsDir();
-  if (!fs.existsSync(dir)) return [];
-  return fs
-    .readdirSync(dir)
-    .filter((f) => f.endsWith(".db"))
-    .sort()
-    .reverse()
-    .slice(0, 8)
-    .map((name) => ({ name, sizeKb: Math.round(fs.statSync(path.join(dir, name)).size / 1024) }));
+/**
+ * The live ledger measured the same way a snapshot is, so the restore dialog
+ * can put "now" and "after restoring" side by side in identical units. Opened
+ * read-only as a second connection — SQLite readers do not disturb the writer,
+ * and a failure here must cost the comparison, never the page.
+ */
+function currentState(): SnapshotState | null {
+  try {
+    return readSnapshotState(defaultDbPath());
+  } catch {
+    return null;
+  }
 }
 
-export default function SettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const raw = await searchParams;
+  const error = typeof raw.error === "string" ? raw.error : null;
+
   const db = getDb();
   const settings = readSettings(db);
   const spend = aiSpend(db);
-  const backups = listBackups();
   const rules = listRules(db);
   const hasApiKey = Boolean(process.env.ANTHROPIC_API_KEY);
+  const archive = listSnapshots(defaultBackupsDir(), SNAPSHOT_LIST_LIMIT);
 
   return (
     <>
@@ -39,6 +55,16 @@ export default function SettingsPage() {
         title="Settings"
         description="Thresholds, AI spend, and backups. Everything else is derived from your data."
       />
+
+      {error && (
+        <div
+          role="alert"
+          className="mb-6 rounded-(--radius-card) border border-negative/40 bg-surface-raised px-4 py-3 text-sm text-negative"
+        >
+          {error}
+        </div>
+      )}
+
       <div className="space-y-6">
         <SurfaceCard>
           <h2 className="mb-4 text-sm font-medium">Thresholds</h2>
@@ -65,8 +91,7 @@ export default function SettingsPage() {
             </div>
           </form>
           <p className="mt-3 text-xs text-ink-faint">
-            Weeks start Monday (ISO). Backups keep {settings.backupRetention.keepDaily} daily +{" "}
-            {settings.backupRetention.keepMonthly} monthly snapshots.
+            Weeks start Monday (ISO). What the backup archive keeps is spelled out below it.
           </p>
         </SurfaceCard>
 
@@ -81,54 +106,47 @@ export default function SettingsPage() {
           <RulesManager rules={rules} />
         </SurfaceCard>
 
-        <div className="grid gap-6 md:grid-cols-2">
-          <SurfaceCard>
-            <h2 className="mb-3 text-sm font-medium">AI spend</h2>
-            <p className="figures text-3xl font-semibold">
-              ${spend.monthUsd.toFixed(2)}
-              <span className="ml-2 text-sm font-normal text-ink-faint">
-                / ${spend.capUsd.toFixed(2)} cap this month
-              </span>
-            </p>
-            {spend.overCap && (
-              <p className="mt-1 text-xs font-medium text-negative" role="alert">
-                Monthly cap reached — Claude classification pauses until next month or a higher cap.
-              </p>
-            )}
-            <p className="mt-2 text-xs text-ink-muted">
-              {spend.monthCalls} calls this month · ${spend.totalUsd.toFixed(2)} all-time. Every call
-              is logged with tokens and batch size.
-            </p>
-            <p className="mt-2 text-xs">
-              {hasApiKey ? (
-                <span className="text-positive">ANTHROPIC_API_KEY configured</span>
-              ) : (
-                <span className="text-warning">
-                  No ANTHROPIC_API_KEY — the app fully works; unknown merchants queue for later.
-                </span>
-              )}
-            </p>
-          </SurfaceCard>
+        {/* retentionNote quotes DEFAULT_RETENTION, not settings.backupRetention:
+            the stored setting is display-only — nothing passes it to prune(),
+            so repeating it would state a rotation that never runs */}
+        <SurfaceCard>
+          <BackupsManager
+            rows={archive.snapshots.map(toBackupRow)}
+            currentStateLines={describeState(currentState())}
+            retentionNote={retentionSentence(archive, DEFAULT_RETENTION)}
+            hiddenCount={archive.totalFiles - archive.snapshots.length}
+            archivePath={defaultBackupsDir()}
+          />
+        </SurfaceCard>
 
-          <SurfaceCard>
-            <h2 className="mb-3 text-sm font-medium">Backups</h2>
-            {backups.length === 0 ? (
-              <p className="text-sm text-ink-muted">
-                First snapshot lands on next app start — crash-safe copies via SQLite&apos;s online
-                backup API, never raw file copies.
-              </p>
+        {/* the backup card below carries what this one used to sit beside */}
+        <SurfaceCard>
+          <h2 className="mb-3 text-sm font-medium">AI spend</h2>
+          <p className="figures text-3xl font-semibold">
+            ${spend.monthUsd.toFixed(2)}
+            <span className="ml-2 text-sm font-normal text-ink-faint">
+              / ${spend.capUsd.toFixed(2)} cap this month
+            </span>
+          </p>
+          {spend.overCap && (
+            <p className="mt-1 text-xs font-medium text-negative" role="alert">
+              Monthly cap reached — Claude classification pauses until next month or a higher cap.
+            </p>
+          )}
+          <p className="mt-2 text-xs text-ink-muted">
+            {spend.monthCalls} calls this month · ${spend.totalUsd.toFixed(2)} all-time. Every call
+            is logged with tokens and batch size.
+          </p>
+          <p className="mt-2 text-xs">
+            {hasApiKey ? (
+              <span className="text-positive">ANTHROPIC_API_KEY configured</span>
             ) : (
-              <ul className="space-y-1">
-                {backups.map((b) => (
-                  <li key={b.name} className="flex justify-between text-xs">
-                    <span className="figures">{b.name}</span>
-                    <span className="text-ink-faint">{b.sizeKb} KB</span>
-                  </li>
-                ))}
-              </ul>
+              <span className="text-warning">
+                No ANTHROPIC_API_KEY — the app fully works; unknown merchants queue for later.
+              </span>
             )}
-          </SurfaceCard>
-        </div>
+          </p>
+        </SurfaceCard>
       </div>
     </>
   );

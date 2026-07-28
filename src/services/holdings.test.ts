@@ -1,14 +1,16 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { dailyBalances } from "@/db/schema/balances";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings, priceCache } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
 import { createAccount } from "./accounts";
+import { addManualAnchor } from "./anchors";
 import {
   formatQuantityE8,
   listAccountHoldings,
@@ -167,6 +169,24 @@ describe("holdings service against a real database", () => {
     ).toThrow(/investment accounts only/);
   });
 
+  test("a fat-fingered occurredOn is rejected and no event is recorded", () => {
+    // the event date seeds the value timeline, which crypto-history walks one
+    // day at a time — an 11th-century "as of" would be a million-row rebuild
+    for (const occurredOn of ["1026-06-01", "9999-12-31"]) {
+      expect(() =>
+        upsertHolding(bundle.db, {
+          accountId: brokerageId,
+          symbol: "VOO",
+          assetType: "etf",
+          quantityE8: 1e8,
+          occurredOn,
+        }),
+      ).toThrow(/occurredOn must be between/);
+    }
+    expect(bundle.db.select().from(holdings).all()).toEqual([]);
+    expect(bundle.db.select().from(holdingEvents).all()).toEqual([]);
+  });
+
   test("listAccountHoldings: day change from the two latest closes, allocation within the account", () => {
     // Arrange: 10 AAPL @ $100 avg; closed $110 yesterday, $121 today
     upsertHolding(bundle.db, {
@@ -224,5 +244,81 @@ describe("holdings service against a real database", () => {
     expect(rows[0]!.valueCents).toBe(360_000);
     expect(rows[0]!.dayChangeCents).toBeNull();
     expect(rows[0]!.plCents).toBeNull(); // no avg cost recorded
+  });
+
+  /**
+   * daily_balances is a DERIVED CACHE, and an investment account's inputs are
+   * holding_events × closes — so a quantity change has to invalidate it here
+   * rather than waiting for the next price refresh to notice.
+   */
+  describe("a quantity change invalidates the derived balance cache", () => {
+    function balanceOn(accountId: string, day: string): number | undefined {
+      return bundle.db
+        .select()
+        .from(dailyBalances)
+        .where(and(eq(dailyBalances.accountId, accountId), eq(dailyBalances.day, day)))
+        .get()?.balanceCents;
+    }
+
+    test("the curve follows the new quantity without a price refresh", () => {
+      // Arrange: one cached close, carried forward by crypto-history
+      cachePrice("AAPL", "stock", "2026-07-20", 100);
+
+      // Act: open the position, then double it the next day
+      const base = { accountId: brokerageId, symbol: "AAPL", assetType: "stock" as const };
+      upsertHolding(bundle.db, { ...base, quantityE8: 10 * 1e8, occurredOn: "2026-07-20" });
+      expect(balanceOn(brokerageId, "2026-07-20")).toBe(100_000); // 10 × $100
+
+      upsertHolding(bundle.db, { ...base, quantityE8: 20 * 1e8, occurredOn: "2026-07-21" });
+
+      // Assert: the cache moved with the position, same day, no refresh
+      expect(balanceOn(brokerageId, "2026-07-21")).toBe(200_000); // 20 × $100
+      expect(balanceOn(brokerageId, "2026-07-20")).toBe(100_000); // history intact
+    });
+
+    test("selling to zero writes the closing level, it does not freeze the old one", () => {
+      cachePrice("AAPL", "stock", "2026-07-20", 100);
+      const base = { accountId: brokerageId, symbol: "AAPL", assetType: "stock" as const };
+      upsertHolding(bundle.db, { ...base, quantityE8: 10 * 1e8, occurredOn: "2026-07-20" });
+      upsertHolding(bundle.db, { ...base, quantityE8: 0, occurredOn: "2026-07-21" });
+      expect(balanceOn(brokerageId, "2026-07-21")).toBe(0);
+    });
+
+    test("an unpriced holding never wipes the value anchors carrying the account", () => {
+      // Arrange: a bare value-anchored investment account (no events yet)
+      addManualAnchor(bundle.db, {
+        accountId: brokerageId,
+        anchoredOn: "2026-07-20",
+        enteredCents: 50_000,
+      });
+      expect(balanceOn(brokerageId, "2026-07-20")).toBe(50_000);
+
+      // Act: the first holding arrives before any price for it does
+      upsertHolding(bundle.db, {
+        accountId: brokerageId,
+        symbol: "FOO",
+        assetType: "stock",
+        quantityE8: 1e8,
+        occurredOn: "2026-07-20",
+      });
+
+      // Assert: an events curve with no close produces NO days — rebuilding now
+      // would delete the anchor rows and drop the account out of net worth.
+      // refreshPrices skips these accounts for the same reason.
+      expect(balanceOn(brokerageId, "2026-07-20")).toBe(50_000);
+    });
+
+    test("an avg-cost-only edit changes no quantity, so it rebuilds nothing", () => {
+      cachePrice("AAPL", "stock", "2026-07-20", 100);
+      const base = { accountId: brokerageId, symbol: "AAPL", assetType: "stock" as const };
+      upsertHolding(bundle.db, { ...base, quantityE8: 10 * 1e8, occurredOn: "2026-07-20" });
+      // wipe the cache to make any rebuild visible
+      bundle.db.delete(dailyBalances).where(eq(dailyBalances.accountId, brokerageId)).run();
+
+      upsertHolding(bundle.db, { ...base, quantityE8: 10 * 1e8, avgCostCents: 90_00, occurredOn: "2026-07-21" });
+
+      expect(balanceOn(brokerageId, "2026-07-20")).toBeUndefined();
+      expect(bundle.db.select().from(holdingEvents).all()).toHaveLength(1); // no phantom event either
+    });
   });
 });

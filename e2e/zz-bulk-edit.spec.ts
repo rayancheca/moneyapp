@@ -62,6 +62,13 @@ test("select all matching applies to the whole filtered set with its server coun
   // the bar now states the whole set — the by-filter blast radius, not the page
   await expect(bar.getByText(`${matchCount} selected`)).toBeVisible();
 
+  // Exclude is gated: the confirm must state the same server count the bar did,
+  // and the rows are only written once it is accepted
   await bar.getByRole("button", { name: "Exclude" }).click();
+  const gate = page.getByRole("dialog");
+  await expect(gate.getByText(`${matchCount} transactions`).first()).toBeVisible();
+  await expect(gate.getByText("every transaction matching the current filters").first()).toBeVisible();
+  await gate.getByRole("button", { name: "Exclude them" }).click();
+
   await expect(page.locator("p", { hasText: new RegExp(`Excluded · ${matchCount}`) })).toBeVisible();
 });

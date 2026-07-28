@@ -9,7 +9,7 @@ import { transactions } from "@/db/schema/transactions";
 import { spendingTransactions, transactionsHref, type AnalyticsTxn } from "@/services/analytics";
 import { dailySpendHeatmap, type SpendHeatmap } from "@/services/spending";
 import { isValidIsoDate } from "@/lib/dates";
-import type { ActionResult } from "@/app/transactions/action-types";
+import { actionErrorMessage, type ActionResult } from "@/app/transactions/action-types";
 
 /**
  * Lazy loader for the Spending page's inline categorizer (ux-overhaul-plan §5.4):
@@ -84,7 +84,16 @@ export async function loadSpendingCategoryTxns(input: {
     const rows = hydrateRows(db, page);
     return { ok: true, data: { rows, total, href: transactionsHref(filter) } };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Failed to load" };
+    // a ZodError's own message is a JSON dump of the issue array — unwrap it to
+    // the single "Invalid from date" the schema declared
+    return {
+      ok: false,
+      error: actionErrorMessage(
+        error,
+        { categoryId: "Category", from: "From", to: "To" },
+        "Failed to load",
+      ),
+    };
   }
 }
 
@@ -96,7 +105,7 @@ export async function loadSpendHeatmap(monthKey: string): Promise<ActionResult<S
     if (!MONTH_KEY_RE.test(monthKey)) return { ok: false, error: "Invalid month" };
     return { ok: true, data: dailySpendHeatmap(getDb(), monthKey) };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Failed to load" };
+    return { ok: false, error: actionErrorMessage(error, {}, "Failed to load") };
   }
 }
 

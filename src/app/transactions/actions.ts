@@ -54,13 +54,15 @@ import {
 } from "@/services/rule-corrections";
 import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/description-key";
 import { parseFilters, type SearchParams, type TxnNotice } from "@/components/transactions/query";
-import type {
-  ActionResult,
-  BulkMutationData,
-  CorrectCategoryData,
-  CreatedRuleData,
-  RecategorizeGroupData,
-  RulePromptPreview,
+import {
+  actionErrorMessage,
+  firstIssueMessage,
+  type ActionResult,
+  type BulkMutationData,
+  type CorrectCategoryData,
+  type CreatedRuleData,
+  type RecategorizeGroupData,
+  type RulePromptPreview,
 } from "./action-types";
 
 /**
@@ -84,78 +86,176 @@ function transactionsPath(returnQuery: string, notice?: TxnNotice): string {
 }
 
 const correctionFormSchema = z.object({
-  transactionId: z.string().min(1, "Missing transaction"),
-  categoryId: z.string().min(1, "Pick a category"),
+  // the single-argument form reports the SAME message when the field is missing
+  // entirely, instead of zod's "expected string, received null"
+  transactionId: z.string("Missing transaction").min(1, "Missing transaction"),
+  categoryId: z.string("Pick a category").min(1, "Pick a category"),
   applyToMerchant: z.boolean(),
   retroactive: z.boolean(),
   returnTo: z.string(),
 });
 
-export async function correctCategoryAction(formData: FormData): Promise<void> {
-  const parsed = correctionFormSchema.parse({
+const TXN_LABELS = {
+  transactionId: "Transaction",
+  categoryId: "Category",
+  merchantId: "Merchant",
+  monthKey: "Month",
+  date: "Date",
+  amountCents: "Amount",
+  postedOn: "Date",
+  accountId: "Account",
+  name: "Name",
+} as const;
+
+/**
+ * The redirect-style form actions below keep their `Promise<void>` signature
+ * byte-identical: React types `<form action>` as
+ * `(formData) => void | Promise<void>`, so a result cannot be returned from one
+ * without breaking its call site. Each delegates to a `*ResultAction` twin that
+ * validates with safeParse and hands back the destination, and the void adapter
+ * does the redirect — a failure lands on `?error=` instead of becoming a
+ * Next.js error digest that replaces the page.
+ */
+function returnPath(returnQuery: string, error: string): string {
+  const separator = returnQuery === "" ? "?" : "&";
+  return `/transactions${returnQuery}${separator}error=${encodeURIComponent(error)}`;
+}
+
+export async function correctCategoryResultAction(
+  formData: FormData,
+): Promise<ActionResult<{ href: string }>> {
+  const returnTo = safeReturnQuery(formData.get("returnTo"));
+  const parsed = correctionFormSchema.safeParse({
     transactionId: formData.get("transactionId"),
     categoryId: formData.get("categoryId"),
     applyToMerchant: formData.get("applyToMerchant") === "on",
     retroactive: formData.get("retroactive") === "on",
-    returnTo: safeReturnQuery(formData.get("returnTo")),
+    returnTo,
   });
-
-  const result = applyCorrection(getDb(), {
-    transactionId: parsed.transactionId,
-    categoryId: parsed.categoryId,
-    applyToMerchant: parsed.applyToMerchant,
-    retroactive: parsed.retroactive,
-  });
-
+  if (!parsed.success) {
+    return { ok: false, error: firstIssueMessage(parsed.error.issues, TXN_LABELS) };
+  }
+  let directionGuardTriggered: boolean;
+  try {
+    const result = applyCorrection(getDb(), {
+      transactionId: parsed.data.transactionId,
+      categoryId: parsed.data.categoryId,
+      applyToMerchant: parsed.data.applyToMerchant,
+      retroactive: parsed.data.retroactive,
+    });
+    directionGuardTriggered = result.directionGuardTriggered;
+  } catch (error: unknown) {
+    return failure(error);
+  }
   revalidatePath("/transactions");
   revalidatePath("/");
-  if (result.directionGuardTriggered) {
-    // sign-opposing correction: the txn changed, the mapping did NOT —
-    // surface a notice instead of silently flipping the merchant default
-    redirect(transactionsPath(parsed.returnTo, "direction-guard"));
-  }
-  redirect(transactionsPath(parsed.returnTo));
+  // sign-opposing correction: the txn changed, the mapping did NOT —
+  // surface a notice instead of silently flipping the merchant default
+  const notice = directionGuardTriggered ? "direction-guard" : undefined;
+  return { ok: true, data: { href: transactionsPath(parsed.data.returnTo, notice) } };
+}
+
+export async function correctCategoryAction(formData: FormData): Promise<void> {
+  const result = await correctCategoryResultAction(formData);
+  // redirect() throws NEXT_REDIRECT by design — it must stay outside any catch
+  redirect(
+    result.ok
+      ? result.data.href
+      : returnPath(safeReturnQuery(formData.get("returnTo")), result.error),
+  );
 }
 
 const returnOnlyFormSchema = z.object({ returnTo: z.string() });
 
-export async function runCategorizationAction(formData: FormData): Promise<void> {
-  const parsed = returnOnlyFormSchema.parse({
+export async function runCategorizationResultAction(
+  formData: FormData,
+): Promise<ActionResult<{ href: string }>> {
+  const parsed = returnOnlyFormSchema.safeParse({
     returnTo: safeReturnQuery(formData.get("returnTo")),
   });
-
-  const db = getDb();
-  categorizeAll(db);
-  detectTransfers(db);
-
+  if (!parsed.success) {
+    return { ok: false, error: firstIssueMessage(parsed.error.issues, TXN_LABELS) };
+  }
+  try {
+    const db = getDb();
+    categorizeAll(db);
+    detectTransfers(db);
+  } catch (error: unknown) {
+    return failure(error);
+  }
   revalidatePath("/transactions");
   revalidatePath("/");
-  redirect(transactionsPath(parsed.returnTo));
+  return { ok: true, data: { href: transactionsPath(parsed.data.returnTo) } };
+}
+
+export async function runCategorizationAction(formData: FormData): Promise<void> {
+  const result = await runCategorizationResultAction(formData);
+  redirect(
+    result.ok
+      ? result.data.href
+      : returnPath(safeReturnQuery(formData.get("returnTo")), result.error),
+  );
+}
+
+export async function stopClassifyResultAction(
+  formData: FormData,
+): Promise<ActionResult<{ href: string }>> {
+  const parsed = returnOnlyFormSchema.safeParse({
+    returnTo: safeReturnQuery(formData.get("returnTo")),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: firstIssueMessage(parsed.error.issues, TXN_LABELS) };
+  }
+  try {
+    requestClaudeStop(getDb());
+  } catch (error: unknown) {
+    return failure(error);
+  }
+  revalidatePath("/transactions");
+  return { ok: true, data: { href: transactionsPath(parsed.data.returnTo) } };
 }
 
 export async function stopClassifyAction(formData: FormData): Promise<void> {
-  const parsed = returnOnlyFormSchema.parse({
+  const result = await stopClassifyResultAction(formData);
+  redirect(
+    result.ok
+      ? result.data.href
+      : returnPath(safeReturnQuery(formData.get("returnTo")), result.error),
+  );
+}
+
+export async function classifyMerchantsResultAction(
+  formData: FormData,
+): Promise<ActionResult<{ href: string }>> {
+  const parsed = returnOnlyFormSchema.safeParse({
     returnTo: safeReturnQuery(formData.get("returnTo")),
   });
-  requestClaudeStop(getDb());
+  if (!parsed.success) {
+    return { ok: false, error: firstIssueMessage(parsed.error.issues, TXN_LABELS) };
+  }
+  let ran: boolean;
+  let queued: number;
+  try {
+    const result = await classifyPendingMerchants(getDb());
+    ran = result.ran;
+    queued = result.queued;
+  } catch (error: unknown) {
+    return failure(error);
+  }
   revalidatePath("/transactions");
-  redirect(transactionsPath(parsed.returnTo));
+  revalidatePath("/");
+  // no ANTHROPIC_API_KEY — the service no-ops and the queue is preserved
+  const notice = !ran && queued > 0 ? "no-api-key" : undefined;
+  return { ok: true, data: { href: transactionsPath(parsed.data.returnTo, notice) } };
 }
 
 export async function classifyMerchantsAction(formData: FormData): Promise<void> {
-  const parsed = returnOnlyFormSchema.parse({
-    returnTo: safeReturnQuery(formData.get("returnTo")),
-  });
-
-  const result = await classifyPendingMerchants(getDb());
-
-  revalidatePath("/transactions");
-  revalidatePath("/");
-  if (!result.ran && result.queued > 0) {
-    // no ANTHROPIC_API_KEY — the service no-ops and the queue is preserved
-    redirect(transactionsPath(parsed.returnTo, "no-api-key"));
-  }
-  redirect(transactionsPath(parsed.returnTo));
+  const result = await classifyMerchantsResultAction(formData);
+  redirect(
+    result.ok
+      ? result.data.href
+      : returnPath(safeReturnQuery(formData.get("returnTo")), result.error),
+  );
 }
 
 /* -------------------------------------------------------------------------
@@ -166,7 +266,9 @@ export async function classifyMerchantsAction(formData: FormData): Promise<void>
  * ---------------------------------------------------------------------- */
 
 function failure(error: unknown): { ok: false; error: string } {
-  return { ok: false, error: error instanceof Error ? error.message : "Unexpected error" };
+  // actionErrorMessage unwraps a ZodError's issues; `error.message` alone would
+  // hand the caller a JSON dump of the whole issue array.
+  return { ok: false, error: actionErrorMessage(error, TXN_LABELS, "Unexpected error") };
 }
 
 function revalidateTransactions(): void {

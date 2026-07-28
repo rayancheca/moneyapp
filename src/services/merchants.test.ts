@@ -335,6 +335,27 @@ describe("merchant default category (S6)", () => {
     expect(bundle.db.select().from(transactions).where(eq(transactions.id, bare)).get()!.categoryId).toBeNull();
   });
 
+  test("a row the user deliberately left uncategorized is not backfilled", () => {
+    const food = bundle.db.select().from(categories).where(eq(categories.name, "Food")).all()[0]!;
+    const gap = insertTxn({ merchantId: netflixId });
+    const userLeftBlank = insertTxn({ merchantId: netflixId });
+    // category stays NULL — source='user' makes it a decision, not a gap
+    bundle.db
+      .update(transactions)
+      .set({ categorizationSource: "user" })
+      .where(eq(transactions.id, userLeftBlank))
+      .run();
+
+    setMerchantDefaultCategory(bundle.db, netflixId, food.id);
+    const result = applyMerchantDefaultToUncategorized(bundle.db, netflixId);
+
+    expect(result.affected).toBe(1);
+    expect(bundle.db.select().from(transactions).where(eq(transactions.id, gap)).get()!.categoryId).toBe(food.id);
+    const untouched = bundle.db.select().from(transactions).where(eq(transactions.id, userLeftBlank)).get()!;
+    expect(untouched.categoryId).toBeNull();
+    expect(untouched.categorizationSource).toBe("user");
+  });
+
   test("backfill without a default is rejected", () => {
     const bare = bundle.db
       .insert(merchants)

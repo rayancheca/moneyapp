@@ -1,14 +1,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import { and, eq, gte, inArray, isNull, lte, max, min, ne, sql } from "drizzle-orm";
+import { withPreMutationSnapshot } from "@/db/backup";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { balanceAnchors } from "@/db/schema/balances";
 import { importFiles, statementPeriods, type FileFormat } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
-import { transactions } from "@/db/schema/transactions";
-import { migrateSplits } from "../transaction-splits";
+import {
+  transactions,
+  type CategorizationSource,
+  type SeriesLinkSource,
+  type TransactionStatus,
+} from "@/db/schema/transactions";
+import { migrateSplits, splitCountsByTxn } from "../transaction-splits";
 import { assignOccurrenceIndexes, dedupeHash, fileSha256 } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { sumCents } from "@/lib/money";
@@ -53,6 +59,12 @@ export interface FileOutcome {
   /** rows not inserted because a higher-fidelity source owns their date range */
   skippedOwned: number;
   supersededTakeover: number;
+  /**
+   * rows that inherited user-set attributes (category/notes/transfer link/
+   * recurring link/exclusion/splits) from this same file's prior parser
+   * version — the re-parse lifecycle, visible instead of silent
+   */
+  carriedForward: number;
   quarantined: number;
   periods: PeriodOutcome[];
 }
@@ -104,6 +116,237 @@ function consumeIdentity(pool: Map<string, number>, key: string): boolean {
   const remaining = pool.get(key) ?? 0;
   if (remaining <= 0) return false;
   pool.set(key, remaining - 1);
+  return true;
+}
+
+/**
+ * The user-set attributes a row owns — everything the parser cannot re-derive.
+ * They belong to the MONEY, not to the parse, so a re-parse at a new parser
+ * version must move them onto the fresh row (schema.md lifecycle rule).
+ * `categorizationSource` decides whether the category itself travels: only a
+ * `user` category is user-set — rule/merchant/bank/transfer categories are
+ * re-derived by categorizeAll once the batch settles, so carrying one would
+ * freeze a stale guess. A user category takes its merchant along, because
+ * categorizeAll never revisits a user-categorized row.
+ * Deliberately NOT carried: needs_review (re-derived every import) and
+ * quarantined status (a reconciliation verdict on the OLD file's period —
+ * the new file reconciles for itself).
+ */
+interface CarryAttributes {
+  categoryId: string | null;
+  categorizationSource: CategorizationSource | null;
+  categorizationConfidence: number | null;
+  merchantId: string | null;
+  notes: string | null;
+  transferGroupId: string | null;
+  recurringSeriesId: string | null;
+  seriesLinkSource: SeriesLinkSource | null;
+  status: TransactionStatus;
+}
+
+/** A superseded prior-version row, still content-matchable to its successor. */
+interface CarryRow extends CarryAttributes {
+  id: string;
+  dedupeHash: string;
+  normalizedDescription: string;
+}
+
+/** Carryable rows bucketed by (account, day, amount) — the money's identity. */
+type CarryPool = Map<string, CarryRow[]>;
+
+function carryKey(accountId: string, postedOn: string, amountCents: number): string {
+  return `${accountId}\x1f${postedOn}\x1f${amountCents}`;
+}
+
+/** Something a re-parse would otherwise destroy (splits handled separately). */
+function hasCarryableAttributes(row: CarryRow): boolean {
+  return (
+    (row.categorizationSource === "user" && row.categoryId !== null) ||
+    row.notes !== null ||
+    row.transferGroupId !== null ||
+    row.recurringSeriesId !== null ||
+    row.status === "excluded"
+  );
+}
+
+/**
+ * Snapshot the user-set attributes of the rows a set of about-to-be-superseded
+ * import files contributed. MUST run BEFORE supersedeFileContribution — after
+ * it the rows are `superseded` and every lookup path skips them.
+ */
+function captureCarryForward(db: AppDatabase, oldFileIds: readonly string[]): CarryPool {
+  const pool: CarryPool = new Map();
+  if (oldFileIds.length === 0) return pool;
+  const rows = db
+    .select()
+    .from(transactions)
+    .where(
+      and(
+        inArray(transactions.importFileId, [...oldFileIds]),
+        inArray(transactions.status, ["active", "quarantined", "excluded"]),
+      ),
+    )
+    .all();
+  // a split row carries even when its parent fields are empty: the parts are
+  // the user's work and must land on the successor
+  const splitCounts = splitCountsByTxn(db, rows.map((r) => r.id));
+  for (const row of rows) {
+    if (!hasCarryableAttributes(row) && (splitCounts.get(row.id) ?? 0) === 0) continue;
+    const key = carryKey(row.accountId, row.postedOn, row.amountCents);
+    const bucket = pool.get(key);
+    if (bucket) bucket.push(row);
+    else pool.set(key, [row]);
+  }
+  // deterministic order so two runs consume identical buckets identically
+  for (const bucket of pool.values()) bucket.sort((a, b) => a.id.localeCompare(b.id));
+  return pool;
+}
+
+/**
+ * Claim the prior-version row for this incoming row, if any. Same account, same
+ * day, same amount — that is the same money even when a fixed parser now reads
+ * the description differently; the description only RANKS candidates when a day
+ * holds several equal amounts. Multiset consumption: each old row's attributes
+ * migrate onto at most one successor.
+ */
+function takeCarry(pool: CarryPool, accountId: string, t: CanonicalTxn, hash: string): CarryRow | null {
+  const key = carryKey(accountId, t.postedOn, t.amountCents);
+  const bucket = pool.get(key);
+  if (!bucket || bucket.length === 0) return null;
+  const incoming = normalizeDescription(t.rawDescription);
+  const ranked = bucket
+    .map((row, index) => ({
+      row,
+      index,
+      // an unchanged dedupe hash is proof of the same parsed row
+      score: row.dedupeHash === hash ? 4 : descriptionScore(row.normalizedDescription, incoming),
+    }))
+    .sort((a, b) => b.score - a.score || a.row.id.localeCompare(b.row.id));
+  const winner = ranked[0]!;
+  bucket.splice(winner.index, 1);
+  return winner.row;
+}
+
+/**
+ * Stamp carried attributes onto a row THIS file just inserted (it owns the row,
+ * so a full overwrite is safe and idempotent).
+ */
+function applyCarry(tx: AppDatabase, txnId: string, carry: CarryAttributes): void {
+  const userCategory = carry.categorizationSource === "user" && carry.categoryId !== null;
+  tx.update(transactions)
+    .set({
+      ...(userCategory
+        ? {
+            categoryId: carry.categoryId,
+            categorizationSource: "user" as const,
+            categorizationConfidence: carry.categorizationConfidence,
+            merchantId: carry.merchantId,
+            needsReview: false,
+          }
+        : {}),
+      notes: carry.notes,
+      // a self-group (user-marked transfer with no counterparty) keeps pointing
+      // at the retired row's id — still a valid marker, and analytics must never
+      // drop a row merely for carrying a group id
+      transferGroupId: carry.transferGroupId,
+      recurringSeriesId: carry.recurringSeriesId,
+      seriesLinkSource: carry.recurringSeriesId ? carry.seriesLinkSource : null,
+      // a user-excluded row stays excluded — a re-parse must not resurrect it
+      ...(carry.status === "excluded" ? { status: "excluded" as const } : {}),
+    })
+    .where(eq(transactions.id, txnId))
+    .run();
+}
+
+/**
+ * Re-attach carried attributes to a row that ALREADY existed (this file's row
+ * deduped against another source's). Fill-only: an attribute already set on the
+ * survivor wins, so a user category is never downgraded or overwritten.
+ */
+function fillFromCarry(tx: AppDatabase, existing: typeof transactions.$inferSelect, carry: CarryAttributes): void {
+  const set: Partial<typeof transactions.$inferInsert> = {};
+  if (
+    carry.categorizationSource === "user" &&
+    carry.categoryId !== null &&
+    existing.categorizationSource !== "user"
+  ) {
+    set.categoryId = carry.categoryId;
+    set.categorizationSource = "user";
+    set.categorizationConfidence = carry.categorizationConfidence;
+    set.merchantId = existing.merchantId ?? carry.merchantId;
+    set.needsReview = false;
+  }
+  if (existing.notes === null && carry.notes !== null) set.notes = carry.notes;
+  if (existing.transferGroupId === null && carry.transferGroupId !== null) {
+    set.transferGroupId = carry.transferGroupId;
+  }
+  if (existing.recurringSeriesId === null && carry.recurringSeriesId !== null) {
+    set.recurringSeriesId = carry.recurringSeriesId;
+    set.seriesLinkSource = carry.seriesLinkSource;
+  }
+  if (Object.keys(set).length === 0) return;
+  tx.update(transactions).set(set).where(eq(transactions.id, existing.id)).run();
+}
+
+/**
+ * Move the carried row's splits onto its successor. migrateSplits stamps the
+ * source parent's category onto the destination, so a row that is NOT freshly
+ * ours keeps its own work: a user category or an existing split there outranks
+ * anything we could bring. The parent/parts invariant survives either way —
+ * successor and carry match on amount by construction, so the parts still sum.
+ */
+function adoptCarriedSplits(
+  tx: AppDatabase,
+  carry: CarryRow,
+  target: typeof transactions.$inferSelect,
+  targetIsFresh: boolean,
+): void {
+  if (!targetIsFresh) {
+    if (target.categorizationSource === "user") return;
+    if ((splitCountsByTxn(tx, [target.id]).get(target.id) ?? 0) > 0) return;
+  }
+  migrateSplits(tx, carry.id, target.id);
+}
+
+/** The live (non-superseded) row for an account's dedupe hash, if it exists. */
+function liveRowByHash(
+  tx: AppDatabase,
+  accountId: string,
+  hash: string,
+): typeof transactions.$inferSelect | undefined {
+  return tx
+    .select()
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.accountId, accountId),
+        eq(transactions.dedupeHash, hash),
+        ne(transactions.status, "superseded"),
+      ),
+    )
+    .get();
+}
+
+/**
+ * Land a claimed carry on whichever live row now represents this money (read
+ * fresh, so any takeover migration that just ran is accounted for).
+ * `fresh` — we inserted that row ourselves, so it is ours to stamp outright;
+ * otherwise the row predates this file and only its EMPTY attributes fill in.
+ * Returns false when nothing represents the money (the carry simply retires
+ * with its superseded row).
+ */
+function landCarry(
+  tx: AppDatabase,
+  accountId: string,
+  hash: string,
+  carry: CarryRow,
+  fresh: boolean,
+): boolean {
+  const target = liveRowByHash(tx, accountId, hash);
+  if (!target) return false;
+  adoptCarriedSplits(tx, carry, target, fresh);
+  if (fresh) applyCarry(tx, target.id, carry);
+  else fillFromCarry(tx, target, carry);
   return true;
 }
 
@@ -379,6 +622,7 @@ async function importOneFile(
     dedupedCrossFormat: 0,
     skippedOwned: 0,
     supersededTakeover: 0,
+    carriedForward: 0,
     quarantined: 0,
     periods: [],
   };
@@ -393,16 +637,21 @@ async function importOneFile(
   }
 
   // re-parse lifecycle (schema.md): a newer parser version supersedes the old
-  // version's entire contribution atomically before importing fresh
-  if (profile) {
-    const stale = db
-      .select()
-      .from(importFiles)
-      .where(and(eq(importFiles.fileSha256, sha), inArray(importFiles.status, ["parsed", "parsed_with_claude"])))
-      .all()
-      .filter((f) => f.parserVersion < profile.version);
-    for (const old of stale) supersedeFileContribution(db, old.id);
-  }
+  // version's entire contribution atomically before importing fresh. The old
+  // rows' user-set attributes are snapshotted FIRST — superseding them hides
+  // them from every lookup path, and the fresh rows inherit them by content
+  // match below. Without this a parser improvement would silently destroy every
+  // hand-set category, note, transfer link, exclusion and split on the file.
+  const stale = profile
+    ? db
+        .select()
+        .from(importFiles)
+        .where(and(eq(importFiles.fileSha256, sha), inArray(importFiles.status, ["parsed", "parsed_with_claude"])))
+        .all()
+        .filter((f) => f.parserVersion < profile.version)
+    : [];
+  const carryPool = captureCarryForward(db, stale.map((f) => f.id));
+  for (const old of stale) supersedeFileContribution(db, old.id);
 
   const institution = guessInstitution(db, file);
   // basename neutralizes traversal; truncation + control-strip neutralizes
@@ -492,6 +741,10 @@ async function importOneFile(
             occurrenceIndex,
           });
           const poolKey = identityKey(t.postedOn, t.amountCents);
+          // this file's own prior-version row for the same money, if the user
+          // had put anything on it (claimed here so a row skipped as owned
+          // above leaves its attributes for whichever row does materialize)
+          const carried = takeCarry(carryPool, accountId, t, hash);
 
           // takeover: a lower-fidelity source owns this day — replace its
           // best-matching row (schema.md: date, amount, description similarity)
@@ -504,25 +757,22 @@ async function importOneFile(
               // the victim leaves the ledger — release its identity so a later
               // same-day equal-amount row can't consume the superseded slot
               if (victim.status !== "quarantined") consumeIdentity(identityPool, poolKey);
-              const inserted = insertTxn(tx, db, accountId, fileRow.id, t, hash, occurrenceIndex, victim);
+              // the re-parse carry wins over the victim: same file lineage, so
+              // it is the row the user actually edited
+              const inserted = insertTxn(tx, db, accountId, fileRow.id, t, hash, occurrenceIndex, carried ?? victim);
               if (inserted) outcome.inserted += 1;
               else outcome.deduped += 1;
               // move any user-entered splits off the superseded victim onto its
               // replacement (the SAME real charge, so amounts match) — found by
               // the replacement's own dedupe hash. Covers both the freshly-
               // inserted and the deduped (existing active twin) branches.
-              const replacement = tx
-                .select({ id: transactions.id })
-                .from(transactions)
-                .where(
-                  and(
-                    eq(transactions.accountId, accountId),
-                    eq(transactions.dedupeHash, hash),
-                    ne(transactions.status, "superseded"),
-                  ),
-                )
-                .get();
+              const replacement = liveRowByHash(tx, accountId, hash);
               if (replacement) migrateSplits(tx, victim.id, replacement.id);
+              // the carry lands last: same file lineage as the row the user
+              // actually edited, so it outranks the victim's attributes
+              if (carried && landCarry(tx, accountId, hash, carried, inserted)) {
+                outcome.carriedForward += 1;
+              }
               continue;
             }
           }
@@ -543,12 +793,24 @@ async function importOneFile(
               .get();
             if (exact) outcome.deduped += 1;
             else outcome.dedupedCrossFormat += 1;
+            // the survivor belongs to another file: fill only the attributes it
+            // lacks, never overwrite (its own user category outranks ours). A
+            // cross-format dedupe (hash miss) has no identifiable survivor, so
+            // that carry retires with its superseded row rather than guess.
+            if (carried && landCarry(tx, accountId, hash, carried, false)) {
+              outcome.carriedForward += 1;
+            }
             continue;
           }
 
-          const inserted = insertTxn(tx, db, accountId, fileRow.id, t, hash, occurrenceIndex, null);
+          const inserted = insertTxn(tx, db, accountId, fileRow.id, t, hash, occurrenceIndex, carried);
           if (inserted) outcome.inserted += 1;
           else outcome.deduped += 1;
+          // `inserted === false` means an active twin already held this hash —
+          // that row is not ours to overwrite, only to fill
+          if (carried && landCarry(tx, accountId, hash, carried, inserted)) {
+            outcome.carriedForward += 1;
+          }
         }
 
         // anchors: point-in-time ledger observations and statement balances
@@ -679,17 +941,24 @@ function pickTakeoverVictim(
   if (candidates.length === 1) return candidates[0];
 
   const incoming = normalizeDescription(t.rawDescription);
-  const score = (candidateDesc: string): number => {
-    if (candidateDesc === incoming) return 3;
-    if (candidateDesc.includes(incoming) || incoming.includes(candidateDesc)) return 2;
-    let prefix = 0;
-    while (prefix < Math.min(candidateDesc.length, incoming.length) && candidateDesc[prefix] === incoming[prefix]) prefix++;
-    return prefix >= 8 ? 1 : 0;
-  };
   const ranked = candidates
-    .map((c) => ({ c, s: score(c.normalizedDescription) }))
+    .map((c) => ({ c, s: descriptionScore(c.normalizedDescription, incoming) }))
     .sort((a, b) => b.s - a.s || a.c.id.localeCompare(b.c.id));
   return ranked[0]!.s > 0 ? ranked[0]!.c : undefined;
+}
+
+/**
+ * How closely two normalized descriptions describe the same charge: 3 equal,
+ * 2 one contains the other, 1 a long shared prefix, 0 unrelated. Shared by
+ * takeover-victim selection (where 0 vetoes the supersede) and re-parse
+ * carry-forward (where it only ranks candidates that already match on money).
+ */
+function descriptionScore(candidate: string, incoming: string): number {
+  if (candidate === incoming) return 3;
+  if (candidate.includes(incoming) || incoming.includes(candidate)) return 2;
+  let prefix = 0;
+  while (prefix < Math.min(candidate.length, incoming.length) && candidate[prefix] === incoming[prefix]) prefix++;
+  return prefix >= 8 ? 1 : 0;
 }
 
 function insertTxn(
@@ -700,7 +969,9 @@ function insertTxn(
   t: CanonicalTxn,
   hash: string,
   occurrenceIndex: number,
-  carryFrom: { categoryId: string | null; categorizationSource: string | null; notes: string | null; transferGroupId: string | null; recurringSeriesId: string | null } | null,
+  // the row this one replaces (takeover victim or re-parse predecessor); the
+  // remaining carried attributes land in applyCarry once the row exists
+  carryFrom: CarryAttributes | null,
 ): boolean {
   const categoryId = t.categoryPath ? categoryIdForPath(db, t.categoryPath) : null;
   const carryUserCategory = carryFrom?.categorizationSource === "user" ? carryFrom.categoryId : null;
@@ -970,45 +1241,53 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
     .all()
     .map((r) => r.accountId);
 
-  db.transaction((tx) => {
-    tx.delete(transactions).where(eq(transactions.importFileId, importFileId)).run();
-    tx.delete(balanceAnchors).where(eq(balanceAnchors.importFileId, importFileId)).run();
-    // anchors owned by OTHER files may reference this file's periods — detach
-    // them before the periods go (FK integrity under foreign_keys=ON)
-    tx.run(sql`
-      UPDATE balance_anchors SET statement_period_id = NULL
-      WHERE statement_period_id IN (SELECT id FROM statement_periods WHERE import_file_id = ${importFileId})
-    `);
-    tx.delete(statementPeriods).where(eq(statementPeriods.importFileId, importFileId)).run();
-    tx.delete(importFiles).where(eq(importFiles.id, importFileId)).run();
+  // The file's rows leave the database entirely — re-importing re-parses the
+  // original, but every correction made to those rows since is gone.
+  withPreMutationSnapshot(db, "unimport-file", () => {
+    db.transaction((tx) => {
+      tx.delete(transactions).where(eq(transactions.importFileId, importFileId)).run();
+      tx.delete(balanceAnchors).where(eq(balanceAnchors.importFileId, importFileId)).run();
+      // anchors owned by OTHER files may reference this file's periods — detach
+      // them before the periods go (FK integrity under foreign_keys=ON)
+      tx.run(sql`
+        UPDATE balance_anchors SET statement_period_id = NULL
+        WHERE statement_period_id IN (SELECT id FROM statement_periods WHERE import_file_id = ${importFileId})
+      `);
+      tx.delete(statementPeriods).where(eq(statementPeriods.importFileId, importFileId)).run();
+      tx.delete(importFiles).where(eq(importFiles.id, importFileId)).run();
+    });
+    reconcileAccounts(db, affected);
+    for (const accountId of affected) rebuildAccount(db, accountId);
   });
-  reconcileAccounts(db, affected);
-  for (const accountId of affected) rebuildAccount(db, accountId);
 }
 
 /** Accept a gap: the user takes the statement as-is; rows return to analytics. */
 export function acceptGap(db: AppDatabase, statementPeriodId: string): void {
   const period = db.select().from(statementPeriods).where(eq(statementPeriods.id, statementPeriodId)).get();
   if (!period) return;
-  db.transaction((tx) => {
-    tx.update(statementPeriods)
-      .set({ reconciliation: "accepted" })
-      .where(eq(statementPeriods.id, statementPeriodId))
-      .run();
-    tx.update(transactions)
-      .set({ status: "active" })
-      .where(
-        and(
-          eq(transactions.accountId, period.accountId),
-          eq(transactions.importFileId, period.importFileId),
-          eq(transactions.status, "quarantined"),
-          gte(transactions.postedOn, period.periodStart),
-          lte(transactions.postedOn, period.periodEnd),
-        ),
-      )
-      .run();
+  // Un-quarantining is a one-way door: the reconciliation verdict that put
+  // those rows aside is overwritten, and nothing recomputes it.
+  withPreMutationSnapshot(db, "accept-gap", () => {
+    db.transaction((tx) => {
+      tx.update(statementPeriods)
+        .set({ reconciliation: "accepted" })
+        .where(eq(statementPeriods.id, statementPeriodId))
+        .run();
+      tx.update(transactions)
+        .set({ status: "active" })
+        .where(
+          and(
+            eq(transactions.accountId, period.accountId),
+            eq(transactions.importFileId, period.importFileId),
+            eq(transactions.status, "quarantined"),
+            gte(transactions.postedOn, period.periodStart),
+            lte(transactions.postedOn, period.periodEnd),
+          ),
+        )
+        .run();
+    });
+    categorizeAll(db);
+    detectTransfers(db);
+    rebuildAccount(db, period.accountId);
   });
-  categorizeAll(db);
-  detectTransfers(db);
-  rebuildAccount(db, period.accountId);
 }

@@ -508,8 +508,13 @@ export interface SeriesView {
   amountCentsAvg: number | null;
   amountCentsStddev: number | null;
   toleranceDays: number;
-  /** effective next-expected (user override first) */
+  /**
+   * effective next-expected (user override first), rolled forward past a stale
+   * stored value so a live series never lists a "next" date in the past
+   */
   nextExpectedOn: string | null;
+  /** the stored (un-rolled) effective next-expected — what the detector last wrote */
+  storedNextExpectedOn: string | null;
   nextExpectedAmountCents: number | null;
   status: SeriesStatus;
   confidence: number | null;
@@ -562,6 +567,11 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
   return rows
     .map(({ series: s, merchantName }) => {
       const eff = effectiveSeries(s);
+      // Show the same date the forecast projects: rolled forward off a stale
+      // stored value. Only for the statuses the forecast actually projects —
+      // rolling a dismissed/ended series forward would invent a future charge.
+      const isProjected = s.status === "detected" || s.status === "confirmed";
+      const nextExpectedOn = isProjected ? rollForwardNextExpected(eff, today) : eff.nextExpectedOn;
       return {
         id: s.id,
         name: s.name,
@@ -573,7 +583,8 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
         amountCentsAvg: s.amountCentsAvg,
         amountCentsStddev: s.amountCentsStddev,
         toleranceDays: s.toleranceDays,
-        nextExpectedOn: eff.nextExpectedOn,
+        nextExpectedOn,
+        storedNextExpectedOn: eff.nextExpectedOn,
         nextExpectedAmountCents: eff.nextExpectedAmountCents,
         status: s.status,
         confidence: s.confidence,
@@ -598,6 +609,32 @@ export interface SeriesOccurrence {
   cadence: Cadence;
   date: string;
   amountCents: number;
+  /**
+   * How old the evidence behind this projection is, when the caller supplied
+   * it (see toProjectable). Undefined means "not measured here", never "fresh".
+   */
+  staleness?: SeriesStaleness;
+}
+
+/**
+ * How late a series' evidence is running. Carried alongside a projection so the
+ * read path can DISCLOSE staleness instead of resolving it by exclusion: the
+ * owner's weekly cash job routinely sits ~3 weeks behind on deposit/import lag,
+ * so filtering stale series out of the forecast would delete real income, while
+ * projecting a dead subscription with no note hides the doubt. Computed with
+ * exactly the arithmetic isSeriesActive splits on, so the two cannot disagree.
+ */
+export interface SeriesStaleness {
+  /** newest matched charge, or null when nothing has ever matched the series */
+  lastMatchedOn: string | null;
+  /** days from lastMatchedOn to today; null when there is nothing to measure */
+  daysSinceLastMatch: number | null;
+  /** the effective step: user cadence → nominal, else the detected average gap */
+  stepDays: number;
+  /** step × INACTIVE_MISS_LIMIT + cadence grace — past this the evidence is late */
+  toleranceDays: number;
+  /** true once the evidence is older than toleranceDays, or absent entirely */
+  isStale: boolean;
 }
 
 interface ProjectableSeries {
@@ -608,6 +645,8 @@ interface ProjectableSeries {
   intervalDaysAvg: number | null;
   nextExpectedOn: string | null;
   nextExpectedAmountCents: number | null;
+  /** copied onto every occurrence this series projects */
+  staleness?: SeriesStaleness;
 }
 
 /** Nominal step when a series predates interval stats (should not happen). */
@@ -650,15 +689,42 @@ export function effectiveSeries(s: SeriesOverrides): EffectiveSeries {
   };
 }
 
-/** Maps a series row (with overrides) to the effective projection input. */
+/**
+ * Maps a series row (with overrides) to the effective projection input.
+ * `staleness` is opt-in: a caller that means to disclose the age of the
+ * evidence passes it, and it rides along onto every projected occurrence.
+ */
 export function toProjectable(
   s: SeriesOverrides & { id: string; name: string; kind: SeriesKind },
+  staleness?: SeriesStaleness,
 ): ProjectableSeries {
   const eff = effectiveSeries(s);
-  return { id: s.id, name: s.name, kind: s.kind, ...eff };
+  return { id: s.id, name: s.name, kind: s.kind, ...eff, staleness };
 }
 
 const INACTIVE_MISS_LIMIT = 1.5;
+
+/**
+ * How late a series is, measured against the same threshold the Active/Inactive
+ * split uses. Status plays no part — a dismissed series can still be perfectly
+ * fresh, and freshness is what this reports.
+ */
+export function seriesStaleness(
+  s: SeriesOverrides & { lastMatchedOn: string | null },
+  today: string = todayIso(),
+): SeriesStaleness {
+  const cadence = s.userCadence ?? s.cadence;
+  const stepDays = s.userCadence ? CADENCE_NOMINAL_DAYS[cadence] : s.intervalDaysAvg ?? CADENCE_NOMINAL_DAYS[cadence];
+  const toleranceDays = stepDays * INACTIVE_MISS_LIMIT + CADENCE_TOLERANCE_DAYS[cadence];
+  const daysSinceLastMatch = s.lastMatchedOn ? diffDays(s.lastMatchedOn, today) : null;
+  return {
+    lastMatchedOn: s.lastMatchedOn,
+    daysSinceLastMatch,
+    stepDays,
+    toleranceDays,
+    isStale: daysSinceLastMatch === null || daysSinceLastMatch > toleranceDays,
+  };
+}
 
 /**
  * Active/Inactive split for the "All" sub-view (§4.1): a detected/confirmed
@@ -671,11 +737,23 @@ export function isSeriesActive(
   today: string = todayIso(),
 ): boolean {
   if (s.status === "dismissed" || s.status === "ended") return false;
-  if (!s.lastMatchedOn) return false;
-  const cadence = s.userCadence ?? s.cadence;
-  const step = s.userCadence ? CADENCE_NOMINAL_DAYS[cadence] : s.intervalDaysAvg ?? CADENCE_NOMINAL_DAYS[cadence];
-  const grace = CADENCE_TOLERANCE_DAYS[cadence];
-  return diffDays(s.lastMatchedOn, today) <= step * INACTIVE_MISS_LIMIT + grace;
+  return !seriesStaleness(s, today).isStale;
+}
+
+/**
+ * The first non-past occurrence of a series, stepping from its effective
+ * next_expected_on the same way projectOccurrences does. The stored column is
+ * the detector's output as of its last run and goes stale between runs — the
+ * READ path must never surface a date in the past as "next". Returns null when
+ * the series has no expected date at all.
+ */
+export function rollForwardNextExpected(eff: EffectiveSeries, today: string = todayIso()): string | null {
+  if (!eff.nextExpectedOn) return null;
+  const overdueDays = diffDays(eff.nextExpectedOn, today);
+  if (overdueDays <= 0) return eff.nextExpectedOn;
+  const step = Math.max(1, Math.round(eff.intervalDaysAvg ?? CADENCE_NOMINAL_DAYS[eff.cadence]));
+  // one arithmetic hop instead of a step-by-step walk — a stale value can be years old
+  return addDays(eff.nextExpectedOn, Math.ceil(overdueDays / step) * step);
 }
 
 /**
@@ -704,26 +782,37 @@ export function projectOccurrences(
       cadence: series.cadence,
       date: d,
       amountCents: series.nextExpectedAmountCents,
+      staleness: series.staleness,
     });
     d = addDays(d, step);
   }
   return occurrences;
 }
 
-/** All active (detected|confirmed) series' occurrences in the next N days. */
+/**
+ * All live (detected|confirmed) series' occurrences in the next N days.
+ *
+ * Liveness here is STATUS ONLY, deliberately: a series whose evidence has gone
+ * stale still projects, carrying its `staleness` so the reader is told how old
+ * the evidence is. Filtering on isSeriesActive instead would silently delete
+ * the owner's weekly cash income the moment a deposit posted late — the same
+ * dishonesty the derivation layer avoids when it stamps a `gap` rather than
+ * inventing a slope. recurring-calendar.ts may filter; it draws nothing rather
+ * than asserting an amount, so omission there costs no information.
+ */
 export function upcomingOccurrences(
   db: AppDatabase,
   today: string = todayIso(),
   windowDays = 30,
 ): SeriesOccurrence[] {
-  const active = db
+  const live = db
     .select()
     .from(recurringSeries)
     .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
     .all();
 
   const to = addDays(today, windowDays);
-  return active
-    .flatMap((s) => projectOccurrences(toProjectable(s), today, to))
+  return live
+    .flatMap((s) => projectOccurrences(toProjectable(s, seriesStaleness(s, today)), today, to))
     .sort((a, b) => compareDates(a.date, b.date) || a.name.localeCompare(b.name));
 }

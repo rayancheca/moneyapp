@@ -239,6 +239,9 @@ export function ScrubChart({
   const customWindow = controlled ? (activeWindow ?? null) : internalWindow;
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
   const [selection, setSelection] = useState<{ a: number; b: number } | null>(null);
+  // why the last requested window was refused (the <2-point rule below) — a
+  // From/To change that changes nothing has to say so
+  const [windowNote, setWindowNote] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [pointerType, setPointerType] = useState<string>("mouse");
   const reduced = usePrefersReducedMotion();
@@ -384,6 +387,7 @@ export function ScrubChart({
   function selectRange(next: ChartRange): void {
     if (rangeControlled) onRangeChange!(next);
     else setInternalRange(next);
+    setWindowNote(null);
     setWindow(null, "pill");
     setScrubIndex(null);
     setSelection(null);
@@ -395,12 +399,19 @@ export function ScrubChart({
     // The date inputs need the brush's minimum-span guard too: a window with
     // fewer than 2 chartable points would trip the ALL fallback in `slice`
     // while the header still labels the custom window — an all-time delta
-    // captioned with a one-day range. Ignore it, like a hair-thin drag.
+    // captioned with a one-day range.
     let inRange = 0;
     for (const p of points) {
       if (compareDates(p.day, lo) >= 0 && compareDates(p.day, hi) <= 0 && ++inRange >= 2) break;
     }
-    if (inRange < 2) return;
+    if (inRange < 2) {
+      // Refusing the window is right; refusing it in silence is not — a typed
+      // From/To would just snap back with no reason given. Same wording the
+      // table lens uses for the same condition (ScrubTable's fell-back caption).
+      setWindowNote(`${formatDayShort(lo)} – ${formatDayShort(hi)} holds too little data to chart.`);
+      return;
+    }
+    setWindowNote(null);
     setWindow({ start: lo, end: hi }, source);
     setScrubIndex(null);
     setSelection(null);
@@ -912,6 +923,11 @@ export function ScrubChart({
               className="figures rounded-md border border-line bg-surface-raised px-1.5 py-0.5 text-xs transition-colors duration-(--duration-fast) hover:border-line-strong focus:border-accent"
             />
           </div>
+        )}
+        {windowNote && (
+          <p role="status" className="w-full text-xs text-ink-muted">
+            {windowNote}
+          </p>
         )}
       </div>
       ) : (

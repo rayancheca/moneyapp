@@ -125,7 +125,14 @@ test("Predict budgets reviews forecast amounts, creates one, and restores", asyn
     .first();
   await expect(row.getByRole("progressbar")).toBeVisible();
 
-  // …and is deactivated again so sibling specs see the seeded three budgets
+  // …and is deactivated again so sibling specs see the seeded three budgets.
+  // Deactivate is gated: the confirm names what stops being budgeted, and the
+  // row survives until it is accepted.
   await row.getByRole("button", { name: "Deactivate" }).click();
+  const gate = page.getByRole("dialog");
+  await expect(gate.getByText(/stops being budgeted/).first()).toBeVisible();
+  await expect(page.getByRole("progressbar")).toHaveCount(4);
+  await gate.getByRole("button", { name: "Deactivate this budget" }).click();
+
   await expect(page.getByRole("progressbar")).toHaveCount(3);
 });

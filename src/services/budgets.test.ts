@@ -282,6 +282,125 @@ describe("budgetStatuses — period bounds across month/year boundaries (fixed o
   });
 });
 
+describe("budgetStatuses — startsOn clamps the graded window", () => {
+  test("a budget created mid-period is graded only on spend from startsOn onward", () => {
+    spend("2026-07-03", -240_000, "Food > Dining"); // the month's damage, done before the budget existed
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 5_000,
+      startsOn: "2026-07-27",
+    });
+    spend("2026-07-28", -1_000, "Food > Coffee");
+
+    const status = statusFor(id, "2026-07-28");
+    expect(status.bounds).toEqual({ start: "2026-07-27", end: "2026-07-31" }); // start clamped, end untouched
+    expect(status.partialPeriod).toBe(true);
+    expect(status.spentCents).toBe(1_000); // NOT 241_000
+    expect(status.remainingCents).toBe(4_000);
+    expect(status.pct).toBeCloseTo(0.2, 10);
+    expect(status.alert).toBe("none"); // day one never opens at "over budget by 4798%"
+  });
+
+  test("partialPeriod is true exactly when the clamp moves the start", () => {
+    const onStart = createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 60_000,
+      startsOn: "2026-07-01", // exactly the period start — nothing to clamp
+    });
+    const older = createBudget(bundle.db, {
+      categoryId: catId("Travel"),
+      period: "monthly",
+      amountCents: 30_000,
+      startsOn: "2026-01-15", // long-running budget, whole period is its own
+    });
+    const mid = createBudget(bundle.db, {
+      categoryId: catId("Shopping"),
+      period: "monthly",
+      amountCents: 10_000,
+      startsOn: "2026-07-02", // one day in — the clamp bites
+    });
+
+    expect(statusFor(onStart, "2026-07-15").partialPeriod).toBe(false);
+    expect(statusFor(onStart, "2026-07-15").bounds).toEqual({ start: "2026-07-01", end: "2026-07-31" });
+    expect(statusFor(older, "2026-07-15").partialPeriod).toBe(false);
+    expect(statusFor(older, "2026-07-15").bounds).toEqual({ start: "2026-07-01", end: "2026-07-31" });
+    expect(statusFor(mid, "2026-07-15").partialPeriod).toBe(true);
+    expect(statusFor(mid, "2026-07-15").bounds).toEqual({ start: "2026-07-02", end: "2026-07-31" });
+  });
+
+  test("the clamp applies to any period kind — a weekly budget started mid-week", () => {
+    spend("2026-07-06", -4_000, "Food > Dining"); // Monday, before the budget
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "weekly",
+      amountCents: 5_000,
+      startsOn: "2026-07-08", // Wednesday of the ISO week 07-06..07-12
+    });
+    spend("2026-07-09", -1_500, "Food > Coffee");
+
+    const status = statusFor(id, "2026-07-09");
+    expect(status.bounds).toEqual({ start: "2026-07-08", end: "2026-07-12" });
+    expect(status.partialPeriod).toBe(true);
+    expect(status.spentCents).toBe(1_500);
+  });
+
+  test("pace measures the budget's own life inside the period, not the whole period", () => {
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 20_000,
+      startsOn: "2026-07-25",
+    });
+    spend("2026-07-03", -100_000, "Food > Dining"); // pre-budget, invisible to it
+    spend("2026-07-26", -2_000, "Food > Coffee");
+
+    const status = budgetPaceStatuses(bundle.db, "2026-07-28").find((s) => s.budget.id === id)!;
+    expect(status.totalDays).toBe(7); // 07-25..07-31
+    expect(status.elapsedDays).toBe(4); // 07-25..07-28
+    expect(status.elapsedFraction).toBeCloseTo(4 / 7, 10);
+    expect(status.spentCents).toBe(2_000);
+    // variable remainder = round(2_000 × 3/4) = 1_500 → projected 3_500
+    expect(status.projectedCents).toBe(3_500);
+    expect(status.pace).toBe("under");
+  });
+
+  test("a future-dated budget has not opened yet — no spend, no elapsed days, no divide-by-zero", () => {
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 20_000,
+      startsOn: "2026-07-25",
+    });
+    spend("2026-07-10", -9_000, "Food > Dining");
+
+    const status = budgetPaceStatuses(bundle.db, "2026-07-08").find((s) => s.budget.id === id)!;
+    expect(status.partialPeriod).toBe(true);
+    expect(status.spentCents).toBe(0);
+    expect(status.totalDays).toBe(7);
+    expect(status.elapsedDays).toBe(0);
+    expect(status.elapsedFraction).toBe(0);
+    expect(status.projectedCents).toBe(0);
+    expect(status.pace).toBe("under");
+  });
+
+  test("the expected tail starts at startsOn — a bill due before the budget began is not projected onto it", () => {
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Housing"),
+      period: "monthly",
+      amountCents: 200_000,
+      startsOn: "2026-07-25",
+    });
+    const rent = createSeries({ name: "Rent", nextExpectedOn: "2026-07-20", nextExpectedAmountCents: -180_000 });
+    spendLinked("2026-06-20", -180_000, "Housing > Rent", rent); // maps the series to Housing
+
+    const status = budgetPaceStatuses(bundle.db, "2026-07-08").find((s) => s.budget.id === id)!;
+    expect(status.expectedTailCents).toBe(0); // 07-20 falls before the budget's window
+    expect(status.tail).toEqual([]);
+  });
+});
+
 describe("parent/child overlap semantics", () => {
   test("child spend counts toward the parent's budget AND its own; totals never double-count", () => {
     const parent = createBudget(bundle.db, {

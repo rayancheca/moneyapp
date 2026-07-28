@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNotNull, max, ne } from "drizzle-orm";
 import { z } from "zod";
+import { withPreMutationSnapshot } from "@/db/backup";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors } from "@/db/schema/balances";
@@ -8,6 +9,7 @@ import { statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { transactionSplits } from "@/db/schema/transaction-splits";
+import { financialWindowMessage, isWithinFinancialWindow } from "@/lib/date-window";
 import { isValidIsoDate } from "@/lib/dates";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
@@ -24,7 +26,13 @@ import { rebuildAccount } from "./derivation";
 export const manualTxnInputSchema = z
   .object({
     accountId: z.string().min(1),
-    postedOn: z.string().refine(isValidIsoDate, "postedOn must be a valid YYYY-MM-DD date"),
+    // manual rows drive the wallet's replay, so a typo'd year would make
+    // derivation emit one row per day back to it — bound the year, not just
+    // the shape (derivation.ts holds the matching cap for non-UI callers)
+    postedOn: z
+      .string()
+      .refine(isValidIsoDate, "postedOn must be a valid YYYY-MM-DD date")
+      .refine(isWithinFinancialWindow, financialWindowMessage("postedOn")),
     amountCents: z
       .number()
       .int()
@@ -174,7 +182,11 @@ export function addManualTransaction(db: AppDatabase, input: ManualTxnInput): st
 
 export const manualTxnEditSchema = z
   .object({
-    postedOn: z.string().refine(isValidIsoDate, "postedOn must be a valid YYYY-MM-DD date").optional(),
+    postedOn: z
+      .string()
+      .refine(isValidIsoDate, "postedOn must be a valid YYYY-MM-DD date")
+      .refine(isWithinFinancialWindow, financialWindowMessage("postedOn"))
+      .optional(),
     amountCents: z
       .number()
       .int()
@@ -270,6 +282,9 @@ export function deleteManualTransaction(db: AppDatabase, id: string): void {
   if (txn.importFileId !== null) {
     throw new Error("Only manual transactions can be deleted — imported rows are the audit trail");
   }
-  db.delete(transactions).where(eq(transactions.id, id)).run();
-  rebuildAccount(db, txn.accountId);
+  // Nothing re-imports a manual row — the deletion is the whole history.
+  withPreMutationSnapshot(db, "delete-manual-transaction", () => {
+    db.delete(transactions).where(eq(transactions.id, id)).run();
+    rebuildAccount(db, txn.accountId);
+  });
 }

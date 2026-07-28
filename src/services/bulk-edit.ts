@@ -6,10 +6,13 @@ import {
   CATEGORIZATION_SOURCES,
   SERIES_LINK_SOURCES,
   TRANSACTION_STATUSES,
+  type TransactionStatus,
 } from "@/db/schema/transactions";
 import { isValidIsoDate, todayIso } from "@/lib/dates";
+import { changesReplayMembership, rebuildAccount } from "./derivation";
 import { loadRecomputeCtx, recomputeSeriesStats } from "./recurring";
 import { hasSplits, splitTxnIdsIn } from "./transaction-splits";
+import { transferCategoryResolver, transferKindCategoryIds } from "./transfer-links";
 import { matchingTransactionIds } from "./transactions-query";
 import type { TxnFilters, TxnView } from "@/components/transactions/query";
 
@@ -20,6 +23,16 @@ import type { TxnFilters, TxnView } from "@/components/transactions/query";
  * a lossless restore, not a guess. Category changes always stamp
  * categorizationSource='user': bulk edits ARE user actions, and the
  * pipeline's precedence (user > everything) then protects them forever.
+ *
+ * Two invariants these mutations share with the rest of the app:
+ * - "Transfer" means ONE thing. Marking a row a transfer stamps the same
+ *   Transfers-kind category linkTransferPair stamps, because analytics keys off
+ *   category KIND — a row holding only a transfer_group_id still counts as
+ *   spending. (Analytics must NEVER key off transfer_group_id itself: a
+ *   self-group has no counterparty, and skipping it would hide a real outflow.)
+ * - daily_balances is a derived cache that cannot notice its own inputs
+ *   changing, so a status flip that moves a row in or out of balance replay
+ *   rebuilds that account here (see derivation.REPLAY_STATUSES).
  */
 
 export const txnPatchSchema = z
@@ -108,6 +121,7 @@ export function bulkApply(db: AppDatabase, ids: readonly string[], patch: TxnPat
   // them — affected then reflects only real rows.
   const rows: Array<{
     id: string;
+    accountId: string;
     categoryId: string | null;
     categorizationSource: (typeof CATEGORIZATION_SOURCES)[number] | null;
     categorizationConfidence: number | null;
@@ -120,6 +134,7 @@ export function bulkApply(db: AppDatabase, ids: readonly string[], patch: TxnPat
     const chunkRows = db
       .select({
         id: transactions.id,
+        accountId: transactions.accountId,
         categoryId: transactions.categoryId,
         categorizationSource: transactions.categorizationSource,
         categorizationConfidence: transactions.categorizationConfidence,
@@ -142,7 +157,15 @@ export function bulkApply(db: AppDatabase, ids: readonly string[], patch: TxnPat
       ? splitTxnIdsIn(db, rows.map((r) => r.id))
       : new Set<string>();
 
+  // resolved once for the whole batch (account types + the Transfers categories)
+  const transferStamp =
+    ops.transfer === "mark"
+      ? { categoryFor: transferCategoryResolver(db), alreadyTransfer: transferKindCategoryIds(db) }
+      : null;
+
   const undoRows: UndoPatch["rows"] = [];
+  // accounts whose replay membership changed — rebuilt after the write closes
+  const staleAccounts = new Set<string>();
   db.transaction((tx) => {
     for (const row of rows) {
       const prev: UndoFields = {};
@@ -170,14 +193,44 @@ export function bulkApply(db: AppDatabase, ids: readonly string[], patch: TxnPat
         // mark without a detected pair: a self-group (kept when already
         // grouped) — pairing tuning is a later stage, the flag is honest now
         set.transferGroupId = ops.transfer === "mark" ? (row.transferGroupId ?? row.id) : null;
+        // …and the group id alone does not mean "transfer" to analytics, which
+        // reads the category's KIND. Stamp the same Transfers category
+        // linkTransferPair stamps, or this row keeps counting as spending.
+        // Two things outrank the implied category: a categoryId in the same
+        // patch (the user named one explicitly) and a transfer-kind category
+        // the row already carries (whoever set it saw both legs).
+        if (
+          transferStamp &&
+          ops.categoryId === undefined &&
+          !(row.categoryId !== null && transferStamp.alreadyTransfer.has(row.categoryId))
+        ) {
+          prev.categoryId = row.categoryId;
+          prev.categorizationSource = row.categorizationSource;
+          prev.categorizationConfidence = row.categorizationConfidence;
+          set.categoryId = transferStamp.categoryFor([row.accountId]);
+          set.categorizationSource = "user";
+          set.categorizationConfidence = 1;
+          // an explicit markReviewed in the same patch stays authoritative
+          if (ops.reviewed === undefined) {
+            prev.needsReview = row.needsReview;
+            set.needsReview = false;
+          }
+        }
       }
       // a row can be a no-op (e.g. a transfer-mark skipped on a split row) — an
       // empty .set({}) throws "No values to set" and would abort the whole batch
       if (Object.keys(set).length === 0) continue;
       tx.update(transactions).set(set).where(eq(transactions.id, row.id)).run();
       undoRows.push({ id: row.id, prev });
+      if (set.status !== undefined && changesReplayMembership(row.status, set.status)) {
+        staleAccounts.add(row.accountId);
+      }
     }
   });
+
+  // OUTSIDE the write transaction: rebuildAccount opens its own, and a nested
+  // BEGIN on a synchronous driver throws
+  for (const accountId of staleAccounts) rebuildAccount(db, accountId);
 
   // affected reflects rows actually mutated (skipped split rows don't count)
   return { affected: undoRows.length, undo: { rows: undoRows } };
@@ -207,6 +260,15 @@ export function applyUndoPatch(db: AppDatabase, undo: UndoPatch): number {
   // restoring a series link must also settle that series' stats — collect
   // every id the patch moves rows INTO plus the ids rows currently sit ON
   const touchedSeriesIds = new Set<string>();
+  // Undoing a status restore can move a row back OUT of balance replay
+  // (active/excluded → quarantined) — the same invalidation as the forward
+  // edit, so read the CURRENT status of exactly those rows first (chunked,
+  // like bulkApply's id-select) and rebuild the affected accounts after.
+  const beforeStatus = currentStatusOf(
+    db,
+    parsed.rows.filter((r) => r.prev.status !== undefined).map((r) => r.id),
+  );
+  const staleAccounts = new Set<string>();
   db.transaction((tx) => {
     for (const row of parsed.rows) {
       const set: TxnUpdate = {};
@@ -241,11 +303,16 @@ export function applyUndoPatch(db: AppDatabase, undo: UndoPatch): number {
       if (row.prev.seriesLinkSource !== undefined) set.seriesLinkSource = row.prev.seriesLinkSource;
       if (row.prev.notes !== undefined) set.notes = row.prev.notes;
       if (Object.keys(set).length === 0) continue;
-      restored += tx
+      const changed = tx
         .update(transactions)
         .set(set)
         .where(and(eq(transactions.id, row.id), ne(transactions.status, "superseded")))
         .run().changes;
+      restored += changed;
+      const before = beforeStatus.get(row.id);
+      if (changed > 0 && set.status !== undefined && before) {
+        if (changesReplayMembership(before.status, set.status)) staleAccounts.add(before.accountId);
+      }
     }
     if (touchedSeriesIds.size > 0) {
       const ctx = loadRecomputeCtx(db);
@@ -253,7 +320,30 @@ export function applyUndoPatch(db: AppDatabase, undo: UndoPatch): number {
       for (const seriesId of touchedSeriesIds) recomputeSeriesStats(tx, seriesId, today, ctx);
     }
   });
+  for (const accountId of staleAccounts) rebuildAccount(db, accountId);
   return restored;
+}
+
+/** Chunked {id → account, status} read — the pre-mutation side of a status flip. */
+function currentStatusOf(
+  db: AppDatabase,
+  ids: readonly string[],
+): Map<string, { accountId: string; status: TransactionStatus }> {
+  const byId = new Map<string, { accountId: string; status: TransactionStatus }>();
+  for (let start = 0; start < ids.length; start += ID_SELECT_CHUNK) {
+    const chunk = ids.slice(start, start + ID_SELECT_CHUNK);
+    const rows = db
+      .select({
+        id: transactions.id,
+        accountId: transactions.accountId,
+        status: transactions.status,
+      })
+      .from(transactions)
+      .where(inArray(transactions.id, [...chunk]))
+      .all();
+    for (const r of rows) byId.set(r.id, { accountId: r.accountId, status: r.status });
+  }
+  return byId;
 }
 
 export const txnFlagsSchema = z
@@ -289,6 +379,24 @@ export function setTransactionFlags(
     }
     prev.transferGroupId = row.transferGroupId;
     set.transferGroupId = parsed.transfer ? (row.transferGroupId ?? row.id) : null;
+    // same one meaning for "Transfer" as the bulk path and linkTransferPair:
+    // analytics reads the category's KIND, so the link alone leaves the row in
+    // spending. A transfer-kind category already on the row is left alone (it
+    // was set with both legs in view). Clearing the flag keeps the category,
+    // exactly like unlinkTransferGroup — dropping the LINK must not fabricate
+    // an uncategorized hole; the undo patch is the way back.
+    if (parsed.transfer && !(row.categoryId !== null && transferKindCategoryIds(db).has(row.categoryId))) {
+      prev.categoryId = row.categoryId;
+      prev.categorizationSource = row.categorizationSource;
+      prev.categorizationConfidence = row.categorizationConfidence;
+      set.categoryId = transferCategoryResolver(db)([row.accountId]);
+      set.categorizationSource = "user";
+      set.categorizationConfidence = 1;
+      if (parsed.reviewed === undefined) {
+        prev.needsReview = row.needsReview;
+        set.needsReview = false;
+      }
+    }
   }
   if (parsed.exclude !== undefined) {
     prev.status = row.status;
@@ -305,6 +413,11 @@ export function setTransactionFlags(
   if (Object.keys(set).length === 0) throw new Error("No flags provided");
 
   db.update(transactions).set(set).where(eq(transactions.id, row.id)).run();
+  // un-quarantining through the sheet stales this account's replay just as the
+  // bulk path does (active ⇄ excluded both replay, so those cost nothing)
+  if (set.status !== undefined && changesReplayMembership(row.status, set.status)) {
+    rebuildAccount(db, row.accountId);
+  }
   return { affected: 1, undo: { rows: [{ id: row.id, prev }] } };
 }
 

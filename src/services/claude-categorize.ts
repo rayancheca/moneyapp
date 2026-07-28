@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { and, eq, isNull, ne, or } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import type { AppDatabase } from "@/db/client";
 import { aiCalls } from "@/db/schema/ai";
@@ -7,6 +7,7 @@ import { categories } from "@/db/schema/categories";
 import { merchantAliases, merchants } from "@/db/schema/merchants";
 import { appSettings } from "@/db/schema/settings";
 import { transactions } from "@/db/schema/transactions";
+import { notUserOwned } from "./merchants";
 
 /**
  * Claude fallback (master-plan §3 step 4): unknown merchants batched to
@@ -42,6 +43,10 @@ export interface ClaudeRunResult {
   capReached?: boolean;
   /** the user pressed Stop — run ended between batches */
   stopped?: boolean;
+  /** a batch threw — the counters above are partial progress, not a result */
+  failed?: boolean;
+  /** why it failed, carried through to the header strip */
+  error?: string;
 }
 
 /** display-only estimate for the queue (≈ actuals from real runs) */
@@ -102,8 +107,7 @@ export function pendingMerchantQueue(db: AppDatabase): { description: string; co
         eq(transactions.status, "active"),
         isNull(transactions.categoryId),
         isNull(transactions.merchantId),
-        // NULL != 'user' is NULL in SQL, not true — must be explicit
-        or(isNull(transactions.categorizationSource), ne(transactions.categorizationSource, "user")),
+        notUserOwned(),
       ),
     )
     .all();
@@ -231,7 +235,11 @@ export async function classifyPendingMerchants(
         if (!categoryId) continue;
 
         let merchant = tx
-          .select({ id: merchants.id, mappingSource: merchants.mappingSource })
+          .select({
+            id: merchants.id,
+            mappingSource: merchants.mappingSource,
+            defaultCategoryId: merchants.defaultCategoryId,
+          })
           .from(merchants)
           .where(eq(merchants.canonicalName, m.canonicalName))
           .get();
@@ -243,22 +251,30 @@ export async function classifyPendingMerchants(
               .returning({ id: merchants.id })
               .get().id,
             mappingSource: "claude",
+            defaultCategoryId: categoryId,
           };
         }
-        // never overwrite a user mapping (precedence)
+        // Never overwrite a user mapping (precedence) — which has to mean the
+        // ROWS too. Leaving the user's default in place and then stamping
+        // Claude's category on its transactions was one rule with two answers:
+        // "Blue Bottle is Coffee" survived on the merchant while its rows
+        // landed wherever Claude put them.
+        const userDefaultCategoryId =
+          merchant.mappingSource === "user" ? merchant.defaultCategoryId : null;
         tx.insert(merchantAliases)
           .values({ merchantId: merchant.id, pattern: m.description, matchType: "exact", priority: 10 })
           .onConflictDoNothing()
           .run();
 
-        const lowConfidence = m.confidence < confidenceMin;
+        // a user-owned mapping is certain — Claude's confidence doesn't apply
+        const lowConfidence = userDefaultCategoryId === null && m.confidence < confidenceMin;
         const updated = tx
           .update(transactions)
           .set({
             merchantId: merchant.id,
-            categoryId,
-            categorizationSource: "claude",
-            categorizationConfidence: m.confidence,
+            categoryId: userDefaultCategoryId ?? categoryId,
+            categorizationSource: userDefaultCategoryId === null ? "claude" : "merchant_map",
+            categorizationConfidence: userDefaultCategoryId === null ? m.confidence : 1,
             needsReview: lowConfidence,
           })
           .where(
@@ -266,6 +282,10 @@ export async function classifyPendingMerchants(
               eq(transactions.normalizedDescription, m.description),
               eq(transactions.status, "active"),
               isNull(transactions.categoryId),
+              // defence in depth: category_id IS NULL already excludes every
+              // categorized row, so this only ever catches the deliberate
+              // "user left it uncategorized" case the queue also skips
+              notUserOwned(),
             ),
           )
           .run();
@@ -274,6 +294,14 @@ export async function classifyPendingMerchants(
       }
     });
   }
+  } catch (error) {
+    // a throwing batch (network, 401, rate limit) is a FAILED run, not a quiet
+    // one. Without this the finally below records {ran:true, classified:0} and
+    // the header reads it back as a successful no-op. Committed batches stay
+    // committed, so the counters travel with the failure as partial progress.
+    result.failed = true;
+    result.error = error instanceof Error ? error.message : "Unexpected error";
+    throw error;
   } finally {
     // always release the running flag and record the outcome — a crashed
     // run must not leave the UI showing "classifying…" forever

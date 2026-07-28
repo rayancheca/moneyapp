@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
@@ -9,10 +9,18 @@ import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
+import {
+  DateOutOfRangeError,
+  MAX_FINANCIAL_DATE,
+  MIN_FINANCIAL_DATE,
+} from "@/lib/date-window";
 import { dedupeHash } from "@/lib/hash";
 import {
+  REPLAY_STATUSES,
   accountSeries,
+  changesReplayMembership,
   deriveDailyRows,
+  isReplayStatus,
   latestBalances,
   netWorthSeries,
   pickWinners,
@@ -39,6 +47,27 @@ describe("pickWinners", () => {
       { anchoredOn: "2026-06-01", balanceCents: 1, source: "manual" },
     ]);
     expect(winners.map((w) => w.anchoredOn)).toEqual(["2026-06-01", "2026-07-01"]);
+  });
+});
+
+describe("REPLAY_STATUSES — the one definition of what replays", () => {
+  test("excluded replays (the money still moved); quarantined and superseded never did", () => {
+    expect([...REPLAY_STATUSES]).toEqual(["active", "excluded"]);
+    expect(isReplayStatus("active")).toBe(true);
+    expect(isReplayStatus("excluded")).toBe(true);
+    expect(isReplayStatus("quarantined")).toBe(false);
+    expect(isReplayStatus("superseded")).toBe(false);
+  });
+
+  test("only crossing the set stales the derived cache", () => {
+    // ordinary Exclude/Restore stays inside the set — no rebuild owed
+    expect(changesReplayMembership("active", "excluded")).toBe(false);
+    expect(changesReplayMembership("excluded", "active")).toBe(false);
+    expect(changesReplayMembership("active", "active")).toBe(false);
+    // leaving quarantine joins replay, and undoing that leaves it again
+    expect(changesReplayMembership("quarantined", "active")).toBe(true);
+    expect(changesReplayMembership("quarantined", "excluded")).toBe(true);
+    expect(changesReplayMembership("active", "quarantined")).toBe(true);
   });
 });
 
@@ -214,6 +243,70 @@ describe("deriveDailyRows — investment accounts", () => {
   });
 });
 
+describe("deriveDailyRows — the date-window cap", () => {
+  const opts = { isInvestment: false, today: TODAY };
+
+  test("refuses an out-of-window anchor instead of walking a millennium of days", () => {
+    expect(() =>
+      deriveDailyRows(
+        [
+          { anchoredOn: "1026-07-01", balanceCents: 0, source: "manual" }, // typo for 2026
+          { anchoredOn: "2026-07-01", balanceCents: 10_000, source: "manual" },
+        ],
+        new Map(),
+        opts,
+      ),
+    ).toThrow(DateOutOfRangeError);
+
+    expect(() =>
+      deriveDailyRows(
+        [{ anchoredOn: "9999-12-31", balanceCents: 10_000, source: "manual" }],
+        new Map(),
+        opts,
+      ),
+    ).toThrow(/anchor date must be between/);
+  });
+
+  test("refuses an out-of-window transaction day — it bounds the backward walk", () => {
+    expect(() =>
+      deriveDailyRows(
+        [{ anchoredOn: "2026-07-01", balanceCents: 10_000, source: "manual" }],
+        new Map([["1026-07-01", -500]]),
+        opts,
+      ),
+    ).toThrow(/transaction date must be between/);
+  });
+
+  test("refuses an out-of-window today — it bounds the forward walk", () => {
+    expect(() =>
+      deriveDailyRows(
+        [{ anchoredOn: "2026-07-01", balanceCents: 10_000, source: "manual" }],
+        new Map(),
+        { isInvestment: false, today: "9999-01-01" },
+      ),
+    ).toThrow(/today must be between/);
+  });
+
+  test("the window bounds themselves are legal", () => {
+    expect(
+      deriveDailyRows([{ anchoredOn: MIN_FINANCIAL_DATE, balanceCents: 1, source: "manual" }], new Map(), {
+        isInvestment: false,
+        today: MIN_FINANCIAL_DATE,
+      }),
+    ).toEqual([{ day: MIN_FINANCIAL_DATE, balanceCents: 1, basis: "anchored" }]);
+    expect(
+      deriveDailyRows([{ anchoredOn: MAX_FINANCIAL_DATE, balanceCents: 1, source: "manual" }], new Map(), {
+        isInvestment: true,
+        today: MAX_FINANCIAL_DATE,
+      }),
+    ).toEqual([{ day: MAX_FINANCIAL_DATE, balanceCents: 1, basis: "anchored" }]);
+  });
+
+  test("with no anchors there is no loop to bound, so a wild txn date is still just no rows", () => {
+    expect(deriveDailyRows([], new Map([["9999-12-31", -100]]), opts)).toEqual([]);
+  });
+});
+
 describe("integration: rebuild + net worth against a real database", () => {
   let dir: string;
   let bundle: DbBundle;
@@ -381,6 +474,45 @@ describe("integration: rebuild + net worth against a real database", () => {
     expect(jul3?.balanceCents).toBe(90_000); // only the active txn replayed
   });
 
+  test("an excluded transaction still replays — it is hidden from analytics, not from the balance", () => {
+    const a = createAccount(bundle.db, {
+      institutionId: institutionId("Chase"),
+      name: "A",
+      type: "checking",
+    });
+    bundle.db
+      .insert(balanceAnchors)
+      .values({ accountId: a, anchoredOn: "2026-07-01", balanceCents: 100_000, source: "statement" })
+      .run();
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId: a,
+        postedOn: "2026-07-03",
+        amountCents: -10_000,
+        rawDescription: "EXCLUDED BUT REAL",
+        normalizedDescription: "EXCLUDED BUT REAL",
+        status: "excluded",
+        dedupeHash: dedupeHash({
+          accountId: a,
+          postedOn: "2026-07-03",
+          amountCents: -10_000,
+          rawDescription: "EXCLUDED BUT REAL",
+          occurrenceIndex: 0,
+        }),
+      })
+      .run();
+
+    rebuildAccount(bundle.db, a, TODAY);
+
+    const jul3 = bundle.db
+      .select()
+      .from(dailyBalances)
+      .where(and(eq(dailyBalances.accountId, a), eq(dailyBalances.day, "2026-07-03")))
+      .get();
+    expect(jul3?.balanceCents).toBe(90_000);
+  });
+
   test("anchor precedence end-to-end: statement supersedes manual on the same date", () => {
     const a = createAccount(bundle.db, {
       institutionId: institutionId("Chase"),
@@ -401,6 +533,30 @@ describe("integration: rebuild + net worth against a real database", () => {
       .all()
       .find((r) => r.day === "2026-07-01");
     expect(row?.balanceCents).toBe(100_000);
+  });
+
+  test("a rogue out-of-window anchor fails the rebuild loudly, leaving the cache untouched", () => {
+    const a = createAccount(bundle.db, {
+      institutionId: institutionId("Chase"),
+      name: "A",
+      type: "checking",
+    });
+    addManualAnchor(bundle.db, { accountId: a, anchoredOn: "2026-07-01", enteredCents: 100_000 });
+    const before = bundle.db.select().from(dailyBalances).where(eq(dailyBalances.accountId, a)).all();
+    expect(before.length).toBeGreaterThan(0);
+
+    // written straight to the table, the way an importer or a script could —
+    // the schema guard never sees it, so the pure cap has to
+    bundle.db
+      .insert(balanceAnchors)
+      .values({ accountId: a, anchoredOn: "1026-07-01", balanceCents: 0, source: "statement" })
+      .run();
+
+    expect(() => rebuildAccount(bundle.db, a, TODAY)).toThrow(DateOutOfRangeError);
+    // the cap fires before rebuildAccount opens its delete/insert transaction
+    expect(bundle.db.select().from(dailyBalances).where(eq(dailyBalances.accountId, a)).all()).toEqual(
+      before,
+    );
   });
 
   test("accounts.isActive=false leaves the net-worth series", () => {

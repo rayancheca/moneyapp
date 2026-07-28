@@ -95,6 +95,8 @@ describe("forecastCurrentMonth", () => {
     nextExpectedOn: string;
     nextExpectedAmountCents: number;
     status?: SeriesStatus;
+    /** omitted → never matched, which reads as stale (services/recurring.ts) */
+    lastMatchedOn?: string;
   }): string {
     return bundle.db
       .insert(recurringSeries)
@@ -127,6 +129,84 @@ describe("forecastCurrentMonth", () => {
     expect(payroll).toMatchObject({ kind: "fixed", cents: 4 * 80000 });
     expect(payroll!.detail).toContain("4 × $800.00");
     expect(f.projectedIncomeCents).toBe(320000);
+  });
+
+  /* ── staleness disclosure (item 13a) ───────────────────────────────────
+     The forecast keeps stale series and says how old their evidence is. The
+     original backlog item asked for the opposite — filtering by isSeriesActive
+     — which measured out to suppressing ~$1,046/wk of the owner's real income
+     (weekly cadence goes stale after 7 × 1.5 + 2 = 12.5 days; his deposits lag
+     ~22) to remove ~$10.99/cycle of dead subscriptions. */
+
+  test("a stale series still projects its full amount, carrying its staleness", () => {
+    insertSeries({
+      name: "Cash job",
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+      nextExpectedOn: "2026-07-09",
+      nextExpectedAmountCents: 104600,
+      status: "confirmed",
+      lastMatchedOn: "2026-06-16", // 22 days before TODAY — past 12.5 of tolerance
+    });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    const cashJob = f.components.find((c) => c.label === "Cash job")!;
+
+    // the money is NOT dropped — four Thursdays of income still land in July
+    expect(cashJob.cents).toBe(4 * 104600);
+    expect(f.projectedIncomeCents).toBe(4 * 104600);
+    expect(cashJob.staleness).toMatchObject({
+      lastMatchedOn: "2026-06-16",
+      daysSinceLastMatch: 22,
+      stepDays: 7,
+      toleranceDays: 12.5,
+      isStale: true,
+    });
+  });
+
+  test("a fresh series carries staleness saying so, never an absent field", () => {
+    insertSeries({
+      name: "Netflix",
+      kind: "subscription",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-16",
+      nextExpectedAmountCents: -1099,
+      status: "confirmed",
+      lastMatchedOn: "2026-06-16", // 22 days against 30 × 1.5 + 3 = 48
+    });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    const netflix = f.components.find((c) => c.label === "Netflix")!;
+
+    expect(netflix.staleness).toMatchObject({ daysSinceLastMatch: 22, isStale: false });
+  });
+
+  test("a series nothing has ever matched is disclosed as stale, not hidden", () => {
+    insertSeries({
+      name: "Ghost bill",
+      kind: "bill",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-20",
+      nextExpectedAmountCents: -5000,
+      status: "detected",
+    });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    const ghost = f.components.find((c) => c.label === "Ghost bill")!;
+
+    expect(ghost.cents).toBe(-5000);
+    expect(ghost.staleness).toMatchObject({ lastMatchedOn: null, daysSinceLastMatch: null, isStale: true });
+  });
+
+  test("variable components carry no staleness — no series stands behind them", () => {
+    for (const month of ["2026-04", "2026-05", "2026-06"]) {
+      insertTxn(cardId, `${month}-10`, -30000, { categoryName: "Groceries" });
+    }
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    const variable = f.components.filter((c) => c.kind === "variable");
+
+    expect(variable.length).toBeGreaterThan(0);
+    expect(variable.every((c) => c.staleness === undefined)).toBe(true);
   });
 
   test("a series whose next date falls after month end contributes nothing", () => {

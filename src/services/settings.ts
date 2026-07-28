@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppDatabase } from "@/db/client";
 import { aiCalls } from "@/db/schema/ai";
 import { appSettings } from "@/db/schema/settings";
+import { DEFAULT_SETTINGS } from "@/db/seed";
 import { monthKey, todayIso } from "@/lib/dates";
 
 /** Typed access to app_settings — every value Zod-validated on read AND write. */
@@ -47,10 +48,42 @@ export const settingsSchema = z.object({
 });
 export type AppSettingsShape = z.infer<typeof settingsSchema>;
 
+/**
+ * A stored value that is not valid JSON is treated as absent rather than fatal:
+ * the row is dropped here so the field can fall back to its default below.
+ */
+function parseStoredValue(value: string): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(value) as unknown };
+  } catch {
+    return { ok: false };
+  }
+}
+
 export function readSettings(db: AppDatabase): AppSettingsShape {
   const rows = db.select().from(appSettings).all();
-  const raw = Object.fromEntries(rows.map((r) => [r.key, JSON.parse(r.value) as unknown]));
-  return settingsSchema.parse(raw);
+  const raw: Record<string, unknown> = {};
+  for (const r of rows) {
+    const parsed = parseStoredValue(r.value);
+    if (parsed.ok) raw[r.key] = parsed.value;
+  }
+
+  const first = settingsSchema.safeParse(raw);
+  if (first.success) return first.data;
+
+  /**
+   * Hygiene, not a live outage (dashboardLayout/viewPreferences/benchmarkSymbol
+   * are already .default()-guarded): readSettings is called unguarded from every
+   * page, so one hand-edited or drifted row should degrade that FIELD to its
+   * default rather than take the whole page down. Only the keys zod actually
+   * complained about are dropped — every other persisted value survives.
+   */
+  const bad = new Set(first.error.issues.map((i) => i.path[0]).filter((k) => typeof k === "string"));
+  const kept = Object.fromEntries(Object.entries(raw).filter(([k]) => !bad.has(k)));
+  // DEFAULT_SETTINGS underneath supplies the keys that have no schema-level
+  // .default(); the repaired object failing would mean the defaults themselves
+  // are broken, which is a bug we do want loud.
+  return settingsSchema.parse({ ...DEFAULT_SETTINGS, ...kept });
 }
 
 export function writeSetting<K extends keyof AppSettingsShape>(

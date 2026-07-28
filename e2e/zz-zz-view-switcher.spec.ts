@@ -66,11 +66,27 @@ async function invPillPressed(page: Page, name: "Value" | "Return"): Promise<boo
 }
 
 test("portfolio chart switches value↔return, updates the URL, and persists", async ({ page }) => {
+  // The portfolio view is PERSISTED, and this suite deliberately shares ONE
+  // database across specs (playwright.config.ts: workers: 1). So "the default is
+  // Value" is not a precondition this test may assume — any earlier spec that
+  // touched /investments leaves it on Return, and this one then fails on its very
+  // first assertion having tested nothing. That was the flake: 2 of 5 full runs,
+  // always here, always "element(s) not found" for the value slider.
+  //
+  // Establish the precondition the way the app actually stores it. A `?view=`
+  // param only wins for THAT render (lib/view-state.ts resolveViewState prefers
+  // the URL over the persisted value) — it does not write the preference. Only
+  // the pill click persists, which is why the tail of this test restores by
+  // clicking too.
   await page.goto("/investments");
+  const viewGroup = page.getByRole("group", { name: "Portfolio chart view" });
+  if (!(await invPillPressed(page, "Value"))) {
+    await viewGroup.getByRole("button", { name: "Value" }).click();
+  }
+
   const valueChart = page.getByRole("slider", { name: /Portfolio value over time/ });
   const returnChart = page.getByRole("slider", { name: /Portfolio return over time/ });
 
-  // default view is the value line
   await expect(valueChart).toBeVisible();
   expect(await invPillPressed(page, "Value")).toBe(true);
 

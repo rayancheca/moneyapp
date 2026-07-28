@@ -86,13 +86,34 @@ Liability status **derived** from `type='credit'`. Debit cards are intentionally
 | error / imported_at | | |
 
 **Lifecycle rules** (the quarantine repair loop must never dead-end):
-- The idempotency no-op applies per **(file_sha256, parser_version)** — a fixed parser can
-  always re-parse the same file. Re-parse = delete-and-replace all child rows in **one
-  synchronous transaction**, migrating user-set attributes (category where
-  `categorization_source='user'`, notes, transfer/recurring links) onto content-matched new rows;
-  the old import_file row becomes `superseded`.
+- The idempotency no-op applies per **(file_sha256, parser_version)** — a byte-identical file at
+  the same parser version is a `skipped_duplicate`, and a fixed parser can always re-parse it.
+- **Re-parse** (a higher `parser_version` for the same `file_sha256`): the old file's periods and
+  anchors are deleted, its transactions become `superseded` (retained as history, never deleted),
+  the old import_file row becomes `superseded`, and the file is parsed fresh.
+- **Carry-forward is what makes a re-parse safe.** The old rows' user-set attributes are
+  snapshotted *before* they are superseded, then re-attached to the new rows by content match:
+  same **(account, posted_on, amount_cents)** — the money's identity, which survives a parser
+  fix that reads the description differently — with the normalized description only *ranking*
+  candidates when a day holds several equal amounts, and multiset consumption so one old row
+  feeds at most one new row. What travels:
+  - `category_id` **only** where `categorization_source='user'` (with its `merchant_id` and
+    confidence, because categorizeAll never revisits a user-categorized row)
+  - `notes`, `transfer_group_id`, `recurring_series_id` + `series_link_source`
+  - `status='excluded'` — a user's exclusion is a decision, not a parse artifact
+  - `transaction_splits`, moved wholesale onto the new parent (same amount ⇒ the parts still sum;
+    the parent stays immutable)
+
+  What does **not** travel: a detected category (rule/merchant/bank/transfer — re-derived once
+  the batch settles, so carrying one would freeze a stale guess), `needs_review`, and
+  `quarantined` status (a reconciliation verdict on the *old* file's period). A user category is
+  never downgraded: when the new row's money is already represented by another file's row, the
+  carry only **fills** attributes that row lacks. The per-file `carriedForward` count in the
+  import outcome makes every carry visible.
 - **Un-import** is a first-class operation: removes the file's transactions, periods, and
-  anchors atomically (user attributes preserved for re-attachment where content-matchable).
+  anchors atomically. Unlike a re-parse it is **destructive to user work** — the rows leave the
+  database, so their categories, notes, links and splits go with them (a pre-mutation snapshot
+  is taken so the operation is recoverable).
 - Imported transactions are **immutable** in amount/date/description. Corrections happen via
   re-parse or an explicit manual-adjustment transaction — never in-place edits (in-place
   edits would silently break dedupe and reconciliation).

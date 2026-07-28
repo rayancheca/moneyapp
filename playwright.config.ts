@@ -47,7 +47,16 @@ export default defineConfig({
     // MONEYAPP_PREVIEW=1 un-gates /design/stage-0a (else notFound in a
     // production `next start`) so the overlay a11y + keyboard specs can reach
     // the only surface that mounts the Sheet/Toast before Stage 1.
-    command: `MONEYAPP_DB_PATH=data/e2e.db MONEYAPP_ORIGINALS_DIR=data/e2e-originals MONEYAPP_BACKUPS_DIR=data/e2e-backups MONEYAPP_SKIP_BACKUP=1 MONEYAPP_FAKE_PRICES=1 MONEYAPP_FAKE_TODAY=${E2E_FAKE_TODAY} MONEYAPP_PREVIEW=1 pnpm start --port 3111`,
+    // ANTHROPIC_API_KEY= pins the ONE input that came from the developer's
+    // machine rather than from this file. /settings renders a one-line
+    // "configured" note when the key is present and a two-line "No
+    // ANTHROPIC_API_KEY" warning when it is not — a 16px height delta that
+    // failed all eight settings baselines the moment a real `.env` appeared
+    // beside the worktree. Next's env loader never overwrites a key that is
+    // already defined, so assigning empty here wins over `.env`. Absent is
+    // also the honest default: no spec drives Claude classification, and a
+    // live key would let one bill the owner for real API calls.
+    command: `MONEYAPP_DB_PATH=data/e2e.db MONEYAPP_ORIGINALS_DIR=data/e2e-originals MONEYAPP_BACKUPS_DIR=data/e2e-backups MONEYAPP_SKIP_BACKUP=1 MONEYAPP_FAKE_PRICES=1 MONEYAPP_FAKE_TODAY=${E2E_FAKE_TODAY} MONEYAPP_PREVIEW=1 ANTHROPIC_API_KEY= pnpm start --port 3111`,
     url: "http://localhost:3111",
     // never baseline against a stale or foreign server
     reuseExistingServer: false,

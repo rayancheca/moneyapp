@@ -3,17 +3,19 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import type { ActionResult } from "@/app/transactions/action-types";
+import { firstIssueMessage, type ActionResult } from "@/app/transactions/action-types";
 import { getDb } from "@/db/client";
 import { BUDGET_PERIODS } from "@/db/schema/budgets";
 import { MoneyParseError, parseAmountToCents } from "@/lib/money";
 import { createBudget, deactivateBudget, updateBudget } from "@/services/budgets";
 import { predictBudgets, type PredictedBudget } from "@/services/category-forecast";
 
+// the single-argument form reports the SAME message when the field is missing
+// entirely, instead of zod's "expected string, received null"
 const createBudgetFormSchema = z.object({
-  categoryId: z.string().min(1, "Pick a category"),
+  categoryId: z.string("Pick a category").min(1, "Pick a category"),
   period: z.enum(BUDGET_PERIODS),
-  amount: z.string().trim().min(1, "Enter a budget amount"),
+  amount: z.string("Enter a budget amount").trim().min(1, "Enter a budget amount"),
 });
 
 function friendlyMessage(error: unknown): string {
@@ -27,26 +29,56 @@ function friendlyMessage(error: unknown): string {
   return "Something went wrong";
 }
 
-export async function createBudgetAction(formData: FormData): Promise<void> {
-  let message: string | null = null;
+const BUDGET_LABELS = {
+  categoryId: "Category",
+  period: "Period",
+  amount: "Amount",
+} as const;
+
+/**
+ * Validating core of the create-budget form. The `Promise<void>` export below
+ * keeps its signature byte-identical — React types `<form action>` as
+ * `(formData) => void | Promise<void>`, so a result cannot be returned from it
+ * without breaking the call site — and forwards a failure to `?error=`, which
+ * /budgets already renders.
+ */
+export async function createBudgetResultAction(
+  formData: FormData,
+): Promise<ActionResult<{ categoryId: string; amountCents: number }>> {
+  const parsed = createBudgetFormSchema.safeParse({
+    categoryId: formData.get("categoryId"),
+    period: formData.get("period"),
+    amount: formData.get("amount"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: firstIssueMessage(parsed.error.issues, BUDGET_LABELS) };
+  }
+  let amountCents: number;
   try {
-    const parsed = createBudgetFormSchema.parse({
-      categoryId: formData.get("categoryId"),
-      period: formData.get("period"),
-      amount: formData.get("amount"),
-    });
-    const amountCents = parseAmountToCents(parsed.amount);
-    if (amountCents <= 0) throw new Error("Budget amount must be positive");
+    amountCents = parseAmountToCents(parsed.data.amount);
+  } catch (error: unknown) {
+    return { ok: false, error: friendlyMessage(error) };
+  }
+  if (amountCents <= 0) return { ok: false, error: "Budget amount must be positive" };
+  try {
     createBudget(getDb(), {
-      categoryId: parsed.categoryId,
-      period: parsed.period,
+      categoryId: parsed.data.categoryId,
+      period: parsed.data.period,
       amountCents,
     });
   } catch (error: unknown) {
-    message = friendlyMessage(error);
+    return { ok: false, error: friendlyMessage(error) };
   }
   revalidatePath("/budgets");
-  redirect(message ? `/budgets?error=${encodeURIComponent(message)}` : "/budgets");
+  return { ok: true, data: { categoryId: parsed.data.categoryId, amountCents } };
+}
+
+export async function createBudgetAction(formData: FormData): Promise<void> {
+  const result = await createBudgetResultAction(formData);
+  // a failed attempt still revalidates so the page it lands on is fresh
+  if (!result.ok) revalidatePath("/budgets");
+  // redirect() throws NEXT_REDIRECT by design — it must stay outside any catch
+  redirect(result.ok ? "/budgets" : `/budgets?error=${encodeURIComponent(result.error)}`);
 }
 
 const updateAmountSchema = z.object({
@@ -79,24 +111,36 @@ export async function updateBudgetAmountAction(input: {
   try {
     updateBudget(getDb(), parsed.data.budgetId, { amountCents });
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Could not update budget" };
+    return { ok: false, error: friendlyMessage(error) };
   }
   revalidatePath("/budgets");
   return { ok: true, data: { id: parsed.data.budgetId, amountCents } };
 }
 
-const deactivateSchema = z.object({ budgetId: z.string().min(1) });
+const deactivateSchema = z.object({
+  budgetId: z.string("Pick a budget").min(1, "Pick a budget"),
+});
 
-export async function deactivateBudgetAction(formData: FormData): Promise<void> {
-  let message: string | null = null;
+export async function deactivateBudgetResultAction(
+  formData: FormData,
+): Promise<ActionResult<{ budgetId: string }>> {
+  const parsed = deactivateSchema.safeParse({ budgetId: formData.get("budgetId") });
+  if (!parsed.success) {
+    return { ok: false, error: firstIssueMessage(parsed.error.issues, { budgetId: "Budget" }) };
+  }
   try {
-    const parsed = deactivateSchema.parse({ budgetId: formData.get("budgetId") });
-    deactivateBudget(getDb(), parsed.budgetId);
+    deactivateBudget(getDb(), parsed.data.budgetId);
   } catch (error: unknown) {
-    message = friendlyMessage(error);
+    return { ok: false, error: friendlyMessage(error) };
   }
   revalidatePath("/budgets");
-  redirect(message ? `/budgets?error=${encodeURIComponent(message)}` : "/budgets");
+  return { ok: true, data: { budgetId: parsed.data.budgetId } };
+}
+
+export async function deactivateBudgetAction(formData: FormData): Promise<void> {
+  const result = await deactivateBudgetResultAction(formData);
+  if (!result.ok) revalidatePath("/budgets");
+  redirect(result.ok ? "/budgets" : `/budgets?error=${encodeURIComponent(result.error)}`);
 }
 
 /** Load next-month budget PREDICTIONS (recurring bills + trend/seasonal estimate). */

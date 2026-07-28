@@ -1,0 +1,1309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Transfer Flow — design prototype</title>
+<style>
+/* ─────────────────────────────────────────────────────────────────────────
+   Tokens lifted verbatim from src/app/globals.css (Editorial finance, OKLCH).
+   Both themes. `data-theme` on <html> wins; otherwise follow the OS.
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  --surface: oklch(0.977 0.005 85);
+  --surface-raised: oklch(0.996 0.002 85);
+  --surface-sunken: oklch(0.955 0.006 85);
+  --ink: oklch(0.22 0.015 75);
+  --ink-muted: oklch(0.46 0.014 75);
+  --ink-faint: oklch(0.52 0.012 78);
+  --line: oklch(0.9 0.008 85);
+  --line-strong: oklch(0.82 0.01 85);
+  --accent: oklch(0.45 0.095 165);
+  --accent-soft: oklch(0.94 0.028 165);
+  --positive: oklch(0.5 0.11 160);
+  --negative: oklch(0.53 0.15 30);
+  --warning: oklch(0.52 0.115 70);
+  --cat-red: oklch(0.53 0.13 25);
+  --cat-orange: oklch(0.52 0.11 55);
+  --cat-green: oklch(0.5 0.1 155);
+  --cat-blue: oklch(0.52 0.1 245);
+  --cat-indigo: oklch(0.52 0.1 275);
+  --cat-violet: oklch(0.52 0.11 300);
+  --shadow-overlay: 0 4px 16px oklch(0% 0 0 / 0.1), 0 1px 3px oklch(0% 0 0 / 0.06);
+  --duration-fast: 150ms;
+  --duration-normal: 300ms;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { color-scheme: dark; } }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+/* dark palette — applied by OS pref OR by the explicit toggle */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface: oklch(0.19 0.012 75);
+    --surface-raised: oklch(0.23 0.013 75);
+    --surface-sunken: oklch(0.165 0.011 75);
+    --ink: oklch(0.93 0.009 85);
+    --ink-muted: oklch(0.7 0.011 80);
+    --ink-faint: oklch(0.64 0.011 80);
+    --line: oklch(0.31 0.013 75);
+    --line-strong: oklch(0.4 0.014 75);
+    --accent: oklch(0.73 0.105 165);
+    --accent-soft: oklch(0.29 0.04 165);
+    --positive: oklch(0.73 0.115 160);
+    --negative: oklch(0.68 0.14 30);
+    --warning: oklch(0.75 0.12 75);
+    --cat-red: oklch(0.72 0.13 25);
+    --cat-orange: oklch(0.73 0.12 55);
+    --cat-green: oklch(0.73 0.11 155);
+    --cat-blue: oklch(0.72 0.1 245);
+    --cat-indigo: oklch(0.72 0.1 275);
+    --cat-violet: oklch(0.72 0.11 300);
+    --shadow-overlay: 0 4px 16px oklch(0% 0 0 / 0.4), 0 1px 3px oklch(0% 0 0 / 0.3);
+  }
+}
+:root[data-theme="dark"] {
+  --surface: oklch(0.19 0.012 75);
+  --surface-raised: oklch(0.23 0.013 75);
+  --surface-sunken: oklch(0.165 0.011 75);
+  --ink: oklch(0.93 0.009 85);
+  --ink-muted: oklch(0.7 0.011 80);
+  --ink-faint: oklch(0.64 0.011 80);
+  --line: oklch(0.31 0.013 75);
+  --line-strong: oklch(0.4 0.014 75);
+  --accent: oklch(0.73 0.105 165);
+  --accent-soft: oklch(0.29 0.04 165);
+  --positive: oklch(0.73 0.115 160);
+  --negative: oklch(0.68 0.14 30);
+  --warning: oklch(0.75 0.12 75);
+  --cat-red: oklch(0.72 0.13 25);
+  --cat-orange: oklch(0.73 0.12 55);
+  --cat-green: oklch(0.73 0.11 155);
+  --cat-blue: oklch(0.72 0.1 245);
+  --cat-indigo: oklch(0.72 0.1 275);
+  --cat-violet: oklch(0.72 0.11 300);
+  --shadow-overlay: 0 4px 16px oklch(0% 0 0 / 0.4), 0 1px 3px oklch(0% 0 0 / 0.3);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--surface);
+  color: var(--ink);
+  font-family: ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+.figures { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
+.wrap { max-width: 1240px; margin: 0 auto; padding: clamp(1rem, 0.5rem + 2vw, 2.5rem) clamp(0.75rem, 0.4rem + 1.6vw, 2rem) 5rem; }
+
+/* ── header ─────────────────────────────────────────────────────────── */
+.eyebrow { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; margin: 0 0 0.35rem; }
+h1 { font-family: ui-serif, "New York", Georgia, serif; font-size: clamp(1.9rem, 1.2rem + 2.6vw, 3.1rem); line-height: 1.05; letter-spacing: -0.02em; margin: 0 0 0.5rem; font-weight: 500; }
+.dek { color: var(--ink-muted); max-width: 62ch; margin: 0 0 1.5rem; font-size: 0.95rem; }
+.dek b { color: var(--ink); font-weight: 600; }
+
+/* ── controls ───────────────────────────────────────────────────────── */
+.controls { display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; align-items: center; margin-bottom: 1.25rem; }
+.seg { display: inline-flex; background: var(--surface-sunken); border: 1px solid var(--line); border-radius: 999px; padding: 3px; gap: 2px; }
+.seg button {
+  appearance: none; border: 0; background: transparent; color: var(--ink-muted);
+  font: inherit; font-size: 12.5px; font-weight: 600; padding: 0.3rem 0.85rem;
+  border-radius: 999px; cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out-expo), color var(--duration-fast) var(--ease-out-expo);
+}
+.seg button:hover { color: var(--ink); }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ctl-label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; margin-right: -0.5rem; }
+.spacer { flex: 1 1 auto; }
+
+/* ── summary rail ───────────────────────────────────────────────────── */
+.rail { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-bottom: 1.25rem; }
+.stat { background: var(--surface-raised); padding: 0.85rem 1rem 0.95rem; }
+.stat dt { font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; margin: 0 0 0.25rem; }
+.stat dd { margin: 0; font-size: clamp(1.05rem, 0.9rem + 0.7vw, 1.45rem); font-weight: 600; letter-spacing: -0.01em; }
+.stat .sub { display: block; font-size: 11.5px; font-weight: 400; color: var(--ink-muted); margin-top: 0.1rem; letter-spacing: 0; }
+.stat.hot dd { color: var(--warning); }
+
+/* ── panel ──────────────────────────────────────────────────────────── */
+.panel { background: var(--surface-raised); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-overlay); overflow: hidden; }
+.panel-head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; padding: 0.9rem 1.1rem 0.5rem; }
+.panel-head h2 { margin: 0; font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; }
+.panel-head p { margin: 0; font-size: 12px; color: var(--ink-faint); }
+.panel-body { position: relative; padding: 0.25rem 0.5rem 1rem; }
+.hidden { display: none !important; }
+
+/* ── 2D spine ───────────────────────────────────────────────────────── */
+#spine { display: block; width: 100%; height: auto; overflow: visible; touch-action: pan-y; }
+.arc { fill: none; stroke-linecap: round; cursor: pointer; transition: opacity var(--duration-fast) linear, stroke-width var(--duration-fast) var(--ease-out-expo); }
+.arc:focus-visible { outline: none; }
+.arc-hit { fill: none; stroke: transparent; stroke-width: 18; cursor: pointer; }
+.node-rect { transition: opacity var(--duration-fast) linear; }
+.node-label { font-size: 12px; font-weight: 600; fill: var(--ink); }
+.node-net { font-size: 11px; fill: var(--ink-muted); }
+.axis-tag { font-size: 10px; letter-spacing: 0.09em; text-transform: uppercase; fill: var(--ink-faint); font-weight: 600; }
+.arc-value { font-size: 10.5px; font-weight: 600; fill: var(--ink-muted); pointer-events: none; }
+g.focusable:focus-visible .arc { stroke-width: var(--hot-w); }
+g.focusable:focus-visible .halo { stroke: var(--accent); stroke-width: 2; opacity: 1; }
+.halo { fill: none; opacity: 0; }
+/* dot cadence = transfers per month. The DASH GAP carries the encoding statically,
+   so the meaning survives with motion off; only the drift is animated. A CSS
+   animation (not SMIL) so Playwright's animations:"disabled" freezes it and the
+   243 visual snapshots stay byte-stable. */
+.flow { animation: flow-drift var(--flow-dur) linear infinite; }
+@keyframes flow-drift { to { stroke-dashoffset: var(--flow-shift); } }
+@media (prefers-reduced-motion: reduce) { .flow { animation: none; } }
+
+/* ── rhythm rail ────────────────────────────────────────────────────── */
+#rhythm { display: block; width: 100%; height: auto; }
+.rh-label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; fill: var(--ink-faint); font-weight: 600; }
+.rh-tick { font-size: 10px; fill: var(--ink-faint); }
+
+/* ── 3D ─────────────────────────────────────────────────────────────── */
+#tower-wrap { position: relative; }
+#tower { display: block; width: 100%; height: clamp(380px, 58vh, 640px); cursor: grab; touch-action: none; border-radius: 12px; }
+#tower:active { cursor: grabbing; }
+#tower:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tower-hint { position: absolute; left: 0.9rem; bottom: 0.75rem; font-size: 11px; color: var(--ink-faint); pointer-events: none; }
+.tower-legend { position: absolute; right: 0.9rem; top: 0.75rem; display: grid; gap: 3px; font-size: 11px; pointer-events: none; }
+.tower-legend span { display: flex; align-items: center; gap: 6px; color: var(--ink-muted); }
+/* every pillar is labelled in-scene, so the legend is redundant once the canvas
+   is narrow enough for the two to collide */
+@media (max-width: 680px) { .tower-legend { display: none; } }
+.tower-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
+/* ── table lens (the 6×6 flow matrix) ───────────────────────────────── */
+.matrix-scroll { overflow-x: auto; padding: 0 0.6rem 0.4rem; }
+table.matrix { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 12.5px; }
+table.matrix caption { text-align: left; padding: 0.35rem 0.15rem 0.7rem; color: var(--ink-muted); font-size: 12px; }
+table.matrix th, table.matrix td { padding: 0.42rem 0.5rem; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.matrix thead th { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; border-bottom: 1px solid var(--line-strong); vertical-align: bottom; }
+table.matrix tbody th { text-align: left; font-weight: 600; }
+table.matrix .cell { position: relative; }
+table.matrix .cell .fill { position: absolute; inset: 2px; border-radius: 4px; opacity: 0.9; }
+table.matrix .cell .v { position: relative; }
+table.matrix .cell .n { display: block; font-size: 10px; color: var(--ink-faint); font-weight: 400; }
+table.matrix .diag { color: var(--ink-faint); background: var(--surface-sunken); }
+table.matrix tfoot th, table.matrix tfoot td { border-top: 1px solid var(--line-strong); border-bottom: 0; font-weight: 600; }
+table.matrix .zero { color: var(--ink-faint); opacity: 0.4; }
+.pos { color: var(--positive); }
+.neg { color: var(--negative); }
+
+/* ── tooltip ────────────────────────────────────────────────────────── */
+#tip {
+  position: fixed; z-index: 40; pointer-events: none; opacity: 0;
+  transform: translate(-50%, calc(-100% - 12px));
+  background: var(--surface-raised); border: 1px solid var(--line);
+  border-radius: 10px; padding: 0.5rem 0.7rem; box-shadow: var(--shadow-overlay);
+  font-size: 12px; max-width: 260px;
+  transition: opacity var(--duration-fast) linear;
+}
+#tip.on { opacity: 1; }
+#tip .t { font-weight: 600; margin-bottom: 2px; }
+#tip .a { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+#tip .m { color: var(--ink-faint); }
+
+/* ── notes ──────────────────────────────────────────────────────────── */
+.notes { margin-top: 1.5rem; display: grid; gap: 0.9rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.note { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 10px; padding: 0.75rem 0.9rem; background: var(--surface-raised); font-size: 12.5px; color: var(--ink-muted); }
+.note.warn { border-left-color: var(--warning); }
+.note h3 { margin: 0 0 0.3rem; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink); font-weight: 700; }
+.note b { color: var(--ink); }
+.reconcile { margin-top: 1rem; font-size: 12px; color: var(--ink-faint); text-align: center; }
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">MoneyApp · new view · prototype</p>
+  <h1>Transfer&nbsp;Flow</h1>
+  <p class="dek">
+    Money you move between your <b>own</b> accounts. Gross says you moved
+    <b>$330,513.57</b> across 516 transfers — but <b>$96,482.26 of that came straight back</b>.
+    The net story is $234,031.31. This view is built so you can see both, and never confuse them.
+  </p>
+
+  <div class="controls">
+    <span class="ctl-label">View</span>
+    <div class="seg" role="group" aria-label="Dimension">
+      <button type="button" id="d2" aria-pressed="true">2D</button>
+      <button type="button" id="d3" aria-pressed="false">3D</button>
+      <button type="button" id="dt" aria-pressed="false">Table</button>
+    </div>
+
+    <span class="ctl-label">Measure</span>
+    <div class="seg" role="group" aria-label="Gross or net">
+      <button type="button" id="mg" aria-pressed="true">Gross</button>
+      <button type="button" id="mn" aria-pressed="false">Net</button>
+    </div>
+
+    <span class="ctl-label">Range</span>
+    <div class="seg" role="group" aria-label="Date range" id="ranges"></div>
+
+    <span class="spacer"></span>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" id="tl" aria-pressed="false">Light</button>
+      <button type="button" id="td" aria-pressed="false">Dark</button>
+    </div>
+  </div>
+
+  <dl class="rail" id="rail"></dl>
+
+  <!-- ── 2D ─────────────────────────────────────────────────────────── -->
+  <section class="panel" id="panel2d" aria-labelledby="h2d">
+    <div class="panel-head">
+      <h2 id="h2d">The Spine</h2>
+      <p>Accounts ordered net-source → net-sink. Arcs bulge <b>right</b> when money flows down the ladder, <b>left</b> when it comes back. Thickness = amount. Dot cadence = how often.</p>
+    </div>
+    <div class="panel-body">
+      <svg id="spine" role="img" aria-labelledby="spineTitle spineDesc"><title id="spineTitle">Transfer spine</title><desc id="spineDesc"></desc></svg>
+      <div class="panel-head" style="padding-top:1.2rem">
+        <h2>The Rhythm</h2>
+        <p>Every month, stacked by edge. Same data, time axis.</p>
+      </div>
+      <svg id="rhythm" role="img" aria-labelledby="rhTitle rhDesc"><title id="rhTitle">Monthly transfer rhythm</title><desc id="rhDesc"></desc></svg>
+    </div>
+  </section>
+
+  <!-- ── 3D ─────────────────────────────────────────────────────────── -->
+  <section class="panel hidden" id="panel3d" aria-labelledby="h3d">
+    <div class="panel-head">
+      <h2 id="h3d">The Tower</h2>
+      <p>The same money, with <b>time as the vertical axis</b> — oldest at the bottom, today at the top. Six account pillars on a fixed ring. Drag to orbit.</p>
+    </div>
+    <div class="panel-body">
+      <div id="tower-wrap">
+        <canvas id="tower" tabindex="0" role="img" aria-label="Three-dimensional transfer tower. Equivalent data is available in the 2D and Table views."></canvas>
+        <div class="tower-legend" id="towerLegend"></div>
+        <div class="tower-hint">Drag to orbit · scroll to zoom · ← → to rotate</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Table lens ─────────────────────────────────────────────────── -->
+  <section class="panel hidden" id="panelTable" aria-labelledby="hT">
+    <div class="panel-head">
+      <h2 id="hT">Flow matrix</h2>
+      <p>Rows send, columns receive. Margins are the account totals; the last column is the net position.</p>
+    </div>
+    <div class="panel-body">
+      <div class="matrix-scroll" id="matrixHost"></div>
+    </div>
+  </section>
+
+  <div class="notes">
+    <div class="note">
+      <h3>What the encodings mean</h3>
+      <b>Position</b> — vertical order is net position, biggest net source at the top.
+      <b>Side</b> — right of the spine is money going down the ladder, left is money coming back.
+      <b>Thickness</b> — dollars. <b>Dot cadence</b> — transfer count. <b>Hue</b> — the sending account.
+      Nothing is decorative.
+    </div>
+    <div class="note">
+      <h3>Why net matters here</h3>
+      Four of your six accounts round-trip money. Gross counts a dollar every time it crosses a
+      boundary, so a dollar that goes Chase → Savings → Chase counts <b>twice</b>. Flip to
+      <b>Net</b> and the left-hand arcs collapse — what you are watching disappear is the churn.
+    </div>
+    <div class="note warn">
+      <h3>Reconciliation gap — verify before shipping</h3>
+      The detector reports <b>650 transfer groups</b>, but the 13 account-pair edges only account for
+      <b>516</b>. 134 groups (~21%) are unattributed here — likely legs whose counterparty account is
+      outside these six, or groups with more than two legs. The real service must reconcile to 650
+      or explicitly show the remainder.
+    </div>
+  </div>
+
+  <p class="reconcile" id="reconcile"></p>
+</div>
+
+<div id="tip" role="presentation"><div class="t"></div><div class="a figures"></div><div class="m"></div></div>
+
+<script>
+"use strict";
+/* ═══════════════════════════════════════════════════════════════════════
+   DATA
+   Edge totals + counts are the owner's REAL measured data.
+   Per-month timing is NOT in the brief, so it is synthesised from a fixed
+   seed purely to demonstrate the time axis. Totals always reconcile back to
+   the real edge numbers (each edge's monthly amounts sum to its real total,
+   and its monthly counts sum to its real count).
+   ═════════════════════════════════════════════════════════════════════ */
+
+const ACCOUNTS = [
+  // id,              label,              token
+  ["chase",  "Chase Checking",  "--cat-blue"],
+  ["sofisav","SoFi Savings",    "--cat-violet"],
+  ["ventx",  "Venture X",       "--cat-red"],
+  ["disc",   "Discover",        "--cat-orange"],
+  ["rh",     "Robinhood Cash",  "--cat-green"],
+  ["sofichk","SoFi Checking",   "--cat-indigo"],
+].map(([id, label, token], i) => ({ id, label, token, order: i }));
+
+const AI = new Map(ACCOUNTS.map(a => [a.id, a]));
+
+/** [from, to, count, dollars] — real. */
+const EDGES_RAW = [
+  ["sofisav", "sofichk", 299, 97921.99],
+  ["chase",   "sofisav",  23, 78995.61],
+  ["chase",   "rh",       14, 51173.09],
+  ["sofichk", "rh",       10, 22819.31],
+  ["rh",      "chase",     6, 19411.88],
+  ["sofichk", "sofisav",  25, 16506.04],
+  ["sofisav", "disc",     49, 13941.67],
+  ["sofisav", "chase",    22, 11823.21],
+  ["chase",   "ventx",    27, 10533.97],
+  ["sofisav", "ventx",     5,  3473.90],
+  ["chase",   "disc",     34,  3312.90],
+  ["rh",      "sofichk",   1,   500.00],
+  ["chase",   "sofichk",   1,   100.00],
+];
+
+const FIRST = { y: 2023, m: 9 };   // Oct 2023 (0-indexed month)
+const LAST  = { y: 2026, m: 6 };   // Jul 2026
+const MONTHS = [];
+for (let y = FIRST.y, m = FIRST.m; y < LAST.y || (y === LAST.y && m <= LAST.m); ) {
+  MONTHS.push({ y, m, key: `${y}-${String(m + 1).padStart(2, "0")}` });
+  m += 1; if (m > 11) { m = 0; y += 1; }
+}
+const NM = MONTHS.length; // 34
+
+/* deterministic PRNG — mulberry32. No Math.random anywhere. */
+function rng(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Spread an edge's real count + real cents across the months, integer-exact.
+ * Weighting: a smooth seasonal-ish curve × per-edge noise, so different edges
+ * have visibly different rhythms. Remainders go to the heaviest months, so the
+ * monthly series ALWAYS sums back to the real totals.
+ */
+function distribute(totalUnits, seed, bias) {
+  const r = rng(seed);
+  const w = [];
+  let sum = 0;
+  for (let i = 0; i < NM; i++) {
+    const t = i / (NM - 1);
+    const wave = 1 + 0.45 * Math.sin(2 * Math.PI * (t * 2.4 + bias));
+    const ramp = 0.55 + 0.9 * t;                 // activity grows over time
+    const noise = 0.35 + 1.3 * r();
+    const v = Math.max(0.02, wave * ramp * noise);
+    w.push(v); sum += v;
+  }
+  const raw = w.map(v => (v / sum) * totalUnits);
+  const out = raw.map(v => Math.floor(v));
+  let rem = totalUnits - out.reduce((a, b) => a + b, 0);
+  const order = raw.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+  for (let k = 0; k < order.length && rem > 0; k++, rem--) out[order[k][1]]++;
+  return out;
+}
+
+const EDGES = EDGES_RAW.map(([from, to, count, dollars], i) => {
+  const cents = Math.round(dollars * 100);
+  const counts = distribute(count, 1000 + i * 7717, i * 0.17);
+  // amount follows the count distribution but with its own jitter, so a month
+  // with 3 transfers isn't mechanically 3× a month with 1
+  const amtW = counts.map((c, j) => (c === 0 ? 0 : c * (0.6 + 0.8 * rng(9000 + i * 131 + j)())));
+  const wSum = amtW.reduce((a, b) => a + b, 0) || 1;
+  const rawC = amtW.map(v => (v / wSum) * cents);
+  const monthCents = rawC.map(v => Math.floor(v));
+  let rem = cents - monthCents.reduce((a, b) => a + b, 0);
+  const ord = rawC.map((v, j) => [v - Math.floor(v), j]).sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+  for (let k = 0; k < ord.length && rem > 0; k++, rem--) monthCents[ord[k][1]]++;
+  return { id: `${from}>${to}`, from, to, count, cents, counts, monthCents };
+});
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PURE AGGREGATION  (the shape src/lib/transfer-flow-layout.ts would own)
+   ═════════════════════════════════════════════════════════════════════ */
+
+const RANGES = [
+  { key: "ALL", label: "ALL", months: NM },
+  { key: "2Y",  label: "2Y",  months: 24 },
+  { key: "1Y",  label: "1Y",  months: 12 },
+  { key: "6M",  label: "6M",  months: 6 },
+  { key: "3M",  label: "3M",  months: 3 },
+];
+
+const state = { dim: "2d", measure: "gross", range: "ALL", hover: null, theme: null };
+
+function monthWindow() {
+  const n = RANGES.find(r => r.key === state.range).months;
+  return [Math.max(0, NM - n), NM]; // [lo, hi)
+}
+
+/** Directed totals inside the active window. */
+function directedEdges() {
+  const [lo, hi] = monthWindow();
+  return EDGES.map(e => {
+    let c = 0, n = 0;
+    for (let i = lo; i < hi; i++) { c += e.monthCents[i]; n += e.counts[i]; }
+    return { ...e, cents: c, count: n };
+  }).filter(e => e.cents > 0 || e.count > 0);
+}
+
+/**
+ * Net view: for every unordered pair, keep the winning direction with
+ * |A→B − B→A|. Count is carried as the TOTAL number of transfers that
+ * produced that net — netting money never nets away the fact they happened.
+ */
+function netEdges(dir) {
+  const pair = new Map();
+  for (const e of dir) {
+    const k = [e.from, e.to].sort().join("|");
+    const cur = pair.get(k) || { a: null, b: null };
+    if (!cur.a) cur.a = e; else cur.b = e;
+    pair.set(k, cur);
+  }
+  const out = [];
+  for (const { a, b } of pair.values()) {
+    if (!b) { out.push({ ...a, grossCents: a.cents, returnedCents: 0 }); continue; }
+    const [win, lose] = a.cents >= b.cents ? [a, b] : [b, a];
+    const net = win.cents - lose.cents;
+    if (net === 0) continue;
+    out.push({
+      id: `${win.from}>${win.to}`, from: win.from, to: win.to,
+      cents: net, count: win.count + lose.count,
+      grossCents: win.cents + lose.cents, returnedCents: lose.cents * 2,
+    });
+  }
+  return out;
+}
+
+function activeEdges() {
+  const dir = directedEdges();
+  return state.measure === "net" ? netEdges(dir) : dir.map(e => ({ ...e, grossCents: e.cents, returnedCents: 0 }));
+}
+
+/** Net position per account (in − out) over the window — always sums to zero. */
+function netPositions() {
+  const dir = directedEdges();
+  const pos = new Map(ACCOUNTS.map(a => [a.id, { in: 0, out: 0 }]));
+  for (const e of dir) { pos.get(e.from).out += e.cents; pos.get(e.to).in += e.cents; }
+  return pos;
+}
+
+function totals() {
+  const dir = directedEdges();
+  const gross = dir.reduce((s, e) => s + e.cents, 0);
+  const count = dir.reduce((s, e) => s + e.count, 0);
+  const net = netEdges(dir).reduce((s, e) => s + e.cents, 0);
+  return { gross, net, churn: gross - net, count };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   FORMAT
+   ═════════════════════════════════════════════════════════════════════ */
+const usd = (cents, opts = {}) => {
+  const v = cents / 100;
+  return v.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: opts.dp ?? 2, maximumFractionDigits: opts.dp ?? 2 });
+};
+const usdK = cents => {
+  const v = Math.abs(cents) / 100;
+  const s = cents < 0 ? "−" : "";
+  if (v >= 1000) return `${s}$${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k`;
+  return `${s}$${Math.round(v)}`;
+};
+const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const monthLabel = i => `${MONTH_NAMES[MONTHS[i].m]} ${String(MONTHS[i].y).slice(2)}`;
+
+/* colour resolution — read the live computed token so both themes work */
+const probe = document.createElement("span");
+probe.style.display = "none";
+document.body.appendChild(probe);
+let COLOR = {};
+function resolveColors() {
+  syncTheme();
+  COLOR = {};
+  for (const a of ACCOUNTS) {
+    probe.style.color = `var(${a.token})`;
+    COLOR[a.id] = getComputedStyle(probe).color;
+  }
+  for (const t of ["--ink", "--ink-muted", "--ink-faint", "--line", "--line-strong", "--surface", "--surface-raised", "--surface-sunken", "--accent", "--warning", "--positive", "--negative"]) {
+    probe.style.color = `var(${t})`;
+    COLOR[t] = getComputedStyle(probe).color;
+  }
+}
+
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const prefersDark = window.matchMedia("(prefers-color-scheme: dark)");
+/** the theme actually in force — explicit toggle wins, else the OS */
+let isDarkNow = false;
+function syncTheme() {
+  const attr = document.documentElement.getAttribute("data-theme");
+  isDarkNow = attr === "dark" || (attr === null && prefersDark.matches);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   TOOLTIP
+   ═════════════════════════════════════════════════════════════════════ */
+const tip = document.getElementById("tip");
+function showTip(x, y, title, amount, meta) {
+  tip.querySelector(".t").textContent = title;
+  tip.querySelector(".a").textContent = amount;
+  tip.querySelector(".m").textContent = meta;
+  tip.style.left = `${x}px`;
+  tip.style.top = `${y}px`;
+  tip.classList.add("on");
+}
+function hideTip() { tip.classList.remove("on"); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SUMMARY RAIL
+   ═════════════════════════════════════════════════════════════════════ */
+function renderRail() {
+  const t = totals();
+  const pct = t.gross > 0 ? (t.churn / t.gross) * 100 : 0;
+  const rows = [
+    ["Gross moved", usd(t.gross), `${t.count} transfers`],
+    ["Net moved", usd(t.net), "after round-trips cancel"],
+    ["Round-trip churn", usd(t.churn), `${pct.toFixed(1)}% of gross came back`, true],
+    ["Busiest edge", busiest(), "by transfer count"],
+    ["Largest edge", largest(), "by dollars"],
+  ];
+  document.getElementById("rail").innerHTML = rows.map(([k, v, s, hot]) => `
+    <div class="stat${hot ? " hot" : ""}">
+      <dt>${k}</dt>
+      <dd class="figures">${v}<span class="sub">${s}</span></dd>
+    </div>`).join("");
+  document.getElementById("reconcile").textContent =
+    `Gross ${usd(t.gross)} − churn ${usd(t.churn)} = net ${usd(t.net)}. Every arc drills to its transactions.`;
+}
+function busiest() {
+  const e = [...directedEdges()].sort((a, b) => b.count - a.count || a.id.localeCompare(b.id))[0];
+  return e ? `${e.count}×` : "—";
+}
+function largest() {
+  const e = [...activeEdges()].sort((a, b) => b.cents - a.cents || a.id.localeCompare(b.id))[0];
+  return e ? usdK(e.cents) : "—";
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   2D — THE SPINE  (pure geometry, then SVG)
+   ═════════════════════════════════════════════════════════════════════ */
+const SPINE = { padT: 26, padB: 22, rowH: 62, spineW: 12, labelW: 148 };
+
+const MAX_SPAN = ACCOUNTS.length - 1;
+
+function spineLayout(width) {
+  const compact = width < 660;
+  const gutter = compact ? 92 : 156;             // right-aligned account labels
+  const gap = compact ? 8 : 14;
+  const inner = Math.min(width, 1120);           // don't let a 2560px monitor stretch it
+  const ox = (width - inner) / 2;
+  const avail = Math.max(120, inner - gutter - gap * 2 - SPINE.spineW);
+  const leftRegion = Math.max(44, avail * 0.36); // "comes back"
+  const rightRegion = avail - leftRegion;        // "flows on"
+  const x = ox + gutter + gap + leftRegion;      // spine left edge
+  const labelX = ox + gutter;
+  const rowH = compact ? 56 : SPINE.rowH;
+  const height = SPINE.padT + SPINE.padB + rowH * (ACCOUNTS.length - 1) + 28;
+  const pos = netPositions();
+
+  const rows = ACCOUNTS.map((a, i) => {
+    const p = pos.get(a.id);
+    return { ...a, y: SPINE.padT + 14 + i * rowH, net: p.in - p.out, in: p.in, out: p.out };
+  });
+  const yOf = new Map(rows.map(r => [r.id, r.y]));
+
+  const edges = activeEdges();
+  const max = Math.max(1, ...edges.map(e => e.cents));
+  const maxW = compact ? 14 : 22;
+
+  const arcs = edges.map(e => {
+    const y0 = yOf.get(e.from), y1 = yOf.get(e.to);
+    const down = AI.get(e.to).order > AI.get(e.from).order;
+    const span = Math.abs(AI.get(e.to).order - AI.get(e.from).order);
+    const w = Math.max(1.6, (e.cents / max) * maxW);
+    // bulge is a function of SPAN only — deterministic and never data-dependent,
+    // so two edges spanning different distances can never sit on top of each other
+    const room = down ? rightRegion : leftRegion;
+    const t = MAX_SPAN > 1 ? (span - 1) / (MAX_SPAN - 1) : 1;
+    const bulge = room * (0.26 + 0.74 * t);
+    const bx = down ? x + SPINE.spineW / 2 + bulge : x + SPINE.spineW / 2 - bulge;
+    const sx = x + (down ? SPINE.spineW : 0);
+    const path = `M ${sx} ${y0} C ${bx} ${y0} ${bx} ${y1} ${sx} ${y1}`;
+    // label anchor: the cubic's t=0.5 point (both controls at bx)
+    const mx = (sx + 3 * bx) / 4;
+    const my = (y0 + y1) / 2;
+    return { ...e, path, w, down, mx, my, y0, y1, span };
+  }).sort((a, b) => a.cents - b.cents); // thin arcs painted last so nothing is buried
+
+  return { width, height, x, labelX, leftRegion, rightRegion, rows, arcs, compact, max, ox, inner };
+}
+
+const spineSvg = document.getElementById("spine");
+
+/** last non-zero measured width — a hidden panel measures 0, and re-laying out
+ *  to 320px there would make the panel snap on every view switch */
+let panelW = 0;
+function measuredWidth() {
+  const w = spineSvg.clientWidth || spineSvg.parentElement.clientWidth;
+  if (w > 0) panelW = w;
+  return Math.max(320, panelW || 720);
+}
+
+function renderSpine() {
+  const width = measuredWidth();
+  const L = spineLayout(width);
+  spineSvg.setAttribute("viewBox", `0 0 ${L.width} ${L.height}`);
+  spineSvg.setAttribute("height", L.height);
+
+  const parts = [];
+
+  // semantic regions: left of the spine is money coming back, right is money going on
+  const topY = SPINE.padT - 4, botY = L.height - SPINE.padB + 6;
+  parts.push(`<rect x="${(L.x - L.leftRegion).toFixed(1)}" y="${topY}" width="${L.leftRegion.toFixed(1)}" height="${(botY - topY).toFixed(1)}"
+    fill="${COLOR["--warning"]}" opacity="0.045" rx="10" />`);
+  parts.push(`<text class="axis-tag" x="${(L.x - L.leftRegion / 2).toFixed(1)}" y="14" text-anchor="middle">← comes back</text>`);
+  parts.push(`<text class="axis-tag" x="${(L.x + SPINE.spineW + L.rightRegion / 2).toFixed(1)}" y="14" text-anchor="middle">flows on →</text>`);
+
+  // arcs
+  for (const a of L.arcs) {
+    const dim = state.hover && state.hover !== a.id && state.hover !== a.from && state.hover !== a.to;
+    const hot = state.hover === a.id;
+    const op = dim ? 0.1 : hot ? 0.95 : 0.62;
+    const col = COLOR[a.from];
+    // dot cadence = transfers per month on this edge, capped so it stays legible
+    const perMonth = a.count / Math.max(1, monthWindow()[1] - monthWindow()[0]);
+    const gap = Math.max(5, Math.min(46, 34 / Math.max(0.28, perMonth)));
+    const dur = Math.max(2.2, Math.min(14, gap * 0.42));
+    parts.push(`<g class="focusable" tabindex="0" role="button"
+        aria-label="${AI.get(a.from).label} to ${AI.get(a.to).label}, ${usd(a.cents)} over ${a.count} transfer${a.count === 1 ? "" : "s"}. Activate to view the transactions."
+        data-edge="${a.id}" style="--hot-w:${a.w + 3}">
+      <path class="halo" d="${a.path}" stroke-width="${a.w + 6}" />
+      <path class="arc" d="${a.path}" stroke="${col}" stroke-width="${hot ? a.w + 2.5 : a.w}" opacity="${op}" />
+      ${!dim ? `<path class="arc flow" d="${a.path}" stroke="${COLOR["--surface-raised"]}" stroke-width="${Math.max(1, a.w * 0.34)}"
+          stroke-dasharray="1.6 ${gap.toFixed(1)}" stroke-linecap="round" opacity="${hot ? 0.95 : 0.5}"
+          style="--flow-dur:${dur.toFixed(1)}s;--flow-shift:-${(gap + 1.6).toFixed(1)}" />` : ""}
+      <path class="arc-hit" d="${a.path}" data-edge="${a.id}" />
+    </g>`);
+  }
+
+  // value labels for the top edges only (avoid a wall of text)
+  const labelled = [...L.arcs].sort((a, b) => b.cents - a.cents).slice(0, L.compact ? 4 : 8);
+  for (const a of labelled) {
+    const dim = state.hover && state.hover !== a.id && state.hover !== a.from && state.hover !== a.to;
+    if (dim) continue;
+    if (a.mx < L.labelX + 26) continue;      // would collide with the account labels
+    parts.push(`<text class="arc-value" x="${a.mx.toFixed(1)}" y="${(a.my + 3.5).toFixed(1)}" text-anchor="middle"
+      style="paint-order:stroke;stroke:${COLOR["--surface-raised"]};stroke-width:4">${usdK(a.cents)}</text>`);
+  }
+
+  // spine + nodes
+  for (const r of L.rows) {
+    const dim = state.hover && state.hover !== r.id && !touchesNode(L.arcs, state.hover, r.id);
+    const op = dim ? 0.3 : 1;
+    const netCls = r.net >= 0 ? "pos" : "neg";
+    parts.push(`<g opacity="${op}">
+      <rect class="node-rect" x="${L.x}" y="${r.y - 13}" width="${SPINE.spineW}" height="26" rx="3" fill="${COLOR[r.id]}" />
+      <text class="node-label" x="${L.labelX}" y="${r.y - 1}" text-anchor="end">${L.compact ? shortLabel(r.label) : r.label}</text>
+      <text class="node-net ${netCls}" x="${L.labelX}" y="${r.y + 12}" text-anchor="end">${r.net >= 0 ? "+" : ""}${usdK(r.net)} net</text>
+    </g>`);
+  }
+
+  spineSvg.innerHTML =
+    `<title id="spineTitle">Transfer spine</title><desc id="spineDesc">${spineSummary()}</desc>` + parts.join("");
+
+  // pointer + keyboard wiring
+  spineSvg.querySelectorAll("[data-edge]").forEach(el => {
+    const id = el.getAttribute("data-edge");
+    el.addEventListener("pointerenter", ev => { state.hover = id; edgeTip(ev, id); renderSpine(); });
+    el.addEventListener("pointermove", ev => edgeTip(ev, id));
+    el.addEventListener("pointerleave", () => { state.hover = null; hideTip(); renderSpine(); });
+    el.addEventListener("focus", () => { state.hover = id; renderSpine(); });
+    el.addEventListener("blur", () => { state.hover = null; renderSpine(); });
+    el.addEventListener("click", () => drill(id));
+    el.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); drill(id); } });
+  });
+}
+
+function shortLabel(s) {
+  return s.replace("Checking", "Chk").replace("Savings", "Sav").replace("Robinhood Cash", "RH Cash").replace("Venture X", "Venture X");
+}
+function touchesNode(arcs, hoverId, nodeId) {
+  return arcs.some(a => a.id === hoverId && (a.from === nodeId || a.to === nodeId)) || hoverId === nodeId;
+}
+function edgeTip(ev, id) {
+  const e = activeEdges().find(x => x.id === id);
+  if (!e) return;
+  const extra = state.measure === "net" && e.returnedCents > 0
+    ? `${usd(e.grossCents)} gross · ${usd(e.returnedCents)} round-tripped`
+    : `${e.count} transfer${e.count === 1 ? "" : "s"} · avg ${usd(Math.round(e.cents / Math.max(1, e.count)))}`;
+  showTip(ev.clientX, ev.clientY, `${AI.get(e.from).label} → ${AI.get(e.to).label}`, usd(e.cents), extra);
+}
+function drill(id) {
+  const e = activeEdges().find(x => x.id === id);
+  if (!e) return;
+  const [lo, hi] = monthWindow();
+  window.alert(
+    `DRILL-THROUGH (prototype stub)\n\n` +
+    `${AI.get(e.from).label} → ${AI.get(e.to).label}\n` +
+    `${usd(e.cents)} across ${e.count} transfer${e.count === 1 ? "" : "s"}\n` +
+    `${MONTHS[lo].key} … ${MONTHS[hi - 1].key}\n\n` +
+    `In the app this navigates to:\n/transactions?transferFrom=${e.from}&transferTo=${e.to}&from=${MONTHS[lo].key}-01&to=${MONTHS[hi - 1].key}-31`
+  );
+}
+function spineSummary() {
+  const t = totals();
+  const pos = netPositions();
+  const ranked = ACCOUNTS.map(a => ({ a, n: pos.get(a.id).in - pos.get(a.id).out })).sort((x, y) => x.n - y.n);
+  return `${usd(t.gross)} moved between 6 accounts across ${t.count} transfers; ${usd(t.churn)} of that returned to where it came from, leaving ${usd(t.net)} net. `
+    + `Largest net source ${ranked[0].a.label} at ${usd(ranked[0].n)}; largest net destination ${ranked[ranked.length - 1].a.label} at ${usd(ranked[ranked.length - 1].n)}.`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   2D — THE RHYTHM RAIL
+   ═════════════════════════════════════════════════════════════════════ */
+const rhythmSvg = document.getElementById("rhythm");
+
+function renderRhythm() {
+  const width = measuredWidth();
+  const H = 132, padL = 8, padR = 8, padT = 8, padB = 24;
+  const [lo, hi] = monthWindow();
+  const n = hi - lo;
+  const bw = (width - padL - padR) / n;
+  const plotH = H - padT - padB;
+
+  // per-month stacks
+  const stacks = [];
+  let maxTotal = 1;
+  for (let i = lo; i < hi; i++) {
+    const segs = [];
+    let tot = 0;
+    if (state.measure === "gross") {
+      for (const e of EDGES) {
+        if (e.monthCents[i] <= 0) continue;
+        segs.push({ id: e.id, from: e.from, to: e.to, cents: e.monthCents[i], count: e.counts[i] });
+        tot += e.monthCents[i];
+      }
+    } else {
+      // net per month, per unordered pair
+      const pair = new Map();
+      for (const e of EDGES) {
+        if (e.monthCents[i] <= 0) continue;
+        const k = [e.from, e.to].sort().join("|");
+        const cur = pair.get(k) || [];
+        cur.push({ from: e.from, to: e.to, cents: e.monthCents[i], count: e.counts[i] });
+        pair.set(k, cur);
+      }
+      for (const list of pair.values()) {
+        if (list.length === 1) { segs.push({ id: `${list[0].from}>${list[0].to}`, ...list[0] }); tot += list[0].cents; continue; }
+        const [a, b] = list;
+        const [win, lose] = a.cents >= b.cents ? [a, b] : [b, a];
+        const v = win.cents - lose.cents;
+        if (v <= 0) continue;
+        segs.push({ id: `${win.from}>${win.to}`, from: win.from, to: win.to, cents: v, count: win.count + lose.count });
+        tot += v;
+      }
+    }
+    segs.sort((x, y) => AI.get(x.from).order - AI.get(y.from).order || x.id.localeCompare(y.id));
+    stacks.push({ i, segs, tot });
+    maxTotal = Math.max(maxTotal, tot);
+  }
+
+  const parts = [];
+  parts.push(`<text class="rh-label" x="${padL}" y="${padT + 8}">${state.measure === "gross" ? "Gross" : "Net"} moved per month · peak ${usdK(maxTotal)}</text>`);
+  stacks.forEach((s, k) => {
+    const x = padL + k * bw;
+    let y = H - padB;
+    for (const seg of s.segs) {
+      const h = (seg.cents / maxTotal) * plotH;
+      const dim = state.hover && state.hover !== seg.id && state.hover !== seg.from && state.hover !== seg.to;
+      y -= h;
+      parts.push(`<rect x="${(x + 0.6).toFixed(2)}" y="${y.toFixed(2)}" width="${Math.max(0.8, bw - 1.2).toFixed(2)}" height="${Math.max(0.5, h).toFixed(2)}"
+        fill="${COLOR[seg.from]}" opacity="${dim ? 0.12 : 0.82}" data-redge="${seg.id}" data-month="${s.i}" style="cursor:pointer" />`);
+    }
+    if (n <= 40 && (k % Math.ceil(n / 8) === 0 || k === n - 1)) {
+      const anchor = k === 0 ? "start" : k === n - 1 ? "end" : "middle";
+      const tx = k === 0 ? padL : k === n - 1 ? width - padR : x + bw / 2;
+      parts.push(`<text class="rh-tick" x="${tx.toFixed(1)}" y="${H - 8}" text-anchor="${anchor}">${monthLabel(s.i)}</text>`);
+    }
+  });
+  parts.push(`<line x1="${padL}" x2="${width - padR}" y1="${H - padB}" y2="${H - padB}" stroke="${COLOR["--line"]}" stroke-width="1" />`);
+
+  rhythmSvg.setAttribute("viewBox", `0 0 ${width} ${H}`);
+  rhythmSvg.setAttribute("height", H);
+  rhythmSvg.innerHTML = `<title id="rhTitle">Monthly transfer rhythm</title><desc id="rhDesc">${rhythmSummary(stacks)}</desc>` + parts.join("");
+
+  rhythmSvg.querySelectorAll("[data-redge]").forEach(el => {
+    el.addEventListener("pointerenter", ev => {
+      const id = el.getAttribute("data-redge"), mi = +el.getAttribute("data-month");
+      const [from, to] = id.split(">");
+      const seg = stacks.find(s => s.i === mi).segs.find(s => s.id === id);
+      showTip(ev.clientX, ev.clientY, `${AI.get(from).label} → ${AI.get(to).label}`, usd(seg.cents), `${monthLabel(mi)} · ${seg.count} transfer${seg.count === 1 ? "" : "s"}`);
+      state.hover = id; renderSpine();
+    });
+    el.addEventListener("pointerleave", () => { hideTip(); state.hover = null; renderSpine(); });
+  });
+}
+function rhythmSummary(stacks) {
+  const busy = [...stacks].sort((a, b) => b.tot - a.tot)[0];
+  return `Monthly ${state.measure} transfer volume across ${stacks.length} months. Busiest month ${monthLabel(busy.i)} at ${usd(busy.tot)}.`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   3D — THE TOWER
+   Hand-authored perspective projection onto a 2D canvas. No library, no CDN,
+   no physics, no Math.random: the camera has a fixed default, every vertex is
+   a pure function of (edge, month, angle), and the paint order is a stable
+   depth sort. Same data, same pixels.
+   ═════════════════════════════════════════════════════════════════════ */
+const cv = document.getElementById("tower");
+const cam = { az: -0.62, el: 0.28, dist: 7.4, zoom: 1 };
+/** the arcs as last painted, in screen space — the canvas hit-test reads this */
+let lastPaint = [];
+let towerReady = false;
+
+function towerGeometry() {
+  const [lo, hi] = monthWindow();
+  const n = Math.max(1, hi - lo);
+  const R = 1.0;
+  const ring = new Map();
+  ACCOUNTS.forEach((a, i) => {
+    const th = (i / ACCOUNTS.length) * Math.PI * 2;
+    ring.set(a.id, { x: Math.cos(th) * R, z: Math.sin(th) * R, th });
+  });
+
+  const yOf = i => -0.95 + ((i - lo) / Math.max(1, n - 1)) * 1.9;
+
+  // arcs: one per (edge, month) with volume
+  const arcs = [];
+  let maxMonthCents = 1;
+  for (const e of EDGES) for (let i = lo; i < hi; i++) maxMonthCents = Math.max(maxMonthCents, e.monthCents[i]);
+
+  const netMode = state.measure === "net";
+  for (let i = lo; i < hi; i++) {
+    let month = EDGES.map(e => ({ id: e.id, from: e.from, to: e.to, cents: e.monthCents[i], count: e.counts[i] })).filter(s => s.cents > 0);
+    if (netMode) {
+      const pair = new Map();
+      for (const s of month) { const k = [s.from, s.to].sort().join("|"); (pair.get(k) || pair.set(k, []).get(k)).push(s); }
+      const out = [];
+      for (const list of pair.values()) {
+        if (list.length === 1) { out.push(list[0]); continue; }
+        const [a, b] = list;
+        const [win, lose] = a.cents >= b.cents ? [a, b] : [b, a];
+        const v = win.cents - lose.cents;
+        if (v > 0) out.push({ id: `${win.from}>${win.to}`, from: win.from, to: win.to, cents: v, count: win.count + lose.count });
+      }
+      month = out;
+    }
+    for (const s of month) {
+      const A = ring.get(s.from), B = ring.get(s.to);
+      const y = yOf(i);
+      // control point pulls toward the axis and arches UPWARD — the arch height
+      // is a function of chord length only, so direction is legible and the
+      // geometry stays a pure function of (from, to, month)
+      const chord = Math.hypot(B.x - A.x, B.z - A.z);
+      const cxp = { x: (A.x + B.x) * 0.24, y: y + 0.055 + 0.075 * chord, z: (A.z + B.z) * 0.24 };
+      const pts = [];
+      const SEG = 20;
+      for (let t = 0; t <= SEG; t++) {
+        const u = t / SEG, iu = 1 - u;
+        pts.push({
+          x: iu * iu * A.x + 2 * iu * u * cxp.x + u * u * B.x,
+          y: iu * iu * y + 2 * iu * u * cxp.y + u * u * y,
+          z: iu * iu * A.z + 2 * iu * u * cxp.z + u * u * B.z,
+        });
+      }
+      arcs.push({ ...s, pts, w: 0.6 + 4.6 * Math.sqrt(s.cents / maxMonthCents), monthIndex: i });
+    }
+  }
+
+  // pillars: gross throughput → radius
+  const pos = netPositions();
+  const pillars = ACCOUNTS.map(a => {
+    const p = pos.get(a.id);
+    const thru = p.in + p.out;
+    return { id: a.id, ...ring.get(a.id), thru, net: p.in - p.out };
+  });
+  const maxThru = Math.max(1, ...pillars.map(p => p.thru));
+  pillars.forEach(p => { p.rad = 0.024 + 0.075 * Math.sqrt(p.thru / maxThru); });
+
+  return { arcs, pillars, ring, lo, hi, yOf };
+}
+
+function project(p, w, h) {
+  const ca = Math.cos(cam.az), sa = Math.sin(cam.az);
+  const ce = Math.cos(cam.el), se = Math.sin(cam.el);
+  const x1 = p.x * ca - p.z * sa;
+  const z1 = p.x * sa + p.z * ca;
+  const y2 = p.y * ce - z1 * se;
+  const z2 = p.y * se + z1 * ce;
+  const d = cam.dist - z2;
+  // auto-fit: the ring (2.6 units wide) and the time column (2.3 units tall)
+  // always fill the canvas, so 440px and 2560px both frame the tower correctly
+  const fit = Math.min(w / 2.9, h / 2.7);
+  const f = (fit * cam.dist * 0.94 * cam.zoom) / Math.max(0.35, d);
+  return { x: w / 2 + x1 * f, y: h / 2 - y2 * f, d, s: f };
+}
+
+function drawTower() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  const w = cv.clientWidth, h = cv.clientHeight;
+  // a hidden panel measures 0 — nothing to paint, and the canvas is NOT ready
+  if (!w || !h) { cv.dataset.ready = "false"; return; }
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  }
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  g.fillStyle = COLOR["--surface-sunken"];
+  g.fillRect(0, 0, w, h);
+
+  const G = towerGeometry();
+  lastPaint = [];
+
+  // ── time floor grid: a faint ring every 6 months, labelled after the geometry
+  const ringLabels = [];
+  g.lineWidth = 1;
+  for (let i = G.lo; i < G.hi; i += 6) {
+    const y = G.yOf(i);
+    g.beginPath();
+    for (let k = 0; k <= 48; k++) {
+      const th = (k / 48) * Math.PI * 2;
+      const q = project({ x: Math.cos(th) * 1.16, y, z: Math.sin(th) * 1.16 }, w, h);
+      k === 0 ? g.moveTo(q.x, q.y) : g.lineTo(q.x, q.y);
+    }
+    g.strokeStyle = COLOR["--line"];
+    g.globalAlpha = 0.55;
+    g.stroke();
+    g.globalAlpha = 1;
+    ringLabels.push({ i, p: project({ x: 0, y, z: 0 }, w, h) });
+  }
+
+  // ── depth-sorted paint list
+  const items = [];
+  const labels = [];
+  for (const p of G.pillars) {
+    const top = project({ x: p.x, y: 1.0, z: p.z }, w, h);
+    const bot = project({ x: p.x, y: -1.0, z: p.z }, w, h);
+    items.push({ kind: "pillar", depth: (top.d + bot.d) / 2, p, top, bot });
+  }
+  for (const a of G.arcs) {
+    const proj = a.pts.map(q => project(q, w, h));
+    const depth = proj.reduce((s, q) => s + q.d, 0) / proj.length;
+    items.push({ kind: "arc", depth, a, proj });
+    lastPaint.push({ a, proj });
+  }
+  // farthest first; ties broken by a stable key so the order is deterministic
+  items.sort((x, y) => y.depth - x.depth || String(x.a?.id ?? x.p.id).localeCompare(String(y.a?.id ?? y.p.id)));
+
+  for (const it of items) {
+    if (it.kind === "pillar") {
+      const dim = state.hover && state.hover !== it.p.id && !String(state.hover).includes(it.p.id);
+      g.globalAlpha = dim ? 0.2 : 0.9;
+      const wpx = Math.max(2, it.p.rad * it.top.s);
+      // gradient reads time: faint at the base (2023), solid at the top (today)
+      const grad = g.createLinearGradient(it.bot.x, it.bot.y, it.top.x, it.top.y);
+      grad.addColorStop(0, COLOR["--surface-sunken"]);
+      grad.addColorStop(0.22, COLOR[it.p.id]);
+      grad.addColorStop(1, COLOR[it.p.id]);
+      g.strokeStyle = grad;
+      g.lineWidth = wpx;
+      g.lineCap = "round";
+      g.beginPath(); g.moveTo(it.bot.x, it.bot.y); g.lineTo(it.top.x, it.top.y); g.stroke();
+      labels.push({ p: it.p, x: it.top.x, y: it.top.y, dim, depth: it.depth });
+      g.globalAlpha = 1;
+    } else {
+      const a = it.a;
+      const dim = state.hover && state.hover !== a.id && state.hover !== a.from && state.hover !== a.to;
+      const hot = state.hover === a.id || state.hover === a.from;
+      // near arcs read stronger than far ones — depth cue, not decoration
+      const depthFade = Math.max(0.12, Math.min(1, (cam.dist + 1.6 - it.depth) / 3.2));
+      g.globalAlpha = dim ? 0.05 : (hot ? 0.95 : 0.18 + 0.42 * depthFade);
+      g.strokeStyle = COLOR[a.from];
+      g.lineWidth = Math.max(0.7, a.w * (it.proj[0].s / 165)) * (hot ? 2 : 1);
+      g.lineJoin = "round"; g.lineCap = "round";
+      g.beginPath();
+      it.proj.forEach((q, k) => (k === 0 ? g.moveTo(q.x, q.y) : g.lineTo(q.x, q.y)));
+      g.stroke();
+      // arrowhead at the destination — direction is never ambiguous
+      if (!dim && a.w > 1.4) {
+        const p1 = it.proj[it.proj.length - 2], p2 = it.proj[it.proj.length - 1];
+        const ang = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+        const s = Math.max(3, g.lineWidth * 1.9);
+        g.globalAlpha = dim ? 0.05 : 0.85;
+        g.fillStyle = COLOR[a.from];
+        g.beginPath();
+        g.moveTo(p2.x, p2.y);
+        g.lineTo(p2.x - s * Math.cos(ang - 0.42), p2.y - s * Math.sin(ang - 0.42));
+        g.lineTo(p2.x - s * Math.cos(ang + 0.42), p2.y - s * Math.sin(ang + 0.42));
+        g.closePath(); g.fill();
+      }
+      g.globalAlpha = 1;
+    }
+  }
+
+  // ── ring month labels, drawn on top so the geometry can't eat them
+  g.font = "500 10px ui-sans-serif, system-ui, sans-serif";
+  g.strokeStyle = COLOR["--line"];
+  g.lineWidth = 1;
+  for (const r of ringLabels) {
+    g.fillStyle = COLOR["--ink-faint"];
+    g.fillText(monthLabel(r.i), 14, r.p.y + 3);
+    g.globalAlpha = 0.45;
+    g.beginPath(); g.moveTo(58, r.p.y); g.lineTo(76, r.p.y); g.stroke();
+    g.globalAlpha = 1;
+  }
+
+  // ── pillar labels last, with a deterministic anti-overlap nudge
+  labels.sort((a, b) => a.x - b.x || a.p.id.localeCompare(b.p.id));
+  const placed = [];
+  for (const L of labels) {
+    const text = AI.get(L.p.id).label;
+    g.font = "600 11.5px ui-sans-serif, system-ui, sans-serif";
+    const tw = g.measureText(text).width;
+    let ly = L.y - 18;
+    // push up in fixed 28px steps (title + net line) until it clears every placed one
+    for (let guard = 0; guard < 8; guard++) {
+      const hit = placed.some(q => Math.abs(q.y - ly) < 27 && Math.abs(q.x - L.x) < (q.w + tw) / 2 + 10);
+      if (!hit) break;
+      ly -= 28;
+    }
+    ly = Math.max(ly, 52);   // clear of the "↑ TIME" caption, never off-canvas
+    placed.push({ x: L.x, y: ly, w: tw });
+    g.globalAlpha = L.dim ? 0.3 : 1;
+    // leader line so a nudged label still points at its pillar
+    if (ly < L.y - 24) {
+      g.strokeStyle = COLOR["--line-strong"]; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(L.x, ly + 12); g.lineTo(L.x, L.y - 6); g.stroke();
+    }
+    g.font = "500 10.5px ui-sans-serif, system-ui, sans-serif";
+    const nl = `${L.p.net >= 0 ? "+" : ""}${usdK(L.p.net)} net`;
+    const nw = g.measureText(nl).width;
+    // a backdrop so a label sitting over a pillar or a dense arc bundle still reads
+    const bw = Math.max(tw, nw) + 12;
+    g.globalAlpha = (L.dim ? 0.3 : 1) * 0.82;
+    g.fillStyle = COLOR["--surface-sunken"];
+    g.beginPath();
+    g.roundRect(L.x - bw / 2, ly - 12, bw, 28, 6);
+    g.fill();
+    g.globalAlpha = L.dim ? 0.3 : 1;
+    g.fillStyle = COLOR["--ink"];
+    g.font = "600 11.5px ui-sans-serif, system-ui, sans-serif";
+    g.fillText(text, L.x - tw / 2, ly);
+    g.fillStyle = L.p.net >= 0 ? COLOR["--positive"] : COLOR["--negative"];
+    g.font = "500 10.5px ui-sans-serif, system-ui, sans-serif";
+    g.fillText(nl, L.x - nw / 2, ly + 12);
+    g.globalAlpha = 1;
+  }
+
+  // ── axis caption
+  g.fillStyle = COLOR["--ink-faint"];
+  g.font = "600 10px ui-sans-serif, system-ui, sans-serif";
+  g.fillText("↑ TIME", 14, 20);
+  g.fillText(`${monthLabel(G.hi - 1)} at the top · ${monthLabel(G.lo)} at the base`, 14, 34);
+  // the settle signal an e2e visual snapshot waits on: the canvas has been fully
+  // painted at its CURRENT size. Screenshotting before this is a measurement race
+  // (the panel was just un-hidden and the ResizeObserver has not fired yet), which
+  // is the only way this deterministic renderer can produce a flaky baseline.
+  cv.dataset.ready = "true";
+  cv.dataset.paintedAt = `${w}x${h}`;
+  towerReady = true;
+}
+
+function renderTowerLegend() {
+  document.getElementById("towerLegend").innerHTML = ACCOUNTS.map(a =>
+    `<span><i style="background:var(${a.token})"></i>${a.label}</span>`).join("");
+}
+
+/* orbit interaction */
+let drag = null;
+
+/** squared distance from a point to a segment — pure, used by the canvas hit-test */
+function segDist2(px, py, ax, ay, bx, by) {
+  const vx = bx - ax, vy = by - ay;
+  const len2 = vx * vx + vy * vy;
+  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / len2));
+  const dx = px - (ax + t * vx), dy = py - (ay + t * vy);
+  return dx * dx + dy * dy;
+}
+
+/** the painted arc nearest the cursor, or null — deterministic tie-break by id */
+function pickArc(cx, cy) {
+  let best = null, bestD = 64;
+  for (const it of lastPaint) {
+    for (let k = 1; k < it.proj.length; k++) {
+      const d = segDist2(cx, cy, it.proj[k - 1].x, it.proj[k - 1].y, it.proj[k].x, it.proj[k].y);
+      if (d < bestD) { bestD = d; best = it.a; }
+    }
+  }
+  return best;
+}
+
+cv.addEventListener("pointerdown", ev => { drag = { x: ev.clientX, y: ev.clientY, az: cam.az, el: cam.el, moved: false }; cv.setPointerCapture(ev.pointerId); });
+cv.addEventListener("pointermove", ev => {
+  const r = cv.getBoundingClientRect();
+  if (!drag) {
+    const hit = pickArc(ev.clientX - r.left, ev.clientY - r.top);
+    const id = hit ? hit.id : null;
+    if (id !== state.hover) { state.hover = id; drawTower(); }
+    if (hit) {
+      showTip(ev.clientX, ev.clientY, `${AI.get(hit.from).label} → ${AI.get(hit.to).label}`,
+        usd(hit.cents), `${monthLabel(hit.monthIndex)} · ${hit.count} transfer${hit.count === 1 ? "" : "s"}`);
+      cv.style.cursor = "pointer";
+    } else { hideTip(); cv.style.cursor = "grab"; }
+    return;
+  }
+  if (Math.abs(ev.clientX - drag.x) > 3 || Math.abs(ev.clientY - drag.y) > 3) drag.moved = true;
+  hideTip();
+  cam.az = drag.az + (ev.clientX - drag.x) * 0.007;
+  cam.el = Math.max(-0.25, Math.min(1.15, drag.el + (ev.clientY - drag.y) * 0.005));
+  drawTower();
+});
+cv.addEventListener("pointerup", ev => {
+  // a click that did not orbit is a drill, exactly like clicking a 2D arc
+  if (drag && !drag.moved) {
+    const r = cv.getBoundingClientRect();
+    const hit = pickArc(ev.clientX - r.left, ev.clientY - r.top);
+    if (hit) drill(hit.id);
+  }
+  drag = null;
+});
+cv.addEventListener("pointercancel", () => { drag = null; });
+cv.addEventListener("pointerleave", () => { hideTip(); if (state.hover !== null) { state.hover = null; drawTower(); } });
+cv.addEventListener("wheel", ev => { ev.preventDefault(); cam.zoom = Math.max(0.55, Math.min(3, cam.zoom - ev.deltaY * 0.0018)); drawTower(); }, { passive: false });
+cv.addEventListener("keydown", ev => {
+  const step = 0.12;
+  if (ev.key === "ArrowLeft") { cam.az -= step; drawTower(); ev.preventDefault(); }
+  else if (ev.key === "ArrowRight") { cam.az += step; drawTower(); ev.preventDefault(); }
+  else if (ev.key === "ArrowUp") { cam.el = Math.min(1.15, cam.el + step * 0.6); drawTower(); ev.preventDefault(); }
+  else if (ev.key === "ArrowDown") { cam.el = Math.max(-0.25, cam.el - step * 0.6); drawTower(); ev.preventDefault(); }
+  else if (ev.key === "Home") { cam.az = -0.62; cam.el = 0.28; cam.zoom = 1; drawTower(); ev.preventDefault(); }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════
+   TABLE LENS — the 6×6 directed flow matrix
+   ═════════════════════════════════════════════════════════════════════ */
+function renderMatrix() {
+  const dir = directedEdges();
+  const grid = new Map();
+  for (const e of dir) grid.set(`${e.from}>${e.to}`, e);
+  const net = state.measure === "net";
+  const shown = net ? new Map(netEdges(dir).map(e => [`${e.from}>${e.to}`, e])) : grid;
+  const max = Math.max(1, ...[...shown.values()].map(e => e.cents));
+  const pos = netPositions();
+
+  const head = ACCOUNTS.map(a => `<th scope="col">${shortLabel(a.label)}</th>`).join("");
+  const body = ACCOUNTS.map(r => {
+    const cells = ACCOUNTS.map(c => {
+      if (r.id === c.id) return `<td class="diag">—</td>`;
+      const e = shown.get(`${r.id}>${c.id}`);
+      if (!e) return `<td class="zero">·</td>`;
+      const alpha = (0.12 + 0.55 * (e.cents / max)).toFixed(3);
+      return `<td class="cell">
+        <span class="fill" style="background:var(${AI.get(r.id).token});opacity:${alpha}"></span>
+        <span class="v figures">${usd(e.cents)}<span class="n">${e.count}×</span></span>
+      </td>`;
+    }).join("");
+    const p = pos.get(r.id);
+    const n = p.in - p.out;
+    return `<tr><th scope="row">${r.label}</th>${cells}
+      <td class="figures">${usd(p.out)}</td>
+      <td class="figures">${usd(p.in)}</td>
+      <td class="figures ${n >= 0 ? "pos" : "neg"}">${n >= 0 ? "+" : "−"}${usd(Math.abs(n))}</td></tr>`;
+  }).join("");
+
+  const t = totals();
+  const colTotals = ACCOUNTS.map(c => {
+    const v = dir.filter(e => e.to === c.id).reduce((s, e) => s + e.cents, 0);
+    return `<td class="figures">${usd(v)}</td>`;
+  }).join("");
+
+  document.getElementById("matrixHost").innerHTML = `
+    <table class="matrix">
+      <caption>${net ? "Net" : "Gross"} transfers between the owner's own accounts, ${monthLabel(monthWindow()[0])} – ${monthLabel(monthWindow()[1] - 1)}. Rows send, columns receive. ${net ? "Netted pairs keep the winning direction only." : ""}</caption>
+      <thead><tr><th scope="col">From ＼ To</th>${head}<th scope="col">Out</th><th scope="col">In</th><th scope="col">Net</th></tr></thead>
+      <tbody>${body}</tbody>
+      <tfoot><tr><th scope="row">Received</th>${colTotals}<td class="figures">${usd(t.gross)}</td><td class="figures">${usd(t.gross)}</td><td class="figures">${usd(0)}</td></tr></tfoot>
+    </table>`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   WIRING
+   ═════════════════════════════════════════════════════════════════════ */
+function setPressed(id, on) { document.getElementById(id).setAttribute("aria-pressed", String(on)); }
+
+function renderRanges() {
+  document.getElementById("ranges").innerHTML = RANGES.map(r =>
+    `<button type="button" data-range="${r.key}" aria-pressed="${state.range === r.key}">${r.label}</button>`).join("");
+  document.querySelectorAll("[data-range]").forEach(b =>
+    b.addEventListener("click", () => { state.range = b.getAttribute("data-range"); renderAll(); }));
+}
+
+function renderAll() {
+  renderRanges();
+  renderRail();
+  setPressed("d2", state.dim === "2d"); setPressed("d3", state.dim === "3d"); setPressed("dt", state.dim === "table");
+  setPressed("mg", state.measure === "gross"); setPressed("mn", state.measure === "net");
+  document.getElementById("panel2d").classList.toggle("hidden", state.dim !== "2d");
+  document.getElementById("panel3d").classList.toggle("hidden", state.dim !== "3d");
+  document.getElementById("panelTable").classList.toggle("hidden", state.dim !== "table");
+
+  // 2D + table always render (cheap, and they are the source of truth)
+  renderSpine();
+  renderRhythm();
+  renderMatrix();
+  if (state.dim === "3d") requestAnimationFrame(drawTower);
+}
+
+function setDim(d) { state.dim = d; state.hover = null; hideTip(); renderAll(); }
+document.getElementById("d2").addEventListener("click", () => setDim("2d"));
+document.getElementById("d3").addEventListener("click", () => setDim("3d"));
+document.getElementById("dt").addEventListener("click", () => setDim("table"));
+document.getElementById("mg").addEventListener("click", () => { state.measure = "gross"; renderAll(); });
+document.getElementById("mn").addEventListener("click", () => { state.measure = "net"; renderAll(); });
+
+function applyTheme(t) {
+  state.theme = t;
+  if (t) document.documentElement.setAttribute("data-theme", t);
+  else document.documentElement.removeAttribute("data-theme");
+  setPressed("tl", t === "light"); setPressed("td", t === "dark");
+  resolveColors();
+  renderAll();
+}
+document.getElementById("tl").addEventListener("click", () => applyTheme(state.theme === "light" ? null : "light"));
+document.getElementById("td").addEventListener("click", () => applyTheme(state.theme === "dark" ? null : "dark"));
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { resolveColors(); renderAll(); });
+
+let rt = null;
+window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(renderAll, 90); });
+
+// measure-driven re-layout: the first paint happens before the SVG has a width,
+// so watch the panel body rather than trusting the initial clientWidth
+let lastW = 0;
+const ro = new ResizeObserver(entries => {
+  const w = Math.round(entries[0].contentRect.width);
+  if (w === lastW || w === 0) return;
+  lastW = w;
+  renderSpine(); renderRhythm();
+  if (state.dim === "3d") drawTower();
+});
+ro.observe(document.querySelector("#panel2d .panel-body"));
+
+resolveColors();
+renderTowerLegend();
+renderAll();
+</script>
+</body>
+</html>

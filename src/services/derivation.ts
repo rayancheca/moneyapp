@@ -3,7 +3,8 @@ import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors, dailyBalances, type AnchorSource, type BalanceBasis } from "@/db/schema/balances";
 import { holdingEvents } from "@/db/schema/holding-events";
-import { transactions } from "@/db/schema/transactions";
+import { transactions, type TransactionStatus } from "@/db/schema/transactions";
+import { assertWithinFinancialWindow } from "@/lib/date-window";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
 import { rebuildInvestmentHistory } from "./crypto-history";
 
@@ -28,6 +29,34 @@ const ANCHOR_PRECEDENCE: Record<AnchorSource, number> = {
 };
 
 const CHAIN_GRADE: ReadonlySet<AnchorSource> = new Set(["statement", "manual"]);
+
+/**
+ * The transaction statuses balance replay reads. 'excluded' hides a row from
+ * analytics only — the money still moved, so replay must include it or chains
+ * break; 'quarantined' and 'superseded' never moved money and stay out.
+ *
+ * Exported because a derived cache cannot notice its own inputs changing: any
+ * caller that flips a row's status has to ask whether the flip moved that row
+ * INTO or OUT of this set, and rebuild the account when it did. Asking here
+ * beats re-listing the statuses at the call site, which is exactly how the two
+ * lists drift apart and the cache goes quietly stale.
+ */
+export const REPLAY_STATUSES = ["active", "excluded"] as const satisfies readonly TransactionStatus[];
+
+/** Does balance replay read rows with this status? */
+export function isReplayStatus(status: TransactionStatus): boolean {
+  return (REPLAY_STATUSES as readonly TransactionStatus[]).includes(status);
+}
+
+/**
+ * True when moving a row from `from` to `to` adds it to, or removes it from,
+ * balance replay — the ONLY status changes that stale daily_balances.
+ * active ⇄ excluded does not (both replay), so ordinary Exclude/Restore costs
+ * no rebuild; quarantined → active/excluded does, and so does its undo.
+ */
+export function changesReplayMembership(from: TransactionStatus, to: TransactionStatus): boolean {
+  return isReplayStatus(from) !== isReplayStatus(to);
+}
 
 interface Anchor {
   anchoredOn: string;
@@ -56,6 +85,9 @@ export function pickWinners(anchors: readonly Anchor[]): Anchor[] {
 /**
  * Pure derivation: winners + per-day transaction sums → daily rows.
  * Exported for exhaustive unit testing; rebuildAccount wires it to the DB.
+ *
+ * Throws DateOutOfRangeError when any loop bound falls outside the supported
+ * date window — see assertLoopBounds below.
  */
 export function deriveDailyRows(
   winners: readonly Anchor[],
@@ -83,6 +115,8 @@ export function deriveDailyRows(
   const firstEndpoint = endpoints[0];
   if (!lastEndpoint || !firstEndpoint) return [];
 
+  assertLoopBounds(firstEndpoint, lastEndpoint, firstTxnDay, today);
+
   if (isInvestment) {
     // value anchors + step-hold; replay never applies (buys/sells are
     // net-worth-neutral inside the account; market movement isn't a txn)
@@ -99,6 +133,29 @@ export function deriveDailyRows(
   if (liveToday) put(today, liveToday.balanceCents, "anchored");
 
   return [...rows.values()].sort((a, b) => compareDates(a.day, b.day));
+}
+
+/**
+ * The CAP. Every day the fills below walk becomes a row, and rebuildAccount
+ * inserts those rows one .run() at a time, so an absurd endpoint is not a bad
+ * chart — it is millions of synchronous writes against the real database. The
+ * four dates below are the only loop bounds that exist (endpoints bracket the
+ * spans, firstTxnDay bounds the backward walk, today bounds the forward walk),
+ * and the endpoints are sorted, so bounding first and last bounds them all.
+ *
+ * It lives in the pure function on purpose: the schemas guard the UI, this
+ * guards every other caller — importers, scripts, a future sync job.
+ */
+function assertLoopBounds(
+  firstEndpoint: Anchor,
+  lastEndpoint: Anchor,
+  firstTxnDay: string | undefined,
+  today: string,
+): void {
+  assertWithinFinancialWindow("anchor date", firstEndpoint.anchoredOn);
+  assertWithinFinancialWindow("anchor date", lastEndpoint.anchoredOn);
+  if (firstTxnDay !== undefined) assertWithinFinancialWindow("transaction date", firstTxnDay);
+  assertWithinFinancialWindow("today", today);
 }
 
 function fillBetweenCarried(
@@ -230,9 +287,8 @@ export function rebuildAccount(db: AppDatabase, accountId: string, today: string
     .where(
       and(
         eq(transactions.accountId, accountId),
-        // 'excluded' hides a txn from analytics only — the money still moved,
-        // so balance replay must include it or chains break
-        inArray(transactions.status, ["active", "excluded"]),
+        // the single definition of "replayed" — see REPLAY_STATUSES
+        inArray(transactions.status, [...REPLAY_STATUSES]),
       ),
     )
     .all();
@@ -257,6 +313,11 @@ export function rebuildAccount(db: AppDatabase, accountId: string, today: string
   });
 }
 
+/**
+ * Rebuild every account's cache — the repair path for a daily_balances that
+ * drifted (a status change nobody invalidated on, a hand-edited database, a
+ * migration). It has no caller yet: no surface exposes "rebuild everything".
+ */
 export function rebuildAllAccounts(db: AppDatabase, today: string = todayIso()): void {
   const ids = db.select({ id: accounts.id }).from(accounts).all();
   for (const { id } of ids) rebuildAccount(db, id, today);

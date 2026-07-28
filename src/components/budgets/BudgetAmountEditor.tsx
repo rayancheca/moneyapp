@@ -18,7 +18,8 @@ interface BudgetAmountEditorProps {
   categoryPath: string;
 }
 
-const PERIOD_WORD: Record<BudgetPeriodKind, string> = {
+/** "$600.00 / month" — the noun every budget surface says the period with. */
+export const PERIOD_WORD: Record<BudgetPeriodKind, string> = {
   daily: "day",
   weekly: "week",
   monthly: "month",

@@ -183,11 +183,28 @@ function DateToken({
 }) {
   const { anchorRef, open, close, triggerProps } = usePopover<HTMLButtonElement>();
   const [draft, setDraft] = useState(value);
+  const [error, setError] = useState<string | null>(null);
   // re-sync the draft to the current value each time the editor opens, so a
   // reopen (or a reset that changed `value`) never prefills a stale date
   useEffect(() => {
-    if (open) setDraft(value);
+    if (open) {
+      setDraft(value);
+      setError(null);
+    }
   }, [open, value]);
+
+  // Save used to close on an empty date without saving — the same silent
+  // discard the amount editor had. Stay open and say what's missing.
+  function commit(): void {
+    if (!draft) {
+      setError("Pick a date");
+      return;
+    }
+    setError(null);
+    onSave(draft);
+    close();
+  }
+
   return (
     <>
       <button type="button" {...triggerProps} aria-haspopup="dialog" aria-expanded={open} className={tokenClass(overridden)}>
@@ -207,10 +224,19 @@ function DateToken({
           id="rec-next-date"
           type="date"
           aria-label="Next expected date"
+          aria-invalid={error ? true : undefined}
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setError(null);
+          }}
           className="mt-1.5 w-full rounded-md border border-line bg-surface-raised px-2 py-1.5 text-sm outline-none focus-visible:border-accent"
         />
+        {error ? (
+          <p role="alert" className="mt-1 text-xs text-negative">
+            {error}
+          </p>
+        ) : null}
         <div className="mt-2.5 flex items-center justify-between gap-2">
           {overridden ? (
             <button
@@ -228,10 +254,7 @@ function DateToken({
           )}
           <button
             type="button"
-            onClick={() => {
-              if (draft) onSave(draft);
-              close();
-            }}
+            onClick={commit}
             className="rounded-md bg-accent px-3 py-1 text-xs font-medium text-surface-raised transition-opacity duration-(--duration-fast) hover:opacity-90"
           >
             Save
@@ -254,19 +277,29 @@ function AmountToken({
 }) {
   const { anchorRef, open, close, triggerProps } = usePopover<HTMLButtonElement>();
   const [draft, setDraft] = useState((Math.abs(cents) / 100).toFixed(2));
+  const [error, setError] = useState<string | null>(null);
   const sign = cents < 0 ? -1 : 1;
   // re-sync the draft each time the editor opens (reopen/reset must not be stale)
   useEffect(() => {
-    if (open) setDraft((Math.abs(cents) / 100).toFixed(2));
+    if (open) {
+      setDraft((Math.abs(cents) / 100).toFixed(2));
+      setError(null);
+    }
   }, [open, cents]);
 
   function commit(): void {
+    let magnitude: number;
     try {
-      const magnitude = Math.abs(parseAmountToCents(draft));
-      onSave(sign * magnitude);
+      magnitude = Math.abs(parseAmountToCents(draft));
     } catch {
+      // Close-on-error threw the draft away along with the message. Stay open
+      // with what was typed and say what's wrong (InlineEditableText's contract).
+      setError("Enter a valid amount");
       toast({ title: "Enter a valid amount", tone: "negative" });
+      return;
     }
+    setError(null);
+    onSave(sign * magnitude);
     close();
   }
 
@@ -291,14 +324,23 @@ function AmountToken({
             id="rec-amount"
             inputMode="decimal"
             aria-label="Expected amount in dollars"
+            aria-invalid={error ? true : undefined}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setError(null);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") commit();
             }}
             className="figures w-full bg-transparent text-sm outline-none"
           />
         </div>
+        {error ? (
+          <p role="alert" className="mt-1 text-xs text-negative">
+            {error}
+          </p>
+        ) : null}
         <div className="mt-2.5 flex items-center justify-between gap-2">
           {overridden ? (
             <button

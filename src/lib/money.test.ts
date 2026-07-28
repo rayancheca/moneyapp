@@ -91,9 +91,16 @@ describe("formatting", () => {
     expect(formatCents(0)).toBe("$0.00");
   });
 
-  test("formatCentsSigned always carries an explicit sign", () => {
+  test("formatCentsSigned carries an explicit sign on every non-zero amount", () => {
     expect(formatCentsSigned(12_000)).toBe("+$120.00");
     expect(formatCentsSigned(-4_364)).toBe("-$43.64");
-    expect(formatCentsSigned(0)).toBe("+$0.00");
+    expect(formatCentsSigned(1)).toBe("+$0.01");
+    expect(formatCentsSigned(-1)).toBe("-$0.01");
+  });
+
+  // a "+" on zero renders as a gain that is not a gain at ~39 flow displays
+  test("formatCentsSigned leaves zero unsigned", () => {
+    expect(formatCentsSigned(0)).toBe("$0.00");
+    expect(formatCentsSigned(-0)).toBe("$0.00");
   });
 });

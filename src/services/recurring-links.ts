@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNull, lte } from "drizzle-orm";
+import { withPreMutationSnapshot } from "@/db/backup";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
@@ -143,48 +144,53 @@ export function mergeSeries(
   const ctx = loadRecomputeCtx(db);
   let relinked = 0;
   let finalTarget = targetId;
-  db.transaction((tx) => {
-    const rows = tx
-      .select({
-        id: recurringSeries.id,
-        status: recurringSeries.status,
-        mergedIntoId: recurringSeries.mergedIntoId,
-      })
-      .from(recurringSeries)
-      .all();
-    const mergedById = new Map(rows.map((s) => [s.id, s.mergedIntoId]));
-    const statusById = new Map(rows.map((s) => [s.id, s.status]));
-    if (!mergedById.has(sourceId)) throw new Error(`Unknown recurring series ${sourceId}`);
-    if (!mergedById.has(targetId)) throw new Error(`Unknown recurring series ${targetId}`);
-    // A source that was already merged has no live occurrences to move; merging
-    // it again would overwrite its mergedIntoId and split its history from its
-    // future charges (an irreversible split-brain). Reject it.
-    if (mergedById.get(sourceId) !== null || statusById.get(sourceId) === "ended") {
-      throw new Error("Series has already been merged");
-    }
-    // the target may itself have been merged onward — follow to the live one
-    finalTarget = resolveMergeTarget(targetId, mergedById);
-    if (finalTarget === sourceId) throw new Error("Cannot merge a series into itself");
-    // The target must be LIVE. Relinking onto a dismissed/ended series would move
-    // the source's charges to a series the forecast/calendar/upcoming views all
-    // exclude (status IN detected|confirmed) — the money would silently vanish.
-    const targetStatus = statusById.get(finalTarget);
-    if (targetStatus !== "detected" && targetStatus !== "confirmed") {
-      throw new Error("Cannot merge into an inactive series");
-    }
+  // A merge has no inverse: the source ends, its mergedIntoId is permanent, and
+  // detection forward-maps its identity so it can never be resurrected. Rows
+  // rejected inside the transaction leave a harmless spare restore point.
+  withPreMutationSnapshot(db, "merge-series", () => {
+    db.transaction((tx) => {
+      const rows = tx
+        .select({
+          id: recurringSeries.id,
+          status: recurringSeries.status,
+          mergedIntoId: recurringSeries.mergedIntoId,
+        })
+        .from(recurringSeries)
+        .all();
+      const mergedById = new Map(rows.map((s) => [s.id, s.mergedIntoId]));
+      const statusById = new Map(rows.map((s) => [s.id, s.status]));
+      if (!mergedById.has(sourceId)) throw new Error(`Unknown recurring series ${sourceId}`);
+      if (!mergedById.has(targetId)) throw new Error(`Unknown recurring series ${targetId}`);
+      // A source that was already merged has no live occurrences to move; merging
+      // it again would overwrite its mergedIntoId and split its history from its
+      // future charges (an irreversible split-brain). Reject it.
+      if (mergedById.get(sourceId) !== null || statusById.get(sourceId) === "ended") {
+        throw new Error("Series has already been merged");
+      }
+      // the target may itself have been merged onward — follow to the live one
+      finalTarget = resolveMergeTarget(targetId, mergedById);
+      if (finalTarget === sourceId) throw new Error("Cannot merge a series into itself");
+      // The target must be LIVE. Relinking onto a dismissed/ended series would move
+      // the source's charges to a series the forecast/calendar/upcoming views all
+      // exclude (status IN detected|confirmed) — the money would silently vanish.
+      const targetStatus = statusById.get(finalTarget);
+      if (targetStatus !== "detected" && targetStatus !== "confirmed") {
+        throw new Error("Cannot merge into an inactive series");
+      }
 
-    const res = tx
-      .update(transactions)
-      .set({ recurringSeriesId: finalTarget, seriesLinkSource: "user" })
-      .where(and(eq(transactions.recurringSeriesId, sourceId), eq(transactions.status, "active")))
-      .run();
-    relinked = res.changes;
+      const res = tx
+        .update(transactions)
+        .set({ recurringSeriesId: finalTarget, seriesLinkSource: "user" })
+        .where(and(eq(transactions.recurringSeriesId, sourceId), eq(transactions.status, "active")))
+        .run();
+      relinked = res.changes;
 
-    tx.update(recurringSeries)
-      .set({ status: "ended", mergedIntoId: finalTarget })
-      .where(eq(recurringSeries.id, sourceId))
-      .run();
-    recomputeSeriesStats(tx, finalTarget, today, ctx);
+      tx.update(recurringSeries)
+        .set({ status: "ended", mergedIntoId: finalTarget })
+        .where(eq(recurringSeries.id, sourceId))
+        .run();
+      recomputeSeriesStats(tx, finalTarget, today, ctx);
+    });
   });
   return { relinked, targetId: finalTarget };
 }

@@ -1,13 +1,17 @@
 import type { Metadata } from "next";
-import { count, desc, eq } from "drizzle-orm";
+import { count, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
+import { balanceAnchors } from "@/db/schema/balances";
 import { importFiles, statementPeriods, type ImportStatus } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
+import { countPhrase } from "@/components/ui/blast-radius";
+import { ConfirmActionButton } from "@/components/ui/Confirm";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Money } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
+import { formatCents } from "@/lib/money";
 import { acceptGapAction, unimportFileAction, uploadStatementsAction } from "./actions";
 
 export const metadata: Metadata = { title: "Imports" };
@@ -29,7 +33,19 @@ const RECONCILIATION_LABEL: Record<string, { label: string; tone: string }> = {
   not_applicable: { label: "no printed balances", tone: "text-ink-faint" },
 };
 
-export default function ImportsPage() {
+export default async function ImportsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  // The three actions on this page are `Promise<void>` form actions, so a
+  // failure travels back as ?error= (the /budgets pattern). Without this read
+  // the redirect landed on a page that rendered nothing — an un-import refused
+  // because its restore point could not be written looked exactly like an
+  // un-import that silently did nothing, which is the worst possible reading.
+  const raw = await searchParams;
+  const error = typeof raw.error === "string" ? raw.error : null;
+
   const db = getDb();
   const files = db
     .select({
@@ -41,12 +57,38 @@ export default function ImportsPage() {
       error: importFiles.error,
       importedAt: importFiles.importedAt,
       txnCount: count(transactions.id),
+      // the un-import blast radius, measured on the same rows the DELETE takes:
+      // how many the owner categorized BY HAND (the work that cannot come back)
+      // and the money the file put on both sides of the ledger
+      userCategorizedCount: sql<number>`coalesce(sum(case when ${transactions.categorizationSource} = 'user' then 1 else 0 end), 0)`,
+      inflowCents: sql<number>`coalesce(sum(case when ${transactions.amountCents} > 0 then ${transactions.amountCents} else 0 end), 0)`,
+      outflowCents: sql<number>`coalesce(sum(case when ${transactions.amountCents} < 0 then -${transactions.amountCents} else 0 end), 0)`,
     })
     .from(importFiles)
     .leftJoin(transactions, eq(transactions.importFileId, importFiles.id))
     .groupBy(importFiles.id)
     .orderBy(desc(importFiles.importedAt))
     .all();
+
+  // the rest of what un-importing takes with it — counted per file rather than
+  // joined into the query above, where they would fan out against the rows
+  const anchorsByFile = new Map(
+    db
+      .select({ importFileId: balanceAnchors.importFileId, n: count() })
+      .from(balanceAnchors)
+      .where(isNotNull(balanceAnchors.importFileId))
+      .groupBy(balanceAnchors.importFileId)
+      .all()
+      .flatMap((r) => (r.importFileId === null ? [] : [[r.importFileId, r.n] as const])),
+  );
+  const periodsByFile = new Map(
+    db
+      .select({ importFileId: statementPeriods.importFileId, n: count() })
+      .from(statementPeriods)
+      .groupBy(statementPeriods.importFileId)
+      .all()
+      .map((r) => [r.importFileId, r.n] as const),
+  );
 
   const periods = db
     .select({
@@ -73,6 +115,16 @@ export default function ImportsPage() {
         title="Imports"
         description="Drop statement exports here — CSV, OFX/QFX, and PDF. Every statement must reconcile: beginning + transactions = ending, to the cent, or it is flagged with its exact gap."
       />
+
+      {error && (
+        <div
+          role="alert"
+          className="mb-6 rounded-(--radius-card) border border-negative/40 bg-surface-raised px-4 py-3 text-sm text-negative"
+        >
+          {error}
+        </div>
+      )}
+
       <div className="space-y-6">
         <SurfaceCard>
           <h2 className="mb-1 text-sm font-medium">Upload statements</h2>
@@ -133,15 +185,33 @@ export default function ImportsPage() {
                     <span className="text-negative">
                       gap <Money cents={p.gapCents ?? 0} className="font-medium" />
                     </span>
-                    <form action={acceptGapAction}>
-                      <input type="hidden" name="statementPeriodId" value={p.id} />
-                      <button
-                        type="submit"
-                        className="rounded-md border border-line px-2.5 py-1 text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:border-line-strong hover:text-ink"
-                      >
-                        Accept as-is
-                      </button>
-                    </form>
+                    {/* every trigger's accessible name CONTAINS its visible
+                        label (WCAG 2.5.3) and adds only which row it acts on */}
+                    <ConfirmActionButton
+                      action={acceptGapAction}
+                      fields={{ statementPeriodId: p.id }}
+                      triggerLabel="Accept as-is"
+                      triggerAriaLabel={`Accept as-is — ${p.accountName}, ${p.periodStart} to ${p.periodEnd}`}
+                      triggerClassName="rounded-md border border-line px-2.5 py-1 text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:border-line-strong hover:text-ink"
+                      title="Accept this statement as-is"
+                      confirmLabel="Accept the gap"
+                      radius={{
+                        headline: `${p.accountName}'s listed transactions do not add up to its printed balances for ${p.periodStart} → ${p.periodEnd}. Accepting takes the statement as printed and keeps the difference.`,
+                        lines: [
+                          {
+                            label: "Gap kept, permanently",
+                            value: formatCents(p.gapCents ?? 0),
+                            irreversible: true,
+                          },
+                          {
+                            label: "Quarantined rows returning to analytics",
+                            value: "all of this period's",
+                          },
+                        ],
+                        reassurance:
+                          "This period's transactions come back into every analytic, and the derived balance stays off the printed balance by the gap until a corrected file is imported.",
+                      }}
+                    />
                   </span>
                 </li>
               ))}
@@ -193,15 +263,53 @@ export default function ImportsPage() {
                         </span>
                       </td>
                       <td className="py-1.5 text-right">
-                        <form action={unimportFileAction} className="inline">
-                          <input type="hidden" name="importFileId" value={f.id} />
-                          <button
-                            type="submit"
-                            className="text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:text-negative"
-                          >
-                            un-import
-                          </button>
-                        </form>
+                        <ConfirmActionButton
+                          action={unimportFileAction}
+                          fields={{ importFileId: f.id }}
+                          formClassName="inline"
+                          triggerLabel="un-import"
+                          triggerAriaLabel={`un-import ${f.fileName}`}
+                          triggerClassName="text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:text-negative"
+                          title="Un-import this file"
+                          tone="negative"
+                          confirmLabel="Delete these transactions"
+                          // a file with rows costs work to lose; an empty one
+                          // costs nothing, so it does not earn a checkbox
+                          acknowledgement={
+                            f.txnCount > 0
+                              ? "I understand these transactions are deleted"
+                              : undefined
+                          }
+                          radius={{
+                            headline: `Un-importing ${f.fileName} deletes every row it brought in. There is no undo for this inside the app.`,
+                            lines: [
+                              {
+                                label: "Transactions deleted",
+                                value: countPhrase(f.txnCount, "transaction"),
+                                irreversible: f.txnCount > 0,
+                              },
+                              {
+                                label: "Categorized by you",
+                                value: countPhrase(f.userCategorizedCount, "transaction"),
+                                irreversible: f.userCategorizedCount > 0,
+                              },
+                              {
+                                label: "Money leaving the ledger",
+                                value: `${formatCents(f.inflowCents)} in · ${formatCents(f.outflowCents)} out`,
+                              },
+                              {
+                                label: "Recorded balances removed",
+                                value: countPhrase(anchorsByFile.get(f.id) ?? 0, "balance"),
+                              },
+                              {
+                                label: "Statement periods removed",
+                                value: countPhrase(periodsByFile.get(f.id) ?? 0, "period"),
+                              },
+                            ],
+                            reassurance:
+                              "The statement file itself stays on disk. Re-importing brings the rows back — uncategorized, with the hand-categorization gone.",
+                          }}
+                        />
                       </td>
                     </tr>
                   ))}

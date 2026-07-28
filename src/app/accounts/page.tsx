@@ -18,7 +18,18 @@ import { PageHeader } from "@/components/ui/PageHeader";
 export const metadata: Metadata = { title: "Accounts" };
 export const dynamic = "force-dynamic";
 
-export default function AccountsPage() {
+export default async function AccountsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  // deleteAnchorAction and setAccountActiveAction are `Promise<void>` form
+  // actions, so their failures land here as ?error= (the /budgets pattern).
+  // Unread, a removal refused because its restore point could not be written
+  // was indistinguishable from one that quietly did nothing.
+  const raw = await searchParams;
+  const error = typeof raw.error === "string" ? raw.error : null;
+
   const db = getDb();
   // cash wallets have their own dedicated card below — keep them out of the
   // institution list so they aren't managed (and rendered) in two places
@@ -38,6 +49,15 @@ export default function AccountsPage() {
         title="Accounts"
         description="Deposit, credit, and investment accounts grouped by institution. Reorder with the arrows or drag the grip; edit a name, institution, or last-4 from the pencil. Debit cards spend from checking; they don't hold balances."
       />
+
+      {error && (
+        <div
+          role="alert"
+          className="mb-6 rounded-(--radius-card) border border-negative/40 bg-surface-raised px-4 py-3 text-sm text-negative"
+        >
+          {error}
+        </div>
+      )}
       <div className="space-y-6">
         {groups.length > 0 && <ManagedAccounts groups={groups} institutions={institutions} />}
 

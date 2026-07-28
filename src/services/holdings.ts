@@ -1,11 +1,18 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings, priceCache, ASSET_TYPES, type AssetType } from "@/db/schema/holdings";
+import { financialWindowMessage, isWithinFinancialWindow } from "@/lib/date-window";
 import { isValidIsoDate, todayIso } from "@/lib/dates";
 import { valueCentsOf } from "@/lib/holding-returns";
+// NOTE: derivation → crypto-history → holdings closes an import cycle here.
+// It is safe (every cross-module reference is inside a function body, never at
+// module scope) but do not add a module-scope use of a derivation export. The
+// cycle disappears the day crypto-history imports valueCentsOf from
+// @/lib/holding-returns — its real home — instead of re-importing it from here.
+import { rebuildAccount } from "./derivation";
 
 /**
  * Holdings CRUD + portfolio math (master-plan Phase 7). Quantities are
@@ -75,8 +82,13 @@ export const holdingInputSchema = z.object({
   assetType: z.enum(ASSET_TYPES),
   quantityE8: z.number().int().nonnegative(),
   avgCostCents: z.number().int().nonnegative().nullish(),
-  /** when the quantity change happened — drives the crypto history timeline */
-  occurredOn: z.string().refine(isValidIsoDate, "Invalid date").optional(),
+  /** when the quantity change happened — drives the crypto history timeline,
+   *  which walks one row per day from the first event, so the year is bounded */
+  occurredOn: z
+    .string()
+    .refine(isValidIsoDate, "Invalid date")
+    .refine(isWithinFinancialWindow, financialWindowMessage("occurredOn"))
+    .optional(),
   note: z.string().trim().max(200).nullish(),
 });
 export type HoldingInput = z.infer<typeof holdingInputSchema>;
@@ -84,6 +96,12 @@ export type HoldingInput = z.infer<typeof holdingInputSchema>;
 /**
  * Insert-or-update by (account, symbol). Any quantity change appends a
  * signed holding_events delta; setting quantity to 0 deactivates the row.
+ *
+ * A quantity change is an INPUT to this account's daily_balances (crypto-history
+ * derives the curve from holding_events × closes), and a derived cache cannot
+ * notice its own inputs changing — so the cache is rebuilt here, once the write
+ * has committed. See shouldRebuildAfterQuantityChange for the one case where
+ * rebuilding would destroy more than it fixes.
  */
 export function upsertHolding(db: AppDatabase, input: HoldingInput): string {
   const parsed = holdingInputSchema.parse(input);
@@ -94,7 +112,7 @@ export function upsertHolding(db: AppDatabase, input: HoldingInput): string {
   }
   const occurredOn = parsed.occurredOn ?? todayIso();
 
-  return db.transaction((tx) => {
+  const { holdingId, quantityChanged } = db.transaction((tx) => {
     const existing = tx
       .select()
       .from(holdings)
@@ -150,8 +168,41 @@ export function upsertHolding(db: AppDatabase, input: HoldingInput): string {
         .run();
     }
 
-    return holdingId;
+    return { holdingId, quantityChanged: deltaE8 !== 0 };
   });
+
+  // outside the write transaction — rebuildAccount opens its own, and a nested
+  // BEGIN on a synchronous driver throws
+  if (quantityChanged && shouldRebuildAfterQuantityChange(db, parsed.accountId)) {
+    rebuildAccount(db, parsed.accountId);
+  }
+  return holdingId;
+}
+
+/**
+ * An events timeline with no cached close anywhere produces NO days at all
+ * (crypto-history never invents a level), so rebuilding one would delete the
+ * value-anchor rows currently carrying the account and leave it absent from net
+ * worth until the next price fetch. refreshPrices skips those accounts for the
+ * same reason (`priced === 0 → continue`). Wait for a price; the refresh
+ * rebuilds then.
+ */
+function shouldRebuildAfterQuantityChange(db: AppDatabase, accountId: string): boolean {
+  const held = db
+    .selectDistinct({ symbol: holdingEvents.symbol, assetType: holdingEvents.assetType })
+    .from(holdingEvents)
+    .where(eq(holdingEvents.accountId, accountId))
+    .all();
+  if (held.length === 0) return false;
+  // each symbol resolves under its OWN asset_type, exactly as crypto-history
+  // prices it — a ticker must never be answered by a same-named coin's close
+  const assetOf = new Map(held.map((h) => [h.symbol, h.assetType]));
+  return db
+    .selectDistinct({ symbol: priceCache.symbol, assetType: priceCache.assetType })
+    .from(priceCache)
+    .where(inArray(priceCache.symbol, [...assetOf.keys()]))
+    .all()
+    .some((c) => assetOf.get(c.symbol) === c.assetType);
 }
 
 /* ── Per-account holdings view (account detail page) ────────────────── */

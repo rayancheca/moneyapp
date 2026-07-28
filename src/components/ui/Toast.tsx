@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { TransitionEvent } from "react";
 import { createPortal } from "react-dom";
 import { IconButton } from "@/components/ui/Button";
@@ -13,9 +13,61 @@ const EXIT_FALLBACK_MS = 400;
 
 export type ToastTone = "neutral" | "positive" | "negative";
 
+/** What a toast card says when an action failed without a readable message. */
+export const TOAST_ACTION_FAILED = "That didn’t go through — try again";
+
+/** What an action reports back so the card knows whether it actually worked. */
+export interface ToastActionOutcome {
+  ok: boolean;
+  error?: string;
+}
+
+/** Returning nothing keeps the old fire-and-forget behaviour. */
+export type ToastActionResult = void | ToastActionOutcome;
+
 export interface ToastAction {
   label: string;
-  onAction: () => void;
+  /**
+   * May be async. The card waits for it and only dismisses on success — an
+   * Undo whose patch lives in this closure must survive a failed attempt.
+   */
+  onAction: () => ToastActionResult | Promise<ToastActionResult>;
+}
+
+/** Recognised structurally so a caller may resolve with anything at all. */
+function isOutcome(value: ToastActionResult): value is ToastActionOutcome {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as ToastActionOutcome).ok === "boolean"
+  );
+}
+
+export interface ToastActionSettlement {
+  /** dismiss the card only when the action actually worked */
+  readonly dismiss: boolean;
+  /** what to show in place of dismissal (null on success) */
+  readonly error: string | null;
+}
+
+/**
+ * What a card does once its action settles. Dismissing on failure was the
+ * worst half of the undo bug: the card was torn down synchronously on click,
+ * so a failed Undo took its own patch with it and left no way to retry and no
+ * way to even know. Success dismisses; a reported `{ ok: false }` or a THROWN
+ * action keeps the card — and its closure — alive, saying what went wrong.
+ */
+export function settleToastAction(
+  settled: { status: "resolved"; value: ToastActionResult } | { status: "rejected"; reason: unknown },
+): ToastActionSettlement {
+  if (settled.status === "rejected") {
+    const message = settled.reason instanceof Error ? settled.reason.message.trim() : "";
+    return { dismiss: false, error: message === "" ? TOAST_ACTION_FAILED : message };
+  }
+  if (!isOutcome(settled.value)) return { dismiss: true, error: null };
+  if (settled.value.ok) return { dismiss: true, error: null };
+  const message = settled.value.error?.trim() ?? "";
+  return { dismiss: false, error: message === "" ? TOAST_ACTION_FAILED : message };
 }
 
 export interface ToastOptions {
@@ -152,6 +204,11 @@ function ToastCard({ item }: { item: ToastItem }) {
   const startedAtRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasAction = item.action !== undefined;
+  // an in-flight action and, after a failed one, what went wrong. Both stay
+  // local to the card: the store holds what to offer, not how the offer is going
+  const [running, setRunning] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const runningRef = useRef(false);
   // Persistent = never auto-dismisses. Action toasts qualify (their affordance
   // must survive), and so does an explicit durationMs <= 0 / non-finite —
   // the escape hatch Stage-1 interaction states use for actionless-but-pinned
@@ -194,6 +251,28 @@ function ToastCard({ item }: { item: ToastItem }) {
     if (item.exiting && event.propertyName === "opacity") removeToast(item.id);
   };
 
+  // Run the action and keep the card alive until it SETTLES. The ref guards
+  // re-entry (a second click while the first is in flight would run an undo
+  // twice); the button stays enabled and focusable throughout, because a
+  // disabled button drops keyboard focus to <body>.
+  const runAction = async (): Promise<void> => {
+    const action = item.action;
+    if (action === undefined || runningRef.current) return;
+    runningRef.current = true;
+    setRunning(true);
+    setActionError(null);
+    let settlement: ToastActionSettlement;
+    try {
+      settlement = settleToastAction({ status: "resolved", value: await action.onAction() });
+    } catch (reason: unknown) {
+      settlement = settleToastAction({ status: "rejected", reason });
+    }
+    runningRef.current = false;
+    setRunning(false);
+    if (settlement.dismiss) dismissToast(item.id);
+    else setActionError(settlement.error);
+  };
+
   const tone = item.tone === "positive" || item.tone === "negative" ? TONE_ICON[item.tone] : null;
 
   return (
@@ -220,14 +299,22 @@ function ToastCard({ item }: { item: ToastItem }) {
             <button
               type="button"
               data-toast-action-for={item.id}
-              onClick={() => {
-                item.action?.onAction();
-                dismissToast(item.id);
-              }}
-              className="mt-2 inline-flex items-center rounded-md bg-accent-soft px-2.5 py-1 text-xs font-medium text-accent transition-colors duration-(--duration-fast) hover:bg-accent hover:text-surface-raised"
+              aria-busy={running}
+              onClick={() => void runAction()}
+              className={`mt-2 inline-flex items-center rounded-md bg-accent-soft px-2.5 py-1 text-xs font-medium text-accent transition-colors duration-(--duration-fast) hover:bg-accent hover:text-surface-raised ${
+                running ? "opacity-60" : ""
+              }`}
             >
               {item.action.label}
             </button>
+          ) : null}
+          {/* role="alert" is how a failure reaches a screen reader at all: the
+              host's live region announces the newest STORE item, and a card's
+              own failure never changes the store. */}
+          {actionError !== null ? (
+            <p role="alert" className="mt-1.5 text-xs text-negative">
+              {actionError}
+            </p>
           ) : null}
         </div>
         <IconButton

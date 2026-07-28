@@ -1,11 +1,16 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { CADENCES } from "@/db/schema/recurring";
 import { isValidIsoDate } from "@/lib/dates";
-import { detectRecurringSeries, setSeriesStatus } from "@/services/recurring";
+import {
+  detectRecurringSeries,
+  setSeriesStatus,
+  type DetectionSummary,
+} from "@/services/recurring";
 import {
   recurringCalendar,
   type RecurringCalendarMonth,
@@ -25,9 +30,17 @@ import {
   type CreateSeriesResult,
 } from "@/services/recurring-links";
 import type { UndoPatch } from "@/services/bulk-edit";
-import type { ActionResult } from "@/app/transactions/action-types";
+import {
+  actionErrorMessage,
+  firstIssueMessage,
+  type ActionResult,
+} from "@/app/transactions/action-types";
 
-const seriesFormSchema = z.object({ seriesId: z.string().min(1) });
+// the single-argument form reports the SAME message when the hidden input is
+// missing entirely, instead of zod's "expected string, received undefined"
+const seriesFormSchema = z.object({
+  seriesId: z.string("Pick a series").min(1, "Pick a series"),
+});
 
 /** Both the /recurring surfaces revalidate together after any mutation. */
 function revalidateRecurring(seriesId?: string): void {
@@ -35,21 +48,95 @@ function revalidateRecurring(seriesId?: string): void {
   if (seriesId) revalidatePath(`/recurring/${seriesId}`);
 }
 
+const SERIES_LABELS = {
+  seriesId: "Series",
+  sourceId: "Series",
+  targetId: "Series",
+  transactionId: "Transaction",
+  transactionIds: "Transactions",
+  name: "Name",
+  status: "Status",
+  userCadence: "Cadence",
+  userAmountCents: "Amount",
+  userNextExpectedOn: "Next expected",
+  monthKey: "Month",
+  query: "Search",
+} as const;
+
+/**
+ * Every catch below can receive a ZodError from the schemas in this file, whose
+ * own `.message` is a JSON dump of the issue array — actionErrorMessage unwraps
+ * it to the single field message the schema declared.
+ */
+function failure(error: unknown, fallback: string): { ok: false; error: string } {
+  return { ok: false, error: actionErrorMessage(error, SERIES_LABELS, fallback) };
+}
+
+/**
+ * The three `<form action>` bindings on /recurring keep their `Promise<void>`
+ * signature byte-identical — React types the prop as
+ * `(formData) => void | Promise<void>`, so a result cannot be returned from one
+ * without breaking its call site. Each delegates to a validating
+ * `*ResultAction` twin and routes a failure to `?error=` (the /budgets pattern)
+ * instead of letting a throwing `.parse()` become an error digest.
+ */
+export async function detectNowResultAction(): Promise<ActionResult<DetectionSummary>> {
+  try {
+    const summary = detectRecurringSeries(getDb());
+    revalidatePath("/recurring");
+    return { ok: true, data: summary };
+  } catch (error: unknown) {
+    return failure(error, "Detection failed");
+  }
+}
+
 export async function detectNowAction(): Promise<void> {
-  detectRecurringSeries(getDb());
-  revalidatePath("/recurring");
+  const result = await detectNowResultAction();
+  if (result.ok) return;
+  // redirect() throws NEXT_REDIRECT by design — it must stay outside any catch
+  redirect(`/recurring?error=${encodeURIComponent(result.error)}`);
+}
+
+/** Shared core of confirm/dismiss — the only difference is the target status. */
+async function setStatusFromForm(
+  formData: FormData,
+  status: "confirmed" | "dismissed",
+): Promise<ActionResult<{ seriesId: string; status: string }>> {
+  const parsed = seriesFormSchema.safeParse({ seriesId: formData.get("seriesId") });
+  if (!parsed.success) {
+    return { ok: false, error: firstIssueMessage(parsed.error.issues, SERIES_LABELS) };
+  }
+  try {
+    setSeriesStatus(getDb(), parsed.data.seriesId, status);
+  } catch (error: unknown) {
+    return failure(error, "Failed to update status");
+  }
+  revalidateRecurring(parsed.data.seriesId);
+  return { ok: true, data: { seriesId: parsed.data.seriesId, status } };
+}
+
+export async function confirmSeriesResultAction(
+  formData: FormData,
+): Promise<ActionResult<{ seriesId: string; status: string }>> {
+  return setStatusFromForm(formData, "confirmed");
 }
 
 export async function confirmSeriesAction(formData: FormData): Promise<void> {
-  const parsed = seriesFormSchema.parse({ seriesId: formData.get("seriesId") });
-  setSeriesStatus(getDb(), parsed.seriesId, "confirmed");
-  revalidateRecurring(parsed.seriesId);
+  const result = await confirmSeriesResultAction(formData);
+  if (result.ok) return;
+  redirect(`/recurring?error=${encodeURIComponent(result.error)}`);
+}
+
+export async function dismissSeriesResultAction(
+  formData: FormData,
+): Promise<ActionResult<{ seriesId: string; status: string }>> {
+  return setStatusFromForm(formData, "dismissed");
 }
 
 export async function dismissSeriesAction(formData: FormData): Promise<void> {
-  const parsed = seriesFormSchema.parse({ seriesId: formData.get("seriesId") });
-  setSeriesStatus(getDb(), parsed.seriesId, "dismissed");
-  revalidateRecurring(parsed.seriesId);
+  const result = await dismissSeriesResultAction(formData);
+  if (result.ok) return;
+  redirect(`/recurring?error=${encodeURIComponent(result.error)}`);
 }
 
 // ─── Detail-page value-returning actions (§4.2) ────────────────────────────
@@ -68,7 +155,7 @@ export async function setSeriesStatusAction(
     revalidateRecurring(seriesId);
     return { ok: true, data: { status } };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Failed to update status" };
+    return failure(error, "Failed to update status");
   }
 }
 
@@ -83,7 +170,7 @@ export async function renameSeriesAction(
     revalidateRecurring(seriesId);
     return { ok: true, data: { name: saved } };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Failed to rename" };
+    return failure(error, "Failed to rename");
   }
 }
 
@@ -109,7 +196,7 @@ export async function setSeriesOverridesAction(
     revalidateRecurring(seriesId);
     return { ok: true, data: {} };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Failed to save" };
+    return failure(error, "Failed to save");
   }
 }
 
@@ -127,7 +214,7 @@ export async function attachToSeriesAction(
     revalidateRecurring(seriesId);
     return { ok: true, data: { attached: result.attached, undo: result.undo } };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Failed to attach" };
+    return failure(error, "Failed to attach");
   }
 }
 
@@ -142,7 +229,7 @@ export async function detachFromSeriesAction(
     revalidateRecurring(result.formerSeriesId ?? undefined);
     return { ok: true, data: { formerSeriesId: result.formerSeriesId, undo: result.undo } };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Failed to detach" };
+    return failure(error, "Failed to detach");
   }
 }
 
@@ -159,7 +246,7 @@ export async function createSeriesFromTxnAction(
     revalidatePath("/transactions");
     return { ok: true, data: result };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Failed to make recurring" };
+    return failure(error, "Failed to make recurring");
   }
 }
 
@@ -177,7 +264,7 @@ export async function undoCreateSeriesAction(
     revalidatePath("/transactions");
     return { ok: true, data: { unlinked: result.unlinked } };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Failed to undo" };
+    return failure(error, "Failed to undo");
   }
 }
 
@@ -193,7 +280,7 @@ export async function mergeIntoSeriesAction(
     revalidatePath(`/recurring/${sourceId}`);
     return { ok: true, data: result };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Failed to merge" };
+    return failure(error, "Failed to merge");
   }
 }
 
@@ -206,7 +293,7 @@ export async function searchAttachCandidatesAction(
     const { seriesId, query } = searchSchema.parse(input);
     return { ok: true, data: searchAttachCandidates(getDb(), seriesId, query) };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Search failed" };
+    return failure(error, "Search failed");
   }
 }
 
@@ -219,6 +306,6 @@ export async function loadRecurringMonthAction(
     const { monthKey } = monthSchema.parse(input);
     return { ok: true, data: recurringCalendar(getDb(), monthKey) };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Failed to load month" };
+    return failure(error, "Failed to load month");
   }
 }

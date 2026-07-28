@@ -128,7 +128,10 @@ export interface BudgetStatus {
   categoryName: string;
   /** "Food > Dining" for subcategories, "Food" for top-levels */
   categoryPath: string;
+  /** the graded window: the period containing refDate, START-clamped to startsOn */
   bounds: PeriodBounds;
+  /** the clamp actually moved the start — the budget only owns part of this period */
+  partialPeriod: boolean;
   /** subtree rollup of active expense spending inside bounds */
   spentCents: number;
   remainingCents: number;
@@ -157,7 +160,14 @@ export function budgetStatuses(db: AppDatabase, refDate: string = todayIso()): B
 
   return rows
     .map((b): BudgetStatus => {
-      const bounds = periodBounds(refDate, b.period);
+      // A budget grades only the days it has actually existed. createBudget
+      // stamps startsOn = today, so an unclamped period would judge a budget
+      // made this morning against the whole month's PRIOR spend and open at
+      // "over by 4798%". Only the START clamps — the end stays the period's, so
+      // the bar still fills toward the real period close.
+      const period = periodBounds(refDate, b.period);
+      const partialPeriod = compareDates(b.startsOn, period.start) > 0;
+      const bounds: PeriodBounds = partialPeriod ? { start: b.startsOn, end: period.end } : period;
       const { spentCents } = categorySpending(db, {
         categoryId: b.categoryId,
         from: bounds.start,
@@ -190,6 +200,7 @@ export function budgetStatuses(db: AppDatabase, refDate: string = todayIso()): B
         categoryName: node.name,
         categoryPath: parent ? `${parent.name} > ${node.name}` : node.name,
         bounds,
+        partialPeriod,
         spentCents,
         remainingCents: b.amountCents - spentCents,
         pct: spentCents / b.amountCents,
@@ -435,7 +446,7 @@ function recurringPostedCents(db: AppDatabase, categoryId: string, from: string,
 
 export interface BudgetPaceStatus extends BudgetStatus {
   totalDays: number;
-  /** days from period start through today (inclusive) */
+  /** days from the window start through today (inclusive); 0 before it opens */
   elapsedDays: number;
   /** 0..1 position of "today" within the period — where the pace tick sits */
   elapsedFraction: number;
@@ -456,10 +467,14 @@ export interface BudgetPaceStatus extends BudgetStatus {
 export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()): BudgetPaceStatus[] {
   return budgetStatuses(db, refDate).map((s) => {
     const { start, end } = s.bounds;
-    // budgetStatuses always evaluates the period CONTAINING refDate, so refDate
-    // ∈ [start,end] and elapsedDays ∈ [1, totalDays] — no clamp needed.
-    const totalDays = diffDays(start, end) + 1;
-    const elapsedDays = diffDays(start, refDate) + 1;
+    // budgetStatuses evaluates the period CONTAINING refDate, start-clamped to
+    // startsOn, so pace is measured over the budget's OWN life inside the period
+    // (a 4-day-old budget paces on 4 days, not on the month). refDate ∈
+    // [start,end] for any budget that has already begun; a future-dated startsOn
+    // has not opened its window yet, hence the clamps — elapsedDays floors at 0
+    // and the span never divides by a non-positive number.
+    const totalDays = Math.max(1, diffDays(start, end) + 1);
+    const elapsedDays = Math.min(totalDays, Math.max(0, diffDays(start, refDate) + 1));
     // Project from spend-TO-DATE ([start, refDate]), NOT full-period spend: a
     // future-dated posting inside the period (a bill logged/posted early) must
     // not be counted both as already-spent AND as an expected-tail occurrence
@@ -473,7 +488,11 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
       to: refDate,
     }).spentCents;
     const posted = recurringPostedCents(db, s.budget.categoryId, start, refDate);
-    const tail = budgetTail(db, s.budget.categoryId, end, refDate);
+    // the tail lives inside the budget's window too: for a budget that starts
+    // LATER in this period, anchor a day before startsOn so budgetTail's
+    // strictly-after-anchor window opens exactly on startsOn, never earlier.
+    const tailFrom = compareDates(start, refDate) > 0 ? addDays(start, -1) : refDate;
+    const tail = budgetTail(db, s.budget.categoryId, end, tailFrom);
     const forecast = projectSpend({
       spentCents: spentToDate,
       recurringPostedCents: posted,

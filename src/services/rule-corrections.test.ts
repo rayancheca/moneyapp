@@ -355,6 +355,93 @@ describe("countRuleMatches + retroApplyRule share one predicate", () => {
     expect(txn(active).status).toBe("active");
   });
 
+  test("re-applying a rule to rows that already carry its outcome changes nothing", () => {
+    // Arrange
+    const streaming = catId("Subscriptions > Streaming");
+    insertTxn({ rawDescription: "NETFLIX.COM A" });
+    insertTxn({ rawDescription: "NETFLIX.COM B" });
+    const created = ruleFromCorrection(bundle.db, {
+      merchantId: netflixId,
+      categoryId: streaming,
+    });
+
+    // Act: the second pass matches the same rows, but they already sit where
+    // the rule wants them
+    const first = retroApplyRule(bundle.db, created.id);
+    const second = retroApplyRule(bundle.db, created.id);
+
+    // Assert: no write, no undo rows, and the badge does not inflate
+    expect(first.affected).toBe(2);
+    expect(second.affected).toBe(0);
+    expect(second.undo.rows).toEqual([]);
+    const rule = bundle.db.select().from(rules).where(eq(rules.id, created.id)).get()!;
+    expect(rule.timesApplied).toBe(2);
+  });
+
+  test("a row already in the rule's category but flagged for review still counts", () => {
+    // Arrange: right category, weaker stamp, still in the review queue
+    const streaming = catId("Subscriptions > Streaming");
+    const flagged = insertTxn({
+      rawDescription: "NETFLIX.COM FLAGGED",
+      categoryId: streaming,
+      categorizationSource: "claude",
+    });
+    bundle.db
+      .update(transactions)
+      .set({ needsReview: true, categorizationConfidence: 0.4 })
+      .where(eq(transactions.id, flagged))
+      .run();
+    const created = ruleFromCorrection(bundle.db, {
+      merchantId: netflixId,
+      categoryId: streaming,
+    });
+
+    // Act
+    const { affected, undo } = retroApplyRule(bundle.db, created.id);
+
+    // Assert: settling the stamp and the review flag IS a change
+    expect(affected).toBe(1);
+    expect(txn(flagged).needsReview).toBe(false);
+    expect(txn(flagged).categorizationSource).toBe("rule");
+    expect(txn(flagged).categorizationConfidence).toBe(1);
+
+    // Undo restores only what moved; the category was never touched
+    applyUndoPatch(bundle.db, undo);
+    expect(txn(flagged).needsReview).toBe(true);
+    expect(txn(flagged).categorizationConfidence).toBe(0.4);
+    expect(txn(flagged).categorizationSource).toBe("claude");
+    expect(txn(flagged).categoryId).toBe(streaming);
+  });
+
+  test("a retro-apply that rewrites rows snapshots first; one that matches nothing does not", () => {
+    // the archive lives beside the database it protects (.db only — reading a
+    // snapshot back leaves -wal/-shm siblings behind)
+    const snapshots = () => {
+      const backups = path.join(dir, "backups");
+      if (!fs.existsSync(backups)) return [];
+      return fs.readdirSync(backups).filter((f) => f.startsWith("pre-") && f.endsWith(".db"));
+    };
+
+    const streaming = catId("Subscriptions > Streaming");
+    const unmatched = ruleFromCorrection(bundle.db, {
+      merchantId: netflixId,
+      categoryId: streaming,
+    });
+    expect(retroApplyRule(bundle.db, unmatched.id).affected).toBe(0);
+    expect(snapshots()).toEqual([]); // nothing matched, nothing to lose
+
+    const id = insertTxn({ rawDescription: "NETFLIX.COM A" });
+    retroApplyRule(bundle.db, unmatched.id);
+
+    const name = snapshots()[0]!;
+    expect(name).toMatch(/-retro-apply-rule\.db$/);
+    const before = createDatabase(path.join(dir, "backups", name));
+    const row = before.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+    expect(row.categoryId).not.toBe(streaming); // pre-rewrite state preserved
+    before.sqlite.close();
+    expect(txn(id).categoryId).toBe(streaming);
+  });
+
   test("unknown rules throw; deleteRule reports whether anything was removed", () => {
     expect(() => retroApplyRule(bundle.db, "nope")).toThrow(/Unknown rule/);
     const streaming = catId("Subscriptions > Streaming");

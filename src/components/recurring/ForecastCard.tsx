@@ -1,7 +1,8 @@
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import type { MonthForecast } from "@/services/forecast";
-import { monthLabel } from "./labels";
+import { monthLabel, staleComponentEntries } from "./labels";
+import { StaleFooter, StaleMark } from "./StalenessNote";
 
 interface ForecastCardProps {
   forecast: MonthForecast;
@@ -11,8 +12,14 @@ interface ForecastCardProps {
  * The end-of-month projection with its math fully inspectable: every
  * component that feeds the totals renders in the "Show the math" table,
  * and the components sum exactly to the displayed projections.
+ *
+ * A series whose evidence has gone stale is NOT dropped from the math — the
+ * forecast keeps the number and marks how old the evidence behind it is
+ * (services/forecast.ts::fixedComponents).
  */
 export function ForecastCard({ forecast: f }: ForecastCardProps) {
+  const stale = staleComponentEntries(f.components);
+
   return (
     <SurfaceCard>
       <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
@@ -94,6 +101,7 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
                 <tr key={`${c.kind}-${c.label}`} className="border-b border-line last:border-b-0">
                   <th scope="row" className="px-4 py-2 text-left font-medium">
                     {c.label}
+                    <StaleMark staleness={c.staleness} className="ml-2" />
                   </th>
                   <td className="px-3 py-2 text-ink-muted">
                     {c.kind === "fixed" ? "Fixed (series)" : "Variable (trailing avg)"}
@@ -118,6 +126,8 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
           </table>
         )}
       </details>
+
+      <StaleFooter entries={stale} className="mt-3" />
     </SurfaceCard>
   );
 }

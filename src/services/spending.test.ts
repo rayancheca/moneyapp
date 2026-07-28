@@ -9,10 +9,12 @@ import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
+import { parseFilters } from "@/components/transactions/query";
 import { dedupeHash } from "@/lib/hash";
 import { resolvePeriod } from "@/lib/period";
 import { createAccount } from "./accounts";
 import { setSplits } from "./transaction-splits";
+import { countMatching } from "./transactions-query";
 import {
   cashFlowByPeriod,
   cashFlowSegmentHref,
@@ -367,6 +369,69 @@ describe("topMerchants", () => {
     insertTxn({ postedOn: "2026-07-02", amountCents: -10_000, category: "Shopping > General", merchantId: m });
     insertTxn({ postedOn: "2026-07-09", amountCents: 3_000, category: "Shopping > General", merchantId: m }); // refund
     expect(topMerchants(bundle.db, JULY).entries[0]!.spentCents).toBe(7_000);
+  });
+});
+
+/**
+ * The drill-down contract: a displayed number is a visitable list. An unlinked
+ * group's NAME is a derived string (the stripped key), while the ledger's `q` is
+ * a literal LIKE against the raw/normalized descriptor — so linking to the name
+ * used to search for text that exists in no row and open an empty ledger.
+ * These follow the generated href through the REAL ledger filter layer.
+ */
+describe("topMerchants unlinked drill-downs", () => {
+  /** rows the ledger actually shows for a generated href */
+  function rowsBehind(href: string): number {
+    const params = Object.fromEntries(new URL(href, "http://localhost").searchParams);
+    const filters = parseFilters(params);
+    return countMatching(bundle.db, filters, filters.view);
+  }
+
+  test("a group whose display name never occurs in a row still lands on its rows", () => {
+    // the embedded date is stripped out of the key, so the derived name
+    // ("AMAZON MKTPLACE PMTS") is contiguous in NEITHER row
+    insertTxn({ postedOn: "2026-07-02", amountCents: -4_000, category: "Shopping > General", normalized: "AMAZON MKTPLACE 07/02 PMTS" });
+    insertTxn({ postedOn: "2026-07-19", amountCents: -6_000, category: "Shopping > General", normalized: "AMAZON MKTPLACE 07/19 PMTS" });
+
+    const entry = topMerchants(bundle.db, JULY).entries[0]!;
+    expect(entry).toMatchObject({ kind: "unlinked", name: "AMAZON MKTPLACE PMTS", txnCount: 2 });
+    // the name itself would have searched for text no row contains
+    expect(rowsBehind(`/transactions?q=${encodeURIComponent(entry.name)}&from=2026-07-01&to=2026-07-31`)).toBe(0);
+    // ...so the link carries the longest run that really occurs, and lands on BOTH rows
+    expect(entry.href).toContain("q=AMAZON+MKTPLACE");
+    expect(rowsBehind(entry.href)).toBe(2);
+  });
+
+  test("a brokerage ticker group links by its symbol, not by the humanized label", () => {
+    insertTxn({ postedOn: "2026-07-02", amountCents: -25_000, category: null, normalized: "RECURRING INVESTMENT CUSIP: 81762P102 07/02 (KO)" });
+    insertTxn({ postedOn: "2026-07-16", amountCents: -25_000, category: null, normalized: "RECURRING INVESTMENT CUSIP: 81762P102 07/16 (KO)" });
+
+    const entry = topMerchants(bundle.db, JULY).entries[0]!;
+    expect(entry.name).toBe("KO recurring buys"); // synthetic label — no row says this
+    expect(rowsBehind(`/transactions?q=${encodeURIComponent(entry.name)}&from=2026-07-01&to=2026-07-31`)).toBe(0);
+    expect(rowsBehind(entry.href)).toBe(2);
+  });
+
+  test("noise between every identity token falls back to a single token, never to nothing", () => {
+    // VENMO / CASHOUT / REF are each separated by stripped noise, so no adjacent
+    // pair survives — the link still has to land
+    insertTxn({ postedOn: "2026-07-05", amountCents: -3_000, category: null, normalized: "VENMO 07/05 CASHOUT 12.34 REF" });
+
+    const entry = topMerchants(bundle.db, JULY).entries[0]!;
+    expect(entry.name).toBe("VENMO CASHOUT REF");
+    expect(entry.href).toBe("/transactions?from=2026-07-01&to=2026-07-31&q=VENMO");
+    expect(rowsBehind(entry.href)).toBe(1);
+  });
+
+  test("a clean descriptor still links by its whole name (no needless narrowing)", () => {
+    insertTxn({ postedOn: "2026-07-03", amountCents: -800, category: "Food > Groceries", normalized: "NEW BEST GOURMET DELI" });
+    insertTxn({ postedOn: "2026-07-04", amountCents: -900, category: "Food > Groceries", normalized: "NEW BEST GOURMET DELI" });
+    // a neighbour that shares only the first token — the narrowed link must not swallow it
+    insertTxn({ postedOn: "2026-07-06", amountCents: -100, category: "Food > Groceries", normalized: "NEW JERSEY TOLLS" });
+
+    const entry = topMerchants(bundle.db, JULY).entries[0]!;
+    expect(entry.href).toContain("q=NEW+BEST+GOURMET+DELI");
+    expect(rowsBehind(entry.href)).toBe(2);
   });
 });
 

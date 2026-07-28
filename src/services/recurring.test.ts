@@ -18,11 +18,16 @@ import {
   detectRecurringSeries,
   fitCadence,
   isDayOfMonthBimodal,
+  isSeriesActive,
+  listSeries,
   median,
   populationStddev,
   projectOccurrences,
+  rollForwardNextExpected,
+  seriesStaleness,
   setSeriesStatus,
   upcomingOccurrences,
+  type SeriesOverrides,
 } from "./recurring";
 
 const TODAY = "2026-07-08";
@@ -191,6 +196,101 @@ describe("projectOccurrences", () => {
 
   test("a series without next-expected data projects nothing", () => {
     expect(projectOccurrences({ ...series, nextExpectedOn: null }, "2026-07-08", "2026-07-31")).toEqual([]);
+  });
+
+  test("staleness supplied by the caller rides onto every occurrence", () => {
+    const staleness = seriesStaleness({ ...series, userCadence: null, userNextExpectedOn: null, userAmountCents: null, lastMatchedOn: "2026-06-16" }, "2026-07-08");
+    const occ = projectOccurrences({ ...series, staleness }, "2026-07-08", "2026-07-31");
+    expect(occ).toHaveLength(4);
+    expect(occ.every((o) => o.staleness === staleness)).toBe(true);
+  });
+
+  test("a caller that supplies none gets none — undefined never reads as fresh", () => {
+    const occ = projectOccurrences(series, "2026-07-08", "2026-07-31");
+    expect(occ.every((o) => o.staleness === undefined)).toBe(true);
+  });
+});
+
+/**
+ * Item 13a. upcomingOccurrences and forecast.ts keep every detected|confirmed
+ * series and DISCLOSE how old its evidence is; only recurring-calendar.ts, which
+ * draws nothing rather than asserting an amount, resolves lateness by omission.
+ */
+describe("seriesStaleness", () => {
+  const overrides = (
+    over: Partial<SeriesOverrides & { lastMatchedOn: string | null }> = {},
+  ): SeriesOverrides & { lastMatchedOn: string | null } => ({
+    cadence: "weekly",
+    userCadence: null,
+    intervalDaysAvg: 7,
+    nextExpectedOn: null,
+    userNextExpectedOn: null,
+    nextExpectedAmountCents: null,
+    userAmountCents: null,
+    lastMatchedOn: "2026-07-01",
+    ...over,
+  });
+
+  test("a weekly series inside 1.5 intervals plus grace is fresh", () => {
+    // weekly: step 7 → 7 × 1.5 + 2 grace = 12.5 days of tolerance
+    expect(seriesStaleness(overrides({ lastMatchedOn: "2026-06-30" }), "2026-07-08")).toEqual({
+      lastMatchedOn: "2026-06-30",
+      daysSinceLastMatch: 8,
+      stepDays: 7,
+      toleranceDays: 12.5,
+      isStale: false,
+    });
+  });
+
+  test("the owner's 22-day cash-job gap reads stale but keeps every number", () => {
+    const s = seriesStaleness(overrides({ lastMatchedOn: "2026-06-16" }), "2026-07-08");
+    expect(s.daysSinceLastMatch).toBe(22);
+    expect(s.isStale).toBe(true);
+    // the point of the disclosure: the reader is told the age, not denied the row
+    expect(s.stepDays).toBe(7);
+    expect(s.toleranceDays).toBe(12.5);
+  });
+
+  test("the tolerance boundary is inclusive — exactly at it is not yet stale", () => {
+    const monthly = overrides({ cadence: "monthly", intervalDaysAvg: 30 }); // 30 × 1.5 + 3 = 48
+    expect(seriesStaleness({ ...monthly, lastMatchedOn: "2026-05-21" }, "2026-07-08").isStale).toBe(false);
+    expect(seriesStaleness({ ...monthly, lastMatchedOn: "2026-05-20" }, "2026-07-08").isStale).toBe(true);
+  });
+
+  test("a series nothing has ever matched is stale, not silently fresh", () => {
+    const s = seriesStaleness(overrides({ lastMatchedOn: null }), "2026-07-08");
+    expect(s.daysSinceLastMatch).toBeNull();
+    expect(s.lastMatchedOn).toBeNull();
+    expect(s.isStale).toBe(true);
+  });
+
+  test("a cadence override judges lateness by its nominal step, not the old gap", () => {
+    const s = seriesStaleness(
+      overrides({ cadence: "monthly", userCadence: "weekly", intervalDaysAvg: 30, lastMatchedOn: "2026-06-25" }),
+      "2026-07-08",
+    );
+    expect(s.stepDays).toBe(7); // weekly nominal, NOT the detected 30
+    expect(s.toleranceDays).toBe(12.5);
+    expect(s.isStale).toBe(true);
+  });
+
+  test("a series without interval stats falls back to its cadence nominal", () => {
+    const s = seriesStaleness(overrides({ cadence: "annual", intervalDaysAvg: null }), "2026-07-08");
+    expect(s.stepDays).toBe(365);
+    expect(s.toleranceDays).toBe(365 * 1.5 + 14);
+    expect(s.isStale).toBe(false);
+  });
+
+  test("isSeriesActive is exactly status-live AND not stale — they cannot drift", () => {
+    for (const lastMatchedOn of ["2026-07-08", "2026-06-30", "2026-06-25", "2026-06-16", null]) {
+      const s = overrides({ lastMatchedOn });
+      const stale = seriesStaleness(s, "2026-07-08").isStale;
+      expect(isSeriesActive({ ...s, status: "confirmed" }, "2026-07-08")).toBe(!stale);
+      expect(isSeriesActive({ ...s, status: "detected" }, "2026-07-08")).toBe(!stale);
+      // status still overrules: a dismissed series is never active, fresh or not
+      expect(isSeriesActive({ ...s, status: "dismissed" }, "2026-07-08")).toBe(false);
+      expect(isSeriesActive({ ...s, status: "ended" }, "2026-07-08")).toBe(false);
+    }
   });
 });
 
@@ -419,7 +519,90 @@ describe("detection on the synthetic corpus", () => {
     expect(dates.every((d) => d >= TODAY && d <= windowEnd)).toBe(true);
   });
 
+  test("a fresh series' occurrences carry staleness that says so", () => {
+    // Netflix last charged 2026-06-15, monthly → 23 days against ~48 of tolerance
+    const netflix = upcomingOccurrences(bundle.db, TODAY, 30).filter((o) => o.name === "Netflix");
+    expect(netflix.length).toBeGreaterThan(0);
+    expect(netflix[0]!.staleness).toMatchObject({
+      lastMatchedOn: "2026-06-15",
+      daysSinceLastMatch: 23,
+      isStale: false,
+    });
+  });
+
+  // THE regression guard for item 13a: the owner's weekly cash job runs weeks
+  // behind on deposit/import lag. Filtering the upcoming list by isSeriesActive
+  // would delete ~$1,046/wk of income he is still earning. It stays, marked.
+  test("a stale income series is still projected, carrying how old its evidence is", () => {
+    const later = "2026-08-01"; // 37 days after the last cash deposit (2026-06-25)
+    const salary = upcomingOccurrences(bundle.db, later, 30).filter((o) => o.name === "Employer (cash)");
+
+    expect(salary.length).toBeGreaterThan(0);
+    expect(salary.every((o) => o.amountCents > 0)).toBe(true);
+    expect(salary[0]!.staleness).toMatchObject({
+      lastMatchedOn: "2026-06-25",
+      daysSinceLastMatch: 37,
+      isStale: true,
+    });
+    // every occurrence of the series is marked, not just the first
+    expect(salary.every((o) => o.staleness?.isStale === true)).toBe(true);
+  });
+
   test("setSeriesStatus rejects unknown ids", () => {
     expect(() => setSeriesStatus(bundle.db, "nope", "confirmed")).toThrow(/Unknown recurring series/);
+  });
+
+  // detection ran at TODAY and stored dates around July 2026; reading the list
+  // 13 months later is exactly the stale-suggestion case (real data: UBER *ONE)
+  test("a stale stored next-expected is listed rolled forward, never as a past date", () => {
+    const later = "2027-08-08";
+    const listed = listSeries(bundle.db, later);
+
+    const live = listed.filter((s) => s.status === "detected" || s.status === "confirmed");
+    expect(live.length).toBeGreaterThan(0);
+    for (const s of live) {
+      if (!s.nextExpectedOn) continue;
+      expect(s.nextExpectedOn >= later).toBe(true);
+    }
+
+    const netflix = listed.find((s) => s.name === "Netflix")!;
+    // stored 2026-07-16, step 30 → 388 days stale → 13 whole steps → 2027-08-10
+    expect(netflix.storedNextExpectedOn).toBe("2026-07-16");
+    expect(netflix.nextExpectedOn).toBe("2027-08-10");
+  });
+
+  test("a dismissed series keeps its stored date — rolling it would invent a charge", () => {
+    const rent = seriesByName("MONTHLY RENT PAYMENT");
+    setSeriesStatus(bundle.db, rent.id, "dismissed");
+
+    const listed = listSeries(bundle.db, "2027-08-08").find((s) => s.id === rent.id)!;
+    expect(listed.nextExpectedOn).toBe("2026-07-02");
+    expect(listed.storedNextExpectedOn).toBe("2026-07-02");
+  });
+});
+
+describe("rollForwardNextExpected", () => {
+  const eff = { cadence: "monthly" as const, intervalDaysAvg: 30, nextExpectedOn: "2026-07-16", nextExpectedAmountCents: -1549 };
+
+  test("a future stored date is returned untouched", () => {
+    expect(rollForwardNextExpected(eff, "2026-07-08")).toBe("2026-07-16");
+  });
+
+  test("today itself is not past — the date is due, not stale", () => {
+    expect(rollForwardNextExpected(eff, "2026-07-16")).toBe("2026-07-16");
+  });
+
+  test("an overdue date steps by whole intervals to the first non-past occurrence", () => {
+    // 31 days stale → 2 whole 30-day steps (one step still lands in the past)
+    expect(rollForwardNextExpected(eff, "2026-08-16")).toBe("2026-09-14");
+  });
+
+  test("no interval stats falls back to the cadence's nominal step", () => {
+    // 15 days stale, weekly nominal 7 → 3 steps
+    expect(rollForwardNextExpected({ ...eff, intervalDaysAvg: null, cadence: "weekly" }, "2026-07-31")).toBe("2026-08-06");
+  });
+
+  test("a series without a next-expected date stays null", () => {
+    expect(rollForwardNextExpected({ ...eff, nextExpectedOn: null }, "2026-07-08")).toBeNull();
   });
 });

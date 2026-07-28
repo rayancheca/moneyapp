@@ -38,6 +38,8 @@
   ],
   "exclude": [
     "node_modules",
-    "data"
+    "data",
+    "**/* ?.ts",
+    "**/* ??.ts"
   ]
 }

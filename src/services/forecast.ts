@@ -10,17 +10,27 @@ import { formatCents } from "@/lib/money";
 import { allocationsFor } from "@/lib/transaction-splits";
 import { latestBalances } from "./derivation";
 import { bridgedNetWorthSeries } from "./in-flight";
-import { projectOccurrences, toProjectable, type SeriesOccurrence } from "./recurring";
+import {
+  projectOccurrences,
+  seriesStaleness,
+  toProjectable,
+  type SeriesOccurrence,
+  type SeriesStaleness,
+} from "./recurring";
 import { activeSplitsInRange } from "./transaction-splits";
 
 /**
  * Current-month forecast (master-plan Phase 6) — every number traceable:
  * the components array IS the math, and it sums exactly to the totals.
  *
- * FIXED: each active (detected|confirmed) series projects every remaining
+ * FIXED: each live (detected|confirmed) series projects every remaining
  * occurrence in the month. Transfer-kind series are excluded — the analytics
  * semantics are authoritative (transfers are never income or spending), and
  * counting both legs would double-book cash that never leaves the household.
+ * A series whose evidence has gone stale still projects and carries its
+ * `staleness` for the UI to show: dropping it would quietly delete real
+ * income (the owner's weekly cash job lags on deposits), and including it
+ * unmarked would quietly assert a dead subscription is alive.
  *
  * VARIABLE: per top-level expense bucket, trailing average of the last 3
  * FULL months of active expense spending excluding recurring-tagged rows,
@@ -78,6 +88,13 @@ export interface ForecastComponent {
   /** net-worth-signed: income positive, spending negative */
   cents: number;
   detail: string;
+  /**
+   * Fixed components only: how old the series' evidence is. Present on every
+   * fixed component (fresh ones included, with isStale false) so the UI never
+   * has to guess whether "no staleness" means "fresh" or "not measured".
+   * Variable components have no series behind them and carry none.
+   */
+  staleness?: SeriesStaleness;
 }
 
 export interface MonthForecast {
@@ -124,17 +141,23 @@ const CADENCE_LABEL: Record<string, string> = {
 };
 
 function fixedComponents(db: AppDatabase, today: string, monthEnd: string): ForecastComponent[] {
-  const active = db
+  // status only — staleness is disclosed per component, never used to exclude
+  const live = db
     .select()
     .from(recurringSeries)
     .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
     .all();
 
   const components: { component: ForecastComponent; firstDate: string }[] = [];
-  for (const series of active) {
+  for (const series of live) {
     if (series.kind === "transfer") continue;
     // forecast reads user overrides first (§4.4): amount, cadence, next-expected
-    const occurrences: SeriesOccurrence[] = projectOccurrences(toProjectable(series), today, monthEnd);
+    const staleness = seriesStaleness(series, today);
+    const occurrences: SeriesOccurrence[] = projectOccurrences(
+      toProjectable(series, staleness),
+      today,
+      monthEnd,
+    );
     if (occurrences.length === 0) continue;
     const perOccurrence = occurrences[0]!.amountCents;
     const cents = occurrences.length * perOccurrence;
@@ -145,6 +168,7 @@ function fixedComponents(db: AppDatabase, today: string, monthEnd: string): Fore
         kind: "fixed",
         cents,
         detail: `${occurrences.length} × ${formatCents(perOccurrence)} (${CADENCE_LABEL[series.cadence] ?? series.cadence}), next ${occurrences[0]!.date}`,
+        staleness,
       },
     });
   }

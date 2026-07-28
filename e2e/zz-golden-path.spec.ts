@@ -34,8 +34,13 @@ test("upload statements through the UI and watch the trust layer work", async ({
   await page.getByRole("button", { name: "Import", exact: true }).click();
 
   // completion signal: the uploaded set-B file appears in the imports ledger
-  // (the "Imported files" card itself pre-exists on the seeded base)
-  await expect(page.getByText("3333_transaction_download.ofx")).toBeVisible({ timeout: 30_000 });
+  // (the "Imported files" card itself pre-exists on the seeded base). Scoped to
+  // the ledger's own cell: each row's un-import confirmation names its file too
+  // (in the headline and in the button's sr-only description), so a bare text
+  // match is three elements now. The cell is the assertion that was meant.
+  await expect(
+    page.getByRole("cell", { name: "3333_transaction_download.ofx", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText(/reconciled periods/i)).toBeVisible();
   await expect
     .poll(async () => Number(await reconciledCount.innerText()))
@@ -89,6 +94,14 @@ test("a corrupted statement is quarantined with its exact gap and can be accepte
   await expect(page.getByText("Unreconciled statements")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText(/gap/i).first()).toBeVisible();
 
+  // gated: accepting a gap is a one-way door, so the confirm states the money
+  // being kept before anything is written, and the card survives until then
   await page.getByRole("button", { name: "Accept as-is" }).click();
+  const gate = page.getByRole("dialog");
+  // .first(): the measured line and the button's sr-only description both say it
+  await expect(gate.getByText("Gap kept, permanently").first()).toBeVisible();
+  await expect(page.getByText("Unreconciled statements")).toHaveCount(1);
+  await gate.getByRole("button", { name: "Accept the gap" }).click();
+
   await expect(page.getByText("Unreconciled statements")).toHaveCount(0);
 });

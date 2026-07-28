@@ -1,15 +1,19 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
+import { categories } from "@/db/schema/categories";
+import { recurringSeries } from "@/db/schema/recurring";
 import { statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { latestBalances, netWorthSeries } from "@/services/derivation";
+import { listSplits, setSplits } from "@/services/transaction-splits";
 import { importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, resolveAccount, type ImportInput } from "./service";
+import { PROFILES } from "./profiles";
 import { importFiles as importFilesTable } from "@/db/schema/imports";
 import { dedupeHash } from "@/lib/hash";
 
@@ -60,6 +64,16 @@ function loadDir(...relative: string[]): ImportInput[] {
     .filter((f) => !f.startsWith("."))
     .filter((f) => fs.statSync(path.join(dirPath, f)).isFile())
     .map((f) => ({ name: f, buffer: fs.readFileSync(path.join(dirPath, f)) }));
+}
+
+/**
+ * Pre-mutation snapshots land beside the database they protect. `.db` only —
+ * reading a snapshot back leaves -wal/-shm siblings behind.
+ */
+function preMutationSnapshots(): string[] {
+  const backups = path.join(dir, "backups");
+  if (!fs.existsSync(backups)) return [];
+  return fs.readdirSync(backups).filter((f) => f.startsWith("pre-") && f.endsWith(".db"));
 }
 
 function activeTxnStats(accountName: string): { count: number; sumCents: number } {
@@ -232,6 +246,23 @@ describe("structured imports", () => {
     expect(activeTxnStats("4321").count).toBe(0);
     expect(bundle.db.select().from(importFilesTable).all()).toHaveLength(0);
   });
+
+  test("un-import snapshots the file's rows first — an unknown id spends nothing", async () => {
+    await importStatementFiles(bundle.db, [load("chase", "Chase4321_Activity_2024-07-01_2024-09-30.QFX")]);
+    const before = activeTxnStats("4321").count;
+    unimportFile(bundle.db, "no-such-file");
+    expect(preMutationSnapshots()).toEqual([]);
+
+    const file = bundle.db.select().from(importFilesTable).all()[0]!;
+    unimportFile(bundle.db, file.id);
+
+    const name = preMutationSnapshots()[0]!;
+    expect(name).toMatch(/-unimport-file\.db$/);
+    const restore = createDatabase(path.join(dir, "backups", name));
+    expect(restore.db.select().from(transactions).all()).toHaveLength(before);
+    expect(restore.db.select().from(importFilesTable).all()).toHaveLength(1);
+    restore.sqlite.close();
+  });
 });
 
 describe("resolveAccount preferName (P0.1 settlement-cash routing)", () => {
@@ -400,6 +431,17 @@ describe("PDF statements + reconciliation", () => {
     expect(
       bundle.db.select().from(statementPeriods).all()[0]!.reconciliation,
     ).toBe("accepted");
+
+    // the overwritten reconciliation verdict survives in a restore point
+    const name = preMutationSnapshots()[0]!;
+    expect(name).toMatch(/-accept-gap\.db$/);
+    const restore = createDatabase(path.join(dir, "backups", name));
+    expect(restore.db.select().from(statementPeriods).all()[0]!.reconciliation).toBe("gap");
+    expect(
+      restore.db.select().from(transactions).where(eq(transactions.status, "quarantined")).all()
+        .length,
+    ).toBe(quarantined.length);
+    restore.sqlite.close();
   });
 
   test("Robinhood statements become value anchors with computed market change", async () => {
@@ -411,6 +453,253 @@ describe("PDF statements + reconciliation", () => {
       expect(p.reconciliation).toBe("value_anchor");
       expect(p.marketChangeCents).not.toBeNull();
     }
+  });
+});
+
+describe("re-parse lifecycle: a parser-version bump preserves user work", () => {
+  const cardCsv = (rows: string[]): string =>
+    ["Card,Transaction Date,Post Date,Description,Category,Type,Amount,Memo", ...rows].join("\n");
+
+  // one file, four rows, each carrying a different kind of user work
+  const FILE: ImportInput = {
+    name: "Chase7777_Activity_2026.CSV",
+    buffer: Buffer.from(
+      cardCsv([
+        "7777,03/02/2026,03/02/2026,SHELL OIL 555 MIAMI FL,Gas,Sale,-40.00,",
+        "7777,03/03/2026,03/03/2026,STARBUCKS STORE 77 MIAMI FL,Food & Drink,Sale,-25.00,",
+        "7777,03/04/2026,03/04/2026,AMZN MKTP US*4H2 MIAMI FL,Shopping,Sale,-60.00,",
+        "7777,03/05/2026,03/05/2026,NETFLIX.COM LOS GATOS CA,Entertainment,Sale,-15.99,",
+      ]),
+    ),
+  };
+
+  /**
+   * The owner improves a parser and re-drops the same statements: the profile's
+   * `version` is what drives the re-parse lifecycle, so bumping it is the whole
+   * simulation. Restored afterwards — PROFILES is module-level state.
+   */
+  async function withBumpedParserVersion<T>(profileId: string, fn: () => Promise<T>): Promise<T> {
+    const profile = PROFILES.find((p) => p.id === profileId)!;
+    const original = profile.version;
+    profile.version = original + 1;
+    try {
+      return await fn();
+    } finally {
+      profile.version = original;
+    }
+  }
+
+  function liveRow(fragment: string): typeof transactions.$inferSelect {
+    const row = bundle.db
+      .select()
+      .from(transactions)
+      .where(ne(transactions.status, "superseded"))
+      .all()
+      .find((r) => r.rawDescription.includes(fragment));
+    if (!row) throw new Error(`No live row matching ${fragment}`);
+    return row;
+  }
+
+  function expenseCategoryIds(count: number): string[] {
+    const ids = bundle.db
+      .select({ id: categories.id, name: categories.name })
+      .from(categories)
+      .where(eq(categories.kind, "expense"))
+      .all()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((c) => c.id);
+    if (ids.length < count) throw new Error("Seed taxonomy is missing expense categories");
+    return ids.slice(0, count);
+  }
+
+  /** Import once, then hand-edit each row the way the owner would in the UI. */
+  async function seedUserWork(): Promise<{ categoryId: string; splitCategoryIds: string[]; seriesId: string }> {
+    await importStatementFiles(bundle.db, [FILE]);
+    const [categoryId, splitA, splitB] = expenseCategoryIds(3) as [string, string, string];
+
+    const seriesId = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "Shell fill-ups", kind: "bill", cadence: "monthly" })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+
+    // hand-categorized + noted + a user-owned recurring link
+    bundle.db
+      .update(transactions)
+      .set({
+        categoryId,
+        categorizationSource: "user",
+        categorizationConfidence: 1,
+        notes: "family car",
+        recurringSeriesId: seriesId,
+        seriesLinkSource: "user",
+      })
+      .where(eq(transactions.id, liveRow("SHELL OIL").id))
+      .run();
+
+    // split (setSplits stamps the parent user-categorized, as the UI does)
+    setSplits(bundle.db, liveRow("STARBUCKS").id, [
+      { categoryId: splitA, amountCents: -1500 },
+      { categoryId: splitB, amountCents: -1000 },
+    ]);
+
+    // transfer-linked (a user-marked self-group keys on the row's own id)
+    const amazon = liveRow("AMZN MKTP");
+    bundle.db
+      .update(transactions)
+      .set({ transferGroupId: amazon.id, notes: "paid Carson back" })
+      .where(eq(transactions.id, amazon.id))
+      .run();
+
+    // user-excluded from analytics
+    bundle.db
+      .update(transactions)
+      .set({ status: "excluded" })
+      .where(eq(transactions.id, liveRow("NETFLIX").id))
+      .run();
+
+    return { categoryId, splitCategoryIds: [splitA, splitB], seriesId };
+  }
+
+  test("category, source, notes, transfer link, recurring link, exclusion and splits all survive", async () => {
+    const { categoryId, splitCategoryIds, seriesId } = await seedUserWork();
+    const before = {
+      shell: liveRow("SHELL OIL"),
+      starbucks: liveRow("STARBUCKS"),
+      amazon: liveRow("AMZN MKTP"),
+      netflix: liveRow("NETFLIX"),
+    };
+
+    const [outcome] = await withBumpedParserVersion("chase-card-csv", () =>
+      importStatementFiles(bundle.db, [FILE]),
+    );
+
+    expect(outcome!.status).toBe("parsed");
+    expect(outcome!.inserted).toBe(4); // a fresh parse, not a duplicate skip
+    expect(outcome!.carriedForward).toBe(4);
+
+    // the old rows are retired, not deleted — the re-parse replaced them
+    for (const old of Object.values(before)) {
+      const row = bundle.db.select().from(transactions).where(eq(transactions.id, old.id)).get()!;
+      expect(row.status).toBe("superseded");
+    }
+
+    const shell = liveRow("SHELL OIL");
+    expect(shell.id).not.toBe(before.shell.id);
+    expect(shell.categoryId).toBe(categoryId);
+    expect(shell.categorizationSource).toBe("user");
+    expect(shell.notes).toBe("family car");
+    expect(shell.recurringSeriesId).toBe(seriesId);
+    expect(shell.seriesLinkSource).toBe("user"); // detection must not re-own it
+
+    const amazon = liveRow("AMZN MKTP");
+    expect(amazon.transferGroupId).toBe(before.amazon.id);
+    expect(amazon.notes).toBe("paid Carson back");
+
+    // a user exclusion is a decision, not a parse artifact — it must not resurrect
+    expect(liveRow("NETFLIX").status).toBe("excluded");
+
+    // splits moved wholesale, and the invariant still holds on the new parent
+    const starbucks = liveRow("STARBUCKS");
+    const parts = listSplits(bundle.db, starbucks.id);
+    expect(parts.map((p) => p.categoryId)).toEqual(splitCategoryIds);
+    expect(parts.reduce((s, p) => s + p.amountCents, 0)).toBe(starbucks.amountCents);
+    expect(starbucks.amountCents).toBe(before.starbucks.amountCents); // parent immutable
+    expect(listSplits(bundle.db, before.starbucks.id)).toEqual([]); // and only once
+  });
+
+  test("idempotency: re-importing the identical file at the new version does not double-count", async () => {
+    await seedUserWork();
+    await withBumpedParserVersion("chase-card-csv", async () => {
+      const [first] = await importStatementFiles(bundle.db, [FILE]);
+      expect(first!.status).toBe("parsed");
+      const after = activeTxnStats("7777");
+
+      const [second] = await importStatementFiles(bundle.db, [FILE]);
+      expect(second!.status).toBe("skipped_duplicate");
+      expect(second!.carriedForward).toBe(0);
+      expect(activeTxnStats("7777")).toEqual(after);
+    });
+
+    // three active rows (the fourth stays user-excluded), each exactly once
+    const live = bundle.db
+      .select()
+      .from(transactions)
+      .where(ne(transactions.status, "superseded"))
+      .all();
+    expect(live).toHaveLength(4);
+    expect(listSplits(bundle.db, liveRow("STARBUCKS").id)).toHaveLength(2);
+  });
+
+  test("a detected category is NOT carried — only a user one is (no frozen stale guess)", async () => {
+    await importStatementFiles(bundle.db, [FILE]);
+    const shell = liveRow("SHELL OIL");
+    const [detectedCategory] = expenseCategoryIds(1) as [string];
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: detectedCategory, categorizationSource: "bank_category", notes: "keep me" })
+      .where(eq(transactions.id, shell.id))
+      .run();
+
+    const [outcome] = await withBumpedParserVersion("chase-card-csv", () =>
+      importStatementFiles(bundle.db, [FILE]),
+    );
+    expect(outcome!.carriedForward).toBe(1); // the note alone is worth carrying
+
+    const fresh = liveRow("SHELL OIL");
+    expect(fresh.notes).toBe("keep me");
+    expect(fresh.categorizationSource).not.toBe("user"); // re-derived, never upgraded
+  });
+
+  test("two same-day equal-amount rows keep their OWN work — carries never swap", async () => {
+    const twins: ImportInput = {
+      name: "Chase7788_Activity_2026.CSV",
+      buffer: Buffer.from(
+        cardCsv([
+          "7788,04/01/2026,04/01/2026,SHELL OIL 555 MIAMI FL,Gas,Sale,-30.00,",
+          "7788,04/01/2026,04/01/2026,STARBUCKS STORE 77 MIAMI FL,Food & Drink,Sale,-30.00,",
+        ]),
+      ),
+    };
+    await importStatementFiles(bundle.db, [twins]);
+    for (const [fragment, note] of [
+      ["SHELL OIL", "gas note"],
+      ["STARBUCKS", "coffee note"],
+    ] as const) {
+      bundle.db
+        .update(transactions)
+        .set({ notes: note })
+        .where(eq(transactions.id, liveRow(fragment).id))
+        .run();
+    }
+
+    const [outcome] = await withBumpedParserVersion("chase-card-csv", () =>
+      importStatementFiles(bundle.db, [twins]),
+    );
+    expect(outcome!.carriedForward).toBe(2);
+    expect(liveRow("SHELL OIL").notes).toBe("gas note");
+    expect(liveRow("STARBUCKS").notes).toBe("coffee note");
+  });
+
+  test("the money is content-matched even when the fixed parser reads the description differently", async () => {
+    const { categoryId } = await seedUserWork();
+    // same file bytes are required for the sha-keyed re-parse, so simulate the
+    // parser change on the DB side: the old row's raw text no longer matches
+    bundle.db
+      .update(transactions)
+      .set({ rawDescription: "SHELL OIL 555 MIAMI FL ***RAW", normalizedDescription: "SHELL OIL RAW" })
+      .where(eq(transactions.id, liveRow("SHELL OIL").id))
+      .run();
+
+    const [outcome] = await withBumpedParserVersion("chase-card-csv", () =>
+      importStatementFiles(bundle.db, [FILE]),
+    );
+    expect(outcome!.carriedForward).toBe(4);
+    // matched on (account, day, amount) — the money, not the text
+    const fresh = liveRow("SHELL OIL");
+    expect(fresh.rawDescription).toBe("SHELL OIL 555 MIAMI FL");
+    expect(fresh.categoryId).toBe(categoryId);
+    expect(fresh.notes).toBe("family car");
   });
 });
 

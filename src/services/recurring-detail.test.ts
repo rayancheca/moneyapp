@@ -15,7 +15,7 @@ import { isNull } from "drizzle-orm";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
-import { detectRecurringSeries } from "./recurring";
+import { detectRecurringSeries, listSeries } from "./recurring";
 import {
   renameSeries,
   searchAttachCandidates,
@@ -219,5 +219,42 @@ describe("searchAttachCandidates", () => {
     attachTransactions(bundle.db, netflix().id, [loose], TODAY);
     const results = searchAttachCandidates(bundle.db, netflix().id, "NETFLIX", TODAY);
     expect(results.map((r) => r.id)).not.toContain(loose);
+  });
+});
+
+describe("next-expected agrees between the list and the detail page", () => {
+  // Regression guard: listSeries rolls a stale stored nextExpectedOn forward so
+  // the read path never shows a past date as "next". seriesDetail must apply the
+  // SAME rule, or /recurring and /recurring/[id] state two different dates for
+  // one series — which is exactly the cross-surface disagreement this pass exists
+  // to remove.
+  function setStale(status: "confirmed" | "dismissed", nextExpectedOn: string): string {
+    const id = netflix().id;
+    bundle.db
+      .update(recurringSeries)
+      .set({ status, nextExpectedOn })
+      .where(eq(recurringSeries.id, id))
+      .run();
+    return id;
+  }
+
+  test("a confirmed series with a stale stored date shows the same rolled date on both surfaces", () => {
+    const id = setStale("confirmed", "2026-04-15"); // ~3 months before TODAY
+    const detail = seriesDetail(bundle.db, id, TODAY);
+    const listed = listSeries(bundle.db, TODAY).find((s) => s.id === id)!;
+
+    expect(detail.nextExpectedOn).toBe(listed.nextExpectedOn);
+    expect(detail.nextExpectedOn! >= TODAY).toBe(true);
+    // the un-rolled value stays available so the UI can tell shown from saved
+    expect(detail.storedNextExpectedOn).toBe("2026-04-15");
+  });
+
+  test("a dismissed series is never rolled forward — that would invent a future charge", () => {
+    const id = setStale("dismissed", "2026-04-15");
+    const detail = seriesDetail(bundle.db, id, TODAY);
+    const listed = listSeries(bundle.db, TODAY).find((s) => s.id === id)!;
+
+    expect(detail.nextExpectedOn).toBe("2026-04-15");
+    expect(listed.nextExpectedOn).toBe("2026-04-15");
   });
 });

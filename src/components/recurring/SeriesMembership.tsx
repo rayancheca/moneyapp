@@ -12,6 +12,7 @@ import { Menu } from "@/components/ui/Menu";
 import { Popover, usePopover } from "@/components/ui/Popover";
 import { toast } from "@/components/ui/Toast";
 import { Icon } from "@/components/shell/Icon";
+import { settleAction, useAction } from "@/hooks/useAction";
 import type {
   AttachCandidate,
   SeriesLinkedTxn,
@@ -29,24 +30,30 @@ export function LinkedTransactions({
   txns: readonly SeriesLinkedTxn[];
   onChanged: () => void;
 }) {
+  const { run } = useAction();
+
   function detach(id: string): void {
-    void detachFromSeriesAction({ transactionId: id }).then((r) => {
-      if (!r.ok) {
-        toast({ title: r.error, tone: "negative" });
-        return;
-      }
-      onChanged();
-      // lossless: re-attaching restores the exact link (user-owned either way)
-      toast({
-        title: "Removed from series",
-        action: {
-          label: "Undo",
-          onAction: () =>
-            void attachToSeriesAction({ seriesId, transactionIds: [id] }).then((back) => {
-              if (back.ok) onChanged();
-            }),
-        },
-      });
+    void run(() => detachFromSeriesAction({ transactionId: id }), {
+      onSuccess: () => {
+        onChanged();
+        // lossless: re-attaching restores the exact link (user-owned either way)
+        toast({
+          title: "Removed from series",
+          action: {
+            label: "Undo",
+            // settle and RETURN: a failed re-attach keeps the card (and this
+            // transaction id) alive instead of vanishing as if it had worked
+            onAction: async () => {
+              const result = await settleAction(
+                () => attachToSeriesAction({ seriesId, transactionIds: [id] }),
+                "Couldn’t put it back in the series — try again",
+              );
+              if (result.ok) onChanged();
+              return result;
+            },
+          },
+        });
+      },
     });
   }
 
@@ -93,6 +100,7 @@ export function AttachPanel({
   const [candidates, setCandidates] = useState<AttachCandidate[]>([]);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [loading, setLoading] = useState(false);
+  const { run, pending } = useAction();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const closeRequestedRef = useRef(false);
 
@@ -142,24 +150,31 @@ export function AttachPanel({
   function attach(): void {
     const ids = [...selected];
     if (ids.length === 0) return;
-    void attachToSeriesAction({ seriesId, transactionIds: ids }).then((r) => {
-      if (!r.ok) {
-        toast({ title: r.error, tone: "negative" });
-        return;
-      }
-      onChanged();
-      setSelected(new Set());
-      setQuery("");
-      toast({
-        title: `${r.data.attached} attached`,
-        action: {
-          label: "Undo",
-          onAction: () =>
-            void Promise.all(ids.map((id) => detachFromSeriesAction({ transactionId: id }))).then(() =>
-              onChanged(),
-            ),
-        },
-      });
+    void run(() => attachToSeriesAction({ seriesId, transactionIds: ids }), {
+      onSuccess: ({ attached }) => {
+        onChanged();
+        setSelected(new Set());
+        setQuery("");
+        toast({
+          title: `${attached} attached`,
+          action: {
+            label: "Undo",
+            // Every detach is settled individually and the shortfall reported:
+            // a partial undo used to look identical to a complete one. Detach is
+            // idempotent, so the retry this leaves available is safe.
+            onAction: async () => {
+              const results = await Promise.all(
+                ids.map((id) => settleAction(() => detachFromSeriesAction({ transactionId: id }))),
+              );
+              onChanged(); // some may have detached — resync either way
+              const failed = results.filter((r) => !r.ok).length;
+              return failed === 0
+                ? { ok: true }
+                : { ok: false, error: `${failed} of ${ids.length} couldn’t be removed — try again` };
+            },
+          },
+        });
+      },
     });
   }
 
@@ -229,8 +244,11 @@ export function AttachPanel({
         <button
           type="button"
           disabled={selected.size === 0}
+          aria-busy={pending}
           onClick={attach}
-          className="rounded-md bg-accent px-3 py-1 text-xs font-medium text-surface-raised transition-opacity duration-(--duration-fast) hover:opacity-90 disabled:opacity-40"
+          className={`rounded-md bg-accent px-3 py-1 text-xs font-medium text-surface-raised transition-opacity duration-(--duration-fast) hover:opacity-90 disabled:opacity-40 ${
+            pending ? "opacity-60" : ""
+          }`}
         >
           Attach {selected.size > 0 ? selected.size : ""}
         </button>
@@ -252,6 +270,7 @@ export function MergeControl({
   const { anchorRef, open, close, triggerProps } = usePopover<HTMLButtonElement>();
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<SeriesMergeCandidate | null>(null);
+  const { run, pending: merging } = useAction();
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -268,14 +287,12 @@ export function MergeControl({
   }, [candidates, query]);
 
   function merge(source: SeriesMergeCandidate): void {
-    void mergeIntoSeriesAction({ sourceId: source.id, targetId: seriesId }).then((r) => {
-      if (!r.ok) {
-        toast({ title: r.error, tone: "negative" });
-        return;
-      }
-      close();
-      onChanged();
-      toast({ title: `${source.name} merged in · ${r.data.relinked} moved` });
+    void run(() => mergeIntoSeriesAction({ sourceId: source.id, targetId: seriesId }), {
+      onSuccess: ({ relinked }) => {
+        close();
+        onChanged();
+        toast({ title: `${source.name} merged in · ${relinked} moved` });
+      },
     });
   }
 
@@ -317,7 +334,10 @@ export function MergeControl({
               <button
                 type="button"
                 onClick={() => merge(pending)}
-                className="rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-surface-raised transition-opacity duration-(--duration-fast) hover:opacity-90"
+                aria-busy={merging}
+                className={`rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-surface-raised transition-opacity duration-(--duration-fast) hover:opacity-90 ${
+                  merging ? "opacity-60" : ""
+                }`}
               >
                 Merge in
               </button>

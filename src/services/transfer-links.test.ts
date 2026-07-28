@@ -11,8 +11,14 @@ import { dedupeHash } from "@/lib/hash";
 import { applyUndoPatch } from "./bulk-edit";
 import { createAccount, createInstitution } from "./accounts";
 import {
+  detachTransferLegs,
+  detachUndoRows,
   linkTransferPair,
+  staleTransferLegs,
   transferCandidates,
+  transferCategoryIdFor,
+  transferCategoryResolver,
+  transferKindCategoryIds,
   transferCounterparts,
   unlinkTransferGroup,
 } from "./transfer-links";
@@ -58,6 +64,21 @@ function insertTxn(accountId: string, postedOn: string, amountCents: number, des
 
 function row(id: string) {
   return bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+}
+
+function catId(pathStr: string): string {
+  const [parentName, subName] = pathStr.split(" > ");
+  const parent = bundle.db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.name, parentName!), isNull(categories.parentId)))
+    .get()!;
+  if (!subName) return parent.id;
+  return bundle.db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.name, subName), eq(categories.parentId, parent.id)))
+    .get()!.id;
 }
 
 function categoryPathOf(categoryId: string | null): string | null {
@@ -114,6 +135,95 @@ describe("linkTransferPair", () => {
 
     expect(() => linkTransferPair(bundle.db, a, a)).toThrow(/two different/);
     expect(() => linkTransferPair(bundle.db, b, "nope")).toThrow(/Unknown transaction/);
+  });
+});
+
+/**
+ * The two pieces every other transfer path reuses. They are exported so a bulk
+ * mark, a sheet checkbox, or a row deletion all mean the same thing by
+ * "transfer" instead of each inventing its own half of it.
+ */
+describe("transferCategoryResolver — one definition of a transfer's category", () => {
+  test("credit wins, then the investment side, else an internal transfer", () => {
+    const resolve = transferCategoryResolver(bundle.db);
+    expect(categoryPathOf(resolve([checkingId, creditId]))).toBe("Transfers > Credit Card Payment");
+    expect(categoryPathOf(resolve([creditId]))).toBe("Transfers > Credit Card Payment");
+    expect(categoryPathOf(resolve([checkingId, savingsId]))).toBe("Transfers > Internal Transfer");
+    // one known leg is enough — a self-group has no counterparty to consult
+    expect(categoryPathOf(resolve([checkingId]))).toBe("Transfers > Internal Transfer");
+  });
+
+  test("an investment leg is a contribution, by SIDE not just type", () => {
+    const brokerage = createAccount(bundle.db, {
+      institutionId: createInstitution(bundle.db, "Robinhood"),
+      name: "Robinhood Brokerage",
+      type: "investment",
+      subtype: "brokerage",
+    });
+    expect(categoryPathOf(transferCategoryIdFor(bundle.db, [checkingId, brokerage]))).toBe(
+      "Transfers > Investment Contribution",
+    );
+  });
+
+  test("transferKindCategoryIds covers every Transfers leaf and nothing else", () => {
+    const ids = transferKindCategoryIds(bundle.db);
+    for (const path of [
+      "Transfers",
+      "Transfers > Credit Card Payment",
+      "Transfers > Internal Transfer",
+      "Transfers > Investment Contribution",
+    ]) {
+      expect(ids.has(catId(path))).toBe(true);
+    }
+    // investment BUYS are not transfers — they must keep counting as investment
+    expect(ids.has(catId("Investments > Buys"))).toBe(false);
+    expect(ids.has(catId("Food"))).toBe(false);
+  });
+
+  test("the resolver a manual link uses is the resolver everything else uses", () => {
+    // the pair-linker's own stamp must equal the shared resolver's answer
+    const out = insertTxn(checkingId, "2026-07-01", -20_000, "WIRE");
+    const inn = insertTxn(savingsId, "2026-07-01", 20_000, "WIRE IN");
+    linkTransferPair(bundle.db, out, inn);
+    expect(row(out).categoryId).toBe(transferCategoryIdFor(bundle.db, [checkingId, savingsId]));
+  });
+});
+
+describe("staleTransferLegs / detachTransferLegs", () => {
+  test("reads the legs a group no longer holds and detaches them losslessly", () => {
+    const out = insertTxn(checkingId, "2026-07-01", -50_000, "WIRE");
+    const inn = insertTxn(savingsId, "2026-07-01", 50_000, "WIRE IN");
+    linkTransferPair(bundle.db, out, inn);
+
+    // keeping the outflow: the counterpart is the leg that would be stranded
+    const stale = staleTransferLegs(bundle.db, out, [out]);
+    expect(stale).toEqual([{ id: inn, transferGroupId: out }]);
+
+    const undo = { rows: detachUndoRows(stale) };
+    detachTransferLegs(bundle.db, stale);
+    expect(row(inn).transferGroupId).toBeNull();
+    expect(row(out).transferGroupId).toBe(out); // the kept leg is untouched
+    expect(row(inn).categoryId).not.toBeNull(); // link-only: the category stays
+
+    applyUndoPatch(bundle.db, undo);
+    expect(row(inn).transferGroupId).toBe(out);
+  });
+
+  test("with no keepIds it returns the whole group — the shape a deleted leg needs", () => {
+    const out = insertTxn(checkingId, "2026-07-01", -50_000, "WIRE");
+    const inn = insertTxn(savingsId, "2026-07-01", 50_000, "WIRE IN");
+    linkTransferPair(bundle.db, out, inn);
+    expect(staleTransferLegs(bundle.db, out).map((l) => l.id).sort()).toEqual([out, inn].sort());
+  });
+
+  test("a superseded row is never detached, and an unknown group yields nothing", () => {
+    const out = insertTxn(checkingId, "2026-07-01", -50_000, "WIRE");
+    const inn = insertTxn(savingsId, "2026-07-01", 50_000, "WIRE IN");
+    linkTransferPair(bundle.db, out, inn);
+    // a retired duplicate pointing at the same group must stay out of the read
+    bundle.db.update(transactions).set({ status: "superseded" }).where(eq(transactions.id, inn)).run();
+    expect(staleTransferLegs(bundle.db, out, [out])).toEqual([]);
+    expect(staleTransferLegs(bundle.db, "no-such-group")).toEqual([]);
   });
 });
 

@@ -175,12 +175,23 @@ test("the allocation donut highlights a holding from its legend, and is keyboard
   expect(focused.filter((o) => o === "1")).toHaveLength(1); // every other wedge recedes
 
   // the legend swatches follow their wedge, but the LABELS never dim — text
-  // contrast is identical in every highlight state (AA can't regress here)
-  const swatches = await legend
-    .locator("span[aria-hidden]")
-    .evaluateAll((els) => els.map((e) => getComputedStyle(e).opacity));
-  expect(swatches[1]).toBe("1");
-  expect(swatches.filter((o) => o === "1")).toHaveLength(1);
+  // contrast is identical in every highlight state (AA can't regress here).
+  //
+  // Polled rather than sampled once: a wedge carries its opacity as an SVG
+  // ATTRIBUTE (flips instantly), but a swatch dims through a CSS transition, so
+  // a single getComputedStyle can land at t=0 and still read the resting "1"
+  // for every swatch. Same two facts asserted — one lit, and it is the focused
+  // one — just waited for instead of raced.
+  const swatchOpacities = () =>
+    legend
+      .locator("span[aria-hidden]")
+      .evaluateAll((els) => els.map((e) => getComputedStyle(e).opacity));
+  await expect
+    .poll(async () => {
+      const o = await swatchOpacities();
+      return { lit: o.filter((x) => x === "1").length, focusedIsLit: o[1] === "1" };
+    })
+    .toEqual({ lit: 1, focusedIsLit: true });
 
   // blurring restores the resting state exactly
   await rows.nth(1).blur();

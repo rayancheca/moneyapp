@@ -5,7 +5,7 @@ import { getDb } from "@/db/client";
 import { isLiability } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
-import { formatCentsSigned } from "@/lib/money";
+import { formatCents, formatCentsSigned } from "@/lib/money";
 import { getAccount, listAccounts, listInstitutions } from "@/services/accounts";
 import { listAnchors } from "@/services/anchors";
 import { accountSeries } from "@/services/derivation";
@@ -22,6 +22,8 @@ import { EditAccountButton } from "@/components/accounts/EditAccountButton";
 import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
 import { RecentTransactions } from "@/components/transactions/RecentTransactions";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
+import { countPhrase } from "@/components/ui/blast-radius";
+import { ConfirmActionButton } from "@/components/ui/Confirm";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { deleteAnchorAction, setAccountActiveAction } from "../actions";
@@ -62,6 +64,24 @@ function ChangeChip({ label, cents, liability = false }: { label: string; cents:
       {label} <span className={`figures font-medium ${tone}`}>{formatCentsSigned(cents)}</span>
     </span>
   );
+}
+
+/**
+ * The days one recorded balance currently pins: its own date up to (but not
+ * including) the next one. Counted on the DERIVED series rather than
+ * re-deriving the span here — the number in a confirmation has to be the
+ * ledger's own, never a second implementation of it.
+ */
+function daysPinnedBy(
+  series: readonly { day: string }[],
+  anchoredOn: string,
+  nextAnchoredOn: string | undefined,
+): number {
+  return series.filter(
+    (p) =>
+      compareDates(p.day, anchoredOn) >= 0 &&
+      (nextAnchoredOn === undefined || compareDates(p.day, nextAnchoredOn) < 0),
+  ).length;
 }
 
 export default async function AccountDetailPage({
@@ -106,6 +126,7 @@ export default async function AccountDetailPage({
   const ledgerRows = recentLedgerRows(db, { accountId: id, limit: RECENT_TXN_LIMIT });
   const pickerOptions = buildCategoryPickerOptions(db.select().from(categories).all());
 
+  // newest first, so anchors[i - 1] is the NEXT recorded balance in time
   const anchors = [...listAnchors(db, id)].reverse();
 
   return (
@@ -234,7 +255,7 @@ export default async function AccountDetailPage({
                 </tr>
               </thead>
               <tbody>
-                {anchors.map((a) => (
+                {anchors.map((a, i) => (
                   <tr key={a.id} className="border-b border-line/60 last:border-0">
                     <td className="figures py-2">{a.anchoredOn}</td>
                     <td className="py-2 text-xs text-ink-muted">{SOURCE_LABEL[a.source]}</td>
@@ -243,16 +264,39 @@ export default async function AccountDetailPage({
                     </td>
                     <td className="py-2 text-right">
                       {(a.source === "manual" || a.source === "live") && (
-                        <form action={deleteAnchorAction} className="inline">
-                          <input type="hidden" name="anchorId" value={a.id} />
-                          <input type="hidden" name="accountId" value={id} />
-                          <button
-                            type="submit"
-                            className="text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:text-negative"
-                          >
-                            remove
-                          </button>
-                        </form>
+                        <ConfirmActionButton
+                          action={deleteAnchorAction}
+                          fields={{ anchorId: a.id, accountId: id }}
+                          formClassName="inline"
+                          triggerLabel="remove"
+                          triggerAriaLabel={`remove the balance recorded on ${a.anchoredOn}`}
+                          triggerClassName="text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:text-negative"
+                          title="Remove this recorded balance"
+                          confirmLabel="Remove this balance"
+                          radius={{
+                            headline: `This balance is what verifies ${account.name} on ${a.anchoredOn}. Removing it leaves those days to be derived from transactions alone.`,
+                            lines: [
+                              {
+                                label: liability ? "Owed, as recorded" : "Balance, as recorded",
+                                value: formatCents(liability ? -a.balanceCents : a.balanceCents),
+                                irreversible: true,
+                              },
+                              {
+                                label: "Days that stop being verified",
+                                value: countPhrase(
+                                  daysPinnedBy(series, a.anchoredOn, anchors[i - 1]?.anchoredOn),
+                                  "day",
+                                ),
+                              },
+                              {
+                                label: "Recorded balances left on this account",
+                                value: countPhrase(anchors.length - 1, "balance"),
+                              },
+                            ],
+                            reassurance:
+                              "No transaction is touched — the balance curve is derived, so it rebuilds from what is left. Record the balance again to re-verify these days.",
+                          }}
+                        />
                       )}
                     </td>
                   </tr>
@@ -266,16 +310,57 @@ export default async function AccountDetailPage({
           <Link href="/accounts" className="text-sm text-ink-muted hover:text-ink">
             ← All accounts
           </Link>
-          <form action={setAccountActiveAction}>
-            <input type="hidden" name="accountId" value={id} />
-            <input type="hidden" name="isActive" value={account.isActive ? "false" : "true"} />
-            <button
-              type="submit"
-              className="text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:text-ink"
-            >
-              {account.isActive ? "Archive account" : "Restore account"}
-            </button>
-          </form>
+          {/* restoring only ever ADDS an account back to the totals, so it
+              stays a one-click form; archiving is the one that moves money */}
+          {account.isActive ? (
+            <ConfirmActionButton
+              action={setAccountActiveAction}
+              fields={{ accountId: id, isActive: "false" }}
+              triggerLabel="Archive account"
+              triggerClassName="text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:text-ink"
+              title="Archive this account"
+              confirmLabel="Archive it"
+              radius={{
+                headline: `Archiving takes ${account.name} out of net worth, the assets and owed totals, and every analytic. Nothing is deleted.`,
+                lines: [
+                  ...(latest
+                    ? [
+                        {
+                          label: "Net worth will read",
+                          value:
+                            latest.balanceCents === 0
+                              ? "unchanged"
+                              : `${formatCents(Math.abs(latest.balanceCents))} ${
+                                  latest.balanceCents > 0 ? "lower" : "higher"
+                                }`,
+                        },
+                        {
+                          label: liability ? "Owed, leaving the totals" : "Balance leaving the totals",
+                          value: formatCents(sign * latest.balanceCents),
+                        },
+                      ]
+                    : []),
+                  {
+                    label: "Recorded balances kept",
+                    value: countPhrase(anchors.length, "balance"),
+                  },
+                ],
+                reassurance:
+                  "Restore account puts it back exactly as it is now — transactions, recorded balances and history are untouched.",
+              }}
+            />
+          ) : (
+            <form action={setAccountActiveAction}>
+              <input type="hidden" name="accountId" value={id} />
+              <input type="hidden" name="isActive" value="true" />
+              <button
+                type="submit"
+                className="text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:text-ink"
+              >
+                Restore account
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </>

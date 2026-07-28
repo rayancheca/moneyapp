@@ -26,6 +26,11 @@ export default async function RecurringPage({
 }) {
   const raw = await searchParams;
   const { tab } = searchSchema.parse({ tab: raw.tab }) as { tab: RecurringTab };
+  // detectNow / confirmSeries / dismissSeries are `Promise<void>` form actions,
+  // so their failures travel back as ?error= (actions.ts:97,127,139) — the
+  // /budgets pattern. Unread, a confirm refused because its restore point could
+  // not be written was indistinguishable from one that quietly did nothing.
+  const error = typeof raw.error === "string" ? raw.error : null;
 
   const db = getDb();
   const today = todayIso();
@@ -57,6 +62,15 @@ export default async function RecurringPage({
           </button>
         </form>
       </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="mb-6 rounded-(--radius-card) border border-negative/40 bg-surface-raised px-4 py-3 text-sm text-negative"
+        >
+          {error}
+        </div>
+      )}
 
       <div className="space-y-6">
         <ForecastCard forecast={forecast} />

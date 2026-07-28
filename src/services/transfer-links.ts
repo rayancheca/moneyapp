@@ -16,6 +16,10 @@ import { hasSplits } from "./transaction-splits";
  * detector's conventions exactly: group key = the outflow leg's id, category
  * by the accounts' types, both legs leave the review queue. Every mutation
  * returns a lossless UndoPatch (bulk-edit's applyUndoPatch restores it).
+ *
+ * It also owns the two pieces every OTHER transfer path needs: what category a
+ * transfer belongs in (transferCategoryResolver) and how a group sheds a leg it
+ * no longer holds (staleTransferLegs / detachTransferLegs).
  */
 
 const CANDIDATE_WINDOW_DAYS = 14;
@@ -37,6 +41,110 @@ function categoryIdByPath(db: AppDatabase, path: string): string {
     .get();
   if (!sub) throw new Error(`Missing category ${path}`);
   return sub.id;
+}
+
+/**
+ * ONE meaning for "Transfer". Analytics keys off a category's KIND, so a row
+ * carrying only a transfer_group_id — with no Transfers category — still
+ * counts as spending. Every path that marks a transfer therefore resolves its
+ * category here: the pair-linker with both legs' accounts, the bulk and
+ * single-row toggles with the one account they know.
+ *
+ * Returns a resolver, not an id, because a bulk mark asks per row: the account
+ * table and the Transfers categories are read ONCE, so marking a thousand rows
+ * costs the same lookups as marking one.
+ */
+export type TransferCategoryResolver = (accountIds: readonly string[]) => string;
+
+export function transferCategoryResolver(db: AppDatabase): TransferCategoryResolver {
+  const accountTypes = new Map(db.select().from(accounts).all().map((r) => [r.id, r.type]));
+  // investment SIDE, not type: the P0.1 settlement-cash sibling receives the
+  // contributions now, and a manual mark must label them like the detector would
+  const investmentSide = investmentSideAccountIds(db);
+  const byPath = new Map<string, string>();
+  const resolvePath = (path: string): string => {
+    const cached = byPath.get(path);
+    if (cached !== undefined) return cached;
+    const id = categoryIdByPath(db, path);
+    byPath.set(path, id);
+    return id;
+  };
+  return (accountIds) => {
+    if (accountIds.some((id) => accountTypes.get(id) === "credit")) {
+      return resolvePath("Transfers > Credit Card Payment");
+    }
+    if (accountIds.some((id) => investmentSide.has(id))) {
+      return resolvePath("Transfers > Investment Contribution");
+    }
+    return resolvePath("Transfers > Internal Transfer");
+  };
+}
+
+/** Single-shot form of transferCategoryResolver, for one-row callers. */
+export function transferCategoryIdFor(db: AppDatabase, accountIds: readonly string[]): string {
+  return transferCategoryResolver(db)(accountIds);
+}
+
+/**
+ * Every transfer-KIND category id. A row already carrying one already reads as
+ * a transfer to analytics, and whatever labelled it — the detector, or
+ * linkTransferPair with BOTH legs in hand — knew more than a one-account guess
+ * can: re-stamping would downgrade "Credit Card Payment" to "Internal
+ * Transfer". Callers marking a transfer use this to stamp only what is unmarked.
+ */
+export function transferKindCategoryIds(db: AppDatabase): Set<string> {
+  return new Set(
+    db
+      .select({ id: categories.id })
+      .from(categories)
+      .where(eq(categories.kind, "transfer"))
+      .all()
+      .map((r) => r.id),
+  );
+}
+
+/** A row still pointing at a transfer group it is no longer part of. */
+export interface StaleTransferLeg {
+  id: string;
+  transferGroupId: string | null;
+}
+
+/**
+ * Rows still pointing at `groupId` that are NOT among `keepIds` — a stale
+ * counterpart left behind by a single-row Transfer-checkbox clear, or by a leg
+ * that was deleted out from under its partner. Read them BEFORE mutating so
+ * the caller can capture a lossless undo, then hand them to detachTransferLegs
+ * inside its write transaction.
+ *
+ * Split in two on purpose: the read must see the pre-mutation state while the
+ * write belongs in the caller's transaction.
+ */
+export function staleTransferLegs(
+  db: AppDatabase,
+  groupId: string,
+  keepIds: readonly string[] = [],
+): StaleTransferLeg[] {
+  const stillLinked = and(
+    eq(transactions.transferGroupId, groupId),
+    ne(transactions.status, "superseded"),
+  );
+  return db
+    .select({ id: transactions.id, transferGroupId: transactions.transferGroupId })
+    .from(transactions)
+    .where(keepIds.length === 0 ? stillLinked : and(stillLinked, notInArray(transactions.id, [...keepIds])))
+    .all();
+}
+
+/** Detach them — link-only, so the undo rows carry transferGroupId and nothing else. */
+export function detachTransferLegs(db: AppDatabase, legs: readonly StaleTransferLeg[]): void {
+  for (const leg of legs) {
+    db.update(transactions).set({ transferGroupId: null }).where(eq(transactions.id, leg.id)).run();
+  }
+}
+
+/** The lossless inverse of detachTransferLegs (bulk-edit's applyUndoPatch restores it). */
+export function detachUndoRows(legs: readonly StaleTransferLeg[]): BulkResult["undo"]["rows"] {
+  return legs.map((leg) => ({ id: leg.id, prev: { transferGroupId: leg.transferGroupId } }));
 }
 
 function prevOf(row: typeof transactions.$inferSelect): UndoFields {
@@ -72,42 +180,18 @@ export function linkTransferPair(db: AppDatabase, aId: string, bId: string): Bul
   if (!outflow || !inflow) throw new Error("A transfer needs one outflow and one inflow");
 
   const groupId = outflow.id; // detector convention: the outflow leg keys the group
-  const accountTypes = new Map(db.select().from(accounts).all().map((r) => [r.id, r.type]));
-  const types = [accountTypes.get(a.accountId), accountTypes.get(b.accountId)];
-  // investment SIDE, not type: the P0.1 settlement-cash sibling receives the
-  // contributions now, and a manual link must label them like the detector would
-  const investmentSide = investmentSideAccountIds(db);
-  const category = types.includes("credit")
-    ? categoryIdByPath(db, "Transfers > Credit Card Payment")
-    : investmentSide.has(a.accountId) || investmentSide.has(b.accountId)
-      ? categoryIdByPath(db, "Transfers > Investment Contribution")
-      : categoryIdByPath(db, "Transfers > Internal Transfer");
+  const category = transferCategoryResolver(db)([a.accountId, b.accountId]);
 
   // a single-row Transfer-checkbox clear can leave a stale counterpart still
   // pointing at this outflow's id — detach it here (link-only, lossless undo)
   // so the re-minted group holds EXACTLY the two chosen legs
-  const staleLegs = db
-    .select()
-    .from(transactions)
-    .where(
-      and(
-        eq(transactions.transferGroupId, groupId),
-        ne(transactions.status, "superseded"),
-        notInArray(transactions.id, [a.id, b.id]),
-      ),
-    )
-    .all();
+  const staleLegs = staleTransferLegs(db, groupId, [a.id, b.id]);
 
   const undo = {
-    rows: [
-      ...[a, b].map((r) => ({ id: r.id, prev: prevOf(r) })),
-      ...staleLegs.map((r) => ({ id: r.id, prev: { transferGroupId: r.transferGroupId } })),
-    ],
+    rows: [...[a, b].map((r) => ({ id: r.id, prev: prevOf(r) })), ...detachUndoRows(staleLegs)],
   };
   db.transaction((tx) => {
-    for (const stale of staleLegs) {
-      tx.update(transactions).set({ transferGroupId: null }).where(eq(transactions.id, stale.id)).run();
-    }
+    detachTransferLegs(tx, staleLegs);
     for (const leg of [a, b]) {
       tx.update(transactions)
         .set({

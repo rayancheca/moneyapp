@@ -52,6 +52,8 @@ export function PeriodSelector({ period, today, basePath = "/spending" }: Period
   const [customOpen, setCustomOpen] = useState(false);
   const [from, setFrom] = useState(period.from);
   const [to, setTo] = useState(period.to);
+  // why the last Apply did nothing — the button must never be a silent no-op
+  const [rangeError, setRangeError] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const href = (params: PeriodParams) => periodHref(basePath, params);
@@ -82,12 +84,22 @@ export function PeriodSelector({ period, today, basePath = "/spending" }: Period
     };
   }, [customOpen]);
 
+  // Apply either navigates or says why it didn't. Silently returning left the
+  // primary-styled button looking live while nothing happened.
   function applyCustom(event: React.FormEvent) {
     event.preventDefault();
-    if (from && to && from <= to) {
-      setCustomOpen(false);
-      router.push(href({ from, to }));
+    if (!from || !to) {
+      setRangeError("Pick both a from and a to date.");
+      return;
     }
+    // ISO dates compare correctly as strings
+    if (from > to) {
+      setRangeError("The from date must be on or before the to date.");
+      return;
+    }
+    setRangeError(null);
+    setCustomOpen(false);
+    router.push(href({ from, to }));
   }
 
   return (
@@ -147,7 +159,10 @@ export function PeriodSelector({ period, today, basePath = "/spending" }: Period
         <button
           ref={triggerRef}
           type="button"
-          onClick={() => setCustomOpen((v) => !v)}
+          onClick={() => {
+            setRangeError(null); // a reopened panel starts clean
+            setCustomOpen((v) => !v);
+          }}
           aria-expanded={customOpen}
           aria-controls="custom-range-panel"
           className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition-colors duration-(--duration-fast) ${
@@ -175,7 +190,11 @@ export function PeriodSelector({ period, today, basePath = "/spending" }: Period
                   type="date"
                   value={from}
                   max={to}
-                  onChange={(e) => setFrom(e.target.value)}
+                  aria-invalid={rangeError ? true : undefined}
+                  onChange={(e) => {
+                    setFrom(e.target.value);
+                    setRangeError(null);
+                  }}
                   className="mt-0.5 w-full rounded-md border border-line bg-surface-raised px-2 py-1 text-sm"
                 />
               </label>
@@ -185,12 +204,22 @@ export function PeriodSelector({ period, today, basePath = "/spending" }: Period
                   type="date"
                   value={to}
                   min={from}
-                  onChange={(e) => setTo(e.target.value)}
+                  aria-invalid={rangeError ? true : undefined}
+                  onChange={(e) => {
+                    setTo(e.target.value);
+                    setRangeError(null);
+                  }}
                   className="mt-0.5 w-full rounded-md border border-line bg-surface-raised px-2 py-1 text-sm"
                 />
               </label>
+              {rangeError ? (
+                <p id="custom-range-error" role="alert" className="text-xs text-negative">
+                  {rangeError}
+                </p>
+              ) : null}
               <button
                 type="submit"
+                aria-describedby={rangeError ? "custom-range-error" : undefined}
                 className="w-full rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-surface-raised transition-opacity hover:opacity-90"
               >
                 Apply range

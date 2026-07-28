@@ -1,17 +1,20 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { renameSeriesAction, setSeriesStatusAction } from "@/app/recurring/actions";
 import { isTableLens, LENS_DIMENSION, LENS_LABELS } from "@/components/charts/chart-lens";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { useViewState } from "@/hooks/useViewState";
+import { formatCents } from "@/lib/money";
 import type { ViewState } from "@/lib/view-state";
 import { RECURRING_SERIES_SURFACE, RECURRING_SERIES_VIEW_SPEC } from "./recurring-view-spec";
 import { Badge } from "@/components/ui/Badge";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { CategoryChip } from "@/components/ui/CategoryChip";
+import { countPhrase } from "@/components/ui/blast-radius";
+import { Confirm } from "@/components/ui/Confirm";
 import { InlineEditableText } from "@/components/ui/InlineEditableText";
 import { Menu } from "@/components/ui/Menu";
 import { Money } from "@/components/ui/Money";
@@ -70,6 +73,9 @@ export function SeriesDetail({
     baseParams: EMPTY_PARAMS,
   });
   const amountsAsTable = isTableLens(state);
+  // ending a series takes money off the forecast and the calendar — the one
+  // status change on this page that changes what the app predicts
+  const [endingSeries, setEndingSeries] = useState(false);
 
   function onChanged(): void {
     startTransition(() => router.refresh());
@@ -159,12 +165,49 @@ export function SeriesDetail({
                 ? [{ label: "Not recurring", icon: "close" as IconName, onSelect: () => setStatus("dismissed", "Dismissed") }]
                 : []),
               ...(data.status !== "ended"
-                ? [{ label: "End series", icon: "circle-alert" as IconName, onSelect: () => setStatus("ended", "Series ended"), destructive: true }]
+                ? [{ label: "End series", icon: "circle-alert" as IconName, onSelect: () => setEndingSeries(true), destructive: true }]
                 : []),
             ]}
           />
         </div>
       </div>
+
+      {endingSeries ? (
+        <Confirm
+          open
+          onClose={() => setEndingSeries(false)}
+          onConfirm={() => {
+            setEndingSeries(false);
+            setStatus("ended", "Series ended");
+          }}
+          title="End this series"
+          confirmLabel="End this series"
+          radius={{
+            headline: `${data.name} stops being expected: it leaves the forecast, the recurring calendar, and every budget's expected tail.`,
+            lines: [
+              ...(data.annualizedCents !== null
+                ? [
+                    {
+                      label: "Leaving the forecast",
+                      value: `~${formatCents(data.annualizedCents)} / yr`,
+                      irreversible: true,
+                    },
+                  ]
+                : []),
+              {
+                label: "Upcoming charges off the calendar",
+                value: countPhrase(data.nextExpected.length, "charge"),
+              },
+              {
+                label: "Linked transactions kept",
+                value: countPhrase(data.linkedTxns.length, "transaction"),
+              },
+            ],
+            reassurance:
+              "Nothing is deleted — the charges stay in your ledger, and Confirm brings the series back if it starts again.",
+          }}
+        />
+      ) : null}
 
       {isMergedAway && data.mergedInto ? (
         <p className="mt-4 rounded-(--radius-card) border border-line bg-surface-sunken/50 px-4 py-2.5 text-sm text-ink-muted">

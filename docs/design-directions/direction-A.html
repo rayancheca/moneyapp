@@ -1,0 +1,1235 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Direction A — Ledger &amp; Letterpress · MoneyApp</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   DIRECTION A — "LEDGER & LETTERPRESS"
+   Evolve the existing Editorial-finance token contract. Every colour below
+   marked (existing) is byte-identical to src/app/globals.css today. Tokens
+   marked (NEW) are purely additive — nothing is redefined, nothing removed.
+
+   Shipping typefaces are Fraunces Variable (display, OFL-1.1), Geist Sans
+   (chrome, OFL-1.1, already installed) and Geist Mono (figures, OFL-1.1,
+   already installed). This offline mockup substitutes system stand-ins.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+:root {
+  /* ── surfaces + ink (existing) ────────────────────────────────────────── */
+  --surface:        oklch(0.977 0.005 85);
+  --surface-raised: oklch(0.996 0.002 85);
+  --surface-sunken: oklch(0.955 0.006 85);
+  --ink:            oklch(0.22 0.015 75);
+  --ink-muted:      oklch(0.46 0.014 75);
+  --ink-faint:      oklch(0.52 0.012 78);
+  --line:           oklch(0.90 0.008 85);
+  --line-strong:    oklch(0.82 0.010 85);
+  --accent:         oklch(0.45 0.095 165);
+  --positive:       oklch(0.50 0.11 160);
+  --negative:       oklch(0.53 0.15 30);
+  --warning:        oklch(0.52 0.115 70);
+
+  /* ── category identity ramp (existing, subset shown) ──────────────────── */
+  --cat-red:    oklch(0.53 0.13 25);   --cat-red-soft:    oklch(0.94 0.028 25);
+  --cat-orange: oklch(0.52 0.11 55);   --cat-orange-soft: oklch(0.94 0.030 55);
+  --cat-amber:  oklch(0.50 0.10 80);   --cat-amber-soft:  oklch(0.945 0.035 80);
+  --cat-lime:   oklch(0.50 0.10 120);  --cat-lime-soft:   oklch(0.945 0.035 120);
+  --cat-green:  oklch(0.50 0.10 155);  --cat-green-soft:  oklch(0.94 0.030 155);
+  --cat-teal:   oklch(0.50 0.08 185);  --cat-teal-soft:   oklch(0.94 0.028 185);
+  --cat-cyan:   oklch(0.51 0.09 215);  --cat-cyan-soft:   oklch(0.94 0.028 215);
+  --cat-blue:   oklch(0.52 0.10 245);  --cat-blue-soft:   oklch(0.94 0.028 245);
+  --cat-indigo: oklch(0.52 0.10 275);  --cat-indigo-soft: oklch(0.938 0.028 275);
+  --cat-violet: oklch(0.52 0.11 300);  --cat-violet-soft: oklch(0.938 0.028 300);
+  --cat-pink:   oklch(0.53 0.12 345);  --cat-pink-soft:   oklch(0.94 0.028 345);
+  --cat-brown:  oklch(0.50 0.06 60);   --cat-brown-soft:  oklch(0.94 0.020 60);
+
+  /* ── NEW: four additive tokens, all WCAG-verified ─────────────────────── */
+  --ink-display:   oklch(0.17 0.020 70);  /* 17.9:1 on --surface — hero numerals */
+  --surface-leaf:  oklch(0.966 0.010 78); /* bracketed by sunken .955 / surface .977 */
+  --accent-ink:    oklch(0.38 0.075 165); /* 9.0:1 on --surface — editorial rules  */
+  --annotation:    oklch(0.50 0.013 78);  /* 5.6:1 on --surface — chart marginalia */
+
+  /* ── NEW: letterpress depth ───────────────────────────────────────────── */
+  --emboss-hi: oklch(1 0 0 / 0.85);
+  --emboss-lo: oklch(0.22 0.015 75 / 0.055);
+  --press-1: 0 1px 0 var(--emboss-lo), inset 0 1px 0 var(--emboss-hi);
+  --press-2: 0 1px 1px var(--emboss-lo), 0 6px 18px -12px oklch(0.22 0.015 75 / 0.22),
+             inset 0 1px 0 var(--emboss-hi);
+  --press-3: 0 2px 3px var(--emboss-lo), 0 18px 44px -20px oklch(0.22 0.015 75 / 0.3),
+             inset 0 1px 0 var(--emboss-hi);
+  --grain-opacity: 0.045;
+  --grain-blend: multiply;
+
+  /* ── typography (NEW scale; faces noted above) ────────────────────────── */
+  --font-display: ui-serif, "New York", "Iowan Old Style", "Palatino Linotype",
+                  Palatino, "Times New Roman", Georgia, serif;
+  --font-ui: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+             system-ui, "Helvetica Neue", Arial, sans-serif;
+  --font-figures: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --text-eyebrow:  0.6875rem;
+  --text-micro:    0.75rem;
+  --text-body:     clamp(0.875rem, 0.845rem + 0.15vw, 0.9375rem);
+  --text-lede:     clamp(1rem, 0.95rem + 0.25vw, 1.125rem);
+  --text-h3:       clamp(1.0625rem, 1rem + 0.3vw, 1.25rem);
+  --text-h2:       clamp(1.375rem, 1.2rem + 0.75vw, 1.875rem);
+  --text-h1:       clamp(1.75rem, 1.45rem + 1.4vw, 2.75rem);
+  --text-display:  clamp(2.75rem, 1.60rem + 5.4vw, 6rem);
+  --text-display-2:clamp(1.5rem, 1.10rem + 1.9vw, 2.5rem);
+
+  --track-eyebrow: 0.16em;
+  --measure: 62ch;
+
+  /* ── rhythm ───────────────────────────────────────────────────────────── */
+  --gutter:  clamp(1.125rem, 0.6rem + 2.2vw, 3rem);
+  --section: clamp(2.25rem, 1.5rem + 3vw, 4.5rem);
+  --radius-card: 0.75rem;
+  --radius-overlay: 1rem;
+
+  /* ── motion: "ink settling" ───────────────────────────────────────────── */
+  --duration-tap:    120ms;   /* NEW */
+  --duration-fast:   150ms;   /* existing */
+  --duration-medium: 280ms;   /* NEW — fills the 150→300 gap */
+  --duration-normal: 300ms;   /* existing */
+  --duration-morph:  440ms;   /* NEW — promotes the chart-focus constant */
+  --duration-slow:   600ms;   /* existing */
+  --ease-out-expo:  cubic-bezier(0.16, 1, 0.3, 1);      /* existing */
+  --ease-spring:    cubic-bezier(0.34, 1.3, 0.64, 1);   /* existing */
+  --ease-ink:       cubic-bezier(0.22, 0.92, 0.30, 1);  /* NEW — arrives, stops */
+  --ease-ink-exit:  cubic-bezier(0.50, 0, 0.85, 0.35);  /* NEW — leaves quickly */
+}
+
+:root[data-theme="dark"] {
+  --surface:        oklch(0.19 0.012 75);
+  --surface-raised: oklch(0.23 0.013 75);
+  --surface-sunken: oklch(0.165 0.011 75);
+  --ink:            oklch(0.93 0.009 85);
+  --ink-muted:      oklch(0.70 0.011 80);
+  --ink-faint:      oklch(0.64 0.011 80);
+  --line:           oklch(0.31 0.013 75);
+  --line-strong:    oklch(0.40 0.014 75);
+  --accent:         oklch(0.73 0.105 165);
+  --positive:       oklch(0.73 0.115 160);
+  --negative:       oklch(0.68 0.14 30);
+  --warning:        oklch(0.75 0.12 75);
+
+  --cat-red:    oklch(0.72 0.13 25);   --cat-red-soft:    oklch(0.30 0.050 25);
+  --cat-orange: oklch(0.73 0.12 55);   --cat-orange-soft: oklch(0.30 0.050 55);
+  --cat-amber:  oklch(0.75 0.12 80);   --cat-amber-soft:  oklch(0.30 0.050 80);
+  --cat-lime:   oklch(0.74 0.12 120);  --cat-lime-soft:   oklch(0.30 0.050 120);
+  --cat-green:  oklch(0.73 0.11 155);  --cat-green-soft:  oklch(0.30 0.045 155);
+  --cat-teal:   oklch(0.73 0.10 185);  --cat-teal-soft:   oklch(0.30 0.045 185);
+  --cat-cyan:   oklch(0.73 0.10 215);  --cat-cyan-soft:   oklch(0.30 0.045 215);
+  --cat-blue:   oklch(0.72 0.10 245);  --cat-blue-soft:   oklch(0.30 0.045 245);
+  --cat-indigo: oklch(0.72 0.10 275);  --cat-indigo-soft: oklch(0.30 0.045 275);
+  --cat-violet: oklch(0.72 0.11 300);  --cat-violet-soft: oklch(0.30 0.048 300);
+  --cat-pink:   oklch(0.73 0.12 345);  --cat-pink-soft:   oklch(0.30 0.050 345);
+  --cat-brown:  oklch(0.72 0.07 60);   --cat-brown-soft:  oklch(0.30 0.030 60);
+
+  --ink-display:  oklch(0.965 0.010 85); /* 16.7:1 on --surface */
+  --surface-leaf: oklch(0.176 0.013 75); /* bracketed by sunken .165 / surface .19 */
+  --accent-ink:   oklch(0.80 0.100 165); /* 10.3:1 on --surface */
+  --annotation:   oklch(0.66 0.012 80);  /*  5.9:1 on --surface */
+
+  --emboss-hi: oklch(1 0 0 / 0.055);
+  --emboss-lo: oklch(0 0 0 / 0.4);
+  --press-1: 0 1px 0 var(--emboss-lo), inset 0 1px 0 var(--emboss-hi);
+  --press-2: 0 1px 2px var(--emboss-lo), 0 6px 18px -12px oklch(0 0 0 / 0.55),
+             inset 0 1px 0 var(--emboss-hi);
+  --press-3: 0 2px 4px var(--emboss-lo), 0 18px 44px -20px oklch(0 0 0 / 0.7),
+             inset 0 1px 0 var(--emboss-hi);
+  --grain-opacity: 0.07;
+  --grain-blend: overlay;
+}
+
+/* ═══ paper ════════════════════════════════════════════════════════════════ */
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+/* the grain. one inline SVG turbulence tile, no network, no JS, no canvas. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: var(--grain-blend);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23g)'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+}
+/* an extremely soft warm wash so "paper" is a gradient, not a flat fill */
+body::after {
+  content: "";
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(120% 70% at 12% -10%, oklch(0.55 0.06 75 / 0.05), transparent 60%),
+    radial-gradient(100% 60% at 100% 110%, oklch(0.45 0.095 165 / 0.045), transparent 60%);
+}
+.page { position: relative; z-index: 1; max-width: 1440px; margin: 0 auto; padding: 0 var(--gutter) 4rem; }
+
+/* ═══ shared editorial atoms ═══════════════════════════════════════════════ */
+.eyebrow {
+  font-family: var(--font-ui);
+  font-size: var(--text-eyebrow);
+  font-weight: 600;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  display: block;
+}
+.figures {
+  font-family: var(--font-figures);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.01em;
+}
+.display {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  color: var(--ink-display);
+}
+.rule       { border: 0; border-top: 1px solid var(--line); margin: 0; }
+.rule-strong{ border: 0; border-top: 2px solid var(--ink-display); margin: 0; }
+.rule-hair  { border: 0; border-top: 1px solid var(--line); margin: 0; opacity: 0.75; }
+.pos { color: var(--positive); }
+.neg { color: var(--negative); }
+.mute{ color: var(--ink-muted); }
+.faint{ color: var(--ink-faint); }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+
+/* ═══ masthead ═════════════════════════════════════════════════════════════ */
+.masthead { padding-top: clamp(1.25rem, 1rem + 1vw, 2rem); }
+.masthead-row {
+  display: flex; align-items: baseline; gap: 1rem 1.25rem; flex-wrap: wrap;
+  justify-content: space-between;
+}
+.wordmark {
+  font-family: var(--font-display);
+  font-size: var(--text-h3);
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-display);
+}
+.wordmark em { font-style: italic; letter-spacing: 0.02em; color: var(--accent-ink); }
+.masthead-meta { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+.masthead-rules { margin-top: 0.7rem; }
+.masthead-rules .rule-strong { margin-bottom: 3px; }
+
+.ctl {
+  font: inherit; font-size: var(--text-eyebrow); font-weight: 600;
+  letter-spacing: var(--track-eyebrow); text-transform: uppercase;
+  color: var(--ink-muted); background: transparent;
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 0.32rem 0.72rem; cursor: pointer;
+  box-shadow: var(--press-1);
+  transition: color var(--duration-tap) var(--ease-ink),
+              border-color var(--duration-tap) var(--ease-ink),
+              background-color var(--duration-tap) var(--ease-ink),
+              transform var(--duration-tap) var(--ease-ink);
+}
+.ctl:hover { color: var(--ink); border-color: var(--line-strong); background: var(--surface-leaf); }
+.ctl:active { transform: translateY(1px); }
+
+/* ═══ hero — asymmetric 12-col, generous ═══════════════════════════════════ */
+.hero { display: grid; gap: var(--gutter); margin-top: var(--section); align-items: end; }
+@media (min-width: 900px) { .hero { grid-template-columns: 7fr 5fr; } }
+
+.hero-figure { min-width: 0; }
+.hero-eyebrow-row { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+.hero-value {
+  display: flex; align-items: baseline; gap: 0.08em;
+  font-size: var(--text-display); line-height: 0.9;
+  margin: 0.5rem 0 0;
+}
+.hero-value .cur { font-size: 0.42em; align-self: flex-start; margin-top: 0.28em; color: var(--ink-muted); letter-spacing: 0; }
+/* editorial fraction: cents set small and raised, like a price in print */
+.hero-cents { font-size: 0.34em; align-self: flex-start; margin-top: 0.22em; color: var(--ink-muted); letter-spacing: 0.01em; }
+
+.hero-delta { display: flex; align-items: baseline; gap: 0.55rem; flex-wrap: wrap; margin-top: 0.9rem;
+  font-size: var(--text-lede); }
+.hero-delta .arrow { font-size: 0.8em; }
+.hero-note { margin-top: 0.55rem; max-width: var(--measure); color: var(--ink-muted); font-size: var(--text-micro); }
+.hero-note b { color: var(--ink); font-weight: 600; }
+
+/* the marginalia rail — rules, not boxes. This is the anti-card move. */
+.rail {
+  background: var(--surface-leaf);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--press-2);
+  padding: clamp(1rem, 0.7rem + 0.9vw, 1.4rem);
+}
+.rail-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
+.rail-list { list-style: none; margin: 0.75rem 0 0; padding: 0; }
+.rail-item {
+  display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 0.5rem 1rem;
+  padding: 0.62rem 0; border-top: 1px solid var(--line);
+  transition: background-color var(--duration-tap) var(--ease-ink);
+}
+.rail-item:first-child { border-top: 0; }
+.rail-item:hover { background: color-mix(in oklch, var(--accent) 6%, transparent); }
+.rail-item .k { font-size: var(--text-micro); color: var(--ink-muted); }
+.rail-item .k small { display: block; font-size: 0.68rem; color: var(--ink-faint); letter-spacing: 0.02em; }
+.rail-item .v { font-size: var(--text-body); font-weight: 600; text-align: right; }
+.rail-item .v small { display: block; font-weight: 400; font-size: 0.7rem; color: var(--ink-faint); }
+
+/* ═══ chart ════════════════════════════════════════════════════════════════ */
+.chart-block { margin-top: var(--section); }
+.chart-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 0.75rem 1.5rem; flex-wrap: wrap; padding-bottom: 0.6rem;
+}
+.pills { display: flex; gap: 0.15rem; flex-wrap: wrap; }
+.pill {
+  position: relative; font: inherit; font-size: var(--text-eyebrow); font-weight: 600;
+  letter-spacing: var(--track-eyebrow); text-transform: uppercase;
+  background: transparent; border: 0; cursor: pointer; color: var(--ink-faint);
+  padding: 0.35rem 0.6rem 0.45rem;
+  transition: color var(--duration-tap) var(--ease-ink);
+}
+.pill::after {
+  content: ""; position: absolute; left: 0.6rem; right: 0.6rem; bottom: 0.18rem; height: 2px;
+  background: var(--accent-ink); border-radius: 2px;
+  transform: scaleX(0); transform-origin: 50% 50%;
+  transition: transform var(--duration-medium) var(--ease-ink);
+}
+.pill:hover { color: var(--ink); }
+.pill[aria-pressed="true"] { color: var(--ink-display); }
+.pill[aria-pressed="true"]::after { transform: scaleX(1); }
+
+.plate {
+  position: relative;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--press-2);
+  padding: clamp(0.75rem, 0.4rem + 1vw, 1.25rem);
+  overflow: hidden;
+}
+/* the printed slug that follows the scrub */
+.slug {
+  position: absolute; top: 0.9rem; left: 1rem; z-index: 3;
+  background: var(--surface-leaf);
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--accent-ink);
+  border-radius: 3px;
+  padding: 0.4rem 0.7rem;
+  box-shadow: var(--press-2);
+  pointer-events: none;
+  opacity: 0; transform: translateY(-4px);
+  transition: opacity var(--duration-fast) var(--ease-ink), transform var(--duration-fast) var(--ease-ink);
+  max-width: min(19rem, 70%);
+}
+.plate[data-scrubbing="true"] .slug { opacity: 1; transform: translateY(0); }
+.slug .d { font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); }
+.slug .v { font-size: var(--text-body); font-weight: 600; margin-top: 0.1rem; }
+
+svg.chart { display: block; width: 100%; height: auto; touch-action: pan-y; cursor: crosshair; }
+.grid-line { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.axis-text { fill: var(--ink-faint); font-family: var(--font-figures); font-size: 11px; }
+.axis-text.side { font-size: 10.5px; }
+.series-line { fill: none; stroke: var(--accent-ink); stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round;
+  vector-effect: non-scaling-stroke; }
+.crosshair { stroke: var(--ink-display); stroke-width: 1; stroke-dasharray: 2 3; vector-effect: non-scaling-stroke; opacity: 0.75; }
+.scrub-dot { fill: var(--surface-raised); stroke: var(--accent-ink); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+.band { fill: var(--accent-ink); opacity: 0.09; }
+.band-edge { stroke: var(--accent-ink); stroke-width: 1; vector-effect: non-scaling-stroke; opacity: 0.55; }
+
+/* printed annotations — hairline leader + small-caps label, like a set caption */
+.ann-leader { stroke: var(--annotation); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.ann-tick   { fill: var(--annotation); }
+.ann-label  { fill: var(--annotation); font-family: var(--font-ui); font-size: 10.5px;
+  letter-spacing: 0.11em; text-transform: uppercase; font-weight: 600; }
+.ann-sub    { fill: var(--ink-faint); font-family: var(--font-figures); font-size: 10px; }
+.ann-group  { transition: opacity var(--duration-medium) var(--ease-ink); }
+.plate[data-annotations="off"] .ann-group { opacity: 0; }
+.plate[data-scrubbing="true"] .ann-group { opacity: 0.35; }
+.extreme-dot { fill: var(--annotation); }
+
+.chart-foot { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+  margin-top: 0.7rem; font-size: var(--text-micro); color: var(--ink-faint); }
+.range-slug {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  background: var(--surface-leaf); border: 1px solid var(--line);
+  border-radius: 999px; padding: 0.2rem 0.28rem 0.2rem 0.7rem;
+}
+.range-slug button {
+  font: inherit; font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase;
+  border: 0; background: transparent; color: var(--ink-muted); cursor: pointer;
+  padding: 0.14rem 0.5rem; border-radius: 999px;
+  transition: background-color var(--duration-tap) var(--ease-ink), color var(--duration-tap) var(--ease-ink);
+}
+.range-slug button:hover { background: var(--surface-sunken); color: var(--ink); }
+
+/* ═══ lower spread — asymmetric 5 / 7 ══════════════════════════════════════ */
+.spread { display: grid; gap: var(--gutter); margin-top: var(--section); align-items: start; }
+@media (min-width: 900px) { .spread { grid-template-columns: 5fr 7fr; } }
+
+.col-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
+.col-title { font-family: var(--font-display); font-size: var(--text-h2); font-weight: 500;
+  letter-spacing: -0.02em; margin: 0; color: var(--ink-display); }
+.col-kicker { margin: 0.15rem 0 0; color: var(--ink-muted); font-size: var(--text-micro); max-width: var(--measure); }
+.col-rules { margin: 0.7rem 0 0.2rem; }
+.col-rules .rule-strong { border-top-width: 2px; margin-bottom: 3px; }
+
+/* category breakdown — hairline bars, serif rank numerals */
+.cats { list-style: none; margin: 0; padding: 0; }
+.cat {
+  display: grid;
+  grid-template-columns: 2.1rem 1fr auto;
+  grid-template-areas: "rank name amt" ". bar bar";
+  align-items: baseline; column-gap: 0.7rem; row-gap: 0.35rem;
+  padding: 0.7rem 0.5rem 0.75rem; margin: 0 -0.5rem;
+  border-top: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: default;
+  transition: background-color var(--duration-tap) var(--ease-ink),
+              transform var(--duration-tap) var(--ease-ink);
+}
+.cat:first-child { border-top: 0; }
+.cat:hover, .cat:focus-within { background: var(--surface-leaf); transform: translateX(2px); }
+.cat .rank { grid-area: rank; font-family: var(--font-display); font-size: 0.95rem;
+  color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.cat:hover .rank { color: var(--accent-ink); }
+.cat .name { grid-area: name; display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.cat .name span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat .amt { grid-area: amt; font-weight: 600; white-space: nowrap; }
+.cat .bar { grid-area: bar; height: 6px; background: var(--surface-sunken);
+  border-radius: 2px; overflow: hidden; box-shadow: inset 0 1px 0 var(--emboss-lo); }
+.cat .bar i { display: block; height: 100%; border-radius: 2px; transform-origin: 0 50%;
+  transition: filter var(--duration-medium) var(--ease-ink); }
+.cat:hover .bar i { filter: saturate(1.25) brightness(1.05); }
+.swatch { width: 9px; height: 9px; border-radius: 2px; flex: none;
+  box-shadow: inset 0 1px 0 var(--emboss-hi); }
+.cat .pct { font-family: var(--font-figures); font-size: 0.68rem; color: var(--ink-faint); }
+
+/* ledger — editorial rows */
+.ledger { list-style: none; margin: 0; padding: 0; }
+.txn {
+  display: grid;
+  grid-template-columns: 3.4rem 1fr auto;
+  align-items: baseline; gap: 0.25rem 0.85rem;
+  padding: 0.72rem 0.6rem; margin: 0 -0.6rem;
+  border-top: 1px solid var(--line);
+  border-radius: 6px;
+  position: relative;
+  transition: background-color var(--duration-tap) var(--ease-ink);
+}
+.txn:first-child { border-top: 0; }
+/* the ink rule that slides in from the left on hover */
+.txn::before {
+  content: ""; position: absolute; left: 0; top: 6px; bottom: 6px; width: 2px;
+  background: var(--accent-ink); border-radius: 2px;
+  transform: scaleY(0); transform-origin: 50% 0;
+  transition: transform var(--duration-medium) var(--ease-ink);
+}
+.txn:hover { background: var(--surface-leaf); }
+.txn:hover::before { transform: scaleY(1); }
+.txn .day { font-family: var(--font-figures); font-size: 0.7rem; color: var(--ink-faint);
+  letter-spacing: 0.02em; text-transform: uppercase; white-space: nowrap; }
+.txn .who { min-width: 0; }
+.txn .who b { display: block; font-weight: 500; font-size: var(--text-body);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.txn .who .sub { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.2rem; flex-wrap: wrap; }
+.txn .amt { font-weight: 600; white-space: nowrap; text-align: right; }
+.chip {
+  display: inline-flex; align-items: center; gap: 0.32rem;
+  border: 1px solid; border-radius: 999px; padding: 0.06rem 0.45rem;
+  font-size: 0.68rem; color: var(--ink); white-space: nowrap;
+}
+.chip i { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+.acct { font-size: 0.68rem; color: var(--ink-faint); }
+
+/* ═══ the one 3D move — axonometric account stack (real SVG, no WebGL) ═════ */
+.iso-block { margin-top: var(--section); }
+.iso-scroll { overflow-x: auto; overscroll-behavior-x: contain; padding-bottom: 0.35rem; }
+svg.iso { display: block; height: auto; min-width: 720px; width: 100%; }
+.iso-face { transition: opacity var(--duration-fast) var(--ease-ink); }
+.iso-col { cursor: pointer; }
+.iso-col g.lift { transition: transform var(--duration-medium) var(--ease-ink); }
+.iso-col:hover g.lift, .iso-col:focus-visible g.lift { transform: translateY(-9px); }
+.iso-col .iso-label { fill: var(--ink-faint); font-family: var(--font-ui); font-size: 10px;
+  letter-spacing: 0.06em; text-transform: uppercase; }
+.iso-col:hover .iso-label { fill: var(--ink); }
+.iso-col .iso-amt { fill: var(--ink-muted); font-family: var(--font-figures); font-size: 10.5px; opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-ink); }
+.iso-col:hover .iso-amt, .iso-col:focus-visible .iso-amt { opacity: 1; }
+.iso-base { stroke: var(--line-strong); stroke-width: 1; vector-effect: non-scaling-stroke; }
+
+/* ═══ colophon ═════════════════════════════════════════════════════════════ */
+.colophon { margin-top: var(--section); padding-top: 1.1rem; border-top: 1px solid var(--line); }
+.colophon-grid { display: grid; gap: 1.25rem var(--gutter); margin-top: 0.9rem; }
+@media (min-width: 720px) { .colophon-grid { grid-template-columns: repeat(3, 1fr); } }
+.colophon p { margin: 0.3rem 0 0; font-size: var(--text-micro); color: var(--ink-muted); max-width: var(--measure); }
+.colophon code { font-family: var(--font-figures); font-size: 0.72rem; color: var(--ink);
+  background: var(--surface-sunken); padding: 0.05rem 0.3rem; border-radius: 3px; }
+.motion-demo { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.55rem; }
+.motion-row { display: grid; grid-template-columns: 6.5rem 1fr; align-items: center; gap: 0.6rem; }
+.motion-track { height: 3px; background: var(--surface-sunken); border-radius: 2px; position: relative; overflow: hidden; }
+.motion-track i { position: absolute; inset: 0 auto 0 0; width: 22%; background: var(--accent-ink); border-radius: 2px; }
+body[data-replay="1"] .motion-track i { animation: slide-ink var(--d) var(--e) both; }
+@keyframes slide-ink { from { transform: translateX(0); } to { transform: translateX(355%); } }
+
+/* ═══ entrance: "ink settling" ═════════════════════════════════════════════ */
+/* every resting frame IS the correct final state, so reduced-motion collapse
+   below snaps to a valid pose — same doctrine as globals.css today */
+@keyframes ink-settle {
+  from { opacity: 0; transform: translateY(9px); filter: blur(4px); }
+  to   { opacity: 1; transform: translateY(0);   filter: blur(0); }
+}
+/* stagger capped at ~240ms total regardless of count (8 tiles × 34ms = 238ms) */
+.settle { animation: ink-settle var(--duration-morph) var(--ease-ink) both;
+          animation-delay: calc(var(--i, 0) * 34ms); }
+
+/* the roll — matches the app's real NumberRoll: fixed 1ch slots, no reflow */
+.roll { display: inline-flex; }
+.roll .slot { display: inline-block; width: 1ch; height: 1lh; overflow: hidden; }
+.roll .strip { display: block; will-change: transform; }
+.roll .strip.anim { transition: transform var(--duration-normal) var(--ease-ink); }
+.roll .strip > b { display: block; height: 1lh; font-weight: inherit; }
+/* ink bleed: only the digits that actually changed get the pulse */
+@keyframes ink-bleed { 0% { opacity: 1; } 35% { opacity: 0.55; } 100% { opacity: 1; } }
+.roll .slot[data-changed="1"] .strip { animation: ink-bleed var(--duration-medium) var(--ease-ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+  .settle { filter: none; }
+}
+
+/* ═══ small screens ════════════════════════════════════════════════════════ */
+/* purely instructional eyebrows are chrome, not data — they go first */
+@media (max-width: 640px) { .hint { display: none; } }
+@media (max-width: 560px) {
+  .txn { grid-template-columns: 1fr auto; }
+  .txn .day { grid-column: 1 / -1; }
+  .hero-value { flex-wrap: wrap; }
+  .masthead-meta { gap: 0.5rem; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ════════════════════════ MASTHEAD ════════════════════════ -->
+  <header class="masthead settle" style="--i:0">
+    <div class="masthead-row">
+      <div class="wordmark">Money<em>App</em></div>
+      <div class="masthead-meta">
+        <span class="eyebrow">Monday, 27 July 2026 · 10 accounts · 1,673 entries</span>
+        <button class="ctl" id="annToggle" aria-pressed="true">Annotations</button>
+        <button class="ctl" id="replay">Replay motion</button>
+        <button class="ctl" id="theme" aria-pressed="false">Dark</button>
+      </div>
+    </div>
+    <div class="masthead-rules">
+      <hr class="rule-strong"><hr class="rule-hair">
+    </div>
+  </header>
+
+  <!-- ════════════════════════ HERO ════════════════════════ -->
+  <section class="hero" aria-labelledby="nw-label">
+    <div class="hero-figure settle" style="--i:1">
+      <div class="hero-eyebrow-row">
+        <span class="eyebrow" id="nw-label">Net worth</span>
+        <span class="eyebrow" id="nwContext" style="color:var(--annotation)">· as of today</span>
+      </div>
+      <div class="hero-value display" aria-live="off">
+        <span class="cur">$</span><span class="roll" id="heroRoll" data-value="110,617"></span><span class="hero-cents" id="heroCents">.42</span>
+      </div>
+      <div class="hero-delta">
+        <span class="pos" id="heroDelta" style="font-weight:600">
+          <span class="arrow" aria-hidden="true">▲</span> <span class="figures">+$0.00</span>
+        </span>
+        <span class="figures faint" id="heroPct">(+0.00%)</span>
+        <span class="faint" id="heroWindow">over 365 days</span>
+      </div>
+      <p class="hero-note">
+        Assets <b class="figures">$115,502.11</b> across 7 accounts, less <b class="figures">$4,884.69</b>
+        owed on 3 cards. Every day since 12 Aug 2024 is reconstructed from statements and
+        reconciled to the cent — <span class="faint">drag on the chart to read any window.</span>
+      </p>
+    </div>
+
+    <!-- the marginalia rail: rules, not a card grid -->
+    <aside class="rail settle" style="--i:2" aria-label="This month at a glance">
+      <div class="rail-head">
+        <span class="eyebrow">This month</span>
+        <span class="eyebrow" style="color:var(--annotation)">July</span>
+      </div>
+      <ul class="rail-list">
+        <li class="rail-item">
+          <span class="k">Money in<small>Salary · family · other</small></span>
+          <span class="v figures pos">+$5,418.00<small class="figures">14 entries</small></span>
+        </li>
+        <li class="rail-item">
+          <span class="k">Money out<small>All categories</small></span>
+          <span class="v figures neg">−$4,359.34<small class="figures">61 entries</small></span>
+        </li>
+        <li class="rail-item">
+          <span class="k">Net for the month<small>In less out</small></span>
+          <span class="v figures pos">+$1,058.66<small class="figures">+24.3% vs June</small></span>
+        </li>
+        <li class="rail-item">
+          <span class="k">Needs review<small>Uncategorised entries</small></span>
+          <span class="v figures" style="color:var(--warning)">12<small class="figures">of 1,673</small></span>
+        </li>
+      </ul>
+    </aside>
+  </section>
+
+  <!-- ════════════════════════ CHART ════════════════════════ -->
+  <section class="chart-block settle" style="--i:3" aria-labelledby="chart-title">
+    <div class="chart-head">
+      <div>
+        <h2 class="col-title" id="chart-title" style="font-size:var(--text-h3)">The line of the year</h2>
+        <p class="col-kicker">Daily net worth. Hover to scrub; drag to set a window.</p>
+      </div>
+      <div class="pills" role="group" aria-label="Chart range">
+        <button class="pill" data-range="30"  aria-pressed="false">1M</button>
+        <button class="pill" data-range="90"  aria-pressed="false">3M</button>
+        <button class="pill" data-range="180" aria-pressed="false">6M</button>
+        <button class="pill" data-range="365" aria-pressed="true">1Y</button>
+        <button class="pill" data-range="720" aria-pressed="false">All</button>
+      </div>
+    </div>
+    <hr class="rule-strong"><hr class="rule-hair" style="margin-bottom:0.75rem">
+
+    <div class="plate" id="plate" data-annotations="on" data-scrubbing="false">
+      <div class="slug" id="slug" aria-hidden="true">
+        <div class="d" id="slugDate">—</div>
+        <div class="v figures" id="slugVal">—</div>
+      </div>
+      <svg class="chart" id="chart" viewBox="0 0 1000 340" preserveAspectRatio="none"
+           role="img" aria-label="Net worth over time. A table with the same figures is available in the chart-to-table lens.">
+      </svg>
+    </div>
+
+    <div class="chart-foot">
+      <span id="footLeft">On <b>All</b>, a shaded band marks partial statement coverage before 4 Oct 2024.</span>
+      <span id="footRight"></span>
+    </div>
+  </section>
+
+  <!-- ════════════════════════ SPREAD ════════════════════════ -->
+  <div class="spread">
+
+    <section class="settle" style="--i:4" aria-labelledby="cat-title">
+      <div class="col-head">
+        <div>
+          <h2 class="col-title" id="cat-title">Where it went</h2>
+          <p class="col-kicker">July, by category. Bars share one scale.</p>
+        </div>
+        <span class="eyebrow figures" style="color:var(--annotation)">$4,359.34</span>
+      </div>
+      <div class="col-rules"><hr class="rule-strong"><hr class="rule-hair"></div>
+      <ul class="cats" id="cats"></ul>
+    </section>
+
+    <section class="settle" style="--i:5" aria-labelledby="led-title">
+      <div class="col-head">
+        <div>
+          <h2 class="col-title" id="led-title">The ledger</h2>
+          <p class="col-kicker">Most recent entries across all ten accounts.</p>
+        </div>
+        <span class="eyebrow hint" style="color:var(--annotation)">Last 5 days</span>
+      </div>
+      <div class="col-rules"><hr class="rule-strong"><hr class="rule-hair"></div>
+      <ul class="ledger" id="ledger"></ul>
+    </section>
+  </div>
+
+  <!-- ════════════════════════ THE ONE 3D MOVE ════════════════════════ -->
+  <section class="iso-block settle" style="--i:6" aria-labelledby="iso-title">
+    <div class="col-head">
+      <div>
+        <h2 class="col-title" id="iso-title" style="font-size:var(--text-h3)">Ten accounts, set in relief</h2>
+        <p class="col-kicker">
+          Axonometric — no perspective, so every height stays comparable. Assets rise from the
+          rule, liabilities fall below it. Real SVG, so it is keyboard-reachable and axe-scannable.
+        </p>
+      </div>
+      <span class="eyebrow hint" style="color:var(--annotation)">Hover a slab</span>
+    </div>
+    <div class="col-rules"><hr class="rule-strong"><hr class="rule-hair"></div>
+    <div class="iso-scroll">
+      <svg class="iso" id="iso" viewBox="0 0 1000 300" role="img"
+           aria-label="Account balances as an axonometric chart. The accounts table carries the same figures."></svg>
+    </div>
+  </section>
+
+  <!-- ════════════════════════ COLOPHON ════════════════════════ -->
+  <footer class="colophon settle" style="--i:7">
+    <span class="eyebrow">Colophon — Direction A · Ledger &amp; Letterpress</span>
+    <div class="colophon-grid">
+      <div>
+        <span class="eyebrow" style="color:var(--annotation)">Type</span>
+        <p>
+          <b>Fraunces Variable</b> (OFL-1.1) for display numerals and section titles —
+          <code>opsz</code>, <code>SOFT</code>, <code>WONK</code> axes.
+          <b>Geist Sans</b> for chrome, <b>Geist Mono</b> for figures. Both already installed.
+          <span class="faint">This offline mockup substitutes system faces.</span>
+        </p>
+      </div>
+      <div>
+        <span class="eyebrow" style="color:var(--annotation)">Colour</span>
+        <p>
+          Zero token churn. Every existing OKLCH value is untouched; four additive tokens
+          (<code>--ink-display</code>, <code>--surface-leaf</code>, <code>--accent-ink</code>,
+          <code>--annotation</code>) are all ≥5.4:1 on every surface in both themes.
+        </p>
+      </div>
+      <div>
+        <span class="eyebrow" style="color:var(--annotation)">Motion — ink settling</span>
+        <div class="motion-demo" aria-hidden="true">
+          <div class="motion-row"><span class="eyebrow">120 tap</span>
+            <span class="motion-track" style="--d:120ms;--e:var(--ease-ink)"><i></i></span></div>
+          <div class="motion-row"><span class="eyebrow">280 element</span>
+            <span class="motion-track" style="--d:280ms;--e:var(--ease-ink)"><i></i></span></div>
+          <div class="motion-row"><span class="eyebrow">440 morph</span>
+            <span class="motion-track" style="--d:440ms;--e:var(--ease-ink)"><i></i></span></div>
+        </div>
+        <p><code>--ease-ink: cubic-bezier(.22,.92,.3,1)</code> — decelerates and stops. No bounce
+          on anything the reader did not physically move.</p>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<script>
+"use strict";
+(function () {
+  const $ = (s, r) => (r || document).querySelector(s);
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const el = (n, a) => { const e = document.createElementNS(SVGNS, n);
+    for (const k in (a || {})) e.setAttribute(k, a[k]); return e; };
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ───────────────────────── data ───────────────────────── */
+  const TODAY = new Date(2026, 6, 27);
+  const TOTAL_DAYS = 720;
+  const NET_NOW = 110617.42;
+
+  // deterministic reconstruction of ~2 years of daily balances, landing exactly
+  // on NET_NOW. Same shape as the real series: payday steps, rent cliffs,
+  // a contribution run, and a flat stretch of partial coverage at the start.
+  const series = (function () {
+    let seed = 20260727;
+    const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+    const out = [];
+    let v = 41250;
+    for (let i = 0; i < TOTAL_DAYS; i++) {
+      const dom = (i + 12) % 30;
+      // market drift on the brokerage — the dominant day-to-day mover
+      let step = 34 + (rnd() - 0.42) * 420;
+      if (dom === 1) step -= 2150;                   // rent
+      if (dom === 7 || dom === 21) step += 1046;     // cash job, fortnightly
+      if (dom === 4) step -= 320;                    // card autopay
+      if (i > 300 && i < 420) step += 48;            // the contribution run
+      if (i > 470) step += 18;
+      step -= rnd() * 120;
+      v += step;
+      out.push(v);
+    }
+    // affine-correct the tail so today lands on the exact headline figure
+    const drift = NET_NOW - out[out.length - 1];
+    for (let i = 0; i < out.length; i++) out[i] += drift * (i / (out.length - 1));
+    return out.map((n) => Math.round(n * 100) / 100);
+  })();
+
+  const dayAt = (i) => new Date(TODAY.getTime() - (TOTAL_DAYS - 1 - i) * 86400000);
+  const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const fmtDay  = (d) => `${d.getDate()} ${MON[d.getMonth()]} ${d.getFullYear()}`;
+  const fmtShort= (d) => `${d.getDate()} ${MON[d.getMonth()]}`;
+  const money = (n) => (n < 0 ? "−" : "") + "$" + Math.abs(n).toLocaleString("en-US",
+    { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const moneySigned = (n) => (n < 0 ? "−" : "+") + "$" + Math.abs(n).toLocaleString("en-US",
+    { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const groupInt = (n) => Math.floor(Math.abs(n)).toLocaleString("en-US");
+  const cents = (n) => "." + Math.abs(Math.round(n * 100) % 100).toString().padStart(2, "0");
+
+  const CATEGORIES = [
+    { name: "Rent",          hue: "brown",  amt: 2150.00 },
+    { name: "Groceries",     hue: "lime",   amt: 684.32 },
+    { name: "Dining",        hue: "orange", amt: 512.87 },
+    { name: "Shopping",      hue: "violet", amt: 341.06 },
+    { name: "Transport",     hue: "blue",   amt: 268.40 },
+    { name: "Utilities",     hue: "teal",   amt: 196.55 },
+    { name: "Subscriptions", hue: "amber",  amt: 118.94 },
+    { name: "Health",        hue: "red",    amt: 87.20 }
+  ];
+
+  const TXNS = [
+    { d: "Jul 26", who: "Whole Foods Market",      cat: "Groceries",  hue: "lime",   acct: "Chase Checking",  amt: -128.44 },
+    { d: "Jul 25", who: "Hoffman Property Mgmt",   cat: "Rent",       hue: "brown",  acct: "SoFi Checking",   amt: -2150.00 },
+    { d: "Jul 25", who: "Robinhood",               cat: "Contribution",hue:"green",  acct: "SoFi Checking",   amt: -1200.00 },
+    { d: "Jul 24", who: "Payroll — Marlow Constr.",cat: "Salary",     hue: "green",  acct: "Chase Checking",  amt: 1046.00 },
+    { d: "Jul 24", who: "Joe & The Juice",         cat: "Dining",     hue: "orange", acct: "Amex Gold",       amt: -18.75 },
+    { d: "Jul 23", who: "Brightline Miami",        cat: "Transport",  hue: "blue",   acct: "Discover Card",   amt: -34.50 },
+    { d: "Jul 22", who: "Publix",                  cat: "Groceries",  hue: "lime",   acct: "Chase Checking",  amt: -71.18 },
+    { d: "Jul 22", who: "FPL Electric",            cat: "Utilities",  hue: "teal",   acct: "Chase Checking",  amt: -96.55 }
+  ];
+
+  const ACCOUNTS = [
+    { n: "Robinhood",   sub: "Brokerage",  v:  78940.22, hue: "green"  },
+    { n: "SoFi",        sub: "Savings",    v:  11200.00, hue: "teal"   },
+    { n: "Vanguard",    sub: "Roth IRA",   v:   8953.67, hue: "blue"   },
+    { n: "Chase",       sub: "Checking",   v:   8412.55, hue: "cyan"   },
+    { n: "SoFi",        sub: "Checking",   v:   3845.12, hue: "teal"   },
+    { n: "Chase",       sub: "Savings",    v:   2190.00, hue: "cyan"   },
+    { n: "Robinhood",   sub: "Cash",       v:   1240.55, hue: "green"  },
+    { n: "Wallet",      sub: "Cash",       v:    720.00, hue: "amber"  },
+    { n: "Amex",        sub: "Gold",       v:  -2104.83, hue: "red"    },
+    { n: "Discover",    sub: "Card",       v:  -1842.66, hue: "red"    },
+    { n: "Capital One", sub: "Venture",    v:   -937.20, hue: "red"    }
+  ];
+
+  const ANNOTATIONS = [
+    { i: 512, label: "Moved to Miami",     sub: "deposit + first month" },
+    { i: 560, label: "Cash job begins",    sub: "≈$1,046 / fortnight"   },
+    { i: 648, label: "Contribution run",   sub: "1,837 buys"            }
+  ];
+
+  /* ───────────────────── number roll (mirrors NumberRoll.tsx) ───────────── */
+  function buildRoll(node, text) {
+    node.textContent = "";
+    const frag = document.createDocumentFragment();
+    for (const ch of text) {
+      if (ch >= "0" && ch <= "9") {
+        const slot = document.createElement("span");
+        slot.className = "slot";
+        const strip = document.createElement("span");
+        strip.className = "strip";
+        for (let d = 0; d <= 9; d++) { const b = document.createElement("b"); b.textContent = d; strip.appendChild(b); }
+        strip.style.transform = `translateY(-${Number(ch) * 10}%)`;
+        slot.appendChild(strip);
+        frag.appendChild(slot);
+      } else {
+        const s = document.createElement("span");
+        s.textContent = ch;
+        frag.appendChild(s);
+      }
+    }
+    node.appendChild(frag);
+    node.dataset.value = text;
+  }
+  function setRoll(node, text) {
+    const prev = node.dataset.value || "";
+    const mask = (s) => [...s].map((c) => (c >= "0" && c <= "9" ? "#" : c)).join("");
+    if (mask(prev) !== mask(text)) { buildRoll(node, text); return; }
+    let idx = 0;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (ch < "0" || ch > "9") continue;
+      const slot = node.querySelectorAll(".slot")[idx++];
+      if (!slot) continue;
+      const strip = slot.firstChild;
+      if (!reduced) strip.classList.add("anim");
+      const changed = prev[i] !== ch;
+      slot.dataset.changed = changed ? "1" : "";
+      if (changed && !reduced) { strip.style.animation = "none"; void strip.offsetWidth; strip.style.animation = ""; }
+      strip.style.transform = `translateY(-${Number(ch) * 10}%)`;
+    }
+    node.dataset.value = text;
+  }
+
+  /* ───────────────────────── categories ───────────────────────── */
+  (function renderCats() {
+    const list = $("#cats");
+    const max = Math.max(...CATEGORIES.map((c) => c.amt));
+    const total = CATEGORIES.reduce((s, c) => s + c.amt, 0);
+    CATEGORIES.forEach((c, i) => {
+      const li = document.createElement("li");
+      li.className = "cat";
+      li.tabIndex = 0;
+      li.innerHTML =
+        `<span class="rank">${String(i + 1).padStart(2, "0")}</span>` +
+        `<span class="name"><i class="swatch" style="background:var(--cat-${c.hue})"></i>` +
+          `<span class="t">${c.name}</span>` +
+          `<span class="pct">${((c.amt / total) * 100).toFixed(1)}%</span></span>` +
+        `<span class="amt figures">${money(c.amt)}</span>` +
+        `<span class="bar"><i style="width:${(c.amt / max) * 100}%;background:var(--cat-${c.hue})"></i></span>`;
+      list.appendChild(li);
+    });
+  })();
+
+  /* ───────────────────────── ledger ───────────────────────── */
+  (function renderLedger() {
+    const list = $("#ledger");
+    TXNS.forEach((t) => {
+      const li = document.createElement("li");
+      li.className = "txn";
+      li.tabIndex = 0;
+      li.innerHTML =
+        `<span class="day">${t.d}</span>` +
+        `<span class="who"><b>${t.who}</b><span class="sub">` +
+          `<span class="chip" style="background:var(--cat-${t.hue}-soft);` +
+            `border-color:color-mix(in oklch, var(--cat-${t.hue}) 30%, transparent)">` +
+            `<i style="background:var(--cat-${t.hue})"></i>${t.cat}</span>` +
+          `<span class="acct">${t.acct}</span></span></span>` +
+        `<span class="amt figures ${t.amt < 0 ? "neg" : "pos"}">${moneySigned(t.amt)}</span>`;
+      list.appendChild(li);
+    });
+  })();
+
+  /* ───────────────────────── the chart ───────────────────────── */
+  const VBW = 1000, VBH = 340;
+  const PAD = { t: 34, r: 74, b: 30, l: 12 };
+  const chart = $("#chart"), plate = $("#plate");
+  let range = 365, windowSel = null, scrubIdx = null, dragFrom = null;
+
+  const heroRoll = $("#heroRoll");
+  buildRoll(heroRoll, groupInt(NET_NOW));
+
+  function slice() {
+    const n = Math.min(range, series.length);
+    const from = series.length - n;
+    return { from, vals: series.slice(from) };
+  }
+
+  function geometry() {
+    const { from, vals } = slice();
+    const lo = Math.min(...vals), hi = Math.max(...vals);
+    const pad = (hi - lo) * 0.14 || 1;
+    const y0 = lo - pad, y1 = hi + pad;
+    const X = (i) => PAD.l + (i / (vals.length - 1)) * (VBW - PAD.l - PAD.r);
+    const Y = (v) => PAD.t + (1 - (v - y0) / (y1 - y0)) * (VBH - PAD.t - PAD.b);
+    return { from, vals, lo, hi, y0, y1, X, Y };
+  }
+
+  function draw() {
+    const g = geometry();
+    chart.textContent = "";
+
+    // gradient for the area fill — accent ink fading into the paper
+    const defs = el("defs");
+    const grad = el("linearGradient", { id: "areaFill", x1: "0", y1: "0", x2: "0", y2: "1" });
+    grad.appendChild(el("stop", { offset: "0%",  "stop-color": "var(--accent-ink)", "stop-opacity": "0.16" }));
+    grad.appendChild(el("stop", { offset: "100%","stop-color": "var(--accent-ink)", "stop-opacity": "0.01" }));
+    defs.appendChild(grad);
+    chart.appendChild(defs);
+
+    // horizontal rules + right-hand value axis (printed, not boxed)
+    const ticks = 4;
+    for (let k = 0; k <= ticks; k++) {
+      const v = g.y0 + ((g.y1 - g.y0) * k) / ticks;
+      const y = g.Y(v);
+      chart.appendChild(el("line", { class: "grid-line", x1: PAD.l, x2: VBW - PAD.r + 6, y1: y, y2: y,
+        opacity: k === 0 ? 0.9 : 0.55 }));
+      const t = el("text", { class: "axis-text side", x: VBW - PAD.r + 12, y: y + 3.5 });
+      t.textContent = "$" + Math.round(v / 1000) + "k";
+      chart.appendChild(t);
+    }
+
+    // area + line
+    let d = "", a = "";
+    for (let i = 0; i < g.vals.length; i++) {
+      const x = g.X(i), y = g.Y(g.vals[i]);
+      d += (i ? "L" : "M") + x.toFixed(2) + " " + y.toFixed(2);
+    }
+    a = d + `L${g.X(g.vals.length - 1).toFixed(2)} ${VBH - PAD.b}L${PAD.l} ${VBH - PAD.b}Z`;
+    chart.appendChild(el("path", { d: a, fill: "url(#areaFill)" }));
+    chart.appendChild(el("path", { class: "series-line", d: d }));
+
+    // the coverage band (real honesty signal the app already carries)
+    if (g.from < 55) {
+      const x2 = g.X(Math.max(0, 55 - g.from));
+      chart.appendChild(el("rect", { class: "band", x: PAD.l, y: PAD.t, width: Math.max(0, x2 - PAD.l),
+        height: VBH - PAD.t - PAD.b, opacity: 0.06 }));
+    }
+
+    // printed annotations with hairline leaders
+    const annG = el("g", { class: "ann-group" });
+    ANNOTATIONS.forEach((ann, k) => {
+      const i = ann.i - g.from;
+      if (i < 4 || i > g.vals.length - 5) return;
+      const x = g.X(i), y = g.Y(g.vals[i]);
+      const up = k % 2 === 0;
+      const ly = up ? PAD.t + 12 : VBH - PAD.b - 40;
+      annG.appendChild(el("line", { class: "ann-leader", x1: x, x2: x, y1: y, y2: ly + (up ? 8 : -6), "stroke-dasharray": "1 3" }));
+      annG.appendChild(el("circle", { class: "ann-tick", cx: x, cy: y, r: 2.6 }));
+      annG.appendChild(el("line", { class: "ann-leader", x1: x, x2: x + 46, y1: ly + (up ? 8 : -6), y2: ly + (up ? 8 : -6) }));
+      const lab = el("text", { class: "ann-label", x: x + 6, y: ly + (up ? 3 : -11) });
+      lab.textContent = ann.label;
+      annG.appendChild(lab);
+      const sub = el("text", { class: "ann-sub", x: x + 6, y: ly + (up ? 20 : 4) });
+      sub.textContent = ann.sub;
+      annG.appendChild(sub);
+    });
+    chart.appendChild(annG);
+
+    // date axis — three marks only, set as small caps
+    [0, Math.floor((g.vals.length - 1) / 2), g.vals.length - 1].forEach((i, k) => {
+      const t = el("text", { class: "axis-text", x: g.X(i), y: VBH - 8,
+        "text-anchor": k === 0 ? "start" : k === 2 ? "end" : "middle" });
+      t.textContent = fmtShort(dayAt(g.from + i));
+      chart.appendChild(t);
+    });
+
+    // the selected window band
+    if (windowSel) {
+      const [s, e] = windowSel;
+      const xs = g.X(Math.max(0, s - g.from)), xe = g.X(Math.min(g.vals.length - 1, e - g.from));
+      chart.appendChild(el("rect", { class: "band", x: Math.min(xs, xe), y: PAD.t,
+        width: Math.abs(xe - xs), height: VBH - PAD.t - PAD.b }));
+      chart.appendChild(el("line", { class: "band-edge", x1: xs, x2: xs, y1: PAD.t, y2: VBH - PAD.b }));
+      chart.appendChild(el("line", { class: "band-edge", x1: xe, x2: xe, y1: PAD.t, y2: VBH - PAD.b }));
+    }
+
+    // crosshair
+    if (scrubIdx !== null) {
+      const i = scrubIdx - g.from;
+      if (i >= 0 && i < g.vals.length) {
+        const x = g.X(i), y = g.Y(g.vals[i]);
+        chart.appendChild(el("line", { class: "crosshair", x1: x, x2: x, y1: PAD.t, y2: VBH - PAD.b }));
+        chart.appendChild(el("circle", { class: "scrub-dot", cx: x, cy: y, r: 4.5 }));
+      }
+    }
+    updateFoot();
+  }
+
+  function updateFoot() {
+    const g = geometry();
+    const s = windowSel ? windowSel[0] : g.from;
+    const e = windowSel ? windowSel[1] : series.length - 1;
+    const delta = series[e] - series[s];
+    const pct = (delta / Math.abs(series[s])) * 100;
+    const right = $("#footRight");
+    right.textContent = "";
+    if (windowSel) {
+      const slug = document.createElement("span");
+      slug.className = "range-slug";
+      slug.innerHTML =
+        `<span class="figures" style="font-size:0.72rem">${fmtShort(dayAt(s))} – ${fmtShort(dayAt(e))} · ` +
+        `<b style="color:var(--${delta >= 0 ? "positive" : "negative"})">${moneySigned(delta)}</b></span>`;
+      const btn = document.createElement("button");
+      btn.textContent = "Clear";
+      btn.addEventListener("click", () => { windowSel = null; draw(); syncHero(); });
+      slug.appendChild(btn);
+      right.appendChild(slug);
+    } else {
+      right.textContent = `${g.vals.length} days · low ${money(g.lo)} · high ${money(g.hi)}`;
+    }
+    if (scrubIdx === null) syncHero(s, e, delta, pct);
+  }
+
+  function syncHero(s, e, delta, pct) {
+    if (s === undefined) {
+      const g = geometry();
+      s = windowSel ? windowSel[0] : g.from;
+      e = windowSel ? windowSel[1] : series.length - 1;
+      delta = series[e] - series[s];
+      pct = (delta / Math.abs(series[s])) * 100;
+    }
+    const v = series[e];
+    setRoll(heroRoll, groupInt(v));
+    $("#heroCents").textContent = cents(v);
+    $("#nwContext").textContent = windowSel ? "· " + fmtDay(dayAt(e)) : "· as of today";
+    const dEl = $("#heroDelta");
+    dEl.className = delta >= 0 ? "pos" : "neg";
+    dEl.style.fontWeight = "600";
+    dEl.innerHTML = `<span class="arrow" aria-hidden="true">${delta >= 0 ? "▲" : "▼"}</span> ` +
+                    `<span class="figures">${moneySigned(delta)}</span>`;
+    $("#heroPct").textContent = `(${pct >= 0 ? "+" : "−"}${Math.abs(pct).toFixed(2)}%)`;
+    $("#heroWindow").textContent = windowSel
+      ? `${fmtShort(dayAt(s))} – ${fmtShort(dayAt(e))}`
+      : `over ${Math.min(range, series.length)} days`;
+  }
+
+  function idxFromEvent(ev) {
+    const g = geometry();
+    const r = chart.getBoundingClientRect();
+    const cx = (ev.clientX - r.left) / r.width * VBW;
+    const t = (cx - PAD.l) / (VBW - PAD.l - PAD.r);
+    const i = Math.round(Math.max(0, Math.min(1, t)) * (g.vals.length - 1));
+    return g.from + i;
+  }
+
+  chart.addEventListener("pointermove", (ev) => {
+    scrubIdx = idxFromEvent(ev);
+    plate.dataset.scrubbing = "true";
+    if (dragFrom !== null) windowSel = [Math.min(dragFrom, scrubIdx), Math.max(dragFrom, scrubIdx)];
+    const v = series[scrubIdx];
+    $("#slugDate").textContent = fmtDay(dayAt(scrubIdx));
+    const g = geometry();
+    const base = series[windowSel ? windowSel[0] : g.from];
+    const dd = v - base;
+    $("#slugVal").innerHTML = `${money(v)} <span style="color:var(--${dd >= 0 ? "positive" : "negative"})">` +
+      `${moneySigned(dd)}</span>`;
+    // the hero rolls in lockstep with the crosshair — the signature move
+    setRoll(heroRoll, groupInt(v));
+    $("#heroCents").textContent = cents(v);
+    $("#nwContext").textContent = "· " + fmtDay(dayAt(scrubIdx));
+    draw();
+  });
+  chart.addEventListener("pointerleave", () => {
+    scrubIdx = null; dragFrom = null;
+    plate.dataset.scrubbing = "false";
+    draw(); syncHero();
+  });
+  chart.addEventListener("pointerdown", (ev) => {
+    dragFrom = idxFromEvent(ev);
+    windowSel = null;
+    chart.setPointerCapture && chart.setPointerCapture(ev.pointerId);
+  });
+  chart.addEventListener("pointerup", () => {
+    if (dragFrom !== null && windowSel && windowSel[1] - windowSel[0] < 3) windowSel = null;
+    dragFrom = null;
+    draw();
+  });
+
+  document.querySelectorAll(".pill").forEach((p) => {
+    p.addEventListener("click", () => {
+      document.querySelectorAll(".pill").forEach((q) => q.setAttribute("aria-pressed", "false"));
+      p.setAttribute("aria-pressed", "true");
+      range = Number(p.dataset.range);
+      windowSel = null; scrubIdx = null;
+      draw(); syncHero();
+    });
+  });
+
+  /* ───────────────────── axonometric account stack ───────────────────── */
+  (function drawIso() {
+    const svg = $("#iso");
+    const W = 1000, H = 320, BASE = 196;
+    const DX = 17, DY = -10;                 // the axonometric shear
+    const slabW = 52, gap = 32, startX = 24;
+    // Scale is set by the SECOND-largest balance, not the largest: one brokerage
+    // account is 7× everything else, and letting it set the scale flattens the
+    // other nine into pancakes. The outlier is drawn to a cap with a printed
+    // scale-break — the old newspaper convention — and always prints its figure.
+    const sorted = [...ACCOUNTS].map((a) => Math.abs(a.v)).sort((a, b) => b - a);
+    const scale = 92 / sorted[1];
+    const CAP = 152;
+
+    /** zigzag torn edge for the scale break */
+    const zig = (x0, x1, y, amp) => {
+      const n = 6, pts = [];
+      for (let i = 0; i <= n; i++) {
+        const t = i / n;
+        pts.push([x0 + (x1 - x0) * t, y + (i % 2 ? amp : -amp)]);
+      }
+      return pts;
+    };
+
+    svg.appendChild(el("line", { class: "iso-base", x1: 8, x2: W - 8, y1: BASE, y2: BASE }));
+    svg.appendChild(el("line", { class: "iso-base", x1: 8 + DX, x2: W - 8 + DX,
+      y1: BASE + DY, y2: BASE + DY, opacity: "0.45" }));
+
+    ACCOUNTS.forEach((acc, k) => {
+      const x = startX + k * (slabW + gap);
+      const raw = Math.abs(acc.v) * scale;
+      const broken = raw > CAP;
+      const h = Math.max(7, Math.min(raw, CAP));
+      const up = acc.v >= 0;
+      const top = up ? BASE - h : BASE;
+      const bot = up ? BASE : BASE + h;
+      const hue = `var(--cat-${acc.hue})`;
+
+      const gCol = el("g", { class: "iso-col", tabindex: "0", role: "listitem" });
+      const title = el("title");
+      title.textContent = `${acc.n} ${acc.sub}: ${money(acc.v)}` + (broken ? " (scale broken)" : "");
+      gCol.appendChild(title);
+      const lift = el("g", { class: "lift" });
+
+      lift.appendChild(el("rect", { class: "iso-face", x: x, y: top, width: slabW, height: bot - top,
+        fill: hue, opacity: "0.78" }));
+      lift.appendChild(el("polygon", { class: "iso-face",
+        points: `${x},${top} ${x + DX},${top + DY} ${x + slabW + DX},${top + DY} ${x + slabW},${top}`,
+        fill: hue, opacity: "1" }));
+      lift.appendChild(el("polygon", { class: "iso-face",
+        points: `${x + slabW},${top} ${x + slabW + DX},${top + DY} ${x + slabW + DX},${bot + DY} ${x + slabW},${bot}`,
+        fill: hue, opacity: "0.5" }));
+
+      if (broken) {
+        const yb = top + 46;
+        const a = zig(x - 1, x + slabW + DX + 1, yb, 3.5);
+        const b = zig(x - 1, x + slabW + DX + 1, yb + 14, 3.5);
+        const pts = a.concat(b.slice().reverse())
+          .map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+        lift.appendChild(el("polygon", { points: pts, fill: "var(--surface)" }));
+        [a, b].forEach((row) => lift.appendChild(el("polyline", {
+          points: row.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" "),
+          fill: "none", stroke: "var(--annotation)", "stroke-width": "1",
+          "vector-effect": "non-scaling-stroke" })));
+      }
+
+      // the outlier always prints its figure; the rest reveal on hover/focus
+      const amt = el("text", {
+        class: "iso-amt", x: x + slabW / 2 + DX / 2,
+        y: up ? top + DY - 9 : bot + 17, "text-anchor": "middle",
+        style: broken ? "opacity:1" : "" });
+      amt.textContent = money(acc.v);
+      lift.appendChild(amt);
+      gCol.appendChild(lift);
+
+      const ly = up ? BASE + 34 : BASE + 34 + h;
+      const l1 = el("text", { class: "iso-label", x: x + slabW / 2, y: ly, "text-anchor": "middle" });
+      l1.textContent = acc.n;
+      const l2 = el("text", { class: "iso-label", x: x + slabW / 2, y: ly + 13,
+        "text-anchor": "middle", opacity: "0.7" });
+      l2.textContent = acc.sub;
+      gCol.appendChild(l1); gCol.appendChild(l2);
+      svg.appendChild(gCol);
+    });
+
+    const cap = el("text", { class: "ann-sub", x: 24, y: H - 8 });
+    cap.textContent = "Scale broken above $12k — Robinhood Brokerage is 7× the next account.";
+    svg.appendChild(cap);
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  })();
+
+  /* ───────────────────────── chrome ───────────────────────── */
+  const root = document.documentElement;
+  if (matchMedia("(prefers-color-scheme: dark)").matches) {
+    root.dataset.theme = "dark";
+    $("#theme").textContent = "Light";
+    $("#theme").setAttribute("aria-pressed", "true");
+  }
+  $("#theme").addEventListener("click", (e) => {
+    const dark = root.dataset.theme === "dark";
+    root.dataset.theme = dark ? "light" : "dark";
+    e.currentTarget.textContent = dark ? "Dark" : "Light";
+    e.currentTarget.setAttribute("aria-pressed", String(!dark));
+    draw();
+  });
+  $("#annToggle").addEventListener("click", (e) => {
+    const on = plate.dataset.annotations === "on";
+    plate.dataset.annotations = on ? "off" : "on";
+    e.currentTarget.setAttribute("aria-pressed", String(!on));
+  });
+  $("#replay").addEventListener("click", () => {
+    document.body.dataset.replay = "";
+    document.querySelectorAll(".settle").forEach((n) => {
+      n.style.animation = "none"; void n.offsetWidth; n.style.animation = "";
+    });
+    void document.body.offsetWidth;
+    document.body.dataset.replay = "1";
+  });
+  document.body.dataset.replay = "1";
+
+  draw();
+  syncHero();
+})();
+</script>
+</body>
+</html>

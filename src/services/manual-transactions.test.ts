@@ -10,6 +10,7 @@ import { categories } from "@/db/schema/categories";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
+import { MAX_FINANCIAL_DATE } from "@/lib/date-window";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
 import { addManualAnchor } from "./anchors";
@@ -275,6 +276,37 @@ describe("addManualTransaction — schema validation", () => {
       }),
     ).toThrow();
   });
+
+  test("rejects a fat-fingered year and writes nothing", () => {
+    const acct = makeCashWallet();
+    // a manual row drives this wallet's replay: "1026" would make derivation
+    // walk one daily row per day back to the 11th century
+    for (const postedOn of ["1026-07-02", "9999-12-31"]) {
+      expect(() =>
+        addManualTransaction(bundle.db, {
+          accountId: acct,
+          postedOn,
+          amountCents: -2_000,
+          description: "Cash coffee",
+        }),
+      ).toThrow(/postedOn must be between/);
+    }
+    expect(
+      bundle.db.select().from(transactions).where(eq(transactions.accountId, acct)).all(),
+    ).toEqual([]);
+  });
+
+  test("accepts the window bounds themselves", () => {
+    const acct = makeCashWallet();
+    expect(() =>
+      addManualTransaction(bundle.db, {
+        accountId: acct,
+        postedOn: MAX_FINANCIAL_DATE,
+        amountCents: -2_000,
+        description: "Far-dated but legal",
+      }),
+    ).not.toThrow();
+  });
 });
 
 describe("deleteManualTransaction", () => {
@@ -314,6 +346,33 @@ describe("deleteManualTransaction", () => {
 
     deleteManualTransaction(bundle.db, manualId);
     expect(bundle.db.select().from(transactions).where(eq(transactions.id, manualId)).get()).toBeUndefined();
+  });
+
+  test("snapshots the row before deleting it, and not when the delete is refused", () => {
+    // the archive lives beside the database it protects (.db only — reading a
+    // snapshot back leaves -wal/-shm siblings behind)
+    const snapshots = () => {
+      const backups = path.join(dir, "backups");
+      if (!fs.existsSync(backups)) return [];
+      return fs.readdirSync(backups).filter((f) => f.startsWith("pre-") && f.endsWith(".db"));
+    };
+
+    const acct = makeCashWallet();
+    const id = addManualTransaction(bundle.db, {
+      accountId: acct,
+      postedOn: "2026-07-02",
+      amountCents: -2_000,
+      description: "Cash coffee",
+    });
+    expect(() => deleteManualTransaction(bundle.db, "no-such-row")).toThrow(/Unknown transaction/);
+    expect(snapshots()).toEqual([]); // refused before any restore point was spent
+
+    deleteManualTransaction(bundle.db, id);
+    const name = snapshots()[0]!;
+    expect(name).toMatch(/-delete-manual-transaction\.db$/);
+    const before = createDatabase(path.join(dir, "backups", name));
+    expect(before.db.select().from(transactions).where(eq(transactions.id, id)).get()).toBeDefined();
+    before.sqlite.close();
   });
 });
 
@@ -389,6 +448,9 @@ describe("editManualTransaction — user-authored rows are correctable", () => {
     expect(() => editManualTransaction(bundle.db, id, {} as never)).toThrow(/Nothing to change/);
     expect(() => editManualTransaction(bundle.db, id, { amountCents: 0 })).toThrow(/cannot be zero/);
     expect(() => editManualTransaction(bundle.db, id, { postedOn: "2026-13-40" })).toThrow(/valid YYYY-MM-DD/);
+    expect(() => editManualTransaction(bundle.db, id, { postedOn: "1026-07-02" })).toThrow(
+      /postedOn must be between/,
+    );
     expect(() => editManualTransaction(bundle.db, "nope", { amountCents: -1 })).toThrow(/Unknown transaction/);
   });
 });

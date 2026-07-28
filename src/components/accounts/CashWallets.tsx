@@ -10,6 +10,7 @@ import { toast } from "@/components/ui/Toast";
 import { addManualTransactionAction } from "@/app/transactions/actions";
 import { createCashWalletAction } from "@/app/accounts/cash-actions";
 import { CategoryPicker, type CategoryPickerOption } from "@/components/transactions/CategoryPicker";
+import { MAX_FINANCIAL_DATE, MIN_FINANCIAL_DATE } from "@/lib/date-window";
 
 /**
  * Cash wallets (ux-overhaul-plan §3.7): create an import-free wallet for the
@@ -161,7 +162,17 @@ function NewWalletForm({
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Cash" fieldSize="sm" autoFocus />
       </Field>
       <Field label="Opening date">
-        <Input type="date" value={openingOn} onChange={(e) => setOpeningOn(e.target.value)} fieldSize="sm" className="figures" />
+        {/* the opening date becomes the wallet's first anchor — bound the year
+            here so the browser refuses a typo before derivation walks it */}
+        <Input
+          type="date"
+          value={openingOn}
+          onChange={(e) => setOpeningOn(e.target.value)}
+          min={MIN_FINANCIAL_DATE}
+          max={MAX_FINANCIAL_DATE}
+          fieldSize="sm"
+          className="figures"
+        />
       </Field>
       <Button type="submit" size="sm" pending={busy} disabled={!canSubmit}>
         Create
@@ -269,7 +280,16 @@ function AddTransactionSheet({
         </div>
 
         <Field label="Date">
-          <Input type="date" value={postedOn} onChange={(e) => setPostedOn(e.target.value)} className="figures" />
+          {/* bounds mirror manualTxnInputSchema — a manual row drives the
+              wallet's replay, so an absurd year is refused at the input */}
+          <Input
+            type="date"
+            value={postedOn}
+            onChange={(e) => setPostedOn(e.target.value)}
+            min={MIN_FINANCIAL_DATE}
+            max={MAX_FINANCIAL_DATE}
+            className="figures"
+          />
         </Field>
 
         <Field label="Description">

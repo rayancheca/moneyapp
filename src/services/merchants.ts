@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, ne } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, or, type SQL } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -15,6 +15,19 @@ import { todayIso } from "@/lib/dates";
  */
 
 const RECENT_LIMIT = 5;
+
+/**
+ * "This row's categorization is not the user's." Every automatic writer must
+ * carry it: NULL != 'user' is NULL in SQL, not true, so an unsourced row drops
+ * out of a bare `ne(...)` match. Lives here rather than in claude-categorize.ts
+ * so importing it never pulls the Anthropic SDK into a page's module graph.
+ */
+export function notUserOwned(): SQL | undefined {
+  return or(
+    isNull(transactions.categorizationSource),
+    ne(transactions.categorizationSource, "user"),
+  );
+}
 
 export interface MerchantTxnRow {
   id: string;
@@ -105,6 +118,10 @@ export function setMerchantDefaultCategory(
 /**
  * Backfill the merchant's UNCATEGORIZED active rows with its default category
  * — never overwrites an existing categorization. Lossless undo.
+ *
+ * category_id IS NULL already keeps user-categorized rows out; notUserOwned()
+ * is the belt to that suspenders — a row the user deliberately left
+ * uncategorized (source='user', category NULL) is a decision, not a gap.
  */
 export function applyMerchantDefaultToUncategorized(db: AppDatabase, merchantId: string): BulkResult {
   const merchant = db.select().from(merchants).where(eq(merchants.id, merchantId)).get();
@@ -118,6 +135,7 @@ export function applyMerchantDefaultToUncategorized(db: AppDatabase, merchantId:
         eq(transactions.merchantId, merchantId),
         eq(transactions.status, "active"),
         isNull(transactions.categoryId),
+        notUserOwned(),
       ),
     )
     .all();

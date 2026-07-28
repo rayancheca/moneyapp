@@ -280,6 +280,39 @@ describe("merge mechanics + error guards", () => {
     const netflix = seriesFor(netflixId);
     expect(attachTransactions(bundle.db, netflix.id, [], TODAY).attached).toBe(0);
   });
+
+  test("a merge snapshots the pre-merge series first — it has no inverse", () => {
+    // the archive lives beside the database it protects (.db only — reading a
+    // snapshot back leaves -wal/-shm siblings behind)
+    const snapshots = () => {
+      const backups = path.join(dir, "backups");
+      if (!fs.existsSync(backups)) return [];
+      return fs.readdirSync(backups).filter((f) => f.startsWith("pre-") && f.endsWith(".db"));
+    };
+
+    const netflix = seriesFor(netflixId);
+    const spotify = seriesFor(spotifyId);
+    expect(snapshots()).toEqual([]);
+
+    mergeSeries(bundle.db, spotify.id, netflix.id, TODAY);
+
+    const name = snapshots()[0]!;
+    expect(name).toMatch(/-merge-series\.db$/);
+    const before = createDatabase(path.join(dir, "backups", name));
+    const source = before.db
+      .select()
+      .from(recurringSeries)
+      .where(eq(recurringSeries.id, spotify.id))
+      .get()!;
+    expect(source.mergedIntoId).toBeNull(); // still live in the restore point
+    expect(source.status).not.toBe("ended");
+    before.sqlite.close();
+    // …and ended in the live database
+    expect(
+      bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, spotify.id)).get()!
+        .mergedIntoId,
+    ).toBe(netflix.id);
+  });
 });
 
 describe("user overrides shadow detection (§4.4)", () => {

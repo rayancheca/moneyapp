@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { deactivateBudgetAction } from "@/app/budgets/actions";
 import { Icon } from "@/components/shell/Icon";
+import { ConfirmActionButton } from "@/components/ui/Confirm";
 import { Money } from "@/components/ui/Money";
 import { NumberRoll } from "@/components/ui/NumberRoll";
 import { Popover, usePopover } from "@/components/ui/Popover";
 import { formatDayShort } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import type { BudgetPace, BudgetPaceStatus } from "@/services/budgets";
-import { BudgetAmountEditor } from "./BudgetAmountEditor";
+import { BudgetAmountEditor, PERIOD_WORD } from "./BudgetAmountEditor";
 
 /** Pace → the bar fill and the label tone. Green→amber→red by projected pace. */
 const PACE: Record<BudgetPace, { fill: string; text: string; label: string }> = {
@@ -197,15 +198,36 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
             period={budget.period}
             categoryPath={status.categoryPath}
           />
-          <form action={deactivateBudgetAction}>
-            <input type="hidden" name="budgetId" value={budget.id} />
-            <button
-              type="submit"
-              className="rounded-md px-1.5 py-0.5 text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:bg-surface-sunken hover:text-negative focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-            >
-              Deactivate
-            </button>
-          </form>
+          <ConfirmActionButton
+            action={deactivateBudgetAction}
+            fields={{ budgetId: budget.id }}
+            triggerLabel="Deactivate"
+            triggerAriaLabel={`Deactivate the ${status.categoryPath} budget`}
+            triggerClassName="rounded-md px-1.5 py-0.5 text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:bg-surface-sunken hover:text-negative focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            title="Deactivate this budget"
+            confirmLabel="Deactivate this budget"
+            radius={{
+              headline: `${status.categoryPath} stops being budgeted. Its spending keeps posting to the ledger — only the pace row, its projection and its alerts go.`,
+              lines: [
+                {
+                  label: "Budget stopped",
+                  value: `${formatCents(budget.amountCents)} / ${PERIOD_WORD[budget.period]}`,
+                  irreversible: true,
+                },
+                { label: "Spent so far this period", value: formatCents(status.spentCents) },
+                ...(status.expectedTailCents > 0
+                  ? [
+                      {
+                        label: "Recurring still expected this period",
+                        value: formatCents(status.expectedTailCents),
+                      },
+                    ]
+                  : []),
+              ],
+              reassurance:
+                "No transaction is changed and nothing is deleted — set the budget again to resume tracking.",
+            }}
+          />
         </div>
       </div>
     </li>

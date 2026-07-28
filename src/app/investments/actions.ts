@@ -1,12 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { ASSET_TYPES } from "@/db/schema/holdings";
 import { isValidIsoDate } from "@/lib/dates";
-import { parseAmountToCents } from "@/lib/money";
-import { parseQuantityToE8, upsertHolding } from "@/services/holdings";
+import { QuantityParseError, parseQuantityToE8, upsertHolding } from "@/services/holdings";
 import {
   pnlCalendarMonth,
   pnlDayDetail,
@@ -17,20 +17,46 @@ import { backfillSymbolHistory, refreshPrices } from "@/services/prices";
 import { hasBenchmark } from "@/services/portfolio";
 import { readSettings, writeSetting } from "@/services/settings";
 import { benchmarkAssetType, normalizeBenchmarkSymbol } from "@/lib/benchmark-symbol";
-import type { ActionResult } from "@/app/transactions/action-types";
+import {
+  actionErrorMessage,
+  firstIssueMessage,
+  parseAmountField,
+  type ActionResult,
+} from "@/app/transactions/action-types";
 
+// the single-argument form reports the SAME message when the field is missing
+// entirely, instead of zod's "expected string, received undefined"
 const addHoldingFormSchema = z.object({
-  accountId: z.string().min(1, "Pick an account"),
-  symbol: z.string().trim().min(1, "Enter a symbol"),
+  accountId: z.string("Pick an account").min(1, "Pick an account"),
+  symbol: z.string("Enter a symbol").trim().min(1, "Enter a symbol"),
   assetType: z.enum(ASSET_TYPES),
-  quantity: z.string().trim().min(1, "Enter a quantity"),
+  quantity: z.string("Enter a quantity").trim().min(1, "Enter a quantity"),
   avgCost: z.string().trim().optional(),
   occurredOn: z.string().refine(isValidIsoDate, "Invalid date").optional(),
 });
 
-export async function addHoldingAction(formData: FormData): Promise<void> {
+const HOLDING_LABELS = {
+  accountId: "Account",
+  symbol: "Symbol",
+  assetType: "Asset type",
+  quantity: "Quantity",
+  avgCost: "Average cost",
+  occurredOn: "Date",
+  monthKey: "Month",
+  day: "Day",
+} as const;
+
+/**
+ * Validating core of the add-holding form: quantity, average cost and the
+ * upsert all report as an {@link ActionResult}. Every one of them used to throw
+ * straight out of a `<form action>`, which Next turns into an error digest that
+ * replaces the page and loses the other fields.
+ */
+export async function addHoldingResultAction(
+  formData: FormData,
+): Promise<ActionResult<{ symbol: string; quantityE8: number }>> {
   const raw = Object.fromEntries(formData.entries());
-  const parsed = addHoldingFormSchema.parse({
+  const parsed = addHoldingFormSchema.safeParse({
     accountId: raw.accountId,
     symbol: raw.symbol,
     assetType: raw.assetType,
@@ -39,25 +65,52 @@ export async function addHoldingAction(formData: FormData): Promise<void> {
     occurredOn:
       typeof raw.occurredOn === "string" && raw.occurredOn !== "" ? raw.occurredOn : undefined,
   });
-
-  // quantity is parsed with string math — floats never touch it
-  const quantityE8 = parseQuantityToE8(parsed.quantity);
-  const avgCostCents = parsed.avgCost !== undefined ? parseAmountToCents(parsed.avgCost) : null;
-  if (avgCostCents !== null && avgCostCents < 0) {
-    throw new Error("Average cost must be positive");
+  if (!parsed.success) {
+    return { ok: false, error: firstIssueMessage(parsed.error.issues, HOLDING_LABELS) };
   }
 
-  upsertHolding(getDb(), {
-    accountId: parsed.accountId,
-    symbol: parsed.symbol,
-    assetType: parsed.assetType,
-    quantityE8,
-    avgCostCents,
-    occurredOn: parsed.occurredOn,
-  });
+  // quantity is parsed with string math — floats never touch it
+  let quantityE8: number;
+  try {
+    quantityE8 = parseQuantityToE8(parsed.data.quantity);
+  } catch (error: unknown) {
+    if (error instanceof QuantityParseError) {
+      return { ok: false, error: `${HOLDING_LABELS.quantity}: enter a number like 10 or 0.25` };
+    }
+    return { ok: false, error: `${HOLDING_LABELS.quantity}: could not read that quantity` };
+  }
+
+  let avgCostCents: number | null = null;
+  if (parsed.data.avgCost !== undefined) {
+    const amount = parseAmountField(HOLDING_LABELS.avgCost, parsed.data.avgCost);
+    if (!amount.ok) return amount;
+    if (amount.data < 0) return { ok: false, error: "Average cost must be positive" };
+    avgCostCents = amount.data;
+  }
+
+  try {
+    upsertHolding(getDb(), {
+      accountId: parsed.data.accountId,
+      symbol: parsed.data.symbol,
+      assetType: parsed.data.assetType,
+      quantityE8,
+      avgCostCents,
+      occurredOn: parsed.data.occurredOn,
+    });
+  } catch (error: unknown) {
+    return { ok: false, error: actionErrorMessage(error, HOLDING_LABELS, "Could not add the holding") };
+  }
 
   revalidatePath("/");
   revalidatePath("/investments");
+  return { ok: true, data: { symbol: parsed.data.symbol, quantityE8 } };
+}
+
+export async function addHoldingAction(formData: FormData): Promise<void> {
+  const result = await addHoldingResultAction(formData);
+  if (result.ok) return;
+  // redirect() throws NEXT_REDIRECT by design — it must stay outside any catch
+  redirect(`/investments?error=${encodeURIComponent(result.error)}`);
 }
 
 export interface RefreshPricesSummary {
@@ -93,7 +146,7 @@ export async function refreshPricesAction(): Promise<ActionResult<RefreshPricesS
       },
     };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Refresh failed" };
+    return { ok: false, error: actionErrorMessage(error, HOLDING_LABELS, "Refresh failed") };
   }
 }
 
@@ -131,7 +184,7 @@ export async function setBenchmarkAction(symbolInput: string): Promise<ActionRes
     revalidatePath("/investments");
     return { ok: true, data: { symbol } };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Couldn't set the benchmark" };
+    return { ok: false, error: actionErrorMessage(error, HOLDING_LABELS, "Couldn't set the benchmark") };
   }
 }
 
@@ -146,7 +199,8 @@ export async function loadPnlMonthAction(
     const { monthKey } = monthSchema.parse(input);
     return { ok: true, data: pnlCalendarMonth(getDb(), monthKey) };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Failed to load month" };
+    // a ZodError's own message is a JSON dump of the issue array — unwrap it
+    return { ok: false, error: actionErrorMessage(error, HOLDING_LABELS, "Failed to load month") };
   }
 }
 
@@ -159,6 +213,6 @@ export async function loadPnlDayAction(
     const { day } = daySchema.parse(input);
     return { ok: true, data: pnlDayDetail(getDb(), day) };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Failed to load day" };
+    return { ok: false, error: actionErrorMessage(error, HOLDING_LABELS, "Failed to load day") };
   }
 }

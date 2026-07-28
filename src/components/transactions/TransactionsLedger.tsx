@@ -17,7 +17,7 @@ import { BulkActionBar } from "./BulkActionBar";
 import { CategoryPicker, type CategoryPickerOption } from "./CategoryPicker";
 import { runCategoryCorrection } from "./correct-category";
 import { LedgerRowExpander } from "./LedgerRowExpander";
-import type { SearchParams } from "./query";
+import { parseFilters, type SearchParams } from "./query";
 import { TransactionSheet } from "./TransactionSheet";
 import { offerUndoToast } from "./undo-toast";
 
@@ -48,11 +48,19 @@ export interface LedgerRow {
   splitCount?: number;
 }
 
-interface DayGroup {
+export interface DayGroup {
   day: string;
   label: string;
   netCents: number;
   rows: LedgerRow[];
+  /** the day is cut by a page boundary — netCents covers THIS page's rows only */
+  partial: boolean;
+}
+
+/** what the page boundary hides on either side of the rows we were handed */
+export interface DayGroupBoundary {
+  hiddenBefore?: boolean;
+  hiddenAfter?: boolean;
 }
 
 const DAY_FORMAT = new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric" });
@@ -62,7 +70,13 @@ const REVEAL =
   "opacity-0 transition-opacity duration-(--duration-fast) group-hover/row:opacity-100 " +
   "group-focus-within/row:opacity-100 pointer-coarse:opacity-100";
 
-function groupByDay(rows: readonly LedgerRow[]): DayGroup[] {
+/**
+ * Group consecutive rows by posted day. Rows arrive one PAGE at a time, so a day
+ * split across a page boundary is only partly here — its subtotal would silently
+ * omit the rest. The boundary-touching groups are flagged `partial` and the
+ * header says so, rather than presenting a wrong day total as a fact.
+ */
+export function groupByDay(rows: readonly LedgerRow[], boundary: DayGroupBoundary = {}): DayGroup[] {
   const groups: DayGroup[] = [];
   for (const row of rows) {
     const last = groups.at(-1);
@@ -75,10 +89,47 @@ function groupByDay(rows: readonly LedgerRow[]): DayGroup[] {
         label: DAY_FORMAT.format(new Date(`${row.postedOn}T12:00:00`)),
         netCents: row.amountCents,
         rows: [row],
+        partial: false,
       });
     }
   }
+  const first = groups[0];
+  const last = groups.at(-1);
+  if (first && boundary.hiddenBefore) first.partial = true;
+  if (last && boundary.hiddenAfter) last.partial = true;
   return groups;
+}
+
+/**
+ * What the page boundary hides on either side of one page of rows.
+ *
+ * The offset has to come from `pageSize`, not from `rows.length`: they agree on
+ * every page but the LAST, where a short page makes `page * rows.length`
+ * collapse far below the total and flag the final day as cut when nothing
+ * follows it (157 rows, page 4 of 4 holding 7 → 4 * 7 = 28 < 157 → a "partial"
+ * tag on the last day of the ledger, which is the common case rather than an
+ * edge one). Counting the rows actually consumed — `(page - 1) * pageSize +
+ * rows.length` — is exact in both directions.
+ *
+ * `hiddenBefore` stays a plain `page > 1`: whether the previous page ended mid-
+ * day is genuinely not knowable from this page's rows, so the header hedges.
+ */
+export function pageBoundary({
+  page,
+  pageSize,
+  rowsOnPage,
+  totalMatching,
+}: {
+  page: number;
+  pageSize: number;
+  rowsOnPage: number;
+  totalMatching: number;
+}): DayGroupBoundary {
+  const consumedBefore = (page - 1) * pageSize;
+  return {
+    hiddenBefore: consumedBefore > 0,
+    hiddenAfter: consumedBefore + rowsOnPage < totalMatching,
+  };
 }
 
 /**
@@ -96,6 +147,7 @@ export function TransactionsLedger({
   categories,
   selectionParams,
   totalMatching,
+  pageSize,
 }: {
   rows: readonly LedgerRow[];
   categories: readonly CategoryPickerOption[];
@@ -103,6 +155,8 @@ export function TransactionsLedger({
   selectionParams: SearchParams;
   /** server count of the whole filtered set — the "Select all N" blast radius */
   totalMatching: number;
+  /** rows per page the server sliced with — the offset behind this page */
+  pageSize: number;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -112,7 +166,12 @@ export function TransactionsLedger({
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [allMatching, setAllMatching] = useState(false);
 
-  const groups = useMemo(() => groupByDay(rows), [rows]);
+  // Day subtotals are honest about the page boundary — see pageBoundary.
+  const page = parseFilters(selectionParams).page;
+  const groups = useMemo(
+    () => groupByDay(rows, pageBoundary({ page, pageSize, rowsOnPage: rows.length, totalMatching })),
+    [rows, page, pageSize, totalMatching],
+  );
   const openIndex = openId === null ? -1 : rows.findIndex((r) => r.id === openId);
   const openRow = openIndex >= 0 ? rows[openIndex]! : null;
 
@@ -237,7 +296,22 @@ export function TransactionsLedger({
           <section key={group.day}>
             <div className="flex items-baseline justify-between border-b border-line bg-surface-sunken/60 px-4 py-1.5">
               <h2 className="text-[11px] font-medium uppercase tracking-[0.1em] text-ink-faint">{group.label}</h2>
-              <Money cents={group.netCents} flow className="figures text-[11px]" />
+              <span className="flex items-baseline gap-1.5">
+                <Money cents={group.netCents} flow className="figures text-[11px]" />
+                {group.partial ? (
+                  <span
+                    title="This day is cut by the page boundary — the subtotal counts only the rows shown on this page."
+                    className="text-[10px] uppercase tracking-[0.08em] text-ink-faint"
+                  >
+                    partial
+                    <span className="sr-only">
+                      {" "}
+                      — subtotal counts only the rows on this page; this day may continue on the
+                      neighboring page
+                    </span>
+                  </span>
+                ) : null}
+              </span>
             </div>
             {group.rows.map((r) => {
               const sel = isSelected(r.id);

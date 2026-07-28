@@ -1,10 +1,25 @@
 "use server";
 
+import fs from "node:fs";
+import path from "node:path";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
-import { getDb } from "@/db/client";
+import { defaultBackupsDir, getDb, getDbBundle } from "@/db/client";
+import {
+  manualSnapshot,
+  resolveSnapshotPath,
+  restoreFromSnapshot,
+  type PreMutationSnapshotResult,
+} from "@/db/backup";
 import { DASHBOARD_SECTION_IDS, readSettings, writeSetting } from "@/services/settings";
 import { normalizeOrder } from "@/lib/reorder";
+import { matchesRestorePhrase } from "@/components/settings/restore-phrase";
+import {
+  actionErrorMessage,
+  firstIssueMessage,
+  type ActionResult,
+} from "@/app/transactions/action-types";
 
 const formSchema = z.object({
   aiMonthlyCapUsd: z.coerce.number().min(0).max(1_000),
@@ -13,19 +28,53 @@ const formSchema = z.object({
   categorizationConfidenceMin: z.coerce.number().min(0).max(1),
 });
 
-export async function updateSettingsAction(formData: FormData): Promise<void> {
-  const parsed = formSchema.parse({
+const SETTINGS_LABELS = {
+  aiMonthlyCapUsd: "Monthly AI cap",
+  priceStalenessHours: "Price staleness window",
+  reviewCreditThresholdCents: "Review credit threshold",
+  categorizationConfidenceMin: "Minimum categorization confidence",
+} as const;
+
+export type SettingsFormValues = z.output<typeof formSchema>;
+
+/**
+ * Validating core of the settings form. `Number("abc")` is NaN, which the coerce
+ * schema rejects — as a throw that used to take the whole Settings page down,
+ * now as a named-field message.
+ */
+export async function updateSettingsResultAction(
+  formData: FormData,
+): Promise<ActionResult<SettingsFormValues>> {
+  const rawThreshold = formData.get("reviewCreditThresholdUsd");
+  const parsed = formSchema.safeParse({
     aiMonthlyCapUsd: formData.get("aiMonthlyCapUsd"),
     priceStalenessHours: formData.get("priceStalenessHours"),
-    reviewCreditThresholdCents: Math.round(Number(formData.get("reviewCreditThresholdUsd")) * 100),
+    // Math.round(NaN) is NaN, so a non-numeric entry still fails the schema
+    // rather than silently writing 0.
+    reviewCreditThresholdCents: Math.round(Number(rawThreshold) * 100),
     categorizationConfidenceMin: formData.get("categorizationConfidenceMin"),
   });
-  const db = getDb();
-  writeSetting(db, "aiMonthlyCapUsd", parsed.aiMonthlyCapUsd);
-  writeSetting(db, "priceStalenessHours", parsed.priceStalenessHours);
-  writeSetting(db, "reviewCreditThresholdCents", parsed.reviewCreditThresholdCents);
-  writeSetting(db, "categorizationConfidenceMin", parsed.categorizationConfidenceMin);
+  if (!parsed.success) {
+    return { ok: false, error: firstIssueMessage(parsed.error.issues, SETTINGS_LABELS) };
+  }
+  try {
+    const db = getDb();
+    writeSetting(db, "aiMonthlyCapUsd", parsed.data.aiMonthlyCapUsd);
+    writeSetting(db, "priceStalenessHours", parsed.data.priceStalenessHours);
+    writeSetting(db, "reviewCreditThresholdCents", parsed.data.reviewCreditThresholdCents);
+    writeSetting(db, "categorizationConfidenceMin", parsed.data.categorizationConfidenceMin);
+  } catch (error: unknown) {
+    return { ok: false, error: actionErrorMessage(error, SETTINGS_LABELS, "Could not save settings") };
+  }
   revalidatePath("/settings");
+  return { ok: true, data: parsed.data };
+}
+
+export async function updateSettingsAction(formData: FormData): Promise<void> {
+  const result = await updateSettingsResultAction(formData);
+  if (result.ok) return;
+  // redirect() throws NEXT_REDIRECT by design — it must stay outside any catch
+  redirect(`/settings?error=${encodeURIComponent(result.error)}`);
 }
 
 const dashboardLayoutSchema = z
@@ -45,7 +94,7 @@ export async function saveDashboardLayoutAction(
     revalidatePath("/");
     return { ok: true };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Could not save the layout" };
+    return { ok: false, error: actionErrorMessage(error, SETTINGS_LABELS, "Could not save the layout") };
   }
 }
 
@@ -83,6 +132,126 @@ export async function saveViewPreferenceAction(
     writeSetting(db, "viewPreferences", { ...current, [parsed.data.surface]: merged });
     return { ok: true };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Could not save the view" };
+    return { ok: false, error: actionErrorMessage(error, SETTINGS_LABELS, "Could not save the view") };
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Backups
+ *
+ * Three actions over the archive the Settings page lists. Every one of them
+ * takes a snapshot NAME, never a path: the name comes from the browser, and
+ * resolveSnapshotPath is the single place that decides whether it points at
+ * something inside the archive at all.
+ * ------------------------------------------------------------------ */
+
+/** Nothing here streams, so a download is capped at what fits comfortably in a response. */
+const MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024;
+
+const snapshotNameSchema = z.string().min(1).max(255);
+
+export interface BackupNowData {
+  /** the restore point written, or null when this database has backups turned off */
+  name: string | null;
+  /** why nothing was written — a skip is never silent */
+  reason: PreMutationSnapshotResult["reason"] | null;
+  /** older restore points rotation removed to make room */
+  pruned: number;
+}
+
+/** A restore point on demand — the same mechanism every irreversible action uses. */
+export async function backUpNowAction(): Promise<ActionResult<BackupNowData>> {
+  try {
+    const result = manualSnapshot(getDbBundle().sqlite);
+    revalidatePath("/settings");
+    return {
+      ok: true,
+      data: {
+        name: result.path === null ? null : path.basename(result.path),
+        reason: result.reason ?? null,
+        pruned: result.pruned.length,
+      },
+    };
+  } catch (error: unknown) {
+    return { ok: false, error: actionErrorMessage(error, {}, "Could not write a backup") };
+  }
+}
+
+export interface RestoreSnapshotData {
+  restoredFrom: string;
+  /** the state from just before, so the restore itself can be walked back */
+  preRestoreName: string | null;
+  transactionsBefore: number | null;
+  transactionsAfter: number | null;
+}
+
+/**
+ * Replaces the ledger with a snapshot. The typed phrase is re-checked HERE:
+ * the dialog's gate is a courtesy, this one is the rule.
+ *
+ * Deliberately value-returning rather than a <form action> — the client needs
+ * to report which restore point was saved on the way past, and a redirect
+ * would throw that away.
+ */
+export async function restoreSnapshotAction(input: {
+  name: string;
+  confirmation: string;
+}): Promise<ActionResult<RestoreSnapshotData>> {
+  const parsed = snapshotNameSchema.safeParse(input.name);
+  if (!parsed.success) return { ok: false, error: "That is not a snapshot in the backups folder" };
+  if (!matchesRestorePhrase(input.confirmation)) {
+    return { ok: false, error: "Nothing was restored — the confirmation word did not match" };
+  }
+  try {
+    const full = resolveSnapshotPath(defaultBackupsDir(), parsed.data);
+    const result = restoreFromSnapshot(getDbBundle(), full);
+    // every screen in the app is now looking at a different ledger
+    revalidatePath("/", "layout");
+    return {
+      ok: true,
+      data: {
+        restoredFrom: result.restoredFrom,
+        preRestoreName:
+          result.preRestorePath === null ? null : path.basename(result.preRestorePath),
+        transactionsBefore: result.transactionsBefore,
+        transactionsAfter: result.transactionsAfter,
+      },
+    };
+  } catch (error: unknown) {
+    return { ok: false, error: actionErrorMessage(error, {}, "Could not restore that snapshot") };
+  }
+}
+
+export interface DownloadSnapshotData {
+  filename: string;
+  sizeBytes: number;
+  /**
+   * The file itself, base64. A local-first app has the snapshot on disk
+   * already; what "download" buys is a copy somewhere this machine's disk
+   * failing cannot reach, so the bytes have to travel through the response.
+   */
+  base64: string;
+}
+
+export async function downloadSnapshotAction(
+  name: string,
+): Promise<ActionResult<DownloadSnapshotData>> {
+  const parsed = snapshotNameSchema.safeParse(name);
+  if (!parsed.success) return { ok: false, error: "That is not a snapshot in the backups folder" };
+  try {
+    const full = resolveSnapshotPath(defaultBackupsDir(), parsed.data);
+    const { size } = fs.statSync(full);
+    if (size > MAX_DOWNLOAD_BYTES) {
+      return {
+        ok: false,
+        error: `That snapshot is too large to download from here — copy it from ${full}`,
+      };
+    }
+    return {
+      ok: true,
+      data: { filename: parsed.data, sizeBytes: size, base64: fs.readFileSync(full).toString("base64") },
+    };
+  } catch (error: unknown) {
+    return { ok: false, error: actionErrorMessage(error, {}, "Could not read that snapshot") };
   }
 }

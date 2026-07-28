@@ -5,11 +5,18 @@ import { and, eq, isNull } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { dailyBalances } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
-import { transactions, type CategorizationSource } from "@/db/schema/transactions";
+import {
+  transactions,
+  type CategorizationSource,
+  type TransactionStatus,
+} from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
+import { addManualAnchor } from "./anchors";
+import { rebuildAccount } from "./derivation";
 import {
   applyUndoPatch,
   bulkApply,
@@ -63,6 +70,7 @@ function insertTxn(overrides: {
   needsReview?: boolean;
   transferGroupId?: string | null;
   notes?: string | null;
+  status?: TransactionStatus;
 }): string {
   seq += 1;
   const accountId = overrides.accountId ?? checkingId;
@@ -82,6 +90,7 @@ function insertTxn(overrides: {
       needsReview: overrides.needsReview ?? false,
       transferGroupId: overrides.transferGroupId ?? null,
       notes: overrides.notes ?? null,
+      status: overrides.status ?? "active",
       dedupeHash: dedupeHash({
         accountId,
         postedOn,
@@ -96,6 +105,23 @@ function insertTxn(overrides: {
 
 function txn(id: string) {
   return bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+}
+
+/** "Transfers > Internal Transfer" for a category id — the KIND is what analytics reads. */
+function categoryPathOf(categoryId: string | null): string | null {
+  if (!categoryId) return null;
+  const cat = bundle.db.select().from(categories).where(eq(categories.id, categoryId)).get()!;
+  if (!cat.parentId) return cat.name;
+  const parent = bundle.db.select().from(categories).where(eq(categories.id, cat.parentId)).get()!;
+  return `${parent.name} > ${cat.name}`;
+}
+
+function balanceOn(accountId: string, day: string): number | undefined {
+  return bundle.db
+    .select()
+    .from(dailyBalances)
+    .where(and(eq(dailyBalances.accountId, accountId), eq(dailyBalances.day, day)))
+    .get()?.balanceCents;
 }
 
 /**
@@ -368,6 +394,188 @@ describe("setTransactionFlags", () => {
     );
     expect(txn(superseded).status).toBe("superseded");
     expect(txn(active).status).toBe("active");
+  });
+});
+
+/**
+ * One meaning for "Transfer". Analytics keys off the category's KIND, so a row
+ * that carries only a transferGroupId still counts as spending — the manual
+ * mark has to stamp the same Transfers category linkTransferPair stamps.
+ * (Measured on the owner's real ledger the double-count is 0 rows today: every
+ * paired row already carries a transfer-kind category. This is the latent hole
+ * in the manual path, not a live mis-count.)
+ */
+describe("markTransfer stamps the category, not just the link", () => {
+  test("a marked row lands in Transfers > Internal Transfer as a user decision", () => {
+    // Arrange: an ordinary spend row the user recognises as moved money
+    const a = insertTxn({ categoryId: catId("Food > Dining"), categorizationSource: "claude", needsReview: true });
+
+    // Act
+    const { undo } = bulkApply(bundle.db, [a], { markTransfer: true });
+
+    // Assert: the link AND the kind — either alone is a half-marked transfer
+    const row = txn(a);
+    expect(row.transferGroupId).toBe(a);
+    expect(categoryPathOf(row.categoryId)).toBe("Transfers > Internal Transfer");
+    expect(row.categorizationSource).toBe("user");
+    expect(row.categorizationConfidence).toBe(1);
+    expect(row.needsReview).toBe(false);
+
+    // Assert: undo is still lossless over every field the mark touched
+    applyUndoPatch(bundle.db, undo);
+    const restored = txn(a);
+    expect(restored.transferGroupId).toBeNull();
+    expect(categoryPathOf(restored.categoryId)).toBe("Food > Dining");
+    expect(restored.categorizationSource).toBe("claude");
+    expect(restored.needsReview).toBe(true);
+  });
+
+  test("the category follows the account, exactly like the pair-linker", () => {
+    const onCard = insertTxn({ accountId: cardId });
+    bulkApply(bundle.db, [onCard], { markTransfer: true });
+    expect(categoryPathOf(txn(onCard).categoryId)).toBe("Transfers > Credit Card Payment");
+  });
+
+  test("a transfer-kind category already on the row is never downgraded", () => {
+    // the pair-linker labels BOTH legs of a card payment "Credit Card Payment".
+    // Re-marking the checking leg knows only one account — it must not rewrite
+    // that to the vaguer "Internal Transfer".
+    const cardPayment = catId("Transfers > Credit Card Payment");
+    const leg = insertTxn({
+      accountId: checkingId,
+      categoryId: cardPayment,
+      categorizationSource: "user",
+      transferGroupId: "pair-group",
+    });
+
+    bulkApply(bundle.db, [leg], { markTransfer: true });
+
+    expect(txn(leg).categoryId).toBe(cardPayment);
+    expect(txn(leg).transferGroupId).toBe("pair-group");
+  });
+
+  test("the sheet's checkbox leaves an existing transfer-kind category alone too", () => {
+    const contribution = catId("Transfers > Investment Contribution");
+    const leg = insertTxn({ categoryId: contribution, categorizationSource: "user" });
+    setTransactionFlags(bundle.db, leg, { transfer: true });
+    expect(txn(leg).categoryId).toBe(contribution);
+    expect(txn(leg).transferGroupId).toBe(leg);
+  });
+
+  test("an explicit categoryId in the same patch outranks the implied one", () => {
+    const a = insertTxn({});
+    const groceries = catId("Food > Groceries");
+    bulkApply(bundle.db, [a], { categoryId: groceries, markTransfer: true });
+    expect(txn(a).categoryId).toBe(groceries);
+    expect(txn(a).transferGroupId).toBe(a);
+  });
+
+  test("clearTransfer drops the link and keeps the category, like unlinkTransferGroup", () => {
+    const a = insertTxn({});
+    bulkApply(bundle.db, [a], { markTransfer: true });
+    const stamped = txn(a).categoryId;
+
+    bulkApply(bundle.db, [a], { clearTransfer: true });
+
+    expect(txn(a).transferGroupId).toBeNull();
+    expect(txn(a).categoryId).toBe(stamped); // clearing a LINK fabricates no uncategorized hole
+  });
+
+  test("a split row is skipped whole — no link, no stamp", () => {
+    // splitTxnIdsIn drives the skip; with no splits present the guard is inert,
+    // so this pins the plain-row half: marking never leaves a set-less UPDATE
+    const a = insertTxn({});
+    const result = bulkApply(bundle.db, [a], { markTransfer: true });
+    expect(result.affected).toBe(1);
+  });
+
+  test("the sheet's Transfer checkbox stamps the same category as the bulk path", () => {
+    const a = insertTxn({ needsReview: true });
+    const { undo } = setTransactionFlags(bundle.db, a, { transfer: true });
+    expect(categoryPathOf(txn(a).categoryId)).toBe("Transfers > Internal Transfer");
+    expect(txn(a).categorizationSource).toBe("user");
+    expect(txn(a).needsReview).toBe(false);
+
+    applyUndoPatch(bundle.db, undo);
+    expect(txn(a).categoryId).toBeNull();
+    expect(txn(a).needsReview).toBe(true);
+  });
+});
+
+/**
+ * daily_balances is a DERIVED CACHE — truth is transactions + anchors. Balance
+ * replay reads status IN ('active','excluded'), so a row leaving quarantine
+ * joins the replay and the cached curve is stale until something rebuilds it.
+ */
+describe("balance replay membership invalidates the derived cache", () => {
+  const ANCHOR_DAY = "2026-07-01";
+  const TXN_DAY = "2026-07-02";
+
+  /** Anchor the account, then settle the cache — the state a real import leaves. */
+  function anchorAndSettle(accountId: string, enteredCents: number): void {
+    addManualAnchor(bundle.db, { accountId, anchoredOn: ANCHOR_DAY, enteredCents });
+    rebuildAccount(bundle.db, accountId);
+  }
+
+  test("restoring a quarantined row rebuilds the account curve", () => {
+    // Arrange: cache settled WITH the quarantined row present — it sits outside
+    // replay, so the curve holds flat across it
+    const held = insertTxn({ postedOn: TXN_DAY, amountCents: -25_000, status: "quarantined" });
+    anchorAndSettle(checkingId, 100_000);
+    expect(balanceOn(checkingId, TXN_DAY)).toBe(100_000);
+
+    // Act
+    const { undo } = bulkApply(bundle.db, [held], { restore: true });
+
+    // Assert: the row now replays — no price refresh, no anchor edit needed
+    expect(txn(held).status).toBe("active");
+    expect(balanceOn(checkingId, TXN_DAY)).toBe(75_000);
+
+    // Assert: undo puts it back out of replay AND un-stales the cache again
+    applyUndoPatch(bundle.db, undo);
+    expect(txn(held).status).toBe("quarantined");
+    expect(balanceOn(checkingId, TXN_DAY)).toBe(100_000);
+  });
+
+  test("excluding a quarantined row also joins replay — the money still moved", () => {
+    const held = insertTxn({ postedOn: TXN_DAY, amountCents: -25_000, status: "quarantined" });
+    anchorAndSettle(checkingId, 100_000);
+    bulkApply(bundle.db, [held], { exclude: true });
+    expect(balanceOn(checkingId, TXN_DAY)).toBe(75_000);
+  });
+
+  test("ordinary exclude/restore never moves the curve (both statuses replay)", () => {
+    const spend = insertTxn({ postedOn: TXN_DAY, amountCents: -25_000 });
+    anchorAndSettle(checkingId, 100_000);
+    expect(balanceOn(checkingId, TXN_DAY)).toBe(75_000);
+
+    bulkApply(bundle.db, [spend], { exclude: true });
+    expect(balanceOn(checkingId, TXN_DAY)).toBe(75_000); // hidden from analytics only
+
+    bulkApply(bundle.db, [spend], { restore: true });
+    expect(balanceOn(checkingId, TXN_DAY)).toBe(75_000);
+  });
+
+  test("the sheet's Restore toggle invalidates the cache too", () => {
+    const held = insertTxn({ postedOn: TXN_DAY, amountCents: -40_000, status: "quarantined" });
+    anchorAndSettle(checkingId, 100_000);
+    setTransactionFlags(bundle.db, held, { exclude: false });
+    expect(txn(held).status).toBe("active");
+    expect(balanceOn(checkingId, TXN_DAY)).toBe(60_000);
+  });
+
+  test("a mixed batch rebuilds every affected account, not just the first", () => {
+    const a = insertTxn({ postedOn: TXN_DAY, amountCents: -5_000, status: "quarantined" });
+    const b = insertTxn({ postedOn: TXN_DAY, amountCents: -3_000, status: "quarantined" });
+    const onCard = insertTxn({ accountId: cardId, postedOn: TXN_DAY, amountCents: -7_000, status: "quarantined" });
+    anchorAndSettle(checkingId, 100_000);
+    anchorAndSettle(cardId, 20_000);
+
+    bulkApply(bundle.db, [a, b, onCard], { restore: true });
+
+    expect(balanceOn(checkingId, TXN_DAY)).toBe(92_000);
+    // credit is stored negative: −$200 owed, then another $70 charged
+    expect(balanceOn(cardId, TXN_DAY)).toBe(-27_000);
   });
 });
 

@@ -10,7 +10,62 @@ import { E2E_FAKE_TODAY, seedE2eDatabase } from "./seed-helpers";
  * The clock is pinned to E2E_FAKE_TODAY here AND in playwright.config.ts's
  * webServer command so seed-time derivation and server renders agree.
  */
+/**
+ * Fail fast when `.next` is older than the sources it is supposed to be built
+ * from.
+ *
+ * playwright.config.ts serves the app with `pnpm start`, which happily serves a
+ * STALE bundle — so `pnpm e2e` on unbuilt changes reports a green suite that
+ * tested the previous build. That is not a theoretical risk: two Phase-1 waves
+ * were signed off against a stale `.next`, and the rebuild immediately exposed
+ * a client/server boundary violation that took two pages down. `tsc` cannot see
+ * that class of bug; only a real render can.
+ *
+ * Green-but-meaningless is worse than red, so this throws rather than warns.
+ * Use `pnpm e2e:fresh` (build + test). For a fast inner loop against a bundle
+ * you know is current, set E2E_ALLOW_STALE=1.
+ */
+function assertBundleIsFresh(): void {
+  if (process.env.E2E_ALLOW_STALE === "1") return;
+  const buildId = path.join(process.cwd(), ".next", "BUILD_ID");
+  if (!fs.existsSync(buildId)) {
+    throw new Error("e2e: no .next build found — run `pnpm e2e:fresh` (or `next build`) first.");
+  }
+  const builtAt = fs.statSync(buildId).mtimeMs;
+
+  let newest = 0;
+  let newestFile = "";
+  // Only `src` — Playwright runs e2e/ directly, so editing a spec does not make
+  // the served bundle stale and must not block a run.
+  const roots = [path.join(process.cwd(), "src")];
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (/\.(ts|tsx|css)$/.test(entry.name)) {
+        const m = fs.statSync(full).mtimeMs;
+        if (m > newest) {
+          newest = m;
+          newestFile = path.relative(process.cwd(), full);
+        }
+      }
+    }
+  };
+  for (const r of roots) if (fs.existsSync(r)) walk(r);
+
+  if (newest > builtAt) {
+    const drift = Math.round((newest - builtAt) / 1000);
+    throw new Error(
+      `e2e: .next is STALE — ${newestFile} was modified ${drift}s after the last build.\n` +
+        "      `pnpm start` would serve the OLD bundle and the suite would pass against code you did not change.\n" +
+        "      Run `pnpm e2e:fresh`, or set E2E_ALLOW_STALE=1 if you know the bundle is current.",
+    );
+  }
+}
+
 export default async function globalSetup(): Promise<void> {
+  assertBundleIsFresh();
   const dbPath = path.join(process.cwd(), "data", "e2e.db");
   // NB: the db file is deliberately NOT unlinked — seedE2eDatabase wipes its
   // data in place so the webServer's open connection keeps the same inode and

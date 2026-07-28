@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   applyMerchantDefaultAction,
@@ -10,6 +10,7 @@ import { CategoryPicker, type CategoryPickerOption } from "@/components/transact
 import { offerUndoToast } from "@/components/transactions/undo-toast";
 import { Button } from "@/components/ui/Button";
 import { toast } from "@/components/ui/Toast";
+import { settleAction, useAction } from "@/hooks/useAction";
 
 /**
  * The merchant→category rule, editable where the merchant lives (S6): pick a
@@ -31,7 +32,10 @@ export function MerchantDefaultCategory({
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const [busy, setBusy] = useState(false);
+  // one runner for both mutations: `pending` is cleared in a finally (the old
+  // hand-rolled flag stayed stuck on if the call rejected, and `if (busy)
+  // return` then disabled the picker until a reload) and no failure is silent
+  const { run, pending: busy } = useAction();
 
   function refresh(): void {
     startTransition(() => router.refresh());
@@ -39,41 +43,42 @@ export function MerchantDefaultCategory({
 
   function pick(categoryId: string): void {
     if (busy) return;
-    setBusy(true);
     const label = categories.find((c) => c.id === categoryId)?.label ?? "category";
-    void setMerchantDefaultCategoryAction({ merchantId, categoryId }).then((r) => {
-      setBusy(false);
-      if (!r.ok) {
-        toast({ title: r.error, tone: "negative" });
-        return;
-      }
-      toast({
-        title: `Default set to ${label}`,
-        action: {
-          label: "Undo",
-          onAction: () =>
-            void setMerchantDefaultCategoryAction({ merchantId, categoryId: defaultCategoryId }).then(refresh),
-        },
-      });
-      refresh();
+    void run(() => setMerchantDefaultCategoryAction({ merchantId, categoryId }), {
+      onSuccess: () => {
+        toast({
+          title: `Default set to ${label}`,
+          action: {
+            label: "Undo",
+            // settle and RETURN: the card keeps itself (and the previous
+            // category in this closure) alive when the undo fails, instead of
+            // dismissing on click and reverting nothing without saying so
+            onAction: async () => {
+              const result = await settleAction(
+                () => setMerchantDefaultCategoryAction({ merchantId, categoryId: defaultCategoryId }),
+                "Couldn’t put the default back — try again",
+              );
+              if (result.ok) refresh();
+              return result;
+            },
+          },
+        });
+        refresh();
+      },
     });
   }
 
   function applyToUncategorized(): void {
     if (busy) return;
-    setBusy(true);
-    void applyMerchantDefaultAction({ merchantId }).then((r) => {
-      setBusy(false);
-      if (!r.ok) {
-        toast({ title: r.error, tone: "negative" });
-        return;
-      }
-      if (r.data.affected === 0) {
-        toast({ title: "Nothing uncategorized to fill" });
-        return;
-      }
-      offerUndoToast(`Categorized · ${r.data.affected}`, r.data.undo, refresh);
-      refresh();
+    void run(() => applyMerchantDefaultAction({ merchantId }), {
+      onSuccess: ({ affected, undo }) => {
+        if (affected === 0) {
+          toast({ title: "Nothing uncategorized to fill" });
+          return;
+        }
+        offerUndoToast(`Categorized · ${affected}`, undo, refresh);
+        refresh();
+      },
     });
   }
 

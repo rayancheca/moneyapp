@@ -224,6 +224,7 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
                   categories={pickerOptions}
                   selectionParams={params}
                   totalMatching={totalRows}
+                  pageSize={PAGE_SIZE}
                 />
               )}
               <Pagination filters={filters} totalRows={totalRows} pageSize={PAGE_SIZE} />

@@ -2,6 +2,7 @@
 
 import { addHoldingAction } from "@/app/investments/actions";
 import { Field, Input, Select } from "@/components/ui/Field";
+import { MAX_FINANCIAL_DATE, MIN_FINANCIAL_DATE } from "@/lib/date-window";
 
 interface InvestmentAccount {
   id: string;
@@ -71,7 +72,15 @@ export function HoldingForm({
         />
       </Field>
       <Field label="As of">
-        <Input type="date" name="occurredOn" defaultValue={defaultDate} />
+        {/* bounds mirror holdingInputSchema — this date seeds the holding's
+            value timeline, which is walked one day at a time */}
+        <Input
+          type="date"
+          name="occurredOn"
+          defaultValue={defaultDate}
+          min={MIN_FINANCIAL_DATE}
+          max={MAX_FINANCIAL_DATE}
+        />
       </Field>
       <div className="md:col-span-2">
         <button

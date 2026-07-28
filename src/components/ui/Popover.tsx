@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { Dispatch, ReactNode, RefObject, SetStateAction, ToggleEvent } from "react";
 import { computePosition, type Placement } from "@/lib/positioning";
 
@@ -63,6 +63,11 @@ interface PopoverProps {
 /**
  * Generic anchored floating layer on popover="auto": native top layer and
  * light dismiss, positioned by the flip+clamp util on open, scroll, resize.
+ *
+ * The panel's contents mount only WHILE open. A closed popover used to render
+ * its whole panel into markup nothing could see — on /transactions that is one
+ * ~67-option category listbox per row (4.2 MB and 32.5k nodes of which ~95%
+ * was invisible; 0.29 MB / 1.5k with the gate).
  */
 export function Popover({
   anchorRef,
@@ -90,7 +95,13 @@ export function Popover({
     element.style.top = `${position.y}px`;
   }, [anchorRef, placement, offset]);
 
-  useEffect(() => {
+  // useLayoutEffect (not useEffect): with the children gated on `open` they
+  // mount in THIS commit, so the panel must reach the top layer and its final
+  // coordinates before the browser paints. A passive effect fires after paint,
+  // which would flash the (now display:block, see below) panel at its static
+  // position first. Parent effects still see an open, positioned popover —
+  // every layout effect here runs before any passive effect anywhere.
+  useLayoutEffect(() => {
     const element = popoverRef.current;
     if (!element) return;
     if (!open) {
@@ -98,6 +109,13 @@ export function Popover({
       return;
     }
     if (!element.matches(":popover-open")) element.showPopover();
+    // The pre-show display override (see the style prop) has done its one
+    // commit of work — drop it now that the top layer governs visibility.
+    // Left in place it would also outrank the UA's display:none during a
+    // NATIVE light dismiss, which hides the panel a task before the toggle
+    // event reaches React. React never re-applies an unchanged inline style,
+    // so the clear holds for as long as the panel stays open.
+    element.style.display = "";
     reposition();
     // The flip/clamp decision is computed against the CURRENT content size —
     // a panel that grows while open (filtered lists, async content) would
@@ -126,12 +144,22 @@ export function Popover({
       ref={popoverRef}
       popover="auto"
       onToggle={handleToggle}
+      // The UA hides a popover that is not :popover-open with display:none,
+      // and a display:none element cannot take focus. React mounts the gated
+      // children (firing their `autoFocus` — which on the CLIENT is a focus()
+      // call at mount, never an attribute the native popover focusing steps
+      // could find) in the layout phase, one step BEFORE the effect above
+      // shows the panel. Rendering it visible for that one commit is what
+      // keeps the caret landing in a picker's search field. No paint can slip
+      // in: mutation, mount-focus and the layout effect are one task. While
+      // open this matches what the panel already computed to — a div.
+      style={open ? { display: "block" } : undefined}
       // inset-auto neutralizes the UA's inset: 0 so the inline left/top from
       // the positioning util are not over-constrained; the max-width mirrors
       // the util's 8px viewport padding on each side.
       className={`fixed inset-auto m-0 max-w-[calc(100vw-16px)] rounded-(--radius-overlay) border border-line bg-surface-overlay p-0 text-ink shadow-(--shadow-overlay) ${className ?? ""}`}
     >
-      {children}
+      {open ? children : null}
     </div>
   );
 }

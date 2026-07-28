@@ -5,7 +5,6 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { ACCOUNT_TYPES, ACCOUNT_SUBTYPES } from "@/db/schema/accounts";
-import { parseAmountToCents } from "@/lib/money";
 import {
   createAccount,
   createInstitution,
@@ -15,20 +14,66 @@ import {
   updateAccount,
 } from "@/services/accounts";
 import { addManualAnchor, deleteAnchor } from "@/services/anchors";
-import type { ActionResult } from "@/app/transactions/action-types";
+import {
+  actionErrorMessage,
+  firstIssueMessage,
+  parseAmountField,
+  type ActionResult,
+} from "@/app/transactions/action-types";
+
+/**
+ * Every form action on this surface has a `*ResultAction` twin that validates
+ * with safeParse and RETURNS an {@link ActionResult}; the `Promise<void>` export
+ * the `<form action>` binding still needs is a thin adapter over it that carries
+ * a failure to `?error=` (the /budgets pattern) instead of throwing. Keeping the
+ * void signature byte-identical is deliberate — React types `action` as
+ * `(formData) => void | Promise<void>`, so returning a result from these would
+ * not compile at the call site.
+ */
+const ACCOUNT_LABELS = {
+  institutionId: "Institution",
+  name: "Name",
+  type: "Account type",
+  last4: "Last 4",
+  subtype: "Subtype",
+  initialBalance: "Initial balance",
+} as const;
+
+const ANCHOR_LABELS = {
+  accountId: "Account",
+  anchoredOn: "Date",
+  balance: "Balance",
+} as const;
+
+/**
+ * Union of the two maps above, for the catch blocks: the services these actions
+ * call (createAccount, addManualAnchor, editAccount…) run their OWN `.parse()`,
+ * so a ZodError can surface from inside them — and a ZodError's own `.message`
+ * is a JSON dump of the issue array, not a sentence.
+ */
+const ACCOUNT_FIELD_LABELS = {
+  ...ACCOUNT_LABELS,
+  ...ANCHOR_LABELS,
+  anchorId: "Balance entry",
+  enteredCents: "Balance",
+  paymentSourceAccountId: "Payment source",
+} as const;
 
 const createAccountFormSchema = z.object({
-  institutionId: z.string().min(1, "Pick an institution"),
-  name: z.string().trim().min(1, "Name the account"),
+  institutionId: z.string("Pick an institution").min(1, "Pick an institution"),
+  name: z.string("Name the account").trim().min(1, "Name the account"),
   type: z.enum(ACCOUNT_TYPES),
   last4: z.string().trim().optional(),
   subtype: z.enum(["brokerage", "crypto"]).optional(),
   initialBalance: z.string().trim().optional(),
 });
 
-export async function createAccountAction(formData: FormData): Promise<void> {
+/** Validating core of the create-account form. */
+export async function createAccountResultAction(
+  formData: FormData,
+): Promise<ActionResult<{ id: string }>> {
   const raw = Object.fromEntries(formData.entries());
-  const parsed = createAccountFormSchema.parse({
+  const parsed = createAccountFormSchema.safeParse({
     institutionId: raw.institutionId,
     name: raw.name,
     type: raw.type,
@@ -39,66 +84,162 @@ export async function createAccountAction(formData: FormData): Promise<void> {
         ? raw.initialBalance
         : undefined,
   });
+  if (!parsed.success) {
+    return { ok: false, error: firstIssueMessage(parsed.error.issues, ACCOUNT_LABELS) };
+  }
+
+  // Parse the opening balance BEFORE the insert: it used to be read after the
+  // account existed, so a typo'd amount threw and left an orphan account behind.
+  let openingCents: number | null = null;
+  if (parsed.data.initialBalance) {
+    const amount = parseAmountField(ACCOUNT_LABELS.initialBalance, parsed.data.initialBalance);
+    if (!amount.ok) return amount;
+    openingCents = amount.data;
+  }
 
   const db = getDb();
-  const accountId = createAccount(db, {
-    institutionId: parsed.institutionId,
-    name: parsed.name,
-    type: parsed.type,
-    subtype: parsed.type === "investment" ? (parsed.subtype ?? "brokerage") : undefined,
-    last4: parsed.last4 && /^\d{4}$/.test(parsed.last4) ? parsed.last4 : undefined,
-  });
-
-  if (parsed.initialBalance) {
-    const { todayIso } = await import("@/lib/dates");
-    addManualAnchor(db, {
-      accountId,
-      anchoredOn: todayIso(),
-      enteredCents: parseAmountToCents(parsed.initialBalance),
+  let accountId: string;
+  try {
+    accountId = createAccount(db, {
+      institutionId: parsed.data.institutionId,
+      name: parsed.data.name,
+      type: parsed.data.type,
+      subtype: parsed.data.type === "investment" ? (parsed.data.subtype ?? "brokerage") : undefined,
+      last4: parsed.data.last4 && /^\d{4}$/.test(parsed.data.last4) ? parsed.data.last4 : undefined,
     });
+    if (openingCents !== null) {
+      const { todayIso } = await import("@/lib/dates");
+      addManualAnchor(db, { accountId, anchoredOn: todayIso(), enteredCents: openingCents });
+    }
+  } catch (error: unknown) {
+    return { ok: false, error: actionErrorMessage(error, ACCOUNT_FIELD_LABELS, "Could not add the account") };
   }
 
   revalidatePath("/");
   revalidatePath("/accounts");
-  redirect(`/accounts/${accountId}`);
+  return { ok: true, data: { id: accountId } };
 }
 
+export async function createAccountAction(formData: FormData): Promise<void> {
+  const result = await createAccountResultAction(formData);
+  // redirect() throws NEXT_REDIRECT by design — it must stay outside any catch
+  redirect(
+    result.ok ? `/accounts/${result.data.id}` : `/accounts?error=${encodeURIComponent(result.error)}`,
+  );
+}
+
+// The single-argument form gives the SAME message when the field is missing
+// entirely — a hidden input that never made it into the FormData would
+// otherwise report zod's "Invalid input: expected string, received undefined".
 const anchorFormSchema = z.object({
-  accountId: z.string().min(1),
-  anchoredOn: z.string().min(10),
-  balance: z.string().trim().min(1, "Enter a balance"),
+  accountId: z.string("Pick an account").min(1, "Pick an account"),
+  anchoredOn: z.string("Pick a date").min(10, "Pick a date"),
+  balance: z.string("Enter a balance").trim().min(1, "Enter a balance"),
 });
 
-export async function addAnchorAction(formData: FormData): Promise<void> {
-  const parsed = anchorFormSchema.parse(Object.fromEntries(formData.entries()));
-  addManualAnchor(getDb(), {
-    accountId: parsed.accountId,
-    anchoredOn: parsed.anchoredOn,
-    enteredCents: parseAmountToCents(parsed.balance),
-  });
+/**
+ * Validating core of "Record a balance". This is the action the owner crashed
+ * twice: `balance` went straight into parseAmountToCents, so "not a number"
+ * escaped as an unhandled server error and blanked the page.
+ */
+export async function addAnchorResultAction(
+  formData: FormData,
+): Promise<ActionResult<{ accountId: string; enteredCents: number }>> {
+  const parsed = anchorFormSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { ok: false, error: firstIssueMessage(parsed.error.issues, ANCHOR_LABELS) };
+  }
+  const amount = parseAmountField(ANCHOR_LABELS.balance, parsed.data.balance);
+  if (!amount.ok) return amount;
+  try {
+    addManualAnchor(getDb(), {
+      accountId: parsed.data.accountId,
+      anchoredOn: parsed.data.anchoredOn,
+      enteredCents: amount.data,
+    });
+  } catch (error: unknown) {
+    return { ok: false, error: actionErrorMessage(error, ACCOUNT_FIELD_LABELS, "Could not save the balance") };
+  }
   revalidatePath("/");
   revalidatePath("/accounts");
-  revalidatePath(`/accounts/${parsed.accountId}`);
+  revalidatePath(`/accounts/${parsed.data.accountId}`);
+  return { ok: true, data: { accountId: parsed.data.accountId, enteredCents: amount.data } };
+}
+
+export async function addAnchorAction(formData: FormData): Promise<void> {
+  const result = await addAnchorResultAction(formData);
+  if (result.ok) return;
+  const accountId = formData.get("accountId");
+  const base = typeof accountId === "string" && accountId !== "" ? `/accounts/${accountId}` : "/accounts";
+  redirect(`${base}?error=${encodeURIComponent(result.error)}`);
+}
+
+const deleteAnchorSchema = z.object({
+  anchorId: z.string("Pick a balance entry").min(1, "Pick a balance entry"),
+  accountId: z.string("Pick an account").min(1, "Pick an account"),
+});
+
+export async function deleteAnchorResultAction(
+  formData: FormData,
+): Promise<ActionResult<{ accountId: string }>> {
+  const parsed = deleteAnchorSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: firstIssueMessage(parsed.error.issues, {
+        ...ANCHOR_LABELS,
+        anchorId: "Balance entry",
+      }),
+    };
+  }
+  try {
+    deleteAnchor(getDb(), parsed.data.anchorId);
+  } catch (error: unknown) {
+    return { ok: false, error: actionErrorMessage(error, ACCOUNT_FIELD_LABELS, "Could not delete the balance") };
+  }
+  revalidatePath("/");
+  revalidatePath("/accounts");
+  revalidatePath(`/accounts/${parsed.data.accountId}`);
+  return { ok: true, data: { accountId: parsed.data.accountId } };
 }
 
 export async function deleteAnchorAction(formData: FormData): Promise<void> {
-  const anchorId = formData.get("anchorId");
-  const accountId = formData.get("accountId");
-  if (typeof anchorId !== "string" || typeof accountId !== "string") return;
-  deleteAnchor(getDb(), anchorId);
+  const result = await deleteAnchorResultAction(formData);
+  if (result.ok) return;
+  redirect(`/accounts?error=${encodeURIComponent(result.error)}`);
+}
+
+const setActiveSchema = z.object({
+  accountId: z.string("Pick an account").min(1, "Pick an account"),
+  isActive: z.enum(["true", "false"]),
+});
+
+export async function setAccountActiveResultAction(
+  formData: FormData,
+): Promise<ActionResult<{ accountId: string; isActive: boolean }>> {
+  const parsed = setActiveSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: firstIssueMessage(parsed.error.issues, { accountId: "Account", isActive: "Status" }),
+    };
+  }
+  const isActive = parsed.data.isActive === "true";
+  try {
+    updateAccount(getDb(), parsed.data.accountId, { isActive });
+  } catch (error: unknown) {
+    return { ok: false, error: actionErrorMessage(error, ACCOUNT_FIELD_LABELS, "Could not update the account") };
+  }
   revalidatePath("/");
   revalidatePath("/accounts");
-  revalidatePath(`/accounts/${accountId}`);
+  revalidatePath(`/accounts/${parsed.data.accountId}`);
+  return { ok: true, data: { accountId: parsed.data.accountId, isActive } };
 }
 
 export async function setAccountActiveAction(formData: FormData): Promise<void> {
-  const accountId = formData.get("accountId");
-  const isActive = formData.get("isActive") === "true";
-  if (typeof accountId !== "string") return;
-  updateAccount(getDb(), accountId, { isActive });
-  revalidatePath("/");
-  revalidatePath("/accounts");
-  revalidatePath(`/accounts/${accountId}`);
+  const result = await setAccountActiveResultAction(formData);
+  if (result.ok) return;
+  redirect(`/accounts?error=${encodeURIComponent(result.error)}`);
 }
 
 // ── Manage accounts (§7.2): value-returning actions the client drives ─────────
@@ -159,7 +300,7 @@ export async function editAccountAction(input: {
     });
     rederived = result.rederived;
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Could not save account" };
+    return { ok: false, error: actionErrorMessage(error, ACCOUNT_FIELD_LABELS, "Could not save account") };
   }
   revalidatePath("/");
   revalidatePath("/accounts");
@@ -188,7 +329,7 @@ export async function renameAccountAction(input: {
   try {
     updateAccount(getDb(), parsed.data.accountId, { name: parsed.data.name });
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Could not rename account" };
+    return { ok: false, error: actionErrorMessage(error, ACCOUNT_FIELD_LABELS, "Could not rename account") };
   }
   revalidatePath("/");
   revalidatePath("/accounts");
@@ -205,7 +346,7 @@ export async function createInstitutionAction(name: string): Promise<ActionResul
     revalidatePath("/accounts");
     return { ok: true, data: { id } };
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Could not add institution" };
+    return { ok: false, error: actionErrorMessage(error, ACCOUNT_FIELD_LABELS, "Could not add institution") };
   }
 }
 
@@ -217,7 +358,7 @@ export async function reorderAccountsAction(orderedIds: string[]): Promise<Actio
   try {
     reorderAccounts(getDb(), orderedIds);
   } catch (error: unknown) {
-    return { ok: false, error: error instanceof Error ? error.message : "Could not reorder accounts" };
+    return { ok: false, error: actionErrorMessage(error, ACCOUNT_FIELD_LABELS, "Could not reorder accounts") };
   }
   revalidatePath("/");
   revalidatePath("/accounts");

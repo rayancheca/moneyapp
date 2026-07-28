@@ -1,0 +1,918 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MoneyApp — Direction B · THE TERMINAL</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   DIRECTION B — "THE TERMINAL"
+   A dark, high-density professional instrument. Bloomberg energy, Linear restraint.
+
+   Every OKLCH value below was verified with the repo's own color-contrast.ts math
+   (Ottosson OKLab matrices) for: sRGB gamut, WCAG-AA text (≥4.5:1) on all four
+   surfaces, and ≥3:1 for graphical objects. Numbers are in the writeup.
+
+   PRODUCTION TYPE (not loadable here — no network):
+     chrome  → Inter Variable        (OFL-1.1, rsms/inter)
+     figures → Martian Mono Variable (OFL-1.1, evilmartians/mono)
+   This file falls back to the system UI + system mono stacks, which approximate
+   the metrics closely enough to judge the direction.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── TOKENS ───────────────────────────────────────────────────────────────── */
+:root {
+  --font-chrome: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+  --font-figures: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* fluid type scale — Utopia-shaped clamp() ladder, dense base (14→15px) */
+  --t-2xs:  clamp(0.625rem, 0.610rem + 0.075vw, 0.6875rem);
+  --t-xs:   clamp(0.6875rem, 0.670rem + 0.09vw, 0.75rem);
+  --t-sm:   clamp(0.8125rem, 0.790rem + 0.11vw, 0.875rem);
+  --t-base: clamp(0.875rem, 0.855rem + 0.10vw, 0.9375rem);
+  --t-lg:   clamp(1rem, 0.960rem + 0.20vw, 1.125rem);
+  --t-xl:   clamp(1.25rem, 1.160rem + 0.45vw, 1.5rem);
+  --t-hero: clamp(2.25rem, 1.400rem + 4.25vw, 4rem);
+
+  /* motion — fast and mechanical. NO spring. NO bounce. Instruments don't wobble. */
+  --dur-tick: 90ms;
+  --dur-fast: 130ms;
+  --dur-base: 220ms;
+  --dur-morph: 380ms;
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-snap: cubic-bezier(0.20, 0.90, 0.15, 1);
+
+  --r-panel: 6px;   /* tight radii — this is an instrument, not a card deck */
+  --r-chip: 3px;
+  --rail: 13.5rem;
+}
+
+/* ── DARK (primary) ───────────────────────────────────────────────────────── */
+[data-theme="dark"] {
+  --surface:         oklch(0.145 0.008 250);
+  --surface-raised:  oklch(0.185 0.009 250);
+  --surface-sunken:  oklch(0.115 0.007 250);
+  --surface-overlay: oklch(0.215 0.010 250);
+  --ink:             oklch(0.95  0.004 250);
+  --ink-muted:       oklch(0.745 0.010 250);
+  --ink-faint:       oklch(0.635 0.010 250);
+  --line:            oklch(0.285 0.012 250);
+  --line-strong:     oklch(0.42  0.014 250);
+  --accent:          oklch(0.80  0.145 78);   /* bloomberg amber — CHROME ONLY, never money */
+  --accent-dim:      oklch(0.80  0.145 78 / 0.16);
+  --gain:            oklch(0.80  0.19  150);
+  --loss:            oklch(0.68  0.195 26);
+  --gain-wash:       oklch(0.80  0.19  150 / 0.14);
+  --loss-wash:       oklch(0.68  0.195 26  / 0.16);
+  --grid:            oklch(0.95  0.004 250 / 0.055);
+  --sheen:           oklch(1 0 0 / 0.045);    /* 1px inner top highlight = physical layering */
+  --shadow-panel:    0 1px 0 var(--sheen) inset, 0 8px 24px oklch(0 0 0 / 0.45);
+  --cat-red:oklch(0.66 0.200 25);   --cat-orange:oklch(0.82 0.116 55);
+  --cat-amber:oklch(0.66 0.134 88); --cat-lime:oklch(0.82 0.200 124);
+  --cat-green:oklch(0.66 0.162 155);--cat-teal:oklch(0.82 0.142 188);
+  --cat-cyan:oklch(0.66 0.116 215); --cat-blue:oklch(0.82 0.094 248);
+  --cat-indigo:oklch(0.66 0.182 278);--cat-violet:oklch(0.82 0.112 305);
+  --cat-pink:oklch(0.66 0.200 348); --cat-brown:oklch(0.82 0.126 62);
+  color-scheme: dark;
+}
+/* CVD scheme — azure/orange. Deuteranopia ΔE 26.4 vs 10.8 for green/red. */
+[data-theme="dark"][data-cvd="on"] {
+  --gain: oklch(0.74 0.14 242); --loss: oklch(0.76 0.155 52);
+  --gain-wash: oklch(0.74 0.14 242 / 0.16); --loss-wash: oklch(0.76 0.155 52 / 0.16);
+}
+
+/* ── LIGHT — cold paper, not warm. Same density, same hairlines. ──────────── */
+[data-theme="light"] {
+  --surface:         oklch(0.978 0.003 250);
+  --surface-raised:  oklch(0.998 0.001 250);
+  --surface-sunken:  oklch(0.950 0.004 250);
+  --surface-overlay: oklch(1 0 0);
+  --ink:             oklch(0.205 0.012 250);
+  --ink-muted:       oklch(0.445 0.012 250);
+  --ink-faint:       oklch(0.515 0.012 250);
+  --line:            oklch(0.895 0.006 250);
+  --line-strong:     oklch(0.730 0.009 250);
+  --accent:          oklch(0.505 0.105 70);
+  --accent-dim:      oklch(0.505 0.105 70 / 0.13);
+  --gain:            oklch(0.475 0.120 152);
+  --loss:            oklch(0.495 0.175 27);
+  --gain-wash:       oklch(0.475 0.120 152 / 0.12);
+  --loss-wash:       oklch(0.495 0.175 27  / 0.12);
+  --grid:            oklch(0.205 0.012 250 / 0.07);
+  --sheen:           oklch(1 0 0 / 0.9);
+  --shadow-panel:    0 1px 0 var(--sheen) inset, 0 1px 2px oklch(0 0 0 / 0.05), 0 4px 14px oklch(0 0 0 / 0.04);
+  --cat-red:oklch(0.44 0.178 25);   --cat-orange:oklch(0.58 0.142 55);
+  --cat-amber:oklch(0.44 0.090 88); --cat-lime:oklch(0.58 0.144 124);
+  --cat-green:oklch(0.44 0.108 155);--cat-teal:oklch(0.58 0.100 188);
+  --cat-cyan:oklch(0.44 0.076 215); --cat-blue:oklch(0.58 0.156 248);
+  --cat-indigo:oklch(0.44 0.190 278);--cat-violet:oklch(0.58 0.190 305);
+  --cat-pink:oklch(0.44 0.184 348); --cat-brown:oklch(0.58 0.132 62);
+  color-scheme: light;
+}
+[data-theme="light"][data-cvd="on"] {
+  --gain: oklch(0.46 0.118 248); --loss: oklch(0.53 0.130 52);
+  --gain-wash: oklch(0.46 0.118 248 / 0.12); --loss-wash: oklch(0.53 0.130 52 / 0.12);
+}
+
+/* ── RESET / BASE ─────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  background: var(--surface); color: var(--ink);
+  font-family: var(--font-chrome); font-size: var(--t-base);
+  line-height: 1.45; -webkit-font-smoothing: antialiased;
+  transition: background-color var(--dur-base) var(--ease-out-quart),
+              color var(--dur-base) var(--ease-out-quart);
+  overflow-x: hidden;
+}
+/* money never wiggles — fixed-width slots, lining figures, slight negative tracking */
+.fig { font-family: var(--font-figures); font-variant-numeric: tabular-nums lining-nums;
+       font-feature-settings: "zero" 1; letter-spacing: -0.015em; }
+button, input { font: inherit; color: inherit; background: none; border: 0; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+::selection { background: var(--accent-dim); }
+
+.lbl { font-size: var(--t-2xs); text-transform: uppercase; letter-spacing: 0.14em;
+       color: var(--ink-faint); font-weight: 600; }
+.pos { color: var(--gain); } .neg { color: var(--loss); }
+
+/* ── SHELL ────────────────────────────────────────────────────────────────── */
+.shell { min-height: 100dvh; display: grid; grid-template-columns: var(--rail) 1fr;
+         grid-template-rows: 1fr auto; }
+/* left rail */
+.rail { grid-row: 1; border-right: 1px solid var(--line); background: var(--surface-sunken);
+        display: flex; flex-direction: column; }
+.rail-head { height: 46px; display: flex; align-items: center; gap: 8px; padding: 0 14px;
+             border-bottom: 1px solid var(--line); }
+.mark { width: 16px; height: 16px; border: 1.5px solid var(--accent); border-radius: 2px;
+        display: grid; place-items: center; position: relative; }
+.mark::after { content: ""; width: 5px; height: 5px; background: var(--accent); border-radius: 1px; }
+.wordmark { font-size: var(--t-xs); font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+.rail nav { padding: 8px 0; flex: 1; }
+.navitem { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 14px;
+           font-size: var(--t-sm); color: var(--ink-muted); position: relative; text-align: left;
+           transition: color var(--dur-fast) var(--ease-out-quart),
+                       background-color var(--dur-fast) var(--ease-out-quart); }
+.navitem::before { content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px;
+                   background: var(--accent); transform: scaleY(0); transform-origin: center;
+                   transition: transform var(--dur-fast) var(--ease-snap); }
+.navitem:hover { color: var(--ink); background: var(--accent-dim); }
+.navitem[aria-current="page"] { color: var(--ink); font-weight: 600; }
+.navitem[aria-current="page"]::before { transform: scaleY(1); }
+.navitem .k { margin-left: auto; font-family: var(--font-figures); font-size: var(--t-2xs);
+              color: var(--ink-faint); opacity: 0; transition: opacity var(--dur-fast) linear; }
+.navitem:hover .k { opacity: 1; }
+.navdot { width: 6px; height: 6px; border-radius: 1px; background: currentColor; opacity: .55; flex: none; }
+.navitem[aria-current="page"] .navdot { background: var(--accent); opacity: 1; }
+.rail-foot { padding: 10px 14px; border-top: 1px solid var(--line); font-size: var(--t-2xs);
+             color: var(--ink-faint); line-height: 1.5; }
+/* declared AFTER .rail so it actually wins — equal specificity, source order decides */
+@media (max-width: 900px) { .shell { grid-template-columns: 1fr; } .rail { display: none; } }
+
+/* top bar */
+.main { grid-row: 1; min-width: 0; display: flex; flex-direction: column; }
+.topbar { height: 46px; display: flex; align-items: center; gap: 14px; padding: 0 16px;
+          border-bottom: 1px solid var(--line); background: var(--surface);
+          position: sticky; top: 0; z-index: 20; }
+.ticker { display: flex; align-items: center; gap: 8px; font-size: var(--t-xs); min-width: 0; }
+.live { display: inline-flex; align-items: center; gap: 5px; font-size: var(--t-2xs);
+        letter-spacing: 0.1em; color: var(--gain); font-weight: 700; }
+.live i { width: 6px; height: 6px; border-radius: 50%; background: var(--gain);
+          animation: beacon 2.4s var(--ease-out-quart) infinite; }
+@keyframes beacon { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+.spacer { flex: 1; }
+.tbtn { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: var(--r-chip);
+        border: 1px solid var(--line); font-size: var(--t-xs); color: var(--ink-muted);
+        transition: border-color var(--dur-fast) var(--ease-out-quart),
+                    color var(--dur-fast) var(--ease-out-quart),
+                    background-color var(--dur-fast) var(--ease-out-quart); }
+.tbtn:hover { border-color: var(--line-strong); color: var(--ink); background: var(--surface-raised); }
+.tbtn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+kbd { font-family: var(--font-figures); font-size: var(--t-2xs); border: 1px solid var(--line);
+      border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; color: var(--ink-faint);
+      background: var(--surface-sunken); }
+
+.canvas { flex: 1; padding: 14px; display: grid; gap: 12px; align-content: start;
+          max-width: 1500px; width: 100%; min-width: 0; }
+/* grid/flex children default to min-width:auto — without this, a nowrap table's
+   min-content width blows the track out and the PAGE scrolls sideways. Wide
+   content scrolls inside .tscroll instead. */
+.canvas > *, .split > *, .stats > * { min-width: 0; }
+.tscroll { overflow-x: auto; scrollbar-width: thin; }
+
+/* ── PANEL ────────────────────────────────────────────────────────────────── */
+.panel { background: var(--surface-raised); border: 1px solid var(--line);
+         border-radius: var(--r-panel); box-shadow: var(--shadow-panel); position: relative;
+         transition: border-color var(--dur-fast) var(--ease-out-quart); }
+.panel:hover { border-color: var(--line-strong); }
+.phead { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+         border-bottom: 1px solid var(--line); }
+.phead h2 { font-size: var(--t-2xs); text-transform: uppercase; letter-spacing: 0.14em;
+            color: var(--ink-faint); font-weight: 600; }
+
+/* ── HERO ─────────────────────────────────────────────────────────────────── */
+.hero { padding: 0; overflow: hidden; }
+.hero-top { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 28px; padding: 16px 18px 12px; }
+.hero-fig { font-size: var(--t-hero); font-weight: 600; line-height: 0.95; letter-spacing: -0.03em;
+            display: block; }
+.hero-sub { display: flex; align-items: baseline; gap: 10px; margin-top: 8px; font-size: var(--t-sm); }
+.hero-delta { font-weight: 600; font-size: var(--t-lg); }
+.hero-scrubbing .hero-fig { color: var(--accent); }
+.hero-meta { margin-left: auto; display: flex; gap: 22px; align-items: flex-end; }
+.metacell { text-align: right; }
+.metacell b { display: block; font-size: var(--t-lg); font-weight: 600; margin-top: 2px; }
+
+/* range pills */
+.pills { display: flex; gap: 2px; padding: 0 18px 10px; }
+.pill { padding: 3px 10px; font-size: var(--t-xs); border-radius: var(--r-chip); color: var(--ink-faint);
+        border: 1px solid transparent; font-family: var(--font-figures); letter-spacing: 0.04em;
+        transition: color var(--dur-fast) var(--ease-out-quart),
+                    background-color var(--dur-fast) var(--ease-out-quart),
+                    border-color var(--dur-fast) var(--ease-out-quart); }
+.pill:hover { color: var(--ink); background: var(--surface-sunken); }
+.pill[aria-pressed="true"] { color: var(--surface); background: var(--accent); border-color: var(--accent);
+                             font-weight: 700; }
+
+/* chart */
+.chartwrap { position: relative; height: clamp(180px, 26vh, 280px); cursor: crosshair;
+             border-top: 1px solid var(--line); background: var(--surface-sunken); }
+.chartwrap svg { display: block; width: 100%; height: 100%; }
+.readout { position: absolute; top: 8px; pointer-events: none; background: var(--surface-overlay);
+           border: 1px solid var(--line-strong); border-radius: var(--r-chip); padding: 5px 8px;
+           font-size: var(--t-xs); white-space: nowrap; opacity: 0; z-index: 4;
+           box-shadow: 0 4px 14px oklch(0 0 0 / 0.35);
+           transition: opacity var(--dur-fast) linear; }
+.chartwrap[data-active="1"] .readout { opacity: 1; }
+.readout .d { color: var(--ink-faint); font-size: var(--t-2xs); display: block; letter-spacing: 0.08em; }
+.readout .v { font-weight: 600; }
+/* hint lives in the pill row, not over the plot — never put chrome on top of data ink */
+.brushnote { margin-left: auto; align-self: center; font-family: var(--font-figures);
+             font-size: var(--t-2xs); color: var(--ink-faint); letter-spacing: 0.08em;
+             pointer-events: none; white-space: nowrap; }
+/* it advertises drag + arrow keys — neither exists on touch, so drop it there */
+@media (max-width: 760px) { .brushnote { display: none; } }
+
+/* ── STAT STRIP ───────────────────────────────────────────────────────────── */
+.stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1px; background: var(--line);
+         border: 1px solid var(--line); border-radius: var(--r-panel); overflow: hidden;
+         box-shadow: var(--shadow-panel); }
+@media (max-width: 1180px) { .stats { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 560px)  { .stats { grid-template-columns: repeat(2, 1fr); } }
+.stat { background: var(--surface-raised); padding: 10px 12px; position: relative; overflow: hidden;
+        transition: background-color var(--dur-fast) var(--ease-out-quart); }
+.stat:hover { background: var(--surface-overlay); }
+.stat b { display: block; font-size: var(--t-lg); font-weight: 600; margin-top: 4px; }
+.stat .sp { display: block; font-size: var(--t-2xs); color: var(--ink-faint); margin-top: 2px; }
+/* the tick flash — a value that just changed washes its cell for 600ms */
+.stat::after, .cell::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+        opacity: 0; background: var(--gain-wash); }
+.stat[data-tick="up"]::after, .cell[data-tick="up"]::after { background: var(--gain-wash); animation: tickflash 600ms var(--ease-out-quart); }
+.stat[data-tick="down"]::after, .cell[data-tick="down"]::after { background: var(--loss-wash); animation: tickflash 600ms var(--ease-out-quart); }
+@keyframes tickflash { 0% { opacity: 0; } 12% { opacity: 1; } 100% { opacity: 0; } }
+
+/* ── SPLIT (accounts | categories) ────────────────────────────────────────── */
+.split { display: grid; grid-template-columns: var(--splitL, 1.35fr) 5px 1fr; gap: 0; align-items: stretch; }
+@media (max-width: 1000px) { .split { grid-template-columns: 1fr; } .gutter { display: none; } }
+.gutter { cursor: col-resize; position: relative; }
+.gutter::after { content: ""; position: absolute; left: 50%; top: 12px; bottom: 12px; width: 1px;
+                 transform: translateX(-50%); background: var(--line);
+                 transition: background-color var(--dur-fast) linear, width var(--dur-fast) linear; }
+.gutter:hover::after, .gutter[data-drag="1"]::after { background: var(--accent); width: 2px; }
+
+/* dense small-multiples account table */
+.acct { width: 100%; border-collapse: collapse; }
+.acct th { text-align: left; font-size: var(--t-2xs); text-transform: uppercase; letter-spacing: 0.12em;
+           color: var(--ink-faint); font-weight: 600; padding: 5px 12px; border-bottom: 1px solid var(--line); }
+.acct th.r, .acct td.r { text-align: right; }
+.acct td { padding: 3px 12px; border-bottom: 1px solid var(--grid); font-size: var(--t-sm); }
+.acct tbody tr { cursor: pointer; transition: background-color var(--dur-fast) linear; }
+.acct tbody tr:hover { background: var(--accent-dim); }
+.acct tbody tr[data-sel="1"] { background: var(--accent-dim); box-shadow: inset 2px 0 0 var(--accent); }
+.acct .inst { color: var(--ink-faint); font-size: var(--t-2xs); }
+.spark { display: block; width: 76px; height: 20px; }
+
+/* category breakdown */
+.cats { padding: 8px 12px 12px; display: grid; gap: 6px; }
+.catrow { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: baseline;
+          cursor: pointer; padding: 3px 4px; border-radius: var(--r-chip); position: relative;
+          transition: background-color var(--dur-fast) linear; }
+.catrow:hover, .catrow[data-sel="1"] { background: var(--surface-sunken); }
+.catrow .nm { font-size: var(--t-sm); display: flex; align-items: center; gap: 7px; }
+.swatch { width: 8px; height: 8px; border-radius: 2px; background: var(--c); flex: none;
+          transition: transform var(--dur-fast) var(--ease-snap); }
+.catrow:hover .swatch { transform: scale(1.5); }
+.catrow .amt { font-size: var(--t-sm); font-weight: 600; }
+.bar { grid-column: 1 / -1; height: 3px; background: var(--surface-sunken); border-radius: 2px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--c); border-radius: 2px;
+         transform-origin: left; transform: scaleX(var(--p));
+         transition: transform var(--dur-base) var(--ease-out-quart), filter var(--dur-fast) linear; }
+.catrow:hover .bar i { filter: brightness(1.25); }
+
+/* ── LEDGER ───────────────────────────────────────────────────────────────── */
+/* min-width + .tscroll: on a phone the ledger scrolls sideways inside its own
+   panel rather than squashing columns or pushing the page. NOTE: no position:sticky
+   on these th — an overflow-x container is itself the sticky containing block, so a
+   viewport-relative sticky header lands in the wrong place. Correct fix in the real
+   app is a separate sticky header row outside the scroller, not a faked one here. */
+.ledger { width: 100%; border-collapse: collapse; min-width: 660px; }
+.acct { min-width: 420px; }
+.ledger th { text-align: left; font-size: var(--t-2xs); text-transform: uppercase; letter-spacing: 0.12em;
+             color: var(--ink-faint); font-weight: 600; padding: 5px 12px;
+             border-bottom: 1px solid var(--line); background: var(--surface-raised); }
+.ledger th.r, .ledger td.r { text-align: right; }
+.ledger td { padding: 4px 12px; border-bottom: 1px solid var(--grid); font-size: var(--t-sm);
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ledger tbody tr { transition: background-color var(--dur-fast) linear, opacity var(--dur-fast) linear; }
+.ledger tbody tr:hover { background: var(--surface-sunken); }
+.ledger tbody tr[data-focus="1"] { background: var(--accent-dim); box-shadow: inset 2px 0 0 var(--accent); }
+.ledger tbody tr[data-dim="1"] { opacity: 0.24; }
+.ledger tbody tr[data-hit="1"] { background: var(--accent-dim); }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: var(--t-2xs); padding: 1px 6px 1px 5px;
+        border-radius: var(--r-chip); border: 1px solid var(--line); color: var(--ink-muted);
+        transition: border-color var(--dur-fast) linear; }
+.chip::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--c); }
+.ledger tbody tr:hover .chip { border-color: var(--line-strong); }
+.flag { font-family: var(--font-figures); font-size: var(--t-2xs); width: 15px; height: 15px;
+        display: inline-grid; place-items: center; border-radius: 2px; background: var(--surface-sunken);
+        color: var(--ink-faint); border: 1px solid var(--line); }
+.mono-dim { color: var(--ink-faint); }
+
+/* ── STATUS BAR ───────────────────────────────────────────────────────────── */
+.status { grid-column: 1 / -1; grid-row: 2; display: flex; align-items: center; gap: 16px;
+          padding: 0 14px; height: 26px; border-top: 1px solid var(--line);
+          background: var(--surface-sunken); font-family: var(--font-figures);
+          font-size: var(--t-2xs); color: var(--ink-faint); letter-spacing: 0.06em;
+          overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+.status::-webkit-scrollbar { display: none; }
+.status b { color: var(--ink-muted); font-weight: 600; }
+.status .sep { width: 1px; height: 12px; background: var(--line); flex: none; }
+
+/* ── SHORTCUT OVERLAY ─────────────────────────────────────────────────────── */
+.sheet { position: fixed; inset: 0; z-index: 60; display: none; place-items: center;
+         background: oklch(0 0 0 / 0.6); backdrop-filter: blur(3px); padding: 20px; }
+.sheet[data-open="1"] { display: grid; }
+.sheet > div { background: var(--surface-overlay); border: 1px solid var(--line-strong);
+               border-radius: var(--r-panel); padding: 18px 20px; max-width: 440px; width: 100%;
+               box-shadow: 0 24px 60px oklch(0 0 0 / 0.5);
+               animation: sheetin var(--dur-base) var(--ease-out-quart); }
+@keyframes sheetin { from { opacity: 0; transform: translateY(8px) scale(0.985); } }
+.klist { display: grid; gap: 5px; margin-top: 12px; }
+.klist div { display: flex; align-items: center; gap: 10px; font-size: var(--t-sm); }
+.klist kbd { min-width: 22px; text-align: center; }
+.klist span { color: var(--ink-muted); }
+
+.note { font-size: var(--t-2xs); color: var(--ink-faint); padding: 0 12px 10px; line-height: 1.55; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0.01ms !important;
+                           transition-duration: 0.01ms !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- ── LEFT RAIL ─────────────────────────────────────────────────────── -->
+  <aside class="rail">
+    <div class="rail-head"><span class="mark" aria-hidden="true"></span><span class="wordmark">MoneyApp</span></div>
+    <nav aria-label="Main">
+      <button class="navitem" aria-current="page"><span class="navdot"></span>Dashboard<span class="k">g d</span></button>
+      <button class="navitem"><span class="navdot" style="color:var(--cat-blue)"></span>Transactions<span class="k">g t</span></button>
+      <button class="navitem"><span class="navdot" style="color:var(--cat-violet)"></span>Spending<span class="k">g s</span></button>
+      <button class="navitem"><span class="navdot" style="color:var(--cat-lime)"></span>Investments<span class="k">g i</span></button>
+      <button class="navitem"><span class="navdot" style="color:var(--cat-teal)"></span>Accounts<span class="k">g a</span></button>
+      <button class="navitem"><span class="navdot" style="color:var(--cat-amber)"></span>Budgets<span class="k">g b</span></button>
+      <button class="navitem"><span class="navdot" style="color:var(--cat-pink)"></span>Recurring<span class="k">g r</span></button>
+    </nav>
+    <p class="rail-foot">LOCAL · SQLITE<br>1,673 txns · 10 accts · 730d</p>
+  </aside>
+
+  <!-- ── MAIN ──────────────────────────────────────────────────────────── -->
+  <div class="main">
+
+    <header class="topbar">
+      <div class="ticker">
+        <span class="live"><i></i>LIVE</span>
+        <span class="fig mono-dim" id="tape">NW 110,617.42</span>
+      </div>
+      <span class="spacer"></span>
+      <button class="tbtn" id="cvd" aria-pressed="false" title="Colour-blind safe gain/loss (azure / orange)">CVD</button>
+      <button class="tbtn" id="theme" aria-pressed="true">DARK</button>
+      <button class="tbtn" id="help">⌘K <kbd>?</kbd></button>
+    </header>
+
+    <div class="canvas">
+
+      <!-- HERO -->
+      <section class="panel hero" aria-labelledby="nw-h">
+        <div class="hero-top">
+          <div>
+            <span class="lbl" id="nw-h">Net worth</span>
+            <span class="fig hero-fig" id="hero">$110,617.42</span>
+            <div class="hero-sub">
+              <span class="fig hero-delta pos" id="heroDelta">+$2,418.09</span>
+              <span class="fig mono-dim" id="heroPct">+2.24%</span>
+              <span class="mono-dim" id="heroWin">past 30 days</span>
+            </div>
+          </div>
+          <div class="hero-meta">
+            <div class="metacell"><span class="lbl">Assets</span><b class="fig">$142,940.18</b></div>
+            <div class="metacell"><span class="lbl">Owed</span><b class="fig neg">−$32,322.76</b></div>
+          </div>
+        </div>
+        <div class="pills" role="group" aria-label="Range">
+          <button class="pill" data-r="30">1M</button>
+          <button class="pill" data-r="90">3M</button>
+          <button class="pill" data-r="180">6M</button>
+          <button class="pill" aria-pressed="true" data-r="365">1Y</button>
+          <button class="pill" data-r="730">ALL</button>
+          <span class="brushnote">DRAG TO SELECT RANGE · ← → TO SCRUB</span>
+        </div>
+        <div class="chartwrap" id="chart" tabindex="0" role="img"
+             aria-label="Net worth over time. Use left and right arrow keys to scrub.">
+          <svg id="svg" viewBox="0 0 1000 260" preserveAspectRatio="none" aria-hidden="true"></svg>
+          <div class="readout fig" id="readout"><span class="d">—</span><span class="v">—</span></div>
+        </div>
+      </section>
+
+      <!-- STAT STRIP -->
+      <section class="stats" aria-label="Key figures">
+        <div class="stat"><span class="lbl">Cash</span><b class="fig">$18,204.61</b><span class="sp">4 accounts</span></div>
+        <div class="stat"><span class="lbl">Invested</span><b class="fig" id="s-inv">$124,735.57</b><span class="sp pos" id="s-invd">+$1,109.22 today</span></div>
+        <div class="stat"><span class="lbl">Credit used</span><b class="fig neg">$4,881.09</b><span class="sp">11.6% of limit</span></div>
+        <div class="stat"><span class="lbl">Burn · 30d</span><b class="fig">$4,612.88</b><span class="sp">−8.1% vs prior</span></div>
+        <div class="stat"><span class="lbl">Runway</span><b class="fig">3.9 mo</b><span class="sp">at current burn</span></div>
+        <div class="stat"><span class="lbl">To review</span><b class="fig" style="color:var(--accent)">12</b><span class="sp">press <kbd>r</kbd></span></div>
+      </section>
+
+      <!-- SPLIT: accounts | categories -->
+      <div class="split" id="split">
+        <section class="panel" aria-labelledby="acct-h">
+          <div class="phead"><h2 id="acct-h">Accounts</h2>
+            <span class="fig mono-dim" style="font-size:var(--t-2xs)">10 · CLICK TO FILTER LEDGER</span></div>
+          <div class="tscroll"><table class="acct">
+            <thead><tr><th>Account</th><th>30D</th><th class="r">Balance</th><th class="r">Δ 30D</th></tr></thead>
+            <tbody id="acctBody"></tbody>
+          </table></div>
+        </section>
+
+        <div class="gutter" id="gutter" role="separator" aria-orientation="vertical"
+             aria-label="Resize panels" tabindex="0"></div>
+
+        <section class="panel" aria-labelledby="cat-h">
+          <div class="phead"><h2 id="cat-h">Spending · 30d</h2>
+            <span class="fig mono-dim" style="font-size:var(--t-2xs);margin-left:auto">$4,612.88</span></div>
+          <div class="cats" id="cats"></div>
+          <p class="note">Top 6 carry colour; the tail collapses to <b>Other</b> — beyond six hues,
+            colour stops encoding and starts decorating. Hover a row to isolate its rows in the ledger.</p>
+        </section>
+      </div>
+
+      <!-- LEDGER -->
+      <section class="panel" aria-labelledby="led-h">
+        <div class="phead"><h2 id="led-h">Ledger</h2>
+          <span class="fig mono-dim" style="font-size:var(--t-2xs)" id="ledMeta">14 OF 1,673</span>
+          <span class="spacer"></span>
+          <span class="fig mono-dim" style="font-size:var(--t-2xs)">
+            <kbd>j</kbd><kbd>k</kbd> move · <kbd>x</kbd> select · <kbd>e</kbd> reviewed</span></div>
+        <div class="tscroll"><table class="ledger">
+          <thead><tr>
+            <th style="width:76px">Date</th><th>Description</th><th style="width:150px">Category</th>
+            <th style="width:150px">Account</th><th class="r" style="width:110px">Amount</th>
+            <th class="r" style="width:38px"></th></tr></thead>
+          <tbody id="ledBody"></tbody>
+        </table></div>
+      </section>
+
+    </div>
+  </div>
+
+  <!-- ── STATUS BAR ──────────────────────────────────────────────────────── -->
+  <footer class="status">
+    <span><b>DB</b> moneyapp.db · WAL</span><span class="sep"></span>
+    <span><b>SYNC</b> <span id="sync">0s</span> ago</span><span class="sep"></span>
+    <span><b>ROWS</b> 1,673</span><span class="sep"></span>
+    <span><b>RANGE</b> <span id="stRange">1Y</span></span><span class="sep"></span>
+    <span><b>FILTER</b> <span id="stFilter">none</span></span><span class="sep"></span>
+    <span><b>SEL</b> <span id="stSel">0</span></span><span class="sep"></span>
+    <span>RECONCILED TO THE CENT</span>
+  </footer>
+</div>
+
+<!-- shortcut sheet -->
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+  <div>
+    <span class="lbl">Keyboard</span>
+    <div class="klist">
+      <div><kbd>j</kbd><kbd>k</kbd><span>move through the ledger</span></div>
+      <div><kbd>x</kbd><span>toggle selection on the focused row</span></div>
+      <div><kbd>e</kbd><span>mark reviewed — row flashes and drains</span></div>
+      <div><kbd>←</kbd><kbd>→</kbd><span>scrub the chart (focus it first)</span></div>
+      <div><kbd>1</kbd>–<kbd>5</kbd><span>range: 1M / 3M / 6M / 1Y / ALL</span></div>
+      <div><kbd>t</kbd><span>light / dark</span></div>
+      <div><kbd>c</kbd><span>colour-blind safe gain / loss</span></div>
+      <div><kbd>Esc</kbd><span>clear filter · close</span></div>
+    </div>
+    <p class="note" style="padding:14px 0 0">Everything reachable by mouse is reachable by key.
+      That is the whole thesis of this direction.</p>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+const $ = s => document.querySelector(s);
+const fmt = n => (n<0?"−$":"$") + Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmt0 = n => (n<0?"−$":"$") + Math.abs(n).toLocaleString("en-US",{maximumFractionDigits:0});
+const sgn = n => (n>=0?"+":"−") + "$" + Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+/* ── deterministic data ────────────────────────────────────────────────── */
+let seed = 20260727;
+const rnd = () => (seed = (seed*1664525 + 1013904223) % 4294967296) / 4294967296;
+
+const N = 730, END = 110617.42;
+// random walk with drift + a couple of real-life step events, then rescaled to land on END
+const raw = [];
+let v = 61000;
+for (let i=0;i<N;i++){
+  v += (rnd()-0.42) * 780 + 92;            // noisy upward drift
+  if (i===214) v -= 6400;                  // the move: Bronx → Miami
+  if (i===402) v += 9100;                  // financial aid disbursement
+  if (i===560) v += 3200;                  // tax refund
+  raw.push(v);
+}
+const adj = END - raw[N-1];
+for (let i=0;i<N;i++) raw[i] += adj * (i/(N-1));   // ramp the correction so history stays shaped
+
+const DAY_MS = 86400000, TODAY = new Date(2026,6,27);
+const dateAt = i => new Date(TODAY.getTime() - (N-1-i)*DAY_MS);
+const dfmt = d => d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"});
+
+/* ── chart ─────────────────────────────────────────────────────────────── */
+const svg = $("#svg"), wrap = $("#chart"), readout = $("#readout");
+const W = 1000, H = 260, PADT = 18, PADB = 22;
+let range = 365, series = [], scrubIdx = null, brush = null;
+
+function slice(){
+  const from = Math.max(0, N - range);
+  series = raw.slice(from).map((y,k)=>({ y, i: from+k }));
+}
+
+function draw(){
+  const ys = series.map(p=>p.y);
+  const lo = Math.min(...ys), hi = Math.max(...ys), sp = (hi-lo)||1;
+  const X = k => (k/(series.length-1))*W;
+  const Y = y => PADT + (1-(y-lo)/sp)*(H-PADT-PADB);
+
+  let line = "", area = "";
+  series.forEach((p,k)=>{ const x=X(k), y=Y(p.y); line += (k?"L":"M")+x.toFixed(2)+" "+y.toFixed(2); });
+  area = line + `L${W} ${H-PADB} L0 ${H-PADB} Z`;
+
+  // horizontal gridlines at quartiles + a zero-ish baseline
+  let grid = "";
+  for (let q=0;q<=4;q++){ const y = PADT + q*(H-PADT-PADB)/4;
+    grid += `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--grid)" stroke-width="1" vector-effect="non-scaling-stroke"/>`; }
+  // month ticks
+  let ticks = "";
+  let lastM = -1;
+  series.forEach((p,k)=>{ const d = dateAt(p.i);
+    if (d.getMonth()!==lastM && d.getDate()<=3){ lastM = d.getMonth();
+      ticks += `<line x1="${X(k)}" x2="${X(k)}" y1="${H-PADB}" y2="${H-PADB+4}" stroke="var(--line-strong)" stroke-width="1" vector-effect="non-scaling-stroke"/>`; } });
+
+  const up = series[series.length-1].y >= series[0].y;
+  const col = up ? "var(--gain)" : "var(--loss)";
+
+  let brushRect = "";
+  if (brush){ const a=Math.min(brush.a,brush.b), b=Math.max(brush.a,brush.b);
+    brushRect = `<rect x="${X(a)}" y="0" width="${Math.max(1,X(b)-X(a))}" height="${H-PADB}" fill="var(--accent)" opacity="0.14"/>
+      <line x1="${X(a)}" x2="${X(a)}" y1="0" y2="${H-PADB}" stroke="var(--accent)" stroke-width="1" vector-effect="non-scaling-stroke"/>
+      <line x1="${X(b)}" x2="${X(b)}" y1="0" y2="${H-PADB}" stroke="var(--accent)" stroke-width="1" vector-effect="non-scaling-stroke"/>`; }
+
+  let cross = "";
+  if (scrubIdx !== null){ const x = X(scrubIdx), y = Y(series[scrubIdx].y);
+    cross = `<line x1="${x}" x2="${x}" y1="0" y2="${H-PADB}" stroke="var(--accent)" stroke-width="1" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"/>
+             <circle cx="${x}" cy="${y}" r="3.5" fill="var(--surface)" stroke="var(--accent)" stroke-width="2" vector-effect="non-scaling-stroke"/>`; }
+
+  svg.innerHTML = `
+   <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+     <stop offset="0" stop-color="${col}" stop-opacity="0.28"/>
+     <stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>
+   ${grid}${brushRect}
+   <path d="${area}" fill="url(#g)"/>
+   <path d="${line}" fill="none" stroke="${col}" stroke-width="1.75"
+         stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+   <line x1="0" x2="${W}" y1="${H-PADB}" y2="${H-PADB}" stroke="var(--line-strong)" stroke-width="1" vector-effect="non-scaling-stroke"/>
+   ${ticks}${cross}`;
+}
+
+/* hero reflects the scrub — the single most "alive" interaction in the app */
+function paintHero(){
+  const first = series[0].y, last = series[series.length-1].y;
+  const label = { 30:"past 30 days", 90:"past 3 months", 180:"past 6 months", 365:"past year", 730:"all time" }[range];
+  if (scrubIdx === null && !brush){
+    setHero(last, last-first, dfmtWin(label), false);
+  } else if (brush){
+    const a=Math.min(brush.a,brush.b), b=Math.max(brush.a,brush.b);
+    const d = series[b].y - series[a].y;
+    setHero(series[b].y, d, dfmt(dateAt(series[a].i))+" → "+dfmt(dateAt(series[b].i)), true);
+  } else {
+    const p = series[scrubIdx];
+    setHero(p.y, p.y-first, dfmt(dateAt(p.i)), true);
+  }
+}
+function dfmtWin(s){ return s; }
+function setHero(val, delta, win, scrubbing){
+  $("#hero").textContent = fmt(val);
+  const d = $("#heroDelta"); d.textContent = sgn(delta);
+  d.className = "fig hero-delta " + (delta>=0?"pos":"neg");
+  const base = val - delta;
+  $("#heroPct").textContent = (delta>=0?"+":"−") + Math.abs(delta/base*100).toFixed(2) + "%";
+  $("#heroWin").textContent = win;
+  $(".hero").classList.toggle("hero-scrubbing", scrubbing);
+  $("#tape").textContent = "NW " + fmt(val).replace("$","");
+}
+
+function idxFromEvent(e){
+  const r = wrap.getBoundingClientRect();
+  const x = ((e.touches?e.touches[0].clientX:e.clientX) - r.left) / r.width;
+  return Math.max(0, Math.min(series.length-1, Math.round(x*(series.length-1))));
+}
+function placeReadout(k){
+  const p = series[k], r = wrap.getBoundingClientRect();
+  const x = (k/(series.length-1))*r.width;
+  readout.innerHTML = `<span class="d">${dfmt(dateAt(p.i)).toUpperCase()}</span><span class="v">${fmt(p.y)}</span>`;
+  const w = readout.offsetWidth || 130;
+  readout.style.left = Math.max(6, Math.min(r.width - w - 6, x - w/2)) + "px";
+}
+
+let dragging = false;
+wrap.addEventListener("pointerdown", e => {
+  dragging = true; wrap.setPointerCapture(e.pointerId);
+  brush = { a: idxFromEvent(e), b: idxFromEvent(e) }; scrubIdx = null;
+  wrap.dataset.active = "0"; draw(); paintHero();
+});
+wrap.addEventListener("pointermove", e => {
+  const k = idxFromEvent(e);
+  if (dragging && brush){ brush.b = k; draw(); paintHero(); return; }
+  scrubIdx = k; wrap.dataset.active = "1"; placeReadout(k); draw(); paintHero();
+});
+wrap.addEventListener("pointerup", e => {
+  dragging = false;
+  if (brush && Math.abs(brush.a - brush.b) < 3){ brush = null; }   // a click, not a drag
+  draw(); paintHero();
+});
+wrap.addEventListener("pointerleave", () => {
+  if (dragging) return;
+  scrubIdx = null; wrap.dataset.active = "0"; draw(); paintHero();
+});
+wrap.addEventListener("keydown", e => {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  e.preventDefault();
+  if (scrubIdx === null) scrubIdx = series.length-1;
+  scrubIdx = Math.max(0, Math.min(series.length-1, scrubIdx + (e.key==="ArrowRight"?1:-1) * (e.shiftKey?7:1)));
+  wrap.dataset.active = "1"; placeReadout(scrubIdx); draw(); paintHero();
+});
+
+function setRange(r, btn){
+  range = r; brush = null; scrubIdx = null; wrap.dataset.active = "0";
+  document.querySelectorAll(".pill").forEach(b => b.setAttribute("aria-pressed", String(b===btn)));
+  $("#stRange").textContent = btn.textContent;
+  slice(); draw(); paintHero();
+}
+document.querySelectorAll(".pill").forEach(b =>
+  b.addEventListener("click", () => setRange(+b.dataset.r, b)));
+
+/* ── accounts (dense small multiples) ──────────────────────────────────── */
+const ACCOUNTS = [
+  ["Chase Checking","Chase",  8412.19,  412.88],
+  ["Chase Sapphire","Chase", -2140.55, -318.20],
+  ["Discover it","Discover",  -981.44,   64.10],
+  ["Capital One Venture","Capital One", -1759.10, -204.77],
+  ["SoFi Checking","SoFi",    3106.42,  188.03],
+  ["SoFi Savings","SoFi",     6686.00,  500.00],
+  ["Robinhood Brokerage","Robinhood", 71204.88, 1806.44],
+  ["Robinhood Cash","Robinhood", 1842.61, -240.00],
+  ["Amex Gold","Amex",        -1441.67,  -96.30],
+  ["Fidelity 401k","Fidelity",26688.08,  826.91],
+];
+function sparkPath(up){
+  let s = "", y = 14;
+  for (let i=0;i<=18;i++){
+    y += (rnd()-0.5)*7 + (up?-0.45:0.45);
+    y = Math.max(3, Math.min(17, y));
+    s += (i?"L":"M") + (i*4.2).toFixed(1) + " " + y.toFixed(1);
+  }
+  return s;
+}
+$("#acctBody").innerHTML = ACCOUNTS.map(([nm,inst,bal,d],i) => {
+  const up = d >= 0, p = sparkPath(up);
+  return `<tr data-acct="${nm}" tabindex="0">
+    <td><div>${nm}</div><div class="inst">${inst}</div></td>
+    <td><svg class="spark" viewBox="0 0 76 20" aria-hidden="true">
+      <path d="${p}" fill="none" stroke="${up?"var(--gain)":"var(--loss)"}" stroke-width="1.25"
+            stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg></td>
+    <td class="r fig ${bal<0?"neg":""}">${fmt(bal)}</td>
+    <td class="r fig ${up?"pos":"neg"}">${sgn(d)}</td></tr>`;
+}).join("");
+
+/* ── categories ────────────────────────────────────────────────────────── */
+const CATS = [
+  ["Rent","violet",1850.00],["Groceries","lime",712.44],["Dining","orange",586.19],
+  ["Transport","cyan",394.82],["Shopping","pink",351.07],["Utilities","teal",238.60],
+  ["Other","brown",479.76],
+];
+const catMax = Math.max(...CATS.map(c=>c[2]));
+$("#cats").innerHTML = CATS.map(([nm,hue,amt]) =>
+  `<div class="catrow" data-cat="${nm}" style="--c:var(--cat-${hue});--p:${(amt/catMax).toFixed(3)}" tabindex="0">
+     <span class="nm"><i class="swatch"></i>${nm}</span>
+     <span class="amt fig">${fmt(amt)}</span>
+     <span class="bar"><i></i></span></div>`).join("");
+
+/* ── ledger ────────────────────────────────────────────────────────────── */
+const TXNS = [
+  ["Jul 27","WHOLE FOODS MKT #10259","Groceries","lime","Chase Checking",-84.12,"R"],
+  ["Jul 27","UBER *TRIP","Transport","cyan","Chase Sapphire",-18.40,""],
+  ["Jul 26","HOFFMAN PROPERTIES LLC","Rent","violet","Chase Checking",-1850.00,"R"],
+  ["Jul 26","ROBINHOOD SECURITIES","Transfer","brown","Robinhood Cash",-1200.00,"T"],
+  ["Jul 25","CASH DEPOSIT — ATM 4471","Income","teal","Chase Checking",1046.00,"I"],
+  ["Jul 25","JOE & THE JUICE 0148","Dining","orange","Amex Gold",-14.75,""],
+  ["Jul 24","PUBLIX #1122 MIAMI FL","Groceries","lime",  "Chase Checking",-63.28,""],
+  ["Jul 24","SPOTIFY USA","Shopping","pink","Chase Sapphire",-11.99,"R"],
+  ["Jul 23","SHELL OIL 57442290","Transport","cyan","Capital One Venture",-51.06,""],
+  ["Jul 23","FPL ELECTRIC","Utilities","teal","Chase Checking",-142.31,"R"],
+  ["Jul 22","AMAZON MKTPL*RT4YZ","Shopping","pink","Amex Gold",-96.44,""],
+  ["Jul 22","SWEETGREEN MIAMI","Dining","orange","Chase Sapphire",-19.85,""],
+  ["Jul 21","SOFI SAVINGS TRANSFER","Transfer","brown","SoFi Savings",500.00,"T"],
+  ["Jul 21","TRADER JOES #0771","Groceries","lime","Chase Checking",-58.90,""],
+];
+$("#ledBody").innerHTML = TXNS.map(([d,desc,cat,hue,acct,amt,flag],i) =>
+  `<tr data-i="${i}" data-cat="${cat}" data-acct="${acct}">
+     <td class="fig mono-dim">${d}</td>
+     <td>${desc}</td>
+     <td><span class="chip" style="--c:var(--cat-${hue})">${cat}</span></td>
+     <td class="mono-dim">${acct}</td>
+     <td class="r fig ${amt<0?"neg":"pos"}">${sgn(amt)}</td>
+     <td class="r">${flag?`<span class="flag" title="${{R:"Recurring",T:"Transfer",I:"Income"}[flag]}">${flag}</span>`:""}</td>
+   </tr>`).join("");
+
+const rows = [...document.querySelectorAll("#ledBody tr")];
+
+/* brushing + linking: hovering a category isolates its rows; clicking an account filters */
+function isolate(pred){
+  rows.forEach(r => { r.dataset.dim = pred && !pred(r) ? "1" : "0"; });
+}
+document.querySelectorAll(".catrow").forEach(el => {
+  const on  = () => { el.dataset.sel = "1"; isolate(r => r.dataset.cat === el.dataset.cat); };
+  const off = () => { el.dataset.sel = "0"; if (!filterAcct) isolate(null); else applyAcct(); };
+  el.addEventListener("mouseenter", on); el.addEventListener("mouseleave", off);
+  el.addEventListener("focus", on);      el.addEventListener("blur", off);
+});
+
+let filterAcct = null;
+function applyAcct(){ isolate(r => r.dataset.acct === filterAcct); }
+document.querySelectorAll("#acctBody tr").forEach(tr => {
+  const toggle = () => {
+    const nm = tr.dataset.acct;
+    filterAcct = (filterAcct === nm) ? null : nm;
+    document.querySelectorAll("#acctBody tr").forEach(t =>
+      t.dataset.sel = t.dataset.acct === filterAcct ? "1" : "0");
+    if (filterAcct){ applyAcct();
+      $("#stFilter").textContent = "acct=" + filterAcct.toUpperCase().replace(/ /g,"_");
+      $("#ledMeta").textContent = rows.filter(r=>r.dataset.dim!=="1").length + " OF 1,673";
+    } else { isolate(null); $("#stFilter").textContent = "none"; $("#ledMeta").textContent = "14 OF 1,673"; }
+  };
+  tr.addEventListener("click", toggle);
+  tr.addEventListener("keydown", e => { if (e.key==="Enter"||e.key===" "){ e.preventDefault(); toggle(); } });
+});
+
+/* keyboard triage on the ledger */
+let focusRow = -1, selected = new Set();
+function paintFocus(){
+  rows.forEach((r,i) => r.dataset.focus = i === focusRow ? "1" : "0");
+  if (focusRow >= 0) rows[focusRow].scrollIntoView({ block: "nearest" });
+}
+function tickCell(row, dir){
+  const cell = row.querySelector("td.r.fig");
+  cell.classList.add("cell"); cell.dataset.tick = dir;
+  setTimeout(() => { delete cell.dataset.tick; }, 640);
+}
+
+/* ── live tape: the instrument keeps ticking ───────────────────────────── */
+let invested = 124735.57, syncT = 0;
+setInterval(() => { $("#sync").textContent = (++syncT) + "s"; }, 1000);
+setInterval(() => {
+  if (document.hidden) return;                                  // never burn battery off-screen
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const d = (rnd()-0.47) * 240;
+  invested += d;
+  const el = $("#s-inv"), card = el.closest(".stat");
+  el.textContent = fmt(invested);
+  $("#s-invd").textContent = sgn(invested - 123626.35) + " today";
+  $("#s-invd").className = "sp " + (invested >= 123626.35 ? "pos" : "neg");
+  card.dataset.tick = d >= 0 ? "up" : "down";
+  setTimeout(() => { delete card.dataset.tick; }, 640);
+}, 3200);
+
+/* ── resizable split ───────────────────────────────────────────────────── */
+const split = $("#split"), gutter = $("#gutter");
+let gdrag = false;
+const setSplit = px => {
+  const r = split.getBoundingClientRect();
+  const f = Math.max(0.28, Math.min(0.78, px / r.width));
+  split.style.setProperty("--splitL", (f/(1-f)).toFixed(3) + "fr");
+};
+gutter.addEventListener("pointerdown", e => { gdrag = true; gutter.dataset.drag = "1";
+  gutter.setPointerCapture(e.pointerId); });
+gutter.addEventListener("pointermove", e => { if (!gdrag) return;
+  setSplit(e.clientX - split.getBoundingClientRect().left); });
+gutter.addEventListener("pointerup", e => { gdrag = false; delete gutter.dataset.drag; });
+gutter.addEventListener("keydown", e => {   // WAI-ARIA windowsplitter: arrows resize
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  e.preventDefault();
+  const r = split.getBoundingClientRect();
+  setSplit(gutter.getBoundingClientRect().left - r.left + (e.key==="ArrowRight"?32:-32));
+});
+
+/* ── chrome toggles ────────────────────────────────────────────────────── */
+const root = document.documentElement;
+const themeBtn = $("#theme");
+function setTheme(t){
+  root.dataset.theme = t;
+  themeBtn.textContent = t.toUpperCase();
+  themeBtn.setAttribute("aria-pressed", String(t === "dark"));
+  draw();
+}
+themeBtn.addEventListener("click", () => setTheme(root.dataset.theme === "dark" ? "light" : "dark"));
+
+const cvdBtn = $("#cvd");
+cvdBtn.addEventListener("click", () => {
+  const on = root.dataset.cvd !== "on";
+  root.dataset.cvd = on ? "on" : "off";
+  cvdBtn.setAttribute("aria-pressed", String(on));
+  cvdBtn.textContent = on ? "CVD ON" : "CVD";
+  draw();
+});
+
+const sheet = $("#sheet");
+const openSheet = o => sheet.dataset.open = o ? "1" : "0";
+$("#help").addEventListener("click", () => openSheet(true));
+sheet.addEventListener("click", e => { if (e.target === sheet) openSheet(false); });
+
+/* global keys — suppressed inside inputs, per the triage safety rule */
+document.addEventListener("keydown", e => {
+  // THE triage safety rule: a bare letter must never fire a mutation while the
+  // caret is in a field. `target` is not always an Element (it can be document),
+  // so guard the instanceof before calling .matches.
+  const t = e.target;
+  if (t instanceof Element && t.matches("input, textarea, select, [contenteditable]")) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+  switch (e.key) {
+    case "j": case "k": {
+      e.preventDefault();
+      const live = rows.filter(r => r.dataset.dim !== "1");
+      if (!live.length) return;
+      let pos = live.indexOf(rows[focusRow]);
+      pos = pos < 0 ? 0 : Math.max(0, Math.min(live.length-1, pos + (e.key === "j" ? 1 : -1)));
+      focusRow = rows.indexOf(live[pos]); paintFocus(); break;
+    }
+    case "x": {
+      if (focusRow < 0) return; e.preventDefault();
+      selected.has(focusRow) ? selected.delete(focusRow) : selected.add(focusRow);
+      rows[focusRow].style.outline = selected.has(focusRow) ? "1px solid var(--accent)" : "";
+      rows[focusRow].style.outlineOffset = "-1px";
+      $("#stSel").textContent = String(selected.size); break;
+    }
+    case "e": {
+      if (focusRow < 0) return; e.preventDefault();
+      const row = rows[focusRow];
+      tickCell(row, row.querySelector("td.r.fig").classList.contains("neg") ? "down" : "up");
+      const f = row.lastElementChild;
+      f.innerHTML = '<span class="flag" style="color:var(--gain);border-color:var(--gain)" title="Reviewed">✓</span>';
+      break;
+    }
+    case "t": setTheme(root.dataset.theme === "dark" ? "light" : "dark"); break;
+    case "c": cvdBtn.click(); break;
+    case "?": openSheet(true); break;
+    case "Escape":
+      if (sheet.dataset.open === "1") { openSheet(false); break; }
+      if (filterAcct){ filterAcct = null; isolate(null);
+        document.querySelectorAll("#acctBody tr").forEach(t => t.dataset.sel = "0");
+        $("#stFilter").textContent = "none"; $("#ledMeta").textContent = "14 OF 1,673"; }
+      break;
+    case "1": case "2": case "3": case "4": case "5": {
+      const b = document.querySelectorAll(".pill")[+e.key - 1];
+      if (b) { e.preventDefault(); setRange(+b.dataset.r, b); } break;
+    }
+  }
+});
+
+/* boot */
+slice(); draw(); paintHero();
+window.addEventListener("resize", () => { draw(); if (scrubIdx !== null) placeReadout(scrubIdx); });
+})();
+</script>
+</body>
+</html>

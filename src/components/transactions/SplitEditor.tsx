@@ -19,6 +19,7 @@ import {
   setSplitsAction,
 } from "@/app/transactions/actions";
 import { loadSplitPanel, type SplitPanelData } from "@/app/transactions/sheet-actions";
+import { settleAction, useAction } from "@/hooks/useAction";
 import type { SplitSnapshot } from "@/services/transaction-splits";
 import { CategoryPicker, type CategoryPickerOption } from "./CategoryPicker";
 
@@ -60,16 +61,25 @@ function parseMagnitude(text: string): number | null {
   }
 }
 
+/**
+ * The undo settles and RETURNS its result: the card reports the failure in
+ * place and keeps itself alive, so `snapshot` — the only copy of the parts as
+ * they were — is still there to try again with. The old shape dismissed the
+ * card on click and dropped the snapshot with it.
+ */
 function offerSplitUndo(title: string, snapshot: SplitSnapshot, onChanged: () => void): void {
   toast({
     title,
     action: {
       label: "Undo",
-      onAction: () =>
-        void restoreSplitsAction(snapshot).then((r) => {
-          if (r.ok) onChanged();
-          else toast({ title: r.error, tone: "negative" });
-        }),
+      onAction: async () => {
+        const result = await settleAction(
+          () => restoreSplitsAction(snapshot),
+          "Couldn’t restore the split — try again",
+        );
+        if (result.ok) onChanged();
+        return result;
+      },
     },
   });
 }
@@ -78,7 +88,9 @@ export function SplitEditor({ txnId, refreshKey, categories, onChanged }: SplitE
   const [panel, setPanel] = useState<SplitPanelData | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<DraftLine[]>([]);
-  const [pending, setPending] = useState(false);
+  // one runner for both mutations: pending cleared in a finally (the old
+  // hand-rolled flag stayed stuck on if the call rejected) and no silent failure
+  const { run, pending } = useAction();
   const keySeq = useRef(0);
   const nextKey = () => `l${(keySeq.current += 1)}`;
   const editingRef = useRef(false);
@@ -183,34 +195,31 @@ export function SplitEditor({ txnId, refreshKey, categories, onChanged }: SplitE
 
   function save(): void {
     if (!panel || !signedLines || !validation.ok) return;
-    setPending(true);
-    void setSplitsAction({
-      transactionId: txnId,
-      lines: signedLines.map((l) => ({ categoryId: l.categoryId!, amountCents: l.amountCents })),
-    }).then((r) => {
-      setPending(false);
-      if (!r.ok) {
-        toast({ title: r.error, tone: "negative" });
-        return;
-      }
-      offerSplitUndo(`Split into ${signedLines.length} parts`, r.data.snapshot, onChanged);
-      setEditing(false);
-      onChanged();
-      void loadSplitPanel(txnId).then((p) => p.ok && setPanel(p.data));
-    });
+    const lines = signedLines;
+    void run(
+      () =>
+        setSplitsAction({
+          transactionId: txnId,
+          lines: lines.map((l) => ({ categoryId: l.categoryId!, amountCents: l.amountCents })),
+        }),
+      {
+        onSuccess: ({ snapshot }) => {
+          offerSplitUndo(`Split into ${lines.length} parts`, snapshot, onChanged);
+          setEditing(false);
+          onChanged();
+          reloadPanel();
+        },
+      },
+    );
   }
 
   function unsplit(): void {
-    setPending(true);
-    void clearSplitsAction({ transactionId: txnId }).then((r) => {
-      setPending(false);
-      if (!r.ok) {
-        toast({ title: r.error, tone: "negative" });
-        return;
-      }
-      offerSplitUndo("Split removed", r.data.snapshot, onChanged);
-      onChanged();
-      void loadSplitPanel(txnId).then((p) => p.ok && setPanel(p.data));
+    void run(() => clearSplitsAction({ transactionId: txnId }), {
+      onSuccess: ({ snapshot }) => {
+        offerSplitUndo("Split removed", snapshot, onChanged);
+        onChanged();
+        reloadPanel();
+      },
     });
   }
 

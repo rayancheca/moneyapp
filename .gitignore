@@ -1,5 +1,11 @@
 # dependencies / build
 node_modules/
+# git worktrees link node_modules (and .env) to the main checkout rather than
+# reinstalling. A trailing slash matches a directory but NOT a symlink, so the
+# link showed as untracked and a `git add -A` would have committed an absolute
+# path pointing at one machine. Both forms are needed.
+node_modules
+.env
 .next/
 out/
 *.tsbuildinfo
