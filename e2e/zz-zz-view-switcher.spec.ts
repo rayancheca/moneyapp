@@ -8,6 +8,35 @@ import { analyzeSettled } from "./axe-helpers";
  * tier and RESTORES the default (Chart) at the end for sibling specs.
  */
 
+/**
+ * Navigate, then WAIT FOR HYDRATION before returning.
+ *
+ * Every control in this spec is a `"use client"` segmented button whose onClick
+ * is attached at hydration — but the button itself ships in the SSR HTML, already
+ * visible and already enabled. Playwright's actionability checks are therefore
+ * satisfied BEFORE React can respond, and a click landing in that window is
+ * silently swallowed: no pill moves, no chart changes, no error.
+ *
+ * That was the flake. Measured on the restore step of the portfolio test (a fresh
+ * navigation followed immediately by a click — the tightest window in the file):
+ * 3 failures in 5 isolated runs, always "element(s) not found" for the value
+ * slider, and the failure dump always showed `button "Return" [pressed]` — i.e.
+ * the click never ran at all, rather than running and rendering the wrong chart.
+ *
+ * The signal: ThemeToggle renders `{mounted ? <Icon/> : <span/>}`, so the SVG
+ * appears only once the client has mounted. Note the button's `aria-label` is
+ * NOT a valid signal — it is present in the SSR markup too, so waiting on the
+ * accessible name proves nothing. Scoping to the svg INSIDE the theme button
+ * also sidesteps the `header button svg` ambiguity on pages that mount a
+ * CalendarGrid or a Sheet (each brings its own <header> svg).
+ */
+async function gotoHydrated(page: Page, path: string): Promise<void> {
+  await page.goto(path);
+  await expect(
+    page.getByRole("button", { name: /Switch to (light|dark) theme/ }).locator("svg"),
+  ).toBeVisible();
+}
+
 const GATING = new Set(["critical", "serious"]);
 function gating(results: { violations: { impact?: string | null }[] }) {
   return results.violations.filter((v) => GATING.has(v.impact ?? ""));
@@ -19,7 +48,7 @@ async function pillPressed(page: Page, name: "Chart" | "Graph" | "Table"): Promi
 }
 
 test("cash-flow view switches chart↔table, updates the URL, and persists", async ({ page }) => {
-  await page.goto("/spending?period=2026-07");
+  await gotoHydrated(page, "/spending?period=2026-07");
   const chart = page.getByRole("figure", { name: /Income above the axis/ });
   const table = page.getByRole("table");
 
@@ -49,20 +78,48 @@ test("cash-flow view switches chart↔table, updates the URL, and persists", asy
   expect(gating(await analyzeSettled(page))).toEqual([]);
 
   // the choice is sticky: a fresh visit with NO cash param keeps the graph
-  await page.goto("/spending");
+  await gotoHydrated(page, "/spending");
   await expect(page.getByRole("figure", { name: /Running totals for the period/ })).toBeVisible();
   expect(await pillPressed(page, "Graph")).toBe(true);
 
   // restore the default so sibling specs see the chart
   await page.getByRole("group", { name: "Cash flow view" }).getByRole("button", { name: "Chart" }).click();
   await expect(page.getByRole("figure", { name: /Income above the axis/ })).toBeVisible();
-  await page.goto("/spending");
+  await gotoHydrated(page, "/spending");
   await expect(page.getByRole("figure", { name: /Income above the axis/ })).toBeVisible();
 });
 
 async function invPillPressed(page: Page, name: "Value" | "Return"): Promise<boolean> {
   const btn = page.getByRole("group", { name: "Portfolio chart view" }).getByRole("button", { name });
   return (await btn.getAttribute("aria-pressed")) === "true";
+}
+
+/**
+ * Press a segmented-control pill and PROVE the press landed.
+ *
+ * `gotoHydrated` above proves the SHELL has hydrated (the theme toggle is in
+ * AppShell). It does not prove this panel has: React hydrates client boundaries
+ * independently, so PortfolioChartPanel can still be inert when AppShell is live,
+ * and a click in that window is swallowed with no error. Measured: waiting on the
+ * shell alone took the restore step from 3-in-5 failures to roughly 2-in-12 — a
+ * real improvement, and still a flake. The failure dump was identical every time,
+ * `button "Return" [pressed]`, i.e. the handler never ran.
+ *
+ * There is no DOM signal for "this boundary is now interactive", so instead of
+ * guessing a longer wait we retry the press until its own control reports the new
+ * state. That is safe precisely BECAUSE it is idempotent: useViewState's setView
+ * early-returns when the requested value is already selected
+ * (`if (next === state) return`), so a redundant press is a no-op, never a toggle.
+ *
+ * This strengthens the action, not the expectation — every caller's assertions
+ * about URL, slider and persistence still have to hold on their own.
+ */
+async function pressView(page: Page, group: string, name: string): Promise<void> {
+  const pill = page.getByRole("group", { name: group }).getByRole("button", { name });
+  await expect(async () => {
+    await pill.click();
+    await expect(pill).toHaveAttribute("aria-pressed", "true", { timeout: 3_000 });
+  }).toPass({ timeout: 30_000 });
 }
 
 test("portfolio chart switches value↔return, updates the URL, and persists", async ({ page }) => {
@@ -78,10 +135,9 @@ test("portfolio chart switches value↔return, updates the URL, and persists", a
   // the URL over the persisted value) — it does not write the preference. Only
   // the pill click persists, which is why the tail of this test restores by
   // clicking too.
-  await page.goto("/investments");
-  const viewGroup = page.getByRole("group", { name: "Portfolio chart view" });
+  await gotoHydrated(page, "/investments");
   if (!(await invPillPressed(page, "Value"))) {
-    await viewGroup.getByRole("button", { name: "Value" }).click();
+    await pressView(page, "Portfolio chart view", "Value");
   }
 
   const valueChart = page.getByRole("slider", { name: /Portfolio value over time/ });
@@ -91,7 +147,7 @@ test("portfolio chart switches value↔return, updates the URL, and persists", a
   expect(await invPillPressed(page, "Value")).toBe(true);
 
   // switch to return: the URL carries it, the slider relabels to the return line
-  await page.getByRole("group", { name: "Portfolio chart view" }).getByRole("button", { name: "Return" }).click();
+  await pressView(page, "Portfolio chart view", "Return");
   await expect(page).toHaveURL(/[?&]view=returns\b/);
   await expect(returnChart).toBeVisible();
   expect(await invPillPressed(page, "Return")).toBe(true);
@@ -101,14 +157,14 @@ test("portfolio chart switches value↔return, updates the URL, and persists", a
   expect(gating(await analyzeSettled(page))).toEqual([]);
 
   // sticky: a fresh visit with NO view param still shows the return line
-  await page.goto("/investments");
+  await gotoHydrated(page, "/investments");
   await expect(page.getByRole("slider", { name: /Portfolio return over time/ })).toBeVisible();
   expect(await invPillPressed(page, "Return")).toBe(true);
 
   // restore the default so sibling specs see the value chart
-  await page.getByRole("group", { name: "Portfolio chart view" }).getByRole("button", { name: "Value" }).click();
+  await pressView(page, "Portfolio chart view", "Value");
   await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
-  await page.goto("/investments");
+  await gotoHydrated(page, "/investments");
   await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
 });
 
@@ -119,10 +175,10 @@ async function holdingPillPressed(page: Page, name: "Price" | "Return"): Promise
 
 test("a holding chart switches price↔return, updates the URL, and persists", async ({ page }) => {
   // resolve the first holding-detail URL from /investments (stable fixture order)
-  await page.goto("/investments");
+  await gotoHydrated(page, "/investments");
   const href = await page.locator('a[href^="/investments/"]').first().getAttribute("href");
   expect(href).toBeTruthy();
-  await page.goto(href!);
+  await gotoHydrated(page, href!);
 
   const priceChart = page.getByRole("slider", { name: /price over time/ });
   const returnChart = page.getByRole("slider", { name: /return over time/ });
@@ -153,7 +209,7 @@ test("a holding chart switches price↔return, updates the URL, and persists", a
   expect(gating(await analyzeSettled(page))).toEqual([]);
 
   // sticky: a fresh visit with NO params still shows the % return line
-  await page.goto(href!);
+  await gotoHydrated(page, href!);
   await expect(page.getByRole("slider", { name: /return over time/ })).toBeVisible();
   expect(await holdingPillPressed(page, "Return")).toBe(true);
 
@@ -166,7 +222,7 @@ test("a holding chart switches price↔return, updates the URL, and persists", a
 test("the benchmark picker fetches history for an unheld symbol and persists", async ({ page }) => {
   // this test backfills (fake) closes into price_cache and runs LAST in the
   // suite; the db is reseeded from scratch on every run, so nothing leaks
-  await page.goto("/investments?view=returns");
+  await gotoHydrated(page, "/investments?view=returns");
   const picker = page.getByRole("combobox", { name: "Benchmark" });
   await expect(picker).toBeVisible();
   // the fixture has no cached SPY — the picker says so instead of a blank overlay
@@ -179,7 +235,7 @@ test("the benchmark picker fetches history for an unheld symbol and persists", a
   await expect(page.getByText(/simulated at daily closes/)).toBeVisible();
 
   // sticky: a fresh visit with NO bench param keeps the persisted pick
-  await page.goto("/investments?view=returns");
+  await gotoHydrated(page, "/investments?view=returns");
   await expect(page.getByText(/Nasdaq 100 replay/)).toBeVisible();
 
   // the % framing swaps to the buy-and-hold comparison for the same benchmark;
@@ -209,7 +265,7 @@ async function unitGroupRestore(page: Page, href: string): Promise<void> {
   await page.getByRole("group", { name: "Return unit" }).getByRole("button", { name: "$" }).click();
   await expect(page).not.toHaveURL(/unit=percent/);
   await page.getByRole("group", { name: "Holding chart view" }).getByRole("button", { name: "Price" }).click();
-  await page.goto(href);
+  await gotoHydrated(page, href);
   await expect(page.getByRole("slider", { name: /price over time/ })).toBeVisible();
 }
 
@@ -228,7 +284,7 @@ async function unitGroupRestore(page: Page, href: string): Promise<void> {
 async function lensRestore(page: Page, group: string, href: string, table: RegExp): Promise<void> {
   await page.getByRole("group", { name: group }).getByRole("button", { name: "Chart" }).click();
   await expect(page).not.toHaveURL(/lens=table/);
-  await page.goto(href);
+  await gotoHydrated(page, href);
   await expect(page.getByRole("table", { name: table })).toHaveCount(0);
   expect(
     await page.getByRole("group", { name: group }).getByRole("button", { name: "Chart" }).getAttribute("aria-pressed"),
@@ -236,7 +292,7 @@ async function lensRestore(page: Page, group: string, href: string, table: RegEx
 }
 
 test("the balance chart switches chart↔table, and the table shows the chart's own window", async ({ page }) => {
-  await page.goto("/accounts");
+  await gotoHydrated(page, "/accounts");
   await page.locator('section[aria-label="Robinhood"] a[href^="/accounts/"]').first().click();
   await expect(page.getByRole("slider", { name: /Balance over time/ })).toBeVisible();
   const href = page.url().split("?")[0]!;
@@ -260,13 +316,13 @@ test("the balance chart switches chart↔table, and the table shows the chart's 
   await expect(page.getByRole("table", { name: /Balance by day — 1 year/ })).toBeVisible();
 
   // sticky across a fresh visit with no param, then restored for sibling specs
-  await page.goto(href);
+  await gotoHydrated(page, href);
   await expect(page.getByRole("table", { name: /Balance by day/ })).toBeVisible();
   await lensRestore(page, "Balance lens", href, /Balance by day/);
 });
 
 test("the portfolio lens tables the SAME metric the view/unit switchers select", async ({ page }) => {
-  await page.goto("/investments");
+  await gotoHydrated(page, "/investments");
   await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
 
   await page.getByRole("group", { name: "Portfolio lens" }).getByRole("button", { name: "Table" }).click();
@@ -296,10 +352,10 @@ test("the portfolio lens tables the SAME metric the view/unit switchers select",
 
 test("a holding's table names its trade days, and the recurring amount history tables too", async ({ page }) => {
   // ── the holding lens ──
-  await page.goto("/investments");
+  await gotoHydrated(page, "/investments");
   const holdingHref = await page.locator('a[href^="/investments/"]').first().getAttribute("href");
   expect(holdingHref).toBeTruthy();
-  await page.goto(holdingHref!);
+  await gotoHydrated(page, holdingHref!);
   await expect(page.getByRole("slider", { name: /price over time/ })).toBeVisible();
 
   await page.getByRole("group", { name: "Holding lens" }).getByRole("button", { name: "Table" }).click();
@@ -313,9 +369,9 @@ test("a holding's table names its trade days, and the recurring amount history t
   await lensRestore(page, "Holding lens", holdingHref!, /close by day/);
 
   // ── the recurring amount-history lens ──
-  await page.goto("/recurring");
+  await gotoHydrated(page, "/recurring");
   await page.getByRole("button", { name: /Detect now/ }).click();
-  await page.goto("/recurring?tab=all");
+  await gotoHydrated(page, "/recurring?tab=all");
   await page.locator('a[href^="/recurring/"]').first().click();
   const seriesHref = page.url().split("?")[0]!;
   const lens = page.getByRole("group", { name: "Amount history lens" });
