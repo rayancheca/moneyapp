@@ -8,13 +8,23 @@
 
 | | |
 |---|---|
-| `main` | **`d4deccf`** — clean, `== origin/main` |
-| branch | `claude/app-polish-adversarial-review-e80abb`, same commit |
-| worktree | `.claude/worktrees/app-polish-adversarial-review-e80abb` |
-| uncommitted | **only** `docs/HANDOFF-2026-07-29.md` in the worktree — the *other* session's in-progress doc edit. Left alone deliberately. |
+| `main` | **`01462b0`** — clean, `== origin/main`, pushed |
+| branch | `claude/app-polish-adversarial-review-e80abb` — **same commit** as main |
+| worktree | `.claude/worktrees/app-polish-adversarial-review-e80abb` (the only one) |
+| uncommitted | **none**, anywhere |
 
-**Gate at handoff, measured on a fresh build:** `tsc` clean · **132 files / 2,143 unit
-tests** · `next build` clean · **258/258 e2e**.
+**Gate at handoff, run on `main` at `01462b0` against a fresh build:** `tsc` clean ·
+**132 files / 2,143 unit tests** · `next build` clean (17 routes) · **258/258 e2e**.
+
+**Closed out at handoff:** no dev/preview server running, nothing listening on 3000 or
+31xx, no process holding the real database, no test runner alive. Three stale worktrees
+(`chart-table-pass23`, `quirky-elgamal-570ccc`, `transaction-clarification-pass-483a26`)
+were removed — all three were at commits already in `main` and held nothing but the
+untracked `node_modules` symlink. **Their branches were kept**, so any of them can be
+recreated with `git worktree add`. One throwaway debug spec was discarded from the first
+of those (`e2e/zzz-cells.spec.ts`: hardcoded screenshot paths into a scratchpad belonging
+to a different project directory, `console.log` inspection, `waitForTimeout`); the feature
+it poked at is properly covered by `e2e/zz-spending-drilldowns.spec.ts:44`.
 
 ### ⚙️ Worktree setup — both symlinks are required, both are gitignored
 
@@ -28,11 +38,20 @@ The missing `.env` — not an expired key — was the long-standing cause of the
 
 ---
 
-## 2. ⚠️⚠️ A SECOND CLAUDE SESSION IS STILL ALIVE IN THIS WORKTREE
+## 2. ⚠️ A SECOND CLAUDE SESSION SHARED THIS WORKTREE — close its window
 
 PID **90295**, open ~2 days, cwd = the same worktree. During pass 26 it independently
 **committed the A+ work as `fb2caec`** and ran three of its own e2e gates, holding port
-3111 the whole time. Symptoms to recognise:
+3111 the whole time.
+
+**Status at handoff:** its processes are all stopped and its uncommitted work is preserved
+in `01462b0` (see §5.3 — three real re-measurements that would otherwise have been lost).
+The session *process* is still alive but idle, one of ~21 open in the Claude app. It was
+left running on purpose: killing it is a UI action that belongs to the owner, not something
+to force. **Close that window before starting the next pass** — two agents editing one
+worktree is how work gets lost.
+
+Symptoms to recognise if it happens again:
 
 - `playwright` fails instantly with `http://localhost:3111 is already used`
 - the PID listening on 3111 keeps *changing* (it is respawning per run)
@@ -53,7 +72,7 @@ Close that session if you can; two agents editing one worktree is how work gets 
 
 ## 3. What shipped in pass 26
 
-Four commits, each gated on a fresh build before merge:
+Code commits, each gated on a fresh build before merge:
 
 | commit | what |
 |---|---|
@@ -62,6 +81,14 @@ Four commits, each gated on a fresh build before merge:
 | `097304d` | feat: `/flow` — the transfer-flow view |
 | `2d9d3dd` | fix: spine fits its canvas, clears its labels, rhythm rail legible |
 | `d4deccf` | feat: "What moved" — Direction C's deviation bar on `/spending` |
+
+Then documentation, up to the current `main`:
+
+| commit | what |
+|---|---|
+| `4bf6fe6` | this handoff |
+| `4232a12` | folds §5.3's re-measurements into this handoff |
+| `01462b0` | the other session's own final handoff update, preserved rather than discarded |
 
 ### 3.1 ⚠️ THE HYDRATION RACE — this is repo-wide, not one spec
 
