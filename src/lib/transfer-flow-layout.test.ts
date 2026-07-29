@@ -252,6 +252,81 @@ describe("degenerate states", () => {
   });
 });
 
+describe("everything fits, and nothing sits on top of anything else", () => {
+  // These are the two defects the first version shipped: node labels drawn
+  // under the returning arcs, and lobes running off the canvas. Neither was
+  // visible to any assertion above — only to a screenshot.
+  const busy = () => {
+    const accounts = [
+      account("a", -300_00),
+      account("b", -100_00),
+      account("c", 0),
+      account("d", 50_00),
+      account("e", 150_00),
+      account("f", 200_00),
+    ];
+    const edges = [
+      edge("a", "f", 500_00, 40),
+      edge("f", "a", 200_00, 12),
+      edge("b", "e", 300_00, 9),
+      edge("e", "b", 90_00, 3),
+      edge("c", "d", 40_00, 2),
+    ];
+    return data({ accounts, edges });
+  };
+
+  for (const width of [320, 375, 440, 768, 1024, 1440, 2560]) {
+    test(`@${width}: labels clear the return region and no lobe leaves the canvas`, () => {
+      const layout = computeSpineLayout(busy(), "gross", { width });
+
+      // the label anchor is to the LEFT of every returning lobe
+      for (const n of layout.nodes) {
+        expect(n.labelX).toBeLessThanOrEqual(layout.spineX - layout.leftRegion);
+        expect(n.labelX).toBeGreaterThanOrEqual(0);
+      }
+      // and both lobe regions are inside the canvas
+      expect(layout.spineX - layout.leftRegion).toBeGreaterThanOrEqual(0);
+      expect(layout.spineX + layout.rightRegion).toBeLessThanOrEqual(width);
+    });
+  }
+
+  test("a label gutter is reserved even when nothing returns", () => {
+    const accounts = [account("a", -100_00), account("b", 100_00)];
+    const layout = computeSpineLayout(
+      data({ accounts, edges: [edge("a", "b", 100_00)] }),
+      "gross",
+      { width: 900 },
+    );
+    expect(layout.leftRegion).toBe(0);
+    expect(layout.spineX).toBeGreaterThan(0); // room for the account names
+    expect(layout.nodes[0]!.labelX).toBeGreaterThan(0);
+  });
+
+  test("lobes grow to use the canvas, and stop growing once capped", () => {
+    const narrow = computeSpineLayout(busy(), "gross", { width: 480 });
+    const wide = computeSpineLayout(busy(), "gross", { width: 1440 });
+    expect(wide.rightRegion).toBeGreaterThan(narrow.rightRegion);
+
+    // past the cap the geometry stops stretching, so an ultrawide window does
+    // not flatten the lobes into indistinguishable sweeps
+    const huge = computeSpineLayout(busy(), "gross", { width: 2560 });
+    const huger = computeSpineLayout(busy(), "gross", { width: 4000 });
+    expect(huger.rightRegion).toBe(huge.rightRegion);
+  });
+
+  test("a wide canvas is actually used, not left half empty", () => {
+    const layout = computeSpineLayout(busy(), "gross", { width: 1200 });
+    const used = layout.spineX + layout.rightRegion;
+    expect(used / 1200).toBeGreaterThan(0.7);
+  });
+
+  test("height follows the account count so the last node is never clipped", () => {
+    const layout = computeSpineLayout(busy(), "gross", { width: 900 });
+    const lastY = Math.max(...layout.nodes.map((n) => n.y));
+    expect(lastY).toBeLessThanOrEqual(layout.height);
+  });
+});
+
 describe("compact mode", () => {
   test("narrow viewports shrink the lobes so they stay on screen", () => {
     const wide = computeSpineLayout(data(), "gross", { width: 900 });

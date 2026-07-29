@@ -56,13 +56,23 @@ export function TransferRhythm({ data, measure, hoveredEdgeId, onHoverEdge }: Tr
         aria-label={`Transfers by month, ${data.months[0]} to ${data.months[data.months.length - 1]}. Busiest month ${formatCents(peak)}. The same figures are in the table lens.`}
       >
         {data.months.map((month, i) => {
+          const total = monthTotals[i] ?? 0;
+          // The STACK is scaled with sqrt, then split proportionally among its
+          // edges. Scaling each segment individually would be wrong: Σ√xᵢ > √Σxᵢ,
+          // so the stack would overflow the rail.
+          //
+          // sqrt rather than linear because this data is extremely spiky — one
+          // month peaks near $98k while a typical month is a couple of thousand
+          // — and a linear rail drew every month except the peak as a 1px
+          // sliver, which said nothing at all.
+          const stack = total > 0 ? Math.sqrt(total / peak) * (RAIL_HEIGHT - 4) : 0;
           let y = RAIL_HEIGHT;
           return (
             <g key={month}>
               {edges.map((e) => {
                 const cents = e.monthCents[i] ?? 0;
                 if (cents <= 0) return null;
-                const h = Math.max(MIN_BAR, (cents / peak) * (RAIL_HEIGHT - 4));
+                const h = Math.max(MIN_BAR, (cents / total) * stack);
                 y -= h;
                 const lit = hoveredEdgeId === null || hoveredEdgeId === e.id;
                 return (

@@ -176,7 +176,11 @@ export function TransferSpine({
   const drift = !reducedMotion;
 
   return (
-    <div ref={containerRef} className={`relative w-full ${heightClass} overflow-x-auto`}>
+    // The height is the LAYOUT's, not a fixed class: the spine grows by one
+    // NODE_GAP per account, so a fixed h-[26rem] silently clipped the bottom
+    // node the moment a sixth account appeared. `heightClass` is kept only as
+    // the empty-state and focus-dialog hook.
+    <div ref={containerRef} className="relative w-full">
       <svg
         width={layout.width}
         height={layout.height}

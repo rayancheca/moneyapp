@@ -90,6 +90,9 @@ export interface SpineLayout {
 
 const NODE_GAP = 74;
 const PAD_Y = 34;
+/** room reserved LEFT of everything for the account name + its net figure */
+const LABEL_GUTTER = 132;
+const COMPACT_LABEL_GUTTER = 96;
 const MIN_STROKE = 2;
 const MAX_STROKE = 26;
 const MIN_RADIUS = 4;
@@ -98,6 +101,8 @@ const MIN_BULGE = 46;
 const MAX_BULGE = 190;
 const COMPACT_BULGE_SCALE = 0.56;
 const DEFAULT_COMPACT_BELOW = 560;
+/** how far the span-derived lobes may be stretched to fill a wide canvas */
+const MAX_FIT_SCALE = 2.4;
 
 /** Round to 2dp so the emitted path strings are stable across platforms. */
 function r2(n: number): number {
@@ -142,9 +147,51 @@ export function computeSpineLayout(
   const nodeOrder = new Map(data.accounts.map((a, i) => [a.id, i]));
   const height = PAD_Y * 2 + Math.max(0, data.accounts.length - 1) * NODE_GAP;
 
-  // The spine sits right of centre so the wider ONWARD lobes have room; the
-  // left region only ever carries return flow, which is the smaller story.
-  const spineX = r2(options.width * (compact ? 0.34 : 0.38));
+  const maxCents = edges.reduce((m, e) => Math.max(m, e.cents), 0);
+  const maxCount = edges.reduce((m, e) => Math.max(m, e.count), 0);
+  // Span drives the bulge, so it must be the span of the EDGES actually drawn.
+  const maxSpan = edges.reduce((m, e) => {
+    const from = nodeOrder.get(e.fromAccountId);
+    const to = nodeOrder.get(e.toAccountId);
+    if (from === undefined || to === undefined) return m;
+    return Math.max(m, Math.abs(to - from));
+  }, 0);
+
+  // ---- FIT THE SPINE TO THE CANVAS BEFORE PLACING ANYTHING ------------------
+  // Two passes are required. The unscaled bulges tell us how far the lobes want
+  // to reach on each side; only then can the spine's x be chosen so that the
+  // label gutter, the return lobes and the onward lobes all fit the real width.
+  // Doing this in one pass (a fixed fraction of the width) put the labels
+  // underneath the returning arcs and let the widest lobes run off the canvas.
+  const unscaledBulge = (span: number) => {
+    const t = maxSpan > 0 ? span / maxSpan : 1;
+    return MIN_BULGE + t * (MAX_BULGE - MIN_BULGE);
+  };
+  let wantLeft = 0;
+  let wantRight = 0;
+  for (const e of edges) {
+    const from = nodeOrder.get(e.fromAccountId);
+    const to = nodeOrder.get(e.toAccountId);
+    if (from === undefined || to === undefined) continue;
+    const b = unscaledBulge(Math.abs(to - from));
+    if (to > from) wantRight = Math.max(wantRight, b);
+    else wantLeft = Math.max(wantLeft, b);
+  }
+
+  const gutter = compact ? COMPACT_LABEL_GUTTER : LABEL_GUTTER;
+  const wanted = wantLeft + wantRight;
+  const available = Math.max(1, options.width - gutter);
+  // Fill the canvas rather than sitting in the middle of it. A fixed MAX_BULGE
+  // left roughly half the width empty on a desktop card — the same dead
+  // horizontal space the shell was widened to reclaim. Growth is capped so a
+  // very wide screen stretches the lobes into flat, indistinguishable sweeps.
+  const fitScale = Math.min(MAX_FIT_SCALE, available / Math.max(1, wanted));
+  const bulgeScaleFinal = bulgeScale * fitScale;
+
+  const leftMax = r2(wantLeft * bulgeScaleFinal);
+  const rightMax = r2(wantRight * bulgeScaleFinal);
+  // Everything left of the spine — the return lobes AND the labels beyond them.
+  const spineX = r2(gutter + leftMax);
 
   const maxAbsNet = data.accounts.reduce((m, a) => Math.max(m, Math.abs(a.netCents)), 0);
   const nodes: SpineNode[] = data.accounts.map((a, i) => {
@@ -158,21 +205,12 @@ export function computeSpineLayout(
       outCents: a.outCents,
       href: a.href,
       y: PAD_Y + i * NODE_GAP,
-      labelX: r2(spineX - 16),
+      // clear of the return region, not merely clear of the spine
+      labelX: r2(spineX - leftMax - 12),
       weight: r2(weight),
       radius: r2(MIN_RADIUS + Math.sqrt(weight) * (MAX_RADIUS - MIN_RADIUS)),
     };
   });
-
-  const maxCents = edges.reduce((m, e) => Math.max(m, e.cents), 0);
-  const maxCount = edges.reduce((m, e) => Math.max(m, e.count), 0);
-  // Span drives the bulge, so it must be the span of the EDGES actually drawn.
-  const maxSpan = edges.reduce((m, e) => {
-    const from = nodeOrder.get(e.fromAccountId);
-    const to = nodeOrder.get(e.toAccountId);
-    if (from === undefined || to === undefined) return m;
-    return Math.max(m, Math.abs(to - from));
-  }, 0);
 
   let leftRegion = 0;
   let rightRegion = 0;
@@ -187,8 +225,7 @@ export function computeSpineLayout(
     const y2 = PAD_Y + toIdx * NODE_GAP;
     const span = Math.abs(toIdx - fromIdx);
     // Guard the single-edge / single-span case: t = 1 rather than 0/0.
-    const t = maxSpan > 0 ? span / maxSpan : 1;
-    const bulge = r2((MIN_BULGE + t * (MAX_BULGE - MIN_BULGE)) * bulgeScale);
+    const bulge = r2(unscaledBulge(span) * bulgeScaleFinal);
 
     // Down the ladder = toward the net destination = onward = bulge RIGHT.
     const isOnward = toIdx > fromIdx;
