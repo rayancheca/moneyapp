@@ -26,6 +26,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { WhereItWentPanel, type WhereItWentRow } from "@/components/charts/CategoryMassif";
+import { CategoryDeviation } from "@/components/spending/CategoryDeviation";
 import { CashFlowView } from "@/components/spending/CashFlowView";
 import { CASH_VIEW_SPEC, SPENDING_SURFACE } from "@/components/spending/spending-view-spec";
 import { HonestyBucketsCard } from "@/components/spending/HonestyBucketsCard";
@@ -100,6 +101,14 @@ export default async function SpendingPage({
   const breakdown = categoryBreakdown(db, range);
   const prevBreakdown = categoryBreakdown(db, { from: prevPeriod.from, to: prevPeriod.to });
   const prevById = new Map(prevBreakdown.map((r) => [r.categoryId, r.spentCents]));
+  // "What moved" reads the SAME two breakdowns the categories table already
+  // compares, so the two panels can never disagree about a delta.
+  const deviationRows = breakdown.map((r) => ({
+    key: r.categoryId ?? "__uncat",
+    label: r.name,
+    currentCents: r.spentCents,
+    previousCents: prevById.get(r.categoryId) ?? 0,
+  }));
   // Share denominator = gross positive spending across categories. The NET total
   // (cashFlow.totals.spentCents) can be dragged below an individual category's
   // gross by refund/reimbursement-heavy categories that net to an inflow, which
@@ -267,6 +276,22 @@ export default async function SpendingPage({
               <TopMerchantsCard data={merchants} />
             </SurfaceCard>
           </div>
+
+          {/* Direction C's centre-rule deviation bar. Every other panel on this
+              page answers "how much"; this is the only one that asks WHAT MOVED,
+              with the change on its own axis and zero at the centre rather than
+              at the bottom. It sits here rather than on the dashboard because
+              the dashboard's category list already prints the move against last
+              month beside each amount — there it would be a third encoding of a
+              fact already stated twice. */}
+          <SurfaceCard>
+            <h2 className="mb-3 text-sm font-medium">What moved</h2>
+            <CategoryDeviation
+              rows={deviationRows}
+              currentLabel={period.label}
+              previousLabel={prevPeriod.label}
+            />
+          </SurfaceCard>
 
           <SurfaceCard>
             <div className="mb-2 flex items-baseline justify-between">
