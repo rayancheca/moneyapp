@@ -385,6 +385,16 @@
   from { transform: scale(0.6); }
   to   { transform: scale(1); }
 }
+/* The transfer-flow arcs drift their dashes along the path to suggest direction
+   of travel. Only the OFFSET moves — the dash GAP, which is what actually
+   encodes transfer count, is static geometry set in transfer-flow-layout.ts. So
+   with motion disabled below, the reading of the chart is completely unchanged.
+   stroke-dashoffset is not compositor-accelerated, but these are a handful of
+   paths on one deliberately-visited route, not an always-on background effect. */
+@keyframes transfer-drift {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: -100; }
+}
 
 body {
   background-color: var(--surface);

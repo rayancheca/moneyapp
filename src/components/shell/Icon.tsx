@@ -79,6 +79,7 @@ const ICONS = {
   imports: Download,
   transactions: ArrowDownUp,
   spending: ChartPie,
+  flow: ArrowLeftRight,
   budgets: ChartBar,
   recurring: RefreshCw,
   investments: TrendingUp,
