@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import type { FocusEvent, KeyboardEvent, ReactNode, RefObject } from "react";
 import { Icon, type IconName } from "@/components/shell/Icon";
 import { Popover, usePopover } from "@/components/ui/Popover";
+import { CONTROL_MOTION } from "@/components/ui/letterpress";
 import type { Placement } from "@/lib/positioning";
 
 export interface MenuItem {
@@ -106,7 +107,7 @@ export function Menu({ label, items, trigger, placement = "bottom-end" }: MenuPr
         <button
           type="button"
           {...fullTriggerProps}
-          className="inline-flex size-8 items-center justify-center rounded-md font-medium text-ink-muted transition-colors duration-(--duration-fast) hover:bg-surface-sunken hover:text-ink"
+          className={`inline-flex size-8 items-center justify-center rounded-full font-medium text-ink-muted ${CONTROL_MOTION} hover:bg-surface-leaf hover:text-ink`}
         >
           <Icon name="more" />
         </button>
@@ -131,7 +132,7 @@ export function Menu({ label, items, trigger, placement = "bottom-end" }: MenuPr
                 close();
                 item.onSelect();
               }}
-              className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors duration-(--duration-fast) focus:bg-surface-sunken not-aria-disabled:hover:bg-surface-sunken aria-disabled:text-ink-faint ${
+              className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors duration-(--duration-tap) ease-(--ease-ink) focus:bg-surface-leaf not-aria-disabled:hover:bg-surface-leaf aria-disabled:text-ink-faint ${
                 item.destructive ? "text-negative" : "text-ink"
               }`}
             >

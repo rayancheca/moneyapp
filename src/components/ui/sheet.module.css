@@ -17,7 +17,16 @@
   border-radius: var(--radius-overlay) var(--radius-overlay) 0 0;
   background: var(--surface-overlay);
   color: var(--ink);
-  box-shadow: var(--shadow-sheet);
+  /* --shadow-sheet still owns the drawer's occlusion (globals.css reserves it
+     for dialog surfaces); the letterpress catch-light is COMPOSED onto it, not
+     swapped in. It runs along the edge the panel enters from — the top edge of
+     a bottom sheet, the left edge of the md+ right drawer below — because a
+     catch-light on the wrong edge reads as a stray border. The token does the
+     theme work: 0.85 white on paper, 0.055 in the dark, where a bright inset
+     line would stop reading as paper and start reading as a glowing rim. */
+  box-shadow:
+    var(--shadow-sheet),
+    inset 0 1px 0 var(--emboss-hi);
   opacity: 0;
   translate: 0 100%;
   /* overlay + display transition discretely so close() plays the exit */
@@ -69,6 +78,10 @@
     max-height: none;
     border-radius: 0;
     translate: 100% 0;
+    /* the drawer slides in from the right, so its lit edge is the left one */
+    box-shadow:
+      var(--shadow-sheet),
+      inset 1px 0 0 var(--emboss-hi);
   }
 
   .sheet[open] {

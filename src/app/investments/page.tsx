@@ -203,7 +203,16 @@ export default async function InvestmentsPage({
           </SurfaceCard>
         )}
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
+        {/* `*:min-w-0` is load-bearing (the dashboard's shrink guard, same
+            token). A grid item's automatic minimum size is its MIN-CONTENT
+            size, so below lg — where this collapses to one implicit column —
+            the track sized itself to the holdings table and dragged the whole
+            document sideways: +337px at 320, +217px on his phone. Zeroing it
+            lets the track match the container and hands the scrolling back to
+            the table's own overflow-x-auto, which is where a wide financial
+            table belongs. The lg track already says minmax(0,…) for this
+            reason; the mobile column had nothing saying it. */}
+        <div className="grid gap-6 *:min-w-0 lg:grid-cols-[minmax(0,1fr)_280px]">
           <SurfaceCard>
             <h2 className="mb-4 text-sm font-medium">Holdings</h2>
             <PortfolioHoldingsTable rows={rows} />

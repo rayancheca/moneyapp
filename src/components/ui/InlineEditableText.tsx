@@ -3,6 +3,7 @@
 import type { KeyboardEvent } from "react";
 import { useInlineEdit, type InlineSaveResult } from "@/hooks/useInlineEdit";
 import { resolveTextCommit, type CommitOutcome } from "@/lib/inline-edit";
+import { PRESSED_SLOT } from "./letterpress";
 
 interface InlineEditableTextProps {
   value: string;
@@ -69,7 +70,7 @@ export function InlineEditableText({
           maxLength={maxLength}
           size={Math.max(edit.draft.length + 1, 8)}
           data-inline-edit="input"
-          className={`-mx-1.5 max-w-full min-w-0 rounded-md border border-accent bg-surface-raised px-1.5 py-0.5 outline-none ${shared}`}
+          className={`-mx-1.5 max-w-full min-w-0 rounded-md border border-accent bg-surface-leaf ${PRESSED_SLOT} px-1.5 py-0.5 outline-none ${shared}`}
         />
         {edit.error ? (
           <span role="alert" className="text-xs font-normal text-negative">

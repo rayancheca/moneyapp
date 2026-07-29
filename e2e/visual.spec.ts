@@ -64,6 +64,40 @@ async function openHydrated(page: Page, path: string, theme: string, width: numb
   // svg`: pages with a CalendarGrid (its own <header> nav) or a mounted Sheet
   // (its own <header> close button) put more than one svg under a <header>.
   await expect(page.getByRole("button", { name: /Switch to (light|dark) theme/ })).toBeVisible();
+  await settleAnimations(page);
+}
+
+/**
+ * …and never screenshot a chart that is still drawing itself.
+ *
+ * `toHaveScreenshot({ animations: "disabled" })` does NOT fast-forward a
+ * running CSS transition — it sets `transition: none`, which FREEZES it at
+ * whatever value it had reached. Recharts' 1.1s reveal (ScrubChart's
+ * `animateReveal`) is exactly such a transition, so a page captured mid-reveal
+ * produces a stable-but-arbitrary frame: Playwright reports "captured a stable
+ * screenshot" and the two consecutive frames agree, because both are frozen.
+ * Measured on `dashboard dark @768`, three consecutive captures gave three
+ * different half-drawn lines — a baseline that could be written but never
+ * reproduced. Nothing about the wait relaxes an assertion; it removes the only
+ * source of nondeterminism left in these screenshots.
+ *
+ * Same deterministic Web-Animations wait `axe-helpers.ts` already uses for the
+ * route fade-rise, and for the same reason: wait on `finished`, never a timeout.
+ * Infinite animations (the live-dot pulse-ring) never finish and are skipped —
+ * they are decorative, and `animations: "disabled"` pins them to their first
+ * frame, which is deterministic.
+ */
+async function settleAnimations(page: Page): Promise<void> {
+  await page.evaluate(() =>
+    Promise.all(
+      document.getAnimations().map((a) => {
+        const timing = a.effect?.getTiming();
+        if (timing && timing.iterations === Infinity) return undefined;
+        // a cancelled animation (unmount) rejects `finished` — that is settled too
+        return a.finished.catch(() => {});
+      }),
+    ),
+  );
 }
 
 for (const theme of THEMES) {

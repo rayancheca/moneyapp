@@ -1,11 +1,21 @@
+import { PRESSED_SLOT } from "./letterpress";
+
 /* The one canonical field style — replaces the FIELD consts previously
    copy-pasted across AccountForm/AnchorForm/BudgetForm/HoldingForm/
    FiltersBar/settings. Exactly two geometries exist in the app today:
    "md" (the form default, `w-full px-3 py-2`) and "sm" (the compact
    `px-2.5 py-1.5` used by FiltersBar) — kept byte-faithful to those call
    sites so adoption is pixel-neutral. */
+/* A field is the one thing on the page that is pressed INTO the paper rather
+   than raised off it: the leaf tone plus PRESSED_SLOT's inner ink pool, and
+   pointedly no catch-light — that inversion is what makes a slot read as a
+   slot next to a card that shares its border colour. Contrast is measured, not
+   assumed: --ink on --surface-leaf is 15.70:1 light / 15.42:1 dark, and the
+   placeholder moves to --annotation, which is a strictly HIGHER ratio than the
+   --ink-faint it replaces in both themes (5.44 vs 4.99 light, 6.09 vs 5.63
+   dark). */
 const FIELD_BASE =
-  "rounded-md border border-line bg-surface-raised text-sm transition-colors duration-(--duration-fast) placeholder:text-ink-faint hover:border-line-strong focus:border-accent";
+  `rounded-md border border-line bg-surface-leaf text-sm ${PRESSED_SLOT} transition-colors duration-(--duration-fast) placeholder:text-annotation hover:border-line-strong focus:border-accent`;
 
 const FIELD_SIZE = {
   md: "w-full px-3 py-2",
@@ -35,7 +45,10 @@ export function Field({ label, hint, error, className, children }: FieldProps) {
       {error ? (
         <span className="font-normal text-negative">{error}</span>
       ) : hint ? (
-        <span className="font-normal text-ink-faint">{hint}</span>
+        // a hint is marginalia, so it is set in --annotation: the token exists
+        // for exactly this, and it reads darker than --ink-faint in light and
+        // lighter in dark, i.e. it is a contrast improvement in both themes
+        <span className="font-normal text-annotation">{hint}</span>
       ) : null}
     </label>
   );

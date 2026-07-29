@@ -4,6 +4,7 @@ import type { KeyboardEvent } from "react";
 import { useInlineEdit, type InlineSaveResult } from "@/hooks/useInlineEdit";
 import { resolveAmountCommit } from "@/lib/inline-edit";
 import { formatCents, formatCentsSigned } from "@/lib/money";
+import { PRESSED_SLOT } from "./letterpress";
 
 interface InlineEditableAmountProps {
   /** integer cents, net-worth-signed */
@@ -61,7 +62,7 @@ export function InlineEditableAmount({
           inputMode="decimal"
           size={Math.max(edit.draft.length + 1, 8)}
           data-inline-edit="input"
-          className={`figures -mx-1.5 max-w-full min-w-0 rounded-md border border-accent bg-surface-raised px-1.5 py-0.5 text-right outline-none ${shared}`}
+          className={`figures -mx-1.5 max-w-full min-w-0 rounded-md border border-accent bg-surface-leaf ${PRESSED_SLOT} px-1.5 py-0.5 text-right outline-none ${shared}`}
         />
         {edit.error ? (
           <span role="alert" className="text-xs font-normal text-negative">

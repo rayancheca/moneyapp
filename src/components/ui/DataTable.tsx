@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, type ReactNode } from "react";
 import { Icon } from "@/components/shell/Icon";
+import { PLATE, ROW_HOVER, RULE_STRONG_BOTTOM } from "./letterpress";
 
 export interface Column<Row> {
   key: string;
@@ -172,14 +173,18 @@ export function DataTable<Row>({
   return (
     <div
       data-selecting={selected.size > 0 ? "" : undefined}
-      className="group/table overflow-x-auto rounded-(--radius-card) border border-line bg-surface-raised"
+      className={`group/table overflow-x-auto ${PLATE}`}
     >
       <table className="w-full text-sm">
         <caption className="sr-only">{caption}</caption>
         {/* not sticky: this overflow-x wrapper never scrolls vertically — vertical
             stickiness returns with a real scroll container in Stage 1 */}
         <thead className="bg-surface-raised">
-          <tr className="border-b border-line">
+          {/* the ledger's head rule: 2px of --ink-display, the same weight a
+              printed table uses to separate its column heads from its body.
+              This one line does more to make a table read as a ledger than any
+              amount of cell styling. */}
+          <tr className={RULE_STRONG_BOTTOM}>
             {selectable ? (
               <th scope="col" className="w-10 py-2.5 pr-1 pl-4">
                 <SelectAllCheckbox
@@ -237,7 +242,7 @@ export function DataTable<Row>({
               return (
                 <tr
                   key={id}
-                  className="group/row relative border-b border-line transition-colors duration-(--duration-fast) last:border-b-0 hover:bg-surface-sunken"
+                  className={`group/row relative border-b border-line last:border-b-0 ${ROW_HOVER}`}
                 >
                   {selectable ? (
                     <td className="w-10 py-2.5 pr-1 pl-4 align-top">

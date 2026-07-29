@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Field";
 import { Sheet } from "@/components/ui/Sheet";
+import { PRESSED_SLOT } from "./letterpress";
 import { blastRadiusSentence, type BlastRadius } from "@/components/ui/blast-radius";
 
 /**
@@ -24,9 +25,11 @@ import { blastRadiusSentence, type BlastRadius } from "@/components/ui/blast-rad
 
 export type ConfirmTone = "warning" | "negative";
 
+/* The blast-radius panel is a well pressed into the sheet — you are reading a
+   consequence, not being offered another surface to act on. */
 const TONE: Record<ConfirmTone, { panel: string; confirm: "primary" | "destructive" }> = {
-  warning: { panel: "border-warning/40 bg-warning/10", confirm: "primary" },
-  negative: { panel: "border-negative/40 bg-negative-soft", confirm: "destructive" },
+  warning: { panel: `border-warning/40 bg-warning/10 ${PRESSED_SLOT}`, confirm: "primary" },
+  negative: { panel: `border-negative/40 bg-negative-soft ${PRESSED_SLOT}`, confirm: "destructive" },
 };
 
 export interface ConfirmProps {

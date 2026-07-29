@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import type { TransitionEvent } from "react";
 import { createPortal } from "react-dom";
 import { IconButton } from "@/components/ui/Button";
+import { PRESS } from "@/components/ui/letterpress";
 import { Icon, type IconName } from "@/components/shell/Icon";
 
 const DEFAULT_DURATION_MS = 5000;
@@ -282,7 +283,9 @@ function ToastCard({ item }: { item: ToastItem }) {
       onFocus={pauseTimer}
       onBlur={startTimer}
       onTransitionEnd={handleTransitionEnd}
-      className={`pointer-events-auto w-full max-w-sm rounded-(--radius-overlay) border border-line bg-surface-overlay p-3 shadow-(--shadow-overlay) transition-[opacity,translate] duration-(--duration-normal) ease-(--ease-out-expo) starting:translate-y-2 starting:opacity-0 ${
+      // the one thing in the app that is genuinely lifted clear of the sheet,
+      // so it is the one consumer of PRESS.lifted — press-3 is rare by design
+      className={`pointer-events-auto w-full max-w-sm rounded-(--radius-overlay) border border-line bg-surface-overlay p-3 ${PRESS.lifted} transition-[opacity,translate] duration-(--duration-normal) ease-(--ease-out-expo) starting:translate-y-2 starting:opacity-0 ${
         item.exiting ? "translate-y-2 opacity-0" : "translate-y-0 opacity-100"
       }`}
     >

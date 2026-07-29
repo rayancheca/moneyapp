@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { FocusEvent, KeyboardEvent, ReactNode, RefObject } from "react";
 import { computePosition, type Placement } from "@/lib/positioning";
+import { OVERLAY_PRESS } from "./letterpress";
 
 const SHOW_DELAY_MS = 300;
 
@@ -107,7 +108,7 @@ export function Tooltip<T extends HTMLElement = HTMLElement>({
         id={id}
         role="tooltip"
         popover="manual"
-        className="fixed inset-auto m-0 max-w-64 rounded-md border border-line bg-surface-overlay px-2 py-1 text-xs text-ink shadow-(--shadow-overlay)"
+        className={`fixed inset-auto m-0 max-w-64 rounded-md border border-line bg-surface-overlay px-2 py-1 text-xs text-ink ${OVERLAY_PRESS}`}
       >
         {content}
       </div>

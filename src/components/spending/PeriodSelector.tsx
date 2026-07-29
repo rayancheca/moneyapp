@@ -105,7 +105,12 @@ export function PeriodSelector({ period, today, basePath = "/spending" }: Period
   return (
     <div className="flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-2">
       {/* granularity switch */}
-      <nav aria-label="Period granularity" className="flex gap-1 rounded-full bg-surface-sunken p-1">
+      {/* `flex-wrap` for the same reason ViewSwitcher carries it: a
+          non-wrapping flex row cannot be narrower than the sum of its children,
+          so these five pills held a 318px min-content against 288px of page at
+          320 and pushed /spending 14px sideways. Wrapping drops the minimum to
+          the widest single pill. No effect at any width where the row fits. */}
+      <nav aria-label="Period granularity" className="flex flex-wrap gap-1 rounded-full bg-surface-sunken p-1">
         {GRANULARITIES.map((g) => {
           const active = period.granularity === g.key;
           return (

@@ -3,6 +3,7 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { Dispatch, ReactNode, RefObject, SetStateAction, ToggleEvent } from "react";
 import { computePosition, type Placement } from "@/lib/positioning";
+import { OVERLAY_PRESS } from "./letterpress";
 
 export interface PopoverTriggerProps<T extends HTMLElement> {
   ref: RefObject<T | null>;
@@ -157,7 +158,10 @@ export function Popover({
       // inset-auto neutralizes the UA's inset: 0 so the inline left/top from
       // the positioning util are not over-constrained; the max-width mirrors
       // the util's 8px viewport padding on each side.
-      className={`fixed inset-auto m-0 max-w-[calc(100vw-16px)] rounded-(--radius-overlay) border border-line bg-surface-overlay p-0 text-ink shadow-(--shadow-overlay) ${className ?? ""}`}
+      // OVERLAY_PRESS keeps the reserved --shadow-overlay and composes the
+      // letterpress catch-light onto it in one declaration — a second shadow-*
+      // utility would replace the first rather than add to it.
+      className={`fixed inset-auto m-0 max-w-[calc(100vw-16px)] rounded-(--radius-overlay) border border-line bg-surface-overlay p-0 text-ink ${OVERLAY_PRESS} ${className ?? ""}`}
     >
       {open ? children : null}
     </div>

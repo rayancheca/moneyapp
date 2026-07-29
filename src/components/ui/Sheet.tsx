@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef } from "react";
 import type { ReactNode } from "react";
 import { IconButton } from "@/components/ui/Button";
+import { Rule } from "@/components/ui/Rule";
 import { useKeyScope } from "@/components/ui/KeyScopeProvider";
 import { registerModalRoot } from "@/components/ui/Toast";
 import { PRIORITIES } from "@/lib/keyscope";
@@ -104,11 +105,17 @@ export function Sheet({
       }}
     >
       <div className="flex h-full max-h-[85dvh] flex-col md:max-h-none">
-        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-5 py-4">
-          <h2 id={titleId} className="min-w-0 text-sm font-semibold text-ink">
-            {title}
-          </h2>
-          <IconButton icon="close" aria-label="Close" onClick={onClose} />
+        {/* the drawer gets the page's own masthead: display-ink title closed by
+            the strong rule + hairline, so a detail sheet reads as another
+            printed leaf rather than as a modal chrome bar */}
+        <header className="shrink-0 px-5 pt-4">
+          <div className="flex items-center justify-between gap-3 pb-3">
+            <h2 id={titleId} className="min-w-0 text-sm font-semibold text-ink-display">
+              {title}
+            </h2>
+            <IconButton icon="close" aria-label="Close" onClick={onClose} />
+          </div>
+          <Rule weight="masthead" />
         </header>
         <div
           ref={bodyRef}
@@ -120,7 +127,11 @@ export function Sheet({
           {children}
         </div>
         {footer ? (
-          <footer className="shrink-0 border-t border-line px-5 py-4">{footer}</footer>
+          // a pinned footer is a nested panel, so it takes the leaf tone —
+          // paper laid on paper, not a second elevation
+          <footer className="shrink-0 border-t border-line bg-surface-leaf px-5 py-4">
+            {footer}
+          </footer>
         ) : null}
       </div>
     </dialog>

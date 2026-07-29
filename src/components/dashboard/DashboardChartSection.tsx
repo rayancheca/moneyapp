@@ -14,6 +14,7 @@ import type { NetWorthPoint } from "@/services/derivation";
 import type { DashboardAccountOption, DashboardChartData } from "@/services/dashboard-series";
 import { useViewState } from "@/hooks/useViewState";
 import { ChartFocus } from "@/components/charts/ChartFocus";
+import { NetWorthTerrain } from "@/components/charts/NetWorthTerrain";
 import { DashboardModePanel } from "./DashboardModePanel";
 import { NetWorthChartPanel } from "./NetWorthChartPanel";
 
@@ -37,6 +38,7 @@ const MODE_LABELS: Record<string, string> = {
   split: "Split",
   accounts: "Accounts",
   sankey: "Flow",
+  terrain: "Terrain",
 };
 
 /** stride-5 walk over the 12-hue ramp — adjacent accounts get distant hues
@@ -201,6 +203,22 @@ export function DashboardChartSection({
                 showTableToggle
               />
             </div>
+          ) : mode === "terrain" ? (
+            /* the SAME per-account series `accounts` draws as lines, drawn
+               spatially instead — one ribbon per account over time, assets
+               above the zero plane and what is owed below it. `netWorthPoints`
+               is the in-flight-bridged hero series, which is exactly the
+               reference the terrain reconciles itself against and states the
+               result of; it carries `complete` and `inTransitCents` already,
+               so nothing is recomputed for a second opinion. No range pills:
+               the terrain's whole subject is the full two years at once. */
+            <NetWorthTerrain
+              series={series}
+              reference={netWorthPoints}
+              today={today}
+              colorByKey={colorByKey}
+              {...(heightClass ? { heightClass } : {})}
+            />
           ) : mode === "combined" ? (
             <NetWorthChartPanel
               points={netWorthPoints}

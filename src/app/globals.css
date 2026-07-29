@@ -70,6 +70,98 @@
   --surface-overlay: oklch(0.996 0.002 85);
   --shadow-overlay: 0 4px 16px oklch(0% 0 0 / 0.1), 0 1px 3px oklch(0% 0 0 / 0.06);
   --shadow-sheet: 0 8px 40px oklch(0% 0 0 / 0.18);
+
+  /* ── Letterpress (Direction A+) ──────────────────────────────────────────
+     Purely additive: four colours and a pressed-paper depth scale that sit
+     BESIDE the contract above. Nothing already declared is re-derived, which
+     is the whole reason this direction is snapshot-safe.
+     Every ratio below was MEASURED with src/lib/color-contrast.ts (Ottosson
+     OKLab → WCAG 2.x), not inherited from the mockup's comments, and is
+     quoted against the WORST surface the token can land on — in this theme
+     that is --surface-sunken, the darkest paper. */
+  --ink-display: oklch(0.17 0.02 70); /* hero numerals — 16.79:1 on sunken, 17.92:1 on --surface */
+  --accent-ink: oklch(0.38 0.075 165); /* editorial rules — 8.45:1 on sunken, 9.02:1 on --surface */
+  --annotation: oklch(0.5 0.013 78); /* chart marginalia — 5.27:1 on sunken, 5.62:1 on --surface */
+  /* A fourth sheet, bracketed by sunken (L .955) and surface (L .977) so it
+     reads as a leaf laid on the page rather than a new elevation. It is a
+     SAFE surface, not a decorative one: every existing foreground clears its
+     bar on it — --ink 15.70:1, --ink-faint 4.99:1 (the tightest text), the
+     four state tones ≥ 5.12:1, and all 12 category solids ≥ 4.94:1 (graphical
+     bar is 3:1). */
+  --surface-leaf: oklch(0.966 0.01 78);
+
+  /* Depth is letterpress, not elevation: a pressed sheet shows a catch-light
+     on the edge that rises and ink pooling under the edge that sinks. -1 is a
+     rule or a table row, -2 a card, -3 a lifted overlay. The ink pool is the
+     WARM --ink hue at low alpha, never neutral black — neutral reads as a
+     drop shadow, tinted reads as impression. --shadow-overlay/--shadow-sheet
+     are untouched and still own the dialog surfaces. */
+  --emboss-hi: oklch(100% 0 0 / 0.85);
+  --emboss-lo: oklch(0.22 0.015 75 / 0.055);
+  --press-1: 0 1px 0 var(--emboss-lo), inset 0 1px 0 var(--emboss-hi);
+  --press-2:
+    0 1px 1px var(--emboss-lo), 0 6px 18px -12px oklch(0.22 0.015 75 / 0.22),
+    inset 0 1px 0 var(--emboss-hi);
+  --press-3:
+    0 2px 3px var(--emboss-lo), 0 18px 44px -20px oklch(0.22 0.015 75 / 0.3),
+    inset 0 1px 0 var(--emboss-hi);
+  /* Paper tooth. Consumed by `.paper-grain` at the bottom of this file — a
+     decorative layer AppShell renders (aria-hidden, pointer-events:none,
+     z-index:-1). Kept as tokens so the two themes can disagree about both the
+     amount and the blend, which they must — see .dark. */
+  --grain-opacity: 0.045;
+  --grain-blend: multiply;
+
+  /* Motion: "ink settling". --ease-ink arrives and stops dead (no overshoot —
+     a figure that bounces reads as unsettled money); --ease-ink-exit leaves
+     fast because a departing surface owes you nothing. The three new
+     durations fill the gaps in the existing 150/300/600 ladder: tap for
+     press feedback, medium for a panel, morph for the chart-focus transition
+     (the same 440ms the ::view-transition rules below already use). */
+  --duration-tap: 120ms;
+  --duration-medium: 280ms;
+  --duration-morph: 440ms;
+  --ease-ink: cubic-bezier(0.22, 0.92, 0.3, 1);
+  --ease-ink-exit: cubic-bezier(0.5, 0, 0.85, 0.35);
+
+  /* ── The editorial type scale (Direction A+) ─────────────────────────────
+     A+'s hierarchy is carried by SCALE CONTRAST, not by weight: a 6rem hero
+     numeral against 0.6875rem tracked marginalia. The app had nine steps of
+     Tailwind's default ramp and no display step at all, so nothing could be
+     set large without a hand-written arbitrary value. These are A+'s own nine
+     steps, copied value-for-value from the mockup's `--text-*` block; the
+     clamps mean every step is fluid and the ladder never needs a breakpoint.
+
+     WHY `--type-*` HERE AND `--text-*` BELOW. Tailwind v4 owns the `--text-*`
+     namespace inside `@theme`, so a raw `--text-display` in `:root` would be
+     shadowed by (or would shadow) Tailwind's own emission and `@theme inline
+     { --text-display: var(--text-display) }` is a self-reference that resolves
+     to nothing. Measured: `@theme inline` does NOT emit its keys as custom
+     properties — it inlines the value into the utility — so a scale declared
+     ONLY there is unreachable from hand-written CSS. Declaring the raw step
+     under `--type-*` and mapping it below gives BOTH access paths, which is
+     exactly the pattern this file already uses for --ink-display →
+     --color-ink-display.
+
+     The type scale is deliberately NOT restated in .dark: a sheet does not
+     change size when the lights go out. */
+  --face-display: ui-serif, "New York", "Iowan Old Style", "Palatino Linotype",
+    Palatino, "Times New Roman", Georgia, serif;
+
+  --type-eyebrow: 0.6875rem;
+  --type-micro: 0.75rem;
+  --type-body: clamp(0.875rem, 0.845rem + 0.15vw, 0.9375rem);
+  --type-lede: clamp(1rem, 0.95rem + 0.25vw, 1.125rem);
+  --type-h3: clamp(1.0625rem, 1rem + 0.3vw, 1.25rem);
+  --type-h2: clamp(1.375rem, 1.2rem + 0.75vw, 1.875rem);
+  --type-h1: clamp(1.75rem, 1.45rem + 1.4vw, 2.75rem);
+  /* the hero numeral. 44px at 440px (his phone) → 96px past 1600px */
+  --type-display: clamp(2.75rem, 1.6rem + 5.4vw, 6rem);
+  --type-display-2: clamp(1.5rem, 1.1rem + 1.9vw, 2.5rem);
+
+  --track-eyebrow: 0.16em;
+  /* prose measure — a caption that runs the full 2064px sheet is unreadable */
+  --measure: 62ch;
 }
 
 .dark {
@@ -130,6 +222,43 @@
   --surface-overlay: oklch(0.26 0.014 75);
   --shadow-overlay: 0 4px 16px oklch(0% 0 0 / 0.4), 0 1px 3px oklch(0% 0 0 / 0.3);
   --shadow-sheet: 0 8px 40px oklch(0% 0 0 / 0.55);
+
+  /* ── Letterpress (Direction A+) — dark ───────────────────────────────────
+     Measured the same way, but the worst surface flips: light-on-dark is
+     tightest against the LIGHTEST paper, which here is --surface-overlay
+     (L .26), not --surface-sunken. Quoted worst-first. */
+  --ink-display: oklch(0.965 0.01 85); /* hero numerals — 14.05:1 on overlay, 16.69:1 on --surface */
+  --accent-ink: oklch(0.8 0.1 165); /* editorial rules — 8.68:1 on overlay, 10.32:1 on --surface */
+  --annotation: oklch(0.66 0.012 80); /* chart marginalia — 5.00:1 on overlay, 5.94:1 on --surface */
+  /* Bracketed by sunken (L .165) and surface (L .19), same relationship as
+     light. Safe surface here too: --ink 15.42:1, --ink-faint 5.63:1, state
+     tones ≥ 6.19:1, all 12 category solids ≥ 7.22:1. */
+  --surface-leaf: oklch(0.176 0.013 75);
+
+  /* Dark letterpress is AUTHORED, not the light scale with a different alpha.
+     The inversion is one of KIND, not degree:
+       · the catch-light collapses 0.85 → 0.055. A bright inset line on a dark
+         ground stops reading as paper rising and starts reading as a glowing
+         rim; all it may do here is separate a raised face from its own shadow.
+       · the occlusion therefore has to carry all of the depth, so it goes
+         neutral black (the warm ink tint is invisible against near-black
+         paper) and ~7× stronger, 0.055 → 0.4.
+       · blur radii step out 1px→2px and 3px→4px, and the ambient layers
+         deepen 0.22/0.3 → 0.55/0.7: there is no light bounce in the dark to
+         soften a falloff, so a tight shadow reads as a hard edge.
+       · grain flips multiply → overlay — multiply is a no-op on near-black —
+         and rises 0.045 → 0.07, because large dark fields band without it. */
+  --emboss-hi: oklch(100% 0 0 / 0.055);
+  --emboss-lo: oklch(0% 0 0 / 0.4);
+  --press-1: 0 1px 0 var(--emboss-lo), inset 0 1px 0 var(--emboss-hi);
+  --press-2:
+    0 1px 2px var(--emboss-lo), 0 6px 18px -12px oklch(0% 0 0 / 0.55),
+    inset 0 1px 0 var(--emboss-hi);
+  --press-3:
+    0 2px 4px var(--emboss-lo), 0 18px 44px -20px oklch(0% 0 0 / 0.7),
+    inset 0 1px 0 var(--emboss-hi);
+  --grain-opacity: 0.07;
+  --grain-blend: overlay;
 }
 
 @theme inline {
@@ -184,18 +313,56 @@
   --color-gain: var(--gain);
   --color-loss: var(--loss);
   --color-surface-overlay: var(--surface-overlay);
+  /* Letterpress (A+). Mapped so the new tokens are reachable the same way as
+     every other token in this system — text-ink-display, bg-surface-leaf,
+     border-accent-ink, text-annotation, shadow-press-2 — instead of leaking
+     raw var() into component styles. */
+  --color-ink-display: var(--ink-display);
+  --color-surface-leaf: var(--surface-leaf);
+  --color-accent-ink: var(--accent-ink);
+  --color-annotation: var(--annotation);
   --shadow-overlay: var(--shadow-overlay);
   --shadow-sheet: var(--shadow-sheet);
+  --shadow-press-1: var(--press-1);
+  --shadow-press-2: var(--press-2);
+  --shadow-press-3: var(--press-3);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* A+'s third face. A system serif stack costs zero bytes and zero requests —
+     it is the one thing in the mockup that is free — and it is what makes a
+     figure read as SET rather than as UI. `font-display` is the utility. */
+  --font-display: var(--face-display);
+  /* The nine editorial steps, reachable as text-eyebrow … text-display-2.
+     Only the two display steps carry a line-height, because those are the two
+     the mockup states one for (.hero-value 0.9, .tf-stat dd 1.05); the rest
+     inherit the page's 1.55 exactly as they do in A+. */
+  --text-eyebrow: var(--type-eyebrow);
+  --text-micro: var(--type-micro);
+  --text-body: var(--type-body);
+  --text-lede: var(--type-lede);
+  --text-h3: var(--type-h3);
+  --text-h2: var(--type-h2);
+  --text-h1: var(--type-h1);
+  --text-display: var(--type-display);
+  --text-display--line-height: 0.9;
+  --text-display-2: var(--type-display-2);
+  --text-display-2--line-height: 1.05;
+  --tracking-eyebrow: var(--track-eyebrow);
+  /* `max-w-measure` — the prose column, per A+'s --measure */
+  --container-measure: var(--measure);
   --radius-card: 0.75rem;
   --radius-overlay: 1rem;
+  --duration-tap: 120ms;
   --duration-fast: 150ms;
+  --duration-medium: 280ms;
   --duration-normal: 300ms;
+  --duration-morph: 440ms;
   --duration-slow: 600ms;
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
   --ease-in-out-sine: cubic-bezier(0.37, 0, 0.63, 1);
+  --ease-ink: cubic-bezier(0.22, 0.92, 0.3, 1);
+  --ease-ink-exit: cubic-bezier(0.5, 0, 0.85, 0.35);
   --animate-fade-rise: fade-rise var(--duration-normal) var(--ease-out-expo) both;
   --animate-pulse-ring: pulse-ring 1.8s var(--ease-in-out-sine) infinite;
 }
@@ -224,13 +391,107 @@ body {
   color: var(--ink);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* TABULAR NUMERALS, EVERYWHERE. Measured from the shipped font binaries
+     (node_modules/geist/dist/fonts/geist-sans): Geist Sans' default digit
+     advances are 663 384 619 613 615 626 593 524 604 593 per 1000em — a 72.7%
+     spread between "1" and "0". Its `tnum` feature flattens all ten to 600
+     (612 Medium, 624 SemiBold): a 0% spread.
+     `.figures` below only ever LOOKED aligned because it also switches to
+     Geist Mono. Every figure OUTSIDE it — chart axis ticks, SVG labels, the
+     scrub tooltip's date line, any inline count in prose — was proportional,
+     so a readout re-rendering on every pointer move visibly shimmied as its
+     digits changed width under the cursor. Setting the property once here,
+     inherited (it reaches SVG <text> too), fixes all of them without
+     migrating a single component to a monospace face. Prose pays for it in a
+     slightly wide "1"; a ledger is the one document where that is the right
+     trade. */
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
 /* money never wiggles */
 .figures {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: tabular-nums lining-nums;
   letter-spacing: -0.01em;
+}
+
+/* ── The paper ────────────────────────────────────────────────────────────
+   A+'s tooth: ONE inline SVG turbulence tile — no network request, no canvas,
+   no JS, no animation — repeated at 200px and blended into the sheet. This is
+   the layer the --grain-* tokens were written for; AppShell renders the node.
+
+   IT SITS UNDER EVERYTHING (z-index:-1), WHICH IS THE WHOLE DESIGN.
+   A+ puts its grain ON TOP at z-index 0 and lifts `.page` to 1. That works in
+   a one-file mockup where every section is opaque; here it would paint 4.5%
+   of noise over live text and over every card face. Under the content the
+   grain can only ever modulate the BARE sheet — the canvas background — and
+   never a glyph, never a card, never a table row: any element with an opaque
+   background occludes it completely.
+
+   MEASURED, worst pixel (the noise at full alpha AND full black, i.e. a
+   luminance the tile reaches only in its tail), against the bare sheet:
+     light, multiply 0.045 — ink 16.22→14.69, ink-muted 6.68→6.05,
+       annotation 5.62→5.09, positive 5.31→4.81, warning 5.29→4.79,
+       and the tightest text in the system, ink-faint, 5.16→4.67.
+     dark, overlay 0.07 — every token moves less than 0.21 (ink-faint
+       5.49→5.42), because overlay on a near-black ground is nearly a no-op.
+   Nothing crosses 4.5:1, and src/app/globals.test.ts re-derives all of it
+   from this file so a future retune of --grain-opacity cannot quietly push a
+   token under AA.
+
+   NOT SHIPPED, and this is the reason: A+ also lays a warm radial wash
+   (`body::after`, 5% oklch(0.55 0.06 75)) under the grain. Measured the same
+   way, wash + grain puts ink-faint at 4.40:1 — under AA. The tooth is worth
+   more than the wash, so the tooth is what landed. */
+.paper-grain {
+  position: fixed;
+  inset: 0;
+  /* below every background box in the document, above the canvas fill */
+  z-index: -1;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: var(--grain-blend);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23g)'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+}
+/* paper does not print itself */
+@media print {
+  .paper-grain {
+    display: none;
+  }
+}
+
+/* ── Editorial atoms (Direction A+) ───────────────────────────────────────
+   The two classes A+ leans on hardest, offered here so a component can adopt
+   the direction with one class instead of six utilities. Additive: nothing
+   already styled changes until something opts in.
+
+   IN `@layer components` ON PURPOSE, unlike `.figures` above. Plain CSS
+   written after `@import "tailwindcss"` is unlayered, and unlayered rules beat
+   EVERY layered utility — so an unlayered atom that sets `color` would
+   silently defeat `text-annotation` on the same element, and one that sets
+   `letter-spacing` would defeat `tracking-*`. In the components layer the
+   atom is a default and a utility still wins, which is the only way an atom
+   is safe to compose with. (`.figures` predates this and is left exactly as
+   it was — moving it would change how existing components render.) */
+@layer components {
+  /* small, tracked, uppercase — the label that lets a figure stay unlabelled */
+  .eyebrow {
+    font-size: var(--type-eyebrow);
+    font-weight: 600;
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  /* a set figure: the serif face, the display ink, tight fit, tabular by
+     inheritance. Pair with `text-display` / `text-display-2` for the hero. */
+  .display {
+    font-family: var(--face-display);
+    font-weight: 500;
+    letter-spacing: -0.025em;
+    color: var(--ink-display);
+  }
 }
 
 :focus-visible {

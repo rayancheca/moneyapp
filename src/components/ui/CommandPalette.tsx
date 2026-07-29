@@ -164,7 +164,7 @@ export function CommandPalette({ groups }: CommandPaletteProps) {
           aria-selected={isActive}
           aria-describedby={groupHeaderId(item.group)}
           className={`flex cursor-default items-center gap-3 px-4 py-2 text-sm ${
-            isActive ? "bg-accent-soft text-ink" : "text-ink-muted"
+            isActive ? "bg-accent-soft text-ink-display" : "text-ink-muted"
           }`}
           onMouseMove={() => setActiveIndex(index)}
           onClick={() => activate(item)}
@@ -177,7 +177,7 @@ export function CommandPalette({ groups }: CommandPaletteProps) {
           )}
           <span className="truncate">{item.label}</span>
           {item.hint !== undefined && (
-            <span className="ml-auto shrink-0 text-xs text-ink-faint">{item.hint}</span>
+            <span className="ml-auto shrink-0 text-xs text-annotation">{item.hint}</span>
           )}
         </li>,
       );
@@ -188,7 +188,7 @@ export function CommandPalette({ groups }: CommandPaletteProps) {
     <dialog
       ref={dialogRef}
       aria-label="Command palette"
-      className="mx-auto mt-[18svh] mb-auto w-full max-w-lg rounded-(--radius-overlay) border border-line bg-surface-overlay p-0 text-ink shadow-(--shadow-sheet) backdrop:bg-[oklch(0%_0_0/0.3)]"
+      className="mx-auto mt-[18svh] mb-auto w-full max-w-lg rounded-(--radius-overlay) border border-line bg-surface-overlay p-0 text-ink shadow-[var(--shadow-sheet),inset_0_1px_0_var(--emboss-hi)] backdrop:bg-[oklch(0%_0_0/0.3)]"
       onCancel={(event) => {
         // keep React state authoritative over the native Esc close
         event.preventDefault();

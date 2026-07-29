@@ -7,7 +7,8 @@ import {
   resolvePeriod,
   stepPeriodParams,
 } from "@/lib/period";
-import { resolveViewState } from "@/lib/view-state";
+import { WHERE_VIEW_SPEC } from "@/lib/massif-layout";
+import { resolveViewState, viewStateToParams } from "@/lib/view-state";
 import { categoryBreakdown } from "@/services/analytics";
 import { spendingSankey } from "@/services/sankey";
 import { predictBudgetableCategories } from "@/services/category-forecast";
@@ -24,6 +25,7 @@ import {
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
+import { WhereItWentPanel, type WhereItWentRow } from "@/components/charts/CategoryMassif";
 import { CashFlowView } from "@/components/spending/CashFlowView";
 import { CASH_VIEW_SPEC, SPENDING_SURFACE } from "@/components/spending/spending-view-spec";
 import { HonestyBucketsCard } from "@/components/spending/HonestyBucketsCard";
@@ -62,15 +64,25 @@ export default async function SpendingPage({
   const merchants = topMerchants(db, range);
 
   // switchable-view state (NS#2 Pillar 2): URL > persisted preference > default.
-  const cashView = resolveViewState(
-    CASH_VIEW_SPEC,
-    { cash: firstParam(raw.cash) ?? undefined },
-    readSettings(db).viewPreferences[SPENDING_SURFACE],
-  );
-  // params to preserve when switching views: the current period
-  const baseParams: Record<string, string> = period.key
+  // Two INDEPENDENT dimensions on this surface — the cash-flow card's renderer
+  // and the "Where it went" card's lens — sharing one persisted record, which
+  // saveViewPreferenceAction merges per key.
+  const persistedViews = readSettings(db).viewPreferences[SPENDING_SURFACE];
+  const cashView = resolveViewState(CASH_VIEW_SPEC, { cash: firstParam(raw.cash) ?? undefined }, persistedViews);
+  const whereView = resolveViewState(WHERE_VIEW_SPEC, { where: firstParam(raw.where) ?? undefined }, persistedViews);
+  // params to preserve when switching views: the current period, and the OTHER
+  // card's lens — so flipping one card never drops the other out of the URL.
+  const periodParams: Record<string, string> = period.key
     ? { period: period.key }
     : { from: period.from, to: period.to };
+  const baseParams: Record<string, string> = {
+    ...periodParams,
+    ...viewStateToParams(WHERE_VIEW_SPEC, whereView),
+  };
+  const whereBaseParams: Record<string, string> = {
+    ...periodParams,
+    ...viewStateToParams(CASH_VIEW_SPEC, cashView),
+  };
   const honesty = honestyBuckets(db, range);
   const heatMonth = heatmapInitialMonth(period, today);
   const heatmap = dailySpendHeatmap(db, heatMonth);
@@ -159,6 +171,32 @@ export default async function SpendingPage({
     }));
   const categoryRows: CategoryTableRow[] = [...spentRows, ...upcomingRows];
 
+  // The relief/table lenses of the SAME card, cut from the SAME breakdown rows
+  // the list above is: this period against the previous one, with the entry
+  // count the footprint depth encodes. Forecast-only "upcoming" rows are not
+  // here on purpose — a category with no spend and no entries has no footprint,
+  // and the list lens still shows them.
+  const whereRows: WhereItWentRow[] = breakdown
+    .filter((r) => r.categoryId !== null)
+    .map((r) => ({
+      categoryId: r.categoryId!,
+      name: r.name,
+      hue: catMeta.get(r.categoryId!)?.color ?? null,
+      spentCents: r.spentCents,
+      priorCents: prevById.get(r.categoryId) ?? 0,
+      txnCount: r.txnCount,
+    }));
+  // The identity the relief states under itself, from the SAME two services the
+  // stat cards use: Σ categories + uncategorized = gross spent − refunds.
+  // categoryBreakdown books a refund as a negative in its category's bucket, so
+  // its rows sum to NET money out; periodTotals keeps the two sides apart.
+  const massifTotals = {
+    blocksCents: whereRows.reduce((sum, r) => sum + r.spentCents, 0),
+    uncategorizedCents: breakdown.find((r) => r.categoryId === null)?.spentCents ?? 0,
+    grossSpentCents: cashFlow.totals.spentCents,
+    refundsCents: cashFlow.totals.refundsCents,
+  };
+
   const largest: LargestPurchaseRow[] = largestTransactions(db, range).map((t) => {
     const meta = t.categoryId ? catMeta.get(t.categoryId) : undefined;
     return {
@@ -211,7 +249,12 @@ export default async function SpendingPage({
             />
           </SurfaceCard>
 
-          <div className="grid gap-6 lg:grid-cols-5">
+          {/* `*:min-w-0` is load-bearing (the dashboard's shrink guard, same
+              token): a grid item's automatic minimum size is its MIN-CONTENT
+              size, so below lg — one implicit column — the track sized itself
+              to the widest card and pushed the PAGE sideways. Zeroing it keeps
+              any scrolling inside the card that owns a scroller. */}
+          <div className="grid gap-6 *:min-w-0 lg:grid-cols-5">
             <SurfaceCard className="lg:col-span-3">
               <h2 className="mb-3 text-sm font-medium">Daily heatmap</h2>
               {/* keyed by the period-derived month so changing the period
@@ -230,14 +273,26 @@ export default async function SpendingPage({
               <h2 className="text-sm font-medium">Where it went</h2>
               <span className="text-xs text-ink-faint">tap a category to open its page</span>
             </div>
-            <SpendingCategoriesTable
-              rows={categoryRows}
-              showDelta={period.granularity === "month"}
-              forecastMonthLabel={forecastMonthLabel}
-            />
+            {/* three lenses on one set of rows: the ranked list this card has
+                always shown (default), the spatial relief, and every figure as
+                a table. The lens lives in the URL and persists per surface. */}
+            <WhereItWentPanel
+              rows={whereRows}
+              totals={massifTotals}
+              periodLabel={period.label}
+              priorLabel={prevPeriod.label}
+              viewState={whereView}
+              baseParams={whereBaseParams}
+            >
+              <SpendingCategoriesTable
+                rows={categoryRows}
+                showDelta={period.granularity === "month"}
+                forecastMonthLabel={forecastMonthLabel}
+              />
+            </WhereItWentPanel>
           </SurfaceCard>
 
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid gap-6 *:min-w-0 lg:grid-cols-2">
             <SurfaceCard>
               <h2 className="mb-3 text-sm font-medium">Largest purchases</h2>
               <LargestPurchases rows={largest} />

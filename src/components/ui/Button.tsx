@@ -1,18 +1,29 @@
 import { Icon, type IconName } from "@/components/shell/Icon";
+import { CONTROL_MOTION, PRESS } from "./letterpress";
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "destructive";
 type ButtonSize = "sm" | "md";
 
+/**
+ * Every control in this direction is a struck pill (the mockup's `.ctl`), and
+ * every control presses one pixel into the page when you push it — the single
+ * gesture that sells "ink on paper" rather than "boxes on a screen".
+ * CONTROL_MOTION carries the shared transition + active translate; a variant
+ * only says what its surface is.
+ */
 const BASE =
-  "inline-flex items-center justify-center gap-1.5 rounded-md font-medium duration-(--duration-fast) disabled:pointer-events-none disabled:opacity-50";
+  `inline-flex items-center justify-center gap-1.5 rounded-full font-medium ${CONTROL_MOTION} disabled:pointer-events-none disabled:opacity-50`;
 
-/* primary animates opacity (solid accent bg has no hover token); the rest animate colors */
 const VARIANT: Record<ButtonVariant, string> = {
-  primary: "bg-accent text-surface-raised transition-opacity hover:opacity-90 active:opacity-80",
-  secondary: "border border-line bg-surface-raised transition-colors hover:border-line-strong",
-  ghost: "transition-colors hover:bg-surface-sunken",
-  destructive:
-    "border border-line text-negative transition-colors hover:border-negative hover:bg-negative-soft",
+  // the one filled control: already the raised sheet, so it is the only
+  // variant that starts at PRESS.card. A solid accent has no hover token, so
+  // it dims rather than warming to the leaf tone.
+  primary: `bg-accent text-surface-raised ${PRESS.card} hover:opacity-90 active:opacity-80`,
+  secondary: `border border-line bg-surface-raised ${PRESS.rule} hover:border-line-strong hover:bg-surface-leaf`,
+  // no border, so no press shadow either: a ghost is unprinted paper until
+  // the cursor warms it
+  ghost: "hover:bg-surface-leaf",
+  destructive: `border border-line text-negative ${PRESS.rule} hover:border-negative hover:bg-negative-soft`,
 };
 
 const SIZE: Record<ButtonSize, string> = {

@@ -9,7 +9,6 @@ import { dashboardData } from "@/services/dashboard";
 import { dashboardChartData } from "@/services/dashboard-series";
 import { spendingSankey } from "@/services/sankey";
 import { CHART_RANGES, rangeStartDay, type ChartRange } from "@/lib/chart-range";
-import type { DashboardMode } from "@/lib/multi-series";
 import type { SankeyGraph } from "@/lib/sankey-layout";
 import { resolveViewState } from "@/lib/view-state";
 import { recentLedgerRows } from "@/services/ledger-rows";
@@ -23,7 +22,11 @@ import { InstitutionCard } from "@/components/accounts/InstitutionCard";
 import { DashboardWindowProvider } from "@/components/dashboard/DashboardWindowContext";
 import { InvestmentsTeaser } from "@/components/dashboard/InvestmentsTeaser";
 import { DashboardChartSection } from "@/components/dashboard/DashboardChartSection";
-import { DASHBOARD_SURFACE, DASHBOARD_VIEW_SPEC } from "@/components/dashboard/dashboard-view-spec";
+import {
+  DASHBOARD_SURFACE,
+  DASHBOARD_VIEW_SPEC,
+  dashboardSeriesMode,
+} from "@/components/dashboard/dashboard-view-spec";
 import { PeriodActivityPanel } from "@/components/dashboard/PeriodActivityPanel";
 import { SpendingPaceWidget } from "@/components/dashboard/SpendingPaceWidget";
 import { ToReviewCard } from "@/components/dashboard/ToReviewCard";
@@ -87,15 +90,40 @@ export default async function DashboardPage({
   const chartMode = chartView.chart ?? "combined";
   const isSankey = chartMode === "sankey";
   const acctsParam = firstParam(raw.accts) ?? settings.viewPreferences[DASHBOARD_SURFACE]?.accts ?? "";
-  // sankey is a hero-chart view but not a net-worth SERIES mode — it draws its
-  // own flow, so skip the series build. The `as DashboardMode` cast is sound
-  // because combined + sankey are excluded first (spec options minus those two
-  // ARE DashboardMode); adding a spec option without updating DashboardMode would
-  // need updating here too.
-  const chartData =
-    chartMode === "combined" || isSankey
-      ? null
-      : dashboardChartData(db, chartMode as DashboardMode, acctsParam.split(",").filter(Boolean));
+  // A hero VIEW is not a net-worth SERIES mode, and the difference is a crash.
+  // This used to read `chartMode as DashboardMode` behind a comment promising
+  // that "adding a spec option without updating DashboardMode would need
+  // updating here too" — and the very next spec option ("terrain") was added
+  // without it. The cast let the raw slug reach `buildDashboardSeries`, whose
+  // exhaustive switch has no case for it, so it fell through, returned
+  // `undefined`, and the RSC died on `built.map` — the whole dashboard replaced
+  // by the error boundary for anyone who clicked the seventh pill.
+  //
+  // `dashboardSeriesMode` is that comment enforced by the compiler instead: it
+  // returns a real DashboardMode ("terrain" draws the SAME per-account series
+  // as "accounts", spatially), or null for the views that build no series at
+  // all (combined renders the richer summary path; sankey draws its own flow).
+  // An option nobody has mapped yet returns null and renders an empty chart —
+  // wrong, but not a 500.
+  //
+  // THE TERRAIN IS EVERY ACCOUNT, and that is not a preference. It states, in
+  // its own accessible label and under the plate, whether its ribbons sum to
+  // the net-worth line above it — so handing it the `accts` CURATION (which
+  // belongs to the Accounts line view, where showing three accounts is the
+  // point) makes it compare a subset against the whole and announce a mismatch
+  // that is not one. Measured on the e2e ledger: an 11-of-16 selection left it
+  // saying "$145,095.79 … does NOT match the net-worth chart above — read the
+  // ledger", $67.00 out, when the full 16 reconcile to the cent. In a money
+  // app a false alarm about the figures is worse than no figure at all, so
+  // terrain asks for every account (an empty request means "all active" —
+  // dashboardChartData's documented fallback) and leaves the curation alone.
+  const isTerrain = chartMode === "terrain";
+  const chartData = (() => {
+    const seriesMode = dashboardSeriesMode(chartMode);
+    if (seriesMode === null) return null;
+    const requested = isTerrain ? [] : acctsParam.split(",").filter(Boolean);
+    return dashboardChartData(db, seriesMode, requested);
+  })();
   // Precompute the flow for each range pill so the client switches pills with no
   // round-trip (the pill is client-side ChartFocus state). Only runs in sankey
   // mode; 5 aggregations over local SQLite is cheap for a single-user desktop
@@ -121,12 +149,15 @@ export default async function DashboardPage({
             statements to reconstruct the last two years.
           </p>
         </header>
-        <div className="grid gap-4 md:grid-cols-3">
+        {/* The sheet now runs to 2064px, so a three-up grid hands each card a
+            ~670px column — past a reader's eye span. A+ answers this with
+            `--measure`; `max-w-prose` (65ch) is the same rule in Tailwind. */}
+        <div className="grid gap-4 *:min-w-0 md:grid-cols-3">
           {SETUP_STEPS.map((s) => (
             <SurfaceCard key={s.step} className="space-y-2">
               <span className="figures text-xs text-accent">{s.step}</span>
               <h2 className="text-sm font-medium">{s.title}</h2>
-              <p className="text-[13px] leading-relaxed text-ink-muted">{s.detail}</p>
+              <p className="max-w-prose text-[13px] leading-relaxed text-ink-muted">{s.detail}</p>
             </SurfaceCard>
           ))}
         </div>
@@ -195,8 +226,12 @@ export default async function DashboardPage({
               selectedAccountIds={chartData?.selectedAccountIds ?? []}
               acctsParam={
                 // the durable selection: in accounts mode the RSC validated it
-                // (drops stale ids); in other modes carry the raw resolved value
-                chartData ? chartData.selectedAccountIds.join(",") : acctsParam
+                // (drops stale ids); in other modes carry the raw resolved
+                // value. Terrain is explicitly "other": it asked for every
+                // account, so echoing its selection back would silently
+                // overwrite the user's curation with "all" the moment they
+                // looked at the terrain and switched back.
+                chartData && !isTerrain ? chartData.selectedAccountIds.join(",") : acctsParam
               }
               sankeyByRange={sankeyByRange}
               today={today}
@@ -214,7 +249,15 @@ export default async function DashboardPage({
         <h2 id="activity-hub-heading" className="sr-only">
           Activity
         </h2>
-        <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
+        {/* `*:min-w-0` is load-bearing, not decoration. A grid item's automatic
+            minimum size is min-content, so BOTH tracks here refused to shrink
+            below the widest transaction row: the implicit single column below
+            `lg` sized itself to 454px inside a 343px page (+95px of sideways
+            scroll at 375, +30px at 440), and above `lg` the 1fr track held
+            305px against its 291px share. Zeroing the items' minimum lets the
+            tracks shrink; the rows inside already truncate. Same failure shape
+            as `truncate` needing `min-w-0`, and page.test.ts gates it. */}
+        <div className="grid gap-4 *:min-w-0 lg:grid-cols-[1.5fr_1fr]">
           <ToReviewCard
             count={data.reviewCount}
             href={data.reviewHref}

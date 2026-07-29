@@ -1,3 +1,5 @@
+import { PRESSED_SLOT } from "./letterpress";
+
 type BadgeTone = "neutral" | "accent" | "positive" | "negative" | "warning" | "info";
 
 /* -soft bg + solid tone text — every tone meets AA on its own tint
@@ -45,7 +47,7 @@ export function LetterBadge({ letter, className }: LetterBadgeProps) {
   return (
     <span
       title={meaning}
-      className={`figures inline-flex size-4 items-center justify-center rounded bg-surface-sunken text-[10px] font-medium text-ink-faint ${className ?? ""}`.trim()}
+      className={`figures inline-flex size-4 items-center justify-center rounded bg-surface-sunken ${PRESSED_SLOT} text-[10px] font-medium text-ink-faint ${className ?? ""}`.trim()}
     >
       <span aria-hidden>{letter}</span>
       <span className="sr-only">{meaning}</span>
