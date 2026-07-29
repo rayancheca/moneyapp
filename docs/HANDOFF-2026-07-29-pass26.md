@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| `main` | **`01462b0`** — clean, `== origin/main`, pushed |
+| `main` | tip of `origin/main`, clean and pushed. **Last CODE commit is `d4deccf`**; everything after it is documentation, so `git log --oneline d4deccf..main` is all prose. (A handoff cannot name its own hash without lying — check `git rev-parse main`.) |
 | branch | `claude/app-polish-adversarial-review-e80abb` — **same commit** as main |
 | worktree | `.claude/worktrees/app-polish-adversarial-review-e80abb` (the only one) |
 | uncommitted | **none**, anywhere |
@@ -82,13 +82,11 @@ Code commits, each gated on a fresh build before merge:
 | `2d9d3dd` | fix: spine fits its canvas, clears its labels, rhythm rail legible |
 | `d4deccf` | feat: "What moved" — Direction C's deviation bar on `/spending` |
 
-Then documentation, up to the current `main`:
-
-| commit | what |
-|---|---|
-| `4bf6fe6` | this handoff |
-| `4232a12` | folds §5.3's re-measurements into this handoff |
-| `01462b0` | the other session's own final handoff update, preserved rather than discarded |
+Then documentation only, from `d4deccf` to the tip: this handoff (`4bf6fe6`), §5.3's
+re-measurements folded in (`4232a12`), the other session's own final handoff update
+preserved rather than discarded (`01462b0`), and the closed-out-state corrections that
+follow it. **No source file changed after `d4deccf`**, which is why the gate figures above
+still describe the tip.
 
 ### 3.1 ⚠️ THE HYDRATION RACE — this is repo-wide, not one spec
 
