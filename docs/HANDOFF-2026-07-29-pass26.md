@@ -205,6 +205,29 @@ part of the owner's brief ("the 3D charts from design C") not yet delivered for 
 - **`HeaderStrip.tsx`** doesn't render the `failed` Claude-run state that exists in the model.
 - **`--press-2` / `--press-3`** still have few consumers; the depth scale is partly applied.
   (`TransferSpine`'s tooltip uses `shadow-press-2`.)
+- **`--annotation` adoption is thin** — 8 elements. Worth extending.
+- **Residual overflow**, both pre-existing and untouched: **11px at 320px** on `/` — the hero
+  odometer's per-digit `w-[1ch]` spans measure 315px in a 288px box (`src/app/page.tsx:154`) —
+  and **~87px at 320px** on `/transactions`. Everything else is 0 at 440px.
+
+### 5.3 Two measurement lessons inherited from the A+ session
+Recorded in `5db96eb`; both generalise beyond the work that produced them.
+
+**Count token adoption on COMPUTED STYLES, not by source grep.** Measured across 10 routes ×
+both themes: `--emboss-hi` **157** elements, `--emboss-lo` 139 light / 194 dark,
+`--ink-display` **85**, `--surface-leaf` 41, `--accent-ink` 20, `--annotation` 8. A source
+grep of the same tree reported roughly 8 and 6 — it counts declaration sites, not the
+elements that actually inherit them, and so understates adoption by more than an order of
+magnitude.
+
+**A registry that drives UI needs a spec that ENUMERATES the registry.** `/?chart=terrain`
+was a **500**: the option was registered in the view spec — so it rendered a clickable pill
+and a persistable URL — but was never wired to a renderer, so the raw slug fell through an
+exhaustive switch and threw. **All 246 e2e passed over it, because not one test opened the
+view.** `e2e/zz-zz-dashboard-chart-options.spec.ts` now walks the spec itself, so the next
+appended option is covered automatically. This is the same failure shape as the
+`{key:"lens"}` positional-index warning in `chart-lens.ts`: registries need tests that
+iterate them.
 - **Coverage gate RED** (pre-existing): `src/lib/**` 100% threshold missed by
   `in-flight.ts` (94.7%) and `xirr.ts` (89.1%). `pnpm test` runs with coverage and is red;
   `vitest run` is green.
