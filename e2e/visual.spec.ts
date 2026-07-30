@@ -6,7 +6,36 @@ import { expect, test, type Page } from "@playwright/test";
  */
 const WIDTHS = [320, 768, 1024, 1440] as const;
 const THEMES = ["light", "dark"] as const;
-const ROUTES = [
+
+interface VisualRoute {
+  path: string;
+  name: string;
+  /** extra wait for a route whose chart measures itself after mount */
+  settle?: (page: Page) => Promise<void>;
+}
+
+/**
+ * ⚠️ `/flow` needs more than `openHydrated` gives, for two reasons.
+ *
+ * 1. It PERSISTS its view (measure + shape + lens) in app_settings, and the
+ *    whole suite shares one database — so its URL pins every dimension. Without
+ *    that, a run in which `zz-zz-flow.spec.ts` failed between pressing "Table"
+ *    and restoring "Chart" would leave these baselines capturing the matrix.
+ * 2. Both of its charts size themselves from a ResizeObserver in a LAYOUT
+ *    effect, so before React attaches they render at a hard-coded default width
+ *    and the screenshot is of a chart that has not measured its container.
+ *    `openHydrated` waits on the theme toggle by accessible NAME, which is in
+ *    the SSR markup and therefore proves nothing; the SVG *inside* it renders
+ *    only after mount and is a true signal. Layout effects all flush in the
+ *    same commit, so once that svg exists the chart has measured.
+ */
+async function settleFlow(page: Page): Promise<void> {
+  await expect(
+    page.getByRole("button", { name: /Switch to (light|dark) theme/ }).locator("svg"),
+  ).toBeVisible();
+}
+
+const ROUTES: readonly VisualRoute[] = [
   { path: "/", name: "dashboard" },
   { path: "/accounts", name: "accounts" },
   { path: "/transactions", name: "transactions" },
@@ -18,7 +47,17 @@ const ROUTES = [
   { path: "/investments", name: "investments" }, // ALL range → a gain (green) accent
   { path: "/investments?range=1M", name: "investments-loss" }, // 1M → a loss (red) accent
   { path: "/settings", name: "settings" },
-] as const;
+  {
+    path: "/flow?shape=spine&measure=gross&lens=chart",
+    name: "flow-spine",
+    settle: settleFlow,
+  },
+  {
+    path: "/flow?shape=tower&measure=gross&lens=chart",
+    name: "flow-tower",
+    settle: settleFlow,
+  },
+];
 
 /** Resolve a stable category page URL from the year view (id is random per
  *  reseed, but the top-spending category — hence the page content — is not). */
@@ -105,6 +144,10 @@ for (const theme of THEMES) {
     for (const route of ROUTES) {
       test(`${route.name} ${theme} @${width}`, async ({ page }) => {
         await openHydrated(page, route.path, theme, width);
+        if (route.settle) {
+          await route.settle(page);
+          await settleAnimations(page);
+        }
         await expect(page).toHaveScreenshot(`${route.name}-${theme}-${width}.png`, {
           fullPage: true,
         });
