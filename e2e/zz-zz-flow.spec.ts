@@ -56,6 +56,10 @@ test("the flow page states its totals, switches gross↔net and chart↔table, a
   // shares one database)
   await press(page, "Transfer measure", "Gross");
   await press(page, "Transfer lens", "Chart");
+  // shape too — the tower also tags its groups `data-edge`, so a leaked
+  // shape=tower would satisfy the locator below and then fail on the labels,
+  // for a reason the failure message would not name
+  await press(page, "Transfer shape", "Spine");
 
   // the spine renders and every arc is keyboard-reachable with a real label
   const arcs = page.locator("g[data-edge]");
@@ -110,6 +114,92 @@ test("the flow page states its totals, switches gross↔net and chart↔table, a
   await press(page, "Transfer measure", "Gross");
   await gotoHydrated(page, "/flow");
   await expect(page.locator("g[data-edge]").first()).toBeVisible();
+});
+
+test("the tower puts time on the vertical axis, and never becomes the only path to a fact", async ({
+  page,
+}) => {
+  await gotoHydrated(page, "/flow");
+  await press(page, "Transfer lens", "Chart");
+  await press(page, "Transfer measure", "Gross");
+
+  // Count the SPINE's edges while the spine is still on screen. Both charts tag
+  // their groups `data-edge` — honestly, since both are keyed by route — so
+  // reading that selector after the switch just counts the tower against
+  // itself, which is an assertion that can never fail.
+  const spineEdges = await page.locator("g[data-edge]").count();
+  expect(spineEdges).toBeGreaterThan(0);
+
+  await press(page, "Transfer shape", "Tower");
+  await expect(page).toHaveURL(/[?&]shape=tower\b/);
+
+  // one arc per (edge, month) bucket that carried money — necessarily more than
+  // the spine's one per edge, which is the whole point of adding a time axis
+  const arcs = page.locator("[data-arc]");
+  await expect(arcs.first()).toBeVisible();
+  const arcCount = await arcs.count();
+  expect(arcCount).toBeGreaterThan(spineEdges);
+
+  // every arc key is unique, so the paint order is a total order
+  const keys = await arcs.evaluateAll((els) => els.map((e) => e.getAttribute("data-arc")));
+  expect(new Set(keys).size).toBe(keys.length);
+
+  // THE ESCAPE HATCH. The arcs are pointer-only by design — a couple of hundred
+  // tab stops would be a trap — so the rail beside the plate has to carry every
+  // account as a real link, or the view is unreachable without a mouse.
+  const rail = page.getByRole("list", { name: "Accounts in this tower" });
+  await expect(rail).toBeVisible();
+  const railLinks = rail.getByRole("link");
+  expect(await railLinks.count()).toBeGreaterThan(1);
+  await expect(railLinks.first()).toHaveAttribute("href", /\/transactions\?/);
+
+  // and nothing inside the drawing is focusable
+  expect(await page.locator("[data-arc][tabindex]").count()).toBe(0);
+
+  // the viewpoints are real buttons, which is what makes the camera keyboard-
+  // reachable without a drag gesture nobody can perform from a keyboard
+  for (const viewpoint of ["Front", "Plan", "Side", "Quarter"]) {
+    await press(page, "Tower viewpoint", viewpoint);
+    await expect(page.locator("[data-arc]").first()).toBeVisible();
+  }
+
+  expect(gating(await analyzeSettled(page))).toEqual([]);
+
+  // NET folds the bidirectional pairs, so it can only ever draw fewer arcs
+  await press(page, "Transfer measure", "Net");
+  expect(await page.locator("[data-arc]").count()).toBeLessThanOrEqual(arcCount);
+
+  // restore the defaults for sibling specs — the suite shares one database and
+  // this surface persists its view
+  await press(page, "Transfer measure", "Gross");
+  await press(page, "Transfer shape", "Spine");
+  await gotoHydrated(page, "/flow");
+  await expect(page.locator("g[data-edge]").first()).toBeVisible();
+  expect(await page.locator("[data-arc]").count()).toBe(0);
+});
+
+test("the tower's geometry is deterministic — the same view twice is the same markup", async ({
+  page,
+}) => {
+  // The visual baselines and every future screenshot depend on this. It is
+  // asserted directly rather than hoped for: no Math.random, no Date, no
+  // physics settling, and a paint order tie-broken by id.
+  const markup = async () => {
+    await page.goto("/flow?shape=tower&measure=gross&lens=chart");
+    await expect(
+      page.getByRole("button", { name: /Switch to (light|dark) theme/ }).locator("svg"),
+    ).toBeVisible();
+    await expect(page.locator("[data-arc]").first()).toBeVisible();
+    return page.locator("[data-arc]").first().locator("xpath=..").innerHTML();
+  };
+
+  const a = await markup();
+  await page.setViewportSize({ width: 900, height: 800 });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const b = await markup();
+
+  expect(b).toBe(a);
+  expect(a.length).toBeGreaterThan(1_000); // guards the guard
 });
 
 test("the flow page is reachable from the main navigation", async ({ page }) => {

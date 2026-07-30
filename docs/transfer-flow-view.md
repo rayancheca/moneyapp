@@ -1,9 +1,67 @@
 # Transfer Flow — a new view for money moving between your own accounts
 
-> **Status:** design spec + working prototype. Nothing here modifies an existing chart.
+> **Status: SHIPPED.** The spine, the rhythm rail and the matrix landed in pass 26; **the Tower
+> landed in pass 27**. Everything below is the original design spec, kept because its *reasoning*
+> is still the reasoning — but several of its **mechanisms were overruled during implementation**.
+> §0 is the record of what actually shipped. Where §0 and the rest of this document disagree, §0 is
+> what is in the repo.
+>
 > **Prototype:** [`docs/design-directions/transfer-flow-prototype.html`](design-directions/transfer-flow-prototype.html) — open it directly with `file://`, no server, no network.
 > **Hard constraint:** purely **ADDITIVE**. The Sankey, the balance chart, the portfolio chart, the
 > heatmap, the donut and every lens on them are untouched. This is a new surface alongside them.
+
+---
+
+## 0. What actually shipped, and where it departs from this spec
+
+Route is **`/flow`**, not `/transfers` (owner's call). View dimensions are
+`measure` (gross|net) · `shape` (spine|tower) · `lens` (chart|table), in that order, with `lens`
+last. The **dimension key is `shape`, not `flow`** — the route is already `/flow`, so `?flow=tower`
+reads as nonsense while `?shape=tower` reads as English.
+
+```
+src/lib/transfer-tower-layout.ts        pure geometry + orthographic projection  (100% covered)
+src/lib/transfer-tower-layout.test.ts   68 cases
+src/components/charts/TransferTower.tsx the SVG renderer + the account rail
+src/components/charts/TransferTower.test.ts  source + wiring contract
+e2e/zz-zz-flow-views.spec.ts            enumerates FLOW_VIEW_SPEC — every option must render
+```
+
+### Eight deviations, each with its reason
+
+| Spec said | Shipped | Why |
+|---|---|---|
+| **Canvas 2D**, dynamically imported with `ssr: false` (§9) | **SVG**, imported normally | The handoff had already reversed this (§5.1: "SVG + orthographic projection, not WebGL"), and `NetWorthTerrain` is the in-repo precedent. SVG is axe-inspectable, needs no CSS-variable resolution (`var(--cat-blue)` works directly in a `stroke`), and the browser hit-tests it for free. Separately: in **Next 16 `ssr: false` inside a Server Component is a hard build error**, so the canvas route also needed a client wrapper module that does not otherwise exist. |
+| **Free orbit** — drag, scroll-zoom, arrow keys, `Home` resets (§6) | **Four named viewpoints** (`quarter`, `front`, `side`, `plan`), local state | The terrain's doctrine, verbatim: *"No free tumble: a camera that lies about which ribbon is in front is not offered."* Buttons are keyboard-reachable without inventing a drag gesture nobody can perform from a keyboard, and the geometry stays snapshot-stable. Viewpoint is **not** persisted and **not** in the URL — same as the terrain — so a shared `/flow?shape=tower` link always opens at the same camera. |
+| Camera elevation **16°** (az −0.62 rad, el 0.28 rad) | **27°** | That figure came from the prototype, which projected in **perspective**, and perspective supplies depth on its own. This renderer is orthographic *on purpose* — a stroke encoding dollars must mean the same thing at the front and the back of the ring. Under orthographic projection 16° squashes the ring to 28% of its width and the pillars line up as a flat picket fence. 27° is also the terrain's quarter elevation, so both 3D figures in the app are now read from the same angle. **Found by screenshot; no assertion can see it.** |
+| Geometry emitted as **`Float32Array` vertex buffers** (§5.2) | Plain objects, matching `SpineArc[]` | The argument for buffers was snapshot-testability without booting WebGL. Plain objects give exactly that (`toEqual` of two calls proves determinism just as well), the SVG renderer cannot consume a typed array any faster, and the buffers throw away the `(edge, month)` identity that the tooltip and the drill both need. |
+| A hand-rolled **`pickTowerArc`** nearest-polyline hit test (§6) | Deleted — the browser does it | It was written, tested and then removed. Paint order is back-to-front, so the topmost SVG element under the cursor *is* the nearest arc. Shipping it would have been dead code. |
+| **Every arc keyboard-focusable** (§8) | Arcs are pointer-only; the **rail** is the keyboard path | True and right for the spine, which has 13–17 arcs. The tower has one arc per (edge, month) — **167 on the real database** — and 167 tab stops between the viewpoint pills and the rest of the page is a trap, not access. The rail beside the plate names every account with its exact figures and is a real link to that account's ledger; the table lens carries every number. This is the terrain's bargain and it is why the terrain makes it. |
+| The rhythm rail sits under every chart | Tower renders **without** the rhythm rail | The tower's own Y axis *is* time. A monthly rail under it would be a second, worse answer to a question already on screen. |
+| Pillar radius from gross throughput (§3.2) | Same — and **held gross in net mode too** | Making the skeleton measure-invariant means switching gross → net changes only which arcs are drawn, so the eye tracks the change instead of re-acquiring the scene. |
+
+### Two invariants this spec did not have, added because the geometry needed them
+
+1. **The arch is bounded by the month spacing.** An arc lifts so it reads as a solid rather than a
+   flat smear, but never by more than `0.4 × monthStep` — so an arc can never appear to sit at a
+   month it does not belong to. The prototype's `0.055 + 0.075 · chord` had no such bound and on a
+   short window would lift an arc clean past its neighbour. Asserted at 2, 8 and 60 months.
+
+2. **The sideways bow is anchored to the pair's canonical direction, not the edge's own.** ⚠️ This
+   was a real bug, caught by the invariant test on the first run. Reversing an edge flips the
+   perpendicular *and* flips the sign, and **the two cancel**: computed the obvious way, A→B and
+   B→A land on precisely the same control point and draw one exactly on top of the other — hiding
+   the round-trip churn this entire surface exists to reveal. Taking the perpendicular along
+   `low ringIndex → high` and the sign from the direction is what actually separates them.
+
+### Verified, on the real database
+
+167 arcs in gross and 125 in net across 7 accounts and 34 months; **zero horizontal overflow at 320,
+375, 768, 1440**; zero console errors; axe clean (critical + serious) in the tower view; identical
+markup across a resize cycle. The month labels live in a reserved left gutter — drawn at a fixed
+`x = 8` they landed *on top of* the leftmost pillar at 375px and stranded themselves ~380px from a
+self-centring figure at 1440px. Both were found by looking at a screenshot, and both are now pinned
+by a test.
 
 ---
 

@@ -44,9 +44,13 @@ export default async function FlowPage({
   const range = { from: START_OF_TIME, to: todayIso() };
   const data = transferFlow(db, range);
 
+  // Every dimension the spec declares must be named here too. A dimension
+  // missing from this map still works from its pill (setView persists, then
+  // navigates, and the persisted value wins) — so it LOOKS fine, and only a
+  // shared link or a hard reload exposes that the `?param=` was ignored.
   const view = resolveViewState(
     FLOW_VIEW_SPEC,
-    { measure: one(raw.measure), lens: one(raw.lens) },
+    { measure: one(raw.measure), shape: one(raw.shape), lens: one(raw.lens) },
     settings.viewPreferences[FLOW_SURFACE],
   );
 
