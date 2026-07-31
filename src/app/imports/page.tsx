@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Money } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
+import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { formatCents } from "@/lib/money";
 import { acceptGapAction, unimportFileAction, uploadStatementsAction } from "./actions";
 
@@ -44,7 +45,7 @@ export default async function ImportsPage({
   // because its restore point could not be written looked exactly like an
   // un-import that silently did nothing, which is the worst possible reading.
   const raw = await searchParams;
-  const error = typeof raw.error === "string" ? raw.error : null;
+  const error = errorParam(raw);
 
   const db = getDb();
   const files = db
@@ -116,14 +117,7 @@ export default async function ImportsPage({
         description="Drop statement exports here — CSV, OFX/QFX, and PDF. Every statement must reconcile: beginning + transactions = ending, to the cent, or it is flagged with its exact gap."
       />
 
-      {error && (
-        <div
-          role="alert"
-          className="mb-6 rounded-(--radius-card) border border-negative/40 bg-surface-raised px-4 py-3 text-sm text-negative"
-        >
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner message={error} />}
 
       <div className="space-y-6">
         <SurfaceCard>

@@ -176,7 +176,12 @@ export default async function CategoryPage({
           </SurfaceCard>
         )}
 
-        <div className="grid gap-6 lg:grid-cols-2">
+        {/* `*:min-w-0` is load-bearing, not cosmetic. A grid track defaults to
+            minmax(auto, 1fr) and `auto` as a MINIMUM resolves to min-content, so a
+            single child that cannot shrink (a nowrap merchant row here) widens the
+            track and pushes the whole page sideways — measured at 358px in a 320px
+            viewport before this. Same guard, same reason, as page.tsx:155. */}
+        <div className="grid gap-6 *:min-w-0 lg:grid-cols-2">
           {subcats.length > 0 && (
             <SurfaceCard>
               <h2 className="mb-3 text-sm font-medium">Subcategories</h2>

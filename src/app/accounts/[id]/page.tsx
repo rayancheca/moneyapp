@@ -17,6 +17,7 @@ import { ACCOUNT_SURFACE, ACCOUNT_VIEW_SPEC } from "@/components/accounts/accoun
 import { AccountHoldingsTable } from "@/components/accounts/AccountHoldingsTable";
 import { AccountNameHeading } from "@/components/accounts/AccountNameHeading";
 import { AnchorForm } from "@/components/accounts/AnchorForm";
+import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { BalanceChartPanel } from "@/components/accounts/BalanceChartPanel";
 import { EditAccountButton } from "@/components/accounts/EditAccountButton";
 import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
@@ -93,6 +94,10 @@ export default async function AccountDetailPage({
 }) {
   const { id } = await params;
   const raw = await searchParams;
+  // `addAnchorAction` (accounts/actions.ts:174) redirects HERE with the reason a
+  // balance was refused — "Record a balance" is the form most likely to be
+  // rejected on this page, and until this was read the refusal was invisible.
+  const error = errorParam(raw);
   const db = getDb();
   const account = getAccount(db, id);
   if (!account) notFound();
@@ -135,6 +140,7 @@ export default async function AccountDetailPage({
         className="mb-3"
         items={[{ label: "Accounts", href: "/accounts" }, { label: account.name }]}
       />
+      {error && <ErrorBanner message={error} />}
       <div className="flex items-start justify-between gap-4">
         <AccountNameHeading
           accountId={account.id}

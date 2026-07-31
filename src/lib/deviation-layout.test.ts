@@ -150,4 +150,23 @@ describe("deviationDescription", () => {
       "Nothing changed against the previous period.",
     );
   });
+
+  /**
+   * The sentence says "down" when the biggest mover fell. The test above has a
+   * decrease in it, but the LARGEST move there is the increase, so the "down"
+   * wording of `biggest` was never produced — a screen-reader user hearing this
+   * summary on a month where the headline was a big cut would have been told it
+   * went "up". Ordering matters here: FOOD's $300 drop has to outrank RENT's $100
+   * rise for `bars[0]` to be the decrease.
+   */
+  test("names the largest move as down when the biggest mover fell", () => {
+    const layout = computeDeviationLayout(
+      [row("rent", 200_00, 100_00), row("food", 10_00, 310_00)],
+      OPTS,
+    );
+    expect(layout.bars[0]!.key).toBe("food"); // guards the premise
+    const desc = deviationDescription(layout, fmt);
+    expect(desc).toContain("FOOD, down $300.00");
+    expect(desc).not.toContain("FOOD, up");
+  });
 });

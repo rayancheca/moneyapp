@@ -19,6 +19,7 @@ import { Pagination } from "@/components/transactions/Pagination";
 import { ReviewInbox } from "@/components/transactions/ReviewInbox";
 import { TransactionsLedger, type LedgerRow } from "@/components/transactions/TransactionsLedger";
 import { ViewTabs } from "@/components/transactions/ViewTabs";
+import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { reviewInbox } from "@/services/review-inbox";
 import { toLedgerRow } from "@/services/ledger-rows";
 import { splitCountsByTxn } from "@/services/transaction-splits";
@@ -73,6 +74,10 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
   const params = await searchParams;
   const filters = parseFilters(params);
   const notice = parseNotice(params);
+  // All four redirect actions come back through `returnPath` (transactions/actions.ts:121)
+  // with `&error=`; `parseNotice` matches a fixed enum and cannot carry an arbitrary
+  // message, so without this the refusal was dropped and the page re-rendered unchanged.
+  const error = errorParam(params);
 
   const db = getDb();
   const accountRows = db
@@ -184,6 +189,11 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
         title="Transactions"
         description="Every transaction from your statements — deduplicated, reconciled against printed balances, and categorized."
       />
+
+      {/* Above the notice deliberately: `notice` reports a success, `error` a refusal,
+          and the refusal is the one the reader has to act on. Both sit above the
+          `totalInLedger === 0` branch below so neither state can swallow them. */}
+      {error && <ErrorBanner message={error} />}
 
       {notice ? <NoticeBanner notice={notice} dismissHref={`/transactions${returnQuery}`} /> : null}
 

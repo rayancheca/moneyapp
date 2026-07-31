@@ -18,6 +18,7 @@ import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { BudgetForm } from "@/components/budgets/BudgetForm";
 import { PredictBudgets } from "@/components/budgets/PredictBudgets";
 import { BudgetRow } from "@/components/budgets/BudgetRow";
+import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 
 export const metadata: Metadata = { title: "Budgets" };
 export const dynamic = "force-dynamic";
@@ -40,7 +41,7 @@ export default async function BudgetsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const raw = await searchParams;
-  const error = typeof raw.error === "string" ? raw.error : null;
+  const error = errorParam(raw);
 
   const db = getDb();
   const today = todayIso();
@@ -67,14 +68,7 @@ export default async function BudgetsPage({
         <PredictBudgets />
       </div>
 
-      {error && (
-        <div
-          role="alert"
-          className="mb-6 rounded-(--radius-card) border border-negative/40 bg-surface-raised px-4 py-3 text-sm text-negative"
-        >
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner message={error} />}
 
       <div className="space-y-6">
         {sections.length === 0 ? (

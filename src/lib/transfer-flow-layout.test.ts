@@ -384,3 +384,73 @@ describe("spineDescription", () => {
     );
   });
 });
+
+/**
+ * Degenerate inputs. Every guard below is a real `?:` or early return in the
+ * layout, and each was previously unexercised — invisible in the coverage text
+ * report, which only lists files with uncovered LINES and so never showed a file
+ * whose gaps are all branches.
+ *
+ * These are not hypothetical shapes. A period in which every account's inflows
+ * exactly cancel its outflows makes every `netCents` zero, and that is the
+ * ordinary result of a pure round-trip month.
+ */
+describe("degenerate data", () => {
+  test("all-zero net balances give every node zero weight instead of dividing by zero", () => {
+    const layout = computeSpineLayout(
+      data({
+        accounts: [account("a", 0), account("b", 0)],
+        edges: [edge("a", "b", 100_00)],
+        netEdges: [edge("a", "b", 100_00)],
+      }),
+      "gross",
+      { width: 900 },
+    );
+    expect(layout.nodes).toHaveLength(2);
+    for (const n of layout.nodes) {
+      expect(n.weight).toBe(0);
+      expect(Number.isFinite(n.radius)).toBe(true);
+      expect(n.radius).toBeGreaterThan(0); // a zero-weight node still has to be visible
+    }
+  });
+
+  test("a zero-dollar edge draws at the minimum stroke, not at zero or NaN", () => {
+    const layout = computeSpineLayout(
+      data({
+        accounts: [account("a", 0), account("b", 0)],
+        edges: [edge("a", "b", 0)],
+        netEdges: [edge("a", "b", 0)],
+      }),
+      "gross",
+      { width: 900 },
+    );
+    expect(layout.arcs).toHaveLength(1);
+    expect(layout.arcs[0]!.width).toBe(2); // MIN_STROKE
+  });
+
+  test("a self-referential edge has zero span and still produces a finite path", () => {
+    // span = |toIdx - fromIdx| = 0, so maxSpan is 0 and the bulge ratio would be
+    // 0/0 without its guard. The detector does not emit self-transfers today, but
+    // the type permits one and a NaN in a path string blanks the whole chart.
+    const layout = computeSpineLayout(
+      data({
+        accounts: [account("a", -100_00), account("b", 100_00)],
+        edges: [edge("a", "a", 100_00)],
+        netEdges: [edge("a", "a", 100_00)],
+      }),
+      "gross",
+      { width: 900 },
+    );
+    expect(layout.arcs).toHaveLength(1);
+    expect(layout.arcs[0]!.path).not.toContain("NaN");
+    // "M x y C x1 y1, x2 y2, x y" — every coordinate a finite number
+    expect(layout.arcs[0]!.path).toMatch(/^M -?[\d.]+ -?[\d.]+ C( -?[\d.]+ -?[\d.]+,?){3}$/);
+  });
+
+  test("zero gross with edges present reports 0% churn rather than NaN%", () => {
+    const d = data({ edges: [edge("a", "b", 0)], netEdges: [edge("a", "b", 0)] });
+    const text = spineDescription({ ...d, totals: { ...d.totals, grossCents: 0, churnCents: 0 } }, fmt);
+    expect(text).not.toContain("NaN");
+    expect(text).toContain("(0%)");
+  });
+});

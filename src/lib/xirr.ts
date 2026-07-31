@@ -73,8 +73,18 @@ export function xirr(flows: readonly CashFlow[]): number | null {
     if (!Number.isFinite(f)) break;
     if (Math.abs(f) < TOL_CENTS) return sane(rate);
     const df = dNpv(rate);
+    /* v8 ignore next — unreachable, kept as a guard. dNpv's terms carry exponent
+       (y+1) against npv's y, so for a large span df underflows to 0 (hence ±Inf)
+       within 0.05% of the rate at which f does — and the domain clamp below halves
+       1+rate each step, jumping clean over a window that narrow, so `f` always
+       trips its own check first (verified: a 2000-year span breaks at f, not df).
+       `df === 0` needs the weighted sum to vanish exactly at an iterate, which the
+       sign-change precondition makes impossible for two flows. */
     if (!Number.isFinite(df) || df === 0) break;
     let next = rate - f / df;
+    /* v8 ignore next — unreachable, kept as a guard. f and df are both finite here
+       and df is non-zero, and in the overflow regime |df| exceeds |f| (again the
+       larger exponent), so the quotient cannot overflow to Infinity. */
     if (!Number.isFinite(next)) break;
     // keep the iterate inside the (-1, ∞) domain
     if (next <= -1) next = (rate - 1) / 2;
@@ -97,6 +107,12 @@ export function xirr(flows: readonly CashFlow[]): number | null {
   for (let i = 0; i < BISECT_ITERS; i += 1) {
     const mid = (lo + hi) / 2;
     const fMid = npv(mid);
+    /* v8 ignore next — unreachable, kept as a guard. It needs two things at once
+       that exclude each other: `mid` close enough to RATE_FLOOR that (1+mid)^y
+       underflows (y > ~54 years), and a bracket sitting down at the floor. But the
+       longer the span, the closer to zero the root of a losing series moves — a
+       120-year total loss brackets at [-0.11, -0.10], a 2000-year one at [-0.01, 0]
+       — so a long span never produces a floor-adjacent bracket. */
     if (!Number.isFinite(fMid)) return null;
     if (Math.abs(fMid) < TOL_CENTS || hi - lo < 1e-12) return sane(mid);
     if (fLo * fMid < 0) {
@@ -106,6 +122,11 @@ export function xirr(flows: readonly CashFlow[]): number | null {
       fLo = fMid;
     }
   }
+  /* v8 ignore next 2 — unreachable: findBracket can return a span no wider than
+     RATE_CEIL − 100_000 = 9e5, and halving that 200 times gives ~5e-58, so the
+     `hi - lo < 1e-12` exit above always fires first (measured: the widest real
+     bracket converges by iteration ~70). Kept as a guard against a future change
+     to BISECT_ITERS or the sample range rather than deleted. */
   return sane((lo + hi) / 2);
 }
 

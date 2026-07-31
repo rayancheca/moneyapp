@@ -22,6 +22,7 @@ import { ManagedAccounts } from "@/components/accounts/ManagedAccounts";
 import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 
 export const metadata: Metadata = { title: "Accounts" };
 export const dynamic = "force-dynamic";
@@ -57,7 +58,7 @@ export default async function AccountsPage({
   // Unread, a removal refused because its restore point could not be written
   // was indistinguishable from one that quietly did nothing.
   const raw = await searchParams;
-  const error = typeof raw.error === "string" ? raw.error : null;
+  const error = errorParam(raw);
 
   const db = getDb();
   // cash wallets have their own dedicated card below — keep them out of the
@@ -111,14 +112,7 @@ export default async function AccountsPage({
         description="Deposit, credit, and investment accounts grouped by institution. Reorder with the arrows or drag the grip; edit a name, institution, or last-4 from the pencil. Debit cards spend from checking; they don't hold balances."
       />
 
-      {error && (
-        <div
-          role="alert"
-          className="mb-6 rounded-(--radius-card) border border-negative/40 bg-surface-raised px-4 py-3 text-sm text-negative"
-        >
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner message={error} />}
       <div className="space-y-6">
         {groups.length > 0 && (
           <section aria-labelledby="accounts-list-heading">

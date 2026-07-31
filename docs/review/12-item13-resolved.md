@@ -60,7 +60,47 @@ was built to prevent — and silently keeping it without a staleness note is the
 Note `UBER *ONE` (429 days stale, still advertising a "next expected" date at 100% confidence in
 Suggestions) is handled by item 14, which fixes the read path — not by suppression here.
 
-### 13b — DATA: the series over-captures
+### 13b — DATA: the series over-captures  ✅ **DONE 2026-07-31**
+
+> **Outcome, and it inverts this section's conclusion.** The owner ruled on all eight deposits
+> individually. Only **two** — the Florida pair, $1,047 + $400 = **$1,447** — are cash-job pay. The
+> other six left income: $1,500 (Phil repaying the $5,000 Zelled to him on 2025-06-25, already
+> filed as `Loans`) → **Loans**; $1,000 (his girlfriend's cash to forward, send failed) → **Family
+> pass-through**; $300 + $150 + $730 (his own cash, and one he does not recognise) → **Internal
+> Transfer**. Income **$122,593.85 → $118,913.85** (−$3,680); Salary **$49,194.86 → $45,514.86**;
+> balances and net worth provably unchanged.
+>
+> **The projection was NOT contaminated — this section's premise was wrong.** Asked what the job
+> actually pays, the owner said: *"its 1046 a week for the past month or two i just havent been
+> depositing it in the bank often ... i do get paid i just put it in the bank at random intervals
+> and quantities."* So $1,046/wk is real EARNINGS. The deposits were never a measurement of pay;
+> they are a lumpy, partial proxy for it, and reading a rate out of them — in either direction —
+> was the mistake. The "~60% above what the deposits average" framing above therefore describes
+> a gap between *earning* and *depositing*, not an error in the rate.
+>
+> $1,046/wk is now recorded as an explicit override (`recurring_series.user_amount_cents`,
+> `user_cadence='weekly'`), which `effectiveSeries()` (recurring.ts:681) reads ahead of the
+> detected value. Before this it survived only by luck: it is not the average of the series'
+> members ($640.88), and it persisted purely because all eight rows were already
+> `series_link_source='user'`, which makes detection skip the series entirely (recurring.ts:377).
+>
+> Two consequences to carry forward:
+> 1. **Recorded `Salary` now UNDER-counts what he earns**, by design — it records what reached the
+>    bank. Earnings and deposits are different quantities and the app should not be made to
+>    reconcile them.
+> 2. Verify that the recurring series' fixed occurrence and `projectOngoingIncome`'s trailing
+>    `Salary` average are not both counting the same deposited cash. **Not yet checked.**
+>
+> Script: `clarify-atm-pay-split.cjs` (backup + preflight identity assertions + LIVE delta guards
+> + `source='user'`). Backup at `data/backups/moneyapp.db.pre-13b.2026-07-31T15-18-42-698Z`.
+> Verified by diffing the live DB against that backup: exactly 6 rows differ, only in
+> `category_id` and `recurring_series_id`, per-account sums byte-identical.
+>
+> Still open: the **$3,500 Phil Zelled him** is not missing, just **not imported** — Chase Checking
+> coverage ends 2026-07-10 and that landed around 07-17→07-24. And a separate **−$1,495 Zelle to
+> Philipe on 2026-05-29** is already filed as `Loans`, so there may be a second loan outstanding.
+
+#### Original analysis (kept — the reasoning that led here)
 It matches every `ATM CASH DEPOSIT`, but only some are pay. The $1,046 average is contaminated by
 gifts, reimbursements and sales, which is why the projection sits ~60% above what the deposits
 average. This is a guarded real-DB clarification pass in the style of pass 24 (backup + dry-run +

@@ -106,6 +106,10 @@ export function computeDeviationLayout(
     // Linear, deliberately. Unlike the spine's stroke widths this axis IS the
     // quantity being compared — a sqrt here would flatter small moves and make
     // "twice as big a change" stop looking twice as big.
+    /* v8 ignore next — the `: MIN_BAR` arm is unreachable, kept as a guard. This
+       map only runs when `ranked` is non-empty, and `ranked` has already dropped
+       every zero-delta row (:93), so peakCents is the max of a non-empty set of
+       non-zero magnitudes and is always > 0. */
     const w = peakCents > 0 ? Math.max(MIN_BAR, (Math.abs(r.deltaCents) / peakCents) * half) : MIN_BAR;
     return {
       key: r.key,

@@ -39,6 +39,7 @@ import { PortfolioHoldingsTable } from "@/components/investments/PortfolioHoldin
 import { PortfolioStats } from "@/components/investments/PortfolioStats";
 import { TopMovers } from "@/components/investments/TopMovers";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 
@@ -46,23 +47,6 @@ export const metadata: Metadata = { title: "Investments" };
 export const dynamic = "force-dynamic";
 
 const rangeSchema = z.enum(CHART_RANGES).catch("ALL");
-
-/**
- * The ?error= banner (the /budgets pattern). Rendered in BOTH page branches so
- * the message can never land on a branch that drops it — including the
- * pre-mutation snapshot's "Could not save a restore point, so nothing was
- * changed", which unread renders as complete silence.
- */
-function ErrorBanner({ message }: { message: string }) {
-  return (
-    <div
-      role="alert"
-      className="mb-6 rounded-(--radius-card) border border-negative/40 bg-surface-raised px-4 py-3 text-sm text-negative"
-    >
-      {message}
-    </div>
-  );
-}
 
 export default async function InvestmentsPage({
   searchParams,
@@ -73,8 +57,9 @@ export default async function InvestmentsPage({
   // addHoldingAction is a `Promise<void>` form action, so its failures travel
   // back as ?error= (actions.ts:113). Unread, an add refused by validation — or
   // by a restore point that could not be written — was indistinguishable from
-  // one that quietly did nothing.
-  const error = typeof raw.error === "string" ? raw.error : null;
+  // one that quietly did nothing. Rendered in BOTH page branches below (:94, :156)
+  // so the message can never land on a branch that drops it.
+  const error = errorParam(raw);
   const range = rangeSchema.parse(Array.isArray(raw.range) ? raw.range[0] : raw.range);
   const db = getDb();
   const settings = readSettings(db);

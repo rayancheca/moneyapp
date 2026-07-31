@@ -12,6 +12,7 @@ import { RecurringTabs, type RecurringTab } from "@/components/recurring/Recurri
 import { UpcomingList } from "@/components/recurring/UpcomingList";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { detectNowAction } from "./actions";
 
 export const metadata: Metadata = { title: "Recurring" };
@@ -30,7 +31,7 @@ export default async function RecurringPage({
   // so their failures travel back as ?error= (actions.ts:97,127,139) — the
   // /budgets pattern. Unread, a confirm refused because its restore point could
   // not be written was indistinguishable from one that quietly did nothing.
-  const error = typeof raw.error === "string" ? raw.error : null;
+  const error = errorParam(raw);
 
   const db = getDb();
   const today = todayIso();
@@ -63,14 +64,7 @@ export default async function RecurringPage({
         </form>
       </div>
 
-      {error && (
-        <div
-          role="alert"
-          className="mb-6 rounded-(--radius-card) border border-negative/40 bg-surface-raised px-4 py-3 text-sm text-negative"
-        >
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner message={error} />}
 
       <div className="space-y-6">
         <ForecastCard forecast={forecast} />

@@ -15,6 +15,7 @@ import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { RulesManager } from "@/components/settings/RulesManager";
 import { BackupsManager } from "@/components/settings/BackupsManager";
 import { describeState, retentionSentence, toBackupRow } from "@/components/settings/backup-rows";
+import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { updateSettingsAction } from "./actions";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -40,7 +41,7 @@ export default async function SettingsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const raw = await searchParams;
-  const error = typeof raw.error === "string" ? raw.error : null;
+  const error = errorParam(raw);
 
   const db = getDb();
   const settings = readSettings(db);
@@ -56,14 +57,7 @@ export default async function SettingsPage({
         description="Thresholds, AI spend, and backups. Everything else is derived from your data."
       />
 
-      {error && (
-        <div
-          role="alert"
-          className="mb-6 rounded-(--radius-card) border border-negative/40 bg-surface-raised px-4 py-3 text-sm text-negative"
-        >
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner message={error} />}
 
       <div className="space-y-6">
         <SurfaceCard>

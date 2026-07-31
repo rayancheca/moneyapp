@@ -157,6 +157,33 @@ LIVE deltas, `source='user'`, confirm before `--apply`.
 
 ### 6.2 The §5.2 small fixes
 
+> ⚠️ **CORRECTED 2026-07-31 (pass 28). Four of the five bullets below were wrong, and they were
+> wrong because this list was copied forward from pass 26 without re-measuring — the exact failure
+> §8 warns about, committed by §8's own author. All of it is now done; see
+> `docs/HANDOFF-2026-07-31-pass28.md`. Read the corrections before trusting anything in this list:**
+>
+> - **`?error=`** — already fixed on `/investments`, `/recurring` and `/settings` since pass 25
+>   (`5d200c3`); all three read it and render a `role="alert"` banner in every return branch. The
+>   defect was real but on **two pages this list never named**: `/accounts/[id]` (the
+>   "Record a balance" path) and `/transactions`. Both fixed, both now guarded by
+>   `e2e/error-banner.spec.ts`.
+> - **`HeaderStrip` `failed` state** — already rendered, at `HeaderStrip.tsx:163-167`, and had been
+>   through three handoffs described as missing. What was actually absent was a TEST; it has one now.
+> - **`--press-2`/`--press-3`/`--annotation`** — "few consumers" is **false**. `--press-2` reaches
+>   54 of 55 `SurfaceCard` renders across 23 files plus `DataTable`, `Button` and `StatCard`; it is
+>   the workhorse of the depth scale. `--press-3`'s single consumer (Toast) is mandated by
+>   `letterpress.ts:27` — a design invariant, not a gap. The counting method was the bug: these are
+>   consumed as Tailwind arbitrary values (`shadow-(--press-2)`), which a `var(--press-2)` grep
+>   misses entirely. The only real item left is that `TransferSpine`/`TransferTower` use
+>   `text-ink-muted` where `--annotation` was meant for chart marginalia.
+> - **Overflow** — real, and now fixed and guarded. But the cited line was stale
+>   (`page.tsx:154` → the culprit is `NumberRoll.tsx:52`), and the list **missed
+>   `/categories/[id]`**, which overflowed by 38px.
+> - **Coverage** — the two files named were accurate but the list was **incomplete**: five files
+>   were short, not two. `deviation-layout.ts` and `transfer-flow-layout.ts` never appeared because
+>   the coverage text reporter only lists files with uncovered LINES, and theirs were branch-only.
+>   The gate is green now.
+
 - **`?error=` unrendered** on `/investments`, `/recurring`, `/settings` — server actions redirect
   with a human message these pages drop on the floor. Copy `src/app/budgets/page.tsx:43,70-75`
   (a `role="alert"` banner).

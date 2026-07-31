@@ -123,4 +123,29 @@ describe("applyInFlight", () => {
   test("empty series -> empty result", () => {
     expect(applyInFlight([], [win("2026-01-01", null, 50)])).toEqual([]);
   });
+
+  /**
+   * A zero-delta adjustment is skipped before it ever touches a day. It matters
+   * that this is skipped at the SOURCE and not merely pruned afterwards: the
+   * final prune only removes days whose NET is zero, so a real +500 on the same
+   * day as a 0 would keep the day and the 0 would be invisible either way —
+   * this asserts the cheaper guard actually holds, and that a detector emitting
+   * a no-op window cannot manufacture a `0` entry in the delta map.
+   */
+  test("an adjustment with a zero delta contributes no day at all", () => {
+    expect(inFlightDeltaByDay(["2026-01-01", "2026-01-02"], [win("2026-01-01", null, 0)]).size).toBe(
+      0,
+    );
+  });
+
+  test("a zero-delta window does not disturb a real one covering the same days", () => {
+    const deltas = inFlightDeltaByDay(
+      ["2026-01-01", "2026-01-02"],
+      [win("2026-01-01", null, 0), win("2026-01-01", null, 500)],
+    );
+    expect([...deltas.entries()]).toEqual([
+      ["2026-01-01", 500],
+      ["2026-01-02", 500],
+    ]);
+  });
 });

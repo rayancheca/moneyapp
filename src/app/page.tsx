@@ -141,7 +141,9 @@ export default async function DashboardPage({
       <div className="space-y-8">
         <header>
           <h1 className="text-xs font-medium uppercase tracking-[0.14em] text-ink-faint">Net worth</h1>
-          <p aria-hidden className="figures mt-2 text-5xl font-semibold tracking-tight text-ink-faint">
+          {/* matches the populated hero's responsive size so the two states are the
+              same headline, not two different ones */}
+          <p aria-hidden className="figures mt-2 text-4xl font-semibold tracking-tight text-ink-faint sm:text-5xl">
             $&thinsp;—
           </p>
           <p className="mt-3 max-w-prose text-sm text-ink-muted">
@@ -179,7 +181,15 @@ export default async function DashboardPage({
           <h1 id="net-worth-heading" className="text-xs font-medium uppercase tracking-[0.14em] text-ink-faint">
             Net worth
           </h1>
-          <p className="figures mt-2 text-5xl font-semibold tracking-tight">
+          {/* The size steps down below `sm` because NumberRoll gives every digit a
+              fixed `w-[1ch]` slot (NumberRoll.tsx:52) — that is what stops the odometer
+              reflowing mid-animation, and it also means the headline cannot shrink to
+              fit. At text-5xl one tabular char is ~28.8px, so an 11-character value
+              ($100,000.00 and up) measures ~316px and overflows the 288px content box
+              of a 320px viewport. text-4xl (~21.6px/char) holds 13 characters — past
+              $1,234,567.89 — at the narrowest supported width. Same responsive-hero
+              move PortfolioChartPanel.tsx:185 already makes around its own NumberRoll. */}
+          <p className="figures mt-2 text-4xl font-semibold tracking-tight sm:text-5xl">
             {/* S10: the headline number rolls when it changes (never on first paint) */}
             <NumberRoll value={formatCents(netWorth.latestCents)} />
           </p>

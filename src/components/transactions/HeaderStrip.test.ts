@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { failedRunMessage } from "./HeaderStrip";
 import type { ClaudeRunResult } from "@/services/claude-categorize";
@@ -66,5 +68,41 @@ describe("failedRunMessage", () => {
     ).toBe(
       "Claude run failed: Could not reach the API · the counts above are partial progress, not a result",
     );
+  });
+});
+
+/**
+ * The MARKUP contract. `failedRunMessage` above is pure and thoroughly tested,
+ * but the value it returns reached the DOM through JSX that nothing asserted —
+ * and this runner is `environment: "node"`, so there is no DOM to render into.
+ * Source-text assertions are the repo's answer to that (precedent:
+ * `components/charts/NetWorthTerrain.test.ts`), and they are enough to catch the
+ * regressions that actually matter here: the call being dropped, or the live
+ * region being removed so the failure becomes silent.
+ *
+ * Why it needs guarding at all: the redirect back from a failed categorize run is
+ * a CLIENT navigation. Without `role="alert"` the page looks unchanged and a
+ * screen-reader user is never told the run failed — the same class of silence the
+ * `?error=` banner exists to prevent, and one that three handoffs in a row
+ * described as "not rendered at all" while it was in fact rendered but untested.
+ */
+describe("the failure line's markup", () => {
+  const src = fs.readFileSync(path.join(process.cwd(), "src/components/transactions/HeaderStrip.tsx"), "utf8");
+
+  it("computes the failure message and renders it, rather than discarding it", () => {
+    expect(src).toMatch(/const failure = .*failedRunMessage\(/);
+    // the computed value is actually placed in the tree
+    expect(src).toMatch(/\{failure && \(/);
+    expect(src).toContain("{failure}");
+  });
+
+  it("announces the failure in a live region", () => {
+    // the <p> that carries {failure} must be the one with role="alert"
+    const block = src.slice(src.indexOf("{failure && ("));
+    expect(block.slice(0, block.indexOf("{failure}"))).toContain('role="alert"');
+  });
+
+  it("keeps the terse ' · failed' chip on the summary line as well", () => {
+    expect(src).toContain("lastRun.failed &&");
   });
 });
