@@ -258,6 +258,105 @@ test("the benchmark picker fetches history for an unheld symbol and persists", a
   await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
 });
 
+/**
+ * Comparison is OPT-IN. Before "Just my return" existed the benchmark resolver
+ * fell through to SPY, so there was no way to see your own line without a market
+ * line drawn over it — the owner's words: "i am forced to compare my performance
+ * to something."
+ *
+ * The load-bearing assertion is the DASHED PATH COUNT, not the caption. A caption
+ * can disappear while the overlay is still drawn (and the reverse), and it is the
+ * drawn line the complaint was actually about.
+ */
+test("the benchmark can be turned off entirely, and stays off", async ({ page }) => {
+  await gotoHydrated(page, "/investments?view=returns&unit=percent");
+  const picker = page.getByRole("combobox", { name: "Benchmark" });
+  await expect(picker).toBeVisible();
+  await expect(picker.locator("option").first()).toHaveText("Just my return");
+
+  // with SPY (restored by the test above) the comparison is drawn
+  await expect(page.getByText(/S&P 500.*% since /).first()).toBeVisible();
+  const dashedWith = await countDashedPaths(page);
+  expect(dashedWith).toBeGreaterThan(0);
+
+  await picker.selectOption("__none");
+  await expect(page).toHaveURL(/[?&]bench=__none\b/);
+  await expect(page.getByText(/S&P 500.*% since /)).toHaveCount(0);
+  expect(await countDashedPaths(page)).toBe(0);
+  // the "no price history for X" nag must not fire for a choice that HAS none by design
+  await expect(page.getByText(/No price history for/)).toHaveCount(0);
+  expect(gating(await analyzeSettled(page))).toEqual([]);
+
+  // sticky, like every other view choice: a fresh visit with no ?bench stays off
+  await gotoHydrated(page, "/investments?view=returns&unit=percent");
+  await expect(page.getByRole("combobox", { name: "Benchmark" })).toHaveValue("__none");
+  expect(await countDashedPaths(page)).toBe(0);
+
+  // restore SPY + the $ unit + Value view for whatever runs after this
+  await page.getByRole("combobox", { name: "Benchmark" }).selectOption("SPY");
+  await expect(page).not.toHaveURL(/bench=/);
+  await page.getByRole("group", { name: "Return unit" }).getByRole("button", { name: "$" }).click();
+  await expect(page).not.toHaveURL(/unit=percent/);
+  await page.getByRole("group", { name: "Portfolio chart view" }).getByRole("button", { name: "Value" }).click();
+  await expect(page.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
+});
+
+/** Dashed strokes in the chart — how the benchmark overlay is drawn. */
+async function countDashedPaths(page: Page): Promise<number> {
+  return page.evaluate(
+    () =>
+      Array.from(document.querySelectorAll("svg path")).filter(
+        (el) => (el.getAttribute("stroke-dasharray") ?? "") !== "",
+      ).length,
+  );
+}
+
+/**
+ * Day and week windows (owner: "i also need a week and day view"). 1D on a daily
+ * series is yesterday→today — the change since the previous close, which is the
+ * honest reading for a ledger with no intraday prices.
+ *
+ * Asserts the WINDOW each pill produces, not just that the pill lights up: a pill
+ * that highlights while the chart still shows all time is the exact failure the
+ * fell-back note was added for, and it would pass an aria-pressed-only test.
+ */
+test("the range pills offer a day and a week view, and each shows its own window", async ({ page }) => {
+  await gotoHydrated(page, "/investments");
+  const pills = page.getByRole("group", { name: "Chart range" }).first();
+  await expect(pills.getByRole("button")).toHaveText(["1D", "1W", "1M", "3M", "YTD", "1Y", "ALL"]);
+
+  const header = page.locator("p", { hasText: /· (all time|1D|1W|1M|3M|YTD|1Y)/ }).first();
+  for (const [label, token] of [
+    ["1 day", "1D"],
+    ["1 week", "1W"],
+  ] as const) {
+    await pills.getByRole("button", { name: label }).click();
+    await expect(pills.getByRole("button", { name: label })).toHaveAttribute("aria-pressed", "true");
+    // the header names the window it is actually showing…
+    await expect(header).toContainText(`· ${token}`);
+    // …and the chart really narrowed: the series never widens as the window shrinks
+    expect(await visibleDayCount(page)).toBeGreaterThan(0);
+  }
+
+  // 1D is the tightest window the pills offer — at daily granularity that is two
+  // points, the previous close and today
+  await pills.getByRole("button", { name: "1 day" }).click();
+  expect(await visibleDayCount(page)).toBeLessThanOrEqual(2);
+
+  await pills.getByRole("button", { name: "all time" }).click();
+  await expect(header).toContainText("· all time");
+});
+
+/** How many days the chart is currently drawing, read off its own x-axis data. */
+async function visibleDayCount(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const slider = document.querySelector('[role="slider"]');
+    return slider ? slider.querySelectorAll(".recharts-xAxis .recharts-cartesian-axis-tick").length ||
+      // axis ticks are thinned for readability; fall back to the plotted dots
+      slider.querySelectorAll(".recharts-line-dot").length || 1 : 0;
+  });
+}
+
 /** Reset the persisted unit to $ (the default) so a later Return visit is clean. */
 async function unitGroupRestore(page: Page, href: string): Promise<void> {
   // flip to Return (unit switcher only renders there), set $, flip back to Price

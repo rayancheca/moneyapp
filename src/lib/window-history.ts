@@ -15,7 +15,7 @@
  * algebra is unit-tested to 100%.
  */
 
-export type WindowSource = "pill" | "brush" | "input" | "reset";
+export type WindowSource = "pill" | "brush" | "input" | "reset" | "zoom";
 
 export interface DashboardWindow {
   /** inclusive ISO day (YYYY-MM-DD) */

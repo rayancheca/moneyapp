@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Area,
   CartesianGrid,
@@ -14,8 +14,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { type ChartRange } from "@/lib/chart-range";
-import { windowPoints } from "@/lib/chart-window";
+import { rangeLabel, type ChartRange } from "@/lib/chart-range";
+import { windowedPoints } from "@/lib/chart-window";
 import { ChartRangePills } from "@/components/charts/ChartRangePills";
 import {
   compactMoney,
@@ -34,6 +34,12 @@ import {
   splitCoverageSeries,
 } from "@/lib/scrub-series";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
+import {
+  panIndexWindow,
+  panPointsFromWheel,
+  zoomFactorFromWheel,
+  zoomIndexWindow,
+} from "@/lib/chart-zoom";
 import type { WindowSource } from "@/lib/window-history";
 import { ScrubTooltip, type VividChartRow } from "./ScrubTooltip";
 
@@ -254,10 +260,23 @@ export function ScrubChart({
 
   // the range/drag → visible-rows math lives in lib/chart-window so the table
   // lens slices identically (incl. the <2-point fallback to the full series)
-  const slice = useMemo(
-    () => windowPoints(points, today, range, customWindow),
+  const windowed = useMemo(
+    () => windowedPoints(points, today, range, customWindow),
     [points, range, today, customWindow],
   );
+  const slice = windowed.points;
+  /**
+   * The range asked for more than the series holds, so `windowedPoints` widened
+   * to everything. Saying nothing here is the pass-22 bug class: the header would
+   * caption the rows "1D" while drawing all time. The table lens has always said
+   * so (ScrubTable's caption); the chart did not, and adding 1D/1W — the two
+   * windows most likely to fall short — is what made the gap worth closing.
+   * `customWindow` has its own refusal path (windowNote), so this is range-only.
+   */
+  const rangeNote =
+    windowed.fellBack && !customWindow
+      ? `${rangeLabel(range)} holds too little data to chart — showing all ${slice.length} days.`
+      : null;
 
   const lastIdx = slice.length - 1;
   const effectiveIdx = scrubIndex === null ? lastIdx : clampIndex(scrubIndex, slice.length);
@@ -369,6 +388,74 @@ export function ScrubChart({
     if (!rect || rect.width === 0) return effectiveIdx;
     return ratioToIndex((clientX - rect.left) / rect.width, slice.length);
   }
+
+  // ── trackpad zoom / pan ─────────────────────────────────────────────
+  // The visible window as indices into the FULL series, which is the frame the
+  // zoom maths works in. `slice` is a contiguous run of `points`, so its ends
+  // locate it; a day that somehow isn't in `points` falls back to the whole span
+  // rather than producing a negative index.
+  const dayIndex = useMemo(() => new Map(points.map((p, i) => [p.day, i] as const)), [points]);
+
+  /**
+   * A pinch is the gesture people reach for, and on every browser a trackpad
+   * pinch arrives as `wheel` with `ctrlKey` set. Horizontal two-finger travel
+   * pans. Plain VERTICAL scroll is deliberately left alone: a chart that eats
+   * the page's scroll is a worse bug than a chart that doesn't zoom, and this
+   * one sits halfway down a long page.
+   *
+   * Registered natively rather than via `onWheel` because React attaches wheel
+   * listeners passively — `preventDefault()` on the synthetic event does nothing,
+   * so the browser would zoom the whole page instead of the chart. Held in a ref
+   * so the listener registers once while always seeing this render's state.
+   */
+  const wheelRef = useRef<(e: WheelEvent) => void>(() => {});
+  useEffect(() => {
+    wheelRef.current = (e: WheelEvent) => {
+      if (!selectable || points.length < 2 || slice.length === 0) return;
+      const pinch = e.ctrlKey;
+      const horizontal = !pinch && Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      if (!pinch && !horizontal) return; // vertical scroll belongs to the page
+      const rect = plotRef.current?.getBoundingClientRect();
+      const current = {
+        startIdx: dayIndex.get(slice[0]!.day) ?? 0,
+        endIdx: dayIndex.get(slice[slice.length - 1]!.day) ?? points.length - 1,
+      };
+      const next = pinch
+        ? zoomIndexWindow(
+            points.length,
+            current,
+            rect && rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0.5,
+            zoomFactorFromWheel(e.deltaY),
+          )
+        : panIndexWindow(
+            points.length,
+            current,
+            panPointsFromWheel(e.deltaX, current.endIdx - current.startIdx, rect?.width ?? 0),
+          );
+      // a gesture that resolves to the window already shown is not a change —
+      // returning before preventDefault lets a pan already parked at an edge give
+      // the scroll back to the page instead of swallowing it
+      if (next.startIdx === current.startIdx && next.endIdx === current.endIdx) return;
+      e.preventDefault();
+      // the whole series again is the BASE view, not a custom window equal to it —
+      // otherwise the range pills would read as inactive while showing all time
+      if (next.startIdx === 0 && next.endIdx === points.length - 1) {
+        setWindowNote(null);
+        setWindow(null, "zoom");
+        setScrubIndex(null);
+        setSelection(null);
+        return;
+      }
+      applyWindow(points[next.startIdx]!.day, points[next.endIdx]!.day, "zoom");
+    };
+  });
+  useEffect(() => {
+    const el = plotRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => wheelRef.current(e);
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, []);
 
   function onKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
     const next = stepScrubIndex(effectiveIdx, event.key, slice.length);
@@ -553,6 +640,14 @@ export function ScrubChart({
           setScrubIndex(null);
           setSelection(null);
         }}
+        // a tooltip rather than on-screen copy: the gesture needs to be
+        // discoverable without adding a line of chrome to every chart on the
+        // dashboard (and re-baselining all of them)
+        title={
+          selectable
+            ? "Drag to select a range · pinch to zoom · two-finger swipe to pan"
+            : undefined
+        }
         className={`${heightClass} touch-none rounded-md outline-none focus-visible:ring-2 focus-visible:ring-accent ${
           selectable ? "cursor-crosshair" : ""
         }`}
@@ -924,19 +1019,26 @@ export function ScrubChart({
             />
           </div>
         )}
-        {windowNote && (
+        {(windowNote ?? rangeNote) && (
           <p role="status" className="w-full text-xs text-ink-muted">
-            {windowNote}
+            {windowNote ?? rangeNote}
           </p>
         )}
       </div>
       ) : (
-        <ChartRangePills
-          active={range}
-          onSelect={selectRange}
-          className="mt-3 flex flex-wrap gap-1.5"
-          press={vivid}
-        />
+        <>
+          <ChartRangePills
+            active={range}
+            onSelect={selectRange}
+            className="mt-3 flex flex-wrap gap-1.5"
+            press={vivid}
+          />
+          {rangeNote && (
+            <p role="status" className="mt-1 text-xs text-ink-muted">
+              {rangeNote}
+            </p>
+          )}
+        </>
       )}
       {/* deterministic scrubbed value for tests + a visible caption echo */}
       <figcaption className="sr-only">{valueText(summary, scrubbing)}</figcaption>

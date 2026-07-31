@@ -16,7 +16,7 @@ import {
 import { backfillSymbolHistory, refreshPrices } from "@/services/prices";
 import { hasBenchmark } from "@/services/portfolio";
 import { readSettings, writeSetting } from "@/services/settings";
-import { benchmarkAssetType, normalizeBenchmarkSymbol } from "@/lib/benchmark-symbol";
+import { benchmarkAssetType, isBenchmarkOff, normalizeBenchmarkChoice } from "@/lib/benchmark-symbol";
 import {
   actionErrorMessage,
   firstIssueMessage,
@@ -158,11 +158,23 @@ export async function refreshPricesAction(): Promise<ActionResult<RefreshPricesS
  * rejected with the reason, never silently saved as a blank overlay.
  */
 export async function setBenchmarkAction(symbolInput: string): Promise<ActionResult<{ symbol: string }>> {
-  const symbol = normalizeBenchmarkSymbol(symbolInput);
+  const symbol = normalizeBenchmarkChoice(symbolInput);
   if (symbol === null) {
     return { ok: false, error: "Symbols are 1–12 letters, digits, dots, or dashes" };
   }
   const db = getDb();
+  // "No comparison" persists like any other choice but has no price history and
+  // must never reach a provider — return before the backfill/hasBenchmark path,
+  // which would try to fetch a ticker named "__none" and fail.
+  if (isBenchmarkOff(symbol)) {
+    try {
+      if (readSettings(db).benchmarkSymbol !== symbol) writeSetting(db, "benchmarkSymbol", symbol);
+      revalidatePath("/investments");
+      return { ok: true, data: { symbol } };
+    } catch (error: unknown) {
+      return { ok: false, error: actionErrorMessage(error, HOLDING_LABELS, "Couldn't set the benchmark") };
+    }
+  }
   try {
     if (!hasBenchmark(db, symbol)) {
       try {

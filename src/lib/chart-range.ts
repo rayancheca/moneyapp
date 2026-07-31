@@ -8,10 +8,23 @@
 
 import { addDays } from "./dates";
 
-export const CHART_RANGES = ["1M", "3M", "YTD", "1Y", "ALL"] as const;
+/**
+ * Shortest first. 1D and 1W were added 2026-07-31 on the owner's ask ("i also
+ * need a week and day view").
+ *
+ * 1D is genuinely one TRAILING DAY on a daily series — yesterday and today, so
+ * the chart draws the day's move as a single segment. That is the honest reading
+ * of "day view" for a ledger with no intraday prices: it is the change since the
+ * previous close, not a tick chart. If the series has not reached yesterday
+ * (prices unrefreshed), the window holds too few points and the chart says so
+ * rather than quietly widening — see ScrubChart's fell-back note.
+ */
+export const CHART_RANGES = ["1D", "1W", "1M", "3M", "YTD", "1Y", "ALL"] as const;
 export type ChartRange = (typeof CHART_RANGES)[number];
 
 const TRAILING_DAYS: Partial<Record<ChartRange, number>> = {
+  "1D": 1,
+  "1W": 7,
   "1M": 30,
   "3M": 91,
   "1Y": 365,
@@ -29,6 +42,8 @@ export function rangeStartDay(range: ChartRange, today: string): string | null {
 
 /** Human label for a range pill's accessible name / summary. */
 const RANGE_LABEL: Record<ChartRange, string> = {
+  "1D": "1 day",
+  "1W": "1 week",
   "1M": "1 month",
   "3M": "3 months",
   YTD: "year to date",

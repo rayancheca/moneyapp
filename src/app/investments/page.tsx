@@ -6,6 +6,7 @@ import { replayFlows } from "@/lib/benchmark-replay";
 import {
   DEFAULT_BENCHMARK,
   benchmarkLabel,
+  isBenchmarkOff,
   resolveBenchmarkSymbol,
 } from "@/lib/benchmark-symbol";
 import { CHART_RANGES } from "@/lib/chart-range";
@@ -29,6 +30,7 @@ import {
 } from "@/services/portfolio";
 import { AllocationDonut } from "@/components/investments/AllocationDonut";
 import { HoldingActionsMenu } from "@/components/investments/HoldingActionsMenu";
+import { RefreshPricesButton } from "@/components/investments/RefreshPricesButton";
 import { PnlCalendar } from "@/components/investments/PnlCalendar";
 import { PortfolioChartPanel } from "@/components/investments/PortfolioChartPanel";
 import {
@@ -122,8 +124,12 @@ export default async function InvestmentsPage({
   // one aligned benchmark close series feeds both Return-view overlays: the
   // buy-and-hold % comparison and the "what if these flows bought SPY" replay.
   // Gated like the holding page: no overlays without a chartable return series.
+  // `isBenchmarkOff` FIRST: "No comparison" has no price history, so hasBenchmark
+  // would be false anyway — but short-circuiting here keeps the sentinel out of a
+  // query that expects a real ticker, and states the intent instead of relying on
+  // a lookup happening to miss.
   const benchDays =
-    returnDays.length >= 2 && hasBenchmark(db, benchmarkSymbol)
+    !isBenchmarkOff(benchmarkSymbol) && returnDays.length >= 2 && hasBenchmark(db, benchmarkSymbol)
       ? portfolioBenchmarkDays(db, returnDays.map((d) => d.day), benchmarkSymbol)
       : null;
   const benchmark = benchDays
@@ -149,10 +155,18 @@ export default async function InvestmentsPage({
               : "Holdings, live prices, gain/loss, and allocation."
           }
         />
-        <HoldingActionsMenu
-          accounts={investmentAccounts.map((a) => ({ id: a.id, name: a.name, subtype: a.subtype }))}
-          defaultDate={today}
-        />
+        {/* Refresh sits on the surface, not behind the ⋯ sheet. It was in there
+            with the forms, two clicks deep, and the owner could not find it —
+            "have a button i can press to refresh prices". Prices are the one
+            thing on this page that goes stale on its own, so the control that
+            un-stales them has to be visible without opening anything. */}
+        <div className="flex items-center gap-2">
+          <RefreshPricesButton />
+          <HoldingActionsMenu
+            accounts={investmentAccounts.map((a) => ({ id: a.id, name: a.name, subtype: a.subtype }))}
+            defaultDate={today}
+          />
+        </div>
       </div>
 
       {error && <ErrorBanner message={error} />}

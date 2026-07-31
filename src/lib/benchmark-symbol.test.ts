@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
   BENCHMARK_PRESETS,
+  NO_BENCHMARK,
+  isBenchmarkOff,
+  normalizeBenchmarkChoice,
   DEFAULT_BENCHMARK,
   benchmarkAssetType,
   benchmarkLabel,
@@ -55,5 +58,43 @@ describe("benchmarkLabel / benchmarkAssetType", () => {
     for (const p of BENCHMARK_PRESETS) {
       expect(normalizeBenchmarkSymbol(p.symbol)).toBe(p.symbol);
     }
+  });
+});
+
+/**
+ * "Just my return" — comparison as an opt-in rather than something the resolver
+ * forces on you. The sentinel's whole job is to be a choice the user can make
+ * that no ticker can impersonate, so these tests are mostly about the boundary
+ * between "a symbol" and "the absence of one".
+ */
+describe("no benchmark", () => {
+  test("the sentinel is not a legal ticker, so nothing a user types can collide", () => {
+    expect(normalizeBenchmarkSymbol(NO_BENCHMARK)).toBeNull();
+    // including the word someone would most plausibly try
+    expect(normalizeBenchmarkSymbol("NONE")).toBe("NONE");
+    expect(isBenchmarkOff("NONE")).toBe(false);
+  });
+
+  test("normalizeBenchmarkChoice accepts the sentinel where a plain symbol would not", () => {
+    expect(normalizeBenchmarkChoice(NO_BENCHMARK)).toBe(NO_BENCHMARK);
+    expect(normalizeBenchmarkChoice("spy")).toBe("SPY");
+    expect(normalizeBenchmarkChoice("not a ticker!")).toBeNull();
+    expect(normalizeBenchmarkChoice(undefined)).toBeNull();
+  });
+
+  test("it survives the URL > persisted > default resolution from either layer", () => {
+    expect(resolveBenchmarkSymbol(NO_BENCHMARK, "SPY")).toBe(NO_BENCHMARK);
+    expect(resolveBenchmarkSymbol(undefined, NO_BENCHMARK)).toBe(NO_BENCHMARK);
+    // and an explicit URL choice still beats a persisted "off"
+    expect(resolveBenchmarkSymbol("QQQ", NO_BENCHMARK)).toBe("QQQ");
+  });
+
+  test("it labels as None rather than leaking the sentinel into the UI", () => {
+    expect(benchmarkLabel(NO_BENCHMARK)).toBe("None");
+  });
+
+  test("isBenchmarkOff is true only for the sentinel", () => {
+    expect(isBenchmarkOff(NO_BENCHMARK)).toBe(true);
+    for (const p of BENCHMARK_PRESETS) expect(isBenchmarkOff(p.symbol)).toBe(false);
   });
 });

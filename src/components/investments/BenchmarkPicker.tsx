@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { BENCHMARK_PRESETS, normalizeBenchmarkSymbol } from "@/lib/benchmark-symbol";
+import { BENCHMARK_PRESETS, NO_BENCHMARK, isBenchmarkOff, normalizeBenchmarkSymbol } from "@/lib/benchmark-symbol";
 import { setBenchmarkAction } from "@/app/investments/actions";
 
 /**
@@ -31,6 +31,7 @@ export function BenchmarkPicker({ value, hrefFor, hasData }: BenchmarkPickerProp
   const [customText, setCustomText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const isPreset = BENCHMARK_PRESETS.some((p) => p.symbol === value);
+  const isOff = isBenchmarkOff(value);
 
   function pick(symbol: string): void {
     setError(null);
@@ -89,12 +90,17 @@ export function BenchmarkPicker({ value, hrefFor, hasData }: BenchmarkPickerProp
           aria-label="Benchmark"
           className="rounded-full bg-surface-sunken px-2.5 py-1 text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:text-ink focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-60"
         >
+          {/* First, and phrased as a state of the chart rather than an absence:
+              this is "show me my own return", not "no option selected". Before it
+              existed the resolver fell through to SPY and there was no way to see
+              your line without a market line drawn over it. */}
+          <option value={NO_BENCHMARK}>Just my return</option>
           {BENCHMARK_PRESETS.map((p) => (
             <option key={p.symbol} value={p.symbol}>
               vs {p.label}
             </option>
           ))}
-          {!isPreset && <option value={value}>vs {value}</option>}
+          {!isPreset && !isOff && <option value={value}>vs {value}</option>}
           <option value={CUSTOM}>Custom…</option>
         </select>
       </div>
@@ -103,7 +109,7 @@ export function BenchmarkPicker({ value, hrefFor, hasData }: BenchmarkPickerProp
           {error}
         </p>
       )}
-      {!hasData && !error && (
+      {!hasData && !error && !isOff && (
         <p className="text-[11px] text-ink-faint">
           No price history for {value} yet —{" "}
           <button

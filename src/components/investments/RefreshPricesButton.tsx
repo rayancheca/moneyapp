@@ -62,6 +62,7 @@ export function RefreshPricesButton() {
         onClick={refresh}
         disabled={pending}
         aria-busy={pending}
+        title="Backfills missing daily closes, quotes today, and re-anchors net worth."
         className="rounded-md border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium transition-colors duration-(--duration-fast) hover:border-line-strong hover:text-accent active:bg-surface-sunken disabled:cursor-progress disabled:opacity-60"
       >
         {pending ? "Refreshing…" : "Refresh prices"}

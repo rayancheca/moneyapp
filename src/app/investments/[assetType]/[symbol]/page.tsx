@@ -7,6 +7,7 @@ import {
   DEFAULT_BENCHMARK,
   benchmarkLabel,
   resolveBenchmarkSymbol,
+  isBenchmarkOff,
 } from "@/lib/benchmark-symbol";
 import { todayIso } from "@/lib/dates";
 import { benchmarkReturns } from "@/lib/portfolio-returns";
@@ -67,8 +68,10 @@ export default async function HoldingPage({
   );
   // Return-view overlays (only when the benchmark is priced): buy-and-hold %
   // comparison + "what if this holding's flows had bought it instead" replay
+  // same short-circuit as the portfolio page: the "Just my return" sentinel has no
+  // price history and must not be handed to a query that expects a real ticker
   const benchDays =
-    detail.returnDays.length >= 2 && hasBenchmark(db, benchmarkSymbol)
+    !isBenchmarkOff(benchmarkSymbol) && detail.returnDays.length >= 2 && hasBenchmark(db, benchmarkSymbol)
       ? portfolioBenchmarkDays(db, detail.returnDays.map((d) => d.day), benchmarkSymbol)
       : null;
   const benchmark = benchDays
