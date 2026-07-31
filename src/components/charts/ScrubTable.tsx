@@ -40,6 +40,8 @@ interface ScrubTableProps {
   today: string;
   range: ChartRange;
   onRangeChange: (range: ChartRange) => void;
+  /** see ChartRangePills — a daily-only series drops 1D */
+  ranges?: readonly ChartRange[];
   /** the panel's own window summarize — feeds the shared header */
   summarize: (startIdx: number, endIdx: number, slice: readonly ScrubPoint[]) => ScrubSummary;
   /** the panel's own header renderer, so the readout is identical to the chart's */
@@ -89,6 +91,7 @@ export function ScrubTable({
   today,
   range,
   onRangeChange,
+  ranges,
   summarize,
   renderHeader,
   formatValue,
@@ -151,7 +154,12 @@ export function ScrubTable({
   return (
     <div>
       {summary && renderHeader(summary, false, range, null)}
-      <ChartRangePills active={range} onSelect={onRangeChange} className={pillsClassName} />
+      <ChartRangePills
+        active={range}
+        onSelect={onRangeChange}
+        className={pillsClassName}
+        ranges={ranges}
+      />
       <div className="mt-3">
         <DataTable columns={columns} rows={rows} rowKey={(r) => r.key} caption={caption} emptyState={emptyState} />
       </div>

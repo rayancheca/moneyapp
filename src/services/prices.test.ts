@@ -174,6 +174,10 @@ describe("refreshPrices against a real database", () => {
         ranges.push({ from: fromDay, to: toDay });
         return fakeProvider.getDailyCloses(symbol, assetType, fromDay, toDay);
       },
+      // refreshPrices does not fetch intraday (that is the 1D view's own path),
+      // so this exists to satisfy the interface and would fail loudly if the
+      // refresh ever started calling it without a test saying so
+      getIntradayTicks: () => Promise.reject(new Error("refresh must not fetch intraday")),
       getQuotes(items) {
         counts.quotes += 1;
         const quotes: Quote[] = items.map((i) => ({ ...i, price: quotePrice, asOfDay: TODAY }));
@@ -350,6 +354,7 @@ describe("refreshPrices against a real database", () => {
     const failing: PriceProvider = {
       source: "yahoo",
       getDailyCloses: () => Promise.reject(new Error("yahoo outage")),
+      getIntradayTicks: () => Promise.reject(new Error("yahoo outage")),
       getQuotes: () => Promise.reject(new Error("yahoo outage")),
     };
     setStaleness(0);
@@ -372,6 +377,7 @@ describe("refreshPrices against a real database", () => {
     const failing: PriceProvider = {
       source: "yahoo",
       getDailyCloses: () => Promise.reject(new Error("down")),
+      getIntradayTicks: () => Promise.reject(new Error("down")),
       getQuotes: () => Promise.reject(new Error("down")),
     };
     const result = await refreshPrices(bundle.db, { now: NOW, providers: () => failing });

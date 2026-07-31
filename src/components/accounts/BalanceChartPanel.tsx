@@ -10,7 +10,7 @@ import type { Column } from "@/components/ui/DataTable";
 import { useViewState } from "@/hooks/useViewState";
 import { ACCOUNT_SURFACE, ACCOUNT_VIEW_SPEC } from "./accounts-view-spec";
 import type { ViewState } from "@/lib/view-state";
-import type { ChartRange } from "@/lib/chart-range";
+import { DAILY_SERIES_RANGES, type ChartRange } from "@/lib/chart-range";
 import { formatDayLong } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { scrubValueText } from "@/lib/scrub";
@@ -194,6 +194,7 @@ export function BalanceChartPanel({
               today={today}
               range={opts.activeRange}
               onRangeChange={opts.onRangeChange}
+              ranges={DAILY_SERIES_RANGES}
               summarize={summarize}
               renderHeader={renderHeader}
               formatValue={formatCents}
@@ -209,6 +210,7 @@ export function BalanceChartPanel({
               today={today}
               defaultRange={defaultRange}
               activeRange={opts.activeRange}
+              ranges={DAILY_SERIES_RANGES}
               onRangeChange={opts.onRangeChange}
               summarize={summarize}
               accentOf={accentOf}

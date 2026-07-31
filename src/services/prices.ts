@@ -7,7 +7,7 @@ import { holdings, priceCache, type AssetType, type PriceSource } from "@/db/sch
 import { appSettings } from "@/db/schema/settings";
 import { benchmarkAssetType, normalizeBenchmarkSymbol } from "@/lib/benchmark-symbol";
 import { addDays, compareDates, fromEpochDay, toEpochDay, todayIso } from "@/lib/dates";
-import { fakeDailyClose } from "@/lib/fake-prices";
+import { fakeDailyClose, fakeIntradayClose } from "@/lib/fake-prices";
 import { rebuildAccount } from "./derivation";
 import { valueCentsOf } from "./holdings";
 
@@ -34,6 +34,22 @@ export interface Quote extends QuoteItem {
   asOfDay: string;
 }
 
+/** One intraday observation. `at` is a full ISO-8601 UTC instant (…Z) so it
+ *  sorts lexically, exactly as `DailyClose.day` does. */
+export interface IntradayTick {
+  at: string;
+  close: number;
+}
+
+/**
+ * 5 minutes is the finest interval BOTH providers serve for a whole day:
+ * Yahoo caps 1m history at 7 days and rate-limits it harder, and Coinbase's
+ * documented 300-candle page holds 24h of 5-minute candles exactly (288), so a
+ * crypto day never needs pagination. It is also about the resolution a 320px
+ * phone chart can actually draw.
+ */
+export const INTRADAY_STEP_MINUTES = 5;
+
 export interface PriceProvider {
   readonly source: PriceSource;
   getDailyCloses(
@@ -42,6 +58,16 @@ export interface PriceProvider {
     fromDay: string,
     toDay: string,
   ): Promise<DailyClose[]>;
+  /**
+   * Ticks WITHIN one day. Deliberately a single day rather than a range: the
+   * only caller is the 1D view, and a range parameter would invite callers to
+   * pull a history this table is explicitly not built to keep.
+   *
+   * Returns [] rather than throwing when the provider has no intraday for the
+   * symbol (a market holiday, a delisted ticker, a weekend) — the chart's job is
+   * to say "no session yet", not to error a page.
+   */
+  getIntradayTicks(symbol: string, assetType: AssetType, day: string): Promise<IntradayTick[]>;
   getQuotes(items: readonly QuoteItem[]): Promise<Quote[]>;
 }
 
@@ -99,6 +125,23 @@ export const yahooProvider: PriceProvider = {
       .filter((q): q is { date: Date; close: number } => q.close !== null)
       .map((q) => ({ day: q.date.toISOString().slice(0, 10), close: q.close }))
       .filter((q) => compareDates(q.day, fromDay) >= 0 && compareDates(q.day, toDay) <= 0);
+  },
+
+  async getIntradayTicks(symbol, assetType, day) {
+    assertEquity(assetType, symbol);
+    const yahooFinance = await loadYahoo();
+    const result: unknown = await yahooFinance.chart(symbol, {
+      period1: day,
+      period2: addDays(day, 1), // exclusive, as in getDailyCloses
+      interval: "5m",
+    });
+    const parsed = yahooChartSchema.parse(result);
+    return parsed.quotes
+      .filter((q): q is { date: Date; close: number } => q.close !== null)
+      .map((q) => ({ at: q.date.toISOString(), close: q.close }))
+      // Yahoo pads the session to the requested window on a holiday/weekend, and
+      // the exclusive period2 can still hand back the next day's opening tick
+      .filter((t) => t.at.slice(0, 10) === day);
   },
 
   async getQuotes(items) {
@@ -167,6 +210,26 @@ export const coinbaseProvider: PriceProvider = {
       .sort((a, b) => compareDates(a.day, b.day));
   },
 
+  async getIntradayTicks(symbol, assetType, day) {
+    assertCrypto(assetType, symbol);
+    // 24h of 5-minute candles is 288, inside the documented 300-candle page, so
+    // unlike getDailyCloses this never paginates
+    const url =
+      `${COINBASE_BASE}/products/${symbol}-USD/candles` +
+      `?granularity=${INTRADAY_STEP_MINUTES * 60}` +
+      `&start=${day}T00:00:00Z&end=${day}T23:59:59Z`;
+    const candles = coinbaseCandlesSchema.parse(await fetchJson(url));
+    return candles
+      .flatMap((candle) => {
+        const [time, , , , close] = candle;
+        if (close === undefined) return [];
+        return [{ at: new Date(time * 1000).toISOString(), close }];
+      })
+      .filter((t) => t.at.slice(0, 10) === day)
+      // Coinbase returns candles newest-first; every reader here expects oldest-first
+      .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  },
+
   async getQuotes(items) {
     const day = todayIso();
     const quotes: Quote[] = [];
@@ -209,11 +272,46 @@ function fakeWalk(symbol: string, fromDay: string, toDay: string): DailyClose[] 
   return out;
 }
 
+/**
+ * Fake session windows, as UTC minutes from midnight. Equities get 78 five-minute
+ * steps from 13:30Z (09:30 New York on eastern DAYLIGHT time) and crypto runs the
+ * whole day. The fake does not model DST or holidays: nothing asserts on its wall
+ * clock, only on its ordering and its endpoints, and pretending otherwise would
+ * invite a test to encode a market calendar this app does not have.
+ *
+ * `steps` is the number of INTERVALS, so a session emits `steps + 1` ticks and
+ * the last one is `fakeIntradayClose(..., steps, steps)` — the day's close,
+ * exactly. Crypto stops at 23:55 (287 intervals) rather than rolling to 24:00.
+ */
+const FAKE_SESSIONS = {
+  equity: { startMinute: 13 * 60 + 30, steps: 78 },
+  crypto: { startMinute: 0, steps: 287 },
+} as const;
+
+function fakeIntradayWalk(symbol: string, assetType: AssetType, day: string): IntradayTick[] {
+  const session = assetType === "crypto" ? FAKE_SESSIONS.crypto : FAKE_SESSIONS.equity;
+  const out: IntradayTick[] = [];
+  for (let i = 0; i <= session.steps; i++) {
+    const minute = session.startMinute + i * INTRADAY_STEP_MINUTES;
+    const hh = String(Math.floor(minute / 60)).padStart(2, "0");
+    const mm = String(minute % 60).padStart(2, "0");
+    out.push({
+      at: `${day}T${hh}:${mm}:00.000Z`,
+      close: fakeIntradayClose(symbol, day, i, session.steps),
+    });
+  }
+  return out;
+}
+
 export const fakeProvider: PriceProvider = {
   source: "manual",
 
   getDailyCloses(symbol, _assetType, fromDay, toDay) {
     return Promise.resolve(fakeWalk(symbol, fromDay, toDay));
+  },
+
+  getIntradayTicks(symbol, assetType, day) {
+    return Promise.resolve(fakeIntradayWalk(symbol, assetType, day));
   },
 
   getQuotes(items) {

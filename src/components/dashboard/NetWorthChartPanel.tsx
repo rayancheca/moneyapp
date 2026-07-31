@@ -3,7 +3,7 @@
 import { useCallback, useMemo } from "react";
 import { Icon } from "@/components/shell/Icon";
 import { NumberRoll } from "@/components/ui/NumberRoll";
-import type { ChartRange } from "@/lib/chart-range";
+import { DAILY_SERIES_RANGES, type ChartRange } from "@/lib/chart-range";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { scrubValueText } from "@/lib/scrub";
@@ -128,6 +128,7 @@ export function NetWorthChartPanel({
       today={today}
       defaultRange={defaultRange}
       activeRange={activeRange}
+      ranges={DAILY_SERIES_RANGES}
       onRangeChange={onRangeChange}
       showAxes
       selectable

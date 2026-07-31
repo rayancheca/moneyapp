@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo } from "react";
 import { NumberRoll } from "@/components/ui/NumberRoll";
-import type { ChartRange } from "@/lib/chart-range";
+import { DAILY_SERIES_RANGES, type ChartRange } from "@/lib/chart-range";
 import { compareDates } from "@/lib/dates";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
@@ -209,6 +209,7 @@ export function DashboardModePanel({
         points={scrubPoints}
         today={today}
         activeRange={activeRange}
+        ranges={DAILY_SERIES_RANGES}
         onRangeChange={onRangeChange}
         showAxes
         selectable

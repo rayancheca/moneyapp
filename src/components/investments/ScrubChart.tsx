@@ -182,6 +182,10 @@ interface ScrubChartProps {
    */
   activeRange?: ChartRange;
   onRangeChange?: (range: ChartRange) => void;
+  /** which range pills this surface can honestly offer. Defaults to all of
+   *  them; a daily-only series (net worth, an account balance) passes
+   *  DAILY_SERIES_RANGES so 1D is absent rather than falling back. */
+  ranges?: readonly ChartRange[];
   /**
    * Timeframe back/forward controls (dashboard net worth, §4). When passed, a
    * "← Back / →" cluster renders in the control row and steps through the shared
@@ -231,6 +235,7 @@ export function ScrubChart({
   activeWindow,
   onWindowChange,
   activeRange,
+  ranges,
   onRangeChange,
   history,
 }: ScrubChartProps) {
@@ -986,6 +991,7 @@ export function ScrubChart({
           onSelect={selectRange}
           className="flex flex-wrap gap-1.5"
           press={vivid}
+          ranges={ranges}
         />
         {customWindow && (
           <button
@@ -1032,6 +1038,7 @@ export function ScrubChart({
             onSelect={selectRange}
             className="mt-3 flex flex-wrap gap-1.5"
             press={vivid}
+            ranges={ranges}
           />
           {rangeNote && (
             <p role="status" className="mt-1 text-xs text-ink-muted">

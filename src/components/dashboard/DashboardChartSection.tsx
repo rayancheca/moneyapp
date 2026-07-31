@@ -6,7 +6,7 @@ import { saveViewPreferenceAction } from "@/app/settings/actions";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { SankeyChart } from "@/components/charts/SankeyChart";
 import { CATEGORY_HUE_NAMES, categoryHueVar } from "@/lib/category-palette";
-import { CHART_RANGES, rangeLabel, type ChartRange } from "@/lib/chart-range";
+import { DAILY_SERIES_RANGES, rangeLabel, type ChartRange } from "@/lib/chart-range";
 import type { SankeyGraph } from "@/lib/sankey-layout";
 import { viewHrefQuery, type ViewState } from "@/lib/view-state";
 import { DASHBOARD_SURFACE, DASHBOARD_VIEW_SPEC } from "./dashboard-view-spec";
@@ -189,7 +189,7 @@ export function DashboardChartSection({
                 aria-label="Flow range"
                 className="mb-3 flex w-fit flex-wrap gap-1 rounded-full bg-surface-sunken p-1"
               >
-                {CHART_RANGES.map((r) => (
+                {DAILY_SERIES_RANGES.map((r) => (
                   <button
                     key={r}
                     type="button"

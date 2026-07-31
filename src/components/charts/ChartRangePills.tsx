@@ -22,15 +22,20 @@ export function ChartRangePills({
   className,
   /** the vivid press-scale (the dashboard hero); siblings stay byte-identical */
   press = false,
+  /** which pills this surface can honestly offer — defaults to all of them.
+   *  A daily-only series passes DAILY_SERIES_RANGES to drop 1D; see that
+   *  const for why a fallback would be worse than an absence. */
+  ranges = CHART_RANGES,
 }: {
   active: ChartRange | null;
   onSelect: (range: ChartRange) => void;
   className: string;
   press?: boolean;
+  ranges?: readonly ChartRange[];
 }) {
   return (
     <div role="group" aria-label="Chart range" className={className}>
-      {CHART_RANGES.map((r) => {
+      {ranges.map((r) => {
         const isActive = r === active;
         return (
           <button

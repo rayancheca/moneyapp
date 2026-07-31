@@ -22,6 +22,24 @@ import { addDays } from "./dates";
 export const CHART_RANGES = ["1D", "1W", "1M", "3M", "YTD", "1Y", "ALL"] as const;
 export type ChartRange = (typeof CHART_RANGES)[number];
 
+/**
+ * The pills a surface may offer when its series is DAILY by construction and no
+ * intraday exists behind it.
+ *
+ * `1D` is dropped rather than left to fall back. On a daily series it can only
+ * ever mean "yesterday and today" — a two-point segment that looks like a day
+ * view, is captioned like a day view, and is not one. Net worth and account
+ * balances come from `daily_balances`, and the money-flow Sankey aggregates
+ * transactions by `posted_on`; none of the three has an instant to plot, and no
+ * amount of fetching would give them one.
+ *
+ * Only /investments and a single holding keep `1D`, because only they are backed
+ * by `price_intraday`. Derived from CHART_RANGES rather than restated so a new
+ * range is offered everywhere by default — the surface that must opt OUT is the
+ * exception, and exceptions should be the thing you have to write down.
+ */
+export const DAILY_SERIES_RANGES: readonly ChartRange[] = CHART_RANGES.filter((r) => r !== "1D");
+
 const TRAILING_DAYS: Partial<Record<ChartRange, number>> = {
   "1D": 1,
   "1W": 7,
