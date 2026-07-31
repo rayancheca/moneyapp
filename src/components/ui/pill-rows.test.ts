@@ -44,6 +44,17 @@ const ROWS: readonly { file: string; what: string; anchor: string }[] = [
     what: "the period-granularity nav on /spending",
     anchor: 'aria-label="Period granularity"',
   },
+  {
+    // Added after this row shipped 48px over the 320 floor on `/?chart=sankey`.
+    // The detector below already MATCHED this file and already returned
+    // `flex-wrap === false` — the file simply was not in this array, so it was
+    // never opened. Two of three pill rows were fixed and the third, on the one
+    // view that hand-rolls its own, was not. If you add a fourth pill row
+    // anywhere, it belongs here the same day.
+    file: "src/components/dashboard/DashboardChartSection.tsx",
+    what: "the Sankey's own range pills on the dashboard (`/?chart=sankey`)",
+    anchor: 'aria-label="Flow range"',
+  },
 ];
 
 describe("pill rows wrap instead of pushing the page sideways", () => {

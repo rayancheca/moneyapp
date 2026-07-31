@@ -84,46 +84,54 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
             No components yet — detect recurring series or import spending history.
           </p>
         ) : (
-          <table className="w-full border-t border-line text-xs">
-            <caption className="sr-only">
-              Every forecast component; the rows sum exactly to the projections above
-            </caption>
-            <thead>
-              <tr className="border-b border-line text-left text-[10px] font-medium uppercase tracking-[0.1em] text-ink-faint">
-                <th scope="col" className="px-4 py-2">Component</th>
-                <th scope="col" className="px-3 py-2">Type</th>
-                <th scope="col" className="px-3 py-2">How it was computed</th>
-                <th scope="col" className="px-4 py-2 text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {f.components.map((c) => (
-                <tr key={`${c.kind}-${c.label}`} className="border-b border-line last:border-b-0">
-                  <th scope="row" className="px-4 py-2 text-left font-medium">
-                    {c.label}
-                    <StaleMark staleness={c.staleness} className="ml-2" />
+          // four columns of prose ("How it was computed") have a min-content
+          // floor of ~374px, so on a phone this table pushed the whole document
+          // sideways — 270px at 320 and still 150px at 440, and it did it while
+          // COLLAPSED, scrolling the page into empty space. Wide content scrolls
+          // in its own container (the web rule, and what DataTable.tsx:176 does);
+          // the wrapper is what keeps it off the document.
+          <div className="overflow-x-auto">
+            <table className="w-full border-t border-line text-xs">
+              <caption className="sr-only">
+                Every forecast component; the rows sum exactly to the projections above
+              </caption>
+              <thead>
+                <tr className="border-b border-line text-left text-[10px] font-medium uppercase tracking-[0.1em] text-ink-faint">
+                  <th scope="col" className="px-4 py-2">Component</th>
+                  <th scope="col" className="px-3 py-2">Type</th>
+                  <th scope="col" className="px-3 py-2">How it was computed</th>
+                  <th scope="col" className="px-4 py-2 text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {f.components.map((c) => (
+                  <tr key={`${c.kind}-${c.label}`} className="border-b border-line last:border-b-0">
+                    <th scope="row" className="px-4 py-2 text-left font-medium">
+                      {c.label}
+                      <StaleMark staleness={c.staleness} className="ml-2" />
+                    </th>
+                    <td className="px-3 py-2 text-ink-muted">
+                      {c.kind === "fixed" ? "Fixed (series)" : "Variable (trailing avg)"}
+                    </td>
+                    <td className="px-3 py-2 text-ink-faint">{c.detail}</td>
+                    <td className="px-4 py-2 text-right">
+                      <Money cents={c.cents} flow />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-line-strong">
+                  <th scope="row" colSpan={3} className="px-4 py-2 text-left font-medium">
+                    Projected net (components sum)
                   </th>
-                  <td className="px-3 py-2 text-ink-muted">
-                    {c.kind === "fixed" ? "Fixed (series)" : "Variable (trailing avg)"}
-                  </td>
-                  <td className="px-3 py-2 text-ink-faint">{c.detail}</td>
                   <td className="px-4 py-2 text-right">
-                    <Money cents={c.cents} flow />
+                    <Money cents={f.projectedNetCents} flow className="font-medium" />
                   </td>
                 </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t border-line-strong">
-                <th scope="row" colSpan={3} className="px-4 py-2 text-left font-medium">
-                  Projected net (components sum)
-                </th>
-                <td className="px-4 py-2 text-right">
-                  <Money cents={f.projectedNetCents} flow className="font-medium" />
-                </td>
-              </tr>
-            </tfoot>
-          </table>
+              </tfoot>
+            </table>
+          </div>
         )}
       </details>
 

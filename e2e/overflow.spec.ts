@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { DASHBOARD_VIEW_SPEC } from "../src/components/dashboard/dashboard-view-spec";
+
 /**
  * Horizontal-overflow gate — no route may scroll sideways on a phone.
  *
@@ -33,10 +35,18 @@ const ROUTES: readonly string[] = [
   "/spending",
   "/spending?period=2026",
   "/budgets",
+  // all three tabs: they are separate DOMs behind one path, and the calendar is
+  // a seven-column grid — the shape most likely to have a min-content floor
   "/recurring",
+  "/recurring?tab=all",
+  "/recurring?tab=calendar",
   "/investments",
   "/investments?range=1M",
   "/settings",
+  "/imports",
+  // reachable here only because playwright.config.ts sets MONEYAPP_PREVIEW=1;
+  // a production `next start` returns notFound for it
+  "/design/stage-0a",
   "/flow?shape=spine&measure=gross&lens=chart",
   "/flow?shape=tower&measure=gross&lens=chart",
 ];
@@ -185,6 +195,38 @@ const DYNAMIC: readonly { name: string; resolve: (page: Page) => Promise<string>
       return href;
     },
   },
+  {
+    name: "/recurring/[id]",
+    resolve: async (page) => {
+      // `?tab=all`, not the default `upcoming`: only AllSeriesView lists every
+      // series as a link, and `upcoming` can legitimately be empty
+      await page.goto("/recurring?tab=all");
+      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+      const href = await page.locator('a[href^="/recurring/"]').first().getAttribute("href");
+      if (!href) throw new Error("no series link on /recurring?tab=all");
+      return href;
+    },
+  },
+  {
+    // No page links to a merchant directly (only a series detail and the ledger
+    // row sheet do), so this reaches it the same way command-palette.spec.ts
+    // does — ⌘K is the one deterministic path that does not depend on which
+    // seeded row happens to carry a merchant.
+    name: "/merchants/[id]",
+    resolve: async (page) => {
+      await page.goto("/transactions");
+      await expect(
+        page.getByRole("button", { name: /Switch to (light|dark) theme/ }).locator("svg"),
+      ).toBeVisible();
+      await page.keyboard.press("ControlOrMeta+KeyK");
+      const palette = page.getByRole("dialog", { name: "Command palette" });
+      await expect(palette).toBeVisible();
+      await palette.getByRole("combobox").fill("Netflix");
+      await palette.getByRole("option", { name: /Netflix/ }).first().click();
+      await expect(page).toHaveURL(/\/merchants\/[A-Za-z0-9-]+/);
+      return new URL(page.url()).pathname;
+    },
+  },
 ];
 
 for (const width of WIDTHS) {
@@ -199,6 +241,87 @@ for (const width of WIDTHS) {
     });
   }
 }
+
+/**
+ * The dashboard's chart dimension, ENUMERATED FROM THE REGISTRY rather than
+ * sampled. One state per route is not coverage for a URL-addressable view: the
+ * pills that draw `?chart=sankey` are a different DOM from the ones that draw
+ * `?chart=combined`, and only the sankey branch hand-rolls its own range row.
+ * That row shipped 48px over the 320 floor and every one of these 49 width
+ * assertions passed, because none of them opened it — the same lesson that
+ * produced `zz-zz-dashboard-chart-options.spec.ts`, recurring inside the gate
+ * that was supposed to be the backstop.
+ *
+ * Importing the spec (rather than restating the seven options) is the point:
+ * an eighth option is measured the day it is added, with no second edit here.
+ *
+ * 320 only, deliberately. This sweep exists to catch automatic-minimum-size
+ * failures, which are a min-content-vs-available problem and therefore always
+ * bite hardest at the narrowest width — sankey measured 327px, so it fit at 375
+ * and 440 and broke only at the floor. Running 7 options x 3 widths would
+ * triple the cost of this file to re-measure two widths that cannot fail first.
+ */
+const CHART_OPTIONS: readonly string[] =
+  DASHBOARD_VIEW_SPEC.find((d) => d.key === "chart")?.options ?? [];
+
+test("the dashboard chart registry is non-empty", () => {
+  // guards the guard: an import that silently resolved to [] would make every
+  // assertion below vacuous by generating zero tests
+  expect(CHART_OPTIONS.length).toBeGreaterThanOrEqual(7);
+});
+
+for (const chart of CHART_OPTIONS) {
+  test(`no horizontal overflow — /?chart=${chart} @320`, async ({ page }) => {
+    const route = `/?chart=${chart}`;
+    await open(page, route, 320);
+    const report = await measure(page);
+    expect(report.scrollWidth, explain(route, 320, report)).toBeLessThanOrEqual(
+      report.clientWidth,
+    );
+  });
+}
+
+/**
+ * Structural drift guard. The guard below compares against visual.spec.ts, so a
+ * route in NEITHER list is invisible to it by construction — which is exactly
+ * how `/imports` went unmeasured and shipped 39px over. This one compares
+ * against the filesystem instead, so a new `page.tsx` is covered or explicitly
+ * exempted, and there is no third state.
+ */
+/**
+ * Deliberately EMPTY. Every page in the app is measured, including the
+ * `/design/stage-0a` specimen — it was clean at all three widths when this was
+ * written, and a standing exemption for a route that passes is precisely the
+ * unused third state that hid `/imports`. If a specimen ever needs to display
+ * something wider than the viewport on purpose, add it here with that reason.
+ */
+const UNMEASURED: readonly { route: string; why: string }[] = [];
+
+test("measures every page in src/app, or names why not", async () => {
+  const { readdirSync } = await import("node:fs");
+  const appDir = new URL("../src/app/", import.meta.url);
+  const pages = readdirSync(appDir, { withFileTypes: true, recursive: true })
+    .filter((e) => e.isFile() && e.name === "page.tsx")
+    .map((e) => {
+      const dir = e.parentPath ?? (e as unknown as { path: string }).path;
+      const rel = dir.slice(dir.indexOf("src/app") + "src/app".length);
+      return rel === "" ? "/" : rel;
+    });
+
+  expect(pages.length, "failed to enumerate src/app/**/page.tsx").toBeGreaterThan(10);
+
+  const covered = new Set([
+    ...ROUTES.map((r) => r.split("?")[0]!),
+    ...DYNAMIC.map((d) => d.name),
+    ...UNMEASURED.map((u) => u.route),
+  ]);
+  const unmeasured = pages.filter((p) => !covered.has(p));
+  expect(
+    unmeasured,
+    `these pages exist but no width is ever measured on them: ${unmeasured.join(", ")}. ` +
+      `Add each to ROUTES (static) or DYNAMIC (has an [id]), or to UNMEASURED with a reason.`,
+  ).toEqual([]);
+});
 
 /**
  * Drift guard. A route added to the visual baselines but not here would be

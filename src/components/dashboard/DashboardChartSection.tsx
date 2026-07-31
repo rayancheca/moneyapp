@@ -178,8 +178,17 @@ export function DashboardChartSection({
             <div>
               {/* the Sankey has no scrubbable time axis, so it carries its OWN
                   range pills (same windows as the chart), controlled by the
-                  ChartFocus-lifted range so focus mode keeps the selection */}
-              <div role="group" aria-label="Flow range" className="mb-3 flex w-fit gap-1 rounded-full bg-surface-sunken p-1">
+                  ChartFocus-lifted range so focus mode keeps the selection.
+                  `flex-wrap` for the same reason ViewSwitcher carries it: seven
+                  pills are 327px of min-content and the 320 floor gives 288, so
+                  without it this row pushes the whole page sideways. Wrapping
+                  makes the row's minimum one pill, so appending an eighth range
+                  costs a second line and never a scrollbar. */}
+              <div
+                role="group"
+                aria-label="Flow range"
+                className="mb-3 flex w-fit flex-wrap gap-1 rounded-full bg-surface-sunken p-1"
+              >
                 {CHART_RANGES.map((r) => (
                   <button
                     key={r}

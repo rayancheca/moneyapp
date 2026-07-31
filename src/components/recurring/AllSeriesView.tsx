@@ -110,7 +110,15 @@ function SeriesSection({ title, series, muted }: { title: string; series: Series
           {title === "Active" ? "No active series yet — confirm a suggestion above." : "None."}
         </p>
       ) : (
-        <div className={`overflow-x-auto rounded-(--radius-card) border border-line bg-surface-raised ${muted ? "opacity-70" : ""}`}>
+        // `contain-paint` on top of `overflow-x-auto`: six columns give this
+        // table a 589px min-content, and although the wrapper's own box fits
+        // (408px) and scrolls internally, it still propagated that width to the
+        // document — /recurring?tab=all really scrolled sideways, 270px at 320
+        // and 150px at 440. Measured: containing BOTH wrappers takes the
+        // document from 590 back to 440; containing either alone does not.
+        // Nothing here is meant to paint outside the card, so this only tells
+        // the browser what the rounded border already implies.
+        <div className={`overflow-x-auto contain-paint rounded-(--radius-card) border border-line bg-surface-raised ${muted ? "opacity-70" : ""}`}>
           <table className="w-full text-sm">
             <caption className="sr-only">{title} recurring series</caption>
             <thead>
