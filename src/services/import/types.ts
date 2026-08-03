@@ -64,6 +64,17 @@ export interface ParserProfile {
   id: string;
   version: number;
   matches(file: SniffedFile): boolean;
+  /**
+   * Optional second gate for formats whose `matches` cannot see inside the
+   * file. A PDF's `SniffedFile.text` is empty (sniff.ts only decodes text
+   * formats, and these streams are compressed and encrypted anyway), so two
+   * products that share a download filename — Chase checking and Chase card
+   * statements are both `<YYYYMMDD>-statements-<last4>-.pdf` — are
+   * indistinguishable until the text is extracted. When a profile declares
+   * this, selection extracts the document text ONCE and offers it here; the
+   * profile is chosen only if it also returns true.
+   */
+  matchesContent?(text: string): boolean;
   parse(file: SniffedFile): Promise<ParsedStatement[]> | ParsedStatement[];
 }
 

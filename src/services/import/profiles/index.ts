@@ -9,6 +9,7 @@ import {
   sofiCsv,
 } from "./csv-profiles";
 import { capitalOneStatementPdf } from "./capitalone-statement-profile";
+import { chaseCardStatementPdf } from "./chase-card-statement-profile";
 import { chaseCheckingStatementPdf } from "./chase-checking-statement-profile";
 import { discoverItStatementPdf } from "./discover-statement-profile";
 import { ofxProfile } from "./ofx-profile";
@@ -30,6 +31,8 @@ export const PROFILES: ParserProfile[] = [
   // real-bank PDF statements (filename-routed) before the generic PDF fallback
   chaseSpendingReportPdf,
   capitalOneStatementPdf,
+  // both are <YYYYMMDD>-statements-<last4>-.pdf; matchesContent separates them
+  chaseCardStatementPdf,
   chaseCheckingStatementPdf,
   discoverItStatementPdf,
   robinhoodCryptoStatementPdf,

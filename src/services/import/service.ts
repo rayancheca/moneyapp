@@ -23,7 +23,8 @@ import { rebuildAccount } from "../derivation";
 import { accountSlug, institutionSlug } from "./account-slug";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
-import { ParseError, type AccountHint, type CanonicalTxn, type ParsedStatement } from "./types";
+import { extractLines } from "./profiles/pdf-profile";
+import { ParseError, type AccountHint, type CanonicalTxn, type ParsedStatement, type ParserProfile } from "./types";
 
 /**
  * The import orchestrator (master-plan Phases 2a/2b): sniff → profile →
@@ -607,13 +608,37 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
   return outcomes;
 }
 
+/**
+ * First match in registry order still wins — but a profile may add a content
+ * gate (`matchesContent`) for formats whose filename cannot identify them.
+ * Chase ships checking and credit-card statements under the same download
+ * name, so the filename genuinely cannot decide between them; the text can.
+ * The document is extracted at most once, and only when some candidate asks
+ * for it, so files with an unambiguous filename cost nothing extra.
+ */
+async function selectProfile(file: ReturnType<typeof sniffFile>): Promise<ParserProfile | undefined> {
+  const candidates = PROFILES.filter((p) => p.matches(file));
+  if (candidates.length === 0) return undefined;
+  if (!candidates.some((p) => p.matchesContent)) return candidates[0];
+
+  let content = file.text;
+  if (file.format === "pdf") {
+    try {
+      content = (await extractLines(file.buffer)).map((l) => l.text).join("\n");
+    } catch {
+      content = ""; // unreadable PDF — gates fail closed, parse() reports loudly
+    }
+  }
+  return candidates.find((p) => (p.matchesContent ? p.matchesContent(content) : true));
+}
+
 async function importOneFile(
   db: AppDatabase,
   file: ReturnType<typeof sniffFile>,
   touchedAccounts: Set<string>,
 ): Promise<FileOutcome> {
   const sha = fileSha256(file.buffer);
-  const profile = PROFILES.find((p) => p.matches(file));
+  const profile = await selectProfile(file);
   const outcome: FileOutcome = {
     fileName: file.name,
     status: "parsed",
