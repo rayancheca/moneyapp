@@ -78,22 +78,31 @@ interface CoveredRange {
 }
 
 /**
- * Cross-format reconciliation dedupe (the DB is master): count the account's
- * balance-affecting rows from OTHER sources by (posted_on, amount). An incoming
- * row whose exact hash misses still dedupes when this pool holds an unconsumed
- * match — the same money described with different raw text by another export
- * format. Multiset consumption keeps two genuinely identical same-day charges
- * distinct: each existing row absorbs at most one incoming row.
+ * Cross-format reconciliation dedupe (the DB is master): the account's
+ * balance-affecting rows from OTHER sources, indexed by amount under BOTH the
+ * dates they carry. An incoming row whose exact hash misses still dedupes when
+ * this pool holds an unconsumed match — the same money described with
+ * different raw text, or dated differently, by another export format.
+ * One slot per existing row, taken at most once no matter which index found
+ * it, so two genuinely identical same-day charges stay distinct: each existing
+ * row absorbs at most one incoming row.
  * Quarantined rows stay out of the pool (they don't affect balances, so an
  * incoming balance-affecting row must not vanish against one), and superseded
  * rows are history.
  */
-function existingIdentityPool(db: AppDatabase, accountId: string, excludeFileId: string): Map<string, number> {
+interface IdentityPool {
+  /** one slot per existing row, consumed at most once however it is matched */
+  used: boolean[];
+  byPosted: Map<string, number[]>;
+  byTransacted: Map<string, number[]>;
+}
+
+function existingIdentityPool(db: AppDatabase, accountId: string, excludeFileId: string): IdentityPool {
   const rows = db
     .select({
       postedOn: transactions.postedOn,
+      transactedOn: transactions.transactedOn,
       amountCents: transactions.amountCents,
-      n: sql<number>`COUNT(*)`,
     })
     .from(transactions)
     .where(
@@ -103,21 +112,54 @@ function existingIdentityPool(db: AppDatabase, accountId: string, excludeFileId:
         sql`(${transactions.importFileId} IS NULL OR ${transactions.importFileId} != ${excludeFileId})`,
       ),
     )
-    .groupBy(transactions.postedOn, transactions.amountCents)
     .all();
-  return new Map(rows.map((r) => [identityKey(r.postedOn, r.amountCents), r.n]));
+
+  const pool: IdentityPool = { used: rows.map(() => false), byPosted: new Map(), byTransacted: new Map() };
+  rows.forEach((r, i) => {
+    index(pool.byPosted, identityKey(r.postedOn, r.amountCents), i);
+    if (r.transactedOn !== null) index(pool.byTransacted, identityKey(r.transactedOn, r.amountCents), i);
+  });
+  return pool;
 }
 
-function identityKey(postedOn: string, amountCents: number): string {
-  return `${postedOn}\x1f${amountCents}`;
+function index(map: Map<string, number[]>, key: string, i: number): void {
+  const bucket = map.get(key);
+  if (bucket) bucket.push(i);
+  else map.set(key, [i]);
 }
 
-/** Consume one unit from the pool; false when nothing is left to match. */
-function consumeIdentity(pool: Map<string, number>, key: string): boolean {
-  const remaining = pool.get(key) ?? 0;
-  if (remaining <= 0) return false;
-  pool.set(key, remaining - 1);
-  return true;
+function identityKey(day: string, amountCents: number): string {
+  return `${day}\x1f${amountCents}`;
+}
+
+function takeSlot(pool: IdentityPool, map: Map<string, number[]>, key: string): boolean {
+  for (const i of map.get(key) ?? []) {
+    if (pool.used[i]) continue;
+    pool.used[i] = true;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Consume one existing row that records this same money; false when none is
+ * left. Posted-vs-posted is tried first, so behaviour is unchanged wherever
+ * the two sources agree on the date.
+ *
+ * The fallback exists because a source can date the SAME charge differently:
+ * a Chase card statement prints the TRANSACTION date, while the rows already
+ * stored from the Spending Report export carry the POST date, typically one
+ * to three days later. Keyed only on posted_on, re-stating a card period
+ * inserted a duplicate of nearly every row in it. Matching transacted-to-
+ * transacted bridges that without widening into a fuzzy date window — a window
+ * would merge genuinely distinct same-amount charges (measured: 43 such pairs
+ * on this one card), whereas this only ever matches two records that claim the
+ * same transaction day.
+ */
+function consumeIdentity(pool: IdentityPool, postedOn: string, transactedOn: string | undefined, amountCents: number): boolean {
+  if (takeSlot(pool, pool.byPosted, identityKey(postedOn, amountCents))) return true;
+  if (transactedOn === undefined) return false;
+  return takeSlot(pool, pool.byTransacted, identityKey(transactedOn, amountCents));
 }
 
 /**
@@ -765,7 +807,6 @@ async function importOneFile(
             rawDescription: t.rawDescription,
             occurrenceIndex,
           });
-          const poolKey = identityKey(t.postedOn, t.amountCents);
           // this file's own prior-version row for the same money, if the user
           // had put anything on it (claimed here so a row skipped as owned
           // above leaves its attributes for whichever row does materialize)
@@ -781,7 +822,7 @@ async function importOneFile(
               outcome.supersededTakeover += 1;
               // the victim leaves the ledger — release its identity so a later
               // same-day equal-amount row can't consume the superseded slot
-              if (victim.status !== "quarantined") consumeIdentity(identityPool, poolKey);
+              if (victim.status !== "quarantined") consumeIdentity(identityPool, t.postedOn, t.transactedOn, t.amountCents);
               // the re-parse carry wins over the victim: same file lineage, so
               // it is the row the user actually edited
               const inserted = insertTxn(tx, db, accountId, fileRow.id, t, hash, occurrenceIndex, carried ?? victim);
@@ -802,7 +843,7 @@ async function importOneFile(
             }
           }
 
-          if (consumeIdentity(identityPool, poolKey)) {
+          if (consumeIdentity(identityPool, t.postedOn, t.transactedOn, t.amountCents)) {
             // another source already records this money movement — classify by
             // whether the raw text matched exactly (visible, never silent)
             const exact = tx
