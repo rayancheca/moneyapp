@@ -68,6 +68,10 @@ interface ScrubTableProps {
    * a generic one automatically whenever the window holds an incomplete day.
    */
   ownsCompleteness?: boolean;
+  /** The same already-windowed session ScrubChart draws on 1D. Passed by the two
+   *  price-backed surfaces so the two lenses cannot disagree about what "today"
+   *  shows; omitted (and therefore inert) everywhere else. */
+  session?: { points: readonly ScrubPoint[] } | null;
 }
 
 /**
@@ -101,9 +105,15 @@ export function ScrubTable({
   emptyState,
   pillsClassName = "mt-3 flex flex-wrap gap-1.5",
   ownsCompleteness = false,
+  session,
 }: ScrubTableProps) {
+  // mirrors ScrubChart's own substitution, for the reason this file exists: if
+  // the table kept deriving a daily window while the chart drew a session, the
+  // lens toggle would swap between 79 intraday points and 2 daily ones and call
+  // them the same view
+  const sessionActive = range === "1D" && (session?.points.length ?? 0) >= 2;
   const windowed = useMemo(() => windowedPoints(points, today, range), [points, today, range]);
-  const visible = windowed.points;
+  const visible = sessionActive ? session!.points : windowed.points;
 
   // the chart's own header, on the chart's own numbers (one summarize call over
   // the whole window — the same call the chart makes for its resting state)
@@ -125,8 +135,10 @@ export function ScrubTable({
       // 3-line-wrapped date at 320px is far worse than a scroll
       {
         key: "day",
-        header: "Day",
-        render: (r) => <span className="whitespace-nowrap">{formatDayLong(r.point.day)}</span>,
+        header: sessionActive ? "Time" : "Day",
+        render: (r) => (
+          <span className="whitespace-nowrap">{r.point.atLabel ?? formatDayLong(r.point.day)}</span>
+        ),
       },
       {
         key: "value",
@@ -141,15 +153,17 @@ export function ScrubTable({
       ...(needsCompleteness ? [COMPLETENESS_COLUMN] : []),
       ...(extraColumns ?? []),
     ],
-    [valueHeader, formatValue, extraColumns, needsCompleteness],
+    [valueHeader, formatValue, extraColumns, needsCompleteness, sessionActive],
   );
 
   // NEVER caption a window the rows aren't showing: when the requested range
   // held fewer than two points the chart falls back to the whole series, and
   // saying "3 months" over all-time rows would be a lie (the pass-22 bug class).
-  const caption = windowed.fellBack
-    ? `${subject} — all ${visible.length} days, newest first (${rangeLabel(range)} holds too little data to chart).`
-    : `${subject} — ${rangeLabel(range)}, ${visible.length} days, newest first.`;
+  const caption = sessionActive
+    ? `${subject} — today's session, ${visible.length} points, newest first.`
+    : windowed.fellBack
+      ? `${subject} — all ${visible.length} days, newest first (${rangeLabel(range)} holds too little data to chart).`
+      : `${subject} — ${rangeLabel(range)}, ${visible.length} days, newest first.`;
 
   return (
     <div>

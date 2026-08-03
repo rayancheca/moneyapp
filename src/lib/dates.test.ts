@@ -29,6 +29,13 @@ describe("validation", () => {
     "2026-4-1",
     "",
     "garbage",
+    // An ISO INSTANT is not a day, and must never become one here. This is the
+    // zod refinement guarding writes to `posted_on` / `occurred_on`, columns the
+    // whole ledger reads as bank-local calendar days. Relaxing it to accept a
+    // leading date prefix — the shortcut the 1D intraday view invites — would
+    // let an instant be stored as a day. The chart substitutes its window
+    // instead; see chart-window.test.ts's refusal guards.
+    "2026-07-31T13:30:00.000Z",
   ])("rejects %s", (s) => expect(isValidIsoDate(s)).toBe(false));
 
   test("operations throw DateParseError on invalid input", () => {

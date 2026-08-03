@@ -13,6 +13,8 @@ import { viewHrefQuery, type ViewState } from "@/lib/view-state";
 import { DEFAULT_BENCHMARK } from "@/lib/benchmark-symbol";
 import type { ChartRange } from "@/lib/chart-range";
 import { formatDayLong } from "@/lib/format-date";
+import { type SessionChartView } from "@/lib/intraday-axis";
+import { SessionNote } from "./SessionNote";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { type PortfolioDay } from "@/lib/portfolio-returns";
 import { scrubValueText } from "@/lib/scrub";
@@ -68,6 +70,9 @@ interface HoldingChartPanelProps {
   benchmark?: ReturnBenchmark | null;
   /** the resolved benchmark SYMBOL (may lack data — the picker still shows it) */
   benchmarkSymbol: string;
+  /** this holding's own intraday session in per-share cents, already windowed
+   *  and labelled by the RSC; null when it has not ticked today */
+  session?: SessionChartView | null;
 }
 
 function accentOf(summary: ScrubSummary): Accent {
@@ -94,6 +99,7 @@ export function HoldingChartPanel({
   baseParams,
   benchmark,
   benchmarkSymbol,
+  session,
 }: HoldingChartPanelProps) {
   const { state, setView } = useViewState({
     surface: HOLDING_SURFACE,
@@ -177,7 +183,11 @@ export function HoldingChartPanel({
 
   const valueText = useCallback(
     (summary: ScrubSummary): string =>
-      scrubValueText(formatDayLong(summary.day), heroText(summary), isPercent ? null : summary.deltaPct),
+      scrubValueText(
+        summary.atLabel ?? formatDayLong(summary.day),
+        heroText(summary),
+        isPercent ? null : summary.deltaPct,
+      ),
     [heroText, isPercent],
   );
 
@@ -195,7 +205,7 @@ export function HoldingChartPanel({
       // priced — earlier appreciation is not measured, so never say "all
       // time"; name the basis day instead
       const context = scrubbing
-        ? formatDayLong(summary.day)
+        ? (summary.atLabel ?? formatDayLong(summary.day))
         : customWindow
           ? `${customWindow.start} → ${customWindow.end}`
           : range === "ALL"
@@ -268,7 +278,14 @@ export function HoldingChartPanel({
       defaultRange="ALL"
       cardClassName="relative"
       resetRangeKey={isReturns ? "returns" : "price"}
-      renderPanel={(opts) => (
+      renderPanel={(opts) => {
+        // same restriction as the portfolio panel: the session is per-SHARE
+        // cents, which is what the PRICE view's y-axis already means; the
+        // flow-adjusted return series is a different quantity entirely
+        const intraday = isReturns ? null : (session ?? null);
+        const show1D = opts.activeRange === "1D" && !isReturns;
+        const sessionActive = show1D && (intraday?.points.length ?? 0) >= 2;
+        return (
         // rendered INSIDE renderPanel so the focus modal gets the same lens
         <div>
           {/* Always rendered (unlike the returns-only controls it hosts) so the
@@ -338,6 +355,7 @@ export function HoldingChartPanel({
               subject={isReturns ? `${symbol} return by day` : `${symbol} close by day`}
               {...(isReturns ? {} : { extraColumns: tradeColumn })}
               emptyState="No price history yet."
+              session={intraday}
             />
           ) : (
             <ScrubChart
@@ -361,19 +379,33 @@ export function HoldingChartPanel({
               showAxes
               selectable
               marks={isReturns ? [] : marks}
-              refLine={!isReturns && avgCostCents !== null ? { cents: avgCostCents, label: "Avg cost" } : null}
+              // Avg cost joins the y-domain, and over ONE session that ruins the
+              // scale: a $150 basis against a $245 price stretches the axis to
+              // $100–$250 and squashes the day's whole 3.5% move into the top
+              // sliver of the plot. It is a long-run reference; a day view is not
+              // the run it references.
+              refLine={
+                !isReturns && !sessionActive && avgCostCents !== null
+                  ? { cents: avgCostCents, label: "Avg cost" }
+                  : null
+              }
               ariaLabel={
                 isReturns
                   ? `${symbol} return over time — scrub to inspect a day`
                   : `${symbol} price over time — scrub to inspect a day`
               }
               renderHeader={renderHeader}
+              session={intraday}
             />
+          )}
+          {show1D && (
+            <SessionNote session={intraday} pricedSymbols={1} totalSymbols={1} />
           )}
           {stats && (stats.bestDay || stats.worstDay) && <ReturnStatsList stats={stats} isPercent={isPercent} />}
           {decomposition && <DecompositionBar decomposition={decomposition} />}
         </div>
-      )}
+        );
+      }}
     />
   );
 }

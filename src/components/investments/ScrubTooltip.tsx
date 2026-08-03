@@ -13,6 +13,9 @@ import { formatCentsSigned } from "@/lib/money";
 
 export interface VividChartRow {
   day: string;
+  /** 1D intraday only: the server-formatted label for this point's instant.
+   *  `day` then holds an instant, which formatDayLong correctly refuses. */
+  atLabel?: string;
   lineValue: number | null;
   fillValue: number | null;
   /** every account covered that day */
@@ -82,7 +85,7 @@ export function ScrubTooltip({
 
   return (
     <div className="animate-fade-rise w-[200px] rounded-lg border border-line bg-surface-raised px-3 py-2 shadow-(--shadow-overlay)">
-      <p className="text-[11px] text-ink-muted">{formatDayLong(row.day)}</p>
+      <p className="text-[11px] text-ink-muted">{row.atLabel ?? formatDayLong(row.day)}</p>
       <p className="figures mt-0.5 text-[15px] font-semibold tracking-tight text-ink">{formatValue(value)}</p>
       {deltaStart !== null && (
         <div className="mt-1">

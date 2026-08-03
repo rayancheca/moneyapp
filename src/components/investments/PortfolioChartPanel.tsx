@@ -11,8 +11,10 @@ import { useViewState } from "@/hooks/useViewState";
 import { viewHrefQuery, type ViewState } from "@/lib/view-state";
 import { DEFAULT_BENCHMARK } from "@/lib/benchmark-symbol";
 import { formatDayLong } from "@/lib/format-date";
+import { sessionSummarize, type SessionChartView } from "@/lib/intraday-axis";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import type { ChartRange } from "@/lib/chart-range";
+import { SessionNote } from "./SessionNote";
 import { type PortfolioDay } from "@/lib/portfolio-returns";
 import { scrubValueText } from "@/lib/scrub";
 import { BenchmarkPicker } from "./BenchmarkPicker";
@@ -65,6 +67,13 @@ interface PortfolioChartPanelProps {
    *  (the portfolio summary stats) — server-rendered, passed from the RSC so the
    *  stat block never enters the client bundle */
   footer?: ReactNode;
+  /** today's intraday session, already windowed and labelled by the RSC; null
+   *  when nothing has ticked yet (the 1D note then says so and offers to load) */
+  session?: SessionChartView | null;
+  /** how many held symbols carried a price into the session — stated rather than
+   *  implied, so a partly-priced book cannot read as full coverage */
+  pricedSymbols?: number;
+  totalSymbols?: number;
 }
 
 function accentOf(summary: ScrubSummary): Accent {
@@ -89,6 +98,9 @@ export function PortfolioChartPanel({
   benchmark,
   benchmarkSymbol,
   footer,
+  session,
+  pricedSymbols = 0,
+  totalSymbols = 0,
 }: PortfolioChartPanelProps) {
   const { state, setView } = useViewState({
     surface: INVESTMENTS_SURFACE,
@@ -150,7 +162,11 @@ export function PortfolioChartPanel({
 
   const valueText = useCallback(
     (summary: ScrubSummary): string =>
-      scrubValueText(formatDayLong(summary.day), heroText(summary), isPercent ? null : summary.deltaPct),
+      scrubValueText(
+        summary.atLabel ?? formatDayLong(summary.day),
+        heroText(summary),
+        isPercent ? null : summary.deltaPct,
+      ),
     [heroText, isPercent],
   );
 
@@ -165,7 +181,7 @@ export function PortfolioChartPanel({
       const accent = accentOf(summary);
       const arrow = accent === "gain" ? "▲" : accent === "loss" ? "▼" : "•";
       const context = scrubbing
-        ? formatDayLong(summary.day)
+        ? (summary.atLabel ?? formatDayLong(summary.day))
         : customWindow
           ? `${customWindow.start} → ${customWindow.end}`
           : range === "ALL"
@@ -210,7 +226,26 @@ export function PortfolioChartPanel({
       label="Portfolio"
       defaultRange={defaultRange ?? "ALL"}
       cardClassName="relative"
-      renderPanel={(opts) => (
+      renderPanel={(opts) => {
+        /**
+         * The session is deliberately confined to the VALUE view. `returnPoints`
+         * is a flow-adjusted DAILY series with a different y-meaning and its own
+         * benchmark overlay; giving it intraday points would need a second,
+         * flow-adjusted grid. So Return+1D keeps today's sanctioned two-point
+         * behaviour — unchanged, not regressed.
+         */
+        const intraday = isReturns ? null : (session ?? null);
+        const show1D = opts.activeRange === "1D" && !isReturns;
+        /**
+         * The flow-adjusted summarize cannot describe a session, and it fails
+         * SILENTLY: it selects days with `d.day >= from`, and an instant sorts
+         * after the bare day, so it matched nothing and the header read
+         * "$0.00 (+0.00%)" over a line that had visibly moved. Swap it for the
+         * plain value delta whenever the session is what is actually drawn.
+         */
+        const sessionActive = opts.activeRange === "1D" && !isReturns && (intraday?.points.length ?? 0) >= 2;
+        const summarizeFn = sessionActive ? sessionSummarize : summarize;
+        return (
         // rendered INSIDE renderPanel so the focus modal gets the same lens
         <div>
           {/* Always rendered (unlike the returns-only controls it hosts) so the
@@ -271,12 +306,13 @@ export function PortfolioChartPanel({
               today={today}
               range={opts.activeRange}
               onRangeChange={opts.onRangeChange}
-              summarize={summarize}
+              summarize={summarizeFn}
               renderHeader={renderHeader}
               formatValue={formatValue}
               valueHeader={isReturns ? "Return" : "Value"}
               subject={isReturns ? "Portfolio return by day" : "Portfolio value by day"}
               emptyState="No portfolio history yet."
+              session={intraday}
             />
           ) : (
             <ScrubChart
@@ -286,7 +322,7 @@ export function PortfolioChartPanel({
               activeRange={opts.activeRange}
               onRangeChange={opts.onRangeChange}
               heightClass={opts.heightClass}
-              summarize={summarize}
+              summarize={summarizeFn}
               accentOf={accentOf}
               valueText={valueText}
               formatValue={formatValue}
@@ -301,13 +337,22 @@ export function PortfolioChartPanel({
                   : "Portfolio value over time — scrub to inspect a day"
               }
               renderHeader={renderHeader}
+              session={intraday}
+            />
+          )}
+          {show1D && (
+            <SessionNote
+              session={intraday}
+              pricedSymbols={pricedSymbols}
+              totalSymbols={totalSymbols}
             />
           )}
           {stats && (stats.bestDay || stats.worstDay) && <ReturnStatsList stats={stats} isPercent={isPercent} />}
           {decomposition && <DecompositionBar decomposition={decomposition} />}
           {footer}
         </div>
-      )}
+        );
+      }}
     />
   );
 }

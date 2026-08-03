@@ -183,3 +183,44 @@ describe("hasEstimatedDay", () => {
     expect(hasEstimatedDay([])).toBe(false);
   });
 });
+
+/**
+ * The 1D intraday view puts an ISO INSTANT in `.day`, and this parser must keep
+ * refusing it.
+ *
+ * That refusal is load-bearing, not an inconvenience to be engineered around.
+ * `windowedPoints` is shared with five daily-only render sites, and the tempting
+ * "fix" — teaching compareDates/toEpochDay to ignore a time suffix — would make
+ * every instant in a session compare EQUAL. The chart would then count every
+ * point as inside any drag window, so a twenty-minute selection would silently
+ * yield the whole session while the Reset chip captioned it as twenty minutes.
+ * ScrubChart substitutes the session for the derived window instead; see the
+ * `sessionActive` branch there.
+ */
+describe("windowedPoints refuses an instant", () => {
+  const INSTANTS = [
+    { day: "2026-07-31T13:30:00.000Z", valueCents: 1 },
+    { day: "2026-07-31T13:35:00.000Z", valueCents: 2 },
+    { day: "2026-07-31T13:40:00.000Z", valueCents: 3 },
+  ];
+
+  test("1D substitutes the window — it does not widen this parser", () => {
+    expect(() => windowedPoints(INSTANTS, "2026-07-31", "1D", null)).toThrow(/Invalid ISO date/);
+  });
+
+  test("a custom window of instants is refused too", () => {
+    expect(() =>
+      windowedPoints(INSTANTS, "2026-07-31", "ALL", {
+        start: INSTANTS[0]!.day,
+        end: INSTANTS[2]!.day,
+      }),
+    ).toThrow(/Invalid ISO date/);
+  });
+
+  test("the crash is DATA-DEPENDENT, which is why it needs pinning", () => {
+    // fewer than two points short-circuits before any compareDates call, so a
+    // session that has only just opened does NOT throw — a design validated
+    // against the first tick of the day would pass and then crash on the second
+    expect(() => windowedPoints(INSTANTS.slice(0, 1), "2026-07-31", "1D", null)).not.toThrow();
+  });
+});

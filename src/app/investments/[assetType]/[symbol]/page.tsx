@@ -13,6 +13,8 @@ import { todayIso } from "@/lib/dates";
 import { benchmarkReturns } from "@/lib/portfolio-returns";
 import { resolveViewState } from "@/lib/view-state";
 import { holdingDetail } from "@/services/holding-detail";
+import { holdingSessionCents } from "@/services/intraday";
+import { sessionView } from "@/lib/intraday-axis";
 import { hasBenchmark, portfolioBenchmarkDays } from "@/services/portfolio";
 import { readSettings } from "@/services/settings";
 import { HoldingChartPanel } from "@/components/investments/HoldingChartPanel";
@@ -85,6 +87,10 @@ export default async function HoldingPage({
     .filter((m): m is typeof m & { closeCents: number } => m.closeCents !== null)
     .map((m) => ({ day: m.day, valueCents: m.closeCents, kind: m.kind }));
 
+  // per-share cents — the unit this page's price axis already speaks
+  const rawSession = holdingSessionCents(db, detail.symbol, detail.assetType, today);
+  const session = sessionView(today, rawSession.ticks, rawSession.priorCloseCents);
+
   return (
     <>
       <Breadcrumbs
@@ -119,6 +125,7 @@ export default async function HoldingPage({
             }
             benchmark={benchmark}
             benchmarkSymbol={benchmarkSymbol}
+            session={session}
           />
         ) : (
           <SurfaceCard>

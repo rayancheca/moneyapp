@@ -2,6 +2,7 @@ import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { holdings, priceCache, priceIntraday, type AssetType } from "@/db/schema/holdings";
 import { addDays, todayIso } from "@/lib/dates";
+import { valueCentsOf } from "@/lib/holding-returns";
 import { intradayPortfolioGrid, type IntradayGrid, type SymbolTicks } from "@/lib/intraday-grid";
 import { getProvider, type IntradayTick, type ProviderLookup } from "./prices";
 
@@ -111,6 +112,34 @@ export function intradayTicks(
  * through invented points.
  */
 export function portfolioIntradayGrid(db: AppDatabase, day: string): IntradayGrid {
+  return portfolioSession(db, day).grid;
+}
+
+export interface PortfolioSession {
+  grid: IntradayGrid;
+  /**
+   * The whole book valued at yesterday's closes, or null when even one held
+   * symbol has no prior close.
+   *
+   * Null rather than a partial sum on purpose: a baseline missing one holding
+   * understates the day's move by that holding's entire value, and it would do
+   * so silently — the line would simply start lower and every delta above it
+   * would read as a gain. The caller says "measured from the first print"
+   * instead, which is true and visibly weaker.
+   */
+  priorCloseCents: number | null;
+}
+
+/**
+ * The grid plus the baseline it opened from.
+ *
+ * A separate wrapper rather than a fourth key on `IntradayGrid` because
+ * `intraday-grid.test.ts` asserts that shape with `toEqual`, and widening a
+ * tested return shape to carry a display concern is how a pure module starts
+ * accumulating view state. `portfolioIntradayGrid` delegates here so there is
+ * still exactly one `heldSymbols` pass and its existing tests are untouched.
+ */
+export function portfolioSession(db: AppDatabase, day: string): PortfolioSession {
   const held = heldSymbols(db);
   const symbols: SymbolTicks[] = held.map((h) => ({
     symbol: h.symbol,
@@ -118,7 +147,30 @@ export function portfolioIntradayGrid(db: AppDatabase, day: string): IntradayGri
     priorClose: priorClose(db, h.symbol, h.assetType, day),
     ticks: intradayTicks(db, h.symbol, h.assetType, day),
   }));
-  return intradayPortfolioGrid(symbols);
+
+  const complete = symbols.length > 0 && symbols.every((s) => s.priorClose !== null);
+  const priorCloseCents = complete
+    ? symbols.reduce((sum, s) => sum + valueCentsOf(s.quantityE8, s.priorClose!), 0)
+    : null;
+
+  return { grid: intradayPortfolioGrid(symbols), priorCloseCents };
+}
+
+/**
+ * One holding's session in CENTS PER SHARE — the unit the price chart's y-axis
+ * already speaks, matching `priceSeries`' own dollars→cents rounding.
+ */
+export function holdingSessionCents(
+  db: AppDatabase,
+  symbol: string,
+  assetType: AssetType,
+  day: string,
+): { ticks: { at: string; valueCents: number }[]; priorCloseCents: number | null } {
+  const session = holdingIntradaySession(db, symbol, assetType, day);
+  return {
+    ticks: session.ticks.map((t) => ({ at: t.at, valueCents: Math.round(t.close * 100) })),
+    priorCloseCents: session.priorClose === null ? null : Math.round(session.priorClose * 100),
+  };
 }
 
 /** One holding's own session, with the baseline it opened from. */

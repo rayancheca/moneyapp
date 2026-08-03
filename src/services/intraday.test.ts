@@ -11,8 +11,10 @@ import { createAccount } from "./accounts";
 import { upsertHolding } from "./holdings";
 import {
   holdingIntradaySession,
+  holdingSessionCents,
   intradayTicks,
   portfolioIntradayGrid,
+  portfolioSession,
   refreshIntraday,
 } from "./intraday";
 import { fakeProvider, type PriceProvider } from "./prices";
@@ -67,7 +69,12 @@ describe("intraday", () => {
     upsertHolding(bundle.db, { accountId: brokerageId, symbol, assetType, quantityE8: qty * E8 });
   }
 
-  function cacheClose(symbol: string, day: string, close: number, assetType = "etf" as const) {
+  function cacheClose(
+    symbol: string,
+    day: string,
+    close: number,
+    assetType: "stock" | "etf" | "crypto" = "etf",
+  ) {
     bundle.db
       .insert(priceCache)
       .values({
@@ -363,6 +370,75 @@ describe("intraday", () => {
       expect(grid.totalSymbols).toBe(2);
       expect(grid.pricedSymbols).toBe(1); // MYSTERY has neither a tick nor a close
       expect(grid.points[0]!.valueCents).toBe(11_000);
+    });
+  });
+
+  describe("portfolioSession", () => {
+    test("returns the identical grid portfolioIntradayGrid returns", async () => {
+      hold("VOO", 1);
+      cacheClose("VOO", "2026-07-30", 100);
+      await refreshIntraday(bundle.db, {
+        day: DAY,
+        providers: () => stubProvider([{ at: `${DAY}T13:30:00.000Z`, close: 110 }]),
+      });
+
+      // the delegation proof: the old entry point must not have drifted
+      expect(portfolioSession(bundle.db, DAY).grid).toEqual(portfolioIntradayGrid(bundle.db, DAY));
+    });
+
+    test("values the whole book at yesterday's closes", async () => {
+      hold("VOO", 1);
+      hold("AAPL", 2, "stock");
+      cacheClose("VOO", "2026-07-30", 100);
+      cacheClose("AAPL", "2026-07-30", 200, "stock");
+
+      // VOO 1 x $100 + AAPL 2 x $200
+      expect(portfolioSession(bundle.db, DAY).priorCloseCents).toBe(10_000 + 40_000);
+    });
+
+    test("refuses a partial baseline when one holding has no prior close", () => {
+      hold("VOO", 1);
+      hold("AAPL", 2, "stock");
+      cacheClose("VOO", "2026-07-30", 100);
+      // AAPL has no cached close at all
+
+      // a partial sum would understate the day's move by AAPL's whole value,
+      // and would do it silently — null makes the caller say so instead
+      expect(portfolioSession(bundle.db, DAY).priorCloseCents).toBeNull();
+    });
+
+    test("has no baseline for an empty book", () => {
+      expect(portfolioSession(bundle.db, DAY).priorCloseCents).toBeNull();
+    });
+
+    test("ignores a close dated on the day itself", () => {
+      hold("VOO", 1);
+      cacheClose("VOO", DAY, 999); // today's close is not a PRIOR close
+      cacheClose("VOO", "2026-07-30", 100);
+
+      expect(portfolioSession(bundle.db, DAY).priorCloseCents).toBe(10_000);
+    });
+  });
+
+  describe("holdingSessionCents", () => {
+    test("converts dollars to cents for both the ticks and the baseline", async () => {
+      hold("VOO", 1);
+      cacheClose("VOO", "2026-07-30", 100.005);
+      await refreshIntraday(bundle.db, {
+        day: DAY,
+        providers: () => stubProvider([{ at: `${DAY}T13:30:00.000Z`, close: 110.014 }]),
+      });
+
+      const session = holdingSessionCents(bundle.db, "VOO", "etf", DAY);
+
+      expect(session.ticks).toEqual([{ at: `${DAY}T13:30:00.000Z`, valueCents: 11_001 }]);
+      expect(session.priorCloseCents).toBe(10_001); // 100.005 rounds up
+    });
+
+    test("keeps a null baseline null rather than rounding it to zero", () => {
+      hold("VOO", 1);
+
+      expect(holdingSessionCents(bundle.db, "VOO", "etf", DAY).priorCloseCents).toBeNull();
     });
   });
 

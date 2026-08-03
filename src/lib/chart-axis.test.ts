@@ -200,3 +200,28 @@ describe("windowExtremes", () => {
     expect(windowExtremes([{ day: "a", valueCents: null }])).toBeNull();
   });
 });
+
+/**
+ * `dateAxisTicks` must keep refusing an instant, on BOTH of its branches.
+ *
+ * This is why the 1D view cannot be built by adding a label field to the point
+ * shape: tick SELECTION here is `diffDays(first, last)`, not just tick
+ * labelling, and the ≤2-point branch formats with `formatDayShort`. Both parse a
+ * calendar day. The session arrives with its ticks already chosen instead — see
+ * `sessionView` in intraday-axis.
+ */
+describe("dateAxisTicks refuses an instant", () => {
+  const INSTANTS = [
+    "2026-07-31T13:30:00.000Z",
+    "2026-07-31T13:35:00.000Z",
+    "2026-07-31T13:40:00.000Z",
+  ];
+
+  test("on the span-based branch (3+ points)", () => {
+    expect(() => dateAxisTicks(INSTANTS)).toThrow(/Invalid ISO date/);
+  });
+
+  test("on the short-series branch (≤2 points)", () => {
+    expect(() => dateAxisTicks(INSTANTS.slice(0, 2))).toThrow(/Invalid ISO date/);
+  });
+});

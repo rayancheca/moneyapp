@@ -22,6 +22,7 @@ import {
   dateAxisTicks,
   niceLinearTicks,
   windowExtremes,
+  type DateTick,
   type WindowExtremes,
 } from "@/lib/chart-axis";
 import { compareDates } from "@/lib/dates";
@@ -68,6 +69,16 @@ export interface ScrubPoint {
   /** cents; null = no data that day (partial coverage) — the line breaks */
   valueCents: number | null;
   /**
+   * 1D INTRADAY ONLY: the display label for this point's INSTANT, formatted by
+   * the server in the market's timezone (lib/intraday-axis).
+   *
+   * Present if and only if `day` holds an ISO instant rather than a
+   * 'YYYY-MM-DD' day — which is why every readout reads `atLabel ?? formatDayLong(day)`
+   * rather than branching on the range. Absent on every daily series, so those
+   * expressions collapse to exactly the call they make today.
+   */
+  atLabel?: string;
+  /**
    * false = a partial/estimated day (net worth: not every account covered;
    * balance: a carried/unverified basis) → drawn dashed. Defaults to true
    * (solid). Omitted entirely by the portfolio/holding charts, which are exact.
@@ -113,6 +124,9 @@ export interface ScrubSummary {
   /** change from the window start to this point */
   deltaCents: number;
   deltaPct: number | null;
+  /** carried through from the scrubbed ScrubPoint so the header, the aria
+   *  valuetext and the figcaption can name an instant instead of a day. */
+  atLabel?: string;
 }
 
 export type Accent = "gain" | "loss" | "flat";
@@ -187,6 +201,18 @@ interface ScrubChartProps {
    *  DAILY_SERIES_RANGES so 1D is absent rather than falling back. */
   ranges?: readonly ChartRange[];
   /**
+   * ONE intraday session — already windowed and already labelled by the server —
+   * drawn INSTEAD of the derived daily window while the 1D pill is active.
+   *
+   * The chart normally DERIVES its window and its axis from `.day` by calendar
+   * math. A session's `.day` holds an instant, which that math correctly
+   * refuses, so on 1D the chart substitutes rather than derives: nothing here
+   * parses an instant as a date. Passed only by the two price-backed surfaces
+   * (/investments and a holding); every other chart omits it and cannot reach
+   * any of the branches it gates.
+   */
+  session?: { points: readonly ScrubPoint[]; ticks: readonly DateTick[] } | null;
+  /**
    * Timeframe back/forward controls (dashboard net worth, §4). When passed, a
    * "← Back / →" cluster renders in the control row and steps through the shared
    * window history. Omitted by the sibling charts, so they render no chips.
@@ -238,6 +264,7 @@ export function ScrubChart({
   ranges,
   onRangeChange,
   history,
+  session,
 }: ScrubChartProps) {
   const [internalRange, setInternalRange] = useState<ChartRange>(defaultRange);
   // controlled when a parent supplies the change handler (mirrors the window)
@@ -263,11 +290,25 @@ export function ScrubChart({
   const plotRef = useRef<HTMLDivElement>(null);
   const pressRef = useRef<{ startIdx: number; startX: number; moved: boolean } | null>(null);
 
+  /**
+   * A session replaces the derived window only while 1D is the active pill, and
+   * only when it holds enough points to chart. Both conjuncts matter: the second
+   * keeps a one-tick session (or a market holiday) on the existing daily
+   * fallback instead of drawing a single dot, and the first is what makes every
+   * branch below structurally unreachable for the daily-only surfaces — they
+   * pass `ranges={DAILY_SERIES_RANGES}`, which is DERIVED by excluding "1D"
+   * (chart-range.ts), so `range` can never equal it there.
+   */
+  const sessionActive = range === "1D" && (session?.points.length ?? 0) >= 2;
+
   // the range/drag → visible-rows math lives in lib/chart-window so the table
   // lens slices identically (incl. the <2-point fallback to the full series)
   const windowed = useMemo(
-    () => windowedPoints(points, today, range, customWindow),
-    [points, range, today, customWindow],
+    () =>
+      sessionActive
+        ? { points: session!.points, fellBack: false }
+        : windowedPoints(points, today, range, customWindow),
+    [sessionActive, session, points, range, today, customWindow],
   );
   const slice = windowed.points;
   /**
@@ -287,10 +328,14 @@ export function ScrubChart({
   const effectiveIdx = scrubIndex === null ? lastIdx : clampIndex(scrubIndex, slice.length);
   const scrubbing = scrubIndex !== null;
 
-  const summary = useMemo(
-    () => (slice.length >= 2 ? summarize(0, effectiveIdx, slice) : null),
-    [slice, effectiveIdx, summarize],
-  );
+  const summary = useMemo(() => {
+    if (slice.length < 2) return null;
+    const computed = summarize(0, effectiveIdx, slice);
+    const atLabel = slice[effectiveIdx]?.atLabel;
+    // returns summarize's OWN object when there is no instant label — same
+    // reference, not merely an equal one — so no daily surface can shift
+    return atLabel === undefined ? computed : { ...computed, atLabel };
+  }, [slice, effectiveIdx, summarize]);
   const accent: Accent = summary ? accentOf(summary) : "flat";
   const stroke = strokeColor ?? ACCENT_STROKE[accent];
 
@@ -306,6 +351,7 @@ export function ScrubChart({
     return netWorthChartSeries(slice).map((row, i) => ({
       ...row,
       complete: slice[i]?.complete !== false,
+      atLabel: slice[i]?.atLabel,
       prevValue: i > 0 ? (slice[i - 1]?.valueCents ?? null) : null,
       missingAccounts: slice[i]?.missingAccounts,
       coveredAccountNames: slice[i]?.coveredAccountNames,
@@ -348,8 +394,17 @@ export function ScrubChart({
     return rows;
   }, [chartDataBase, compareLine, overlayData]);
 
+  /**
+   * Trade marks are dropped inside a session (their day-keyed x has no position
+   * in an instant domain) — and they must be dropped from the Y-DOMAIN too, not
+   * just from the JSX. Suppressing only the dots left an old $150 buy still
+   * stretching the axis to $100–$250, squashing the day's entire move into the
+   * top sliver of a plot with nothing drawn down there to explain why.
+   */
+  const visibleMarks = sessionActive ? undefined : marks;
+
   const values = useMemo(() => {
-    const base = collectValues(slice, marks, refLine, baselineCents);
+    const base = collectValues(slice, visibleMarks, refLine, baselineCents);
     if (compareLine) {
       for (const p of slice) {
         const c = compareLine.byDay[p.day];
@@ -365,7 +420,7 @@ export function ScrubChart({
       }
     }
     return base;
-  }, [slice, marks, refLine, baselineCents, compareLine, overlays]);
+  }, [slice, visibleMarks, refLine, baselineCents, compareLine, overlays]);
   const niceY = useMemo(() => {
     if (!showAxes || values.length === 0) return null;
     let lo = Math.min(...values);
@@ -377,9 +432,22 @@ export function ScrubChart({
   }, [showAxes, values, vivid]);
   const domain: [number, number] = niceY ? niceY.domain : rawDomain(values);
 
+  /**
+   * `dateAxisTicks` cannot be rehabilitated for intraday by adding a label
+   * field: it picks tick SPACING from `diffDays(first, last)` and falls back to
+   * `formatDayShort` under three points, so both of its branches parse a day.
+   * The session therefore arrives with its ticks already chosen, in the same
+   * `DateTick` shape — so the `ticks=` prop, `xLabelByDay` and the
+   * `tickFormatter` below are untouched.
+   */
   const xTicks = useMemo(
-    () => (showAxes ? dateAxisTicks(slice.map((p) => p.day)) : []),
-    [showAxes, slice],
+    () =>
+      sessionActive
+        ? [...session!.ticks]
+        : showAxes
+          ? dateAxisTicks(slice.map((p) => p.day))
+          : [],
+    [sessionActive, session, showAxes, slice],
   );
   const xLabelByDay = useMemo(() => new Map(xTicks.map((t) => [t.day, t.label] as const)), [xTicks]);
 
@@ -416,7 +484,9 @@ export function ScrubChart({
   const wheelRef = useRef<(e: WheelEvent) => void>(() => {});
   useEffect(() => {
     wheelRef.current = (e: WheelEvent) => {
-      if (!selectable || points.length < 2 || slice.length === 0) return;
+      // sessionActive: zoom/pan resolve to a {start,end} DAY pair, which one
+      // session cannot express — see the note on the From/To inputs below
+      if (!selectable || sessionActive || points.length < 2 || slice.length === 0) return;
       const pinch = e.ctrlKey;
       const horizontal = !pinch && Math.abs(e.deltaX) > Math.abs(e.deltaY);
       if (!pinch && !horizontal) return; // vertical scroll belongs to the page
@@ -536,7 +606,9 @@ export function ScrubChart({
     if (capturing) {
       const press = pressRef.current;
       if (!press) return;
-      if (Math.abs(e.clientX - press.startX) > SELECT_DRAG_PX) press.moved = true;
+      // only range-SELECT arming is suppressed inside a session; the press keeps
+      // scrubbing, which is the whole point of an intraday chart
+      if (!sessionActive && Math.abs(e.clientX - press.startX) > SELECT_DRAG_PX) press.moved = true;
       const idx = idxFromClientX(e.clientX);
       if (press.moved) {
         setSelection({ a: press.startIdx, b: idx });
@@ -649,12 +721,12 @@ export function ScrubChart({
         // discoverable without adding a line of chrome to every chart on the
         // dashboard (and re-baselining all of them)
         title={
-          selectable
+          selectable && !sessionActive
             ? "Drag to select a range · pinch to zoom · two-finger swipe to pan"
             : undefined
         }
         className={`${heightClass} touch-none rounded-md outline-none focus-visible:ring-2 focus-visible:ring-accent ${
-          selectable ? "cursor-crosshair" : ""
+          selectable && !sessionActive ? "cursor-crosshair" : ""
         }`}
       >
         <ResponsiveContainer width="100%" height="100%">
@@ -892,7 +964,10 @@ export function ScrubChart({
                 />
               </>
             )}
-            {(marks ?? []).map((m, i) => (
+            {/* trade marks are keyed by DAY; inside a session the category
+                domain holds instants, so a mark's x would match nothing and the
+                dot would have no scale position at all */}
+            {(visibleMarks ?? []).map((m, i) => (
               <ReferenceDot
                 key={`${m.day}-${i}`}
                 x={m.day}
@@ -1002,7 +1077,11 @@ export function ScrubChart({
             {formatDayShort(customWindow.start)} – {formatDayShort(customWindow.end)} · Reset
           </button>
         )}
-        {seriesFirst && seriesLast && (
+        {/* A sub-window of ONE session is a time range, not a date range. Giving
+            these inputs an instant would show a browser date picker holding a
+            value it cannot represent, and typing into them would hand an instant
+            to compareDates. There is nothing honest to put here, so nothing is. */}
+        {!sessionActive && seriesFirst && seriesLast && (
           <div className="ml-auto flex items-center gap-1.5 text-xs text-ink-faint">
             <input
               type="date"

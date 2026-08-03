@@ -338,22 +338,42 @@ test("the range pills offer a day and a week view, and each shows its own window
     expect(await visibleDayCount(page)).toBeGreaterThan(0);
   }
 
-  // 1D is the tightest window the pills offer — at daily granularity that is two
-  // points, the previous close and today
+  // 1D is the tightest window the pills offer, and it means one of two things:
+  // with an intraday session cached it draws that session (many points); without
+  // one it falls back to daily granularity — two points, the previous close and
+  // today. Which applies depends on whether a sibling zz spec has loaded a
+  // session, so read the page's own note rather than assuming an order.
+  //
+  // The lower bound is not decoration. This assertion used to read
+  // `toBeLessThanOrEqual(2)` alone, and `visibleDayCount` used to return 1 when
+  // it found nothing at all — so a chart that drew NOTHING scored 1 and passed.
+  // The tripwire meant to protect the 1D view was certifying a blank one.
   await pills.getByRole("button", { name: "1 day" }).click();
-  expect(await visibleDayCount(page)).toBeLessThanOrEqual(2);
+  const hasSession = await page.getByText(/Today's session ·/).isVisible();
+  const dayPoints = await visibleDayCount(page);
+  expect(dayPoints).toBeGreaterThan(0);
+  expect(hasSession ? dayPoints > 2 : dayPoints <= 2).toBe(true);
 
   await pills.getByRole("button", { name: "all time" }).click();
   await expect(header).toContainText("· all time");
 });
 
-/** How many days the chart is currently drawing, read off its own x-axis data. */
+/**
+ * How many points the chart is currently drawing, read off its own x-axis data.
+ *
+ * Returns 0 — never 1 — when the chart drew nothing. The previous `|| 1` tail
+ * made "found nothing" indistinguishable from "found one point", which is how a
+ * blank 1D chart satisfied an upper-bound assertion. A count is now either real
+ * or zero, and callers assert both bounds.
+ */
 async function visibleDayCount(page: Page): Promise<number> {
   return page.evaluate(() => {
     const slider = document.querySelector('[role="slider"]');
-    return slider ? slider.querySelectorAll(".recharts-xAxis .recharts-cartesian-axis-tick").length ||
-      // axis ticks are thinned for readability; fall back to the plotted dots
-      slider.querySelectorAll(".recharts-line-dot").length || 1 : 0;
+    if (!slider) return 0;
+    const ticks = slider.querySelectorAll(".recharts-xAxis .recharts-cartesian-axis-tick").length;
+    // axis ticks are thinned for readability; the plotted dots are the denser signal
+    const dots = slider.querySelectorAll(".recharts-line-dot").length;
+    return Math.max(ticks, dots);
   });
 }
 

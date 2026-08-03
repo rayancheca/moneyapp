@@ -16,6 +16,8 @@ import { benchmarkReturns } from "@/lib/portfolio-returns";
 import { carryForwardTo } from "@/lib/price-series";
 import { resolveViewState } from "@/lib/view-state";
 import { listAccounts } from "@/services/accounts";
+import { portfolioSession } from "@/services/intraday";
+import { sessionView } from "@/lib/intraday-axis";
 import { readSettings } from "@/services/settings";
 import {
   allocationSlices,
@@ -144,6 +146,13 @@ export default async function InvestmentsPage({
   const allocation = allocationSlices(db);
   const calendarMonth = pnlCalendarMonth(db, monthKey(overview.asOf ?? today), today);
 
+  // Read unconditionally rather than behind a `range === "1D"` check: the pill
+  // is client state, so gating on the URL would make a press to 1D need a
+  // navigation. This is 1 + 2N indexed reads against a table pruned to two days,
+  // on a page that already runs eight heavier queries.
+  const intraday = portfolioSession(db, today);
+  const session = sessionView(today, intraday.grid.points, intraday.priorCloseCents);
+
   return (
     <>
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -186,6 +195,9 @@ export default async function InvestmentsPage({
             benchmark={benchmark}
             benchmarkSymbol={benchmarkSymbol}
             footer={<PortfolioStats overview={overview} />}
+            session={session}
+            pricedSymbols={intraday.grid.pricedSymbols}
+            totalSymbols={intraday.grid.totalSymbols}
           />
         ) : (
           <SurfaceCard>

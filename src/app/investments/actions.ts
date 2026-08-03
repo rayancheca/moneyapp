@@ -13,6 +13,7 @@ import {
   type PnlCalendarMonth,
   type PnlDayDetail,
 } from "@/services/portfolio";
+import { refreshIntraday } from "@/services/intraday";
 import { backfillSymbolHistory, refreshPrices } from "@/services/prices";
 import { hasBenchmark } from "@/services/portfolio";
 import { readSettings, writeSetting } from "@/services/settings";
@@ -147,6 +148,39 @@ export async function refreshPricesAction(): Promise<ActionResult<RefreshPricesS
     };
   } catch (error: unknown) {
     return { ok: false, error: actionErrorMessage(error, HOLDING_LABELS, "Refresh failed") };
+  }
+}
+
+/**
+ * Load today's intraday session for the 1D view.
+ *
+ * Deliberately NOT folded into `refreshPricesAction`. That flow backfills two
+ * years of daily closes, quotes every symbol and re-anchors net worth — the
+ * dashboard number depends on it. Intraday feeds one chart window on one
+ * surface and nothing depends on it, so joining them would make every net-worth
+ * refresh pay for a chart nobody may open and would put a five-minute tick on
+ * the same failure path as the headline. `prices.test.ts` asserts that
+ * separation directly ("refresh must not fetch intraday"); this keeps it true.
+ *
+ * `refreshIntraday` collects per-symbol failures rather than throwing, so a
+ * delisted ticker or a provider outage degrades to whatever ticked.
+ */
+export async function refreshIntradayAction(): Promise<
+  ActionResult<{ symbols: number; ticks: number; errors: string[] }>
+> {
+  try {
+    const result = await refreshIntraday(getDb());
+    revalidatePath("/investments");
+    revalidatePath("/investments/[assetType]/[symbol]", "page");
+    return {
+      ok: true,
+      data: { symbols: result.symbols, ticks: result.ticks, errors: result.errors },
+    };
+  } catch (error: unknown) {
+    return {
+      ok: false,
+      error: actionErrorMessage(error, HOLDING_LABELS, "Couldn't load today's session"),
+    };
   }
 }
 

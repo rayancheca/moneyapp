@@ -62,7 +62,7 @@ describe("intradayPortfolioGrid", () => {
     expect(points[2]!.valueCents).toBe(21_000 + 310_000);
   });
 
-  test("the first grid point equals yesterday's closing valuation when nothing has moved", () => {
+  test("a symbol that has not printed yet is carried at its prior close", () => {
     const symbols: SymbolTicks[] = [
       {
         symbol: "AAPL",
@@ -93,6 +93,36 @@ describe("intradayPortfolioGrid", () => {
 
     expect(points[0]!.at).toBe("2026-07-31T00:00:00.000Z");
     expect(points[0]!.valueCents).toBe(3 * 20_000 + 2 * 40_000); // 60,000 + 80,000
+  });
+
+  /**
+   * The counterpart to the test above, and the reason its name had to change.
+   *
+   * That test only holds because it manufactures a third symbol that ticks at
+   * 00:00Z, which is the sole condition under which the grid begins before any
+   * equity has printed. Take it away — an ordinary equities-only book — and the
+   * first grid point is the OPEN, because the time axis is built from instants
+   * that ticked and the earliest such instant is somebody's first print.
+   *
+   * This is pinned rather than fixed here on purpose: adding a synthetic opening
+   * instant inside a PURE grid function would invent a data point that no
+   * provider reported. The previous-close anchor belongs to the view layer,
+   * where it can be captioned — see `sessionView` in lib/intraday-axis.
+   */
+  test("an equities-only book opens at the FIRST PRINT, not at yesterday's close", () => {
+    const { points } = intradayPortfolioGrid([
+      {
+        symbol: "VOO",
+        quantityE8: 1 * E8,
+        priorClose: 200,
+        ticks: [tick("2026-07-31T13:30:00.000Z", 210), tick("2026-07-31T13:35:00.000Z", 211)],
+      },
+    ]);
+
+    expect(points[0]!.at).toBe("2026-07-31T13:30:00.000Z");
+    expect(points[0]!.valueCents).toBe(21_000); // the open — NOT the 20_000 prior close
+    // so the overnight gap is genuinely absent from the grid
+    expect(points[0]!.valueCents).not.toBe(20_000);
   });
 
   test("a symbol with neither ticks nor a prior close contributes zero, and is reported as unpriced", () => {
