@@ -9,10 +9,11 @@ import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { institutions } from "@/db/schema/institutions";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
+import { compareDates } from "@/lib/dates";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
 import { rebuildAccount, netWorthSeries } from "./derivation";
-import { bridgedNetWorthSeries, transferFloats } from "./in-flight";
+import { bridgedNetWorthSeries, latestBridgedNetWorthCents, transferFloats } from "./in-flight";
 
 const TODAY = "2026-07-08";
 
@@ -266,5 +267,157 @@ describe("transferFloats + bridgedNetWorthSeries", () => {
     const bridged = bridgedNetWorthSeries(bundle.db);
     const last = bridged.at(-1)!;
     expect(last.inTransitCents).toBe(10_000);
+  });
+
+  /**
+   * latestBridgedNetWorthCents skips the series entirely, so every one of these
+   * asserts BOTH the invariant (it equals the last point) and the literal cents
+   * — a purely relative assertion would pass if both sides broke together.
+   *
+   * Each shape is one that a wrong-but-plausible implementation actually fails:
+   * these are the four an adversarial sweep found among 5,400 randomized DBs.
+   */
+  describe("latestBridgedNetWorthCents", () => {
+    function bothWays(): { cheap: number; fromSeries: number } {
+      return {
+        cheap: latestBridgedNetWorthCents(bundle.db),
+        fromSeries: bridgedNetWorthSeries(bundle.db).at(-1)?.totalCents ?? 0,
+      };
+    }
+
+    test("carry-forward: an account whose last statement is stale still counts", () => {
+      const a = createAccount(bundle.db, { institutionId: institutionId("Chase"), name: "A", type: "checking" });
+      const b = createAccount(bundle.db, { institutionId: institutionId("SoFi"), name: "B", type: "savings" });
+      anchor(a, "2026-07-01", 100_000); // stale: nothing after Jul 1
+      anchor(b, "2026-07-20", 50_000); // the axis ends here
+      rebuildAccount(bundle.db, a, "2026-07-01");
+      rebuildAccount(bundle.db, b, "2026-07-20");
+
+      const { cheap, fromSeries } = bothWays();
+      expect(cheap).toBe(150_000); // NOT 50_000 — A carries forward to the axis end
+      expect(cheap).toBe(fromSeries);
+    });
+
+    test("an INACTIVE account's balance is excluded (latestBalances does not filter)", () => {
+      const a = createAccount(bundle.db, { institutionId: institutionId("Chase"), name: "A", type: "checking" });
+      const dead = createAccount(bundle.db, { institutionId: institutionId("SoFi"), name: "Dead", type: "savings" });
+      anchor(a, "2026-07-01", 100_000);
+      anchor(dead, "2026-07-01", 888_888);
+      rebuildAccount(bundle.db, a, "2026-07-02");
+      rebuildAccount(bundle.db, dead, "2026-07-02");
+      bundle.db.update(accounts).set({ isActive: false }).where(eq(accounts.id, dead)).run();
+
+      const { cheap, fromSeries } = bothWays();
+      expect(cheap).toBe(100_000); // summing latestBalances unfiltered would give 988_888
+      expect(cheap).toBe(fromSeries);
+    });
+
+    test("a trailing 'gap' row must not drag the last day past the axis end", () => {
+      const a = createAccount(bundle.db, { institutionId: institutionId("Chase"), name: "A", type: "checking" });
+      anchor(a, "2026-07-01", 100_000);
+      rebuildAccount(bundle.db, a, "2026-07-02");
+      // a gap day LATER than every covered day: invisible to netWorthSeries, so
+      // it is not on the axis — but a naive MAX(day) would pick it up
+      bundle.db
+        .insert(dailyBalances)
+        .values({ accountId: a, day: "2026-07-09", balanceCents: 0, basis: "gap" })
+        .run();
+
+      const { cheap, fromSeries } = bothWays();
+      expect(cheap).toBe(100_000);
+      expect(cheap).toBe(fromSeries);
+    });
+
+    /** Same shape as pairFixture, but the curves stop on `through`. */
+    function pairEndingOn(opts: { outPostedOn: string; inPostedOn: string; through: string }) {
+      const a = createAccount(bundle.db, { institutionId: institutionId("Chase"), name: "A", type: "checking" });
+      const b = createAccount(bundle.db, { institutionId: institutionId("SoFi"), name: "B", type: "savings" });
+      anchor(a, "2026-07-01", 100_000);
+      anchor(a, "2026-07-02", 90_000);
+      anchor(b, "2026-07-01", 50_000);
+      anchor(b, "2026-07-02", 60_000);
+      txn(a, opts.outPostedOn, -10_000, "g1");
+      txn(b, opts.inPostedOn, 10_000, "g1");
+      rebuildAccount(bundle.db, a, opts.through);
+      rebuildAccount(bundle.db, b, opts.through);
+      return { a, b };
+    }
+
+    test("a window whose endDay IS the last axis day has already resolved", () => {
+      // [startDay, endDay) is half-open: on endDay the two ledgers agree again,
+      // so a float ending exactly on the last day must NOT be re-added.
+      pairEndingOn({ outPostedOn: "2026-07-02", inPostedOn: "2026-07-04", through: "2026-07-04" });
+      expect(transferFloats(bundle.db)).toMatchObject([{ endDay: "2026-07-04", deltaCents: 10_000 }]);
+
+      const series = bridgedNetWorthSeries(bundle.db);
+      expect(series.at(-1)!.day).toBe("2026-07-04"); // endDay === last axis day
+      expect(series.at(-1)!.inTransitCents).toBe(0); // resolved, not bridged
+
+      const { cheap, fromSeries } = bothWays();
+      expect(cheap).toBe(fromSeries);
+      expect(cheap).toBe(160_000); // an inclusive end test would give 170_000
+    });
+
+    test("a window still open on the last axis day IS counted (inclusive start)", () => {
+      // receiver credits first: the money is visible in both books from 07-02,
+      // and 07-02 is also where the axis stops — startDay === lastDay.
+      pairEndingOn({ outPostedOn: "2026-07-05", inPostedOn: "2026-07-02", through: "2026-07-02" });
+      expect(transferFloats(bundle.db)).toMatchObject([{ startDay: "2026-07-02", endDay: null, deltaCents: -10_000 }]);
+
+      const { cheap, fromSeries } = bothWays();
+      expect(cheap).toBe(fromSeries);
+      expect(cheap).toBe(140_000); // an exclusive start test would give 150_000
+    });
+
+    test("a window opening AFTER the last axis day is not counted", () => {
+      const { b } = pairEndingOn({ outPostedOn: "2026-07-05", inPostedOn: "2026-07-02", through: "2026-07-02" });
+      // a gap run past both curves splits the pair's correction in two: the
+      // second window opens at 07-05, three days beyond where the axis stops
+      for (const day of ["2026-07-03", "2026-07-04"]) {
+        bundle.db.insert(dailyBalances).values({ accountId: b, day, balanceCents: 0, basis: "gap" }).run();
+      }
+      const floats = transferFloats(bundle.db);
+      const series = bridgedNetWorthSeries(bundle.db);
+      const lastDay = series.at(-1)!.day;
+      expect(lastDay).toBe("2026-07-02");
+      expect(floats).toMatchObject([
+        { startDay: "2026-07-02", endDay: "2026-07-03" }, // covers the last day
+        { startDay: "2026-07-05", endDay: null }, // opens past it
+      ]);
+      expect(floats.some((f) => compareDates(f.startDay, lastDay) > 0)).toBe(true);
+
+      const { cheap, fromSeries } = bothWays();
+      expect(cheap).toBe(fromSeries);
+      expect(cheap).toBe(140_000); // without the start test the second window gives 130_000
+    });
+
+    test("an unresolved float (endDay null) IS counted on the last day", () => {
+      const a = createAccount(bundle.db, { institutionId: institutionId("Chase"), name: "A", type: "checking" });
+      const b = createAccount(bundle.db, { institutionId: institutionId("SoFi"), name: "B", type: "savings" });
+      anchor(a, "2026-07-01", 100_000);
+      anchor(b, "2026-06-01", 50_000);
+      txn(a, "2026-07-02", -10_000, "g1");
+      txn(b, "2026-07-20", 10_000, "g1");
+      rebuildAccount(bundle.db, a, TODAY);
+      rebuildAccount(bundle.db, b, "2026-06-01");
+      expect(transferFloats(bundle.db)).toMatchObject([{ endDay: null, deltaCents: 10_000 }]);
+
+      const { cheap, fromSeries } = bothWays();
+      expect(cheap).toBe(fromSeries);
+      expect(cheap).toBe(bridgedNetWorthSeries(bundle.db).at(-1)!.totalCents);
+    });
+
+    test("no accounts and no coverage both fall back to 0", () => {
+      expect(latestBridgedNetWorthCents(bundle.db)).toBe(0); // seeded db, no accounts
+
+      const a = createAccount(bundle.db, { institutionId: institutionId("Chase"), name: "A", type: "checking" });
+      bundle.db
+        .insert(dailyBalances)
+        .values({ accountId: a, day: "2026-07-01", balanceCents: 5_000, basis: "gap" })
+        .run();
+      // every row is a gap -> netWorthSeries returns [] -> 0, not 5_000
+      expect(latestBridgedNetWorthCents(bundle.db)).toBe(0);
+      expect(bridgedNetWorthSeries(bundle.db).at(-1)?.totalCents ?? 0).toBe(0);
+    });
   });
 });

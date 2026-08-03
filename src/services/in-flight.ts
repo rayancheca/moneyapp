@@ -1,11 +1,11 @@
-import { asc, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { dailyBalances, type BalanceBasis } from "@/db/schema/balances";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates } from "@/lib/dates";
 import { applyInFlight } from "@/lib/in-flight";
-import { netWorthSeries, type NetWorthPoint } from "./derivation";
+import { latestBalances, netWorthSeries, type NetWorthPoint } from "./derivation";
 
 /**
  * 🕊️ Evidence layer for the in-flight rule (docs/inflight-dips.md): a
@@ -269,4 +269,51 @@ export type BridgedNetWorthPoint = NetWorthPoint & { inTransitCents: number };
  */
 export function bridgedNetWorthSeries(db: AppDatabase): BridgedNetWorthPoint[] {
   return applyInFlight(netWorthSeries(db), transferFloats(db));
+}
+
+/**
+ * `bridgedNetWorthSeries(db).at(-1)?.totalCents ?? 0` without building the
+ * series — the answer to "what is net worth right now", which the forecast
+ * needs and the 1,438-point curve was only a means to.
+ *
+ * It is the same number by construction, not by coincidence. netWorthSeries'
+ * trailing carry-forward means that on the FINAL axis day every active account
+ * with any non-gap row contributes its last known balance, which is exactly
+ * what latestBalances already returns — so the raw total is a sum, not a scan.
+ * The bridge on that day is then just the floats whose half-open window
+ * [startDay, endDay) still covers it.
+ *
+ * Three details are load-bearing, each verified by a shape that fails without it:
+ *  - sum over ACTIVE accounts only (latestBalances does NOT filter by isActive,
+ *    and an inactive account holding a balance would be added twice over);
+ *  - `basis <> 'gap'` in the MAX, or a trailing gap row drags the "last day"
+ *    past the real axis end and out of a float's window;
+ *  - the half-open end test (`endDay` ON the last day means already resolved).
+ */
+export function latestBridgedNetWorthCents(db: AppDatabase, balances = latestBalances(db)): number {
+  const activeIds = db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(eq(accounts.isActive, true))
+    .all()
+    .map((a) => a.id);
+  if (activeIds.length === 0) return 0; // netWorthSeries returns [] — no last point
+
+  const lastDay =
+    db
+      .select({ day: sql<string | null>`max(${dailyBalances.day})` })
+      .from(dailyBalances)
+      .where(and(inArray(dailyBalances.accountId, activeIds), ne(dailyBalances.basis, "gap")))
+      .get()?.day ?? null;
+  if (lastDay === null) return 0; // no covered day anywhere — the axis is empty
+
+  let total = 0;
+  for (const id of activeIds) total += balances.get(id)?.balanceCents ?? 0;
+
+  for (const f of transferFloats(db)) {
+    if (compareDates(lastDay, f.startDay) < 0) continue; // window hasn't opened yet
+    if (f.endDay !== null && compareDates(lastDay, f.endDay) >= 0) continue; // already resolved
+    total += f.deltaCents;
+  }
+  return total;
 }

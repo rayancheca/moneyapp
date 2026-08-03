@@ -9,7 +9,7 @@ import { projectOngoingIncome } from "@/lib/income-forecast";
 import { formatCents } from "@/lib/money";
 import { allocationsFor } from "@/lib/transaction-splits";
 import { latestBalances } from "./derivation";
-import { bridgedNetWorthSeries } from "./in-flight";
+import { latestBridgedNetWorthCents } from "./in-flight";
 import {
   projectOccurrences,
   seriesStaleness,
@@ -356,8 +356,10 @@ export function forecastCurrentMonth(db: AppDatabase, today: string = todayIso()
   }
 
   // bridged, so the EOM projection starts from the same number the dashboard
-  // headline shows (docs/inflight-dips.md — one source for "latest net worth")
-  const latestNetWorth = bridgedNetWorthSeries(db).at(-1)?.totalCents ?? 0;
+  // headline shows (docs/inflight-dips.md — one source for "latest net worth").
+  // Only the final point is wanted, so this reuses the `balances` map above
+  // rather than rebuilding the whole 1,438-day curve to read its last element.
+  const latestNetWorth = latestBridgedNetWorthCents(db, balances);
 
   return {
     today,

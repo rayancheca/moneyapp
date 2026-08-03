@@ -38,6 +38,40 @@ describe("validation", () => {
     "2026-07-31T13:30:00.000Z",
   ])("rejects %s", (s) => expect(isValidIsoDate(s)).toBe(false));
 
+  // The parser reads digits off the string by char code instead of running a
+  // regex, so the shape checks are hand-written and each needs its own case.
+  test.each([
+    ["2026-0a-01", "a digit position holding a char ABOVE '9'"],
+    ["2026-0/-01", "a digit position holding a char BELOW '0'"],
+    ["2026-07x01", "the second separator not being a dash"],
+    ["2026x07-01", "the first separator not being a dash"],
+    ["٢٠٢٦-٠٧-٠١", "non-ASCII digits"],
+  ])("rejects %s — %s", (s) => expect(isValidIsoDate(s)).toBe(false));
+
+  // Years 0000-0099 have never been accepted: the original implementation built
+  // the date with Date.UTC, which maps them into 1900-1999, so its own
+  // round-trip check rejected them. Pinned because five server actions use
+  // isValidIsoDate as their zod refinement for user input.
+  test.each(["0000-01-01", "0001-01-01", "0099-12-31"])(
+    "rejects year %s (below the Date.UTC two-digit-year boundary)",
+    (s) => expect(isValidIsoDate(s)).toBe(false),
+  );
+  test("accepts the first year above that boundary", () => {
+    expect(isValidIsoDate("0100-01-01")).toBe(true);
+  });
+
+  test.each([
+    ["2000-02-29", true], // divisible by 400
+    ["1900-02-29", false], // divisible by 100, not 400
+    ["2024-02-29", true], // divisible by 4
+    ["2023-02-29", false],
+  ])("leap-year rule: %s -> %s", (s, valid) => expect(isValidIsoDate(s)).toBe(valid));
+
+  test("periodBounds and monthKey reject a malformed date rather than guessing", () => {
+    expect(() => monthKey("2026-13-01")).toThrow(DateParseError);
+    expect(() => periodBounds("nope", "monthly")).toThrow(DateParseError);
+  });
+
   test("operations throw DateParseError on invalid input", () => {
     expect(() => toEpochDay("2025-02-29")).toThrow(DateParseError);
     expect(() => addDays("nope", 1)).toThrow(DateParseError);
