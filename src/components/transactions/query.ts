@@ -6,7 +6,7 @@ import { isValidIsoDate } from "@/lib/dates";
  * raw params defensively and rebuild canonical query strings.
  */
 
-export const TXN_VIEWS = ["all", "review", "quarantined", "excluded"] as const;
+export const TXN_VIEWS = ["all", "review", "duplicates", "quarantined", "excluded"] as const;
 export type TxnView = (typeof TXN_VIEWS)[number];
 
 export const TXN_NOTICES = ["direction-guard", "no-api-key"] as const;

@@ -22,6 +22,7 @@ import { sumCents } from "@/lib/money";
 import { categorizeAll, detectTransfers } from "../categorize";
 import { rebuildAccount } from "../derivation";
 import { flagDuplicateCandidates } from "../duplicate-flags";
+import { accountsOfTransactions, restoreDuplicatesLosingTheirSurvivor } from "../duplicate-lifecycle";
 import { accountSlug, institutionSlug } from "./account-slug";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
@@ -1297,10 +1298,29 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
     .all()
     .map((r) => r.accountId);
 
+  const doomed = db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(eq(transactions.importFileId, importFileId))
+    .all()
+    .map((r) => r.id);
+
   // The file's rows leave the database entirely — re-importing re-parses the
   // original, but every correction made to those rows since is gone.
   withPreMutationSnapshot(db, "unimport-file", () => {
+    let restored: string[] = [];
     db.transaction((tx) => {
+      // A charge this file's rows are the SURVIVING copy of has a retired twin
+      // sitting `superseded` in another file. Delete the survivor without putting
+      // that twin back and the money is recorded by zero live rows: it vanishes
+      // from balances and net worth silently, because the owner asked to remove a
+      // FILE and got a missing CHARGE.
+      //
+      // Inside this transaction, and before the delete, so the restore and the
+      // delete cannot come apart: on the bare db each restore would autocommit
+      // on its own, and a later failure would leave rows restored beside
+      // survivors that were never deleted — the double count, from the fix.
+      restored = restoreDuplicatesLosingTheirSurvivor(tx, doomed);
       tx.delete(transactions).where(eq(transactions.importFileId, importFileId)).run();
       tx.delete(balanceAnchors).where(eq(balanceAnchors.importFileId, importFileId)).run();
       // anchors owned by OTHER files may reference this file's periods — detach
@@ -1312,11 +1332,12 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
       tx.delete(statementPeriods).where(eq(statementPeriods.importFileId, importFileId)).run();
       tx.delete(importFiles).where(eq(importFiles.id, importFileId)).run();
     });
-    reconcileAccounts(db, affected);
-    for (const accountId of affected) rebuildAccount(db, accountId);
+    const scope = [...new Set([...affected, ...accountsOfTransactions(db, restored)])];
+    reconcileAccounts(db, scope);
+    for (const accountId of scope) rebuildAccount(db, accountId);
     // removing a file can CLOSE another file's gap, and reconcileAccounts then
     // promotes that period's quarantined rows — the same seam as an import
-    flagDuplicateCandidates(db, affected);
+    flagDuplicateCandidates(db, scope);
   });
 }
 

@@ -11,5 +11,6 @@ export * from "./budgets";
 export * from "./recurring";
 export * from "./holdings";
 export * from "./holding-events";
+export * from "./duplicate-candidates";
 export * from "./ai";
 export * from "./settings";

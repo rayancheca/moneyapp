@@ -21,6 +21,8 @@ import { TransactionsLedger, type LedgerRow } from "@/components/transactions/Tr
 import { ViewTabs } from "@/components/transactions/ViewTabs";
 import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { reviewInbox } from "@/services/review-inbox";
+import { listDuplicatePairs, openDuplicateCount } from "@/services/duplicate-resolution";
+import { DuplicatePairs } from "@/components/transactions/DuplicatePairs";
 import { toLedgerRow } from "@/services/ledger-rows";
 import { splitCountsByTxn } from "@/services/transaction-splits";
 import {
@@ -54,6 +56,11 @@ const EMPTY_FILTERED_COPY: Record<TxnView, { title: string; description: string 
     title: "Review queue is clear",
     description:
       "No transactions need review under the current filters — low-confidence categorizations, big uncategorized deposits, and ambiguous transfer pairs land here.",
+  },
+  duplicates: {
+    title: "No duplicate charges found",
+    description:
+      "Nothing here means no charge is recorded twice. Pairs land here when two different files record the same money — usually after a statement closes a gap that had put its own rows aside.",
   },
   quarantined: {
     title: "No quarantined transactions",
@@ -91,6 +98,9 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
   const counts: Record<TxnView, number> = {
     all: countMatching(db, filters, "all"),
     review: countMatching(db, filters, "review"),
+    // Pairs, not rows: the tab counts the questions the owner has to answer,
+    // and one question always has two rows behind it.
+    duplicates: openDuplicateCount(db),
     quarantined: countMatching(db, filters, "quarantined"),
     excluded: countMatching(db, filters, "excluded"),
   };
@@ -161,6 +171,10 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
   // Review is a distinct surface (§3.3): the whole backlog clustered by
   // merchant, not the filtered/paginated ledger — so it skips FiltersBar.
   const inbox = filters.view === "review" ? reviewInbox(db) : null;
+  // Duplicates is its own surface too, and for a stronger reason than Review:
+  // the question is about a PAIR, and neither the cluster model nor the ledger
+  // can express a relationship between two specific rows.
+  const duplicatePairs = filters.view === "duplicates" ? listDuplicatePairs(db) : null;
 
   // The guided one-by-one Categorize walk (§3.2) gets the WHOLE flagged backlog
   // (capped) as ledger rows, ordered like the ledger — so a category set on the
@@ -213,7 +227,16 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
       ) : (
         <div className="space-y-4">
           <ViewTabs filters={filters} counts={counts} />
-          {inbox ? (
+          {duplicatePairs ? (
+            duplicatePairs.length === 0 ? (
+              <EmptyState
+                title={EMPTY_FILTERED_COPY.duplicates.title}
+                description={EMPTY_FILTERED_COPY.duplicates.description}
+              />
+            ) : (
+              <DuplicatePairs pairs={duplicatePairs} />
+            )
+          ) : inbox ? (
             <>
               {/* CategorizeMode renders its own launcher when there is a backlog,
                   and keeps an in-progress walk alive even if the backlog empties */}

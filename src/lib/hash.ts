@@ -62,6 +62,38 @@ export function assignOccurrenceIndexes<T>(
   });
 }
 
+/**
+ * One side of a duplicate pair, as the pair key sees it: the money and the
+ * words, never the id. `transacted_on` is in because the detector will pair two
+ * rows that agree on it while disagreeing on `posted_on`.
+ */
+export interface DuplicatePairSide {
+  postedOn: string;
+  transactedOn: string | null;
+  amountCents: number;
+  normalizedDescription: string;
+}
+
+/**
+ * Content identity of a duplicate PAIR, stable across the ids changing.
+ *
+ * Every unimport→re-import gives the same two charges brand-new row ids, so a
+ * key built from ids would forget that the owner already answered "these are
+ * not the same charge" and ask again — the import-order dependence
+ * duplicate_candidates exists to end. Sides are sorted so the key does not
+ * depend on which row the self-join happened to emit first.
+ *
+ * A re-parse that changes a normalized description changes this key, and that
+ * is correct: the owner judged the words he was shown, and different words are
+ * a different question.
+ */
+export function duplicatePairKey(accountId: string, left: DuplicatePairSide, right: DuplicatePairSide): string {
+  const encode = (s: DuplicatePairSide): string =>
+    canonicalize([s.postedOn, s.transactedOn ?? "", String(s.amountCents), s.normalizedDescription]);
+  const sides = [encode(left), encode(right)].sort();
+  return createHash("sha256").update(canonicalize([accountId, ...sides]), "utf8").digest("hex");
+}
+
 /** Content hash for import_files.file_sha256. */
 export function fileSha256(contents: Buffer | string): string {
   return createHash("sha256").update(contents).digest("hex");

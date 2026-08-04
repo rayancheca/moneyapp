@@ -14,6 +14,7 @@ import { isValidIsoDate } from "@/lib/dates";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { rebuildAccount } from "./derivation";
+import { accountsOfTransactions, restoreDuplicatesLosingTheirSurvivor } from "./duplicate-lifecycle";
 
 /**
  * Manual transactions (ux-overhaul-plan §3.7): allowed ONLY on manual
@@ -284,7 +285,17 @@ export function deleteManualTransaction(db: AppDatabase, id: string): void {
   }
   // Nothing re-imports a manual row — the deletion is the whole history.
   withPreMutationSnapshot(db, "delete-manual-transaction", () => {
-    db.delete(transactions).where(eq(transactions.id, id)).run();
-    rebuildAccount(db, txn.accountId);
+    // If another copy of this charge was retired as a duplicate OF this row,
+    // deleting this one alone would leave the money recorded by nothing at all.
+    // Put the retired copy back first — same reasoning, and same atomicity
+    // requirement, as unimportFile.
+    let restored: string[] = [];
+    db.transaction((tx) => {
+      restored = restoreDuplicatesLosingTheirSurvivor(tx, [id]);
+      tx.delete(transactions).where(eq(transactions.id, id)).run();
+    });
+    for (const accountId of new Set([txn.accountId, ...accountsOfTransactions(db, restored)])) {
+      rebuildAccount(db, accountId);
+    }
   });
 }

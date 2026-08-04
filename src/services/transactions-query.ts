@@ -35,6 +35,17 @@ export function viewCondition(view: TxnView): SQL {
   switch (view) {
     case "review":
       return and(eq(transactions.status, "active"), eq(transactions.needsReview, true)) as SQL;
+    case "duplicates":
+      // Deliberately NOT gated on status='active'. A pair can legitimately hold
+      // an `excluded` row — excluded hides a row from analytics but its money
+      // still moves through balance replay, which is exactly why an excluded
+      // twin double-counts net worth and why the detector admits one. Filtering
+      // to active here would hide the side that makes the pair worth showing.
+      return sql`${transactions.id} IN (
+        SELECT transaction_id_a FROM duplicate_candidates WHERE resolution = 'unresolved'
+        UNION ALL
+        SELECT transaction_id_b FROM duplicate_candidates WHERE resolution = 'unresolved'
+      )`;
     case "quarantined":
       return eq(transactions.status, "quarantined");
     case "excluded":

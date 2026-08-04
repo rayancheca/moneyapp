@@ -185,8 +185,14 @@ reconciliation is the backstop.
   against existing ones; user-set attributes migrate to the new rows; unmatched old rows go
   to the fuzzy review queue; replaced rows become `superseded`. **Invariant: importing the
   same file set in any order permutation yields an equivalent database.**
-- Residual fuzzy pass (same account, amount, date ±1) flags probable duplicates for review —
-  never silently deletes.
+- Residual cross-source pass flags probable duplicates for review — never silently deletes, and
+  never picks a winner. Matching is same account, same amount, **same day** (post-to-post, or
+  transaction-to-transaction when both rows carry one), from two DIFFERENT sources, with a
+  non-zero description score. **Not date ±1**, which this doc prescribed until pass 35: measured
+  against the real 9,827-row ledger, a ±1 window pairs two distinct month-end ETH buys (0.003247
+  vs 0.003508 ETH, both $9.90, both normalizing to the same text) — 22 rows, mostly false. A pair
+  inside a `reconciled` statement period is exempt: that period's arithmetic already proves its
+  money to the cent (see `src/services/duplicate-flags.ts`).
 
 ### balance_anchors
 | field | type | notes |
@@ -284,6 +290,47 @@ known close is stepped forward) — closing the Phase 2b crypto exemption. `upse
 appends a delta event for every quantity change on any holding, so the timeline is
 maintained as a side effect of normal holdings CRUD. Like all market-derived values,
 computed balances are rounded to cents at the edge; quantities stay exact 1e-8 integers.
+
+### duplicate_candidates (pass-35 addendum)
+`id · account_id · transaction_id_a · transaction_id_b · pair_key · reason · reason_detail ·
+resolution (unresolved|confirmed_duplicate|dismissed) · resolved_at · retired_transaction_id ·
+retired_from_status` — **UNIQUE(transaction_id_a, transaction_id_b)**, indexed on
+`transaction_id_b`, on `pair_key`, and on `(resolution, account_id)`.
+
+One row per cross-source duplicate PAIR, so the app can say *which two rows* and *why* — and so
+the owner's verdict outlives the boolean. `transactions.needs_review` alone could not carry this:
+it has no reason field, and fifteen code paths clear it (categorizing a row, confirming a review
+cluster, linking a transfer, the "mark all reviewed" amnesty), any of which would erase a
+double-count warning with nothing left to re-derive it.
+
+**Invariants enforced in app code, not SQL:**
+- `transaction_id_a < transaction_id_b` lexicographically. uuidv7 ids are lowercase hex, so JS `<`
+  and SQLite's BINARY collation agree. Normalization lives in the single writer
+  (`flagDuplicateCandidates`), which is what makes the unique index actually dedupe — the
+  self-join is symmetric and emits every pair twice.
+- `retired_transaction_id` is non-null only when `resolution = 'confirmed_duplicate'`, and always
+  equals one of the two ids.
+
+**Both transaction FKs are `ON DELETE SET NULL`, deliberately not CASCADE.** Rows are genuinely
+hard-deleted (`unimportFile`, `deleteManualTransaction`) under `foreign_keys = ON`, so a plain
+reference would throw — but cascading would destroy the owner's own verdict along with the row,
+and `unimportFile` re-runs the detector fifteen lines after its delete, so a dismissed pair would
+return immediately as unresolved.
+
+`pair_key` is a content hash of the account plus both sides' (posted_on, transacted_on, amount,
+normalized description), sides sorted. It exists because every unimport→re-import gives the same
+two charges brand-new ids: an id-keyed memory would re-ask a question the owner already answered,
+which is the import-order dependence this table was added to end. A re-parse that changes a
+normalized description changes the key, and that is correct — different words are a different
+question.
+
+**Money rule:** confirming a duplicate retires ONE side by setting `transactions.status =
+'superseded'` (out of `REPLAY_STATUSES`, out of every analytics total, still in the table), records
+what its status was, and is reversible. Nothing is ever deleted and no winner is ever picked
+automatically — an earlier revision picked winners on (day, amount) alone and destroyed real
+charges (reverted in `3e5a7fc`). Retiring is refused when the row sits inside a `reconciled`
+period: that statement's arithmetic already proves the money, and removing a row from it would
+make the next reconcile find a gap and quarantine the whole file's rows in that period.
 
 ### ai_calls
 `id · purpose (categorize|pdf_extract|annotate) · model · input_tokens · output_tokens · est_cost_usd · batch_size` — surfaces monthly AI spend; settings cap warns before exceeding.

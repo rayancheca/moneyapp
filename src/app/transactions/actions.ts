@@ -31,6 +31,14 @@ import {
   type ManualTxnEdit,
   type ManualTxnInput,
 } from "@/services/manual-transactions";
+import {
+  resolveDuplicate,
+  resolveDuplicateSchema,
+  undoDuplicateResolution,
+  undoDuplicateResolutionSchema,
+  type ResolveDuplicateInput,
+  type UndoDuplicateResolutionInput,
+} from "@/services/duplicate-resolution";
 import { renameMerchant, similarGroupIds } from "@/services/merchants";
 import { linkTransferPair, unlinkTransferGroup } from "@/services/transfer-links";
 import {
@@ -754,6 +762,45 @@ export async function restoreSplitsAction(
     const parsed = splitSnapshotSchema.parse(snapshot);
     restoreSplits(getDb(), parsed);
     revalidateAfterSplit();
+    return { ok: true, data: {} };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * Duplicates (§duplicate_candidates): the owner's verdict on one pair.
+ *
+ * Retiring a side moves money — it leaves balance replay and every total — so
+ * these revalidate the accounts and dashboard surfaces too, not just the
+ * transactions page. Both verdicts are reversible through undoDuplicateAction.
+ * ---------------------------------------------------------------------- */
+
+function revalidateAfterDuplicate(): void {
+  revalidateTransactions();
+  revalidatePath("/accounts");
+}
+
+export async function resolveDuplicateAction(
+  input: ResolveDuplicateInput,
+): Promise<ActionResult<{ retiredTransactionId: string | null }>> {
+  try {
+    const parsed = resolveDuplicateSchema.parse(input);
+    const result = resolveDuplicate(getDb(), parsed);
+    revalidateAfterDuplicate();
+    return { ok: true, data: { retiredTransactionId: result.retiredTransactionId } };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
+
+export async function undoDuplicateAction(
+  input: UndoDuplicateResolutionInput,
+): Promise<ActionResult<Record<string, never>>> {
+  try {
+    const parsed = undoDuplicateResolutionSchema.parse(input);
+    undoDuplicateResolution(getDb(), parsed);
+    revalidateAfterDuplicate();
     return { ok: true, data: {} };
   } catch (error: unknown) {
     return failure(error);

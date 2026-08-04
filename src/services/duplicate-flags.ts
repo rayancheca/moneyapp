@@ -1,10 +1,14 @@
-import { inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
+import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
 import { transactions } from "@/db/schema/transactions";
 import { descriptionScore } from "@/lib/description-score";
+import { duplicatePairKey } from "@/lib/hash";
+import { formatCents } from "@/lib/money";
 
 /**
- * Cross-source duplicate money, surfaced for review — never deleted.
+ * Cross-source duplicate money, recorded as a PAIR the owner can act on —
+ * never deleted, never auto-resolved.
  *
  * Two files can record the same charge: a card statement and a Spending Report
  * word it differently, and one prints the transaction date where the other
@@ -15,12 +19,18 @@ import { descriptionScore } from "@/lib/description-score";
  * against one. The bill for that choice comes due when the quarantine lifts:
  * the period returns to analytics holding a second copy of its own charges.
  *
- * These pairs are FLAGGED, never superseded. A previous revision picked a
- * winner automatically and silently destroyed real charges (reverted in
+ * These pairs are FLAGGED, never superseded by this module. A previous revision
+ * picked a winner automatically and silently destroyed real charges (reverted in
  * 3e5a7fc): its only evidence was (day, amount), and this ledger holds 1,766
  * rows that collide on (account, day, amount) with a DIFFERENT merchant inside
- * a single file. A double count is visible in the Review queue and reversible
- * by hand; a deleted charge is neither.
+ * a single file. Retiring a side is the owner's call, in resolveDuplicate, and
+ * it is reversible.
+ *
+ * The pair goes to `duplicate_candidates` and only the boolean lands on the
+ * rows. That split is the point of this table: fifteen code paths clear
+ * `needs_review` — categorizing a row, confirming a cluster, linking a transfer,
+ * the one-click "mark all reviewed" amnesty — and every one of them would
+ * otherwise erase a double-count warning with nothing left to say it existed.
  */
 
 /**
@@ -121,15 +131,76 @@ function chunk<T>(items: readonly T[], size: number): T[][] {
   return out;
 }
 
+/** One emitted direction of the symmetric self-join: t1 paired with t2. */
 interface CandidateRow {
-  id: string;
-  description: string;
-  otherDescription: string;
+  accountId: string;
+  aId: string;
+  aPostedOn: string;
+  aTransactedOn: string | null;
+  aAmountCents: number;
+  aDescription: string;
+  bId: string;
+  bPostedOn: string;
+  bTransactedOn: string | null;
+  bAmountCents: number;
+  bDescription: string;
+}
+
+/** The pair as it will be stored: ids in canonical order, with its content key. */
+interface PendingPair {
+  accountId: string;
+  transactionIdA: string;
+  transactionIdB: string;
+  pairKey: string;
+  reasonDetail: string;
 }
 
 /**
- * Mark both sides of every cross-source duplicate pair `needs_review`, so the
- * Review tab asks the owner which copy is real.
+ * The sentence the owner reads in the duplicates queue. Facts only — the amount
+ * and the day, which are exactly what the detector matched on — because the one
+ * thing this module must never do is imply which side is wrong.
+ */
+function describePair(row: CandidateRow): string {
+  const sameDay = row.aPostedOn === row.bPostedOn;
+  const when = sameDay
+    ? `on ${row.aPostedOn}`
+    : `on ${row.aPostedOn} and ${row.bPostedOn}, both transacted ${row.aTransactedOn ?? ""}`;
+  return `Two sources each recorded ${formatCents(Math.abs(row.aAmountCents))} ${when}.`;
+}
+
+/**
+ * Canonical pair identity: uuidv7 ids are lowercase hex, so JS `<` and SQLite's
+ * BINARY collation agree and the unique index actually dedupes. The self-join is
+ * symmetric and emits every pair twice; ordering here is what collapses the two
+ * directions into one row.
+ */
+function toPending(row: CandidateRow): PendingPair {
+  const aFirst = row.aId < row.bId;
+  const left = {
+    postedOn: row.aPostedOn,
+    transactedOn: row.aTransactedOn,
+    amountCents: row.aAmountCents,
+    normalizedDescription: row.aDescription,
+  };
+  const right = {
+    postedOn: row.bPostedOn,
+    transactedOn: row.bTransactedOn,
+    amountCents: row.bAmountCents,
+    normalizedDescription: row.bDescription,
+  };
+  return {
+    accountId: row.accountId,
+    transactionIdA: aFirst ? row.aId : row.bId,
+    transactionIdB: aFirst ? row.bId : row.aId,
+    pairKey: duplicatePairKey(row.accountId, left, right),
+    reasonDetail: describePair(row),
+  };
+}
+
+/**
+ * Record every cross-source duplicate pair in `duplicate_candidates` and mark
+ * both of its rows `needs_review`, so the duplicates queue can ask the owner
+ * which copy is real — and still say WHY when it does.
  *
  * Scoped to the given accounts — every caller is settling a status change it
  * already knows the accounts for, and an unscoped self-join over the whole
@@ -144,13 +215,21 @@ export function flagDuplicateCandidates(
 ): number {
   if (accountIds.length === 0) return 0;
 
-  const flagIds = new Set<string>();
+  const pairs = new Map<string, PendingPair>();
   for (const part of chunk([...new Set(accountIds)], ID_CHUNK)) {
     const scope = sql`(${sql.join(part.map((id) => sql`${id}`), sql`, `)})`;
     const candidates = db.all<CandidateRow>(sql`
-      SELECT t1.id AS id,
-             t1.normalized_description AS description,
-             t2.normalized_description AS otherDescription
+      SELECT t1.account_id            AS accountId,
+             t1.id                    AS aId,
+             t1.posted_on             AS aPostedOn,
+             t1.transacted_on         AS aTransactedOn,
+             t1.amount_cents          AS aAmountCents,
+             t1.normalized_description AS aDescription,
+             t2.id                    AS bId,
+             t2.posted_on             AS bPostedOn,
+             t2.transacted_on         AS bTransactedOn,
+             t2.amount_cents          AS bAmountCents,
+             t2.normalized_description AS bDescription
         FROM transactions t1
         JOIN transactions t2 ${IDENTITY_JOIN}
       ${BOTH_IN_REPLAY}
@@ -170,9 +249,74 @@ export function flagDuplicateCandidates(
       // description that is only a reference number normalizes away entirely.
       // Such a row carries no evidence about WHAT it bought, so it can never be
       // the basis for telling the owner two charges are the same charge.
-      if (c.description === "" || c.otherDescription === "") continue;
-      if (descriptionScore(c.description, c.otherDescription) > 0) flagIds.add(c.id);
+      if (c.aDescription === "" || c.bDescription === "") continue;
+      if (descriptionScore(c.aDescription, c.bDescription) <= 0) continue;
+      const pair = toPending(c);
+      // NOT_ALREADY_PROVEN guards t1 alone — deliberately, for per-row precision
+      // — so a pair whose OTHER side sits inside a reconciled period reaches
+      // here from one direction only. Recording it is still right: a pair is two
+      // rows, and showing one of them asks a question the owner cannot answer.
+      // The proven side is protected where it matters instead — resolveDuplicate
+      // refuses to retire a row whose own period reconciles.
+      pairs.set(`${pair.transactionIdA}\x1f${pair.transactionIdB}`, pair);
     }
+  }
+
+  if (pairs.size === 0) return 0;
+
+  const flagIds = new Set<string>();
+  for (const pair of pairs.values()) {
+    // The owner already answered this exact question. `pair_key` is content, not
+    // ids, so the answer survives the unimport→re-import that gives these two
+    // charges brand-new ids — which is the whole of the import-order dependence
+    // this table was added to end. Re-asking would make the queue feel like it
+    // never empties, and an owner who learns to dismiss a queue stops reading it.
+    const dismissed = db
+      .select({ id: duplicateCandidates.id })
+      .from(duplicateCandidates)
+      .where(
+        and(
+          eq(duplicateCandidates.pairKey, pair.pairKey),
+          eq(duplicateCandidates.resolution, "dismissed"),
+        ),
+      )
+      .get();
+    if (dismissed) continue;
+
+    const existing = db
+      .select({ id: duplicateCandidates.id, resolution: duplicateCandidates.resolution })
+      .from(duplicateCandidates)
+      .where(
+        and(
+          eq(duplicateCandidates.transactionIdA, pair.transactionIdA),
+          eq(duplicateCandidates.transactionIdB, pair.transactionIdB),
+        ),
+      )
+      .get();
+    if (existing === undefined) {
+      db.insert(duplicateCandidates)
+        .values({
+          accountId: pair.accountId,
+          transactionIdA: pair.transactionIdA,
+          transactionIdB: pair.transactionIdB,
+          pairKey: pair.pairKey,
+          reason: "cross_source_same_day",
+          reasonDetail: pair.reasonDetail,
+        })
+        .run();
+    } else if (existing.resolution === "confirmed_duplicate") {
+      // Already settled by retiring one side. BOTH_IN_REPLAY cannot see a
+      // superseded row, so re-deriving this pair means the retired side came
+      // back — undone by hand, or restored by unimportFile when the survivor's
+      // file was removed. Either way the question is open again, and the stale
+      // 'confirmed' verdict would otherwise hide it from the queue forever.
+      db.update(duplicateCandidates)
+        .set({ resolution: "unresolved", resolvedAt: null, retiredTransactionId: null })
+        .where(eq(duplicateCandidates.id, existing.id))
+        .run();
+    }
+    flagIds.add(pair.transactionIdA);
+    flagIds.add(pair.transactionIdB);
   }
 
   if (flagIds.size === 0) return 0;

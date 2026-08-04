@@ -57,6 +57,13 @@
       "when": 1785524508214,
       "tag": "0007_woozy_speedball",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1785870698559,
+      "tag": "0008_nebulous_frank_castle",
+      "breakpoints": true
     }
   ]
 }

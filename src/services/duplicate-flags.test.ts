@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
 import { institutions } from "@/db/schema/institutions";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
@@ -393,5 +394,100 @@ describe("flagDuplicateCandidates", () => {
     expect(flagDuplicateCandidates(bundle.db, [accountId])).toBe(1);
     expect(isFlagged(a)).toBe(true);
     expect(isFlagged(b)).toBe(true);
+  });
+});
+
+describe("the recorded pair", () => {
+  function candidates() {
+    return bundle.db.select().from(duplicateCandidates).all();
+  }
+
+  test("records the pair itself, with the reason the owner will read", () => {
+    const [a, b] = realDuplicatePair();
+
+    flagDuplicateCandidates(bundle.db, [accountId]);
+
+    const rows = candidates();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.accountId).toBe(accountId);
+    expect(rows[0]!.reason).toBe("cross_source_same_day");
+    expect(rows[0]!.resolution).toBe("unresolved");
+    // the sentence names the money and the day — the two things it matched on
+    expect(rows[0]!.reasonDetail).toContain("$1.25");
+    expect(rows[0]!.reasonDetail).toContain("2026-07-09");
+    // ids canonically ordered, so the unique index actually dedupes
+    expect([rows[0]!.transactionIdA, rows[0]!.transactionIdB]).toEqual([a, b].sort());
+  });
+
+  test("the symmetric self-join emits each pair twice but stores it once", () => {
+    realDuplicatePair();
+
+    flagDuplicateCandidates(bundle.db, [accountId]);
+    flagDuplicateCandidates(bundle.db, [accountId]);
+
+    expect(candidates()).toHaveLength(1);
+  });
+
+  test("never asks again about a pair the owner dismissed — even after a re-import renumbers it", () => {
+    const [a, b] = realDuplicatePair();
+    flagDuplicateCandidates(bundle.db, [accountId]);
+    const pair = candidates()[0]!;
+    bundle.db
+      .update(duplicateCandidates)
+      .set({ resolution: "dismissed", resolvedAt: "2026-07-10" })
+      .where(eq(duplicateCandidates.id, pair.id))
+      .run();
+
+    // un-import + re-import: the same two charges come back as BRAND-NEW rows.
+    // An id-keyed memory would forget the owner's answer here and ask again —
+    // which is exactly the import-order dependence this table exists to end.
+    bundle.db.delete(transactions).where(eq(transactions.id, a)).run();
+    bundle.db.delete(transactions).where(eq(transactions.id, b)).run();
+    const [a2, b2] = realDuplicatePair();
+
+    expect(flagDuplicateCandidates(bundle.db, [accountId])).toBe(0);
+    expect(candidates().filter((c) => c.resolution === "unresolved")).toHaveLength(0);
+    expect(isFlagged(a2)).toBe(false);
+    expect(isFlagged(b2)).toBe(false);
+  });
+
+  test("re-opens a settled pair when the retired copy comes back", () => {
+    const [a, b] = realDuplicatePair();
+    flagDuplicateCandidates(bundle.db, [accountId]);
+    const pair = candidates()[0]!;
+    // settled by retiring one side...
+    bundle.db
+      .update(duplicateCandidates)
+      .set({ resolution: "confirmed_duplicate", retiredTransactionId: b, retiredFromStatus: "active" })
+      .where(eq(duplicateCandidates.id, pair.id))
+      .run();
+    bundle.db.update(transactions).set({ status: "superseded" }).where(eq(transactions.id, b)).run();
+    // ...and while it is retired the pair cannot be re-derived at all
+    expect(flagDuplicateCandidates(bundle.db, [accountId])).toBe(0);
+    expect(candidates()[0]!.resolution).toBe("confirmed_duplicate");
+
+    // the retired row returns (undone by hand, or restored by an un-import)
+    bundle.db.update(transactions).set({ status: "active" }).where(eq(transactions.id, b)).run();
+
+    flagDuplicateCandidates(bundle.db, [accountId]);
+
+    const reopened = candidates()[0]!;
+    expect(reopened.resolution).toBe("unresolved");
+    expect(reopened.retiredTransactionId).toBeNull();
+    expect(isFlagged(a)).toBe(true);
+    expect(isFlagged(b)).toBe(true);
+  });
+
+  test("records nothing when the description gate vetoes the pair", () => {
+    insertTxn({ description: "MICROSOFT CUSIP MSFT", postedOn: "2026-06-23", amountCents: -400000 });
+    insertTxn({
+      importFileId: fileB,
+      description: "cash settlement crypto purchase",
+      postedOn: "2026-06-23",
+      amountCents: -400000,
+    });
+
+    expect(flagDuplicateCandidates(bundle.db, [accountId])).toBe(0);
+    expect(candidates()).toHaveLength(0);
   });
 });

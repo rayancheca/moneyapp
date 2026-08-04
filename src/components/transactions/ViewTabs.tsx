@@ -4,6 +4,7 @@ import { filtersToQuery, TXN_VIEWS, type TxnFilters, type TxnView } from "./quer
 const VIEW_LABELS: Record<TxnView, string> = {
   all: "All",
   review: "Review",
+  duplicates: "Duplicates",
   quarantined: "Quarantined",
   excluded: "Excluded",
 };
