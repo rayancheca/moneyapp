@@ -61,6 +61,31 @@ describe("createCashWallet", () => {
     expect(latestBalances(bundle.db).get(id)!.balanceCents).toBe(-2_000);
   });
 
+  test("an opening balance lands on the books, so creating a wallet moves net worth", () => {
+    // the reported bug: a wallet could only ever open at $0, so adding a cash
+    // account with $200 in it changed no balance anywhere
+    const id = createCashWallet(bundle.db, {
+      name: "Pocket",
+      openingOn: "2026-06-01",
+      openingBalanceCents: 20_000,
+    });
+    expect(latestBalances(bundle.db).get(id)!.balanceCents).toBe(20_000);
+
+    // and it composes with transactions rather than replacing them
+    addManualTransaction(bundle.db, {
+      accountId: id,
+      postedOn: "2026-06-01", // same day as the opening date
+      amountCents: -2_000,
+      description: "Coffee",
+    });
+    expect(latestBalances(bundle.db).get(id)!.balanceCents).toBe(18_000);
+  });
+
+  test("omitting the opening balance still opens the wallet empty", () => {
+    const id = createCashWallet(bundle.db, { name: "Empty", openingOn: "2026-06-01" });
+    expect(latestBalances(bundle.db).get(id)!.balanceCents).toBe(0);
+  });
+
   test("reuses the single Cash institution across wallets; defaults opening to today", () => {
     const a = createCashWallet(bundle.db, { name: "Wallet A" });
     const b = createCashWallet(bundle.db, { name: "Wallet B" });

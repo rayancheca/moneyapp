@@ -133,13 +133,18 @@ function NewWalletForm({
 }) {
   const [name, setName] = useState("");
   const [openingOn, setOpeningOn] = useState(today);
+  const [openingBalance, setOpeningBalance] = useState("");
   const [busy, setBusy] = useState(false);
-  const canSubmit = name.trim() !== "" && !busy;
+  // an empty box means "start empty"; validate on CENTS so a sub-cent entry
+  // cannot round into a silently different opening figure
+  const openingCents = openingBalance.trim() === "" ? 0 : Math.round(Number(openingBalance) * 100);
+  const openingValid = Number.isFinite(openingCents) && openingCents >= 0;
+  const canSubmit = name.trim() !== "" && openingValid && !busy;
 
   function submit(): void {
     if (!canSubmit) return;
     setBusy(true);
-    void createCashWalletAction({ name: name.trim(), openingOn }).then((r) => {
+    void createCashWalletAction({ name: name.trim(), openingOn, openingBalanceCents: openingCents }).then((r) => {
       setBusy(false);
       if (!r.ok) {
         toast({ title: r.error, tone: "negative" });
@@ -156,10 +161,25 @@ function NewWalletForm({
         e.preventDefault();
         submit();
       }}
-      className="grid gap-3 rounded-(--radius-card) border border-line p-3 sm:grid-cols-[1fr_auto_auto_auto] sm:items-end"
+      className="grid gap-3 rounded-(--radius-card) border border-line p-3 sm:grid-cols-[1fr_auto_auto_auto_auto] sm:items-end"
     >
       <Field label="Wallet name">
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Cash" fieldSize="sm" autoFocus />
+      </Field>
+      <Field label="Cash on hand">
+        {/* the wallet's opening anchor — without it a new wallet could only
+            open empty, so creating one never moved a single balance */}
+        <Input
+          type="number"
+          min="0"
+          step="0.01"
+          inputMode="decimal"
+          value={openingBalance}
+          onChange={(e) => setOpeningBalance(e.target.value)}
+          placeholder="0.00"
+          fieldSize="sm"
+          className="figures"
+        />
       </Field>
       <Field label="Opening date">
         {/* the opening date becomes the wallet's first anchor — bound the year
