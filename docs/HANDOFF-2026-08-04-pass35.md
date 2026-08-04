@@ -5,6 +5,10 @@
 > resolve a double count that is neither a delete nor a lie. The owner's cash wallet also has its
 > real opening balance. Read `docs/HANDOFF-2026-08-04-pass34.md` §2–§3 first — this pass is the
 > other half of that one.
+>
+> **⚠️ Pass 36 has a stated goal — "finish polishing the app so i can host it". Start at §7, and
+> read §7.0 before planning: hosting itself is 5–7 hours with no rewrite, so the work is the
+> polish, not the infrastructure.**
 
 ## 1. Repo state
 
@@ -273,12 +277,103 @@ rows in `afterAll`.
 
 ---
 
-## 7. Next
+## 7. THE ROAD TO HOSTING — the owner's stated goal for pass 36
 
-1. **The transfer-detector fix for the 33 rows** (§4) — the only way that queue empties for good.
-2. §5 items 1–2: make an open duplicate visible from outside its own tab.
-3. Pass 34 §5 items 3–5: the wallet-creation defects in the *other* form (`createAccountResultAction`
-   has the same orphan class, anchors on the day instead of the day before, and a cash wallet can be
-   typed `investment` and then be ignored by derivation).
-4. Pass 34 §5 item 6: the bounded batch-boundary import test.
-5. **Hosting — ⛔ still NOT YET, by explicit instruction.**
+> **New instruction, 2026-08-04, verbatim: *"i want to finish polishing the app so i can host it."***
+> The long-standing ⛔ on hosting is therefore **lifted as a direction of travel** — but read §7.0
+> before planning anything, because the premise most people bring to this is wrong.
+
+### 7.0 Hosting is NOT the big job. Read this first.
+
+`docs/hosting-and-auth-plan.md` (2026-07-27, measured against this worktree) already answered the
+hosting question with high confidence, and the answer is **local Mac + Tailscale Serve: 5–7 hours,
+$0/month, ZERO code rewrite, and the real financial data never leaves the machine.**
+
+That matters because the intuitive plan — "move it to a real host" — costs **25–40 engineering
+hours of the highest-risk refactor in the codebase** and buys almost nothing. Any hosted database
+means an async driver, and the measured blast radius is **79 files, 448 sync call sites, 211
+service functions that would become `async`, and 30+ `db.transaction()` callbacks**. Those
+transactions wrap every money-mutating path (`categorize.ts`, `bulk-edit.ts`,
+`transaction-splits.ts`, `import/service.ts`). **A missed `await` inside a transaction does not
+throw — it silently commits partial state**, against a ledger reconciled to the cent over 35 passes.
+
+Three more measured blockers for any serverless host, independent of the database:
+- `src/db/backup.ts` uses better-sqlite3's **online backup API**, which does not exist in
+  `@libsql/client` or any Postgres driver — a full rewrite of the restore-point system.
+- `import/service.ts` writes statement originals to disk; an ephemeral filesystem loses the
+  archive on every redeploy.
+- `next.config.ts:8` sets `serverActions.bodySizeLimit: "100mb"` for batch PDF imports. Vercel's
+  serverless limit is 4.5 MB, so **batch import breaks on serverless regardless of the database**.
+
+**So: do not start a hosting migration. The remaining work is polishing the app itself**, plus the
+three small perimeter changes in §7.1. Hosting is then a half-day of the owner's own machine setup.
+
+### 7.1 Actually pre-hosting (code) — small, do it first, ~2 hours
+
+All three verified still outstanding as of this commit:
+
+1. **`src/middleware.ts` → `src/proxy.ts`.** Middleware is deprecated in Next 16. Official codemod:
+   `npx @next/codemod@canary middleware-to-proxy .`
+2. **Make the host allowlist configurable.** `src/middleware.ts:3` hard-codes
+   `["localhost","127.0.0.1","::1","[::1]"]` and 403s everything else (`:14-16`). That is correct
+   DNS-rebinding defence and it is **the one line that blocks every remote-access plan**. Read the
+   extra hosts from `MONEYAPP_ALLOWED_HOSTS`, keeping loopback as the default so the local-only
+   posture is unchanged when unset.
+3. **Test the perimeter.** It has no test today. Assert an unknown `Host` still 403s and that only
+   the configured host is admitted. This is the app's entire security boundary.
+
+⚠️ **Keep `-H 127.0.0.1` in `package.json:7,9`.** Counter-intuitive but correct: Tailscale Serve
+terminates TLS and proxies *to* loopback, so the app stays reachable **only** through the tailnet
+and never listens on the LAN. Changing the bind would make it strictly less safe.
+
+### 7.2 Correctness polish — highest owner-visible value
+
+4. **The transfer-detector fix for the 33 review rows** (§2, §4). The only way that queue ever
+   empties. Prior art for the shape already exists at `categorize.ts:616-624` (a same-day mirror
+   multiset resolved deterministically by id); generalise it so N equal outflows facing N equal
+   inflows between the same two accounts pair by a deterministic bijection. Safe because with
+   identical amounts every bijection gives the same aggregate flow. **Verify by re-running
+   `detectTransfers` on a COPY and checking the queue goes to ~0 without any pairing that crosses
+   an account boundary it shouldn't.**
+5. **The wallet-creation defects in the OTHER form** (pass 34 §5 items 3–5, still open):
+   `createAccountResultAction` has the same orphan class fixed in `createCashWallet`, anchors on
+   the opening day rather than the day *before* (so a same-day first transaction is silently
+   invisible), a cash wallet can be typed `investment` and then be ignored by derivation entirely,
+   and the create form rejects `1,800` while the inline editor beside it accepts `$1,800.00`.
+6. **Make an open duplicate visible from outside its own tab** (§5 items 1–2). Today a double count
+   raises the Duplicates tab count but not the sidebar badge, so it is invisible from anywhere else.
+7. **The bounded batch-boundary import test** (pass 34 §5 item 6). Note the investigation's
+   conclusion: permuting one `importStatementFiles` call is a provable no-op because the service
+   sorts its input (`service.ts:628-630`), so test the BATCH BOUNDARY, not permutations.
+
+### 7.3 Quality polish — the "is it finished" list
+
+8. **Re-measure the Phase 2 perf backlog before touching it.** Pass 31's 16.4× `compareDates` fix
+   moved what is actually slow; items 24/26/32/30/29/25 were prioritised against the old profile and
+   their premises may no longer hold. **Re-profile first** — pass 31's own lesson is that the
+   backlog named the right symptom and the wrong cause.
+9. **A touch-emulation Playwright project.** `playwright.config.ts:41` is a single desktop chromium
+   with no `hasTouch`, so **every `pointer-coarse:` branch in the app has never once executed** —
+   on the owner's iPhone 17 Pro Max, that is the only branch that runs.
+10. **Pin `TZ` in the test configs** (pass 30). A timezone bug was undetectable on an Eastern box;
+    the source-text guard is currently the only defence.
+11. **Tighten `maxDiffPixelRatio`** — pass 29 proved removing a visible pill moved no baseline, so
+    the visual gate is looser than it looks.
+12. **Responsive sweep at 320/375 on the real routes.** Pass 29 found three routes that genuinely
+    scroll sideways on the owner's own phone; new surfaces (including this pass's Duplicates tab,
+    which was checked at 320/375/768/1440 and is clean) need the same treatment as they land.
+
+### 7.4 The owner's own steps — NOT code, do not attempt from the agent side
+
+Tailscale install + sign-in on Mac/phone/tablet, MagicDNS + HTTPS certs, `tailscale serve --bg 3000`,
+a `launchd` plist so the server survives reboot, and Energy Saver so the Mac does not sleep.
+Full step-by-step in `docs/hosting-and-auth-plan.md` §3.
+
+⚠️ **`tailscale funnel` must NEVER be enabled** — Serve is private-tailnet-only; Funnel is the
+public internet.
+
+⚠️ **§7.4 Phase 5 is the one not to skip: off-machine encrypted backups.** Tailscale solves access,
+not durability — the ledger is currently single-copy on one laptop. Back up
+`data/backups/daily-*.db` (produced by the safe online-backup API), **never** the live
+`moneyapp.db`; copying a live WAL database is precisely the corruption `backup.ts` exists to avoid.
+And verify a restore once, on a copy — an unverified backup is not a backup.
