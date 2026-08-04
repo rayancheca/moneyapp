@@ -249,8 +249,18 @@ export default async function ImportsPage({
                 <tbody>
                   {files.map((f) => (
                     <tr key={f.id} className="border-b border-line/60 last:border-0">
-                      <td className="max-w-[16rem] truncate py-1.5 pr-2 text-[13px]" title={f.fileName}>
-                        {f.fileName}
+                      {/* the reason a file failed has to be readable without
+                          hovering — a bulk drop of statements is exactly when
+                          a silent row is most likely to be scrolled past */}
+                      <td className="max-w-[16rem] py-1.5 pr-2 text-[13px]">
+                        <div className="truncate" title={f.fileName}>
+                          {f.fileName}
+                        </div>
+                        {f.error ? (
+                          <div className="truncate text-[11px] text-negative" title={f.error}>
+                            {f.error}
+                          </div>
+                        ) : null}
                       </td>
                       <td className="py-1.5 pr-2 text-xs text-ink-muted">{f.parserProfile ?? "—"}</td>
                       <td className="figures py-1.5 pr-2 text-right text-xs">{f.txnCount}</td>

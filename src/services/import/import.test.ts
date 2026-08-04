@@ -196,6 +196,23 @@ describe("structured imports", () => {
     expect(starbucks.map((r) => r.status).sort()).toEqual(["active", "superseded"]);
   });
 
+  test("an unrecognised file fails with a reason, and a scanned PDF says so specifically", async () => {
+    // a real PDF header, but no extractable text and no known layout
+    const scanned: ImportInput = { name: "scan.pdf", buffer: Buffer.from("%PDF-1.4\nnot really a pdf") };
+    const unknown: ImportInput = { name: "mystery.csv", buffer: Buffer.from("Col A,Col B\n1,2") };
+    await importStatementFiles(bundle.db, [scanned, unknown]);
+
+    const rows = bundle.db.select().from(importFilesTable).all();
+    const scannedRow = rows.find((r) => r.fileName === "scan.pdf")!;
+    const unknownRow = rows.find((r) => r.fileName === "mystery.csv")!;
+    expect(scannedRow.status).toBe("failed");
+    expect(scannedRow.error).toMatch(/scanned or image-only PDF/);
+    expect(unknownRow.status).toBe("failed");
+    expect(unknownRow.error).toBe("No parser profile matched this file");
+    // one bad file must never abort the batch
+    expect(rows).toHaveLength(2);
+  });
+
   test("a single-account file is archived under its per-account folder", async () => {
     await importStatementFiles(bundle.db, [load("chase", "Chase4321_Activity_2024-07-01_2024-09-30.QFX")]);
     const file = bundle.db.select().from(importFilesTable).all()[0]!;

@@ -658,20 +658,27 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
  * The document is extracted at most once, and only when some candidate asks
  * for it, so files with an unambiguous filename cost nothing extra.
  */
-async function selectProfile(file: ReturnType<typeof sniffFile>): Promise<ParserProfile | undefined> {
+async function selectProfile(
+  file: ReturnType<typeof sniffFile>,
+): Promise<{ profile: ParserProfile | undefined; unreadable: boolean }> {
   const candidates = PROFILES.filter((p) => p.matches(file));
-  if (candidates.length === 0) return undefined;
-  if (!candidates.some((p) => p.matchesContent)) return candidates[0];
+  if (candidates.length === 0) return { profile: undefined, unreadable: false };
+  if (!candidates.some((p) => p.matchesContent)) return { profile: candidates[0], unreadable: false };
 
   let content = file.text;
   if (file.format === "pdf") {
     try {
       content = (await extractLines(file.buffer)).map((l) => l.text).join("\n");
     } catch {
-      content = ""; // unreadable PDF — gates fail closed, parse() reports loudly
+      content = ""; // unreadable PDF — gates fail closed, reported below
     }
   }
-  return candidates.find((p) => (p.matchesContent ? p.matchesContent(content) : true));
+  return {
+    profile: candidates.find((p) => (p.matchesContent ? p.matchesContent(content) : true)),
+    // a scanned/image-only statement is a different problem with a different
+    // fix than one whose text simply matched no known layout — say which
+    unreadable: file.format === "pdf" && content.trim() === "",
+  };
 }
 
 async function importOneFile(
@@ -680,7 +687,7 @@ async function importOneFile(
   touchedAccounts: Set<string>,
 ): Promise<FileOutcome> {
   const sha = fileSha256(file.buffer);
-  const profile = await selectProfile(file);
+  const { profile, unreadable } = await selectProfile(file);
   const outcome: FileOutcome = {
     fileName: file.name,
     status: "parsed",
@@ -755,11 +762,14 @@ async function importOneFile(
       .get();
 
   if (!profile) {
+    const message = unreadable
+      ? "No text could be extracted — this looks like a scanned or image-only PDF"
+      : "No parser profile matched this file";
     db.update(importFiles)
-      .set({ status: "failed", error: "No parser profile matched this file" })
+      .set({ status: "failed", error: message })
       .where(eq(importFiles.id, fileRow.id))
       .run();
-    return { ...outcome, status: "failed", error: "No parser profile matched this file" };
+    return { ...outcome, status: "failed", error: message };
   }
 
   let statements: ParsedStatement[];
