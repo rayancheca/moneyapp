@@ -461,6 +461,81 @@ describe("PDF statements + reconciliation", () => {
     restore.sqlite.close();
   });
 
+  test("accepting a gap never promotes a row another file already recorded", async () => {
+    // 1. a statement that does not reconcile → its rows sit quarantined
+    await importStatementFiles(bundle.db, [loadDir("discover", "corrupted")[0]!]);
+    const period = bundle.db.select().from(statementPeriods).all()[0]!;
+    expect(period.reconciliation).toBe("gap");
+    const quarantined = bundle.db
+      .select()
+      .from(transactions)
+      .where(eq(transactions.status, "quarantined"))
+      .all();
+    expect(quarantined.length).toBeGreaterThanOrEqual(2);
+
+    // 2. a SECOND pdf source records the same two charges in its own words.
+    //    Built by hand because it is the one shape the fixture set has no
+    //    example of, and the only shape that reaches the bug: an exact
+    //    dedupe-hash match already sees quarantined rows, and a higher-fidelity
+    //    format (csv over pdf) takes them over instead. Equal-priority pdf +
+    //    different wording is exactly the real pairing — a Chase card
+    //    statement and a Chase Spending Report.
+    const other = bundle.db
+      .insert(importFilesTable)
+      .values({
+        fileName: "spending-report.pdf",
+        fileSha256: "second-source-sha",
+        format: "pdf",
+        institutionId: bundle.db.select().from(importFilesTable).all()[0]!.institutionId,
+        parserProfile: "chase-spending-report-pdf",
+        parserVersion: 1,
+        status: "parsed",
+        storagePath: path.join(dir, "originals", "spending-report.pdf"),
+        importedAt: new Date().toISOString(),
+      })
+      .returning()
+      .get();
+    const dupes = quarantined.slice(0, 2);
+    for (const d of dupes) {
+      const raw = `OTHER SOURCE ${d.id.slice(0, 6)}`;
+      bundle.db
+        .insert(transactions)
+        .values({
+          accountId: d.accountId,
+          importFileId: other.id,
+          postedOn: d.postedOn, // same day and amount, different wording
+          amountCents: d.amountCents,
+          rawDescription: raw,
+          normalizedDescription: raw,
+          status: "active",
+          dedupeHash: dedupeHash({
+            accountId: d.accountId,
+            postedOn: d.postedOn,
+            amountCents: d.amountCents,
+            rawDescription: raw,
+            occurrenceIndex: 0,
+          }),
+        })
+        .run();
+    }
+
+    // 3. accepting the gap must NOT hand analytics two copies of the same money
+    acceptGap(bundle.db, period.id);
+
+    expect(bundle.db.select().from(transactions).where(eq(transactions.status, "quarantined")).all()).toHaveLength(0);
+    const superseded = bundle.db.select().from(transactions).where(eq(transactions.status, "superseded")).all();
+    expect(superseded).toHaveLength(2);
+    // the other file's copies survive; the statement's duplicates stepped aside
+    expect(superseded.every((t) => !t.rawDescription.startsWith("OTHER SOURCE"))).toBe(true);
+
+    // the money is counted exactly once — every charge in the period, no more
+    const active = bundle.db.select().from(transactions).where(eq(transactions.status, "active")).all();
+    expect(active).toHaveLength(quarantined.length);
+    expect(active.reduce((s, t) => s + t.amountCents, 0)).toBe(
+      quarantined.reduce((s, t) => s + t.amountCents, 0),
+    );
+  });
+
   test("Robinhood statements become value anchors with computed market change", async () => {
     const pdfs = loadDir("robinhood", "statements").slice(0, 4);
     await importStatementFiles(bundle.db, pdfs);

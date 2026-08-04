@@ -1200,7 +1200,12 @@ export function reconcileAccounts(db: AppDatabase, accountIds: string[]): void {
           .set({ reconciliation: gap === 0 ? "reconciled" : "gap", gapCents: gap === 0 ? null : gap })
           .where(eq(statementPeriods.id, period.id))
           .run();
-        // quarantine policy: this period's own file's rows hold until resolved
+        // quarantine policy: this period's own file's rows hold until resolved.
+        // Deliberately a blind flip, unlike acceptGap's promoteQuarantinedRows:
+        // the gap above is summed over active AND quarantined rows for this
+        // account and date range, so a gap of 0 is a verdict reached WITH these
+        // rows counted. Setting any of them aside here would change the very
+        // sum that just reconciled and re-open the gap on the next run.
         const target = gap === 0 ? "active" : "quarantined";
         const from = gap === 0 ? "quarantined" : "active";
         tx.update(transactions)
@@ -1337,6 +1342,70 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
   });
 }
 
+/**
+ * Return a period's quarantined rows to analytics — except any whose money
+ * another file has since recorded as a live row.
+ *
+ * Quarantined rows are deliberately kept OUT of the import-time identity pool
+ * (see IdentityPool): they do not affect balances, so an incoming
+ * balance-affecting row must not vanish against one. The price of that choice
+ * is that a period which sat quarantined while an overlapping export was
+ * imported now holds a second copy of its own rows. Promoting them all would
+ * turn every such pair into a double count — measured at 66 rows on one real
+ * card period, and the reconciliation sum at reconcileAccounts() counts both
+ * copies too, because it is scoped by account and date, not by file.
+ *
+ * So promotion replays the very match the importer would have made had these
+ * rows been active at the time, and supersedes the losers. That is the same
+ * `consumeIdentity` machinery, so a row is only ever set aside for one that
+ * claims the same day (posted or transacted) AND the same amount — never a
+ * fuzzy window. The surviving copy is the other file's, not this one's, so the
+ * money and the row count are right; strict order-independence would also
+ * require the same FILE to win, which would mean superseding already-active
+ * rows and destroying whatever the user has since set on them.
+ */
+function promoteQuarantinedRows(
+  tx: AppDatabase,
+  accountId: string,
+  importFileId: string,
+  periodStart: string,
+  periodEnd: string,
+): { activated: number; superseded: number } {
+  const rows = tx
+    .select({
+      id: transactions.id,
+      postedOn: transactions.postedOn,
+      transactedOn: transactions.transactedOn,
+      amountCents: transactions.amountCents,
+    })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.accountId, accountId),
+        eq(transactions.importFileId, importFileId),
+        eq(transactions.status, "quarantined"),
+        gte(transactions.postedOn, periodStart),
+        lte(transactions.postedOn, periodEnd),
+      ),
+    )
+    // deterministic: which duplicate absorbs which slot must not depend on
+    // SQLite's row order
+    .orderBy(transactions.postedOn, transactions.id)
+    .all();
+
+  const pool = existingIdentityPool(tx, accountId, importFileId);
+  let superseded = 0;
+  for (const row of rows) {
+    const alreadyRecorded = consumeIdentity(pool, row.postedOn, row.transactedOn ?? undefined, row.amountCents);
+    tx.update(transactions)
+      .set({ status: alreadyRecorded ? "superseded" : "active" })
+      .where(eq(transactions.id, row.id))
+      .run();
+    if (alreadyRecorded) superseded++;
+  }
+  return { activated: rows.length - superseded, superseded };
+}
+
 /** Accept a gap: the user takes the statement as-is; rows return to analytics. */
 export function acceptGap(db: AppDatabase, statementPeriodId: string): void {
   const period = db.select().from(statementPeriods).where(eq(statementPeriods.id, statementPeriodId)).get();
@@ -1349,18 +1418,7 @@ export function acceptGap(db: AppDatabase, statementPeriodId: string): void {
         .set({ reconciliation: "accepted" })
         .where(eq(statementPeriods.id, statementPeriodId))
         .run();
-      tx.update(transactions)
-        .set({ status: "active" })
-        .where(
-          and(
-            eq(transactions.accountId, period.accountId),
-            eq(transactions.importFileId, period.importFileId),
-            eq(transactions.status, "quarantined"),
-            gte(transactions.postedOn, period.periodStart),
-            lte(transactions.postedOn, period.periodEnd),
-          ),
-        )
-        .run();
+      promoteQuarantinedRows(tx, period.accountId, period.importFileId, period.periodStart, period.periodEnd);
     });
     categorizeAll(db);
     detectTransfers(db);
