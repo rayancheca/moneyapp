@@ -19,6 +19,15 @@ import { compareDates, isValidIsoDate } from "./dates";
 export const MIN_FINANCIAL_DATE = "1970-01-01";
 export const MAX_FINANCIAL_DATE = "2099-12-31";
 
+/**
+ * The earliest date something may OPEN on, for the one caller that anchors the
+ * day before its opening date (a cash wallet — see createCashWallet). One day
+ * inside the floor, because the anchor, not the opening date, is what gets
+ * stored and walked. Kept here rather than in the service so a client component
+ * can bound its date input without pulling drizzle into the browser bundle.
+ */
+export const MIN_OPENING_DATE = "1970-01-02";
+
 /** Typed so a caller can tell a bounds rejection from a parse failure. */
 export class DateOutOfRangeError extends Error {
   constructor(field: string, value: string) {

@@ -26,7 +26,15 @@ test("create a cash wallet, add a transaction, and see a derived balance", async
   await sheet.getByRole("button", { name: "Add transaction" }).click();
 
   await expect(page.locator("p", { hasText: /Added to Pocket cash/ })).toBeVisible();
-  // the manual row moved the balance off $0 (spent $20 → −$20)
-  await expect(walletRow).toContainText("20");
-  await expect(walletRow).not.toContainText("$0.00");
+  // The manual row moved the DERIVED balance off $0 (spent $20 → −$20). Asserted
+  // positively on the figure itself: the row also carries an "Opened with $0.00"
+  // subtitle now, and a "row does not contain $0.00" proxy read that as failure
+  // while the balance was in fact correct.
+  await expect(walletRow).toContainText("-$20.00");
+  // the OPENING is still $0 — the transaction moved the balance, not the anchor
+  await expect(walletRow).toContainText("Opened with");
+  await expect(walletRow.getByRole("button", { name: "Opening cash for Pocket cash" })).toHaveAttribute(
+    "aria-label",
+    /\$0\.00/,
+  );
 });

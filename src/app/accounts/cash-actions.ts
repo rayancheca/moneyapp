@@ -3,7 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getDb } from "@/db/client";
-import { createCashWallet, cashWalletInputSchema, type CashWalletInput } from "@/services/cash-wallets";
+import {
+  createCashWallet,
+  cashWalletInputSchema,
+  cashWalletOpeningSchema,
+  setCashWalletOpening,
+  type CashWalletInput,
+  type CashWalletOpeningInput,
+} from "@/services/cash-wallets";
 import { deleteManualTransaction } from "@/services/manual-transactions";
 import type { ActionResult } from "@/app/transactions/action-types";
 
@@ -30,6 +37,19 @@ export async function createCashWalletAction(
     const accountId = createCashWallet(getDb(), parsed);
     revalidateAccounts();
     return { ok: true, data: { accountId } };
+  } catch (error: unknown) {
+    return fail(error);
+  }
+}
+
+export async function setCashWalletOpeningAction(
+  input: CashWalletOpeningInput,
+): Promise<ActionResult<{ anchoredOn: string }>> {
+  try {
+    const parsed = cashWalletOpeningSchema.parse(input);
+    const result = setCashWalletOpening(getDb(), parsed);
+    revalidateAccounts();
+    return { ok: true, data: result };
   } catch (error: unknown) {
     return fail(error);
   }

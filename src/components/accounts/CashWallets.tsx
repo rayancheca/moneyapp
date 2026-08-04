@@ -1,16 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { Money } from "@/components/ui/Money";
 import { Sheet } from "@/components/ui/Sheet";
 import { toast } from "@/components/ui/Toast";
+import { InlineEditableAmount } from "@/components/ui/InlineEditableAmount";
 import { addManualTransactionAction } from "@/app/transactions/actions";
-import { createCashWalletAction } from "@/app/accounts/cash-actions";
+import { createCashWalletAction, setCashWalletOpeningAction } from "@/app/accounts/cash-actions";
 import { CategoryPicker, type CategoryPickerOption } from "@/components/transactions/CategoryPicker";
-import { MAX_FINANCIAL_DATE, MIN_FINANCIAL_DATE } from "@/lib/date-window";
+import { MAX_FINANCIAL_DATE, MIN_FINANCIAL_DATE, MIN_OPENING_DATE } from "@/lib/date-window";
+import { formatCents } from "@/lib/money";
 
 /**
  * Cash wallets (ux-overhaul-plan §3.7): create an import-free wallet for the
@@ -23,6 +26,8 @@ export interface CashWalletView {
   id: string;
   name: string;
   balanceCents: number | null;
+  openingCents: number | null;
+  anchorCount: number;
 }
 
 interface CashWalletsProps {
@@ -63,8 +68,11 @@ export function CashWallets({ wallets, categories, today }: CashWalletsProps) {
       {wallets.length > 0 ? (
         <ul className="divide-y divide-line">
           {wallets.map((w) => (
-            <li key={w.id} className="flex items-center justify-between gap-3 py-2">
-              <span className="text-sm font-medium">{w.name}</span>
+            <li key={w.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 py-2">
+              <div className="min-w-0">
+                <span className="block truncate text-sm font-medium">{w.name}</span>
+                <OpeningBalance wallet={w} onSaved={refresh} />
+              </div>
               <div className="flex items-center gap-3">
                 {w.balanceCents !== null ? (
                   <Money cents={w.balanceCents} className="figures text-sm text-ink-muted" />
@@ -119,6 +127,64 @@ export function CashWallets({ wallets, categories, today }: CashWalletsProps) {
         />
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The wallet's opening cash, editable in place.
+ *
+ * This is the affordance the create form alone could not provide: a wallet made
+ * before "Cash on hand" existed — or made with the box left empty — opened at
+ * $0 and there was no way to say otherwise, so it read $0.00 forever.
+ *
+ * The DATE is deliberately not editable here. Re-anchoring the wallet's own
+ * opening day is an upsert; a different day would insert a second anchor, and
+ * two unequal anchors with no transactions between them turn the whole span to
+ * basis='gap' and drop it from the chart. The account page's "Record a balance"
+ * form is the place to record a LATER balance.
+ */
+function OpeningBalance({ wallet, onSaved }: { wallet: CashWalletView; onSaved: () => void }) {
+  if (wallet.openingCents === null) return null;
+
+  // Above one recorded balance, editing the opening moves nothing the owner can
+  // see — derivation seeds its forward walk from the LAST anchor. Saying so
+  // beats a success toast over an unchanged number.
+  if (wallet.anchorCount > 1) {
+    // Editing the opening here would move nothing the owner can see — derivation
+    // seeds its forward walk from the LAST anchor — and can flip the span
+    // between the two anchors to basis='gap', which drops those days from the
+    // chart and from net-worth coverage. Withholding the editor without saying
+    // where to go would strand a wallet whose opening is wrong, so link to the
+    // page that can actually reconcile the two figures.
+    return (
+      <span className="text-xs text-ink-faint">
+        Opened with <Money cents={wallet.openingCents} className="figures" /> ·{" "}
+        <Link href={`/accounts/${wallet.id}`} className="underline hover:text-ink">
+          later balances recorded
+        </Link>
+      </span>
+    );
+  }
+
+  return (
+    <span className="flex flex-wrap items-baseline gap-x-1 text-xs text-ink-faint">
+      <span>Opened with</span>
+      <InlineEditableAmount
+        valueCents={wallet.openingCents}
+        label={`Opening cash for ${wallet.name}`}
+        className="text-xs"
+        describe={(cents) => `Opening cash set to ${formatCents(cents)}`}
+        onSave={async (nextCents) => {
+          if (nextCents < 0) return { ok: false, error: "Cash on hand cannot be negative" };
+          const r = await setCashWalletOpeningAction({
+            accountId: wallet.id,
+            openingBalanceCents: nextCents,
+          });
+          if (r.ok) onSaved();
+          return r.ok ? { ok: true } : { ok: false, error: r.error };
+        }}
+      />
+    </span>
   );
 }
 
@@ -190,12 +256,16 @@ function NewWalletForm({
       </Field>
       <Field label="Opening date">
         {/* the opening date becomes the wallet's first anchor — bound the year
-            here so the browser refuses a typo before derivation walks it */}
+            here so the browser refuses a typo before derivation walks it.
+            MIN_OPENING_DATE, not MIN_FINANCIAL_DATE: the anchor lands the day
+            BEFORE this, so the floor itself used to throw after the account row
+            had already been written. The schema refuses it too — this only
+            stops the browser from offering it. */}
         <Input
           type="date"
           value={openingOn}
           onChange={(e) => setOpeningOn(e.target.value)}
-          min={MIN_FINANCIAL_DATE}
+          min={MIN_OPENING_DATE}
           /* today, not MAX_FINANCIAL_DATE: a future opening date parks the whole
              opening balance in the future and drags the net-worth series past
              today — measured, a 2027 date moved the last point to 2026-12-31 */

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { listAccounts, listInstitutions } from "@/services/accounts";
-import { listCashWallets } from "@/services/cash-wallets";
+import { listCashWalletSummaries } from "@/services/cash-wallets";
 import { institutionGroups } from "@/services/institution-groups";
 import { CASH_INSTITUTION_NAME } from "@/services/manual-transactions";
 import { readSettings } from "@/services/settings";
@@ -66,11 +66,7 @@ export default async function AccountsPage({
   const groups = institutionGroups(db).filter((g) => g.institutionName !== CASH_INSTITUTION_NAME);
   const institutions = listInstitutions(db).map((i) => ({ id: i.id, name: i.name }));
   const archived = listAccounts(db).filter((a) => !a.isActive);
-  const cashWallets = listCashWallets(db).map((w) => ({
-    id: w.id,
-    name: w.name,
-    balanceCents: w.balance?.balanceCents ?? null,
-  }));
+  const cashWallets = listCashWalletSummaries(db);
   const categoryOptions = buildCategoryPickerOptions(db.select().from(categories).all());
 
   // switchable-view state (NS#2 Pillar 2): URL > persisted preference > default
