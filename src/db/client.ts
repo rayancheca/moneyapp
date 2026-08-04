@@ -70,30 +70,54 @@ const g = globalThis as unknown as { __moneyappDb?: DbBundle };
  */
 function applyPendingMigrations(bundle: DbBundle): void {
   const migrationsFolder = defaultMigrationsFolder();
-  let expected: number;
+  let newestOnDisk: number;
+  let newestApplied: number;
   try {
     const journal = fs.readFileSync(path.join(migrationsFolder, "meta", "_journal.json"), "utf8");
-    expected = (JSON.parse(journal) as { entries: unknown[] }).entries.length;
+    const entries = (JSON.parse(journal) as { entries: { when: number }[] }).entries;
+    if (entries.length === 0) return;
+    newestOnDisk = Math.max(...entries.map((e) => e.when));
+    // Must be drizzle's OWN predicate, not a count: its migrator applies a file
+    // only when the newest applied created_at is older than that file's
+    // timestamp. Counting instead disagrees in both directions — a journal
+    // entry stamped older than the watermark makes the count trail forever
+    // while migrate() correctly applies nothing (so this would re-run it, and
+    // open a write transaction, on every single call), and a migration swapped
+    // for a differently-stamped one across a branch or worktree keeps the count
+    // equal while a real migration is pending. This repo hand-edits the journal
+    // (entry 4 is an exactly-round `when`) and uses worktrees, so both are live.
+    newestApplied = Number(
+      (bundle.sqlite.prepare("SELECT max(created_at) AS t FROM __drizzle_migrations").get() as { t: number | null })
+        .t ?? 0,
+    );
   } catch {
-    return; // no journal to compare against (in-memory/test databases)
+    return; // no journal, or never migrated — createDatabase() owns that path
   }
-  let applied: number;
+  if (newestApplied >= newestOnDisk) return;
   try {
-    applied = (bundle.sqlite.prepare("SELECT count(*) AS n FROM __drizzle_migrations").get() as { n: number }).n;
-  } catch {
-    return; // never migrated — createDatabase() owns that path
+    migrate(bundle.db, { migrationsFolder });
+  } catch (error: unknown) {
+    // Never take down every page over this. Two processes can both see the
+    // same pending migration, both decide to apply, then serialize — the loser
+    // hits "table already exists", which is not a reason to 500 a request that
+    // has nothing to do with the new table. Let the original, specific
+    // "no such table" surface instead if the schema really is behind.
+    console.error("[db] pending migration did not apply — restart the dev server:", error);
   }
-  if (applied < expected) migrate(bundle.db, { migrationsFolder });
 }
 
 export function getDbBundle(): DbBundle {
-  const existing = g.__moneyappDb;
-  if (existing) {
-    if (process.env.NODE_ENV !== "production") applyPendingMigrations(existing);
-    return existing;
-  }
-  g.__moneyappDb = createDatabase();
+  g.__moneyappDb ??= createDatabase();
   return g.__moneyappDb;
+}
+
+// Runs at module evaluation, which in dev is exactly once per hot reload — the
+// only moment a new migration file can appear while the process lives. Doing it
+// here rather than inside getDbBundle() keeps fs + JSON.parse out of every
+// request while still catching the case createDatabase() cannot: a connection
+// opened before the migration existed.
+if (process.env.NODE_ENV !== "production" && g.__moneyappDb) {
+  applyPendingMigrations(g.__moneyappDb);
 }
 
 export function getDb(): AppDatabase {

@@ -161,8 +161,15 @@ function NewWalletForm({
         e.preventDefault();
         submit();
       }}
-      className="grid gap-3 rounded-(--radius-card) border border-line p-3 sm:grid-cols-[1fr_auto_auto_auto_auto] sm:items-end"
+      className="grid gap-3 rounded-(--radius-card) border border-line p-3"
     >
+      {/* three fields at most on one row, and the buttons on their own — a
+          fourth control here pushed Create and Cancel outside the viewport
+          between 768 and 1024px, where the overflow gate (320/375/440) cannot
+          see because the form has already stacked at those widths */}
+      {/* lg, not sm: measured, the three controls need 833px of content width,
+          so at 768-900 a sm: breakpoint scrolls the whole document sideways */}
+      <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto] lg:items-end">
       <Field label="Wallet name">
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Cash" fieldSize="sm" autoFocus />
       </Field>
@@ -189,17 +196,23 @@ function NewWalletForm({
           value={openingOn}
           onChange={(e) => setOpeningOn(e.target.value)}
           min={MIN_FINANCIAL_DATE}
-          max={MAX_FINANCIAL_DATE}
+          /* today, not MAX_FINANCIAL_DATE: a future opening date parks the whole
+             opening balance in the future and drags the net-worth series past
+             today — measured, a 2027 date moved the last point to 2026-12-31 */
+          max={today}
           fieldSize="sm"
           className="figures"
         />
       </Field>
-      <Button type="submit" size="sm" pending={busy} disabled={!canSubmit}>
-        Create
-      </Button>
-      <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-        Cancel
-      </Button>
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" size="sm" pending={busy} disabled={!canSubmit}>
+          Create
+        </Button>
+      </div>
     </form>
   );
 }
