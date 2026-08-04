@@ -8,6 +8,7 @@ import { seedDatabase } from "@/db/seed";
 import { dailyBalances } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
+import { importFiles } from "@/db/schema/imports";
 import {
   transactions,
   type CategorizationSource,
@@ -605,5 +606,91 @@ describe("markAllReviewedBefore — the §3.3 amnesty", () => {
       affected: 0,
       undo: { rows: [] },
     });
+  });
+});
+
+describe("promoting a row out of quarantine asks whether its money is already recorded", () => {
+  /**
+   * The quarantine dedupe gap: quarantined rows are invisible to the
+   * import-time identity pool, so a file imported during a quarantine can
+   * record the same charges again. Every path that returns such a row to
+   * balance replay therefore has to ask the question — these are the three in
+   * this module, which pass 33 named as missed. The rows are FLAGGED, never
+   * superseded (a deleted charge is not recoverable; a double count is).
+   */
+  function twinPair(): { quarantined: string; twin: string } {
+    const quarantined = insertTxn({
+      postedOn: "2026-07-09",
+      amountCents: -125,
+      status: "quarantined",
+    });
+    // same money, another file's wording — insertTxn has no importFileId, so
+    // stamp one so the two rows read as two sources
+    const twin = insertTxn({ postedOn: "2026-07-09", amountCents: -125 });
+    bundle.db
+      .update(transactions)
+      .set({ normalizedDescription: "CPI CANTEEN VENDING MIAMI", importFileId: null })
+      .where(eq(transactions.id, quarantined))
+      .run();
+    bundle.db
+      .update(transactions)
+      .set({ normalizedDescription: "CPI CANTEEN VENDING MIAMI 800", importFileId: fileForTwin() })
+      .where(eq(transactions.id, twin))
+      .run();
+    return { quarantined, twin };
+  }
+
+  function fileForTwin(): string {
+    const inst = bundle.db.select().from(institutions).all()[0]!;
+    return bundle.db
+      .insert(importFiles)
+      .values({
+        fileName: "spending-report.pdf",
+        fileSha256: `sha-${Math.abs(seed())}`,
+        format: "pdf",
+        institutionId: inst.id,
+        status: "parsed",
+        storagePath: "/tmp/x.pdf",
+        importedAt: "2026-07-01T00:00:00.000Z",
+      })
+      .returning({ id: importFiles.id })
+      .get().id;
+  }
+
+  let seedN = 0;
+  function seed(): number {
+    seedN += 1;
+    return seedN;
+  }
+
+  test("bulkApply restore flags both copies", () => {
+    const { quarantined, twin } = twinPair();
+    bulkApply(bundle.db, [quarantined], { restore: true });
+    expect(txn(quarantined).needsReview).toBe(true);
+    expect(txn(twin).needsReview).toBe(true);
+    // and NOTHING was superseded or removed
+    expect(txn(quarantined).status).toBe("active");
+    expect(txn(twin).status).toBe("active");
+  });
+
+  test("setTransactionFlags restore flags both copies", () => {
+    const { quarantined, twin } = twinPair();
+    setTransactionFlags(bundle.db, quarantined, { exclude: false });
+    expect(txn(quarantined).needsReview).toBe(true);
+    expect(txn(twin).needsReview).toBe(true);
+  });
+
+  test("an undo that restores a row INTO replay flags it too", () => {
+    const { quarantined, twin } = twinPair();
+    applyUndoPatch(bundle.db, { rows: [{ id: quarantined, prev: { status: "active" } }] });
+    expect(txn(quarantined).needsReview).toBe(true);
+    expect(txn(twin).needsReview).toBe(true);
+  });
+
+  test("a status change that does NOT re-enter replay flags nothing", () => {
+    // active ⇄ excluded both replay, so no money re-entered the ledger
+    const { twin } = twinPair();
+    bulkApply(bundle.db, [twin], { exclude: true });
+    expect(txn(twin).needsReview).toBe(false);
   });
 });

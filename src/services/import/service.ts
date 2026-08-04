@@ -15,11 +15,13 @@ import {
   type TransactionStatus,
 } from "@/db/schema/transactions";
 import { migrateSplits, splitCountsByTxn } from "../transaction-splits";
+import { descriptionScore } from "@/lib/description-score";
 import { assignOccurrenceIndexes, dedupeHash, fileSha256 } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { sumCents } from "@/lib/money";
 import { categorizeAll, detectTransfers } from "../categorize";
 import { rebuildAccount } from "../derivation";
+import { flagDuplicateCandidates } from "../duplicate-flags";
 import { accountSlug, institutionSlug } from "./account-slug";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
@@ -641,11 +643,24 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
   if (touchedAccounts.size > 0) {
     categorizeAll(db);
     detectTransfers(db);
-    flagFuzzyDuplicates(db);
     // reconcile ALL periods of touched accounts again — later files can close
     // or open gaps in earlier files' periods (date-range membership)
     reconcileAccounts(db, [...touchedAccounts]);
     for (const accountId of touchedAccounts) rebuildAccount(db, accountId);
+    // AFTER the reconcile, never before — but NOT to catch the rows the
+    // reconcile promotes. reconcileAccounts only promotes when the gap
+    // recomputes to exactly 0, and it stamps `reconciled` in the same
+    // statement; since its sum counts quarantined rows too, with no file
+    // filter, a period that closes to 0 provably holds no double count and
+    // flagDuplicateCandidates correctly exempts every row in it.
+    //
+    // It runs here because the reconcile is the last thing that MOVES rows in
+    // or out of replay, so this is the first moment the ledger is settled
+    // enough to ask the question at all — for rows in `accepted` periods, in
+    // `not_applicable` periods, and in no period. Running it before the
+    // reconcile (as the pass it replaces did) asked the question of a ledger
+    // that was still being rearranged.
+    flagDuplicateCandidates(db, [...touchedAccounts]);
   }
   return outcomes;
 }
@@ -1023,20 +1038,6 @@ function pickTakeoverVictim(
   return ranked[0]!.s > 0 ? ranked[0]!.c : undefined;
 }
 
-/**
- * How closely two normalized descriptions describe the same charge: 3 equal,
- * 2 one contains the other, 1 a long shared prefix, 0 unrelated. Shared by
- * takeover-victim selection (where 0 vetoes the supersede) and re-parse
- * carry-forward (where it only ranks candidates that already match on money).
- */
-function descriptionScore(candidate: string, incoming: string): number {
-  if (candidate === incoming) return 3;
-  if (candidate.includes(incoming) || incoming.includes(candidate)) return 2;
-  let prefix = 0;
-  while (prefix < Math.min(candidate.length, incoming.length) && candidate[prefix] === incoming[prefix]) prefix++;
-  return prefix >= 8 ? 1 : 0;
-}
-
 function insertTxn(
   tx: AppDatabase,
   db: AppDatabase,
@@ -1220,27 +1221,6 @@ export function reconcileAccounts(db: AppDatabase, accountIds: string[]): void {
   }
 }
 
-/** Residual probable duplicates across files: never silently deleted, only flagged. */
-function flagFuzzyDuplicates(db: AppDatabase): void {
-  const dupes = db.all<{ id: string }>(sql`
-    SELECT t1.id FROM transactions t1
-    JOIN transactions t2
-      ON t1.account_id = t2.account_id
-     AND t1.posted_on = t2.posted_on
-     AND t1.amount_cents = t2.amount_cents
-     AND t1.id != t2.id
-     AND t1.import_file_id != t2.import_file_id
-     AND t1.normalized_description = t2.normalized_description
-    WHERE t1.status = 'active' AND t2.status = 'active'
-      AND t1.transfer_group_id IS NULL AND t2.transfer_group_id IS NULL
-  `);
-  if (dupes.length === 0) return;
-  db.update(transactions)
-    .set({ needsReview: true })
-    .where(inArray(transactions.id, dupes.map((d) => d.id)))
-    .run();
-}
-
 export interface StorageMigration {
   importFileId: string;
   fileName: string;
@@ -1334,6 +1314,9 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
     });
     reconcileAccounts(db, affected);
     for (const accountId of affected) rebuildAccount(db, accountId);
+    // removing a file can CLOSE another file's gap, and reconcileAccounts then
+    // promotes that period's quarantined rows — the same seam as an import
+    flagDuplicateCandidates(db, affected);
   });
 }
 
@@ -1365,5 +1348,12 @@ export function acceptGap(db: AppDatabase, statementPeriodId: string): void {
     categorizeAll(db);
     detectTransfers(db);
     rebuildAccount(db, period.accountId);
+    // The rows just promoted were invisible to the import-time identity pool
+    // for as long as they sat quarantined, so an overlapping export imported
+    // during the quarantine may already record the same charges. They are
+    // FLAGGED, never superseded: an earlier revision picked a winner here on
+    // (day, amount) alone and silently destroyed real charges (reverted in
+    // 3e5a7fc). Outside the transaction above, because flagging writes.
+    flagDuplicateCandidates(db, [period.accountId]);
   });
 }

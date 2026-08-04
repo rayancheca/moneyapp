@@ -461,6 +461,94 @@ describe("PDF statements + reconciliation", () => {
     restore.sqlite.close();
   });
 
+  test("accepting a gap surfaces money another file already recorded — and deletes nothing", async () => {
+    // The quarantine dedupe gap: quarantined rows are deliberately kept OUT of
+    // the import-time identity pool (service.ts existingIdentityPool), so an
+    // overlapping export landing DURING a quarantine cannot dedupe against
+    // them. Accepting the gap then returns a second copy of the same charges.
+    await importStatementFiles(bundle.db, [loadDir("discover", "corrupted")[0]!]);
+    const period = bundle.db.select().from(statementPeriods).all()[0]!;
+    expect(period.reconciliation).toBe("gap");
+    const quarantined = bundle.db
+      .select()
+      .from(transactions)
+      .where(eq(transactions.status, "quarantined"))
+      .all();
+    expect(quarantined.length).toBeGreaterThanOrEqual(2);
+
+    // a SECOND pdf source records the same two charges in its own words — the
+    // real pairing is a card statement and a Spending Report, which agree on
+    // the money and disagree on the text
+    const other = bundle.db
+      .insert(importFilesTable)
+      .values({
+        fileName: "spending-report.pdf",
+        fileSha256: "second-source-sha",
+        format: "pdf",
+        institutionId: bundle.db.select().from(importFilesTable).all()[0]!.institutionId,
+        parserProfile: "chase-spending-report-pdf",
+        parserVersion: 1,
+        status: "parsed",
+        storagePath: path.join(dir, "originals", "spending-report.pdf"),
+        importedAt: new Date().toISOString(),
+      })
+      .returning()
+      .get();
+    const twins = quarantined.slice(0, 2);
+    for (const d of twins) {
+      // contains the quarantined row's text, so descriptionScore is 2 — the
+      // same "describes one purchase" test that vetoes a takeover supersede
+      const raw = `${d.normalizedDescription} REF 8841`;
+      bundle.db
+        .insert(transactions)
+        .values({
+          accountId: d.accountId,
+          importFileId: other.id,
+          postedOn: d.postedOn,
+          amountCents: d.amountCents,
+          rawDescription: raw,
+          normalizedDescription: raw,
+          status: "active",
+          dedupeHash: dedupeHash({
+            accountId: d.accountId,
+            postedOn: d.postedOn,
+            amountCents: d.amountCents,
+            rawDescription: raw,
+            occurrenceIndex: 0,
+          }),
+        })
+        .run();
+    }
+    const before = bundle.db.select().from(transactions).all();
+
+    acceptGap(bundle.db, period.id);
+
+    const after = bundle.db.select().from(transactions).all();
+    // NOTHING is destroyed. An earlier revision superseded the losers here on
+    // (day, amount) alone and silently deleted real charges (reverted 3e5a7fc);
+    // a double count is visible and reversible, a deleted charge is neither.
+    expect(after).toHaveLength(before.length);
+    expect(after.filter((t) => t.status === "superseded")).toHaveLength(0);
+    expect(after.filter((t) => t.status === "quarantined")).toHaveLength(0);
+    const sumOf = (rows: readonly { amountCents: number }[]) =>
+      rows.reduce((s, t) => s + t.amountCents, 0);
+    expect(sumOf(after)).toBe(sumOf(before));
+
+    // instead both copies of each duplicated charge are put to the owner
+    const flagged = after.filter((t) => t.needsReview);
+    const twinDays = new Set(twins.map((t) => `${t.postedOn}${t.amountCents}`));
+    const flaggedTwins = flagged.filter((t) => twinDays.has(`${t.postedOn}${t.amountCents}`));
+    expect(flaggedTwins.length).toBe(2 * twins.length);
+    // one of each pair is the statement's row, the other the second source's
+    expect(flaggedTwins.filter((t) => t.importFileId === other.id)).toHaveLength(twins.length);
+
+    // and a row the second source never claimed is left alone
+    const untouched = quarantined.slice(2);
+    for (const q of untouched) {
+      expect(after.find((t) => t.id === q.id)!.status).toBe("active");
+    }
+  });
+
   test("Robinhood statements become value anchors with computed market change", async () => {
     const pdfs = loadDir("robinhood", "statements").slice(0, 4);
     await importStatementFiles(bundle.db, pdfs);

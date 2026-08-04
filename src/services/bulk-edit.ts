@@ -10,6 +10,7 @@ import {
 } from "@/db/schema/transactions";
 import { isValidIsoDate, todayIso } from "@/lib/dates";
 import { changesReplayMembership, rebuildAccount } from "./derivation";
+import { flagDuplicateCandidates } from "./duplicate-flags";
 import { loadRecomputeCtx, recomputeSeriesStats } from "./recurring";
 import { hasSplits, splitTxnIdsIn } from "./transaction-splits";
 import { transferCategoryResolver, transferKindCategoryIds } from "./transfer-links";
@@ -231,6 +232,10 @@ export function bulkApply(db: AppDatabase, ids: readonly string[], patch: TxnPat
   // OUTSIDE the write transaction: rebuildAccount opens its own, and a nested
   // BEGIN on a synchronous driver throws
   for (const accountId of staleAccounts) rebuildAccount(db, accountId);
+  // staleAccounts is exactly "money that wasn't counted now is" — the promotion
+  // out of quarantine, which is the one status change that can return a charge
+  // another file already recorded. Flagged for review, never superseded.
+  flagDuplicateCandidates(db, [...staleAccounts]);
 
   // affected reflects rows actually mutated (skipped split rows don't count)
   return { affected: undoRows.length, undo: { rows: undoRows } };
@@ -321,6 +326,8 @@ export function applyUndoPatch(db: AppDatabase, undo: UndoPatch): number {
     }
   });
   for (const accountId of staleAccounts) rebuildAccount(db, accountId);
+  // an undo can restore a row INTO balance replay just as the forward edit can
+  flagDuplicateCandidates(db, [...staleAccounts]);
   return restored;
 }
 
@@ -417,6 +424,9 @@ export function setTransactionFlags(
   // bulk path does (active ⇄ excluded both replay, so those cost nothing)
   if (set.status !== undefined && changesReplayMembership(row.status, set.status)) {
     rebuildAccount(db, row.accountId);
+    // same seam as the bulk path: this row's money re-entered the ledger, so
+    // ask whether another file already recorded it
+    flagDuplicateCandidates(db, [row.accountId]);
   }
   return { affected: 1, undo: { rows: [{ id: row.id, prev }] } };
 }
