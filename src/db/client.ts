@@ -56,8 +56,43 @@ export function createDatabase(
 // globalThis-cached singleton or connections accumulate.
 const g = globalThis as unknown as { __moneyappDb?: DbBundle };
 
+/**
+ * Because the bundle above survives hot reload, createDatabase() — and so
+ * migrate() — runs once per SERVER PROCESS, not once per edit. Generating a
+ * migration while `next dev` is running therefore leaves the live server on the
+ * old schema until somebody restarts it, and the symptom arrives much later and
+ * far from the cause: a bare "no such table: price_intraday" on whichever page
+ * touches the new table first. (Measured: that cost a full day.)
+ *
+ * Applying on open is already this module's contract, so applying after a
+ * hot reload is the same contract, not a new behaviour. Dev only — a production
+ * server boots into its own current code and migrates there.
+ */
+function applyPendingMigrations(bundle: DbBundle): void {
+  const migrationsFolder = defaultMigrationsFolder();
+  let expected: number;
+  try {
+    const journal = fs.readFileSync(path.join(migrationsFolder, "meta", "_journal.json"), "utf8");
+    expected = (JSON.parse(journal) as { entries: unknown[] }).entries.length;
+  } catch {
+    return; // no journal to compare against (in-memory/test databases)
+  }
+  let applied: number;
+  try {
+    applied = (bundle.sqlite.prepare("SELECT count(*) AS n FROM __drizzle_migrations").get() as { n: number }).n;
+  } catch {
+    return; // never migrated — createDatabase() owns that path
+  }
+  if (applied < expected) migrate(bundle.db, { migrationsFolder });
+}
+
 export function getDbBundle(): DbBundle {
-  g.__moneyappDb ??= createDatabase();
+  const existing = g.__moneyappDb;
+  if (existing) {
+    if (process.env.NODE_ENV !== "production") applyPendingMigrations(existing);
+    return existing;
+  }
+  g.__moneyappDb = createDatabase();
   return g.__moneyappDb;
 }
 
