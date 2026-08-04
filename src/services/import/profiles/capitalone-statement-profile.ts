@@ -105,14 +105,24 @@ export function parseCapitalOneLines(texts: readonly string[]): CapitalOneParse 
   };
 }
 
+/**
+ * The billing-cycle clause is load-bearing: the brand clause ALONE draws 34
+ * false positives (synthetic and real Chase checking, plus real SoFi, all of
+ * which mention Capital One as a counterparty). This clause is the same period
+ * header the parser itself requires, so gate and parser cannot disagree.
+ * Measured: 6/6 real Capital One statements, 0 of the other 230.
+ */
+export function isCapitalOneStatementText(text: string): boolean {
+  return /\d+ days in Billing Cycle/.test(text) && /(capitalone\.com|Capital One)/i.test(text);
+}
+
 export const capitalOneStatementPdf: ParserProfile = {
   id: PROFILE_ID,
   version: 1,
-  // Capital One's own download naming, or the inbox convention after rename;
-  // parse still verifies content loudly
-  matches: (f) =>
-    f.format === "pdf" &&
-    (/^Statement_\d{6}_\d{4}\.pdf$/i.test(f.name) || /^capitalone-.*statement.*\.pdf$/i.test(f.name)),
+  // 5 of the 6 real files were hand-renamed; only Statement_MMYYYY_<last4>.pdf
+  // is native. Content decides so either imports unrenamed.
+  matches: (f) => f.format === "pdf",
+  matchesContent: isCapitalOneStatementText,
   parse: async (f): Promise<ParsedStatement[]> => {
     const lines = await extractLines(f.buffer);
     if (lines.length === 0) throw new ParseError(PROFILE_ID, "No extractable text — scanned PDF?");

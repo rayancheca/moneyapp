@@ -132,11 +132,23 @@ export function parseChaseCheckingLines(texts: readonly string[]): ChaseChecking
   };
 }
 
+/**
+ * Chase checking and Chase card statements ship under the SAME download name
+ * (<YYYYMMDD>-statements-<last4>-.pdf), so content is the only thing that can
+ * separate them — see isChaseCardStatementText, whose CHECKING_MARKERS are the
+ * mirror of these. The `*start*` clause is load-bearing: the bank-name line
+ * alone also appears in the two Spending Reports. Measured over every PDF on
+ * disk: 27/27 real Chase checking statements, 0 of the other 209.
+ */
+export function isChaseCheckingStatementText(text: string): boolean {
+  return /JPMorgan Chase Bank, N\.A\./.test(text) && /\*start\*/.test(text);
+}
+
 export const chaseCheckingStatementPdf: ParserProfile = {
   id: PROFILE_ID,
   version: 1,
-  // Chase's date-prefixed deposit-statement naming; parse verifies content loudly
-  matches: (f) => f.format === "pdf" && /^\d{8}-statements?-\d{4}[-_]?.*\.pdf$/i.test(f.name),
+  matches: (f) => f.format === "pdf",
+  matchesContent: isChaseCheckingStatementText,
   parse: async (f): Promise<ParsedStatement[]> => {
     const lines = await extractLines(f.buffer);
     if (lines.length === 0) throw new ParseError(PROFILE_ID, "No extractable text — scanned PDF?");

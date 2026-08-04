@@ -84,10 +84,24 @@ export function parseRobinhoodCryptoLines(texts: readonly string[]): RobinhoodCr
   };
 }
 
+/**
+ * Three markers, following the isChaseCardStatementText doctrine — a single
+ * marker would let one template tweak flip routing. The crypto statement is
+ * distinguished from the BROKERAGE statement, which says "Robinhood Brokerage
+ * Statement"/"Portfolio Summary" and carries neither "Crypto Statement" nor
+ * "PERIOD START". Measured: 8/8 real crypto statements, 0 of the other 228.
+ */
+export function isRobinhoodCryptoStatementText(text: string): boolean {
+  return /Crypto Statement/.test(text) && /PERIOD START/.test(text) && /OPENING BALANCE/.test(text);
+}
+
 export const robinhoodCryptoStatementPdf: ParserProfile = {
   id: PROFILE_ID,
   version: 1,
-  matches: (f) => f.format === "pdf" && /robinhood-crypto.*statement.*\.pdf$/i.test(f.name),
+  // the hand-coined name this used to require is not what Robinhood ships —
+  // content decides, so a native download imports unrenamed
+  matches: (f) => f.format === "pdf",
+  matchesContent: isRobinhoodCryptoStatementText,
   parse: async (f): Promise<ParsedStatement[]> => {
     const lines = await extractLines(f.buffer);
     if (lines.length === 0) throw new ParseError(PROFILE_ID, "No extractable text — scanned PDF?");

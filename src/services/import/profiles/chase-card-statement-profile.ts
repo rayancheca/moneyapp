@@ -223,8 +223,9 @@ export function parseChaseCardLines(texts: readonly string[]): ChaseCardParse {
 export const chaseCardStatementPdf: ParserProfile = {
   id: PROFILE_ID,
   version: 1,
-  // shares its filename shape with the checking statements — content decides
-  matches: (f) => f.format === "pdf" && /^\d{8}-statements?-\d{4}[-_]?.*\.pdf$/i.test(f.name),
+  // shares its filename shape with the checking statements — content decides,
+  // and gating on the name too would exclude any copy that has been renamed
+  matches: (f) => f.format === "pdf",
   matchesContent: isChaseCardStatementText,
   parse: async (f): Promise<ParsedStatement[]> => {
     const lines = await extractLines(f.buffer);

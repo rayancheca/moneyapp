@@ -81,13 +81,22 @@ export function parseSpendingReportLines(texts: readonly string[]): SpendingRepo
   return { txns, rangeStart: range.start, rangeEnd: range.end, ...(range.last4 ? { last4: range.last4 } : {}) };
 }
 
+/**
+ * A Spending Report is a year-to-date spend SUMMARY, not a monthly statement,
+ * and it shares the bank-name line with real Chase checking statements — hence
+ * the second marker. Measured: 2/2 real Spending Reports, 0 of the other 234.
+ */
+export function isChaseSpendingReportText(text: string): boolean {
+  return /Spending Report \d{4}/.test(text) && /Spending By Category/.test(text);
+}
+
 export const chaseSpendingReportPdf: ParserProfile = {
   id: PROFILE_ID,
   version: 1,
-  // matches() is sync so content can't be sniffed here — the filename
-  // carries the routing (Chase names these exports "Spending Report PDF");
-  // a mis-named report reaches statement-pdf and fails loudly there.
-  matches: (f) => f.format === "pdf" && /spending[ _-]?report/i.test(f.name),
+  // the filename used to carry the routing; content does now, so a report
+  // saved under any name still routes here instead of failing elsewhere
+  matches: (f) => f.format === "pdf",
+  matchesContent: isChaseSpendingReportText,
   parse: async (f): Promise<ParsedStatement[]> => {
     const lines = await extractLines(f.buffer);
     if (lines.length === 0) throw new ParseError(PROFILE_ID, "No extractable text — scanned PDF?");

@@ -120,10 +120,24 @@ export function parseDiscoverItLines(lines: readonly Line[]): DiscoverParse {
   };
 }
 
+/**
+ * Real Discover statements lead with "DISCOVER IT CARD ENDING IN 4741". The
+ * synthetic fixtures print "Account: Discover it Card ****2222" and carry no
+ * "ENDING IN", so this separates the real product from the generated one; the
+ * `\b.*\b` generalizes past the "it" product name. Measured over every PDF on
+ * disk: 10/10 real Discover statements, 0 of the other 226.
+ */
+export function isDiscoverStatementText(text: string): boolean {
+  return /^DISCOVER\b.*\bCARD ENDING IN \d{4}/im.test(text);
+}
+
 export const discoverItStatementPdf: ParserProfile = {
   id: PROFILE_ID,
   version: 1,
-  matches: (f) => f.format === "pdf" && /discover-it-\d{4}.*statement.*\.pdf$/i.test(f.name),
+  // Discover's own download name is not the hand-coined one this used to
+  // require — content decides, so a native download imports unrenamed
+  matches: (f) => f.format === "pdf",
+  matchesContent: isDiscoverStatementText,
   parse: async (f): Promise<ParsedStatement[]> => {
     const lines = await extractLines(f.buffer);
     if (lines.length === 0) throw new ParseError(PROFILE_ID, "No extractable text — scanned PDF?");

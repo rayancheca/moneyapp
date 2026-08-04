@@ -28,14 +28,25 @@ export const PROFILES: ParserProfile[] = [
   sofiCsv,
   robinhoodActivityCsv,
   ofxProfile,
-  // real-bank PDF statements (filename-routed) before the generic PDF fallback
+  /*
+   * Every PDF profile below matches ALL pdfs and is separated by matchesContent
+   * alone, because filenames do not identify the institution: Chase ships
+   * checking and card statements under one name, SoFi ships opaque UUIDs, and
+   * the names the other profiles used to require were coined by hand at ingest.
+   *
+   * Order is therefore not load-bearing for correctness — the gates are
+   * disjoint, verified over all 236 statements on disk. It stays meaningful for
+   * one reason: selectProfile returns the FIRST candidate that passes its gate
+   * OR HAS NO GATE, so an ungated profile here would shadow every gated one
+   * after it. Do not add a PDF profile without a matchesContent.
+   */
   chaseSpendingReportPdf,
   capitalOneStatementPdf,
-  // both are <YYYYMMDD>-statements-<last4>-.pdf; matchesContent separates them
   chaseCardStatementPdf,
   chaseCheckingStatementPdf,
   discoverItStatementPdf,
   robinhoodCryptoStatementPdf,
   sofiCombinedStatementPdf,
+  // synthetic fixtures only — see isSyntheticStatementText
   statementPdf,
 ];

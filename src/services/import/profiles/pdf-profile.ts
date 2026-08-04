@@ -95,10 +95,31 @@ function parseActivityRows(profileId: string, lines: Line[], flipSign: boolean):
   return txns;
 }
 
+/**
+ * This parser is NOT a general fallback, despite matching every PDF: measured
+ * against every statement on disk it succeeds on 148/148 synthetic fixtures and
+ * 0/88 real bank statements. Real statements print their period as "June 11,
+ * 2026 through July 10, 2026" or "Opening/Closing Date 06/03/26 - 07/02/26",
+ * never the "Statement Period: MM/DD/YYYY - MM/DD/YYYY" that PERIOD_RE below
+ * requires and that scripts/fixtures/render-pdf.ts is the sole producer of.
+ *
+ * So it gates on exactly the header it needs. Without the gate it claimed real
+ * files it could not read and reported a misleading "Unknown institution in
+ * header: …" — the honest outcome is for selection to find nothing and say so.
+ * Broadening it instead was measured and rejected: a whole-document institution
+ * scan makes /CHASE/i match the word "purCHASE" in 81 of 88 real files, and the
+ * activity-row shape reads 0 rows out of every real statement anyway, so it
+ * would write statement balances with no transactions to justify them.
+ */
+export function isSyntheticStatementText(text: string): boolean {
+  return /Statement Period:\s*\d{2}\/\d{2}\/\d{4}\s*-\s*\d{2}\/\d{2}\/\d{4}/.test(text);
+}
+
 export const statementPdf: ParserProfile = {
   id: "statement-pdf",
   version: 1,
   matches: (f) => f.format === "pdf",
+  matchesContent: isSyntheticStatementText,
   parse: async (f: SniffedFile): Promise<ParsedStatement[]> => {
     const id = "statement-pdf";
     const lines = await extractLines(f.buffer);

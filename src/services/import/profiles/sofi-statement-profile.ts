@@ -227,13 +227,28 @@ function toStatement(section: SectionParse): ParsedStatement {
   };
 }
 
+/**
+ * Real SoFi downloads are opaque UUIDs, so the old sofi-statement-YYYY-MM name
+ * gate only ever matched files a human had renamed. These three markers are
+ * what the real statements print; the synthetic sofi-combined-*.pdf fixtures
+ * say "Statement Period:" (not "Monthly Statement Period") and "SoFi Checking
+ * ****5555" (not "Checking Account - 9067"), so they still route to the generic
+ * parser. Measured: 33/33 real SoFi statements, 0 of the other 203.
+ * Do NOT swap in /Transaction ID: \d/ — it misses sofi-statement-2026-06.
+ */
+export function isSofiCombinedStatementText(text: string): boolean {
+  return (
+    /Primary Account Holder/.test(text) &&
+    /Monthly Statement Period/.test(text) &&
+    /(Checking|Savings) Account - \d{4}/.test(text)
+  );
+}
+
 export const sofiCombinedStatementPdf: ParserProfile = {
   id: PROFILE_ID,
   version: 1,
-  // real SoFi downloads are opaque UUIDs → renamed to sofi-statement-YYYY-MM.pdf
-  // on ingest. Specific enough NOT to grab the synthetic sofi-combined-*-DD.pdf
-  // test fixtures (those flow through the generic statementPdf path).
-  matches: (f) => f.format === "pdf" && /sofi-statement-\d{4}-\d{2}/i.test(f.name),
+  matches: (f) => f.format === "pdf",
+  matchesContent: isSofiCombinedStatementText,
   parse: async (f): Promise<ParsedStatement[]> => {
     const lines = await extractLines(f.buffer);
     if (lines.length === 0) throw new ParseError(PROFILE_ID, "No extractable text — scanned PDF?");
