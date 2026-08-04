@@ -206,6 +206,77 @@ export const capOne360Csv: ParserProfile = {
 
 const SOFI_HEADER = "Date,Description,Type,Amount,Current balance,Status";
 
+type SofiSide = "checking" | "savings";
+
+const otherSide = (side: SofiSide): SofiSide => (side === "savings" ? "checking" : "savings");
+
+/**
+ * A SoFi export names only the COUNTERPARTY of an internal transfer: the
+ * checking sheet's rows read "… from Savings - 5791" and the savings sheet's
+ * are the exact mirror. Measured on the two real exports — 244/244 unanimous
+ * each way — and, decisively, a sheet's OWN account number appears zero times
+ * in its body. So the sheet proves which side it is NOT; the own account
+ * number lives only in the filename. Routing on a number read out of the body
+ * would therefore misfile every single export.
+ */
+const SOFI_COUNTERPARTY_RE = /\b(?:to|from)\s+(?:sofi\s+)?(checking|savings)\b(?:\s*-\s*(\d{4}))?/i;
+
+/** The counterparty side, only when every transfer row agrees — a mixed sheet is not evidence. */
+function sofiCounterparty(descriptions: readonly string[]): { side: SofiSide; last4s: Set<string> } | undefined {
+  const sides = new Set<SofiSide>();
+  const last4s = new Set<string>();
+  for (const description of descriptions) {
+    const m = SOFI_COUNTERPARTY_RE.exec(description);
+    if (!m) continue;
+    sides.add(m[1]!.toLowerCase() as SofiSide);
+    if (m[2]) last4s.add(m[2]);
+  }
+  if (sides.size !== 1) return undefined;
+  return { side: [...sides][0]!, last4s };
+}
+
+/** real exports carry the account number in the name: "SOFI-Checking•9067-…" */
+const sofiOwnLast4 = (fileName: string): string | undefined => /(?:•|%E2%80%A2)(\d{4})/.exec(fileName)?.[1];
+
+/**
+ * Which SoFi account a sheet belongs to. Both signals are checked and any
+ * contradiction throws, because the two accounts are indistinguishable
+ * downstream once the rows land: `resolveAccount` matches on last4 first, and
+ * an account created from a wrong hint is never corrected afterwards.
+ */
+function sofiSide(fileName: string, descriptions: readonly string[]): SofiSide {
+  const nameSide: SofiSide | undefined = /savings/i.test(fileName)
+    ? "savings"
+    : /checking/i.test(fileName)
+      ? "checking"
+      : undefined;
+  const counterparty = sofiCounterparty(descriptions);
+  const bodySide = counterparty ? otherSide(counterparty.side) : undefined;
+
+  if (nameSide && bodySide && nameSide !== bodySide) {
+    throw new ParseError(
+      "sofi-csv",
+      `Filename says "${nameSide}" but every internal transfer in the sheet moves money to/from ${counterparty!.side}, which makes this the ${bodySide} export. Re-download it without renaming.`,
+    );
+  }
+  const last4 = sofiOwnLast4(fileName);
+  if (last4 && counterparty?.last4s.has(last4)) {
+    throw new ParseError(
+      "sofi-csv",
+      `Filename claims account ····${last4}, but the sheet names ····${last4} as the OTHER side of its transfers — the filename does not belong to this export.`,
+    );
+  }
+
+  const side = bodySide ?? nameSide;
+  if (!side) {
+    throw new ParseError(
+      "sofi-csv",
+      `Cannot tell checking from savings: "${fileName}" carries neither an account number (real exports look like "SOFI-Checking•9067-….csv") nor the word "checking"/"savings", and the sheet has no internal-transfer rows to infer from. Re-download the export without renaming it.`,
+    );
+  }
+  return side;
+}
+
 /** SoFi Type → direct taxonomy assignment where the intent is unambiguous */
 function sofiCategoryPath(type: string, amountCents: number): string | undefined {
   if (type === "INTEREST_EARNED") return "Income > Interest";
@@ -244,15 +315,17 @@ export const sofiCsv: ParserProfile = {
         };
       });
     const ledger = validateRunningBalance("sofi-csv", rows);
-    const isSavings = /savings/i.test(f.name);
-    // real exports carry the account number in the name: "SOFI-Checking•9067-…"
-    const last4 = /(?:•|%E2%80%A2)(\d{4})/.exec(f.name)?.[1];
+    const side = sofiSide(
+      f.name,
+      rows.map((r) => r.rawDescription),
+    );
+    const last4 = sofiOwnLast4(f.name);
     return [
       {
         accountHint: {
           institution: "SoFi",
-          type: isSavings ? "savings" : "checking",
-          name: isSavings ? "SoFi Savings" : "SoFi Checking",
+          type: side,
+          name: side === "savings" ? "SoFi Savings" : "SoFi Checking",
           ...(last4 ? { last4 } : {}),
         },
         txns: rows.map(({ balanceCents: _b, ...t }) => t),

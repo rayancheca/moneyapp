@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 import type { ParsedStatement, SniffedFile } from "../types";
-import { capitalOneStatementPdf, parseCapitalOneLines } from "./capitalone-statement-profile";
+import { capitalOneStatementPdf, isCapitalOneStatementText, parseCapitalOneLines } from "./capitalone-statement-profile";
 import { chaseDepositCsv, robinhoodActivityCsv, sofiCsv } from "./csv-profiles";
-import { chaseSpendingReportPdf, parseSpendingReportLines } from "./spending-report-profile";
+import { chaseSpendingReportPdf, isChaseSpendingReportText, parseSpendingReportLines } from "./spending-report-profile";
 
 /* ── Chase spending-report PDF (text-level core) ────────────────────── */
 
@@ -65,12 +65,16 @@ describe("parseSpendingReportLines", () => {
     ).toThrow(/No transaction rows/);
   });
 
-  test("profile matches by filename, pdf format only", () => {
+  test("routes on content, and only for pdfs", () => {
     const pdf = (name: string): SniffedFile => ({ name, buffer: Buffer.alloc(0), format: "pdf", text: "" });
     expect(chaseSpendingReportPdf.matches(pdf("Spending Report PDF.pdf"))).toBe(true);
-    expect(chaseSpendingReportPdf.matches(pdf("Spending Report PDF (1).pdf"))).toBe(true);
-    expect(chaseSpendingReportPdf.matches(pdf("20260630-statements-3522-.pdf"))).toBe(false);
+    // a report saved under any other name is still a candidate…
+    expect(chaseSpendingReportPdf.matches(pdf("20260630-statements-3522-.pdf"))).toBe(true);
     expect(chaseSpendingReportPdf.matches({ ...pdf("Spending Report.csv"), format: "csv" })).toBe(false);
+    // …and only the content admits it
+    expect(isChaseSpendingReportText("Spending Report 2026\nSpending By Category")).toBe(true);
+    // a real Chase checking statement shares the bank-name line but is not a report
+    expect(isChaseSpendingReportText("JPMorgan Chase Bank, N.A.\n*start*transaction detail")).toBe(false);
   });
 });
 
@@ -272,6 +276,75 @@ describe("sofiCsv — real-export quirks", () => {
   });
 });
 
+/* ── SoFi CSV — which of the two accounts a sheet belongs to ─────────────
+ * A SoFi export names only the COUNTERPARTY of an internal transfer, and never
+ * its own account number. Measured on the real exports: the checking sheet says
+ * "5791" 244 times and "9067" zero times; the savings sheet is the mirror. So
+ * the body identifies the side by inversion, and a sheet that carries neither
+ * signal must fail rather than default into checking.
+ */
+describe("sofiCsv — checking vs savings routing", () => {
+  const TRANSFER_IN = "2026-06-02,Transfer from Savings - 5791,TRANSFER,25.00,125,Posted";
+  const PLAIN = "2026-06-01,Coffee,DEBIT_CARD,-4.00,100,Posted";
+
+  test("a sheet with neither signal fails loudly instead of defaulting to checking", () => {
+    // the real silent-misfile: an opaque download name and no transfer rows
+    expect(() => sofiCsv.parse(sofiFile([PLAIN], "transactions.csv"))).toThrow(/Cannot tell checking from savings/);
+  });
+
+  test("the body alone identifies the side, by naming the OTHER account", () => {
+    // an opaque native download name: the sheet's transfers all name CHECKING,
+    // so this is the SAVINGS export — the answer the old filename-only routing
+    // could never give, since it defaulted every unlabelled file to checking
+    const [statement] = sofiCsv.parse(
+      sofiFile(
+        ["2026-06-02,Transfer from Checking - 9067,TRANSFER,25.00,125,Posted", PLAIN],
+        "19f645c5-b6a7-5cc9-b6cb-704104af4792.csv",
+      ),
+    ) as ParsedStatement[];
+    expect(statement!.accountHint.type).toBe("savings");
+    expect(statement!.accountHint.name).toBe("SoFi Savings");
+    expect(statement!.accountHint.last4).toBeUndefined();
+  });
+
+  test("a filename contradicting the sheet's own transfers throws", () => {
+    // named savings, but every transfer names Savings as the counterparty
+    expect(() => sofiCsv.parse(sofiFile([TRANSFER_IN, PLAIN], "SOFI-Savings-2026-07-10.csv"))).toThrow(
+      /Filename says "savings" but every internal transfer/,
+    );
+  });
+
+  test("a filename whose account number is the sheet's counterparty throws", () => {
+    // ····5791 is named as the OTHER side, so the name cannot be this sheet's
+    expect(() => sofiCsv.parse(sofiFile([TRANSFER_IN, PLAIN], "SOFI-Checking•5791-2026-07-10.csv"))).toThrow(
+      /does not belong to this export/,
+    );
+  });
+
+  test("a mixed sheet is not evidence — the filename still decides", () => {
+    const [statement] = sofiCsv.parse(
+      sofiFile(
+        [
+          "2026-06-03,Transfer from Checking - 9067,TRANSFER,10.00,135,Posted",
+          TRANSFER_IN,
+          PLAIN,
+        ],
+        "SOFI-Savings•5791-2026-07-10.csv",
+      ),
+    ) as ParsedStatement[];
+    expect(statement!.accountHint.type).toBe("savings");
+    expect(statement!.accountHint.last4).toBe("5791");
+  });
+
+  test("name and body agreeing keeps the real export routing unchanged", () => {
+    const [statement] = sofiCsv.parse(
+      sofiFile([TRANSFER_IN, PLAIN], "SOFI-Checking•9067-2026-07-10.csv"),
+    ) as ParsedStatement[];
+    expect(statement!.accountHint.type).toBe("checking");
+    expect(statement!.accountHint.last4).toBe("9067");
+  });
+});
+
 /* ── Capital One statement PDF (text-level core) ─────────────────────── */
 
 const CAPONE_LINES = [
@@ -328,10 +401,17 @@ describe("parseCapitalOneLines", () => {
     ).toThrow(/No billing-cycle period/);
   });
 
-  test("profile matches Capital One's download naming and the inbox rename convention", () => {
+  test("routing ignores the filename entirely and gates on content", () => {
     const pdf = (name: string): SniffedFile => ({ name, buffer: Buffer.alloc(0), format: "pdf", text: "" });
+    // any PDF is a candidate — an opaque native download must not be excluded
     expect(capitalOneStatementPdf.matches(pdf("Statement_062026_4208.pdf"))).toBe(true);
-    expect(capitalOneStatementPdf.matches(pdf("capitalone-venturex-statement-2026-06.pdf"))).toBe(true);
-    expect(capitalOneStatementPdf.matches(pdf("Spending Report PDF.pdf"))).toBe(false);
+    expect(capitalOneStatementPdf.matches(pdf("19f645c5-b6a7-5cc9-b6cb-704104af4792.pdf"))).toBe(true);
+    // …and content is what actually decides
+    expect(isCapitalOneStatementText("Dec 15, 2025 - Jan 13, 2026 | 30 days in Billing Cycle capitalone.com")).toBe(
+      true,
+    );
+    // the brand name alone is NOT enough: real Chase and SoFi statements name
+    // Capital One as a counterparty, which is why the cycle clause is required
+    expect(isCapitalOneStatementText("ONLINE PAYMENT TO CAPITAL ONE N.A. $25.00")).toBe(false);
   });
 });
