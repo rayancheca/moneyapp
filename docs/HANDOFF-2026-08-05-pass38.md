@@ -17,7 +17,9 @@ Both pushed.
 
 **Real DB — written this pass, with approval:** 9,918 txns (unchanged count) · **9,782 active · 65
 excluded · 71 superseded · 0 quarantined** (was 83) · 0 gap days ledger-wide (was 323) · 71
-`duplicate_candidates` rows, all `confirmed_duplicate` / `card_payment_mirror`.
+`duplicate_candidates` rows, all `confirmed_duplicate` / `card_payment_mirror`. The cash account
+`1800` was also **renamed `Cash on Hand`** (metadata only; backup
+`data/backups/pre-wallet-rename-2026-08-05.db`).
 
 Net worth **$92,735.98, unchanged** — verified before and after via `netWorthSeries`, not by SQL.
 
@@ -174,14 +176,36 @@ real. The owner was told this before approving.
    `fullyParallel: false, workers: 1` and all specs share ONE database with the golden-path spec
    mutating it last, so a second project must **not** double-run — scope it to a subset or give it
    its own DB.
-4. **Chart-gap UX** — say plainly which account is starving the chart. **Re-scope before building:**
-   Sapphire's 323 gap days are gone and there are now **0 gap days ledger-wide**, so the original
-   motivation is largely spent. What remains is that `netWorthSeries` reports only **3 "complete"
-   days out of 1,443**, because the `1800` cash wallet has balances on two days only — a different
-   problem with a different fix. Measure before writing code. Frame staleness as the normal monthly
-   statement rhythm, **never** as an error.
+4. **Chart "partial coverage"** — ⚠️ **this is now a UX/copy job, NOT a data job. Read this before
+   touching it.** Sapphire's 323 gap days are gone and there are **0 gap days ledger-wide**. The
+   only remaining cause of "Partial coverage" is the cash wallet, and it is **honest**:
+
+   The account formerly named `1800` is **$1,800 of physical cash in the owner's safe** — his answer,
+   verbatim: *"its 1800 i have in cash in my safe… its the weekly cash from getting paid i just
+   havent put it in the account yet."* Renamed **`Cash on Hand`** this pass. It is anchored at
+   $1,800 on 2026-08-03 and has **zero coverage before that**, which is why `netWorthSeries` reports
+   **3 complete days of 1,443**.
+
+   ⛔ **Do NOT backfill it to make the chart look solid.** The app does not know what cash he held in
+   2024, and the `gap` basis exists precisely so levels are never invented. A flat $1,800 line back
+   through history is fabricated financial data. It is also a **float**, not a fixed balance — the
+   cash job pays ~$1,046/wk and he deposits irregularly, so $1,800 is a snapshot.
+
+   The work that IS legitimate: make the chart *say* which account is unknown and why, instead of a
+   bare "Partial coverage". Frame it as the normal cash/statement rhythm, **never** as an error. The
+   only honest data fix requires HIS assertion — a date he started keeping cash and roughly how
+   much — so ask before assuming.
 5. **Duplicate/review leftovers** from pass 35 §5 — nothing re-flags a duplicate after one side is
-   categorized; a cross-account double count is undetectable by construction.
+   categorized; a cross-account double count is undetectable by construction. **33 rows still carry
+   `needs_review`** (SoFi Checking 16, Robinhood Cash 16, Chase Checking 1). Clearing them in bulk
+   is theatre: the next import's PASS 2 re-flags unconditionally (pass 35). Fix the re-flagging
+   before touching the queue.
+
+   ✅ **CLOSED — the two identical Robinhood +$6,000 rows on 2025-07-07 are BOTH REAL.** Owner
+   answered directly this pass. Do not raise it again. No DB write was made, deliberately: both rows
+   come from the **same import file** (`019f4cb0-b44b-7713-…`), and `IDENTITY_JOIN` requires
+   `t1.import_file_id IS NOT t2.import_file_id`, so the detector can never flag them — and clearing
+   their `needs_review` would just be undone by the next import.
 6. **The Chase card parser clamp** — measured, deliberately not shipped, full write-up in
    `docs/sapphire-reconciliation-finding.md` §5. **Do not ship it without its mitigation**: clamping
    moves 60 rows onto `consumeIdentity`'s posted lens, which runs first and has no description check,
@@ -205,6 +229,13 @@ real. The owner was told this before approving.
   simply stopping it was allowed all along.
 - He approved a real-money write after being shown the two consequences (historical net worth drops
   on 323 days; the reconciled-period retire refusal). **State consequences before asking, not after.**
+- ⚠️ **The `1800` wallet WAS $1,800 after all** — physical cash in his safe, undeposited weekly pay.
+  Pass 34's note ("still $0.00 — do NOT infer it from the name") is **wrong and has been corrected**.
+  The lesson is not "the name was right", it is that **asking took one question and two passes had
+  guessed instead**.
+- **Both Robinhood +$6,000 rows on 2025-07-07 are real.** Closed; do not re-raise.
+- **Queue order confirmed: work straight down the list.** He was offered a shortcut to hosting after
+  two quick wins and declined it.
 
 ---
 
