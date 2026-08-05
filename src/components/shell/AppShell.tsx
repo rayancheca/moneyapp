@@ -11,6 +11,8 @@ interface AppShellProps {
   children: React.ReactNode;
   /** Unreviewed active transactions — badges the Transactions nav item. */
   reviewCount: number;
+  /** Unresolved duplicate PAIRS — a second pill on the same nav item. */
+  duplicateCount: number;
   /** ⌘K entity index (accounts, categories, merchants) — §3.8. */
   entityGroups: CommandPaletteGroup[];
 }
@@ -94,7 +96,12 @@ function Wordmark() {
   );
 }
 
-export function AppShell({ children, reviewCount, entityGroups }: AppShellProps) {
+export function AppShell({
+  children,
+  reviewCount,
+  duplicateCount,
+  entityGroups,
+}: AppShellProps) {
   return (
     <KeyScopeProvider>
       {/* THE PAPER TOOTH (A+ `body::before`). Decorative only: aria-hidden so
@@ -118,7 +125,7 @@ export function AppShell({ children, reviewCount, entityGroups }: AppShellProps)
           <span className="inline-block size-2.5 rounded-full bg-accent" aria-hidden />
           <Wordmark />
         </div>
-        <SideNav reviewCount={reviewCount} />
+        <SideNav reviewCount={reviewCount} duplicateCount={duplicateCount} />
         <p className="border-t border-line px-5 py-3 text-[11px] leading-relaxed text-ink-faint">
           Local-first · your data never leaves this Mac
         </p>
@@ -147,7 +154,7 @@ export function AppShell({ children, reviewCount, entityGroups }: AppShellProps)
             <ThemeToggle />
           </div>
         </header>
-        <MobileNav reviewCount={reviewCount} />
+        <MobileNav reviewCount={reviewCount} duplicateCount={duplicateCount} />
         <main
           id="main"
           tabIndex={-1}

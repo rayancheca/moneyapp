@@ -6,6 +6,7 @@ import { ThemeProvider } from "next-themes";
 import { getDb } from "@/db/client";
 import { commandEntityGroups } from "@/services/command-index";
 import { needsReviewCount } from "@/services/review-count";
+import { openDuplicateCount } from "@/services/duplicate-count";
 import { AppShell } from "@/components/shell/AppShell";
 import type { CommandPaletteGroup } from "@/components/ui/CommandPalette";
 import "./globals.css";
@@ -27,6 +28,32 @@ function safeReviewCount(): number {
       reviewCountErrorReported = true;
       const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(`[layout] needs-review badge fell back to 0: ${message}\n`);
+    }
+    return 0;
+  }
+}
+
+/** once per boot: see safeReviewCount — a permanently-zero badge must be traceable */
+let duplicateCountErrorReported = false;
+
+/**
+ * Deliberately a SEPARATE try/catch from safeReviewCount, not a shared one.
+ * `duplicate_candidates` arrives only in migration 0008, so on a database that
+ * predates it this query throws — and sharing the catch would zero the REVIEW
+ * badge too, which is exactly the silent-zero failure the comment above exists
+ * to prevent.
+ *
+ * Any future mutation that can create a candidate must revalidate `/` and
+ * `/transactions`, or this pill goes stale.
+ */
+function safeDuplicateCount(): number {
+  try {
+    return openDuplicateCount(getDb());
+  } catch (error: unknown) {
+    if (!duplicateCountErrorReported) {
+      duplicateCountErrorReported = true;
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[layout] duplicates badge fell back to 0: ${message}\n`);
     }
     return 0;
   }
@@ -54,6 +81,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // freezing a stale badge count into the built shell
   await connection();
   const reviewCount = safeReviewCount();
+  const duplicateCount = safeDuplicateCount();
   const entityGroups = safeEntityGroups();
   return (
     <html
@@ -63,7 +91,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     >
       <body>
         <ThemeProvider attribute="class" defaultTheme="light" disableTransitionOnChange>
-          <AppShell reviewCount={reviewCount} entityGroups={entityGroups}>
+          <AppShell
+            reviewCount={reviewCount}
+            duplicateCount={duplicateCount}
+            entityGroups={entityGroups}
+          >
             {children}
           </AppShell>
         </ThemeProvider>

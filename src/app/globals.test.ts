@@ -210,6 +210,25 @@ describe("the grain never spends the contrast budget", () => {
       }
     });
 
+    /**
+     * Soft-tint pills (`bg-<tone>-soft text-<tone>`) are used for the nav
+     * badges and status chips, and nothing gated them until pass 36: the
+     * check above puts every tone on the SHEET, never on its own tint. The
+     * duplicates pill (`--warning` on `--warning-soft`) measures 4.71:1 in
+     * light — passing, but by 0.21, so a future token retune could break it
+     * silently.
+     */
+    test(`${theme.name}: every tone clears AA on its OWN soft tint`, () => {
+      for (const tone of ["--accent", "--positive", "--negative", "--warning", "--info"]) {
+        const soft = theme.tokens.get(`${tone}-soft`);
+        if (soft === undefined) continue;
+        const fg = luminance(toSrgb(parseOklch(theme.tokens.get(tone) as string)));
+        const bg = luminance(toSrgb(parseOklch(soft)));
+        const r = ratio(fg, bg);
+        expect(r, `${tone} on ${tone}-soft (${theme.name}): ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA_TEXT);
+      }
+    });
+
     test(`${theme.name}: every category solid still clears the graphical bar`, () => {
       for (const hue of CATEGORY_HUES) {
         const name = `--cat-${hue}`;

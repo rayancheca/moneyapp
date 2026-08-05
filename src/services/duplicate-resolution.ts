@@ -7,6 +7,11 @@ import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { descriptionScore } from "@/lib/description-score";
 import { todayIso } from "@/lib/dates";
 import { isReplayStatus, rebuildAccount } from "./derivation";
+// STILL_ASKABLE and openDuplicateCount live in a LEAF module because the root
+// layout reads the count on every route and this file reaches the PDF parser
+// through ./import/service. Re-exported so the queue and the badge share one
+// definition and can never drift apart.
+import { openDuplicateCount, STILL_ASKABLE } from "./duplicate-count";
 import { flagDuplicateCandidates } from "./duplicate-flags";
 import { reconcileAccounts } from "./import/service";
 import { hasSplits } from "./transaction-splits";
@@ -384,30 +389,7 @@ export interface DuplicatePairSideRow {
   provenByStatement: boolean;
 }
 
-/**
- * Hide an UNRESOLVED pair whose sides are no longer both in balance replay.
- *
- * One row can belong to several pairs: two identical charges in each of two
- * files produce four candidates, because the unique index is on the id pair, not
- * on `pair_key`. Retiring through one of them settles that candidate and leaves
- * its siblings pointing at a now-superseded row — an item the owner can never
- * answer, because every retire button on it throws (both sides must be in
- * replay) and the only working control, "Not a duplicate", would write a
- * dismissal under a content key shared by every identical pair that day, and so
- * suppress a future real detection.
- *
- * Deliberately scoped to `unresolved`. A RESOLVED pair must keep rendering even
- * though its retired side is out of replay — it is the only place a superseded
- * row is visible, and hiding it would turn a reversible retire into exactly the
- * silent delete this module exists to avoid.
- */
-const STILL_ASKABLE = sql`(
-  d.resolution != 'unresolved'
-  OR (
-    (SELECT ta.status FROM transactions ta WHERE ta.id = d.transaction_id_a) IN ('active', 'excluded')
-    AND (SELECT tb.status FROM transactions tb WHERE tb.id = d.transaction_id_b) IN ('active', 'excluded')
-  )
-)`;
+
 
 interface PairQueryRow {
   candidateId: string;
@@ -511,17 +493,7 @@ function loadPairSide(db: AppDatabase, id: string): DuplicatePairSideRow | undef
   };
 }
 
-/** Unresolved pairs, for the tab badge. */
-export function openDuplicateCount(db: AppDatabase): number {
-  return (
-    db.get<{ n: number }>(sql`
-      SELECT COUNT(*) AS n
-        FROM duplicate_candidates d
-       WHERE d.resolution = 'unresolved'
-         AND d.transaction_id_a IS NOT NULL
-         AND d.transaction_id_b IS NOT NULL
-         AND ${STILL_ASKABLE}
-    `)?.n ?? 0
-  );
-}
 
+
+/** Re-exported from the leaf module so the tab badge and the queue agree. */
+export { openDuplicateCount };
