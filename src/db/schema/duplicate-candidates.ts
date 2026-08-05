@@ -20,7 +20,16 @@ import { TRANSACTION_STATUSES, transactions } from "./transactions";
  * automatic winner. An earlier revision picked winners itself on (day, amount)
  * alone and silently destroyed real charges (reverted in 3e5a7fc).
  */
-export const DUPLICATE_REASONS = ["cross_source_same_day"] as const;
+/**
+ * `card_payment_mirror` is not detector output — nothing re-derives it. It
+ * labels the pairs retired by scripts/fix-card-payment-mirrors.ts, where a card
+ * payment was recorded both as the statement line the bank printed and as a
+ * hand-entered mirror carrying the bank's post date one to five days later. The
+ * detector cannot find these (IDENTITY_JOIN needs the dates to agree), so they
+ * would otherwise be retired with no record at all — invisible in the duplicates
+ * surface and, worse, invisible to `restoreDuplicatesLosingTheirSurvivor`.
+ */
+export const DUPLICATE_REASONS = ["cross_source_same_day", "card_payment_mirror"] as const;
 export type DuplicateReason = (typeof DUPLICATE_REASONS)[number];
 
 export const DUPLICATE_RESOLUTIONS = ["unresolved", "confirmed_duplicate", "dismissed"] as const;
