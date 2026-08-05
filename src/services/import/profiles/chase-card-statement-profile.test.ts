@@ -202,3 +202,75 @@ describe("fees and interest are charges, not purchases", () => {
     expect(() => parseChaseCardLines(phantom)).toThrow(/Section totals disagree/);
   });
 });
+
+describe("sub-dollar amounts printed without a leading zero", () => {
+  /**
+   * Chase prints `.78`, never `0.78`. Requiring a digit before the decimal
+   * silently dropped 71 real charges worth $32.95 across the owner's 18
+   * Sapphire statements — and six of them then failed to reconcile by exactly
+   * the dropped amount. The rows were fine; the reader refused to see them.
+   */
+  const base = [
+    "Account Number: XXXX XXXX XXXX 9805",
+    "Previous Balance $0.00",
+    "Payment, Credits -$0.00",
+    "Purchases +$2.34",
+    "New Balance $2.34",
+    "Opening/Closing Date 03/03/25 - 04/02/25",
+  ];
+
+  test("reads a bare .NN amount", () => {
+    const parsed = parseChaseCardLines([
+      ...base,
+      "03/13 EAST 110 CANDY GROCERY CO NEW YORK NY .78",
+      "03/13 EAST 110 CANDY GROCERY CO NEW YORK NY .78",
+      "03/13 EAST 110 CANDY GROCERY CO NEW YORK NY .78",
+    ]);
+    expect(parsed.txns).toHaveLength(3);
+    expect(parsed.txns.map((t) => t.amountCents)).toEqual([-78, -78, -78]);
+  });
+
+  test("a bare .NN credit keeps its sign", () => {
+    const parsed = parseChaseCardLines([
+      "Account Number: XXXX XXXX XXXX 9805",
+      "Previous Balance $1.00",
+      "Payment, Credits -$0.78",
+      "Purchases +$0.00",
+      "New Balance $0.22",
+      "Opening/Closing Date 03/03/25 - 04/02/25",
+      "03/13 SOME REFUND NEW YORK NY -.78",
+    ]);
+    expect(parsed.txns.map((t) => t.amountCents)).toEqual([78]);
+  });
+
+  test("ordinary amounts are unaffected", () => {
+    const parsed = parseChaseCardLines([
+      "Account Number: XXXX XXXX XXXX 9805",
+      "Previous Balance $0.00",
+      "Payment, Credits -$0.00",
+      "Purchases +$1,234.56",
+      "New Balance $1,234.56",
+      "Opening/Closing Date 03/03/25 - 04/02/25",
+      "03/13 BIG PURCHASE NEW YORK NY 1,234.56",
+    ]);
+    expect(parsed.txns.map((t) => t.amountCents)).toEqual([-123456]);
+  });
+
+  test("a comma-only integer part is NOT a row, so it can never reach the money parser", () => {
+    // `[\d,]*` would have admitted this and thrown MoneyParseError out of the
+    // profile as an unexpected error type; `(?:\d[\d,]*)?` refuses it outright.
+    expect(() =>
+      parseChaseCardLines([...base, "03/13 WEIRD MERCHANT NEW YORK NY ,.21"]),
+    ).toThrow(/No activity rows found/);
+  });
+
+  test("the reconcile check still catches a genuinely dropped sub-dollar row", () => {
+    expect(() =>
+      parseChaseCardLines([
+        ...base,
+        "03/13 EAST 110 CANDY GROCERY CO NEW YORK NY .78",
+        "03/13 EAST 110 CANDY GROCERY CO NEW YORK NY .78",
+      ]),
+    ).toThrow(ParseError);
+  });
+});

@@ -68,8 +68,25 @@ const PURCHASES_RE = /^Purchases\s+([+-]?)\s*\$([\d,]+\.\d{2})$/;
 // back rather than be loosened.
 const FEES_RE = /^Fees Charged\s+([+-]?)\s*\$([\d,]+\.\d{2})$/;
 const INTEREST_RE = /^Interest Charged\s+([+-]?)\s*\$([\d,]+\.\d{2})$/;
-/** MM/DD <description> <amount>; (?!\/) rejects a full MM/DD/YY date line. */
-const ROW_RE = /^(\d{2})\/(\d{2})(?!\/)\s+(.+?)\s+(-?)([\d,]+\.\d{2})$/;
+/**
+ * MM/DD <description> <amount>; (?!\/) rejects a full MM/DD/YY date line.
+ *
+ * The integer part is OPTIONAL because Chase drops the leading zero on
+ * sub-dollar amounts — it prints `.78`, never `0.78`. Requiring a digit there
+ * silently dropped 71 real charges worth $32.95 across the owner's 18 Sapphire
+ * statements, and six of those statements then failed to reconcile by exactly
+ * the amount that had been dropped. The rows were never malformed; the reader
+ * refused to see them.
+ *
+ * `(?:\d[\d,]*)?` rather than `[\d,]*`: both accept the same real amounts, but
+ * the loose form also admits a comma-only integer part (`,.21`), which reaches
+ * parseAmountToCents and throws MoneyParseError — escaping this profile as an
+ * unexpected error type instead of a clean ParseError.
+ *
+ * This widens what the parser can READ. It does not touch either check below,
+ * and must not: those are what prove the recovered rows are real.
+ */
+const ROW_RE = /^(\d{2})\/(\d{2})(?!\/)\s+(.+?)\s+(-?)((?:\d[\d,]*)?\.\d{2})$/;
 /** Everything past the year-to-date block is summary, never activity. */
 const TERMINATOR_RE = /Totals\s+Year-to-Date/;
 
