@@ -152,3 +152,53 @@ describe("parseChaseCardLines", () => {
     expect(() => parseChaseCardLines(HEADER)).toThrow(/No activity rows found/);
   });
 });
+
+describe("fees and interest are charges, not purchases", () => {
+  /**
+   * A real Sapphire statement (2025-03-02) was rejected outright because it
+   * carried the $95 annual fee: Chase printed `Purchases +$5,371.57` and
+   * `Fees Charged +$95.00`, but listed the fee as an ordinary activity row, so
+   * the rows summed to $5,466.57 and the section check called it a mismatch.
+   * The difference was exactly the fee.
+   */
+  const withFee = [
+    "Account Number: XXXX XXXX XXXX 9805",
+    "Previous Balance $100.00",
+    "Payment, Credits -$0.00",
+    "Purchases +$50.00",
+    "Fees Charged +$95.00",
+    "Interest Charged $0.00",
+    "New Balance $245.00",
+    "Opening/Closing Date 02/03/25 - 03/02/25",
+    "02/10 SOME MERCHANT MIAMI FL 50.00",
+    "02/11 ANNUAL MEMBERSHIP FEE 95.00",
+  ];
+
+  test("a statement carrying the annual fee parses instead of being rejected", () => {
+    const parsed = parseChaseCardLines(withFee);
+    expect(parsed.txns).toHaveLength(2);
+    // card-side charge -> net-worth negative
+    expect(parsed.txns.map((t) => t.amountCents)).toEqual([-5000, -9500]);
+    expect(parsed.endingBalanceCents).toBe(-24500);
+  });
+
+  test("interest is counted the same way", () => {
+    const withInterest = withFee.map((l) =>
+      l === "Fees Charged +$95.00" ? "Fees Charged $0.00"
+      : l === "Interest Charged $0.00" ? "Interest Charged +$95.00"
+      : l === "02/11 ANNUAL MEMBERSHIP FEE 95.00" ? "02/11 PURCHASE INTEREST CHARGE 95.00"
+      : l);
+    expect(parseChaseCardLines(withInterest).txns).toHaveLength(2);
+  });
+
+  test("a genuinely missing row is still caught to the cent", () => {
+    // the whole point of adding fees back rather than dropping the check
+    const missingRow = withFee.filter((l) => l !== "02/10 SOME MERCHANT MIAMI FL 50.00");
+    expect(() => parseChaseCardLines(missingRow)).toThrow(ParseError);
+  });
+
+  test("a phantom fee that no row backs is still caught", () => {
+    const phantom = withFee.map((l) => (l === "Fees Charged +$95.00" ? "Fees Charged +$120.00" : l));
+    expect(() => parseChaseCardLines(phantom)).toThrow(/Section totals disagree/);
+  });
+});
