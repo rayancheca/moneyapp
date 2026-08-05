@@ -13,6 +13,12 @@ next-env.d.ts
 
 # local data — statements, database, backups NEVER enter git
 data/
+# the drop folder statements land in before import. Same rule as data/. These
+# are real PDFs: the Chase ones mask the card number themselves but still carry
+# the cardholder name and every itemized purchase, and the Robinhood ones carry
+# a full account number and home address. Untracked-but-not-ignored until
+# 2026-08-05, so one `git add -A` would have published 143 of them.
+statements/
 
 # env
 .env*
