@@ -172,6 +172,43 @@ test("the daily-only surfaces still offer no 1D pill at all", async ({ page }) =
 });
 
 /**
+ * Wait for the session control to settle, then load a session if one is needed.
+ *
+ * `isVisible()` does NOT auto-wait — it samples the DOM at one instant. Called
+ * straight after a re-render it races the render, so the same run could take
+ * either branch. That matters far more than it looks: the two branches leave
+ * the page at DIFFERENT scroll offsets (0 vs 180), and at 180 the 56px sticky
+ * header sits over the top of the chart card. A screenshot of the card then
+ * captures the header bleeding across it — 983 differing pixels, intermittent,
+ * and indistinguishable from a real visual regression.
+ *
+ * Waiting for EITHER the button or a loaded session first makes the branch a
+ * property of the data (has this run priced AAPL yet?) rather than of timing.
+ */
+async function ensureSessionLoaded(page: Page): Promise<void> {
+  const load = page.getByRole("button", { name: "Load today's session" });
+  await expect(load.or(page.getByText(/Today's session ·/)).first()).toBeVisible();
+  if (await load.isVisible()) {
+    await load.click();
+  }
+}
+
+/**
+ * Pin the page to the top before a card capture.
+ *
+ * Playwright scrolls a locator into view before shooting it, but only if it is
+ * not already fully visible — so the resulting framing inherits whatever scroll
+ * the preceding interactions happened to leave behind. Every card captured here
+ * fits inside the 900px viewport at scroll 0, so scrolling home makes that
+ * scroll-into-view a no-op and puts the card in the same place every run,
+ * clear of the sticky header. Without it the capture is only as stable as the
+ * scroll side effects of the clicks above it.
+ */
+async function scrollHome(page: Page): Promise<void> {
+  await page.evaluate(() => window.scrollTo(0, 0));
+}
+
+/**
  * Visual baselines for the LOADED 1D state.
  *
  * They live here rather than in `visual.spec.ts` because of tier ordering: this
@@ -200,12 +237,10 @@ for (const width of [440, 1280]) {
   test(`the loaded 1D portfolio chart looks right @${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await gotoHydrated(page, "/investments?range=1D");
-    const load = page.getByRole("button", { name: "Load today's session" });
-    if (await load.isVisible()) {
-      await load.click();
-    }
+    await ensureSessionLoaded(page);
     await expect(page.getByText(/Today's session ·/)).toBeVisible();
     await settleAnimations(page);
+    await scrollHome(page);
 
     const card = page.locator('[role="slider"]').first().locator("xpath=ancestor::*[contains(@class,'relative')][1]");
     await expect(card).toHaveScreenshot(`intraday-portfolio-1d-${width}.png`);
@@ -216,12 +251,10 @@ test("the loaded 1D holding chart looks right", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await gotoHydrated(page, "/investments/stock/AAPL");
   await page.getByRole("group", { name: "Chart range" }).first().getByRole("button", { name: "1 day" }).click();
-  const load = page.getByRole("button", { name: "Load today's session" });
-  if (await load.isVisible()) {
-    await load.click();
-  }
+  await ensureSessionLoaded(page);
   await expect(page.getByText(/measured from yesterday's close/)).toBeVisible();
   await settleAnimations(page);
+  await scrollHome(page);
 
   const card = page.locator('[role="slider"]').first().locator("xpath=ancestor::*[contains(@class,'relative')][1]");
   await expect(card).toHaveScreenshot("intraday-holding-1d.png");

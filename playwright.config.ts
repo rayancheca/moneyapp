@@ -30,6 +30,21 @@ export default defineConfig({
   use: {
     baseURL: "http://localhost:3111",
     trace: "retain-on-failure",
+    // The BROWSER's timezone and locale are inputs to every rendered date, and
+    // until now they were whatever the developer's machine happened to be. That
+    // is the same hole pass 30's timezone bug went through: a plan that is
+    // undetectably wrong on an Eastern box.
+    //
+    // Pacific/Kiritimati (UTC+14, and it has never observed DST) rather than
+    // UTC, for the reason vitest.config.ts already pins it: under UTC the local
+    // date EQUALS the UTC date on an Eastern box, so a `new Date(isoDay)` that
+    // should have shifted a day silently agrees with itself and the bug class
+    // stays invisible. At +14 every such slip is off by one and shows up.
+    //
+    // en-US matches the explicit locale the app's own Intl formatters request,
+    // so a machine set to another locale can no longer move a baseline.
+    timezoneId: "Pacific/Kiritimati",
+    locale: "en-US",
   },
   expect: {
     toHaveScreenshot: {
@@ -56,7 +71,12 @@ export default defineConfig({
     // already defined, so assigning empty here wins over `.env`. Absent is
     // also the honest default: no spec drives Claude classification, and a
     // live key would let one bill the owner for real API calls.
-    command: `MONEYAPP_DB_PATH=data/e2e.db MONEYAPP_ORIGINALS_DIR=data/e2e-originals MONEYAPP_BACKUPS_DIR=data/e2e-backups MONEYAPP_SKIP_BACKUP=1 MONEYAPP_FAKE_PRICES=1 MONEYAPP_FAKE_TODAY=${E2E_FAKE_TODAY} MONEYAPP_PREVIEW=1 ANTHROPIC_API_KEY= pnpm start --port 3111`,
+    // TZ pins the SERVER half of the same hole the browser `timezoneId` closes
+    // above. RSCs render dates on the server, so leaving this to the host clock
+    // means half the rendered page came from a pinned timezone and half from
+    // whatever machine ran the suite. Same zone on both sides or neither is
+    // pinned in any useful sense.
+    command: `TZ=Pacific/Kiritimati MONEYAPP_DB_PATH=data/e2e.db MONEYAPP_ORIGINALS_DIR=data/e2e-originals MONEYAPP_BACKUPS_DIR=data/e2e-backups MONEYAPP_SKIP_BACKUP=1 MONEYAPP_FAKE_PRICES=1 MONEYAPP_FAKE_TODAY=${E2E_FAKE_TODAY} MONEYAPP_PREVIEW=1 ANTHROPIC_API_KEY= pnpm start --port 3111`,
     url: "http://localhost:3111",
     // never baseline against a stale or foreign server
     reuseExistingServer: false,
