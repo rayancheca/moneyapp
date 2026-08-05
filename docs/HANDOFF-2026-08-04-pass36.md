@@ -184,7 +184,24 @@ the run, from the byte-identical-pill argument — and it held.
 
 ---
 
-## 5. ⛔ OPEN — an owner decision, not an engineering one
+## 5. ⛔ ASKED AND ANSWERED — "leave it alone" (owner, 2026-08-04)
+
+**The owner was asked directly and chose: not sure, leave it alone.** That is a decision, not a
+gap — treat it as standing until they revisit it.
+
+**Consequences, binding on pass 37+:**
+- **Do NOT auto-pair the $6,000 component.** Absent an answer, pairing it would be a guess about
+  real money.
+- **Do NOT flag it as a duplicate** either. Both readings are still live; surfacing it as a
+  duplicate asserts one of them.
+- **Leave all 33 rows exactly as they are.** They are safe, correctly categorized as transfers,
+  and affect no total.
+- **Do not re-ask spontaneously.** The owner can check the Robinhood app when convenient. Re-ask
+  only if new evidence arrives — e.g. a second Robinhood export that would let
+  `duplicate-flags` see across import files, or a statement period that gives Robinhood Cash a
+  reconciliation arbiter for the first time.
+
+The question, for whenever they do revisit it:
 
 **Are the two identical Robinhood +$6,000 rows on 2025-07-07 two real fundings, or one charge
 imported twice?**
@@ -238,7 +255,8 @@ Tailscale solves access, not durability. Back up `data/backups/daily-*.db`, **ne
    `review_dismissed_at` column; PASS 2 skips a row whose dismissal is newer than its last
    mutation. The alternative (reusing `bulk-edit.ts:196`'s self-group) needs no schema change but
    overloads `transferGroupId` with "dismissed" and silently opts the row out of duplicate-flags.
-2. **N:N transfer pairing** — optional, and **blocked on §5** for the $6,000 component. If built:
+2. **N:N transfer pairing** — optional, and the **$6,000 component is now explicitly excluded by
+   owner decision (§5), not merely unresolved**. If built, it must skip that component. Otherwise:
    run the unique-nearest fixpoint to a stall, then commit ONE saturated block, repeat. Do **not**
    relax to `min(N,M)` — the leftover row freezes with a stale `needs_review` that PASS 2 can no
    longer re-derive. Expect exactly **4 pairs / 8 rows / 33 → 25**; any other count means stop.
