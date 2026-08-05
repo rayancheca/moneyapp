@@ -50,7 +50,7 @@ beforeEach(() => {
       format: "pdf",
       institutionId: institution.id,
       parserProfile: "chase-card-statement-pdf",
-      status: "imported",
+      status: "parsed",
       storagePath: "statements/test/statement.pdf",
       importedAt: "2026-01-01T00:00:00.000Z",
     })
