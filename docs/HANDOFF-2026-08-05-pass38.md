@@ -11,7 +11,9 @@
 
 ## 1. Repo state
 
-`main` = run `git rev-parse --short main`. Everything below is pushed.
+`main` = `d8b8548` (verify with `git rev-parse --short main` rather than trusting this line).
+Two commits: the e2e flake + clock pinning (`9d3200c`), then the reconciliation fix (`d8b8548`).
+Both pushed.
 
 **Real DB — written this pass, with approval:** 9,918 txns (unchanged count) · **9,782 active · 65
 excluded · 71 superseded · 0 quarantined** (was 83) · 0 gap days ledger-wide (was 323) · 71
