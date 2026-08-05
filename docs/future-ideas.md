@@ -1366,12 +1366,24 @@ Options weighed (pass-13 research):
   ATO, targeted phishing). The fix costs ~20 lines + one env hash; the downside is unbounded.
   **The owner's indifference doesn't lower the third-party risk — ship auth or don't ship.**
 
-**A5. 🚨 Deploy-blocker: `src/middleware.ts` rejects any non-localhost `Host`.** Today it
-hard-403s any `Host` header that isn't `localhost`/`127.0.0.1` (a DNS-rebinding defense for a
-deliberately loopback-only, unauthenticated app; `dev`/`start` even bind `-H 127.0.0.1`). On
-Vercel this **403s 100% of production traffic** regardless of any DB/blob work. It must be
-replaced by the A4 auth guard (allow the real prod host + require the session cookie). Keep the
-existing security headers (HSTS/nosniff/frame-deny/referrer/permissions) — they're already good.
+**A5. ✅ CLOSED (pass 36) — the Host guard is now configurable.** It was: `src/middleware.ts`
+hard-403s any `Host` that isn't `localhost`/`127.0.0.1`, which would 403 100% of traffic on any
+remote host. Now `src/proxy.ts` (renamed for the Next 16 convention) delegates to
+`src/lib/allowed-hosts.ts`, which admits loopback unconditionally plus anything named in
+`MONEYAPP_ALLOWED_HOSTS`. Unset == the old local-only posture exactly, so nothing changed for
+the owner's current setup.
+
+⚠️ **This closes the Tailscale path, NOT the public-internet path.** A5 was only ever the
+*mechanical* blocker; **A4 (auth) is still open and still non-negotiable for public exposure**.
+The allowlist admits a host — it does not authenticate a person. On a private tailnet that is
+the correct trade (the tailnet IS the auth boundary); on the public internet it is not, and
+`tailscale funnel` must never be enabled. Keep the existing security headers.
+
+Measured on the real build, not assumed: the perimeter 403s a bad `Host` on Server Action POSTs
+and on `/_next/static` assets, and the matcher is `^.*$`. Two traps found the hard way — a
+root-level `proxy.ts` builds clean with **no warning** and silently serves `evil.com` a 200 (the
+file must be `src/proxy.ts`), and `fetch()` rewrites `Host`, so it reports a false 200 pass;
+verify with `curl` or `node:http` only.
 
 **A6. One-time MIGRATION (reversible + verified).**
 1. Back up first: `data/backups/pre-turso-migration.db` (copy the live file).

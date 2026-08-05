@@ -56,7 +56,19 @@ This fits inside every free tier discussed. **Storage is never the constraint** 
 
 ### 1.4 Two Next.js 16 findings that affect the auth design
 
-**(a) `middleware.ts` is deprecated in Next 16.** Per the [official docs](https://nextjs.org/docs/app/api-reference/file-conventions/proxy), v16.0.0: *"Middleware is deprecated and renamed to Proxy."* The app currently ships `src/middleware.ts`. There is a codemod: `npx @next/codemod@canary middleware-to-proxy .`
+**(a) `middleware.ts` is deprecated in Next 16.** ✅ **DONE in pass 36** — the app now ships
+`src/proxy.ts` exporting `proxy`, and the build no longer prints the deprecation warning.
+
+The codemod was **not** used, and should not be: `@next/codemod` needs network, has repo-wide
+blast radius, and every one of its other transforms had zero targets here. The whole migration
+was `git mv` plus renaming one identifier.
+
+⚠️ **The file must be `src/proxy.ts`.** Next resolves the convention against the directory
+containing `app/`, so a **root-level `proxy.ts` builds cleanly with no warning, no tree entry —
+and the perimeter is silently gone** (measured: `Host: evil.com` → 200). A wrong *export name*
+fails the build loudly; a wrong *location* does not. Verify against
+`.next/server/functions-config-manifest.json` (`functions['/_middleware'].runtime === 'nodejs'`),
+never against a stdout string.
 
 **(b) Proxy does NOT reliably cover Server Actions.** The docs are explicit:
 
@@ -64,16 +76,28 @@ This fits inside every free tier discussed. **Storage is never the constraint** 
 
 This app has **78 Server Actions across 14 files**, 15 pages, and **0 API routes**. All mutation goes through Server Actions. So *any* proxy-only auth scheme is one matcher refactor away from exposing every write path. This is a real design input, addressed in §4.
 
-### 1.5 The existing middleware will block remote access
+### 1.5 The Host guard — ✅ made configurable in pass 36
 
-`src/middleware.ts` hard-rejects any `Host` that is not loopback:
+It used to hard-reject any `Host` that was not loopback, which was the single line blocking
+*any* remote-access plan. `src/proxy.ts` now delegates to `src/lib/allowed-hosts.ts`:
 
-```ts
-const ALLOWED_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
-// ...returns 403 "Forbidden: MoneyApp only serves localhost"
-```
+- loopback (`localhost`, `127.0.0.1`, `[::1]`) is **hard-coded and unconditional** — never from env
+- extra hostnames come from `MONEYAPP_ALLOWED_HOSTS` (comma-separated, no wildcard)
+- **unset == the historical local-only posture, byte for byte**
 
-This is good security design (DNS-rebinding defense), and it is also the single line that must change for *any* remote-access plan. Note `package.json` binds to loopback explicitly: `next start -H 127.0.0.1`.
+Set it on deploy day: `MONEYAPP_ALLOWED_HOSTS=moneyapp.your-tailnet.ts.net`.
+
+Env is read **per request**, not at module scope, so an operator's edit is not frozen until a
+rebuild. Entries run through the same normalizer as the incoming `Host`, so a pasted
+`name:443` still matches. There is deliberately **no `x-forwarded-host` fallback** — that header
+is attacker-controlled and would defeat the rebinding defense this file exists for.
+
+⚠️ **Keep `next start -H 127.0.0.1` in `package.json`.** Counter-intuitive but correct:
+Tailscale Serve terminates TLS and proxies *to* loopback, so the app stays reachable only
+through the tailnet and never on the LAN. Changing the bind is strictly less safe.
+
+⚠️ **Verify with `curl`, never `fetch()`** — `fetch` rewrites `Host`, so it reports a false
+200 pass against a perimeter that is actually working.
 
 ---
 
@@ -179,22 +203,25 @@ The strongest argument is the risk asymmetry. The migration options put the *mon
 2. Install Tailscale on phone and tablet from the App Store / Play Store; sign in with the same account. Confirm all three appear in the admin console.
 3. Note the Mac's tailnet DNS name, e.g. `macbook.tailnet-xyz.ts.net`. Enable MagicDNS and HTTPS certificates in the admin console.
 
-**Phase 1 — migrate the deprecated middleware (30 min)**
-4. Run the official codemod: `npx @next/codemod@canary middleware-to-proxy .` This renames `src/middleware.ts` → `src/proxy.ts` and `middleware()` → `proxy()`. Clears the Next 16 deprecation.
-5. Verify the 243 e2e tests still pass — the host-allowlist behaviour is load-bearing and should be covered.
+**Phases 1 and 2 — ✅ ALREADY DONE (pass 36). No code work remains before deploy day.**
 
-**Phase 2 — allow the tailnet host (1 hour)**
-6. Extend the allowlist in `src/proxy.ts` to read from an env var, keeping the loopback default so the local-only posture is unchanged when unset:
-   ```ts
-   const EXTRA = (process.env.MONEYAPP_ALLOWED_HOSTS ?? "")
-     .split(",").map(s => s.trim()).filter(Boolean);
-   const ALLOWED_HOSTNAMES = new Set([
-     "localhost", "127.0.0.1", "::1", "[::1]", ...EXTRA,
-   ]);
-   ```
-7. Set `MONEYAPP_ALLOWED_HOSTS=macbook.tailnet-xyz.ts.net` in `.env`.
-8. **Add a unit test** asserting an unknown Host still 403s, and that only the configured tailnet host is admitted. This line is the app's perimeter — it deserves a test.
+Steps 4–8 are complete and verified: `src/proxy.ts` exports `proxy`, the allowlist lives in
+`src/lib/allowed-hosts.ts` and reads `MONEYAPP_ALLOWED_HOSTS` **per request**, and the perimeter
+has 24 unit tests where it previously had none. The one step left for the owner:
+
+7. Set `MONEYAPP_ALLOWED_HOSTS=macbook.tailnet-xyz.ts.net` in `.env` (it is gitignored;
+   `.env.example` documents the variable).
+
+Do **not** re-run the codemod — the migration is already done, and running it now would find
+nothing to change.
+
 9. **Keep `-H 127.0.0.1` in `package.json`.** This is important and slightly counter-intuitive: Tailscale Serve terminates TLS and proxies *to* loopback, so the Next server should continue to bind loopback only. The app is then reachable *exclusively* through the tailnet — it is not listening on the LAN at all. This is the safest possible posture and it requires changing nothing.
+
+⚠️ **Deploy-day check that cannot be run from this machine.** After `tailscale serve`, curl the
+tailnet URL from a second device and confirm from the server log which `Host` actually arrived.
+If Tailscale rewrites it to `127.0.0.1`, then `MONEYAPP_ALLOWED_HOSTS` is a no-op **and the
+perimeter is bypassed for anything that reaches loopback** — stop and rethink before exposing
+real financial data.
 
 **Phase 3 — publish to the tailnet (30 min)**
 10. `pnpm build && pnpm start`
