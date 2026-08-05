@@ -5,6 +5,8 @@ import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors } from "@/db/schema/balances";
 import { importFiles, statementPeriods, type ImportStatus } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
+import { CoveragePanel } from "@/components/imports/CoveragePanel";
+import { accountCoverage } from "@/services/coverage";
 import { countPhrase } from "@/components/ui/blast-radius";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -106,6 +108,8 @@ export default async function ImportsPage({
     .orderBy(desc(statementPeriods.periodEnd))
     .all();
 
+  const coverage = accountCoverage(db);
+
   const reconciled = periods.filter((p) => p.reconciliation === "reconciled").length;
   const valueAnchors = periods.filter((p) => p.reconciliation === "value_anchor").length;
   const gaps = periods.filter((p) => p.reconciliation === "gap");
@@ -153,6 +157,8 @@ export default async function ImportsPage({
             </button>
           </form>
         </SurfaceCard>
+
+        <CoveragePanel coverage={coverage} />
 
         {periods.length > 0 && (
           <div className="grid gap-3 sm:grid-cols-3">
