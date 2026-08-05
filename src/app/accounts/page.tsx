@@ -64,7 +64,13 @@ export default async function AccountsPage({
   // cash wallets have their own dedicated card below — keep them out of the
   // institution list so they aren't managed (and rendered) in two places
   const groups = institutionGroups(db).filter((g) => g.institutionName !== CASH_INSTITUTION_NAME);
-  const institutions = listInstitutions(db).map((i) => ({ id: i.id, name: i.name }));
+  // Cash is filtered here too, for the same reason: picking it in the generic
+  // "add an account" form would anchor a wallet on today instead of asking for
+  // an opening date. The action rejects it as a backstop; this keeps the owner
+  // from choosing a dead end in the first place.
+  const institutions = listInstitutions(db)
+    .filter((i) => i.name !== CASH_INSTITUTION_NAME)
+    .map((i) => ({ id: i.id, name: i.name }));
   const archived = listAccounts(db).filter((a) => !a.isActive);
   const cashWallets = listCashWalletSummaries(db);
   const categoryOptions = buildCategoryPickerOptions(db.select().from(categories).all());

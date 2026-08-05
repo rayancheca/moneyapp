@@ -10,6 +10,7 @@ import { getAccount, listAccounts, listInstitutions } from "@/services/accounts"
 import { listAnchors } from "@/services/anchors";
 import { accountSeries } from "@/services/derivation";
 import { listAccountHoldings } from "@/services/holdings";
+import { CASH_INSTITUTION_NAME } from "@/services/manual-transactions";
 import { recentLedgerRows } from "@/services/ledger-rows";
 import { readSettings } from "@/services/settings";
 import { resolveViewState } from "@/lib/view-state";
@@ -158,7 +159,14 @@ export default async function AccountDetailPage({
               subtype: account.subtype,
               paymentSourceAccountId: account.paymentSourceAccountId,
             }}
-            institutions={listInstitutions(db)}
+            // Cash is hidden so an ordinary account cannot be MOVED under it
+            // (it would then be a wallet anchored on the wrong day), but it
+            // stays listed for an account already there — the edit sheet's
+            // Select is controlled, and dropping the current value would leave
+            // the owner's own wallet with no matching option.
+            institutions={listInstitutions(db).filter(
+              (i) => i.name !== CASH_INSTITUTION_NAME || i.id === account.institutionId,
+            )}
             fundingCandidates={listAccounts(db)
               .filter((a) => (a.type === "checking" || a.type === "savings") && a.id !== account.id)
               .map((a) => ({ id: a.id, name: a.name }))}

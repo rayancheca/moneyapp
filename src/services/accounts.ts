@@ -1,9 +1,10 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import type { AppDatabase } from "@/db/client";
 import { accounts, ACCOUNT_TYPES, ACCOUNT_SUBTYPES, isLiability } from "@/db/schema/accounts";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { institutions } from "@/db/schema/institutions";
+import { transactions } from "@/db/schema/transactions";
 import { isInvestmentSide } from "@/lib/account-side";
 import { latestBalances, rebuildAccount, type AccountBalance } from "./derivation";
 
@@ -214,6 +215,32 @@ export function editAccount(db: AppDatabase, id: string, input: AccountEditInput
     if (hasHoldings) {
       throw new Error(
         "This account's balance history is derived from its holdings — changing its type would discard that history",
+      );
+    }
+  }
+
+  // The mirror image: flipping INTO investment routes derivation down the
+  // holdings branch, which carries the anchor forward and never reads the
+  // day sums — so every entry after the anchor stops counting.
+  //
+  // The guard keys on manual rows, and the reason is narrower than "manual is
+  // what derivation cares about" (it is not — derivation filters on `status`,
+  // never on provenance). It is that manual rows are the only transactions
+  // with no external ground truth to re-anchor from. An IMPORTED account
+  // suffers the same freeze, but its newest anchor is a recent statement, so
+  // the next import restates it; blocking that case too would break the
+  // legitimate repair of a stub auto-created as checking that is really a
+  // brokerage. A hand-kept wallet's only anchor is its OPENING — the oldest
+  // date it has — so the freeze there is permanent and inflates the balance.
+  if (typeChanged && effectiveType === "investment") {
+    const hasManual = db
+      .select({ id: transactions.id })
+      .from(transactions)
+      .where(and(eq(transactions.accountId, id), isNull(transactions.importFileId)))
+      .get();
+    if (hasManual) {
+      throw new Error(
+        "This account's balance is replayed from its own cash entries — an investment account derives value from holdings instead, so those entries would stop counting",
       );
     }
   }

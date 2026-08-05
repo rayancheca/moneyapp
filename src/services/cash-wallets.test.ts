@@ -9,7 +9,7 @@ import { accounts } from "@/db/schema/accounts";
 import { institutions } from "@/db/schema/institutions";
 import { balanceAnchors } from "@/db/schema/balances";
 import { MIN_FINANCIAL_DATE } from "@/lib/date-window";
-import { createAccount } from "./accounts";
+import { createAccount, editAccount } from "./accounts";
 import { addManualAnchor } from "./anchors";
 import { addManualTransaction, isCashWallet } from "./manual-transactions";
 import { latestBalances } from "./derivation";
@@ -274,5 +274,70 @@ describe("listCashWallets", () => {
     const wallets = listCashWallets(bundle.db);
     expect(wallets.map((w) => w.id)).toContain(walletId);
     expect(wallets.map((w) => w.id)).not.toContain(checkingId);
+  });
+});
+
+describe("flipping a cash wallet to an investment account", () => {
+  /**
+   * Derivation has two branches. A cash wallet replays its own entries forward
+   * from its opening anchor; an investment account carries the anchor forward
+   * and values the account from holdings × prices, never reading the day sums.
+   * Flipping a hand-kept wallet into the second branch therefore discards every
+   * entry after the opening — silently, and upward, because the opening is the
+   * OLDEST date the wallet has. The owner would see their spending undone.
+   */
+  test("is refused while the wallet has entries that would stop counting", () => {
+    const id = createCashWallet(bundle.db, {
+      name: "Pocket",
+      openingOn: "2026-06-01",
+      openingBalanceCents: 180_000,
+    });
+    addManualTransaction(bundle.db, {
+      accountId: id,
+      postedOn: "2026-06-10",
+      description: "Rent",
+      amountCents: -40_000,
+    });
+    addManualTransaction(bundle.db, {
+      accountId: id,
+      postedOn: "2026-06-20",
+      description: "Groceries",
+      amountCents: -25_000,
+    });
+    expect(latestBalances(bundle.db).get(id)!.balanceCents).toBe(115_000);
+
+    expect(() =>
+      editAccount(bundle.db, id, {
+        institutionId: bundle.db.select().from(accounts).where(eq(accounts.id, id)).get()!
+          .institutionId,
+        last4: null,
+        name: "Pocket",
+        type: "investment",
+      }),
+    ).toThrow(/replayed|holdings/);
+
+    // the refusal must also leave the balance alone — before this guard the
+    // flip succeeded and the figure jumped to the opening, 180_000
+    expect(latestBalances(bundle.db).get(id)!.balanceCents).toBe(115_000);
+  });
+
+  test("is still allowed on a wallet with nothing to lose", () => {
+    // over-broad guarding would block the legitimate repair of an account
+    // created as cash that is really a brokerage
+    const id = createCashWallet(bundle.db, {
+      name: "Empty",
+      openingOn: "2026-06-01",
+      openingBalanceCents: 20_000,
+    });
+
+    expect(() =>
+      editAccount(bundle.db, id, {
+        institutionId: bundle.db.select().from(accounts).where(eq(accounts.id, id)).get()!
+          .institutionId,
+        last4: null,
+        name: "Empty",
+        type: "investment",
+      }),
+    ).not.toThrow();
   });
 });

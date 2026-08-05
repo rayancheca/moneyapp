@@ -40,6 +40,7 @@ const { institutions } = await import("@/db/schema/institutions");
 const { accounts } = await import("@/db/schema/accounts");
 const { balanceAnchors } = await import("@/db/schema/balances");
 const { createAccount } = await import("@/services/accounts");
+const { CASH_INSTITUTION_NAME } = await import("@/services/manual-transactions");
 const {
   addAnchorAction,
   addAnchorResultAction,
@@ -138,6 +139,27 @@ describe("createAccountResultAction", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.error).toMatch(/^Initial balance: /);
+    expect(db.select().from(accounts).all().length).toBe(before);
+  });
+
+  test("a cash institution is refused here and pointed at the wallet form", async () => {
+    // This form anchors on TODAY. A wallet needs an opening DATE, or its
+    // balance freezes at the anchor for every entry dated today or earlier —
+    // the owner would add spending and watch the number not move.
+    const { db } = getDbBundle();
+    const cashInstitutionId = db
+      .insert(institutions)
+      .values({ name: CASH_INSTITUTION_NAME })
+      .returning({ id: institutions.id })
+      .get().id;
+    const before = db.select().from(accounts).all().length;
+
+    const result = await createAccountResultAction(
+      form({ institutionId: cashInstitutionId, name: "Pocket", type: "checking" }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toMatch(/New cash wallet/);
     expect(db.select().from(accounts).all().length).toBe(before);
   });
 

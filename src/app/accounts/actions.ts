@@ -14,6 +14,8 @@ import {
   updateAccount,
 } from "@/services/accounts";
 import { addManualAnchor, deleteAnchor } from "@/services/anchors";
+import { cashWalletInstitutionId } from "@/services/manual-transactions";
+import { todayIso } from "@/lib/dates";
 import {
   actionErrorMessage,
   firstIssueMessage,
@@ -98,19 +100,46 @@ export async function createAccountResultAction(
   }
 
   const db = getDb();
+
+  // This form anchors the opening balance on TODAY, which is right for a bank
+  // account (the number you read off the app is today's) and wrong for a cash
+  // wallet (the number you counted is an OPENING, and its history replays
+  // forward from there). A wallet minted here would freeze its displayed
+  // balance at the anchor for every entry dated today or earlier — the owner
+  // would add spending and watch the number not move. Send them to the wallet
+  // form, which asks for an opening DATE, instead of silently mis-anchoring.
+  const cashId = cashWalletInstitutionId(db);
+  if (cashId !== null && parsed.data.institutionId === cashId) {
+    return {
+      ok: false,
+      error:
+        'Use "New cash wallet" for cash — it opens on a date, and its balance replays from your entries',
+    };
+  }
+
   let accountId: string;
   try {
-    accountId = createAccount(db, {
-      institutionId: parsed.data.institutionId,
-      name: parsed.data.name,
-      type: parsed.data.type,
-      subtype: parsed.data.type === "investment" ? (parsed.data.subtype ?? "brokerage") : undefined,
-      last4: parsed.data.last4 && /^\d{4}$/.test(parsed.data.last4) ? parsed.data.last4 : undefined,
+    // One transaction: the account and its opening anchor commit together or
+    // not at all. They used to be two loose writes, so an anchor that threw
+    // left an account behind that the owner was told had not been created.
+    // Safe to nest (better-sqlite3 downgrades to a SAVEPOINT), and this cannot
+    // reach withPreMutationSnapshot — that VACUUM INTO throws inside an open
+    // transaction, but the id here is brand new so addManualAnchor's
+    // `overwrites` branch is unreachable. Same reasoning as createCashWallet.
+    accountId = db.transaction(() => {
+      const id = createAccount(db, {
+        institutionId: parsed.data.institutionId,
+        name: parsed.data.name,
+        type: parsed.data.type,
+        subtype:
+          parsed.data.type === "investment" ? (parsed.data.subtype ?? "brokerage") : undefined,
+        last4: parsed.data.last4 && /^\d{4}$/.test(parsed.data.last4) ? parsed.data.last4 : undefined,
+      });
+      if (openingCents !== null) {
+        addManualAnchor(db, { accountId: id, anchoredOn: todayIso(), enteredCents: openingCents });
+      }
+      return id;
     });
-    if (openingCents !== null) {
-      const { todayIso } = await import("@/lib/dates");
-      addManualAnchor(db, { accountId, anchoredOn: todayIso(), enteredCents: openingCents });
-    }
   } catch (error: unknown) {
     return { ok: false, error: actionErrorMessage(error, ACCOUNT_FIELD_LABELS, "Could not add the account") };
   }
