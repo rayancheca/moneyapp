@@ -16,6 +16,7 @@
     "e2e:fresh": "next build && playwright test",
     "db:generate": "drizzle-kit generate",
     "fixtures": "tsx scripts/fixtures/generate.ts",
+    "backup:statements": "tsx scripts/backup-statements.ts",
     "demo:load": "MONEYAPP_FAKE_PRICES=1 tsx scripts/demo/load-demo.ts",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed-run.ts"
