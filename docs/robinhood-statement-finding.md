@@ -1,5 +1,23 @@
 # Robinhood: why the 32 statements are not yet parseable
 
+> ⛔ **SUPERSEDED 2026-08-06 (pass 40). The central claim in this document is WRONG.**
+>
+> §2 concluded that `Robinhood Cash` "is not Robinhood's cash" by comparing the app's balance
+> against the statement's `Brokerage Cash Balance` line — while ignoring the `Deposit Sweep Balance`
+> line printed directly beneath it, which is where the money actually sat. At 2025-07-31 this
+> document reads `$35.00`; the sweep line that month read `$41,532.16`, and the app was within
+> $100.04 of the true total.
+>
+> `Robinhood Cash` IS a settlement-cash account, it IS a legitimate reconciliation target, and it
+> needed no modelling decision and no change to `reconcileAccounts` — only statements, because it is
+> type `checking` and the cash branch already gates it arithmetically. All 32 statements are now
+> imported. §3's two CODE claims about *investment* accounts remain true and still apply to
+> Robinhood **Brokerage**; §5's stated discriminator was also false (`Robinhood Brokerage Statement`
+> appears in 0 of 32 files).
+>
+> See `docs/HANDOFF-2026-08-06-pass40.md`. Kept for the record, not for guidance.
+
+
 **Measured 2026-08-05.** The owner downloaded 32 consecutive monthly Robinhood brokerage
 statements (2023-12 → 2026-07, zero gaps) so that Robinhood could finally have an arbiter. They
 are real, complete, and rich. **They are still not importable, and the blocker is a modelling
