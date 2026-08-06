@@ -14,6 +14,7 @@ import { chaseCheckingStatementPdf } from "./chase-checking-statement-profile";
 import { discoverItStatementPdf } from "./discover-statement-profile";
 import { ofxProfile } from "./ofx-profile";
 import { statementPdf } from "./pdf-profile";
+import { robinhoodBrokerageStatementPdf } from "./robinhood-brokerage-statement-profile";
 import { robinhoodCryptoStatementPdf } from "./robinhood-crypto-statement-profile";
 import { sofiCombinedStatementPdf } from "./sofi-statement-profile";
 import { chaseSpendingReportPdf } from "./spending-report-profile";
@@ -46,6 +47,10 @@ export const PROFILES: ParserProfile[] = [
   chaseCheckingStatementPdf,
   discoverItStatementPdf,
   robinhoodCryptoStatementPdf,
+  // after the crypto profile: both are Robinhood PDFs, and while the brokerage
+  // gate excludes the crypto markers explicitly, keeping the narrower product
+  // first means a future loosening cannot silently swallow it
+  robinhoodBrokerageStatementPdf,
   sofiCombinedStatementPdf,
   // synthetic fixtures only — see isSyntheticStatementText
   statementPdf,

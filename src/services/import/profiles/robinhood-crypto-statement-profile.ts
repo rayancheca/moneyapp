@@ -86,10 +86,16 @@ export function parseRobinhoodCryptoLines(texts: readonly string[]): RobinhoodCr
 
 /**
  * Three markers, following the isChaseCardStatementText doctrine — a single
- * marker would let one template tweak flip routing. The crypto statement is
- * distinguished from the BROKERAGE statement, which says "Robinhood Brokerage
- * Statement"/"Portfolio Summary" and carries neither "Crypto Statement" nor
- * "PERIOD START". Measured: 8/8 real crypto statements, 0 of the other 228.
+ * marker would let one template tweak flip routing.
+ *
+ * The crypto statement is distinguished from the BROKERAGE statement, which
+ * carries "Account Summary"/"Portfolio Value" and neither "Crypto Statement" nor
+ * "PERIOD START" — see robinhood-brokerage-statement-profile.
+ *
+ * ⚠️ This comment previously named "Robinhood Brokerage Statement" as the
+ * brokerage discriminator. Measured against the owner's 32-month archive that
+ * string appears in 0 of 32 files; a gate built on it would have matched
+ * nothing. Corrected 2026-08-06.
  */
 export function isRobinhoodCryptoStatementText(text: string): boolean {
   return /Crypto Statement/.test(text) && /PERIOD START/.test(text) && /OPENING BALANCE/.test(text);
