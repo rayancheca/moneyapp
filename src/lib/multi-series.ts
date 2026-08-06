@@ -60,8 +60,25 @@ export interface DashboardSeriesPoint {
   day: string;
   /** null = no shown account covers this day (a hard line break) */
   valueCents: number | null;
-  /** false = estimated/partial — the chart draws it dashed */
+  /**
+   * false = estimated/partial — the chart draws it dashed.
+   *
+   * ⚠️ For a rollup this conflates TWO things: not every member is covered, AND
+   * at least one covered member is an estimate. That is right for a dashed
+   * line and wrong for a percentage, which only cares about the first. The
+   * coverage fields below separate them; do not repurpose `complete`.
+   */
   complete: boolean;
+  /** covered member names, parallel to `coveredCents` (rollups only) */
+  coveredAccountNames?: string[];
+  /** each covered member's own signed value, parallel to the names */
+  coveredCents?: number[];
+  /** members whose own history has not started on this day — not a hole */
+  notYetOpen?: { name: string; opensOn: string }[];
+  /** members already open on this day that nothing covers — a real hole */
+  gapAccounts?: string[];
+  /** how many members this rollup sums when every one is covered */
+  totalAccounts?: number;
 }
 
 export interface DashboardSeries {
@@ -116,21 +133,44 @@ function rollupLine(
   sign: 1 | -1,
 ): DashboardSeries {
   const aligned = members.map((m) => alignOverDays(m.points, days));
+  // each member's own first day, so an uncovered day can say WHY it is uncovered
+  const opensOn = members.map((m) => m.points[0]?.day ?? null);
   const points = days.map((day, i) => {
     let sum = 0;
-    let covered = 0;
     let allExact = true;
-    for (const series of aligned) {
-      const v = series[i] ?? null;
-      if (v === null) continue;
+    const coveredAccountNames: string[] = [];
+    const coveredCents: number[] = [];
+    const notYetOpen: { name: string; opensOn: string }[] = [];
+    const gapAccounts: string[] = [];
+    for (let m = 0; m < aligned.length; m++) {
+      const member = members[m]!;
+      const v = aligned[m]![i] ?? null;
+      if (v === null) {
+        // an account with no history at all has no opening date to name, so it
+        // counts as a hole rather than an "opens later" claim we cannot support
+        const first = opensOn[m];
+        if (first !== null && first !== undefined && compareDates(day, first) < 0) {
+          notYetOpen.push({ name: member.label, opensOn: first });
+        } else {
+          gapAccounts.push(member.label);
+        }
+        continue;
+      }
       sum += v.valueCents;
-      covered += 1;
+      coveredAccountNames.push(member.label);
+      coveredCents.push(sign * v.valueCents);
       if (!v.exact) allExact = false;
     }
+    const covered = coveredAccountNames.length;
     return {
       day,
       valueCents: covered === 0 ? null : sign * sum,
       complete: covered === members.length && allExact,
+      coveredAccountNames,
+      coveredCents,
+      notYetOpen,
+      gapAccounts,
+      totalAccounts: members.length,
     };
   });
   return { key, label, owedFrame: sign === -1, points };

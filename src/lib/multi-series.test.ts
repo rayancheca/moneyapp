@@ -77,11 +77,40 @@ describe("buildDashboardSeries", () => {
     const net = out[0]!;
     expect(net.key).toBe("net");
     // 07-01: checking 1000 + card −400 (savings absent → partial) = 600, incomplete
-    expect(net.points[0]).toEqual({ day: "2026-07-01", valueCents: 60000, complete: false });
+    expect(net.points[0]).toMatchObject({ day: "2026-07-01", valueCents: 60000, complete: false });
     // 07-02: 1000(carried) + 5000 − 600 = 5400 — all covered, but the card day is inexact
-    expect(net.points[1]).toEqual({ day: "2026-07-02", valueCents: 540000, complete: false });
+    expect(net.points[1]).toMatchObject({ day: "2026-07-02", valueCents: 540000, complete: false });
     // 07-03: 1200 + 5000(carried) − 600(carried-inexact) = 5600 — carried days still count as covered
-    expect(net.points[2]).toEqual({ day: "2026-07-03", valueCents: 560000, complete: false });
+    expect(net.points[2]).toMatchObject({ day: "2026-07-03", valueCents: 560000, complete: false });
+  });
+
+  test("`complete` conflates two causes; the coverage fields separate them", () => {
+    // this is the distinction a percentage depends on: 07-01 is incomplete
+    // because an account is MISSING, 07-02 because a covered one is an
+    // ESTIMATE. Only the first is a reason to refuse to compare.
+    const net = buildDashboardSeries(inputs, { mode: "combined" })[0]!;
+
+    const first = net.points[0]!;
+    expect(first.complete).toBe(false);
+    expect(first.coveredAccountNames).toEqual(["Checking", "Venture X"]);
+    // Savings has not opened yet — not a hole, and it names the day it starts
+    expect(first.notYetOpen).toEqual([{ name: "Savings", opensOn: "2026-07-02" }]);
+    expect(first.gapAccounts).toEqual([]);
+
+    const second = net.points[1]!;
+    expect(second.complete).toBe(false); // an inexact member
+    // …yet every account is covered, so there is nothing to exclude
+    expect(second.coveredAccountNames).toHaveLength(3);
+    expect(second.notYetOpen).toEqual([]);
+    expect(second.gapAccounts).toEqual([]);
+  });
+
+  test("coveredCents is signed and parallel to the names", () => {
+    const first = buildDashboardSeries(inputs, { mode: "combined" })[0]!.points[0]!;
+    // the card is a liability: its own contribution is negative in the net frame
+    expect(first.coveredCents).toEqual([100000, -40000]);
+    expect(first.coveredCents!.reduce((a, b) => a + b, 0)).toBe(first.valueCents);
+    expect(first.totalAccounts).toBe(3);
   });
 
   test("combined with all-exact coverage is complete", () => {
@@ -172,7 +201,7 @@ describe("buildDashboardSeries", () => {
     };
     const out = buildDashboardSeries([checking, earlyCard], { mode: "assets" });
     // 06-30 is on the shared axis (the card has it) but no ASSET account covers it
-    expect(out[0]!.points[0]).toEqual({ day: "2026-06-30", valueCents: null, complete: false });
+    expect(out[0]!.points[0]).toMatchObject({ day: "2026-06-30", valueCents: null, complete: false });
   });
 
   test("accounts mode: a later-starting account's line begins at its own first day", () => {

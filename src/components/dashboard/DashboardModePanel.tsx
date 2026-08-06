@@ -3,6 +3,7 @@
 import { useCallback, useMemo } from "react";
 import { NumberRoll } from "@/components/ui/NumberRoll";
 import { DAILY_SERIES_RANGES, type ChartRange } from "@/lib/chart-range";
+import { sharedCoverageChange } from "@/lib/coverage-label";
 import { compareDates } from "@/lib/dates";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
@@ -92,6 +93,11 @@ function toScrubPoints(s: BridgedDashboardSeries): ScrubPoint[] {
     day: p.day,
     valueCents: p.valueCents,
     complete: p.complete,
+    coveredAccountNames: p.coveredAccountNames,
+    coveredCents: p.coveredCents,
+    notYetOpen: p.notYetOpen,
+    gapAccounts: p.gapAccounts,
+    totalAccounts: p.totalAccounts,
     inTransitCents: p.inTransitCents,
   }));
 }
@@ -152,12 +158,31 @@ export function DashboardModePanel({
       const start = startPoint.valueCents;
       const endPoint = slice[endIdx]!;
       const end = endPoint.valueCents ?? 0;
-      const deltaCents = start === null ? 0 : end - start;
-      // % suppressed unless BOTH measured ends are complete (a partial endpoint
-      // would fabricate the percentage) and the base is non-zero
-      const comparable = start !== null && startPoint.complete !== false && endPoint.complete !== false;
-      const deltaPct = comparable && start !== 0 ? (deltaCents / Math.abs(start)) * 100 : null;
-      return { day: endPoint.day, valueCents: end, deltaCents, deltaPct };
+      const rawDelta = start === null ? 0 : end - start;
+      /*
+       * The same rule the hero uses (lib/coverage-label): compare the accounts
+       * BOTH endpoints cover, and name what was dropped. Suppressing whenever an
+       * endpoint was partial is what made the headline % disappear from every
+       * range once a new account opened.
+       *
+       * `complete` is NOT the input here. For a rollup it also goes false when a
+       * covered member is merely an estimate, which is a reason to dash the line
+       * and not a reason to refuse a percentage — the coverage fields answer the
+       * narrower question. A genuine interior gap still suppresses, inside
+       * sharedCoverageChange.
+       */
+      const change =
+        start === null
+          ? { pct: null, scope: null, deltaCents: null }
+          : sharedCoverageChange({ cents: start, coverage: startPoint }, { cents: end, coverage: endPoint });
+      return {
+        day: endPoint.day,
+        valueCents: end,
+        // the dollar must cover the same accounts as the percentage beside it
+        deltaCents: change.deltaCents ?? rawDelta,
+        deltaPct: change.pct,
+        deltaPctScope: change.scope,
+      };
     },
     [],
   );
@@ -165,7 +190,11 @@ export function DashboardModePanel({
   const valueText = useCallback(
     (summary: ScrubSummary): string => {
       const base = scrubValueText(formatDayLong(summary.day), formatCents(summary.valueCents), summary.deltaPct);
-      const framed = owed ? `${base} — amount owed` : base;
+      // the scope belongs in the spoken text too — a screen-reader user hearing
+      // a bare percentage has no way to learn it excluded an account
+      const scoped =
+        summary.deltaPct !== null && summary.deltaPctScope ? `${base}, ${summary.deltaPctScope}` : base;
+      const framed = owed ? `${scoped} — amount owed` : scoped;
       const transit = transitByDay.get(summary.day) ?? 0;
       if (transit > 0) return `${framed} — includes ${formatCents(transit)} in transit`;
       if (transit < 0) return `${framed} — excludes ${formatCents(-transit)} posted in two accounts`;
@@ -244,7 +273,13 @@ export function DashboardModePanel({
                 {summary.deltaPct !== null && (
                   <span className="figures">
                     ({summary.deltaPct >= 0 ? "+" : ""}
-                    {summary.deltaPct.toFixed(1)}%)
+                    {summary.deltaPct.toFixed(1)}%
+                    {/* a scoped percentage that does not name its scope reads as
+                        a claim about the whole rollup */}
+                    {summary.deltaPctScope && (
+                      <span className="font-normal text-ink-faint"> {summary.deltaPctScope}</span>
+                    )}
+                    )
                   </span>
                 )}
               </span>
