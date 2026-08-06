@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { createDatabase } from "@/db/client";
 import { accountCoverage } from "@/services/coverage";
 import { netWorthSeries } from "@/services/derivation";
@@ -90,10 +91,19 @@ async function main(): Promise<void> {
   fs.rmSync(SCRATCH, { recursive: true, force: true });
   fs.mkdirSync(TRIAL_ORIGINALS, { recursive: true });
 
-  // copy the real DB via SQLite's own backup API so a live WAL cannot tear it
-  const source = createDatabase(path.join(process.cwd(), "data", "moneyapp.db"));
-  await source.sqlite.backup(TRIAL_DB);
-  source.sqlite.close();
+  /*
+   * Copy the real DB via SQLite's own backup API so a live WAL cannot tear it.
+   *
+   * Opened READONLY and deliberately NOT through createDatabase(): that helper
+   * runs `migrate()` on every open (db/client.ts), so merely taking this
+   * snapshot used to apply any pending migration to the REAL database. It is
+   * additive DDL and harmless to money, but a script whose whole purpose is to
+   * leave the real file alone must not be the thing that writes to it — and the
+   * claim printed at the end of this run has to stay true.
+   */
+  const source = new Database(path.join(process.cwd(), "data", "moneyapp.db"), { readonly: true });
+  await source.backup(TRIAL_DB);
+  source.close();
 
   // every write below lands in .trial/ — the real archive is never touched
   process.env.MONEYAPP_ORIGINALS_DIR = TRIAL_ORIGINALS;
@@ -152,7 +162,7 @@ async function main(): Promise<void> {
   console.log(`  delta  ${delta === 0 ? "$0.00 — unchanged" : money(delta)}`);
 
   sqlite.close();
-  console.log(`\nTrial DB left at ${TRIAL_DB} for inspection. The real database was never opened for writing.`);
+  console.log(`\nTrial DB left at ${TRIAL_DB} for inspection. The real database was opened READONLY and never written.`);
 }
 
 await main();
