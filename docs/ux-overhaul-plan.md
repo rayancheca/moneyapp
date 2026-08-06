@@ -274,7 +274,8 @@ Unit: return math vs fixtures (list in §6.2), timeline-rebuild reconciliation (
 ### 7.1 Dashboard (`/`)
 
 **Aggregator of teasers — never dead-ends** [CP]. Stack (static, deliberate order; reorder deferred §9):
-1. **Net worth header** + **ScrubChart** (adopted from Stage 4; its API already handles the dual solid/dashed partial-coverage series with null gaps — scrub announces "partial · 5/7 accounts") + range-delta chip.
+1. **Net worth header** + **ScrubChart** (adopted from Stage 4; its API already handles the dual solid/dashed partial-coverage series with null gaps — scrub announces "5 of 7 accounts open on this date" — reworded pass 40; the old
+   "partial · 5/7" wording fired on 99.79% of days and read as lost data) + range-delta chip.
 2. **To Review card**: count + 3 newest + Review all → [CP].
 3. **Upcoming bills strip** (14 days, horizontal) → series pages; "$X due before your next paycheck" when income series exist [RM-S].
 4. **Spending pace widget**: solid-vs-dotted mini chart + "Free to spend ≈ $X" [CP] → /spending.

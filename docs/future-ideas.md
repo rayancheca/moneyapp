@@ -916,6 +916,9 @@ financial data; then iOS.
 - [x] **Dynamic dashboard §2/§4** — brush the net-worth chart → linked activity panel + ← Back/→ timeframe history (commit `913a090`).
 - [x] **Per-account coverage report** — done as analysis (see "Data coverage" below).
 - [x] **Chart names WHICH accounts are missing** at each partial day (tooltip "● Partial · no Robinhood Crypto, Venture X", header, hero, aria) — commit `194477d`.
+  - ↳ **REWORDED 2026-08-06 (pass 40).** That warning fired on 1,440 of 1,443 days, which is decoration.
+    Pre-start ("the account had not opened yet") is now neutral and worded "open"/"opens"; only a genuine
+    interior gap keeps the warning. See `src/lib/coverage-label.ts` — `splitMissing` is the one rule.
 - [x] **Account editable from its detail page** (name / institution / last4) — commit `8b66cda`. First slice of "nothing read-only".
 - [x] **Statement ingestion + per-account storage (PRIMARY MISSION)** — built 3 real-bank PDF
   parsers (Chase College Checking, Discover it, Robinhood Crypto), re-architected the archive to

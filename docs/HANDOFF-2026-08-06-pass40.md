@@ -15,14 +15,18 @@
 
 ## 1. Repo state
 
-`main` = `0fdd858` (verify with `git rev-parse --short main`). Six commits, all pushed.
+`main` = `8b6b906` (verify with `git rev-parse --short main`). Ten commits, all pushed.
+
+⚠️ **HISTORY WAS REWRITTEN THIS PASS.** Every SHA below `a2c6cf6` differs from what an older clone
+has — see §8. A full pre-rewrite backup of every ref is at
+`~/Desktop/moneyapp-pre-history-purge-2026-08-06.bundle` (198 MB); delete it once you are satisfied.
 
 | gate | result |
 |---|---|
 | `tsc --noEmit` | clean |
-| unit | **149 files / 2,616 tests** (was 148 / 2,559) · 99.65% statements |
+| unit | **150 files / 2,635 tests** (was 148 / 2,559) · 99.65% statements |
 | `next build` | clean |
-| `E2E_GATE=1 pnpm e2e:fresh` | **384 passed, 0 failed. Zero baseline churn.** |
+| `E2E_GATE=1 pnpm e2e:fresh` | **386 passed, 0 failed.** 16 `investments*` baselines deliberately regenerated (§7); no other churn. |
 
 Real DB written twice this pass, both approved. `integrity_check ok`. 9,792 active txns (+10),
 216 statement periods (was 176).
@@ -99,6 +103,30 @@ are PASS-2 transfer ambiguities. The 33 rows are untouched — draining them is 
 database was never opened for writing" while opening it through `createDatabase()`, which calls
 `migrate()` on every open. That is how migration 0009 reached the real DB mid-pass. Additive DDL,
 no data changed — but the claim had to become true. Now opens READONLY.
+
+---
+
+## 3b. Shipped after the first draft of this handoff
+
+**Row-selection on `/investments`** — `DataTable`'s selection API was complete and used by nobody.
+Ticking holdings now prints a ledger-style total: count, combined value, combined share, today's
+move. The rule that matters is the null rule — sum only non-null values per figure and always state
+how many rows fed it; a figure with no contributors is `null`, never `0`, because "none of these is
+priced" and "these are worth nothing" must not render alike. Selection is keyed on account+symbol,
+so one symbol in two accounts stays two legs. Clearing moves focus to the select-all box (the Clear
+button removes itself from the document). 16 `investments*` baselines regenerated — the checkbox
+column shifts the table, which is the intended change.
+
+⚠️ **One test was replaced because it could not fail.** "Two accounts holding the same symbol are
+not deduped" asserted a property the reducer cannot violate — its input type carries no symbol. The
+real invariant lives in the selection key and is pinned there now. A test that cannot fail is worse
+than no test: it reads as coverage.
+
+**The other four dashboard modes got their % back too.** Split/assets/liabilities/accounts kept the
+old both-endpoints-complete rule. ⚠️ The trap: a rollup's `complete` goes false for TWO reasons —
+a member is uncovered, OR a covered member is an estimate — and it also drives the dashed line.
+Feeding it to the comparison would have suppressed the % on every carried day, which is most days.
+`rollupLine` now emits coverage detail ALONGSIDE `complete` rather than changing it.
 
 ---
 
@@ -182,9 +210,26 @@ three billing cycles have no independent arbiter. Worth re-downloading.
 6. ⛔ **Hosting LAST.** `docs/deploy-plan-gcp-firebase-auth.md`. Allowlist known:
    `rayankarimcheca@gmail.com` + `rayanchecakarim@gmail.com` (transposed — copy, never retype).
 
-Still open from pass 39: the real Sapphire PDFs remain in **git history**. The repo is private, so
-exposure is contained; purging needs `git-filter-repo` + force-push and was not requested. Raise
-once, do not nag.
+**The +$6,000 question from pass 36 is ANSWERED.** The two identical Robinhood +$6,000 rows on
+2025-07-07 are BOTH REAL: the July 2025 statement's sweep ledger steps twice,
+`$19,846.18 → $25,846.18 → $31,846.18`. Not a double count. One of the 33 already settled.
+
+---
+
+## 8. ⚠️ Git history was rewritten (owner-approved)
+
+The 18 real Chase Sapphire PDFs committed while the repo was public have been purged from history
+with `git-filter-repo --path statements/ --invert-paths`, and `main` force-pushed.
+
+- **Every SHA below `a2c6cf6` changed.** An older clone cannot fast-forward; re-clone instead.
+- Verified after: 0 statement paths across ALL refs (the 4 stale `claude/*` branches predate them
+  and carried none), 194 synthetic test fixtures intact, `.gitignore` protections for `statements/`
+  and `data/` both survived, `.git` 393 MB → 194 MB.
+- One commit vanished — `fix: stop tracking real statements` — correctly pruned as empty once the
+  files it deleted never existed.
+- **Backup:** `~/Desktop/moneyapp-pre-history-purge-2026-08-06.bundle`, every ref as it was.
+- ⚠️ Anything GitHub already cached, or any clone taken while the repo was public, may still retain
+  the files. The rewrite cannot reach those.
 
 ---
 
