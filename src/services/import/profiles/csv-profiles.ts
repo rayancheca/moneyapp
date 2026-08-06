@@ -133,18 +133,40 @@ const DISCOVER_HEADER = "Trans. Date,Post Date,Description,Amount,Category";
 
 export const discoverCardCsv: ParserProfile = {
   id: "discover-card-csv",
-  version: 1,
+  // v2: posted_on takes the LATER of the two printed dates — see below
+  version: 2,
   matches: (f) => f.format === "csv" && f.text.startsWith("Trans. Date,"),
   parse: (f): ParsedStatement[] => {
     requireHeader(f, "discover-card-csv", DISCOVER_HEADER);
-    const txns: CanonicalTxn[] = parseCsv(f, "discover-card-csv").map((r) => ({
-      postedOn: mdyToIso("discover-card-csv", r["Post Date"] ?? ""),
-      transactedOn: mdyToIso("discover-card-csv", r["Trans. Date"] ?? ""),
-      // Discover convention is INVERTED: purchases positive, credits negative
-      amountCents: -parseAmountToCents(r.Amount ?? ""),
-      rawDescription: r.Description ?? "",
-      bankCategory: r.Category || undefined,
-    }));
+    const txns: CanonicalTxn[] = parseCsv(f, "discover-card-csv").map((r) => {
+      const posted = mdyToIso("discover-card-csv", r["Post Date"] ?? "");
+      const transacted = mdyToIso("discover-card-csv", r["Trans. Date"] ?? "");
+      return {
+        /*
+         * A charge cannot post before it happens, so `Post Date` earlier than
+         * `Trans. Date` means Discover printed something other than a posting
+         * date. It does exactly that for dispute adjustments: the credit is
+         * BACK-DATED to the charge it reverses, while the real posting date
+         * lands in `Trans. Date`.
+         *
+         * Measured on the owner's archive: 3 rows ledger-wide are inverted, all
+         * Discover. Two are $40.00 dispute refunds that really posted
+         * 2024-10-29 but were filed to 2024-09-18 and 2024-10-03; that
+         * displacement put three consecutive reconciliation spans out by
+         * exactly ±$40.00 and left 89 days unverifiable. Taking the later date
+         * lands all three spans on their anchors to the cent.
+         *
+         * ISO dates compare lexicographically, and for an ordinary row
+         * `Post Date` is already the later one, so this is a no-op there.
+         */
+        postedOn: transacted > posted ? transacted : posted,
+        transactedOn: transacted,
+        // Discover convention is INVERTED: purchases positive, credits negative
+        amountCents: -parseAmountToCents(r.Amount ?? ""),
+        rawDescription: r.Description ?? "",
+        bankCategory: r.Category || undefined,
+      };
+    });
     return [{ accountHint: { institution: "Discover", type: "credit" }, txns }];
   },
 };

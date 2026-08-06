@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { ParsedStatement, SniffedFile } from "../types";
 import { capitalOneStatementPdf, isCapitalOneStatementText, parseCapitalOneLines } from "./capitalone-statement-profile";
-import { chaseDepositCsv, robinhoodActivityCsv, sofiCsv } from "./csv-profiles";
+import { chaseDepositCsv, discoverCardCsv, robinhoodActivityCsv, sofiCsv } from "./csv-profiles";
 import { chaseSpendingReportPdf, isChaseSpendingReportText, parseSpendingReportLines } from "./spending-report-profile";
 
 /* ── Chase spending-report PDF (text-level core) ────────────────────── */
@@ -413,5 +413,54 @@ describe("parseCapitalOneLines", () => {
     // the brand name alone is NOT enough: real Chase and SoFi statements name
     // Capital One as a counterparty, which is why the cycle clause is required
     expect(isCapitalOneStatementText("ONLINE PAYMENT TO CAPITAL ONE N.A. $25.00")).toBe(false);
+  });
+});
+
+/* ── Discover CSV — back-dated dispute adjustments ──────────────────── */
+
+const DISCOVER_HEADER_LINE = "Trans. Date,Post Date,Description,Amount,Category";
+
+function discoverFile(rows: string[]): SniffedFile {
+  const text = [DISCOVER_HEADER_LINE, ...rows].join("\n");
+  return { name: "Discover-RecentActivity.csv", buffer: Buffer.from(text), format: "csv", text };
+}
+
+describe("discoverCardCsv — Post Date is not always a posting date", () => {
+  test("an ordinary row keeps its printed Post Date", () => {
+    const [statement] = discoverCardCsv.parse(
+      discoverFile(["10/01/2024,10/03/2024,STEPHANCODES.COM 3012045907 MD,40.00,Services"]),
+    ) as [ParsedStatement];
+    const txn = statement.txns[0]!;
+    expect(txn.postedOn).toBe("2024-10-03");
+    expect(txn.transactedOn).toBe("2024-10-01");
+    // Discover prints purchases positive; the ledger stores money out
+    expect(txn.amountCents).toBe(-4000);
+  });
+
+  test("a back-dated dispute adjustment posts on its Trans. Date", () => {
+    // both rows are verbatim from the owner's export: Discover back-dates the
+    // credit to the charge it reverses, so Post Date precedes Trans. Date
+    const [statement] = discoverCardCsv.parse(
+      discoverFile([
+        "10/29/2024,10/03/2024,AUTOMATIC PAYMENT -CRAN ADJUSTMENT TO YOUR ACCOUNT,-40.00,Payments and Credits",
+        "10/29/2024,09/18/2024,CREDIT NOT PROCESSEDAN ADJUSTMENT TO YOUR ACCOUNT,-40.00,Payments and Credits",
+      ]),
+    ) as [ParsedStatement];
+
+    // filing these to 10/03 and 09/18 put three consecutive reconciliation
+    // spans out by exactly ±$40.00 and left 89 days unverifiable
+    expect(statement.txns.map((t) => t.postedOn)).toEqual(["2024-10-29", "2024-10-29"]);
+    // the printed transaction date is preserved either way
+    expect(statement.txns.map((t) => t.transactedOn)).toEqual(["2024-10-29", "2024-10-29"]);
+    expect(statement.txns.map((t) => t.amountCents)).toEqual([4000, 4000]);
+  });
+
+  test("never moves a date backwards", () => {
+    const [statement] = discoverCardCsv.parse(
+      discoverFile(["09/18/2024,09/16/2024,RETURNED INTERNET PMT,0.79,Fees"]),
+    ) as [ParsedStatement];
+    // Post Date 09/16 is before Trans. Date 09/18, which cannot be a real
+    // posting date; the later of the two wins
+    expect(statement.txns[0]!.postedOn).toBe("2024-09-18");
   });
 });
