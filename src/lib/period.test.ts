@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
+import { compareDates } from "./dates";
 import {
+  ALL_TIME_FLOOR,
   currentPeriodLabel,
   currentPeriodParams,
   heatmapInitialMonth,
@@ -276,3 +278,91 @@ describe("heatmapInitialMonth", () => {
 // exported type is used by services — a compile-time smoke check
 const _typecheck: ResolvedPeriod = resolvePeriod({ period: "2026" }, TODAY);
 void _typecheck;
+
+describe("anchored ranges — YTD and All time", () => {
+  const TODAY = "2026-08-06";
+
+  test("YTD runs from Jan 1 to today and is always in progress", () => {
+    const p = resolvePeriod({ period: "YTD" }, TODAY);
+    expect(p.granularity).toBe("ytd");
+    expect(p.from).toBe("2026-01-01");
+    expect(p.to).toBe(TODAY);
+    expect(p.label).toBe("2026 to date");
+    // the window ends today by definition, so spending pace always applies
+    expect(p.isCurrent).toBe(true);
+  });
+
+  test("All time starts at the ledger's own first day when it is given", () => {
+    const p = resolvePeriod({ period: "ALL" }, TODAY, "2022-08-15");
+    expect(p.granularity).toBe("all");
+    expect(p.from).toBe("2022-08-15");
+    expect(p.to).toBe(TODAY);
+    expect(p.label).toBe("All time");
+  });
+
+  test("All time falls back to the floor when no ledger day is known", () => {
+    // a pure caller (no database) still resolves, just from the constant
+    expect(resolvePeriod({ period: "ALL" }, TODAY).from).toBe(ALL_TIME_FLOOR);
+  });
+
+  test("All time never inverts, even if handed a start in the future", () => {
+    // from > to would make every range query return nothing, silently
+    const p = resolvePeriod({ period: "ALL" }, TODAY, "2030-01-01");
+    expect(compareDates(p.from, p.to)).toBeLessThanOrEqual(0);
+    expect(p.from).toBe(TODAY);
+  });
+
+  test("YTD steps to the SAME window a year earlier, not the previous N days", () => {
+    // the useful comparison for "2026 to date" is "2025 to date"
+    const p = resolvePeriod({ period: "YTD" }, TODAY);
+    expect(stepPeriodParams(p, -1)).toEqual({ from: "2025-01-01", to: "2025-08-06" });
+  });
+
+  test("All time steps to the window before the ledger began — genuinely empty", () => {
+    // that emptiness is the point: the prior-period comparison finds nothing
+    // and the surface omits it, rather than comparing all time against itself
+    const p = resolvePeriod({ period: "ALL" }, TODAY, "2026-08-01");
+    const prev = stepPeriodParams(p, -1);
+    expect(compareDates(prev.to!, p.from)).toBeLessThan(0);
+  });
+
+  test("switching into an anchored range always lands on the live window", () => {
+    const march = resolvePeriod({ period: "2026-03" }, TODAY);
+    expect(switchGranularityParams(march, "ytd")).toEqual({ period: "YTD" });
+    expect(switchGranularityParams(march, "all")).toEqual({ period: "ALL" });
+  });
+
+  test("the reset link names each range", () => {
+    expect(currentPeriodLabel("ytd")).toBe("Year to date");
+    expect(currentPeriodLabel("all")).toBe("All time");
+    expect(currentPeriodParams("ytd", TODAY)).toEqual({ period: "YTD" });
+    expect(currentPeriodParams("all", TODAY)).toEqual({ period: "ALL" });
+  });
+
+  test("an unknown period string still falls back to the current month", () => {
+    // "YTD"/"ALL" must not have widened the parser into accepting anything
+    expect(resolvePeriod({ period: "ALLTIME" }, TODAY).granularity).toBe("month");
+    expect(resolvePeriod({ period: "ytd" }, TODAY).granularity).toBe("month");
+  });
+})
+
+describe("month bucket labels disambiguate across years", () => {
+  test("a single-year window keeps the bare month name", () => {
+    const p = resolvePeriod({ period: "2026" }, "2026-08-06");
+    expect(subBuckets(p).map((b) => b.label).slice(0, 3)).toEqual(["Jan", "Feb", "Mar"]);
+  });
+
+  test("a multi-year window carries the year, so four Augusts are distinguishable", () => {
+    const p = resolvePeriod({ period: "ALL" }, "2026-08-06", "2022-08-15");
+    const labels = subBuckets(p).map((b) => b.label);
+    expect(labels[0]).toBe("Aug '22");
+    expect(labels.at(-1)).toBe("Aug '26");
+    // the whole point: no label appears twice
+    expect(new Set(labels).size).toBe(labels.length);
+  });
+
+  test("YTD stays within one year, so it stays bare", () => {
+    const p = resolvePeriod({ period: "YTD" }, "2026-08-06");
+    expect(subBuckets(p).map((b) => b.label)).toEqual(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"]);
+  });
+})

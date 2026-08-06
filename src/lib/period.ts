@@ -10,7 +10,23 @@
 import { addDays, compareDates, diffDays, isValidIsoDate, monthKey, periodBounds } from "./dates";
 import { addMonths, monthLabel } from "./calendar-math";
 
-export type PeriodGranularity = "day" | "week" | "month" | "quarter" | "year" | "custom";
+export type PeriodGranularity = "day" | "week" | "month" | "quarter" | "year" | "ytd" | "all" | "custom";
+
+/**
+ * The `?period=` values for the two ANCHORED ranges. Unlike day…year they do
+ * not repeat — both end at today — so they page by shifting their own span,
+ * the way a custom window does.
+ */
+const YTD_KEY = "YTD";
+const ALL_KEY = "ALL";
+
+/**
+ * Where "All time" starts when the caller does not say. Only a surface with
+ * database access knows the ledger's real first day, so it passes it in;
+ * everything else gets a floor early enough to contain any real history and
+ * late enough not to draw decades of empty axis.
+ */
+export const ALL_TIME_FLOOR = "2020-01-01";
 
 export interface ResolvedPeriod {
   granularity: PeriodGranularity;
@@ -159,11 +175,35 @@ function weekPeriod(anchor: string, today: string): ResolvedPeriod {
  * window wins; otherwise `period` is matched as month → quarter → year;
  * anything malformed falls back to the current month of `today`.
  */
-export function resolvePeriod(params: PeriodParams, today: string): ResolvedPeriod {
+export function resolvePeriod(
+  params: PeriodParams,
+  today: string,
+  /** the ledger's own first day — only "All time" uses it */
+  earliest: string = ALL_TIME_FLOOR,
+): ResolvedPeriod {
   const { period, from, to } = params;
 
   if (from && to && isValidIsoDate(from) && isValidIsoDate(to) && compareDates(from, to) <= 0) {
     return { granularity: "custom", key: null, from, to, label: customLabel(from, to), isCurrent: within(today, from, to) };
+  }
+
+  if (period === YTD_KEY) {
+    return {
+      granularity: "ytd",
+      key: YTD_KEY,
+      from: `${today.slice(0, 4)}-01-01`,
+      to: today,
+      label: `${today.slice(0, 4)} to date`,
+      // always in progress: the window ends today by definition, so pace applies
+      isCurrent: true,
+    };
+  }
+
+  if (period === ALL_KEY) {
+    // a floor later than today would invert the range; the ledger cannot start
+    // in the future, but a bad `earliest` must not produce from > to
+    const start = compareDates(earliest, today) <= 0 ? earliest : today;
+    return { granularity: "all", key: ALL_KEY, from: start, to: today, label: "All time", isCurrent: true };
   }
 
   if (period) {
@@ -203,7 +243,17 @@ export function stepPeriodParams(period: ResolvedPeriod, delta: number): PeriodP
     }
     case "year":
       return { period: pad(Number(period.key) + delta, 4) };
+    case "ytd": {
+      // the useful comparison is the SAME window a year earlier ("2025 to
+      // date"), not the previous N days
+      const y = Number(period.from.slice(0, 4)) + delta;
+      return { from: `${pad(y, 4)}-01-01`, to: `${pad(y, 4)}${period.to.slice(4)}` };
+    }
+    case "all":
     case "custom": {
+      // "all" shifts by its own span like a custom window: the window before
+      // the ledger began is genuinely empty, which is what a prior-period
+      // comparison should find
       const span = diffDays(period.from, period.to) + 1;
       return { from: addDays(period.from, delta * span), to: addDays(period.to, delta * span) };
     }
@@ -230,6 +280,12 @@ export function switchGranularityParams(
       return { period: `${pad(y, 4)}-Q${quarterOfMonth(m)}` };
     case "year":
       return { period: pad(y, 4) };
+    // both anchored ranges end at TODAY, so there is nothing of the old period
+    // to carry over — switching into them always lands on the live window
+    case "ytd":
+      return { period: YTD_KEY };
+    case "all":
+      return { period: ALL_KEY };
   }
 }
 
@@ -251,6 +307,10 @@ export function currentPeriodParams(
     }
     case "year":
       return { period: today.slice(0, 4) };
+    case "ytd":
+      return { period: YTD_KEY };
+    case "all":
+      return { period: ALL_KEY };
   }
 }
 
@@ -267,6 +327,10 @@ export function currentPeriodLabel(granularity: Exclude<PeriodGranularity, "cust
       return "This quarter";
     case "year":
       return "This year";
+    case "ytd":
+      return "Year to date";
+    case "all":
+      return "All time";
   }
 }
 
@@ -300,6 +364,9 @@ export function subBuckets(period: ResolvedPeriod): PeriodBucket[] {
   const out: PeriodBucket[] = [];
   let cursor = monthKey(period.from);
   const lastMonth = monthKey(period.to);
+  // a window spanning more than one calendar year repeats every month name, so
+  // "Aug" alone would label four different Augusts identically down one column
+  const multiYear = period.from.slice(0, 4) !== period.to.slice(0, 4);
   while (true) {
     const { start, end } = periodBounds(`${cursor}-01`, "monthly");
     const month = Number(cursor.slice(5, 7));
@@ -307,7 +374,7 @@ export function subBuckets(period: ResolvedPeriod): PeriodBucket[] {
       key: cursor,
       from: clamp(start, period.from, period.to),
       to: clamp(end, period.from, period.to),
-      label: monthShort(month),
+      label: multiYear ? `${monthShort(month)} '${cursor.slice(2, 4)}` : monthShort(month),
     });
     if (cursor === lastMonth) break;
     cursor = addMonths(cursor, 1);

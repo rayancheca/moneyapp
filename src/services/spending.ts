@@ -1,4 +1,4 @@
-import { and, eq, gte, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -152,6 +152,24 @@ function categoryColors(db: AppDatabase): Map<string, string | null> {
 /** month buckets have 7-char keys ("YYYY-MM"); day buckets have 10-char ISO keys. */
 function bucketKeyFor(postedOn: string, byMonth: boolean): string {
   return byMonth ? monthKey(postedOn) : postedOn;
+}
+
+/**
+ * The ledger's own first day — what "All time" starts from.
+ *
+ * `resolvePeriod` is pure and only knows `today`, so a surface with database
+ * access passes this in; without it "All time" falls back to a constant floor
+ * and would draw years of empty axis before the first transaction.
+ *
+ * Null when the ledger is empty, in which case the caller keeps the floor.
+ */
+export function ledgerFirstDay(db: AppDatabase): string | null {
+  const row = db
+    .select({ day: sql<string | null>`MIN(${transactions.postedOn})` })
+    .from(transactions)
+    .where(inArray(transactions.status, ["active", "quarantined", "excluded"]))
+    .get();
+  return row?.day ?? null;
 }
 
 export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today: string): CashFlow {

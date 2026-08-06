@@ -29,7 +29,15 @@ const GRANULARITIES: { key: Exclude<PeriodGranularity, "custom">; label: string 
   { key: "month", label: "Month" },
   { key: "quarter", label: "Quarter" },
   { key: "year", label: "Year" },
+  // two ANCHORED ranges: both end today, so neither repeats and neither pages
+  { key: "ytd", label: "YTD" },
+  { key: "all", label: "All" },
 ];
+
+/** true for the ranges that end at today — ‹ › would step off the live window */
+function isAnchoredRange(g: PeriodGranularity): boolean {
+  return g === "ytd" || g === "all";
+}
 
 function periodHref(basePath: string, params: PeriodParams): string {
   const sp = new URLSearchParams();
@@ -61,7 +69,10 @@ export function PeriodSelector({ period, today, basePath = "/spending" }: Period
   // the reset targets TODAY's period at the ACTIVE granularity (custom → month);
   // hidden while already looking at it
   const resetGranularity = period.granularity === "custom" ? "month" : period.granularity;
-  const isOnCurrent = period.granularity !== "custom" && period.isCurrent;
+  // an anchored range IS today's window by construction, so a "Year to date"
+  // reset link beside it would be a link back to where you already are
+  const isOnCurrent =
+    period.granularity !== "custom" && (period.isCurrent || isAnchoredRange(period.granularity));
 
   // Dismiss the custom-range panel on Escape (from anywhere) or a click outside
   // it — the expected disclosure affordance regardless of where focus sits.
@@ -128,25 +139,31 @@ export function PeriodSelector({ period, today, basePath = "/spending" }: Period
         })}
       </nav>
 
-      {/* pager — centered in the remaining space */}
+      {/* pager — centered in the remaining space. YTD and All time end at
+          today, so stepping them would silently leave the range the label
+          promises; the label stays, the arrows go. */}
       <div className="order-last flex w-full items-center justify-center gap-1 sm:order-none sm:w-auto sm:flex-1">
-        <Link
-          href={href(stepPeriodParams(period, -1))}
-          aria-label="Previous period"
-          className="grid size-8 place-items-center rounded-full text-ink-muted transition-colors duration-(--duration-fast) hover:bg-surface-sunken hover:text-ink"
-        >
-          <Icon name="chevron-left" className="size-4" />
-        </Link>
+        {!isAnchoredRange(period.granularity) && (
+          <Link
+            href={href(stepPeriodParams(period, -1))}
+            aria-label="Previous period"
+            className="grid size-8 place-items-center rounded-full text-ink-muted transition-colors duration-(--duration-fast) hover:bg-surface-sunken hover:text-ink"
+          >
+            <Icon name="chevron-left" className="size-4" />
+          </Link>
+        )}
         <span className="min-w-[12ch] text-center text-sm font-medium tabular-nums" aria-live="polite">
           {period.label}
         </span>
-        <Link
-          href={href(stepPeriodParams(period, 1))}
-          aria-label="Next period"
-          className="grid size-8 place-items-center rounded-full text-ink-muted transition-colors duration-(--duration-fast) hover:bg-surface-sunken hover:text-ink"
-        >
-          <Icon name="chevron-right" className="size-4" />
-        </Link>
+        {!isAnchoredRange(period.granularity) && (
+          <Link
+            href={href(stepPeriodParams(period, 1))}
+            aria-label="Next period"
+            className="grid size-8 place-items-center rounded-full text-ink-muted transition-colors duration-(--duration-fast) hover:bg-surface-sunken hover:text-ink"
+          >
+            <Icon name="chevron-right" className="size-4" />
+          </Link>
+        )}
       </div>
 
       <div className="flex items-center gap-2">

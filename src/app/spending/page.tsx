@@ -21,6 +21,7 @@ import {
   largestTransactions,
   spendingProjection,
   topMerchants,
+  ledgerFirstDay,
 } from "@/services/spending";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -52,13 +53,16 @@ export default async function SpendingPage({
 }) {
   const raw = await searchParams;
   const today = todayIso();
+  const db = getDb();
+  // "All time" needs the ledger's real first day, or it draws years of empty
+  // axis before the first transaction
   const period = resolvePeriod(
     { period: firstParam(raw.period), from: firstParam(raw.from), to: firstParam(raw.to) },
     today,
+    ledgerFirstDay(db) ?? undefined,
   );
   const range = { from: period.from, to: period.to };
 
-  const db = getDb();
   const cashFlow = cashFlowByPeriod(db, period, today);
   const projection = spendingProjection(db, period, today, cashFlow.pace, cashFlow.totals.spentCents);
   const sankey = spendingSankey(db, range);
