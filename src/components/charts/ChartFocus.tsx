@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { flushSync } from "react-dom";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/shell/Icon";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
@@ -40,6 +41,7 @@ export function ChartFocus({
   defaultRange = "1Y",
   cardClassName = "relative mt-4",
   resetRangeKey,
+  rangeParam,
 }: {
   /** renders the SAME panel (incl. any view-mode switcher) in the inline card
    *  and the focus dialog — view parity is structural, not re-implemented */
@@ -53,6 +55,21 @@ export function ChartFocus({
   /** the inline SurfaceCard's className — defaults to the dashboard's `mt-4`
    *  spacing; a stacked page passes `"relative"` (no top margin) */
   cardClassName?: string;
+  /**
+   * When set, the chosen range is mirrored into this URL search param.
+   *
+   * Without it the pill is pure client state that never leaves this component,
+   * which is why every server-rendered panel on the page — holdings, movers,
+   * allocation, the heatmap — stayed frozen at "today" while the chart moved.
+   * The page reads the param back and re-queries, so the whole surface answers
+   * the same question.
+   *
+   * The local state below stays the source of truth for the CHART, which slices
+   * already-shipped points in a `useMemo`. So the line redraws on the same tick
+   * as the click and the server round-trip only refreshes the panels that need
+   * one — pressing a pill never feels like a page load.
+   */
+  rangeParam?: string;
   /** an opaque identity for the underlying SERIES. When it changes, the lifted
    *  range resets to `defaultRange`. Holding passes its Price/Return view here:
    *  those two series are not day-aligned, so carrying a range like "1M" from
@@ -65,6 +82,32 @@ export function ChartFocus({
   // one range for both instances ("the same chart, bigger") — seeded from the
   // panel's default so the closed state renders exactly as before
   const [range, setRange] = useState<ChartRange>(defaultRange);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [, startUrlSync] = useTransition();
+
+  /**
+   * Adopt a range arriving from the URL — Back/Forward, or a link into a range.
+   * Guarded on inequality so the optimistic update above never round-trips into
+   * a second render, and so callers without `rangeParam` are untouched.
+   */
+  useEffect(() => {
+    if (rangeParam === undefined) return;
+    setRange((current) => (current === defaultRange ? current : defaultRange));
+  }, [rangeParam, defaultRange]);
+
+  function selectRange(next: ChartRange): void {
+    // local first: the chart re-slices synchronously, before any navigation
+    setRange(next);
+    if (rangeParam === undefined) return;
+    const params = new URLSearchParams(searchParams?.toString() ?? "");
+    params.set(rangeParam, next);
+    // `replace`, not `push`: a range pill is a lens on one page, not a place in
+    // history — pushing would make Back walk every pill the user tried.
+    // `scroll: false` keeps a mid-page chart under the cursor.
+    startUrlSync(() => router.replace(`${pathname}?${params.toString()}`, { scroll: false }));
+  }
   // reset the shared range when the caller's series identity changes (see
   // resetRangeKey). A ref-guarded effect so it NEVER fires on mount or for the
   // (undefined) callers whose series axis is stable — those keep byte-identical.
@@ -124,7 +167,7 @@ export function ChartFocus({
         >
           <Icon name="arrow-up-right" className="size-4" />
         </button>
-        {renderPanel({ activeRange: range, onRangeChange: setRange })}
+        {renderPanel({ activeRange: range, onRangeChange: selectRange })}
       </SurfaceCard>
 
       <dialog
@@ -166,7 +209,7 @@ export function ChartFocus({
                 <Icon name="close" className="size-4" />
               </button>
             </div>
-            {renderPanel({ heightClass: "h-[55vh]", activeRange: range, onRangeChange: setRange })}
+            {renderPanel({ heightClass: "h-[55vh]", activeRange: range, onRangeChange: selectRange })}
           </div>
         ) : null}
       </dialog>

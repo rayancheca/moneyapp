@@ -226,6 +226,10 @@ export function PortfolioChartPanel({
       label="Portfolio"
       defaultRange={defaultRange ?? "ALL"}
       cardClassName="relative"
+      // /investments already PARSED ?range= (page.tsx) and then never heard the
+      // pill again — every server-fed panel below stayed frozen at "today"
+      // while the chart moved. Naming the param is what closes that loop.
+      rangeParam="range"
       renderPanel={(opts) => {
         /**
          * The session is deliberately confined to the VALUE view. `returnPoints`
