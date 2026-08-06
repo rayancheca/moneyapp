@@ -53,7 +53,36 @@ export default defineConfig({
       maxDiffPixelRatio: 0.001,
     },
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  // Two projects, ONE spec apart. The row controls in the ledger are hidden
+  // (opacity-0) until hover/focus — a phone has neither, so the whole contract
+  // rests on a `pointer-coarse:` branch that a desktop run can never execute.
+  // Covering it needs a coarse-pointer context, and a project is the only way
+  // to get one without re-running all 383 desktop tests a second time.
+  //
+  // `touch` is declared FIRST because with workers:1 Playwright drains the
+  // queue in project-declaration order: the reveal spec reads the pristine
+  // seeded database before any zz- spec mutates it.
+  //
+  // The `testIgnore` on chromium is LOAD-BEARING. `testMatch` narrows only the
+  // project that carries it, so without the mirror-image ignore the new spec
+  // would be collected by BOTH projects — the double-run this split exists to
+  // avoid, and a second (fine-pointer) run of a spec that asserts coarse.
+  //
+  // hasTouch alone, NOT a phone descriptor: `hasTouch` is the single input
+  // Chromium maps to `(pointer: coarse)`. A device descriptor would also swap
+  // the UA and deviceScaleFactor, changing inputs this spec does not test.
+  projects: [
+    {
+      name: "touch",
+      testMatch: /touch-reveal\.spec\.ts$/,
+      use: { ...devices["Desktop Chrome"], viewport: { width: 390, height: 844 }, hasTouch: true },
+    },
+    {
+      name: "chromium",
+      testIgnore: /touch-reveal\.spec\.ts$/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+  ],
   webServer: {
     // MONEYAPP_FAKE_TODAY pins server-side "today" (RSC renders on the
     // server) to the same date global-setup seeded with — see seed-helpers.ts.
