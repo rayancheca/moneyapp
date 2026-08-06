@@ -12,5 +12,6 @@ export * from "./recurring";
 export * from "./holdings";
 export * from "./holding-events";
 export * from "./duplicate-candidates";
+export * from "./transfer-ambiguities";
 export * from "./ai";
 export * from "./settings";

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, asc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
@@ -6,8 +7,10 @@ import { merchantAliases, merchants } from "@/db/schema/merchants";
 import { rules, ruleActionsSchema, ruleConditionsSchema, type RuleConditions } from "@/db/schema/rules";
 import { appSettings } from "@/db/schema/settings";
 import { transactions } from "@/db/schema/transactions";
-import { diffDays } from "@/lib/dates";
+import { transferAmbiguities } from "@/db/schema/transfer-ambiguities";
+import { diffDays, todayIso } from "@/lib/dates";
 import { strippedDescriptionKey } from "@/lib/description-key";
+import { formatCents } from "@/lib/money";
 import { investmentSideAccountIds } from "./accounts";
 import { splitTxnIdsIn } from "./transaction-splits";
 
@@ -353,6 +356,123 @@ const ROBINHOOD_RE = /ROBINHOOD|\bRH\b|\bRHS\b/i;
 export interface TransferStats {
   paired: number;
   flaggedAmbiguous: number;
+  /** PASS-2 questions the owner has already answered, so not re-asked */
+  dismissedAmbiguous: number;
+}
+
+/**
+ * One row as the ambiguity key sees it: the money and the words, never the id.
+ * `transacted_on` is deliberately out — PASS 2 matches and measures distance on
+ * `posted_on` alone, so it is not part of the question the owner was shown.
+ */
+interface AmbiguitySide {
+  accountId: string;
+  postedOn: string;
+  amountCents: number;
+  normalizedDescription: string;
+}
+
+/**
+ * Length-prefixed canonical encoding, so field boundaries cannot be forged by a
+ * description containing the separator. Mirrors `canonicalize` in lib/hash.ts,
+ * which is private to that module.
+ */
+function canonicalSides(fields: readonly string[]): string {
+  return fields.map((f) => `${f.length}:${f}`).join("\x1f");
+}
+
+/**
+ * Content identity of ONE PASS-2 question: this anchor outflow, and the exact
+ * set of equal-cent legs it is being asked about.
+ *
+ * Built from content, never from ids — the same doctrine as `duplicatePairKey`,
+ * and for the same reason. Every unimport→re-import gives these charges
+ * brand-new row ids, so a key built from ids would forget "I already answered
+ * this" precisely when the owner re-imports, and PASS 2 would set needs_review
+ * back on rows he has already categorized by hand. That is the un-drainable
+ * queue this key exists to end.
+ *
+ * The LEGS are in the key, not just the anchor: "which of these two?" and
+ * "which of these three?" are different questions, so a newly-imported third
+ * counterpart correctly re-asks rather than inheriting an answer that never
+ * considered it. Legs are sorted so the key does not depend on candidate order.
+ *
+ * Two anchors whose money, words and leg set are all identical produce ONE key
+ * and are therefore one question — correctly, because they are indistinguishable
+ * to the owner reading them.
+ */
+function transferAmbiguityKey(anchor: AmbiguitySide, legs: readonly AmbiguitySide[]): string {
+  const encode = (s: AmbiguitySide): string =>
+    canonicalSides([s.accountId, s.postedOn, String(s.amountCents), s.normalizedDescription]);
+  const canonical = canonicalSides([encode(anchor), ...legs.map(encode).sort()]);
+  return createHash("sha256").update(canonical, "utf8").digest("hex");
+}
+
+/**
+ * The sentence the owner reads. Facts only — the amount, the day and how many
+ * counterparts there are, which is exactly what PASS 2 matched on — because the
+ * one thing this must never do is imply which leg is the partner.
+ */
+function describeAmbiguity(anchor: AmbiguitySide, legs: readonly AmbiguitySide[]): string {
+  const plural = legs.length === 1 ? "" : "s";
+  return `${formatCents(Math.abs(anchor.amountCents))} out on ${anchor.postedOn} has ${legs.length} equal-amount counterpart${plural}.`;
+}
+
+/**
+ * The owner's answer to one PASS-2 question: stop asking. `ambiguity_key` is
+ * content, so the answer outlives the ids and survives any re-import.
+ *
+ * Deliberately narrow: it records a verdict and nothing else. It does NOT clear
+ * `needs_review` — fifteen code paths already do that, categorizing the row
+ * among them, and this module's job is to stop UNDOING them, not to add a
+ * sixteenth. No money moves, so there is nothing to snapshot or rebuild.
+ *
+ * Returns true when a verdict was recorded; false when the id is unknown or the
+ * question was already dismissed.
+ */
+export function dismissTransferAmbiguity(db: AppDatabase, ambiguityId: string): boolean {
+  const row = db
+    .select({ id: transferAmbiguities.id, resolution: transferAmbiguities.resolution })
+    .from(transferAmbiguities)
+    .where(eq(transferAmbiguities.id, ambiguityId))
+    .get();
+  if (row === undefined || row.resolution === "dismissed") return false;
+  db.update(transferAmbiguities)
+    .set({ resolution: "dismissed", resolvedAt: todayIso() })
+    .where(eq(transferAmbiguities.id, row.id))
+    .run();
+  return true;
+}
+
+/**
+ * Record that every open PASS-2 question anchored on this row has been answered.
+ *
+ * Categorizing a row IS the answer to "which of these equal-cent legs is its
+ * partner?" — the owner looked at it and decided. Without this the verdict
+ * table stays empty forever and `flag()` re-asks on the next import, which is
+ * the un-drainable queue the table was added to end. Mirrors how
+ * `resolveDuplicate` records a verdict and then clears the review flag.
+ *
+ * Returns the number of questions closed.
+ */
+function dismissAmbiguitiesAnchoredOn(db: AppDatabase, transactionId: string): number {
+  const open = db
+    .select({ id: transferAmbiguities.id })
+    .from(transferAmbiguities)
+    .where(
+      and(
+        eq(transferAmbiguities.anchorTransactionId, transactionId),
+        eq(transferAmbiguities.resolution, "unresolved"),
+      ),
+    )
+    .all();
+  for (const row of open) {
+    db.update(transferAmbiguities)
+      .set({ resolution: "dismissed", resolvedAt: todayIso() })
+      .where(eq(transferAmbiguities.id, row.id))
+      .run();
+  }
+  return open.length;
 }
 
 function categoryIdByPath(db: AppDatabase, path: string): string {
@@ -394,12 +514,15 @@ function categoryIdByPath(db: AppDatabase, path: string): string {
  *      multiset resolves deterministically by id.
  *   2. Flag the rest for review — a hinted outflow with equal-cent candidates
  *      surfaces all of them; an unhinted outflow surfaces only a ±4d coincidence.
+ *      Each question is recorded in `transfer_ambiguities` under a CONTENT key, and
+ *      one the owner has dismissed is never asked again — so his answers survive
+ *      both the next import and the unimport→re-import that renumbers every row.
  * ELIGIBILITY: a leg already categorized OUTSIDE the Transfers subtree (by any
  * source — a real Buy/Dividend/Reward, a rule/merchant map, or the user) is
  * off-limits and never relabeled a transfer.
  */
 export function detectTransfers(db: AppDatabase): TransferStats {
-  const stats: TransferStats = { paired: 0, flaggedAmbiguous: 0 };
+  const stats: TransferStats = { paired: 0, flaggedAmbiguous: 0, dismissedAmbiguous: 0 };
   const accountRows = db.select().from(accounts).all();
   const accountTypes = new Map(accountRows.map((a) => [a.id, a.type]));
   // includes the P0.1 settlement-cash sibling ("Robinhood Cash", type checking),
@@ -628,7 +751,52 @@ export function detectTransfers(db: AppDatabase): TransferStats {
     // an unhinted outflow surfaces only a NEAR (±4d) coincidence (far bare matches ignored,
     // no review noise). Non-consuming: every contended outflow is surfaced, none dropped
     // (re-review finding: a hinted outflow that lost a shared candidate must still be seen).
+    // Every question is recorded in `transfer_ambiguities` before it is asked, and a
+    // question the owner has already dismissed is not asked again. Without that memory
+    // this pass re-flags forever: the owner ANSWERS by categorizing, which clears
+    // needs_review, and the next import re-derives the identical question and sets the
+    // flag straight back — the queue can never be emptied. (Measured 2026-08-06: all 33
+    // rows sitting in the review queue are PASS-2 flags, 31 of them on rows the owner
+    // categorized by hand.) The cheap version of this — "skip rows already categorized
+    // by the user" — is NOT what runs here: it would swallow a genuinely new ambiguity
+    // on a row he happens to have touched before, which is exactly the ambiguity most
+    // worth showing him.
     const flag = (a: (typeof candidates)[number], legs: (typeof candidates)[number][]): void => {
+      const key = transferAmbiguityKey(a, legs);
+      const known = tx
+        .select({
+          id: transferAmbiguities.id,
+          resolution: transferAmbiguities.resolution,
+          anchorTransactionId: transferAmbiguities.anchorTransactionId,
+        })
+        .from(transferAmbiguities)
+        .where(eq(transferAmbiguities.ambiguityKey, key))
+        .get();
+      if (known?.resolution === "dismissed") {
+        stats.dismissedAmbiguous += 1;
+        return;
+      }
+      if (known === undefined) {
+        tx.insert(transferAmbiguities)
+          .values({
+            accountId: a.accountId,
+            ambiguityKey: key,
+            anchorTransactionId: a.id,
+            legCount: legs.length,
+            reasonDetail: describeAmbiguity(a, legs),
+          })
+          .run();
+      } else if (known.anchorTransactionId !== a.id) {
+        // Same question, new rows: an unimport→re-import brings these charges back with
+        // brand-new ids, and the FK left this pointer null when the old ones went. Only
+        // the pointer moves — the key already proved this is the same question, and
+        // `leg_count` and `reason_detail` are functions of that key, so they cannot have
+        // changed either. The steady state writes nothing at all.
+        tx.update(transferAmbiguities)
+          .set({ anchorTransactionId: a.id })
+          .where(eq(transferAmbiguities.id, known.id))
+          .run();
+      }
       const ids = [...new Set([a.id, ...legs.map((m) => m.id)])];
       tx.update(transactions).set({ needsReview: true }).where(inArray(transactions.id, ids)).run();
       stats.flaggedAmbiguous += 1;
@@ -686,6 +854,10 @@ export function applyCorrection(db: AppDatabase, input: CorrectionInput): Correc
       })
       .where(eq(transactions.id, input.transactionId))
       .run();
+
+    // the flag is cleared above; without this the QUESTION behind it stays
+    // unresolved and PASS 2 sets the flag straight back on the next import
+    dismissAmbiguitiesAnchoredOn(tx, input.transactionId);
 
     if (!input.applyToMerchant || !txn.merchantId) return;
 

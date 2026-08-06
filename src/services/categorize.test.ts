@@ -10,10 +10,17 @@ import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
 import { transactions } from "@/db/schema/transactions";
+import { transferAmbiguities } from "@/db/schema/transfer-ambiguities";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
-import { applyCorrection, categorizeAll, coverageStats, detectTransfers } from "./categorize";
+import {
+  applyCorrection,
+  categorizeAll,
+  coverageStats,
+  detectTransfers,
+  dismissTransferAmbiguity,
+} from "./categorize";
 
 let dir: string;
 let bundle: DbBundle;
@@ -721,4 +728,189 @@ describe("detectTransfers — 2026-07-15 review hardening (preservation · proxi
     expect(categoryOf(inn).name).toBe("Investment Contribution"); // user leg kept
     expect(categoryOf(out).name).toBe("Investment Contribution"); // other leg adopts it (coherence)
   });
+});
+
+describe("detectTransfers — PASS 2 remembers the owner's answers (2026-08-06)", () => {
+  let savingsD: string;
+
+  beforeEach(() => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    savingsD = createAccount(bundle.db, { institutionId: chase.id, name: "SavingsD", type: "savings" });
+  });
+
+  function rowD(id: string) {
+    return bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+  }
+  function questions() {
+    return bundle.db.select().from(transferAmbiguities).all();
+  }
+  /**
+   * How every OTHER path in the app clears the flag — the owner categorizes the
+   * row, marks the cluster reviewed, or uses the one-click amnesty. PASS 2 must
+   * not undo it on the next import; that is the whole defect under test.
+   */
+  function clearReview(ids: string[]): void {
+    bundle.db.update(transactions).set({ needsReview: false }).where(inArray(transactions.id, ids)).run();
+  }
+  /**
+   * The real shape of the 33: a hinted outflow with two equal-cent counterparts
+   * the owner must choose between. They sit EQUIDISTANT on purpose — that is
+   * what makes the question genuinely unanswerable by the detector, so PASS 1
+   * can never pair it away and PASS 2 owns it however the rows are categorized.
+   */
+  function askTheQuestion(): { out: string; legA: string; legB: string } {
+    return {
+      out: insertTxn(checkingId, "2026-06-10", -20_000, "ONLINE TRANSFER TO SOFI"),
+      legA: insertTxn(savingsD, "2026-06-09", 20_000, "MISC CREDIT A"),
+      legB: insertTxn(savingsD, "2026-06-11", 20_000, "MISC CREDIT B"),
+    };
+  }
+
+  test("a dismissed ambiguity is never asked again", () => {
+    const { out, legA, legB } = askTheQuestion();
+    const first = detectTransfers(bundle.db);
+    expect(first.paired).toBe(0);
+    expect(first.flaggedAmbiguous).toBe(1);
+    expect(rowD(out).needsReview).toBe(true);
+
+    const q = questions();
+    expect(q).toHaveLength(1);
+    expect(q[0]!.resolution).toBe("unresolved");
+    expect(q[0]!.legCount).toBe(2);
+    expect(dismissTransferAmbiguity(bundle.db, q[0]!.id)).toBe(true);
+    clearReview([out, legA, legB]);
+
+    const second = detectTransfers(bundle.db);
+    expect(second.flaggedAmbiguous).toBe(0);
+    expect(second.dismissedAmbiguous).toBe(1);
+    for (const id of [out, legA, legB]) expect(rowD(id).needsReview).toBe(false);
+    expect(questions()).toHaveLength(1); // the verdict, not a second copy of the question
+  });
+
+  test("the owner categorizing the row closes the question — the wiring, not just the table", () => {
+    // dismissTransferAmbiguity is reachable from a real user action or it is
+    // shelf-ware: if nothing writes a verdict, every question stays unresolved
+    // and PASS 2 re-flags forever, which is the defect this table exists to end
+    const { out, legA, legB } = askTheQuestion();
+    detectTransfers(bundle.db);
+    expect(questions()[0]!.resolution).toBe("unresolved");
+
+    const general = bundle.db.select().from(categories).where(eq(categories.name, "General")).get()!;
+    applyCorrection(bundle.db, { transactionId: out, categoryId: general.id, applyToMerchant: false });
+    expect(questions()[0]!.resolution).toBe("dismissed");
+
+    clearReview([legA, legB]);
+    const second = detectTransfers(bundle.db);
+    // the flag does not come back, and no duplicate question is written. The
+    // dismissedAmbiguous counter stays 0 here because applyCorrection also marks
+    // the row user-categorized, so PASS 2 skips it before it reaches the verdict
+    // lookup — a second, independent reason the queue drains.
+    expect(second.flaggedAmbiguous).toBe(0);
+    expect(rowD(out).needsReview).toBe(false);
+    expect(questions()).toHaveLength(1);
+  });
+
+  test("the verdict alone stops the re-flag, even with the row still auto-categorized", () => {
+    // isolates the TABLE's contribution from applyCorrection's user-source side
+    // effect: here nothing marks the row 'user', so PASS 2 does reach the
+    // verdict lookup and reports the dismissal it honoured
+    const { out, legA, legB } = askTheQuestion();
+    detectTransfers(bundle.db);
+    const anchorId = questions()[0]!.anchorTransactionId;
+    expect(anchorId).toBe(out);
+
+    expect(dismissTransferAmbiguity(bundle.db, questions()[0]!.id)).toBe(true);
+    clearReview([out, legA, legB]);
+
+    const second = detectTransfers(bundle.db);
+    expect(second.flaggedAmbiguous).toBe(0);
+    expect(second.dismissedAmbiguous).toBe(1);
+    expect(rowD(out).needsReview).toBe(false);
+  });
+
+  test("dismissing is idempotent and never invents a second verdict", () => {
+    askTheQuestion();
+    detectTransfers(bundle.db);
+    const id = questions()[0]!.id;
+    expect(dismissTransferAmbiguity(bundle.db, id)).toBe(true);
+    expect(dismissTransferAmbiguity(bundle.db, id)).toBe(false); // already answered
+    expect(dismissTransferAmbiguity(bundle.db, "no-such-question")).toBe(false);
+    expect(questions()).toHaveLength(1);
+  });
+
+  test("a NEW counterpart on the dismissed anchor re-asks — the answer never considered it", () => {
+    // the exact reason the cheap heuristic ("skip rows the user already categorized")
+    // is wrong: this row IS user-touched, and the question has genuinely changed.
+    const { out, legA, legB } = askTheQuestion();
+    detectTransfers(bundle.db);
+    dismissTransferAmbiguity(bundle.db, questions()[0]!.id);
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: catIdD("Internal Transfer"), categorizationSource: "user", needsReview: false })
+      .where(inArray(transactions.id, [out, legA, legB]))
+      .run();
+
+    const legC = insertTxn(savingsD, "2026-06-13", 20_000, "MISC CREDIT C");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.flaggedAmbiguous).toBe(1); // three counterparts is a different question
+    expect(stats.dismissedAmbiguous).toBe(0);
+    expect(rowD(out).needsReview).toBe(true);
+    expect(rowD(legC).needsReview).toBe(true);
+    const keys = new Set(questions().map((q) => q.ambiguityKey));
+    expect(keys.size).toBe(2); // the old verdict is intact beside the new question
+  });
+
+  test("a genuinely new ambiguity on the SAME account pair is still flagged", () => {
+    const { out, legA, legB } = askTheQuestion();
+    detectTransfers(bundle.db);
+    dismissTransferAmbiguity(bundle.db, questions()[0]!.id);
+    clearReview([out, legA, legB]);
+
+    const out2 = insertTxn(checkingId, "2026-07-14", -31_500, "ONLINE TRANSFER TO SOFI");
+    const coin = insertTxn(savingsD, "2026-07-15", 31_500, "MISC CREDIT D");
+    const stats = detectTransfers(bundle.db);
+    expect(stats.flaggedAmbiguous).toBe(1);
+    expect(stats.dismissedAmbiguous).toBe(1); // the old one stays answered
+    expect(rowD(out2).needsReview).toBe(true);
+    expect(rowD(coin).needsReview).toBe(true);
+    expect(rowD(out).needsReview).toBe(false);
+  });
+
+  test("the dismissal survives an unimport → re-import that renumbers every row", () => {
+    const { out, legA, legB } = askTheQuestion();
+    detectTransfers(bundle.db);
+    dismissTransferAmbiguity(bundle.db, questions()[0]!.id);
+
+    // unimport hard-deletes the rows under `foreign_keys = ON`; the FK is SET NULL,
+    // never cascade, so the owner's verdict outlives the rows it pointed at.
+    bundle.db.delete(transactions).where(inArray(transactions.id, [out, legA, legB])).run();
+    expect(questions()[0]!.anchorTransactionId).toBeNull();
+    expect(questions()[0]!.resolution).toBe("dismissed");
+
+    // re-import: the same three charges, brand-new ids
+    const again = askTheQuestion();
+    expect(again.out).not.toBe(out);
+    const stats = detectTransfers(bundle.db);
+    expect(stats.flaggedAmbiguous).toBe(0);
+    expect(stats.dismissedAmbiguous).toBe(1);
+    for (const id of [again.out, again.legA, again.legB]) expect(rowD(id).needsReview).toBe(false);
+    expect(questions()).toHaveLength(1);
+  });
+
+  test("an unresolved question is re-pointed at the live rows, not duplicated", () => {
+    const { out, legA, legB } = askTheQuestion();
+    detectTransfers(bundle.db);
+    expect(questions()[0]!.anchorTransactionId).toBe(out);
+
+    bundle.db.delete(transactions).where(inArray(transactions.id, [out, legA, legB])).run();
+    const again = askTheQuestion();
+    const stats = detectTransfers(bundle.db);
+    expect(stats.flaggedAmbiguous).toBe(1); // still unanswered, so still asked
+    expect(questions()).toHaveLength(1);
+    expect(questions()[0]!.anchorTransactionId).toBe(again.out);
+  });
+
+  function catIdD(name: string): string {
+    return bundle.db.select().from(categories).where(eq(categories.name, name)).get()!.id;
+  }
 });
