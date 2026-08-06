@@ -4,6 +4,7 @@ import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors, dailyBalances, type AnchorSource, type BalanceBasis } from "@/db/schema/balances";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
+import { splitMissing, type AccountOpening } from "@/lib/coverage-label";
 import { assertWithinFinancialWindow } from "@/lib/date-window";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
 import { rebuildInvestmentHistory } from "./crypto-history";
@@ -330,11 +331,25 @@ export interface NetWorthPoint {
   totalAccounts: number;
   complete: boolean;
   /** names of active accounts with NO coverage that day (empty when complete) —
-   *  so a partial day can say exactly which accounts it's missing, not just N/M */
+   *  so a partial day can say exactly which accounts it's missing, not just N/M.
+   *  The union of `notYetOpen` and `gapAccounts` below, which split it by CAUSE. */
   missingAccounts: string[];
   /** names of active accounts WITH coverage that day — lets an early-history day
    *  say "only Chase ····3522" instead of listing everything else as missing */
   coveredAccountNames: string[];
+  /** each covered account's own balance that day, ALIGNED to coveredAccountNames.
+   *  A percentage between two days is only honest over the accounts BOTH days
+   *  cover (lib/coverage-label sharedCoverageChange), and that subtraction needs
+   *  the per-account figure — the total alone cannot give it back. */
+  coveredCents: number[];
+  /** the uncovered accounts that had not OPENED yet, with the day each one's own
+   *  history starts. Not a defect — the account did not exist — so every surface
+   *  words these "open"/"opens" and renders them neutral. */
+  notYetOpen: AccountOpening[];
+  /** the uncovered accounts that were already open: a day inside the account's
+   *  life that no statement covers. This half is the real hole, and the only
+   *  half that earns a warning. */
+  gapAccounts: string[];
 }
 
 /**
@@ -359,17 +374,25 @@ export function netWorthSeries(db: AppDatabase): NetWorthPoint[] {
     .orderBy(asc(dailyBalances.day))
     .all();
 
-  const byDay = new Map<string, { total: number; covered: Set<string> }>();
+  // `covered` maps account → its OWN balance that day: the same set membership
+  // the totals have always used, plus the per-account figure a like-for-like
+  // percentage needs (NetWorthPoint.coveredCents). Totals are untouched.
+  const byDay = new Map<string, { total: number; covered: Map<string, number> }>();
   // each account's most-recent known (non-gap) balance, for the trailing carry-forward below
   const lastKnown = new Map<string, { day: string; cents: number }>();
+  // ...and its FIRST, which is the day the account opens as far as the data
+  // knows — the line between "had not opened yet" and "a statement is missing"
+  const firstKnown = new Map<string, string>();
   for (const r of rows) {
     if (r.basis === "gap") continue;
-    const entry = byDay.get(r.day) ?? { total: 0, covered: new Set<string>() };
+    const entry = byDay.get(r.day) ?? { total: 0, covered: new Map<string, number>() };
     entry.total += r.balanceCents;
-    entry.covered.add(r.accountId);
+    entry.covered.set(r.accountId, r.balanceCents);
     byDay.set(r.day, entry);
     const prev = lastKnown.get(r.accountId);
     if (!prev || compareDates(r.day, prev.day) > 0) lastKnown.set(r.accountId, { day: r.day, cents: r.balanceCents });
+    const first = firstKnown.get(r.accountId);
+    if (!first || compareDates(r.day, first) < 0) firstKnown.set(r.accountId, r.day);
   }
   if (byDay.size === 0) return [];
 
@@ -387,20 +410,32 @@ export function netWorthSeries(db: AppDatabase): NetWorthPoint[] {
       const entry = byDay.get(day)!;
       if (entry.covered.has(accountId)) continue;
       entry.total += last.cents;
-      entry.covered.add(accountId);
+      entry.covered.set(accountId, last.cents);
     }
   }
 
   return days.map((day) => {
     const { total, covered } = byDay.get(day)!;
+    const coveredIds = activeIds.filter((id) => covered.has(id));
+    const missingIds = activeIds.filter((id) => !covered.has(id));
+    // WHY a day is partial decides how it must READ: an account that had not
+    // opened yet is not lost data, and styling the two alike made a warning
+    // fire on 1,440 of 1,443 days (lib/coverage-label).
+    const { notYetOpen, gapAccounts } = splitMissing(
+      day,
+      missingIds.map((id) => ({ name: nameById.get(id)!, opensOn: firstKnown.get(id) ?? null })),
+    );
     return {
       day,
       totalCents: total,
       coveredAccounts: covered.size,
       totalAccounts: activeIds.length,
       complete: covered.size === activeIds.length,
-      missingAccounts: activeIds.filter((id) => !covered.has(id)).map((id) => nameById.get(id)!),
-      coveredAccountNames: activeIds.filter((id) => covered.has(id)).map((id) => nameById.get(id)!),
+      missingAccounts: missingIds.map((id) => nameById.get(id)!),
+      coveredAccountNames: coveredIds.map((id) => nameById.get(id)!),
+      coveredCents: coveredIds.map((id) => covered.get(id)!),
+      notYetOpen,
+      gapAccounts,
     };
   });
 }

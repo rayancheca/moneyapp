@@ -3,7 +3,7 @@ import Link from "next/link";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { todayIso } from "@/lib/dates";
-import { coverageLabel } from "@/lib/coverage-label";
+import { coveragePhrase, formatNameList, openingLabel } from "@/lib/coverage-label";
 import { formatCents } from "@/lib/money";
 import { dashboardData } from "@/services/dashboard";
 import { dashboardChartData } from "@/services/dashboard-series";
@@ -133,8 +133,16 @@ export default async function DashboardPage({
         CHART_RANGES.map((r) => [r, spendingSankey(db, { from: rangeStartDay(r, today) ?? EARLIEST_DAY, to: today })]),
       ) as Record<ChartRange, SankeyGraph>)
     : null;
-  // on a partial "today", name whichever list is more concise (covered vs missing)
-  const heroCoverage = coverageLabel(netWorth.coveredAccountNames, netWorth.missingAccounts);
+  // On a partial "today" the two causes read completely differently: an account
+  // that had not opened yet is a fact about the calendar (neutral), a day no
+  // statement covers is missing data (warning). The split lives on the point the
+  // summary was taken from — dashboardData reads the same last point for its
+  // counts, so the hero and the chart can never disagree about the day.
+  const latestPoint = netWorth.series.at(-1) ?? null;
+  const heroNotYetOpen = latestPoint?.notYetOpen ?? [];
+  const heroGapAccounts = latestPoint?.gapAccounts ?? [];
+  const heroOpening =
+    heroNotYetOpen.length > 0 ? openingLabel(netWorth.coveredAccountNames, heroNotYetOpen) : null;
 
   if (netWorth.totalAccounts === 0) {
     return (
@@ -213,15 +221,14 @@ export default async function DashboardPage({
                   : `excludes ${formatCents(-netWorth.inTransitCents)} posted twice in transit`}
               </span>
             )}
-            {!netWorth.complete && (
-              <span className="text-warning">
-                partial · {netWorth.coveredAccounts}/{netWorth.totalAccounts} covered
-                {heroCoverage && (
-                  <span className="text-ink-faint">
-                    {" "}· {heroCoverage.kind} {heroCoverage.text}
-                  </span>
-                )}
+            {heroNotYetOpen.length > 0 && (
+              <span className="text-ink-faint">
+                {netWorth.totalAccounts - heroNotYetOpen.length} of {netWorth.totalAccounts} accounts open
+                {heroOpening && <>{" "}· {coveragePhrase(heroOpening)}</>}
               </span>
+            )}
+            {heroGapAccounts.length > 0 && (
+              <span className="text-warning">no statement for {formatNameList(heroGapAccounts)} on this date</span>
             )}
           </p>
         </header>

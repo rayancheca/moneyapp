@@ -15,15 +15,21 @@ import {
   type ScrubPoint,
   type ScrubSummary,
 } from "@/components/investments/ScrubChart";
-import { coverageLabel } from "@/lib/coverage-label";
+import { coveragePhrase, formatNameList, openingLabel, sharedCoverageChange } from "@/lib/coverage-label";
 
 /**
  * Net worth adoption of the ScrubChart (ux-overhaul-plan §7.1). The Stage-4
  * chart already breaks the line on `complete: false`; here every day carries a
  * total but some are partial-coverage — so we thread `complete` through, the
- * chart draws those spans dashed, and the scrub announces "partial · N/M
- * accounts" so the honesty is spoken, not just drawn. The window return is a
- * plain value delta (net worth has no flows to adjust for).
+ * chart draws those spans dashed, and the scrub announces the coverage so the
+ * honesty is spoken, not just drawn. The window return is a plain value delta
+ * (net worth has no flows to adjust for).
+ *
+ * WHICH partial, though: a day before an account opened says "9/10 accounts open
+ * · Cash on Hand opens Aug 3, 2026" in the faint tone, and only a day no
+ * statement covers keeps the warning ("no statement for Discover on this date").
+ * The percentage is measured over the accounts both window ends cover and names
+ * what it dropped — see lib/coverage-label, which owns both rules.
  */
 
 /** dashboard points carry the in-flight correction (docs/inflight-dips.md);
@@ -71,6 +77,10 @@ export function NetWorthChartPanel({
         complete: p.complete,
         missingAccounts: p.missingAccounts,
         coveredAccountNames: p.coveredAccountNames,
+        coveredCents: p.coveredCents,
+        notYetOpen: p.notYetOpen,
+        gapAccounts: p.gapAccounts,
+        totalAccounts: p.totalAccounts,
         inTransitCents: p.inTransitCents,
       })),
     [points],
@@ -82,16 +92,31 @@ export function NetWorthChartPanel({
 
   const summarize = useCallback(
     (startIdx: number, endIdx: number, slice: readonly ScrubPoint[]): ScrubSummary => {
-      const start = slice[startIdx]!.valueCents ?? 0;
-      const end = slice[endIdx]!.valueCents ?? 0;
-      const deltaCents = end - start;
-      // A partial-coverage endpoint covers fewer accounts, so a % against it would
-      // be a fabricated number (the "40k→3→90" artifact the graph must never lie
-      // about). Suppress the % unless BOTH ends are complete — the honest delta
-      // is still shown, just without an over/under-stated percentage.
-      const comparable = slice[startIdx]!.complete !== false && slice[endIdx]!.complete !== false;
-      const deltaPct = comparable && start !== 0 ? (deltaCents / Math.abs(start)) * 100 : null;
-      return { day: slice[endIdx]!.day, valueCents: end, deltaCents, deltaPct };
+      const startPoint = slice[startIdx]!;
+      const endPoint = slice[endIdx]!;
+      const start = startPoint.valueCents ?? 0;
+      const end = endPoint.valueCents ?? 0;
+      // A partial-coverage endpoint covers fewer accounts, so a % against the raw
+      // totals would be a fabricated number (the "40k→3→90" artifact the graph
+      // must never lie about). The fix is to compare like with like rather than
+      // to say nothing: sharedCoverageChange measures only the accounts BOTH ends
+      // cover and hands back the scope it measured, which the header prints next
+      // to the number. A genuine interior gap still suppresses entirely.
+      const change = sharedCoverageChange(
+        { cents: start, coverage: startPoint },
+        { cents: end, coverage: endPoint },
+      );
+      return {
+        day: endPoint.day,
+        valueCents: end,
+        // the dollar figure must describe the SAME accounts as the percentage
+        // beside it — otherwise dividing one by the other yields a third number
+        // true of nothing, which is the fabricated-figure problem relocated
+        // rather than fixed
+        deltaCents: change.deltaCents ?? end - start,
+        deltaPct: change.pct,
+        deltaPctScope: change.scope,
+      };
     },
     [],
   );
@@ -99,6 +124,9 @@ export function NetWorthChartPanel({
   const valueText = useCallback(
     (summary: ScrubSummary): string => {
       const base = scrubValueText(formatDayLong(summary.day), formatCents(summary.valueCents), summary.deltaPct);
+      // a percentage measured over some of the accounts must SAY so out loud too,
+      // or the spoken headline is the one place the number reads as the whole
+      const scope = summary.deltaPct !== null && summary.deltaPctScope ? `, ${summary.deltaPctScope}` : "";
       const cov = coverageByDay.get(summary.day);
       // the in-flight note must be SPOKEN, not just drawn (docs/inflight-dips.md)
       const transit = cov?.inTransitCents ?? 0;
@@ -108,12 +136,21 @@ export function NetWorthChartPanel({
           : transit < 0
             ? ` — excludes ${formatCents(-transit)} posted in two accounts`
             : "";
-      if (!cov || cov.complete) return `${base}${transitSuffix}`;
+      if (!cov || cov.complete) return `${base}${scope}${transitSuffix}`;
       // untruncated (no "+N more") so the spoken description names every account
-      const label = coverageLabel(cov.coveredAccountNames, cov.missingAccounts, Number.MAX_SAFE_INTEGER);
-      // "; only X" / "; missing X" — no trailing "covered" (the base already said it)
-      const suffix = label ? `; ${label.kind} ${label.text}` : "";
-      return `${base} — partial, ${cov.coveredAccounts} of ${cov.totalAccounts} accounts covered${suffix}${transitSuffix}`;
+      const opening = openingLabel(cov.coveredAccountNames, cov.notYetOpen, Number.MAX_SAFE_INTEGER);
+      // an account that had not opened yet is spoken as a fact about the calendar,
+      // never as lost data — the missing statement below is the only defect here
+      const openClause =
+        cov.notYetOpen.length > 0
+          ? ` — ${cov.totalAccounts - cov.notYetOpen.length} of ${cov.totalAccounts} accounts were open` +
+            (opening ? `; ${coveragePhrase(opening)}` : "")
+          : "";
+      const gapClause =
+        cov.gapAccounts.length > 0
+          ? ` — no statement covers ${formatNameList(cov.gapAccounts, Number.MAX_SAFE_INTEGER)} on this day`
+          : "";
+      return `${base}${scope}${openClause}${gapClause}${transitSuffix}`;
     },
     [coverageByDay],
   );
@@ -151,7 +188,7 @@ export function NetWorthChartPanel({
               ? "all time"
               : range;
         const cov = coverageByDay.get(summary.day);
-        const covLabel = cov && !cov.complete ? coverageLabel(cov.coveredAccountNames, cov.missingAccounts) : null;
+        const opening = cov && cov.notYetOpen.length > 0 ? openingLabel(cov.coveredAccountNames, cov.notYetOpen) : null;
         // spoken subtly whenever the summarized day is bridged — while
         // scrubbing that is the scrubbed day (on touch the header IS the
         // readout), and at rest it is the window's latest day, so an in-air
@@ -167,16 +204,31 @@ export function NetWorthChartPanel({
               <span aria-hidden>{arrow}</span>
               <NumberRoll value={formatCentsSigned(summary.deltaCents)} />
               {summary.deltaPct !== null && (
-                <span className="figures">({summary.deltaPct >= 0 ? "+" : ""}{summary.deltaPct.toFixed(1)}%)</span>
+                // the scope rides INSIDE the parentheses, so the % and the set it
+                // was measured over can never be read apart from each other
+                <span className="figures">
+                  ({summary.deltaPct >= 0 ? "+" : ""}{summary.deltaPct.toFixed(1)}%
+                  {summary.deltaPctScope && (
+                    <span className="font-normal text-ink-faint"> {summary.deltaPctScope}</span>
+                  )}
+                  )
+                </span>
               )}
             </span>
             <span className="font-normal text-ink-faint">· {context}</span>
-            {cov && !cov.complete && (
+            {/* (a) the account had not opened yet — NOT a defect, so it reads as
+                calendar fact in the same faint tone as the range context */}
+            {cov && cov.notYetOpen.length > 0 && (
+              <span className="font-normal text-ink-faint">
+                · {cov.totalAccounts - cov.notYetOpen.length}/{cov.totalAccounts} accounts open
+                {opening && <> · {coveragePhrase(opening)}</>}
+              </span>
+            )}
+            {/* (b) a day inside the account's life that no statement covers —
+                the real hole, and the only one that keeps the warning tone */}
+            {cov && cov.gapAccounts.length > 0 && (
               <span className="font-normal text-warning">
-                · partial {cov.coveredAccounts}/{cov.totalAccounts}
-                {covLabel && (
-                  <span className="text-ink-faint"> · {covLabel.kind} {covLabel.text}</span>
-                )}
+                · no statement for {formatNameList(cov.gapAccounts)} on this date
               </span>
             )}
             {transit !== 0 && (

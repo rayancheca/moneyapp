@@ -25,6 +25,7 @@ import {
   type DateTick,
   type WindowExtremes,
 } from "@/lib/chart-axis";
+import type { AccountOpening } from "@/lib/coverage-label";
 import { compareDates } from "@/lib/dates";
 import { formatDayShort } from "@/lib/format-date";
 import { clampIndex, ratioToIndex, stepScrubIndex } from "@/lib/scrub";
@@ -90,6 +91,18 @@ export interface ScrubPoint {
   /** net worth only: names of accounts WITH coverage that day, so an early day
    *  can say "only Chase ····3522" instead of a long missing list. */
   coveredAccountNames?: string[];
+  /** net worth only: those accounts' own balances, aligned to the names above —
+   *  what lets a % compare the accounts BOTH window ends cover, instead of
+   *  suppressing itself the moment one account opened mid-window. */
+  coveredCents?: number[];
+  /** net worth only: uncovered accounts that had not opened yet, with the day
+   *  each one's history starts. Never a defect — worded "open", drawn neutral. */
+  notYetOpen?: AccountOpening[];
+  /** net worth only: uncovered accounts that WERE open — the real hole. */
+  gapAccounts?: string[];
+  /** net worth only: how many accounts exist, so a partial % can say "across
+   *  9 of 10 accounts" without the consumer re-deriving it. */
+  totalAccounts?: number;
   /** net worth only: signed in-flight correction applied to this day's value
    *  (docs/inflight-dips.md) — positive = "includes $X in transit", negative =
    *  a removed double-post. The tooltip/readout state it; the line stays calm. */
@@ -124,6 +137,11 @@ export interface ScrubSummary {
   /** change from the window start to this point */
   deltaCents: number;
   deltaPct: number | null;
+  /** what the % was measured over when that is NOT everything ("excl. Cash on
+   *  Hand, opened Aug 3, 2026") — set only by consumers whose series carries
+   *  coverage detail, and printed beside the number so it cannot be read as the
+   *  whole portfolio having moved. */
+  deltaPctScope?: string | null;
   /** carried through from the scrubbed ScrubPoint so the header, the aria
    *  valuetext and the figcaption can name an instant instead of a day. */
   atLabel?: string;
@@ -342,7 +360,10 @@ export function ScrubChart({
   const splitData = useMemo(() => splitCoverageSeries(slice), [slice]);
   const showSoft = hasPartialCoverage(slice);
   const baselineCents = slice[0]?.valueCents ?? null;
-  const baselineComplete = slice[0]?.complete !== false;
+  // the window-start point's own coverage: which accounts its total can see, so
+  // the tooltip's % is measured over the same set as the header's (one rule,
+  // lib/coverage-label sharedCoverageChange, not two that can drift apart)
+  const baselineCoverage = slice[0] ?? {};
 
   // vivid net-worth series: one continuous line, fill suppressed before coverage
   const boundaryDay = useMemo(() => (vivid ? firstCompleteDay(slice) : null), [vivid, slice]);
@@ -355,6 +376,10 @@ export function ScrubChart({
       prevValue: i > 0 ? (slice[i - 1]?.valueCents ?? null) : null,
       missingAccounts: slice[i]?.missingAccounts,
       coveredAccountNames: slice[i]?.coveredAccountNames,
+      coveredCents: slice[i]?.coveredCents,
+      notYetOpen: slice[i]?.notYetOpen,
+      gapAccounts: slice[i]?.gapAccounts,
+      totalAccounts: slice[i]?.totalAccounts,
       inTransitCents: slice[i]?.inTransitCents,
     }));
   }, [vivid, slice]);
@@ -676,6 +701,16 @@ export function ScrubChart({
   // caption the prefix band only when it's wide enough to hold the label without
   // the text spilling past the boundary into the exact (filled) region
   const showBandLabel = hasBoundaryBand && lastIdx > 0 && boundaryIdx / lastIdx >= 0.18;
+  // ...and say WHY it is shaded, but only when the series can prove it: the calm
+  // wording is earned by a band whose every incomplete day is an account that had
+  // not opened yet. A series carrying no coverage detail (the dashboard modes,
+  // whose `complete` also means "exact") keeps the blunt caption it always had.
+  const bandEndIdx = hasBoundaryBand ? boundaryIdx : lastIdx;
+  const band = hasBoundaryBand || wholeWindowPartial ? slice.slice(0, bandEndIdx + 1) : [];
+  const bandLabel =
+    band.some((p) => (p.notYetOpen?.length ?? 0) > 0) && !band.some((p) => (p.gapAccounts?.length ?? 0) > 0)
+      ? "Before every account was open"
+      : "Partial coverage";
 
   // a perfectly-flat window draws a horizontal line whose objectBoundingBox glow
   // filter region collapses to 0 height (hiding the line), so drop the glow then
@@ -806,7 +841,7 @@ export function ScrubChart({
                   x2={boundaryDay!}
                   fill="var(--chart-band)"
                   strokeOpacity={0}
-                  label={showBandLabel ? { value: "Partial coverage", position: "insideTopLeft", fontSize: 10, fill: "var(--ink-faint)" } : undefined}
+                  label={showBandLabel ? { value: bandLabel, position: "insideTopLeft", fontSize: 10, fill: "var(--ink-faint)" } : undefined}
                 />
                 {/* the estimated span carries no fill; the divider marks where every
                     account is covered, so the filled region to its right is exact */}
@@ -819,7 +854,7 @@ export function ScrubChart({
                 x2={slice[lastIdx]!.day}
                 fill="var(--chart-band)"
                 strokeOpacity={0}
-                label={{ value: "Partial coverage", position: "insideTopLeft", fontSize: 10, fill: "var(--ink-faint)" }}
+                label={{ value: bandLabel, position: "insideTopLeft", fontSize: 10, fill: "var(--ink-faint)" }}
               />
             )}
 
@@ -1024,7 +1059,7 @@ export function ScrubChart({
                       active={props.active}
                       payload={props.payload as unknown as readonly { payload?: VividChartRow; value?: number | null }[]}
                       baselineCents={baselineCents}
-                      baselineComplete={baselineComplete}
+                      baselineCoverage={baselineCoverage}
                       formatValue={formatValue}
                       overlayRows={overlayRows}
                       owedFrame={owedFrame}
