@@ -416,6 +416,42 @@ describe("parseCapitalOneLines", () => {
   });
 });
 
+/* ── Robinhood activity CSV — codes that carry shares, not cash ─────── */
+
+const RH_HEADER_LINE =
+  '"Activity Date","Process Date","Settle Date","Instrument","Description","Trans Code","Quantity","Price","Amount"';
+
+function robinhoodFile(rows: string[]): SniffedFile {
+  const text = [RH_HEADER_LINE, ...rows].join("\n");
+  return { name: "robinhood-activity.csv", buffer: Buffer.from(text), format: "csv", text };
+}
+
+describe("robinhoodActivityCsv — a share receipt is not a missing code", () => {
+  test("REC carries a quantity and no cash, and does not fail the file", () => {
+    // the owner's first AAPL fraction, 12/2023. The code gate runs BEFORE the
+    // empty-amount skip, so an unlisted code fails the whole 2,260-row export
+    const [statement] = robinhoodActivityCsv.parse(
+      robinhoodFile([
+        '"12/5/2023","12/5/2023","12/5/2023","AAPL","Apple",REC,"0.0267","",""',
+        '"12/6/2023","12/6/2023","12/6/2023","","ACH Deposit",ACH,"","","$100.00"',
+      ]),
+    ) as [ParsedStatement];
+    // the share receipt moves no money, so it contributes no ledger row…
+    expect(statement.txns).toHaveLength(1);
+    // …and the row after it still parses, which is the point
+    expect(statement.txns[0]!.amountCents).toBe(10_000);
+  });
+
+  test("a genuinely unknown code still refuses to guess", () => {
+    // the guard exists so a new Robinhood code cannot be silently mis-filed
+    expect(() =>
+      robinhoodActivityCsv.parse(
+        robinhoodFile(['"12/5/2023","12/5/2023","12/5/2023","","Mystery",ZZZZ,"","","$5.00"']),
+      ),
+    ).toThrow(/Unknown Trans Code/);
+  });
+});
+
 /* ── Discover CSV — back-dated dispute adjustments ──────────────────── */
 
 const DISCOVER_HEADER_LINE = "Trans. Date,Post Date,Description,Amount,Category";

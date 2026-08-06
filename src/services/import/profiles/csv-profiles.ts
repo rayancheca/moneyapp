@@ -373,6 +373,11 @@ const RH_CODE_CATEGORY: Record<string, string | null> = {
   ITRF: null, // brokerage-to-brokerage transfer (counter-account may be untracked)
   FUTSWP: null, // event-contracts inter-entity sweep — cash effect real, intent unknown
   SPL: null, // stock splits carry no cash amount; kept for completeness
+  // a share RECEIPT — the owner's first AAPL fraction, 12/2023 — carries a
+  // quantity and an empty Amount, so like SPL it moves shares and not cash.
+  // Listing it is what stops the whole file failing: the code gate runs before
+  // the empty-amount skip, and it refuses to guess rather than mis-file money.
+  REC: null,
   OTHER: null,
 };
 
@@ -381,7 +386,8 @@ const RH_DATE_RE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
 
 export const robinhoodActivityCsv: ParserProfile = {
   id: "robinhood-activity-csv",
-  version: 2,
+  // v3: REC (share receipt) recognised — see RH_CODE_CATEGORY
+  version: 3,
   matches: (f) => f.format === "csv" && f.text.startsWith('"Activity Date"'),
   parse: (f): ParsedStatement[] => {
     requireHeader(f, "robinhood-activity-csv", RH_HEADER);
