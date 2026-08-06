@@ -143,6 +143,29 @@ describe("robinhoodActivityCsv — real-export quirks", () => {
     expect(statement!.txns[0]!.postedOn).toBe("2026-06-05");
   });
 
+  test("posts on the SETTLE date and keeps the activity date as transactedOn", () => {
+    const [statement] = robinhoodActivityCsv.parse(
+      rhFile([
+        // the real shape: a 7/31 buy that settles 8/3, which the July statement
+        // quarantines as "Executed Trades Pending Settlement" — August's money
+        '"7/31/2026","7/31/2026","8/3/2026","AAPL","Apple","Buy","5","$313.30","($1,566.50)"',
+      ]),
+    ) as ParsedStatement[];
+    const txn = statement!.txns[0]!;
+    expect(txn.postedOn).toBe("2026-08-03");
+    expect(txn.transactedOn).toBe("2026-07-31");
+    expect(txn.amountCents).toBe(-156_650);
+  });
+
+  test("a missing settle date falls back to the activity date rather than dropping the row", () => {
+    const [statement] = robinhoodActivityCsv.parse(
+      rhFile(['"6/5/2026","6/5/2026","","","Stock Lending","SLIP","","","$0.01"']),
+    ) as ParsedStatement[];
+    const txn = statement!.txns[0]!;
+    expect(txn.postedOn).toBe("2026-06-05");
+    expect(txn.transactedOn).toBe("2026-06-05");
+  });
+
   test("multi-line quoted descriptions flatten to one line", () => {
     const [statement] = robinhoodActivityCsv.parse(
       rhFile([

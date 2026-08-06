@@ -387,7 +387,9 @@ const RH_DATE_RE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
 export const robinhoodActivityCsv: ParserProfile = {
   id: "robinhood-activity-csv",
   // v3: REC (share receipt) recognised — see RH_CODE_CATEGORY
-  version: 3,
+  // v4: posted_on is the SETTLE date, not the activity date — see the block comment
+  //     above `postedOn` below for the statement evidence.
+  version: 4,
   matches: (f) => f.format === "csv" && f.text.startsWith('"Activity Date"'),
   parse: (f): ParsedStatement[] => {
     requireHeader(f, "robinhood-activity-csv", RH_HEADER);
@@ -417,11 +419,32 @@ export const robinhoodActivityCsv: ParserProfile = {
       // transfer fee riders ("Instant bank transfer - withdrawal fee") are
       // spend, not transfer legs — categorize deterministically
       const isTransferFee = RH_CODE_CATEGORY[code] === null && /\bfee\b/i.test(description);
+      const activityIso = mdyToIso(
+        "robinhood-activity-csv",
+        `${dm[1]!.padStart(2, "0")}/${dm[2]!.padStart(2, "0")}/${dm[3]}`,
+      );
+      // Robinhood's cash ledger moves on the SETTLE date, and the statements say
+      // so in their own words. The July-2026 statement quarantines the 7/31 AAPL
+      // buy under "Executed Trades Pending Settlement — These transactions may
+      // not be reflected in the other summaries" and leaves its $1,566.50 in the
+      // closing cash balance; Feb-2025 does the same to a 2/28 ACH deposit that
+      // settles 3/3 (the amount appears nowhere in that statement). Dating this
+      // ledger on Activity Date put both on the wrong side of a period boundary.
+      // Only Buy/Sell/ACH ever lag (1–4 days); every other code settles same-day,
+      // so this is one unconditional rule, not a per-code table.
+      const settleRaw = (r["Settle Date"] ?? "").trim();
+      const sm = RH_DATE_RE.exec(settleRaw);
+      // fixtures (and any future export that drops the column) fall back to the
+      // activity date — a known-good date, not a guess. Real exports: 0 of 2,256.
+      const settleIso = sm
+        ? mdyToIso(
+            "robinhood-activity-csv",
+            `${sm[1]!.padStart(2, "0")}/${sm[2]!.padStart(2, "0")}/${sm[3]}`,
+          )
+        : activityIso;
       txns.push({
-        postedOn: mdyToIso(
-          "robinhood-activity-csv",
-          `${dm[1]!.padStart(2, "0")}/${dm[2]!.padStart(2, "0")}/${dm[3]}`,
-        ),
+        postedOn: settleIso,
+        transactedOn: activityIso,
         amountCents: parseAmountToCents(amountRaw),
         rawDescription: instrument !== "" ? `${description} (${instrument})` : description,
         bankCategory: code,
