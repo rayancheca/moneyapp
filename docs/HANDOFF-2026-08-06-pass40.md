@@ -10,12 +10,17 @@
 > **zero `gap` days left anywhere in the ledger**. Net worth **$92,735.98 → $87,180.71**, which is
 > the correction the owner approved in advance.
 >
-> ⛔ **NEXT: export a fresh Robinhood activity CSV.** Not a parser, not a decision — §4 explains why
-> that single file closes most of what still looks broken.
+> ⛔ **NEXT: rebuild the holdings book from the trade record.** The Robinhood CSV LANDED and is
+> imported. It exposed something bigger than anything else in this pass: **`/investments` has been
+> showing a frozen snapshot — under-counting 8 of 9 symbols and omitting GOOG entirely.** §9.
+>
+> ⛔ **STANDING RULE, stated by the owner this pass: NO FAKE DATA.** Every number must trace to a
+> real source document. No estimates, no inference, no backfill. And its other half — *go and read
+> the source*, because he was right that I had under-read what his own export already contained. §10.
 
 ## 1. Repo state
 
-`main` = `8b6b906` (verify with `git rev-parse --short main`). Ten commits, all pushed.
+`main` = `1b25129` (verify with `git rev-parse --short main`). Fourteen commits, all pushed.
 
 ⚠️ **HISTORY WAS REWRITTEN THIS PASS.** Every SHA below `a2c6cf6` differs from what an older clone
 has — see §8. A full pre-rewrite backup of every ref is at
@@ -24,9 +29,9 @@ has — see §8. A full pre-rewrite backup of every ref is at
 | gate | result |
 |---|---|
 | `tsc --noEmit` | clean |
-| unit | **150 files / 2,635 tests** (was 148 / 2,559) · 99.65% statements |
+| unit | **150 files / 2,649 tests** (was 148 / 2,559) · 99.65% statements |
 | `next build` | clean |
-| `E2E_GATE=1 pnpm e2e:fresh` | **386 passed, 0 failed.** 16 `investments*` baselines deliberately regenerated (§7); no other churn. |
+| `E2E_GATE=1 pnpm e2e:fresh` | **386 passed, 0 failed.** 17 baselines deliberately regenerated (16 `investments*`, 1 `category`); no other churn. |
 
 Real DB written twice this pass, both approved. `integrity_check ok`. 9,792 active txns (+10),
 216 statement periods (was 176).
@@ -246,3 +251,144 @@ with `git-filter-repo --path statements/ --invert-paths`, and `main` force-pushe
 - **The reviewer earned its keep twice**: the chart's dollar/percentage mismatch and the fact that
   the new verdict table had no writer. Both were "the feature works" claims that were true in
   isolation and false in use.
+
+
+---
+
+## 9. ⛔ THE BIGGEST FINDING: `/investments` holdings are WRONG on screen today
+
+The owner's all-time Robinhood activity export (`statements/robinhood/3ab6c2a8-….csv`, 2,260 rows,
+2023-12-05 → 2026-07-31) is imported: **75 rows inserted, 2,181 deduped, net worth unchanged.**
+Robinhood Cash now reads **$1,680.38** — the statement's own 07/31 close, to the cent — and July's
+missing three weeks (40 recurring buys) are in. Failing periods **17 → 15**, gap days **526 → 468**.
+
+Then reconstructing the share book from that CSV and checking it against the July statement's
+Portfolio Summary found this:
+
+| symbol | statement 2026-07-31 | reconstructed from the CSV | app `holdings` |
+|---|---|---|---|
+| MSFT | 45.890386 | **45.890386** ✓ | 43.63423 ✗ |
+| SPY | 18.027139 | **18.027139** ✓ | 16.546213 ✗ |
+| AMZN | 34.884778 | **34.884778** ✓ | 33.748471 ✗ |
+| COKE | 33.959422 | **33.959427** ✓ | 32.989121 ✗ |
+| UNH | 19.329560 | **19.329560** ✓ | 18.906582 ✗ |
+| META | 7.283111 | **7.283111** ✓ | 6.984804 ✗ |
+| GOOG | 0.312739 | **0.312739** ✓ | **absent** ✗ |
+| WMT | 0.412664 | 0.412664 ✓ | 0.412664 ✓ |
+| AAPL | 16.150657 | 21.150620 ⚠️ | 15.606784 ✗ |
+
+**The reconstruction matches the statement for 8 of 9. The app matches for 1.**
+
+The giveaway: AAPL's dividend rows print the share count they were paid on, and the app's
+`15.606784` is *exactly* the 2026-05-13 dividend's count. `holding_events` also only begins
+**2025-02-20** while the trade history begins **2023-12-05** — 14 months of trades never became
+events. Worth roughly **+$1,570** against the statement's Total Securities.
+
+⚠️ **Do not rebuild until AAPL is explained.** It reconstructs 5.000000 shares high (21.150620 vs
+16.150657). Eight symbols land exactly, so this is one specific unfound event, not a method error.
+Checked and NOT the cause: the only two price-less share events in the whole history are a COKE
+split (9.0131, 2025-05-27, already reconciles) and the AAPL referral share (0.0267, 2023-12-05); the
+single `ITRF` row is cash-only (−$26.64, no instrument).
+
+**Cost basis is a RECORDED FACT, not an estimate.** Every `Buy` carries `Quantity` and `Price`.
+Measured across 33 symbols: exactly 2 share events lack a price. A historical holdings table can
+honestly show quantity, price, market value AND cost basis — see §10 for why the earlier
+"derived estimate" framing was wrong.
+
+---
+
+## 10. ⛔ STANDING RULE — no fake data (owner, this pass)
+
+> *"i dont want any fake data. i dont want reasoned data. all the data has to come from the actual
+> statements. i dont want you hallucinating. the rules i told you before you can keep i just dont
+> want fake data."*
+
+Additive to every earlier rule. **The test for any number about to be displayed: which file, and
+which line of it, says this?** Traceable → ship. Not traceable → do not display it; say what the
+source does not carry.
+
+⚠️ **The half that is easy to miss.** He said this immediately after I described his historical cost
+basis as a *"derived estimate"* — and he was right that it is not. His export already contained the
+price of every trade. **Before declaring anything unavailable, open the source documents and
+measure.** Reconstructing from a real export is reading the record; guessing what the export would
+have said is not. Under-reading available data is as much a failure of this rule as inventing data.
+
+---
+
+## 11. The reactivity work — root cause found, foundation shipped
+
+The owner's ask: changing a chart's range should move the whole page, on every tab with a graph;
+plus the transaction-list flow.
+
+**Root cause, measured.** `ChartFocus.tsx` held the range in `useState(defaultRange)` and never
+wrote it anywhere. The param was URL-*seeded* but never written back, so on `/investments`, the
+dashboard hero, the account chart and the holding chart a pill press **could not reach the server at
+all**. Not a missing wire — a one-way street.
+
+**Shipped:** `rangeParam` opts a caller in; local state still leads so the chart re-slices on the
+same tick, and the URL sync rides a transition behind it. `replace` not `push` (a range is a lens,
+not a place in history). `/investments` opted in and verified live: pills write `?range=1M`, survive
+a reload, stay pressed. Callers without `rangeParam` are byte-identical.
+
+**Three corrections to the brief, all measured:**
+- **There is no 20-row list.** Caps are 5, 6, 8, 10 and 50 (`PAGE_SIZE=50`). "like 20 entries"
+  matches no constant in `src`.
+- **The filter is NOT lost.** Every "View all" already carries its params into `/transactions`.
+  What is lost is his PLACE: `/transactions` is the only detail destination in the app with **no
+  breadcrumb**, and the dashboard's brushed window is React-only with no URL form. Two filter chips
+  also render nameless ("Filtered category", "One merchant").
+- **`/spending` is already fully reactive.** Do not sell work there. Its only gap is the heatmap
+  showing one month of a YTD/ALL period.
+
+**A live bug, still open:** `ReturnViewParts.tsx:89` computes best day / worst day / max drawdown
+over the FULL series while the chart above shows a slice — all-time numbers under a 1M chart, with
+nothing saying so. `lib/portfolio-returns.ts:102` already takes a pre-sliced run, so the fix is
+passing the window. ⚠️ `dailyReturns()` starts at `i=1`, so the slice must include one day BEFORE
+the window start or the first day silently loses its return.
+
+**Cheapest remaining win:** `/flow` — `flow/page.tsx:44` hardcodes `2000-01-01` while
+`transfer-flow.ts:145` already honours a range. Page-level change, no service work.
+
+**Drill-down recommendation:** a drawer over the current page built from the existing `Sheet` +
+`LedgerRowExpander` + one paged server action — not expand-in-place, not virtualization (10,003 rows
+total). ⚠️ Trap: `bulkApplyByFilterAction` re-parses raw URL params server-side
+(`actions.ts:456`), so a drawer holding its filter in React state and offering a bulk action would
+mutate the WRONG set. And `RecentTransactions.tsx:81 → TransactionSheet.tsx:151` is a
+Sheet-inside-Sheet hazard.
+
+---
+
+## 12. Also settled this pass, by measurement
+
+**The SoFi → Robinhood chain is real and balances to the cent.** 44 rows out of SoFi Checking
+(`$54,104.31`), 44 rows into Robinhood Cash (`$54,104.31`), and **43 of 44** pulls have a same-day,
+same-amount sweep from SoFi Savings. Two caveats worth carrying: that savings→checking sweep is
+SoFi's overdraft protection and fires **241** times for unrelated reasons, and from 2026 the funding
+source switched to **Chase Checking**, bypassing SoFi entirely.
+
+**The 2026-05-20 `$87.22` triple is not a double count.** An `ACH Deposit` was cancelled
+(`ACH CANCEL`, −$87.22) and an `Instant bank transfer` from account 3522 succeeded.
+
+**The pass-36 +$6,000 question is closed.** Both rows are real — the July 2025 statement's sweep
+ledger steps twice: `$19,846.18 → $25,846.18 → $31,846.18`.
+
+---
+
+## 13. The queue, as it now stands
+
+1. ⛔ **Explain AAPL's 5.000000 share gap, then rebuild the holdings book** from the trade record
+   (§9). Fixes today's wrong numbers AND is the prerequisite for historical holdings — both need the
+   same event history. Include cost basis; it is recorded, not inferred.
+2. **Fix the all-time stats under the windowed chart** (§11).
+3. **Wire `/investments` panels to `?range=`** — holdings, allocation, top movers, P&L heatmap.
+   ⚠️ `holdings` has 9 rows and structurally cannot represent a past period; rebuild from
+   `holding_events`. `holdingRows` also filters `isActive=true`, hiding the 25 exited symbols that
+   are most of the point of a historical view.
+4. **`/flow` range** (§11) — cheapest win.
+5. **The transaction drawer + `/transactions` breadcrumb + name the filter chips** (§11).
+6. **Robinhood CRYPTO activity export** would close July's remaining `+$1,798.35` gap — the
+   securities export does not carry the crypto entity, so the `$4,999.74` ETH-sale transfer is still
+   missing. ⛔ Do NOT delete the `+$3,579.67` plug first; the arithmetic now says that makes July
+   worse.
+7. **The 33 review rows** — walk them together; several are already settled by §12.
+8. ⛔ **Hosting LAST.**
