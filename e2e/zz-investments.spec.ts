@@ -197,3 +197,33 @@ test("the allocation donut highlights a holding from its legend, and is keyboard
   await rows.nth(1).blur();
   expect(await wedgeOpacities(page)).toEqual(rest);
 });
+
+test("ticking holdings totals them, discloses coverage, and clearing restores focus", async ({ page }) => {
+  await gotoInvestments(page);
+
+  // no selection, no total line — the bar is not a permanent empty shelf
+  await expect(page.getByText(/holdings? selected/)).toHaveCount(0);
+
+  // `Select {symbol} in {account}` — the account is in the name because two
+  // accounts can hold one symbol, and "Select AAPL" twice names nothing
+  const boxes = page.getByRole("checkbox", { name: /^Select \S+ in / });
+  await boxes.first().check();
+  await expect(page.getByText("1 holding")).toBeVisible();
+
+  await boxes.nth(1).check();
+  const summary = page.getByText("2 holdings");
+  await expect(summary).toBeVisible();
+
+  // the subtotal states what it is a total OF — a bare figure that silently
+  // omitted an unpriced holding is the failure this bar exists to avoid
+  const bar = page.locator("dl").filter({ hasText: "Selected" }).first();
+  await expect(bar.getByText("Value")).toBeVisible();
+  await expect(bar.getByText("Share")).toBeVisible();
+
+  // clearing empties the bar AND keeps the keyboard somewhere sensible: the
+  // button removes itself from the document, so focus would otherwise fall to
+  // <body> and the user would lose their place in the table
+  await page.getByRole("button", { name: "Clear selection" }).click();
+  await expect(page.getByText(/holdings? selected/)).toHaveCount(0);
+  await expect(page.getByRole("checkbox", { name: "Select all rows" })).toBeFocused();
+});

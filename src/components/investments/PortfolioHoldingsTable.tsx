@@ -1,9 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { DataTable, type Column, type SortState } from "@/components/ui/DataTable";
+import { RULE_STRONG } from "@/components/ui/letterpress";
 import { Money } from "@/components/ui/Money";
 import { holdingMetricLabel, nextHoldingMetric, type HoldingMetric } from "@/lib/holding-cycle";
+import {
+  formatSharePct,
+  subtotalAnnouncement,
+  subtotalCoverage,
+  subtotalHoldings,
+} from "@/lib/holding-subtotal";
 import { formatCents } from "@/lib/money";
 import { formatQuantityE8 } from "@/services/holdings";
 import type { HoldingRow } from "@/services/portfolio";
@@ -13,6 +20,12 @@ import { HoldingSparkline } from "./HoldingSparkline";
  * The portfolio holdings table (ux-overhaul-plan §6.3): symbol + qty subtitle, a
  * day sparkline, price, and one day-change block that TAPS to cycle % → $ →
  * total P/L. Sortable; each row opens the aggregated holding page.
+ *
+ * Rows are also TICKABLE, and ticking them prints what they add up to: value,
+ * share of the portfolio, and today's move. The arithmetic lives in
+ * lib/holding-subtotal.ts, which sums only the figures that exist and reports
+ * how many rows fed each one — an unpriced holding is disclosed, never quietly
+ * counted as zero.
  */
 
 const ASSET_LABEL: Record<string, string> = { stock: "Stock", etf: "ETF", crypto: "Crypto" };
@@ -34,14 +47,82 @@ const SORTERS: Record<string, (a: HoldingRow, b: HoldingRow) => number> = {
   alloc: (a, b) => (a.allocationPct ?? 0) - (b.allocationPct ?? 0),
 };
 
+/** One leg, not one symbol: the same symbol in two accounts is two rows. */
+/**
+ * The selection identity of one holding LEG.
+ *
+ * Keyed on account + symbol, not symbol alone: the same symbol held in two
+ * accounts is two independent legs with two values and two allocation shares,
+ * and collapsing them would make one checkbox tick both and halve the subtotal.
+ * Exported so that property is pinned by a test rather than by inspection.
+ */
+export function holdingKey(r: Pick<HoldingRow, "accountId" | "symbol">): string {
+  return `${r.accountId}-${r.symbol}`;
+}
+
+const NO_SELECTION: ReadonlySet<string> = new Set();
+
+/** One figure in the subtotal line: a label, the number, and its caveat. */
+function SubtotalStat({
+  label,
+  note,
+  children,
+}: {
+  label: string;
+  /** the coverage caveat, or null when every selected row fed this figure */
+  note: string | null;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      <dt className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint">{label}</dt>
+      <dd className="mt-0.5 flex items-baseline gap-1.5 text-sm">
+        {children}
+        {note !== null && <span className="text-[11px] text-ink-faint">{note}</span>}
+      </dd>
+    </div>
+  );
+}
+
 export function PortfolioHoldingsTable({ rows }: { rows: HoldingRow[] }) {
   const [metric, setMetric] = useState<HoldingMetric>("dayPct");
   const [sort, setSort] = useState<SortState>({ key: "value", dir: "desc" });
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(NO_SELECTION);
+  /**
+   * Announced INSTEAD of the subtotal once a selection goes back to empty.
+   * `subtotalAnnouncement` is silent at zero, which is right on first paint —
+   * but going from a full sentence to silence tells a screen-reader user
+   * nothing, and clearing is exactly the moment they need confirming.
+   */
+  const [clearedNote, setClearedNote] = useState("");
+  // the table's own select-all checkbox — where focus goes when the Clear
+  // button removes itself from the document
+  const tableRef = useRef<HTMLDivElement>(null);
+
+  function changeSelection(next: ReadonlySet<string>): void {
+    setClearedNote(next.size === 0 && selectedIds.size > 0 ? "Selection cleared." : "");
+    setSelectedIds(next);
+  }
+
+  function clearSelection(): void {
+    changeSelection(NO_SELECTION);
+    // the button is about to unmount, so focus would fall to <body> and a
+    // keyboard user would lose their place in the table entirely
+    tableRef.current?.querySelector<HTMLInputElement>('input[type="checkbox"]')?.focus();
+  }
 
   const sorted = [...rows].sort((a, b) => {
     const cmp = (SORTERS[sort.key] ?? SORTERS.value)!(a, b);
     return sort.dir === "asc" ? cmp : -cmp;
   });
+
+  // Sorting and selection never touch each other: the sort re-orders a COPY,
+  // and a selection id is content (account + symbol), so a re-sort moves ticked
+  // rows around without dropping a tick. Read off `rows` rather than `sorted`
+  // for the same reason — the subtotal is order-insensitive, and filtering here
+  // means an id whose row is gone contributes nothing and is not counted.
+  const selectedRows = rows.filter((r) => selectedIds.has(holdingKey(r)));
+  const subtotal = subtotalHoldings(selectedRows);
 
   function metricCell(r: HoldingRow) {
     if (metric === "dayPct") {
@@ -160,15 +241,89 @@ export function PortfolioHoldingsTable({ rows }: { rows: HoldingRow[] }) {
   ];
 
   return (
-    <DataTable
-      columns={columns}
-      rows={sorted}
-      rowKey={(r) => `${r.accountId}-${r.symbol}`}
-      caption="Portfolio holdings with price, day change, unrealized or realized profit and loss, and allocation"
-      sort={sort}
-      onSortChange={setSort}
-      rowHref={(r) => `/investments/${r.assetType}/${r.symbol}`}
-      emptyState="No holdings yet — add your first position with the ⋯ menu."
-    />
+    <>
+      <div ref={tableRef}>
+        <DataTable
+          columns={columns}
+          rows={sorted}
+          rowKey={holdingKey}
+          caption="Portfolio holdings with price, day change, unrealized or realized profit and loss, and allocation"
+          sort={sort}
+          onSortChange={setSort}
+          selectable
+          // the account is part of the name because it is part of the row: two
+          // accounts can hold the same symbol, and "Select AAPL" twice is two
+          // indistinguishable checkboxes
+          rowLabel={(r) => `${r.symbol} in ${r.accountName}`}
+          selectedIds={selectedIds}
+          onSelectedIdsChange={changeSelection}
+          rowHref={(r) => `/investments/${r.assetType}/${r.symbol}`}
+          emptyState="No holdings yet — add your first position with the ⋯ menu."
+        />
+      </div>
+
+      {/* The total line, closed by the strong rule the way a printed ledger
+          closes one. Below the table, so ticking a row never shifts the rows
+          being ticked. */}
+      {subtotal.selected > 0 && (
+        <div
+          className={`mt-3 flex flex-wrap items-end justify-between gap-x-6 gap-y-3 px-4 pt-3 ${RULE_STRONG}`}
+        >
+          <dl className="flex flex-wrap items-end gap-x-6 gap-y-3">
+            <SubtotalStat label="Selected" note={null}>
+              <span className="figures font-medium">{subtotal.selected}</span>
+              <span className="text-[11px] text-ink-faint">
+                holding{subtotal.selected === 1 ? "" : "s"}
+              </span>
+            </SubtotalStat>
+            <SubtotalStat
+              label="Value"
+              note={subtotalCoverage(subtotal.valueCents, subtotal.selected, "priced")}
+            >
+              {subtotal.valueCents.total !== null ? (
+                <Money cents={subtotal.valueCents.total} className="font-medium" />
+              ) : (
+                // the same word the Price column uses for a symbol with no close
+                <span className="text-warning">no price</span>
+              )}
+            </SubtotalStat>
+            <SubtotalStat
+              label="Share"
+              note={subtotalCoverage(subtotal.allocationPct, subtotal.selected, "with a share")}
+            >
+              <span className="figures font-medium text-ink-muted">
+                {subtotal.allocationPct.total !== null
+                  ? formatSharePct(subtotal.allocationPct.total)
+                  : "—"}
+              </span>
+            </SubtotalStat>
+            <SubtotalStat
+              label="Today"
+              note={subtotalCoverage(subtotal.dayChangeCents, subtotal.selected, "with a day change")}
+            >
+              {subtotal.dayChangeCents.total !== null ? (
+                <Money cents={subtotal.dayChangeCents.total} flow className="font-medium" />
+              ) : (
+                <span className="text-ink-faint">—</span>
+              )}
+            </SubtotalStat>
+          </dl>
+          <button
+            type="button"
+            onClick={clearSelection}
+            className="shrink-0 rounded-md border border-line px-2.5 py-1 text-xs font-medium text-ink-muted transition-colors duration-(--duration-fast) hover:border-line-strong hover:text-ink"
+          >
+            Clear selection
+          </button>
+        </div>
+      )}
+
+      {/* Always mounted so the region exists before it has anything to say —
+          a live region created in the same tick as its text is not reliably
+          announced. Same idiom as the palette's result count. */}
+      <div aria-live="polite" className="sr-only">
+        {subtotal.selected > 0 ? subtotalAnnouncement(subtotal) : clearedNote}
+      </div>
+    </>
   );
 }
