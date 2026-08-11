@@ -433,3 +433,83 @@ so, or a correct import will look like a bug.
 6. **Will you also download the Wells Fargo QFX/OFX?** It carries a balance and a declared period;
    the CSV carries neither, so with CSV alone that account can never reconcile. `ofxProfile` already
    ships.
+
+---
+
+## 8. ⭐ DECISIONS LOCKED (2026-08-11, owner, interactive) — SUPERSEDES §1 AND §7.5
+
+⚠️ **Everything above using $369.00, $928.89 or $1,392.20 is SUPERSEDED.** Those came from the
+owner's first estimate; he later gave a more specific figure with the billing day attached, and
+confirmed it when the conflict was put to him directly.
+
+### 8.1 The car, corrected
+
+| | |
+|---|---|
+| lease | **$559.89** on the **11th of each month**, **first payment 2026-09-11**, debited from **Wells Fargo** |
+| lease term | 24 payments → last on **2028-08-11**. Total $13,437.36 |
+| down payment | **$5,000.00, paid IN CASH on 2026-08-11** |
+| insurance | **$361.49/mo** (⚠️ NOT $369.00) on the 11th, **6 payments: 2026-08-11 → 2027-01-11** = $2,168.94 |
+| insurance #1 | **already paid 2026-08-11 on VENTURE X** |
+| insurance #2–6 | **Wells Fargo**, 2026-09-11 … 2027-01-11 |
+| after Jan 2027 | **UNKNOWN — renews at a rate he has not been told.** The "~20% lower" is his guess ("hopefully") and must be stored `estimated` or not at all. |
+| fixed monthly commitment | **$921.38** ($559.89 + $361.49), Sep 2026 → Jan 2027 |
+| all-in 24 months | $18,437.36 lease + $2,168.94 insurance-so-far = **$20,606.30** (+ unknown renewals) |
+
+### 8.2 Where the car lives — TOP-LEVEL `Car`, settled
+
+`Transport > Car > {Car Payment, Car Insurance}` is **structurally impossible** — the category schema
+is deliberately one level deep, which is why `moveCategory` threw (⚠️ *not* `IMPORT_HINT_ROOTS`; that
+guess in an earlier draft was wrong, and `Transport` is not in that set).
+
+So it is one or the other, and the owner chose **top-level `Car`**:
+- **`Car` budget = $921.38/mo** ✅ **CREATED** (`019ff1c6-7893…`, monthly, starts 2026-08-11)
+- **`Transport` stays $520/mo** for Uber / transit / gas / parking
+
+The reasoning, which is better than the merged number: a fixed lease and variable getting-around
+spend are different questions, and merging them means the budget can answer neither. The earlier
+"$1,392.20 single Transport budget" is dead.
+
+### 8.3 Cash on Hand → $0
+
+*"no more cash after i give the 5k"*, and *"1800 i had and ive been saving the cash from getting paid
+from work."* So the safe held **exactly $5,000** before today and is **empty now**.
+
+⛔ **NOT YET APPLIED — it needs one decision first.** The recorded balance is $1,800, so $3,200 of the
+$5,000 is **cash pay he earned and never deposited, and which the ledger has never seen**. Zeroing
+the wallet honestly means recording that $3,200, and that is an income question, not a balance edit:
+
+- **(a)** Record $3,200 as previously-unrecorded cash income, then a −$5,000 Car Payment today →
+  wallet $0. Income totals rise $3,200; net worth rises $3,200 then falls $5,000.
+- **(b)** Treat the safe as an untracked float: just correct the opening balance to $5,000 and book
+  the −$5,000. Net worth unchanged overall, but $3,200 of real earnings stays invisible to income.
+
+⚠️ `docs/income-ground-truth.md` is carefully maintained and pass 15/28 both had to undo income
+contamination — do not pick one silently.
+
+### 8.4 Review queue — DONE this pass
+
+The two groups the owner pointed at are categorized and paired (`3dbf3d6`). He described the route:
+*"this is just me transfering from sofi saving into robinhood but it goes sofi saving into sofi
+checking then into robinhood"* — the reviewed rows are the **second hop**.
+
+- 15 SoFi outflows (−$17,800) + 13 Robinhood inflows (+$17,500) → **13 pairs linked**, lag 0–5 days,
+  Robinhood usually crediting *before* SoFi debits (the pass-19 float direction).
+- Category came from the shipped `transferCategoryResolver`, not a hand pick: it treats the Robinhood
+  settlement-cash sibling as **investment-side**, so the pairs resolve to
+  `Transfers > Investment Contribution` — what the SoFi legs already said, and what the Robinhood
+  legs (`Internal Transfer`) did not.
+- **Review queue 28 → 4 rows.** Net worth unchanged at $91,392.26 (a pairing moves no money).
+- ⏸️ Still in review, deliberately not force-fitted: 2 SoFi legs (2025-03-09 −$100, 2025-04-16 −$200
+  — exactly the $300 difference) and 2 Robinhood `ACH Deposit` rows (+$187.22).
+
+### 8.5 Still open
+
+1. **§8.3 — the $3,200 of unrecorded cash income.** (a) or (b)?
+2. **Wells Fargo**: the previous session recommends *not* creating the account until its first
+   statement, because an account with no statement reads permanently unverified on every coverage
+   surface. That conflicts with §6's "create it first so the lease series can bind". Since the lease
+   does not debit until 2026-09-11, **there is no rush — defer until the statement arrives.**
+3. **`recurring_series.category_id` migration** — still the blocker for representing the lease at all
+   (§7.2/§7.4). Nothing about the car is *projected* until it exists; the `Car` budget will simply
+   read "no data" until Wells Fargo lands.
