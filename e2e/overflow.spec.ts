@@ -34,6 +34,9 @@ const ROUTES: readonly string[] = [
   "/transactions?view=review",
   "/spending",
   "/spending?period=2026",
+  // the category manager: a full-width table of every category with its
+  // transaction count, so its min-content floor is set by the longest name
+  "/categories",
   "/budgets",
   // all three tabs: they are separate DOMs behind one path, and the calendar is
   // a seven-column grid — the shape most likely to have a min-content floor
