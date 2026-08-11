@@ -30,6 +30,18 @@ function paceSentence(status: BudgetPaceStatus): string {
   return `on track — ${projected}`;
 }
 
+/**
+ * "no spending imported since 8 Jul · 11 days of this period unaccounted".
+ * Statement lag is normal here — accounts land on different dates each month —
+ * so this reads as a fact about coverage, never as an error.
+ */
+function coverageSentence(status: BudgetPaceStatus): string {
+  const days = `${status.uncoveredDays} day${status.uncoveredDays === 1 ? "" : "s"} unaccounted`;
+  return status.dataThroughOn
+    ? `no spending imported since ${formatDayShort(status.dataThroughOn)} · ${days}`
+    : `nothing imported for this category yet · ${days}`;
+}
+
 interface BudgetRowProps {
   status: BudgetPaceStatus;
   guidanceCents: number;
@@ -49,10 +61,20 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
   // the headline % must say WHAT it measures: 108% of a budget is "over BY 8%",
   // never "over budget · 108%" (which reads as 108% over)
   const overPct = (status.pct - 1) * 100;
+
+  // With days of this window still unimported, spent/pct/pace are LOWER BOUNDS,
+  // not measurements — every figure can only rise when the statement lands. A
+  // green "On track · 0% used" over an unimported month is the one failure mode
+  // a budgeting tool cannot afford, so the verdict is withheld rather than
+  // guessed. "Over" is the exception: already exceeding the budget on partial
+  // data is a fact more data cannot undo.
+  const undermeasured = status.uncoveredDays > 0 && status.pace !== "over";
   const headline =
     status.pace === "over"
       ? `Over budget by ${overPct < 1 ? "<1" : Math.round(overPct)}%`
-      : `${tone.label} · ${pctDisplay}% used`;
+      : undermeasured
+        ? "Awaiting statements"
+        : `${tone.label} · ${pctDisplay}% used`;
 
   const spentPct = clampPct(status.pct * 100);
   const tailEndPct = clampPct(((status.spentCents + status.expectedTailCents) / budget.amountCents) * 100);
@@ -64,7 +86,7 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
 
   const valueText = `${status.categoryPath}: ${formatCents(status.spentCents)} of ${formatCents(
     budget.amountCents,
-  )} (${pctDisplay}% of budget). ${paceSentence(status)}.${
+  )} (${pctDisplay}% of budget). ${undermeasured ? coverageSentence(status) : paceSentence(status)}.${
     status.expectedTailCents > 0
       ? ` ${formatCents(status.expectedTailCents)} in recurring still expected this period.`
       : ""
@@ -84,7 +106,9 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
             <span className="ml-2 text-[11px] text-ink-faint">also counts toward its parent&apos;s budget</span>
           )}
         </div>
-        <div className={`text-xs font-medium ${tone.text}`}>{headline}</div>
+        <div className={`text-xs font-medium ${undermeasured ? "text-ink-faint" : tone.text}`}>
+          {headline}
+        </div>
       </div>
 
       <div
@@ -98,7 +122,7 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
       >
         <div className="absolute inset-0 overflow-hidden rounded-full bg-surface-sunken">
           <div
-            className={`absolute inset-y-0 left-0 rounded-full ${tone.fill}`}
+            className={`absolute inset-y-0 left-0 rounded-full ${undermeasured ? "bg-ink-faint/40" : tone.fill}`}
             style={{ width: `${spentPct}%` }}
           />
           {tailWidth > 0 && (
@@ -116,6 +140,10 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
           style={{ left: `${tickPct}%` }}
         />
       </div>
+
+      {undermeasured && (
+        <p className="mt-2 text-xs text-ink-faint">{coverageSentence(status)}</p>
+      )}
 
       {status.expectedTailCents > 0 && (
         <div className="mt-2">
@@ -183,7 +211,7 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
               className={over ? "text-negative" : undefined}
             />
           </span>
-          {status.pace !== "over" && (
+          {status.pace !== "over" && status.projectedCents !== status.spentCents && (
             <span>
               <span className="text-ink-faint">Projected ≈ </span>
               <Money cents={status.projectedCents} className={status.pace === "at-risk" ? "text-warning" : undefined} />

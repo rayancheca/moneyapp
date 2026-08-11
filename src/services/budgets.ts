@@ -444,6 +444,31 @@ function recurringPostedCents(db: AppDatabase, categoryId: string, from: string,
   return [...unsplit, ...splitParts].reduce((sum, r) => sum - r.amountCents, 0);
 }
 
+/**
+ * The last day this budget's subtree actually has imported spending for — the
+ * ledger's real reach, not the period's. Statements land weeks apart, so on any
+ * given day most categories are grading a window the data does not cover yet.
+ *
+ * Deliberately NOT sourced from account coverage/verifiedThrough: that answers
+ * "which periods reconcile", which is a different and more optimistic question
+ * (SoFi Checking reports a verified 2026-07-31 against a last transaction of
+ * 2026-05-31, and cash wallets report nothing at all). This reads the same rows
+ * the budget is graded from, so the two can never disagree.
+ */
+function subtreeDataThrough(db: AppDatabase, categoryId: string): string | null {
+  const subtree = loadCategoryIndex(db).subtreeIds(categoryId);
+  const rows = db
+    .select({ postedOn: transactions.postedOn })
+    .from(transactions)
+    .where(and(eq(transactions.status, "active"), inArray(transactions.categoryId, subtree)))
+    .all();
+  let latest: string | null = null;
+  for (const r of rows) {
+    if (latest === null || compareDates(r.postedOn, latest) > 0) latest = r.postedOn;
+  }
+  return latest;
+}
+
 export interface BudgetPaceStatus extends BudgetStatus {
   totalDays: number;
   /** days from the window start through today (inclusive); 0 before it opens */
@@ -456,6 +481,16 @@ export interface BudgetPaceStatus extends BudgetStatus {
   projectedCents: number;
   pace: BudgetPace;
   tail: BudgetTailSeries[];
+  /** last day with imported spending in this subtree, ever; null = none at all */
+  dataThroughOn: string | null;
+  /**
+   * Days of THIS window the ledger cannot speak for: from the day after
+   * dataThroughOn (or the window start) through today. >0 means the row's
+   * spent/pace/% figures are lower bounds, not measurements, and the UI must
+   * not report a verdict — "On track" over an unimported month is the one
+   * failure mode a budgeting tool cannot afford.
+   */
+  uncoveredDays: number;
 }
 
 /**
@@ -504,8 +539,18 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
     // future-dated non-recurring charge is a committed fact, not an estimate, so
     // the full-period actual is the projection floor.
     const projectedCents = Math.max(s.spentCents, forecast);
+    // the uncovered stretch is measured against the graded window only: data
+    // ending before the window opens leaves the WHOLE elapsed window uncovered,
+    // and data running past today leaves none.
+    const dataThroughOn = subtreeDataThrough(db, s.budget.categoryId);
+    const coveredThrough =
+      dataThroughOn && compareDates(dataThroughOn, start) >= 0 ? dataThroughOn : addDays(start, -1);
+    const uncoveredDays =
+      compareDates(coveredThrough, refDate) >= 0 ? 0 : Math.max(0, diffDays(coveredThrough, refDate));
     return {
       ...s,
+      dataThroughOn,
+      uncoveredDays,
       totalDays,
       elapsedDays,
       elapsedFraction: elapsedDays / totalDays,

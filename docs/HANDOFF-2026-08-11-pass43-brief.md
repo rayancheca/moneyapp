@@ -71,10 +71,19 @@ Maintenance. A search of all 73 categories for insurance/lease/car/auto returns 
 > before the first payment posts, or the lease lands in `Uncategorized` or gets swallowed by
 > `Auto Maintenance`.
 
-✅ Creating them is easy and needs no new code: `createCategory` ships at
-`src/services/category-edit.ts:78` and is wired through `createCategoryAction`
-(`src/app/categories/actions.ts:119`) to `CategoryManager.tsx:67` — reachable from `/categories`
-today. (The adversarial review claimed no creation path existed; **refuted** — see §7.5.)
+✅ Creating them needs no new code *as of today*: `createCategory` ships at
+`src/services/category-edit.ts:78`, wired through `createCategoryAction`
+(`src/app/categories/actions.ts:119`) to `CategoryManager.tsx:67`, reachable from `/categories`.
+
+> ⚠️ **CORRECTION — and a lesson about concurrent sessions.** An earlier draft said the adversarial
+> review was "refuted" for claiming no category-creation path existed. **The review was RIGHT when it
+> ran.** A second Claude session added `createCategory` in commit `5a3d5c1` at **2026-08-11 12:23**,
+> between the agent's read and mine. I measured after the fact, found the function, and blamed the
+> agent for a difference that concurrency created.
+>
+> 🔴 **The lesson: in a repo with more than one session live, `git log --since` is part of verifying a
+> claim.** "I checked and it's there" does not refute "it wasn't there" unless you also check *when*
+> it arrived. Re-measurement beats quotation (the standing rule) — but only if you also date it.
 
 ---
 

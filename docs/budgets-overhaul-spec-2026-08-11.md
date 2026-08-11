@@ -3,8 +3,9 @@
 > pace=under` for Aug 2026 ✅ · `recurringCalendar` `missedCount=4` ✅ ·
 > `recurringSeriesIdsForCategory` reads only posted transactions ✅ · no Wells Fargo institution ✅ ·
 > gambling stakes/payouts land in different categories ✅ (magnitudes vary with the match method —
-> a narrower description match gives $952.60 out / $895.78 in). **One claim was REFUTED: category
-> creation already exists and is wired (see the corrected row in §0).**
+> a narrower description match gives $952.60 out / $895.78 in). **One claim was initially marked REFUTED — category creation exists and is wired — but that was
+> WRONG OF ME: a concurrent session added `createCategory` in `5a3d5c1` at 2026-08-11 12:23, AFTER
+> this agent ran. The agent's measurement was correct at the time. See §1.2 of the handoff.**
 
 Verified the load-bearing claims on a copy at `/private/tmp/claude-501/-Users-rayankarimcheca-Desktop-Dev-MoneyApp/508253bd-89f3-49f8-beb8-41c676c65d60/scratchpad/spec/specwork.db` (live DB untouched, 10 budgets, `max(created_at)=2026-07-16T20:25:27.973Z`). Repo `main @ 603b96e` (the brief's `32e8242` is one behind), tree clean.
 

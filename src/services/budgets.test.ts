@@ -769,3 +769,68 @@ describe("budgetPaceStatuses — end-to-end pace, projection, and tail", () => {
   });
 });
 
+
+describe("data coverage (uncoveredDays / dataThroughOn)", () => {
+  test("a period the ledger does not reach reports the uncovered stretch", () => {
+    spend("2026-08-03", -5_000, "Food");
+    createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 100_000,
+      startsOn: "2026-08-01",
+    });
+    const s = budgetPaceStatuses(bundle.db, "2026-08-11").find((x) => x.categoryName === "Food")!;
+    expect(s.dataThroughOn).toBe("2026-08-03");
+    expect(s.uncoveredDays).toBe(8); // 04-Aug .. 11-Aug inclusive
+  });
+
+  test("a category with no rows at all reports null and the whole elapsed window", () => {
+    createBudget(bundle.db, {
+      categoryId: catId("Travel"),
+      period: "monthly",
+      amountCents: 50_000,
+      startsOn: "2026-08-01",
+    });
+    const s = budgetPaceStatuses(bundle.db, "2026-08-11").find((x) => x.categoryName === "Travel")!;
+    expect(s.dataThroughOn).toBeNull();
+    expect(s.uncoveredDays).toBe(11);
+  });
+
+  test("data reaching today leaves nothing uncovered", () => {
+    spend("2026-08-11", -5_000, "Food");
+    createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 100_000,
+      startsOn: "2026-08-01",
+    });
+    const s = budgetPaceStatuses(bundle.db, "2026-08-11").find((x) => x.categoryName === "Food")!;
+    expect(s.uncoveredDays).toBe(0);
+  });
+
+  test("data from a PRIOR period covers none of this one, and never over-counts", () => {
+    spend("2026-07-20", -5_000, "Food");
+    createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 100_000,
+      startsOn: "2026-08-01",
+    });
+    const s = budgetPaceStatuses(bundle.db, "2026-08-11").find((x) => x.categoryName === "Food")!;
+    expect(s.dataThroughOn).toBe("2026-07-20");
+    expect(s.uncoveredDays).toBe(11); // the elapsed window, not the 22 days since the row
+  });
+
+  test("a CHILD's spending counts as coverage for its parent's budget", () => {
+    spend("2026-08-09", -2_500, "Food > Coffee");
+    createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 100_000,
+      startsOn: "2026-08-01",
+    });
+    const s = budgetPaceStatuses(bundle.db, "2026-08-11").find((x) => x.categoryName === "Food")!;
+    expect(s.dataThroughOn).toBe("2026-08-09");
+    expect(s.uncoveredDays).toBe(2);
+  });
+});
