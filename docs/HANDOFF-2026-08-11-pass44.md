@@ -354,3 +354,79 @@ projects past 2028-08-11 and the insurance past 2027-01-11. Harmless inside a mo
 8. Then the pass-42 tail: the last $1,911.24, `ReturnViewParts.tsx:89`, `?range=` on `/investments`,
    `/flow` range, the transaction drawer.
 9. ⛔ **Hosting LAST.**
+
+---
+
+# PASS 44c — e2e fixed; two owner decisions
+
+`main` = `c7a355e`.
+
+## W. ✅ The red gate is fixed (`c7a355e`)
+
+`zz-budgets.spec.ts` **7/7 green**; suite **357 → 360 passed**. `e5bb8dd`'s behaviour was correct —
+the *test* asserted the old contract. It now asserts the real one, and gives `e5bb8dd` the e2e
+coverage it never had: `Over budget` still speaks (pace `over` is exempt), unaccounted days are
+reported, and `On track` / `Off pace` appear **zero** times. Two more tests pin that a verdict and a
+coverage note are mutually exclusive per row, and cover the new income header.
+
+⚠️ **STILL RED: `visual.spec.ts` snapshots only.** Failures include `category dark @1024`,
+`holding light/dark @768/@1024` — pages I did **not** touch. Do NOT regenerate blind: a budgets-only
+change should not move a *holding* snapshot, so find out why before accepting them. Suspect
+`e5bb8dd`'s `BudgetRow` change reaching the category page's budget reference, or a shared
+`SurfaceCard` metric. This is the next task after reading this.
+
+## X. ⭐ OWNER DECISION: the $5,000 STAYS VISIBLE
+
+> *"5k stays visible. its a payment i made"*
+
+So August's `Car` budget showing ~542% used is **correct and stays**. Do not add a one-off exclusion
+that hides it, and do not net it out of the category. It was money he spent, on the day he spent it.
+
+⚠️ This does **not** dissolve §T. The $105,000 *projection* is still wrong and he called it out
+himself (§Y). Hiding the row was never the fix; fixing the run-rate is.
+
+## Y. ⭐ OWNER on the $105,000, and the true all-in figure
+
+> *"car shouldnt be 105k. im paying 550 a month plus 365 for insurance plus 120 parking and 100 gas
+> so around 1200 (these are estimates you already know the exact amounts) for two years is 24k but
+> insurance will go down so lets say 21k around there"*
+
+He is confirming the §T defect from the outside, and giving the shape of the real number:
+
+| | his estimate | exact, from §3 |
+|---|---|---|
+| lease | ~$550 | **$559.89** |
+| insurance | ~$365 | **$361.49** (→ unknown after 2027-01-11) |
+| parking | ~$120 | *not yet measured — Parking & Tolls averaged $11.12/mo BEFORE the car* |
+| gas | ~$100 | *not yet measured — Gas averaged $36.84/mo BEFORE the car* |
+| **all-in/mo** | **~$1,200** | ~$921.38 contractual + fuel/parking |
+| **24-month total** | **~$21–24k** | $18,437.36 lease + insurance + running costs |
+
+**Two things follow, and neither is a licence to invent numbers:**
+1. **`Car` ($921.38) is only the contractual half.** Parking and gas live under `Transport`, and his
+   ~$220/mo estimate for them is **~5× the measured pre-car rate**. That is entirely plausible — he
+   did not drive before — but it is an ESTIMATE. Do not write it into a budget as fact. Watch the
+   first two Wells Fargo statements, then set it from data.
+2. **The $105,000 projection must be fixed** (§T). He should never see it again. The defect is that
+   `projectSpend` treats a one-off as a rate; since the $5,000 now stays visible by decision (§X),
+   the projection is the ONLY thing left to fix. A minimum-elapsed-days guard does **not** work —
+   measured: by day 3 it still extrapolates ~$28,000.
+
+**Suggested direction, unverified:** exclude from the run-rate any single transaction that exceeds
+the whole period's budget — it is definitionally not a rate. Keep it in `spentCents` (so the row
+still reads 542% and `over`), just not in the extrapolation. ⚠️ Measure against all 11 budgets before
+shipping; `projectSpend` is shared.
+
+## Z. Queue
+
+1. ⛔ **Why do `holding` / `category` visual snapshots move on a budgets change?** (§W) — diagnose
+   before regenerating.
+2. ⛔ **Fix the run-rate one-off** (§Y.2). The $5,000 stays; the $105,000 goes.
+3. **Series end dates** — the lease projects past 2028-08-11, the insurance past 2027-01-11.
+4. **Overdue bills on `/budgets`** — `recurringCalendar` returns `missedCount 4` (rent $2,285.70 due
+   2026-08-08) while Housing shows green.
+5. **Set `Transport` from data** once two Wells Fargo statements land (§Y.1) — not from the estimate.
+6. **Rollover, opt-in per budget.** **Gambling → own category**, gross + net.
+7. **Wells Fargo** — deferred until its first statement; ask for the **QFX**.
+8. The pass-42 tail: the last $1,911.24, `ReturnViewParts.tsx:89`, `?range=`, `/flow` range, drawer.
+9. ⛔ **Hosting LAST.**
