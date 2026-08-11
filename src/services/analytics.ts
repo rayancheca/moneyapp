@@ -1,6 +1,7 @@
 import { and, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
+import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { activeSplitsInRange } from "./transaction-splits";
@@ -90,12 +91,18 @@ export function loadCategoryIndex(db: AppDatabase): CategoryIndex {
 }
 
 /**
- * The recurring series whose linked ACTIVE transactions fall in a category's
- * subtree. A series carries no category column — its category IS the category
- * of its linked rows (schema.md). This is the ONE bridge used by both the
- * category page's "Recurring series" list and the budget "expected tail", so a
- * series can never appear in a budget's forecast without also appearing on its
- * category page (drill-down contract).
+ * The recurring series belonging to a category's subtree.
+ *
+ * Normally a series has no category of its own — its category IS the category
+ * of its linked ACTIVE transactions (schema.md). `user_category_id` is the one
+ * exception, for commitments that have not charged yet; see the block comment
+ * inside.
+ *
+ * This is the ONE bridge used by both the category page's "Recurring series"
+ * list and the budget "expected tail", so a series can never appear in a
+ * budget's forecast without also appearing on its category page (drill-down
+ * contract) — which is why the override has to be applied here rather than in
+ * budgetTail, or the two surfaces would disagree.
  */
 export function recurringSeriesIdsForCategory(db: AppDatabase, categoryId: string): Set<string> {
   const subtree = loadCategoryIndex(db).subtreeIds(categoryId);
@@ -105,6 +112,23 @@ export function recurringSeriesIdsForCategory(db: AppDatabase, categoryId: strin
   // and predictWith would project the WHOLE bill amount into every category the
   // split touches (double-counting). Spend ACTUALS still follow the split parts
   // via activeTxnsInRange/recurringPostedCents; only forecast membership does not.
+  /*
+   * `user_category_id` is an OVERRIDE, not a union, and the distinction is the
+   * whole point. A commitment the owner has entered but which has not charged
+   * yet — a lease signed today, first payment next month — has no posted rows,
+   * so the derivation below can never find it and its budget would read "no
+   * data" while he pays it. But a series that ALSO has posted rows under some
+   * other category must not appear in both: budgetTail would then project the
+   * full amount into each. So an overridden series is removed from the
+   * posted-row set entirely and counted only where the owner put it.
+   */
+  const overridden = db
+    .select({ id: recurringSeries.id, categoryId: recurringSeries.userCategoryId })
+    .from(recurringSeries)
+    .where(isNotNull(recurringSeries.userCategoryId))
+    .all();
+  const overriddenIds = new Set(overridden.map((r) => r.id));
+
   const rows = db
     .selectDistinct({ seriesId: transactions.recurringSeriesId })
     .from(transactions)
@@ -116,7 +140,17 @@ export function recurringSeriesIdsForCategory(db: AppDatabase, categoryId: strin
       ),
     )
     .all();
-  return new Set(rows.map((r) => r.seriesId).filter((v): v is string => v !== null));
+
+  const ids = new Set(
+    rows
+      .map((r) => r.seriesId)
+      .filter((v): v is string => v !== null)
+      .filter((seriesId) => !overriddenIds.has(seriesId)),
+  );
+  for (const row of overridden) {
+    if (row.categoryId !== null && subtree.includes(row.categoryId)) ids.add(row.id);
+  }
+  return ids;
 }
 
 // ── Month helpers ────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { id, timestamps } from "./common";
 import { accounts } from "./accounts";
+import { categories } from "./categories";
 import { merchants } from "./merchants";
 
 export const SERIES_KINDS = ["income", "bill", "subscription", "transfer", "other"] as const;
@@ -44,6 +45,19 @@ export const recurringSeries = sqliteTable("recurring_series", {
   userAmountCents: integer("user_amount_cents"),
   userCadence: text("user_cadence", { enum: CADENCES }),
   userNextExpectedOn: text("user_next_expected_on"),
+  /**
+   * Which category this series belongs to, when the ledger cannot say.
+   *
+   * Series→category is otherwise derived from POSTED rows
+   * (`recurringSeriesIdsForCategory`), which is unanswerable for a commitment
+   * that has not charged yet — a lease signed today posts nothing until next
+   * month's statement, so its budget could never see it coming.
+   *
+   * ⚠️ An OVERRIDE, never a union. A series carrying this is removed from the
+   * posted-row derivation entirely; otherwise it would belong to two categories
+   * at once and `budgetTail` would project the whole amount into both.
+   */
+  userCategoryId: text("user_category_id").references(() => categories.id),
   // Set when this series is merged INTO another: it becomes `ended` and its
   // occurrences relink to the target. Detection forward-maps through this so a
   // merged-away identity is never resurrected (§4.3).

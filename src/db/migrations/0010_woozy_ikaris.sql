@@ -1,0 +1,1 @@
+ALTER TABLE `recurring_series` ADD `user_category_id` text REFERENCES categories(id);

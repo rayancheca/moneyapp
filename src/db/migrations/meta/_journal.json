@@ -71,6 +71,13 @@
       "when": 1786024548063,
       "tag": "0009_parallel_king_bedlam",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1786471535610,
+      "tag": "0010_woozy_ikaris",
+      "breakpoints": true
     }
   ]
 }

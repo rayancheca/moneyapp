@@ -600,6 +600,58 @@ describe("recurringSeriesIdsForCategory — the shared series↔category bridge"
     expect(recurringSeriesIdsForCategory(bundle.db, catId("Travel"))).toEqual(new Set([flights]));
     expect(recurringSeriesIdsForCategory(bundle.db, catId("Food > Groceries"))).toEqual(new Set());
   });
+
+  test("user_category_id maps a commitment that has NEVER posted", () => {
+    // the case this column exists for: a lease signed today, first payment next
+    // month. Zero linked rows, so the posted-row derivation cannot find it.
+    const lease = createSeries({ name: "Car lease", nextExpectedOn: "2026-09-11", nextExpectedAmountCents: -55_989 });
+    bundle.db
+      .update(recurringSeries)
+      .set({ userCategoryId: catId("Travel > Flights") })
+      .where(eq(recurringSeries.id, lease))
+      .run();
+
+    expect(recurringSeriesIdsForCategory(bundle.db, catId("Travel > Flights"))).toEqual(new Set([lease]));
+    expect(recurringSeriesIdsForCategory(bundle.db, catId("Travel"))).toEqual(new Set([lease]));
+    expect(recurringSeriesIdsForCategory(bundle.db, catId("Food"))).toEqual(new Set());
+  });
+
+  test("an OVERRIDE, not a union — an overridden series leaves its posted-row category", () => {
+    // without this the series would answer to BOTH categories and budgetTail
+    // would project the whole amount into each.
+    const moved = createSeries({ name: "Moved", nextExpectedOn: "2026-07-20", nextExpectedAmountCents: -9_000 });
+    spendLinked("2026-06-20", -9_000, "Food > Dining", moved);
+    expect(recurringSeriesIdsForCategory(bundle.db, catId("Food"))).toEqual(new Set([moved]));
+
+    bundle.db
+      .update(recurringSeries)
+      .set({ userCategoryId: catId("Travel > Flights") })
+      .where(eq(recurringSeries.id, moved))
+      .run();
+
+    expect(recurringSeriesIdsForCategory(bundle.db, catId("Travel"))).toEqual(new Set([moved]));
+    expect(recurringSeriesIdsForCategory(bundle.db, catId("Food"))).toEqual(new Set());
+    expect(recurringSeriesIdsForCategory(bundle.db, catId("Food > Dining"))).toEqual(new Set());
+  });
+
+  test("clearing the override hands the series back to its posted rows", () => {
+    const back = createSeries({ name: "Back", nextExpectedOn: "2026-07-20", nextExpectedAmountCents: -4_000 });
+    spendLinked("2026-06-20", -4_000, "Food > Dining", back);
+    bundle.db
+      .update(recurringSeries)
+      .set({ userCategoryId: catId("Travel") })
+      .where(eq(recurringSeries.id, back))
+      .run();
+    expect(recurringSeriesIdsForCategory(bundle.db, catId("Food"))).toEqual(new Set());
+
+    bundle.db
+      .update(recurringSeries)
+      .set({ userCategoryId: null })
+      .where(eq(recurringSeries.id, back))
+      .run();
+    expect(recurringSeriesIdsForCategory(bundle.db, catId("Food"))).toEqual(new Set([back]));
+    expect(recurringSeriesIdsForCategory(bundle.db, catId("Travel"))).toEqual(new Set());
+  });
 });
 
 describe("budgetTail — expected-but-unposted recurring", () => {
