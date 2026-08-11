@@ -7,6 +7,7 @@ export interface NavItem {
     | "imports"
     | "transactions"
     | "spending"
+    | "tag"
     | "flow"
     | "budgets"
     | "recurring"
@@ -20,6 +21,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/imports", label: "Imports", icon: "imports" },
   { href: "/transactions", label: "Transactions", icon: "transactions" },
   { href: "/spending", label: "Spending", icon: "spending" },
+  { href: "/categories", label: "Categories", icon: "tag" },
   // Transfers sit next to Spending because that is the question they answer:
   // "where did the money go" splits into what LEFT (spending) and what merely
   // MOVED (flow). The Sankey deliberately excludes the latter.

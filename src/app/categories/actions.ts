@@ -3,7 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getDb } from "@/db/client";
-import { moveCategory, renameCategory } from "@/services/category-edit";
+import {
+  archiveCategory,
+  createCategory,
+  CREATABLE_CATEGORY_KINDS,
+  moveCategory,
+  renameCategory,
+  unarchiveCategory,
+} from "@/services/category-edit";
 import {
   actionErrorMessage,
   firstIssueMessage,
@@ -79,5 +86,85 @@ export async function moveCategoryAction(input: {
     return { ok: true, data: result };
   } catch (error: unknown) {
     return { ok: false, error: actionErrorMessage(error, CATEGORY_LABELS, "Could not move category") };
+  }
+}
+
+/**
+ * Every surface that renders a category name or picker. Kept in one place so a
+ * create/archive refreshes exactly what a rename already does — plus /recurring
+ * and /accounts, whose pickers list categories too.
+ */
+function revalidateCategorySurfaces(categoryId?: string): void {
+  revalidatePath("/");
+  revalidatePath("/spending");
+  revalidatePath("/budgets");
+  revalidatePath("/transactions");
+  revalidatePath("/recurring");
+  revalidatePath("/categories");
+  if (categoryId) revalidatePath(`/categories/${categoryId}`);
+}
+
+const createCategoryActionSchema = z
+  .object({
+    name: z.string().trim().min(1, "Name the category").max(60, "Keep it to 60 characters or fewer"),
+    parentId: z.string().min(1).nullable().optional(),
+    kind: z.enum(CREATABLE_CATEGORY_KINDS).optional(),
+  })
+  .refine((v) => (v.parentId ?? null) !== null || v.kind !== undefined, {
+    message: "Pick what kind of category this is",
+    path: ["kind"],
+  });
+
+/** Create a category — top-level (needs a kind) or a subcategory (inherits its parent's). */
+export async function createCategoryAction(input: {
+  name: string;
+  parentId?: string | null;
+  kind?: (typeof CREATABLE_CATEGORY_KINDS)[number];
+}): Promise<ActionResult<{ id: string; name: string; parentId: string | null }>> {
+  const parsed = createCategoryActionSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: firstIssueMessage(parsed.error.issues, CATEGORY_LABELS, "Invalid category") };
+  }
+  try {
+    const result = createCategory(getDb(), {
+      name: parsed.data.name,
+      parentId: parsed.data.parentId ?? null,
+      kind: parsed.data.kind,
+    });
+    revalidateCategorySurfaces(result.id);
+    return { ok: true, data: { id: result.id, name: result.name, parentId: result.parentId } };
+  } catch (error: unknown) {
+    return { ok: false, error: actionErrorMessage(error, CATEGORY_LABELS, "Could not create category") };
+  }
+}
+
+const categoryIdSchema = z.object({ categoryId: z.string().min(1) });
+
+/** Archive (never delete — history keeps resolving through the id). */
+export async function archiveCategoryAction(input: {
+  categoryId: string;
+}): Promise<ActionResult<{ id: string; isArchived: boolean }>> {
+  const parsed = categoryIdSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Pick a category" };
+  try {
+    const result = archiveCategory(getDb(), parsed.data.categoryId);
+    revalidateCategorySurfaces(result.id);
+    return { ok: true, data: result };
+  } catch (error: unknown) {
+    return { ok: false, error: actionErrorMessage(error, CATEGORY_LABELS, "Could not archive category") };
+  }
+}
+
+export async function unarchiveCategoryAction(input: {
+  categoryId: string;
+}): Promise<ActionResult<{ id: string; isArchived: boolean }>> {
+  const parsed = categoryIdSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Pick a category" };
+  try {
+    const result = unarchiveCategory(getDb(), parsed.data.categoryId);
+    revalidateCategorySurfaces(result.id);
+    return { ok: true, data: result };
+  } catch (error: unknown) {
+    return { ok: false, error: actionErrorMessage(error, CATEGORY_LABELS, "Could not restore category") };
   }
 }

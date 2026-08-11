@@ -6,7 +6,13 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { categories } from "@/db/schema/categories";
-import { moveCategory, renameCategory } from "./category-edit";
+import {
+  archiveCategory,
+  createCategory,
+  moveCategory,
+  renameCategory,
+  unarchiveCategory,
+} from "./category-edit";
 
 let dir: string;
 let bundle: DbBundle;
@@ -152,5 +158,106 @@ describe("moveCategory (S7)", () => {
     expect(() => moveCategory(bundle.db, dining.id, null)).toThrow(/already exists/);
     // moving to the current parent is a no-op
     expect(moveCategory(bundle.db, dining.id, food.id).parentId).toBe(food.id);
+  });
+});
+
+describe("createCategory", () => {
+  test("creates a top-level expense category with an explicit kind", () => {
+    const result = createCategory(bundle.db, { name: "  Car  ", kind: "expense" });
+    expect(result.name).toBe("Car");
+    expect(result.parentId).toBeNull();
+    expect(result.kind).toBe("expense");
+    expect(byName("Car")?.id).toBe(result.id);
+  });
+
+  test("a child inherits its parent's kind instead of taking one", () => {
+    const car = createCategory(bundle.db, { name: "Car", kind: "expense" });
+    const child = createCategory(bundle.db, { name: "Car Payment", parentId: car.id });
+    expect(child.kind).toBe("expense");
+    expect(child.parentId).toBe(car.id);
+  });
+
+  test("appends after existing siblings rather than colliding on sortOrder 0", () => {
+    const car = createCategory(bundle.db, { name: "Car", kind: "expense" });
+    const first = createCategory(bundle.db, { name: "Car Payment", parentId: car.id });
+    const second = createCategory(bundle.db, { name: "Car Insurance", parentId: car.id });
+    const rowOf = (id: string) => bundle.db.select().from(categories).where(eq(categories.id, id)).get()!;
+    expect(rowOf(second.id).sortOrder).toBeGreaterThan(rowOf(first.id).sortOrder);
+  });
+
+  test("rejects an empty or whitespace-only name", () => {
+    expect(() => createCategory(bundle.db, { name: "   ", kind: "expense" })).toThrow(/cannot be empty/);
+  });
+
+  test("rejects a duplicate name among the same siblings", () => {
+    expect(() => createCategory(bundle.db, { name: "Food", kind: "expense" })).toThrow(/already exists/);
+    const food = byName("Food")!;
+    expect(() => createCategory(bundle.db, { name: "Dining", parentId: food.id })).toThrow(/already exists/);
+  });
+
+  test("allows the same name under a DIFFERENT parent", () => {
+    const food = byName("Food")!;
+    const car = createCategory(bundle.db, { name: "Car", kind: "expense" });
+    createCategory(bundle.db, { name: "Extras", parentId: food.id });
+    expect(() => createCategory(bundle.db, { name: "Extras", parentId: car.id })).not.toThrow();
+  });
+
+  test("refuses to nest more than one level deep", () => {
+    const food = byName("Food")!;
+    const dining = byName("Dining", food.id)!;
+    expect(() => createCategory(bundle.db, { name: "Sushi", parentId: dining.id })).toThrow(/one level deep/);
+  });
+
+  test("requires a kind for a top-level category", () => {
+    expect(() => createCategory(bundle.db, { name: "Car" })).toThrow(/what kind/);
+  });
+
+  test("refuses to create transfer or system categories", () => {
+    // @ts-expect-error — deliberately outside CreatableCategoryKind
+    expect(() => createCategory(bundle.db, { name: "Sneaky", kind: "transfer" })).toThrow(/cannot be created/);
+  });
+
+  test("refuses to add a subcategory under a transfer parent", () => {
+    const transfers = bundle.db.select().from(categories).where(eq(categories.kind, "transfer")).get()!;
+    const root = transfers.parentId === null ? transfers : byName("Transfers")!;
+    expect(() => createCategory(bundle.db, { name: "Sneaky", parentId: root.id })).toThrow(/detection depends on them/);
+  });
+});
+
+describe("archiveCategory", () => {
+  test("archives a user-made category and hides it from budgetable pickers", async () => {
+    const car = createCategory(bundle.db, { name: "Car", kind: "expense" });
+    expect(archiveCategory(bundle.db, car.id).isArchived).toBe(true);
+    const { listBudgetableCategories } = await import("./budgets");
+    expect(listBudgetableCategories(bundle.db).some((c) => c.id === car.id)).toBe(false);
+  });
+
+  test("refuses while a live subcategory remains, and succeeds once it is archived", () => {
+    const car = createCategory(bundle.db, { name: "Car", kind: "expense" });
+    const child = createCategory(bundle.db, { name: "Car Payment", parentId: car.id });
+    expect(() => archiveCategory(bundle.db, car.id)).toThrow(/subcategories first/);
+    archiveCategory(bundle.db, child.id);
+    expect(() => archiveCategory(bundle.db, car.id)).not.toThrow();
+  });
+
+  test("refuses to archive a category imports categorize into", () => {
+    const income = byName("Income")!;
+    expect(() => archiveCategory(bundle.db, income.id)).toThrow(/stays active/);
+  });
+
+  test("never deletes the row — history keeps resolving", () => {
+    const car = createCategory(bundle.db, { name: "Car", kind: "expense" });
+    archiveCategory(bundle.db, car.id);
+    expect(bundle.db.select().from(categories).where(eq(categories.id, car.id)).get()).toBeDefined();
+  });
+
+  test("unarchive restores it, but not under an archived parent", () => {
+    const car = createCategory(bundle.db, { name: "Car", kind: "expense" });
+    const child = createCategory(bundle.db, { name: "Car Payment", parentId: car.id });
+    archiveCategory(bundle.db, child.id);
+    archiveCategory(bundle.db, car.id);
+    expect(() => unarchiveCategory(bundle.db, child.id)).toThrow(/Unarchive "Car" first/);
+    unarchiveCategory(bundle.db, car.id);
+    expect(unarchiveCategory(bundle.db, child.id).isArchived).toBe(false);
   });
 });

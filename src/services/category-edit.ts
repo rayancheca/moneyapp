@@ -1,6 +1,7 @@
-import { and, eq, isNull, ne } from "drizzle-orm";
+import { and, desc, eq, isNull, ne } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
-import { categories } from "@/db/schema/categories";
+import { categories, type CategoryKind } from "@/db/schema/categories";
+import { transactions } from "@/db/schema/transactions";
 
 /**
  * Category writes (the "nothing read-only" program, S3). Renaming is a pure
@@ -36,6 +37,139 @@ const IMPORT_HINT_PATHS = new Set([
 export interface RenameCategoryResult {
   id: string;
   name: string;
+}
+
+/**
+ * Kinds a user may create. `transfer` and `system` are deliberately absent:
+ * the transfer detector and credit-match machinery resolve those BY NAME, so a
+ * user-made one would either collide with a name detection depends on or sit
+ * inert while looking real. Same reasoning that blocks renaming them.
+ */
+export const CREATABLE_CATEGORY_KINDS = ["expense", "income", "rewards", "investment"] as const;
+export type CreatableCategoryKind = (typeof CREATABLE_CATEGORY_KINDS)[number];
+
+export interface CreateCategoryInput {
+  name: string;
+  /** null = a new top-level category; otherwise the ROOT it lives under */
+  parentId?: string | null;
+  /** required for a root; ignored for a child, which always inherits its parent's kind */
+  kind?: CreatableCategoryKind;
+}
+
+export interface CreateCategoryResult {
+  id: string;
+  name: string;
+  parentId: string | null;
+  kind: CategoryKind;
+}
+
+/**
+ * Create a category (the "nothing read-only" program — until now the 73 seeded
+ * categories were the only ones that could ever exist: nothing outside
+ * `db/seed.ts` inserted a row, so a user with a new kind of spending had
+ * nowhere to put it).
+ *
+ * A child ALWAYS inherits its parent's kind rather than accepting one — kind
+ * drives the money math (transfer/investment/rewards never count as spending),
+ * and a child whose kind disagreed with its parent's would make a subtree
+ * rollup mean two different things at two depths. Depth stays one level, matching
+ * moveCategory's guard and the two-level assumption in listBudgetableCategories.
+ */
+export function createCategory(db: AppDatabase, input: CreateCategoryInput): CreateCategoryResult {
+  const name = input.name.trim();
+  if (name === "") throw new Error("Category name cannot be empty");
+  const parentId = input.parentId ?? null;
+
+  let kind: CategoryKind;
+  if (parentId === null) {
+    if (!input.kind) throw new Error("Pick what kind of category this is");
+    if (!CREATABLE_CATEGORY_KINDS.includes(input.kind)) {
+      throw new Error(`Categories of kind "${input.kind}" cannot be created`);
+    }
+    kind = input.kind;
+  } else {
+    const parent = db.select().from(categories).where(eq(categories.id, parentId)).get();
+    if (!parent) throw new Error("Unknown parent category");
+    if (parent.parentId !== null) {
+      throw new Error("Categories nest one level deep — pick a top-level parent");
+    }
+    if (parent.kind === "transfer" || parent.kind === "system") {
+      throw new Error("Transfer and system categories cannot take new subcategories — detection depends on them");
+    }
+    if (parent.isArchived) throw new Error("That parent is archived — unarchive it first");
+    kind = parent.kind;
+  }
+
+  const siblingClash = db
+    .select({ id: categories.id })
+    .from(categories)
+    .where(and(parentId === null ? isNull(categories.parentId) : eq(categories.parentId, parentId), eq(categories.name, name)))
+    .get();
+  if (siblingClash) throw new Error(`A category named "${name}" already exists here`);
+
+  // append to the end of its sibling list rather than colliding on 0, so the
+  // seeded ordering the rest of the app renders by is preserved
+  const lastSibling = db
+    .select({ sortOrder: categories.sortOrder })
+    .from(categories)
+    .where(parentId === null ? isNull(categories.parentId) : eq(categories.parentId, parentId))
+    .orderBy(desc(categories.sortOrder))
+    .get();
+
+  const row = db
+    .insert(categories)
+    .values({ name, parentId, kind, sortOrder: (lastSibling?.sortOrder ?? 0) + 1 })
+    .returning({ id: categories.id })
+    .get();
+  return { id: row.id, name, parentId, kind };
+}
+
+export interface ArchiveCategoryResult {
+  id: string;
+  isArchived: boolean;
+}
+
+/**
+ * Archive rather than delete. A category id is referenced by transactions,
+ * budgets, rules and merchant defaults, so a hard delete would either violate
+ * those foreign keys or orphan real history — and this app's rule is that
+ * history is never rewritten to make a screen tidier. Archiving hides the
+ * category from every picker (listBudgetableCategories already filters it)
+ * while every past transaction keeps pointing at it.
+ */
+export function archiveCategory(db: AppDatabase, categoryId: string): ArchiveCategoryResult {
+  const row = db.select().from(categories).where(eq(categories.id, categoryId)).get();
+  if (!row) throw new Error("Unknown category");
+  if (row.kind === "transfer" || row.kind === "system") {
+    throw new Error("Transfer and system categories stay active — detection depends on them");
+  }
+  const hintPath = row.parentId
+    ? `${db.select({ name: categories.name }).from(categories).where(eq(categories.id, row.parentId)).get()?.name} > ${row.name}`
+    : row.name;
+  if ((row.parentId === null && IMPORT_HINT_ROOTS.has(row.name)) || IMPORT_HINT_PATHS.has(hintPath)) {
+    throw new Error("Imports auto-categorize into this category — it stays active");
+  }
+  const liveChild = db
+    .select({ id: categories.id })
+    .from(categories)
+    .where(and(eq(categories.parentId, categoryId), eq(categories.isArchived, false)))
+    .get();
+  if (liveChild) throw new Error("Archive or move its subcategories first");
+
+  db.update(categories).set({ isArchived: true }).where(eq(categories.id, categoryId)).run();
+  return { id: categoryId, isArchived: true };
+}
+
+/** Restore an archived category. A child cannot come back under an archived parent. */
+export function unarchiveCategory(db: AppDatabase, categoryId: string): ArchiveCategoryResult {
+  const row = db.select().from(categories).where(eq(categories.id, categoryId)).get();
+  if (!row) throw new Error("Unknown category");
+  if (row.parentId !== null) {
+    const parent = db.select().from(categories).where(eq(categories.id, row.parentId)).get();
+    if (parent?.isArchived) throw new Error(`Unarchive "${parent.name}" first`);
+  }
+  db.update(categories).set({ isArchived: false }).where(eq(categories.id, categoryId)).run();
+  return { id: categoryId, isArchived: false };
 }
 
 export interface MoveCategoryResult {
@@ -173,4 +307,65 @@ export function renameCategory(db: AppDatabase, categoryId: string, newName: str
 
   db.update(categories).set({ name }).where(eq(categories.id, row.id)).run();
   return { id: row.id, name };
+}
+
+export interface CategoryTreeNode {
+  id: string;
+  name: string;
+  kind: CategoryKind;
+  isArchived: boolean;
+  /** transactions pointing at THIS category (not its subtree) */
+  txnCount: number;
+  /** false for transfer/system and the import-hint names — the UI hides their controls */
+  isEditable: boolean;
+  children: CategoryTreeNode[];
+}
+
+/** Is this category one the rename/move/archive guards refuse to touch? */
+function isProtected(name: string, parentName: string | null, kind: CategoryKind): boolean {
+  if (kind === "transfer" || kind === "system") return true;
+  if (parentName === null) return IMPORT_HINT_ROOTS.has(name);
+  return IMPORT_HINT_PATHS.has(`${parentName} > ${name}`);
+}
+
+/**
+ * The whole taxonomy as roots-with-children, for the category manager. Includes
+ * archived rows (the manager is the only place they can be restored from) and a
+ * per-category transaction count, so archiving something with real history is a
+ * visibly informed choice rather than a blind one.
+ */
+export function listCategoryTree(db: AppDatabase): CategoryTreeNode[] {
+  const rows = db.select().from(categories).all();
+  const counts = new Map<string, number>();
+  for (const r of db
+    .select({ categoryId: transactions.categoryId })
+    .from(transactions)
+    .where(eq(transactions.status, "active"))
+    .all()) {
+    if (r.categoryId) counts.set(r.categoryId, (counts.get(r.categoryId) ?? 0) + 1);
+  }
+
+  const bySort = (a: { sortOrder: number; name: string }, b: { sortOrder: number; name: string }) =>
+    a.sortOrder - b.sortOrder || a.name.localeCompare(b.name);
+
+  const node = (r: (typeof rows)[number], parentName: string | null): CategoryTreeNode => ({
+    id: r.id,
+    name: r.name,
+    kind: r.kind,
+    isArchived: r.isArchived,
+    txnCount: counts.get(r.id) ?? 0,
+    isEditable: !isProtected(r.name, parentName, r.kind),
+    children: [],
+  });
+
+  return rows
+    .filter((r) => r.parentId === null)
+    .sort(bySort)
+    .map((root) => ({
+      ...node(root, null),
+      children: rows
+        .filter((r) => r.parentId === root.id)
+        .sort(bySort)
+        .map((child) => node(child, root.name)),
+    }));
 }
