@@ -71,6 +71,11 @@ Maintenance. A search of all 73 categories for insurance/lease/car/auto returns 
 > before the first payment posts, or the lease lands in `Uncategorized` or gets swallowed by
 > `Auto Maintenance`.
 
+✅ Creating them is easy and needs no new code: `createCategory` ships at
+`src/services/category-edit.ts:78` and is wired through `createCategoryAction`
+(`src/app/categories/actions.ts:119`) to `CategoryManager.tsx:67` — reachable from `/categories`
+today. (The adversarial review claimed no creation path existed; **refuted** — see §7.5.)
+
 ---
 
 ## 2. 💰 Budgets — the measured diagnosis
@@ -138,10 +143,17 @@ budget paces on 4 days, not on the month"* (`budgets.ts:470-473`). This is handl
 (`budgets.ts:486-500`), and the comment explains it takes real care to keep spent-to-date and the
 expected tail **disjoint**, so a bill posted early is never counted twice.
 
-**Consequence for the car:** a $559.89 fixed monthly payment is exactly a recurring series. Register
-it as one and the budget page's projection picks it up **with no new machinery**. The temptation to
-build a parallel "commitments" concept should be resisted until this path is proven insufficient —
-this project has a documented history of specifying work a shipped mechanism already does.
+**Consequence for the car:** a $559.89 fixed monthly payment is exactly a recurring series, so the
+recurring layer — not a new parallel "commitments" concept — is the right home. This project has a
+documented history of specifying work a shipped mechanism already does.
+
+> ⛔ **BUT — corrected in §7.2, and this is the important part.** "Register it as a recurring series
+> and the projection picks it up **with no new machinery**" is **WRONG**, verified.
+> `recurringSeriesIdsForCategory` (`analytics.ts:100-120`) resolves series → category **only through
+> posted transactions**, so a hand-entered commitment with zero posted rows has no category and
+> `budgetTail` never sees it. Measured: **Transport has 0 linked series.** Since the lease debits
+> Wells Fargo and will not post until next month, this path is **inert** until `recurring_series`
+> gains an explicit `category_id` (§7.4).
 
 ### 2.3 The insurance step-down is the acid test
 
@@ -149,8 +161,8 @@ Any design must record **$369/mo as fact** (he is paying it) and the **−20% at
 he stated with "hopefully"** — visibly distinct from a measured amount, and never silently promoted
 to truth. If the schema cannot hold that distinction, that is the schema change worth making.
 
-*(The full adversarial review — five refutation-tested lenses plus a ranked build order — is still
-running and will be appended as **§7**. Everything in §2 above is already measured and final.)*
+*(The full adversarial review landed — see **§7**, and the complete 400-line spec in
+`docs/budgets-overhaul-spec-2026-08-11.md`.)*
 
 ---
 
@@ -268,3 +280,147 @@ Wells Fargo rows land** — that is the exact seam where a double-count would ap
 **Binding order matters:** create the Wells Fargo account row → register the lease + insurance as
 recurring series **on that account** → then the budget projection picks them up. Registering them
 against the wrong account now would need unpicking later.
+
+---
+
+## 7. The adversarial review — findings and build order
+
+12 agents, 5 refutation-tested lenses. Full spec: **`docs/budgets-overhaul-spec-2026-08-11.md`**.
+Everything below was independently re-verified by the main loop before being written here.
+
+### 7.1 🔴 THE FINDING: the page is asserting a measured zero where "not measured" is true
+
+Run `budgetPaceStatuses(db, '2026-08-11')` against the real DB today and **all ten budgets return
+`spent=$0.00 · pace=under · bounds=2026-08-01..2026-08-31`.** The page reads
+*"$0.00 spent · On track · 0% used · $6,799 left"* across the board — not because he has spent
+nothing, but because **August has not been imported yet.**
+
+That is the NO-FAKE-DATA failure pointed at a rendering instead of a row, and it is the honest answer
+to "not really functional or useful": he looks at this page during the two-thirds of every month when
+it has nothing to grade, and it confidently tells him he is fine.
+
+**It gets worse — the app already knows better.** `recurringCalendar(db,'2026-08','2026-08-11')`
+returns **`missedCount = 4`**: rent **−$2,285.70 due 2026-08-08**, Breezeline −$50.00 (08-10),
+FPL −$14.21 (08-10), Amazon Prime −$4.99 (08-05). All came due, none arrived. **Housing still renders
+green**, because `budgetTail` anchors at `addDays(today, 1)` (`budgets.ts:364`) and never looks
+backwards.
+
+**Diagnosis in one line:** everything on `/budgets` is derived from the past, and his two real
+questions — *"can I afford this?"* and *"what am I locked into?"* — are both about the future.
+
+### 7.2 ⚠️ CORRECTION to what I told you last turn
+
+I said the lease could just be registered as a recurring series and the budget projection would pick
+it up "with no new machinery". **That is wrong, and I verified it.**
+
+`recurringSeriesIdsForCategory` (`src/services/analytics.ts:100-120`) resolves series → category
+**only through posted transactions** (`selectDistinct(transactions.recurringSeriesId) … where
+categoryId in subtree`). A hand-entered commitment with **zero posted rows has no category**, so
+`budgetTail` (`budgets.ts:361`) will never see it. Measured: **Transport has 0 linked series today.**
+
+Since the lease debits Wells Fargo and won't post until next month, **every "just add a recurring
+series" plan is inert until `recurring_series` gains an explicit `category_id`.** That is why §7.4's
+first column is the load-bearing one.
+
+### 7.3 Ranked build order (value ÷ effort)
+
+| # | item | effort |
+|---|---|---|
+| 1 | ⭐ **Say what the page does not know** — per-row coverage. A row whose accounts have no data in `bounds` must not render `$0.00 · On track`; say *"no data yet for 1–31 Aug — Chase Checking imported through 10 Jul"* and suppress the pace verdict. `accountCoverage` + `CoveragePanel.tsx:48` prose + `StalenessNote` badges **all already ship** — reuse, don't reinvent. | **S** |
+| 2 | **Show the bill that was due and never arrived** — add `overdueCents` as a third term, rendered left of the today-tick. ⚠️ **Consume `recurring-calendar.ts:150-163`**, don't write a second matcher, or `/budgets` and `/recurring` will disagree about the same rent bill. | S–M |
+| 3 | **Anchor the plan to income** — "Left to budget", with a *named basis*. $6,799 budgeted vs **$4,184** projected August income (4 × $1,046 confirmed weekly series) = **162%**. Nothing on the page says so today. | M |
+| 4 | **Let him look at a month that has data** — `page.tsx:48` hard-codes `todayIso()`. The whole period-nav apparatus already exists (`src/lib/period.ts`, `PeriodSelector`). ⚠️ not S — pace/tail math is `today`-relative. | M |
+| 5 | **The car** — §7.5. | M+M+S |
+| 6 | **Committed floor** — warn when a budget is set below known commitments; never block. | S |
+| 7–12 | 6-month guide on the row · window carried into drill-down · "Recalibrate" · "Everything else" row · dashboard tile · empty-state onboarding. | all S |
+
+### 7.4 The schema change — three columns, one table, no new tables
+
+```sql
+ALTER TABLE recurring_series ADD COLUMN category_id  TEXT REFERENCES categories(id);
+ALTER TABLE recurring_series ADD COLUMN ends_on      TEXT;
+ALTER TABLE recurring_series ADD COLUMN amount_basis TEXT NOT NULL DEFAULT 'posted';
+```
+
+- **`category_id`** — the load-bearing one (§7.2). Union it into `recurringSeriesIdsForCategory`.
+- **`ends_on`** — a 24-payment lease that stops at 24; the 6-month insurance term.
+- **`amount_basis`** `'posted'|'stated'|'estimated'` — the vocabulary for "expected, not confirmed".
+  ⚠️ **Port, don't invent:** `daily_balances.basis` is already a five-level confidence ladder in
+  production; mirror its naming and rendering doctrine.
+
+All 27 existing series are NULL/`'posted'` → **behaviour is byte-identical today.** `budgets` is
+untouched. Three SQLite `ADD COLUMN`s: instant, no backfill, reversible.
+
+**Net worth — what the car must NOT do.** It is **not an asset** (leased, no source document states a
+value) and the remaining $13,437.36 is **not a liability** (`isLiability` is hardcoded to
+`type === 'credit'`, `accounts.ts:35`; booking it would drop net worth $13k overnight for a
+commitment not yet incurred). The honest form is a third annotated number:
+*"net worth $91,392.26 · $13,437.36 committed over the next 24 months"* — which falls out of
+`ends_on` for free.
+
+### 7.5 The car, concretely
+
+Two new categories under `Transport`: **Car Payment** and **Car Insurance**.
+✅ **`createCategory` already exists and is wired** (`category-edit.ts:78` → `actions.ts:119` →
+`CategoryManager.tsx:67`) — he can create them from `/categories` today. *(The review claimed no
+creation path existed; refuted.)*
+
+Both commitments become `recurring_series` **bound to the Wells Fargo account**, with explicit
+`category_id`, `ends_on`, and `amount_basis`: the $559.89 lease and the $369.00 insurance as
+**`stated`** (facts he gave me), the post-month-6 insurance as **`estimated`** and visually distinct —
+never silently promoted to truth.
+
+### 7.6 What NOT to rebuild — it already ships
+
+Pace projection, today-tick, green/amber/red, `aria-valuetext` narration · "Projected ≈ $X" per row ·
+the dashed expected-recurring tail **with a full drill-down popover** · **`6-mo avg ≈ $X` plus a
+working `Use` button** (`BudgetAmountEditor.tsx:109-125` — lift these lines) · overdue detection with
+tolerance (`recurring-calendar.ts`) · the entire period-nav URL apparatus (`src/lib/period.ts`) ·
+per-account coverage grades and honest staleness prose · income-anchored "Free to spend" and savings
+rate on the dashboard · category creation (§7.5) · mid-month clamping (§2.2f).
+
+⚠️ `docs/future-ideas.md:387` is **stale** — the per-row projection it asks for is already there.
+
+### 7.7 Wells Fargo — the format, with citations
+
+**CSV: headerless, 5 quoted positional fields** —
+`Date MM/DD/YYYY | Amount (signed, debits NEGATIVE, may carry commas) | "*" literal | Check Number | Description`.
+Corroborated by three independent open-source implementations. **There is no running-balance
+column** — sources claiming one are PDF→CSV vendors describing their own output.
+
+⚠️ **This is the repo's first headerless CSV**, so both guardrails are unavailable: `requireHeader()`
+compares line 1 to a literal, and `parseCsv()` uses `header: true` — which would **eat the first
+transaction as the header**. `wellsFargoCsv` must parse with `header:false` and make **the shape the
+gate**: 5 fields, field 0 matching `/^\d{2}\/\d{2}\/\d{4}$/`, **field 2 the literal `*`** — re-asserted
+on every row, not just in `matches()`. Register it **last** among CSV profiles.
+
+Four setup items are required or the import fails/misroutes: add `"Wells Fargo"` to
+`INSTITUTION_NAMES` (`seed.ts:12-19`); add it to the **closed union** `AccountHint.institution`
+(`types.ts:17`) or it won't typecheck; add a `wells` branch to `guessInstitution` (`service.ts:1138`)
+— **its default is `"Chase"`, so today a WF file that fails to parse is archived into the Chase
+bucket**; and **do not hand-create the account row** — `resolveAccount` creates it on first import.
+Import the **PDF first**, then the CSV, so the account is born with a real name instead of a stub.
+
+⚠️ **Set expectations:** a CSV with no balance column yields no anchor, so the new account will read
+unverified/partial no matter how many rows land. Only the PDF (or QFX `LEDGERBAL`) fixes that — say
+so, or a correct import will look like a bug.
+
+### 7.8 Open questions for the owner
+
+1. **What date does the lease start?** Every date in the car spec cascades from it. First lease
+   payment date, and first insurance premium date — same day or different?
+2. **Insurance after month 6** — store `≈$295/mo` tagged `estimated` (plan stays complete, carries a
+   guess), or store nothing and prompt at month 6 (nothing unproven stored, but Transport
+   under-projects from month 7)?
+3. **The Transport number — A or B?** (a) **$1,392.20/mo** = $928.89 + today's full $463.31 (the car
+   adds to current life), or (b) **$1,021.20/mo** = $928.89 + $92.31 non-substitutable (the car
+   replaces $345.00/mo of Rideshare + Public Transit). Measured either way; which is true is his call.
+4. **Rollover** — build it opt-in, or keep the clean single model? His Travel is the strongest case
+   (Feb $8.75 → Jul $2,448.88 against a $50 budget).
+5. **Gambling: net or gross?** Stakes land in an expense category while payouts land in
+   `Income > Other Income`, so the budget grades **gross**. Route payouts back to `Entertainment >
+   Games` so it grades net, or split gambling out with a gross-staked / net-result readout?
+   ⛔ Do not silently net either way.
+6. **Will you also download the Wells Fargo QFX/OFX?** It carries a balance and a declared period;
+   the CSV carries neither, so with CSV alone that account can never reconcile. `ofxProfile` already
+   ships.
