@@ -19,6 +19,7 @@ import {
   activeTxnsInRange,
   categorySpending,
   loadCategoryIndex,
+  spendingTransactions,
   recurringSeriesIdsForCategory,
 } from "./analytics";
 import { trailingFullMonths } from "./forecast";
@@ -311,6 +312,14 @@ export interface PaceProjectionInput {
   /** days from period start through today, inclusive */
   elapsedDays: number;
   totalDays: number;
+  /**
+   * Posted spend too large to be a RATE (subset of spentCents). A single charge
+   * bigger than the whole period's budget is an event, not a daily habit, and
+   * extrapolating it is how a $5,000 car deposit on day 1 of a 21-day window
+   * projected $105,000 against a $921.38 budget. It still counts as spent — it
+   * is simply not evidence about the remaining days.
+   */
+  oneOffCents?: number;
 }
 
 /**
@@ -324,7 +333,7 @@ export interface PaceProjectionInput {
  */
 export function projectSpend(input: PaceProjectionInput): number {
   const { spentCents, recurringPostedCents, expectedTailCents, elapsedDays, totalDays } = input;
-  const variablePosted = spentCents - recurringPostedCents;
+  const variablePosted = spentCents - recurringPostedCents - (input.oneOffCents ?? 0);
   const remainingDays = Math.max(0, totalDays - elapsedDays);
   const variableRemainder =
     elapsedDays > 0 && variablePosted > 0
@@ -641,6 +650,23 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
       to: refDate,
     }).spentCents;
     const posted = recurringPostedCents(db, s.budget.categoryId, start, refDate);
+    /*
+     * A single charge larger than the WHOLE period's budget is an event, not a
+     * rate. The owner's $5,000 car deposit landed on day 1 of a 21-day window
+     * against a $921.38 budget and the linear run-rate turned it into a
+     * $105,000 projection. It stays in spentCents — he spent it, the row is
+     * honestly `over` — but it tells you nothing about the other 20 days, so it
+     * must not be extrapolated. Threshold is the budget itself rather than an
+     * invented multiple: anything that alone exhausts the period cannot be the
+     * daily habit the run-rate is modelling.
+     */
+    const oneOffCents = spendingTransactions(db, {
+      categoryId: s.budget.categoryId,
+      from: start,
+      to: refDate,
+    })
+      .filter((t) => -t.amountCents > s.budget.amountCents)
+      .reduce((sum, t) => sum - t.amountCents, 0);
     // the tail lives inside the budget's window too: for a budget that starts
     // LATER in this period, anchor a day before startsOn so budgetTail's
     // strictly-after-anchor window opens exactly on startsOn, never earlier.
@@ -650,6 +676,7 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
       spentCents: spentToDate,
       recurringPostedCents: posted,
       expectedTailCents: tail.totalCents,
+      oneOffCents,
       elapsedDays,
       totalDays,
     });

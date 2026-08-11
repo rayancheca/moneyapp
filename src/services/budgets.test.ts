@@ -580,6 +580,22 @@ describe("projectSpend — the components ARE the math, no double count", () => 
     expect(projectSpend({ ...base, spentCents: -500 })).toBe(-500);
   });
 
+  test("a single charge bigger than the whole budget is an event, not a rate", () => {
+    // the $5,000-car-deposit shape: without the guard this extrapolates to a
+    // number many multiples of the budget and makes the page untrustworthy.
+    const oneOff = { ...base, spentCents: 500_000, elapsedDays: 1, totalDays: 21 };
+    expect(projectSpend(oneOff)).toBe(500_000 + 500_000 * 20); // 5000 x 20/1 — absurd
+    // excluded from the RATE, still counted as spent, so the row stays over budget
+    expect(projectSpend({ ...oneOff, oneOffCents: 500_000 })).toBe(500_000);
+  });
+
+  test("ordinary spend alongside a one-off still extrapolates", () => {
+    // the guard must not silence the rate; only the event is excluded from it
+    const mixed = { ...base, spentCents: 510_000, oneOffCents: 500_000, elapsedDays: 10, totalDays: 30 };
+    // variable = 510k - 0 - 500k = 10k over 10 days -> 20k more across the 20 left
+    expect(projectSpend(mixed)).toBe(510_000 + 20_000);
+  });
+
   test("guards elapsedDays 0 and a fully-elapsed period", () => {
     expect(projectSpend({ ...base, spentCents: 10_000, elapsedDays: 0 })).toBe(10_000);
     expect(projectSpend({ ...base, spentCents: 10_000, elapsedDays: 30, expectedTailCents: 500 })).toBe(10_500);
