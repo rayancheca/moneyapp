@@ -1,6 +1,6 @@
 # Handoff — 2026-08-11, pass 45
 
-> **`main` = `32ccac5`, tree clean, EVERY GATE GREEN** — tsc clean · 151 files / 2,712 unit ·
+> **`main` = `76a2096`, tree clean, EVERY GATE GREEN** — tsc clean · 151 files / 2,712 unit ·
 > `next build` clean · **391/391 e2e**. Six shipped items, two migrations, four guarded real-DB
 > writes.
 >
@@ -105,32 +105,46 @@ It shipped with 3 unit tests and **zero** e2e, because the fixture world has no 
 budgeted category — which is also why the 391 run showed no baseline churn for it. Add one to the
 fixture, or the UI path can rot silently.
 
-## 7. ⛔ OWNER DECISION WAITING: the gambling winnings
+## 7. ✅ RESOLVED: the gambling winnings ARE NOT INCOME (`76a2096`)
 
-`Gambling` currently shows **GROSS staked**. To get the "net" half he asked for, the 7 winnings rows
-(**$1,053.82**, currently `Income > Other Income`) must move into it — the same category then nets
-them automatically.
+Put to the owner with the number attached — told explicitly it changes **income**, not just a
+category — and he approved it.
 
-**That is an INCOME change, not a categorisation one.** It drops his income total
-$118,969.23 → **$117,915.41**. `docs/income-ground-truth.md` is hand-maintained and passes 15 and 28
-both had to *un-contaminate* it.
+Seven credits totalling **$1,053.82** have moved out of `Income > Other Income` into `Gambling`.
+They are not earnings: they are money returning from a betting platform, the return leg of stakes
+already recorded as spending. Counting them as income inflated earnings *and* left a break-even
+activity reading as ~$1,148 of overspend.
 
-There is a real argument that gambling winnings were never earned income and their presence there IS
-the contamination — but with that history, it is his call with the number in front of him, not
-something to slip into a categorisation pass. **Ask; do not assume.**
+| | |
+|---|---|
+| gross staked | **$1,445.10** (44 rows) |
+| returned | **$1,053.82** (7 rows) |
+| **net** | **$391.28** |
+| ledger income | **$118,969.23 → $117,915.41** |
+
+Both sides in one category means analytics nets them with no new machinery, while gross stays
+recoverable as the sum of the negatives — the "gross + net" he asked for.
+
+⚠️ **`docs/income-ground-truth.md` was updated**, not just the DB. It is hand-maintained, and passes
+15 and 28 both had to un-contaminate it; leaving it stale is exactly how the next pass inherits a
+wrong figure. It now records the rule this sets:
+
+> **A credit that returns money previously recorded as spend is NOT income. It belongs in the same
+> category as the spend, where the two net.**
+
+Restore point: `data/backups/pre-gambling-winnings-move.db`.
 
 ## 8. Queue
 
-1. ⛔ **§7** — the winnings decision.
-2. **Rollover, opt-in per budget** (his choice). Travel is the case: $8.75 Feb → $2,448.88 Jul
+1. **Rollover, opt-in per budget** (his choice). Travel is the case: $8.75 Feb → $2,448.88 Jul
    against $50/mo.
-3. **§6** — an overdue bill in the e2e fixture.
-4. **§5** — calendar-month stepping.
-5. **Re-set the wrong budgets from data.** Still stale: Travel $50 vs $600.65 actual, Fees $30 vs
+2. **§6** — an overdue bill in the e2e fixture.
+3. **§5** — calendar-month stepping.
+4. **Re-set the wrong budgets from data.** Still stale: Travel $50 vs $600.65 actual, Fees $30 vs
    $102.86, Food $1,430 vs $1,990.88. Entertainment is now $60 vs $123.09 (was $290.19).
-6. **Set `Transport` from data** once two Wells Fargo statements land — his ~$220/mo parking+gas
+5. **Set `Transport` from data** once two Wells Fargo statements land — his ~$220/mo parking+gas
    estimate is ~5× the measured pre-car rate, which is plausible but unmeasured.
-7. **Wells Fargo** — deferred until its first statement; ask for the **QFX**
+6. **Wells Fargo** — deferred until its first statement; ask for the **QFX**
    (`ofxProfile` already accepts `.qfx`, and it is the only export carrying a balance).
-8. The pass-42 tail: the last $1,911.24, `ReturnViewParts.tsx:89`, `?range=`, `/flow` range, drawer.
-9. ⛔ **Hosting LAST.**
+7. The pass-42 tail: the last $1,911.24, `ReturnViewParts.tsx:89`, `?range=`, `/flow` range, drawer.
+8. ⛔ **Hosting LAST.**
