@@ -48,6 +48,8 @@ interface Commitment {
   readonly categoryName: string;
   readonly amountCents: number;
   readonly nextExpectedOn: string;
+  /** last payment — a lease is not "monthly forever" (migration 0011) */
+  readonly endsOn: string;
   readonly note: string;
 }
 
@@ -57,6 +59,7 @@ const COMMITMENTS: readonly Commitment[] = [
     categoryName: "Car Payment",
     amountCents: -55_989,
     nextExpectedOn: "2026-09-11",
+    endsOn: "2028-08-11",
     note: "24 payments, 2026-09-11 .. 2028-08-11, from Wells Fargo",
   },
   {
@@ -67,6 +70,8 @@ const COMMITMENTS: readonly Commitment[] = [
     // September's. Starting the projection at today would forecast a charge he
     // has already made.
     nextExpectedOn: "2026-09-11",
+    // #1 was 2026-08-11 on Venture X, so the last of the six is 2027-01-11
+    endsOn: "2027-01-11",
     note: "6 payments 2026-08-11 .. 2027-01-11; #1 paid on Venture X, #2-6 Wells Fargo",
   },
 ];
@@ -95,11 +100,15 @@ function main(): void {
   }
 
   const toCreate = planned.filter((p) => p.existingId === null);
-  if (toCreate.length === 0) {
-    console.log("\nNothing to create — both already exist.");
+  // rows created before migration 0011 have no end date; back-fill them so a
+  // second run is a no-op rather than leaving a lease projecting forever
+  const toEnd = planned.filter((p) => p.existingId !== null);
+  if (toCreate.length === 0 && toEnd.length === 0) {
+    console.log("\nNothing to do.");
     sqlite.close();
     return;
   }
+  for (const p of toEnd) console.log(`  set end date ${p.endsOn} on existing "${p.name}"`);
 
   if (!CONFIRMED) {
     console.log("\nDRY RUN — nothing written. Re-run with --confirm.");
@@ -108,6 +117,13 @@ function main(): void {
   }
 
   withPreMutationSnapshot(db, "register-car-commitments", () => {
+    for (const p of toEnd) {
+      db.update(recurringSeries)
+        .set({ userEndsOn: p.endsOn, userCategoryId: p.categoryId })
+        .where(eq(recurringSeries.id, p.existingId!))
+        .run();
+      console.log(`ended "${p.name}" on ${p.endsOn}`);
+    }
     for (const p of toCreate) {
       db.insert(recurringSeries)
         .values({
@@ -121,6 +137,7 @@ function main(): void {
           // the owner stated these amounts; they are not detection's guess
           userAmountCents: p.amountCents,
           userCategoryId: p.categoryId,
+          userEndsOn: p.endsOn,
           // he told us directly — this is not a candidate awaiting confirmation
           status: "confirmed",
           confidence: 1,

@@ -58,6 +58,15 @@ export const recurringSeries = sqliteTable("recurring_series", {
    * at once and `budgetTail` would project the whole amount into both.
    */
   userCategoryId: text("user_category_id").references(() => categories.id),
+  /**
+   * Last day this series can occur — a commitment with a KNOWN end.
+   *
+   * A 24-payment car lease is not "monthly forever"; without this it projects
+   * past its final payment and every long-range forecast over-counts. Null
+   * means open-ended, which is the right default for a subscription or a
+   * paycheque.
+   */
+  userEndsOn: text("user_ends_on"),
   // Set when this series is merged INTO another: it becomes `ended` and its
   // occurrences relink to the target. Detection forward-maps through this so a
   // merged-away identity is never resurrected (§4.3).

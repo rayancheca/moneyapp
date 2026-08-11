@@ -1,0 +1,1 @@
+ALTER TABLE `recurring_series` ADD `user_ends_on` text;

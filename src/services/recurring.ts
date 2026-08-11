@@ -645,6 +645,8 @@ interface ProjectableSeries {
   intervalDaysAvg: number | null;
   nextExpectedOn: string | null;
   nextExpectedAmountCents: number | null;
+  /** last day this series can occur; null = open-ended */
+  userEndsOn?: string | null;
   /** copied onto every occurrence this series projects */
   staleness?: SeriesStaleness;
 }
@@ -668,6 +670,8 @@ export interface SeriesOverrides {
   userNextExpectedOn: string | null;
   nextExpectedAmountCents: number | null;
   userAmountCents: number | null;
+  /** last day the series can occur; null = open-ended */
+  userEndsOn?: string | null;
 }
 
 /** Effective values the UI and forecast read: user override first, else detected. */
@@ -699,7 +703,7 @@ export function toProjectable(
   staleness?: SeriesStaleness,
 ): ProjectableSeries {
   const eff = effectiveSeries(s);
-  return { id: s.id, name: s.name, kind: s.kind, ...eff, staleness };
+  return { id: s.id, name: s.name, kind: s.kind, ...eff, userEndsOn: s.userEndsOn ?? null, staleness };
 }
 
 const INACTIVE_MISS_LIMIT = 1.5;
@@ -773,8 +777,13 @@ export function projectOccurrences(
   let d = series.nextExpectedOn;
   while (compareDates(d, from) < 0) d = addDays(d, step);
 
+  // a commitment with a known end stops there — a 24-payment lease is not
+  // "monthly forever", and projecting past its last payment silently inflates
+  // every forecast that reaches beyond it
+  const last = series.userEndsOn && compareDates(series.userEndsOn, to) < 0 ? series.userEndsOn : to;
+
   const occurrences: SeriesOccurrence[] = [];
-  while (compareDates(d, to) <= 0) {
+  while (compareDates(d, last) <= 0) {
     occurrences.push({
       seriesId: series.id,
       name: series.name,

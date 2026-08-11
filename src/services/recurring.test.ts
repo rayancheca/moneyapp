@@ -183,6 +183,28 @@ describe("projectOccurrences", () => {
     nextExpectedAmountCents: 80000,
   };
 
+  test("userEndsOn stops the projection — a 24-payment lease is not monthly forever", () => {
+    // the car lease shape: without an end it projects past its final payment and
+    // every long-range forecast silently over-counts
+    const lease = {
+      id: "lease",
+      name: "Car lease",
+      kind: "bill" as const,
+      cadence: "monthly" as const,
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-11",
+      nextExpectedAmountCents: -55989,
+      userEndsOn: "2026-09-11",
+    };
+    const occ = projectOccurrences(lease, "2026-07-01", "2026-12-31");
+    expect(occ.map((o) => o.date)).toEqual(["2026-07-11", "2026-08-10", "2026-09-09"]);
+  });
+
+  test("a null userEndsOn stays open-ended", () => {
+    const occ = projectOccurrences({ ...series, userEndsOn: null }, "2026-07-08", "2026-07-31");
+    expect(occ).toHaveLength(4);
+  });
+
   test("a weekly series contributes every expected date inside the window", () => {
     const occ = projectOccurrences(series, "2026-07-08", "2026-07-31");
     expect(occ.map((o) => o.date)).toEqual(["2026-07-09", "2026-07-16", "2026-07-23", "2026-07-30"]);
