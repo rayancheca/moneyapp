@@ -479,6 +479,88 @@ export interface BudgetTail {
  * income series linked here never inflates a spending budget. Reuses
  * projectOccurrences, so the tail agrees with the Recurring tab to the cent.
  */
+/**
+ * Bills this period EXPECTED and never posted — the past-facing sibling of
+ * `budgetTail`.
+ *
+ * `budgetTail` anchors at `addDays(today, 1)` and only ever looks forward, so a
+ * bill that came due and never arrived falls into a blind spot: it is not in
+ * `spentCents` (nothing posted) and not in the tail (its date has passed).
+ * Measured consequence on the owner's ledger — rent of $2,285.70 came due
+ * 2026-08-08, never posted, and Housing still read green with $2,109.00 left.
+ *
+ * Same `alreadyPosted` rule as `recurringCalendar` (`recurring-calendar.ts:157`)
+ * so the two surfaces cannot disagree about the same bill: an occurrence is
+ * overdue only when NO linked posting sits within the series' own
+ * `toleranceDays`. That is also what keeps this disjoint from `spentCents` —
+ * anything that posted is spend, never overdue.
+ */
+export function budgetOverdue(
+  db: AppDatabase,
+  categoryId: string,
+  periodStart: string,
+  today: string,
+): BudgetTail {
+  const seriesIds = recurringSeriesIdsForCategory(db, categoryId);
+  if (seriesIds.size === 0) return { totalCents: 0, series: [] };
+  if (compareDates(periodStart, today) > 0) return { totalCents: 0, series: [] };
+
+  const rows = db
+    .select()
+    .from(recurringSeries)
+    .where(
+      and(
+        inArray(recurringSeries.id, [...seriesIds]),
+        inArray(recurringSeries.status, ["detected", "confirmed"]),
+      ),
+    )
+    .all();
+  if (rows.length === 0) return { totalCents: 0, series: [] };
+
+  // postings linked to these series, widened by the largest tolerance so a bill
+  // that landed a few days either side of its due date still counts as paid
+  const maxTolerance = rows.reduce((m, r) => Math.max(m, r.toleranceDays), 0);
+  const postedBySeries = new Map<string, string[]>();
+  for (const row of db
+    .select({ seriesId: transactions.recurringSeriesId, postedOn: transactions.postedOn })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.status, "active"),
+        inArray(transactions.recurringSeriesId, [...seriesIds]),
+        gte(transactions.postedOn, addDays(periodStart, -maxTolerance)),
+        lte(transactions.postedOn, addDays(today, maxTolerance)),
+      ),
+    )
+    .all()) {
+    if (row.seriesId === null) continue;
+    postedBySeries.set(row.seriesId, [...(postedBySeries.get(row.seriesId) ?? []), row.postedOn]);
+  }
+
+  const series: BudgetTailSeries[] = [];
+  let totalCents = 0;
+  for (const s of rows) {
+    const posted = postedBySeries.get(s.id) ?? [];
+    const occ = projectOccurrences(toProjectable(s), periodStart, today)
+      .filter((o) => o.amountCents < 0)
+      .filter((o) => !posted.some((p) => Math.abs(diffDays(p, o.date)) <= s.toleranceDays));
+    if (occ.length === 0) continue;
+    const amountCents = occ.reduce((sum, o) => sum - o.amountCents, 0);
+    totalCents += amountCents;
+    series.push({
+      id: s.id,
+      name: s.name,
+      cadence: occ[0]!.cadence,
+      nextDate: occ[0]!.date,
+      amountCents,
+      occurrenceCount: occ.length,
+      href: `/recurring/${s.id}`,
+    });
+  }
+  series.sort((a, b) => compareDates(a.nextDate, b.nextDate) || a.name.localeCompare(b.name));
+  return { totalCents, series };
+}
+
 export function budgetTail(
   db: AppDatabase,
   categoryId: string,
@@ -608,6 +690,9 @@ export interface BudgetPaceStatus extends BudgetStatus {
   projectedCents: number;
   pace: BudgetPace;
   tail: BudgetTailSeries[];
+  /** bills expected on/before today that never posted — money committed but missing */
+  overdueCents: number;
+  overdue: BudgetTailSeries[];
   /** last day with imported spending in this subtree, ever; null = none at all */
   dataThroughOn: string | null;
   /**
@@ -672,10 +757,15 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
     // strictly-after-anchor window opens exactly on startsOn, never earlier.
     const tailFrom = compareDates(start, refDate) > 0 ? addDays(start, -1) : refDate;
     const tail = budgetTail(db, s.budget.categoryId, end, tailFrom);
+    // due already, still not posted — disjoint from BOTH spentCents (it never
+    // posted) and the tail (which starts strictly after today)
+    const overdue = budgetOverdue(db, s.budget.categoryId, start, refDate);
     const forecast = projectSpend({
       spentCents: spentToDate,
       recurringPostedCents: posted,
-      expectedTailCents: tail.totalCents,
+      // an overdue bill is COMMITTED money, not an extrapolation — it belongs in
+      // the projection exactly once, alongside the forward tail
+      expectedTailCents: tail.totalCents + overdue.totalCents,
       oneOffCents,
       elapsedDays,
       totalDays,
@@ -694,6 +784,8 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
       compareDates(coveredThrough, refDate) >= 0 ? 0 : Math.max(0, diffDays(coveredThrough, refDate));
     return {
       ...s,
+      overdueCents: overdue.totalCents,
+      overdue: overdue.series,
       dataThroughOn,
       uncoveredDays,
       totalDays,

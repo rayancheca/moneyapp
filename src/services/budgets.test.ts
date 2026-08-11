@@ -17,6 +17,7 @@ import {
   budgetGuidanceCents,
   budgetPaceStatuses,
   budgetStatuses,
+  budgetOverdue,
   budgetTail,
   computeAlert,
   computePace,
@@ -113,6 +114,15 @@ function createSeries(opts: {
     })
     .returning({ id: recurringSeries.id })
     .get().id;
+}
+
+/** Bind a series to a category without any posted row — migration 0010's case. */
+function bindSeries(seriesId: string, categoryPath: string): void {
+  bundle.db
+    .update(recurringSeries)
+    .set({ userCategoryId: catId(categoryPath) })
+    .where(eq(recurringSeries.id, seriesId))
+    .run();
 }
 
 /** A spend row linked to a recurring series (and optionally superseded). */
@@ -714,6 +724,41 @@ describe("incomeExpectation — the term /budgets never had", () => {
     const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-08-11");
     expect(got.postedCents).toBe(40_000);
     expect(got.expectedCents).toBe(0);
+  });
+});
+
+describe("budgetOverdue — the bill that came due and never arrived", () => {
+  test("an expected occurrence with no posting is overdue; a posted one is not", () => {
+    const rent = createSeries({
+      name: "Rent",
+      nextExpectedOn: "2026-06-08",
+      nextExpectedAmountCents: -228_570,
+    });
+    bindSeries(rent, "Housing");
+    // today is the 20th: the 8th came due and nothing posted
+    const missed = budgetOverdue(bundle.db, catId("Housing"), "2026-06-01", "2026-06-20");
+    expect(missed.totalCents).toBe(228_570);
+    expect(missed.series.map((x) => x.name)).toEqual(["Rent"]);
+
+    // once it posts, it is spend — never also overdue
+    spendLinked("2026-06-08", -228_570, "Housing", rent);
+    expect(budgetOverdue(bundle.db, catId("Housing"), "2026-06-01", "2026-06-20").totalCents).toBe(0);
+  });
+
+  test("a posting inside toleranceDays still counts as paid", () => {
+    const bill = createSeries({ name: "Wifi", nextExpectedOn: "2026-06-08", nextExpectedAmountCents: -5_000 });
+    bindSeries(bill, "Housing");
+    // default toleranceDays is 3 — landing on the 10th is the same bill
+    spendLinked("2026-06-10", -5_000, "Housing", bill);
+    expect(budgetOverdue(bundle.db, catId("Housing"), "2026-06-01", "2026-06-20").totalCents).toBe(0);
+  });
+
+  test("never looks past today, so it can never overlap budgetTail", () => {
+    bindSeries(
+      createSeries({ name: "Later", nextExpectedOn: "2026-06-25", nextExpectedAmountCents: -1_000 }),
+      "Housing",
+    );
+    expect(budgetOverdue(bundle.db, catId("Housing"), "2026-06-01", "2026-06-20").totalCents).toBe(0);
   });
 });
 

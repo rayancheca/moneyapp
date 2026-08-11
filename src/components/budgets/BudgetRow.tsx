@@ -90,6 +90,10 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
     status.expectedTailCents > 0
       ? ` ${formatCents(status.expectedTailCents)} in recurring still expected this period.`
       : ""
+  }${
+    status.overdueCents > 0
+      ? ` ${formatCents(status.overdueCents)} was expected by now and has not been imported.`
+      : ""
   }`;
 
   return (
@@ -143,6 +147,22 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
 
       {undermeasured && (
         <p className="mt-2 text-xs text-ink-faint">{coverageSentence(status)}</p>
+      )}
+
+      {/* Due already and still not posted. Distinct from the forward tail on
+          purpose: the tail is money the month has not reached yet, this is money
+          the month has passed and cannot account for. Reading "on track" over a
+          missing rent payment is the failure this exists to prevent. */}
+      {status.overdueCents > 0 && (
+        <p className="mt-2 text-xs text-warning">
+          {formatCents(status.overdueCents)} expected by now, not imported
+          {status.overdue.length > 0 && (
+            <span className="text-ink-faint">
+              {" · "}
+              {status.overdue.map((o) => `${o.name} ${formatDayShort(o.nextDate)}`).join(", ")}
+            </span>
+          )}
+        </p>
       )}
 
       {status.expectedTailCents > 0 && (
