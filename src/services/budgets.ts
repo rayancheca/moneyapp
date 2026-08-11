@@ -15,7 +15,12 @@ import {
   todayIso,
   type PeriodBounds,
 } from "@/lib/dates";
-import { categorySpending, loadCategoryIndex, recurringSeriesIdsForCategory } from "./analytics";
+import {
+  activeTxnsInRange,
+  categorySpending,
+  loadCategoryIndex,
+  recurringSeriesIdsForCategory,
+} from "./analytics";
 import { trailingFullMonths } from "./forecast";
 import { projectOccurrences, toProjectable } from "./recurring";
 
@@ -326,6 +331,119 @@ export function projectSpend(input: PaceProjectionInput): number {
       ? Math.round((variablePosted * remainingDays) / elapsedDays)
       : 0;
   return spentCents + expectedTailCents + variableRemainder;
+}
+
+/**
+ * Posted income in a window, by analytics' own rule (analytics.ts header):
+ * POSITIVE amounts in income-kind categories. Split parts are attributed
+ * independently because activeTxnsInRange explodes them.
+ */
+function incomeTotalCents(db: AppDatabase, from: string, to: string): number {
+  if (compareDates(from, to) > 0) return 0;
+  const idx = loadCategoryIndex(db);
+  let cents = 0;
+  for (const txn of activeTxnsInRange(db, from, to)) {
+    if (txn.categoryId === null || txn.amountCents <= 0) continue;
+    if (idx.byId.get(txn.categoryId)?.kind !== "income") continue;
+    cents += txn.amountCents;
+  }
+  return cents;
+}
+
+export interface IncomeExpectation {
+  /** money already in, inside [start, today] */
+  postedCents: number;
+  /** money still expected, strictly after today through end */
+  expectedCents: number;
+  /** postedCents + expectedCents */
+  totalCents: number;
+  /** the live income series contributing to expectedCents */
+  series: { id: string; name: string; amountCents: number }[];
+}
+
+/**
+ * What this period is expected to bring IN — the term `/budgets` has never had.
+ *
+ * Ten budgets totalling more than the owner earns is the single most useful
+ * thing the page could tell him, and today nothing on it mentions income at
+ * all. Built exactly like `budgetTail`: posted actuals over [start, today] plus
+ * projected occurrences strictly after today, which are disjoint by
+ * construction, so a paycheque that has already landed is never also forecast.
+ *
+ * Deliberately series-driven rather than a trailing average. His income is a
+ * cash job deposited IRREGULARLY (docs/income-ground-truth.md), so a trailing
+ * mean reads far below the confirmed weekly series — the series is the stated
+ * fact, the deposits are its noisy shadow.
+ */
+export function incomeExpectation(
+  db: AppDatabase,
+  start: string,
+  end: string,
+  today: string,
+): IncomeExpectation {
+  const postedCents = incomeTotalCents(db, start, compareDates(today, end) > 0 ? end : today);
+
+  const from = addDays(today, 1);
+  const series: IncomeExpectation["series"] = [];
+  let expectedCents = 0;
+  if (compareDates(from, end) <= 0) {
+    const live = db
+      .select()
+      .from(recurringSeries)
+      .where(
+        and(
+          eq(recurringSeries.kind, "income"),
+          inArray(recurringSeries.status, ["detected", "confirmed"]),
+        ),
+      )
+      .all();
+    for (const s of live) {
+      // money IN only — a refund-shaped income series must not subtract here
+      const cents = projectOccurrences(toProjectable(s), from, end)
+        .filter((o) => o.amountCents > 0)
+        .reduce((sum, o) => sum + o.amountCents, 0);
+      if (cents === 0) continue;
+      expectedCents += cents;
+      series.push({ id: s.id, name: s.name, amountCents: cents });
+    }
+  }
+  series.sort((a, b) => b.amountCents - a.amountCents);
+
+  /*
+   * posted + future UNDERSTATES whenever the month's income has not been
+   * imported yet, which is most of every month here — statements land weeks
+   * apart, so early August reads $0.00 posted and silently drops the paydays
+   * that already happened. Publishing that as "expected income" would assert a
+   * measured zero where "not measured yet" is true, which is the same failure
+   * the per-row coverage work fixed for SPENDING.
+   *
+   * So take the larger of (what is known + what is still coming) and (what the
+   * series says the WHOLE period should bring). Mirrors projectSpend's
+   * max(spent, forecast): actuals win once they exceed the forecast, and the
+   * forecast carries the window while the ledger is behind.
+   */
+  const wholePeriodCents = db
+    .select()
+    .from(recurringSeries)
+    .where(
+      and(eq(recurringSeries.kind, "income"), inArray(recurringSeries.status, ["detected", "confirmed"])),
+    )
+    .all()
+    .reduce(
+      (sum, s) =>
+        sum +
+        projectOccurrences(toProjectable(s), start, end)
+          .filter((o) => o.amountCents > 0)
+          .reduce((inner, o) => inner + o.amountCents, 0),
+      0,
+    );
+
+  return {
+    postedCents,
+    expectedCents,
+    totalCents: Math.max(postedCents + expectedCents, wholePeriodCents),
+    series,
+  };
 }
 
 export interface BudgetTailSeries {

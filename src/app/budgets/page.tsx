@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import { getDb } from "@/db/client";
-import { todayIso } from "@/lib/dates";
+import { periodBounds, todayIso } from "@/lib/dates";
 import { formatDayShort } from "@/lib/format-date";
 import type { BudgetPeriodKind } from "@/db/schema/budgets";
 import {
   budgetGuidanceCents,
   budgetPaceStatuses,
+  incomeExpectation,
   hasOverlappingChildBudget,
   listBudgetableCategories,
   totalBudgetedCents,
@@ -53,6 +54,18 @@ export default async function BudgetsPage({
     statuses.map((s) => [s.budget.id, budgetGuidanceCents(db, s.budget.categoryId, s.budget.period, today)]),
   );
 
+  // The income term the page has never had. Scoped to MONTHLY budgets only:
+  // they are the ones whose window matches a pay cycle, and mixing a daily and
+  // an annual budget into one "allocated" figure would compare unlike things.
+  const monthly = statuses.filter((s) => s.budget.period === "monthly");
+  const monthlyBudgetedCents = totalBudgetedCents(monthly);
+  // the WHOLE month, deliberately — not any one budget's `bounds`. A budget
+  // created mid-month is start-clamped, so borrowing its window would compare a
+  // full month of budgeted amounts against a fraction of a month of income.
+  const monthBounds = periodBounds(today, "monthly");
+  const income = incomeExpectation(db, monthBounds.start, monthBounds.end, today);
+  const leftToAllocateCents = income.totalCents - monthlyBudgetedCents;
+
   const sections = PERIOD_SECTIONS.map((s) => ({
     ...s,
     statuses: statuses.filter((st) => st.budget.period === s.period),
@@ -69,6 +82,46 @@ export default async function BudgetsPage({
       </div>
 
       {error && <ErrorBanner message={error} />}
+
+      {monthly.length > 0 && (
+        <SurfaceCard>
+          <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+            <h2 className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
+              This month
+            </h2>
+            <p className="text-sm">
+              <span className="text-ink-muted">Budgeted </span>
+              <Money cents={monthlyBudgetedCents} className="font-medium" />
+              <span className="text-ink-muted"> of </span>
+              <Money cents={income.totalCents} className="font-medium" />
+              <span className="text-ink-muted"> expected income</span>
+            </p>
+          </div>
+          <p className="mt-1 text-xs text-ink-muted">
+            {leftToAllocateCents >= 0 ? (
+              <>
+                <Money cents={leftToAllocateCents} className="font-medium text-ink" /> left to
+                allocate
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-danger">
+                  Over-allocated by <Money cents={-leftToAllocateCents} />
+                </span>{" "}
+                — these budgets total more than this month is expected to bring in
+              </>
+            )}
+            {income.expectedCents > 0 && (
+              <>
+                {" · "}
+                <Money cents={income.postedCents} /> in so far,{" "}
+                <Money cents={income.expectedCents} /> still expected
+                {income.series.length > 0 && ` from ${income.series[0]!.name}`}
+              </>
+            )}
+          </p>
+        </SurfaceCard>
+      )}
 
       <div className="space-y-6">
         {sections.length === 0 ? (

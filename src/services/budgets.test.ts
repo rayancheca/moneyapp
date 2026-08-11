@@ -24,6 +24,7 @@ import {
   deactivateBudget,
   hasOverlappingChildBudget,
   listBudgetableCategories,
+  incomeExpectation,
   projectSpend,
   totalBudgetedCents,
   updateBudget,
@@ -651,6 +652,52 @@ describe("recurringSeriesIdsForCategory — the shared series↔category bridge"
       .run();
     expect(recurringSeriesIdsForCategory(bundle.db, catId("Food"))).toEqual(new Set([back]));
     expect(recurringSeriesIdsForCategory(bundle.db, catId("Travel"))).toEqual(new Set());
+  });
+});
+
+describe("incomeExpectation — the term /budgets never had", () => {
+  test("posted and expected are disjoint, so a landed paycheque is never also forecast", () => {
+    const pay = createSeries({
+      name: "Cash job (weekly pay)",
+      nextExpectedOn: "2026-06-08",
+      nextExpectedAmountCents: 104_600,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    // one already in, inside [start, today]
+    spendLinked("2026-06-03", 104_600, "Income > Salary", pay);
+
+    const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-05");
+    expect(got.postedCents).toBe(104_600);
+    // 06-08, 06-15, 06-22, 06-29 — strictly after today, none of them the posted one
+    expect(got.expectedCents).toBe(104_600 * 4);
+    expect(got.totalCents).toBe(104_600 * 5);
+    expect(got.series.map((s) => s.name)).toEqual(["Cash job (weekly pay)"]);
+  });
+
+  test("only money-IN counts, and only live income series", () => {
+    const rent = createSeries({ name: "Rent", nextExpectedOn: "2026-06-10", nextExpectedAmountCents: -180_000 });
+    const dead = createSeries({
+      name: "Old job",
+      nextExpectedOn: "2026-06-10",
+      nextExpectedAmountCents: 50_000,
+      kind: "income",
+      status: "ended",
+    });
+    expect(rent).toBeTruthy();
+    expect(dead).toBeTruthy();
+
+    const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-05");
+    expect(got.expectedCents).toBe(0);
+    expect(got.series).toEqual([]);
+  });
+
+  test("a window entirely in the past forecasts nothing and reports only actuals", () => {
+    spend("2026-06-03", 40_000, "Income > Salary");
+    const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-08-11");
+    expect(got.postedCents).toBe(40_000);
+    expect(got.expectedCents).toBe(0);
   });
 });
 
