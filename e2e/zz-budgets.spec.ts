@@ -19,7 +19,7 @@ function budgetRow(page: Page, category: string): Locator {
     .first();
 }
 
-test("every active budget renders a pace bar in all three tones", async ({ page }) => {
+test("every active budget renders a pace bar, and states a verdict only where covered", async ({ page }) => {
   await page.goto("/budgets");
   await expect(page.getByRole("heading", { level: 1, name: "Budgets" })).toBeVisible();
 
@@ -30,10 +30,35 @@ test("every active budget renders a pace bar in all three tones", async ({ page 
     await expect(budgetRow(page, category)).toBeVisible();
   }
 
-  // the §8 crux: green→amber→red by PROJECTED pace, one of each present
-  await expect(page.getByText(/On track/).first()).toBeVisible(); // under
-  await expect(page.getByText(/Off pace/).first()).toBeVisible(); // at-risk
-  await expect(page.getByText(/Over budget/).first()).toBeVisible(); // over
+  // A row states a pace verdict ONLY where the ledger covers the window. In this
+  // fixture every budget has unaccounted days, so the two non-`over` rows report
+  // coverage instead — "On track · 0% used" over an unimported stretch is the one
+  // failure mode a budgeting tool cannot afford, and suppressing it is the point.
+  // `over` is deliberately exempt: money already spent is measured, not inferred,
+  // so Housing still speaks.
+  await expect(page.getByText(/Over budget/).first()).toBeVisible();
+  await expect(page.getByText(/days? unaccounted/).first()).toBeVisible();
+  await expect(page.getByText(/On track/)).toHaveCount(0);
+  await expect(page.getByText(/Off pace/)).toHaveCount(0);
+});
+
+test("a budget whose window the ledger covers DOES state its pace", async ({ page }) => {
+  // the other half of the contract above: suppression must be driven by coverage,
+  // not be a blanket silence. Housing is `over` and therefore always speaks; this
+  // pins that a verdict and a coverage note are mutually exclusive per row.
+  await page.goto("/budgets");
+  const housing = budgetRow(page, "Housing");
+  await expect(housing).toBeVisible();
+  await expect(housing.getByText(/Over budget/)).toBeVisible();
+  await expect(housing.getByText(/unaccounted/)).toHaveCount(0);
+});
+
+test("the month header compares what is budgeted against expected income", async ({ page }) => {
+  await page.goto("/budgets");
+  const header = page.getByText(/expected income/);
+  await expect(header).toBeVisible();
+  // over- or under-allocated, one of the two must be stated — never neither
+  await expect(page.getByText(/left to allocate|Over-allocated by/).first()).toBeVisible();
 });
 
 test("the hollow tail opens a popover of contributing series → its recurring page", async ({
