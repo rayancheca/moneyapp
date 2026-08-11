@@ -224,3 +224,133 @@ does not debit until **2026-09-11**, so there is no rush.
 2. **The 4 rows still in review** (§5) — the 2 orphan SoFi legs and the 2 Robinhood ACH deposits.
 3. **Does he want the $5,000 excluded from August's `Car` budget** once a one-off concept exists, or
    left visible as a 542% month?
+
+---
+
+# PASS 44b — the migration, the income line, and a RED gate on `main`
+
+`main` = `8e64933`. **⛔ Read §R first: e2e is red, and it is not from this work.**
+
+## R. ⛔ `main` HAS A RED E2E GATE — inherited, precisely located
+
+`E2E_GATE=1 pnpm e2e:fresh` → **357 passed, several failed**, including
+`e2e/zz-budgets.spec.ts:22` and a set of `visual.spec.ts` snapshots.
+
+**Cause: commit `e5bb8dd`** (the concurrent session's budgets-coverage work), which added to
+`BudgetRow.tsx`:
+
+```ts
+const undermeasured = status.uncoveredDays > 0 && status.pace !== "over";
+```
+
+and renders `coverageSentence(status)` in place of `paceSentence(status)` when true. So
+**"On track" / "Off pace" no longer render for any budget with unaccounted days** — which
+`zz-budgets.spec.ts:34-36` asserts must be visible.
+
+That session shipped it having run **unit tests only** (`2699/2699`); it never ran e2e.
+
+**Proof it is not the income line (this pass):** the new card only ADDS a `SurfaceCard` above the
+sections — it cannot remove verdict text. The failing assertions are on strings that `e5bb8dd`
+gated away.
+
+**The fix is to update the TEST, not revert the behaviour** — the new behaviour is correct and is
+the whole point of `e5bb8dd`. The test should assert a *covered* budget shows a verdict and an
+*uncovered* one shows the coverage sentence. ⚠️ Check first whether the fixture world contains any
+budget with covered days; if not, the fixture needs one, or the assertion cannot exist.
+
+The `visual.spec.ts` snapshots need regenerating for **both** `e5bb8dd`'s row change and this pass's
+new card. ⚠️ Do not regenerate blind — confirm each diff is the intended change first.
+
+## S. Shipped this pass
+
+### S.1 `recurring_series.user_category_id` — migration 0010 (`50295d4`)
+
+The blocker named in §6 is gone. `recurringSeriesIdsForCategory` derived a series' category purely
+from POSTED transactions, so a commitment that has not charged could never be projected — measured
+before: **Transport had 0 linked series**, and so did every category the car touches.
+
+**An OVERRIDE, not a union**, and that is the design. A series carrying `user_category_id` is
+REMOVED from the posted-row derivation; otherwise one with rows under category A and an override
+pointing at B would answer to both and `budgetTail` would project the full amount into each. Three
+tests pin it: maps a never-posted commitment, leaves its posted-row category when overridden, hands
+itself back when cleared.
+
+Applied in the one shared bridge (`analytics.ts`) rather than in `budgetTail`, because that bridge
+also feeds the category page's series list — fixing it lower would let the forecast and the
+drill-down disagree.
+
+**Both car commitments registered** (`scripts/register-car-commitments.ts`), `accountId` NULL on
+purpose (Wells Fargo has no row yet, by design). Verified end to end on the real DB:
+
+| refDate | window | tail |
+|---|---|---|
+| 2026-08-11 | Aug 11–31 | $0.00 — correct, both next charges are 2026-09-11 |
+| 2026-09-01 | Sep 1–30 | **$921.38** = $559.89 + $361.49 |
+| 2026-10-01 | Oct 1–31 | **$921.38** |
+
+`Car` resolves 2 series, `Car Payment` 1, `Car Insurance` 1, **`Transport` 0** — the override does
+not leak.
+
+### S.2 The income line on `/budgets` (`8e64933`)
+
+Now reads: **Budgeted $7,720.38 of $4,184.00 expected income — OVER-ALLOCATED by $3,536.38.**
+
+`incomeExpectation()` is built like `budgetTail` (posted over `[start, today]` + projections
+strictly after, disjoint by construction). Series-driven, not a trailing average: his income is a
+cash job deposited IRREGULARLY, so the series is the stated fact and the deposits are its noisy
+shadow.
+
+**Two bugs caught while verifying against the real ledger — both would have shipped a wrong number:**
+1. The window came from `monthly[0].bounds`, an **arbitrary** budget. The Car budget is start-clamped
+   to 2026-08-11, so it compared a full month of budgeted amounts against 3 weeks of income. Now uses
+   `periodBounds(today, "monthly")`.
+2. posted+future alone read **$3,138.00**, because August income is not imported and `$0.00 posted`
+   silently dropped paydays that already happened — asserting a measured zero where "not measured
+   yet" is true, the *same failure* `e5bb8dd` fixed for spending. Now takes the max with a
+   whole-period series projection (mirroring `projectSpend`'s `max(spent, forecast)`), giving
+   **$4,184.00** — matching an independent measurement of the confirmed weekly series.
+
+## T. ⚠️ NEW FINDING: the one-off breaks the run-rate projection
+
+August's `Car` budget projects **$105,000.00**, pace `over`.
+
+`projectSpend` (`budgets.ts:320-328`) extrapolates `variablePosted × remainingDays / elapsedDays`.
+With the $5,000 down payment on day 1 of a 21-day window: $5,000 × 20 ÷ 1 = $100,000, plus the
+$5,000 spent.
+
+**The verdict (`over`) is TRUE** — he did blow the Car budget in August. Only the number is absurd.
+
+I deliberately did **not** patch this. A minimum-elapsed-days guard was the obvious fix and it does
+not work: by day 3 it still extrapolates ~$28,000. The real defect is that **a one-off event is
+being treated as a rate**, which is the sinking-fund gap already open for the owner's decision. A
+threshold would only hide day 1 while leaving the wrong model in place.
+
+Related and still open: the schema has **no end date for a series** (only `status`), so the lease
+projects past 2028-08-11 and the insurance past 2027-01-11. Harmless inside a monthly budget
+(`budgetTail` stops at `periodEnd`), wrong for any long-range forecast.
+
+## U. Gate
+
+| gate | result |
+|---|---|
+| `tsc --noEmit` | clean |
+| unit | **151 files / 2,705 tests** (2,699 → +3 bridge, +3 income) |
+| `next build` | clean |
+| e2e | ⛔ **RED — inherited from `e5bb8dd`, see §R** |
+
+## V. Queue
+
+1. ⛔ **Fix the red e2e** (§R) — test update, not a revert. Do this first.
+2. **One-off / sinking fund** (§T) — also fixes the $105,000 projection and needs the owner's call on
+   whether the $5,000 stays visible in August.
+3. **Series end dates** (§T) — `ends_on`, so a 24-payment lease stops projecting.
+4. **Overdue bills on `/budgets`** — `recurringCalendar` already returns `missedCount 4` (rent
+   $2,285.70 due 2026-08-08, never posted) while Housing shows green. `budgetTail` anchors at
+   `addDays(today,1)` and never looks backwards.
+5. **Rollover, opt-in per budget** (owner's choice). Travel is the case: $8.75 Feb → $2,448.88 Jul
+   against $50/mo.
+6. **Gambling → own category**, gross + net (owner's choice).
+7. **Wells Fargo** — still deferred until its first statement; ask for the **QFX**.
+8. Then the pass-42 tail: the last $1,911.24, `ReturnViewParts.tsx:89`, `?range=` on `/investments`,
+   `/flow` range, the transaction drawer.
+9. ⛔ **Hosting LAST.**
