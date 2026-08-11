@@ -9,6 +9,10 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
  * the inline amount editor with a 6-month guide, and the reciprocal link to
  * the category page — without dead-ending. The inline-edit test mutates a
  * budget amount and restores it, so sibling zz-specs see the seed unchanged.
+ *
+ * Food additionally carries a bill that came due and never posted (Meal Kit,
+ * 2026-07-05), so the overdue disclosure — the past-facing sibling of the tail
+ * — has a rendered path under test.
  */
 
 /** The budget row `<li>` carrying a given top-level category link. */
@@ -81,6 +85,37 @@ test("the hollow tail opens a popover of contributing series → its recurring p
   await seriesLink.click();
   await expect(page).toHaveURL(/\/recurring\/[^/]+$/);
   await expect(page.getByRole("navigation", { name: "Breadcrumb" })).toBeVisible();
+});
+
+test("a bill that came due and never posted is disclosed on its budget row", async ({ page }) => {
+  await page.goto("/budgets");
+  const food = budgetRow(page, "Food");
+  await expect(food).toBeVisible();
+
+  // Meal Kit was expected 2026-07-05 and never arrived. Food is `under` and
+  // undermeasured, so its headline is "Awaiting statements" — the overdue line
+  // is the ONLY thing telling him $125.00 of this month is already committed.
+  await expect(food.getByText("$125.00 expected by now, not imported")).toBeVisible();
+  await expect(food.getByText(/Meal Kit Jul 5/)).toBeVisible();
+
+  // exactly one row is overdue — Housing and Subscriptions must stay silent,
+  // or the state would be decorative rather than measured
+  await expect(page.getByText(/expected by now, not imported/)).toHaveCount(1);
+
+  // overdue is NOT the forward tail: budgetTail opens strictly AFTER today, so
+  // Food gains no "expected before" trigger and Subscriptions keeps the only one
+  await expect(food.getByRole("button", { name: /expected before/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /expected before/ })).toHaveCount(1);
+
+  // the screen reader is told the same thing the sighted reader is
+  await expect(food.getByRole("progressbar")).toHaveAttribute(
+    "aria-valuetext",
+    /\$125\.00 was expected by now and has not been imported\.$/,
+  );
+
+  // …and it is committed money, so it lands in the projection exactly once:
+  // $653.36 of extrapolated variable spend + $125.00 overdue = $778.36
+  await expect(food.getByText("$778.36")).toBeVisible();
 });
 
 test("the inline editor writes a new amount with a 6-month guide (restored)", async ({ page }) => {

@@ -358,6 +358,45 @@ async function seedBudgets(db: AppDatabase): Promise<void> {
   createBudget(db, { categoryId: topLevel("Subscriptions"), period: "monthly", amountCents: 4_000, startsOn: "2026-07-01" });
   createBudget(db, { categoryId: topLevel("Housing"), period: "monthly", amountCents: 200_000, startsOn: "2026-07-01" });
 
+  /*
+   * A bill that came due and never posted — the only thing on this page that
+   * `budgetOverdue` (budgets.ts:498) renders, and it shipped with unit tests and
+   * no e2e at all, so the whole rendered path could rot silently.
+   *
+   * On FOOD, not Housing, for two reasons. Housing is the `over` row whose
+   * verdict already speaks; Food reads "Awaiting statements", so this proves the
+   * disclosure survives a row that otherwise looks benign — which is exactly the
+   * failure it exists for (rent overdue while Housing sat green). And the
+   * `category-*` visual baseline IS the Housing page, whose "Recurring series"
+   * card would otherwise gain a row and move eight snapshots for nothing.
+   *
+   * `userCategoryId` is the ONLY way this can reach a budget: series→category is
+   * derived from POSTED rows and this series has none — by design, since a linked
+   * posting inside toleranceDays is what "paid" means. The column is an OVERRIDE,
+   * never a union.
+   *
+   * 2026-07-05 is inside [period start, E2E_FAKE_TODAY] so it is already due, and
+   * the next monthly step (2026-08-04) falls outside the dashboard's 14-day bill
+   * strip — so no dashboard baseline moves. /recurring's tab counts do
+   * (Upcoming 6→7, All 4→5, Calendar 5→6): unavoidable for any new series, since
+   * budgetOverdue needs status detected|confirmed and those counts filter on
+   * status alone.
+   */
+  db.insert(recurringSeries)
+    .values({
+      name: "Meal Kit",
+      kind: "bill",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      amountCentsAvg: -125_00,
+      nextExpectedOn: "2026-07-05",
+      nextExpectedAmountCents: -125_00,
+      lastMatchedOn: "2026-06-05",
+      status: "confirmed",
+      userCategoryId: topLevel("Food"),
+    })
+    .run();
+
   const netflix = db.select({ id: recurringSeries.id }).from(recurringSeries).where(eq(recurringSeries.name, "Netflix")).get();
   const oldRow = db
     .select({ id: transactions.id })
