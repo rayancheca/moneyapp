@@ -11,6 +11,26 @@ are cents-exact from `data/moneyapp.db` at the 2026-07-16 snapshot unless noted.
 
 ---
 
+> **⚠️ PASS-45 UPDATE (2026-08-11) — GAMBLING WINNINGS ARE NO LONGER INCOME.**
+> Seven credits totalling **$1,053.82** sat in `Income > Other Income`. They are not earnings —
+> they are money coming back from a betting platform (DraftKings / Kalshi), the return leg of
+> stakes that were already recorded as spending. Counting them as income inflated earnings *and*
+> made a roughly break-even activity read as ~$1,148 of overspend against a $60/mo Entertainment
+> budget.
+>
+> They now live in the top-level **`Gambling`** category alongside the 44 stakes ($1,445.10), so
+> analytics nets them automatically: **gross staked $1,445.10, returned $1,053.82, net $391.28.**
+>
+> **Ledger income total: $118,969.23 → $117,915.41.** Owner-approved with the number in front of
+> him, after being told explicitly that this changes income rather than just a category.
+> `scripts/split-out-gambling.ts` is the record; restore point
+> `data/backups/pre-gambling-winnings-move.db`.
+>
+> **The rule this sets:** a credit that returns money previously recorded as spend is NOT income.
+> It belongs in the same category as the spend, where the two net.
+
+---
+
 > **⚠️ PASS-18 UPDATE (2026-07-18):** the user's situation changed. He **moved Bronx → Miami** in early 2026,
 > **Fordham work-study ENDED** (last 2026-05-13) and **Knack tutoring ENDED** (last 2026-05-21), and he now earns
 > from a **cash job (~$1,046/week)**. Per his instruction, the cash-job deposits were categorized `Income › Salary`,

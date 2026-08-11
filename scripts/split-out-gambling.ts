@@ -17,19 +17,18 @@ import { createCategory } from "@/services/category-edit";
  * Entertainment limit while the winnings were counted as income somewhere else
  * — a roughly break-even activity reading as ~$1,148 of overspend.
  *
- * ⛔ THIS SCRIPT MOVES THE STAKES ONLY.
+ * Moves BOTH sides. The stakes were moved first; the winnings needed a separate
+ * decision, because relocating them is not a categorisation change — it is an
+ * INCOME change, dropping the owner's income total by $1,053.82.
+ * `docs/income-ground-truth.md` is hand-maintained and passes 15 and 28 both had
+ * to un-contaminate it, so it was put to him with the number attached. He said
+ * move them (2026-08-11), and the reasoning holds up: those seven credits are
+ * winnings returning from a betting platform, not money he earned. Their
+ * presence in `Income > Other Income` was itself the contamination.
  *
- * The winnings are deliberately left where they are, because moving them is not
- * a categorisation change — it is an INCOME change. It would drop the owner's
- * income total by $1,053.82, and `docs/income-ground-truth.md` is a hand-
- * maintained figure that passes 15 and 28 both had to un-contaminate. There is a
- * real argument that gambling winnings were never earned income and their
- * presence there IS the contamination — but that is his call to make with the
- * number in front of him, not one to slip into a categorisation pass.
- *
- * Until he decides, `Gambling` shows GROSS staked. Once the winnings move here
- * too, the same category nets them automatically (analytics nets positives
- * against negatives within a category), which is the "gross + net" he asked for.
+ * With both sides in one category, analytics nets positives against negatives
+ * automatically — so `Gambling` reports NET while its negative rows still sum to
+ * GROSS staked. That is the "gross + net" he asked for, with no new machinery.
  *
  * The 2 `Internal Transfer` rows stay: they are transfer-kind, they move money
  * onto the platform rather than spending it, and re-labelling them as spend
@@ -58,7 +57,7 @@ function main(): void {
   const games = db.select().from(categories).where(eq(categories.name, "Games")).get();
   if (!games) throw new Error('No "Games" category');
 
-  // only the STAKES: money-out rows currently filed under Games
+  // the STAKES: money-out rows filed under Games
   const rows = db
     .select({ id: transactions.id, amountCents: transactions.amountCents })
     .from(transactions)
@@ -73,14 +72,45 @@ function main(): void {
     .filter((r) => r.amountCents < 0);
 
   const staked = rows.reduce((sum, r) => sum - r.amountCents, 0);
+
+  // the WINNINGS: money-in rows still sitting in Income > Other Income
+  const otherIncome = db.select().from(categories).where(eq(categories.name, "Other Income")).get();
+  const wins = otherIncome
+    ? db
+        .select({ id: transactions.id, amountCents: transactions.amountCents })
+        .from(transactions)
+        .where(
+          and(
+            eq(transactions.status, "active"),
+            eq(transactions.categoryId, otherIncome.id),
+            or(...PATTERNS.map((p) => like(transactions.rawDescription, p))),
+          ),
+        )
+        .all()
+        .filter((r) => r.amountCents > 0)
+    : [];
+  const returned = wins.reduce((sum, r) => sum + r.amountCents, 0);
+
   const existing = db.select().from(categories).where(eq(categories.name, CATEGORY)).get();
 
   console.log(`db=${DB_PATH}`);
   console.log(`${CATEGORY} category: ${existing ? "exists" : "will be created (top level, expense)"}`);
-  console.log(`stakes to move: ${rows.length} rows, ${money(staked)} out of "Games"`);
-  console.log("winnings: NOT moved — that is an income decision (see this script's header)");
+  console.log(`stakes to move  : ${rows.length} rows, ${money(staked)} out of "Games"`);
+  console.log(`winnings to move: ${wins.length} rows, ${money(returned)} out of "Income > Other Income"`);
+  // net is measured from the category's FINAL contents, not from this run's
+  // deltas — the stakes may already have moved in an earlier run
+  const alreadyIn = existing
+    ? db
+        .select({ amountCents: transactions.amountCents })
+        .from(transactions)
+        .where(and(eq(transactions.status, "active"), eq(transactions.categoryId, existing.id)))
+        .all()
+        .reduce((sum, r) => sum - r.amountCents, 0)
+    : 0;
+  console.log(`  => income falls by ${money(returned)}`);
+  console.log(`  => ${CATEGORY} net after this run: ${money(alreadyIn + staked - returned)}`);
 
-  if (rows.length === 0) {
+  if (rows.length === 0 && wins.length === 0) {
     console.log("\nNothing to move.");
     sqlite.close();
     return;
@@ -95,16 +125,14 @@ function main(): void {
     const categoryId =
       existing?.id ??
       createCategory(db, { name: CATEGORY, parentId: null, kind: "expense" }).id;
-    db.update(transactions)
-      .set({ categoryId, categorizationSource: "user", categorizationConfidence: 1 })
-      .where(
-        inArray(
-          transactions.id,
-          rows.map((r) => r.id),
-        ),
-      )
-      .run();
-    console.log(`moved ${rows.length} rows into "${CATEGORY}" (${categoryId})`);
+    const ids = [...rows, ...wins].map((r) => r.id);
+    if (ids.length > 0) {
+      db.update(transactions)
+        .set({ categoryId, categorizationSource: "user", categorizationConfidence: 1 })
+        .where(inArray(transactions.id, ids))
+        .run();
+    }
+    console.log(`moved ${rows.length} stakes + ${wins.length} winnings into "${CATEGORY}" (${categoryId})`);
   });
 
   sqlite.close();
