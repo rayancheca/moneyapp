@@ -7,10 +7,15 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { categories } from "@/db/schema/categories";
 import {
+  allMoveDestinations,
   archiveCategory,
   createCategory,
+  KIND_ORDER,
+  listCategoryTree,
   moveCategory,
+  moveDestinations,
   renameCategory,
+  reorderCategories,
   unarchiveCategory,
 } from "./category-edit";
 
@@ -259,5 +264,121 @@ describe("archiveCategory", () => {
     expect(() => unarchiveCategory(bundle.db, child.id)).toThrow(/Unarchive "Car" first/);
     unarchiveCategory(bundle.db, car.id);
     expect(unarchiveCategory(bundle.db, child.id).isArchived).toBe(false);
+  });
+});
+
+describe("reorderCategories", () => {
+  /** Root ids of one kind, in the order the manager displays them. */
+  function rootsOfKind(kind: string): { id: string; name: string }[] {
+    return listCategoryTree(bundle.db)
+      .filter((r) => r.kind === kind)
+      .map((r) => ({ id: r.id, name: r.name }));
+  }
+
+  function sortOrderOf(id: string): number {
+    return bundle.db.select().from(categories).where(eq(categories.id, id)).get()!.sortOrder;
+  }
+
+  test("moving a root up changes the displayed order and persists it", () => {
+    const before = rootsOfKind("expense");
+    expect(before.length).toBeGreaterThan(2);
+    const moved = [before[1]!, before[0]!, ...before.slice(2)];
+
+    reorderCategories(bundle.db, moved.map((r) => r.id));
+
+    expect(rootsOfKind("expense").map((r) => r.name)).toEqual(moved.map((r) => r.name));
+  });
+
+  test("roots are renumbered GLOBALLY, so two kinds never share a sort_order", () => {
+    const expense = rootsOfKind("expense");
+    reorderCategories(bundle.db, [expense[1]!.id, expense[0]!.id, ...expense.slice(2).map((r) => r.id)]);
+
+    // every root, across every kind, must hold a distinct sort_order — otherwise
+    // the readers that sort by sort_order ALONE (the budget form, the transaction
+    // category picker, the command index) interleave spending and income by name
+    const roots = bundle.db
+      .select()
+      .from(categories)
+      .where(isNull(categories.parentId))
+      .all();
+    const orders = roots.map((r) => r.sortOrder);
+    expect(new Set(orders).size).toBe(orders.length);
+  });
+
+  test("the global renumber keeps kinds grouped in KIND_ORDER", () => {
+    const expense = rootsOfKind("expense");
+    reorderCategories(bundle.db, [expense[1]!.id, expense[0]!.id, ...expense.slice(2).map((r) => r.id)]);
+
+    const roots = bundle.db
+      .select()
+      .from(categories)
+      .where(isNull(categories.parentId))
+      .all()
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+    // the kind sequence must be non-decreasing in KIND_ORDER terms
+    const rank = (k: string) => KIND_ORDER.indexOf(k as (typeof KIND_ORDER)[number]);
+    for (let i = 1; i < roots.length; i += 1) {
+      expect(rank(roots[i]!.kind)).toBeGreaterThanOrEqual(rank(roots[i - 1]!.kind));
+    }
+  });
+
+  test("children reorder within their parent only", () => {
+    const food = listCategoryTree(bundle.db).find((r) => r.name === "Food")!;
+    expect(food.children.length).toBeGreaterThan(1);
+    const ids = food.children.map((c) => c.id);
+    const swapped = [ids[1]!, ids[0]!, ...ids.slice(2)];
+
+    reorderCategories(bundle.db, swapped);
+
+    const after = listCategoryTree(bundle.db).find((r) => r.name === "Food")!;
+    expect(after.children.map((c) => c.id)).toEqual(swapped);
+  });
+
+  test("a sibling the caller omitted is appended, never dropped", () => {
+    const food = listCategoryTree(bundle.db).find((r) => r.name === "Food")!;
+    const ids = food.children.map((c) => c.id);
+    // the screen was hiding the last child (archived, say) so it never sent it
+    reorderCategories(bundle.db, ids.slice(0, -1));
+
+    const after = listCategoryTree(bundle.db).find((r) => r.name === "Food")!;
+    expect(after.children.length).toBe(ids.length);
+    expect(after.children.at(-1)!.id).toBe(ids.at(-1));
+  });
+
+  test("refuses to reorder categories that are not siblings", () => {
+    const tree = listCategoryTree(bundle.db);
+    const food = tree.find((r) => r.name === "Food")!;
+    const housing = tree.find((r) => r.name === "Housing")!;
+    expect(() => reorderCategories(bundle.db, [food.children[0]!.id, housing.id])).toThrow(
+      /siblings/i,
+    );
+  });
+
+  test("refuses to mix root kinds, which would break the kind grouping", () => {
+    const tree = listCategoryTree(bundle.db);
+    const expense = tree.find((r) => r.kind === "expense")!;
+    const income = tree.find((r) => r.kind === "income")!;
+    expect(() => reorderCategories(bundle.db, [expense.id, income.id])).toThrow(/same kind/i);
+  });
+
+  test("an unknown id is rejected before anything is written", () => {
+    const expense = rootsOfKind("expense");
+    const before = sortOrderOf(expense[0]!.id);
+    expect(() => reorderCategories(bundle.db, [expense[0]!.id, "nope"])).toThrow(/Unknown category/);
+    expect(sortOrderOf(expense[0]!.id)).toBe(before);
+  });
+});
+
+describe("allMoveDestinations", () => {
+  test("is equivalent to moveDestinations for EVERY category, from one table read", () => {
+    // the batch form exists purely for speed (the manager renders ~77 rows and the
+    // per-row form re-scans the table each time). Speed is only worth having if
+    // the answer is identical, so prove it row by row rather than trusting it.
+    const all = bundle.db.select().from(categories).all();
+    const batch = allMoveDestinations(bundle.db);
+    expect(Object.keys(batch).length).toBe(all.length);
+    for (const c of all) {
+      expect(batch[c.id]).toEqual(moveDestinations(bundle.db, c.id));
+    }
   });
 });

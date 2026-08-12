@@ -47,8 +47,21 @@ test("manual txn edits inline in the expander; imported rows stay immutable", as
   await dateInput.press("Enter");
   await expect(page.getByRole("button", { name: /^Transaction date: 2026-07-01/ })).toBeVisible();
 
-  // notes edit inline on any row
-  await page.getByRole("button", { name: /^Notes:/ }).click();
+  /*
+   * Notes edit inline on any row.
+   *
+   * The click is retried rather than issued once: the date save above ends in a
+   * `router.refresh()`, and when that lands React re-renders the expander and
+   * REPLACES this button's node. A single click can resolve the locator, lose the
+   * node to the refresh, and land on a detached element — a no-op that then times
+   * out waiting for an input that never opens. Latent since the expander shipped;
+   * it surfaced once the suite got slower, and it fails ~3 runs in 4 rather than
+   * cleanly, which is the signature of exactly this race.
+   */
+  await expect(async () => {
+    await page.getByRole("button", { name: /^Notes:/ }).click();
+    await expect(page.getByRole("textbox", { name: "Notes" })).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 15_000 });
   const notesInput = page.getByRole("textbox", { name: "Notes" });
   await notesInput.fill("paid in cash");
   await notesInput.press("Enter");

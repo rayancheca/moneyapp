@@ -2,6 +2,7 @@ import { and, desc, eq, isNull, ne } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import { transactions } from "@/db/schema/transactions";
+import { normalizeOrder } from "@/lib/reorder";
 
 /**
  * Category writes (the "nothing read-only" program, S3). Renaming is a pure
@@ -242,19 +243,40 @@ export interface MoveDestination {
  * the UI simply hides the menu instead of offering doomed choices.
  */
 export function moveDestinations(db: AppDatabase, categoryId: string): MoveDestination[] {
-  const row = db.select().from(categories).where(eq(categories.id, categoryId)).get();
+  return destinationsFrom(db.select().from(categories).all(), categoryId);
+}
+
+/**
+ * Valid destinations for EVERY category, from a single table read.
+ *
+ * `moveDestinations` scans the whole `categories` table per call, which is fine
+ * for the one-category detail page it was written for and quadratic for the
+ * manager, which renders ~77 rows. Calling it per row measurably slowed the whole
+ * e2e suite (≈2 minutes across the ~8 renders of /categories), so the manager
+ * uses this instead.
+ */
+export function allMoveDestinations(db: AppDatabase): Record<string, MoveDestination[]> {
+  const all = db.select().from(categories).all();
+  const out: Record<string, MoveDestination[]> = {};
+  for (const c of all) out[c.id] = destinationsFrom(all, c.id);
+  return out;
+}
+
+type CategoryRowShape = { id: string; name: string; parentId: string | null; kind: CategoryKind; isArchived: boolean };
+
+function destinationsFrom(all: readonly CategoryRowShape[], categoryId: string): MoveDestination[] {
+  const row = all.find((c) => c.id === categoryId);
   if (!row) return [];
   if (row.kind === "transfer" || row.kind === "system") return [];
   const hintPath = row.parentId
-    ? `${db.select({ name: categories.name }).from(categories).where(eq(categories.id, row.parentId)).get()?.name} > ${row.name}`
+    ? `${all.find((c) => c.id === row.parentId)?.name} > ${row.name}`
     : row.name;
   if ((row.parentId === null && IMPORT_HINT_ROOTS.has(row.name)) || IMPORT_HINT_PATHS.has(hintPath)) return [];
   if (row.parentId === null) {
-    const child = db.select({ id: categories.id }).from(categories).where(eq(categories.parentId, categoryId)).get();
-    if (child) return []; // one level deep — a root with children stays a root
+    // one level deep — a root with children stays a root
+    if (all.some((c) => c.parentId === categoryId)) return [];
   }
 
-  const all = db.select().from(categories).all();
   const clashesUnder = (parentId: string | null): boolean =>
     all.some((c) => c.parentId === parentId && c.name === row.name && c.id !== row.id);
 
@@ -307,6 +329,96 @@ export function renameCategory(db: AppDatabase, categoryId: string, newName: str
 
   db.update(categories).set({ name }).where(eq(categories.id, row.id)).run();
   return { id: row.id, name };
+}
+
+/**
+ * The order the manager groups roots in: what you spend first, then what comes
+ * in, then the plumbing. Exported because `reorderCategories` has to renumber
+ * roots in exactly the sequence the screen shows them, and a second copy of this
+ * list would silently drift from the one the UI renders.
+ */
+export const KIND_ORDER: readonly CategoryKind[] = [
+  "expense",
+  "income",
+  "rewards",
+  "investment",
+  "transfer",
+  "system",
+];
+
+const SORT_STEP = 10;
+
+/**
+ * Persist a manual sibling order, writing `categories.sort_order` — the column
+ * five existing readers ALREADY sort by (`listCategoryTree`,
+ * `listBudgetableCategories`, the transaction category picker, the command index
+ * and the design preview). Writing anything else would have meant a second
+ * ordering mechanism that four of those five could not see.
+ *
+ * `orderedIds` is the sibling group as the SCREEN currently shows it, already
+ * moved. It is passed through `normalizeOrder` against the real sibling set, so
+ * a stale client list can neither drop a category nor duplicate one — a hidden
+ * archived sibling the caller never sent simply sinks to the end of its group.
+ *
+ * Roots are renumbered GLOBALLY across the whole KIND_ORDER sequence, not within
+ * the moved kind. Renumbering one partition would hand `expense` and `income`
+ * both a 0, and every reader that sorts by `sort_order` alone (without grouping
+ * by kind, which is all of them) would then interleave spending and income roots
+ * by name.
+ */
+export function reorderCategories(db: AppDatabase, orderedIds: readonly string[]): void {
+  if (orderedIds.length === 0) return;
+  const all = db.select().from(categories).all();
+  const byId = new Map(all.map((c) => [c.id, c]));
+
+  const first = byId.get(orderedIds[0]!);
+  if (!first) throw new Error(`Unknown category ${orderedIds[0]}`);
+  for (const id of orderedIds) {
+    const row = byId.get(id);
+    if (!row) throw new Error(`Unknown category ${id}`);
+    if (row.parentId !== first.parentId) {
+      throw new Error("Only siblings can be reordered together");
+    }
+    if (first.parentId === null && row.kind !== first.kind) {
+      throw new Error("Only roots of the same kind can be reordered together");
+    }
+  }
+
+  const bySort = (a: { sortOrder: number; name: string }, b: { sortOrder: number; name: string }) =>
+    a.sortOrder - b.sortOrder || a.name.localeCompare(b.name);
+
+  if (first.parentId !== null) {
+    const canonical = all.filter((c) => c.parentId === first.parentId).sort(bySort).map((c) => c.id);
+    writeOrder(db, normalizeOrder([...orderedIds], canonical));
+    return;
+  }
+
+  // roots: splice the moved kind's new order into the full display sequence
+  const moved = new Set(orderedIds);
+  const sequence: string[] = [];
+  for (const kind of KIND_ORDER) {
+    const inKind = all.filter((c) => c.parentId === null && c.kind === kind).sort(bySort);
+    if (kind === first.kind) {
+      sequence.push(...normalizeOrder([...orderedIds], inKind.map((c) => c.id)));
+    } else {
+      sequence.push(...inKind.filter((c) => !moved.has(c.id)).map((c) => c.id));
+    }
+  }
+  // any kind not named in KIND_ORDER would otherwise be dropped from the renumber
+  const seen = new Set(sequence);
+  for (const c of all.filter((c) => c.parentId === null && !seen.has(c.id)).sort(bySort)) {
+    sequence.push(c.id);
+  }
+  writeOrder(db, sequence);
+}
+
+function writeOrder(db: AppDatabase, ids: readonly string[]): void {
+  ids.forEach((id, i) => {
+    db.update(categories)
+      .set({ sortOrder: i * SORT_STEP })
+      .where(eq(categories.id, id))
+      .run();
+  });
 }
 
 export interface CategoryTreeNode {

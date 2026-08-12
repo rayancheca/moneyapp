@@ -9,6 +9,7 @@ import {
   CREATABLE_CATEGORY_KINDS,
   moveCategory,
   renameCategory,
+  reorderCategories,
   unarchiveCategory,
 } from "@/services/category-edit";
 import {
@@ -135,6 +136,32 @@ export async function createCategoryAction(input: {
     return { ok: true, data: { id: result.id, name: result.name, parentId: result.parentId } };
   } catch (error: unknown) {
     return { ok: false, error: actionErrorMessage(error, CATEGORY_LABELS, "Could not create category") };
+  }
+}
+
+const reorderSchema = z.object({
+  orderedIds: z.array(z.string().min(1)).min(2, "Nothing to reorder"),
+});
+
+/**
+ * Persist a manual sibling order. Revalidates the SAME surface set as every other
+ * category write — `sort_order` is read by the budget form, the transaction
+ * category picker and the command index, so a reorder that only refreshed
+ * /categories would leave three other screens showing the old sequence.
+ */
+export async function reorderCategoriesAction(input: {
+  orderedIds: string[];
+}): Promise<ActionResult<{ count: number }>> {
+  const parsed = reorderSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: firstIssueMessage(parsed.error.issues, CATEGORY_LABELS) };
+  }
+  try {
+    reorderCategories(getDb(), parsed.data.orderedIds);
+    revalidateCategorySurfaces();
+    return { ok: true, data: { count: parsed.data.orderedIds.length } };
+  } catch (error: unknown) {
+    return { ok: false, error: actionErrorMessage(error, CATEGORY_LABELS, "Could not reorder categories") };
   }
 }
 

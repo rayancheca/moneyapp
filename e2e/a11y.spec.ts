@@ -13,6 +13,9 @@ const ROUTES = [
   "/spending",
   "/spending?period=2026",
   "/budgets",
+  // swept from pass 46, BEFORE the disclosure/reorder/inline-edit work landed on
+  // it — this route carries ~180 controls and axe had never looked at it
+  "/categories",
   "/recurring",
   "/investments",
   "/investments?range=1M", // the loss (red) accent state

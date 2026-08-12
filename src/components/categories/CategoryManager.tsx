@@ -12,9 +12,14 @@ import { Icon } from "@/components/shell/Icon";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
+import { CategoryRow } from "./CategoryRow";
 import { toast } from "@/components/ui/Toast";
-import type { CategoryTreeNode } from "@/services/category-edit";
-import { CREATABLE_CATEGORY_KINDS, type CreatableCategoryKind } from "@/services/category-edit";
+import type { CategoryTreeNode, MoveDestination } from "@/services/category-edit";
+import {
+  CREATABLE_CATEGORY_KINDS,
+  KIND_ORDER,
+  type CreatableCategoryKind,
+} from "@/services/category-edit";
 
 const KIND_LABEL: Record<string, string> = {
   expense: "Spending",
@@ -25,11 +30,18 @@ const KIND_LABEL: Record<string, string> = {
   system: "System",
 };
 
-/** Order the tree reads in: what you spend first, then what comes in, then plumbing. */
-const KIND_ORDER = ["expense", "income", "rewards", "investment", "transfer", "system"];
+// KIND_ORDER is imported, not redeclared: `reorderCategories` renumbers roots in
+// exactly this sequence, so a local copy that drifted would persist an order the
+// screen does not show.
 
 interface CategoryManagerProps {
   tree: CategoryTreeNode[];
+  /**
+   * Valid re-parent targets per category id, computed once on the server.
+   * `moveDestinations` does a full `categories` scan per call, so calling it
+   * per-row from the client would be 77 table scans for one page.
+   */
+  destinations: Record<string, MoveDestination[]>;
 }
 
 /**
@@ -43,7 +55,7 @@ interface CategoryManagerProps {
  * budgets and rules, so the row stays and the history keeps resolving. Every
  * row shows how many transactions point at it, so that is an informed choice.
  */
-export function CategoryManager({ tree }: CategoryManagerProps) {
+export function CategoryManager({ tree, destinations }: CategoryManagerProps) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [parentId, setParentId] = useState<string>("");
@@ -176,81 +188,58 @@ export function CategoryManager({ tree }: CategoryManagerProps) {
         )}
       </div>
 
-      {groups.map((group) => (
-        <section key={group.kind} aria-label={`${KIND_LABEL[group.kind]} categories`}>
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
-            {KIND_LABEL[group.kind]}
-          </h3>
-          <ul className="divide-y divide-line overflow-hidden rounded-(--radius-card) border border-line bg-surface-raised">
-            {group.roots.map((root) => (
-              <li key={root.id}>
-                <Row node={root} depth={0} busy={busy} onArchive={setArchived} />
-                {root.children
-                  .filter((c) => showArchived || !c.isArchived)
-                  .map((child) => (
-                    <Row key={child.id} node={child} depth={1} busy={busy} onArchive={setArchived} />
-                  ))}
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
-    </div>
-  );
-}
-
-interface RowProps {
-  node: CategoryTreeNode;
-  depth: 0 | 1;
-  busy: boolean;
-  onArchive: (node: CategoryTreeNode, archived: boolean) => void;
-}
-
-function Row({ node, depth, busy, onArchive }: RowProps) {
-  return (
-    <div
-      className={`flex items-center justify-between gap-3 px-4 py-2.5 transition-colors duration-(--duration-fast) hover:bg-surface-leaf ${
-        depth === 1 ? "border-t border-line/60 pl-10" : ""
-      } ${node.isArchived ? "opacity-55" : ""}`}
-    >
-      <div className="flex min-w-0 items-baseline gap-2">
-        <Link
-          href={`/categories/${node.id}`}
-          className={`truncate hover:text-accent hover:underline ${
-            depth === 0 ? "text-sm font-medium" : "text-sm text-ink-muted"
-          }`}
-        >
-          {node.name}
-        </Link>
-        {node.isArchived && (
-          <span className="shrink-0 rounded-full border border-line px-1.5 text-[10px] uppercase tracking-wide text-ink-faint">
-            Archived
-          </span>
-        )}
-        {!node.isEditable && (
-          <span
-            className="shrink-0 text-[10px] uppercase tracking-wide text-ink-faint"
-            title="Imports and transfer detection resolve this category by name, so it stays fixed"
-          >
-            Locked
-          </span>
-        )}
-      </div>
-      <div className="flex shrink-0 items-center gap-3">
-        <span className="figures text-xs text-ink-faint">
-          {node.txnCount > 0 ? `${node.txnCount.toLocaleString()} txn` : "—"}
-        </span>
-        {node.isEditable &&
-          (node.isArchived ? (
-            <Button variant="ghost" size="sm" disabled={busy} onClick={() => onArchive(node, false)}>
-              Restore
-            </Button>
-          ) : (
-            <Button variant="ghost" size="sm" disabled={busy} onClick={() => onArchive(node, true)}>
-              Archive
-            </Button>
-          ))}
-      </div>
+      {groups.map((group) => {
+        // the reorder basis is what the SCREEN shows: with archived rows hidden
+        // they are not in this list, and the service's normalizeOrder sinks them
+        // to the end of the group rather than dropping them
+        const rootIds = group.roots.map((r) => r.id);
+        return (
+          <section key={group.kind} aria-label={`${KIND_LABEL[group.kind]} categories`}>
+            <h3 className="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
+              {KIND_LABEL[group.kind]}
+            </h3>
+            {/* one <li> per row, with children in a NESTED <ul>. A single <li>
+                wrapping a root and all its children would open the root's detail
+                panel above its own children and break reading order. */}
+            <ul className="divide-y divide-line overflow-hidden rounded-(--radius-card) border border-line bg-surface-raised">
+              {group.roots.map((root) => {
+                const shownChildren = root.children.filter((c) => showArchived || !c.isArchived);
+                const childIds = shownChildren.map((c) => c.id);
+                return (
+                  <li key={root.id}>
+                    <CategoryRow
+                      node={root}
+                      depth={0}
+                      busy={busy}
+                      onArchive={setArchived}
+                      siblingIds={rootIds}
+                      parentId={null}
+                      destinations={destinations[root.id] ?? []}
+                    />
+                    {shownChildren.length > 0 && (
+                      <ul>
+                        {shownChildren.map((child) => (
+                          <li key={child.id}>
+                            <CategoryRow
+                              node={child}
+                              depth={1}
+                              busy={busy}
+                              onArchive={setArchived}
+                              siblingIds={childIds}
+                              parentId={root.id}
+                              destinations={destinations[child.id] ?? []}
+                            />
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        );
+      })}
     </div>
   );
 }
