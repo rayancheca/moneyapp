@@ -1,7 +1,7 @@
 # Handoff — 2026-08-12, pass 46
 
-> **`main` = `d5707c9`**, tree clean. tsc clean · **151 files / 2,733 unit** · `next build` clean ·
-> **398/398 e2e** (green twice consecutively). Two migrations' worth of queue cleared: the overdue e2e gap closed, opt-in
+> **`main` = `76f5c7c`**, pushed, tree clean. tsc clean · **152 files / 2,744 unit** ·
+> `next build` clean · **401/401 e2e**. Two migrations' worth of queue cleared: the overdue e2e gap closed, opt-in
 > rollover shipped, calendar-month stepping measured and deliberately deferred.
 >
 > ⛔ **Owner asked for a large feature set mid-pass (§6). Read that before picking anything up.**
@@ -11,9 +11,9 @@
 | gate | result |
 |---|---|
 | `tsc --noEmit` | clean |
-| unit | **151 files / 2,733 tests** (2,712 at pass 45) |
+| unit | **152 files / 2,744 tests** (2,712 at pass 45) |
 | `next build` | clean |
-| `E2E_GATE=1 pnpm e2e:fresh` | **398 passed, 0 failed** (391 at pass 45) |
+| `E2E_GATE=1 pnpm e2e:fresh` | **401 passed, 0 failed** (391 at pass 45) |
 
 Restore points: `pre-0012-rollover.db`, `pre-travel-rebudget-2026-08-12.db`.
 
@@ -191,11 +191,30 @@ Two lessons worth keeping:
   date save's `router.refresh()` replaces the Notes button between locator resolution and click.
   Hardened with a retry, and it fixes a flake that predates this pass.
 
-### 6.2 🔴 NOT shipped: LLM-written insights. The safety mechanism was tested and it fails.
+### 6.2 Shipped: /budgets cards open in place (`ef30b6a`)
 
-The design routed every figure through app-computed slots (`{{f7}}`) so the model could never emit a
-digit, with a validator discarding anything else. An adversarial pass **executed that validator
-against 17 attack strings and 16 were ACCEPTED**, including:
+A `Details` disclosure per card carrying the settings that are *decisions* rather than *readings* —
+the period (newly editable), the graded window stated plainly, and the rollover carry-from date and
+cap. The service already accepted both knobs; only `setRolloverSchema` was dropping them.
+
+⛔ **Never emit a button named `"Save"` on /budgets.** `zz-budgets.spec.ts:182,191` click
+`getByRole("button", { name: "Save" })` **unscoped**, and `BudgetAmountEditor` is the only match — a
+second one is a strict-mode *throw*, not a soft failure. The period is a native `<select>` committing
+on change; both text editors commit on blur/Enter.
+
+`useDisclosure`/`DisclosureRegion` were split out (mirroring `usePopover`/`Popover`) because the
+trigger belongs in the controls cluster beside Edit and Deactivate — the combined component forced it
+onto its own line and orphaned Deactivate above it. `flex-wrap` added to that cluster: it now carries
+four controls and 320px is swept for overflow.
+
+The cap test is the one that matters — it sets $100 against the fixture's $133.00 carry and asserts
+the row is then graded against **$350.00**, so the cap is proven to *clamp the carry* rather than
+merely render.
+
+### 6.3 Shipped: measured section notes (`76f5c7c`) — and 🔴 why the LLM layer is NOT
+
+The model-written version was designed and then **rejected on executed evidence**. Its
+anti-fabrication validator was run against 17 adversarial strings and **accepted 16**:
 
 ```
 "{{f1}} is your largest spending category."   ← f1 is third largest
@@ -203,50 +222,67 @@ against 17 attack strings and 16 were ACCEPTED**, including:
 "{{f1}} used about ½ of its plan."            ← /\d/ has no `u` flag
 ```
 
-Root cause: a `Fact` carries only `display: string`. With no machine-readable value, **no comparison,
-ordering, delta, trend or causal claim can be verified even in principle**, and a denylist of English
-quantity words is unwinnable (`ninety`, `several`, `doubling`, `almost all` all pass). The slot
-mechanism blocks fabricated **numbers** and does nothing about fabricated **relationships**.
+Root cause: a `Fact` carries only `display: string`. With no machine-readable value **no comparison,
+ordering, delta or trend claim can be verified even in principle**, and a denylist of English
+quantity words is unwinnable. Slots constrain fabricated **numbers** and say nothing about fabricated
+**relationships**. Against the owner's standing *"i dont want you hallucinating"*, that is not
+shippable.
 
-Given the owner's standing rule — *"i dont want any fake data… i dont want you hallucinating"* — the
-model layer is **held**, not shipped. What ships instead is `SectionNote`: authored copy selected by a
-measured predicate, every figure rendered by the app's own formatter, no model involved and therefore
-no channel for an unsourced claim. Closing the LLM path needs `Fact.value?: number`, `kind`s of
-`rank`/`delta`/`trend`/`projection` gating the relational lexicon, and an **allowlisted** prose
-vocabulary rather than a denylist. That is a pass of its own.
+What shipped instead — `src/lib/section-notes.ts` — is authored copy selected by a **measured
+predicate**, every figure from the app's own formatter, no model in the path. Live on /budgets:
+
+> *One bill totalling $125.00 came due this period and no import has covered it yet — Food. That
+> money is committed, so the room left is smaller than it looks.*
+> *3 of 4 budgets are grading days the ledger has not reached — up to 8 days on Utilities. Their
+> spend and percentages are lower bounds, not measurements, so no verdict is shown for them.*
+
+Both are strictly **cross-row**: each row already discloses its own overdue bill and coverage gap,
+and neither can say how much of the page is affected. Each predicate has a test that fails without
+it — `over` is exempt from the under-measured count exactly as `BudgetRow` exempts it, an empty page
+emits nothing rather than "0 bills came due", and the category note counts **subtree** transactions
+so a parent whose children hold 2,066 rows is never called unused.
+
+`RESERVED_NOTE_PHRASES` + a sweep test stops a note repeating a phrase the surrounding UI owns —
+`"rolled over"` and `"expected by now, not imported"` are matched by **page-level** e2e locators with
+exact counts, so a duplicate breaks an unrelated assertion *and* says the same thing twice.
+
+**To finish the LLM path** (a pass of its own): `Fact.value?: number`; `rank`/`delta`/`trend`/
+`projection` kinds gating a relational lexicon; an **allowlisted** prose vocabulary, not a denylist;
+NFKC-normalise before scanning; validate on **read** as well as write; and
+`delete process.env.ANTHROPIC_API_KEY` in `e2e/global-setup.ts` (playwright.config pins it empty for
+the webServer only — the setup process inherits the developer's shell).
 
 ## 7. Queue
 
-1. **§6 — the rest of the owner's feature set**, in this order. `/categories` has **zero** visual
+1. **§6 — what is left of the owner's feature set**, in this order. `/categories` has **zero** visual
    baselines, so prove each mechanism there for free; `/budgets` owns exactly 8 of the 128 PNGs, so
-   land ALL its DOM in ONE commit and regenerate once with one explanation.
-   1. **`/budgets` card disclosure + a period editor + jargon tooltips — one commit, 8 PNGs.**
-      ⛔ **Never emit a `"Save"` button on /budgets**: `zz-budgets.spec.ts:182,191` call
-      `getByRole("button", { name: "Save" })` **unscoped** and `BudgetAmountEditor` is the only match
-      today, so a second one is a strict-mode throw. Use a native `<select>` committing on change.
-      ⚠️ The controls row (`BudgetRow.tsx`, the `flex items-center gap-1` div) has **no `flex-wrap`** —
-      add it with the 4th control or 320px breaks.
-   2. **Rollover cap + rollover-start editors.** The service is already done —
-      `budgetRolloverSchema` accepts both and `setBudgetRollover` refuses a start before the budget's
-      own `startsOn`. Only `setRolloverSchema` in `app/budgets/actions.ts` drops them. Lift the
-      optimistic flag out of `BudgetRolloverToggle` into `BudgetRow` first, or a panel reading the
-      server prop will not react until `router.refresh()`.
-   3. **`SectionNote`** (§6.2) across sections — measured predicates, no model.
-   4. **`/budgets` card reorder.** Blocked on a prerequisite bug: `app/budgets/page.tsx` renders the
+   land all its DOM in ONE commit and regenerate once with one explanation.
+   1. **Jargon tooltips** on `/budgets` and `/categories` — the remaining half of "guidance and
+      tips". `Tooltip` (`ui/Tooltip.tsx`) is a `"use client"` render-prop component, so a server
+      page cannot pass it a function child: split a small client wrapper. Terms worth annotating:
+      *Projected*, *expected income*, *overlapping child budgets excluded*, and the kind-group
+      headings on /categories. ⚠️ A tooltip body is **live DOM text** (`popover="manual"` renders it
+      unconditionally and `getByText` matches `display:none` nodes), so it counts against
+      `RESERVED_NOTE_PHRASES` — extend the `section-notes` sweep to cover tooltip copy too.
+   2. **`SectionNote` on the remaining sections** — investments, spending, recurring, dashboard. The
+      lib and the component are done and mounted on /budgets; each new section needs only a measured
+      predicate. `categorySectionNotes` is written and tested but **not yet mounted** (it needs a
+      subtree-count source; `listCategoryTree`'s `txnCount` is direct-only by design).
+   3. **`/budgets` card reorder.** Blocked on a prerequisite bug: `app/budgets/page.tsx` renders the
       section date range from `formatBounds(section.statuses[0]!)`, so the Monthly header shows Car's
       clamped `Aug 11 – Aug 31` instead of the whole month. Fix that first, then order via a new
       `budgets.display_order` column (NOT `app_settings` — budget ids are random UUIDs, so the
       `z.enum` strictness that makes `dashboardLayout` safe is unavailable and `deactivateBudget`
       would accrete dead UUIDs forever). Cards may never cross a period section.
-   5. **Category drag-and-drop** (pointer events, touch-capable) — the up/down buttons already cover
+   4. **Category drag-and-drop** (pointer events, touch-capable). The up/down buttons already cover
       keyboard and touch, so this is polish. Separately: `ManagedAccounts.tsx`'s `touch-none` on an
       `aria-hidden` grip makes a finger landing there unable to scroll `/accounts`.
-   6. **Animate the pace-bar refill.** Needs the fill to stop encoding the value as `width` (→
+   5. **Animate the pace-bar refill.** Needs the fill to stop encoding its value as `width` (→
       `clip-path: inset()` at `width:100%`), which is a pixel question against
       `maxDiffPixelRatio: 0.001` — ship it alone and measure. Any WAAPI fallback must read tokens via
-      `getComputedStyle` and gate on `usePrefersReducedMotion()`; `globals.css`'s reduced-motion
-      guard cannot reach `element.animate()` timing.
-   7. **Add `/categories` to `visual.spec.ts` ROUTES** (+8 new PNGs) — defensible now that it carries
+      `getComputedStyle` and gate on `usePrefersReducedMotion()`; the CSS reduced-motion guard cannot
+      reach `element.animate()` timing.
+   6. **Add `/categories` to `visual.spec.ts` ROUTES** (+8 new PNGs) — defensible now that it carries
       real UI, but argue it and commit it alone.
 2. **§4 — calendar-month stepping**, with all five prerequisites. ~356 days of runway.
 3. **Re-set the remaining stale budgets from data.** Travel is done ($50 → $100). Still stale: Fees
