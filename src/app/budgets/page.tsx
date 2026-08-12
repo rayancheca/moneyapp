@@ -20,6 +20,8 @@ import { BudgetForm } from "@/components/budgets/BudgetForm";
 import { PredictBudgets } from "@/components/budgets/PredictBudgets";
 import { BudgetRow } from "@/components/budgets/BudgetRow";
 import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
+import { SectionNotes } from "@/components/insights/SectionNotes";
+import { budgetSectionNotes } from "@/lib/section-notes";
 
 export const metadata: Metadata = { title: "Budgets" };
 export const dynamic = "force-dynamic";
@@ -65,6 +67,16 @@ export default async function BudgetsPage({
   const monthBounds = periodBounds(today, "monthly");
   const income = incomeExpectation(db, monthBounds.start, monthBounds.end, today);
   const leftToAllocateCents = income.totalCents - monthlyBudgetedCents;
+
+  // measured guidance: what the page as a whole knows and no single row states
+  const notes = budgetSectionNotes({
+    rows: statuses.map((s) => ({
+      categoryPath: s.categoryPath,
+      overdueCents: s.overdueCents,
+      uncoveredDays: s.uncoveredDays,
+      pace: s.pace,
+    })),
+  });
 
   const sections = PERIOD_SECTIONS.map((s) => ({
     ...s,
@@ -122,6 +134,8 @@ export default async function BudgetsPage({
           </p>
         </SurfaceCard>
       )}
+
+      <SectionNotes notes={notes} label="What this page noticed" />
 
       <div className="space-y-6">
         {sections.length === 0 ? (

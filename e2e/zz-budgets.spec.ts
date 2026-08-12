@@ -161,6 +161,24 @@ test("a rolling budget names the line it is graded against, and the toggle turns
   await expect(utilities.getByText("$250.00 plan + $133.00 rolled over")).toBeVisible();
 });
 
+test("the page states what it noticed across rows, measured and without a verdict", async ({
+  page,
+}) => {
+  await page.goto("/budgets");
+  const notes = page.getByRole("complementary", { name: "What this page noticed" });
+  await expect(notes).toBeVisible();
+
+  // the cross-row facts no single row can state: the fixture has one overdue
+  // bill (Meal Kit, $125.00) and every budget grading an under-covered window
+  await expect(notes.getByText(/One bill totalling \$125\.00/)).toBeVisible();
+  await expect(notes.getByText(/budgets are grading days the ledger has not reached/)).toBeVisible();
+
+  // …and it withholds rather than estimates: no projection or pace verdict is
+  // asserted over a window the ledger has not covered
+  await expect(notes.getByText(/lower bounds/)).toBeVisible();
+  await expect(notes.getByText(/On track|Off pace|projected/i)).toHaveCount(0);
+});
+
 test("a budget row opens its settings in place, and says what rollover does", async ({ page }) => {
   await page.goto("/budgets");
 
