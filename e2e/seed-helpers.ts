@@ -338,7 +338,7 @@ async function seedRecurring(db: AppDatabase): Promise<void> {
  * counts only render on the un-baselined Recurring "all" sub-view).
  */
 async function seedBudgets(db: AppDatabase): Promise<void> {
-  const { createBudget } = await import("../src/services/budgets");
+  const { createBudget, setBudgetRollover } = await import("../src/services/budgets");
   const { categories } = await import("../src/db/schema/categories");
   const { recurringSeries } = await import("../src/db/schema/recurring");
   const { transactions } = await import("../src/db/schema/transactions");
@@ -357,6 +357,28 @@ async function seedBudgets(db: AppDatabase): Promise<void> {
   createBudget(db, { categoryId: topLevel("Food"), period: "monthly", amountCents: 80_000, startsOn: "2026-07-01" });
   createBudget(db, { categoryId: topLevel("Subscriptions"), period: "monthly", amountCents: 4_000, startsOn: "2026-07-01" });
   createBudget(db, { categoryId: topLevel("Housing"), period: "monthly", amountCents: 200_000, startsOn: "2026-07-01" });
+
+  /*
+   * A budget that ROLLS OVER, so the carry disclosure has a rendered path.
+   *
+   * Utilities is chosen because it is the only top-level expense category with
+   * steady spend in both closed months and NO recurring series bound to it — so
+   * its carry is pure arithmetic with no tail or overdue term muddying it, and it
+   * cannot disturb the "exactly one overdue row" / "exactly one tail" assertions
+   * the other tests depend on.
+   *
+   * Deterministic at E2E_FAKE_TODAY (2026-07-08): the closed periods are May
+   * (spend $194.00) and June ($173.00) against $250.00/month, so the carry is
+   * ($250.00 − $194.00) + ($250.00 − $173.00) = $133.00 and the row is graded
+   * against $383.00. July is the CURRENT period and is never banked.
+   */
+  const utilities = createBudget(db, {
+    categoryId: topLevel("Utilities"),
+    period: "monthly",
+    amountCents: 250_00,
+    startsOn: "2026-05-01",
+  });
+  setBudgetRollover(db, utilities, { enabled: true });
 
   /*
    * A bill that came due and never posted — the only thing on this page that

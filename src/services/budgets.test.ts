@@ -21,8 +21,10 @@ import {
   budgetTail,
   computeAlert,
   computePace,
+  carryInto,
   createBudget,
   deactivateBudget,
+  setBudgetRollover,
   hasOverlappingChildBudget,
   listBudgetableCategories,
   incomeExpectation,
@@ -992,5 +994,173 @@ describe("data coverage (uncoveredDays / dataThroughOn)", () => {
     const s = budgetPaceStatuses(bundle.db, "2026-08-11").find((x) => x.categoryName === "Food")!;
     expect(s.dataThroughOn).toBe("2026-08-09");
     expect(s.uncoveredDays).toBe(2);
+  });
+});
+
+/**
+ * Opt-in rollover (migration 0012). Each accumulation rule gets its own test
+ * because each one exists to REFUSE a specific dishonest number, and a rule that
+ * is only implied by a happy-path assertion is a rule the next pass will delete.
+ */
+describe("rollover", () => {
+  /** A Food budget of `amountCents`/month from `startsOn`, rollover already on. */
+  function rollingFoodBudget(startsOn: string, amountCents = 500_00): string {
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents,
+      startsOn,
+    });
+    setBudgetRollover(bundle.db, id, { enabled: true });
+    return id;
+  }
+
+  function foodStatus(refDate: string) {
+    const s = budgetStatuses(bundle.db, refDate).find((r) => r.categoryPath === "Food");
+    if (!s) throw new Error("no Food budget status");
+    return s;
+  }
+
+  test("is off by default, and an untouched budget grades exactly as before", () => {
+    createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 500_00,
+      startsOn: "2026-05-01",
+    });
+    spend("2026-05-10", -100_00, "Food");
+
+    const s = foodStatus("2026-07-15");
+    expect(s.budget.rolloverEnabled).toBe(false);
+    expect(s.rolloverCents).toBe(0);
+    // available collapses onto the plan, so pct/alert/remaining are untouched
+    expect(s.availableCents).toBe(500_00);
+    expect(s.remainingCents).toBe(500_00);
+  });
+
+  test("unspent plan from each CLOSED period accumulates", () => {
+    rollingFoodBudget("2026-05-01");
+    spend("2026-05-10", -100_00, "Food"); // May surplus $400
+    spend("2026-06-10", -200_00, "Food"); // June surplus $300
+
+    const s = foodStatus("2026-07-15");
+    expect(s.rolloverCents).toBe(700_00);
+    expect(s.availableCents).toBe(1_200_00);
+  });
+
+  test("the period being graded is never banked — only closed ones are", () => {
+    rollingFoodBudget("2026-06-01");
+    // June is the CURRENT period at this refDate, so it contributes nothing even
+    // though nothing has been spent in it
+    expect(foodStatus("2026-06-20").rolloverCents).toBe(0);
+  });
+
+  test("a deficit is floored at zero, never carried forward as debt", () => {
+    rollingFoodBudget("2026-05-01");
+    spend("2026-05-10", -2_000_00, "Food"); // May overspent by $1,500
+
+    // May floors to 0 rather than −$1,500, so June's full $500 survives. Carrying
+    // the deficit would leave the row permanently, unrecoverably over.
+    expect(foodStatus("2026-07-15").rolloverCents).toBe(500_00);
+  });
+
+  test("a partial first period is skipped whole, never prorated", () => {
+    rollingFoodBudget("2026-05-15"); // opens mid-May
+
+    // only June is banked. Crediting the 17 days of May the budget did exist for
+    // would bank surplus out of days that were never planned.
+    expect(foodStatus("2026-07-15").rolloverCents).toBe(500_00);
+  });
+
+  test("rollover cannot be told to start before the budget does", () => {
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 500_00,
+      startsOn: "2026-05-01",
+    });
+    expect(() => setBudgetRollover(bundle.db, id, { enabled: true, startsOn: "2026-01-01" })).toThrow(
+      /cannot start before the budget/i,
+    );
+  });
+
+  test("a later rollover start narrows the lookback", () => {
+    const id = rollingFoodBudget("2026-04-01");
+    expect(foodStatus("2026-07-15").rolloverCents).toBe(1_500_00); // Apr+May+Jun
+
+    setBudgetRollover(bundle.db, id, { enabled: true, startsOn: "2026-06-01" });
+    expect(foodStatus("2026-07-15").rolloverCents).toBe(500_00); // June only
+  });
+
+  test("a bill that came due and never posted is not banked as surplus", () => {
+    rollingFoodBudget("2026-05-01");
+    const series = createSeries({
+      name: "Meal Kit",
+      nextExpectedOn: "2026-06-10",
+      nextExpectedAmountCents: -200_00,
+    });
+    bindSeries(series, "Food");
+
+    // June banks $500 − $200 committed = $300, on top of May's $500. Without the
+    // overdue term June would bank the full $500 of a month whose bill simply
+    // has not arrived yet — and the bill would then be charged to July as well.
+    expect(foodStatus("2026-07-15").rolloverCents).toBe(800_00);
+  });
+
+  test("the carry is capped when a cap is set", () => {
+    const id = rollingFoodBudget("2026-04-01");
+    expect(foodStatus("2026-07-15").rolloverCents).toBe(1_500_00);
+
+    setBudgetRollover(bundle.db, id, { enabled: true, capCents: 600_00 });
+    expect(foodStatus("2026-07-15").rolloverCents).toBe(600_00);
+  });
+
+  test("the carry is derived at read time, so a back-filled import moves it", () => {
+    rollingFoodBudget("2026-05-01");
+    expect(foodStatus("2026-07-15").rolloverCents).toBe(1_000_00);
+
+    // a statement lands late and back-fills a closed period — a stored balance
+    // would still be reporting $1,000.00
+    spend("2026-05-20", -150_00, "Food");
+    expect(foodStatus("2026-07-15").rolloverCents).toBe(850_00);
+  });
+
+  test("pct, alert and pace all grade against the carry, and cannot disagree", () => {
+    rollingFoodBudget("2026-05-01");
+    spend("2026-07-05", -700_00, "Food"); // over the $500 plan, under $1,500 available
+
+    const s = budgetPaceStatuses(bundle.db, "2026-07-15").find((r) => r.categoryPath === "Food")!;
+    expect(s.availableCents).toBe(1_500_00);
+    // past the plan but not past the line he is actually graded against
+    expect(s.spentCents).toBeGreaterThan(s.budget.amountCents);
+    expect(s.remainingCents).toBe(800_00);
+    expect(s.pct).toBeLessThan(1);
+    expect(s.alert).not.toBe("over");
+    // pace shares the denominator — split denominators would render
+    // "Over budget by <1%" on a row sitting comfortably under
+    expect(s.pace).not.toBe("over");
+  });
+
+  test("carryInto walks weekly periods too, not just months", () => {
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "weekly",
+      amountCents: 100_00,
+      startsOn: "2026-06-01", // a Monday — a whole ISO week
+    });
+    setBudgetRollover(bundle.db, id, { enabled: true });
+    spend("2026-06-03", -40_00, "Food");
+
+    // weeks of 06-01 and 06-08 are closed at 06-15; the first banks $60, the
+    // second the full $100
+    const budget = {
+      categoryId: catId("Food"),
+      period: "weekly" as const,
+      amountCents: 100_00,
+      startsOn: "2026-06-01",
+      rolloverStartsOn: null,
+      rolloverCapCents: null,
+    };
+    expect(carryInto(bundle.db, budget, "2026-06-15")).toBe(160_00);
   });
 });

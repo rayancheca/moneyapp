@@ -12,7 +12,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
  *
  * Food additionally carries a bill that came due and never posted (Meal Kit,
  * 2026-07-05), so the overdue disclosure — the past-facing sibling of the tail
- * — has a rendered path under test.
+ * — has a rendered path under test. Utilities is the one budget with rollover
+ * ON, banking $133.00 from two closed months against $250.00/month.
  */
 
 /** The budget row `<li>` carrying a given top-level category link. */
@@ -29,8 +30,8 @@ test("every active budget renders a pace bar, and states a verdict only where co
 
   // one progressbar per budget row, each with a spoken value
   const bars = page.getByRole("progressbar");
-  await expect(bars).toHaveCount(3);
-  for (const category of ["Food", "Subscriptions", "Housing"]) {
+  await expect(bars).toHaveCount(4);
+  for (const category of ["Food", "Subscriptions", "Housing", "Utilities"]) {
     await expect(budgetRow(page, category)).toBeVisible();
   }
 
@@ -118,6 +119,48 @@ test("a bill that came due and never posted is disclosed on its budget row", asy
   await expect(food.getByText("$778.36")).toBeVisible();
 });
 
+test("a rolling budget names the line it is graded against, and the toggle turns it off", async ({
+  page,
+}) => {
+  await page.goto("/budgets");
+  const utilities = budgetRow(page, "Utilities");
+  await expect(utilities).toBeVisible();
+
+  // May banked $56.00 and June $77.00 against $250.00/month, so the row is
+  // graded against $383.00 — and says so, because "Budget $250.00 · Left …"
+  // computed from $383.00 is a pair of numbers the reader cannot reconcile.
+  await expect(utilities.getByText("Available")).toBeVisible();
+  await expect(utilities.getByText("$250.00 plan + $133.00 rolled over")).toBeVisible();
+  // $383.00 is deliberately NOT asserted as visible text: nothing has posted to
+  // Utilities in July, so Available and Left are the same figure and the locator
+  // matches twice. The denominator is pinned by aria-valuetext below instead.
+
+  // the screen reader hears the same denominator, not the plan
+  await expect(utilities.getByRole("progressbar")).toHaveAttribute(
+    "aria-valuetext",
+    /of \$383\.00 \(\$133\.00 rolled over\)/,
+  );
+
+  // no other budget rolls over, so the carry is opted into and not ambient
+  await expect(page.getByText(/rolled over/)).toHaveCount(1);
+
+  // turning it off drops the carry and restores plain plan grading. "Available"
+  // disappearing is the assertion rather than "Budget" appearing — the row also
+  // carries the deactivate confirm sheet, whose copy contains that word.
+  const on = utilities.getByRole("button", { name: "Rolls over", exact: true });
+  await expect(on).toHaveAttribute("aria-pressed", "true");
+  await on.click();
+
+  const off = utilities.getByRole("button", { name: "Roll over", exact: true });
+  await expect(off).toHaveAttribute("aria-pressed", "false");
+  await expect(utilities.getByText(/rolled over/)).toHaveCount(0);
+  await expect(utilities.getByText("Available")).toHaveCount(0);
+
+  // restored, so sibling zz-specs see the seed unchanged
+  await off.click();
+  await expect(utilities.getByText("$250.00 plan + $133.00 rolled over")).toBeVisible();
+});
+
 test("the inline editor writes a new amount with a 6-month guide (restored)", async ({ page }) => {
   await page.goto("/budgets");
   const food = budgetRow(page, "Food");
@@ -191,8 +234,9 @@ test("Predict budgets reviews forecast amounts, creates one, and restores", asyn
   await row.getByRole("button", { name: "Deactivate" }).click();
   const gate = page.getByRole("dialog");
   await expect(gate.getByText(/stops being budgeted/).first()).toBeVisible();
-  await expect(page.getByRole("progressbar")).toHaveCount(4);
+  await expect(page.getByRole("progressbar")).toHaveCount(5);
   await gate.getByRole("button", { name: "Deactivate this budget" }).click();
 
-  await expect(page.getByRole("progressbar")).toHaveCount(3);
+  // back to the four seeded budgets
+  await expect(page.getByRole("progressbar")).toHaveCount(4);
 });

@@ -11,6 +11,7 @@ import { formatDayShort } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import type { BudgetPace, BudgetPaceStatus } from "@/services/budgets";
 import { BudgetAmountEditor, PERIOD_WORD } from "./BudgetAmountEditor";
+import { BudgetRolloverToggle } from "./BudgetRolloverToggle";
 
 /** Pace → the bar fill and the label tone. Green→amber→red by projected pace. */
 const PACE: Record<BudgetPace, { fill: string; text: string; label: string }> = {
@@ -77,16 +78,25 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
         : `${tone.label} · ${pctDisplay}% used`;
 
   const spentPct = clampPct(status.pct * 100);
-  const tailEndPct = clampPct(((status.spentCents + status.expectedTailCents) / budget.amountCents) * 100);
+  // divides by AVAILABLE, the same denominator as `pct` — dividing the tail by the
+  // plan while the fill divides by available would draw a tail longer than the
+  // spend it extends
+  const tailEndPct = clampPct(
+    ((status.spentCents + status.expectedTailCents) / status.availableCents) * 100,
+  );
   const tailWidth = Math.max(0, tailEndPct - spentPct);
   const tickPct = clampPct(status.elapsedFraction * 100);
   const over = status.remainingCents < 0;
 
   const tailPopover = usePopover<HTMLButtonElement>();
 
+  // the spoken sentence uses the SAME denominator the visual bar does, or
+  // assistive tech gets a strictly worse number than the sighted reader
   const valueText = `${status.categoryPath}: ${formatCents(status.spentCents)} of ${formatCents(
-    budget.amountCents,
-  )} (${pctDisplay}% of budget). ${undermeasured ? coverageSentence(status) : paceSentence(status)}.${
+    status.availableCents,
+  )}${
+    status.rolloverCents > 0 ? ` (${formatCents(status.rolloverCents)} rolled over)` : ""
+  } (${pctDisplay}% of budget). ${undermeasured ? coverageSentence(status) : paceSentence(status)}.${
     status.expectedTailCents > 0
       ? ` ${formatCents(status.expectedTailCents)} in recurring still expected this period.`
       : ""
@@ -220,9 +230,19 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
             <span className="text-ink-faint">Spent </span>
             <Money cents={status.spentCents} />
           </span>
+          {/* With a carry, "Budget $50 · Left $631" cannot be reconciled by the
+              reader, so the row names the line it is actually graded against and
+              shows its two parts. The editor below still edits the PLAN. */}
           <span>
-            <span className="text-ink-faint">Budget </span>
-            <NumberRoll value={formatCents(budget.amountCents)} />
+            <span className="text-ink-faint">{status.rolloverCents > 0 ? "Available " : "Budget "}</span>
+            <NumberRoll value={formatCents(status.availableCents)} />
+            {status.rolloverCents > 0 && (
+              <span className="text-ink-faint">
+                {" ("}
+                {formatCents(budget.amountCents)} plan + {formatCents(status.rolloverCents)} rolled
+                over)
+              </span>
+            )}
           </span>
           <span>
             <span className="text-ink-faint">{over ? "Over by " : "Left "}</span>
@@ -239,6 +259,11 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
           )}
         </div>
         <div className="flex items-center gap-1">
+          <BudgetRolloverToggle
+            budgetId={budget.id}
+            enabled={budget.rolloverEnabled}
+            categoryPath={status.categoryPath}
+          />
           <BudgetAmountEditor
             budgetId={budget.id}
             amountCents={budget.amountCents}

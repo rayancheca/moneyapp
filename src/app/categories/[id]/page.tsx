@@ -151,11 +151,17 @@ export default async function CategoryPage({
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-medium">Budget</h2>
-                <p className="text-xs text-ink-faint">{budget.period} budget for this category</p>
+                <p className="text-xs text-ink-faint">
+                  {budget.period} budget for this category
+                  {/* the "left" figure beside this is measured from AVAILABLE, so a
+                      carry has to be named here or the two cannot be reconciled */}
+                  {budget.rolloverCents > 0 &&
+                    ` · ${formatCents(budget.amountCents)} plan + ${formatCents(budget.rolloverCents)} rolled over`}
+                </p>
               </div>
               <div className="flex items-center gap-4 text-sm">
                 <span>
-                  <Money cents={budget.spentCents} /> of <Money cents={budget.amountCents} />
+                  <Money cents={budget.spentCents} /> of <Money cents={budget.availableCents} />
                 </span>
                 <span
                   className={

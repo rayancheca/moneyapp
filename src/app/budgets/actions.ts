@@ -7,7 +7,7 @@ import { firstIssueMessage, type ActionResult } from "@/app/transactions/action-
 import { getDb } from "@/db/client";
 import { BUDGET_PERIODS } from "@/db/schema/budgets";
 import { MoneyParseError, parseAmountToCents } from "@/lib/money";
-import { createBudget, deactivateBudget, updateBudget } from "@/services/budgets";
+import { createBudget, deactivateBudget, setBudgetRollover, updateBudget } from "@/services/budgets";
 import { predictBudgets, type PredictedBudget } from "@/services/category-forecast";
 
 // the single-argument form reports the SAME message when the field is missing
@@ -115,6 +115,34 @@ export async function updateBudgetAmountAction(input: {
   }
   revalidatePath("/budgets");
   return { ok: true, data: { id: parsed.data.budgetId, amountCents } };
+}
+
+const setRolloverSchema = z.object({
+  budgetId: z.string().min(1),
+  enabled: z.boolean(),
+});
+
+/**
+ * Turn a budget's rollover on or off. Amount, start and cap are deliberately not
+ * settable here — the toggle is the whole gesture, and `setBudgetRollover`
+ * refuses a start date earlier than the budget itself.
+ */
+export async function setBudgetRolloverAction(input: {
+  budgetId: string;
+  enabled: boolean;
+}): Promise<ActionResult<{ id: string; enabled: boolean }>> {
+  const parsed = setRolloverSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+  try {
+    setBudgetRollover(getDb(), parsed.data.budgetId, { enabled: parsed.data.enabled });
+  } catch (error: unknown) {
+    return { ok: false, error: friendlyMessage(error) };
+  }
+  revalidatePath("/budgets");
+  revalidatePath("/categories");
+  return { ok: true, data: { id: parsed.data.budgetId, enabled: parsed.data.enabled } };
 }
 
 const deactivateSchema = z.object({

@@ -160,6 +160,10 @@ export function seriesInCategory(db: AppDatabase, categoryId: string, today: str
 
 export interface CategoryBudgetRef {
   amountCents: number;
+  /** banked plan from closed periods; 0 unless the budget opted into rollover */
+  rolloverCents: number;
+  /** amountCents + rolloverCents — the denominator `remainingCents` is measured from */
+  availableCents: number;
   spentCents: number;
   remainingCents: number;
   period: string;
@@ -173,6 +177,8 @@ export function categoryBudgetRef(db: AppDatabase, categoryId: string, refDate: 
   if (!status) return null;
   return {
     amountCents: status.budget.amountCents,
+    rolloverCents: status.rolloverCents,
+    availableCents: status.availableCents,
     spentCents: status.spentCents,
     remainingCents: status.remainingCents,
     period: status.budget.period,

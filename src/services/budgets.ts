@@ -34,7 +34,11 @@ import { projectOccurrences, toProjectable } from "./recurring";
  * row; any "total budgeted" aggregate excludes budgets whose category is a
  * descendant of another budgeted category so totals never double-count.
  *
- * No rollover: leftover/overrun is informational only.
+ * Rollover is opt-in per budget and off by default. Off, leftover/overrun is
+ * informational only. On, unspent plan from CLOSED periods accumulates (see
+ * `carryInto`) and every "how am I doing" figure — pct, alert, pace, remaining —
+ * grades against `availableCents` instead. Totals and the expected-income
+ * comparison deliberately stay on the plan amount.
  */
 
 const WARN_NUMERATOR = 4; // 80% = 4/5, compared in integer math — no float drift
@@ -112,6 +116,40 @@ export function updateBudget(db: AppDatabase, id: string, patch: BudgetPatch): v
   }
 }
 
+export const budgetRolloverSchema = z.object({
+  enabled: z.boolean(),
+  /** null clears the override and falls back to the budget's own startsOn */
+  startsOn: z.string().refine(isValidIsoDate, "Invalid date").nullable().optional(),
+  capCents: z.number().int().positive("Rollover cap must be positive").nullable().optional(),
+});
+export type BudgetRolloverInput = z.infer<typeof budgetRolloverSchema>;
+
+/**
+ * Turn rollover on or off for one budget, with the one invariant the column
+ * cannot express: a carry may never begin BEFORE the budget did. Nothing else
+ * validates cross-field, so without this a caller could set the start to
+ * 2025-01-01 and manufacture exactly the fabricated budget history the
+ * accumulation rules exist to refuse.
+ */
+export function setBudgetRollover(db: AppDatabase, id: string, input: BudgetRolloverInput): void {
+  const parsed = budgetRolloverSchema.parse(input);
+  const existing = db.select().from(budgets).where(eq(budgets.id, id)).get();
+  if (!existing) throw new Error(`Unknown budget ${id}`);
+  if (parsed.startsOn != null && compareDates(parsed.startsOn, existing.startsOn) < 0) {
+    throw new Error(
+      `Rollover cannot start before the budget does (${existing.startsOn}) — there is no plan to carry from`,
+    );
+  }
+  db.update(budgets)
+    .set({
+      rolloverEnabled: parsed.enabled,
+      ...(parsed.startsOn !== undefined && { rolloverStartsOn: parsed.startsOn }),
+      ...(parsed.capCents !== undefined && { rolloverCapCents: parsed.capCents }),
+    })
+    .where(eq(budgets.id, id))
+    .run();
+}
+
 export function deactivateBudget(db: AppDatabase, id: string, endedOn: string = todayIso()): void {
   const existing = db.select().from(budgets).where(eq(budgets.id, id)).get();
   if (!existing) throw new Error(`Unknown budget ${id}`);
@@ -130,6 +168,9 @@ export interface BudgetStatus {
     amountCents: number;
     startsOn: string;
     endsOn: string | null;
+    rolloverEnabled: boolean;
+    rolloverStartsOn: string | null;
+    rolloverCapCents: number | null;
   };
   categoryName: string;
   /** "Food > Dining" for subcategories, "Food" for top-levels */
@@ -140,8 +181,12 @@ export interface BudgetStatus {
   partialPeriod: boolean;
   /** subtree rollup of active expense spending inside bounds */
   spentCents: number;
+  /** unspent plan banked from CLOSED periods; 0 whenever rollover is off */
+  rolloverCents: number;
+  /** amountCents + rolloverCents — the line this period is actually graded against */
+  availableCents: number;
   remainingCents: number;
-  /** spent/budget — may exceed 1 (over) or dip below 0 (net refunds) */
+  /** spent/available — may exceed 1 (over) or dip below 0 (net refunds) */
   pct: number;
   alert: BudgetAlert;
   /** an ancestor category also carries an active budget (overlap by design) */
@@ -157,6 +202,86 @@ export function computeAlert(spentCents: number, amountCents: number): BudgetAle
 }
 
 const PERIOD_ORDER: Record<BudgetPeriodKind, number> = { daily: 0, weekly: 1, monthly: 2, annual: 3 };
+
+interface CarryableBudget {
+  categoryId: string;
+  period: BudgetPeriodKind;
+  amountCents: number;
+  startsOn: string;
+  rolloverStartsOn: string | null;
+  rolloverCapCents: number | null;
+}
+
+/**
+ * Unspent plan banked from every CLOSED period, for a budget with rollover on.
+ *
+ *     balance = clampToCap(max(0, balance + amount − spent(p) − overdue(p)))
+ *
+ * Four rules, each of which exists because the alternative asserts something the
+ * ledger does not support:
+ *
+ * - **Floor at zero.** Carrying deficits forward would leave every category whose
+ *   mean spend exceeds its amount permanently, unrecoverably negative — Car's
+ *   $921.38 is lease $559.89 + insurance $361.49 EXACTLY, so its planned surplus
+ *   is $0.00/month and one bad month would mark it over budget forever. A colour
+ *   that can never return to green carries no information.
+ *
+ * - **Skip a partial first period.** A budget created mid-period has not lived a
+ *   whole one, and crediting it for the days before it existed banks a surplus
+ *   out of missing data: the ten budgets started 2026-07-16 would bank $6,522.71
+ *   from 16 days whose measured spend was $276.29 — more than a month of this
+ *   owner's expected income, for half a month.
+ *
+ * - **Never look back past `startsOn`.** Seeding from trailing history would hand
+ *   the Car budget thousands in "savings" for months in which he had no car. It
+ *   is the same fabrication as backfilling a cash wallet's opening history.
+ *
+ * - **Subtract the period's overdue.** A bill that came due and never posted is
+ *   money committed, not money saved. Housing's August window holds $0.00 spent
+ *   against $2,285.70 of rent overdue since 2026-08-08; without this term, August
+ *   closing before that statement lands banks $2,109.00 of "surplus" created
+ *   entirely by a bill the same row already flags in red — and then the rent
+ *   either back-dates (the carry silently changes) or posts in September (banked
+ *   once, charged again).
+ *
+ * Derived at read time and never stored: the 2026-08-03 import back-filled
+ * $623.58 of spend into an already-closed July, so a stored balance would have
+ * been stale within 72 hours.
+ *
+ * Cost: one `categorySpending` + one `budgetOverdue` per closed period, which
+ * grows with calendar time. Deliberately exact rather than truncated to a recent
+ * window — a silently-bounded lookback would report a carry that is not the sum
+ * of the periods it claims to cover. `rolloverStartsOn` is the supported way to
+ * bound it.
+ */
+export function carryInto(
+  db: AppDatabase,
+  budget: CarryableBudget,
+  currentPeriodStart: string,
+): number {
+  const from = budget.rolloverStartsOn ?? budget.startsOn;
+  const first = periodBounds(from, budget.period);
+  // a period the budget only partly owned is skipped whole, never prorated
+  let cursor = compareDates(first.start, from) < 0 ? addDays(first.end, 1) : first.start;
+
+  let balance = 0;
+  while (compareDates(cursor, currentPeriodStart) < 0) {
+    const p = periodBounds(cursor, budget.period);
+    // stop before any period that reaches into the one being graded — only
+    // CLOSED periods have a final answer to bank
+    if (compareDates(p.end, currentPeriodStart) >= 0) break;
+    const spent = categorySpending(db, {
+      categoryId: budget.categoryId,
+      from: p.start,
+      to: p.end,
+    }).spentCents;
+    const overdue = budgetOverdue(db, budget.categoryId, p.start, p.end).totalCents;
+    balance = Math.max(0, balance + budget.amountCents - spent - overdue);
+    if (budget.rolloverCapCents !== null) balance = Math.min(balance, budget.rolloverCapCents);
+    cursor = addDays(p.end, 1);
+  }
+  return balance;
+}
 
 /** Actual-vs-budget for every active budget, evaluated in refDate's period. */
 export function budgetStatuses(db: AppDatabase, refDate: string = todayIso()): BudgetStatus[] {
@@ -179,6 +304,11 @@ export function budgetStatuses(db: AppDatabase, refDate: string = todayIso()): B
         from: bounds.start,
         to: bounds.end,
       });
+      // Banked plan from closed periods. Off by default, and `carryInto` is not
+      // even called then, so a non-rollover budget grades exactly as it did
+      // before the column existed.
+      const rolloverCents = b.rolloverEnabled ? carryInto(db, b, period.start) : 0;
+      const availableCents = b.amountCents + rolloverCents;
       const node = idx.byId.get(b.categoryId);
       if (!node) throw new Error(`Budget ${b.id} points at unknown category ${b.categoryId}`);
       const parent = node.parentId ? idx.byId.get(node.parentId) : null;
@@ -202,15 +332,25 @@ export function budgetStatuses(db: AppDatabase, refDate: string = todayIso()): B
           amountCents: b.amountCents,
           startsOn: b.startsOn,
           endsOn: b.endsOn,
+          rolloverEnabled: b.rolloverEnabled,
+          rolloverStartsOn: b.rolloverStartsOn,
+          rolloverCapCents: b.rolloverCapCents,
         },
         categoryName: node.name,
         categoryPath: parent ? `${parent.name} > ${node.name}` : node.name,
         bounds,
         partialPeriod,
         spentCents,
-        remainingCents: b.amountCents - spentCents,
-        pct: spentCents / b.amountCents,
-        alert: computeAlert(spentCents, b.amountCents),
+        rolloverCents,
+        availableCents,
+        // Every "how am I doing" figure grades against AVAILABLE, not plan: with
+        // rollover on, the owner has said the carry is part of the line. Splitting
+        // them would put a contradiction on screen — BudgetRow derives its
+        // headline percentage from `pct` while gating on `pace`, so a row could
+        // read "Over budget by <1%" while sitting comfortably under.
+        remainingCents: availableCents - spentCents,
+        pct: spentCents / availableCents,
+        alert: computeAlert(spentCents, availableCents),
         isDescendantOfBudgeted,
         ancestorCategoryIds,
       };
@@ -744,6 +884,11 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
      * must not be extrapolated. Threshold is the budget itself rather than an
      * invented multiple: anything that alone exhausts the period cannot be the
      * daily habit the run-rate is modelling.
+     *
+     * Deliberately the PLAN amount and not `availableCents`: this is a question
+     * about the shape of a charge, not about how much room is left. Raising the
+     * bar by a large carry would let the $5,000 deposit back into the run-rate
+     * and reproduce the $105,000 projection exactly.
      */
     const oneOffCents = spendingTransactions(db, {
       categoryId: s.budget.categoryId,
@@ -794,7 +939,9 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
       recurringPostedCents: posted,
       expectedTailCents: tail.totalCents,
       projectedCents,
-      pace: computePace(s.spentCents, projectedCents, s.budget.amountCents),
+      // graded against AVAILABLE so pace and pct cannot disagree; `over` still
+      // means "past the line", it is just that rollover moves the line
+      pace: computePace(s.spentCents, projectedCents, s.availableCents),
       tail: tail.series,
     };
   });

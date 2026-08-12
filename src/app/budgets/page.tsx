@@ -76,7 +76,7 @@ export default async function BudgetsPage({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <PageHeader
           title="Budgets"
-          description="Daily, weekly, monthly, and annual budgets per category. Child spending rolls into parent budgets; leftover is visible but never rolls over."
+          description="Daily, weekly, monthly, and annual budgets per category. Child spending rolls into parent budgets. Leftover is forgotten each period unless a budget opts into rolling it over."
         />
         <PredictBudgets />
       </div>

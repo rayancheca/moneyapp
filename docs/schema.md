@@ -255,9 +255,16 @@ The seeded ATM-salary rule assigns a synthetic merchant **"Employer (cash)"** so
 salary is visible to merchant-grouped recurring detection (review finding).
 
 ### budgets
-`id · category_id · period (daily|weekly|monthly|annual) · amount_cents · starts_on · ends_on? · is_active` — UNIQUE(category_id, period) among active.
+`id · category_id · period (daily|weekly|monthly|annual) · amount_cents · starts_on · ends_on? · is_active · rollover_enabled · rollover_starts_on? · rollover_cap_cents?` — UNIQUE(category_id, period) among active.
 
-No rollover; leftover/overrun displayed informationally. **Overlap semantics**: child spend
+**Rollover is opt-in per budget, off by default** (migration 0012). Off, leftover/overrun is
+displayed informationally, unchanged. On, unspent plan from CLOSED periods accumulates
+(`carryInto`) and pct/alert/pace/remaining grade against `amount_cents + carry`. The carry is
+floored at zero (a deficit is never carried), skips a partial first period, never looks back past
+`starts_on` (`rollover_starts_on` may only move it LATER), subtracts each period's overdue bills,
+and is derived at read time — never stored, because imports back-fill closed periods.
+Totals and the expected-income comparison stay on the plan amount: a carry is money an earlier
+period brought in. **Overlap semantics**: child spend
 rolls into a parent's budget by design; alerts fire independently per budget row; any
 "total budgeted" aggregate excludes budgets whose category is a descendant of another
 budgeted category (no double-count).
