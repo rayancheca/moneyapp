@@ -1,7 +1,7 @@
 # Handoff — 2026-08-12, pass 46
 
-> **`main` = `226fc21`**, tree clean. tsc clean · **151 files / 2,724 unit** · `next build` clean ·
-> **393/393 e2e**. Two migrations' worth of queue cleared: the overdue e2e gap closed, opt-in
+> **`main` = `d5707c9`**, tree clean. tsc clean · **151 files / 2,733 unit** · `next build` clean ·
+> **398/398 e2e** (green twice consecutively). Two migrations' worth of queue cleared: the overdue e2e gap closed, opt-in
 > rollover shipped, calendar-month stepping measured and deliberately deferred.
 >
 > ⛔ **Owner asked for a large feature set mid-pass (§6). Read that before picking anything up.**
@@ -11,9 +11,9 @@
 | gate | result |
 |---|---|
 | `tsc --noEmit` | clean |
-| unit | **151 files / 2,724 tests** (2,712 at pass 45) |
+| unit | **151 files / 2,733 tests** (2,712 at pass 45) |
 | `next build` | clean |
-| `E2E_GATE=1 pnpm e2e:fresh` | **393 passed, 0 failed** (391 at pass 45) |
+| `E2E_GATE=1 pnpm e2e:fresh` | **398 passed, 0 failed** (391 at pass 45) |
 
 Restore points: `pre-0012-rollover.db`, `pre-travel-rebudget-2026-08-12.db`.
 
@@ -173,15 +173,81 @@ Infrastructure that already exists and **must be reused, not reinvented**:
   live on the category's *own* page (`CategoryManager.tsx:35-45`), so "editable" here means bringing
   those onto the list. `node.isEditable` gates locked categories.
 
-🔴 **The hard constraint on AI insights:** the owner's standing rule is *"i dont want any fake data…
-i dont want you hallucinating."* An LLM writing prose about money will invent figures unless the
-design makes it structurally impossible. Any insight whose numbers are not traceable to a
-pre-computed fact supplied by the app must be **discarded before storage**, and the e2e fixture must
-never reach a live API.
+### 6.1 Shipped: /categories rows expand, edit and reorder (`d5707c9`)
+
+Rename inline, re-parent, reorder within the row's own group — all previously off-page. `Disclosure`
+is extracted from `InstitutionCard`'s shipped idiom. Reorder writes `sort_order` and renumbers roots
+**globally across KIND_ORDER**, because every reader sorts by `sort_order` alone and a per-partition
+renumber gives `expense` and `income` both a 0. Up/down buttons, not drag: `dragstart` never fires
+from a finger and both existing drag surfaces here are mouse-only.
+
+Two lessons worth keeping:
+- **`toHaveCount(0)` cannot assert that collapsed content is unreachable.** Playwright resolves roles
+  from the DOM, not the real accessibility tree, so it happily matches controls inside an `inert`
+  subtree. Assert `aria-expanded` + `inert` on the region resolved through `aria-controls`.
+- **A gate that goes red near your change still needs attribution.** `zz-zz-txn-expander` began
+  failing ~3 runs in 4 while passing in isolation. I ran the full suite on **pristine main under the
+  same load** (green, 7.6m) before concluding anything — the trigger was mine. The bug was latent: the
+  date save's `router.refresh()` replaces the Notes button between locator resolution and click.
+  Hardened with a retry, and it fixes a flake that predates this pass.
+
+### 6.2 🔴 NOT shipped: LLM-written insights. The safety mechanism was tested and it fails.
+
+The design routed every figure through app-computed slots (`{{f7}}`) so the model could never emit a
+digit, with a validator discarding anything else. An adversarial pass **executed that validator
+against 17 attack strings and 16 were ACCEPTED**, including:
+
+```
+"{{f1}} is your largest spending category."   ← f1 is third largest
+"{{f1}} has been climbing since July."        ← invented trend and date
+"{{f1}} used about ½ of its plan."            ← /\d/ has no `u` flag
+```
+
+Root cause: a `Fact` carries only `display: string`. With no machine-readable value, **no comparison,
+ordering, delta, trend or causal claim can be verified even in principle**, and a denylist of English
+quantity words is unwinnable (`ninety`, `several`, `doubling`, `almost all` all pass). The slot
+mechanism blocks fabricated **numbers** and does nothing about fabricated **relationships**.
+
+Given the owner's standing rule — *"i dont want any fake data… i dont want you hallucinating"* — the
+model layer is **held**, not shipped. What ships instead is `SectionNote`: authored copy selected by a
+measured predicate, every figure rendered by the app's own formatter, no model involved and therefore
+no channel for an unsourced claim. Closing the LLM path needs `Fact.value?: number`, `kind`s of
+`rank`/`delta`/`trend`/`projection` gating the relational lexicon, and an **allowlisted** prose
+vocabulary rather than a denylist. That is a pass of its own.
 
 ## 7. Queue
 
-1. **§6 — the owner's feature set.** In flight; see the build order in the pass-46 design run.
+1. **§6 — the rest of the owner's feature set**, in this order. `/categories` has **zero** visual
+   baselines, so prove each mechanism there for free; `/budgets` owns exactly 8 of the 128 PNGs, so
+   land ALL its DOM in ONE commit and regenerate once with one explanation.
+   1. **`/budgets` card disclosure + a period editor + jargon tooltips — one commit, 8 PNGs.**
+      ⛔ **Never emit a `"Save"` button on /budgets**: `zz-budgets.spec.ts:182,191` call
+      `getByRole("button", { name: "Save" })` **unscoped** and `BudgetAmountEditor` is the only match
+      today, so a second one is a strict-mode throw. Use a native `<select>` committing on change.
+      ⚠️ The controls row (`BudgetRow.tsx`, the `flex items-center gap-1` div) has **no `flex-wrap`** —
+      add it with the 4th control or 320px breaks.
+   2. **Rollover cap + rollover-start editors.** The service is already done —
+      `budgetRolloverSchema` accepts both and `setBudgetRollover` refuses a start before the budget's
+      own `startsOn`. Only `setRolloverSchema` in `app/budgets/actions.ts` drops them. Lift the
+      optimistic flag out of `BudgetRolloverToggle` into `BudgetRow` first, or a panel reading the
+      server prop will not react until `router.refresh()`.
+   3. **`SectionNote`** (§6.2) across sections — measured predicates, no model.
+   4. **`/budgets` card reorder.** Blocked on a prerequisite bug: `app/budgets/page.tsx` renders the
+      section date range from `formatBounds(section.statuses[0]!)`, so the Monthly header shows Car's
+      clamped `Aug 11 – Aug 31` instead of the whole month. Fix that first, then order via a new
+      `budgets.display_order` column (NOT `app_settings` — budget ids are random UUIDs, so the
+      `z.enum` strictness that makes `dashboardLayout` safe is unavailable and `deactivateBudget`
+      would accrete dead UUIDs forever). Cards may never cross a period section.
+   5. **Category drag-and-drop** (pointer events, touch-capable) — the up/down buttons already cover
+      keyboard and touch, so this is polish. Separately: `ManagedAccounts.tsx`'s `touch-none` on an
+      `aria-hidden` grip makes a finger landing there unable to scroll `/accounts`.
+   6. **Animate the pace-bar refill.** Needs the fill to stop encoding the value as `width` (→
+      `clip-path: inset()` at `width:100%`), which is a pixel question against
+      `maxDiffPixelRatio: 0.001` — ship it alone and measure. Any WAAPI fallback must read tokens via
+      `getComputedStyle` and gate on `usePrefersReducedMotion()`; `globals.css`'s reduced-motion
+      guard cannot reach `element.animate()` timing.
+   7. **Add `/categories` to `visual.spec.ts` ROUTES** (+8 new PNGs) — defensible now that it carries
+      real UI, but argue it and commit it alone.
 2. **§4 — calendar-month stepping**, with all five prerequisites. ~356 days of runway.
 3. **Re-set the remaining stale budgets from data.** Travel is done ($50 → $100). Still stale: Fees
    $30 vs $102.86 measured, Food $1,430 vs $1,990.88, Entertainment $60 vs $123.09.
