@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { firstIssueMessage, type ActionResult } from "@/app/transactions/action-types";
 import { getDb } from "@/db/client";
-import { BUDGET_PERIODS } from "@/db/schema/budgets";
+import { BUDGET_PERIODS, type BudgetPeriodKind } from "@/db/schema/budgets";
 import { MoneyParseError, parseAmountToCents } from "@/lib/money";
 import { createBudget, deactivateBudget, setBudgetRollover, updateBudget } from "@/services/budgets";
 import { predictBudgets, type PredictedBudget } from "@/services/category-forecast";
@@ -120,29 +120,73 @@ export async function updateBudgetAmountAction(input: {
 const setRolloverSchema = z.object({
   budgetId: z.string().min(1),
   enabled: z.boolean(),
+  /** null clears the override; undefined leaves it untouched */
+  startsOn: z.string().nullable().optional(),
+  capCents: z.number().int().nullable().optional(),
 });
 
 /**
- * Turn a budget's rollover on or off. Amount, start and cap are deliberately not
- * settable here — the toggle is the whole gesture, and `setBudgetRollover`
- * refuses a start date earlier than the budget itself.
+ * Turn a budget's rollover on or off, and set the two knobs that shape the carry.
+ *
+ * The bounds are NOT re-stated here. `setBudgetRollover` is the single authority:
+ * it validates the date, requires a positive cap, and refuses a start earlier
+ * than the budget's own `startsOn` ("there is no plan to carry from"). Repeating
+ * those rules in the action would give two places to disagree about the same
+ * invariant, which is how a UI ends up more permissive than its service.
  */
 export async function setBudgetRolloverAction(input: {
   budgetId: string;
   enabled: boolean;
+  startsOn?: string | null;
+  capCents?: number | null;
 }): Promise<ActionResult<{ id: string; enabled: boolean }>> {
   const parsed = setRolloverSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
   try {
-    setBudgetRollover(getDb(), parsed.data.budgetId, { enabled: parsed.data.enabled });
+    setBudgetRollover(getDb(), parsed.data.budgetId, {
+      enabled: parsed.data.enabled,
+      ...(parsed.data.startsOn !== undefined && { startsOn: parsed.data.startsOn }),
+      ...(parsed.data.capCents !== undefined && { capCents: parsed.data.capCents }),
+    });
   } catch (error: unknown) {
     return { ok: false, error: friendlyMessage(error) };
   }
   revalidatePath("/budgets");
   revalidatePath("/categories");
   return { ok: true, data: { id: parsed.data.budgetId, enabled: parsed.data.enabled } };
+}
+
+const updatePeriodSchema = z.object({
+  budgetId: z.string().min(1),
+  period: z.enum(BUDGET_PERIODS),
+});
+
+/**
+ * Change a budget's period. Commits on change with no Save button — deliberately:
+ * two e2e specs click `getByRole("button", { name: "Save" })` UNSCOPED, and the
+ * inline amount editor is the only match today, so a second Save anywhere on this
+ * page is a strict-mode throw rather than a soft failure.
+ *
+ * One active budget per (category, period) is enforced by a partial unique index;
+ * `updateBudget` turns that constraint into a readable message.
+ */
+export async function updateBudgetPeriodAction(input: {
+  budgetId: string;
+  period: BudgetPeriodKind;
+}): Promise<ActionResult<{ id: string; period: BudgetPeriodKind }>> {
+  const parsed = updatePeriodSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+  try {
+    updateBudget(getDb(), parsed.data.budgetId, { period: parsed.data.period });
+  } catch (error: unknown) {
+    return { ok: false, error: friendlyMessage(error) };
+  }
+  revalidatePath("/budgets");
+  return { ok: true, data: { id: parsed.data.budgetId, period: parsed.data.period } };
 }
 
 const deactivateSchema = z.object({

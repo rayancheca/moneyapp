@@ -161,6 +161,63 @@ test("a rolling budget names the line it is graded against, and the toggle turns
   await expect(utilities.getByText("$250.00 plan + $133.00 rolled over")).toBeVisible();
 });
 
+test("a budget row opens its settings in place, and says what rollover does", async ({ page }) => {
+  await page.goto("/budgets");
+
+  // Food does NOT roll over, so its panel explains the default rather than
+  // showing knobs that would do nothing
+  const food = budgetRow(page, "Food");
+  const foodTrigger = food.getByRole("button", { name: "Details for the Food budget" });
+  await expect(foodTrigger).toHaveAttribute("aria-expanded", "false");
+  await foodTrigger.click();
+  await expect(foodTrigger).toHaveAttribute("aria-expanded", "true");
+  await expect(food.getByText(/Leftover is forgotten at the end of each month/)).toBeVisible();
+
+  // the period is editable here — a native select committing on change, never a
+  // second "Save" button (two specs below click that name unscoped)
+  const period = food.getByRole("combobox", { name: "Food budget period" });
+  await expect(period).toHaveValue("monthly");
+
+  // the graded window is stated, so a partial or under-covered row is explicable
+  await expect(food.getByText(/^Grading /)).toBeVisible();
+
+  // …and the rolling budget shows the two knobs plus what it has banked
+  const utilities = budgetRow(page, "Utilities");
+  await utilities.getByRole("button", { name: "Details for the Utilities budget" }).click();
+  await expect(utilities.getByText(/Banked/)).toBeVisible();
+  await expect(
+    utilities.getByRole("button", { name: /Utilities rollover cap: empty/ }),
+  ).toBeVisible();
+});
+
+test("capping the carry changes what the row is graded against, and clears again", async ({
+  page,
+}) => {
+  await page.goto("/budgets");
+  const utilities = budgetRow(page, "Utilities");
+  await utilities.getByRole("button", { name: "Details for the Utilities budget" }).click();
+
+  // $133.00 banked, uncapped → graded against $250 + $133
+  await expect(utilities.getByText("$250.00 plan + $133.00 rolled over")).toBeVisible();
+
+  const cap = utilities.getByRole("button", { name: /Utilities rollover cap/ });
+  await cap.click();
+  const capInput = utilities.getByRole("textbox", { name: "Utilities rollover cap" });
+  await capInput.fill("100");
+  await capInput.press("Enter");
+
+  // the cap is not decoration: the carry itself is clamped, so the line the row
+  // is graded against drops by exactly the $33.00 the cap refused
+  await expect(utilities.getByText("$250.00 plan + $100.00 rolled over")).toBeVisible();
+
+  // clearing it restores the uncapped carry — and the seed, for sibling specs
+  await utilities.getByRole("button", { name: /Utilities rollover cap/ }).click();
+  const clearInput = utilities.getByRole("textbox", { name: "Utilities rollover cap" });
+  await clearInput.fill("");
+  await clearInput.press("Enter");
+  await expect(utilities.getByText("$250.00 plan + $133.00 rolled over")).toBeVisible();
+});
+
 test("the inline editor writes a new amount with a 6-month guide (restored)", async ({ page }) => {
   await page.goto("/budgets");
   const food = budgetRow(page, "Food");

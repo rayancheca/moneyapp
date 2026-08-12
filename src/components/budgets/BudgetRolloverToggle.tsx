@@ -10,6 +10,8 @@ interface BudgetRolloverToggleProps {
   budgetId: string;
   enabled: boolean;
   categoryPath: string;
+  /** report the flag upward so the row's details panel reacts without a refetch */
+  onChange?: (enabled: boolean) => void;
 }
 
 /**
@@ -22,7 +24,12 @@ interface BudgetRolloverToggleProps {
  * the refresh is what makes the new number appear; the local flag only keeps the
  * control from flickering back while the server round-trips.
  */
-export function BudgetRolloverToggle({ budgetId, enabled, categoryPath }: BudgetRolloverToggleProps) {
+export function BudgetRolloverToggle({
+  budgetId,
+  enabled,
+  categoryPath,
+  onChange,
+}: BudgetRolloverToggleProps) {
   const router = useRouter();
   const [on, setOn] = useState(enabled);
   const [pending, startTransition] = useTransition();
@@ -30,10 +37,12 @@ export function BudgetRolloverToggle({ budgetId, enabled, categoryPath }: Budget
   const toggle = () => {
     const next = !on;
     setOn(next);
+    onChange?.(next);
     startTransition(async () => {
       const result = await setBudgetRolloverAction({ budgetId, enabled: next });
       if (!result.ok) {
         setOn(!next);
+        onChange?.(!next);
         toast({ title: result.error, tone: "negative" });
         return;
       }

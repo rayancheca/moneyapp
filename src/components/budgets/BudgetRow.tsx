@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { deactivateBudgetAction } from "@/app/budgets/actions";
 import { Icon } from "@/components/shell/Icon";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
@@ -10,7 +11,9 @@ import { Popover, usePopover } from "@/components/ui/Popover";
 import { formatDayShort } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import type { BudgetPace, BudgetPaceStatus } from "@/services/budgets";
+import { DisclosureChevron, DisclosureRegion, useDisclosure } from "@/components/ui/Disclosure";
 import { BudgetAmountEditor, PERIOD_WORD } from "./BudgetAmountEditor";
+import { BudgetDetails } from "./BudgetDetails";
 import { BudgetRolloverToggle } from "./BudgetRolloverToggle";
 
 /** Pace → the bar fill and the label tone. Green→amber→red by projected pace. */
@@ -57,6 +60,10 @@ interface BudgetRowProps {
  */
 export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
   const { budget, tail } = status;
+  // Lifted out of BudgetRolloverToggle so the details panel reacts to the toggle
+  // immediately. Left inside the toggle, the panel would read the stale server
+  // prop until router.refresh() landed and show the wrong half of its copy.
+  const [rolloverEnabled, setRolloverEnabled] = useState(budget.rolloverEnabled);
   const tone = PACE[status.pace];
   const pctDisplay = Math.round(status.pct * 100);
   // the headline % must say WHAT it measures: 108% of a budget is "over BY 8%",
@@ -89,6 +96,7 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
   const over = status.remainingCents < 0;
 
   const tailPopover = usePopover<HTMLButtonElement>();
+  const details = useDisclosure();
 
   // the spoken sentence uses the SAME denominator the visual bar does, or
   // assistive tech gets a strictly worse number than the sighted reader
@@ -258,10 +266,13 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-1">
+        {/* flex-wrap is load-bearing, not cosmetic: this row now carries four
+            controls and 320px is swept for horizontal overflow. */}
+        <div className="flex flex-wrap items-center gap-1">
           <BudgetRolloverToggle
             budgetId={budget.id}
-            enabled={budget.rolloverEnabled}
+            enabled={rolloverEnabled}
+            onChange={setRolloverEnabled}
             categoryPath={status.categoryPath}
           />
           <BudgetAmountEditor
@@ -301,8 +312,29 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
                 "No transaction is changed and nothing is deleted — set the budget again to resume tracking.",
             }}
           />
+          {/* in the controls cluster, not on its own line below it — the trigger
+              is a sibling of Edit and Deactivate, and wraps with them */}
+          <button
+            type="button"
+            onClick={details.toggle}
+            aria-expanded={details.triggerProps["aria-expanded"]}
+            aria-controls={details.triggerProps["aria-controls"]}
+            aria-label={`Details for the ${status.categoryPath} budget`}
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:bg-surface-sunken hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            Details
+            <DisclosureChevron open={details.open} />
+          </button>
         </div>
       </div>
+
+      {/* Panel content renders only when open — the page carries one of these per
+          budget and nothing in it is needed to read the bar. */}
+      <DisclosureRegion open={details.open} regionId={details.regionId}>
+        {(open) =>
+          open ? <BudgetDetails status={status} rolloverEnabled={rolloverEnabled} /> : null
+        }
+      </DisclosureRegion>
     </li>
   );
 }
