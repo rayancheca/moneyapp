@@ -209,7 +209,7 @@ export default async function InvestmentsPage({
             baseParams={viewBaseParams}
             benchmark={benchmark}
             benchmarkSymbol={benchmarkSymbol}
-            footer={<PortfolioStats overview={overview} />}
+            footer={<PortfolioStats overview={overview} today={today} />}
             session={session}
             pricedSymbols={intraday.grid.pricedSymbols}
             totalSymbols={intraday.grid.totalSymbols}
@@ -219,7 +219,7 @@ export default async function InvestmentsPage({
             <p className="py-6 text-sm text-ink-muted">
               A portfolio chart appears once holdings have at least two days of cached prices.
             </p>
-            <PortfolioStats overview={overview} />
+            <PortfolioStats overview={overview} today={today} />
           </SurfaceCard>
         )}
 

@@ -1,5 +1,6 @@
 import { Money } from "@/components/ui/Money";
-import { formatMonthYear } from "@/lib/format-date";
+import { dayChangeLabel } from "@/lib/day-change-label";
+import { formatDayShort, formatMonthYear } from "@/lib/format-date";
 import type { PortfolioOverview } from "@/services/portfolio";
 
 /**
@@ -19,22 +20,48 @@ function toneClass(value: number | null): string {
   return value < 0 ? "text-negative" : "text-positive";
 }
 
-export function PortfolioStats({ overview }: { overview: PortfolioOverview }) {
+export function PortfolioStats({ overview, today }: { overview: PortfolioOverview; today: string }) {
+  /*
+   * "Today" is a claim about WHEN, and this stat is never measured over today
+   * unless the prices happen to be current. It is always the flow-adjusted move
+   * from `dayChangeVsDay` to `asOf` — two days that both sit in the past
+   * whenever prices have not been refreshed, which is this page's normal
+   * resting state. On the real ledger `asOf` trails today by a week, so the
+   * word asserted that a move measured between Aug 5 and Aug 6 happened today,
+   * while the price-age note directly above said the closes were seven days
+   * old. Two elements on one screen contradicting each other.
+   *
+   * So the word is spent only when it is true, and when it is not, the dates
+   * that WERE measured are named instead of estimated over.
+   */
+  const { label, interval } = dayChangeLabel(
+    overview.asOf,
+    overview.dayChangeVsDay,
+    today,
+    formatDayShort,
+  );
   return (
     <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-4 border-t border-line pt-4 sm:grid-cols-4">
       <div>
         <dt className="text-xs font-medium uppercase tracking-[0.08em] text-ink-faint">
-          Today{overview.dayChangeVsDay ? "" : ""}
+          {label}
         </dt>
-        <dd className="mt-1 flex items-baseline gap-1.5">
-          <Money cents={overview.dayChangeCents} flow className="text-sm font-medium" />
-          <span className={`figures text-xs ${toneClass(overview.dayChangeCents)}`}>
-            {pctText(overview.dayChangePct)}
-          </span>
-          {!overview.dayChangeExact && (
-            <span className="text-[11px] text-ink-faint" title="A crypto trade this day — market P/L not separable to the cent">
-              ≈
+        {/* the interval note lives inside the dd, so each dl > div holds exactly
+            a dt/dd pair (axe definition-list) — same idiom as Total return */}
+        <dd className="mt-1">
+          <span className="flex items-baseline gap-1.5">
+            <Money cents={overview.dayChangeCents} flow className="text-sm font-medium" />
+            <span className={`figures text-xs ${toneClass(overview.dayChangeCents)}`}>
+              {pctText(overview.dayChangePct)}
             </span>
+            {!overview.dayChangeExact && (
+              <span className="text-[11px] text-ink-faint" title="A crypto trade this day — market P/L not separable to the cent">
+                ≈
+              </span>
+            )}
+          </span>
+          {interval && (
+            <span className="mt-0.5 block text-[11px] font-normal text-ink-faint">{interval}</span>
           )}
         </dd>
       </div>
