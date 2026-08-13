@@ -388,6 +388,43 @@ export function hasOverlappingChildBudget(statuses: readonly BudgetStatus[]): bo
   return statuses.some((s) => s.ancestorCategoryIds.some((id) => present.has(id)));
 }
 
+const PERIOD_LABEL: Record<BudgetPeriodKind, string> = {
+  daily: "Daily",
+  weekly: "Weekly",
+  monthly: "Monthly",
+  annual: "Annual",
+};
+
+export interface BudgetSection<T> {
+  period: BudgetPeriodKind;
+  label: string;
+  /**
+   * The PERIOD's own window. Deliberately NOT read off a member row: a budget
+   * created mid-period is start-clamped (see the clamp above), so a section
+   * labelled from `statuses[0]` inherits one budget's short window and states it
+   * over every other row. The per-row clamped window belongs on the row.
+   */
+  bounds: PeriodBounds;
+  statuses: T[];
+}
+
+/**
+ * Group statuses into the period sections the page renders, in period order,
+ * dropping periods with no budgets. Pure and generic over the status shape so
+ * the grouping can be tested without standing up a database.
+ */
+export function budgetSections<T extends { budget: { period: BudgetPeriodKind } }>(
+  statuses: readonly T[],
+  refDate: string,
+): BudgetSection<T>[] {
+  return BUDGET_PERIODS.map((period) => ({
+    period,
+    label: PERIOD_LABEL[period],
+    bounds: periodBounds(refDate, period),
+    statuses: statuses.filter((s) => s.budget.period === period),
+  })).filter((section) => section.statuses.length > 0);
+}
+
 // ── Form support ─────────────────────────────────────────────────────
 
 export interface BudgetableCategory {

@@ -1,16 +1,15 @@
 import type { Metadata } from "next";
 import { getDb } from "@/db/client";
-import { periodBounds, todayIso } from "@/lib/dates";
+import { periodBounds, todayIso, type PeriodBounds } from "@/lib/dates";
 import { formatDayShort } from "@/lib/format-date";
-import type { BudgetPeriodKind } from "@/db/schema/budgets";
 import {
   budgetGuidanceCents,
   budgetPaceStatuses,
+  budgetSections,
   incomeExpectation,
   hasOverlappingChildBudget,
   listBudgetableCategories,
   totalBudgetedCents,
-  type BudgetPaceStatus,
 } from "@/services/budgets";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Money } from "@/components/ui/Money";
@@ -26,15 +25,8 @@ import { budgetSectionNotes } from "@/lib/section-notes";
 export const metadata: Metadata = { title: "Budgets" };
 export const dynamic = "force-dynamic";
 
-const PERIOD_SECTIONS: { period: BudgetPeriodKind; label: string }[] = [
-  { period: "daily", label: "Daily" },
-  { period: "weekly", label: "Weekly" },
-  { period: "monthly", label: "Monthly" },
-  { period: "annual", label: "Annual" },
-];
-
-function formatBounds(status: BudgetPaceStatus): string {
-  const { start, end } = status.bounds;
+function formatBounds(bounds: PeriodBounds): string {
+  const { start, end } = bounds;
   return start === end ? formatDayShort(start) : `${formatDayShort(start)} – ${formatDayShort(end)}`;
 }
 
@@ -78,10 +70,7 @@ export default async function BudgetsPage({
     })),
   });
 
-  const sections = PERIOD_SECTIONS.map((s) => ({
-    ...s,
-    statuses: statuses.filter((st) => st.budget.period === s.period),
-  })).filter((s) => s.statuses.length > 0);
+  const sections = budgetSections(statuses, today);
 
   return (
     <>
@@ -150,7 +139,7 @@ export default async function BudgetsPage({
                 <h2 className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
                   {section.label}
                   <span className="ml-2 font-normal normal-case tracking-normal">
-                    {formatBounds(section.statuses[0]!)}
+                    {formatBounds(section.bounds)}
                   </span>
                 </h2>
                 <span className="text-xs text-ink-muted">

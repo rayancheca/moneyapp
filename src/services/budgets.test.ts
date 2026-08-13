@@ -16,6 +16,7 @@ import { categorySpending, recurringSeriesIdsForCategory } from "./analytics";
 import {
   budgetGuidanceCents,
   budgetPaceStatuses,
+  budgetSections,
   budgetStatuses,
   budgetOverdue,
   budgetTail,
@@ -1162,5 +1163,71 @@ describe("rollover", () => {
       rolloverCapCents: null,
     };
     expect(carryInto(bundle.db, budget, "2026-06-15")).toBe(160_00);
+  });
+});
+
+describe("budgetSections — a section is labelled by its PERIOD, never by a member row", () => {
+  /**
+   * The defect this exists to prevent, measured on the real ledger 2026-08-13:
+   * the page read its section range off `statuses[0].bounds`. A budget created
+   * mid-period is START-CLAMPED, so the Car budget (created 2026-08-11, and
+   * alphabetically first among eleven) made the whole Monthly header read
+   * "Aug 11 – Aug 31" over ten budgets that had been graded since Aug 1.
+   *
+   * The clamped row must sort FIRST here, or the test passes without the fix.
+   */
+  test("a start-clamped first row does not shrink its section's window", () => {
+    createBudget(bundle.db, {
+      // sorts before "Food" — the structural position the real Car budget held
+      categoryId: catId("Entertainment"),
+      period: "monthly",
+      amountCents: 92_138,
+      startsOn: "2026-08-11",
+    });
+    createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 143_000,
+      startsOn: "2026-07-16",
+    });
+
+    const statuses = budgetStatuses(bundle.db, "2026-08-13");
+    const [section] = budgetSections(statuses, "2026-08-13");
+
+    // the premise: the clamped budget really is first, and really is clamped
+    expect(statuses[0]!.categoryPath).toBe("Entertainment");
+    expect(statuses[0]!.partialPeriod).toBe(true);
+    expect(statuses[0]!.bounds).toEqual({ start: "2026-08-11", end: "2026-08-31" });
+
+    // the section spans the whole month regardless
+    expect(section!.bounds).toEqual({ start: "2026-08-01", end: "2026-08-31" });
+    expect(section!.label).toBe("Monthly");
+    expect(section!.statuses).toHaveLength(2);
+  });
+
+  test("periods with no budgets are dropped, and the rest stay in period order", () => {
+    createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "annual",
+      amountCents: 500_000,
+      startsOn: "2026-01-01",
+    });
+    createBudget(bundle.db, {
+      categoryId: catId("Transport"),
+      period: "weekly",
+      amountCents: 10_000,
+      startsOn: "2026-07-01",
+    });
+
+    const sections = budgetSections(budgetStatuses(bundle.db, "2026-08-13"), "2026-08-13");
+
+    expect(sections.map((s) => s.period)).toEqual(["weekly", "annual"]);
+    expect(sections.map((s) => s.label)).toEqual(["Weekly", "Annual"]);
+    // each carries ITS OWN period's window, not the page's month
+    expect(sections[1]!.bounds).toEqual({ start: "2026-01-01", end: "2026-12-31" });
+  });
+
+  test("emits nothing at all when there are no budgets", () => {
+    expect(budgetSections([], "2026-08-13")).toEqual([]);
   });
 });
