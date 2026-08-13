@@ -95,6 +95,56 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
   return notes;
 }
 
+export interface HoldingPriceNoteInput {
+  /** one entry per ACTIVE holding with a live quantity */
+  rows: readonly { quotedOn: string | null }[];
+  /** today, so staleness is a subtraction and never a projection */
+  today: string;
+  /** inclusive day count between two ISO dates */
+  daysBetween: (from: string, to: string) => number;
+  formatDay: (iso: string) => string;
+}
+
+/**
+ * How old the closes behind this page's market value are.
+ *
+ * This is the one thing /investments knows and never says. Its own staleness
+ * disclosures cover a different question: `SessionNote` describes today's
+ * intraday session and is mounted only on the 1D range, and the holdings table
+ * discloses holdings with NO price. A holding priced a week ago is neither —
+ * it is priced, and the number is simply old.
+ *
+ * ⚠️ The wording turns on min vs max deliberately. Saying "every position" over
+ * a `max()` would be a FALSE statement about the stalest rows the moment one
+ * symbol lags (a delisting, a partial backfill, a provider gap). When the dates
+ * disagree the note anchors on the OLDEST and says so.
+ */
+export function holdingPriceSectionNotes(input: HoldingPriceNoteInput): SectionNote[] {
+  const dates = input.rows.map((r) => r.quotedOn).filter((d): d is string => d !== null);
+  // Nothing priced at all is the holdings table's story, not this one, and an
+  // empty portfolio must never produce "priced 0 days ago".
+  if (dates.length === 0) return [];
+
+  const oldest = dates.reduce((a, b) => (b < a ? b : a));
+  const newest = dates.reduce((a, b) => (b > a ? b : a));
+  // Priced through today: there is no gap, so there is nothing to report.
+  if (input.daysBetween(newest, input.today) <= 0) return [];
+
+  const age = input.daysBetween(oldest, input.today);
+  const uniform = oldest === newest;
+  return [
+    {
+      id: "investments-price-age",
+      body:
+        (uniform
+          ? `Every position on this page still carries its close from ${input.formatDay(oldest)}`
+          : `The oldest close behind these figures is from ${input.formatDay(oldest)}`) +
+        ` — ${age} ${age === 1 ? "day" : "days"} ago. Market value and allocation are computed from ` +
+        `stored closes, not from a live quote, so use Refresh prices before reading them as current.`,
+    },
+  ];
+}
+
 export interface CategoryNoteInput {
   /** every category, with the count of transactions in its OWN subtree */
   rows: readonly { name: string; subtreeTxnCount: number; isArchived: boolean; hasChildren: boolean }[];

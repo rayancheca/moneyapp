@@ -10,8 +10,8 @@ import {
   resolveBenchmarkSymbol,
 } from "@/lib/benchmark-symbol";
 import { CHART_RANGES } from "@/lib/chart-range";
-import { monthKey, todayIso } from "@/lib/dates";
-import { formatMonthYear } from "@/lib/format-date";
+import { diffDays, monthKey, todayIso } from "@/lib/dates";
+import { formatDayLong, formatMonthYear } from "@/lib/format-date";
 import { benchmarkReturns } from "@/lib/portfolio-returns";
 import { carryForwardTo } from "@/lib/price-series";
 import { resolveViewState } from "@/lib/view-state";
@@ -30,6 +30,8 @@ import {
   portfolioSeries,
   topMovers,
 } from "@/services/portfolio";
+import { SectionNotes } from "@/components/insights/SectionNotes";
+import { holdingPriceSectionNotes } from "@/lib/section-notes";
 import { AllocationDonut } from "@/components/investments/AllocationDonut";
 import { HoldingActionsMenu } from "@/components/investments/HoldingActionsMenu";
 import { RefreshPricesButton } from "@/components/investments/RefreshPricesButton";
@@ -142,6 +144,14 @@ export default async function InvestmentsPage({
       }
     : null;
   const rows = holdingRows(db);
+  // How old the closes behind every figure on this page are. `quotedOn` was
+  // already computed per row and rendered nowhere, so this costs no query.
+  const priceNotes = holdingPriceSectionNotes({
+    rows: rows.filter((r) => r.quantityE8 > 0),
+    today,
+    daysBetween: diffDays,
+    formatDay: formatDayLong,
+  });
   const movers = topMovers(db);
   const allocation = allocationSlices(db);
   const calendarMonth = pnlCalendarMonth(db, monthKey(overview.asOf ?? today), today);
@@ -179,6 +189,11 @@ export default async function InvestmentsPage({
       </div>
 
       {error && <ErrorBanner message={error} />}
+
+      {/* Mounted HERE, not inside PortfolioChartPanel: ChartFocus renders its
+          panel twice (inline and in the focus dialog), so a note placed inside
+          it would exist twice in the DOM. */}
+      <SectionNotes notes={priceNotes} label="What this page noticed" />
 
       <div className="space-y-6">
         {/* the chart panel provides its own SurfaceCard (via ChartFocus) and

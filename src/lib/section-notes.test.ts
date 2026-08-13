@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   budgetSectionNotes,
   categorySectionNotes,
+  holdingPriceSectionNotes,
   RESERVED_NOTE_PHRASES,
   type SectionNote,
 } from "./section-notes";
@@ -62,6 +63,22 @@ describe("budgetSectionNotes", () => {
     expect(coverage.body).not.toContain("Housing");
   });
 
+  test("reports the worst gap even when it is not the first row", () => {
+    // the existing case has the worst gap first, so the reduce only ever kept its
+    // accumulator — this exercises the arm that replaces it
+    const notes = budgetSectionNotes({
+      rows: [row({ categoryPath: "Travel", uncoveredDays: 4 }), row({ categoryPath: "Food", uncoveredDays: 11 })],
+    });
+    expect(notes[0]!.body).toContain("11 days on Food");
+  });
+
+  test("reads singular for a one-day coverage gap", () => {
+    // pre-existing branch, never exercised until the coverage gate was run
+    const notes = budgetSectionNotes({ rows: [row({ uncoveredDays: 1 })] });
+    expect(notes[0]!.body).toContain("up to 1 day on");
+    expect(notes[0]!.body).not.toContain("1 days");
+  });
+
   test("never states a projection or a verdict over an uncovered window", () => {
     const notes = budgetSectionNotes({ rows: [row({ uncoveredDays: 11 })] });
     const body = notes.map((n) => n.body).join(" ");
@@ -103,8 +120,74 @@ describe("categorySectionNotes", () => {
     expect(notes[0]!.body).toContain("2 of 3 live categories");
   });
 
+  test("says nothing when every category is archived", () => {
+    // the live set is empty, so there is no denominator to speak of
+    expect(categorySectionNotes({ rows: [cat({ isArchived: true }), cat({ isArchived: true })] })).toEqual([]);
+  });
+
   test("says nothing when every category is in use", () => {
     expect(categorySectionNotes({ rows: [cat(), cat({ name: "Housing" })] })).toEqual([]);
+  });
+});
+
+describe("holdingPriceSectionNotes", () => {
+  const days = (from: string, to: string) =>
+    Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000);
+  const fmt = (iso: string) => iso;
+  const call = (rows: { quotedOn: string | null }[], today = "2026-08-13") =>
+    holdingPriceSectionNotes({ rows, today, daysBetween: days, formatDay: fmt });
+
+  test("says nothing when every holding is priced through today", () => {
+    expect(call([{ quotedOn: "2026-08-13" }, { quotedOn: "2026-08-13" }])).toEqual([]);
+  });
+
+  test("emits nothing rather than a zero when nothing is priced at all", () => {
+    // an unpriced holding is the holdings table's story; "priced 0 days ago" here
+    // would be a measurement of an absence
+    expect(call([{ quotedOn: null }, { quotedOn: null }])).toEqual([]);
+    expect(call([])).toEqual([]);
+  });
+
+  test("reports one shared date as covering every position", () => {
+    const [note] = call([{ quotedOn: "2026-08-06" }, { quotedOn: "2026-08-06" }]);
+    expect(note!.body).toContain("Every position");
+    expect(note!.body).toContain("2026-08-06");
+    expect(note!.body).toContain("7 days ago");
+  });
+
+  test("NEVER says 'every position' when the dates disagree — it anchors on the oldest", () => {
+    // the trap: a max()-driven "every position ... from <newest>" is a false
+    // statement about the stalest rows the moment one symbol lags
+    const [note] = call([{ quotedOn: "2026-08-06" }, { quotedOn: "2026-08-12" }]);
+    expect(note!.body).not.toContain("Every position");
+    expect(note!.body).toContain("oldest close");
+    expect(note!.body).toContain("2026-08-06");
+    expect(note!.body).not.toContain("2026-08-12");
+  });
+
+  test("finds the oldest and newest whichever order the rows arrive in", () => {
+    // the reduce compares pairwise, so a descending list exercises the other arm
+    const descending = call([{ quotedOn: "2026-08-12" }, { quotedOn: "2026-08-06" }])[0]!.body;
+    const ascending = call([{ quotedOn: "2026-08-06" }, { quotedOn: "2026-08-12" }])[0]!.body;
+    expect(descending).toBe(ascending);
+    expect(descending).toContain("2026-08-06");
+  });
+
+  test("ignores holdings with no price when computing the oldest", () => {
+    const [note] = call([{ quotedOn: null }, { quotedOn: "2026-08-06" }]);
+    expect(note!.body).toContain("Every position");
+    expect(note!.body).toContain("2026-08-06");
+  });
+
+  test("reads singular for a one-day gap", () => {
+    const [note] = call([{ quotedOn: "2026-08-12" }]);
+    expect(note!.body).toContain("1 day ago");
+    expect(note!.body).not.toContain("1 days ago");
+  });
+
+  test("states no projection and no verdict", () => {
+    const body = call([{ quotedOn: "2026-08-06" }])[0]!.body;
+    expect(body).not.toMatch(/probably|should be|estimated|worth about/i);
   });
 });
 
@@ -122,6 +205,12 @@ describe("reserved phrases", () => {
       ],
     }),
     ...categorySectionNotes({ rows: [{ name: "Gifts", subtreeTxnCount: 0, isArchived: false, hasChildren: false }] }),
+    ...holdingPriceSectionNotes({
+      rows: [{ quotedOn: "2026-08-06" }, { quotedOn: "2026-08-12" }],
+      today: "2026-08-13",
+      daysBetween: (f, t) => Math.round((Date.parse(t) - Date.parse(f)) / 86_400_000),
+      formatDay: (iso) => iso,
+    }),
   ];
 
   test("no note repeats a phrase the surrounding UI already owns", () => {
