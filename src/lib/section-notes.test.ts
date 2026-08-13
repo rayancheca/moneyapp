@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   budgetSectionNotes,
+  categoryNoteRows,
   categorySectionNotes,
   holdingPriceSectionNotes,
   RESERVED_NOTE_PHRASES,
@@ -89,44 +90,196 @@ describe("budgetSectionNotes", () => {
 
 describe("categorySectionNotes", () => {
   const cat = (over: Partial<Parameters<typeof categorySectionNotes>[0]["rows"][number]> = {}) => ({
-    name: "Food",
+    path: "Food",
     subtreeTxnCount: 10,
     isArchived: false,
-    hasChildren: false,
+    hasLiveChildren: false,
+    isEditable: true,
+    hasScheduledSeries: false,
     ...over,
   });
 
-  test("a parent whose CHILDREN hold the transactions is never called unused", () => {
+  test("a parent whose CHILDREN hold the transactions is never called empty", () => {
     // the defect this exists to prevent: the per-row count is direct-only, so
     // Investments reads 0 while its children hold thousands
     const notes = categorySectionNotes({
       rows: [
-        cat({ name: "Investments", subtreeTxnCount: 0, hasChildren: true }),
-        cat({ name: "Buys", subtreeTxnCount: 2_066 }),
+        cat({ path: "Investments", subtreeTxnCount: 0, hasLiveChildren: true }),
+        cat({ path: "Investments > Buys", subtreeTxnCount: 2_066 }),
       ],
     });
     expect(notes).toEqual([]);
   });
 
-  test("counts only live, childless, never-used categories", () => {
+  /*
+   * ⛔ THE ONE THAT MATTERS. `Car > Car Insurance` holds zero transactions and
+   * carries a confirmed −$361.49 monthly bill that has not charged yet. Calling
+   * it empty tells the owner to archive a live commitment.
+   *
+   * Coverage cannot enforce this test. The gate is an operand in an `&&` chain,
+   * and v8 scores that operand covered the moment it is EVALUATED — which every
+   * other test here already does. Branch coverage reads 100% with the excluding
+   * direction never once executed, so this case is only ever caught by someone
+   * writing it on purpose.
+   */
+  test("a category carrying a scheduled series is never called empty", () => {
+    const notes = categorySectionNotes({
+      rows: [cat({ path: "Car > Car Insurance", subtreeTxnCount: 0, hasScheduledSeries: true }), cat()],
+    });
+    expect(notes).toEqual([]);
+  });
+
+  test("a category the archive guard refuses is never named", () => {
+    // advertising an action the service will reject is worse than silence
+    const notes = categorySectionNotes({
+      rows: [cat({ path: "Uncategorized", subtreeTxnCount: 0, isEditable: false }), cat()],
+    });
+    expect(notes).toEqual([]);
+  });
+
+  test("a parent whose only children are ARCHIVED counts as a leaf", () => {
+    // hasLiveChildren, not hasChildren: filtering on parentId alone would hide
+    // such a row from this note forever
     const notes = categorySectionNotes({
       rows: [
-        cat({ name: "Gifts", subtreeTxnCount: 0 }),
-        cat({ name: "Education", subtreeTxnCount: 0 }),
-        cat({ name: "Old", subtreeTxnCount: 0, isArchived: true }),
-        cat({ name: "Food", subtreeTxnCount: 500 }),
+        cat({ path: "Hobbies", subtreeTxnCount: 0, hasLiveChildren: false }),
+        cat({ path: "Hobbies > Model Trains", subtreeTxnCount: 0, isArchived: true }),
+        cat(),
       ],
     });
-    expect(notes[0]!.body).toContain("2 of 3 live categories");
+    expect(notes[0]!.body).toContain("Hobbies holds no transactions.");
+  });
+
+  test("names every empty category when there are few, and reads singular for one", () => {
+    const one = categorySectionNotes({ rows: [cat({ path: "Gifts", subtreeTxnCount: 0 }), cat()] });
+    expect(one[0]!.body).toContain("Gifts holds no transactions.");
+    expect(one[0]!.body).toContain("you do not use it");
+    expect(one[0]!.body).toContain("its transactions are landing");
+    expect(one[0]!.body).toContain("before archiving it.");
+
+    const two = categorySectionNotes({
+      rows: [
+        cat({ path: "Fees > Interest Charges", subtreeTxnCount: 0 }),
+        cat({ path: "Utilities > Water/Gas", subtreeTxnCount: 0 }),
+        cat({ path: "Food", subtreeTxnCount: 500 }),
+      ],
+    });
+    expect(two[0]!.body).toContain(
+      "2 categories hold no transactions: Fees > Interest Charges, Utilities > Water/Gas.",
+    );
+    expect(two[0]!.body).toContain("you do not use them");
+    expect(two[0]!.body).toContain("before archiving one.");
+  });
+
+  test("caps the list and switches to a count when many are empty", () => {
+    // the e2e fixture really does have 28 of these; naming all of them would
+    // turn a note into a wall
+    const rows = [...Array.from({ length: 7 }, (_, i) => cat({ path: `Empty ${i}`, subtreeTxnCount: 0 })), cat()];
+    const [note] = categorySectionNotes({ rows });
+    expect(note!.body).toContain("7 categories hold no transactions, including Empty 0, Empty 1, Empty 2, Empty 3.");
+    expect(note!.body).not.toContain("Empty 4");
   });
 
   test("says nothing when every category is archived", () => {
-    // the live set is empty, so there is no denominator to speak of
     expect(categorySectionNotes({ rows: [cat({ isArchived: true }), cat({ isArchived: true })] })).toEqual([]);
   });
 
+  describe("categoryNoteRows", () => {
+    const node = (over: Partial<Parameters<typeof categoryNoteRows>[0][number]> = {}) => ({
+      id: "id-food",
+      name: "Food",
+      isArchived: false,
+      isEditable: true,
+      children: [],
+      ...over,
+    });
+    const counts = (m: Record<string, number> = {}) => (id: string) => m[id] ?? 0;
+
+    test("a root's subtree count includes its children's", () => {
+      const [root] = categoryNoteRows(
+        [node({ id: "id-inv", name: "Investments", children: [node({ id: "id-buys", name: "Buys" })] })],
+        new Set(),
+        counts({ "id-buys": 2_066 }),
+      );
+      expect(root!.subtreeTxnCount).toBe(2_066);
+      expect(root!.hasLiveChildren).toBe(true);
+    });
+
+    test("a root whose only child is ARCHIVED is a leaf", () => {
+      // listCategoryTree filters children by parentId alone, so the archived
+      // child is present in the tree; counting it would hide this root forever
+      const [root] = categoryNoteRows(
+        [node({ id: "id-h", name: "Hobbies", children: [node({ id: "id-m", name: "Trains", isArchived: true })] })],
+        new Set(),
+        counts(),
+      );
+      expect(root!.hasLiveChildren).toBe(false);
+      expect(root!.subtreeTxnCount).toBe(0);
+    });
+
+    test("a child is printed as a path, so a leaf is findable in the manager", () => {
+      const rows = categoryNoteRows(
+        [node({ id: "id-fees", name: "Fees", children: [node({ id: "id-ic", name: "Interest Charges" })] })],
+        new Set(),
+        counts(),
+      );
+      expect(rows.map((r) => r.path)).toEqual(["Fees", "Fees > Interest Charges"]);
+      expect(rows[1]!.hasLiveChildren).toBe(false);
+    });
+
+    test("the scheduled set is matched by id, at either level", () => {
+      const rows = categoryNoteRows(
+        [node({ id: "id-car", name: "Car", children: [node({ id: "id-ins", name: "Car Insurance" })] })],
+        new Set(["id-ins"]),
+        counts(),
+      );
+      expect(rows.map((r) => r.hasScheduledSeries)).toEqual([false, true]);
+    });
+
+    test("the count comes from the supplied source, not from the tree node", () => {
+      // the whole point of the accessor: excluded rows and split parts reach a
+      // category without appearing in the manager's active-parent-row count, and
+      // a category /spending shows spend for must never read as holding nothing
+      const rows = categoryNoteRows(
+        [node({ id: "id-fees", name: "Fees", children: [node({ id: "id-ic", name: "Interest Charges" })] })],
+        new Set(),
+        counts({ "id-ic": 1 }),
+      );
+      expect(rows[1]!.subtreeTxnCount).toBe(1);
+      expect(categorySectionNotes({ rows })).toEqual([]);
+    });
+  });
+
   test("says nothing when every category is in use", () => {
-    expect(categorySectionNotes({ rows: [cat(), cat({ name: "Housing" })] })).toEqual([]);
+    expect(categorySectionNotes({ rows: [cat(), cat({ path: "Housing" })] })).toEqual([]);
+  });
+
+  test("says nothing at all on a ledger with nothing imported yet", () => {
+    /*
+     * The rule at the top of this module: never assert a measured zero. A fresh
+     * install has a full seeded taxonomy and no transactions, so EVERY category
+     * is empty — measured, 41 of them. Listing the app's own starter categories
+     * back at a first-run user, with a two-way explanation where neither branch
+     * is the reason, is the exact output that rule forbids.
+     */
+    const virgin = ["Food", "Housing", "Housing > Rent", "Income > Salary"].map((path) =>
+      cat({ path, subtreeTxnCount: 0 }),
+    );
+    expect(categorySectionNotes({ rows: virgin })).toEqual([]);
+
+    // …but one imported transaction anywhere is enough to make the rest speak
+    const started = [...virgin, cat({ path: "Groceries", subtreeTxnCount: 1 })];
+    expect(categorySectionNotes({ rows: started })[0]!.body).toContain("4 categories hold no transactions");
+  });
+
+  test("never concludes the categories are unused, and never repeats the page header", () => {
+    const [note] = categorySectionNotes({ rows: [cat({ path: "Gifts", subtreeTxnCount: 0 }), cat()] });
+    // the state is observable; the CAUSE is not, and three different causes
+    // produced it on the real ledger
+    expect(note!.body).toMatch(/can mean/);
+    expect(note!.body).not.toMatch(/unused|no longer needed|safe to archive|you can delete/i);
+    // /categories' PageHeader already owns the archiving-is-not-deletion line
+    expect(note!.body).not.toMatch(/nothing is deleted|never deletes|history intact/i);
   });
 });
 
@@ -204,7 +357,19 @@ describe("reserved phrases", () => {
         row({ categoryPath: "Food", uncoveredDays: 11 }),
       ],
     }),
-    ...categorySectionNotes({ rows: [{ name: "Gifts", subtreeTxnCount: 0, isArchived: false, hasChildren: false }] }),
+    ...categorySectionNotes({
+      rows: [
+        { path: "Food", subtreeTxnCount: 10, isArchived: false, hasLiveChildren: false, isEditable: true, hasScheduledSeries: false },
+        {
+          path: "Gifts",
+          subtreeTxnCount: 0,
+          isArchived: false,
+          hasLiveChildren: false,
+          isEditable: true,
+          hasScheduledSeries: false,
+        },
+      ],
+    }),
     ...holdingPriceSectionNotes({
       rows: [{ quotedOn: "2026-08-06" }, { quotedOn: "2026-08-12" }],
       today: "2026-08-13",

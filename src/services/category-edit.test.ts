@@ -1,14 +1,21 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { categories } from "@/db/schema/categories";
+import { institutions } from "@/db/schema/institutions";
+import { recurringSeries } from "@/db/schema/recurring";
+import { transactions } from "@/db/schema/transactions";
+import { transactionSplits } from "@/db/schema/transaction-splits";
+import { dedupeHash } from "@/lib/hash";
+import { createAccount } from "./accounts";
 import {
   allMoveDestinations,
   archiveCategory,
+  categoryTouchCounts,
   createCategory,
   KIND_ORDER,
   listCategoryTree,
@@ -16,6 +23,7 @@ import {
   moveDestinations,
   renameCategory,
   reorderCategories,
+  scheduledCategoryIds,
   unarchiveCategory,
 } from "./category-edit";
 
@@ -366,6 +374,124 @@ describe("reorderCategories", () => {
     const before = sortOrderOf(expense[0]!.id);
     expect(() => reorderCategories(bundle.db, [expense[0]!.id, "nope"])).toThrow(/Unknown category/);
     expect(sortOrderOf(expense[0]!.id)).toBe(before);
+  });
+});
+
+describe("scheduledCategoryIds", () => {
+  /**
+   * The gate that stops /categories calling `Car > Car Insurance` empty while it
+   * carries a confirmed −$361.49 monthly bill that has not charged yet. The
+   * category holds zero transactions by design, so nothing derived from posted
+   * rows can see it — only the override can.
+   */
+  const series = (over: Partial<typeof recurringSeries.$inferInsert> = {}) => ({
+    name: "Car insurance",
+    kind: "bill" as const,
+    cadence: "monthly" as const,
+    status: "confirmed" as const,
+    amountCentsAvg: -36_149,
+    nextExpectedOn: "2026-09-11",
+    ...over,
+  });
+
+  test("finds a category reachable only through user_category_id", () => {
+    const car = createCategory(bundle.db, { name: "Car", kind: "expense" });
+    const ins = createCategory(bundle.db, { name: "Car Insurance", parentId: car.id });
+    bundle.db.insert(recurringSeries).values(series({ userCategoryId: ins.id })).run();
+    expect([...scheduledCategoryIds(bundle.db)]).toEqual([ins.id]);
+  });
+
+  test("a series with no override contributes nothing", () => {
+    bundle.db.insert(recurringSeries).values(series()).run();
+    expect(scheduledCategoryIds(bundle.db).size).toBe(0);
+  });
+
+  test("a dismissed, ended, or merged-away series stops holding its category", () => {
+    const car = createCategory(bundle.db, { name: "Car", kind: "expense" });
+    const ins = createCategory(bundle.db, { name: "Car Insurance", parentId: car.id });
+    // merged_into_id is a self-referencing FK, so the merge target has to be a
+    // real row — it stays out of the way by carrying no override of its own
+    const target = bundle.db
+      .insert(recurringSeries)
+      .values(series({ name: "Car insurance (merged target)" }))
+      .returning({ id: recurringSeries.id })
+      .get();
+
+    for (const over of [
+      { status: "dismissed" as const },
+      { status: "ended" as const },
+      { mergedIntoId: target.id },
+    ]) {
+      bundle.db.delete(recurringSeries).where(ne(recurringSeries.id, target.id)).run();
+      bundle.db.insert(recurringSeries).values(series({ userCategoryId: ins.id, ...over })).run();
+      expect(scheduledCategoryIds(bundle.db).size, JSON.stringify(over)).toBe(0);
+    }
+  });
+
+  test("a detected-but-unconfirmed override still holds its category", () => {
+    // the safe direction: a category wrongly held back is a quieter note, one
+    // wrongly released is bad advice about real money
+    const car = createCategory(bundle.db, { name: "Car", kind: "expense" });
+    const ins = createCategory(bundle.db, { name: "Car Insurance", parentId: car.id });
+    bundle.db.insert(recurringSeries).values(series({ userCategoryId: ins.id, status: "detected" })).run();
+    expect([...scheduledCategoryIds(bundle.db)]).toEqual([ins.id]);
+  });
+});
+
+describe("categoryTouchCounts", () => {
+  /**
+   * Counts what listCategoryTree's `txnCount` cannot see. Both cases below are
+   * latent on today's ledger (0 split rows; no category holds only excluded
+   * rows) and both ship in the UI, so both are one user action away.
+   */
+  let seq = 0;
+  function txn(categoryId: string | null, status: "active" | "excluded" | "superseded", amountCents = -1_000) {
+    seq += 1;
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const accountId = createAccount(bundle.db, { institutionId: chase.id, name: `Card ${seq}`, type: "credit" });
+    const raw = `TXN ${seq}`;
+    return bundle.db
+      .insert(transactions)
+      .values({
+        accountId,
+        postedOn: "2026-03-01",
+        amountCents,
+        rawDescription: raw,
+        normalizedDescription: raw,
+        status,
+        categoryId,
+        dedupeHash: dedupeHash({ accountId, postedOn: "2026-03-01", amountCents, rawDescription: raw, occurrenceIndex: seq }),
+      })
+      .returning({ id: transactions.id })
+      .get();
+  }
+
+  test("an EXCLUDED row still counts — the money moved", () => {
+    const cat = createCategory(bundle.db, { name: "Water/Gas", kind: "expense" });
+    txn(cat.id, "excluded");
+    expect(categoryTouchCounts(bundle.db).get(cat.id)).toBe(1);
+  });
+
+  test("a SUPERSEDED row does not count — it was replaced, not spent", () => {
+    const cat = createCategory(bundle.db, { name: "Water/Gas", kind: "expense" });
+    txn(cat.id, "superseded");
+    expect(categoryTouchCounts(bundle.db).get(cat.id)).toBeUndefined();
+  });
+
+  test("a split part counts for its own category, not just the parent's", () => {
+    // setSplits stamps the PARENT with only the dominant part, so the minor leg's
+    // category is invisible to a parent-row count while /spending shows spend for it
+    const groceries = createCategory(bundle.db, { name: "Groceries", kind: "expense" });
+    const fees = createCategory(bundle.db, { name: "Interest Charges", kind: "expense" });
+    const parent = txn(groceries.id, "active", -20_000);
+    bundle.db
+      .insert(transactionSplits)
+      .values([
+        { transactionId: parent.id, categoryId: groceries.id, amountCents: -15_000 },
+        { transactionId: parent.id, categoryId: fees.id, amountCents: -5_000 },
+      ])
+      .run();
+    expect(categoryTouchCounts(bundle.db).get(fees.id)).toBe(1);
   });
 });
 

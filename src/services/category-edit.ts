@@ -1,8 +1,11 @@
-import { and, desc, eq, isNull, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
+import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
+import { transactionSplits } from "@/db/schema/transaction-splits";
 import { normalizeOrder } from "@/lib/reorder";
+import { REPLAY_STATUSES } from "./derivation";
 
 /**
  * Category writes (the "nothing read-only" program, S3). Renaming is a pure
@@ -438,6 +441,79 @@ function isProtected(name: string, parentName: string | null, kind: CategoryKind
   if (kind === "transfer" || kind === "system") return true;
   if (parentName === null) return IMPORT_HINT_ROOTS.has(name);
   return IMPORT_HINT_PATHS.has(`${parentName} > ${name}`);
+}
+
+/**
+ * Categories a LIVE recurring series points at through `user_category_id`.
+ *
+ * Such a category is SCHEDULED, not idle: it can hold zero transactions and
+ * still be the home of a confirmed commitment. `Car > Car Insurance` is exactly
+ * this — a −$361.49 monthly bill first due 2026-09-11, entered by the owner,
+ * with nothing posted against it yet. Anything reasoning about "empty"
+ * categories has to subtract these or it calls a live commitment dead.
+ *
+ * `dismissed` and `ended` series are excluded, as is one merged away: a series
+ * the owner rejected or that has finished no longer keeps its category alive.
+ * The safe direction here is to over-include — a category wrongly held back is
+ * a quieter note, while one wrongly released is bad advice about real money.
+ */
+export function scheduledCategoryIds(db: AppDatabase): Set<string> {
+  const rows = db
+    .select({ categoryId: recurringSeries.userCategoryId })
+    .from(recurringSeries)
+    .where(
+      and(
+        isNotNull(recurringSeries.userCategoryId),
+        isNull(recurringSeries.mergedIntoId),
+        inArray(recurringSeries.status, ["detected", "confirmed"]),
+      ),
+    )
+    .all();
+  return new Set(rows.map((r) => r.categoryId).filter((v): v is string => v !== null));
+}
+
+/**
+ * How many rows TOUCH each category — the count behind "holds no transactions".
+ *
+ * Deliberately NOT `listCategoryTree`'s `txnCount`, which counts only active
+ * parent rows and therefore misses two ways money reaches a category:
+ *
+ * - **`excluded` rows still moved money.** `REPLAY_STATUSES` is the single
+ *   definition of replayed (`derivation.ts:45`), and it includes `excluded`; a
+ *   category whose only rows are excluded is not one nothing ever touched.
+ * - **Split parts are attributed by `transaction_splits.category_id`.** A split
+ *   stamps its PARENT with only the dominant part
+ *   (`transaction-splits.ts:242-250`), so a category that holds only the minor
+ *   leg of a split is invisible to a parent-row count — while `/spending` and
+ *   `/budgets` both show spend for it (`budgets.ts:815-829`). Two screens
+ *   contradicting each other about one category is precisely the defect the
+ *   note exists to avoid causing.
+ *
+ * Both are latent on today's ledger (0 split rows; every excluded row sits in a
+ * category with active rows too) and neither is hypothetical: the split editor
+ * and the bulk Exclude action both ship.
+ */
+export function categoryTouchCounts(db: AppDatabase): Map<string, number> {
+  const counts = new Map<string, number>();
+  const bump = (id: string | null) => {
+    if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+  };
+  for (const r of db
+    .select({ categoryId: transactions.categoryId })
+    .from(transactions)
+    .where(inArray(transactions.status, [...REPLAY_STATUSES]))
+    .all()) {
+    bump(r.categoryId);
+  }
+  for (const r of db
+    .select({ categoryId: transactionSplits.categoryId })
+    .from(transactionSplits)
+    .innerJoin(transactions, eq(transactions.id, transactionSplits.transactionId))
+    .where(inArray(transactions.status, [...REPLAY_STATUSES]))
+    .all()) {
+    bump(r.categoryId);
+  }
+  return counts;
 }
 
 /**

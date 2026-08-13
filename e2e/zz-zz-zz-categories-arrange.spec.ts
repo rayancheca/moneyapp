@@ -135,3 +135,30 @@ test("every kind group on the page carries a definition", async ({ page }) => {
   const tips = page.getByRole("button", { name: /^What .+ means$/ });
   expect(await tips.count()).toBe(await headings.count());
 });
+
+/**
+ * The measured note. Deliberately asserts NO count: this spec sorts after
+ * zz-categorize / zz-inline-chip / zz-split, which assign categories positionally
+ * (`option.nth(2)`) and do not restore, so the number of empty categories has
+ * already moved by the time this runs. The contract being locked in is what the
+ * note is allowed to SAY, not how many it found.
+ */
+test("the page states which categories are empty without concluding they are unused", async ({ page }) => {
+  await page.goto("/categories");
+
+  const note = page.getByRole("complementary", { name: "What this page noticed" });
+  await expect(note).toBeVisible();
+  await expect(note).toContainText(/hold no transactions|holds no transactions/);
+
+  // the honesty contract: three different causes produced this one state on the
+  // real ledger, so the note reports the state and refuses to explain it
+  await expect(note).toContainText(/can mean/);
+  await expect(note).toContainText(/landing on another category/);
+  const body = (await note.textContent()) ?? "";
+  expect(body).not.toMatch(/unused|safe to archive|no longer needed/i);
+  // and it must not restate the page header's own archiving-is-not-deletion line
+  expect(body).not.toMatch(/nothing is deleted|never deletes/i);
+
+  // it carries no heading of its own — the tip-per-h3 count above depends on it
+  await expect(note.getByRole("heading")).toHaveCount(0);
+});

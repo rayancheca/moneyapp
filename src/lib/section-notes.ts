@@ -43,6 +43,10 @@ export const RESERVED_NOTE_PHRASES = [
   "expected by now, not imported",
   "expected before",
   "Awaiting statements",
+  // /categories row copy — owned by CategoryRow, and now sharing a page with a
+  // note for the first time
+  "Archived",
+  "Locked",
 ] as const;
 
 export interface BudgetNoteInput {
@@ -147,32 +151,141 @@ export function holdingPriceSectionNotes(input: HoldingPriceNoteInput): SectionN
 
 export interface CategoryNoteInput {
   /** every category, with the count of transactions in its OWN subtree */
-  rows: readonly { name: string; subtreeTxnCount: number; isArchived: boolean; hasChildren: boolean }[];
+  rows: readonly {
+    /** display path — "Fees > Card Annual Fees", so a leaf is never confused with a root */
+    path: string;
+    subtreeTxnCount: number;
+    isArchived: boolean;
+    /**
+     * LIVE children only. A parent whose only children are archived IS a leaf —
+     * counting archived children would hide it from this note forever.
+     */
+    hasLiveChildren: boolean;
+    /** false for transfer/system/import-hint rows: the archive guard refuses them */
+    isEditable: boolean;
+    /** a recurring series points here via `user_category_id` */
+    hasScheduledSeries: boolean;
+  }[];
+}
+
+/** Named individually up to here; beyond it the note gives a count and examples. */
+const MAX_NAMED_CATEGORIES = 4;
+
+/**
+ * Flatten the category manager's roots-with-children into the rows this note
+ * reads. Generic over the node shape so it stays testable without reaching for
+ * the service layer.
+ *
+ * Three things here are each a place a bug hides, which is why this is not left
+ * inline in the page:
+ * - a root's subtree count is its own plus its children's; the per-row count is
+ *   direct-only, so summing is what stops `Investments` (0 of its own, 2,066
+ *   below it) from reading as empty;
+ * - `hasLiveChildren` ignores ARCHIVED children, because `listCategoryTree`
+ *   filters children by parentId alone — a root whose only child is archived is
+ *   a leaf in every sense the reader cares about, and counting the archived one
+ *   would hide it from this note permanently;
+ * - the path is what the note prints, and a bare leaf name ("Interest Charges")
+ *   is not something the reader can find in a two-level manager.
+ *
+ * The schema nests exactly one level (enforced in createCategory/moveCategory),
+ * so a child is always a leaf.
+ */
+export function categoryNoteRows<T extends { id: string; name: string; isArchived: boolean; isEditable: boolean }>(
+  roots: readonly (T & { children: readonly T[] })[],
+  scheduledIds: ReadonlySet<string>,
+  /**
+   * Rows touching a category. Passed in rather than read off the tree node: the
+   * manager's own `txnCount` counts ACTIVE PARENT rows only, which misses
+   * `excluded` rows (money still moved) and split parts (attributed through
+   * `transaction_splits`, so a category holding only a minor split leg reads
+   * zero while /spending shows spend for it). See `categoryTouchCounts`.
+   */
+  txnCountOf: (categoryId: string) => number,
+): CategoryNoteInput["rows"] {
+  return roots.flatMap((root) => [
+    {
+      path: root.name,
+      subtreeTxnCount: txnCountOf(root.id) + root.children.reduce((sum, c) => sum + txnCountOf(c.id), 0),
+      isArchived: root.isArchived,
+      hasLiveChildren: root.children.some((c) => !c.isArchived),
+      isEditable: root.isEditable,
+      hasScheduledSeries: scheduledIds.has(root.id),
+    },
+    ...root.children.map((child) => ({
+      path: `${root.name} > ${child.name}`,
+      subtreeTxnCount: txnCountOf(child.id),
+      isArchived: child.isArchived,
+      hasLiveChildren: false,
+      isEditable: child.isEditable,
+      hasScheduledSeries: scheduledIds.has(child.id),
+    })),
+  ]);
 }
 
 /**
- * The one thing the category manager cannot show per row: how much of the
- * taxonomy is doing nothing.
+ * The one thing the category manager cannot show per row: which categories are
+ * holding nothing.
  *
  * Counts are SUBTREE counts, deliberately. The per-row figure is direct-only, so
  * a parent whose children hold thousands of transactions reads zero — calling
- * that one "unused" would be advice about money that plainly exists.
+ * that one empty would be a claim about money that plainly exists.
+ *
+ * ⚠️ This note NAMES the categories and refuses to conclude anything about them,
+ * and both halves of that were forced by measurement rather than chosen. On the
+ * real ledger the ungated version flagged four, and the reasons they were empty
+ * were not the same reason:
+ *
+ * - `Car > Car Insurance` carried a CONFIRMED −$361.49 monthly bill that had not
+ *   charged yet. Scheduled, not idle — excluded here by `hasScheduledSeries`.
+ * - `Fees > Card Annual Fees` was empty while a −$95.00 ANNUAL MEMBERSHIP FEE
+ *   posted every March, filed on the PARENT `Fees`. Empty because of a
+ *   categorisation gap, not disuse — and no predicate available here can tell
+ *   that apart from genuine disuse, because the evidence lives in rows that
+ *   point somewhere else entirely.
+ * - `Fees > Interest Charges` and `Utilities > Water/Gas` really were unused.
+ *
+ * Three explanations, one observable state. So the note reports the state, names
+ * the rows so the reader can apply the knowledge it does not have, and states
+ * the ambiguity instead of resolving it. It deliberately does NOT say archiving
+ * is safe — the page header already says that, and a note repeating its own
+ * page says the same thing twice in two voices.
  */
 export function categorySectionNotes(input: CategoryNoteInput): SectionNote[] {
-  const live = input.rows.filter((r) => !r.isArchived);
-  if (live.length === 0) return [];
+  // The population is the set where archiving is even the right question, and
+  // numerator and denominator are drawn from it alike — a count gated one way
+  // and framed against a differently-gated total is how a true sentence becomes
+  // a false one.
+  // Never assert a measured zero (the rule at the top of this file). On a ledger
+  // with nothing imported yet EVERY category holds nothing, and the note would
+  // greet a first-run install by listing its own seeded taxonomy back at it and
+  // offering a two-way explanation where neither branch is the reason.
+  if (input.rows.every((r) => r.subtreeTxnCount === 0)) return [];
 
-  // a leaf with nothing in it, ever: safe to say, and the only actionable case
-  const empty = live.filter((r) => !r.hasChildren && r.subtreeTxnCount === 0);
+  const candidates = input.rows.filter(
+    (r) => !r.isArchived && !r.hasLiveChildren && r.isEditable && !r.hasScheduledSeries,
+  );
+  const empty = candidates.filter((r) => r.subtreeTxnCount === 0);
   if (empty.length === 0) return [];
+
+  const named = empty
+    .slice(0, MAX_NAMED_CATEGORIES)
+    .map((r) => r.path)
+    .join(", ");
+  const one = empty.length === 1;
+  const lead = one
+    ? `${named} holds no transactions.`
+    : empty.length <= MAX_NAMED_CATEGORIES
+      ? `${empty.length} categories hold no transactions: ${named}.`
+      : `${empty.length} categories hold no transactions, including ${named}.`;
 
   return [
     {
       id: "categories-unused",
       body:
-        `${empty.length} of ${live.length} live categories have never had a transaction in them. ` +
-        `Archiving one keeps its id and its history intact — nothing is deleted — so the pickers ` +
-        `and reports get shorter without losing anything.`,
+        `${lead} That can mean you do not use ${one ? "it" : "them"} — or that ` +
+        `${one ? "its" : "their"} transactions are landing on another category, which is worth ` +
+        `checking before archiving ${one ? "it" : "one"}.`,
     },
   ];
 }
