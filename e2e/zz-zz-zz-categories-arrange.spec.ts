@@ -95,3 +95,43 @@ test("reordering a root persists, and restores", async ({ page }) => {
   await page.reload();
   expect(await firstName()).toBe(original);
 });
+
+/**
+ * The kind headings carry a definition of what the kind does to the money math —
+ * the one thing on this screen that silently changes it.
+ *
+ * The load-bearing assertion is the FIRST one: a tooltip body is live DOM text
+ * even while its popover is closed (Playwright's text engine ignores
+ * visibility), so a tip that rendered open by default would be invisible to
+ * `toHaveCount` checks elsewhere but plainly wrong on screen. `toBeHidden`
+ * reads layout, not the DOM, which is exactly the distinction that matters here.
+ */
+test("a kind heading explains what the kind does, and stays quiet until asked", async ({ page }) => {
+  await page.goto("/categories");
+
+  const trigger = page.getByRole("button", { name: "What Spending means" });
+  await expect(trigger).toBeVisible();
+
+  // present in the DOM, but not shown — the closed-popover contract
+  const tip = page.getByText(/only kind counted as spending/);
+  await expect(tip).toHaveCount(1);
+  await expect(tip).toBeHidden();
+
+  // keyboard opens it immediately (no hover-intent delay on :focus-visible)
+  await trigger.focus();
+  await expect(tip).toBeVisible();
+
+  // and Escape closes it without leaving the page
+  await page.keyboard.press("Escape");
+  await expect(tip).toBeHidden();
+  await expect(page.getByRole("heading", { level: 1, name: "Categories" })).toBeVisible();
+});
+
+test("every kind group on the page carries a definition", async ({ page }) => {
+  await page.goto("/categories");
+  // one per rendered group heading — never one per row; 77 rows of info buttons
+  // would cost more in keyboard traversal than the jargon costs in confusion
+  const headings = page.getByRole("heading", { level: 3 });
+  const tips = page.getByRole("button", { name: /^What .+ means$/ });
+  expect(await tips.count()).toBe(await headings.count());
+});

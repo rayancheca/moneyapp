@@ -37,7 +37,7 @@ export function Tooltip<T extends HTMLElement = HTMLElement>({
 }: TooltipProps<T>) {
   const id = useId();
   const triggerRef = useRef<T>(null);
-  const tooltipRef = useRef<HTMLDivElement>(null);
+  const tooltipRef = useRef<HTMLSpanElement>(null);
   const delayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [open, setOpen] = useState(false);
 
@@ -103,7 +103,19 @@ export function Tooltip<T extends HTMLElement = HTMLElement>({
         onKeyDown: handleKeyDown,
         "aria-describedby": id,
       })}
-      <div
+      {/* A <span>, NOT a <div> — and deliberately with no display utility.
+       *
+       * Jargon lives in prose, so a tooltip has to be mountable inside a <p>.
+       * The HTML parser hoists a <div> out of an open <p> and closes the <p>
+       * early, which is an SSR/hydration mismatch rather than a lint error
+       * (measured: a <div> so placed reparents to BODY and the <p> loses its
+       * trailing text). A <span> is phrasing content and stays put.
+       *
+       * No `block` class: `position: fixed` already blockifies the span when it
+       * is shown, while a display utility would OVERRIDE the UA rule that hides
+       * a closed popover — measured, that leaves every tooltip permanently on
+       * screen. Closed reads `display: none`, open reads `display: block`. */}
+      <span
         ref={tooltipRef}
         id={id}
         role="tooltip"
@@ -111,7 +123,7 @@ export function Tooltip<T extends HTMLElement = HTMLElement>({
         className={`fixed inset-auto m-0 max-w-64 rounded-md border border-line bg-surface-overlay px-2 py-1 text-xs text-ink ${OVERLAY_PRESS}`}
       >
         {content}
-      </div>
+      </span>
     </>
   );
 }

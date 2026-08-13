@@ -11,7 +11,9 @@ import {
 import { Icon } from "@/components/shell/Icon";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select } from "@/components/ui/Field";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
+import { CATEGORY_KIND_JARGON } from "@/lib/jargon";
 import { CategoryRow } from "./CategoryRow";
 import { toast } from "@/components/ui/Toast";
 import type { CategoryTreeNode, MoveDestination } from "@/services/category-edit";
@@ -195,8 +197,18 @@ export function CategoryManager({ tree, destinations }: CategoryManagerProps) {
         const rootIds = group.roots.map((r) => r.id);
         return (
           <section key={group.kind} aria-label={`${KIND_LABEL[group.kind]} categories`}>
-            <h3 className="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
+            {/* One tip per GROUP, not per row: /categories renders ~180
+                controls already, and an info button on each of 77 rows would
+                cost more in keyboard traversal than the jargon costs in
+                confusion. The kind is also the only thing on this screen that
+                silently changes the money math. */}
+            <h3 className="mb-2 flex items-center text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
               {KIND_LABEL[group.kind]}
+              {CATEGORY_KIND_JARGON[group.kind] && (
+                <InfoTip term={KIND_LABEL[group.kind]!} placement="bottom">
+                  {CATEGORY_KIND_JARGON[group.kind]}
+                </InfoTip>
+              )}
             </h3>
             {/* one <li> per row, with children in a NESTED <ul>. A single <li>
                 wrapping a root and all its children would open the root's detail
