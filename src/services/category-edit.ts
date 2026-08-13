@@ -26,6 +26,37 @@ import { REPLAY_STATUSES } from "./derivation";
  * docs/future-ideas.md). Everything else renames freely.
  */
 
+/**
+ * Two characters a category name may not contain. Both are defects in something
+ * the app already ships, not style preferences, and both were reproduced before
+ * being banned:
+ *
+ * - **`,`** — the section notes state a COUNT and then list names joined with
+ *   ", ". A category named `Food, Drink` renders "2 categories hold no
+ *   transactions: Food, Drink, Pets" — says two, lists three. The same
+ *   count-then-comma-join shape is in `budgetSectionNotes` and
+ *   `categorySectionNotes` alike, so the ambiguity is not local to one note.
+ * - **`>`** — the display path is `Parent > Child`, so a ROOT literally named
+ *   `Fees > Interest Charges` prints identically to the real child of that path.
+ *   The schema's sibling-uniqueness index cannot prevent the collision, because
+ *   a root and someone else's child are not siblings.
+ *
+ * Rejecting at the boundary rather than escaping at each render is deliberate:
+ * `createCategory` and `renameCategory` are the ONLY two paths that put a name
+ * in the table (the seeded taxonomy is the third, and is swept by a test), so
+ * one guard here makes the property true everywhere instead of at each of the
+ * places that happen to print a name today.
+ */
+export const FORBIDDEN_NAME_CHARS = [",", ">"] as const;
+
+function assertNameIsPrintable(name: string): void {
+  for (const char of FORBIDDEN_NAME_CHARS) {
+    if (name.includes(char)) {
+      throw new Error(`Category names cannot contain "${char}" — it is how paths and lists are punctuated`);
+    }
+  }
+}
+
 /** Names the import profiles resolve by (parent, and "parent > sub"). */
 const IMPORT_HINT_ROOTS = new Set(["Income", "Cash & ATM", "Fees", "Investments"]);
 const IMPORT_HINT_PATHS = new Set([
@@ -82,6 +113,7 @@ export interface CreateCategoryResult {
 export function createCategory(db: AppDatabase, input: CreateCategoryInput): CreateCategoryResult {
   const name = input.name.trim();
   if (name === "") throw new Error("Category name cannot be empty");
+  assertNameIsPrintable(name);
   const parentId = input.parentId ?? null;
 
   let kind: CategoryKind;
@@ -303,6 +335,7 @@ function destinationsFrom(all: readonly CategoryRowShape[], categoryId: string):
 export function renameCategory(db: AppDatabase, categoryId: string, newName: string): RenameCategoryResult {
   const name = newName.trim();
   if (name === "") throw new Error("Category name cannot be empty");
+  assertNameIsPrintable(name);
 
   const row = db.select().from(categories).where(eq(categories.id, categoryId)).get();
   if (!row) throw new Error("Unknown category");

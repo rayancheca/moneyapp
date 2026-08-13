@@ -2,6 +2,8 @@ import type { AppDatabase } from "@/db/client";
 import type { AssetType } from "@/db/schema/holdings";
 import type { SeriesKind } from "@/db/schema/recurring";
 import { compareDates, todayIso } from "@/lib/dates";
+import { dayChangeTerm } from "@/lib/day-change-label";
+import { formatDayShort } from "@/lib/format-date";
 import { resolvePeriod } from "@/lib/period";
 import { listAccounts } from "./accounts";
 import { bridgedNetWorthSeries, type BridgedNetWorthPoint } from "./in-flight";
@@ -96,9 +98,20 @@ export interface TeaserMover {
 
 export interface InvestmentsTeaser {
   valueCents: number;
-  dayChangeCents: number;
+  /** null when no prior covered day exists — see `PortfolioOverview.dayChangeCents` */
+  dayChangeCents: number | null;
   dayChangePct: number | null;
   dayChangeExact: boolean;
+  /**
+   * What to call the change — "today" only when the newest close IS today,
+   * otherwise the two dates it was actually measured between.
+   *
+   * Resolved here rather than in the component because the naming rule needs
+   * `today`, which the dashboard model already carries and the teaser's props
+   * do not. `dayChangeTerm` wraps the same `dayChangeLabel` the /investments
+   * header renders, so the two surfaces cannot disagree about the same figure.
+   */
+  dayChangeTerm: string;
   sparkline: number[];
   topMover: TeaserMover | null;
   href: string;
@@ -211,7 +224,7 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
   };
 }
 
-function investmentsTeaser(db: AppDatabase): InvestmentsTeaser | null {
+function investmentsTeaser(db: AppDatabase, today: string): InvestmentsTeaser | null {
   const overview = portfolioOverview(db);
   if (overview.asOf === null || overview.valueCents === 0) return null;
 
@@ -226,11 +239,17 @@ function investmentsTeaser(db: AppDatabase): InvestmentsTeaser | null {
     null,
   );
 
+  // "today" is a claim about WHEN, and this figure is measured over today only
+  // when the newest close is today's. Between price refreshes it is not, and the
+  // teaser used to say the word anyway.
+  const term = dayChangeTerm(overview.asOf, overview.dayChangeVsDay, today, formatDayShort);
+
   return {
     valueCents: overview.valueCents,
     dayChangeCents: overview.dayChangeCents,
     dayChangePct: overview.dayChangePct,
     dayChangeExact: overview.dayChangeExact,
+    dayChangeTerm: term,
     sparkline,
     topMover: top
       ? {
@@ -253,6 +272,6 @@ export function dashboardData(db: AppDatabase, today: string = todayIso()): Dash
     reviewHref: "/transactions?view=review",
     upcoming: upcomingBills(db, today),
     pace: spendingPace(db, today),
-    investments: investmentsTeaser(db),
+    investments: investmentsTeaser(db, today),
   };
 }

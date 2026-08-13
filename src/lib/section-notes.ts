@@ -49,6 +49,20 @@ export const RESERVED_NOTE_PHRASES = [
   "Locked",
 ] as const;
 
+/**
+ * How a note punctuates a list of category names, and how it punctuates a path.
+ *
+ * Named rather than inlined because both are only unambiguous while a category
+ * name cannot contain them — a note that states a COUNT and then joins names
+ * with ", " contradicts its own list the moment one name has a comma in it
+ * ("2 categories hold no transactions: Food, Drink, Pets" says two, lists
+ * three). `FORBIDDEN_NAME_CHARS` in `services/category-edit` is what makes that
+ * impossible, and `section-notes.test.ts` asserts the two agree, so changing a
+ * separator here fails the build rather than silently reopening the ambiguity.
+ */
+export const NAME_LIST_SEPARATOR = ", ";
+export const PATH_SEPARATOR = " > ";
+
 export interface BudgetNoteInput {
   /** one entry per active budget in the graded set */
   rows: readonly {
@@ -70,7 +84,7 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
   const overdue = input.rows.filter((r) => r.overdueCents > 0);
   if (overdue.length > 0) {
     const total = overdue.reduce((sum, r) => sum + r.overdueCents, 0);
-    const names = overdue.map((r) => r.categoryPath).join(", ");
+    const names = overdue.map((r) => r.categoryPath).join(NAME_LIST_SEPARATOR);
     notes.push({
       id: "budgets-overdue",
       body:
@@ -213,7 +227,7 @@ export function categoryNoteRows<T extends { id: string; name: string; isArchive
       hasScheduledSeries: scheduledIds.has(root.id),
     },
     ...root.children.map((child) => ({
-      path: `${root.name} > ${child.name}`,
+      path: `${root.name}${PATH_SEPARATOR}${child.name}`,
       subtreeTxnCount: txnCountOf(child.id),
       isArchived: child.isArchived,
       hasLiveChildren: false,
@@ -271,7 +285,7 @@ export function categorySectionNotes(input: CategoryNoteInput): SectionNote[] {
   const named = empty
     .slice(0, MAX_NAMED_CATEGORIES)
     .map((r) => r.path)
-    .join(", ");
+    .join(NAME_LIST_SEPARATOR);
   const one = empty.length === 1;
   const lead = one
     ? `${named} holds no transactions.`

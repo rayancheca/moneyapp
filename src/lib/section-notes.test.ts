@@ -1,9 +1,13 @@
 import { describe, expect, test } from "vitest";
+import { TAXONOMY } from "@/db/seed";
+import { FORBIDDEN_NAME_CHARS } from "@/services/category-edit";
 import {
   budgetSectionNotes,
   categoryNoteRows,
   categorySectionNotes,
   holdingPriceSectionNotes,
+  NAME_LIST_SEPARATOR,
+  PATH_SEPARATOR,
   RESERVED_NOTE_PHRASES,
   type SectionNote,
 } from "./section-notes";
@@ -391,5 +395,40 @@ describe("reserved phrases", () => {
     expect(notes.length).toBeGreaterThan(0);
     expect(new Set(notes.map((n) => n.id)).size).toBe(notes.length);
     for (const n of notes) expect(n.body.trim().length).toBeGreaterThan(0);
+  });
+});
+
+describe("the punctuation these notes rely on", () => {
+  /**
+   * A note that states a COUNT and then joins names with a separator is only
+   * unambiguous while no name can contain that separator. That invariant spans
+   * two modules — the note prints it, `createCategory`/`renameCategory` enforce
+   * it — so it is asserted rather than remembered. Changing either separator
+   * here without extending `FORBIDDEN_NAME_CHARS` fails this test instead of
+   * quietly reopening "2 categories: Food, Drink, Pets" (says two, lists three).
+   */
+  test("every separator character is one a category name may not contain", () => {
+    for (const separator of [NAME_LIST_SEPARATOR, PATH_SEPARATOR]) {
+      const meaningful = [...separator.trim()];
+      expect(meaningful.length, `${JSON.stringify(separator)} must punctuate with something`).toBeGreaterThan(0);
+      for (const char of meaningful) {
+        expect(
+          FORBIDDEN_NAME_CHARS as readonly string[],
+          `a name containing ${JSON.stringify(char)} would make a note contradict its own list`,
+        ).toContain(char);
+      }
+    }
+  });
+
+  test("the seeded taxonomy — the one naming path no validator guards — obeys it too", () => {
+    // createCategory and renameCategory are the only two paths a user's name
+    // takes; db/seed.ts is the third and calls neither, so the sweep is here.
+    const seeded = TAXONOMY.flatMap((entry) => [entry.name, ...entry.subs]);
+    expect(seeded.length).toBeGreaterThan(0);
+    for (const name of seeded) {
+      for (const char of FORBIDDEN_NAME_CHARS) {
+        expect(name, `seeded category ${JSON.stringify(name)} contains ${char}`).not.toContain(char);
+      }
+    }
   });
 });

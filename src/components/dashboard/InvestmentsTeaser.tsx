@@ -11,15 +11,20 @@ import { formatCentsSigned } from "@/lib/money";
  * §6 portfolioOverview/topMovers so the numbers match the tab exactly.
  */
 
-function toneOf(cents: number): SparklineTone {
-  if (cents > 0) return "positive";
-  if (cents < 0) return "negative";
-  return "neutral";
+function toneOf(cents: number | null): SparklineTone {
+  if (cents === null || cents === 0) return "neutral";
+  return cents > 0 ? "positive" : "negative";
 }
 
 export function InvestmentsTeaser({ data }: { data: InvestmentsTeaserData }) {
   const dayTone =
-    data.dayChangeCents > 0 ? "text-positive" : data.dayChangeCents < 0 ? "text-negative" : "text-ink-muted";
+    data.dayChangeCents === null
+      ? "text-ink-muted"
+      : data.dayChangeCents > 0
+        ? "text-positive"
+        : data.dayChangeCents < 0
+          ? "text-negative"
+          : "text-ink-muted";
 
   return (
     <section aria-labelledby="investments-teaser-heading" className="space-y-3">
@@ -42,17 +47,28 @@ export function InvestmentsTeaser({ data }: { data: InvestmentsTeaserData }) {
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <Money cents={data.valueCents} className="text-2xl font-semibold tracking-tight" />
+            {/* No prior covered day means no change to report — an em dash, not
+                a $0.00 that would read as a portfolio which sat still. And the
+                period is NAMED rather than assumed: `dayChangeTerm` says "today"
+                only when the newest close is today's, otherwise the two dates
+                the move was measured between. */}
             <p className={`figures mt-0.5 text-xs ${dayTone}`}>
-              {!data.dayChangeExact && <span aria-hidden>≈ </span>}
-              {formatCentsSigned(data.dayChangeCents)}
-              {data.dayChangePct !== null && (
-                <span>
-                  {" "}
-                  ({data.dayChangePct >= 0 ? "+" : ""}
-                  {data.dayChangePct.toFixed(2)}%)
-                </span>
+              {data.dayChangeCents === null ? (
+                <span className="text-ink-faint">— no prior close to compare</span>
+              ) : (
+                <>
+                  {!data.dayChangeExact && <span aria-hidden>≈ </span>}
+                  {formatCentsSigned(data.dayChangeCents)}
+                  {data.dayChangePct !== null && (
+                    <span>
+                      {" "}
+                      ({data.dayChangePct >= 0 ? "+" : ""}
+                      {data.dayChangePct.toFixed(2)}%)
+                    </span>
+                  )}
+                  <span className="text-ink-faint"> {data.dayChangeTerm}</span>
+                </>
               )}
-              <span className="text-ink-faint"> today</span>
             </p>
           </div>
           <Sparkline values={data.sparkline} tone={toneOf(data.dayChangeCents)} width={88} height={32} />

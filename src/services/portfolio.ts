@@ -315,8 +315,21 @@ export function hasBenchmark(db: AppDatabase, symbol = "SPY"): boolean {
 export interface PortfolioOverview {
   valueCents: number;
   asOf: string | null;
-  /** flow-adjusted change vs the prior point (today's market P/L) */
-  dayChangeCents: number;
+  /**
+   * Flow-adjusted change vs the prior covered point, and NULL when there is no
+   * prior point to measure against — a portfolio with nothing priced yet, or
+   * with exactly one covered day.
+   *
+   * Nullable rather than 0 because 0 is a measurement: it says the portfolio
+   * moved nowhere. Reachable, not theoretical — /investments guards its empty
+   * state on `investmentAccounts.length`, never on the number of covered days,
+   * so the first render after adding a brokerage account showed `$0.00` and a
+   * flat tone over a portfolio no day had ever been measured for. The sibling
+   * stats on that same header (`costBasisPlCents`, `realizedPlCents`) and every
+   * per-holding row (`HoldingRow.dayChangeCents`) were already nullable for
+   * exactly this reason; this field was the one that guessed.
+   */
+  dayChangeCents: number | null;
   dayChangePct: number | null;
   dayChangeExact: boolean;
   /** the prior point's date — labels "day change" honestly across weekends */
@@ -347,7 +360,7 @@ export function portfolioOverview(db: AppDatabase): PortfolioOverview {
   const last = days.at(-1) ?? null;
   const prev = days.length >= 2 ? days[days.length - 2]! : null;
 
-  let dayChangeCents = 0;
+  let dayChangeCents: number | null = null;
   let dayChangePct: number | null = null;
   let dayChangeExact = true;
   let dayChangeVsDay: string | null = null;

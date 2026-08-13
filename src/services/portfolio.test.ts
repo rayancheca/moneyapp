@@ -4,6 +4,7 @@ import path from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
+import { todayIso } from "@/lib/dates";
 import { seedDatabase } from "@/db/seed";
 import { priceCache } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
@@ -165,6 +166,46 @@ describe("portfolioOverview", () => {
     expect(o.twrGainCents).toBe(12_000);
     expect(o.twrAnchor).toBe(D1);
     expect(o.hasCrypto).toBe(true);
+  });
+
+  test("a portfolio with no prior covered day reports NO day change, not a flat one", () => {
+    /*
+     * A position opened TODAY, priced today, and never before. The series is
+     * built forward to today from its first covered day, so this — not a
+     * back-dated single price — is the one shape that yields exactly one day.
+     * Measured: seeding at D1 instead produces a series running D1 → today and
+     * a perfectly real (flat) change, which is why this test dates everything
+     * at `todayIso()`.
+     *
+     * Reachable rather than theoretical: /investments guards its empty state on
+     * the number of investment ACCOUNTS, never on covered days, so this is what
+     * the header renders on the day a brokerage account gets its first holding.
+     */
+    const day = todayIso();
+    cache("AAPL", "stock", day, 100);
+    upsertHolding(bundle.db, {
+      accountId: brokerage,
+      symbol: "AAPL",
+      assetType: "stock",
+      quantityE8: 100_000_000,
+      avgCostCents: 10_000,
+      occurredOn: day,
+    });
+
+    const o = portfolioOverview(bundle.db);
+    expect(o.asOf).toBe(day);
+    expect(o.valueCents).toBeGreaterThan(0);
+    // 0 would be a measurement — it would say the portfolio moved nowhere
+    expect(o.dayChangeCents).toBeNull();
+    expect(o.dayChangePct).toBeNull();
+    expect(o.dayChangeVsDay).toBeNull();
+  });
+
+  test("an empty book reports no day change either", () => {
+    const o = portfolioOverview(bundle.db);
+    expect(o.asOf).toBeNull();
+    expect(o.dayChangeCents).toBeNull();
+    expect(o.dayChangePct).toBeNull();
   });
 });
 

@@ -20,6 +20,8 @@ import { PredictBudgets } from "@/components/budgets/PredictBudgets";
 import { BudgetRow } from "@/components/budgets/BudgetRow";
 import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { SectionNotes } from "@/components/insights/SectionNotes";
+import { InfoTip } from "@/components/ui/InfoTip";
+import { BUDGET_JARGON } from "@/lib/jargon";
 import { budgetSectionNotes } from "@/lib/section-notes";
 
 export const metadata: Metadata = { title: "Budgets" };
@@ -96,19 +98,35 @@ export default async function BudgetsPage({
               <span className="text-ink-muted"> of </span>
               <Money cents={income.totalCents} className="font-medium" />
               <span className="text-ink-muted"> expected income</span>
+              {/* Mounted on the TERM, not on the figure: the surprise is not the
+                  number, it is that `incomeExpectation` takes a max rather than
+                  the sum of the two parts printed on the line below. */}
+              <InfoTip term="expected income" placement="bottom">
+                {BUDGET_JARGON.expectedIncome}
+              </InfoTip>
             </p>
           </div>
           <p className="mt-1 text-xs text-ink-muted">
+            {/* One definition, two mount sites — exactly one of which ever
+                renders. Both branches describe the same subtraction, and the
+                monthly-only scope is the surprising half of it in either
+                direction. */}
             {leftToAllocateCents >= 0 ? (
               <>
                 <Money cents={leftToAllocateCents} className="font-medium text-ink" /> left to
                 allocate
+                <InfoTip term="left to allocate" placement="bottom">
+                  {BUDGET_JARGON.leftToAllocate}
+                </InfoTip>
               </>
             ) : (
               <>
                 <span className="font-medium text-danger">
                   Over-allocated by <Money cents={-leftToAllocateCents} />
-                </span>{" "}
+                </span>
+                <InfoTip term="over-allocated" placement="bottom">
+                  {BUDGET_JARGON.leftToAllocate}
+                </InfoTip>{" "}
                 — these budgets total more than this month is expected to bring in
               </>
             )}
@@ -143,7 +161,15 @@ export default async function BudgetsPage({
                   </span>
                 </h2>
                 <span className="text-xs text-ink-muted">
-                  Total budgeted{" "}
+                  Total budgeted
+                  {/* One per SECTION, never per row. The exclusion rule below is
+                      invisible unless it bites — the page prints "overlapping
+                      child budgets excluded" only when a child is actually
+                      dropped, so on every other page load the sum looks like
+                      plain addition and is not. */}
+                  <InfoTip term="Total budgeted" placement="bottom">
+                    {BUDGET_JARGON.totalBudgeted}
+                  </InfoTip>{" "}
                   <Money cents={totalBudgetedCents(section.statuses)} className="font-medium" />
                   {hasOverlappingChildBudget(section.statuses) && (
                     <span className="text-ink-faint"> · overlapping child budgets excluded</span>

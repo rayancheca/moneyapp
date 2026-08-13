@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { dayChangeLabel } from "./day-change-label";
+import { dayChangeLabel, dayChangeTerm } from "./day-change-label";
 import { formatDayShort } from "./format-date";
 
 describe("dayChangeLabel", () => {
@@ -31,7 +31,7 @@ describe("dayChangeLabel", () => {
   });
 
   test("falls back to a neutral label rather than naming a date it cannot support", () => {
-    // one covered day: portfolioOverview leaves vsDay null and the figure 0
+    // one covered day: portfolioOverview leaves BOTH vsDay and the figure null
     expect(call("2026-08-06", null, "2026-08-13")).toEqual({ label: "Day change", interval: null });
     // no covered days at all
     expect(call(null, null, "2026-08-13")).toEqual({ label: "Day change", interval: null });
@@ -43,5 +43,30 @@ describe("dayChangeLabel", () => {
     for (const asOf of ["2026-08-05", "2026-08-12", "2026-08-14"]) {
       expect(call(asOf, "2026-08-01", "2026-08-13").label).not.toBe("Today");
     }
+  });
+});
+
+describe("dayChangeTerm — the inline form the dashboard teaser renders", () => {
+  const term = (asOf: string | null, vsDay: string | null, today: string) =>
+    dayChangeTerm(asOf, vsDay, today, formatDayShort);
+
+  test("keeps the word 'today' when the newest close really is today's", () => {
+    // the e2e fixture's state, and the string the teaser rendered before this
+    // existed — so the fixture, and its 8 dashboard baselines, are unchanged
+    expect(term("2026-07-08", "2026-07-07", "2026-07-08")).toBe("today");
+  });
+
+  test("names the two measured days instead, once the closes are stale", () => {
+    // the real ledger's state. No Playwright run reaches it: the fixture is
+    // never stale, so the teaser would have gone on saying "today" about a
+    // week-old figure with every rendered test green.
+    expect(term("2026-08-06", "2026-08-05", "2026-08-13")).toBe("Aug 6 vs Aug 5");
+  });
+
+  test("degrades to a neutral phrase, never a bare heading, with nothing to compare", () => {
+    // lower-cased on purpose — "Day change" is a <dt>, and reads as a label
+    // rather than a trailing phrase after a figure
+    expect(term("2026-08-06", null, "2026-08-13")).toBe("day change");
+    expect(term(null, null, "2026-08-13")).toBe("day change");
   });
 });

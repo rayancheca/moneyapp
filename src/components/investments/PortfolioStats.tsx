@@ -50,14 +50,24 @@ export function PortfolioStats({ overview, today }: { overview: PortfolioOvervie
             a dt/dd pair (axe definition-list) — same idiom as Total return */}
         <dd className="mt-1">
           <span className="flex items-baseline gap-1.5">
-            <Money cents={overview.dayChangeCents} flow className="text-sm font-medium" />
-            <span className={`figures text-xs ${toneClass(overview.dayChangeCents)}`}>
-              {pctText(overview.dayChangePct)}
-            </span>
-            {!overview.dayChangeExact && (
-              <span className="text-[11px] text-ink-faint" title="A crypto trade this day — market P/L not separable to the cent">
-                ≈
-              </span>
+            {/* Nothing to measure against — one covered day, or none at all. The
+                em dash is the same treatment the two P/L stats below use for
+                "not computable", rather than a $0.00 that would read as a
+                portfolio which sat still. */}
+            {overview.dayChangeCents === null ? (
+              <span className="text-sm text-ink-faint">—</span>
+            ) : (
+              <>
+                <Money cents={overview.dayChangeCents} flow className="text-sm font-medium" />
+                <span className={`figures text-xs ${toneClass(overview.dayChangeCents)}`}>
+                  {pctText(overview.dayChangePct)}
+                </span>
+                {!overview.dayChangeExact && (
+                  <span className="text-[11px] text-ink-faint" title="A crypto trade this day — market P/L not separable to the cent">
+                    ≈
+                  </span>
+                )}
+              </>
             )}
           </span>
           {interval && (

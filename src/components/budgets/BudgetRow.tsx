@@ -7,8 +7,10 @@ import { Icon } from "@/components/shell/Icon";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
 import { Money } from "@/components/ui/Money";
 import { NumberRoll } from "@/components/ui/NumberRoll";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { Popover, usePopover } from "@/components/ui/Popover";
 import { formatDayShort } from "@/lib/format-date";
+import { BUDGET_JARGON } from "@/lib/jargon";
 import { formatCents } from "@/lib/money";
 import type { BudgetPace, BudgetPaceStatus } from "@/services/budgets";
 import { DisclosureChevron, DisclosureRegion, useDisclosure } from "@/components/ui/Disclosure";
@@ -94,17 +96,38 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
   const tailWidth = Math.max(0, tailEndPct - spentPct);
   const tickPct = clampPct(status.elapsedFraction * 100);
   const over = status.remainingCents < 0;
+  /*
+   * Whether the fill covers the whole track — the condition under which the
+   * today mark stops meaning anything and the bar stops being to scale.
+   *
+   * Deliberately `pace === "over"` and NOT the `over` above, which they are not
+   * the same predicate: `computePace` turns over at `spent >= available` while
+   * `over` is `remaining < 0`, i.e. strictly greater. They disagree at EXACTLY
+   * 100%, and that is the case where the bar is already full, the mark is buried
+   * under it, and the copy below would have promised a mark that cannot be seen.
+   *
+   * Sharing the headline's own predicate is what makes `paceBarFull`'s "the
+   * heading beside it says by how much" true by construction rather than by
+   * coincidence — the headline states an overshoot on exactly this branch.
+   */
+  const barIsFull = status.pace === "over";
 
   const tailPopover = usePopover<HTMLButtonElement>();
   const details = useDisclosure();
 
   // the spoken sentence uses the SAME denominator the visual bar does, or
   // assistive tech gets a strictly worse number than the sighted reader
+  // The elapsed fraction is what the today mark encodes, and the mark is
+  // `aria-hidden` — so without this clause the spoken row is strictly poorer
+  // than the drawn one, and on an `over` row (where the mark is not drawn at
+  // all) nothing would state it. Placed EARLY on purpose: the overdue clause
+  // below is asserted with an end-anchored regex.
+  const elapsedSentence = `${Math.round(status.elapsedFraction * 100)}% of this period has passed`;
   const valueText = `${status.categoryPath}: ${formatCents(status.spentCents)} of ${formatCents(
     status.availableCents,
   )}${
     status.rolloverCents > 0 ? ` (${formatCents(status.rolloverCents)} rolled over)` : ""
-  } (${pctDisplay}% of budget). ${undermeasured ? coverageSentence(status) : paceSentence(status)}.${
+  } (${pctDisplay}% of budget). ${elapsedSentence}. ${undermeasured ? coverageSentence(status) : paceSentence(status)}.${
     status.expectedTailCents > 0
       ? ` ${formatCents(status.expectedTailCents)} in recurring still expected this period.`
       : ""
@@ -130,6 +153,19 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
         </div>
         <div className={`text-xs font-medium ${undermeasured ? "text-ink-faint" : tone.text}`}>
           {headline}
+          {/* One per ROW, departing from the "one tip per group" rule /categories
+              set — deliberately, and for the two reasons that rule was costed on.
+              A budgets page carries a handful of rows rather than 77, and the
+              thing being explained is drawn per row and differs per row: a
+              clamped bar does not render the today mark, so a single
+              section-level definition would describe something the row in front
+              of the reader does not have. */}
+          {/* the category is in the accessible name because the page carries one
+              of these per row, and four buttons all called "What this bar means"
+              are indistinguishable in a screen reader's control list */}
+          <InfoTip term={`the ${status.categoryPath} bar`} placement="bottom">
+            {barIsFull ? BUDGET_JARGON.paceBarFull : BUDGET_JARGON.paceBar}
+          </InfoTip>
         </div>
       </div>
 
@@ -155,12 +191,21 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
             />
           )}
         </div>
-        {/* today tick — the pace reference; fill left of it means you are ahead */}
-        <div
-          aria-hidden
-          className="absolute top-[-2px] bottom-[-2px] w-0.5 -translate-x-1/2 rounded-full bg-ink/70"
-          style={{ left: `${tickPct}%` }}
-        />
+        {/* Today mark — the pace reference; fill left of it means you are ahead.
+            NOT drawn once the fill is clamped. Above 100% the bar has stopped
+            showing the quantity the mark exists to be compared against (108% and
+            300% both draw full), so the comparison would be against a number no
+            longer on screen — and with no unfilled side, the mark has nothing to
+            divide. Reported by the owner on the Housing row, which reads 108%.
+            The elapsed figure it encodes is still spoken in `aria-valuetext`. */}
+        {!barIsFull && (
+          <div
+            aria-hidden
+            data-today-tick
+            className="absolute top-[-2px] bottom-[-2px] w-0.5 -translate-x-1/2 rounded-full bg-ink/70"
+            style={{ left: `${tickPct}%` }}
+          />
+        )}
       </div>
 
       {undermeasured && (

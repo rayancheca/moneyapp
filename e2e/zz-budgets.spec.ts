@@ -179,6 +179,112 @@ test("the page states what it noticed across rows, measured and without a verdic
   await expect(notes.getByText(/On track|Off pace|projected/i)).toHaveCount(0);
 });
 
+/**
+ * The three sums this page performs and never shows its working for.
+ *
+ * The load-bearing assertion is the SECOND one: a tooltip body is live DOM text
+ * even while its popover is closed (Playwright's text engine ignores
+ * visibility), so a tip that rendered open by default would pass every count
+ * check on this page and be plainly wrong on screen. `toBeHidden` reads layout,
+ * not the DOM, which is exactly the distinction that matters.
+ *
+ * The THIRD is the reason this route is the hostile one: eleven phrases on
+ * /budgets are asserted by exact count in the tests above, and definition copy
+ * repeating one of them would turn a spec red that has nothing to do with
+ * tooltips. `RESERVED_JARGON_PHRASES` enforces that on the copy; this checks it
+ * on the rendered page, so the two cannot both be wrong in the same direction.
+ */
+test("the page defines the three sums it performs and never shows", async ({ page }) => {
+  await page.goto("/budgets");
+
+  // Two page-level terms, one per period section, and one per row for the bar
+  // itself — the bar is the one annotated thing that is drawn per row, because
+  // what it renders differs per row (a clamped bar has no today mark).
+  const sections = page.getByRole("region", { name: /^(Daily|Weekly|Monthly|Annual) budgets$/ });
+  const tips = page.getByRole("button", { name: /^What .+ means$/ });
+  const sectionCount = await sections.count();
+  const rowCount = await page.getByRole("progressbar").count();
+  expect(sectionCount).toBeGreaterThan(0);
+  expect(await tips.count()).toBe(2 + sectionCount + rowCount);
+
+  await expect(page.getByRole("button", { name: "What expected income means" })).toHaveCount(1);
+  // one definition, two mount sites, exactly one of which ever renders — which
+  // branch depends on whether the seeded budgets outrun the seeded income
+  await expect(
+    page.getByRole("button", { name: /^What (left to allocate|over-allocated) means$/ }),
+  ).toHaveCount(1);
+  await expect(page.getByText(/never counted twice/)).toHaveCount(sectionCount);
+
+  // present in the DOM, but not shown — the closed-popover contract
+  const tip = page.getByText(/whichever is larger/);
+  await expect(tip).toHaveCount(1);
+  await expect(tip).toBeHidden();
+
+  // keyboard opens it immediately (no hover-intent delay on :focus-visible)
+  await page.getByRole("button", { name: "What expected income means" }).focus();
+  await expect(tip).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(tip).toBeHidden();
+
+  // …and no definition on this page repeats a phrase the page itself grades by.
+  // Read off the rendered tooltips rather than the source, so a body that
+  // reaches the DOM by some other route is caught too.
+  const spoken = (await page.locator('[role="tooltip"]').allTextContents()).join(" ");
+  expect(spoken.length).toBeGreaterThan(0);
+  expect(spoken).not.toMatch(/On track|Off pace|Over budget|rolled over|Awaiting statements/);
+});
+
+/**
+ * The today mark, and the one row it could not be read on.
+ *
+ * Housing is at 108%, so its fill clamps to 100%: the bar stops showing the
+ * quantity the mark exists to be compared against, and with no unfilled side
+ * the mark has nothing to divide. It is therefore not drawn there — while the
+ * elapsed figure it encoded stays in the spoken description, so hiding a visual
+ * never costs assistive tech a fact.
+ */
+test("the today mark is drawn only where the bar is still to scale", async ({ page }) => {
+  await page.goto("/budgets");
+
+  // Housing: 108% → clamped → no mark, and its tip says why the bar is full
+  const housing = budgetRow(page, "Housing");
+  await expect(housing.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
+  await expect(housing.locator("[data-today-tick]")).toHaveCount(0);
+  await expect(housing.getByText(/no longer to scale/)).toHaveCount(1);
+
+  // every other row is under the line, so the mark is a real boundary there
+  for (const category of ["Food", "Subscriptions", "Utilities"]) {
+    const row = budgetRow(page, category);
+    await expect(row.locator("[data-today-tick]")).toHaveCount(1);
+    await expect(row.getByText(/fill behind the mark/)).toHaveCount(1);
+  }
+
+  /*
+   * …and the same thing as an INVARIANT over every row, not a fact about
+   * Housing. The two candidate predicates for "the bar is full" disagree at
+   * exactly 100% — `computePace` turns over at `spent >= available`, while
+   * `remaining < 0` is strictly greater — and a row sitting precisely on its
+   * line is the case the Housing assertion above cannot see.
+   */
+  const bars = page.getByRole("progressbar");
+  const total = await bars.count();
+  expect(total).toBeGreaterThan(0);
+  for (let i = 0; i < total; i += 1) {
+    const bar = bars.nth(i);
+    const full = (await bar.getAttribute("aria-valuenow")) === "100";
+    await expect(bar.locator("[data-today-tick]")).toHaveCount(full ? 0 : 1);
+  }
+
+  // the elapsed fraction the mark encodes is SPOKEN on every row, including the
+  // one that no longer draws it — the same figure, 8 of 31 days at the fake today
+  for (const category of ["Food", "Housing", "Subscriptions", "Utilities"]) {
+    await expect(budgetRow(page, category).getByRole("progressbar")).toHaveAttribute(
+      "aria-valuetext",
+      /26% of this period has passed\./,
+    );
+  }
+});
+
 test("a budget row opens its settings in place, and says what rollover does", async ({ page }) => {
   await page.goto("/budgets");
 

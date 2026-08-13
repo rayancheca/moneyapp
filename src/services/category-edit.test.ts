@@ -62,6 +62,20 @@ describe("renameCategory", () => {
     expect(renameCategory(bundle.db, food.id, "Food").name).toBe("Food");
   });
 
+  test("refuses a name carrying the punctuation paths and lists are built from", () => {
+    const food = byName("Food")!;
+    // "," — a section note states a count and then joins names with it, so
+    // "Food, Drink" makes the note list three things while saying two.
+    expect(() => renameCategory(bundle.db, food.id, "Food, Drink")).toThrow(/cannot contain/);
+    // ">" — a ROOT named for a path collides with the real child of that path,
+    // and sibling-uniqueness cannot see it because they are not siblings.
+    expect(() => renameCategory(bundle.db, food.id, "Fees > Interest Charges")).toThrow(
+      /cannot contain/,
+    );
+    // and the refusal is a refusal: nothing was written on the way out
+    expect(byName("Food")?.id).toBe(food.id);
+  });
+
   test("rejects empty and unknown", () => {
     const food = byName("Food")!;
     expect(() => renameCategory(bundle.db, food.id, "   ")).toThrow(/cannot be empty/);
@@ -200,6 +214,20 @@ describe("createCategory", () => {
 
   test("rejects an empty or whitespace-only name", () => {
     expect(() => createCategory(bundle.db, { name: "   ", kind: "expense" })).toThrow(/cannot be empty/);
+  });
+
+  test("rejects the punctuation paths and lists are built from, at either depth", () => {
+    const food = byName("Food")!;
+    for (const name of ["Food, Drink", "Fees > Interest Charges"]) {
+      expect(() => createCategory(bundle.db, { name, kind: "expense" })).toThrow(/cannot contain/);
+      expect(() => createCategory(bundle.db, { name, parentId: food.id })).toThrow(/cannot contain/);
+    }
+    // the guard runs AFTER the trim, so padding cannot smuggle one through
+    expect(() => createCategory(bundle.db, { name: "  Food, Drink  ", kind: "expense" })).toThrow(
+      /cannot contain/,
+    );
+    // …and nothing was inserted by any of the six attempts above
+    expect(bundle.db.select().from(categories).all().some((c) => /[,>]/.test(c.name))).toBe(false);
   });
 
   test("rejects a duplicate name among the same siblings", () => {

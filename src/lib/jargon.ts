@@ -23,6 +23,7 @@
 /** Terms the surrounding UI owns. A definition may not contain one of these. */
 export const RESERVED_JARGON_PHRASES = [
   // graded verdicts and windows on /budgets, each read by an exact-count locator
+  "Total budgeted",
   "On track",
   "Off pace",
   "Over budget",
@@ -66,3 +67,56 @@ export const CATEGORY_KIND_JARGON: Record<string, string> = {
   system:
     "Where a transaction sits until it has a real category. Kept out of spending totals, and surfaced separately so it is never silently treated as nothing.",
 };
+
+/**
+ * The three sums `/budgets` performs and never shows its working for.
+ *
+ * Each is mounted where the term is printed EXACTLY ONCE — the two header terms
+ * render once per page, `Total budgeted` once per period section. That is not a
+ * style preference: the pace verdict ("On track", "Off pace") is the page's most
+ * misread term and is deliberately absent here, because it is printed once per
+ * ROW and an identical explanation repeated beside every row is furniture rather
+ * than information. Annotating it needs a home that does not scale with the row
+ * count, and this page has not got one yet.
+ *
+ * Every definition below was written AFTER reading the function that computes
+ * the figure, and says what that function does rather than what the words
+ * suggest:
+ *
+ * - `incomeExpectation` (budgets.ts) returns `max(posted + still-due, whole-period
+ *   series forecast)` — the max is there because most of every month reads $0.00
+ *   posted while statements land weeks apart, and publishing that would assert a
+ *   measured zero. The definition states the max, because a reader who assumes
+ *   plain addition cannot reconcile the figure with the two parts printed beside it.
+ * - `leftToAllocateCents` (page.tsx) subtracts MONTHLY budgets only. A weekly
+ *   grocery budget does not reduce it — the single most surprising thing on the
+ *   page, and nothing on screen says it.
+ * - `totalBudgetedCents` (budgets.ts) drops any budget whose ancestor is budgeted
+ *   in the same set. The page prints "overlapping child budgets excluded" only
+ *   when that actually bites, so the rule itself is otherwise invisible.
+ */
+export const BUDGET_JARGON = {
+  expectedIncome:
+    "Money already in for this window plus the pay still due before it ends — or, when statements are behind, what your recurring income adds up to across the whole window, whichever is larger.",
+  leftToAllocate:
+    "That income minus the monthly total below. Budgets on any other cycle are left out, so a weekly or an annual one never moves this figure.",
+  totalBudgeted:
+    "What the plans in this section come to. A budget nested inside another one here is left out of the sum, so the same money is never counted twice.",
+  /**
+   * The bar, and the unlabelled mark inside it.
+   *
+   * Reported by the owner against the Housing row: a solid red bar with a dark
+   * vertical line a quarter of the way in, and nothing on the page saying what
+   * the line was. Measured — it is the today mark, drawn at the same elapsed
+   * fraction on every row, `aria-hidden`, absent from the spoken `aria-valuetext`,
+   * and explained nowhere.
+   *
+   * Two bodies rather than one because ONE of them would have been false. The
+   * mark is not drawn on a row whose fill is clamped, so a single definition
+   * describing it would describe something that row does not render.
+   */
+  paceBar:
+    "The filled part is what has been spent against the line this budget is graded on, and the dark mark is how far through the period you are — fill behind the mark means spending is slower than time.",
+  paceBarFull:
+    "Spending has passed the line, so the bar is full and no longer to scale — the heading beside it says by how much. The period mark is left off, because there is nothing left for it to divide.",
+} as const;
