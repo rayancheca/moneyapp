@@ -47,7 +47,17 @@ describe("jargon copy", () => {
     // Same failure as above: BudgetsPage reads these by key, and a missing one
     // renders nothing at all rather than erroring.
     expect(Object.keys(BUDGET_JARGON).sort()).toEqual(
-      ["expectedIncome", "leftToAllocate", "paceBar", "paceBarFull", "totalBudgeted"].sort(),
+      [
+        "expectedIncome",
+        "leftToAllocate",
+        "totalBudgeted",
+        // one per state `budgetVerdict` can return — a missing key is a row that
+        // renders a headline with nothing behind it
+        "paceUnder",
+        "paceAtRisk",
+        "paceOver",
+        "paceWithheld",
+      ].sort(),
     );
   });
 

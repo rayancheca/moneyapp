@@ -95,6 +95,17 @@ export const CATEGORY_KIND_JARGON: Record<string, string> = {
  *   in the same set. The page prints "overlapping child budgets excluded" only
  *   when that actually bites, so the rule itself is otherwise invisible.
  */
+/**
+ * How to read the bar, shared by the three states that draw a today mark.
+ *
+ * Factored so the sentence cannot drift between them — three hand-copied
+ * variants would eventually disagree about the same graphic. `paceOver` does
+ * NOT use it: that row draws no mark, and would be describing something it does
+ * not render.
+ */
+const BAR_ANATOMY =
+  "The filled part is what has gone so far, and the dark mark is how far through the period you are — fill behind the mark means spending is slower than time.";
+
 export const BUDGET_JARGON = {
   expectedIncome:
     "Money already in for this window plus the pay still due before it ends — or, when statements are behind, what your recurring income adds up to across the whole window, whichever is larger.",
@@ -103,20 +114,25 @@ export const BUDGET_JARGON = {
   totalBudgeted:
     "What the plans in this section come to. A budget nested inside another one here is left out of the sum, so the same money is never counted twice.",
   /**
-   * The bar, and the unlabelled mark inside it.
+   * The verdict, and the bar underneath it — one body per state the headline can
+   * actually render, selected by `budgetVerdict` so the words and the reading
+   * they explain are chosen by the SAME branch and cannot drift apart.
    *
-   * Reported by the owner against the Housing row: a solid red bar with a dark
-   * vertical line a quarter of the way in, and nothing on the page saying what
-   * the line was. Measured — it is the today mark, drawn at the same elapsed
-   * fraction on every row, `aria-hidden`, absent from the spoken `aria-valuetext`,
-   * and explained nowhere.
+   * The bar half was reported by the owner against the Housing row: a solid red
+   * bar with a dark vertical line a quarter of the way in, and nothing on the
+   * page saying what the line was. The verdict half is the older gap — "Off pace"
+   * at thirty-nine percent used is not a contradiction, it is a claim about where
+   * spending is HEADING, and no screen said so.
    *
-   * Two bodies rather than one because ONE of them would have been false. The
-   * mark is not drawn on a row whose fill is clamped, so a single definition
-   * describing it would describe something that row does not render.
+   * ⛔ None of these may contain the words they explain. "On track", "Off pace",
+   * "Over budget", "Awaiting statements" and "projected" are all reserved: each
+   * is read by an exact-count locator, and a tooltip body is live DOM text even
+   * while closed. So each body describes its state without naming it — which is
+   * also better writing.
    */
-  paceBar:
-    "The filled part is what has been spent against the line this budget is graded on, and the dark mark is how far through the period you are — fill behind the mark means spending is slower than time.",
-  paceBarFull:
-    "Spending has passed the line, so the bar is full and no longer to scale — the heading beside it says by how much. The period mark is left off, because there is nothing left for it to divide.",
+  paceUnder: `Spending is inside the line and, at this rate, would finish inside it — the reading is about where this is heading, not only where it stands. ${BAR_ANATOMY}`,
+  paceAtRisk: `Spending is still inside the line today, but at this rate it lands on or past the line before the period ends — the reading is about where this is heading, not where it stands. ${BAR_ANATOMY}`,
+  paceOver:
+    "Spending has already passed the line, and no later import can undo that — this reading is measured rather than a forecast. The bar is full and no longer to scale, and the period mark is left off because there is nothing left for it to divide.",
+  paceWithheld: `Days in this window have no imported spending yet, so the amount and the percentage can only rise — they are floors rather than measurements. No reading is offered over them, because calling an unimported month healthy is the one error this page must not make. ${BAR_ANATOMY}`,
 } as const;

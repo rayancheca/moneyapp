@@ -235,6 +235,40 @@ test("the page defines the three sums it performs and never shows", async ({ pag
 });
 
 /**
+ * The verdict tooltip: each row explains the reading it is actually showing.
+ *
+ * "Off pace" at 39% used is not a contradiction — it is a claim about where
+ * spending is HEADING — and until now no screen said so.
+ *
+ * ⚠️ This fixture can only render TWO of the four states: one `over` (Housing)
+ * and three `withheld`. The suite asserts elsewhere that `On track` and
+ * `Off pace` appear zero times, so the two "heading" bodies are unreachable from
+ * any Playwright run — which is exactly why the selection lives in
+ * `src/lib/budget-verdict.ts` under the coverage gate, and why the last
+ * assertion here pins their ABSENCE rather than pretending to cover them.
+ */
+test("each row's tooltip explains the reading that row is showing", async ({ page }) => {
+  await page.goto("/budgets");
+
+  // Housing is over: the reading is measured, not a forecast, and it says so
+  const housing = budgetRow(page, "Housing");
+  await expect(housing.getByText(/already passed the line/)).toHaveCount(1);
+  await expect(housing.getByText(/measured rather than a forecast/)).toHaveCount(1);
+
+  // the three under-covered rows explain why no verdict is offered at all
+  for (const category of ["Food", "Subscriptions", "Utilities"]) {
+    const row = budgetRow(page, category);
+    await expect(row.getByText(/floors rather than measurements/)).toHaveCount(1);
+    await expect(row.getByText(/already passed the line/)).toHaveCount(0);
+  }
+
+  // …and the two forward-looking bodies are absent, because no row is in either
+  // state here. If this ever fails, the fixture gained an `under` or `at-risk`
+  // budget and the /On track/ + /Off pace/ count-0 assertions above are stale too.
+  await expect(page.getByText(/where this is heading/)).toHaveCount(0);
+});
+
+/**
  * The today mark, and the one row it could not be read on.
  *
  * Housing is at 108%, so its fill clamps to 100%: the bar stops showing the

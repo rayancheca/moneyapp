@@ -10,7 +10,7 @@ import { NumberRoll } from "@/components/ui/NumberRoll";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { Popover, usePopover } from "@/components/ui/Popover";
 import { formatDayShort } from "@/lib/format-date";
-import { BUDGET_JARGON } from "@/lib/jargon";
+import { budgetVerdict } from "@/lib/budget-verdict";
 import { formatCents } from "@/lib/money";
 import type { BudgetPace, BudgetPaceStatus } from "@/services/budgets";
 import { DisclosureChevron, DisclosureRegion, useDisclosure } from "@/components/ui/Disclosure";
@@ -18,11 +18,17 @@ import { BudgetAmountEditor, PERIOD_WORD } from "./BudgetAmountEditor";
 import { BudgetDetails } from "./BudgetDetails";
 import { BudgetRolloverToggle } from "./BudgetRolloverToggle";
 
-/** Pace → the bar fill and the label tone. Green→amber→red by projected pace. */
-const PACE: Record<BudgetPace, { fill: string; text: string; label: string }> = {
-  under: { fill: "bg-positive", text: "text-positive", label: "On track" },
-  "at-risk": { fill: "bg-warning", text: "text-warning", label: "Off pace" },
-  over: { fill: "bg-negative", text: "text-negative", label: "Over budget" },
+/**
+ * Pace → the bar fill and the label tone. Green→amber→red by projected pace.
+ *
+ * Colours only. The words live in `budgetVerdict`, with the definition that
+ * explains them — a label here and a definition there is exactly the split that
+ * let a tooltip describe a mark the row did not draw.
+ */
+const PACE: Record<BudgetPace, { fill: string; text: string }> = {
+  under: { fill: "bg-positive", text: "text-positive" },
+  "at-risk": { fill: "bg-warning", text: "text-warning" },
+  over: { fill: "bg-negative", text: "text-negative" },
 };
 
 function clampPct(value: number): number {
@@ -55,10 +61,14 @@ interface BudgetRowProps {
 
 /**
  * One pace-aware budget row (ux-overhaul §8): a bar coloured green→amber→red by
- * PROJECTED pace, a today tick at the elapsed fraction, and a hollow tail for
+ * PROJECTED pace, a today mark at the elapsed fraction (drawn only while the bar
+ * is still to scale — see `budgetVerdict`), and a hollow tail for
  * expected-but-unposted recurring that opens a popover of the contributing
  * series (drill-down contract). The amount edits inline; the row links to the
  * category page, which shows the budget back.
+ *
+ * The headline and the definition beside it both come from `budgetVerdict`, so
+ * the words and their explanation are chosen by one branch.
  */
 export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
   const { budget, tail } = status;
@@ -68,23 +78,17 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
   const [rolloverEnabled, setRolloverEnabled] = useState(budget.rolloverEnabled);
   const tone = PACE[status.pace];
   const pctDisplay = Math.round(status.pct * 100);
-  // the headline % must say WHAT it measures: 108% of a budget is "over BY 8%",
-  // never "over budget · 108%" (which reads as 108% over)
-  const overPct = (status.pct - 1) * 100;
 
-  // With days of this window still unimported, spent/pct/pace are LOWER BOUNDS,
-  // not measurements — every figure can only rise when the statement lands. A
-  // green "On track · 0% used" over an unimported month is the one failure mode
-  // a budgeting tool cannot afford, so the verdict is withheld rather than
-  // guessed. "Over" is the exception: already exceeding the budget on partial
-  // data is a fact more data cannot undo.
-  const undermeasured = status.uncoveredDays > 0 && status.pace !== "over";
-  const headline =
-    status.pace === "over"
-      ? `Over budget by ${overPct < 1 ? "<1" : Math.round(overPct)}%`
-      : undermeasured
-        ? "Awaiting statements"
-        : `${tone.label} · ${pctDisplay}% used`;
+  // The headline, what it means, and whether the bar is still to scale — all
+  // from one branch, so the words and the definition beside them cannot drift.
+  // Every state it can return is unit-tested; only two of the four can render in
+  // the e2e fixture.
+  const verdict = budgetVerdict({
+    pace: status.pace,
+    pct: status.pct,
+    uncoveredDays: status.uncoveredDays,
+  });
+  const { headline, withheld: undermeasured, barIsFull } = verdict;
 
   const spentPct = clampPct(status.pct * 100);
   // divides by AVAILABLE, the same denominator as `pct` — dividing the tail by the
@@ -95,34 +99,23 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
   );
   const tailWidth = Math.max(0, tailEndPct - spentPct);
   const tickPct = clampPct(status.elapsedFraction * 100);
+  // "Over by" vs "Left" in the figures cluster below — and NOT the same question
+  // as `barIsFull`. This is `remaining < 0` (strictly past the line); the bar
+  // fills at `spent >= available`. They disagree at exactly 100%, where "Left
+  // $0.00" is the right words over a bar that has just filled.
   const over = status.remainingCents < 0;
-  /*
-   * Whether the fill covers the whole track — the condition under which the
-   * today mark stops meaning anything and the bar stops being to scale.
-   *
-   * Deliberately `pace === "over"` and NOT the `over` above, which they are not
-   * the same predicate: `computePace` turns over at `spent >= available` while
-   * `over` is `remaining < 0`, i.e. strictly greater. They disagree at EXACTLY
-   * 100%, and that is the case where the bar is already full, the mark is buried
-   * under it, and the copy below would have promised a mark that cannot be seen.
-   *
-   * Sharing the headline's own predicate is what makes `paceBarFull`'s "the
-   * heading beside it says by how much" true by construction rather than by
-   * coincidence — the headline states an overshoot on exactly this branch.
-   */
-  const barIsFull = status.pace === "over";
 
   const tailPopover = usePopover<HTMLButtonElement>();
   const details = useDisclosure();
 
-  // the spoken sentence uses the SAME denominator the visual bar does, or
-  // assistive tech gets a strictly worse number than the sighted reader
   // The elapsed fraction is what the today mark encodes, and the mark is
   // `aria-hidden` — so without this clause the spoken row is strictly poorer
-  // than the drawn one, and on an `over` row (where the mark is not drawn at
-  // all) nothing would state it. Placed EARLY on purpose: the overdue clause
-  // below is asserted with an end-anchored regex.
+  // than the drawn one, and on a full bar (where the mark is not drawn at all)
+  // nothing would state it. Placed EARLY in the sentence on purpose: the overdue
+  // clause at the end is asserted with an end-anchored regex.
   const elapsedSentence = `${Math.round(status.elapsedFraction * 100)}% of this period has passed`;
+  // the spoken sentence uses the SAME denominator the visual bar does, or
+  // assistive tech gets a strictly worse number than the sighted reader
   const valueText = `${status.categoryPath}: ${formatCents(status.spentCents)} of ${formatCents(
     status.availableCents,
   )}${
@@ -155,16 +148,17 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
           {headline}
           {/* One per ROW, departing from the "one tip per group" rule /categories
               set — deliberately, and for the two reasons that rule was costed on.
-              A budgets page carries a handful of rows rather than 77, and the
-              thing being explained is drawn per row and differs per row: a
-              clamped bar does not render the today mark, so a single
-              section-level definition would describe something the row in front
-              of the reader does not have. */}
-          {/* the category is in the accessible name because the page carries one
-              of these per row, and four buttons all called "What this bar means"
-              are indistinguishable in a screen reader's control list */}
-          <InfoTip term={`the ${status.categoryPath} bar`} placement="bottom">
-            {barIsFull ? BUDGET_JARGON.paceBarFull : BUDGET_JARGON.paceBar}
+              A budgets page carries a handful of rows rather than 77, and what is
+              being explained DIFFERS per row: the headline is one of four
+              readings, and a clamped bar does not render the today mark, so a
+              single section-level definition would describe something the row in
+              front of the reader does not have.
+
+              The category is in the accessible name because the page carries one
+              of these per row, and four buttons all called "What the pace means"
+              are indistinguishable in a screen reader's control list. */}
+          <InfoTip term={`the ${status.categoryPath} pace`} placement="bottom">
+            {verdict.explanation}
           </InfoTip>
         </div>
       </div>
