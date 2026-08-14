@@ -147,8 +147,68 @@ describe("analyzeGroup", () => {
     expect(stats!.cadence).toBe("monthly");
     expect(stats!.amountCentsStddev).toBe(0);
     expect(stats!.amountCentsAvg).toBe(-180000);
-    // gaps 31, 28 → median 29.5 → next = Mar 1 + 30
-    expect(stats!.nextExpectedOn).toBe("2026-03-31");
+    // Charges on the 1st. Gaps 31 + 28 → mean 29.5, inside the calendar-month
+    // band, so the anchor is one calendar month on and keeps the 1st. The old
+    // round(median 29.5) = 30-day walk anchored it on 2026-03-31 — a bill that
+    // has only ever landed on the 1st, expected on the 31st.
+    expect(stats!.nextExpectedOn).toBe("2026-04-01");
+  });
+
+  /**
+   * ⚠️ The one shape this model cannot express, pinned so it is stated rather
+   * than discovered. A bill on the LAST day of each month has no single ISO date
+   * that means "the 31st": the anchor one month past 2027-01-31 is 2027-02-28,
+   * and because projectOccurrences indexes off the stored anchor, the walk then
+   * sits on the 28th — three days early in every long month.
+   *
+   * Bounded and self-correcting, unlike the day-stepped model it replaces: each
+   * detection run re-anchors on the newest charge, so the error never exceeds
+   * the gap between a short month and a long one, where a 30-day walk on the
+   * same series drifted to 2027-02-25 and beyond. Closing it properly needs an
+   * anchor-day-of-month column — see the pass-51 handoff §5.
+   */
+  test("a month-end bill anchors on the clamp — the residual this model cannot avoid", () => {
+    const stats = analyzeGroup([
+      txn("a", "2026-08-31", -210900),
+      txn("b", "2026-09-30", -210900),
+      txn("c", "2026-10-31", -210900),
+      txn("d", "2026-11-30", -210900),
+      txn("e", "2026-12-31", -210900),
+      txn("f", "2027-01-31", -210900),
+    ]);
+    expect(stats!.cadence).toBe("monthly");
+    expect(stats!.nextExpectedOn).toBe("2027-02-28"); // the 31 is not recoverable
+    // and the walk inherits it — asserted, because a comment claiming otherwise
+    // is exactly what the adversarial review of this change caught
+    const walk = projectOccurrences(
+      {
+        id: "eom",
+        name: "Rent",
+        kind: "bill",
+        cadence: stats!.cadence,
+        intervalDaysAvg: stats!.intervalDaysAvg,
+        nextExpectedOn: stats!.nextExpectedOn,
+        nextExpectedAmountCents: stats!.nextExpectedAmountCents,
+      },
+      "2027-02-01",
+      "2027-05-31",
+    ).map((o) => o.date);
+    expect(walk).toEqual(["2027-02-28", "2027-03-28", "2027-04-28", "2027-05-28"]);
+  });
+
+  test("a monthly group outside the calendar band keeps the day-stepped anchor", () => {
+    // 28-day gaps are FOUR-WEEKLY: the charge really does walk backwards through
+    // the month, so reading it as "the 1st of each month" would be an invention.
+    // fitCadence still buckets it monthly (median 28 is inside 28–33), which is
+    // exactly why the projection guard has to be two-sided.
+    const stats = analyzeGroup([
+      txn("a", "2026-01-01", -1000),
+      txn("b", "2026-01-29", -1000),
+      txn("c", "2026-02-26", -1000),
+    ]);
+    expect(stats!.cadence).toBe("monthly");
+    expect(stats!.intervalDaysAvg).toBe(28);
+    expect(stats!.nextExpectedOn).toBe("2026-03-26");
   });
 
   test("stores every stat the UI needs to show the math", () => {
@@ -183,21 +243,85 @@ describe("projectOccurrences", () => {
     nextExpectedAmountCents: 80000,
   };
 
+  const lease = {
+    id: "lease",
+    name: "Car lease",
+    kind: "bill" as const,
+    cadence: "monthly" as const,
+    intervalDaysAvg: 30,
+    nextExpectedOn: "2026-09-11",
+    nextExpectedAmountCents: -55989,
+    userEndsOn: "2028-08-11",
+  };
+
   test("userEndsOn stops the projection — a 24-payment lease is not monthly forever", () => {
     // the car lease shape: without an end it projects past its final payment and
     // every long-range forecast silently over-counts
-    const lease = {
-      id: "lease",
-      name: "Car lease",
-      kind: "bill" as const,
-      cadence: "monthly" as const,
-      intervalDaysAvg: 30,
-      nextExpectedOn: "2026-07-11",
-      nextExpectedAmountCents: -55989,
-      userEndsOn: "2026-09-11",
+    const short = { ...lease, nextExpectedOn: "2026-07-11", userEndsOn: "2026-09-11" };
+    const occ = projectOccurrences(short, "2026-07-01", "2026-12-31");
+    expect(occ.map((o) => o.date)).toEqual(["2026-07-11", "2026-08-11", "2026-09-11"]);
+  });
+
+  /**
+   * The real ledger's lease: 24 payments from 2026-09-11 with a user end on
+   * 2028-08-11. No test in the suite projected a monthly series past ~2 months
+   * before this one, which is why day stepping's drift — a full ten days over
+   * two years — never showed up in a single assertion.
+   */
+  test("a two-year monthly commitment lands on its own end date, not ten days early", () => {
+    const occ = projectOccurrences(lease, "2026-09-01", "2029-12-31");
+    expect(occ).toHaveLength(24);
+    expect(occ[0]!.date).toBe("2026-09-11");
+    expect(occ.at(-1)!.date).toBe("2028-08-11");
+    // every single payment on the 11th — the day the lease is actually billed
+    expect(occ.every((o) => o.date.endsWith("-11"))).toBe(true);
+  });
+
+  test("a 31-day month never holds two charges of a monthly series", () => {
+    // 2027-12 is the first month day stepping double-bills the rent: 12-01 AND
+    // 12-31, projecting $4,571.40 against a $2,109 budget.
+    const rent = {
+      ...lease,
+      name: "Rent",
+      nextExpectedOn: "2026-08-08",
+      nextExpectedAmountCents: -228570,
+      userEndsOn: null,
     };
-    const occ = projectOccurrences(lease, "2026-07-01", "2026-12-31");
-    expect(occ.map((o) => o.date)).toEqual(["2026-07-11", "2026-08-10", "2026-09-09"]);
+    const occ = projectOccurrences(rent, "2027-12-01", "2027-12-31");
+    expect(occ.map((o) => o.date)).toEqual(["2027-12-08"]);
+  });
+
+  test("a monthly series never disappears from a short month", () => {
+    // The mirror of the double-billed December, and the worse of the two: a
+    // 30-day walk from 2026-01-30 lands on 2026-03-01, so February holds NO
+    // rent at all and $2,285.70 of committed money vanishes from that period.
+    const rent = { ...lease, name: "Rent", nextExpectedOn: "2026-01-30", nextExpectedAmountCents: -228570, userEndsOn: null };
+    const feb = projectOccurrences(rent, "2026-02-01", "2026-02-28");
+    expect(feb.map((o) => o.date)).toEqual(["2026-02-28"]);
+  });
+
+  test("a month-end anchor clamps into February WITHOUT losing the 31st after", () => {
+    // the trap in iterative stepping: 01-31 → 02-28 → 03-28 loses the day-of-
+    // month for good. Every date is measured from the anchor, so it comes back.
+    const eom = { ...lease, nextExpectedOn: "2026-01-31", userEndsOn: null };
+    const occ = projectOccurrences(eom, "2026-01-01", "2026-06-30");
+    expect(occ.map((o) => o.date)).toEqual([
+      "2026-01-31",
+      "2026-02-28",
+      "2026-03-31",
+      "2026-04-30",
+      "2026-05-31",
+      "2026-06-30",
+    ]);
+  });
+
+  test("a monthly series outside the calendar band still walks in days", () => {
+    // 53.25 days is a real stored value on the ledger (Rocket Money Premium).
+    // Nothing about it is a calendar month, and pretending otherwise would
+    // silently halve the interval.
+    const drifting = { ...lease, intervalDaysAvg: 53.25, nextExpectedOn: "2026-09-11", userEndsOn: null };
+    const occ = projectOccurrences(drifting, "2026-09-01", "2026-12-31");
+    expect(occ.map((o) => o.date)).toEqual(["2026-09-11", "2026-11-03", "2026-12-26"]);
   });
 
   test("a null userEndsOn stays open-ended", () => {
@@ -442,8 +566,10 @@ describe("detection on the synthetic corpus", () => {
   test("exact next expected date and amount on the noiseless monthly rent", () => {
     const rent = seriesByName("MONTHLY RENT PAYMENT");
     expect(rent.cadence).toBe("monthly");
-    // gaps 31,28,31,30,31 → median 31 → 2026-06-01 + 31
-    expect(rent.nextExpectedOn).toBe("2026-07-02");
+    // Six charges, every one on the 1st. gaps 31,28,31,30,31 → mean 30.2, inside
+    // the calendar band → 2026-06-01 + one month. The day-stepped anchor was
+    // 2026-07-02, a bill that has never once landed on the 2nd.
+    expect(rent.nextExpectedOn).toBe("2026-07-01");
     expect(rent.nextExpectedAmountCents).toBe(-180000);
     expect(rent.amountCentsStddev).toBe(0);
     expect(rent.kind).toBe("bill");
@@ -467,7 +593,8 @@ describe("detection on the synthetic corpus", () => {
     const netflix = seriesByName("Netflix");
     expect(netflix.kind).toBe("subscription");
     expect(netflix.cadence).toBe("monthly");
-    expect(netflix.nextExpectedOn).toBe("2026-07-16");
+    // charges on the 15th; the 30/31-day walk anchored it on the 16th
+    expect(netflix.nextExpectedOn).toBe("2026-07-15");
     expect(netflix.nextExpectedAmountCents).toBe(-1549);
   });
 
@@ -534,7 +661,7 @@ describe("detection on the synthetic corpus", () => {
     const upcoming = upcomingOccurrences(bundle.db, TODAY, 30);
     expect(upcoming.length).toBeGreaterThan(0);
     expect(upcoming.some((o) => o.name === "MONTHLY RENT PAYMENT")).toBe(false);
-    expect(upcoming.some((o) => o.name === "Netflix" && o.date === "2026-07-16")).toBe(true);
+    expect(upcoming.some((o) => o.name === "Netflix" && o.date === "2026-07-15")).toBe(true);
     const dates = upcoming.map((o) => o.date);
     expect([...dates].sort()).toEqual(dates);
     const windowEnd = addDays(TODAY, 30);
@@ -588,9 +715,9 @@ describe("detection on the synthetic corpus", () => {
     }
 
     const netflix = listed.find((s) => s.name === "Netflix")!;
-    // stored 2026-07-16, step 30 → 388 days stale → 13 whole steps → 2027-08-10
-    expect(netflix.storedNextExpectedOn).toBe("2026-07-16");
-    expect(netflix.nextExpectedOn).toBe("2027-08-10");
+    // stored 2026-07-15, 13 calendar months on is the first 15th not in the past
+    expect(netflix.storedNextExpectedOn).toBe("2026-07-15");
+    expect(netflix.nextExpectedOn).toBe("2027-08-15");
   });
 
   test("a dismissed series keeps its stored date — rolling it would invent a charge", () => {
@@ -598,8 +725,8 @@ describe("detection on the synthetic corpus", () => {
     setSeriesStatus(bundle.db, rent.id, "dismissed");
 
     const listed = listSeries(bundle.db, "2027-08-08").find((s) => s.id === rent.id)!;
-    expect(listed.nextExpectedOn).toBe("2026-07-02");
-    expect(listed.storedNextExpectedOn).toBe("2026-07-02");
+    expect(listed.nextExpectedOn).toBe("2026-07-01");
+    expect(listed.storedNextExpectedOn).toBe("2026-07-01");
   });
 });
 
@@ -615,8 +742,24 @@ describe("rollForwardNextExpected", () => {
   });
 
   test("an overdue date steps by whole intervals to the first non-past occurrence", () => {
-    // 31 days stale → 2 whole 30-day steps (one step still lands in the past)
-    expect(rollForwardNextExpected(eff, "2026-08-16")).toBe("2026-09-14");
+    // one calendar month lands exactly on today, which is due rather than past.
+    // The 30-day walk overshot to 2026-09-14 and skipped the charge entirely.
+    expect(rollForwardNextExpected(eff, "2026-08-16")).toBe("2026-08-16");
+    // and a year and a bit behind still resolves in one hop, on the 16th
+    expect(rollForwardNextExpected(eff, "2027-09-01")).toBe("2027-09-16");
+  });
+
+  test("a stale month-end anchor rolls to a real date, clamped when it must", () => {
+    const eom = { ...eff, nextExpectedOn: "2026-01-31" };
+    expect(rollForwardNextExpected(eom, "2026-02-15")).toBe("2026-02-28");
+    // and the 31st survives the clamp — the next long month gets it back
+    expect(rollForwardNextExpected(eom, "2026-03-01")).toBe("2026-03-31");
+  });
+
+  test("a monthly series outside the calendar band rolls forward in days", () => {
+    const drifting = { ...eff, intervalDaysAvg: 53.25 };
+    // 31 days stale, step 53 → one hop
+    expect(rollForwardNextExpected(drifting, "2026-08-16")).toBe("2026-09-07");
   });
 
   test("no interval stats falls back to the cadence's nominal step", () => {

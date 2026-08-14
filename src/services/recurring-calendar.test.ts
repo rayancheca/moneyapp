@@ -133,9 +133,9 @@ describe("recurringCalendar", () => {
   test("a future expected occurrence in the current month is upcoming", () => {
     buildMonthlyNetflix();
     detectRecurringSeries(bundle.db, TODAY);
-    // median gap 31 → next expected 2026-06-15 + 31 = 2026-07-16 (≥ today)
+    // charges on the 15th → next expected 2026-07-15 (≥ today)
     const july = recurringCalendar(bundle.db, "2026-07", TODAY);
-    const day = july.entriesByDay["2026-07-16"];
+    const day = july.entriesByDay["2026-07-15"];
     expect(day).toHaveLength(1);
     expect(day![0]).toMatchObject({ state: "upcoming", transactionId: null, amountCents: -1549 });
     expect(july.upcomingNetCents).toBe(-1549);
@@ -145,9 +145,9 @@ describe("recurringCalendar", () => {
   test("an overdue expected occurrence before today is missed", () => {
     buildMonthlyNetflix();
     detectRecurringSeries(bundle.db, TODAY);
-    // view the same July but with a later 'today' so 07-16 is in the past
+    // view the same July but with a later 'today' so 07-15 is in the past
     const july = recurringCalendar(bundle.db, "2026-07", "2026-07-20");
-    const day = july.entriesByDay["2026-07-16"];
+    const day = july.entriesByDay["2026-07-15"];
     expect(day![0]!.state).toBe("missed");
     expect(july.missedCount).toBe(1);
     expect(july.upcomingNetCents).toBe(0);

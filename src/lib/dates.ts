@@ -125,6 +125,45 @@ export function compareDates(a: string, b: string): number {
   return toEpochDay(a) - toEpochDay(b);
 }
 
+/**
+ * `s` advanced by `months` calendar months, keeping the day-of-month and
+ * CLAMPING it into the target month: 2026-01-31 +1 → 2026-02-28.
+ *
+ * ⚠️ Clamping is lossy, so this is only drift-free when called with the
+ * ORIGINAL anchor and a total delta. Iterating it walks
+ * 2026-01-31 → 02-28 → 03-28 and loses the 31st permanently, while
+ * addCalendarMonths("2026-01-31", 2) is 2026-03-31. Every caller that walks a
+ * schedule must therefore index off the anchor, never off the last result.
+ *
+ * Distinct from calendar-math.ts::addMonths, which takes a 'YYYY-MM' month key
+ * and has no day to clamp.
+ */
+export function addCalendarMonths(s: string, months: number): string {
+  const [y, m, d] = parts(s);
+  const total = y * 12 + (m - 1) + months;
+  const year = Math.floor(total / 12);
+  const month = total - year * 12 + 1;
+  const day = Math.min(d, daysInMonth(year, month));
+  return `${year.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`;
+}
+
+/**
+ * The smallest n ≥ 0 for which `addCalendarMonths(anchor, n)` lands on or after
+ * `boundary` — one arithmetic hop, not a walk, because a stale anchor can be
+ * years behind.
+ *
+ * Exact without a correction loop: n₀ months puts the anchor inside boundary's
+ * own month, and n₀−1 puts it in the month BEFORE boundary's, which is strictly
+ * earlier than boundary whatever the clamping did. So only n₀ and n₀+1 can ever
+ * be the answer.
+ */
+export function calendarMonthsToReach(anchor: string, boundary: string): number {
+  const [ay, am] = parts(anchor);
+  const [by, bm] = parts(boundary);
+  const n = Math.max(0, (by - ay) * 12 + (bm - am));
+  return compareDates(addCalendarMonths(anchor, n), boundary) >= 0 ? n : n + 1;
+}
+
 /** 0 = Monday … 6 = Sunday (ISO). */
 export function isoWeekday(s: string): number {
   // epoch day 0 = 1970-01-01, a Thursday (ISO index 3)

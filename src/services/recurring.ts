@@ -9,7 +9,8 @@ import {
   type SeriesStatus,
 } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import { addDays, compareDates, diffDays, todayIso } from "@/lib/dates";
+import { addCalendarMonths, addDays, compareDates, diffDays, todayIso } from "@/lib/dates";
+import { CADENCE_NOMINAL_DAYS, stepFrom, stepPlan, stepsToReach } from "@/lib/recurring-step";
 
 /**
  * A drizzle transaction handle. Detection and the user-link services
@@ -175,15 +176,23 @@ export function analyzeGroup(txns: readonly AnalyzableTxn[]): GroupStats | null 
   const confidence = Math.round((0.5 * gapConsistency + 0.5 * amountScore) * 100) / 100;
 
   const last = sorted.at(-1)!;
+  const intervalDaysAvg = Math.round((gaps.reduce((a, b) => a + b, 0) / gaps.length) * 100) / 100;
   return {
     cadence,
     medianGapDays: medianGap,
-    intervalDaysAvg: Math.round((gaps.reduce((a, b) => a + b, 0) / gaps.length) * 100) / 100,
+    intervalDaysAvg,
     amountCentsAvg: Math.round(mean),
     amountCentsStddev: Math.round(stddev * 100) / 100,
     toleranceDays,
     confidence,
-    nextExpectedOn: addDays(last.postedOn, Math.round(medianGap)),
+    // The anchor has to be laid down by the SAME model the projection walks, or
+    // the two disagree permanently: under day stepping a one-day-early anchor is
+    // self-correcting noise, but a calendar walk repeats it every single month.
+    // So the plan is built from the interval this call is about to STORE — the
+    // exact value projectOccurrences will read back.
+    nextExpectedOn: stepPlan(cadence, intervalDaysAvg).calendarMonths
+      ? addCalendarMonths(last.postedOn, 1)
+      : addDays(last.postedOn, Math.round(medianGap)),
     nextExpectedAmountCents: Math.round(mean),
     lastMatchedOn: last.postedOn,
   };
@@ -651,16 +660,6 @@ interface ProjectableSeries {
   staleness?: SeriesStaleness;
 }
 
-/** Nominal step when a series predates interval stats (should not happen). */
-export const CADENCE_NOMINAL_DAYS: Record<Cadence, number> = {
-  weekly: 7,
-  biweekly: 14,
-  semimonthly: 15,
-  monthly: 30,
-  quarterly: 91,
-  annual: 365,
-};
-
 /** The user-override columns that shadow detection's values (§4.4). */
 export interface SeriesOverrides {
   cadence: Cadence;
@@ -717,6 +716,10 @@ export function seriesStaleness(
   s: SeriesOverrides & { lastMatchedOn: string | null },
   today: string = todayIso(),
 ): SeriesStaleness {
+  // Deliberately NOT stepPlan(): this measures how old the EVIDENCE is, which
+  // is a span of days whatever calendar the series bills on. The projection's
+  // step and this tolerance answer different questions and are allowed to
+  // differ — for a calendar-monthly series they no longer name the same number.
   const cadence = s.userCadence ?? s.cadence;
   const stepDays = s.userCadence ? CADENCE_NOMINAL_DAYS[cadence] : s.intervalDaysAvg ?? CADENCE_NOMINAL_DAYS[cadence];
   const toleranceDays = stepDays * INACTIVE_MISS_LIMIT + CADENCE_TOLERANCE_DAYS[cadence];
@@ -753,18 +756,20 @@ export function isSeriesActive(
  */
 export function rollForwardNextExpected(eff: EffectiveSeries, today: string = todayIso()): string | null {
   if (!eff.nextExpectedOn) return null;
-  const overdueDays = diffDays(eff.nextExpectedOn, today);
-  if (overdueDays <= 0) return eff.nextExpectedOn;
-  const step = Math.max(1, Math.round(eff.intervalDaysAvg ?? CADENCE_NOMINAL_DAYS[eff.cadence]));
-  // one arithmetic hop instead of a step-by-step walk — a stale value can be years old
-  return addDays(eff.nextExpectedOn, Math.ceil(overdueDays / step) * step);
+  const plan = stepPlan(eff.cadence, eff.intervalDaysAvg);
+  return stepFrom(eff.nextExpectedOn, plan, stepsToReach(eff.nextExpectedOn, plan, today));
 }
 
 /**
  * Projects a series' expected occurrences inside [from, to] (inclusive),
- * stepping from next_expected_on by the rounded average interval. Overdue
+ * stepping from next_expected_on the way its cadence actually bills. Overdue
  * occurrences before `from` are skipped — they are actuals or misses, not
  * forecast (a weekly series can contribute several occurrences).
+ *
+ * Every date is measured from the ANCHOR by an index, never from the previous
+ * result: month-end clamping is lossy, so an iterative walk would drag a
+ * 31st-of-the-month series down to the 28th the first time it crossed February
+ * and leave it there (see dates.ts::addCalendarMonths).
  */
 export function projectOccurrences(
   series: ProjectableSeries,
@@ -772,10 +777,8 @@ export function projectOccurrences(
   to: string,
 ): SeriesOccurrence[] {
   if (!series.nextExpectedOn || series.nextExpectedAmountCents === null) return [];
-  const step = Math.max(1, Math.round(series.intervalDaysAvg ?? CADENCE_NOMINAL_DAYS[series.cadence]));
-
-  let d = series.nextExpectedOn;
-  while (compareDates(d, from) < 0) d = addDays(d, step);
+  const anchor = series.nextExpectedOn;
+  const plan = stepPlan(series.cadence, series.intervalDaysAvg);
 
   // a commitment with a known end stops there — a 24-payment lease is not
   // "monthly forever", and projecting past its last payment silently inflates
@@ -783,17 +786,18 @@ export function projectOccurrences(
   const last = series.userEndsOn && compareDates(series.userEndsOn, to) < 0 ? series.userEndsOn : to;
 
   const occurrences: SeriesOccurrence[] = [];
-  while (compareDates(d, last) <= 0) {
+  for (let i = stepsToReach(anchor, plan, from); ; i++) {
+    const date = stepFrom(anchor, plan, i);
+    if (compareDates(date, last) > 0) break;
     occurrences.push({
       seriesId: series.id,
       name: series.name,
       kind: series.kind,
       cadence: series.cadence,
-      date: d,
+      date,
       amountCents: series.nextExpectedAmountCents,
       staleness: series.staleness,
     });
-    d = addDays(d, step);
   }
   return occurrences;
 }

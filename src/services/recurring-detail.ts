@@ -10,10 +10,10 @@ import {
   type SeriesStatus,
 } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import { addDays, isValidIsoDate, todayIso } from "@/lib/dates";
+import { isValidIsoDate, todayIso } from "@/lib/dates";
+import { stepFrom, stepPlan } from "@/lib/recurring-step";
 import {
   annualizedCentsOf,
-  CADENCE_NOMINAL_DAYS,
   effectiveSeries,
   isSeriesActive,
   projectOccurrences,
@@ -210,12 +210,14 @@ export function seriesDetail(
   const eff = effectiveSeries(s);
   // Size the projection window off the series' own step so even a long-interval
   // annual series reaches NEXT_EXPECTED_COUNT occurrences: the first can land up
-  // to (step-1) out, so (count+1)*step covers count of them with slack.
-  const step = Math.max(1, Math.round(eff.intervalDaysAvg ?? CADENCE_NOMINAL_DAYS[eff.cadence]));
+  // to one whole step out, so (count+1) steps covers count of them with slack.
+  // Stepped by the SAME plan the projection walks, or a calendar-monthly series
+  // whose months run long could have its last occurrence fall outside a window
+  // sized in 30-day units.
   const nextExpected = projectOccurrences(
     toProjectable(s),
     today,
-    addDays(today, step * (NEXT_EXPECTED_COUNT + 1)),
+    stepFrom(today, stepPlan(eff.cadence, eff.intervalDaysAvg), NEXT_EXPECTED_COUNT + 1),
   ).slice(0, NEXT_EXPECTED_COUNT);
 
   const mergeCandidates: SeriesMergeCandidate[] = db

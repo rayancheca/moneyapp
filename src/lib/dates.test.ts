@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   DateParseError,
+  addCalendarMonths,
   addDays,
+  calendarMonthsToReach,
   compareDates,
   diffDays,
   fromEpochDay,
@@ -101,6 +103,66 @@ describe("epoch-day round trip and arithmetic", () => {
   test("compareDates orders", () => {
     expect(compareDates("2026-01-01", "2026-01-02")).toBeLessThan(0);
     expect(compareDates("2026-01-02", "2026-01-02")).toBe(0);
+  });
+});
+
+describe("addCalendarMonths", () => {
+  test("keeps the day-of-month across months and years", () => {
+    expect(addCalendarMonths("2026-08-08", 1)).toBe("2026-09-08");
+    expect(addCalendarMonths("2026-12-11", 1)).toBe("2027-01-11");
+    expect(addCalendarMonths("2026-09-11", 23)).toBe("2028-08-11");
+    expect(addCalendarMonths("2026-07-08", 0)).toBe("2026-07-08");
+  });
+
+  test("steps backwards, including across a year boundary", () => {
+    expect(addCalendarMonths("2026-01-11", -1)).toBe("2025-12-11");
+    expect(addCalendarMonths("2026-01-11", -13)).toBe("2024-12-11");
+  });
+
+  test("clamps a day the target month does not have", () => {
+    expect(addCalendarMonths("2026-01-31", 1)).toBe("2026-02-28");
+    expect(addCalendarMonths("2024-01-31", 1)).toBe("2024-02-29"); // leap
+    expect(addCalendarMonths("2026-03-31", 1)).toBe("2026-04-30");
+    expect(addCalendarMonths("2026-05-31", -1)).toBe("2026-04-30");
+  });
+
+  test("clamping is LOSSY when iterated, exact from the anchor", () => {
+    // the trap this function's contract exists to name: two hops of one lose the
+    // 31st for good, one hop of two keeps it
+    expect(addCalendarMonths(addCalendarMonths("2026-01-31", 1), 1)).toBe("2026-03-28");
+    expect(addCalendarMonths("2026-01-31", 2)).toBe("2026-03-31");
+  });
+
+  test("rejects a non-date the same way every other reader does", () => {
+    expect(() => addCalendarMonths("2026-02-30", 1)).toThrow(DateParseError);
+  });
+});
+
+describe("calendarMonthsToReach", () => {
+  test("an anchor already on or after the boundary needs no steps", () => {
+    expect(calendarMonthsToReach("2026-09-11", "2026-08-14")).toBe(0); // later month
+    expect(calendarMonthsToReach("2026-08-20", "2026-08-14")).toBe(0); // same month
+    expect(calendarMonthsToReach("2026-08-14", "2026-08-14")).toBe(0); // exactly on it
+  });
+
+  test("lands on the first occurrence on or after the boundary", () => {
+    expect(calendarMonthsToReach("2026-08-05", "2026-08-14")).toBe(1); // same month, earlier day
+    expect(calendarMonthsToReach("2026-01-05", "2026-03-20")).toBe(3);
+    expect(calendarMonthsToReach("2026-01-25", "2026-03-20")).toBe(2);
+  });
+
+  test("a years-stale anchor resolves in one hop", () => {
+    // UBER *ONE's real shape: stored 2025-06-25, read on 2026-08-14
+    expect(calendarMonthsToReach("2025-06-25", "2026-08-14")).toBe(14);
+    expect(addCalendarMonths("2025-06-25", 14)).toBe("2026-08-25");
+  });
+
+  test("a clamped candidate still counts as reaching its own month", () => {
+    // 1 step from Jan 31 is Feb 28; the boundary is inside February, and Feb 28
+    // is on or after it, so the answer must be 1 and not 2
+    expect(calendarMonthsToReach("2026-01-31", "2026-02-10")).toBe(1);
+    // but a boundary LATER in February than the clamp needs the next month
+    expect(calendarMonthsToReach("2026-01-31", "2026-03-01")).toBe(2);
   });
 });
 

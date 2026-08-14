@@ -462,7 +462,9 @@ describe("createSeriesFromTransaction — the 'Make recurring' button", () => {
     expect(series.cadence).toBe("monthly");
     expect(series.kind).toBe("bill");
     expect(series.accountId).toBe(cardId);
-    expect(series.nextExpectedOn).toBe("2026-07-11"); // last + median gap (31d) — detection's own rule
+    // the 10th, every time — detection's own rule, and the day the bill lands.
+    // The old last + median-gap (31d) walk put it on the 11th.
+    expect(series.nextExpectedOn).toBe("2026-07-10");
     expect(taggedIds(result.seriesId).sort()).toEqual([...ids].sort());
     // detected-ownership keeps the rows in detection's grouping pool, so the
     // series keeps absorbing its own future charges (a user stamp would freeze it)
@@ -493,7 +495,7 @@ describe("createSeriesFromTransaction — the 'Make recurring' button", () => {
     expect(series.status).toBe("confirmed");
     expect(series.cadence).toBe("monthly");
     expect(series.amountCentsAvg).toBe(-5000);
-    expect(series.nextExpectedOn).toBe("2026-08-04"); // seed + 30
+    expect(series.nextExpectedOn).toBe("2026-08-05"); // the seed's day-of-month, one month on
     expect(series.nextExpectedAmountCents).toBe(-5000);
     expect(series.confidence).toBeNull(); // honest: user-asserted, not evidenced
     expect(taggedIds(result.seriesId)).toEqual([seed]); // sibling NOT swept in without evidence
@@ -502,6 +504,34 @@ describe("createSeriesFromTransaction — the 'Make recurring' button", () => {
     const after = snapshot();
     detectRecurringSeries(bundle.db, TODAY);
     expect(snapshot()).toEqual(after);
+  });
+
+  test("the thin-evidence anchor is one calendar month on — and a month-end seed keeps its clamp", () => {
+    /*
+     * A series created `monthly` with a null intervalDaysAvg is CALENDAR
+     * monthly, so its anchor decides its day-of-month for good: recomputeSeries
+     * Stats declines to write while the evidence stays this thin, and detection
+     * does not even link the second charge, so nothing corrects it until a third
+     * one lands. A 30-day hop off Jan 31 would put this charge on March 2 and
+     * keep it there.
+     *
+     * ⚠️ Both halves of that are asserted, including the ugly one. February has
+     * no 31st, so the stored anchor IS the clamp, and the walk then indexes off
+     * it: this series sits on the 28th, three days early in every long month.
+     * That is a measured residual of storing a schedule as a single date, not an
+     * accident — see the const doc on FALLBACK_CADENCE.
+     */
+    const seed = insertTxn({ postedOn: "2026-01-31", amountCents: -5000, rawDescription: "MONTH END DUES" });
+    const result = createSeriesFromTransaction(bundle.db, seed, TODAY);
+    const series = seriesById(result.seriesId);
+    expect(series.nextExpectedOn).toBe("2026-02-28");
+
+    const walk = projectOccurrences(
+      toProjectable({ ...series, userEndsOn: null }),
+      "2026-02-01",
+      "2026-05-31",
+    ).map((o) => o.date);
+    expect(walk).toEqual(["2026-02-28", "2026-03-28", "2026-04-28", "2026-05-28"]);
   });
 
   test("a FUTURE-dated seed still becomes the member of its own series (no phantom)", () => {

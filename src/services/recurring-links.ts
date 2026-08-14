@@ -1,9 +1,10 @@
 import { and, eq, inArray, isNull, lte } from "drizzle-orm";
 import { withPreMutationSnapshot } from "@/db/backup";
 import type { AppDatabase } from "@/db/client";
-import { recurringSeries } from "@/db/schema/recurring";
+import { recurringSeries, type Cadence } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import { addDays, todayIso } from "@/lib/dates";
+import { todayIso } from "@/lib/dates";
+import { stepFrom, stepPlan } from "@/lib/recurring-step";
 import { applyUndoPatch, type UndoPatch } from "./bulk-edit";
 import {
   analyzeGroup,
@@ -206,8 +207,27 @@ export interface CreateSeriesResult {
   undo: UndoPatch;
 }
 
-/** Nominal monthly step for the thin-evidence fallback (the user asserted "recurring"). */
-const FALLBACK_STEP_DAYS = 30;
+/**
+ * The thin-evidence fallback's cadence: the user asserted "recurring" and there
+ * is not enough history to measure a gap, so the series is created `monthly`
+ * with a null `intervalDaysAvg`.
+ *
+ * That combination makes stepPlan read it as CALENDAR monthly, so the anchor is
+ * laid down by the same walk rather than by a 30-day hop: a charge seen on the
+ * 31st would otherwise be anchored on the 2nd and, unlike under day stepping,
+ * the calendar walk would repeat the 2nd every month for the life of the series
+ * — `recomputeSeriesStats` cannot correct it, because it declines to write
+ * anything while the evidence stays this thin (MIN_OCCURRENCES = 3, and
+ * detection does not even link the second charge).
+ *
+ * ⚠️ KNOWN RESIDUAL, measured, not fixed here. A seed on a day the FOLLOWING
+ * month does not have is anchored on the clamp — 2026-01-31 stores 2026-02-28 —
+ * and because the walk indexes off the stored anchor, the series then sits on
+ * the 28th of every month until three real charges re-derive it. The intended
+ * day-of-month is not recoverable from one ISO date, so closing this needs an
+ * anchor-day column, not a smarter hop. See the pass-51 handoff §5.
+ */
+const FALLBACK_CADENCE: Cadence = "monthly";
 
 /**
  * The "Make recurring" button: promote a transaction into a CONFIRMED recurring
@@ -365,11 +385,11 @@ export function createSeriesFromTransaction(
         // user-asserted → confirmed; thin evidence stays honest via null confidence
         status: "confirmed",
         kind: isTransferSeed ? "transfer" : seed.amountCents > 0 ? "income" : "bill",
-        cadence: "monthly",
+        cadence: FALLBACK_CADENCE,
         intervalDaysAvg: null,
         amountCentsAvg: seed.amountCents,
         toleranceDays: 3,
-        nextExpectedOn: addDays(seed.postedOn, FALLBACK_STEP_DAYS),
+        nextExpectedOn: stepFrom(seed.postedOn, stepPlan(FALLBACK_CADENCE, null), 1),
         nextExpectedAmountCents: seed.amountCents,
         confidence: null,
         lastMatchedOn: seed.postedOn,

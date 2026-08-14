@@ -121,7 +121,8 @@ describe("seriesDetail", () => {
     expect(d.annualizedCents).toBe(1549 * 12);
     expect(d.isActive).toBe(true);
     expect(d.nextExpected).toHaveLength(3);
-    expect(d.nextExpected[0]!.date).toBe("2026-07-16");
+    // the 15th, the day every one of the six linked charges landed on
+    expect(d.nextExpected[0]!.date).toBe("2026-07-15");
     expect(d.nextExpected.every((o) => o.amountCents === -1549)).toBe(true);
   });
 
@@ -139,6 +140,22 @@ describe("seriesDetail", () => {
     const annual = bundle.db.select().from(recurringSeries).where(isNull(recurringSeries.merchantId)).get()!;
     expect(annual.cadence).toBe("annual");
     expect(seriesDetail(bundle.db, annual.id, TODAY).nextExpected).toHaveLength(3);
+  });
+
+  test("a commitment dated further out than the count itself is still listed", () => {
+    /*
+     * The window is `count + 1` steps, not `count`. Every anchor at or before
+     * today needs only `count` — the first occurrence lands inside one step, so
+     * three of them land inside three. The extra step is for the OTHER anchor: a
+     * user-set date further out than the count. 2026-10-20 is three months and
+     * twelve days past TODAY, so a three-month window would list nothing at all
+     * for a commitment the user entered by hand — the car lease's exact shape,
+     * signed in advance of its first charge.
+     */
+    const id = netflix().id;
+    setSeriesOverrides(bundle.db, id, { userNextExpectedOn: "2026-10-20" });
+    const d = seriesDetail(bundle.db, id, TODAY);
+    expect(d.nextExpected.map((o) => o.date)).toEqual(["2026-10-20"]);
   });
 
   test("effective values follow user overrides; merge candidates exclude self", () => {
