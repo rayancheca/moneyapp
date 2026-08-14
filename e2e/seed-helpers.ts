@@ -176,13 +176,19 @@ export async function seedReviewBacklog(db: AppDatabase): Promise<number> {
  * Deterministic investment fixture for the §6 Investments surfaces. The synthetic
  * brokerage is value-anchored (no per-symbol holdings or events), so the holdings
  * table / allocation / movers / holding pages would render blank. This seeds a
- * fully controlled, position-based portfolio with fixed prices (no randomness):
+ * fully controlled, position-based portfolio:
  *   - three equities that rise over the window (gains), with a last-day move
  *     shaped per symbol so movers has a winner AND losers, and
  *   - an ETH crypto position that rises over the window but dips the last 30 days
  *     — so the portfolio's ALL range is a gain (green accent) while 1M is a loss
  *     (red accent), giving both accent-state baselines from one seed.
- * Every value is fixed, so every run — and every baseline over it — is identical.
+ *
+ * Those two shapes are TRENDS. The close actually stored is the trend times
+ * `priceWobble`, a seeded function of (symbol, day index) — so the series is
+ * reproducible to the cent across runs while looking like a price rather than a
+ * ruled line. Determinism is the property the baselines need; straightness never
+ * was, and buying the former with the latter cost every investment chart its
+ * credibility (and its ability to witness a renderer bug).
  */
 interface SeedSecurity {
   symbol: string;
@@ -212,6 +218,7 @@ export async function seedInvestments(db: AppDatabase, today: string): Promise<v
   const { holdingEvents } = await import("../src/db/schema/holding-events");
   const { createAccount } = await import("../src/services/accounts");
   const { rebuildInvestmentHistory } = await import("../src/services/crypto-history");
+  const { priceWobble } = await import("../src/lib/fake-prices");
   const { addDays, compareDates } = await import("../src/lib/dates");
   const { and, eq } = await import("drizzle-orm");
 
@@ -242,8 +249,15 @@ export async function seedInvestments(db: AppDatabase, today: string): Promise<v
     const accountId = s.assetType === "crypto" ? cryptoId : brokerage.id;
     const source = s.assetType === "crypto" ? ("coinbase" as const) : ("yahoo" as const);
 
-    // build a deterministic close series: linear rise to the peak, an optional
-    // 30-day dip, and a fixed last-day delta to set the day-change direction
+    // build a deterministic close series: a rise to the peak, an optional 30-day
+    // dip, and a fixed last-day delta to set the day-change direction.
+    //
+    // The rise and the dip are TRENDS, not the series: each close is the trend
+    // times `priceWobble`, so the line has the texture of a price. Drawn from the
+    // trend alone it was literally straight — AAPL's holding page was a ruler-
+    // ruled diagonal across two years — which is not just ugly. A sparkline that
+    // renders as a segment is exactly what a collapsed-series renderer bug looks
+    // like, so 40-odd baselines were blind to the failure they exist to catch.
     const closes: { quotedOn: string; close: number }[] = [];
     const riseDays = Math.max(1, dayCount(firstDay, s.dipToPrice !== null ? dipStart : today, addDays, compareDates));
     let i = 0;
@@ -256,6 +270,10 @@ export async function seedInvestments(db: AppDatabase, today: string): Promise<v
       } else {
         close = s.startPrice + (s.peakPrice - s.startPrice) * (i / riseDays);
       }
+      close *= priceWobble(s.symbol, i);
+      // pinned LAST so the day change stays exactly `lastDayDeltaCents × qty` —
+      // the movers direction and the teaser's headline move are contract, and
+      // they must not inherit a cent of the wobble
       if (day === today) close = prevClose + s.lastDayDeltaCents / 100;
       const rounded = Math.round(close * 100) / 100;
       closes.push({ quotedOn: day, close: rounded });

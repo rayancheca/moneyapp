@@ -18,17 +18,35 @@ const LEVELS: Record<string, { start: number; end: number }> = {
   ETH: { start: 2430, end: 3860 },
 };
 
+/**
+ * The texture a synthetic price series wears: ±1.6% day-to-day noise plus two
+ * slow waves, as a multiplier around whatever trend the caller owns.
+ *
+ * Exported because the e2e fixture draws its OWN trend (a start→peak rise with
+ * an optional 30-day dip, shaped to give the baselines a green all-time range
+ * and a red 1M one) and so cannot call `fakeDailyClose`, whose levels are fixed
+ * per symbol. Before this was shared, the fixture multiplied by nothing at all
+ * and every investment chart in every baseline rendered as a ruler-straight
+ * diagonal — see the note in e2e/seed-helpers.ts.
+ *
+ * Deterministic in (symbol, t): identical across runs, which is the property the
+ * fixture actually needs. "No randomness" was never the requirement; "the same
+ * numbers every time" was.
+ */
+export function priceWobble(symbol: string, t: number): number {
+  const seed = hashString(symbol.toUpperCase()) ^ Math.imul(t, 2654435761);
+  const noise = (mulberry32(seed)() - 0.5) * 0.032; // ±1.6%
+  const wave = Math.sin(t / 9.3) * 0.011 + Math.sin(t / 41.7) * 0.019;
+  return 1 + noise + wave;
+}
+
 export function fakeDailyClose(symbol: string, day: string): number {
   const level = LEVELS[symbol.toUpperCase()] ?? { start: 60, end: 130 };
   const t = Math.max(0, toEpochDay(day) - WALK_START);
   const progress = Math.min(1, t / WALK_SPAN_DAYS);
   const drift = level.start + (level.end - level.start) * progress;
 
-  const seed = hashString(symbol.toUpperCase()) ^ Math.imul(t, 2654435761);
-  const noise = (mulberry32(seed)() - 0.5) * 0.032; // ±1.6%
-  const wave = Math.sin(t / 9.3) * 0.011 + Math.sin(t / 41.7) * 0.019;
-
-  return Math.round(drift * (1 + noise + wave) * 100) / 100;
+  return Math.round(drift * priceWobble(symbol, t) * 100) / 100;
 }
 
 /** Intraday wobble, peak-to-peak, as a fraction of price. Smaller than the

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { addDays } from "./dates";
-import { fakeDailyClose, fakeIntradayClose } from "./fake-prices";
+import { fakeDailyClose, fakeIntradayClose, priceWobble } from "./fake-prices";
 
 /**
  * The fake price walk is what the fixture simulator, the demo loader and
@@ -36,6 +36,53 @@ describe("fakeDailyClose", () => {
 
   test("is case-insensitive in the symbol, so a lowercase ticker is the same asset", () => {
     expect(fakeDailyClose("voo", "2026-07-31")).toBe(fakeDailyClose("VOO", "2026-07-31"));
+  });
+});
+
+describe("priceWobble", () => {
+  const INDICES = Array.from({ length: 400 }, (_, i) => i);
+
+  test("is deterministic in (symbol, t)", () => {
+    for (const symbol of SYMBOLS) {
+      for (const t of [0, 1, 97, 733]) {
+        expect(priceWobble(symbol, t)).toBe(priceWobble(symbol, t));
+      }
+    }
+  });
+
+  test("is case-insensitive in the symbol", () => {
+    expect(priceWobble("eth", 42)).toBe(priceWobble("ETH", 42));
+  });
+
+  /**
+   * The reason this function exists. The e2e fixture used to store its trend
+   * directly and every investment chart came out a straight diagonal; a wobble
+   * that returned a constant would put that back, and no baseline would fail
+   * loudly enough to say why.
+   */
+  test("actually bends the line — a trend multiplied by it reverses direction repeatedly", () => {
+    for (const symbol of SYMBOLS) {
+      // a strictly rising trend, exactly the fixture's shape
+      const series = INDICES.map((t) => (100 + t * 0.25) * priceWobble(symbol, t));
+      const deltas = series.slice(1).map((v, i) => v - series[i]!);
+      const turns = deltas.filter((d, i) => i > 0 && Math.sign(d) !== Math.sign(deltas[i - 1]!)).length;
+      expect(turns).toBeGreaterThan(20);
+    }
+  });
+
+  test("stays within ±5% of the trend, so the shape it decorates still reads", () => {
+    for (const symbol of SYMBOLS) {
+      for (const t of INDICES) {
+        expect(priceWobble(symbol, t)).toBeGreaterThan(0.95);
+        expect(priceWobble(symbol, t)).toBeLessThan(1.05);
+      }
+    }
+  });
+
+  test("gives different symbols different wobbles, so a portfolio does not move as one", () => {
+    const a = INDICES.map((t) => priceWobble("AAPL", t));
+    const b = INDICES.map((t) => priceWobble("MSFT", t));
+    expect(a).not.toEqual(b);
   });
 });
 

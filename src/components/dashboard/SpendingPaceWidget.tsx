@@ -1,55 +1,24 @@
 import Link from "next/link";
 import type { SpendingPace } from "@/services/dashboard";
 import { formatCents } from "@/lib/money";
+import { paceGeometry, PACE_VH, PACE_VW } from "@/lib/pace-geometry";
 
 /**
- * The spending-pace teaser (ux-overhaul-plan §7.1 [CP]): a solid line of
+ * The spending-pace teaser (ux-overhaul-plan §7.1 [CP]): a filled staircase of
  * cumulative spend so far and a dotted projection to where the month's current
  * pace lands, plus "Free to spend ≈ $X" — the discretionary headroom left after
  * income and the fixed bills still due. A calm read that hands off to /spending.
+ *
+ * All of the geometry lives in @/lib/pace-geometry, where the 100%-branch gate
+ * can reach the days of the month a pinned e2e clock never renders. This file
+ * owns colour, weight and order only.
  */
 
-const VW = 240;
-const VH = 56;
-
-interface PaceGeometry {
-  solid: string;
-  projection: string | null;
-}
-
-function buildGeometry(pace: SpendingPace): PaceGeometry | null {
-  const n = pace.points.length;
-  if (n < 2) return null;
-  const actual = pace.points.map((p) => p.actualCents);
-  let lastActualIdx = -1;
-  for (let i = 0; i < actual.length; i++) if (actual[i] !== null) lastActualIdx = i;
-  if (lastActualIdx < 0) return null;
-
-  const max = Math.max(
-    pace.projectedCents,
-    ...actual.filter((v): v is number => v !== null),
-    1,
-  );
-  const x = (i: number) => (i / (n - 1)) * VW;
-  const y = (v: number) => VH - 4 - (v / max) * (VH - 8);
-
-  const solid = actual
-    .slice(0, lastActualIdx + 1)
-    .map((v, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)} ${y(v!).toFixed(1)}`)
-    .join(" ");
-
-  // straight dotted projection from the last actual point to the month-end pace
-  const startV = actual[lastActualIdx]!;
-  const projection =
-    lastActualIdx < n - 1
-      ? `M ${x(lastActualIdx).toFixed(1)} ${y(startV).toFixed(1)} L ${x(n - 1).toFixed(1)} ${y(pace.projectedCents).toFixed(1)}`
-      : null;
-
-  return { solid, projection };
-}
-
 export function SpendingPaceWidget({ pace }: { pace: SpendingPace }) {
-  const geo = buildGeometry(pace);
+  const geo = paceGeometry({
+    actualCents: pace.points.map((p) => p.actualCents),
+    projectedCents: pace.projectedCents,
+  });
   const free = pace.freeToSpendCents;
 
   return (
@@ -88,21 +57,30 @@ export function SpendingPaceWidget({ pace }: { pace: SpendingPace }) {
           </div>
           {geo && (
             <svg
-              viewBox={`0 0 ${VW} ${VH}`}
+              viewBox={`0 0 ${PACE_VW} ${PACE_VH}`}
               preserveAspectRatio="none"
               aria-hidden="true"
               className="h-14 w-32 shrink-0 text-accent"
             >
+              {/* The estimate, deliberately a whisper. It is a straight line
+                  because it IS a straight-line extrapolation, and curving it to
+                  look livelier would draw a shape nobody measured — so it is
+                  quietened instead of restyled. --line-strong rather than
+                  --ink-faint: fainter in BOTH themes (light 0.82 vs 0.52; dark
+                  0.40 vs 0.64 against a dark ground). Safe to fade because the
+                  svg is aria-hidden and every figure it draws is printed as text
+                  beside it, so it is decorative, not informational. */}
               {geo.projection && (
                 <path
                   d={geo.projection}
                   fill="none"
-                  stroke="var(--ink-faint)"
-                  strokeWidth={1.5}
-                  strokeDasharray="3 3"
+                  stroke="var(--line-strong)"
+                  strokeWidth={1.25}
+                  strokeDasharray="2 3"
                   vectorEffect="non-scaling-stroke"
                 />
               )}
+              <path d={geo.area} fill="currentColor" opacity={0.12} stroke="none" />
               <path
                 d={geo.solid}
                 fill="none"
@@ -110,6 +88,18 @@ export function SpendingPaceWidget({ pace }: { pace: SpendingPace }) {
                 strokeWidth={1.75}
                 strokeLinecap="round"
                 strokeLinejoin="round"
+                vectorEffect="non-scaling-stroke"
+              />
+              {/* Where the measured part stops and the estimate takes over.
+                  A zero-length round-capped stroke, not a <circle>: the viewBox
+                  is drawn with preserveAspectRatio="none", which squeezes x to
+                  ~0.53 and would hatch any real circle into an egg. Stroke
+                  geometry is exempt via non-scaling-stroke. */}
+              <path
+                d={`M ${geo.todayX.toFixed(1)} ${geo.todayY.toFixed(1)} L ${geo.todayX.toFixed(1)} ${geo.todayY.toFixed(1)}`}
+                stroke="currentColor"
+                strokeWidth={4}
+                strokeLinecap="round"
                 vectorEffect="non-scaling-stroke"
               />
             </svg>
