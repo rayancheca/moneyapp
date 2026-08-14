@@ -97,4 +97,55 @@ export default async function globalSetup(): Promise<void> {
       `${summary.coveragePct}% categorized, ${summary.gapPeriods} open gaps, ` +
       `${summary.reviewBacklog} flagged for review, fake today ${E2E_FAKE_TODAY}`,
   );
+
+  await assertFixtureKeptItsShape(dbPath);
+}
+
+/**
+ * The seeded price series' SHAPE is contract, not decoration.
+ *
+ * Every investment baseline is drawn over these closes, and a ruler-straight
+ * series is indistinguishable from a collapsed-series rendering bug — which is
+ * exactly how ~40 baselines silently stopped being evidence once before. The
+ * rules live in scripts/fixture-shape.ts and are unit-tested there; this is the
+ * gate that actually runs them.
+ *
+ * Deliberately NOT gated behind E2E_GATE. There is no speed argument to make —
+ * this reads the database the line above just built (measured in milliseconds)
+ * rather than seeding a second one — and E2E_GATE is unset for `pnpm
+ * e2e:update`, which is the command that REGENERATES the baselines. Gating here
+ * would leave the hole open at the one moment the defect ships.
+ *
+ * Throwing aborts the whole run, the same mechanism assertBundleIsFresh uses.
+ */
+async function assertFixtureKeptItsShape(dbPath: string): Promise<void> {
+  const { SEEDED_SERIES, checkFixtureShape, formatFixtureShapeFailures, seriesKey } = await import(
+    "../scripts/fixture-shape"
+  );
+  const Database = (await import("better-sqlite3")).default;
+
+  const raw = new Database(dbPath, { readonly: true });
+  let report;
+  try {
+    // by (symbol, asset_type) — the pair price_cache is unique on. Ordering is
+    // this caller's job: checkFixtureShape is pure and takes closes already in
+    // ascending day order.
+    const read = raw.prepare(
+      "select close from price_cache where symbol = ? and asset_type = ? order by quoted_on",
+    );
+    report = checkFixtureShape(
+      new Map(
+        SEEDED_SERIES.map((s) => [
+          seriesKey(s.symbol, s.assetType),
+          (read.all(s.symbol, s.assetType) as { close: number }[]).map((r) => r.close),
+        ]),
+      ),
+    );
+  } finally {
+    raw.close();
+  }
+
+  if (report.failures.length > 0) {
+    throw new Error("e2e: " + formatFixtureShapeFailures(report));
+  }
 }

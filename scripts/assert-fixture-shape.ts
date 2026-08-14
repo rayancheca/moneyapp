@@ -9,12 +9,17 @@
  *
  * Exit 0 = both hold.
  *
- * This lives as a script rather than a vitest test because the only honest way
- * to check it is to run the REAL seeder, and the seeder lives in e2e/ — outside
- * vitest's include globs, and it wants a database on disk. Deleting the
- * `close *= priceWobble(...)` line in e2e/seed-helpers.ts is otherwise a silent
- * change: no unit test imports the seeder, and the pixel baselines would simply
- * be regenerated straight again by whoever did it.
+ * The RULES live in ./fixture-shape.ts and are unit-tested there; this file is
+ * only the I/O around them — seed a throwaway database, read it, print. The
+ * same rules now also run inside e2e/global-setup.ts on every Playwright
+ * invocation, which is the automatic gate. Two callers, one copy of the
+ * arithmetic, so they cannot drift apart.
+ *
+ * Given that gate, why keep the script? Because it answers the question WITHOUT
+ * A BUILD. global-setup runs `assertBundleIsFresh` before it ever reaches the
+ * seed, so the in-harness check is unreachable until `next build` has run.
+ * This script seeds its own database in /tmp and needs no .next at all — it is
+ * the form you can run mid-edit.
  *
  *   pnpm assert-fixture-shape
  */
@@ -40,62 +45,38 @@ await seedE2eDatabase(dbPath);
 const Database = (await import("better-sqlite3")).default;
 const raw = new Database(dbPath, { readonly: true });
 
-const symbols = raw.prepare("select distinct symbol from price_cache order by symbol").all() as {
-  symbol: string;
-}[];
+const { SEEDED_SERIES, checkFixtureShape, formatFixtureShapeFailures, seriesKey } = await import(
+  "./fixture-shape"
+);
 
-// only the seeded positions carry the trend+wobble shape; SPY/QQQ arrive from
-// the statement fixtures and are already a random walk
-const SEEDED = new Set(["AAPL", "MSFT", "WMT", "ETH"]);
-const LAST_DAY_DELTA_CENTS: Record<string, number> = { AAPL: 340, MSFT: -520, WMT: 0, ETH: 0 };
-
-const failures: string[] = [];
-
-for (const { symbol } of symbols) {
-  if (!SEEDED.has(symbol)) continue;
-  const rows = raw
-    .prepare("select quoted_on, close from price_cache where symbol = ? order by quoted_on")
-    .all(symbol) as { quoted_on: string; close: number }[];
-
-  if (rows.length < 60) {
-    failures.push(`${symbol}: only ${rows.length} closes`);
-    continue;
-  }
-
-  // (1) does the line bend? count sign changes in the day-over-day delta,
-  // excluding the pinned final day
-  const closes = rows.slice(0, -1).map((r) => r.close);
-  const deltas = closes.slice(1).map((v, i) => v - closes[i]!);
-  let turns = 0;
-  for (let i = 1; i < deltas.length; i++) {
-    if (Math.sign(deltas[i]!) !== Math.sign(deltas[i - 1]!)) turns += 1;
-  }
-  const turnRate = turns / deltas.length;
-  if (turnRate < 0.2) {
-    failures.push(
-      `${symbol}: series is effectively straight — ${turns} direction changes over ${deltas.length} days (${(turnRate * 100).toFixed(1)}%)`,
-    );
-  }
-
-  // (2) is the final day still pinned to the contract delta?
-  const last = rows.at(-1)!;
-  const prev = rows.at(-2)!;
-  const gotCents = Math.round(last.close * 100) - Math.round(prev.close * 100);
-  const wantCents = LAST_DAY_DELTA_CENTS[symbol]!;
-  if (gotCents !== wantCents) {
-    failures.push(`${symbol}: last-day delta is ${gotCents}c, contract says ${wantCents}c`);
-  }
-
-  console.log(
-    `${symbol.padEnd(5)} ${rows.length} closes · ${turns} turns (${(turnRate * 100).toFixed(1)}%) · last-day ${gotCents}c`,
-  );
-}
+// Read by (symbol, asset_type) — the pair price_cache is actually unique on.
+// Any OTHER symbol in the table is ignored by construction, because iteration is
+// driven by the contract list rather than by the query: SPY and QQQ arrive from
+// the statement fixtures (and from the spec that writes closes), and they are a
+// random walk with no pinned delta, so they have no shape to hold.
+const read = raw.prepare(
+  "select close from price_cache where symbol = ? and asset_type = ? order by quoted_on",
+);
+const series = new Map<string, number[]>(
+  SEEDED_SERIES.map((s) => [
+    seriesKey(s.symbol, s.assetType),
+    (read.all(s.symbol, s.assetType) as { close: number }[]).map((r) => r.close),
+  ]),
+);
 
 raw.close();
 
-if (failures.length > 0) {
-  console.error("\nFAILURES:");
-  for (const f of failures) console.error("  - " + f);
+const report = checkFixtureShape(series);
+
+for (const shape of report.shapes) {
+  console.log(
+    `${shape.symbol.padEnd(5)} ${shape.closeCount} closes · ${shape.turns} turns ` +
+      `(${(shape.turnRate * 100).toFixed(1)}%) · last-day ${shape.lastDayDeltaCents}c`,
+  );
+}
+
+if (report.failures.length > 0) {
+  console.error("\nFAILURES:\n" + formatFixtureShapeFailures(report));
   process.exit(1);
 }
 console.log("\nfixture price series: bends, and the last-day deltas are exact");
