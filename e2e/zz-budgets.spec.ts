@@ -62,8 +62,62 @@ test("the month header compares what is budgeted against expected income", async
   await page.goto("/budgets");
   const header = page.getByText(/expected income/);
   await expect(header).toBeVisible();
-  // over- or under-allocated, one of the two must be stated — never neither
-  await expect(page.getByText(/left to allocate|Over-allocated by/).first()).toBeVisible();
+  // EXACT, not an `over-|under-allocated` alternation. The alternation is why
+  // the negative branch went uncovered for so long: it passes in either state,
+  // so it could never have noticed that one of the two never rendered. The
+  // seeded budgets fall short of the seeded income, so this is the under-
+  // allocated state, and the test below owns the other one.
+  await expect(page.getByText(/left to allocate/)).toHaveCount(1);
+  await expect(page.getByText(/Over-allocated by/)).toHaveCount(0);
+});
+
+test("the header flips to over-allocated when the budgets outrun the income", async ({ page }) => {
+  // The negative branch of the same line, which no fixture state reaches: the
+  // seed budgets $3,090.00 against $7,662.00 of expected income. Rather than
+  // inflate the shared fixture — which would churn the budgets baselines, flip
+  // Housing's `over` verdict that five assertions here depend on, and merely
+  // TRADE which branch goes unrendered — this drives the amount editor the app
+  // already ships, then puts the seed back.
+  await page.goto("/budgets");
+  const food = budgetRow(page, "Food");
+
+  // Pin the pre-state first, so everything below is arithmetic rather than
+  // assumption. If the seeded income ever moves, this fails loudly instead of
+  // quietly exercising the wrong branch.
+  await expect(page.getByText("$4,572.00")).toBeVisible();
+
+  const setFoodBudget = async (value: string): Promise<void> => {
+    await food.getByRole("button", { name: "Edit Food budget amount" }).click();
+    await page.getByRole("textbox", { name: "Food budget amount" }).fill(value);
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.locator("body")).toContainText("Food budget updated");
+  };
+
+  await food.getByRole("button", { name: "Edit Food budget amount" }).click();
+  const original = await page.getByRole("textbox", { name: "Food budget amount" }).inputValue();
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  // $3,090.00 − $800.00 + $8,000.00 = $10,290.00 against $7,662.00 → over by $2,628.00
+  await setFoodBudget("8000.00");
+
+  await expect(page.getByText("Over-allocated by")).toBeVisible();
+  await expect(page.getByText("$2,628.00")).toBeVisible();
+  await expect(
+    page.getByText(/these budgets total more than this month is expected to bring in/),
+  ).toBeVisible();
+
+  // The ternary SWITCHED — it did not mount both halves. This is the assertion
+  // the old alternation could not make.
+  await expect(page.getByText(/left to allocate/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "What over-allocated means" })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "What left to allocate means" })).toHaveCount(0);
+
+  // Restore, and prove the restore landed. The inline-editor test further down
+  // this file reads Food's LIVE amount as its own restore target, so a value
+  // left dirty here would be laundered into the seed for the rest of the run.
+  await setFoodBudget(original);
+  await expect(page.getByText("$4,572.00")).toBeVisible();
+  await expect(page.getByText(/Over-allocated by/)).toHaveCount(0);
 });
 
 test("the hollow tail opens a popover of contributing series → its recurring page", async ({
