@@ -86,8 +86,21 @@ function withCoverage(text: string, note: string | null): string {
  * The polite live-region sentence: a screen-reader user hears the whole
  * subtotal — including which rule applied — without hunting for the bar.
  * Empty string when nothing is selected, so the region announces nothing.
+ *
+ * `dayTerm` is INJECTED rather than hardcoded. This sentence used to end
+ * "…, +$481.18 today." — but the summed figure is each holding's last close
+ * against its previous one, which is only today's move when prices were
+ * refreshed today. On the real ledger the closes trail by a week, so the word
+ * was false on every read, in the one channel whose user cannot see the
+ * price-age note that contradicts it.
+ *
+ * It is a bare LABEL ("today", "last close") and never a pair of dates: the
+ * subtotal spans holdings that may each carry a different `quotedOn`, so there
+ * is no single interval this sentence could honestly name. Same reason
+ * `holdingPriceSectionNotes` anchors on the oldest close instead of claiming
+ * one date for every position.
  */
-export function subtotalAnnouncement(subtotal: HoldingSubtotal): string {
+export function subtotalAnnouncement(subtotal: HoldingSubtotal, dayTerm: string): string {
   if (subtotal.selected === 0) return "";
   const head = `${subtotal.selected} holding${subtotal.selected === 1 ? "" : "s"} selected`;
   const value =
@@ -108,7 +121,7 @@ export function subtotalAnnouncement(subtotal: HoldingSubtotal): string {
     subtotal.dayChangeCents.total === null
       ? "no day change"
       : withCoverage(
-          `${formatCentsSigned(subtotal.dayChangeCents.total)} today`,
+          `${formatCentsSigned(subtotal.dayChangeCents.total)} ${dayTerm}`,
           subtotalCoverage(subtotal.dayChangeCents, subtotal.selected, "with a day change"),
         );
   return `${head}: ${value}, ${share}, ${day}.`;

@@ -11,7 +11,8 @@ import {
 } from "@/lib/benchmark-symbol";
 import { CHART_RANGES } from "@/lib/chart-range";
 import { diffDays, monthKey, todayIso } from "@/lib/dates";
-import { formatDayLong, formatMonthYear } from "@/lib/format-date";
+import { dayChangeLabel } from "@/lib/day-change-label";
+import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { benchmarkReturns } from "@/lib/portfolio-returns";
 import { carryForwardTo } from "@/lib/price-series";
 import { resolveViewState } from "@/lib/view-state";
@@ -241,7 +242,10 @@ export default async function InvestmentsPage({
         <div className="grid gap-6 *:min-w-0 lg:grid-cols-[minmax(0,1fr)_280px]">
           <SurfaceCard>
             <h2 className="mb-4 text-sm font-medium">Holdings</h2>
-            <PortfolioHoldingsTable rows={rows} />
+            <PortfolioHoldingsTable
+              rows={rows}
+              dayChangeLabel={dayChangeLabel(overview.asOf, overview.dayChangeVsDay, today, formatDayShort).label}
+            />
           </SurfaceCard>
           <SurfaceCard className="h-fit">
             <h2 className="mb-4 text-sm font-medium">Allocation</h2>

@@ -84,7 +84,22 @@ function SubtotalStat({
   );
 }
 
-export function PortfolioHoldingsTable({ rows }: { rows: HoldingRow[] }) {
+export function PortfolioHoldingsTable({
+  rows,
+  dayChangeLabel,
+}: {
+  rows: HoldingRow[];
+  /**
+   * What to call the day-change column of the subtotal bar — "Today" only when
+   * the closes behind these rows are today's. Resolved by the page from
+   * `dayChangeLabel`, so this bar, the header stat, and the price-age note all
+   * agree about how old the numbers are.
+   *
+   * A bare label, never an interval: the selection can span holdings with
+   * different `quotedOn` dates, so no single pair of days describes them all.
+   */
+  dayChangeLabel: string;
+}) {
   const [metric, setMetric] = useState<HoldingMetric>("dayPct");
   const [sort, setSort] = useState<SortState>({ key: "value", dir: "desc" });
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(NO_SELECTION);
@@ -298,7 +313,7 @@ export function PortfolioHoldingsTable({ rows }: { rows: HoldingRow[] }) {
               </span>
             </SubtotalStat>
             <SubtotalStat
-              label="Today"
+              label={dayChangeLabel}
               note={subtotalCoverage(subtotal.dayChangeCents, subtotal.selected, "with a day change")}
             >
               {subtotal.dayChangeCents.total !== null ? (
@@ -322,7 +337,7 @@ export function PortfolioHoldingsTable({ rows }: { rows: HoldingRow[] }) {
           a live region created in the same tick as its text is not reliably
           announced. Same idiom as the palette's result count. */}
       <div aria-live="polite" className="sr-only">
-        {subtotal.selected > 0 ? subtotalAnnouncement(subtotal) : clearedNote}
+        {subtotal.selected > 0 ? subtotalAnnouncement(subtotal, dayChangeLabel.toLowerCase()) : clearedNote}
       </div>
     </>
   );

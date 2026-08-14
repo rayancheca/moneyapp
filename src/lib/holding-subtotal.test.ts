@@ -111,12 +111,12 @@ describe("formatSharePct", () => {
 
 describe("subtotalAnnouncement", () => {
   test("says nothing when nothing is selected", () => {
-    expect(subtotalAnnouncement(subtotalHoldings([]))).toBe("");
+    expect(subtotalAnnouncement(subtotalHoldings([]), "today")).toBe("");
   });
 
   test("states count, value, share and day change for a complete selection", () => {
     const s = subtotalHoldings([row({ valueCents: 1_000_00, dayChangeCents: 25_00, allocationPct: 12.5 })]);
-    expect(subtotalAnnouncement(s)).toBe(
+    expect(subtotalAnnouncement(s, "today")).toBe(
       "1 holding selected: $1,000.00, 12.5% of the portfolio, +$25.00 today.",
     );
   });
@@ -126,14 +126,35 @@ describe("subtotalAnnouncement", () => {
       row({ valueCents: 500_00, dayChangeCents: 5_00, allocationPct: 20 }),
       row({ valueCents: null, dayChangeCents: null, allocationPct: null }),
     ]);
-    expect(subtotalAnnouncement(s)).toBe(
+    expect(subtotalAnnouncement(s, "today")).toBe(
       "2 holdings selected: $500.00 (1 of 2 priced), 20.0% of the portfolio (1 of 2 with a share), +$5.00 today (1 of 2 with a day change).",
+    );
+  });
+
+  test("calls the day change what the caller calls it, never 'today' by default", () => {
+    /*
+     * The word used to be hardcoded. The summed figure is each holding's last
+     * close against its previous one, so it is only today's move when prices
+     * were refreshed today — and on the real ledger the closes trail by about a
+     * week. This channel is the one whose user cannot see the price-age note
+     * that would contradict it, so the label has to arrive already correct.
+     */
+    const s = subtotalHoldings([row({ valueCents: 1_000_00, dayChangeCents: 25_00, allocationPct: 12.5 })]);
+    expect(subtotalAnnouncement(s, "last close")).toContain("+$25.00 last close.");
+    expect(subtotalAnnouncement(s, "last close")).not.toContain("today");
+    // and the coverage caveat still lands AFTER the term, not inside it
+    const partial = subtotalHoldings([
+      row({ valueCents: 500_00, dayChangeCents: 5_00, allocationPct: 20 }),
+      row({ valueCents: null, dayChangeCents: null, allocationPct: null }),
+    ]);
+    expect(subtotalAnnouncement(partial, "last close")).toContain(
+      "+$5.00 last close (1 of 2 with a day change)",
     );
   });
 
   test("never announces a $0.00 total for a wholly unpriced selection", () => {
     const s = subtotalHoldings([row({ valueCents: null, dayChangeCents: null, allocationPct: null })]);
-    const said = subtotalAnnouncement(s);
+    const said = subtotalAnnouncement(s, "today");
     expect(said).toBe(
       "1 holding selected: no market value — none of them is priced, no share of the portfolio, no day change.",
     );
