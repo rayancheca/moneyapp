@@ -1,6 +1,6 @@
 # Handoff — 2026-08-14, pass 52
 
-> **`main` = `9b03244`**, tree clean. tsc clean · **158 files / 2,878 unit** ·
+> **`main` = `1d90c19`**, tree clean. tsc clean · **158 files / 2,878 unit** ·
 > `pnpm test` coverage gate **exit 0** · `next build` clean · **full
 > `E2E_GATE=1 pnpm e2e:fresh`: 410 passed** · **8 `dashboard-*` baselines regenerated,
 > predicted and read back**.
