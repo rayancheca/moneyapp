@@ -1,6 +1,6 @@
 # Handoff — 2026-08-14, pass 56
 
-> **`main` = `1dd0d3c`**, tree clean. tsc clean · **161 files / 2,962 unit** ·
+> **`main` = `d01ee3b`**, tree clean. tsc clean · **161 files / 2,962 unit** ·
 > coverage gate exit 0 · `next build` clean · **`E2E_GATE=1` 414 passed**
 > (410 before) · zero baseline churn.
 >
@@ -85,7 +85,7 @@ Rejected: inflating the shared fixture. It would churn baselines, invert
 Housing's `over` verdict that five assertions depend on, and would not add
 coverage — it would **trade** it, making the positive branch the unrendered one.
 
-### 1.4 What the adversarial review then found (`1dd0d3c`)
+### 1.4 What the adversarial review then found (`d01ee3b`)
 
 Three lenses over the diff, nine agents, every finding independently verified by
 a second agent instructed to refute it. **Six findings, three confirmed, three
