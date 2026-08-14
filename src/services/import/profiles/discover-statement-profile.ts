@@ -20,7 +20,20 @@ const PROFILE_ID = "discover-statement-pdf";
 const SIDEBAR_X = 405;
 const DESC_MIN_X = 55;
 const DESC_MAX_X = 200;
-const MONEY_RE = /^-?\$[\d,]+\.\d{2}$/;
+/**
+ * A money token. The optional space after the minus is load-bearing: Capital
+ * One's template (they issue the card as of the August 2026 statement) prints a
+ * payment as `- $300.00`, where every earlier Discover statement printed
+ * `-$300.00`. Without it the token does not read as money, the row has no
+ * amount, and it is skipped — the statement then quarantines with a gap of
+ * exactly the payment, which is how this was found.
+ */
+const MONEY_RE = /^-?\s?\$[\d,]+\.\d{2}$/;
+
+/** parseAmountToCents rejects the inner space, so normalise before parsing. */
+function moneyCents(token: string): number {
+  return parseAmountToCents(token.replace(/\s+/g, ""));
+}
 const DATE_RE = /^(\d{2})\/(\d{2})$/;
 const PERIOD_RE = /(\d{2})\/(\d{2})\/(\d{4}) - (\d{2})\/(\d{2})\/(\d{4})/;
 const LAST4_RE = /ENDING IN (\d{4})/i;
@@ -104,7 +117,7 @@ export function parseDiscoverItLines(lines: readonly Line[]): DiscoverParse {
       postedOn,
       transactedOn,
       // printed purchase +, payment − → canonical flips both
-      amountCents: -parseAmountToCents(amountTok.str),
+      amountCents: -moneyCents(amountTok.str),
       rawDescription: descTokens.map((t) => t.str).join(" ").trim(),
       ...(category ? { bankCategory: category } : {}),
     });

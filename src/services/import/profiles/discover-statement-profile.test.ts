@@ -109,6 +109,36 @@ describe("parseDiscoverItLines", () => {
     expect(begin + sum).toBe(end);
   });
 
+  /**
+   * The August 2026 statement is the first on Capital One's template (they now
+   * issue the card), and it prints the payment amount as `- $300.00` — a minus,
+   * a SPACE, then the dollar sign — where every earlier statement printed
+   * `-$300.00`. Measured off the real PDF's token positions: one token, x≈361,
+   * description at x≈74 rather than 80.
+   *
+   * The old money pattern required the minus to touch the `$`, so the token did
+   * not read as money, the row had no amount, and it was skipped in silence.
+   * Nothing about that is visible in a parse: the statement quarantines with a
+   * gap of exactly the payment. This is the pass-37 Chase shape again — a bank
+   * changing how it prints a number, and rows disappearing rather than failing.
+   */
+  test("reads a payment printed with a space between the minus and the dollar sign", () => {
+    const p = parseDiscoverItLines([
+      mkLine(1, [[174, "07/03/2026 - 08/09/2026"]]),
+      mkLine(2, [[38, "Previous Balance"], [247, "$6.98"]]),
+      mkLine(3, [[38, "New Balance:"], [300, "$557.62"]]),
+      mkLine(4, [[38, "07/22"], [74, "INTERNET PAYMENT - THANKYOU"], [361, "- $300.00"]]),
+      mkLine(5, [[38, "07/15"], [74, "BESTBUY.COM 888-237-8289 MN"], [367, "$209.71"]]),
+    ]);
+    const pay = p.txns.find((t) => t.rawDescription.includes("INTERNET PAYMENT"));
+    expect(pay).toBeDefined();
+    expect(pay!.amountCents).toBe(30000); // a payment is net-worth-POSITIVE on a card
+    expect(pay!.postedOn).toBe("2026-07-22");
+    // the spaced token must not bleed into the description either
+    expect(pay!.rawDescription).toBe("INTERNET PAYMENT - THANKYOU");
+    expect(p.txns).toHaveLength(2);
+  });
+
   test("throws when the billing period is missing", () => {
     expect(() =>
       parseDiscoverItLines([mkLine(1, [[38, "Previous Balance"], [300, "$104.00"]])]),
