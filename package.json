@@ -19,6 +19,7 @@
     "backup:statements": "tsx scripts/backup-statements.ts",
     "trial-import": "tsx scripts/trial-import.ts",
     "assert-fixture-shape": "tsx scripts/assert-fixture-shape.ts",
+    "propose-budgets": "tsx scripts/propose-budgets.ts",
     "import-statements": "tsx scripts/import-statements.ts",
     "demo:load": "MONEYAPP_FAKE_PRICES=1 tsx scripts/demo/load-demo.ts",
     "db:migrate": "tsx src/db/migrate.ts",
