@@ -290,30 +290,38 @@ export function rhythmPhrase(cadence: StatementCadence): string {
 }
 
 /**
- * What to do about this account, and why we think so.
+ * What is OUTSTANDING, with no history attached — the dashboard teaser's line,
+ * and the second half of the full sentence below, so the two can never word the
+ * same fact differently.
  *
- * ⛔ Never the word "overdue" for a quiet account. Silence between monthly
- * uploads is this ledger's normal state, and the app has always been right to
- * keep projecting through it. Only a close that has already HAPPENED is late,
- * and then it is the statement that is late, not the account.
+ * null when nothing has closed. A quiet account makes no demand: silence between
+ * monthly uploads is this ledger's normal state, and only a close that has
+ * already HAPPENED is late — and then it is the statement that is late, not the
+ * account. Nothing here ever says "overdue".
  */
+export function pullDemand(pull: StatementPull): string | null {
+  switch (pull.status) {
+    case "unknown":
+    case "waiting":
+      return null;
+    case "due":
+      return `one closed ${plural(pull.daysLate, "day")} ago, not imported`;
+    case "behind": {
+      const count = pull.capped ? `${pull.closesDue}+` : String(pull.closesDue);
+      return `${count} closed since, the oldest ${plural(pull.daysLate, "day")} ago`;
+    }
+  }
+}
+
+/** The full row on /imports: what we know, then what to do about it. */
 export function pullSentence(pull: StatementPull): string {
   const since =
     pull.lastCloseOn === null || pull.daysSinceLastClose === null
       ? "nothing imported yet"
       : `last one closed ${formatDayShort(pull.lastCloseOn)}, ${plural(pull.daysSinceLastClose, "day")} ago`;
 
-  switch (pull.status) {
-    case "unknown":
-      return since;
-    case "waiting":
-      // expectedOn is non-null for every status except `unknown`
-      return `${since} · next closes ${formatDayShort(pull.expectedOn!)}`;
-    case "due":
-      return `${since} · one closed ${plural(pull.daysLate, "day")} ago and has not been imported`;
-    case "behind": {
-      const count = pull.capped ? `${pull.closesDue}+` : String(pull.closesDue);
-      return `${since} · ${count} have closed since, the oldest ${plural(pull.daysLate, "day")} ago`;
-    }
-  }
+  const demand = pullDemand(pull);
+  if (demand) return `${since} · ${demand}`;
+  // expectedOn is non-null for every status except `unknown`
+  return pull.status === "unknown" ? since : `${since} · next closes ${formatDayShort(pull.expectedOn!)}`;
 }

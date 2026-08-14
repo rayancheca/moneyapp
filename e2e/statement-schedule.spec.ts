@@ -53,3 +53,32 @@ test("the statement schedule states each account's measured cycle", async ({ pag
   // wallet is a physical one and nagging about its statements would be invented
   await expect(card).not.toContainText("Cash on Hand");
 });
+
+/**
+ * The dashboard half. It lists ONLY accounts with a close behind them, so on
+ * this fixture — where all seven are inside their cycle — the renderable branch
+ * is the all-clear. That branch is worth pinning precisely because it is a
+ * claim: a teaser that vanished when satisfied could not make it, and on a home
+ * screen the absence of a warning has to mean something.
+ *
+ * ⚠️ The `due` / `behind` rows cannot be reached from any Playwright run here.
+ * Their words live in `src/lib/statement-cadence.ts` (`pullDemand`), under the
+ * 100%-branch gate — do not try to assert them from this file.
+ */
+test("the dashboard says statements are handled rather than going quiet", async ({ page }) => {
+  await page.goto("/");
+
+  // the REGION landmark, not `section:has(heading)` — the activity hub is an
+  // ancestor <section> that also contains this heading, so `has:` matches two
+  const teaser = page.getByRole("region", { name: "Statements", exact: true });
+  await expect(teaser).toHaveCount(1);
+  await expect(teaser).toContainText("Every account is inside its own cycle — nothing to download.");
+
+  // no count chip and no import prompt while there is nothing outstanding
+  await expect(teaser.getByRole("link", { name: "Schedule →" })).toBeVisible();
+  await expect(teaser.getByRole("link", { name: "Import →" })).toHaveCount(0);
+
+  // and it drills to the panel that carries the full reasoning
+  await teaser.getByRole("link", { name: "Schedule →" }).click();
+  await expect(page.getByRole("heading", { name: "Statement schedule" })).toBeVisible();
+});

@@ -10,6 +10,7 @@ import { bridgedNetWorthSeries, type BridgedNetWorthPoint } from "./in-flight";
 import { forecastCurrentMonth } from "./forecast";
 import { portfolioOverview, portfolioSeries, topMovers } from "./portfolio";
 import { upcomingOccurrences } from "./recurring";
+import { statementPulls, type AccountStatementPull } from "./statement-pulls";
 import { needsReviewCount } from "./review-count";
 import { cashFlowByPeriod } from "./spending";
 
@@ -124,6 +125,13 @@ export interface DashboardData {
   upcoming: UpcomingBills;
   pace: SpendingPace | null;
   investments: InvestmentsTeaser | null;
+  /**
+   * Every account that issues statements, due or not. The teaser needs the
+   * whole list, not just the outstanding ones: an all-clear it can only reach
+   * by counting to zero is a claim, and "no rows" and "nothing to do" have to
+   * be distinguishable on a dashboard.
+   */
+  statements: AccountStatementPull[];
 }
 
 function netWorthSummary(db: AppDatabase): NetWorthSummary {
@@ -273,5 +281,6 @@ export function dashboardData(db: AppDatabase, today: string = todayIso()): Dash
     upcoming: upcomingBills(db, today),
     pace: spendingPace(db, today),
     investments: investmentsTeaser(db, today),
+    statements: statementPulls(db, today),
   };
 }

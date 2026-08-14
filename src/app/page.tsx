@@ -21,6 +21,7 @@ import { RecentTransactions } from "@/components/transactions/RecentTransactions
 import { InstitutionCard } from "@/components/accounts/InstitutionCard";
 import { DashboardWindowProvider } from "@/components/dashboard/DashboardWindowContext";
 import { InvestmentsTeaser } from "@/components/dashboard/InvestmentsTeaser";
+import { StatementsTeaser } from "@/components/dashboard/StatementsTeaser";
 import { DashboardChartSection } from "@/components/dashboard/DashboardChartSection";
 import {
   DASHBOARD_SURFACE,
@@ -283,6 +284,7 @@ export default async function DashboardPage({
           />
           <div className="space-y-4">
             {data.pace && <SpendingPaceWidget pace={data.pace} />}
+            <StatementsTeaser pulls={data.statements} />
             {data.investments && <InvestmentsTeaser data={data.investments} />}
           </div>
         </div>

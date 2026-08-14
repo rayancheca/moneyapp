@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   MAX_TRACKED_CLOSES,
   nextCloseAfter,
+  pullDemand,
   pullSentence,
   RECENT_CLOSES,
   rhythmPhrase,
@@ -230,26 +231,44 @@ describe("the words", () => {
     const p = statementPull(MONTH_END, "2026-09-02");
     expect(p.status).toBe("due");
     expect(pullSentence(p)).toBe(
-      "last one closed Jul 31, 33 days ago · one closed 2 days ago and has not been imported",
+      "last one closed Jul 31, 33 days ago · one closed 2 days ago, not imported",
     );
   });
 
   test("a behind account counts them, oldest first", () => {
     const p = statementPull(MONTH_END, "2026-10-05");
     expect(pullSentence(p)).toBe(
-      "last one closed Jul 31, 66 days ago · 2 have closed since, the oldest 35 days ago",
+      "last one closed Jul 31, 66 days ago · 2 closed since, the oldest 35 days ago",
     );
   });
 
   test("a dormant account reports a floor, never a fabricated count", () => {
     const p = statementPull(["2019-01-31", "2019-02-28", "2019-03-31"], "2026-08-14");
-    expect(pullSentence(p)).toContain(`${MAX_TRACKED_CLOSES}+ have closed since`);
+    expect(pullSentence(p)).toContain(`${MAX_TRACKED_CLOSES}+ closed since`);
   });
 
   test("a waiting account names the next close, and nothing is called overdue", () => {
     const p = statementPull(MONTH_END, "2026-08-14");
     expect(pullSentence(p)).toBe("last one closed Jul 31, 14 days ago · next closes Aug 31");
     expect(pullSentence(p)).not.toContain("overdue");
+  });
+
+  test("the teaser and the panel cannot word the same fact differently", () => {
+    // pullSentence is built FROM pullDemand, so the dashboard's short line and
+    // the /imports row can never disagree about what is outstanding
+    const due = statementPull(MONTH_END, "2026-09-02");
+    expect(pullDemand(due)).toBe("one closed 2 days ago, not imported");
+    expect(pullSentence(due)).toContain(pullDemand(due)!);
+
+    const behind = statementPull(MONTH_END, "2026-10-05");
+    expect(pullDemand(behind)).toBe("2 closed since, the oldest 35 days ago");
+    expect(pullSentence(behind)).toContain(pullDemand(behind)!);
+  });
+
+  test("a quiet account makes NO demand — the dashboard shows it nothing", () => {
+    expect(pullDemand(statementPull(MONTH_END, "2026-08-14"))).toBeNull(); // waiting
+    expect(pullDemand(statementPull(["2026-07-31"], "2026-12-31"))).toBeNull(); // unknown
+    expect(pullDemand(statementPull([], "2026-08-14"))).toBeNull(); // never had one
   });
 
   test("an account with no statements at all makes no claim about a cycle", () => {
