@@ -44,9 +44,14 @@ function detail(c: AccountCoverage): string {
     case "unknown":
       return "no balances derived yet — import a statement to start the chain";
     case "verified":
-      return c.daysSinceVerified !== null && c.daysSinceVerified > 45
-        ? `balances close to the cent through ${c.verifiedThrough} — the next statement is overdue`
-        : `balances close to the cent through ${c.verifiedThrough}`;
+      // Deliberately says nothing about whether the NEXT statement is late. It
+      // used to, off a flat 45-day rule, which is not a fact about any
+      // particular account: a cycle that closes on the 2nd is 45 days quiet
+      // every single month by construction. The Statement schedule panel above
+      // answers that question from each account's own close dates, and two
+      // panels asserting "overdue" against different definitions is the shape
+      // that lets them drift apart.
+      return `balances close to the cent through ${c.verifiedThrough}`;
   }
 }
 

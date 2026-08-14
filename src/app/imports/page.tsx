@@ -6,7 +6,9 @@ import { balanceAnchors } from "@/db/schema/balances";
 import { importFiles, statementPeriods, type ImportStatus } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { CoveragePanel } from "@/components/imports/CoveragePanel";
+import { StatementSchedule } from "@/components/imports/StatementSchedule";
 import { accountCoverage } from "@/services/coverage";
+import { statementPulls } from "@/services/statement-pulls";
 import { countPhrase } from "@/components/ui/blast-radius";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -109,6 +111,7 @@ export default async function ImportsPage({
     .all();
 
   const coverage = accountCoverage(db);
+  const pulls = statementPulls(db);
 
   const reconciled = periods.filter((p) => p.reconciliation === "reconciled").length;
   const valueAnchors = periods.filter((p) => p.reconciliation === "value_anchor").length;
@@ -157,6 +160,8 @@ export default async function ImportsPage({
             </button>
           </form>
         </SurfaceCard>
+
+        <StatementSchedule pulls={pulls} />
 
         <CoveragePanel coverage={coverage} />
 
