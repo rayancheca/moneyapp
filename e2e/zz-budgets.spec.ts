@@ -97,6 +97,15 @@ test("the header flips to over-allocated when the budgets outrun the income", as
   const original = await page.getByRole("textbox", { name: "Food budget amount" }).inputValue();
   await page.getByRole("button", { name: "Cancel" }).click();
 
+  // EXACTLY zero first. $3,090.00 − $800.00 + $5,372.00 = $7,662.00, precisely
+  // the expected income, which is where the ternary's `>= 0` lives. Without
+  // this step the boundary is untested and `>= 0` could be weakened to `> 0`
+  // with every test still green — and at zero that reads "Over-allocated by
+  // $0.00", which is absurd on its face.
+  await setFoodBudget("5372.00");
+  await expect(page.getByText("$0.00 left to allocate")).toBeVisible();
+  await expect(page.getByText(/Over-allocated by/)).toHaveCount(0);
+
   // $3,090.00 − $800.00 + $8,000.00 = $10,290.00 against $7,662.00 → over by $2,628.00
   await setFoodBudget("8000.00");
 

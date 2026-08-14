@@ -61,15 +61,45 @@ describe("checkFixtureShape", () => {
     expect(report.failures[0]).toMatch(/MSFT \(stock\): series is effectively straight — 0 /);
   });
 
-  test("the pinned last day cannot flatter an otherwise straight series", () => {
-    // the final day is EXCLUDED from the turn count precisely so that one
-    // contract-mandated step in the other direction does not read as a bend
+  test("the pinned last day is EXCLUDED from the turn count", () => {
+    // Asserted on the reported turn COUNT, not on pass/fail. A single extra
+    // turn cannot move a 60-day series across MIN_TURN_RATE, so a pass/fail
+    // assertion here would hold whether or not the exclusion existed — it would
+    // be testing nothing. MSFT's contract delta is NEGATIVE against a strictly
+    // rising trend, so counting it would score exactly one reversal.
     const series = healthy();
-    series.set(seriesKey("AAPL", "stock"), straight(61, 340));
+    series.set(seriesKey("MSFT", "stock"), straight(61, -520));
+
+    const report = checkFixtureShape(series);
+    const msft = report.shapes.find((s) => s.symbol === "MSFT")!;
+
+    expect(msft.turns).toBe(0);
+    expect(report.failures[0]).toMatch(/MSFT \(stock\): series is effectively straight/);
+  });
+
+  test("a monotone STAIRCASE is a ruler too — flat days are not reversals", () => {
+    // The defect this check exists for does not always arrive as a smooth line.
+    // A ramp whose daily step is under a cent rounds to a staircase, and
+    // `Math.sign(0)` is a third value, so comparing raw deltas scored one of
+    // those at 0.814 — a ruler passing the ruler check.
+    const series = healthy();
+    const staircase = Array.from({ length: 60 }, (_, i) => 100 + Math.floor(i / 5) * 0.01);
+    series.set(seriesKey("WMT", "etf"), [...staircase, staircase.at(-1)!]);
 
     const report = checkFixtureShape(series);
 
-    expect(report.failures[0]).toMatch(/AAPL \(stock\): series is effectively straight/);
+    expect(report.failures[0]).toMatch(/WMT \(etf\): series is effectively straight — 0 /);
+  });
+
+  test("a perfectly FLAT series is caught as never moving, not divided by zero", () => {
+    const series = healthy();
+    series.set(seriesKey("ETH", "crypto"), Array.from({ length: 61 }, () => 100));
+
+    const report = checkFixtureShape(series);
+
+    expect(report.failures[0]).toMatch(/ETH \(crypto\): series never moves — 0 non-flat days/);
+    // and it is not measured, so no NaN turn rate reaches a caller
+    expect(report.shapes.map((s) => s.symbol)).not.toContain("ETH");
   });
 
   test("catches a last-day delta that drifted off its contract", () => {

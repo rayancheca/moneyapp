@@ -56,9 +56,10 @@ export const SEEDED_SERIES: readonly SeededSeries[] = [
 export const MIN_CLOSES = 60;
 
 /**
- * The share of day-over-day deltas that must change sign. A pure trend scores
- * 0; the real seeded wobble measures around 0.66. 0.2 is far enough below the
- * real value to never flake and far enough above 0 to catch a ruler.
+ * The share of NON-FLAT day-over-day deltas that must reverse direction. Any
+ * monotone series — a smooth ramp or a staircase — scores 0; the real seeded
+ * wobble measures around 0.66. 0.2 is far enough below the real value to never
+ * flake and far enough above 0 to catch a ruler.
  */
 export const MIN_TURN_RATE = 0.2;
 
@@ -120,21 +121,45 @@ export function checkFixtureShape(
       continue;
     }
 
-    // (1) Does the line bend? Count sign changes in the day-over-day delta,
+    // (1) Does the line bend? Count REVERSALS among the day-over-day deltas,
     // EXCLUDING the pinned final day — that one is a fixed contract move, not
     // part of the wobble, and counting it would let one pinned step flatter a
     // straight series.
+    //
+    // ⚠️ Flat days are removed before the comparison, and that is load-bearing.
+    // `Math.sign(0)` is 0 — a THIRD value, distinct from -1 and +1 — so
+    // comparing raw deltas scores every entry into and exit from a flat day as
+    // two "direction changes" on a series that never actually reverses. That is
+    // not a nitpick: a mathematically perfect ramp whose daily step is smaller
+    // than a cent rounds to a staircase of zeros and one-cent steps, and scored
+    // 0.814 under the naive comparison — a ruler sailing through the one check
+    // whose entire purpose is to catch rulers. Reversals are only meaningful
+    // between days the price actually MOVED.
     const trend = closes.slice(0, -1);
     const deltas = trend.slice(1).map((v, i) => v - trend[i]!);
-    let turns = 0;
-    for (let i = 1; i < deltas.length; i++) {
-      if (Math.sign(deltas[i]!) !== Math.sign(deltas[i - 1]!)) turns += 1;
+    const moves = deltas.filter((d) => d !== 0);
+
+    // A series that barely moves at all cannot be shown to bend, and a flat
+    // line is the most ruler-like series there is.
+    if (moves.length < 2) {
+      failures.push(
+        `${want.symbol} (${want.assetType}): series never moves — ${moves.length} non-flat ` +
+          `${moves.length === 1 ? "day" : "days"} in ${deltas.length}`,
+      );
+      continue;
     }
-    const turnRate = turns / deltas.length;
+
+    let turns = 0;
+    for (let i = 1; i < moves.length; i++) {
+      if (Math.sign(moves[i]!) !== Math.sign(moves[i - 1]!)) turns += 1;
+    }
+    // denominator is the number of comparisons actually made, so the rate is a
+    // true share of "chances to reverse" rather than of calendar days
+    const turnRate = turns / (moves.length - 1);
     if (turnRate < MIN_TURN_RATE) {
       failures.push(
         `${want.symbol} (${want.assetType}): series is effectively straight — ${turns} direction ` +
-          `changes over ${deltas.length} days (${(turnRate * 100).toFixed(1)}%)`,
+          `changes over ${moves.length} moves (${(turnRate * 100).toFixed(1)}%)`,
       );
     }
 
