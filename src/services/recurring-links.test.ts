@@ -335,6 +335,7 @@ describe("user overrides shadow detection (§4.4)", () => {
       intervalDaysAvg: 30,
       nextExpectedOn: "2026-07-15",
       nextExpectedAmountCents: -1549,
+      anchorDay: null,
     });
   });
 
@@ -345,11 +346,29 @@ describe("user overrides shadow detection (§4.4)", () => {
       intervalDaysAvg: null, // stepping now follows the weekly nominal, not 30
       nextExpectedOn: "2026-07-20",
       nextExpectedAmountCents: -2000,
+      anchorDay: null,
     });
     // projection honors the override end-to-end
     const occ = projectOccurrences(toProjectable(overridden), "2026-07-08", "2026-07-31");
     expect(occ.map((o) => o.date)).toEqual(["2026-07-20", "2026-07-27"]);
     expect(occ.every((o) => o.amountCents === -2000)).toBe(true);
+  });
+
+  /**
+   * A detected anchor day must not survive a date the user typed. Otherwise
+   * picking the 15th on a month-end series would be silently re-dayed to the
+   * 31st, and the override would look like it had been ignored.
+   */
+  test("a user's own date beats the detected anchor day", () => {
+    const monthEnd = { ...base, anchorDay: 31, nextExpectedOn: "2027-02-28" };
+    expect(effectiveSeries(monthEnd).anchorDay).toBe(31);
+    expect(projectOccurrences(toProjectable(monthEnd), "2027-03-01", "2027-03-31").map((o) => o.date))
+      .toEqual(["2027-03-31"]);
+
+    const pinned = { ...monthEnd, userNextExpectedOn: "2027-03-15" };
+    expect(effectiveSeries(pinned).anchorDay).toBeNull();
+    expect(projectOccurrences(toProjectable(pinned), "2027-03-01", "2027-03-31").map((o) => o.date))
+      .toEqual(["2027-03-15"]);
   });
 });
 

@@ -3,11 +3,15 @@ import {
   DateParseError,
   addCalendarMonths,
   addDays,
+  calendarMonthsBetween,
   calendarMonthsToReach,
   compareDates,
+  daysInMonthOf,
   diffDays,
   fromEpochDay,
+  isMonthEnd,
   isValidIsoDate,
+  withDayOfMonth,
   isoWeekday,
   monthKey,
   periodBounds,
@@ -135,6 +139,64 @@ describe("addCalendarMonths", () => {
 
   test("rejects a non-date the same way every other reader does", () => {
     expect(() => addCalendarMonths("2026-02-30", 1)).toThrow(DateParseError);
+  });
+});
+
+describe("daysInMonthOf", () => {
+  test("knows the ordinary months", () => {
+    expect(daysInMonthOf("2027-01-05")).toBe(31);
+    expect(daysInMonthOf("2027-04-30")).toBe(30);
+  });
+
+  test("February follows the leap rule, including the century cases", () => {
+    expect(daysInMonthOf("2027-02-01")).toBe(28);
+    expect(daysInMonthOf("2028-02-01")).toBe(29); // divisible by 4
+    expect(daysInMonthOf("1900-02-01")).toBe(28); // century, not by 400
+    expect(daysInMonthOf("2000-02-01")).toBe(29); // divisible by 400
+  });
+});
+
+describe("isMonthEnd", () => {
+  test("is true only on the final day of that particular month", () => {
+    expect(isMonthEnd("2027-01-31")).toBe(true);
+    expect(isMonthEnd("2027-01-30")).toBe(false);
+    expect(isMonthEnd("2027-02-28")).toBe(true);
+    expect(isMonthEnd("2028-02-28")).toBe(false); // leap year: the 29th is
+    expect(isMonthEnd("2028-02-29")).toBe(true);
+    expect(isMonthEnd("2027-04-30")).toBe(true);
+  });
+});
+
+describe("withDayOfMonth", () => {
+  test("moves the date onto the requested day of its own month", () => {
+    expect(withDayOfMonth("2027-03-01", 31)).toBe("2027-03-31");
+    expect(withDayOfMonth("2027-03-31", 1)).toBe("2027-03-01");
+  });
+
+  test("clamps into short months, which is what makes 31 mean month-end", () => {
+    expect(withDayOfMonth("2027-02-10", 31)).toBe("2027-02-28");
+    expect(withDayOfMonth("2028-02-10", 31)).toBe("2028-02-29");
+    expect(withDayOfMonth("2027-04-10", 31)).toBe("2027-04-30");
+  });
+
+  test("refuses to produce a day outside the month, whatever it is handed", () => {
+    expect(withDayOfMonth("2027-03-15", 0)).toBe("2027-03-01");
+    expect(withDayOfMonth("2027-03-15", -7)).toBe("2027-03-01");
+    expect(withDayOfMonth("2027-03-15", 99)).toBe("2027-03-31");
+    expect(withDayOfMonth("2027-03-15", 12.9)).toBe("2027-03-12");
+  });
+});
+
+describe("calendarMonthsBetween", () => {
+  test("counts whole months and ignores the day entirely", () => {
+    expect(calendarMonthsBetween("2027-01-31", "2027-03-01")).toBe(2);
+    expect(calendarMonthsBetween("2027-01-01", "2027-03-31")).toBe(2);
+    expect(calendarMonthsBetween("2026-11-15", "2027-02-15")).toBe(3);
+  });
+
+  test("floors at zero when the boundary is behind the anchor", () => {
+    expect(calendarMonthsBetween("2027-06-01", "2027-01-01")).toBe(0);
+    expect(calendarMonthsBetween("2027-06-01", "2027-06-30")).toBe(0);
   });
 });
 

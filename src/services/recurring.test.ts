@@ -127,6 +127,35 @@ describe("analyzeGroup", () => {
     expect(analyzeGroup([txn("a", "2026-01-01", -1000), txn("b", "2026-02-01", -1000)])).toBeNull();
   });
 
+  /**
+   * The end of the chain the anchor day exists for. Detection sees a month-end
+   * bill whose newest posting is February's clamp; the stored `next_expected_on`
+   * has to come out on the 31st of March, not the 28th.
+   */
+  test("a month-end series stores the anchor day and projects past the clamp", () => {
+    const stats = analyzeGroup([
+      txn("a", "2026-12-31", -228570),
+      txn("b", "2027-01-31", -228570),
+      txn("c", "2027-02-28", -228570),
+    ]);
+    expect(stats).not.toBeNull();
+    expect(stats!.cadence).toBe("monthly");
+    expect(stats!.anchorDay).toBe(31);
+    // the newest posting is the clamped 28th, and the next charge is NOT the 28th
+    expect(stats!.lastMatchedOn).toBe("2027-02-28");
+    expect(stats!.nextExpectedOn).toBe("2027-03-31");
+  });
+
+  test("an ordinary mid-month series records no anchor day and is unchanged", () => {
+    const stats = analyzeGroup([
+      txn("a", "2026-01-08", -180000),
+      txn("b", "2026-02-08", -180000),
+      txn("c", "2026-03-08", -180000),
+    ]);
+    expect(stats!.anchorDay).toBeNull();
+    expect(stats!.nextExpectedOn).toBe("2026-04-08");
+  });
+
   test("unstable amounts (stddev/|mean| > 0.2) are rejected", () => {
     expect(
       analyzeGroup([
@@ -731,7 +760,7 @@ describe("detection on the synthetic corpus", () => {
 });
 
 describe("rollForwardNextExpected", () => {
-  const eff = { cadence: "monthly" as const, intervalDaysAvg: 30, nextExpectedOn: "2026-07-16", nextExpectedAmountCents: -1549 };
+  const eff = { cadence: "monthly" as const, intervalDaysAvg: 30, nextExpectedOn: "2026-07-16", nextExpectedAmountCents: -1549, anchorDay: null };
 
   test("a future stored date is returned untouched", () => {
     expect(rollForwardNextExpected(eff, "2026-07-08")).toBe("2026-07-16");

@@ -36,6 +36,18 @@ export const recurringSeries = sqliteTable("recurring_series", {
   amountCentsStddev: real("amount_cents_stddev"),
   toleranceDays: integer("tolerance_days").notNull().default(3),
   nextExpectedOn: text("next_expected_on"),
+  /**
+   * The day-of-month this series is really billed on, when the calendar can
+   * clamp it (29..31). Null for everything else, which is almost everything.
+   *
+   * `next_expected_on` cannot carry this: a date that has been clamped looks
+   * exactly like one that has not. A month-end bill posts 2027-02-28, detection
+   * re-anchors there, and every long month after it lands on the 28th — the
+   * newest posting is itself the clamped value, so no amount of re-deriving from
+   * it recovers the truth. Written by `analyzeGroup` from ALL of a group's
+   * postings (see `deriveAnchorDay`), read by `stepPlan`.
+   */
+  anchorDay: integer("anchor_day"),
   nextExpectedAmountCents: integer("next_expected_amount_cents"),
   status: text("status", { enum: SERIES_STATUSES }).notNull().default("detected"),
   confidence: real("confidence"),

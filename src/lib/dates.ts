@@ -52,6 +52,31 @@ function daysInMonth(y: number, m: number): number {
   return DAYS_IN_MONTH[m - 1]!;
 }
 
+/** How many days the month containing `s` has. */
+export function daysInMonthOf(s: string): number {
+  const [y, m] = parts(s);
+  return daysInMonth(y, m);
+}
+
+/** True when `s` is the final day of its own month. */
+export function isMonthEnd(s: string): boolean {
+  const [, , d] = parts(s);
+  return d === daysInMonthOf(s);
+}
+
+/**
+ * `s` moved onto `day` of its own month, clamped into short months.
+ *
+ * The clamp is what lets a single integer 1..31 express "the last day of the
+ * month": day 31 lands on the 28th in February and the 30th in April, which is
+ * exactly a month-end schedule. See `deriveAnchorDay`.
+ */
+export function withDayOfMonth(s: string, day: number): string {
+  const [y, m] = parts(s);
+  const d = Math.min(Math.max(1, Math.trunc(day)), daysInMonth(y, m));
+  return `${y.toString().padStart(4, "0")}-${m.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
+}
+
 /**
  * Howard Hinnant's days_from_civil. Shifting the year to begin in March moves
  * the leap day to the very end, which turns day-of-year into a closed form
@@ -157,10 +182,19 @@ export function addCalendarMonths(s: string, months: number): string {
  * earlier than boundary whatever the clamping did. So only n₀ and n₀+1 can ever
  * be the answer.
  */
-export function calendarMonthsToReach(anchor: string, boundary: string): number {
+/**
+ * Whole calendar months from `anchor`'s month to `boundary`'s, floored at 0.
+ * Months only — the day within them is the caller's problem, because a caller
+ * that clamps and a caller that re-days to a fixed anchor disagree about it.
+ */
+export function calendarMonthsBetween(anchor: string, boundary: string): number {
   const [ay, am] = parts(anchor);
   const [by, bm] = parts(boundary);
-  const n = Math.max(0, (by - ay) * 12 + (bm - am));
+  return Math.max(0, (by - ay) * 12 + (bm - am));
+}
+
+export function calendarMonthsToReach(anchor: string, boundary: string): number {
+  const n = calendarMonthsBetween(anchor, boundary);
   return compareDates(addCalendarMonths(anchor, n), boundary) >= 0 ? n : n + 1;
 }
 

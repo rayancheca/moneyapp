@@ -10,7 +10,13 @@ import {
 } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addCalendarMonths, addDays, compareDates, diffDays, todayIso } from "@/lib/dates";
-import { CADENCE_NOMINAL_DAYS, stepFrom, stepPlan, stepsToReach } from "@/lib/recurring-step";
+import {
+  CADENCE_NOMINAL_DAYS,
+  deriveAnchorDay,
+  stepFrom,
+  stepPlan,
+  stepsToReach,
+} from "@/lib/recurring-step";
 
 /**
  * A drizzle transaction handle. Detection and the user-link services
@@ -137,6 +143,8 @@ export interface GroupStats {
   nextExpectedOn: string;
   nextExpectedAmountCents: number;
   lastMatchedOn: string;
+  /** the billed day-of-month when the calendar can clamp it; see deriveAnchorDay */
+  anchorDay: number | null;
 }
 
 /**
@@ -177,6 +185,10 @@ export function analyzeGroup(txns: readonly AnalyzableTxn[]): GroupStats | null 
 
   const last = sorted.at(-1)!;
   const intervalDaysAvg = Math.round((gaps.reduce((a, b) => a + b, 0) / gaps.length) * 100) / 100;
+  // read from EVERY posting, never from `last`: on a month-end series `last` is
+  // itself the clamped value, so it is the one date that cannot reveal the day
+  const anchorDay = deriveAnchorDay(sorted.map((t) => t.postedOn));
+  const plan = stepPlan(cadence, intervalDaysAvg, anchorDay);
   return {
     cadence,
     medianGapDays: medianGap,
@@ -190,11 +202,12 @@ export function analyzeGroup(txns: readonly AnalyzableTxn[]): GroupStats | null 
     // self-correcting noise, but a calendar walk repeats it every single month.
     // So the plan is built from the interval this call is about to STORE — the
     // exact value projectOccurrences will read back.
-    nextExpectedOn: stepPlan(cadence, intervalDaysAvg).calendarMonths
-      ? addCalendarMonths(last.postedOn, 1)
+    nextExpectedOn: plan.calendarMonths
+      ? stepFrom(last.postedOn, plan, 1)
       : addDays(last.postedOn, Math.round(medianGap)),
     nextExpectedAmountCents: Math.round(mean),
     lastMatchedOn: last.postedOn,
+    anchorDay,
   };
 }
 
@@ -320,6 +333,7 @@ export function recomputeSeriesStats(
       amountCentsStddev: stats.amountCentsStddev,
       toleranceDays: stats.toleranceDays,
       nextExpectedOn: stats.nextExpectedOn,
+      anchorDay: stats.anchorDay,
       nextExpectedAmountCents: stats.nextExpectedAmountCents,
       confidence: stats.confidence,
       lastMatchedOn: stats.lastMatchedOn,
@@ -462,6 +476,7 @@ export function detectRecurringSeries(
             amountCentsStddev: stats.amountCentsStddev,
             toleranceDays: stats.toleranceDays,
             nextExpectedOn: stats.nextExpectedOn,
+            anchorDay: stats.anchorDay,
             nextExpectedAmountCents: stats.nextExpectedAmountCents,
             confidence: stats.confidence,
             lastMatchedOn: stats.lastMatchedOn,
@@ -654,6 +669,8 @@ interface ProjectableSeries {
   intervalDaysAvg: number | null;
   nextExpectedOn: string | null;
   nextExpectedAmountCents: number | null;
+  /** billed day-of-month when the calendar can clamp it; see deriveAnchorDay */
+  anchorDay?: number | null;
   /** last day this series can occur; null = open-ended */
   userEndsOn?: string | null;
   /** copied onto every occurrence this series projects */
@@ -671,6 +688,8 @@ export interface SeriesOverrides {
   userAmountCents: number | null;
   /** last day the series can occur; null = open-ended */
   userEndsOn?: string | null;
+  /** detected billed day-of-month, 29..31; optional so older callers still typecheck */
+  anchorDay?: number | null;
 }
 
 /** Effective values the UI and forecast read: user override first, else detected. */
@@ -679,6 +698,7 @@ export interface EffectiveSeries {
   intervalDaysAvg: number | null;
   nextExpectedOn: string | null;
   nextExpectedAmountCents: number | null;
+  anchorDay: number | null;
 }
 
 export function effectiveSeries(s: SeriesOverrides): EffectiveSeries {
@@ -689,6 +709,11 @@ export function effectiveSeries(s: SeriesOverrides): EffectiveSeries {
     intervalDaysAvg: s.userCadence ? null : s.intervalDaysAvg,
     nextExpectedOn: s.userNextExpectedOn ?? s.nextExpectedOn,
     nextExpectedAmountCents: s.userAmountCents ?? s.nextExpectedAmountCents,
+    // A user-set date IS the day-of-month, so the detected anchor must yield to
+    // it — otherwise picking the 15th on a month-end series would be silently
+    // re-dayed to the 31st and the override would look ignored. Same shape as
+    // the cadence override abandoning the detected interval, just above.
+    anchorDay: s.userNextExpectedOn ? null : (s.anchorDay ?? null),
   };
 }
 
@@ -756,7 +781,7 @@ export function isSeriesActive(
  */
 export function rollForwardNextExpected(eff: EffectiveSeries, today: string = todayIso()): string | null {
   if (!eff.nextExpectedOn) return null;
-  const plan = stepPlan(eff.cadence, eff.intervalDaysAvg);
+  const plan = stepPlan(eff.cadence, eff.intervalDaysAvg, eff.anchorDay);
   return stepFrom(eff.nextExpectedOn, plan, stepsToReach(eff.nextExpectedOn, plan, today));
 }
 
@@ -778,7 +803,7 @@ export function projectOccurrences(
 ): SeriesOccurrence[] {
   if (!series.nextExpectedOn || series.nextExpectedAmountCents === null) return [];
   const anchor = series.nextExpectedOn;
-  const plan = stepPlan(series.cadence, series.intervalDaysAvg);
+  const plan = stepPlan(series.cadence, series.intervalDaysAvg, series.anchorDay ?? null);
 
   // a commitment with a known end stops there — a 24-payment lease is not
   // "monthly forever", and projecting past its last payment silently inflates
