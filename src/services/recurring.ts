@@ -773,6 +773,29 @@ export function isSeriesActive(
 }
 
 /**
+ * A series whose EVIDENCE has run out: it posted before, and its newest posting
+ * is older than its own tolerance. UBER *ONE last charged 446 days ago against a
+ * 49-day tolerance and was still projecting $4.99 a month into Travel.
+ *
+ * ⚠️ Deliberately NOT `isSeriesActive`, which also calls a NEVER-posted series
+ * inactive. That is the right answer to "is there evidence for this?" and the
+ * wrong gate for a projection: a commitment the owner registered has no postings
+ * yet by definition — the car lease signed for 2026-09-11 posts nothing until
+ * next month's statement — and `userCategoryId` exists precisely so it still
+ * reaches its budget. Gating a forecast on `isSeriesActive` would delete
+ * $559.89/month of real lease from the Car budget to remove $4.99 of dead Uber.
+ *
+ * Lapsed means "it stopped", which only a series that once started can do.
+ */
+export function seriesHasLapsed(
+  s: SeriesOverrides & { lastMatchedOn: string | null },
+  today: string = todayIso(),
+): boolean {
+  const staleness = seriesStaleness(s, today);
+  return staleness.lastMatchedOn !== null && staleness.isStale;
+}
+
+/**
  * The first non-past occurrence of a series, stepping from its effective
  * next_expected_on the same way projectOccurrences does. The stored column is
  * the detector's output as of its last run and goes stale between runs — the

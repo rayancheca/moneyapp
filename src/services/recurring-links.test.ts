@@ -534,23 +534,23 @@ describe("createSeriesFromTransaction — the 'Make recurring' button", () => {
      * one lands. A 30-day hop off Jan 31 would put this charge on March 2 and
      * keep it there.
      *
-     * ⚠️ Both halves of that are asserted, including the ugly one. February has
-     * no 31st, so the stored anchor IS the clamp, and the walk then indexes off
-     * it: this series sits on the 28th, three days early in every long month.
-     * That is a measured residual of storing a schedule as a single date, not an
-     * accident — see the const doc on FALLBACK_CADENCE.
+     * February has no 31st, so the stored anchor IS the clamp — unavoidable when
+     * a schedule is one date. What is no longer inherited is the clamp itself:
+     * `anchor_day` carries the 31 the user typed, so the walk returns to the
+     * last day in March instead of sitting on the 28th forever.
      */
     const seed = insertTxn({ postedOn: "2026-01-31", amountCents: -5000, rawDescription: "MONTH END DUES" });
     const result = createSeriesFromTransaction(bundle.db, seed, TODAY);
     const series = seriesById(result.seriesId);
     expect(series.nextExpectedOn).toBe("2026-02-28");
+    expect(series.anchorDay).toBe(31);
 
     const walk = projectOccurrences(
       toProjectable({ ...series, userEndsOn: null }),
       "2026-02-01",
       "2026-05-31",
     ).map((o) => o.date);
-    expect(walk).toEqual(["2026-02-28", "2026-03-28", "2026-04-28", "2026-05-28"]);
+    expect(walk).toEqual(["2026-02-28", "2026-03-31", "2026-04-30", "2026-05-31"]);
   });
 
   test("a FUTURE-dated seed still becomes the member of its own series (no phantom)", () => {

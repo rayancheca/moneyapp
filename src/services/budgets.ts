@@ -23,7 +23,7 @@ import {
   recurringSeriesIdsForCategory,
 } from "./analytics";
 import { trailingFullMonths } from "./forecast";
-import { projectOccurrences, toProjectable } from "./recurring";
+import { projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
 
 /**
  * Budgets (master-plan Phase 5). One active budget per (category, period),
@@ -692,11 +692,12 @@ export function budgetOverdue(
       ),
     )
     .all();
-  if (rows.length === 0) return { totalCents: 0, series: [] };
+  const live = rows.filter((r) => !seriesHasLapsed(r, today));
+  if (live.length === 0) return { totalCents: 0, series: [] };
 
   // postings linked to these series, widened by the largest tolerance so a bill
   // that landed a few days either side of its due date still counts as paid
-  const maxTolerance = rows.reduce((m, r) => Math.max(m, r.toleranceDays), 0);
+  const maxTolerance = live.reduce((m, r) => Math.max(m, r.toleranceDays), 0);
   const postedBySeries = new Map<string, string[]>();
   for (const row of db
     .select({ seriesId: transactions.recurringSeriesId, postedOn: transactions.postedOn })
@@ -716,7 +717,7 @@ export function budgetOverdue(
 
   const series: BudgetTailSeries[] = [];
   let totalCents = 0;
-  for (const s of rows) {
+  for (const s of live) {
     const posted = postedBySeries.get(s.id) ?? [];
     const occ = projectOccurrences(toProjectable(s), periodStart, today)
       .filter((o) => o.amountCents < 0)
@@ -767,6 +768,10 @@ export function budgetTail(
   const series: BudgetTailSeries[] = [];
   let totalCents = 0;
   for (const s of rows) {
+    // a series that stopped charging is not a forecast — see seriesHasLapsed for
+    // why this is not `isSeriesActive` (a registered commitment has no postings
+    // yet and must still be projected)
+    if (seriesHasLapsed(s, today)) continue;
     const occ = projectOccurrences(toProjectable(s), from, periodEnd).filter((o) => o.amountCents < 0);
     if (occ.length === 0) continue;
     const amountCents = occ.reduce((sum, o) => sum - o.amountCents, 0); // money-out → positive

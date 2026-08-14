@@ -4,7 +4,7 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries, type Cadence } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { todayIso } from "@/lib/dates";
-import { stepFrom, stepPlan } from "@/lib/recurring-step";
+import { deriveAnchorDay, stepFrom, stepPlan } from "@/lib/recurring-step";
 import { applyUndoPatch, type UndoPatch } from "./bulk-edit";
 import {
   analyzeGroup,
@@ -220,12 +220,15 @@ export interface CreateSeriesResult {
  * anything while the evidence stays this thin (MIN_OCCURRENCES = 3, and
  * detection does not even link the second charge).
  *
- * ⚠️ KNOWN RESIDUAL, measured, not fixed here. A seed on a day the FOLLOWING
- * month does not have is anchored on the clamp — 2026-01-31 stores 2026-02-28 —
- * and because the walk indexes off the stored anchor, the series then sits on
- * the 28th of every month until three real charges re-derive it. The intended
- * day-of-month is not recoverable from one ISO date, so closing this needs an
- * anchor-day column, not a smarter hop. See the pass-51 handoff §5.
+ * The seed's day-of-month is also recorded as `anchor_day`, which closes the
+ * residual this note used to carry. A seed on 2026-01-31 still STORES the clamp
+ * 2026-02-28 — that part is unavoidable — but the walk no longer inherits it,
+ * so the series returns to the 31st in March instead of sitting on the 28th
+ * until three real charges re-derive it.
+ *
+ * One date is enough HERE, where it was not enough for detection: the user
+ * typed this day on purpose. Below day 29 `deriveAnchorDay` declines anyway,
+ * so a seed on the 28th is read as the 28th rather than guessed into month-end.
  */
 const FALLBACK_CADENCE: Cadence = "monthly";
 
@@ -389,7 +392,12 @@ export function createSeriesFromTransaction(
         intervalDaysAvg: null,
         amountCentsAvg: seed.amountCents,
         toleranceDays: 3,
-        nextExpectedOn: stepFrom(seed.postedOn, stepPlan(FALLBACK_CADENCE, null), 1),
+        nextExpectedOn: stepFrom(
+          seed.postedOn,
+          stepPlan(FALLBACK_CADENCE, null, deriveAnchorDay([seed.postedOn])),
+          1,
+        ),
+        anchorDay: deriveAnchorDay([seed.postedOn]),
         nextExpectedAmountCents: seed.amountCents,
         confidence: null,
         lastMatchedOn: seed.postedOn,

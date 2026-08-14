@@ -24,6 +24,7 @@ import {
   populationStddev,
   projectOccurrences,
   rollForwardNextExpected,
+  seriesHasLapsed,
   seriesStaleness,
   setSeriesStatus,
   upcomingOccurrences,
@@ -184,19 +185,17 @@ describe("analyzeGroup", () => {
   });
 
   /**
-   * ⚠️ The one shape this model cannot express, pinned so it is stated rather
-   * than discovered. A bill on the LAST day of each month has no single ISO date
-   * that means "the 31st": the anchor one month past 2027-01-31 is 2027-02-28,
-   * and because projectOccurrences indexes off the stored anchor, the walk then
-   * sits on the 28th — three days early in every long month.
+   * The shape this model could not express until `anchor_day` existed, kept as a
+   * regression pin. A bill on the LAST day of each month has no single ISO date
+   * meaning "the 31st": the anchor one month past 2027-01-31 is 2027-02-28, and
+   * a walk indexing off that stored anchor sat on the 28th — three days early in
+   * every long month, forever.
    *
-   * Bounded and self-correcting, unlike the day-stepped model it replaces: each
-   * detection run re-anchors on the newest charge, so the error never exceeds
-   * the gap between a short month and a long one, where a 30-day walk on the
-   * same series drifted to 2027-02-25 and beyond. Closing it properly needs an
-   * anchor-day-of-month column — see the pass-51 handoff §5.
+   * Both halves are asserted below, because the difference between them IS the
+   * feature: carrying the anchor day recovers the 31st, and dropping it
+   * reproduces the old defect exactly.
    */
-  test("a month-end bill anchors on the clamp — the residual this model cannot avoid", () => {
+  test("a month-end bill recovers its day from the anchor, and loses it without", () => {
     const stats = analyzeGroup([
       txn("a", "2026-08-31", -210900),
       txn("b", "2026-09-30", -210900),
@@ -206,23 +205,33 @@ describe("analyzeGroup", () => {
       txn("f", "2027-01-31", -210900),
     ]);
     expect(stats!.cadence).toBe("monthly");
-    expect(stats!.nextExpectedOn).toBe("2027-02-28"); // the 31 is not recoverable
-    // and the walk inherits it — asserted, because a comment claiming otherwise
-    // is exactly what the adversarial review of this change caught
-    const walk = projectOccurrences(
-      {
-        id: "eom",
-        name: "Rent",
-        kind: "bill",
-        cadence: stats!.cadence,
-        intervalDaysAvg: stats!.intervalDaysAvg,
-        nextExpectedOn: stats!.nextExpectedOn,
-        nextExpectedAmountCents: stats!.nextExpectedAmountCents,
-      },
-      "2027-02-01",
+    // detection reads the day from all six postings, not from the newest one
+    expect(stats!.anchorDay).toBe(31);
+    // the stored anchor is still February's clamp — that part is unavoidable
+    expect(stats!.nextExpectedOn).toBe("2027-02-28");
+
+    const base = {
+      id: "eom",
+      name: "Rent",
+      kind: "bill" as const,
+      cadence: stats!.cadence,
+      intervalDaysAvg: stats!.intervalDaysAvg,
+      nextExpectedOn: stats!.nextExpectedOn,
+      nextExpectedAmountCents: stats!.nextExpectedAmountCents,
+    };
+    const dates = (s: typeof base & { anchorDay?: number | null }) =>
+      projectOccurrences(s, "2027-02-01", "2027-05-31").map((o) => o.date);
+
+    // WITH the anchor day: every month lands on its own last day
+    expect(dates({ ...base, anchorDay: stats!.anchorDay })).toEqual([
+      "2027-02-28",
+      "2027-03-31",
+      "2027-04-30",
       "2027-05-31",
-    ).map((o) => o.date);
-    expect(walk).toEqual(["2027-02-28", "2027-03-28", "2027-04-28", "2027-05-28"]);
+    ]);
+
+    // WITHOUT it: the clamp is inherited and never let go — the old defect
+    expect(dates(base)).toEqual(["2027-02-28", "2027-03-28", "2027-04-28", "2027-05-28"]);
   });
 
   test("a monthly group outside the calendar band keeps the day-stepped anchor", () => {
@@ -756,6 +765,38 @@ describe("detection on the synthetic corpus", () => {
     const listed = listSeries(bundle.db, "2027-08-08").find((s) => s.id === rent.id)!;
     expect(listed.nextExpectedOn).toBe("2026-07-01");
     expect(listed.storedNextExpectedOn).toBe("2026-07-01");
+  });
+});
+
+describe("seriesHasLapsed", () => {
+  const base = {
+    cadence: "monthly" as const,
+    userCadence: null,
+    intervalDaysAvg: 30,
+    nextExpectedOn: "2026-07-16",
+    userNextExpectedOn: null,
+    nextExpectedAmountCents: -499,
+    userAmountCents: null,
+  };
+
+  test("a series that posted and then went quiet past its tolerance has lapsed", () => {
+    // UBER *ONE: 446 days against a 49-day tolerance
+    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2025-05-25" }, "2026-08-14")).toBe(true);
+  });
+
+  test("a series still posting within tolerance has not", () => {
+    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-07-16" }, "2026-08-14")).toBe(false);
+  });
+
+  /**
+   * The distinction from isSeriesActive, and the reason this predicate exists:
+   * a commitment registered before its first charge has no postings at all.
+   */
+  test("a series that has NEVER posted has not lapsed — it has not started", () => {
+    const commitment = { ...base, lastMatchedOn: null };
+    expect(seriesHasLapsed(commitment, "2026-08-14")).toBe(false);
+    // while isSeriesActive, correctly, calls the same row inactive
+    expect(isSeriesActive({ ...commitment, status: "confirmed" as const }, "2026-08-14")).toBe(false);
   });
 });
 

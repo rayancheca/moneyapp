@@ -101,6 +101,8 @@ function createSeries(opts: {
   cadence?: Cadence;
   intervalDaysAvg?: number;
   status?: SeriesStatus;
+  /** omit to mirror nextExpectedOn; null = a commitment that has never posted */
+  lastMatchedOn?: string | null;
 }): string {
   return bundle.db
     .insert(recurringSeries)
@@ -113,7 +115,7 @@ function createSeries(opts: {
       nextExpectedOn: opts.nextExpectedOn,
       nextExpectedAmountCents: opts.nextExpectedAmountCents,
       status: opts.status ?? "confirmed",
-      lastMatchedOn: opts.nextExpectedOn,
+      lastMatchedOn: opts.lastMatchedOn === undefined ? opts.nextExpectedOn : opts.lastMatchedOn,
     })
     .returning({ id: recurringSeries.id })
     .get().id;
@@ -754,6 +756,42 @@ describe("budgetOverdue — the bill that came due and never arrived", () => {
     // default toleranceDays is 3 — landing on the 10th is the same bill
     spendLinked("2026-06-10", -5_000, "Housing", bill);
     expect(budgetOverdue(bundle.db, catId("Housing"), "2026-06-01", "2026-06-20").totalCents).toBe(0);
+  });
+
+  /**
+   * UBER *ONE last charged 446 days ago against a 49-day tolerance and kept
+   * projecting $4.99 a month into Travel. A forecast is a claim about what is
+   * coming; a series that stopped charging has stopped making it.
+   */
+  test("a series that stopped charging is no longer overdue OR forecast", () => {
+    const dead = createSeries({
+      name: "UBER *ONE",
+      nextExpectedOn: "2026-06-10",
+      nextExpectedAmountCents: -499,
+      lastMatchedOn: "2025-03-01", // 466 days before the 2026-06-10 window
+    });
+    bindSeries(dead, "Housing");
+    expect(budgetOverdue(bundle.db, catId("Housing"), "2026-06-01", "2026-06-20").totalCents).toBe(0);
+    expect(budgetTail(bundle.db, catId("Housing"), "2026-06-30", "2026-06-05").totalCents).toBe(0);
+  });
+
+  /**
+   * The reason this gate is not `isSeriesActive`. A lease signed today posts
+   * nothing until next month's statement, so it has no `lastMatchedOn` at all —
+   * and deleting it from the forecast would remove real money the owner owes.
+   */
+  test("a registered commitment that has NEVER posted is still forecast", () => {
+    const lease = createSeries({
+      name: "Car lease",
+      nextExpectedOn: "2026-06-11",
+      nextExpectedAmountCents: -55_989,
+      lastMatchedOn: null,
+    });
+    bindSeries(lease, "Housing");
+    // due on the 11th, today is the 20th, nothing posted → overdue, not ignored
+    expect(budgetOverdue(bundle.db, catId("Housing"), "2026-06-01", "2026-06-20").totalCents).toBe(55_989);
+    // and still forecast while it is ahead of today
+    expect(budgetTail(bundle.db, catId("Housing"), "2026-06-30", "2026-06-05").totalCents).toBe(55_989);
   });
 
   test("never looks past today, so it can never overlap budgetTail", () => {
