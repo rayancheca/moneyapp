@@ -68,9 +68,17 @@ test("the statement schedule states each account's measured cycle", async ({ pag
 test("the dashboard says statements are handled rather than going quiet", async ({ page }) => {
   await page.goto("/");
 
-  // the REGION landmark, not `section:has(heading)` — the activity hub is an
-  // ancestor <section> that also contains this heading, so `has:` matches two
-  const teaser = page.getByRole("region", { name: "Statements", exact: true });
+  /*
+   * The REGION landmark, not `section:has(heading)` — the activity hub is an
+   * ancestor <section> that also contains this heading, so `has:` matches two.
+   *
+   * ⚠️ And anchored, never exact. The heading carries a count chip once
+   * something is outstanding, so the landmark's accessible name becomes
+   * "Statements 1" — an exact match here would resolve on the all-clear state
+   * and silently stop resolving in precisely the state the feature exists for.
+   * Caught by driving the real ledger, where one statement IS due.
+   */
+  const teaser = page.getByRole("region", { name: /^Statements/ });
   await expect(teaser).toHaveCount(1);
   await expect(teaser).toContainText("Every account is inside its own cycle — nothing to download.");
 

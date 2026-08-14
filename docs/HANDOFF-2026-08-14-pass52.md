@@ -195,6 +195,15 @@ and two accounts so that one of them being dropped is observable — then re-run
   resolved to 2 elements because the activity hub is an outer `<section>`
   containing the same heading; `getByRole("region", { name })` resolves the
   landmark and only the landmark.
+- 🔴 **A landmark's accessible name changes when its heading gains a count chip.**
+  The first version of that locator used `{ name: "Statements", exact: true }`
+  and passed every e2e run — because the fixture's state is the all-clear one.
+  Driving the REAL ledger, where a statement is genuinely due, the chip makes the
+  name `"Statements 1"` and the locator resolves nothing. **A spec that only
+  resolves in the uninteresting state is worse than no spec**: it is green
+  exactly when the feature is idle and blind exactly when it fires. Anchored
+  (`/^Statements/`) now. ⇒ **Drive the real ledger before believing an e2e
+  locator generalises** — the fixture can only show you the states it has.
 - Still true: `rm -rf .next` if `next build` hits `ENOTEMPTY` after a Playwright
   run; `--update-snapshots` will not refresh a baseline whose diff is inside the
   tolerance (use `=all` scoped with `-g`); don't run the gate while agents work.
