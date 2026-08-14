@@ -75,8 +75,6 @@ export interface PacePoint {
   label: string;
   /** cumulative actual spend through this sub-bucket; null once past today */
   actualCents: number | null;
-  /** straight-line projection toward the period's projected spend */
-  idealCents: number;
 }
 
 export interface SpendingPace {
@@ -195,16 +193,11 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
   const cashFlow = cashFlowByPeriod(db, period, today);
   if (!cashFlow.pace) return null;
 
-  const totalBuckets = cashFlow.buckets.length || 1;
   let cumulative = 0;
-  const points: PacePoint[] = cashFlow.buckets.map((b, i) => {
+  const points: PacePoint[] = cashFlow.buckets.map((b) => {
     const past = compareDates(b.from, today) <= 0;
     if (past) cumulative += b.spendingCents;
-    return {
-      label: b.label,
-      actualCents: past ? cumulative : null,
-      idealCents: Math.round((cashFlow.pace!.projectedCents * (i + 1)) / totalBuckets),
-    };
+    return { label: b.label, actualCents: past ? cumulative : null };
   });
 
   // free-to-spend = full-month income (actual + upcoming fixed) minus spend so

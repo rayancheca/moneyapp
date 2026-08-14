@@ -141,10 +141,9 @@ describe("dashboardData: spending pace", () => {
     const beforeToday = pace!.points.filter((p) => p.actualCents !== null);
     expect(beforeToday.length).toBeGreaterThan(0);
     expect(pace!.points.at(-1)!.actualCents).toBeNull();
-    // ideal line is non-decreasing and lands at the projected spend
-    const ideals = pace!.points.map((p) => p.idealCents);
-    for (let i = 1; i < ideals.length; i++) expect(ideals[i]!).toBeGreaterThanOrEqual(ideals[i - 1]!);
-    expect(ideals.at(-1)).toBe(pace!.projectedCents);
+    // cumulative actuals never go backwards — spend buckets exclude refunds
+    const actuals = beforeToday.map((p) => p.actualCents!);
+    for (let i = 1; i < actuals.length; i++) expect(actuals[i]!).toBeGreaterThanOrEqual(actuals[i - 1]!);
     expect(pace!.actualToDateCents).toBe(80_00);
   });
 

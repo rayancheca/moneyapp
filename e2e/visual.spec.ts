@@ -69,13 +69,27 @@ async function resolveCategoryUrl(page: Page): Promise<string> {
   return `${href}?period=2026`;
 }
 
-/** Resolve the first holding-detail URL from /investments (the largest holding
- *  by value — stable across reseeds since the fixture prices are fixed). */
+/**
+ * Resolve a holding-detail URL from /investments — whichever holding the page
+ * links to FIRST in DOM order.
+ *
+ * ⚠️ Not "the largest holding by value", which is what this said until the
+ * baselines were read back: the first link is AAPL, the SMALLEST position at
+ * $7,147.20, because DOM order is not the holdings table's sort order.
+ *
+ * The expected symbol is asserted rather than assumed. Which page the eight
+ * `holding-*` baselines capture is part of what they mean, and a reorder would
+ * otherwise swap it silently — the run would still be green while every
+ * baseline quietly documented a different asset.
+ */
+const EXPECTED_HOLDING = "/investments/stock/AAPL";
+
 async function resolveInvestmentUrl(page: Page): Promise<string> {
   await page.goto("/investments");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   const href = await page.locator('a[href^="/investments/"]').first().getAttribute("href");
   if (!href) throw new Error("no holding link on /investments");
+  expect(href, "the holding baselines are captured against this page").toBe(EXPECTED_HOLDING);
   return href;
 }
 
