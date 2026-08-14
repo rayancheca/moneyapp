@@ -1,3 +1,4 @@
+import { isStaleClose } from "./holding-price-age";
 import { formatCents } from "./money";
 
 /**
@@ -146,7 +147,13 @@ export function holdingPriceSectionNotes(input: HoldingPriceNoteInput): SectionN
   const oldest = dates.reduce((a, b) => (b < a ? b : a));
   const newest = dates.reduce((a, b) => (b > a ? b : a));
   // Priced through today: there is no gap, so there is nothing to report.
-  if (input.daysBetween(newest, input.today) <= 0) return [];
+  //
+  // Gated on the NEWEST close, which means ONE freshly-priced symbol silences
+  // this whole note while other rows are still stale. That is deliberate for a
+  // one-sentence page summary — and it is why each row also prints its own
+  // date (see ./holding-price-age.ts). `isStaleClose` is shared with those rows
+  // so the two can never disagree about where the boundary is.
+  if (!isStaleClose(newest, input.today, input.daysBetween)) return [];
 
   const age = input.daysBetween(oldest, input.today);
   const uniform = oldest === newest;

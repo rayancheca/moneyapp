@@ -11,6 +11,9 @@ import {
   subtotalCoverage,
   subtotalHoldings,
 } from "@/lib/holding-subtotal";
+import { diffDays } from "@/lib/dates";
+import { formatDayShort } from "@/lib/format-date";
+import { holdingPriceAge, priceDatesDiffer } from "@/lib/holding-price-age";
 import { formatCents } from "@/lib/money";
 import { formatQuantityE8 } from "@/services/holdings";
 import type { HoldingRow } from "@/services/portfolio";
@@ -87,6 +90,7 @@ function SubtotalStat({
 export function PortfolioHoldingsTable({
   rows,
   dayChangeLabel,
+  today,
 }: {
   rows: HoldingRow[];
   /**
@@ -99,6 +103,14 @@ export function PortfolioHoldingsTable({
    * different `quotedOn` dates, so no single pair of days describes them all.
    */
   dayChangeLabel: string;
+  /**
+   * Today, from the SERVER. Never computed here: `MONEYAPP_FAKE_TODAY` pins the
+   * server's clock and is not inlined into the client bundle, so a `new Date()`
+   * in this component would disagree with what the server rendered and would
+   * drift the e2e baselines with whatever day the machine thinks it is.
+   * (src/lib/dates.ts states the same contract.)
+   */
+  today: string;
 }) {
   const [metric, setMetric] = useState<HoldingMetric>("dayPct");
   const [sort, setSort] = useState<SortState>({ key: "value", dir: "desc" });
@@ -138,6 +150,11 @@ export function PortfolioHoldingsTable({
   // means an id whose row is gone contributes nothing and is not counted.
   const selectedRows = rows.filter((r) => selectedIds.has(holdingKey(r)));
   const subtotal = subtotalHoldings(selectedRows);
+
+  // Per-row close dates only when the rows actually disagree about them. When
+  // they all share one date the page note above already says it once, and
+  // repeating it on every row is noise rather than information.
+  const datesDiffer = priceDatesDiffer(rows);
 
   function metricCell(r: HoldingRow) {
     if (metric === "dayPct") {
@@ -213,12 +230,28 @@ export function PortfolioHoldingsTable({
       key: "price",
       header: "Price",
       align: "right",
-      render: (r) =>
-        r.latestClose !== null ? (
-          <span className="figures text-ink-muted">{formatCents(Math.round(r.latestClose * 100))}</span>
-        ) : (
-          <span className="text-warning">no price</span>
-        ),
+      render: (r) => {
+        if (r.latestClose === null) return <span className="text-warning">no price</span>;
+        // Which rows are stale, on the row itself. The page note above the table
+        // is gated on the newest close across the whole page, so a single
+        // freshly-priced symbol silences it while everything else is a week old
+        // — this is the only place that gap is visible.
+        const age = datesDiffer
+          ? holdingPriceAge(r.quotedOn, today, diffDays, formatDayShort)
+          : null;
+        return (
+          <span className="inline-flex flex-col items-end">
+            <span className="figures text-ink-muted">
+              {formatCents(Math.round(r.latestClose * 100))}
+            </span>
+            {age !== null && (
+              <span className="text-[11px] text-ink-faint" title={age.title}>
+                {age.text}
+              </span>
+            )}
+          </span>
+        );
+      },
     },
     {
       key: "value",

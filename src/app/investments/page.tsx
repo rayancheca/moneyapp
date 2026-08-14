@@ -144,11 +144,18 @@ export default async function InvestmentsPage({
         replay: replayFlows(returnDays, benchDays),
       }
     : null;
-  const rows = holdingRows(db);
-  // How old the closes behind every figure on this page are. `quotedOn` was
-  // already computed per row and rendered nowhere, so this costs no query.
+  // ONE population feeds both the price-age note and the table that prints a
+  // per-row date. They used to differ — the note filtered to live quantities
+  // and the table did not — which meant a zero-quantity holding could print a
+  // stale date on a row the note had never measured. (Measured inert today:
+  // no active holding has a zero quantity in either the real or the seeded
+  // database. Aligning them now is what keeps it inert.)
+  const rows = holdingRows(db).filter((r) => r.quantityE8 > 0);
+  // How old the closes behind every figure on this page are. Gated on the
+  // NEWEST close, so it goes quiet as soon as any one symbol is refreshed —
+  // the per-row dates in the holdings table are what survive that gate.
   const priceNotes = holdingPriceSectionNotes({
-    rows: rows.filter((r) => r.quantityE8 > 0),
+    rows,
     today,
     daysBetween: diffDays,
     formatDay: formatDayLong,
@@ -245,6 +252,7 @@ export default async function InvestmentsPage({
             <PortfolioHoldingsTable
               rows={rows}
               dayChangeLabel={dayChangeLabel(overview.asOf, overview.dayChangeVsDay, today, formatDayShort).label}
+              today={today}
             />
           </SurfaceCard>
           <SurfaceCard className="h-fit">
