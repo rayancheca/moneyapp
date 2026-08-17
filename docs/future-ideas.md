@@ -548,23 +548,55 @@ Ordered roughly by value ÷ effort:
 
 ## 🚨 P0 — DATA CORRECTNESS (investigated 2026-07-14 on a db copy; do these FIRST)
 
-- [ ] **P0.1 — Robinhood Brokerage CASH is missing from the balance model** (the "75k→18k
-  Feb–Oct 2025" scare — CONFIRMED, no data is missing, the MODEL under-counts).
-  **Evidence (copy queries, 2026-07-14):** SoFi Savings $51,970 (2025-06-01) → **$2,021**
-  (2025-08-01) — ~$48k moved to Robinhood — but Robinhood Brokerage only shows $19,731 →
-  $20,127 across the same window, then "slowly climbs" $49,077 (Oct) → $59,097 (Dec). The
-  climb is the user's **$20/day DCA converting invisible CASH into visible holdings**. The
-  brokerage curve tracks securities value, NOT the cash sweep balance the user parked there
-  for APY. Also: brokerage `daily_balances` only start **2025-02-20** even though brokerage
-  txns exist from 2024-08 — the pre-anchor cash era is entirely uncounted.
-  **Fix plan:** model brokerage cash as a replayed ledger (deposits − buys + sells +
-  dividends + interest = cash-over-time, exactly like a checking account — the activity
-  CSV/statements already carry every flow), then `brokerage total = cash + holdings×prices`.
-  Cross-check each statement month: parsed statement "account value" (Robinhood prints
-  cash + securities totals — extend `robinhood` parsers to capture BOTH as anchors) must
-  reconcile to the replayed cash + valued holdings to the cent; gaps quarantine, never guess.
-  Also backfill the 2024-08→2025-02 pre-anchor era from the activity ledger. THIS IS A
-  REAL-DB DATA PASS: backup + dry-run on a copy + Δ-guards + the session playbook below.
+- [~] **P0.1 — Robinhood cash — RE-MEASURED 2026-08-17 (pass 57). The entry below was
+  mostly FALSE; what is left is narrower and is written out first.**
+
+  **What actually shipped (pass 42, `docs/inflight-dips.md` §2):** the cash was MOVED, not
+  modelled in place. The 2,181-row settlement ledger that sat inert on the investment-type
+  Brokerage account now lives on `Robinhood Cash` (a *checking* account) where normal
+  anchor+replay derives it, with 32 monthly statement anchors 2023-12 → 2026-07. So:
+  - ⛔ "brokerage CASH is missing from the balance model" — **false.** It is modelled, on a
+    sibling account, and enters net worth there. Import routing pins it (`preferName:
+    "Robinhood Cash"`).
+  - ⛔ "brokerage `daily_balances` only start 2025-02-20" — **false.** They start
+    **2024-07-10**, and that floor is the `price_cache` floor, not an anchor.
+  - ⛔ "the pre-anchor cash era is entirely uncounted" — **false.** RH Cash reaches back to
+    **2023-12-05**.
+  - ⛔ "~$48k moved to Robinhood but the model doesn't show it" — **false.** Over that exact
+    window RH Cash goes **$3.23 → $41,467.16**, and the statement anchors print it
+    independently ($15,246.18 on 2025-06-30, $41,567.16 on 2025-07-31).
+
+  **What is still true, and is the remaining work:**
+  - [x] **The cash legs of ten Robinhood crypto trades were never recorded** (pass 57).
+    Pass 42's mirroring starts 2025-11-04; the crypto account's first trade is 2025-10-16.
+    Fixed: unreconciled **$1,911.24 → $491.46**, 2025-10 **−$1,419.78 → reconciled**, gap
+    days **323 → 293**, net worth unchanged. `pnpm rh-mirror-crypto-cash`.
+  - [x] **Robinhood Cash had only a MONTH-level arbiter** (pass 57). The statements print a
+    `Deposit Sweep Activity` table — 309 rows across 18 of the 32 files — and the parser
+    threw it away. `parseSweepActivity` + `pnpm rh-sweep-check` now name the *day* a
+    disagreement opens, which is how the item above was found.
+  - [ ] **The remaining $491.46 is settlement lag across a MONTH BOUNDARY**, not missing
+    money: the residuals come in near-mirror pairs on adjacent periods (+$19.79/−$19.91,
+    +$9.87/−$10.01, −$100.03/+$99.98). A settlement in flight over a period end is a timing
+    truth, and reconciliation is currently binary at the cent — so one cent of it marks a
+    whole 30-day span `gap` and holds the account at `broken`. **Decide before building:**
+    tolerate an explained in-flight difference, or keep the hard line and accept the grade.
+    (Same shape as P0.5's in-transit bridging — do them together.)
+  - [ ] **Robinhood Brokerage has NO arbiter at all** — 0 statement periods, `market_value`
+    grade, so its reconciliation cannot fail and therefore proves nothing. Every one of the
+    32 statements prints `Portfolio Value`, and `Portfolio Value = cash + Total Securities`
+    holds **to the cent in 32/32**; `Total Priced Portfolio` prints it a second time and
+    agrees 32/32. The parser reads it only in the detection gate and never captures it.
+    Capturing it would let qty×close be checked against the bank's own number every month.
+    ⚠️ `Total Market Value` is the stock-LENDING subtotal, not securities — confusing the
+    two understates by an order of magnitude.
+  - [ ] **A coverage-grading artifact worth its own fix:** one leading `derived_unverified`
+    day (2023-12-05, the backward walk to the first txn) zeroes `verifiedThrough` for ~22
+    months of genuinely reconciled 2024-01 → 2025-09 history (`coverage.ts` counts trusted
+    days strictly before the first untrusted one).
+  - [ ] **A stray $0.00 `manual` anchor on 2024-08-14** contradicts the statement chain's
+    $0.04 and costs 29 of the remaining gap days. Deletable.
+
 - [x] **P0.2 — missing Chase statement, cycle 2023-10-13 → 2023-11-10 — SHIPPED (pass 12).** The
   user provided it (+ the 2023-06-13→07-13 July cycle that was also absent, + Aug/Oct which
   deduped). Imported to the real db 2026-07-15: Chase 3522 now has 7 continuous 2023 periods
