@@ -202,12 +202,26 @@ const SWEPT_TOTAL_RE = new RegExp(String.raw`^Total Swept Funds ${MONEY} ${MONEY
  * Parse the Deposit Sweep Activity table, or null when it is not printed.
  *
  * ⚠️ The printed movement amount is UNSIGNED — the PDF puts it in a Debit or a
- * Credit column, and column position does not survive text extraction. The sign
- * is therefore taken from the running balance, the only place the direction
- * actually survives, and the unsigned amount is then used to CHECK that
- * reading: `|balance − previous| === printed amount` on every row. A parser
- * that infers a sign it cannot see is the failure mode this repo has paid for
- * twice.
+ * Credit column. The sign is taken from the RUNNING BALANCE, and the unsigned
+ * amount is then used to CHECK that reading: `|balance − previous| === printed
+ * amount` on every row. A parser that infers a sign it cannot see is the
+ * failure mode this repo has paid for twice.
+ *
+ * This docstring used to justify that by saying column position "does not
+ * survive text extraction". That is FALSE and the correction matters: `Line`
+ * carries `tokens: { str, x }[]`, and `pdf-profile.ts` already filters on
+ * `t.x >= 350`. Column position survives perfectly well — this function simply
+ * takes `readonly string[]` and never sees it. The running balance is still the
+ * better source HERE, because it supports the three independent cross-checks
+ * below; but the claim that x is unavailable is wrong, and believing it makes a
+ * whole class of fix look impossible.
+ *
+ * It is not academic. The `Account Activity` table has NO balance column —
+ * only Debit and Credit — so a text-only reader cannot sign its rows at all,
+ * which is why every `Crypto Money Movement` row in the archive is silently
+ * dropped. Reading their x against the Debit/Credit header stops is the only
+ * way to recover them, and it is available today. See docs/future-ideas.md:
+ * that single dropped row type accounts for all 264 remaining gap days.
  *
  * ⚠️ Rows are read ONLY between the opening and closing lines. A generic
  * `<desc> <date> <money> <money>` pattern applied to the whole document also
