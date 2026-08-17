@@ -8,6 +8,7 @@ import { CalendarGrid } from "@/components/ui/CalendarGrid";
 import { Money } from "@/components/ui/Money";
 import { Sheet } from "@/components/ui/Sheet";
 import { toast } from "@/components/ui/Toast";
+import { dayWeight, heaviestDayCents } from "@/lib/calendar-day-weight";
 import type { CalendarDay } from "@/lib/calendar-math";
 import { formatCents } from "@/lib/money";
 import type {
@@ -43,6 +44,26 @@ const STATE_WORD: Record<DayStateKind, string> = {
   upcoming: "upcoming",
   missed: "missed",
 };
+/** The magnitude bar's fill — the same grammar as the glyph, as a surface. */
+const BAR_TONE: Record<DayStateKind, string> = {
+  paid: "bg-positive",
+  paid_different: "bg-warning",
+  upcoming: "bg-info",
+  missed: "bg-negative",
+};
+
+/**
+ * A day total in the width of a calendar cell: "2.3k", "-499", "0".
+ * Cents are dropped on purpose — this is a magnitude for scanning, and the Day
+ * Sheet behind the cell carries every exact figure.
+ */
+function compactCents(cents: number): string {
+  const sign = cents < 0 ? "-" : "";
+  const dollars = Math.abs(cents) / 100;
+  if (dollars >= 1000) return `${sign}${(dollars / 1000).toFixed(1)}k`;
+  return `${sign}${Math.round(dollars)}`;
+}
+
 /** Contrast-safe tone per state (soft tint + tone text — state-contrast.test). */
 const STATE_TONE: Record<DayStateKind, "positive" | "warning" | "info" | "negative"> = {
   paid: "positive",
@@ -83,17 +104,49 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
       .join("; ")}`;
   }
 
+  // scaled against the month, not an absolute ceiling, so a quiet month still
+  // shows its own shape instead of flatlining
+  const heaviest = heaviestDayCents(month.entriesByDay);
+
+  /**
+   * A day cell: the MONEY, then a magnitude bar, then the state glyph.
+   *
+   * It used to be glyphs alone, which made rent and a $4.99 subscription draw
+   * identically — the page could tell you something was due and never how much.
+   * The bar is scaled against the heaviest day in the month (calendar-day-weight),
+   * so a month reads as a rhythm at a glance: rent is a full bar, a subscription
+   * is a hairline, and a heavy week is visible without reading a single number.
+   *
+   * The glyph stays, small, because it is what survives colour-blindness
+   * (WCAG 1.4.1) and it is what the aria-label enumerates.
+   */
   function renderCell(day: CalendarDay): React.ReactNode {
-    const entries = month.entriesByDay[day.iso];
-    if (!entries || entries.length === 0) return null;
+    const w = dayWeight(month.entriesByDay[day.iso], heaviest);
+    if (!w) return null;
+    const upcoming = w.state === "upcoming";
     return (
-      <span className="flex flex-wrap content-start items-center gap-x-1 gap-y-0 leading-none">
-        {entries.slice(0, 4).map((e, i) => (
-          <span key={`${e.seriesId}-${i}`} className={`text-[11px] font-bold leading-none ${STATE_MARK_COLOR[e.state]}`}>
-            {STATE_GLYPH[e.state]}
+      <span className="flex flex-col items-stretch gap-0.5 leading-none">
+        <span className="flex items-baseline justify-between gap-1">
+          <span className={`text-[9px] font-bold leading-none ${STATE_MARK_COLOR[w.state]}`}>
+            {STATE_GLYPH[w.state]}
           </span>
-        ))}
-        {entries.length > 4 ? <span className="text-[9px] leading-none text-ink-faint">+{entries.length - 4}</span> : null}
+          <span
+            className={`figures truncate text-[10px] leading-none tabular-nums ${
+              upcoming ? "text-ink-muted" : STATE_MARK_COLOR[w.state]
+            }`}
+          >
+            {compactCents(w.netCents)}
+          </span>
+        </span>
+        <span className="h-1 w-full overflow-hidden rounded-full bg-surface-sunken">
+          <span
+            className={`block h-full rounded-full ${BAR_TONE[w.state]} ${upcoming ? "opacity-60" : ""}`}
+            style={{ width: `${Math.round(w.weight * 100)}%` }}
+          />
+        </span>
+        {w.count > 1 ? (
+          <span className="text-[9px] leading-none text-ink-faint">{w.count} items</span>
+        ) : null}
       </span>
     );
   }
