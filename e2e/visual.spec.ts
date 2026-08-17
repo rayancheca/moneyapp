@@ -44,6 +44,17 @@ const ROUTES: readonly VisualRoute[] = [
   { path: "/spending?period=2026", name: "spending-year" },
   { path: "/budgets", name: "budgets" },
   { path: "/recurring", name: "recurring" },
+  // The calendar sub-view had NO pixel coverage at all until now: `/recurring`
+  // above photographs the default Upcoming tab, so the whole grid could be —
+  // and in pass 57 was — rewritten without moving a single baseline. The tab
+  // lives in `?tab=`, so it is a route like any other.
+  //
+  // ⚠️ What these eight CAN see is bounded by the seed. At E2E_FAKE_TODAY the
+  // July grid renders `missed` (Meal Kit) and `upcoming` (the other five) only;
+  // `paid` is reachable by paging (recurring-calendar.spec asserts it there)
+  // and `paid_different` is not reachable at all, because no seeded posting
+  // lands outside its series' tolerance band.
+  { path: "/recurring?tab=calendar", name: "recurring-calendar" },
   { path: "/investments", name: "investments" }, // ALL range → a gain (green) accent
   { path: "/investments?range=1M", name: "investments-loss" }, // 1M → a loss (red) accent
   { path: "/settings", name: "settings" },

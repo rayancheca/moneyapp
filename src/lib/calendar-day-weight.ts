@@ -9,14 +9,16 @@ import type { DayStateKind } from "@/services/recurring-calendar";
  * question the page exists to answer, "when does the big money leave?", could
  * not be read off it at all.
  *
- * So each day now carries three things:
+ * So each day now carries four things:
  *
- *   `netCents`  the day's signed total — the number, not a symbol for it
- *   `weight`    0..1, its magnitude against the heaviest day in the month, so
- *               the month reads as a RHYTHM: rent day is visibly heavy and a
- *               subscription is a hairline
- *   `state`     the most urgent state present, which keeps the existing
- *               colour/glyph grammar for colour-blind and screen-reader users
+ *   `netCents`      the day's signed total — the number, not a symbol for it
+ *   `weight`        0..1, its magnitude against the heaviest day in the month,
+ *                   so the month reads as a RHYTHM: rent day is visibly heavy
+ *                   and a subscription is a hairline
+ *   `state`         the most urgent state present, which keeps the existing
+ *                   colour/glyph grammar for colour-blind and screen-reader users
+ *   `dominantName`  the series that OWNS the day, so a heavy cell can say which
+ *                   bill it is without being opened
  *
  * `weight` is deliberately relative to the month, not to an absolute scale: a
  * quiet month should still show its own shape rather than flatlining because
@@ -37,11 +39,14 @@ export interface DayWeight {
   weight: number;
   state: DayStateKind;
   count: number;
+  /** the name of the largest-magnitude entry on the day */
+  dominantName: string;
 }
 
 export interface WeighableEntry {
   amountCents: number;
   state: DayStateKind;
+  name: string;
 }
 
 /**
@@ -63,16 +68,46 @@ export function heaviestDayCents(entriesByDay: Readonly<Record<string, readonly 
 }
 
 /**
+ * A day with activity always shows SOMETHING. Small, because the square-root
+ * scale below already lifts the low end — the floor now only has to catch a day
+ * that nets to exactly zero (rent out, rent refunded in), where something really
+ * happened but the magnitude is genuinely nil.
+ */
+export const MIN_VISIBLE_WEIGHT = 0.04;
+
+/**
+ * Magnitude → bar length, as a SQUARE ROOT of the linear share.
+ *
+ * The first version of this was linear with a 0.08 floor, and on real data that
+ * made the bar say something false. Against the fixture's $3,200 heaviest day,
+ * a $125 meal kit (3.9%), a $49 gym (1.5%) and a $15.99 Netflix (0.5%) all
+ * landed under the floor and drew the IDENTICAL hairline — three different
+ * amounts rendered as one. A scale whose bottom half is a single value is not a
+ * scale; it is the tick grammar this module was written to replace.
+ *
+ * √ trades exact proportionality for separation at the bottom, which is the
+ * honest trade here for one reason: the bar is not the quantitative channel.
+ * Every cell prints its own signed total beside it, so the bar only has to
+ * answer "is this a heavy day?" while the number answers "how much?". A linear
+ * bar answers the second question a little better and the first one much worse,
+ * because on a month containing rent every ordinary bill is a sub-pixel sliver.
+ */
+function barWeight(netCents: number, heaviestCents: number): number {
+  if (heaviestCents <= 0) return MIN_VISIBLE_WEIGHT;
+  const share = Math.min(1, Math.abs(netCents) / heaviestCents);
+  return Math.max(MIN_VISIBLE_WEIGHT, Math.sqrt(share));
+}
+
+/**
  * One day's weight. Returns null for a day with no entries — an empty cell must
  * stay empty, not render a zero bar.
  *
- * A day whose entries net to exactly zero (rent out, rent refunded in) keeps a
- * MINIMUM visible weight rather than vanishing: something happened there, and a
- * cell that draws nothing is indistinguishable from a day with no activity. The
- * amount it prints is the honest $0.00.
+ * `dominantName` is the largest-magnitude entry's name, which is what a cell
+ * shows when it has room: on a day carrying rent and a $4.99 subscription, the
+ * useful word is "Rent". Ties keep the FIRST entry, and the caller
+ * (`recurringCalendar`) has already sorted each day by state then name — so the
+ * choice is deterministic rather than dependent on row order from the database.
  */
-export const MIN_VISIBLE_WEIGHT = 0.08;
-
 export function dayWeight(
   entries: readonly WeighableEntry[] | undefined,
   heaviestCents: number,
@@ -84,12 +119,15 @@ export function dayWeight(
     (worst, e) => (STATE_URGENCY[e.state] < STATE_URGENCY[worst] ? e.state : worst),
     "paid",
   );
-  const raw = heaviestCents > 0 ? Math.abs(netCents) / heaviestCents : 0;
+  const dominant = entries.reduce((big, e) =>
+    Math.abs(e.amountCents) > Math.abs(big.amountCents) ? e : big,
+  );
 
   return {
     netCents,
-    weight: Math.max(MIN_VISIBLE_WEIGHT, Math.min(1, raw)),
+    weight: barWeight(netCents, heaviestCents),
     state,
     count: entries.length,
+    dominantName: dominant.name,
   };
 }

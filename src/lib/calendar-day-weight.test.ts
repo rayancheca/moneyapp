@@ -1,10 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { dayWeight, heaviestDayCents, MIN_VISIBLE_WEIGHT, type WeighableEntry } from "./calendar-day-weight";
 
-const e = (amountCents: number, state: WeighableEntry["state"] = "upcoming"): WeighableEntry => ({
-  amountCents,
-  state,
-});
+const e = (
+  amountCents: number,
+  state: WeighableEntry["state"] = "upcoming",
+  name = "Some series",
+): WeighableEntry => ({ amountCents, state, name });
 
 describe("heaviestDayCents", () => {
   test("takes the largest absolute NET, not the largest single entry", () => {
@@ -48,6 +49,54 @@ describe("dayWeight", () => {
 
   test("nothing is ever invisible — a day with activity always shows some bar", () => {
     expect(dayWeight([e(-1)], HEAVIEST)!.weight).toBe(MIN_VISIBLE_WEIGHT);
+  });
+
+  /*
+   * The regression this scale exists for, taken from the e2e fixture as it
+   * actually renders: a $3,200 paycheque is the month's heaviest day, and the
+   * other three bills are 3.9%, 1.5% and 0.5% of it. Under the previous linear
+   * scale all three fell under the 0.08 floor and drew the SAME bar — the grid
+   * asserted that a $125 bill and a $15.99 one were the same size.
+   *
+   * Strict ordering is the assertion; the exact values are pinned separately
+   * below so a future scale change has to be deliberate rather than incidental.
+   */
+  test("bills far below the heaviest day stay distinguishable from each other", () => {
+    const paycheck = 320000;
+    const mealKit = dayWeight([e(-12500)], paycheck)!.weight;
+    const gym = dayWeight([e(-4900)], paycheck)!.weight;
+    const netflix = dayWeight([e(-1599)], paycheck)!.weight;
+
+    expect(mealKit).toBeGreaterThan(gym);
+    expect(gym).toBeGreaterThan(netflix);
+    // …and none of them has collapsed onto the floor, which is what "distinct"
+    // has to mean here — three values all equal to MIN would also be "ordered"
+    // if the comparison were >=
+    expect(netflix).toBeGreaterThan(MIN_VISIBLE_WEIGHT);
+  });
+
+  test("the bar is the square root of the linear share", () => {
+    // 25% of the month's heaviest day draws at half length, not a quarter
+    expect(dayWeight([e(-HEAVIEST / 4)], HEAVIEST)!.weight).toBeCloseTo(0.5, 10);
+    expect(dayWeight([e(-HEAVIEST / 100)], HEAVIEST)!.weight).toBeCloseTo(0.1, 10);
+  });
+
+  test("names the largest entry, so a heavy day can say which bill it is", () => {
+    const w = dayWeight(
+      [e(-499, "upcoming", "Uber One"), e(-228570, "upcoming", "Rent"), e(-1599, "upcoming", "Netflix")],
+      HEAVIEST,
+    )!;
+    expect(w.dominantName).toBe("Rent");
+  });
+
+  test("the dominant entry is by MAGNITUDE, so an incoming paycheque can own the day", () => {
+    const w = dayWeight([e(-4900, "upcoming", "Gym"), e(320000, "upcoming", "Paycheck")], HEAVIEST)!;
+    expect(w.dominantName).toBe("Paycheck");
+  });
+
+  test("a tie keeps the first entry, so the cell is deterministic", () => {
+    const w = dayWeight([e(-5000, "upcoming", "Aaa"), e(-5000, "upcoming", "Bbb")], HEAVIEST)!;
+    expect(w.dominantName).toBe("Aaa");
   });
 
   test("a day that nets to zero still shows, and prints the honest $0.00", () => {

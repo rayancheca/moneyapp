@@ -27,6 +27,18 @@ interface CalendarGridProps {
   getCellLabel: (iso: string) => string;
   /** decorative dots/tints — rendered inside an aria-hidden wrapper */
   renderCell?: (day: CalendarDay) => ReactNode;
+  /**
+   * Extra classes for a day's button — e.g. a surface tint marking the day as
+   * having content. Optional and empty by default, so a consumer that does not
+   * pass it renders byte-identically to before this prop existed.
+   *
+   * It exists because a cell is a SQUARE with no border: any mark a `renderCell`
+   * puts on the bottom edge of one row sits directly above the date of the next
+   * one and reads as belonging to it. Only something that spans the whole cell —
+   * which `renderCell` cannot, since the date is rendered above it — can give
+   * the cell a visible extent.
+   */
+  getCellClassName?: (iso: string) => string;
   onDayActivate?: (iso: string) => void;
   /** e.g. today ring — defaults to emphasizing the `today` prop */
   isDayEmphasized?: (iso: string) => boolean;
@@ -52,6 +64,7 @@ export function CalendarGrid({
   onMonthChange,
   getCellLabel,
   renderCell,
+  getCellClassName,
   onDayActivate,
   isDayEmphasized,
   weekStartsOn = 1,
@@ -180,7 +193,9 @@ export function CalendarGrid({
                   onKeyDown={handleKeyDown(day.iso)}
                   className={`flex aspect-square w-full flex-col items-start gap-0.5 rounded-md p-1 transition-colors duration-(--duration-tap) ease-(--ease-ink) hover:bg-surface-leaf ${
                     day.inMonth ? "" : "text-ink-faint"
-                  } ${emphasizeDay(day.iso) ? "ring-1 ring-accent" : ""}`.trim()}
+                  } ${emphasizeDay(day.iso) ? "ring-1 ring-accent" : ""} ${
+                    getCellClassName?.(day.iso) ?? ""
+                  }`.trim()}
                 >
                   <span aria-hidden className="text-xs">
                     {Number(day.iso.slice(8))}

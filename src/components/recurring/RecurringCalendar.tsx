@@ -109,13 +109,55 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
   const heaviest = heaviestDayCents(month.entriesByDay);
 
   /**
-   * A day cell: the MONEY, then a magnitude bar, then the state glyph.
+   * A day with money on it gets a surface of its own.
    *
-   * It used to be glyphs alone, which made rent and a $4.99 subscription draw
-   * identically — the page could tell you something was due and never how much.
-   * The bar is scaled against the heaviest day in the month (calendar-day-weight),
-   * so a month reads as a rhythm at a glance: rent is a full bar, a subscription
-   * is a hairline, and a heavy week is visible without reading a single number.
+   * Two jobs. It bounds the cell, so a magnitude column standing on the bottom
+   * edge belongs visibly to THIS square and not to the date printed directly
+   * below it — without a boundary the two are indistinguishable, which is how
+   * the first version of this grid drew Jul 5's bar apparently on top of Jul 12.
+   * And it gives the month a shape at a glance: the days that cost something are
+   * raised, so a quiet week reads as a quiet week rather than as a rendering
+   * failure.
+   */
+  function cellClassName(iso: string): string {
+    /*
+     * A calendar cell does not have to be square, and below ~48px wide it must
+     * not be. `CalendarGrid` sizes days with `aspect-square`, which at 320px is
+     * a 30px box: the date alone takes 16 of it, leaving 10px for figures that
+     * measured 13–22. Everything under the date silently overflowed.
+     *
+     * `min-height` rather than an override of `aspect-ratio` — the two are not
+     * in conflict, because a min-height larger than the aspect-derived height
+     * simply wins, and the aspect keeps applying everywhere it still fits. At
+     * 440px (the owner's phone) a cell is already ~52px and this is inert.
+     */
+    const fitsFigures = "max-sm:min-h-12";
+    const tint = (month.entriesByDay[iso]?.length ?? 0) > 0 ? " bg-surface-sunken" : "";
+    return fitsFigures + tint;
+  }
+
+  /**
+   * A day cell: the MONEY, the series that owns it, and a magnitude COLUMN
+   * standing on the bottom edge of the cell.
+   *
+   * Three things about the previous version were wrong once it was screenshotted
+   * rather than reasoned about:
+   *
+   * 1. It laid the figures out `justify-between`, which pushed the glyph and the
+   *    amount to opposite edges of the cell. At 320px that left about 22px for
+   *    the amount and every one of them ellipsised — the grid rendered `-...`
+   *    and `3...` where the money was supposed to be. They sit adjacent now, so
+   *    the pair reads as one thing and fits.
+   * 2. The bar was a 4px horizontal rule pinned to the TOP of a cell that is a
+   *    square — on a 1024px viewport roughly 25px of content above 75px of
+   *    nothing. A month of that reads as empty, which is exactly the complaint
+   *    the redesign started from. The magnitude is now a vertical column that
+   *    stands in that space, so the grid reads as a bar chart wrapped by weeks.
+   * 3. The amount took the STATE's colour, so a −$1,800 rent and a +$3,200
+   *    paycheque — the two biggest marks in the month, and opposite in meaning —
+   *    drew in the same blue. It takes the app's flow colour now (the same
+   *    green/red `Money flow` uses everywhere else), which puts direction on the
+   *    figure and leaves state to the glyph and the column.
    *
    * The glyph stays, small, because it is what survives colour-blindness
    * (WCAG 1.4.1) and it is what the aria-label enumerates.
@@ -124,29 +166,52 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
     const w = dayWeight(month.entriesByDay[day.iso], heaviest);
     if (!w) return null;
     const upcoming = w.state === "upcoming";
+    const flowTone =
+      w.netCents < 0 ? "text-negative" : w.netCents > 0 ? "text-positive" : "text-ink-muted";
     return (
-      <span className="flex flex-col items-stretch gap-0.5 leading-none">
-        <span className="flex items-baseline justify-between gap-1">
+      <span className="flex h-full w-full flex-col gap-0.5">
+        {/* `flex-wrap` is doing real work at 320px: a ~38px cell leaves ~21px
+            beside the glyph, and "-1.8k" needs 30px — so the amount drops to its
+            own line there and keeps the cell's full width, rather than being
+            ellipsised (what `truncate` did) or spilling over the neighbouring
+            day (what removing `truncate` did instead). It re-joins the glyph on
+            one line as soon as there is room. */}
+        <span className="flex flex-wrap items-center gap-x-0.5 leading-none">
           <span className={`text-[9px] font-bold leading-none ${STATE_MARK_COLOR[w.state]}`}>
             {STATE_GLYPH[w.state]}
           </span>
           <span
-            className={`figures truncate text-[10px] leading-none tabular-nums ${
-              upcoming ? "text-ink-muted" : STATE_MARK_COLOR[w.state]
-            }`}
+            className={`figures whitespace-nowrap text-[9px] font-semibold leading-none tabular-nums sm:text-[10px] ${flowTone}`}
           >
             {compactCents(w.netCents)}
           </span>
         </span>
-        <span className="h-1 w-full overflow-hidden rounded-full bg-surface-sunken">
+
+        {/* Which bill this is — the question a heavy day raises and the grid
+            could not answer without being opened.
+
+            The breakpoint is 400px, NOT Tailwind's `sm` (640px). A phone is the
+            device this page gets read on, and the owner's is 440px logical —
+            which is below `sm`, so an `sm:` gate would have hidden the names on
+            exactly the screen that most needs them. 400px is where a cell first
+            gets wide enough (~46px) for a name to be worth truncating; at 320 it
+            would be an ellipsis and the Day Sheet carries it instead. */}
+        <span className="hidden w-full truncate text-[9px] leading-tight text-ink-muted min-[400px]:block">
+          {w.count > 1 ? `${w.dominantName} +${w.count - 1}` : w.dominantName}
+        </span>
+
+        {/* The magnitude column. `items-end` stands it on the cell's bottom edge
+            so the whole grid shares one baseline; `min-h-[2px]` keeps the
+            smallest bill visible in a short cell, where 4% of ~11px rounds to
+            nothing. */}
+        <span className="flex min-h-0 flex-1 items-end pt-0.5">
           <span
-            className={`block h-full rounded-full ${BAR_TONE[w.state]} ${upcoming ? "opacity-60" : ""}`}
-            style={{ width: `${Math.round(w.weight * 100)}%` }}
+            className={`block min-h-[2px] w-full rounded-t-[2px] ${BAR_TONE[w.state]} ${
+              upcoming ? "opacity-55" : ""
+            }`}
+            style={{ height: `${Math.round(w.weight * 100)}%` }}
           />
         </span>
-        {w.count > 1 ? (
-          <span className="text-[9px] leading-none text-ink-faint">{w.count} items</span>
-        ) : null}
       </span>
     );
   }
@@ -161,6 +226,7 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
         onMonthChange={changeMonth}
         getCellLabel={cellLabel}
         renderCell={renderCell}
+        getCellClassName={cellClassName}
         onDayActivate={(iso) => setOpenDay(iso)}
         footer={<CalendarFooter month={month} />}
       />
