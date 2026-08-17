@@ -1,7 +1,7 @@
 # Handoff — 2026-08-17, pass 57
 
 > **`main` = `902af37`** (plus this doc), tree clean. tsc clean · **2,984 unit** ·
-> coverage gate exit 0 · **`E2E_GATE=1` 414 passed** · **zero baseline churn**.
+> coverage gate exit 0 · **`E2E_GATE=1` 415 passed** (414 before; the account-detail price-age test is new) · **zero baseline churn**.
 >
 > Real-DB writes this pass: the Venture X August statement (50 rows), and the
 > ten Robinhood crypto cash legs. Net worth **$90,942.53 → $101,594.99**, and
