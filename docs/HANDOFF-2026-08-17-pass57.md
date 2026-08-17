@@ -313,9 +313,10 @@ calendar work.
 
 ## 5.4 State after the second half
 
-tsc clean · **163 files / 3,004 unit** · coverage gate exit 0. The recurring
-e2e specs and the 8 recurring visual baselines are green — but see the warning
-above about what those baselines actually cover.
+tsc clean · **163 files / 3,004 unit** · coverage gate exit 0 ·
+**`E2E_GATE=1` 415 passed** · **zero baseline churn**. Re-run in full after the
+calendar commit, not inferred from the earlier run — but see the warning above
+about what those baselines actually cover.
 
 ## 5.5 What this half is really about
 
