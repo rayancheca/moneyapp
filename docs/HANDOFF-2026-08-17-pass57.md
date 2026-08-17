@@ -1,11 +1,18 @@
 # Handoff — 2026-08-17, pass 57
 
-> **`main` = `902af37`** (plus this doc), tree clean. tsc clean · **2,984 unit** ·
-> coverage gate exit 0 · **`E2E_GATE=1` 415 passed** (414 before; the account-detail price-age test is new) · **zero baseline churn**.
+> **`main` = `1abc518`** (plus this doc), tree clean. tsc clean ·
+> **163 files / 3,004 unit** · coverage gate exit 0 · `E2E_GATE=1` **415 passed**
+> at the price-age commit; see §5 for the state after the calendar change.
 >
-> Real-DB writes this pass: the Venture X August statement (50 rows), and the
-> ten Robinhood crypto cash legs. Net worth **$90,942.53 → $101,594.99**, and
-> every cent of that move is the Venture X card payment.
+> Real-DB writes this pass: the Venture X August statement (50 rows), the ten
+> Robinhood crypto cash legs, and the rent anchor day. Net worth
+> **$90,942.53 → $101,594.99**, and every cent of that move is the Venture X
+> card payment.
+>
+> The session ran in two halves. §1–§4 are the planned program (Venture X, price
+> age, Robinhood). **§5 is everything the owner asked for after seeing his own
+> screen** — and it is the more important half, because two of the three were
+> live defects on his real data that every gate had been green over.
 
 ## 0. Read this first
 
@@ -206,3 +213,115 @@ the two best of which are:
 - The **backlog done-count** the brief flagged was never in `future-ideas.md` — it
   was in pass 55's handoff, and pass 56 had already corrected it. Counted fresh
   today: 25 open / 2 partial / 35 done.
+
+
+---
+
+# 5. The second half — three things the owner caught by looking
+
+He sent two screenshots and three sentences. Every item below was already
+shipping, already tested, and already green.
+
+## 5.1 Rent was on the 8th; it is due on the 1st
+
+> *"rent is due and paid for on the first of each month btw. change that
+> everyehre its touched."*
+
+`Flamingo South Beach (rent)` had `anchor_day` NULL and `next_expected_on`
+2026-08-08. Detection is not wrong to have done that — it can only see POSTING
+dates, and the two charges it learned from posted on the 8th and the 16th.
+
+**A posting date is when the bank cleared it. For a bill paid on a fixed day,
+the due day is the fact and the posting is the echo.** Nothing in the model
+could hold that distinction until `anchor_day` (migration 0013) existed.
+
+REAL-DB WRITE (`data/fix-rent-anchor.ts`, guarded, behind a restore point):
+`anchor_day = 1`, `user_next_expected_on = 2026-09-01`. Because every surface
+reads the same effective series, "everywhere it's touched" was one row —
+/recurring Upcoming, the recurring calendar, the dashboard bills strip and the
+Housing budget's confirmed-commitment floor all moved together. Verified: rent
+now projects 2026-09-01 and 2026-10-01.
+
+## 5.2 UBER *ONE — and the fix that would have deleted his income
+
+> *"why would you keep the uber one if it was last seen 449 days ago its
+> clearly not recurring anymore dumbass"*
+
+He is right, and the reason it survived is worth keeping. **`upcomingOccurrences`
+did no lapse filtering at all** — only `budgets.ts` did. So a series last charged
+2025-05-25 was listed as a bill due next week, wearing a `last seen 449d ago`
+chip: a label apologising for a prediction that should not have been made.
+
+🔴 **The obvious fix is wrong and a test caught it.** Filtering every lapsed
+series deletes ~$1,046/wk of his cash income, whose deposits are irregular by
+nature (pass 28). The regression guard for item 13a went red immediately.
+
+The rule that survives is directional, and it is now named
+(`lapsedSeriesShouldStopForecasting`):
+
+| | lapsed means |
+|---|---|
+| money **out** (bill, subscription, transfer, other) | it was cancelled — stop forecasting it |
+| money **in** (income) | import lag or a slow month — keep it, marked stale |
+
+Staleness is still measured and still travels on every occurrence. What changed
+is that a series whose evidence has *fully* run out is no longer forecast.
+
+🔴 **A second defect fell out of the same read.** The calendar gated on
+`isSeriesActive`, which calls a NEVER-posted series inactive — the right answer
+to "is there evidence?" and the wrong gate for a forecast. Measured on the real
+ledger: **Car lease ($559.89) and Car insurance ($361.49), both registered for
+2026-09-11, were absent from every calendar month.** Both now appear. This is
+the exact trap pass 54 documented; the doc was right and the calendar still had
+the bug.
+
+Five mutations, each confirmed to typecheck, go red, and restore byte-identical.
+One of them proved the calendar's income exemption was untested.
+
+## 5.3 The calendar showed state and never money
+
+> *"greatly improve the ui ux of the recurring and forecast calendar. its empty
+> with ticks and corsses now that not ebough"*
+
+It rendered one glyph per entry (✓ ! • ✕) and nothing else, so rent, insurance
+and a $4.99 subscription drew as identical marks. **The one question the page
+exists to answer — when does the big money leave? — could not be read off the
+grid.**
+
+Each day now carries its signed net, a magnitude bar scaled against the heaviest
+day IN THAT MONTH, and an item count. `src/lib/calendar-day-weight.ts` is the
+pure part, 13 tests. Two decisions worth keeping:
+
+- **scaled per month, not absolutely** — an absolute ceiling flatlines every
+  quiet month against whichever month had rent in it;
+- **a day that nets to zero keeps a minimum bar** — a cell that draws nothing is
+  indistinguishable from a day with no activity.
+
+⚠️ **This is a first pass and should be treated as unfinished.** Verified by
+screenshot; what is still weak, specifically:
+- the bars are thin (`h-1`) and low-contrast, especially in light theme;
+- empty weeks still read as dead space — the grid has no sense of a month's
+  shape when little happens;
+- nothing names WHICH series a heavy day belongs to without opening the sheet;
+- the forecast card above the grid was not touched at all.
+
+🔴 **All 8 `recurring-*` visual baselines passed over this redesign.**
+`visual.spec` photographs the default Upcoming tab, so **the calendar has no
+pixel coverage whatsoever** — a component can be rewritten and no baseline
+moves. That gap is the first thing to close next session, before any further
+calendar work.
+
+## 5.4 State after the second half
+
+tsc clean · **163 files / 3,004 unit** · coverage gate exit 0. The recurring
+e2e specs and the 8 recurring visual baselines are green — but see the warning
+above about what those baselines actually cover.
+
+## 5.5 What this half is really about
+
+Three items. Two were live defects on his real data (a bill forecast on the
+wrong day for months, two registered car commitments invisible on the calendar),
+and one was a design that had been signed off twice. **Every one of them was
+found by the owner looking at his own screen, not by any gate in this repo.**
+Pass 56 ended on the same note and it is worth stating again: green gates
+measure the questions someone thought to ask.
