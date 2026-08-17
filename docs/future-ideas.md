@@ -644,16 +644,44 @@ Ordered roughly by value ÷ effort:
     (a non-closing period flips its own file's rows to `quarantined`, removing them from
     replay); on Robinhood Cash it matches **zero** rows because statement periods and
     transactions come from different import files, so that policy is silently dead there.
-  - [ ] **The near-mirror pairs look like settlement lag across a MONTH BOUNDARY**, not
-    missing money: +$19.79/−$19.91, +$9.87/−$10.01, −$100.03/+$99.98 on adjacent periods.
-    A settlement in flight over a period end is a timing truth, and reconciliation is
-    binary at the cent — so one cent of it marks a whole 30-day span `gap` and holds the
-    account at `broken`. **Do NOT ask the owner to set a tolerance yet.** The 12¢/14¢/5¢
-    residuals are unexplained, and picking a tolerance before explaining them is choosing
-    a number that hides a mechanism nobody has identified — the pass-45 lesson
-    (regenerating a baseline you cannot explain converts a bug report into a bug). Explain
-    the residual first; the tolerance question is only answerable after that.
-    (Same shape as P0.5's in-transit bridging — do them together.)
+  - [x] ~~**The near-mirror pairs look like settlement lag**~~ — **RESOLVED, they were not.**
+    They were the mirror script's approximation error, and the migration above deleted
+    both the script's rows and the question. No tolerance decision is needed; do not ask
+    the owner for one.
+  - [ ] 🔴 **Robinhood BROKERAGE — the arbiter, measured 2026-08-17 (pass 59).**
+    The account has **6 anchors, all `source='live'` hand readings, and 0 statement
+    periods**. Its daily values do not come from those anchors — they come from the
+    holdings valuation (`services/holdings.ts` writes `daily_balances`), which is why
+    the basis reads `derived`.
+
+    **The right anchor is `Total Securities`, NOT `Portfolio Value`.** Verified on the
+    2026-07 statement: Portfolio Value = Total Securities + Brokerage Cash + Deposit
+    Sweep ($67,859.26 + $1,679.93 + $0.45 = $69,539.64). `Robinhood Cash` already
+    carries the cash, so anchoring the investment account on Portfolio Value would
+    **double-count it** — by $41,567.16 in 2025-07, where the cash dwarfed the
+    securities. WARNING: `Total Market Value` is the stock-LENDING subtotal ($0.00
+    here), and a second account section (#655929651, $26.64) repeats both labels — take
+    the FIRST occurrence only.
+
+    Measured across all 24 statements that print it, holdings value vs printed
+    Total Securities: **16 exact, 2 within a cent, and 6 that genuinely disagree.**
+
+    | close | printed | ledger | diff |
+    |---|---|---|---|
+    | 2025-02-28 | $569.96 | $478.75 | -$91.21 |
+    | 2025-03-31 | $3,374.69 | $2,929.57 | -$445.12 |
+    | 2025-04-30 | $7,755.39 | $7,087.53 | -$667.86 |
+    | 2025-08-31 | $35,437.20 | $35,445.36 | +$8.16 |
+    | 2026-02-28 | $62,717.14 | $62,627.99 | -$89.15 |
+    | 2026-07-31 | $67,859.26 | $67,661.64 | -$197.62 |
+
+    So the holdings model is broadly right and wrong in six places — which is exactly
+    the case for giving it an arbiter rather than trusting it. Emit a second
+    `ParsedStatement` from the brokerage profile with an investment `period`
+    (`reconcileAccounts` grades those `value_anchor` and records `market_change_cents`),
+    then extend `pnpm ledger-check` to fail when printed and holdings-derived values
+    diverge by more than a cent. `data/probe-brokerage-value.ts` already does the
+    measurement.
   - [ ] **Robinhood Brokerage has NO arbiter at all** — 0 statement periods, `market_value`
     grade, so its reconciliation cannot fail and therefore proves nothing. Every one of the
     32 statements prints `Portfolio Value`, and `Portfolio Value = cash + Total Securities`
