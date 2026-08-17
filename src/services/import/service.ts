@@ -19,6 +19,7 @@ import { descriptionScore } from "@/lib/description-score";
 import { assignOccurrenceIndexes, dedupeHash, fileSha256 } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { sumCents } from "@/lib/money";
+import { RECONCILE_STATUSES, periodVerdict } from "@/lib/reconciliation";
 import { categorizeAll, detectTransfers } from "../categorize";
 import { rebuildAccount } from "../derivation";
 import { flagDuplicateCandidates } from "../duplicate-flags";
@@ -1179,7 +1180,7 @@ export function reconcileAccounts(db: AppDatabase, accountIds: string[]): void {
             eq(transactions.accountId, accountId),
             // 'excluded' hides a txn from ANALYTICS — the money still moved,
             // so reconciliation and balances must include it
-            inArray(transactions.status, ["active", "quarantined", "excluded"]),
+            inArray(transactions.status, [...RECONCILE_STATUSES]),
             gte(transactions.postedOn, period.periodStart),
             lte(transactions.postedOn, period.periodEnd),
           ),
@@ -1187,19 +1188,28 @@ export function reconcileAccounts(db: AppDatabase, accountIds: string[]): void {
         .all();
       const total = sumCents(rows.map((r) => r.amountCents));
 
-      if (account.type === "investment") {
-        const marketChange = period.endingBalanceCents - period.beginningBalanceCents - total;
+      // The grading rule itself lives in lib/reconciliation so `pnpm
+      // ledger-check` can recompute a verdict with the SAME arithmetic that
+      // wrote it — a checker with its own copy of the rule can only report
+      // disagreements with itself.
+      const verdict = periodVerdict(period, total, { isInvestment: account.type === "investment" });
+
+      if (verdict.reconciliation === "value_anchor") {
         db.update(statementPeriods)
-          .set({ reconciliation: "value_anchor", marketChangeCents: marketChange, gapCents: null })
+          .set({
+            reconciliation: verdict.reconciliation,
+            marketChangeCents: verdict.marketChangeCents,
+            gapCents: verdict.gapCents,
+          })
           .where(eq(statementPeriods.id, period.id))
           .run();
         continue;
       }
 
-      const gap = period.endingBalanceCents - (period.beginningBalanceCents + total);
+      const gap = verdict.gapCents ?? 0;
       db.transaction((tx) => {
         tx.update(statementPeriods)
-          .set({ reconciliation: gap === 0 ? "reconciled" : "gap", gapCents: gap === 0 ? null : gap })
+          .set({ reconciliation: verdict.reconciliation, gapCents: verdict.gapCents })
           .where(eq(statementPeriods.id, period.id))
           .run();
         // quarantine policy: this period's own file's rows hold until resolved

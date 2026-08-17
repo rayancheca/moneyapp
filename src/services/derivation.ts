@@ -84,6 +84,26 @@ export function pickWinners(anchors: readonly Anchor[]): Anchor[] {
 }
 
 /**
+ * Which anchors carry the curve, and which are only observations.
+ *
+ * Exported because closure is not only checked here: `pnpm ledger-check` walks
+ * the same pairs to report breaks, and a checker that picked its own endpoints
+ * would report breaks the derivation does not have. That is not hypothetical —
+ * a probe that walked EVERY anchor reported July 2026 on Robinhood Cash as two
+ * separate breaks around a `live` reading the derivation never treats as an
+ * endpoint at all, and the real picture was one break of a different size.
+ */
+export function selectEndpoints(winners: readonly Anchor[]): {
+  endpoints: Anchor[];
+  moments: Anchor[];
+} {
+  const chain = winners.filter((w) => CHAIN_GRADE.has(w.source));
+  const moments = winners.filter((w) => !CHAIN_GRADE.has(w.source));
+  // moment anchors only carry the curve when nothing chain-grade exists
+  return { endpoints: chain.length > 0 ? chain : moments, moments };
+}
+
+/**
  * Pure derivation: winners + per-day transaction sums → daily rows.
  * Exported for exhaustive unit testing; rebuildAccount wires it to the DB.
  *
@@ -98,10 +118,7 @@ export function deriveDailyRows(
   const { isInvestment, today } = options;
   if (winners.length === 0) return [];
 
-  const chain = winners.filter((w) => CHAIN_GRADE.has(w.source));
-  const moments = winners.filter((w) => !CHAIN_GRADE.has(w.source));
-  // moment anchors only carry the curve when nothing chain-grade exists
-  const endpoints = chain.length > 0 ? chain : moments;
+  const { endpoints, moments } = selectEndpoints(winners);
 
   const rows = new Map<string, DayRow>();
   const put = (day: string, balanceCents: number, basis: BalanceBasis) => {
