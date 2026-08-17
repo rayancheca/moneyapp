@@ -16,15 +16,20 @@ import { E2E_FAKE_TODAY } from "./seed-helpers";
  * it through the app is not available, the same reasoning
  * `zz-zz-zz-duplicate-pairs` gives for seeding its pair directly.
  *
- * What it pins is the rule that decides whether a row speaks:
+ * What it pins is the rule that decides WHERE the age is stated:
  *
  *   rows DISAGREE about their close date → each stale row prints its own date,
- *     because the page note is gated on the NEWEST close and goes silent the
- *     moment any one symbol is refreshed. This is the case the note cannot see.
+ *     and the column header stays silent because no one date describes the
+ *     column. The page note is silent too here — it is gated on the NEWEST
+ *     close and goes quiet the moment any one symbol is refreshed — so the rows
+ *     are the only disclosure, which is exactly why they exist.
  *
- *   rows AGREE → the rows say nothing and the note says it once. Ten identical
- *     dates down a column is repetition, not information — and agreeing is the
- *     normal state, including the owner's real portfolio.
+ *   rows AGREE → the COLUMN HEADER carries the date once, and no row repeats
+ *     it. Agreeing is the normal state, including the owner's real portfolio,
+ *     whose ten positions have shared one close since it was last refreshed.
+ *
+ * Both come out of a single `priceColumnAge` call, so the two surfaces cannot
+ * double up on one fact or both fall silent about it.
  *
  * Named `zz-zz-zz-` so it sorts after every spec that photographs or totals the
  * portfolio: removing closes moves value, day change and sparklines, which would
@@ -124,6 +129,11 @@ test.describe("when the holdings disagree about their close date", () => {
     await expect(page.getByRole("row").filter({ hasText: "MSFT" }).first().getByText(/^as of /)).toHaveCount(0);
     await expect(page.getByText(/^as of /)).toHaveCount(1);
 
+    // and the column header does NOT date itself: three of the four holdings
+    // are quoted today, so "Price as of Jul 5" over this column would be a
+    // false claim about them
+    await expect(page.getByRole("columnheader", { name: /^Price/ })).toHaveText("Price");
+
     // THE POINT: the page-level note is gated on the newest close, and three
     // holdings are still quoted today — so it is absent while one sits three
     // days behind. Without the per-row date, nothing on this page discloses it.
@@ -151,14 +161,43 @@ test.describe("when every holding carries the same close date", () => {
   });
   test.afterAll(() => restore(removed));
 
-  test("no row dates itself, because the note already says it once", async ({ page }) => {
+  test("the COLUMN says it once and no row repeats it", async ({ page }) => {
     await page.goto("/investments");
     await expect(page.getByRole("heading", { level: 1, name: "Investments" })).toBeVisible();
 
-    // the note speaks — uniformly stale is exactly what it describes best
-    await expect(page.getByText(/still carries its close from/)).toBeVisible();
+    // the fact belongs to the whole column, so the column header carries it —
+    // adjacent to every number it qualifies, and stated exactly once
+    const header = page.getByRole("columnheader", { name: /^Price/ });
+    await expect(header).toContainText("as of Jul 5");
 
-    // …and not one row repeats it
-    await expect(page.getByText(/^as of /)).toHaveCount(0);
+    // …and not one of the four rows repeats it
+    for (const symbol of ["AAPL", "MSFT", "WMT", "ETH"]) {
+      await expect(page.getByRole("row").filter({ hasText: symbol }).first().getByText(/^as of /)).toHaveCount(0);
+    }
+    // exactly one "as of" on the page: the header's
+    await expect(page.getByText(/^as of /)).toHaveCount(1);
+
+    // the note still speaks too — it carries the CONSEQUENCE (market value and
+    // allocation are computed from these closes), which a column label cannot
+    await expect(page.getByText(/still carries its close from/)).toBeVisible();
+  });
+
+  test("the account-detail holdings table dates its column too", async ({ page }) => {
+    // This page has no `holdingPriceSectionNotes` at all, so before the column
+    // header there was NOTHING on it disclosing that Price, Day, Value, P/L and
+    // Alloc all came from a close five days old.
+    // the same resolver visual.spec uses — the Robinhood section's first
+    // account link is the brokerage, which holds AAPL, MSFT and WMT
+    await page.goto("/accounts");
+    const href = await page
+      .locator('section[aria-label="Robinhood"] a[href^="/accounts/"]')
+      .first()
+      .getAttribute("href");
+    expect(href).not.toBeNull();
+    await page.goto(href!);
+
+    await expect(page.getByRole("columnheader", { name: /^Price/ })).toContainText("as of Jul 5");
+    // the rows stay clean — the column spoke for all three
+    await expect(page.getByRole("row").filter({ hasText: "AAPL" }).first().getByText(/^as of /)).toHaveCount(0);
   });
 });

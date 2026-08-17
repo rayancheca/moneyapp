@@ -38,29 +38,7 @@ export function isStaleClose(
   return daysBetween(quotedOn, today) > 0;
 }
 
-/**
- * Do these holdings disagree about WHEN they were priced?
- *
- * This is the gate on printing per-row dates at all, and it is what keeps the
- * feature from becoming noise. When every holding carries the same close date —
- * the normal case, and the state of the owner's own portfolio today — the page
- * note already says so in one sentence ("Every position on this page still
- * carries its close from …"), and stamping that identical date onto all ten
- * rows would repeat it ten times in the one column that has to stay scannable.
- *
- * The rows earn their space only when they can say something the note cannot:
- * which holdings are behind, when they are not all behind together.
- *
- * Rows with no close at all are excluded — an unpriced holding already says
- * "no price" in this very cell, and letting it count as a disagreement would
- * turn every unpriced row into a reason to date all the others.
- */
-export function priceDatesDiffer(rows: readonly { quotedOn: string | null }[]): boolean {
-  const dates = new Set(rows.map((r) => r.quotedOn).filter((d): d is string => d !== null));
-  return dates.size > 1;
-}
-
-/** The sub-line one holding row prints under its price. */
+/** The sub-line printed under a price — under one row's, or under the column's. */
 export interface HoldingPriceAge {
   /** visible text, e.g. "as of Aug 6" */
   text: string;
@@ -101,4 +79,62 @@ export function holdingPriceAge(
       `Priced ${days} ${days === 1 ? "day" : "days"} ago. Market value here comes from a ` +
       `stored close, not a live quote — refresh prices to bring it up to date.`,
   };
+}
+
+/** Where a holdings table prints price age: on the column, or on the rows. */
+export interface PriceColumnAge {
+  /** under the "Price" column header — the close date that describes EVERY priced row */
+  readonly header: HoldingPriceAge | null;
+  /** under one row's price — only when the header cannot speak for it */
+  readonly row: (quotedOn: string | null) => HoldingPriceAge | null;
+}
+
+/**
+ * Decide, for a whole holdings table at once, WHERE price age gets stated.
+ *
+ * The rule is one sentence: **a fact about every row belongs to the column, and
+ * a fact about one row belongs to that row.**
+ *
+ *   every priced row shares one close → the COLUMN HEADER carries the date
+ *   the rows disagree                 → each stale ROW carries its own
+ *
+ * Both surfaces are returned from this one call for the reason pass 50
+ * established for the budget verdict: two independent gates over the same facts
+ * drift, and the two failure modes here are opposite and both bad. If both
+ * spoke, the owner's ten holdings would print one date eleven times. If neither
+ * spoke — which is what pass 56 shipped, because the per-row gate suppressed
+ * itself precisely when every row agreed and left the fact to a page note the
+ * account-detail page does not even have — then a uniformly stale portfolio
+ * discloses its age nowhere near the numbers. Returning both from one branch
+ * makes "both" and "neither" unrepresentable rather than merely untested.
+ *
+ * This supersedes the `priceDatesDiffer` gate. That predicate answered "may the
+ * rows speak?", which is the right question only if the rows are the only place
+ * that can. The column header is the better place: it is adjacent to the very
+ * numbers it qualifies, it costs one line instead of ten, and it is always on.
+ *
+ * A close dated today is silent in both positions — `holdingPriceAge` decides
+ * that, once, so the header and the rows share the definition of stale with
+ * each other AND with `holdingPriceSectionNotes`.
+ *
+ * Unpriced rows are excluded from the shared-date test rather than defeating
+ * it: a holding with no close already prints "no price" in this very cell, and
+ * letting it count as a disagreement would turn one unpriced row into a reason
+ * to date every other one individually.
+ */
+export function priceColumnAge(
+  rows: readonly { quotedOn: string | null }[],
+  today: string,
+  daysBetween: (from: string, to: string) => number,
+  formatDay: (iso: string) => string,
+): PriceColumnAge {
+  const age = (quotedOn: string | null): HoldingPriceAge | null =>
+    holdingPriceAge(quotedOn, today, daysBetween, formatDay);
+
+  const dates = new Set(rows.map((r) => r.quotedOn).filter((d): d is string => d !== null));
+  const shared = dates.size === 1 ? [...dates][0]! : null;
+
+  return shared === null
+    ? { header: null, row: age }
+    : { header: age(shared), row: () => null };
 }

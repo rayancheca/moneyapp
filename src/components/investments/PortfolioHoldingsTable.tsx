@@ -13,7 +13,8 @@ import {
 } from "@/lib/holding-subtotal";
 import { diffDays } from "@/lib/dates";
 import { formatDayShort } from "@/lib/format-date";
-import { holdingPriceAge, priceDatesDiffer } from "@/lib/holding-price-age";
+import { priceColumnAge } from "@/lib/holding-price-age";
+import { PriceColumnHeader } from "./PriceColumnHeader";
 import { formatCents } from "@/lib/money";
 import { formatQuantityE8 } from "@/services/holdings";
 import type { HoldingRow } from "@/services/portfolio";
@@ -151,10 +152,10 @@ export function PortfolioHoldingsTable({
   const selectedRows = rows.filter((r) => selectedIds.has(holdingKey(r)));
   const subtotal = subtotalHoldings(selectedRows);
 
-  // Per-row close dates only when the rows actually disagree about them. When
-  // they all share one date the page note above already says it once, and
-  // repeating it on every row is noise rather than information.
-  const datesDiffer = priceDatesDiffer(rows);
+  // WHERE price age gets stated — on the column when one close describes every
+  // priced row, on the individual rows when they disagree. Both come from one
+  // call so they can neither double up nor both fall silent.
+  const priceAge = priceColumnAge(rows, today, diffDays, formatDayShort);
 
   function metricCell(r: HoldingRow) {
     if (metric === "dayPct") {
@@ -228,17 +229,15 @@ export function PortfolioHoldingsTable({
     },
     {
       key: "price",
-      header: "Price",
+      header: <PriceColumnHeader age={priceAge.header} />,
       align: "right",
       render: (r) => {
         if (r.latestClose === null) return <span className="text-warning">no price</span>;
-        // Which rows are stale, on the row itself. The page note above the table
-        // is gated on the newest close across the whole page, so a single
-        // freshly-priced symbol silences it while everything else is a week old
-        // — this is the only place that gap is visible.
-        const age = datesDiffer
-          ? holdingPriceAge(r.quotedOn, today, diffDays, formatDayShort)
-          : null;
+        // Only when the header cannot speak for this row — i.e. the rows
+        // disagree about their closes, which is exactly the case the page note
+        // above cannot describe (it is gated on the NEWEST close, so one
+        // freshly-priced symbol silences it while everything else is a week old).
+        const age = priceAge.row(r.quotedOn);
         return (
           <span className="inline-flex flex-col items-end">
             <span className="figures text-ink-muted">

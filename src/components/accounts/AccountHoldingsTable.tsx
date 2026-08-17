@@ -1,8 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { PriceColumnHeader } from "@/components/investments/PriceColumnHeader";
 import { DataTable, type Column, type SortState } from "@/components/ui/DataTable";
 import { Money } from "@/components/ui/Money";
+import { diffDays } from "@/lib/dates";
+import { formatDayShort } from "@/lib/format-date";
+import { priceColumnAge } from "@/lib/holding-price-age";
 import { formatCents } from "@/lib/money";
 import { formatQuantityE8, type AccountHoldingRow } from "@/services/holdings";
 
@@ -10,6 +14,14 @@ import { formatQuantityE8, type AccountHoldingRow } from "@/services/holdings";
  * An investment account's holdings on the shared DataTable (ux-overhaul-plan
  * §7.3): each row opens the aggregated holding page. Allocation is within THIS
  * account. Sortable by value; day change is colored semantically.
+ *
+ * Price age is disclosed here exactly as it is on /investments, from the same
+ * `priceColumnAge` call — and it matters MORE here. /investments carries a
+ * page-level note (`holdingPriceSectionNotes`) that this page does not have, so
+ * until now every number in the Price, Day, Value, P/L and Alloc columns came
+ * from a stored close with nothing anywhere on the page saying how old it was.
+ * `AccountHoldingRow.quotedOn` was computed for every row (services/holdings.ts)
+ * and dropped on the floor.
  */
 
 const ASSET_LABEL: Record<string, string> = { stock: "Stock", etf: "ETF", crypto: "Crypto" };
@@ -30,13 +42,22 @@ const SORTERS: Record<string, (a: AccountHoldingRow, b: AccountHoldingRow) => nu
   alloc: (a, b) => (a.allocationPct ?? 0) - (b.allocationPct ?? 0),
 };
 
-export function AccountHoldingsTable({ rows }: { rows: readonly AccountHoldingRow[] }) {
+export function AccountHoldingsTable({
+  rows,
+  today,
+}: {
+  rows: readonly AccountHoldingRow[];
+  /** Today, from the SERVER — see PortfolioHoldingsTable for why never `new Date()` here. */
+  today: string;
+}) {
   const [sort, setSort] = useState<SortState>({ key: "value", dir: "desc" });
 
   const sorted = [...rows].sort((a, b) => {
     const cmp = (SORTERS[sort.key] ?? SORTERS.value)!(a, b);
     return sort.dir === "asc" ? cmp : -cmp;
   });
+
+  const priceAge = priceColumnAge(rows, today, diffDays, formatDayShort);
 
   const columns: Column<AccountHoldingRow>[] = [
     {
@@ -58,14 +79,22 @@ export function AccountHoldingsTable({ rows }: { rows: readonly AccountHoldingRo
     },
     {
       key: "price",
-      header: "Price",
+      header: <PriceColumnHeader age={priceAge.header} />,
       align: "right",
-      render: (r) =>
-        r.latestClose !== null ? (
-          <span className="figures">{formatCents(Math.round(r.latestClose * 100))}</span>
-        ) : (
-          <span className="text-ink-faint">—</span>
-        ),
+      render: (r) => {
+        if (r.latestClose === null) return <span className="text-ink-faint">—</span>;
+        const age = priceAge.row(r.quotedOn);
+        return (
+          <span className="inline-flex flex-col items-end">
+            <span className="figures">{formatCents(Math.round(r.latestClose * 100))}</span>
+            {age !== null && (
+              <span className="text-[11px] text-ink-faint" title={age.title}>
+                {age.text}
+              </span>
+            )}
+          </span>
+        );
+      },
     },
     {
       key: "day",

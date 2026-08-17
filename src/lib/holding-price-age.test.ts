@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { diffDays } from "./dates";
 import { formatDayShort } from "./format-date";
-import { holdingPriceAge, isStaleClose, priceDatesDiffer } from "./holding-price-age";
+import { holdingPriceAge, isStaleClose, priceColumnAge } from "./holding-price-age";
 import { holdingPriceSectionNotes } from "./section-notes";
 
 const TODAY = "2026-08-14";
@@ -24,30 +24,72 @@ describe("isStaleClose", () => {
   });
 });
 
-describe("priceDatesDiffer", () => {
+describe("priceColumnAge", () => {
   const rows = (...quotedOn: (string | null)[]) => quotedOn.map((q) => ({ quotedOn: q }));
+  const column = (quotedOn: (string | null)[], today = TODAY) =>
+    priceColumnAge(rows(...quotedOn), today, diffDays, formatDayShort);
 
-  test("holdings that all carry the same close date do NOT differ", () => {
-    // the owner's real portfolio today: ten holdings, one shared close date.
-    // The page note says that once; ten identical row dates would be noise.
-    expect(priceDatesDiffer(rows("2026-08-06", "2026-08-06", "2026-08-06"))).toBe(false);
+  test("one shared stale close is stated ONCE, on the column header", () => {
+    // the owner's real portfolio: ten holdings, one shared close date. The fact
+    // belongs to the whole column, so the column says it — not ten rows.
+    const col = column(["2026-08-06", "2026-08-06", "2026-08-06"]);
+
+    expect(col.header?.text).toBe("as of Aug 6");
+    expect(col.row("2026-08-06")).toBeNull();
   });
 
-  test("one holding left behind is a disagreement", () => {
-    expect(priceDatesDiffer(rows(TODAY, "2026-08-06"))).toBe(true);
+  test("a shared close that is NOT stale says nothing anywhere", () => {
+    const col = column([TODAY, TODAY]);
+
+    expect(col.header).toBeNull();
+    expect(col.row(TODAY)).toBeNull();
   });
 
-  test("an unpriced holding is not a disagreement — it already says 'no price'", () => {
-    expect(priceDatesDiffer(rows("2026-08-06", null, "2026-08-06"))).toBe(false);
+  test("when the rows disagree the header goes silent and each stale row speaks", () => {
+    // the header can no longer describe the column, so it must not try: a single
+    // date over a mixed column would be a false claim about the fresh rows.
+    const col = column([TODAY, "2026-08-06"]);
+
+    expect(col.header).toBeNull();
+    expect(col.row("2026-08-06")?.text).toBe("as of Aug 6");
+    expect(col.row(TODAY)).toBeNull();
   });
 
-  test("rows with no closes at all cannot disagree", () => {
-    expect(priceDatesDiffer(rows(null, null))).toBe(false);
-    expect(priceDatesDiffer([])).toBe(false);
+  test("exactly one of the header and the row ever speaks about a given row", () => {
+    // The invariant the shape exists to make unrepresentable. Both speaking is
+    // repetition; neither speaking is the blind spot pass 56 shipped this for.
+    for (const dates of [["2026-08-06", "2026-08-06"], [TODAY, "2026-08-06"], [TODAY, TODAY]]) {
+      const col = column(dates);
+      for (const d of dates) {
+        const spoken = [col.header, col.row(d)].filter((a) => a !== null);
+        // a fresh close is the one case with nothing to say at all
+        expect(spoken.length).toBe(isStaleClose(d, TODAY, diffDays) ? 1 : 0);
+      }
+    }
   });
 
-  test("a single holding never disagrees with itself", () => {
-    expect(priceDatesDiffer(rows("2026-08-06"))).toBe(false);
+  test("an unpriced holding does not break the shared date — it says 'no price' itself", () => {
+    const col = column(["2026-08-06", null, "2026-08-06"]);
+
+    expect(col.header?.text).toBe("as of Aug 6");
+    expect(col.row(null)).toBeNull();
+  });
+
+  test("a column with nothing priced at all is silent", () => {
+    expect(column([null, null]).header).toBeNull();
+    expect(column([]).header).toBeNull();
+    expect(column([]).row(null)).toBeNull();
+  });
+
+  test("a single holding is a shared date, not a disagreement", () => {
+    expect(column(["2026-08-06"]).header?.text).toBe("as of Aug 6");
+    expect(column(["2026-08-06"]).row("2026-08-06")).toBeNull();
+  });
+
+  test("the header carries the same explanation a row would have carried", () => {
+    // one definition of the sentence, so the two surfaces cannot word the same
+    // fact differently
+    expect(column(["2026-08-06"]).header?.title).toBe(age("2026-08-06")?.title);
   });
 });
 

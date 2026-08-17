@@ -223,7 +223,7 @@ export default async function AccountDetailPage({
                 market value <Money cents={holdingsValue} className="font-medium text-ink" />
               </span>
             </div>
-            <AccountHoldingsTable rows={holdings} />
+            <AccountHoldingsTable rows={holdings} today={today} />
           </SurfaceCard>
         )}
 
