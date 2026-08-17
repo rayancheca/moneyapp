@@ -575,6 +575,24 @@ Ordered roughly by value ÷ effort:
     `Deposit Sweep Activity` table — 309 rows across 18 of the 32 files — and the parser
     threw it away. `parseSweepActivity` + `pnpm rh-sweep-check` now name the *day* a
     disagreement opens, which is how the item above was found.
+  - [ ] **WHERE THE REMAINING GAP DAYS ARE — measured 2026-08-17 (pass 58), by walking
+    every consecutive anchor pair rather than by period.** After the stray-anchor deletion
+    below, **all 264 gap days in the entire ledger are on Robinhood Cash, and every one of
+    them is 2025-11 or later** — the whole 2023-12 → 2025-10 history now closes. 10 of 33
+    anchor pairs fail, and they are three different problems, not one:
+    - **near-mirror month-boundary pairs** (the settlement-lag story): −$19.79/+$19.91,
+      −$9.87/+$10.01, +$100.03/−$99.98. Note they are *near*, not exact — 12¢, 14¢ and 5¢
+      of residual survive the mirroring, so "pure timing" does not explain all of it.
+    - **two one-cent breaks** (2026-02→03, 2026-03→04). Rounding, and they alone hold 57
+      days at `gap`.
+    - 🔴 **a real $231.85 shortfall in 2026-07, currently disguised as two much larger
+      breaks by a THIRD-SOURCE anchor.** There is a `source='live'` anchor on 2026-07-10
+      ($7,235.65) sitting between two statement anchors, and it splits the month into
+      −$1,420.07 and +$1,188.22. This is structurally the same defect as the 2024-08-14
+      one deleted below — an anchor from a non-statement source contradicting the statement
+      chain — but it must **NOT** simply be deleted: with it gone the month is still
+      $231.85 short, so it is masking real missing money rather than manufacturing a fake
+      break. Find the $231.85 first.
   - [ ] **The remaining $491.46 is settlement lag across a MONTH BOUNDARY**, not missing
     money: the residuals come in near-mirror pairs on adjacent periods (+$19.79/−$19.91,
     +$9.87/−$10.01, −$100.03/+$99.98). A settlement in flight over a period end is a timing
@@ -590,12 +608,34 @@ Ordered roughly by value ÷ effort:
     Capturing it would let qty×close be checked against the bank's own number every month.
     ⚠️ `Total Market Value` is the stock-LENDING subtotal, not securities — confusing the
     two understates by an order of magnitude.
-  - [ ] **A coverage-grading artifact worth its own fix:** one leading `derived_unverified`
-    day (2023-12-05, the backward walk to the first txn) zeroes `verifiedThrough` for ~22
-    months of genuinely reconciled 2024-01 → 2025-09 history (`coverage.ts` counts trusted
-    days strictly before the first untrusted one).
-  - [ ] **A stray $0.00 `manual` anchor on 2024-08-14** contradicts the statement chain's
-    $0.04 and costs 29 of the remaining gap days. Deletable.
+  - [~] **The "coverage-grading artifact" — RE-MEASURED 2026-08-17 (pass 58). Real, but
+    NOT worth the fix it asked for, and wrong in its particulars.** Measured on the live
+    database:
+    - it is **not one leading day**. The leading `derived_unverified` run is **26 days**,
+      2023-12-05 → 2023-12-30, before the first `ofx_ledger` anchor on 2023-12-31.
+    - the span it supposedly hides is **not uniformly reconciled**: the runs between the
+      monthly statement anchors are mostly basis **`carried`**, and `TRUSTED` is
+      `{anchored, derived}` — so `carried` days were never going to count as verified
+      whatever the leading run did.
+    - ⛔ and the field is **not rendered for this account at all**. `CoveragePanel`
+      (`src/components/imports/CoveragePanel.tsx:54`) prints `verifiedThrough` only in
+      `case "verified"`; Robinhood Cash is graded `broken`, so the panel shows the gap
+      message instead. `daysSinceVerified` has **no UI consumer anywhere** in `src`.
+
+    So the visible cost today is zero, and the "fix" would mean loosening a money-integrity
+    field so that a single fresh anchor could report "verified through today" on an account
+    with years of holes. **Do not change the semantics for this.** If it is ever worth
+    doing, do it for a reason the UI can actually show — e.g. rendering "closed through X,
+    first hole Y" for broken accounts, which needs no change to `coverage.ts` at all.
+  - [x] **A stray $0.00 `manual` anchor on 2024-08-14 — DELETED (pass 58).** It contradicted
+    both neighbours at once: the 2024-07-31 statement anchor prints $0.04, the 2024-08-31
+    one prints $0.06, and August 2024 holds exactly one transaction — a +$0.02 dividend on
+    the 15th. So 0.04 → +0.02 → 0.06 closes to the cent, and the period was already graded
+    `reconciled` on that arithmetic; the stray anchor merely cut the closing walk into two
+    failing ones (08-01→08-13 and 08-15→08-30). Deleted behind a restore point, after
+    re-proving the chain closes against the live DB rather than against this note.
+    **Gap days 293 → 264 (29 cleared)**; August 2024 is now `anchored=1 derived=30`;
+    trusted days 384 → 413; every other account byte-identical.
 
 - [x] **P0.2 — missing Chase statement, cycle 2023-10-13 → 2023-11-10 — SHIPPED (pass 12).** The
   user provided it (+ the 2023-06-13→07-13 July cycle that was also absent, + Aug/Oct which
