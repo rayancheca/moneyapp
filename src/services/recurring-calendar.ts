@@ -3,7 +3,13 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
-import { effectiveSeries, isSeriesActive, projectOccurrences, toProjectable } from "./recurring";
+import {
+  effectiveSeries,
+  lapsedSeriesShouldStopForecasting,
+  projectOccurrences,
+  seriesHasLapsed,
+  toProjectable,
+} from "./recurring";
 
 /**
  * Recurring calendar month (ux-overhaul-plan §4.1.3). One month of the
@@ -148,11 +154,20 @@ export function recurringCalendar(
   }
 
   // 2) expected occurrences (upcoming / missed) not already covered by a posting.
-  // Only ACTIVE series project forward — a long-dead series must not litter the
-  // month with "upcoming" charges it will never make (its historical postings in
-  // step 1 still show). isSeriesActive auto-restores once a new charge lands.
+  // A series whose evidence has RUN OUT must not litter the month with charges
+  // it will never make (its historical postings in step 1 still show); a new
+  // charge auto-restores it, because re-detection moves lastMatchedOn.
+  //
+  // ⚠️ `seriesHasLapsed`, not `isSeriesActive`. The two differ on exactly one
+  // population and it is the one that matters here: a series that has NEVER
+  // posted. `isSeriesActive` calls it inactive — the right answer to "is there
+  // evidence for this?" and the wrong gate for a forecast. Measured on the real
+  // ledger: the owner's Car lease ($559.89) and Car insurance ($361.49), both
+  // registered for 2026-09-11 with no postings yet, were absent from every
+  // calendar month under the old gate. Lapsed means "it stopped", which only a
+  // series that once started can do.
   for (const s of seriesRows) {
-    if (!isSeriesActive(s, today)) continue;
+    if (lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today)) continue;
     const occurrences = projectOccurrences(toProjectable(s), monthStart, monthEnd);
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
     for (const o of occurrences) {

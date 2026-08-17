@@ -19,6 +19,7 @@ import {
   fitCadence,
   isDayOfMonthBimodal,
   isSeriesActive,
+  lapsedSeriesShouldStopForecasting,
   listSeries,
   median,
   populationStddev,
@@ -396,10 +397,38 @@ describe("projectOccurrences", () => {
 });
 
 /**
- * Item 13a. upcomingOccurrences and forecast.ts keep every detected|confirmed
- * series and DISCLOSE how old its evidence is; only recurring-calendar.ts, which
- * draws nothing rather than asserting an amount, resolves lateness by omission.
+ * Item 13a, as revised by the owner on 2026-08-17.
+ *
+ * The old rule was that `upcomingOccurrences` and `forecast.ts` keep every
+ * detected|confirmed series and DISCLOSE how old its evidence is, leaving only
+ * recurring-calendar.ts to resolve lateness by omission. In practice that put
+ * `UBER *ONE` in the Upcoming list as a bill due next week wearing a "last seen
+ * 449d ago" chip — a label apologising for a prediction that should not have
+ * been made. Owner, verbatim: *"why would you keep the uber one if it was last
+ * seen 449 days ago its clearly not recurring anymore"*.
+ *
+ * Staleness is still MEASURED and still travels on every occurrence (the chip
+ * is right for a series that is merely late). What changed is that a series
+ * whose evidence has fully run out is no longer forecast at all.
  */
+describe("lapsedSeriesShouldStopForecasting", () => {
+  test("money OUT stops being forecast once its evidence runs out", () => {
+    expect(lapsedSeriesShouldStopForecasting("subscription")).toBe(true);
+    expect(lapsedSeriesShouldStopForecasting("bill")).toBe(true);
+  });
+
+  test("money IN does not — irregular is how the owner is actually paid", () => {
+    // ~$1,046/wk in cash, arriving in lumps weeks apart (pass 28). A quiet
+    // stretch is import lag, not a lost job.
+    expect(lapsedSeriesShouldStopForecasting("income")).toBe(false);
+  });
+
+  test("transfer and other follow the money-out rule", () => {
+    expect(lapsedSeriesShouldStopForecasting("transfer")).toBe(true);
+    expect(lapsedSeriesShouldStopForecasting("other")).toBe(true);
+  });
+});
+
 describe("seriesStaleness", () => {
   const overrides = (
     over: Partial<SeriesOverrides & { lastMatchedOn: string | null }> = {},
@@ -704,6 +733,33 @@ describe("detection on the synthetic corpus", () => {
     expect([...dates].sort()).toEqual(dates);
     const windowEnd = addDays(TODAY, 30);
     expect(dates.every((d) => d >= TODAY && d <= windowEnd)).toBe(true);
+  });
+
+  test("a series whose evidence has run out is not forecast at all", () => {
+    // the UBER *ONE shape: monthly, last charged far beyond its own tolerance.
+    // It used to appear as a bill due next week with a staleness chip attached.
+    const netflix = seriesByName("Netflix");
+    bundle.db
+      .update(recurringSeries)
+      .set({ lastMatchedOn: "2025-05-25" })
+      .where(eq(recurringSeries.id, netflix.id))
+      .run();
+
+    expect(upcomingOccurrences(bundle.db, TODAY, 30).some((o) => o.name === "Netflix")).toBe(false);
+  });
+
+  test("but a series that has NEVER posted still is — it has not stopped, it has not started", () => {
+    // The car lease the owner registered for 2026-09-11 has no postings by
+    // definition. Gating on `isSeriesActive` instead would delete $559.89/month
+    // of real commitment to remove $4.99 of dead Uber.
+    const netflix = seriesByName("Netflix");
+    bundle.db
+      .update(recurringSeries)
+      .set({ lastMatchedOn: null })
+      .where(eq(recurringSeries.id, netflix.id))
+      .run();
+
+    expect(upcomingOccurrences(bundle.db, TODAY, 30).some((o) => o.name === "Netflix")).toBe(true);
   });
 
   test("a fresh series' occurrences carry staleness that says so", () => {

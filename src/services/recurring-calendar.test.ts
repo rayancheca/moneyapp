@@ -121,6 +121,44 @@ describe("recurringCalendar", () => {
     expect(march.entryCount).toBe(1);
   });
 
+  test("a series that has NEVER posted still projects — it has not stopped, it has not started", () => {
+    // The car-lease shape. `isSeriesActive`, which this gate used to be, calls a
+    // never-posted series inactive, and the owner's registered Car lease
+    // ($559.89) and Car insurance ($361.49) were absent from every calendar
+    // month because of it.
+    buildMonthlyNetflix();
+    detectRecurringSeries(bundle.db, TODAY);
+    bundle.db
+      .update(recurringSeries)
+      .set({ lastMatchedOn: null, kind: "bill" })
+      .where(eq(recurringSeries.name, "Netflix"))
+      .run();
+
+    const july = recurringCalendar(bundle.db, "2026-07", TODAY);
+    expect(july.entriesByDay["2026-07-15"]?.[0]).toMatchObject({ state: "upcoming" });
+  });
+
+  test("a lapsed BILL drops off the calendar, a lapsed INCOME series does not", () => {
+    // The two halves of the rule, on one fixture, because the difference IS the
+    // feature: a dead subscription is cancelled; irregular cash pay is not.
+    buildMonthlyNetflix();
+    detectRecurringSeries(bundle.db, TODAY);
+    const lapse = (kind: "bill" | "income") =>
+      bundle.db
+        .update(recurringSeries)
+        .set({ lastMatchedOn: "2025-05-25", kind })
+        .where(eq(recurringSeries.name, "Netflix"))
+        .run();
+
+    lapse("bill");
+    expect(recurringCalendar(bundle.db, "2026-07", TODAY).entriesByDay["2026-07-15"]).toBeUndefined();
+
+    lapse("income");
+    expect(recurringCalendar(bundle.db, "2026-07", TODAY).entriesByDay["2026-07-15"]?.[0]).toMatchObject({
+      state: "upcoming",
+    });
+  });
+
   test("an amount that drifted past the band shows paid_different", () => {
     buildMonthlyNetflix(-1799); // June is a price hike
     detectRecurringSeries(bundle.db, TODAY);

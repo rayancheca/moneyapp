@@ -773,6 +773,30 @@ export function isSeriesActive(
 }
 
 /**
+ * Should a lapsed series stop being FORECAST, or only be marked late?
+ *
+ * It depends on which way the money goes, and the two answers are opposites.
+ *
+ * **Money out stops.** A subscription that has not charged in 449 days is
+ * cancelled, and listing it as a bill due next week is a prediction no chip can
+ * rescue. Owner, on seeing exactly that: *"why would you keep the uber one if it
+ * was last seen 449 days ago its clearly not recurring anymore"*.
+ *
+ * **Money in does not.** The owner is paid in cash from a job whose deposits are
+ * irregular by nature — pass 28 measured ~$1,046/wk of real earnings arriving in
+ * lumps weeks apart. A quiet stretch there is import lag or a slow month, not a
+ * lost job, and dropping it would delete his entire income forecast to remove
+ * $4.99 of dead Uber. It stays, marked stale, which is what the staleness chip
+ * is actually for.
+ *
+ * `transfer` and `other` follow the money-out rule: neither is income, and a
+ * dead one is as untrustworthy as a dead subscription.
+ */
+export function lapsedSeriesShouldStopForecasting(kind: SeriesKind): boolean {
+  return kind !== "income";
+}
+
+/**
  * A series whose EVIDENCE has run out: it posted before, and its newest posting
  * is older than its own tolerance. UBER *ONE last charged 446 days ago against a
  * 49-day tolerance and was still projecting $4.99 a month into Travel.
@@ -874,6 +898,14 @@ export function upcomingOccurrences(
 
   const to = addDays(today, windowDays);
   return live
+    // A series whose evidence has run out is not a forecast. UBER *ONE last
+    // charged 2025-05-25 and was still listed as a bill due next week, wearing
+    // a "last seen 449d ago" chip — a label on a prediction that should not
+    // have been made. `seriesHasLapsed`, NOT `isSeriesActive`: the latter also
+    // calls a NEVER-posted series inactive, which would delete the $559.89 car
+    // lease and $361.49 insurance the owner registered for 2026-09-11 and that
+    // have no postings yet by definition.
+    .filter((s) => !(lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today)))
     .flatMap((s) => projectOccurrences(toProjectable(s, seriesStaleness(s, today)), today, to))
     .sort((a, b) => compareDates(a.date, b.date) || a.name.localeCompare(b.name));
 }
