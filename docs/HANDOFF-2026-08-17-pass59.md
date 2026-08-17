@@ -1,8 +1,8 @@
 # Handoff — 2026-08-17, pass 59
 
-> **`main` = `2bc1448`** (this doc will follow), tree clean.
+> **`main` = `dc46b35`+** (this doc closes it), tree clean.
 > tsc clean · **166 files / 3,050 unit** (was 163 / 3,016) · coverage gate exit 0 ·
-> **`pnpm ledger-check` exit 0** (new) · e2e re-run, see §6.
+> **`pnpm ledger-check` exit 0** (new) · **E2E_GATE=1 e2e: 428 passed, zero churn**.
 >
 > Two real-DB writes, both behind restore points, both asserting that today's
 > balance and net worth could not move — and both proving it.
@@ -194,14 +194,10 @@ database.
 
 ## 6. Notes for the next session
 
-- ⚠️ **e2e: STARTED, NOT FINISHED.** `E2E_GATE=1 pnpm e2e:fresh` was running when
-  this session ended — **362 of ~428 passed, zero failures, zero flakes** at that
-  point, including every `visual.spec` baseline and the recurring-calendar text
-  specs. The remaining ~66 are the slow `zz-zz-*` tail. **Re-run it before
-  trusting a green e2e claim for this pass** — the import-service change
-  (`soleSource`) and parser v2 are the reason it was worth running at all, and
-  both had already cleared the visual and golden-path specs. Log was written to
-  the session scratchpad, which does not survive.
+- ✅ **e2e: `E2E_GATE=1 pnpm e2e:fresh` — 428 passed in 6.2m, exit 0.** Zero
+  failures, zero flakes, **zero baseline churn** (same 428 as pass 58, so the
+  import-service change and parser v2 moved nothing rendered). Worth having run:
+  `soleSource` touches the coverage rule every import path uses.
 - **`transactions` has no `description` column** — `raw_description` /
   `normalized_description`. `statement_periods` has no `opening_balance_cents` —
   `beginning_balance_cents` / `ending_balance_cents`.
