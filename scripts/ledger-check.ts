@@ -39,41 +39,29 @@ import {
 import { formatCents } from "@/lib/money";
 
 /**
- * The ledger as of 2026-08-17, pass 59.
+ * The ledger as of 2026-08-17, pass 59, AFTER the crypto-movement migration.
  *
- * Nine breaks, every one on Robinhood Cash, every one from 2025-11 onward —
- * the whole 2023-12 → 2025-10 history closes to the cent. They are three
- * different problems and are NOT interchangeable:
+ * **No breaks. Every chain-grade anchor pair on every cash account closes to
+ * the cent, and there are zero `gap` days in the ledger.**
  *
- *   · three near-mirror month-boundary pairs (Nov/Dec, Jan/Feb, May/Jun) that
- *     look like settlement lag but leave 12c, 14c and 5c of residual, so
- *     timing alone does not explain them;
- *   · two one-cent breaks (Mar, Apr) which between them hold 59 days at `gap`;
- *   · July 2026, genuinely $3,811.52 short — real missing money, and the
- *     largest single unexplained figure in the ledger.
+ * It got here by deleting the 74 approximated crypto cash legs that
+ * `pnpm rh-mirror-crypto-cash` had written and re-importing the 32 Robinhood
+ * statements under parser v2, which reads the `Crypto Money Movement` rows the
+ * statements actually print. Nine breaks, 264 gap days, and the whole
+ * $3,811.52 "shortfall" of 2026-07 were one dropped row type.
  *
- * Synthetic totals: Robinhood Cash is the crypto cash-leg mirrors written by
- * `pnpm rh-mirror-crypto-cash` (amount and date taken from the printed sweep
- * row, or from the crypto trade itself when the bank batched the sweep);
- * Chase Sapphire is the hand-entered card activity; Cash on Hand is the
- * -$5,000 car lease down payment. All three trace to a real record.
+ * ⚠️ Keeping this empty is the point. A break appearing here again is either a
+ * new statement that does not close or a regression in that parser, and either
+ * way it is worth stopping for — do not add an entry to quiet the check
+ * without understanding what the money is.
+ *
+ * Synthetic totals: Chase Sapphire is hand-entered card activity; Cash on Hand
+ * is the -$5,000 car lease down payment. Both trace to a real record. The
+ * Robinhood entry is gone because the rows it described no longer exist.
  */
 const BASELINE: LedgerBaseline = {
-  breaks: {
-    "Robinhood Cash": [
-      { from: "2025-10-31", to: "2025-11-30", offByCents: 1_979 },
-      { from: "2025-11-30", to: "2025-12-31", offByCents: -1_991 },
-      { from: "2025-12-31", to: "2026-01-31", offByCents: 987 },
-      { from: "2026-01-31", to: "2026-02-28", offByCents: -1_001 },
-      { from: "2026-02-28", to: "2026-03-31", offByCents: -1 },
-      { from: "2026-03-31", to: "2026-04-30", offByCents: -1 },
-      { from: "2026-04-30", to: "2026-05-31", offByCents: -10_003 },
-      { from: "2026-05-31", to: "2026-06-30", offByCents: 9_998 },
-      { from: "2026-06-30", to: "2026-07-31", offByCents: 381_152 },
-    ],
-  },
+  breaks: {},
   syntheticNetCents: {
-    "Robinhood Cash": -3_593_828,
     "Chase Sapphire": 968_091,
     "Cash on Hand": -500_000,
   },

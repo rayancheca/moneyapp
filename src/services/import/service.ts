@@ -822,7 +822,9 @@ async function importOneFile(
       db.transaction((tx) => {
         for (const { row: t, occurrenceIndex } of indexed) {
           const coveredBy = ranges.filter((r) => t.postedOn >= r.minDay && t.postedOn <= r.maxDay);
-          if (coveredBy.some((r) => r.priority < myPriority)) {
+          // `soleSource` rows opt out: the higher-fidelity source covers the
+          // DAY but is documented not to carry this row type (CanonicalTxn)
+          if (!t.soleSource && coveredBy.some((r) => r.priority < myPriority)) {
             outcome.skippedOwned += 1; // owned by higher fidelity — visible, never silent
             continue;
           }

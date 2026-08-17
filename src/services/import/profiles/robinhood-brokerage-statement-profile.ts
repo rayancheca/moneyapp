@@ -1,17 +1,27 @@
 import { isValidIsoDate } from "@/lib/dates";
 import { parseAmountToCents } from "@/lib/money";
-import { ParseError, type ParsedStatement, type ParserProfile } from "../types";
+import { ParseError, type CanonicalTxn, type ParsedStatement, type ParserProfile } from "../types";
 import { extractLines } from "./pdf-profile";
+import { parseCryptoMoneyMovements } from "./robinhood-crypto-movement";
 
 /**
  * Real Robinhood *securities* statement PDFs — the arbiter `Robinhood Cash` has
  * never had.
  *
- * This profile deliberately emits NO transactions. The activity CSV already
- * carries the itemised settlement-cash rows (2,181 of them); the statement's job
- * is to say what the balance actually was, so the existing cash reconciliation
- * can grade the walk between two printed anchors. Emitting rows here would
+ * This profile emits almost NO transactions. The activity CSV already carries
+ * the itemised settlement-cash rows (2,181 of them); the statement's job is to
+ * say what the balance actually was, so the existing cash reconciliation can
+ * grade the walk between two printed anchors. Emitting rows here would
  * double-count the CSV — statements add proof, not money.
+ *
+ * ⚠️ ONE EXCEPTION, added in pass 59: `Crypto Money Movement` rows. The CSV's
+ * own footer says "This data does not include Robinhood Crypto or Robinhood
+ * Spending activity", and it means it — there is not one `COIN` trans code in
+ * any of the three exported CSVs. Those flows therefore have exactly one
+ * source, this PDF, and emitting them cannot double-count the CSV because the
+ * CSV provably has none. See ./robinhood-crypto-movement.ts; that single
+ * dropped row type accounted for every reconciliation break on the account and
+ * all 264 gap days in the ledger.
  *
  * `Robinhood Cash` is an `AccountType` of "checking", so `reconcileAccounts`
  * takes the CASH branch and a period that does not close to the cent reports a
@@ -424,7 +434,9 @@ export function isRobinhoodBrokerageStatementText(text: string): boolean {
 
 export const robinhoodBrokerageStatementPdf: ParserProfile = {
   id: PROFILE_ID,
-  version: 1,
+  // v2: emits Crypto Money Movement rows. A parser fix never reaches an
+  // already-imported file, so the bump is what makes the archive re-importable.
+  version: 2,
   // Robinhood ships opaque UUID filenames, so content decides routing entirely
   matches: (f) => f.format === "pdf",
   matchesContent: isRobinhoodBrokerageStatementText,
@@ -432,6 +444,16 @@ export const robinhoodBrokerageStatementPdf: ParserProfile = {
     const lines = await extractLines(f.buffer);
     if (lines.length === 0) throw new ParseError(PROFILE_ID, "No extractable text — scanned PDF?");
     const parsed = parseRobinhoodBrokerageLines(lines.map((l) => l.text));
+    // the full lines, not just their text — direction lives in the token x
+    const txns: CanonicalTxn[] = parseCryptoMoneyMovements(lines).map((m) => ({
+      postedOn: m.postedOn,
+      amountCents: m.amountCents,
+      rawDescription: "Crypto Money Movement",
+      categoryPath: "Transfers",
+      // the activity CSV documents that it excludes crypto activity, and does
+      // (zero COIN codes); without this the CSV's day-coverage suppresses these
+      soleSource: true,
+    }));
 
     const accountHint = {
       institution: "Robinhood",
@@ -448,7 +470,7 @@ export const robinhoodBrokerageStatementPdf: ParserProfile = {
       return [
         {
           accountHint,
-          txns: [],
+          txns,
           declaredRange: { start: parsed.periodStart, end: parsed.periodEnd },
           ledger: { cents: parsed.closingCashCents, asOf: parsed.periodEnd },
         },
@@ -458,7 +480,7 @@ export const robinhoodBrokerageStatementPdf: ParserProfile = {
     return [
       {
         accountHint,
-        txns: [],
+        txns,
         period: {
           start: parsed.periodStart,
           end: parsed.periodEnd,

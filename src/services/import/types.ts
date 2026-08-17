@@ -11,6 +11,23 @@ export interface CanonicalTxn {
   bankCategory?: string;
   /** direct taxonomy assignment for investment rows ("Investments > Buys") */
   categoryPath?: string;
+  /**
+   * This row type exists in NO other feed for the account, so a
+   * higher-fidelity source covering the same day must not suppress it.
+   *
+   * The coverage rule it opts out of is otherwise correct: a CSV is more
+   * itemised than a PDF, so PDF rows on CSV-owned days are duplicates and get
+   * skipped. But "the CSV covers this day" is not the same claim as "the CSV
+   * covers this row", and for Robinhood they come apart — the activity CSV's
+   * own footer says it excludes crypto activity, and it does (zero `COIN`
+   * codes in any export). Without this flag every `Crypto Money Movement` row
+   * is skipped as owned by a file that provably cannot contain it, which is
+   * exactly what happened on the first attempt at this import.
+   *
+   * Set it only where the excluded-by-the-other-source claim is documented and
+   * verified, never to force a row past a duplicate check.
+   */
+  soleSource?: boolean;
 }
 
 export interface AccountHint {

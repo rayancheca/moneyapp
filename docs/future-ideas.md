@@ -603,57 +603,37 @@ Ordered roughly by value ÷ effort:
     Still 264 gap days, all on Robinhood Cash, every one 2025-11 or later — the whole
     2023-12 → 2025-10 history closes to the cent. **Every non-investment account except
     Robinhood Cash closes completely.**
-  - [ ] 🔴🔴 **ROOT CAUSE FOUND (pass 59): all nine breaks are ONE dropped row type.**
+  - [x] 🔴🔴 **ROOT CAUSE FOUND AND MIGRATED (pass 59). Gap days 264 → 0.**
     The Robinhood brokerage statement prints `Crypto Money Movement` rows in its
-    `Account Activity` table. **The ledger contains zero of them** — the parser drops
-    every one. `pnpm rh-mirror-crypto-cash` reconstructs the same cash legs from the
-    *crypto* ledger instead, and every break is exactly the difference between what the
-    statement PRINTS and what the mirror APPROXIMATED. Measured on all ten months, and
-    it is exact in all ten:
+    `Account Activity` table and the parser dropped every one; `pnpm rh-mirror-crypto-cash`
+    approximated the same cash legs from the *crypto* ledger instead. Every break was
+    exactly (printed − mirrored) — ±1c in two months, ±$100 in another, and the whole
+    $3,811.52 of 2026-07, which was never mirrored at all. Not missing money: money the
+    statement printed and we discarded.
 
-    | period | printed (statement) | mirrored (ours) | difference | stored gap | |
-    |---|---|---|---|---|---|
-    | 2025-10 | −$1,419.78 | −$1,419.78 | $0.00 | $0.00 | ✓ |
-    | 2025-11 | −$2,509.80 | −$2,529.59 | $19.79 | $19.79 | ✓ |
-    | 2025-12 | −$198.11 | −$178.20 | −$19.91 | −$19.91 | ✓ |
-    | 2026-01 | −$1,529.68 | −$1,539.55 | $9.87 | $9.87 | ✓ |
-    | 2026-02 | −$11,238.37 | −$11,228.36 | −$10.01 | −$10.01 | ✓ |
-    | 2026-03 | −$6,991.10 | −$6,991.09 | −$0.01 | −$0.01 | ✓ |
-    | 2026-04 | $1,188.92 | $1,188.93 | −$0.01 | −$0.01 | ✓ |
-    | 2026-05 | −$4,677.84 | −$4,577.81 | −$100.03 | −$100.03 | ✓ |
-    | 2026-06 | −$8,562.85 | −$8,662.83 | $99.98 | $99.98 | ✓ |
-    | 2026-07 | $3,811.52 | $0.00 | $3,811.52 | $3,811.52 | ✓ |
+    **Done, on the owner's sign-off, behind a restore point
+    (`data/backups/pre-2026-08-17T160014-manual-backup.db`):** deleted the 74
+    approximated rows and re-imported the 32 statements under parser **v2**, which reads
+    the rows by their Debit/Credit column x-position (`robinhood-crypto-movement.ts`).
 
-    So the "three different problems" in the pass-58 entry were one problem seen three
-    ways: the near-mirror pairs are the mirror's date/amount approximation drifting
-    over a month end, the one-cent breaks are it being off by a penny, and **July was
-    simply never mirrored at all** — which is the whole $3,811.52. It is not missing
-    money; it is money the statement prints and we throw away.
+    | | before | after |
+    |---|---|---|
+    | gap days (whole ledger) | 264 | **0** |
+    | Robinhood Cash grade | `broken` | `unverified` (normal staleness) |
+    | periods 2025-10 → 2026-07 | 9 `gap` | **all `reconciled`, $0.00** |
+    | synthetic money on the account | −$35,938.28 | **$0.00** |
+    | net worth / today's balance | $101,594.99 / $113.88 | **unchanged, asserted** |
 
-    ⚠️ **Trade date is REFUTED as a mechanism** (tested separately): replaying on
-    `transacted_on` instead of `posted_on` breaks four periods that currently close to
-    the cent (2025-02, 2025-06, 2025-07, 2025-10). `posted_on = settle date` stands.
+    109 rows inserted, 0 deduped, 0 skipped, 0 quarantined. **No account is `broken`.**
 
-    **THE FIX — parse the printed rows instead of approximating them.** `Account
-    Activity` has no running-balance column, only Debit and Credit, so direction can
-    only come from the x-position of the amount against the column headers. That is
-    available today: `Line` carries `tokens: { str, x }[]` and `pdf-profile.ts` already
-    filters on `t.x >= 350`. (The `parseSweepActivity` docstring claimed column position
-    "does not survive text extraction" — false, and corrected in this pass, because
-    believing it makes this fix look impossible.) A probe doing exactly this reads all
-    14 July rows and nets $3,811.52 to the cent.
-
-    ⛔ **Sequencing — this is a data migration, not just a parser change:**
-    1. parse `Crypto Money Movement` by column x, with tests;
-    2. **bump the parser version** — a parser fix never reaches already-imported files;
-    3. `pnpm trial-import` FIRST (a bank changing how it prints makes rows disappear
-       silently — pass 52);
-    4. re-import the Robinhood statements, and **delete the hand-entered mirror rows in
-       the same operation or the crypto legs double-count** (−$35,938.28 of synthetic
-       money is currently in the chain; `pnpm ledger-check` tracks that total);
-    5. `pnpm ledger-check` should then show zero breaks and the baseline should be
-       emptied. Expect gap days 264 → 0.
-    This moves real money across ten months — get the owner's sign-off before step 4.
+    ⚠️ Two things the migration needed that were not obvious:
+    - the rows were first **silently skipped as `skippedOwned`** — `FORMAT_PRIORITY`
+      makes a CSV outrank a PDF, so the CSV's day-coverage suppressed them. But "the CSV
+      covers this day" ≠ "the CSV covers this row": its own footer says it excludes
+      crypto activity, and it does (zero `COIN` codes). Hence `CanonicalTxn.soleSource`.
+    - deleting the mirrors and re-importing **must happen together**. Importing alone
+      double-counts: gap days go 264 → 234 and 69 rows get quarantined by the
+      reconciliation policy because the months still fail to close.
   - [ ] 🔴 **`statement_periods.reconciliation`/`gap_cents` are written ONLY at import
     time** (`import/service.ts`), and nothing revisits them — not `rebuildAccount`, not a
     status flip, not a deletion. A stored verdict can therefore stop describing the ledger

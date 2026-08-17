@@ -128,6 +128,10 @@ async function main(): Promise<void> {
   console.log(`  deduped    ${sum((o) => o.deduped)}   (cross-format ${sum((o) => o.dedupedCrossFormat)})`);
   console.log(`  carried    ${sum((o) => o.carriedForward)}`);
   console.log(`  quarantined ${sum((o) => o.quarantined)}`);
+  // The service calls this one "visible, never silent" — it was neither, and a
+  // 32-file import that skipped 448 rows reported only "inserted 0".
+  console.log(`  skippedOwned ${sum((o) => o.skippedOwned)}  (a higher-fidelity source already covers the day)`);
+  console.log(`  supersededTakeover ${sum((o) => o.supersededTakeover)}`);
 
   const failures = outcomes.filter((o) => o.status === "failed");
   if (failures.length > 0) {
