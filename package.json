@@ -19,6 +19,7 @@
     "backup:statements": "tsx scripts/backup-statements.ts",
     "trial-import": "tsx scripts/trial-import.ts",
     "rh-sweep-check": "tsx scripts/rh-sweep-check.ts",
+    "rh-mirror-crypto-cash": "tsx scripts/rh-mirror-crypto-cash.ts",
     "assert-fixture-shape": "tsx scripts/assert-fixture-shape.ts",
     "propose-budgets": "tsx scripts/propose-budgets.ts",
     "import-statements": "tsx scripts/import-statements.ts",
