@@ -8,7 +8,7 @@ import { CalendarGrid } from "@/components/ui/CalendarGrid";
 import { Money } from "@/components/ui/Money";
 import { Sheet } from "@/components/ui/Sheet";
 import { toast } from "@/components/ui/Toast";
-import { dayWeight, heaviestDayCents } from "@/lib/calendar-day-weight";
+import { compactDayTotal, dayWeight, heaviestDayCents } from "@/lib/calendar-day-weight";
 import type { CalendarDay } from "@/lib/calendar-math";
 import { formatCents } from "@/lib/money";
 import type {
@@ -51,18 +51,6 @@ const BAR_TONE: Record<DayStateKind, string> = {
   upcoming: "bg-info",
   missed: "bg-negative",
 };
-
-/**
- * A day total in the width of a calendar cell: "2.3k", "-499", "0".
- * Cents are dropped on purpose — this is a magnitude for scanning, and the Day
- * Sheet behind the cell carries every exact figure.
- */
-function compactCents(cents: number): string {
-  const sign = cents < 0 ? "-" : "";
-  const dollars = Math.abs(cents) / 100;
-  if (dollars >= 1000) return `${sign}${(dollars / 1000).toFixed(1)}k`;
-  return `${sign}${Math.round(dollars)}`;
-}
 
 /** Contrast-safe tone per state (soft tint + tone text — state-contrast.test). */
 const STATE_TONE: Record<DayStateKind, "positive" | "warning" | "info" | "negative"> = {
@@ -144,10 +132,10 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
    * rather than reasoned about:
    *
    * 1. It laid the figures out `justify-between`, which pushed the glyph and the
-   *    amount to opposite edges of the cell. At 320px that left about 22px for
-   *    the amount and every one of them ellipsised — the grid rendered `-...`
-   *    and `3...` where the money was supposed to be. They sit adjacent now, so
-   *    the pair reads as one thing and fits.
+   *    amount to opposite edges of the cell. At 320px that left the amount
+   *    17–21px for text needing 24–30, and all six ellipsised — the grid
+   *    rendered `-...` and `3...` where the money was supposed to be. They sit
+   *    adjacent now, so the pair reads as one thing and fits.
    * 2. The bar was a 4px horizontal rule pinned to the TOP of a cell that is a
    *    square — on a 1024px viewport roughly 25px of content above 75px of
    *    nothing. A month of that reads as empty, which is exactly the complaint
@@ -183,7 +171,7 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
           <span
             className={`figures whitespace-nowrap text-[9px] font-semibold leading-none tabular-nums sm:text-[10px] ${flowTone}`}
           >
-            {compactCents(w.netCents)}
+            {compactDayTotal(w.netCents)}
           </span>
         </span>
 

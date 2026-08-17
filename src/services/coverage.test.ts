@@ -156,6 +156,62 @@ describe("accountCoverage", () => {
 
     expect(c.grade).toBe("broken");
     expect(c.unverifiedSince).toBe("2026-08-02");
+    // …and the day the chain actually FAILED is a different day, which is the
+    // whole reason `brokenSince` exists
+    expect(c.brokenSince).toBe("2026-08-03");
+  });
+
+  /*
+   * The coverage panel prints one sentence pairing a DATE with a COUNT — "the
+   * balance chain stops closing at {date} — {n} days cannot be trusted" — and
+   * those were drawn from two different populations. `unverifiedSince` is the
+   * first `derived_unverified` OR `gap` day; `days.gap` counts only `gap`.
+   *
+   * On the real ledger the two were 23 months apart: Robinhood Cash replays 26
+   * days before its first anchor, so it reported the break at 2023-12-05 while
+   * every one of its gap days was 2025-11 or later. The sentence named a year
+   * and a half of reconciled history as the moment the money stopped adding up.
+   */
+  test("the day the chain broke is not the day the replay started", () => {
+    const id = addAccount("a-prehistory", "Replayed First", "checking");
+    addDays(id, [
+      // prehistory: replayed backwards before the account's first anchor
+      { day: "2026-08-01", basis: "derived_unverified" },
+      { day: "2026-08-02", basis: "derived_unverified" },
+      // …then a long stretch that genuinely closes…
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-04", basis: "derived" },
+      { day: "2026-08-05", basis: "anchored" },
+      // …and only THEN a real break
+      { day: "2026-08-06", basis: "gap" },
+      { day: "2026-08-07", basis: "gap" },
+    ]);
+    addTxn(id, "2026-08-04");
+
+    const c = only(id);
+
+    expect(c.grade).toBe("broken");
+    expect(c.days.gap).toBe(2);
+    // the honest pairing: 2 gap days that begin on the 6th
+    expect(c.brokenSince).toBe("2026-08-06");
+    // the field that was being printed beside that count points 5 days earlier,
+    // at prehistory that is not a break at all
+    expect(c.unverifiedSince).toBe("2026-08-01");
+    expect(c.brokenSince).not.toBe(c.unverifiedSince);
+  });
+
+  test("an account with no gap day has no brokenSince to report", () => {
+    const id = addAccount("a-clean", "Clean", "checking");
+    addDays(id, [
+      { day: "2026-08-01", basis: "anchored" },
+      { day: "2026-08-02", basis: "derived" },
+    ]);
+    addTxn(id, "2026-08-02");
+
+    const c = only(id);
+
+    expect(c.grade).toBe("verified");
+    expect(c.brokenSince).toBeNull();
   });
 
   test("an investment account is NEVER graded verified, even when every day says derived", () => {

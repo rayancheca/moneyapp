@@ -49,6 +49,19 @@ export interface AccountCoverage {
   verifiedThrough: string | null;
   /** first day the chain stopped being checkable */
   unverifiedSince: string | null;
+  /**
+   * First day the walk actually MISSED an anchor — the start of `days.gap`,
+   * which is a different population from `unverifiedSince`.
+   *
+   * `unverifiedSince` is the first day that is `derived_unverified` OR `gap`,
+   * so on an account that was replayed past its earliest anchor before any
+   * break, the two are years apart: Robinhood Cash reports `unverifiedSince`
+   * 2023-12-05 (26 days of prehistory before its first anchor) while every one
+   * of its 264 gap days is 2025-11 or later. Pairing the first date with the
+   * second count — which is exactly what the coverage panel printed — names an
+   * innocent date as the moment the money stopped adding up.
+   */
+  brokenSince: string | null;
   /** newest statement period end, or null if the account has never had one */
   statementsThrough: string | null;
   /** when the owner last typed a balance in by hand (manual accounts) */
@@ -128,6 +141,7 @@ export function accountCoverage(db: AppDatabase, today: string = todayIso()): Ac
         grade: "market_value" as const,
         verifiedThrough: null,
         unverifiedSince: null,
+        brokenSince: null,
         daysSinceVerified: null,
       };
     }
@@ -138,6 +152,7 @@ export function accountCoverage(db: AppDatabase, today: string = todayIso()): Ac
         grade: "unknown" as const,
         verifiedThrough: null,
         unverifiedSince: null,
+        brokenSince: null,
         daysSinceVerified: null,
       };
     }
@@ -153,6 +168,7 @@ export function accountCoverage(db: AppDatabase, today: string = todayIso()): Ac
         .get() !== undefined;
 
     const firstUntrusted = balances.find((b) => b.basis === "derived_unverified" || b.basis === "gap");
+    const firstGap = balances.find((b) => b.basis === "gap");
 
     // `verifiedThrough` must not run past the point the chain broke: a later
     // `anchored` day is a fresh starting point, not proof of the span before it
@@ -167,6 +183,7 @@ export function accountCoverage(db: AppDatabase, today: string = todayIso()): Ac
         grade: "manual" as const,
         verifiedThrough: null,
         unverifiedSince: null,
+        brokenSince: null,
         daysSinceVerified: null,
       };
     }
@@ -178,6 +195,7 @@ export function accountCoverage(db: AppDatabase, today: string = todayIso()): Ac
       grade,
       verifiedThrough,
       unverifiedSince: firstUntrusted?.day ?? null,
+      brokenSince: firstGap?.day ?? null,
       daysSinceVerified: verifiedThrough ? diffDays(verifiedThrough, today) : null,
     };
   });

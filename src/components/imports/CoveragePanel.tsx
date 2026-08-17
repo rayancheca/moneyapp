@@ -32,7 +32,15 @@ const GRADE_META: Record<CoverageGrade, { label: string; dot: string; text: stri
 function detail(c: AccountCoverage): string {
   switch (c.grade) {
     case "broken":
-      return `the balance chain stops closing at ${c.unverifiedSince} — ${c.days.gap} day${c.days.gap === 1 ? "" : "s"} cannot be trusted`;
+      // `brokenSince`, NOT `unverifiedSince`. This sentence pairs a date with a
+      // count, and they were drawn from two different populations:
+      // `unverifiedSince` is the first `derived_unverified` OR `gap` day, while
+      // `days.gap` counts only the latter. On Robinhood Cash that rendered "the
+      // balance chain stops closing at 2023-12-05 — 264 days cannot be trusted"
+      // when every one of those 264 days is 2025-11 or later, and 2023-12-05 is
+      // merely where the replay starts, before the account's first anchor. The
+      // date accused a year and a half of reconciled history of being the break.
+      return `the balance chain stops closing at ${c.brokenSince} — ${c.days.gap} day${c.days.gap === 1 ? "" : "s"} cannot be trusted`;
     case "unverified":
       return `nothing has checked this account since ${c.unverifiedSince} — ${c.days.derived_unverified} days rest on an export with no closing balance`;
     case "market_value":

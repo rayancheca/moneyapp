@@ -81,9 +81,15 @@ test("every day with activity prints its own signed total", async ({ page }) => 
  * matter — 320 is the project's floor, and 440 is the owner's phone. Neither
  * gets Tailwind's `sm:` (640px), so neither is covered by the desktop layout.
  */
-const NARROW_WIDTHS = [320, 440] as const;
+const NARROW_WIDTHS = [
+  // 320: the project's floor. A cell is ~38px and only the figures fit.
+  { width: 320, expectNames: false },
+  // 440: the owner's phone. Cells are ~52px, which is where a series name
+  // starts being worth truncating — hence the `min-[400px]:` gate.
+  { width: 440, expectNames: true },
+] as const;
 
-for (const width of NARROW_WIDTHS) {
+for (const { width, expectNames } of NARROW_WIDTHS) {
   test(`no day cell clips or overflows its content at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1400 });
     await page.goto("/recurring?tab=calendar");
@@ -140,6 +146,21 @@ for (const width of NARROW_WIDTHS) {
     // guard the guard: a filter over an empty set also returns [], which would
     // make both assertions above vacuous the day a selector stops matching
     expect(await amounts.count()).toBe(6);
+
+    /*
+     * …and the breakpoint itself, which every check above would pass without.
+     * The names are gated on `min-[400px]:`, an arbitrary Tailwind variant; if
+     * it failed to generate, the names would simply never render and the fit
+     * assertions would get EASIER, not harder. So both sides are asserted: at
+     * 440 (the owner's phone, and below Tailwind's `sm`) the name must be there,
+     * and at 320 it must not.
+     */
+    const rentName = page.locator('[role="grid"] button').filter({ hasText: "Rent" }).first();
+    if (expectNames) {
+      await expect(rentName.getByText("Rent", { exact: true })).toBeVisible();
+    } else {
+      await expect(rentName.getByText("Rent", { exact: true })).toBeHidden();
+    }
   });
 }
 

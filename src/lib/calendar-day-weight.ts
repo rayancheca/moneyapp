@@ -25,6 +25,35 @@ import type { DayStateKind } from "@/services/recurring-calendar";
  * some other month had rent in it.
  */
 
+/**
+ * A day total in the width of a calendar cell: "125", "-1.8k", "30k", "0".
+ *
+ * Cents are dropped on purpose — this is a magnitude for scanning, and the Day
+ * Sheet behind the cell carries every exact figure.
+ *
+ * ⚠️ The WIDTH is the contract, not just the rounding. A 320px cell fits about
+ * five characters, and the first version of this always used one decimal in the
+ * thousands — so the e2e fixture's widest value, `-1.8k`, fit, while the real
+ * ledger's largest amount ($29,800) would have rendered `-29.8k` and overflowed
+ * the cell on the owner's own data. The fixture would never have shown it.
+ *
+ * So the decimal is spent only where it buys something: below $10k, where `1.8k`
+ * and `1.2k` are genuinely different bills. Above that the magnitude alone is
+ * the information. Every result below $1M is at most 4 characters plus a sign.
+ *
+ * The tier boundaries are the ROUNDED values (999.5, 9.95), not the raw ones —
+ * otherwise $9,989 rounds up into "10.0k" and quietly costs a sixth character.
+ */
+export function compactDayTotal(cents: number): string {
+  const sign = cents < 0 ? "-" : "";
+  const dollars = Math.abs(cents) / 100;
+  if (dollars < 999.5) return `${sign}${Math.round(dollars)}`;
+  const k = dollars / 1000;
+  if (k < 9.95) return `${sign}${k.toFixed(1)}k`;
+  if (k < 999.5) return `${sign}${Math.round(k)}k`;
+  return `${sign}${(k / 1000).toFixed(1)}M`;
+}
+
 /** Missed first (needs attention), then drift, then upcoming, then paid. */
 const STATE_URGENCY: Record<DayStateKind, number> = {
   missed: 0,

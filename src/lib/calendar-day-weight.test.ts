@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { dayWeight, heaviestDayCents, MIN_VISIBLE_WEIGHT, type WeighableEntry } from "./calendar-day-weight";
+import {
+  compactDayTotal,
+  dayWeight,
+  heaviestDayCents,
+  MIN_VISIBLE_WEIGHT,
+  type WeighableEntry,
+} from "./calendar-day-weight";
 
 const e = (
   amountCents: number,
@@ -126,5 +132,54 @@ describe("dayWeight", () => {
 
   test("counts the entries, so the cell can say there is more than one", () => {
     expect(dayWeight([e(-1), e(-2), e(-3)], HEAVIEST)!.count).toBe(3);
+  });
+});
+
+describe("compactDayTotal", () => {
+  test("drops the cents — this is a magnitude, not a figure", () => {
+    expect(compactDayTotal(-12500)).toBe("-125");
+    expect(compactDayTotal(-1599)).toBe("-16");
+    expect(compactDayTotal(0)).toBe("0");
+    expect(compactDayTotal(320000)).toBe("3.2k");
+  });
+
+  test("spends its one decimal only below $10k, where it distinguishes bills", () => {
+    expect(compactDayTotal(-180000)).toBe("-1.8k"); // $1,800 rent
+    expect(compactDayTotal(-120000)).toBe("-1.2k"); // …is not $1,200
+    expect(compactDayTotal(-2980000)).toBe("-30k"); // $29,800 — magnitude is enough
+  });
+
+  /*
+   * THE regression. A 320px cell fits about five characters, and the first
+   * version always used one decimal in the thousands. The e2e fixture's widest
+   * value is "-1.8k", so it fit and every test passed — while the largest amount
+   * in the owner's real ledger, $29,800, would have rendered "-29.8k" and
+   * overflowed the cell on his own data. The fixture could never have shown it.
+   */
+  test("never exceeds five characters, at any amount the ledger can hold", () => {
+    const amounts = [
+      0, 1, -1, 99999, -99999, 100000, -100000, 999499, -999499, 999500, 998900,
+      -998900, 999000, 1000000, -1000000, 2980000, -2980000, 99999999, -99999999,
+      99949999, 99950000, -99950000, 100000000, -100000000,
+    ];
+    const tooWide = amounts
+      .map((c) => compactDayTotal(c))
+      .filter((s) => s.length > 5)
+      .map((s) => `${s} (${s.length})`);
+    expect(tooWide).toEqual([]);
+  });
+
+  test("the tier boundary is the ROUNDED value, so $9,989 does not become 10.0k", () => {
+    // 9989/1000 = 9.989 → toFixed(1) = "10.0", which would have been a sixth character
+    expect(compactDayTotal(-998900)).toBe("-10k");
+    expect(compactDayTotal(-994900)).toBe("-9.9k");
+    // …and the same trap one tier down: $999.60 must not print as "1000"
+    expect(compactDayTotal(-99960)).toBe("-1.0k");
+    expect(compactDayTotal(-99940)).toBe("-999");
+  });
+
+  test("millions stay readable rather than becoming a wall of k", () => {
+    expect(compactDayTotal(100000000)).toBe("1.0M");
+    expect(compactDayTotal(-250000000)).toBe("-2.5M");
   });
 });
