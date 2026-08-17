@@ -142,6 +142,159 @@ function findOrphanedNetAccountBalance(lines: readonly string[]): RegExpExecArra
   return ORPHAN_PAIR_RE.exec((lines[idx - 1] as string).trim());
 }
 
+/**
+ * One printed line of the Deposit Sweep Activity ledger — a running balance
+ * the bank states on a specific DAY.
+ */
+export interface SweepObservation {
+  readonly day: string;
+  /** the printed sweep balance AFTER this movement */
+  readonly balanceCents: number;
+  /** the printed movement amount, signed by the direction the balance moved */
+  readonly amountCents: number;
+}
+
+/**
+ * The `Deposit Sweep Activity` table: a DAY-level arbiter, where the rest of
+ * this profile only yields a month-level one.
+ *
+ * Robinhood prints, for most statements, every movement of uninvested cash to
+ * and from the program banks with a running balance beside it. 286 such lines
+ * sit across 18 of the owner's 32 archived statements and nothing has ever read
+ * them: this profile keeps only the month's opening and closing cash, so a
+ * month that fails to reconcile reports one lump sum and cannot say WHICH DAY
+ * the ledger parted company with the bank.
+ *
+ * Measured on 2025-10 — the worst month in the archive, $1,419.78 short — the
+ * printed running balance tracks the replayed ledger to the cent through
+ * 2025-10-16 and then diverges, which localises the fault to a handful of days
+ * instead of a month. That is the entire point.
+ *
+ * `null` when the statement prints no such table (era A, and any month with no
+ * sweep movement at all). Absence is not an error: 14 of the 32 archived
+ * statements have none.
+ */
+export interface SweepLedger {
+  readonly openingOn: string;
+  readonly openingCents: number;
+  readonly closingOn: string;
+  readonly closingCents: number;
+  /** every movement line, in printed order */
+  readonly movements: readonly SweepObservation[];
+}
+
+const SWEEP_OPEN_RE = new RegExp(String.raw`^Opening Sweep Balance (\d{2}/\d{2}/\d{4}) ${MONEY}$`);
+const SWEEP_CLOSE_RE = new RegExp(String.raw`^Closing Sweep Balance (\d{2}/\d{2}/\d{4}) ${MONEY}$`);
+/**
+ * A movement row: `<description> MM/DD/YYYY <amount> <running balance>`.
+ *
+ * The description is NOT pinned to "FDIC Sweep". Writing it that way is the
+ * first thing tried and it is wrong: the table also carries `Interest Payment`
+ * rows (`Interest Payment 03/26/2025 $0.50 $201.16`), and skipping them breaks
+ * the running-balance chain on 5 of the 18 statements that have this table —
+ * which is exactly how it announced itself.
+ */
+const SWEEP_MOVE_RE = new RegExp(String.raw`^(.+?) (\d{2}/\d{2}/\d{4}) ${MONEY} ${MONEY}$`);
+/** `Total Swept Funds $1,813.26 $1,713.76` — the debit and credit column totals. */
+const SWEPT_TOTAL_RE = new RegExp(String.raw`^Total Swept Funds ${MONEY} ${MONEY}$`);
+
+/**
+ * Parse the Deposit Sweep Activity table, or null when it is not printed.
+ *
+ * ⚠️ The printed movement amount is UNSIGNED — the PDF puts it in a Debit or a
+ * Credit column, and column position does not survive text extraction. The sign
+ * is therefore taken from the running balance, the only place the direction
+ * actually survives, and the unsigned amount is then used to CHECK that
+ * reading: `|balance − previous| === printed amount` on every row. A parser
+ * that infers a sign it cannot see is the failure mode this repo has paid for
+ * twice.
+ *
+ * ⚠️ Rows are read ONLY between the opening and closing lines. A generic
+ * `<desc> <date> <money> <money>` pattern applied to the whole document also
+ * matches `Closing Collateral Balance 10/31/2025 $969.77 $0.00` from the
+ * securities-lending collateral table, which is a different ledger entirely.
+ * The table repeats its own `Deposit Sweep Activity` / `Description Date Debit
+ * Credit Balance` headers at every page break; those carry no date and so fall
+ * out of the pattern rather than needing to be listed.
+ *
+ * THREE independent checks have to agree before a ledger is returned, and each
+ * one caught something the others did not while this was being written:
+ *
+ *   1. every row's printed amount equals its own balance step (finds a skipped
+ *      row type — this is what exposed `Interest Payment`);
+ *   2. the last row's balance equals the printed closing balance (finds a row
+ *      dropped at the very end, which check 1 cannot see);
+ *   3. the signed rows sum to the printed `Total Swept Funds` debit and credit
+ *      columns (the bank's own arithmetic, independent of the running balance).
+ *
+ * Measured on the owner's archive: 18 of 32 statements print this table, 309
+ * rows in total, and all three checks hold on every one of them. Before
+ * `Interest Payment` rows were read, check 1 failed on 5 statements and check 2
+ * failed on 12 of the 13 that got past check 1 — which is the whole argument
+ * for keeping all three rather than whichever one is cheapest.
+ */
+export function parseSweepActivity(texts: readonly string[]): SweepLedger | null {
+  const openIdx = texts.findIndex((t) => SWEEP_OPEN_RE.test(t));
+  const closeIdx = texts.findIndex((t) => SWEEP_CLOSE_RE.test(t));
+  if (openIdx === -1 || closeIdx === -1) return null;
+
+  const open = SWEEP_OPEN_RE.exec(texts[openIdx] as string) as RegExpExecArray;
+  const close = SWEEP_CLOSE_RE.exec(texts[closeIdx] as string) as RegExpExecArray;
+  const openingCents = parseAmountToCents(open[2] as string);
+
+  let previous = openingCents;
+  let debits = 0;
+  let credits = 0;
+  const movements: SweepObservation[] = [];
+
+  for (const text of texts.slice(openIdx + 1, closeIdx)) {
+    const m = SWEEP_MOVE_RE.exec(text);
+    if (!m) continue;
+    const printed = parseAmountToCents(m[3] as string);
+    const balanceCents = parseAmountToCents(m[4] as string);
+    const delta = balanceCents - previous;
+    if (Math.abs(delta) !== printed) {
+      throw new ParseError(
+        PROFILE_ID,
+        `Sweep row "${text}" moves ${delta} but prints ${printed} — running balance and amount disagree`,
+      );
+    }
+    if (delta < 0) debits -= delta;
+    else credits += delta;
+    movements.push({ day: toIso(m[2] as string), balanceCents, amountCents: delta });
+    previous = balanceCents;
+  }
+
+  const closingCents = parseAmountToCents(close[2] as string);
+  const lastCents = movements.at(-1)?.balanceCents ?? openingCents;
+  if (lastCents !== closingCents) {
+    throw new ParseError(
+      PROFILE_ID,
+      `Sweep table ends at ${lastCents} but prints a closing balance of ${closingCents} — a row is missing`,
+    );
+  }
+
+  const totals = firstMatch(texts.slice(openIdx), SWEPT_TOTAL_RE);
+  if (totals) {
+    const printedDebits = parseAmountToCents(totals[1] as string);
+    const printedCredits = parseAmountToCents(totals[2] as string);
+    if (printedDebits !== debits || printedCredits !== credits) {
+      throw new ParseError(
+        PROFILE_ID,
+        `Sweep rows total ${debits}/${credits} against a printed Total Swept Funds of ${printedDebits}/${printedCredits}`,
+      );
+    }
+  }
+
+  return {
+    openingOn: toIso(open[1] as string),
+    openingCents,
+    closingOn: toIso(close[1] as string),
+    closingCents,
+    movements,
+  };
+}
+
 export interface RobinhoodBrokerageParse {
   accountNumber: string;
   periodStart: string;

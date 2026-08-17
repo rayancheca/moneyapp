@@ -4,6 +4,7 @@ import {
   firstAccountSection,
   isRobinhoodBrokerageStatementText,
   parseRobinhoodBrokerageLines,
+  parseSweepActivity,
 } from "./robinhood-brokerage-statement-profile";
 
 /**
@@ -202,5 +203,101 @@ describe("firstAccountSection", () => {
 
   test("throws when the document carries no account number", () => {
     expect(() => firstAccountSection(["Account Summary", "Portfolio Value $1.00 $2.00"])).toThrow(ParseError);
+  });
+});
+
+/**
+ * The Deposit Sweep Activity table — a DAY-level arbiter the profile ignored
+ * until now. Every literal is copied from the real 2025-03 statement, whose
+ * page break, `Interest Payment` rows and `Total Swept Funds` line are exactly
+ * the three things that broke the first version of the parser.
+ */
+const SWEEP = [
+  "Deposit Sweep Activity",
+  "Description Date Debit Credit Balance",
+  "Opening Sweep Balance 03/01/2025 $100.02",
+  "FDIC Sweep 03/03/2025 $100.00 $0.02",
+  "FDIC Sweep 03/06/2025 $100.00 $100.02",
+  "FDIC Sweep 03/06/2025 $200.00 $300.02",
+  "FDIC Sweep 03/07/2025 $300.00 $0.02",
+  // a row that is NOT an "FDIC Sweep" — skipping these broke the chain on 5
+  // of the archive's 18 sweep statements
+  "Interest Payment 03/26/2025 $0.50 $0.52",
+  "Closing Sweep Balance 03/31/2025 $0.52",
+  "Total Swept Funds $400.00 $300.50",
+];
+
+describe("parseSweepActivity", () => {
+  const drop = (needle: string) => SWEEP.filter((l) => !l.includes(needle));
+  const swap = (needle: string, replacement: string) =>
+    SWEEP.map((l) => (l.includes(needle) ? replacement : l));
+
+  test("returns null when the statement prints no sweep table", () => {
+    // 14 of the owner's 32 statements have none — absence is not an error
+    expect(parseSweepActivity(ERA_A)).toBeNull();
+  });
+
+  test("reads the opening and closing balances and their days", () => {
+    const sweep = parseSweepActivity(SWEEP)!;
+    expect(sweep.openingOn).toBe("2025-03-01");
+    expect(sweep.openingCents).toBe(10002);
+    expect(sweep.closingOn).toBe("2025-03-31");
+    expect(sweep.closingCents).toBe(52);
+  });
+
+  test("signs each movement from the running balance, not from the printed amount", () => {
+    // the PDF puts the amount in a Debit or a Credit column and column position
+    // does not survive text extraction — the balance is the only witness
+    const sweep = parseSweepActivity(SWEEP)!;
+    expect(sweep.movements.map((m) => m.amountCents)).toEqual([-10000, 10000, 20000, -30000, 50]);
+    expect(sweep.movements.map((m) => m.day)).toEqual([
+      "2025-03-03", "2025-03-06", "2025-03-06", "2025-03-07", "2025-03-26",
+    ]);
+  });
+
+  test("reads rows that are not FDIC Sweeps", () => {
+    // `Interest Payment` inside the table. Pinning the description to "FDIC
+    // Sweep" is the obvious first implementation and it is wrong.
+    const sweep = parseSweepActivity(SWEEP)!;
+    expect(sweep.movements).toHaveLength(5);
+    expect(sweep.movements.at(-1)!.amountCents).toBe(50);
+  });
+
+  test("CHECK 1: refuses a row whose printed amount contradicts its own balance step", () => {
+    expect(() => parseSweepActivity(swap("03/03/2025", "FDIC Sweep 03/03/2025 $99.00 $0.02"))).toThrow(
+      /moves .* but prints/,
+    );
+  });
+
+  test("CHECK 2: refuses a table whose last row misses the printed closing balance", () => {
+    // the failure a dropped FINAL row produces, which check 1 cannot see
+    expect(() => parseSweepActivity(drop("Interest Payment"))).toThrow(/a row is missing/);
+  });
+
+  test("CHECK 3: refuses rows that do not sum to the printed Total Swept Funds", () => {
+    expect(() => parseSweepActivity(swap("Total Swept Funds", "Total Swept Funds $400.00 $999.99"))).toThrow(
+      /Total Swept Funds/,
+    );
+  });
+
+  test("reads rows ONLY between the opening and closing lines", () => {
+    // `Closing Collateral Balance 10/31/2025 $969.77 $0.00` is a different
+    // ledger that matches the same generic row shape. Before the window it must
+    // be ignored; the chain would break instantly if it were not.
+    const withCollateral = [
+      "Opening Collateral Balance 03/01/2025 $0.00",
+      "Closing Collateral Balance 03/31/2025 $969.77 $0.00",
+      ...SWEEP,
+    ];
+    expect(parseSweepActivity(withCollateral)!.movements).toHaveLength(5);
+  });
+
+  test("a table with no movements at all still yields its opening and closing", () => {
+    expect(
+      parseSweepActivity([
+        "Opening Sweep Balance 03/01/2025 $0.52",
+        "Closing Sweep Balance 03/31/2025 $0.52",
+      ])!.movements,
+    ).toEqual([]);
   });
 });
