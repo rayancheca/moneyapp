@@ -575,30 +575,63 @@ Ordered roughly by value ÷ effort:
     `Deposit Sweep Activity` table — 309 rows across 18 of the 32 files — and the parser
     threw it away. `parseSweepActivity` + `pnpm rh-sweep-check` now name the *day* a
     disagreement opens, which is how the item above was found.
-  - [ ] **WHERE THE REMAINING GAP DAYS ARE — measured 2026-08-17 (pass 58), by walking
-    every consecutive anchor pair rather than by period.** After the stray-anchor deletion
-    below, **all 264 gap days in the entire ledger are on Robinhood Cash, and every one of
-    them is 2025-11 or later** — the whole 2023-12 → 2025-10 history now closes. 10 of 33
-    anchor pairs fail, and they are three different problems, not one:
-    - **near-mirror month-boundary pairs** (the settlement-lag story): −$19.79/+$19.91,
-      −$9.87/+$10.01, +$100.03/−$99.98. Note they are *near*, not exact — 12¢, 14¢ and 5¢
-      of residual survive the mirroring, so "pure timing" does not explain all of it.
-    - **two one-cent breaks** (2026-02→03, 2026-03→04). Rounding, and they alone hold 57
-      days at `gap`.
-    - 🔴 **a real $231.85 shortfall in 2026-07, currently disguised as two much larger
-      breaks by a THIRD-SOURCE anchor.** There is a `source='live'` anchor on 2026-07-10
-      ($7,235.65) sitting between two statement anchors, and it splits the month into
-      −$1,420.07 and +$1,188.22. This is structurally the same defect as the 2024-08-14
-      one deleted below — an anchor from a non-statement source contradicting the statement
-      chain — but it must **NOT** simply be deleted: with it gone the month is still
-      $231.85 short, so it is masking real missing money rather than manufacturing a fake
-      break. Find the $231.85 first.
-  - [ ] **The remaining $491.46 is settlement lag across a MONTH BOUNDARY**, not missing
-    money: the residuals come in near-mirror pairs on adjacent periods (+$19.79/−$19.91,
-    +$9.87/−$10.01, −$100.03/+$99.98). A settlement in flight over a period end is a timing
-    truth, and reconciliation is currently binary at the cent — so one cent of it marks a
-    whole 30-day span `gap` and holds the account at `broken`. **Decide before building:**
-    tolerate an explained in-flight difference, or keep the hard line and accept the grade.
+  - [ ] **WHERE THE REMAINING GAP DAYS ARE — RE-MEASURED 2026-08-17 (pass 59). The pass-58
+    entry this replaces was wrong in two ways that mattered.** Run `pnpm ledger-check`.
+
+    **Correction 1 — it walked the wrong anchors.** Pass 58's probe walked EVERY anchor.
+    The derivation service walks only *chain-grade* ones (`statement`, `manual`);
+    `live` and `ofx_ledger` are moments, explicitly exempt from closure
+    (`derivation.ts` §20-22). So the July "two much larger breaks around a `live`
+    anchor" was an artifact of the probe — the service always saw **one** break there.
+    The real count is **9 of 31 chain pairs**, not 10 of 33. The checker now reuses
+    the service's own `selectEndpoints`, so it cannot drift again. (Investment
+    accounts are excluded outright: they replay no transactions, so applying a
+    closure test to one manufactures a "break" out of an ordinary price change —
+    Brokerage and Crypto both "fail" every pair under a naive walk.)
+
+    **Correction 2 — the July figure was masked by a FABRICATED ROW, not by an anchor.**
+    A hand-entered +$3,579.67 transaction sat on 2026-07-10 with no import file and no
+    statement period, described *"Reconciliation — Robinhood settlement residual vs
+    verified live cash"* and noted as an *approximation*. Status `excluded`, so no spend
+    or income view showed it — but `excluded` is inside `REPLAY_STATUSES`, so it moved
+    money in the balance chain. It made July report **$231.85 when the true figure is
+    $3,811.52**: the arbiter under-reporting a hole by 16×. Deleted 2026-08-17 on the
+    owner's explicit call, behind a restore point; today's balance and net worth were
+    unchanged (the 2026-07-31 statement anchor is what everything after it derives
+    from, and the plug sat inside days already graded `gap`).
+
+    Still 264 gap days, all on Robinhood Cash, every one 2025-11 or later — the whole
+    2023-12 → 2025-10 history closes to the cent. **Every non-investment account except
+    Robinhood Cash closes completely.** The 9 breaks are three different problems:
+    - **near-mirror month-boundary pairs**: +$19.79/−$19.91, +$9.87/−$10.01,
+      −$100.03/+$99.98. *Near*, not exact — 12¢, 14¢ and 5¢ of residual survive the
+      mirroring, so "pure timing" does not explain all of it. ⚠️ **Trade date is
+      REFUTED as the mechanism**: replaying on `transacted_on` instead of `posted_on`
+      breaks periods that currently close (2025-02, 2025-06, 2025-07, 2025-10 among
+      them). `posted_on = settle date` stands.
+    - **two one-cent breaks** (2026-02→03, 2026-03→04), which between them hold **59**
+      days at `gap` — pass 58 said 57; it is 30d + 29d.
+    - 🔴 **2026-07 is genuinely $3,811.52 short** — the largest unexplained figure in
+      the ledger, and now stated honestly. Start here.
+  - [ ] 🔴 **`statement_periods.reconciliation`/`gap_cents` are written ONLY at import
+    time** (`import/service.ts`), and nothing revisits them — not `rebuildAccount`, not a
+    status flip, not a deletion. A stored verdict can therefore stop describing the ledger
+    beneath it with nothing to notice. `pnpm ledger-check` now recomputes every verdict
+    (using the same extracted rule that writes it, `src/lib/reconciliation.ts`) and fails
+    on any that has gone stale. Consider calling `reconcileAccounts` from `rebuildAccount`
+    so it cannot happen at all. ⚠️ `reconcileAccounts` carries a quarantine side effect
+    (a non-closing period flips its own file's rows to `quarantined`, removing them from
+    replay); on Robinhood Cash it matches **zero** rows because statement periods and
+    transactions come from different import files, so that policy is silently dead there.
+  - [ ] **The near-mirror pairs look like settlement lag across a MONTH BOUNDARY**, not
+    missing money: +$19.79/−$19.91, +$9.87/−$10.01, −$100.03/+$99.98 on adjacent periods.
+    A settlement in flight over a period end is a timing truth, and reconciliation is
+    binary at the cent — so one cent of it marks a whole 30-day span `gap` and holds the
+    account at `broken`. **Do NOT ask the owner to set a tolerance yet.** The 12¢/14¢/5¢
+    residuals are unexplained, and picking a tolerance before explaining them is choosing
+    a number that hides a mechanism nobody has identified — the pass-45 lesson
+    (regenerating a baseline you cannot explain converts a bug report into a bug). Explain
+    the residual first; the tolerance question is only answerable after that.
     (Same shape as P0.5's in-transit bridging — do them together.)
   - [ ] **Robinhood Brokerage has NO arbiter at all** — 0 statement periods, `market_value`
     grade, so its reconciliation cannot fail and therefore proves nothing. Every one of the
