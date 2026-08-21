@@ -235,6 +235,35 @@ describe("cashEarnings — banked, and the gap between", () => {
     expect(r.basis).toBe("series-stale");
   });
 
+  test("a deposit landing OFF the payday still counts every missed payday after it", () => {
+    // The real ledger's own shape, and an off-by-one the whole suite missed
+    // until the service was run against it. The schedule pays on Thursdays from
+    // 2026-06-04; the last attributed deposit posted FRIDAY 2026-06-05. Every
+    // Thursday from 06-11 to 08-20 was then missed — eleven of them. Counting
+    // the window from 06-05 and subtracting one says ten, because the walk had
+    // already skipped past 06-05 on its own and there was nothing to subtract.
+    const r = read({
+      banked: [{ postedOn: "2026-06-05", amountCents: 40_000 }],
+      from: "2026-06-01",
+      to: "2026-08-31",
+      today: "2026-08-21",
+    });
+    expect(r.lastBankedOn).toBe("2026-06-05");
+    expect(r.periodsSinceBanked).toBe(11);
+  });
+
+  test("a deposit landing ON the payday does not count itself as missed", () => {
+    // The other half of the same rule: 2026-06-04 IS an occurrence, so silence
+    // starts at the NEXT one. Both cases have to be pinned or the fix is a
+    // coin-flip between two formulas that agree on exactly one of them.
+    const r = read({
+      banked: [{ postedOn: "2026-06-04", amountCents: 104_600 }],
+      to: "2026-06-25",
+      today: "2026-06-25",
+    });
+    expect(r.periodsSinceBanked).toBe(3);
+  });
+
   test("silence is counted from the SERIES start, not from the window start", () => {
     // Caught by mutation. Asked about August alone, with a series that began in
     // June and has never once paid, counting silence from the window start says

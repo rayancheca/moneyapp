@@ -1,5 +1,5 @@
 import type { Cadence } from "@/db/schema/recurring";
-import { compareDates } from "./dates";
+import { addDays, compareDates } from "./dates";
 import { stepFrom, stepPlan, stepsToReach } from "./recurring-step";
 
 /**
@@ -220,9 +220,16 @@ export function cashEarnings({
    * says nothing about whether a payment was skipped. Counted from the last
    * deposit when there is one and from the series' start when there is not, so
    * a series that has never paid is stale rather than invisible.
+   *
+   * STRICTLY AFTER `silenceFrom`, via `addDays(…, 1)` — not the window from it
+   * minus one. The two agree only when the deposit landed exactly on a payday,
+   * and on the real ledger it did not: the last attributed deposit posted
+   * 2026-06-05 while the schedule pays on Thursdays, so the walk already skips
+   * to 06-11 and subtracting one then deletes a genuinely missed payday.
+   * Measured 2026-08-21 — the honest answer is eleven, the subtraction said ten.
    */
   const silenceFrom = lastBankedOn ?? series.startedOn;
-  const periodsSinceBanked = Math.max(0, occurrencesBetween(series, silenceFrom, today) - 1);
+  const periodsSinceBanked = occurrencesBetween(series, addDays(silenceFrom, 1), today);
 
   return {
     basis: periodsSinceBanked >= STALE_PERIODS ? "series-stale" : "series-live",
