@@ -23,6 +23,7 @@
     "rh-mirror-crypto-cash": "tsx scripts/rh-mirror-crypto-cash.ts",
     "assert-fixture-shape": "tsx scripts/assert-fixture-shape.ts",
     "propose-budgets": "tsx scripts/propose-budgets.ts",
+    "propose-income-budgets": "tsx scripts/propose-income-budgets.ts",
     "import-statements": "tsx scripts/import-statements.ts",
     "demo:load": "MONEYAPP_FAKE_PRICES=1 tsx scripts/demo/load-demo.ts",
     "db:migrate": "tsx src/db/migrate.ts",
