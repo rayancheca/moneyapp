@@ -47,7 +47,7 @@ Unchanged from the last 59. Each pass is one focused slice that ends green.
 *Six sessions. The app knows what happened; this phase makes it say what that
 means.* This is the half the owner said he wanted first.
 
-### Pass 60 — Cash income, part 1: the engine
+### ✅ Pass 60 — Cash income, part 1: the engine — SHIPPED 2026-08-21
 
 The largest structural gap between the ledger and his life. July income reads
 $52.95 against a cash job paying roughly $1,046/week — correct by design, and
@@ -65,7 +65,7 @@ useless as a picture of what he earns.
   stamped so no import can re-stamp it.
 - **Gate that matters:** reconciled all-time income must not move by one cent.
 
-### Pass 61 — Cash income, part 2: the honest surfaces
+### ✅ Pass 61 — Cash income, part 2: the honest surfaces — SHIPPED 2026-08-21
 
 - A second income line wherever income is shown — dashboard, `/spending`,
   `/categories/[id]` for Income kinds — reading *"Banked $52.95 · Estimated cash
@@ -76,6 +76,45 @@ useless as a picture of what he earns.
   separately labelled, and every view that could confuse them gets an `InfoTip`.
 - New e2e: the estimate is visible, is labelled, and the reconciled figure beside
   it is byte-identical to before the feature existed.
+
+> **⚠️ What passes 60–61 actually found, 2026-08-21. The plan's premise was
+> wrong and the correction is worth carrying forward.**
+>
+> The app is **not** blind to cash income. Every ATM deposit in the ledger is
+> already classified by hand, all `source='user'`, so **the interactive
+> classification sitting pass 60 was built around had no input**. Cash income is
+> counted whenever it is banked and tagged — June 2026 booked $1,447.00 of
+> `Income > Salary` from two Miami ATM deposits.
+>
+> The real gap is **timing**: cash is earned continuously and banked in lumps.
+> Measured since the job began, `2026-06-01 → 2026-08-21`:
+>
+> | | |
+> |---|---|
+> | implied by the confirmed schedule | **$12,552.00** over 12 pay periods |
+> | actually banked | **$1,447.00** |
+> | gap | **$11,105.00** |
+> | last banked | 2026-06-05, **11 paydays** of silence |
+>
+> The owner confirms the job is still running at ~$1,046/wk, so that gap is real
+> earnings that never touched a bank — $5,000 of it demonstrably went to the car
+> deposit through the `Cash on Hand` anchor.
+>
+> Two defects fell out of building it, both now fixed:
+>
+> - `recurring_series.last_matched_on` **froze** whenever a series dropped below
+>   `MIN_OCCURRENCES = 3` linked rows, because it was bundled into an
+>   all-or-nothing early return with the statistics. It is not a statistic. Five
+>   series on the live DB were asserting dates with no row behind them; the cash
+>   job claimed pay was 46 days old when the evidence said 77.
+> - and my own `periodsSinceBanked` was off by one whenever a deposit landed off
+>   the payday — which is exactly what the real data does.
+>
+> **Still owed from pass 61:** the note has no VISIBLE e2e state. The simulator's
+> cash series banks on time to `FAKE_TODAY`, so only the silent case renders.
+> Seeding a schedule that has gone quiet moves income totals across several
+> baselines, so it is folded into **pass 75**'s state-coverage audit rather than
+> regenerated incidentally here.
 
 ### Pass 62 — Net-worth attribution: the bridge
 
