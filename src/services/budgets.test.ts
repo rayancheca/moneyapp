@@ -9,6 +9,7 @@ import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
+import { levelledMonthlyCents } from "@/lib/income-basis";
 import { recurringSeries } from "@/db/schema/recurring";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import { createAccount } from "./accounts";
@@ -703,8 +704,127 @@ describe("incomeExpectation — the term /budgets never had", () => {
     expect(got.postedCents).toBe(104_600);
     // 06-08, 06-15, 06-22, 06-29 — strictly after today, none of them the posted one
     expect(got.expectedCents).toBe(104_600 * 4);
-    expect(got.totalCents).toBe(104_600 * 5);
     expect(got.series.map((s) => s.name)).toEqual(["Cash job (weekly pay)"]);
+    // and the schedule's own reading of the same four days, which is what the
+    // month note quotes — deliberately NOT the posted one, which the walk does
+    // not know about
+    expect(got.scheduledOccurrences).toBe(4);
+    expect(got.scheduledCents).toBe(104_600 * 4);
+  });
+
+  test("the basis is the annualised rate, not the paydays that happen to fall in the month", () => {
+    createSeries({
+      name: "Cash job (weekly pay)",
+      nextExpectedOn: "2026-06-08",
+      nextExpectedAmountCents: 104_600,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-05");
+    expect(got.basis.kind).toBe("levelled");
+    expect(got.basis.cents).toBe(levelledMonthlyCents(104_600, "weekly"));
+  });
+
+  test("the basis does not move between a four-payday month and a five-payday month", () => {
+    // The whole point. July 2026 holds five Mondays after this anchor and June
+    // holds four, and the plan being graded is the same plan in both.
+    createSeries({
+      name: "Cash job (weekly pay)",
+      nextExpectedOn: "2026-06-01",
+      nextExpectedAmountCents: 100_000,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    const june = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-01");
+    const july = incomeExpectation(bundle.db, "2026-07-01", "2026-07-31", "2026-07-01");
+
+    expect(june.scheduledOccurrences).not.toBe(july.scheduledOccurrences);
+    expect(june.scheduledCents).not.toBe(july.scheduledCents);
+    expect(june.basis.cents).toBe(july.basis.cents);
+    // and the note names the difference rather than hiding it
+    expect(june.basis.monthNote).toContain(`${june.scheduledOccurrences} paydays`);
+    expect(july.basis.monthNote).toContain(`${july.scheduledOccurrences} paydays`);
+  });
+
+  test("posted actuals never inflate the basis — a lumpy month is not a raise", () => {
+    // His mother's $6,900 landed in one July day. Grading budgets against that
+    // would licence a plan no ordinary month can fund.
+    const pay = createSeries({
+      name: "Cash job (weekly pay)",
+      nextExpectedOn: "2026-06-08",
+      nextExpectedAmountCents: 104_600,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    const lean = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-05").basis.cents;
+    spendLinked("2026-06-04", 690_000, "Income > Salary", pay);
+    const fat = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-05");
+    expect(fat.postedCents).toBe(690_000);
+    expect(fat.basis.cents).toBe(lean);
+  });
+
+  test("a user cadence override sets the basis, because it sets the projection", () => {
+    // effectiveSeries already abandons the detected interval for an override;
+    // a basis read off the DETECTED cadence would grade against a schedule the
+    // page no longer draws.
+    const pay = createSeries({
+      name: "Cash job",
+      nextExpectedOn: "2026-06-08",
+      nextExpectedAmountCents: 100_000,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    bundle.db
+      .update(recurringSeries)
+      .set({ userCadence: "biweekly", userAmountCents: 200_000 })
+      .where(eq(recurringSeries.id, pay))
+      .run();
+    const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-05");
+    expect(got.basis.cents).toBe(levelledMonthlyCents(200_000, "biweekly"));
+  });
+
+  test("a series whose owner ended it before the window contributes nothing", () => {
+    // `userEndsOn` already stops the projection. A basis that levelled it anyway
+    // would keep paying a job that finished.
+    const pay = createSeries({
+      name: "Old job",
+      nextExpectedOn: "2026-06-08",
+      nextExpectedAmountCents: 100_000,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    bundle.db
+      .update(recurringSeries)
+      .set({ userEndsOn: "2026-05-31" })
+      .where(eq(recurringSeries.id, pay))
+      .run();
+    const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-05");
+    expect(got.basis.kind).toBe("calendar");
+    expect(got.basis.cents).toBe(0);
+    expect(got.basis.monthNote).toBeNull();
+  });
+
+  test("a series still running keeps its full rate in the months it does not pay", () => {
+    // A quarterly series pays in one month of three. Levelling it away in the
+    // other two would re-create the swing this replaced, in a bigger size.
+    createSeries({
+      name: "Quarterly draw",
+      nextExpectedOn: "2026-06-15",
+      nextExpectedAmountCents: 300_000,
+      kind: "income",
+      cadence: "quarterly",
+      intervalDaysAvg: 91,
+    });
+    const quiet = incomeExpectation(bundle.db, "2026-07-01", "2026-07-31", "2026-07-01");
+    expect(quiet.scheduledOccurrences).toBe(0);
+    expect(quiet.basis.kind).toBe("levelled");
+    expect(quiet.basis.cents).toBe(levelledMonthlyCents(300_000, "quarterly"));
+    expect(quiet.basis.monthNote).toContain("No payday falls in this month");
   });
 
   test("only money-IN counts, and only live income series", () => {
@@ -722,6 +842,32 @@ describe("incomeExpectation — the term /budgets never had", () => {
     const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-05");
     expect(got.expectedCents).toBe(0);
     expect(got.series).toEqual([]);
+    // nothing to level, so the page keeps the measurement it always had
+    expect(got.basis.kind).toBe("calendar");
+    expect(got.basis.cents).toBe(0);
+  });
+
+  test("an income series with no amount at all is not levelled to zero silently", () => {
+    // `projectOccurrences` returns nothing without an amount, so a series like
+    // this must not select `levelled` and publish a rate of zero — the fallback
+    // measurement is the honest reading.
+    const pay = createSeries({
+      name: "Unknown pay",
+      nextExpectedOn: "2026-06-08",
+      nextExpectedAmountCents: 100_000,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    bundle.db
+      .update(recurringSeries)
+      .set({ nextExpectedAmountCents: null })
+      .where(eq(recurringSeries.id, pay))
+      .run();
+    spend("2026-06-03", 40_000, "Income > Salary");
+    const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-05");
+    expect(got.basis.kind).toBe("calendar");
+    expect(got.basis.cents).toBe(40_000);
   });
 
   test("a window entirely in the past forecasts nothing and reports only actuals", () => {

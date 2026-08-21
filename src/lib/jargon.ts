@@ -83,11 +83,16 @@ export const CATEGORY_KIND_JARGON: Record<string, string> = {
  * the figure, and says what that function does rather than what the words
  * suggest:
  *
- * - `incomeExpectation` (budgets.ts) returns `max(posted + still-due, whole-period
- *   series forecast)` — the max is there because most of every month reads $0.00
- *   posted while statements land weeks apart, and publishing that would assert a
- *   measured zero. The definition states the max, because a reader who assumes
- *   plain addition cannot reconcile the figure with the two parts printed beside it.
+ * - `incomeExpectation` (budgets.ts) grades against an ANNUALISED rate whenever a
+ *   live income series exists: a year of pay divided by twelve, so a plan sized
+ *   that way is not marked over-allocated in the eight months a year that hold
+ *   four weekly paydays and under-allocated in the four that hold five. Its
+ *   definition says so, because a reader who counts the paydays on the calendar
+ *   cannot otherwise reconcile them with the figure. With nothing to level it
+ *   falls back to `max(posted + still-due, whole-period forecast)`, and the
+ *   second definition states the max — the max is there because most of every
+ *   month reads $0.00 posted while statements land weeks apart, and publishing
+ *   that would assert a measured zero.
  * - `leftToAllocateCents` (page.tsx) subtracts MONTHLY budgets only. A weekly
  *   grocery budget does not reduce it — the single most surprising thing on the
  *   page, and nothing on screen says it.
@@ -107,7 +112,15 @@ const BAR_ANATOMY =
   "The filled part is what has gone so far, and the dark mark is how far through the period you are — fill behind the mark means spending is slower than time.";
 
 export const BUDGET_JARGON = {
-  expectedIncome:
+  /**
+   * ONE of these two ever renders, and `incomeBasis` picks which — the same
+   * headline-and-its-definition-from-one-branch rule `budgetVerdict` follows.
+   * They describe genuinely different arithmetic, and a single body covering
+   * both could only do it by being vague about the one that is on screen.
+   */
+  expectedIncomeLevelled:
+    "A year of your recurring pay spread evenly across twelve months, so the figure holds still instead of jumping whenever a month happens to hold an extra payday.",
+  expectedIncomeMeasured:
     "Money already in for this window plus the pay still due before it ends — or, when statements are behind, what your recurring income adds up to across the whole window, whichever is larger.",
   leftToAllocate:
     "That income minus the monthly total below. Budgets on any other cycle are left out, so a weekly or an annual one never moves this figure.",

@@ -71,9 +71,37 @@ test("the month header compares what is budgeted against expected income", async
   await expect(page.getByText(/Over-allocated by/)).toHaveCount(0);
 });
 
+test("the header grades against the ANNUALISED rate, and names the month underneath", async ({
+  page,
+}) => {
+  await page.goto("/budgets");
+  // The seed's one live income series is Paycheck, biweekly at $3,200.00.
+  // $3,200.00 × 26 ÷ 12 = $6,933.33 — the figure the header grades against, and
+  // the SAME figure in every month of the year. July 2026 holds two of its
+  // paydays (the 10th and the 24th), worth $6,400.00, and the old header graded
+  // against $7,662.00: posted-plus-still-due for this particular month, which
+  // moved whenever the calendar did.
+  await expect(page.getByText("$6,933.33")).toBeVisible();
+  await expect(page.getByText("$7,662.00")).toHaveCount(0);
+
+  // The calendar month is named, not deleted — the levelling is disclosed on
+  // screen rather than only in a tooltip. $6,933.33 − $6,400.00 = $533.33.
+  await expect(
+    page.getByText("2 paydays fall in this month, scheduled at $6,400.00 — $533.33 under"),
+  ).toBeVisible();
+
+  // and the tooltip mounted on the term describes the arithmetic that produced
+  // the figure beside it, not the one it replaced. A tooltip body is live DOM
+  // text even while its popover is closed, so this reads both bodies directly
+  // rather than depending on popover mechanics another test in this file owns —
+  // and asserting the ABSENCE of the other one is what makes it a branch test.
+  await expect(page.getByText(/spread evenly across twelve months/)).toHaveCount(1);
+  await expect(page.getByText(/whichever is larger/)).toHaveCount(0);
+});
+
 test("the header flips to over-allocated when the budgets outrun the income", async ({ page }) => {
   // The negative branch of the same line, which no fixture state reaches: the
-  // seed budgets $3,090.00 against $7,662.00 of expected income. Rather than
+  // seed budgets $3,090.00 against $6,933.33 of expected income. Rather than
   // inflate the shared fixture — which would churn the budgets baselines, flip
   // Housing's `over` verdict that five assertions here depend on, and merely
   // TRADE which branch goes unrendered — this drives the amount editor the app
@@ -84,7 +112,8 @@ test("the header flips to over-allocated when the budgets outrun the income", as
   // Pin the pre-state first, so everything below is arithmetic rather than
   // assumption. If the seeded income ever moves, this fails loudly instead of
   // quietly exercising the wrong branch.
-  await expect(page.getByText("$4,572.00")).toBeVisible();
+  // $6,933.33 − $3,090.00 = $3,843.33
+  await expect(page.getByText("$3,843.33")).toBeVisible();
 
   const setFoodBudget = async (value: string): Promise<void> => {
     await food.getByRole("button", { name: "Edit Food budget amount" }).click();
@@ -97,20 +126,20 @@ test("the header flips to over-allocated when the budgets outrun the income", as
   const original = await page.getByRole("textbox", { name: "Food budget amount" }).inputValue();
   await page.getByRole("button", { name: "Cancel" }).click();
 
-  // EXACTLY zero first. $3,090.00 − $800.00 + $5,372.00 = $7,662.00, precisely
+  // EXACTLY zero first. $3,090.00 − $800.00 + $4,643.33 = $6,933.33, precisely
   // the expected income, which is where the ternary's `>= 0` lives. Without
   // this step the boundary is untested and `>= 0` could be weakened to `> 0`
   // with every test still green — and at zero that reads "Over-allocated by
   // $0.00", which is absurd on its face.
-  await setFoodBudget("5372.00");
+  await setFoodBudget("4643.33");
   await expect(page.getByText("$0.00 left to allocate")).toBeVisible();
   await expect(page.getByText(/Over-allocated by/)).toHaveCount(0);
 
-  // $3,090.00 − $800.00 + $8,000.00 = $10,290.00 against $7,662.00 → over by $2,628.00
+  // $3,090.00 − $800.00 + $8,000.00 = $10,290.00 against $6,933.33 → over by $3,356.67
   await setFoodBudget("8000.00");
 
   await expect(page.getByText("Over-allocated by")).toBeVisible();
-  await expect(page.getByText("$2,628.00")).toBeVisible();
+  await expect(page.getByText("$3,356.67")).toBeVisible();
   await expect(
     page.getByText(/these budgets total more than this month is expected to bring in/),
   ).toBeVisible();
@@ -125,7 +154,7 @@ test("the header flips to over-allocated when the budgets outrun the income", as
   // this file reads Food's LIVE amount as its own restore target, so a value
   // left dirty here would be laundered into the seed for the rest of the run.
   await setFoodBudget(original);
-  await expect(page.getByText("$4,572.00")).toBeVisible();
+  await expect(page.getByText("$3,843.33")).toBeVisible();
   await expect(page.getByText(/Over-allocated by/)).toHaveCount(0);
 });
 
@@ -278,8 +307,12 @@ test("the page defines the three sums it performs and never shows", async ({ pag
   ).toHaveCount(1);
   await expect(page.getByText(/never counted twice/)).toHaveCount(sectionCount);
 
-  // present in the DOM, but not shown — the closed-popover contract
-  const tip = page.getByText(/whichever is larger/);
+  // present in the DOM, but not shown — the closed-popover contract.
+  // TWO bodies now share this single mount site and `incomeBasis` chooses
+  // between them; the seed carries a live income series, so the annualised one
+  // is what renders. Its counterpart's absence is asserted in the header test
+  // above, which is where the branch itself is under test.
+  const tip = page.getByText(/spread evenly across twelve months/);
   await expect(tip).toHaveCount(1);
   await expect(tip).toBeHidden();
 

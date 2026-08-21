@@ -48,7 +48,9 @@ describe("jargon copy", () => {
     // renders nothing at all rather than erroring.
     expect(Object.keys(BUDGET_JARGON).sort()).toEqual(
       [
-        "expectedIncome",
+        // one per basis `incomeBasis` can select — exactly one renders
+        "expectedIncomeLevelled",
+        "expectedIncomeMeasured",
         "leftToAllocate",
         "totalBudgeted",
         // one per state `budgetVerdict` can return — a missing key is a row that

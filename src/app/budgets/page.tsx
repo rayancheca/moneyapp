@@ -60,7 +60,14 @@ export default async function BudgetsPage({
   // full month of budgeted amounts against a fraction of a month of income.
   const monthBounds = periodBounds(today, "monthly");
   const income = incomeExpectation(db, monthBounds.start, monthBounds.end, today);
-  const leftToAllocateCents = income.totalCents - monthlyBudgetedCents;
+  // Graded against the BASIS, not against the paydays that happen to fall in
+  // this calendar month. Budgets here were sized from a weekly wage annualised
+  // ($1,047 × 52 ÷ 12); grading that plan against a four-payday month marked it
+  // over-allocated eight months a year and under-allocated the other four,
+  // while the same plan balanced across the year. lib/income-basis carries the
+  // reasoning, and `basis.monthNote` states the calendar month underneath so
+  // nothing is hidden by the levelling.
+  const leftToAllocateCents = income.basis.cents - monthlyBudgetedCents;
 
   // measured guidance: what the page as a whole knows and no single row states
   const notes = budgetSectionNotes({
@@ -96,13 +103,14 @@ export default async function BudgetsPage({
               <span className="text-ink-muted">Budgeted </span>
               <Money cents={monthlyBudgetedCents} className="font-medium" />
               <span className="text-ink-muted"> of </span>
-              <Money cents={income.totalCents} className="font-medium" />
+              <Money cents={income.basis.cents} className="font-medium" />
               <span className="text-ink-muted"> expected income</span>
               {/* Mounted on the TERM, not on the figure: the surprise is not the
-                  number, it is that `incomeExpectation` takes a max rather than
-                  the sum of the two parts printed on the line below. */}
+                  number, it is which arithmetic produced it. The body comes off
+                  `income.basis` rather than being picked here, so the figure and
+                  its definition are chosen by one branch. */}
               <InfoTip term="expected income" placement="bottom">
-                {BUDGET_JARGON.expectedIncome}
+                {income.basis.explanation}
               </InfoTip>
             </p>
           </div>
@@ -139,6 +147,14 @@ export default async function BudgetsPage({
               </>
             )}
           </p>
+          {/* The calendar month, named rather than deleted. Levelling makes the
+              figure above hold still; this says what the month it is describing
+              actually pays, and by how much the two differ. Authored in
+              `lib/income-basis` beside the branch that chose the figure, so the
+              two cannot describe different months. */}
+          {income.basis.monthNote && (
+            <p className="mt-1 text-xs text-ink-faint">{income.basis.monthNote}</p>
+          )}
         </SurfaceCard>
       )}
 

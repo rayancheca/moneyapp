@@ -1,3 +1,5 @@
+import { levelledMonthlyCents } from "./income-basis";
+
 /**
  * Budgets sized by INCOME rather than by past spending.
  *
@@ -35,10 +37,6 @@
  * than the plan silently shaving a contract to make the arithmetic close.
  */
 
-/** Weeks in a year, for turning a weekly wage into a monthly base. */
-export const WEEKS_PER_YEAR = 52;
-const MONTHS_PER_YEAR = 12;
-
 /**
  * A weekly wage as one month of income.
  *
@@ -46,9 +44,14 @@ const MONTHS_PER_YEAR = 12;
  * months of pay a year — on this ledger, at $1,047 a week, that quietly loses
  * $4,188.00 of real earnings. The owner chose this basis with both numbers in
  * front of him.
+ *
+ * ⚠️ Delegates rather than restating the arithmetic. `/budgets` grades these
+ * budgets against the same annualised rate (`incomeBasis`), and a second copy of
+ * `× 52 ÷ 12` here is a plan and a header that can drift apart while both look
+ * right — the shape pass 54 recorded for dates and pass 50 for verdicts.
  */
 export function monthlyFromWeekly(weeklyCents: number): number {
-  return Math.round((weeklyCents * WEEKS_PER_YEAR) / MONTHS_PER_YEAR);
+  return levelledMonthlyCents(weeklyCents, "weekly");
 }
 
 /**

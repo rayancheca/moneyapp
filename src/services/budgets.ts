@@ -7,6 +7,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { transactionSplits } from "@/db/schema/transaction-splits";
 import {
+  addCalendarMonths,
   addDays,
   compareDates,
   diffDays,
@@ -23,7 +24,8 @@ import {
   recurringSeriesIdsForCategory,
 } from "./analytics";
 import { trailingFullMonths } from "./forecast";
-import { projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
+import { effectiveSeries, projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
+import { incomeBasis, levelledMonthlyCents, type IncomeBasis } from "@/lib/income-basis";
 
 /**
  * Budgets (master-plan Phase 5). One active budget per (category, period),
@@ -541,25 +543,54 @@ export interface IncomeExpectation {
   postedCents: number;
   /** money still expected, strictly after today through end */
   expectedCents: number;
-  /** postedCents + expectedCents */
-  totalCents: number;
+  /**
+   * What the SCHEDULE says this whole window pays, and the occurrences behind
+   * it — one walk, so a count and an amount that are printed in the same
+   * sentence cannot describe different sets of days.
+   *
+   * ⚠️ Not `postedCents + expectedCents`. Those two are cut at `today`, and
+   * actuals routinely disagree with the schedule: a paycheque banked before the
+   * anchor is posted money the walk never projects.
+   */
+  scheduledCents: number;
+  scheduledOccurrences: number;
+  /** which figure budgets are graded against, and how this month sits on it */
+  basis: IncomeBasis;
   /** the live income series contributing to expectedCents */
   series: { id: string; name: string; amountCents: number }[];
 }
+
+/** How far ahead a series must still be paying to earn its annualised rate. */
+const BASIS_HORIZON_MONTHS = 12;
 
 /**
  * What this period is expected to bring IN — the term `/budgets` has never had.
  *
  * Ten budgets totalling more than the owner earns is the single most useful
- * thing the page could tell him, and today nothing on it mentions income at
- * all. Built exactly like `budgetTail`: posted actuals over [start, today] plus
- * projected occurrences strictly after today, which are disjoint by
- * construction, so a paycheque that has already landed is never also forecast.
+ * thing the page could tell him, and before this nothing on it mentioned income
+ * at all. `postedCents` / `expectedCents` are built exactly like `budgetTail`:
+ * posted actuals over [start, today] plus projected occurrences strictly after
+ * today, which are disjoint by construction, so a paycheque that has already
+ * landed is never also forecast.
  *
  * Deliberately series-driven rather than a trailing average. His income is a
  * cash job deposited IRREGULARLY (docs/income-ground-truth.md), so a trailing
  * mean reads far below the confirmed weekly series — the series is the stated
  * fact, the deposits are its noisy shadow.
+ *
+ * **`basis` is what the header grades budgets against, and it is a RATE.** See
+ * `lib/income-basis`: a plan sized from $1,047 × 52 ÷ 12 graded against the
+ * paydays that happen to fall in a calendar month swings by $349.00 either way
+ * and balances only across the year. The calendar month is still reported —
+ * `scheduledCents`, and the note on the basis — it is simply not the yardstick.
+ *
+ * ⛔ **A stale series still feeds this, and that is a decision rather than an
+ * oversight.** The cash job has been silent for eleven paydays while the owner
+ * is demonstrably still working it, so `/spending` says the money never reached
+ * a bank and this says the month should still bring it in. Asked as a concrete
+ * either/or on 2026-08-21, the owner chose to leave both readings standing:
+ * they answer different questions, and suppressing this one would tell a working
+ * man he has no income. Do not "fix" the disagreement without asking again.
  */
 export function incomeExpectation(
   db: AppDatabase,
@@ -569,20 +600,21 @@ export function incomeExpectation(
 ): IncomeExpectation {
   const postedCents = incomeTotalCents(db, start, compareDates(today, end) > 0 ? end : today);
 
+  const live = db
+    .select()
+    .from(recurringSeries)
+    .where(
+      and(
+        eq(recurringSeries.kind, "income"),
+        inArray(recurringSeries.status, ["detected", "confirmed"]),
+      ),
+    )
+    .all();
+
   const from = addDays(today, 1);
   const series: IncomeExpectation["series"] = [];
   let expectedCents = 0;
   if (compareDates(from, end) <= 0) {
-    const live = db
-      .select()
-      .from(recurringSeries)
-      .where(
-        and(
-          eq(recurringSeries.kind, "income"),
-          inArray(recurringSeries.status, ["detected", "confirmed"]),
-        ),
-      )
-      .all();
     for (const s of live) {
       // money IN only — a refund-shaped income series must not subtract here
       const cents = projectOccurrences(toProjectable(s), from, end)
@@ -596,38 +628,63 @@ export function incomeExpectation(
   series.sort((a, b) => b.amountCents - a.amountCents);
 
   /*
+   * The whole window as the SCHEDULE sees it, plus its occurrence count. Both
+   * come out of one walk on purpose: the month note prints them in the same
+   * sentence ("4 paydays … scheduled at $4,188.00"), and two walks could
+   * eventually describe different sets of days while each looked right.
+   */
+  let scheduledCents = 0;
+  let scheduledOccurrences = 0;
+  /*
+   * The annualised rate every live series pays, summed.
+   *
+   * A series earns its rate by still being alive across the year ahead, NOT by
+   * paying inside this particular month — that gate is what would put the
+   * calendar swing straight back, in quarterly and annual sizes. `userEndsOn`
+   * is honoured because the horizon walk goes through `projectOccurrences`,
+   * which stops there; a job that finished pays nothing and levels to nothing.
+   */
+  const horizon = addDays(addCalendarMonths(start, BASIS_HORIZON_MONTHS), -1);
+  let levelledCents = 0;
+  for (const s of live) {
+    const inPeriod = projectOccurrences(toProjectable(s), start, end).filter(
+      (o) => o.amountCents > 0,
+    );
+    scheduledOccurrences += inPeriod.length;
+    scheduledCents += inPeriod.reduce((sum, o) => sum + o.amountCents, 0);
+
+    const eff = effectiveSeries(s);
+    const perOccurrenceCents = eff.nextExpectedAmountCents;
+    // a series with no amount projects nothing at all; levelling it would
+    // publish a rate of zero as though it had been measured
+    if (perOccurrenceCents === null || perOccurrenceCents <= 0) continue;
+    const stillPaying = projectOccurrences(toProjectable(s), start, horizon).some(
+      (o) => o.amountCents > 0,
+    );
+    if (!stillPaying) continue;
+    levelledCents += levelledMonthlyCents(perOccurrenceCents, eff.cadence);
+  }
+
+  /*
+   * The fallback, used only when there is nothing to level.
+   *
    * posted + future UNDERSTATES whenever the month's income has not been
    * imported yet, which is most of every month here — statements land weeks
    * apart, so early August reads $0.00 posted and silently drops the paydays
-   * that already happened. Publishing that as "expected income" would assert a
+   * that already happened. Publishing that as an income figure would assert a
    * measured zero where "not measured yet" is true, which is the same failure
-   * the per-row coverage work fixed for SPENDING.
-   *
-   * So take the larger of (what is known + what is still coming) and (what the
-   * series says the WHOLE period should bring). Mirrors projectSpend's
-   * max(spent, forecast): actuals win once they exceed the forecast, and the
-   * forecast carries the window while the ledger is behind.
+   * the per-row coverage work fixed for SPENDING. So take the larger of (what is
+   * known + what is still coming) and (what the schedule says the whole period
+   * brings). Mirrors projectSpend's max(spent, forecast).
    */
-  const wholePeriodCents = db
-    .select()
-    .from(recurringSeries)
-    .where(
-      and(eq(recurringSeries.kind, "income"), inArray(recurringSeries.status, ["detected", "confirmed"])),
-    )
-    .all()
-    .reduce(
-      (sum, s) =>
-        sum +
-        projectOccurrences(toProjectable(s), start, end)
-          .filter((o) => o.amountCents > 0)
-          .reduce((inner, o) => inner + o.amountCents, 0),
-      0,
-    );
+  const measuredCents = Math.max(postedCents + expectedCents, scheduledCents);
 
   return {
     postedCents,
     expectedCents,
-    totalCents: Math.max(postedCents + expectedCents, wholePeriodCents),
+    scheduledCents,
+    scheduledOccurrences,
+    basis: incomeBasis({ levelledCents, scheduledCents, scheduledOccurrences, measuredCents }),
     series,
   };
 }
