@@ -44,7 +44,7 @@ process.env.MONEYAPP_DB_PATH = DB;
 
 const { createDatabase } = await import("@/db/client");
 const { categorySpending, recurringSeriesIdsForCategory } = await import("@/services/analytics");
-const { incomeBudgetPlan, monthlyFromWeekly } = await import("@/lib/income-budget");
+const { incomeBudgetPlan, monthlyFromWeekly, typicalMonthlySpend } = await import("@/lib/income-budget");
 
 const { db, sqlite } = createDatabase(DB);
 const m = (c: number): string =>
@@ -71,9 +71,11 @@ const categories = budgets.map((b) => {
     const start = `${mo}-01`;
     const end = new Date(Number(mo.slice(0, 4)), Number(mo.slice(5, 7)), 0).toISOString().slice(0, 10);
     return Math.abs(categorySpending(db, { categoryId: b.category_id, from: start, to: end }).spentCents);
-  }).sort((x, y) => x - y);
-  // median of six — robust to the one-off months that are everywhere here
-  const trailingCents = Math.round((monthly[2]! + monthly[3]!) / 2);
+  });
+  // Median of the months the category EXISTED — see `typicalMonthlySpend`. A
+  // plain median over the window reads $0.00 for Utilities, which only starts
+  // at the Miami move, and would fund it $50/month below its real usage.
+  const trailingCents = typicalMonthlySpend(monthly);
 
   /*
    * CONFIRMED monthly commitments in this subtree, exactly as `propose-budgets`

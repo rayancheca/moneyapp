@@ -51,6 +51,35 @@ export function monthlyFromWeekly(weeklyCents: number): number {
   return Math.round((weeklyCents * WEEKS_PER_YEAR) / MONTHS_PER_YEAR);
 }
 
+/**
+ * What a category typically costs in a month, from its trailing monthly totals.
+ *
+ * The median, because one-off months are everywhere on this ledger — Travel's
+ * $2,448.88 trip drags its mean to $600.65 against a $270.14 median.
+ *
+ * ⚠️ But the median of MONTHS THE CATEGORY EXISTED, not of the calendar window.
+ * The owner moved to Miami in mid-2026, so Utilities has real charges in June
+ * ($110.32) and July ($120.43) and structural zeroes before them. A plain
+ * median over six months reads **$0.00** there, and a budget built on it funds
+ * the category at its contractual floor of $64.21 against $115 of actual usage
+ * — underfunding it by about $50 a month, silently, forever.
+ *
+ * Zero months are dropped only when some month is non-zero. A category that
+ * genuinely spent nothing in every trailing month keeps its honest $0.00 rather
+ * than being handed an empty median, which is the Car's case today: the lease
+ * begins 2026-09-11, so its whole budget should come from the commitment.
+ */
+export function typicalMonthlySpend(monthlyTotalsCents: readonly number[]): number {
+  if (monthlyTotalsCents.length === 0) return 0;
+  const active = monthlyTotalsCents.filter((v) => v > 0);
+  const basis = active.length > 0 ? active : monthlyTotalsCents;
+  const sorted = [...basis].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[mid]!
+    : Math.round((sorted[mid - 1]! + sorted[mid]!) / 2);
+}
+
 export interface IncomeBudgetCategory {
   id: string;
   name: string;

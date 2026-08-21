@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   incomeBudgetPlan,
   monthlyFromWeekly,
+  typicalMonthlySpend,
   type IncomeBudgetInput,
 } from "./income-budget";
 
@@ -212,5 +213,37 @@ describe("incomeBudgetPlan — the seams", () => {
       ],
     });
     expect(p.rows.map((r) => `${r.name}/${r.id}`)).toEqual(["Alpha/m", "Same/a", "Same/z"]);
+  });
+});
+
+describe("typicalMonthlySpend", () => {
+  test("takes the median, so one big month does not set the budget", () => {
+    // Travel's real shape: a $2,448.88 trip against five ordinary months.
+    expect(typicalMonthlySpend([27_014, 27_014, 244_888, 27_014, 27_014, 27_014])).toBe(27_014);
+  });
+
+  test("averages the middle pair on an even-length history", () => {
+    expect(typicalMonthlySpend([10_000, 20_000, 30_000, 40_000])).toBe(25_000);
+  });
+
+  test("ignores the months a category did not exist yet", () => {
+    // Utilities on the live ledger: four structural zeroes before the Miami
+    // move, then $110.32 and $120.43. A plain median reads $0.00 and would fund
+    // the category at its $64.21 floor against $115 of real usage.
+    expect(typicalMonthlySpend([0, 0, 0, 0, 11_032, 12_043])).toBe(11_538);
+  });
+
+  test("a category that truly spent nothing keeps its honest zero", () => {
+    // The Car today: the lease begins 2026-09-11, so every trailing month is a
+    // real zero and the whole budget should come from the commitment.
+    expect(typicalMonthlySpend([0, 0, 0, 0, 0, 0])).toBe(0);
+  });
+
+  test("no history at all is zero, not a crash", () => {
+    expect(typicalMonthlySpend([])).toBe(0);
+  });
+
+  test("a single active month is its own median", () => {
+    expect(typicalMonthlySpend([0, 0, 5_000])).toBe(5_000);
   });
 });
