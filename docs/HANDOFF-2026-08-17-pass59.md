@@ -3,6 +3,7 @@
 > **`main` = `dc46b35`+** (this doc closes it), tree clean.
 > tsc clean · **166 files / 3,050 unit** (was 163 / 3,016) · coverage gate exit 0 ·
 > **`pnpm ledger-check` exit 0** (new) · **E2E_GATE=1 e2e: 428 passed, zero churn**.
+> **Ledger: 0 gap days · 0 uncategorized · income $117,924.62.**
 >
 > Two real-DB writes, both behind restore points, both asserting that today's
 > balance and net worth could not move — and both proving it.
@@ -156,8 +157,72 @@ genuinely disagree** (worst −$667.86 on 2025-04-30; −$197.62 on the most rec
 So the holdings model is broadly right and wrong in six places — the case for an
 arbiter rather than trust. `data/probe-brokerage-value.ts` does the measurement.
 
+## 2b. The categorisation session (after the migration, same day)
+
+Three real-DB writes, each behind its own restore point. **No code changed** —
+`data/` scripts only, so nothing here is in a commit.
+
+**The trigger:** the owner asked why July showed **$52.95** of income. It is
+correct: $28.91 dividends + $13.59 interest + $10.00 a Zelle + $0.45 sweep
+interest. July had **$45,024.74 of inflows** and the app rightly refused to call
+any of the rest income — card payments, internal transfers, investment
+contributions. His cash job never shows as July income *by design*: he is paid in
+cash, which enters via `Cash on Hand`, not as a bank transaction.
+
+**12 rows he classified himself** (`data/categorize-user-answers.ts`), all
+stamped `source='user'` so no future import can re-stamp them:
+
+| what | where it went |
+|---|---|
+| $6,600 + $300 ATM (07-21) — **his mother gave him $7k cash** | Transfers > Family pass-through |
+| $4,000 (08-11) + $1,000 (08-12) Zelle from **Arno Search Capital, LLC** — his **dad's** money | Transfers > Family pass-through |
+| $3,500 Philippe (07-16) | Transfers > Loans |
+| $1,320 Robinhood Credits (07-29) — his own withdrawal to pay a card | Transfers > Internal Transfer |
+| $1,047 Zelle from himself (07-16) | Transfers > Internal Transfer |
+| five card payments | Transfers > Credit Card Payment |
+
+🔴 **"ATM deposit" means at least THREE different things on this ledger** — his
+cash-job float, a loan repayment, and his mother's cash. No classifier can tell
+them apart. Always ask.
+
+✅ **The Phil loan is fully repaid, to the cent**: −$5,000 (2025-06-25) → +$1,500
+cash, which he had *already* filed himself as two `Loans` ATM rows on 2026-05-12
+($100 + $1,400) → +$3,500 Zelle (2026-07-16). Exactly his account of it.
+
+🔴 **A wrong category invented a debt.** The −$1,495 Zelle to Philipe on
+2026-05-29 looked like a second, outstanding loan. It is **RENT for the New York
+apartment**, net of $30 for a remote — now `Housing > Rent`
+(`data/fix-rent-and-protect-atm.ts`). There is no second loan.
+
+**Then the LLM categoriser** (`classifyPendingMerchants`): `queued 71 ·
+classified 92 · $0.027`. **Uncategorized 92 → 0.** All-time income unchanged at
+$117,924.62 (ground truth $117,915.41) and July unchanged at $52.95 — the check
+that matters, because it proves the classifier stayed out of income entirely.
+
+⚠️ **`tsx` does not load `.env`** the way Next.js does. `classifyPendingMerchants`
+returns `{ran:false}` with no error when the key is missing. Run it as:
+
+    export $(grep '^ANTHROPIC_API_KEY=' .env | xargs) && npx tsx ...
+
+⚠️ ATM *deposits* needed no protecting in the end — filing the $6,600/$300 as
+family money removed them from the queue. One `ATM WITHDRAWAL` remained and was
+let through deliberately: money leaving cannot become fake income.
+
 ## 3. Still open
 
+- 🔴 **The $560.54 on 2026-07-29** is the one row nobody has identified. Its
+  description says **"From: Rayan Karim Checa/Rayan Karim Checa"** — self to
+  self, routing 021000021 (JPMorgan), received 10:13:20, the same day as the
+  $1,320 Robinhood withdrawal and the −$1,300 card payment. Nine other rows on
+  that rail are `Internal Transfer`/`Investment Contribution`. It is his money;
+  the open question is only WHICH account it left. Ask him.
+- **Dad is sending $10k via Arno Search Capital, LLC** and only $5k has landed
+  ($4,000 + $1,000). Expect ~$5k more — it is family pass-through, NOT income.
+- **59 rows sit at `needs_review`** — the categoriser's own low-confidence flags.
+  None affects income or net worth.
+- ⚠️ **The `ANTHROPIC_API_KEY` was pasted in plaintext in chat** and now lives in
+  the gitignored `.env`. Git cannot see it, but it should be rotated at
+  console.anthropic.com when convenient. The owner was told and did not care.
 - **The ForecastCard** — five equal-weight numbers, no hierarchy. Untouched for a
   third pass; the owner has not asked, and ledger integrity outranked it.
 - **`paid_different` has no rendered coverage anywhere** — no seeded posting lands
