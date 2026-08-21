@@ -218,6 +218,66 @@ describe("detection respects user decisions (§4.3): a re-run changes nothing", 
   });
 });
 
+describe("thin evidence must not freeze `lastMatchedOn` (pass 60)", () => {
+  test("detaching down below MIN_OCCURRENCES still moves the last-matched date", () => {
+    // `recomputeSeriesStats` declines to write when fewer than MIN_OCCURRENCES
+    // rows remain, and for the STATISTICS that is right — a cadence measured
+    // over two points is a guess. But `lastMatchedOn` is not a statistic. It is
+    // max(postedOn) of the linked rows, well defined for one row or none, and
+    // bundling it into the all-or-nothing early return leaves the series
+    // claiming pay arrived on a date that no longer has a row behind it.
+    //
+    // Found on the live ledger 2026-08-21: "Cash job (weekly pay)" carried
+    // last_matched_on = 2026-07-06 with nothing linked on that day, because the
+    // row once matched there had been re-categorised away. `seriesStaleness`
+    // reads that column, so the app believed pay was 46 days old when the
+    // evidence said 77.
+    const netflix = seriesFor(netflixId);
+    const linked = bundle.db
+      .select({ id: transactions.id, postedOn: transactions.postedOn })
+      .from(transactions)
+      .where(eq(transactions.recurringSeriesId, netflix.id))
+      .orderBy(asc(transactions.postedOn))
+      .all();
+    expect(linked).toHaveLength(6);
+
+    // strip the four newest, newest first, so only 2026-01-15 and 2026-02-15 stay
+    for (const row of [...linked].reverse().slice(0, 4)) {
+      detachTransaction(bundle.db, row.id, TODAY);
+    }
+
+    const remaining = bundle.db
+      .select({ postedOn: transactions.postedOn })
+      .from(transactions)
+      .where(eq(transactions.recurringSeriesId, netflix.id))
+      .orderBy(asc(transactions.postedOn))
+      .all();
+    expect(remaining.map((r) => r.postedOn)).toEqual(["2026-01-15", "2026-02-15"]);
+
+    const after = bundle.db
+      .select({ lastMatchedOn: recurringSeries.lastMatchedOn, cadence: recurringSeries.cadence })
+      .from(recurringSeries)
+      .where(eq(recurringSeries.id, netflix.id))
+      .get()!;
+
+    // the date follows the evidence...
+    expect(after.lastMatchedOn).toBe("2026-02-15");
+    // ...while the cadence, which genuinely needs three points, is left alone
+    expect(after.cadence).toBe("monthly");
+  });
+
+  test("unlinking the last row clears the date rather than stranding it", () => {
+    const netflix = seriesFor(netflixId);
+    for (const id of taggedIds(netflix.id)) detachTransaction(bundle.db, id, TODAY);
+    const after = bundle.db
+      .select({ lastMatchedOn: recurringSeries.lastMatchedOn })
+      .from(recurringSeries)
+      .where(eq(recurringSeries.id, netflix.id))
+      .get()!;
+    expect(after.lastMatchedOn).toBeNull();
+  });
+});
+
 describe("merge mechanics + error guards", () => {
   test("merging into a series that was itself merged follows the chain", () => {
     const netflix = seriesFor(netflixId);

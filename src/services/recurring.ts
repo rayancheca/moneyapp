@@ -315,8 +315,40 @@ export function recomputeSeriesStats(
       ),
     )
     .all();
+
+  /*
+   * `lastMatchedOn` is settled FIRST and unconditionally, because it is not a
+   * statistic. Everything else here is measured over the set — a cadence, an
+   * average, a stddev — and genuinely needs MIN_OCCURRENCES points before it
+   * means anything. This one is `max(postedOn)` of the linked rows, exact for
+   * one row and exact for none.
+   *
+   * Bundling it into the all-or-nothing early return below left a series
+   * asserting that pay arrived on a day with nothing linked to it. Measured on
+   * the live ledger 2026-08-21: "Cash job (weekly pay)" carried
+   * `last_matched_on = 2026-07-06` after the row once matched there was
+   * re-categorised to `Transfers > Internal Transfer` and unlinked, and nothing
+   * revisited it. `seriesStaleness` reads this column, so the app believed pay
+   * was 46 days old while the evidence said 77. Unlinking EVERY row was worse
+   * still — the date simply stayed, describing a set that no longer existed.
+   *
+   * The thin-evidence guard keeps everything it was actually protecting: a
+   * cadence, an anchor and a next-expected date measured over two points are
+   * guesses, and they stay frozen at their last good values.
+   */
+  const lastMatchedOn = rows.reduce<string | null>(
+    (latest, r) => (latest === null || compareDates(r.postedOn, latest) > 0 ? r.postedOn : latest),
+    null,
+  );
+
   const stats = analyzeGroup(rows);
-  if (!stats) return;
+  if (!stats) {
+    tx.update(recurringSeries)
+      .set({ lastMatchedOn })
+      .where(eq(recurringSeries.id, seriesId))
+      .run();
+    return;
+  }
   const series = tx.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get();
   if (!series) return;
   const merchantRoot = rootCategoryName(
@@ -336,7 +368,7 @@ export function recomputeSeriesStats(
       anchorDay: stats.anchorDay,
       nextExpectedAmountCents: stats.nextExpectedAmountCents,
       confidence: stats.confidence,
-      lastMatchedOn: stats.lastMatchedOn,
+      lastMatchedOn,
     })
     .where(eq(recurringSeries.id, seriesId))
     .run();
