@@ -139,3 +139,30 @@ test("the day heatmap follows the selected period (regression: prop-desync)", as
   await expect(page).toHaveURL(/period=2026-06/);
   await expect(page.getByRole("grid", { name: "June 2026" })).toBeVisible();
 });
+
+/**
+ * The cash-earnings note stays SILENT while the schedule is keeping up.
+ *
+ * ⚠️ Read what this does and does not prove. The seeded ledger's cash series
+ * ("Employer (cash)", weekly) banks on time right up to FAKE_TODAY, so the
+ * correct rendering is nothing at all — and the assertion below pins exactly
+ * that: the note must not cry wolf about unbanked pay on a schedule that is
+ * current. False POSITIVES are the dangerous direction for this feature, and
+ * this is the direction the fixture can test.
+ *
+ * It does NOT cover the note's visible states. Producing one needs a confirmed
+ * schedule that has gone silent for three pay periods, and the simulator emits
+ * a perfectly regular series — the same "drawn with a ruler" blindness pass 53
+ * found in the price fixtures. Seeding the silent case moves income totals and
+ * ripples through several visual baselines, so it belongs in the state-coverage
+ * audit (plan pass 75) where every unreachable state is seeded together and the
+ * baselines regenerate once, not in a feature pass where the regeneration would
+ * be incidental. The positive states are covered in
+ * `src/lib/section-notes.test.ts` and were verified against the real ledger for
+ * three separate periods.
+ */
+test("cash-earnings note is silent on a schedule that is banking on time", async ({ page }) => {
+  await page.goto("/spending?period=2026-07");
+  await expect(page.getByRole("region", { name: "Cash flow" }).or(page.locator("main"))).toBeVisible();
+  await expect(page.getByLabel("What this page cannot see")).toHaveCount(0);
+});

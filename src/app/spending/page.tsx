@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { todayIso } from "@/lib/dates";
+import { formatDayLong } from "@/lib/format-date";
+import { cashEarningsSectionNotes } from "@/lib/section-notes";
 import {
   heatmapInitialMonth,
   resolvePeriod,
@@ -10,6 +12,7 @@ import {
 import { WHERE_VIEW_SPEC } from "@/lib/massif-layout";
 import { resolveViewState, viewStateToParams } from "@/lib/view-state";
 import { categoryBreakdown } from "@/services/analytics";
+import { cashEarningsReadings } from "@/services/cash-earnings";
 import { spendingSankey } from "@/services/sankey";
 import { predictBudgetableCategories } from "@/services/category-forecast";
 import { readSettings } from "@/services/settings";
@@ -24,6 +27,7 @@ import {
   ledgerFirstDay,
 } from "@/services/spending";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { SectionNotes } from "@/components/insights/SectionNotes";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { WhereItWentPanel, type WhereItWentRow } from "@/components/charts/CategoryMassif";
@@ -67,6 +71,17 @@ export default async function SpendingPage({
   const projection = spendingProjection(db, period, today, cashFlow.pace, cashFlow.totals.spentCents);
   const sankey = spendingSankey(db, range);
   const merchants = topMerchants(db, range);
+
+  /*
+   * What this page's income figure cannot see. Its totals count DEPOSITS, which
+   * for a cash job is a record of ATM trips rather than of earnings — July 2026
+   * reported $52.95 of income while a confirmed $1,046-a-week schedule ran the
+   * whole month. The note is measured, never added to any total.
+   */
+  const cashNotes = cashEarningsSectionNotes({
+    rows: cashEarningsReadings(db, { from: range.from, to: range.to, today }),
+    formatDay: formatDayLong,
+  });
 
   // switchable-view state (NS#2 Pillar 2): URL > persisted preference > default.
   // Two INDEPENDENT dimensions on this surface — the cash-flow card's renderer
@@ -249,6 +264,11 @@ export default async function SpendingPage({
       ) : (
         <div className="space-y-6">
           <SpendingStatCards totals={cashFlow.totals} range={range} />
+
+          {/* Mounted UNDER the stat cards, not above them: the note qualifies a
+              figure the reader has already seen, and a caveat printed before its
+              subject reads as a page-level warning about the whole screen. */}
+          <SectionNotes notes={cashNotes} label="What this page cannot see" />
 
           <SurfaceCard>
             <h2 className="mb-1 text-sm font-medium">Cash flow — {period.label}</h2>

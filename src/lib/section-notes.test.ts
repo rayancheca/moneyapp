@@ -3,7 +3,9 @@ import { TAXONOMY } from "@/db/seed";
 import { FORBIDDEN_NAME_CHARS } from "@/services/category-edit";
 import {
   budgetSectionNotes,
+  cashEarningsSectionNotes,
   categoryNoteRows,
+  type CashEarningsNoteInput,
   categorySectionNotes,
   holdingPriceSectionNotes,
   NAME_LIST_SEPARATOR,
@@ -430,5 +432,116 @@ describe("the punctuation these notes rely on", () => {
         expect(name, `seeded category ${JSON.stringify(name)} contains ${char}`).not.toContain(char);
       }
     }
+  });
+});
+
+describe("cashEarningsSectionNotes", () => {
+  const formatDay = (iso: string) => iso;
+  const row = (over: Partial<CashEarningsNoteInput["rows"][number]> = {}) => ({
+    seriesName: "Cash job (weekly pay)",
+    basis: "series-stale" as const,
+    impliedCents: 523_000,
+    bankedCents: 0,
+    unbankedCents: 523_000,
+    periodsSinceBanked: 11,
+    lastBankedOn: "2026-06-05",
+    ...over,
+  });
+  const notes = (over: Partial<CashEarningsNoteInput["rows"][number]> = {}) =>
+    cashEarningsSectionNotes({ rows: [row(over)], formatDay });
+
+  test("a silent schedule names the gap, the silence, and all three readings", () => {
+    // The live ledger's own July: $5,230.00 implied, nothing banked, eleven
+    // paydays since 2026-06-05.
+    const [note] = notes();
+    expect(note).toBeDefined();
+    // suffixed with the series name so two silent schedules cannot share a React key
+    expect(note!.id).toMatch(/^cash-earnings-unbanked-/);
+    expect(note!.body).toContain("$5,230.00");
+    expect(note!.body).toContain("11 expected paydays");
+    // the scope marker: the sentence before it counts THIS PERIOD's paydays (5),
+    // this one counts the schedule's silence (11), and without the phrase a
+    // reader merges the two
+    expect(note!.body).toContain("Across the whole schedule");
+    expect(note!.body).toContain("2026-06-05");
+    // all three explanations, because the module genuinely cannot choose
+    expect(note!.body).toContain("held as cash");
+    expect(note!.body).toContain("spent as cash");
+    expect(note!.body).toContain("ended");
+  });
+
+  test("a period that banked SOME of it names the part that landed", () => {
+    // June 2026 on the live ledger: $4,184.00 implied, $1,447.00 banked in two
+    // deposits, still stale because nothing has arrived since. "none of it
+    // reached an account" would be false here, and it is the branch the real
+    // data hits most often.
+    const [note] = notes({ impliedCents: 418_400, bankedCents: 144_700, unbankedCents: 273_700 });
+    expect(note!.body).toContain("only $1,447.00 reached an account");
+    expect(note!.body).not.toContain("none of it");
+  });
+
+  test("a schedule that has never paid says so instead of naming a date", () => {
+    const [note] = notes({ lastBankedOn: null, periodsSinceBanked: 4 });
+    expect(note!.body).toContain("no deposit has ever");
+    expect(note!.body).not.toContain("since");
+  });
+
+  test("a live schedule keeping up says nothing at all", () => {
+    // His ordinary rhythm is to bank in lumps, so a single unbanked week is not
+    // news. A strip that always has something to say stops being read.
+    expect(notes({ basis: "series-live", periodsSinceBanked: 1 })).toEqual([]);
+  });
+
+  test("no confirmed schedule means nothing is measured, so nothing is said", () => {
+    expect(
+      notes({ basis: "no-series", impliedCents: 0, unbankedCents: 0, periodsSinceBanked: 0 }),
+    ).toEqual([]);
+  });
+
+  test("no confirmed schedule stays silent even when the numbers would speak", () => {
+    // Caught by mutation. The natural producer zeroes every implied figure for
+    // `no-series`, so the guard looked dead — but this module takes arbitrary
+    // input, and a caller assembling rows by hand can hand it a gap with no
+    // schedule behind it. Without a confirmed schedule there is no measurement,
+    // and a note about an unmeasured thing is the one shape this file refuses.
+    expect(notes({ basis: "no-series", unbankedCents: -50_000 })).toEqual([]);
+  });
+
+  test("never asserts a measured zero", () => {
+    // A window before the series began implies nothing. "implies $0.00 and none
+    // was banked" is true and useless, and the doctrine forbids it.
+    expect(notes({ impliedCents: 0, bankedCents: 0, unbankedCents: 0 })).toEqual([]);
+  });
+
+  test("banking MORE than the period earned reads as catching up, not as a windfall", () => {
+    // June banked $1,447.00 in two deposits; a month that clears a backlog will
+    // bank more than it earned, and without this the page looks like a raise.
+    const [note] = notes({ basis: "series-live", bankedCents: 900_000, unbankedCents: -376_000 });
+    expect(note!.id).toMatch(/^cash-earnings-catchup-/);
+    expect(note!.body).toContain("$3,760.00");
+    expect(note!.body).toContain("earlier");
+  });
+
+  test("one note per series, and a quiet series contributes none", () => {
+    const out = cashEarningsSectionNotes({
+      rows: [
+        row(),
+        row({ seriesName: "Tutoring", basis: "series-live", unbankedCents: 0, impliedCents: 0 }),
+      ],
+      formatDay,
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]!.body).toContain("Cash job (weekly pay)");
+  });
+
+  test("note ids stay unique when two schedules are both silent", () => {
+    // The id is a React key; two stale series producing the same id would drop
+    // one of the notes silently.
+    const out = cashEarningsSectionNotes({
+      rows: [row(), row({ seriesName: "Second gig" })],
+      formatDay,
+    });
+    expect(out).toHaveLength(2);
+    expect(new Set(out.map((n) => n.id)).size).toBe(2);
   });
 });

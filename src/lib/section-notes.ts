@@ -1,5 +1,6 @@
 import { isStaleClose } from "./holding-price-age";
 import { formatCents } from "./money";
+import type { CashEarningsBasis } from "./cash-earnings";
 
 /**
  * A section note is AUTHORED COPY selected by a MEASURED predicate, with every
@@ -309,4 +310,92 @@ export function categorySectionNotes(input: CategoryNoteInput): SectionNote[] {
         `checking before archiving ${one ? "it" : "one"}.`,
     },
   ];
+}
+
+export interface CashEarningsNoteInput {
+  /** one entry per confirmed income schedule the window could measure */
+  rows: readonly {
+    seriesName: string;
+    basis: CashEarningsBasis;
+    impliedCents: number;
+    bankedCents: number;
+    unbankedCents: number;
+    periodsSinceBanked: number;
+    lastBankedOn: string | null;
+  }[];
+  formatDay: (iso: string) => string;
+}
+
+/**
+ * What an income figure on this page cannot see, when the pay arrives as cash.
+ *
+ * The page's income total is a record of DEPOSITS. For a cash job that makes it
+ * a record of ATM trips instead of earnings — measured on the live ledger, July
+ * 2026 reported $52.95 of income while a confirmed $1,046-a-week schedule ran
+ * the whole month. This note is the difference, said out loud.
+ *
+ * ⛔ It never adds the gap to anything. The figure it names is not money the
+ * ledger has found; it is the arithmetic distance between a confirmed schedule
+ * and the deposits that actually landed, and `lib/cash-earnings` is explicit
+ * that at least three innocent explanations fit. So the note states all three
+ * rather than picking one — the reader knows which is true and the app does not.
+ *
+ * Two notes, and both are deliberately narrow:
+ *
+ *   - a SILENT schedule is news. Banking in lumps is his ordinary rhythm, so a
+ *     live schedule one week behind says nothing at all; only `series-stale`
+ *     speaks, and `STALE_PERIODS` sets that bar at three missed periods.
+ *   - a period that banked MORE than it earned is also news, in the other
+ *     direction: without it, the month he clears a backlog reads as a raise.
+ */
+export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionNote[] {
+  const notes: SectionNote[] = [];
+
+  for (const r of input.rows) {
+    // Nothing is confirmed, so nothing was measured — and a note about an
+    // unmeasured thing is the one shape this module refuses.
+    if (r.basis === "no-series") continue;
+
+    if (r.basis === "series-stale" && r.unbankedCents > 0) {
+      // The never-paid branch is a different SENTENCE, not a different noun
+      // phrase: "paydays have passed since no deposit has ever been attributed"
+      // is what slotting it into the same template produced, and it is not
+      // English. A schedule with no evidence at all has no "since" to name.
+      /*
+       * "Across the whole schedule" is load-bearing, not filler. The sentence
+       * before it states a WINDOW figure (what this period implied) and this one
+       * states a SCHEDULE figure (silence measured from the last deposit, which
+       * may sit outside the window entirely). Without the marker the June note
+       * reads "$4,184.00 in this period … 11 expected paydays", and a reader
+       * reasonably takes eleven paydays to be June's — it has four.
+       */
+      const silence =
+        r.lastBankedOn === null
+          ? `Across the whole schedule, ${r.periodsSinceBanked} expected paydays have passed and ` +
+            `no deposit has ever been attributed to it`
+          : `Across the whole schedule, ${r.periodsSinceBanked} expected paydays have passed ` +
+            `since the last deposit on ${input.formatDay(r.lastBankedOn)}`;
+      notes.push({
+        id: `cash-earnings-unbanked-${r.seriesName}`,
+        body:
+          `${r.seriesName} implies ${formatCents(r.impliedCents)} of earnings in this period and ` +
+          `${r.bankedCents === 0 ? "none of it reached an account" : `only ${formatCents(r.bankedCents)} reached an account`}. ` +
+          `${silence} — that money was held as cash, spent as cash, or the schedule has ended. ` +
+          `The income figures on this page count deposits, so they cannot tell you which.`,
+      });
+      continue;
+    }
+
+    if (r.unbankedCents < 0) {
+      notes.push({
+        id: `cash-earnings-catchup-${r.seriesName}`,
+        body:
+          `${r.seriesName} banked ${formatCents(-r.unbankedCents)} more than this period earned. ` +
+          `Cash is deposited in lumps, so the surplus is earlier pay arriving late — read it as a ` +
+          `backlog clearing rather than as a period that earned more.`,
+      });
+    }
+  }
+
+  return notes;
 }
