@@ -172,23 +172,107 @@ $349.00 under the annualised figure above."*
 > series whose cadence label disagrees with its measured gap levels from the
 > label (pinned as a decision, with the reasoning, in `budgets.test.ts`).
 
-### Pass 62 — Net-worth attribution: the bridge
+### ✅ Pass 62a — Net-worth attribution: the engine — SHIPPED 2026-08-24
 
-*Net worth moved from X to Y. Why?*
+*Net worth moved from X to Y. Why?* — the arithmetic half. **Pass 62 split**; the
+chart is 62b below, and the reason is at the end of this entry.
 
-- Pure `src/lib/attribution.ts` — decompose a window's change into **earned ·
-  spent · market · family pass-through · in transit · unexplained**, where
-  `unexplained` is a first-class output that must be zero on a reconciled window
-  and is *shown* when it is not.
-- Every component already exists in a service (`periodTotals`,
-  `market_change_cents`, the Family pass-through category, `inTransitCents`).
-  This assembles them and proves they close.
-- A waterfall chart, built the way `SankeyChart` and `AllocationDonut` were —
-  bespoke SVG, hover, drill to the rows, chart⇄table lens, focus mode from day one.
-- Answers the question that matters for a portfolio that is now most of his net
-  worth: *am I actually getting richer, or is it just the market?*
+> **⚠️ The plan's premise was partly false, and measuring said so before any
+> code.** It claimed "every component already exists in a service (`periodTotals`,
+> `market_change_cents`, the Family pass-through category, `inTransitCents`) —
+> this assembles them and proves they close." Measured:
+>
+> - **`market_change_cents` cannot supply a windowed market term.** Populated on
+>   16 of 219 `statement_periods` rows, every one Robinhood Crypto, newest period
+>   ending 2026-06-30. Robinhood Brokerage — the larger account, +$9,648.16 in
+>   July–August alone — has **no statement periods at all**.
+> - **`periodTotals` is not a partition of net-worth movement.** Over 2026-07-01 →
+>   08-24 it reports net **−$16,468.15** while net worth **rose $26,424.71**:
+>   wrong in sign, off by $46,326.64. It drops +$18,870.53 of transfer- and
+>   investment-kind rows by design.
+> - **`src/db/derive/**`, cited by the plan, does not exist.** The engine is
+>   `src/services/derivation.ts` + `crypto-history.ts`.
+> - `inTransitCents` IS the right idea, and is $0.00 on every window ending today.
 
-### Pass 63 — Runway, and the car priced all-in
+**What is true, and is what the pass rests on: the identity closes.** Measured
+across seven windows from one month to the full four-year axis, *before* writing
+anything:
+
+    Δ net worth = transactions on REPLAYING accounts
+                + market gain + portfolio flow + Δ in transit
+                + unexplained
+
+`unexplained` is exactly **$0.00** on every window spanning neither an account
+opening nor a manual anchor — and on the three that do, every cent has a NAME:
+$5,000.00 (Cash on Hand's manual anchor, the owner's untracked float, deliberate)
+and $20.19 (Robinhood Brokerage entering coverage, 2024-07-10). **7/7 windows
+fully accounted for.**
+
+| | |
+|---|---|
+| `src/lib/attribution.ts` | pure, 100%, `unexplained` is SUBTRACTION only |
+| `src/services/attribution.ts` | the queries, each chosen so the identity closes |
+| `marketChangeBetween` | the window slice that lived only in a client hook |
+| `inTransitAt` / `inFlightDeltaOn` | the float boundary, written twice, now once |
+
+🔴 **A test caught a defect that would have shipped green.** The replay divider
+was written as "investment type AND has holding events" — the same set as
+"investment type" on today's ledger. A bare value-anchored investment account
+does not replay either (`deriveDailyRows`: *"value anchors + step-hold; replay
+never applies"*), so the narrow divider would have double-counted the market term
+the moment one existed. ⛔ And never `investmentSideAccountIds()`, which includes
+the settlement-cash sibling — typed `checking`, replayed, 1,989 rows worth
+−$55,659.37.
+
+🔴 **The adversarial review found three more** (`ca912ad` → `df3a17a`): archived
+accounts were read by the bands but not by net worth (every net-worth surface is
+active-only, so the bridge would report a hole it invented itself); the CLOSING
+window bound was unpinned (`lte` → `lt` survived all 13 tests); and
+`reason: "opening"` was **dead code** for a replaying account — removed rather
+than defended. Six further surviving mutants killed. All 14 now die.
+
+### Pass 62b — the waterfall, and the surface it lives on
+
+**Part one shipped 2026-08-24** (`34756ad`): `src/lib/waterfall-layout.ts` at
+100%, plus the contrast gate the palette test was missing. Two geometry decisions
+are made and pinned:
+
+- **The axis is the excursion, not zero**, and `axisStartsAtZero` is a first-class
+  output so the renderer must disclose it. Zero-anchored, `earned` is 0.05% of the
+  height on the real window.
+- **A band too small to draw is MARKED, never floored.** `deviation-layout`'s 2px
+  minimum is right for bars that need not sum to anything; a waterfall's whole
+  claim is that the parts add up, and a floored bar makes the geometry visibly not
+  close. `earned` is 0.18px and stays 0.18px; `belowHairline` says so.
+
+**Still to build — everything is specified, nothing is decided-by-default:**
+
+- The bespoke-SVG renderer. ⛔ The plan's cited precedent is wrong:
+  `AllocationDonut` is **recharts**, not bespoke SVG. `SankeyChart` is the real
+  exemplar — copy its `<title>`-not-`role="img"` a11y model (role="img" prunes
+  the nested drill `<a>` from the a11y tree), its modified-click passthrough, and
+  its `useId()` for element ids (ChartFocus mounts the panel TWICE).
+- ⛔ **Hue can never be the only carrier of direction.** Measured: `--positive`
+  and `--negative` are contrast **1.00** apart in light theme, 1.35 in dark. The
+  house answer is PnlCalendar's aria-hidden ▲/▼ over neutral numerals. A test now
+  pins this as a limit.
+- **Split `moved` into named bands.** The plan's own spec lists *family
+  pass-through* as a component and it is currently inside `moved`. Measured:
+  `Transfers > Family pass-through` is **+$43,863.44 across 28 rows, all in Chase
+  Checking, all unpaired** — and `docs/adversarial-review-2026-07-27.md` finding
+  81 records that **every one of the top eight single-day net-worth moves in the
+  series is a Family pass-through row**. Naming it is most of this band's value.
+- **Where it lives.** `PeriodSelector` already takes a `basePath`, and
+  `resolvePeriod` + `stepPeriodParams` give a window and its predecessor — the
+  "moved from X to Y" framing, ready. A new route costs 8 visual baselines, 2 axe
+  tests and 3 overflow tests (`overflow.spec.ts` enumerates `src/app/**/page.tsx`
+  off the filesystem and FAILS unless the route is listed). A dashboard chart
+  option instead auto-generates its own tests from `DASHBOARD_VIEW_SPEC`.
+- **Seed the fixture first.** The e2e taxonomy has no `Family pass-through`, and
+  `unexplained` has no seeded non-zero case, so those bands would photograph as
+  structurally $0 in every baseline — the pass-53 blindness, exactly.
+
+### Pass 63 — Runway, and the car priced all-in### Pass 63 — Runway, and the car priced all-in
 
 Two decision cards over one new engine.
 
