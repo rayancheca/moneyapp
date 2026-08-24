@@ -30,17 +30,24 @@ import { computeWaterfallLayout, type WaterfallStep } from "@/lib/waterfall-layo
  *
  * **A band too small to draw gets its own axis rather than a lie.** On the real
  * July–August window `earned` is $52.95 against an $18,870.53 largest band —
- * 0.18px at this height. The main bridge draws it at its true (invisible) size
- * and marks it; underneath, `magnitudeTiers` regroups the small bands onto an
- * axis scaled to THEIR largest member and prints the magnification. Nothing is
- * rescaled silently and nothing is floored, because a waterfall's whole claim is
- * that the parts add up.
+ * 0.18px at this height. The bridge draws NO rectangle for it (a floored bar is
+ * the thing `waterfall-layout` exists to refuse) and marks its position with a
+ * glyph; underneath, those bands are redrawn on an axis scaled to their own
+ * largest member, with BOTH ceilings printed so the stated factor can be checked
+ * against two numbers on the page rather than taken on trust.
+ *
+ * **A total is a LEVEL, drawn as a rule with no height.** Review measured what
+ * the first version did instead: the all-time window rendered the opening total
+ * as a 77.97px bar labelled "$0.00", and whenever the opening was also the
+ * lowest running total its height came out constant at 24.00px whatever the
+ * value. A rectangle's height is a magnitude; the distance from a padded floor
+ * up to a level is not one.
  */
 
 const DEFAULT_WIDTH = 720;
 const DEFAULT_HEIGHT = 240;
-/** what a sub-hairline band is drawn as instead: a visible mark at the true y */
-const TICK_HEIGHT = 2.5;
+/** half-width of the diamond that marks a band too small to draw as an area */
+const MARKER = 3.5;
 const DIM_OPACITY = 0.28;
 /** room under the bars for the two printed totals */
 const TOTAL_LABEL_ROW = 16;
@@ -74,14 +81,8 @@ interface Tooltip {
   meaning: string;
 }
 
-/**
- * A total is a REFERENCE, not a movement, and it must not be the loudest thing
- * on the chart. Drawn in a muted neutral so the eye reads the coloured bands as
- * the story and the two columns as the posts they hang between — `--ink-display`
- * was tried first and the closing column simply dominated the frame.
- */
+/** Bands only — a total is a rule, not a fill. */
 function fillOf(step: WaterfallStep): string {
-  if (step.kind === "total") return "var(--chart-band, var(--surface-sunken))";
   if (step.direction === "up") return "var(--gain)";
   if (step.direction === "down") return "var(--loss)";
   return "var(--ink-faint)";
@@ -129,15 +130,27 @@ export function NetWorthBridge({
   );
 
   /*
-   * The small bands, regrouped onto axes they can actually fill. Tier 0 is
-   * already legible in the bridge above, so only the magnified tiers are drawn
-   * again — redrawing tier 0 would be the same picture twice.
+   * The bands the bridge could NOT draw, regrouped onto axes they can fill.
+   *
+   * ⚠️ Driven by `belowHairline` — the very flag that decided the bridge would
+   * not draw them — so the caption "too small to draw above" is true by
+   * construction. It was first driven by `magnitudeTiers` over ALL the bands,
+   * which is a different denominator, and review measured the consequence: the
+   * strip printed "too small to see above" over a band the bridge had drawn as a
+   * perfectly visible 2.6px bar.
    */
-  const tiering = useMemo(
-    () => magnitudeTiers(attribution.bands.map((b) => ({ key: b.key, cents: b.cents }))),
+  const smallSteps = useMemo(
+    () => layout.steps.filter((s) => s.kind === "band" && s.belowHairline && s.cents !== 0),
+    [layout.steps],
+  );
+  const largestBandCents = useMemo(
+    () => Math.max(0, ...attribution.bands.map((b) => Math.abs(b.cents))),
     [attribution.bands],
   );
-  const magnified = tiering.tiers.filter((t) => t.magnification > 1);
+  const smallTiering = useMemo(
+    () => magnitudeTiers(smallSteps.map((s) => ({ key: s.key, cents: s.cents }))),
+    [smallSteps],
+  );
 
   const summary = useMemo(() => {
     const delta = formatCentsSigned(attribution.deltaCents);
@@ -197,27 +210,86 @@ export function NetWorthBridge({
         <g aria-hidden="true">
           {layout.steps.map((s) => {
             const dim = hovered !== null && hovered !== s.key;
-            /* A band under a pixel is drawn as a TICK at its true position, not
-               as a floored bar: the position is honest, the mark is visible, and
-               the magnified row below carries the size. */
-            const isTick = s.kind === "band" && s.belowHairline;
+            const clear = () => {
+              setHovered(null);
+              setTooltip(null);
+            };
+            /*
+             * A TOTAL is a level: a rule at its value, spanning the column, with
+             * no area. Drawn from the floor it was a magnitude nobody had —
+             * 77.97px of "$0.00" on the all-time window.
+             */
+            if (s.kind === "total") {
+              return (
+                <g
+                  key={s.key}
+                  className={motion}
+                  style={{ opacity: dim ? DIM_OPACITY : 1 }}
+                  onPointerMove={(e) => {
+                    setHovered(s.key);
+                    moveTooltip(e, s);
+                  }}
+                  onPointerLeave={clear}
+                >
+                  {/* a wide invisible target so a 2px rule is still hoverable */}
+                  <rect x={s.x} y={s.y - 8} width={s.width} height={16} fill="transparent" />
+                  <line
+                    x1={s.x}
+                    y1={s.y}
+                    x2={s.x + s.width}
+                    y2={s.y}
+                    stroke="var(--ink-display)"
+                    strokeWidth={2}
+                  />
+                </g>
+              );
+            }
+            /*
+             * A band the bridge cannot draw as an area gets NO rectangle. A
+             * floored bar would assert a size it does not have and would make
+             * drawn height non-monotone in value — a $130 band drawing shorter
+             * than a $52.95 one. The glyph marks WHERE it happened; the strip
+             * below carries HOW BIG. A band of exactly zero gets neither,
+             * because nothing happened.
+             */
+            if (s.belowHairline) {
+              if (s.cents === 0) return null;
+              const cx = s.x + s.width / 2;
+              return (
+                <g
+                  key={s.key}
+                  className={motion}
+                  style={{ opacity: dim ? DIM_OPACITY : 1 }}
+                  onPointerMove={(e) => {
+                    setHovered(s.key);
+                    moveTooltip(e, s);
+                  }}
+                  onPointerLeave={clear}
+                >
+                  <rect x={s.x} y={s.y - 8} width={s.width} height={16} fill="transparent" />
+                  <path
+                    d={`M ${cx} ${s.y - MARKER} L ${cx + MARKER} ${s.y} L ${cx} ${s.y + MARKER} L ${cx - MARKER} ${s.y} Z`}
+                    fill={s.direction === "up" ? "var(--gain)" : "var(--loss)"}
+                  />
+                </g>
+              );
+            }
             return (
               <rect
                 key={s.key}
                 x={s.x}
-                y={isTick ? s.y - TICK_HEIGHT / 2 : s.y}
+                y={s.y}
                 width={s.width}
-                height={isTick ? TICK_HEIGHT : s.height}
+                height={s.height}
                 rx={1.5}
                 fill={fillOf(s)}
-                stroke={s.kind === "total" ? "var(--line-strong)" : "none"}
-                strokeWidth={s.kind === "total" ? 1 : 0}
                 className={motion}
                 style={{ opacity: dim ? DIM_OPACITY : 1 }}
                 onPointerMove={(e) => {
                   setHovered(s.key);
                   moveTooltip(e, s);
                 }}
+                onPointerLeave={clear}
               />
             );
           })}
@@ -256,6 +328,23 @@ export function NetWorthBridge({
         </div>
       ) : null}
     </div>
+  );
+
+  /**
+   * The axis does not start at zero, and it has to say so.
+   *
+   * `computeWaterfallLayout` has published `axisStartsAtZero` from the start and
+   * nothing rendered it — review grepped and found the flag's only consumers
+   * were its own unit tests, on a chart whose module docstring promises the
+   * omission is "said out loud". A zero-anchored axis would make every band a
+   * sliver here; omitting zero is the right call and an undisclosed one is not.
+   */
+  const axisNote = layout.axisStartsAtZero ? null : (
+    <p className="mt-2 text-xs text-ink-faint">
+      Bar heights are measured from{" "}
+      <span className="figures">{formatCents(layout.axisMinCents)}</span>, not from zero, so the
+      period&rsquo;s movement is visible. The two rules mark the opening and closing totals.
+    </p>
   );
 
   const legend = (
@@ -336,43 +425,58 @@ export function NetWorthBridge({
     );
 
   const magnifier =
-    magnified.length === 0 ? null : (
+    smallTiering.tiers.length === 0 && smallTiering.negligible.length === 0 ? null : (
       <div className="mt-4 border-t border-line pt-3">
-        {magnified.map((tier) => (
-          <div key={tier.index}>
-            <p className="text-xs text-ink-faint">
-              Too small to see above — shown at {tier.magnification.toLocaleString("en-US")}× against{" "}
-              {formatCents(tier.maxCents)}.
-            </p>
-            <ul className="mt-2 space-y-1">
-              {tier.keys.map((rawKey) => {
-                const key = rawKey as AttributionBandKey;
-                // read the band itself rather than a parallel lookup map: one
-                // source, and no fallback that can never fire
-                const band = attribution.bands.find((b) => b.key === key)!;
-                const cents = band.cents;
-                const pct = (Math.abs(cents) / tier.maxCents) * 100;
-                return (
-                  <li key={key} className="grid grid-cols-[7rem_1fr_auto] items-center gap-2 text-xs">
-                    <span className="truncate text-ink-muted">
-                      {ATTRIBUTION_BAND_LABEL[key]}
-                    </span>
-                    <span className="h-2 rounded-sm bg-surface-sunken">
-                      <span
-                        className="block h-full rounded-sm"
-                        style={{
-                          width: `${pct}%`,
-                          background: band.direction === "up" ? "var(--gain)" : "var(--loss)",
-                        }}
-                      />
-                    </span>
-                    <span className="figures">{formatCentsSigned(cents)}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        ))}
+        {smallTiering.tiers.map((tier) => {
+          // stated against the bridge's OWN tallest band, which is the thing a
+          // reader is comparing to — and both ceilings are printed below, so the
+          // factor can be checked against two numbers on the page
+          const factor = Math.max(1, Math.round(largestBandCents / tier.maxCents));
+          return (
+            <div key={tier.index} className="mb-2 last:mb-0">
+              <p className="text-xs text-ink-faint">
+                Too small to draw above. This row&rsquo;s full width is{" "}
+                <span className="figures">{formatCents(tier.maxCents)}</span>; the tallest band above
+                is <span className="figures">{formatCents(largestBandCents)}</span> —{" "}
+                {factor.toLocaleString("en-US")}× larger.
+              </p>
+              <ul className="mt-2 space-y-1">
+                {tier.keys.map((rawKey) => {
+                  const key = rawKey as AttributionBandKey;
+                  const band = attribution.bands.find((b) => b.key === key)!;
+                  const pct = (Math.abs(band.cents) / tier.maxCents) * 100;
+                  return (
+                    <li key={key} className="grid grid-cols-[7rem_1fr_auto] items-center gap-2 text-xs">
+                      <span className="truncate text-ink-muted">{ATTRIBUTION_BAND_LABEL[key]}</span>
+                      <span className="h-2 rounded-sm bg-surface-sunken">
+                        <span
+                          className="block h-full rounded-sm"
+                          style={{
+                            width: `${pct}%`,
+                            background: band.direction === "up" ? "var(--gain)" : "var(--loss)",
+                          }}
+                        />
+                      </span>
+                      <span className="figures">{formatCentsSigned(band.cents)}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          );
+        })}
+        {smallTiering.negligible.length > 0 && (
+          /* Too small to magnify honestly either — past the cap a bar stops
+             being a comparison. Named in prose instead, which is information a
+             700,000× bar is not. */
+          <p className="text-xs text-ink-faint">
+            {smallTiering.negligible
+              .map((k) => ATTRIBUTION_BAND_LABEL[k as AttributionBandKey])
+              .join(", ")}{" "}
+            {smallTiering.negligible.length === 1 ? "is" : "are"} too small to draw even magnified —
+            the exact amounts are in the list above.
+          </p>
+        )}
       </div>
     );
 
@@ -398,6 +502,7 @@ export function NetWorthBridge({
       ) : (
         <>
           {diagram}
+          {axisNote}
           {legend}
           {magnifier}
           {residual}

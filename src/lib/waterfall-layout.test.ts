@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { computeWaterfallLayout, HAIRLINE_PX, type WaterfallInput } from "./waterfall-layout";
+import { computeWaterfallLayout, LEGIBLE_PX, type WaterfallInput } from "./waterfall-layout";
 
 /**
  * The real July–August window, measured. Deliberately NOT round numbers: a
@@ -74,15 +74,10 @@ describe("computeWaterfallLayout — a running total that visibly closes", () =>
     expect(l.axisMaxCents).toBe(l.dataMaxCents);
   });
 
-  test("the lowest total column is drawn, not collapsed onto the floor", () => {
-    /*
-     * Found by looking at it. Net worth on the e2e ledger only rose, so the
-     * OPENING total was the minimum running total, sat exactly on the axis
-     * floor, and rendered with a height of precisely zero — the chart opened
-     * with an invisible bar where its starting point should be.
-     */
-    // a window that only ever rises — which is what the e2e ledger does, and
-    // exactly the shape that put an invisible bar on screen
+  test("a window that only ever rises still puts its opening mark where the opening is", () => {
+    // The shape that produced the original bug: net worth only rose, so the
+    // OPENING was the lowest running total and its bar collapsed onto the floor.
+    // As a level there is nothing to collapse.
     const rising = computeWaterfallLayout(
       {
         openingCents: 6_558_800,
@@ -96,13 +91,10 @@ describe("computeWaterfallLayout — a running total that visibly closes", () =>
     );
     const opening = rising.steps[0]!;
     expect(opening.runningCents).toBe(rising.dataMinCents);
-    expect(opening.height).toBeGreaterThan(HAIRLINE_PX);
-    expect(opening.belowHairline).toBe(false);
-
-    // and in a window whose low point is a BAND, the totals are unaffected
-    const l = computeWaterfallLayout(REAL, OPTS);
-    expect(l.dataMinCents).toBeLessThan(l.steps[0]!.runningCents);
-    expect(l.steps[0]!.height).toBeGreaterThan(HAIRLINE_PX);
+    expect(opening.height).toBe(0);
+    // strictly inside the canvas — the pad keeps it off the bottom edge
+    expect(opening.y).toBeLessThan(OPTS.height);
+    expect(opening.y).toBeGreaterThan(0);
   });
 
   test("padding never pushes a non-negative axis below zero — it snaps to zero instead", () => {
@@ -146,10 +138,45 @@ describe("computeWaterfallLayout — a running total that visibly closes", () =>
     expect(spent.height).toBeCloseTo(y(spent.runningCents) - y(refunds.runningCents), 6);
   });
 
-  test("total columns are drawn from the axis floor, because a total IS its level", () => {
+  test("a total is a LEVEL — a mark at its value, with no height at all", () => {
+    /*
+     * ⛔ The defect this replaces, measured in review on the real ledger: totals
+     * were drawn as bars from the padded floor, so the all-time window rendered
+     * the opening as a **77.97px column labelled "$0.00"** beside a 205.23px
+     * column labelled "$109,322.37" — a drawn ratio of 0.380 against a true
+     * ratio of 0.000. And whenever the opening was also the lowest running
+     * total, its height came out at exactly `height × pad/(1+pad)` — 24.00px —
+     * REGARDLESS of the number printed beneath it.
+     *
+     * A rectangle's height encodes a magnitude. The distance from an arbitrary
+     * floor up to a level is not one.
+     */
     const l = computeWaterfallLayout(REAL, OPTS);
-    const opening = l.steps[0]!;
-    expect(opening.y + opening.height).toBeCloseTo(OPTS.height, 6);
+    const y = (v: number) => OPTS.height * ((l.axisMaxCents - v) / (l.axisMaxCents - l.axisMinCents));
+    for (const total of [l.steps[0]!, l.steps.at(-1)!]) {
+      expect(total.kind).toBe("total");
+      expect(total.height, `${total.key} must have no height`).toBe(0);
+      expect(total.y, `${total.key} sits at its own level`).toBeCloseTo(y(total.cents), 6);
+      expect(total.belowHairline).toBe(false);
+    }
+  });
+
+  test("a total's mark does not move when the floor padding does", () => {
+    // The property the old geometry failed: the pad is decoration, so nothing
+    // measured may depend on it. Both totals must land on the same LEVEL under
+    // any padding, even though the pixel scale differs.
+    const a = computeWaterfallLayout(REAL, { ...OPTS, floorPadFraction: 0 });
+    const b = computeWaterfallLayout(REAL, { ...OPTS, floorPadFraction: 0.5 });
+    for (const [x, z] of [
+      [a.steps[0]!, b.steps[0]!],
+      [a.steps.at(-1)!, b.steps.at(-1)!],
+    ] as const) {
+      expect(x.cents).toBe(z.cents);
+      expect(x.height).toBe(0);
+      expect(z.height).toBe(0);
+      // and the RATIO between the two marks' levels is the data's, not the pad's
+      expect(x.runningCents).toBe(z.runningCents);
+    }
   });
 
   test("a band too small to draw to scale is MARKED, and its geometry is left honest", () => {
@@ -164,7 +191,7 @@ describe("computeWaterfallLayout — a running total that visibly closes", () =>
      */
     const l = computeWaterfallLayout(REAL, OPTS);
     const earned = l.steps.find((s) => s.key === "earned")!;
-    expect(earned.height).toBeLessThan(HAIRLINE_PX);
+    expect(earned.height).toBeLessThan(LEGIBLE_PX);
     expect(earned.belowHairline).toBe(true);
     // …and NOT inflated to a floor
     const y = (v: number) => OPTS.height * ((l.axisMaxCents - v) / (l.axisMaxCents - l.axisMinCents));
@@ -215,6 +242,40 @@ describe("computeWaterfallLayout — a running total that visibly closes", () =>
       }
       expect(s.connectorY!, s.key).toBeCloseTo(y(s.runningCents), 6);
     }
+  });
+
+  test("every CENTS value it publishes is a whole cent", () => {
+    /*
+     * `formatCents` throws on a fractional value, so a float here is not a
+     * rounding nit — it is a crashed dashboard. The padded floor was a float and
+     * took the page down with `RangeError: Invalid cents value: 10259599.92` the
+     * first time anything rendered it.
+     */
+    for (const input of [
+      REAL,
+      { ...REAL, closingCents: 8_000_000 },
+      { openingCents: -3_331, closingCents: 7, bands: [{ key: "a", label: "A", cents: 3_338 }] },
+    ]) {
+      const l = computeWaterfallLayout(input, OPTS);
+      for (const [name, v] of [
+        ["axisMinCents", l.axisMinCents],
+        ["axisMaxCents", l.axisMaxCents],
+        ["dataMinCents", l.dataMinCents],
+        ["dataMaxCents", l.dataMaxCents],
+        ["shortfallCents", l.shortfallCents],
+      ] as const) {
+        expect(Number.isInteger(v), name).toBe(true);
+      }
+      for (const st of l.steps) {
+        expect(Number.isInteger(st.cents), `${st.key}.cents`).toBe(true);
+        expect(Number.isInteger(st.runningCents), `${st.key}.runningCents`).toBe(true);
+      }
+    }
+  });
+
+  test("the padded floor only ever moves DOWN, never up into the data", () => {
+    const l = computeWaterfallLayout(REAL, OPTS);
+    expect(l.axisMinCents).toBeLessThanOrEqual(l.dataMinCents);
   });
 
   test("a completely flat window does not divide by zero", () => {

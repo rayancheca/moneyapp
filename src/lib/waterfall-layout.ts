@@ -29,8 +29,17 @@
  * table lens carries the number, which is what the lens is for.
  */
 
-/** Below this, a band cannot be seen as an area — the renderer draws a rule. */
-export const HAIRLINE_PX = 1;
+/**
+ * Below this a band cannot be read as an area at all.
+ *
+ * THREE pixels, not one, and it is the same number `TIER_RATIO` is derived from
+ * (208px ÷ 69 ≈ 3). One pixel was wrong twice over: a 1px bar is not legible,
+ * and it put the "can the bridge draw this?" threshold on a different footing
+ * from the "should the magnified strip hold this?" threshold, so the strip could
+ * print "too small to see above" over a band the bridge drew perfectly well.
+ * One number, one meaning, and the caption is true by construction.
+ */
+export const LEGIBLE_PX = 3;
 
 export interface WaterfallBandInput {
   key: string;
@@ -51,12 +60,18 @@ export interface WaterfallOptions {
   /** fraction of a column the bar occupies; the rest is the gap */
   barFraction?: number;
   /**
-   * How far below the lowest running total the drawing floor sits, as a
-   * fraction of the span.
+   * Breathing room below the lowest running total, as a fraction of the span.
    *
-   * Without it the lowest total column has a height of exactly ZERO and simply
-   * does not render — measured on the e2e ledger, where net worth only rose, so
-   * the opening total WAS the minimum and the chart opened with an invisible bar.
+   * ⚠️ Purely visual, and that is a correction. It was introduced to give the
+   * lowest TOTAL column a visible height, back when totals were drawn as bars
+   * from the floor — and review measured what that actually produced: on the
+   * all-time window the opening total rendered as a 77.97px bar labelled
+   * "$0.00" beside a 205.23px bar labelled "$109,322.37", a drawn ratio of 0.380
+   * against a true ratio of 0.000. Worse, whenever the opening WAS the lowest
+   * running total its bar height came out at exactly `height × pad/(1+pad)`
+   * regardless of the number printed under it — a column carrying no information
+   * at all. Totals are levels now, not areas, and nothing is measured from the
+   * floor; this only stops a band at the extreme sitting flush against the edge.
    */
   floorPadFraction?: number;
 }
@@ -77,7 +92,11 @@ export interface WaterfallStep {
   width: number;
   y: number;
   height: number;
-  /** the height is under one device pixel — draw a rule and say so */
+  /**
+   * A BAND the bridge cannot draw as an area. The renderer must mark it and let
+   * the magnified strip carry its size. Always false for a total, which has no
+   * area to be too small.
+   */
   belowHairline: boolean;
   /** y of the level this step leaves behind, for the connector to the next; null on the last */
   connectorY: number | null;
@@ -102,7 +121,7 @@ export interface WaterfallLayout {
 }
 
 const BAR_FRACTION = 0.62;
-const FLOOR_PAD_FRACTION = 0.12;
+const FLOOR_PAD_FRACTION = 0.06;
 
 function directionOf(cents: number): WaterfallDirection {
   if (cents > 0) return "up";
@@ -143,7 +162,15 @@ export function computeWaterfallLayout(
    * worse lie than a shorter column, and snapping to zero is strictly better
    * because it makes `axisStartsAtZero` honestly true.
    */
-  const padded = dataMinCents - (dataMaxCents - dataMinCents) * floorPadFraction;
+  /*
+   * Floored to a whole cent, and that is not a nicety. Every money value in this
+   * app is an integer number of cents and `formatCents` THROWS on anything else
+   * — rendering the axis floor crashed the dashboard with
+   * `RangeError: Invalid cents value: 10259599.92` the moment the disclosure was
+   * added. Floor rather than round, so the pad can only ever grow the gap and
+   * never pull the axis up into the data.
+   */
+  const padded = Math.floor(dataMinCents - (dataMaxCents - dataMinCents) * floorPadFraction);
   const axisMinCents = dataMinCents >= 0 ? Math.max(0, padded) : padded;
   const axisMaxCents = dataMaxCents;
   const span = axisMaxCents - axisMinCents;
@@ -151,7 +178,6 @@ export function computeWaterfallLayout(
   // A window where nothing moved has no extent: every level is the same point,
   // so every height is zero rather than 0/0.
   const y = (v: number): number => (span === 0 ? height : height * ((axisMaxCents - v) / span));
-  const floorY = height;
 
   const columns = input.bands.length + 2;
   const colWidth = width / columns;
@@ -160,22 +186,32 @@ export function computeWaterfallLayout(
 
   const steps: WaterfallStep[] = [];
 
+  /*
+   * ⛔ A total is a LEVEL and is drawn with NO HEIGHT — a rule at `y`, never a
+   * bar from the floor.
+   *
+   * Bars from a floor were the shipped version and review measured what they
+   * said: the all-time window drew the opening as a 77.97px column labelled
+   * "$0.00". A rectangle's height encodes a magnitude, and the distance from an
+   * arbitrary padded floor up to a level is not one — it changes when the pad
+   * changes and stays put when the total does. The two totals are printed as
+   * text beside their marks, which is the only honest way to state a level.
+   */
   const pushTotal = (key: string, label: string, cents: number, index: number): void => {
-    const top = y(cents);
     steps.push({
       key,
       label,
       kind: "total",
       cents,
       runningCents: cents,
-      // A total is a LEVEL, not a movement — it has no direction to be, and
-      // colouring it up or down would claim one.
+      // no direction either: a level has none, and colouring one up or down
+      // would claim a movement that is not there
       direction: "flat",
       x: xOf(index),
       width: barWidth,
-      y: top,
-      height: floorY - top,
-      belowHairline: floorY - top < HAIRLINE_PX,
+      y: y(cents),
+      height: 0,
+      belowHairline: false,
       connectorY: null,
     });
   };
@@ -200,7 +236,7 @@ export function computeWaterfallLayout(
       // a band floats between its own two levels — never from the floor
       y: Math.min(yFrom, yTo),
       height: bandHeight,
-      belowHairline: bandHeight < HAIRLINE_PX,
+      belowHairline: bandHeight < LEGIBLE_PX,
       connectorY: null,
     });
   });

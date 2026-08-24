@@ -36,6 +36,17 @@ test("the bridge decomposes the hero number and states where it started and ende
   for (const label of ["Earned", "Refunds", "Spent", "Moved", "Market", "Unexplained"]) {
     await expect(page.getByText(label, { exact: true })).toBeVisible();
   }
+
+  /*
+   * The axis omits zero — it has to, or an $82k→$109k bridge makes every band a
+   * sliver — and it says so. The flag was published by the layout from the start
+   * and rendered nowhere until review grepped for its consumers and found only
+   * its own unit tests.
+   */
+  await expect(
+    page.getByText(/Bar heights are measured from .*, not from zero/),
+  ).toBeVisible();
+  await expect(page.getByText(/The two rules mark the opening and closing totals\./)).toBeVisible();
 });
 
 test("a band too small to draw is redrawn on its own axis, with the magnification stated", async ({
@@ -50,7 +61,15 @@ test("a band too small to draw is redrawn on its own axis, with the magnificatio
   await page.goto("/?chart=bridge");
   await bridgeRange(page).getByRole("button", { name: "Year to date" }).click();
 
-  await expect(page.getByText(/Too small to see above — shown at 77× against \$521\.42\./)).toBeVisible();
+  // BOTH ceilings are printed, so the stated factor is checkable against two
+  // numbers on the page rather than taken on trust: $39,934.90 / $521.42 = 77.
+  // matched in pieces, not as one long regex: the copy renders a typographic
+  // apostrophe (&rsquo;) and a straight one in the pattern silently never matches
+  const caption = page.getByText(/Too small to draw above/);
+  await expect(caption).toBeVisible();
+  await expect(caption).toContainText("full width is $521.42");
+  await expect(caption).toContainText("the tallest band above is $39,934.90");
+  await expect(caption).toContainText("77× larger");
   await expect(page.getByText("-$521.42").first()).toBeVisible();
 });
 
