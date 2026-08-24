@@ -231,48 +231,77 @@ window bound was unpinned (`lte` → `lt` survived all 13 tests); and
 `reason: "opening"` was **dead code** for a replaying account — removed rather
 than defended. Six further surviving mutants killed. All 14 now die.
 
-### Pass 62b — the waterfall, and the surface it lives on
+### ✅ Pass 62b — the waterfall, and the scale problem behind it — SHIPPED 2026-08-24
 
-**Part one shipped 2026-08-24** (`34756ad`): `src/lib/waterfall-layout.ts` at
-100%, plus the contrast gate the palette test was missing. Two geometry decisions
-are made and pinned:
+The bridge is the dashboard's **eighth hero view** (`/?chart=bridge`), server-
+precomputed per range pill like the Sankey beside it.
 
-- **The axis is the excursion, not zero**, and `axisStartsAtZero` is a first-class
-  output so the renderer must disclose it. Zero-anchored, `earned` is 0.05% of the
-  height on the real window.
-- **A band too small to draw is MARKED, never floored.** `deviation-layout`'s 2px
-  minimum is right for bars that need not sum to anything; a waterfall's whole
-  claim is that the parts add up, and a floored bar makes the geometry visibly not
-  close. `earned` is 0.18px and stays 0.18px; `belowHairline` says so.
+> **The owner, on the charts generally:** *"a lot of the graphs are comparing low
+> numbers like $300 balance to a 100k account which should be even legible in a
+> graph so we have to figure out a way to display this properly."*
+>
+> **Measured before designing anything.** The active accounts span **seven
+> million to one**, and on a 208px linear axis:
+>
+> | account | balance | height |
+> |---|---|---|
+> | Robinhood Brokerage | $70,291.75 | 208px |
+> | Chase Checking | $3,007.60 | 8.9px |
+> | Discover | −$557.62 | **1.65px** |
+> | Robinhood Cash | $113.88 | **0.34px** |
+> | SoFi Savings | $0.10 | **0.00px** |
+>
+> **Five of ten accounts draw under one device pixel.**
 
-**Still to build — everything is specified, nothing is decided-by-default:**
+`src/lib/magnitude-tiers.ts` is the answer, and it is general. Values split into
+tiers; each tier gets an axis scaled to its own largest member and **states its
+magnification**. Robinhood Cash goes from 0.34px to **42.5px**. Four refusals are
+written into the module: no log scale (money is not read logarithmically and a
+log axis has no sign and no zero), no minimum-bar floor (it misreports size and
+breaks conservation), no broken axis, and **no unlimited magnification** — past
+1000× a value stops being a shape and becomes a sentence.
 
-- The bespoke-SVG renderer. ⛔ The plan's cited precedent is wrong:
-  `AllocationDonut` is **recharts**, not bespoke SVG. `SankeyChart` is the real
-  exemplar — copy its `<title>`-not-`role="img"` a11y model (role="img" prunes
-  the nested drill `<a>` from the a11y tree), its modified-click passthrough, and
-  its `useId()` for element ids (ChartFocus mounts the panel TWICE).
-- ⛔ **Hue can never be the only carrier of direction.** Measured: `--positive`
-  and `--negative` are contrast **1.00** apart in light theme, 1.35 in dark. The
-  house answer is PnlCalendar's aria-hidden ▲/▼ over neutral numerals. A test now
-  pins this as a limit.
-- **Split `moved` into named bands.** The plan's own spec lists *family
-  pass-through* as a component and it is currently inside `moved`. Measured:
-  `Transfers > Family pass-through` is **+$43,863.44 across 28 rows, all in Chase
-  Checking, all unpaired** — and `docs/adversarial-review-2026-07-27.md` finding
-  81 records that **every one of the top eight single-day net-worth moves in the
-  series is a Family pass-through row**. Naming it is most of this band's value.
-- **Where it lives.** `PeriodSelector` already takes a `basePath`, and
-  `resolvePeriod` + `stepPeriodParams` give a window and its predecessor — the
-  "moved from X to Y" framing, ready. A new route costs 8 visual baselines, 2 axe
-  tests and 3 overflow tests (`overflow.spec.ts` enumerates `src/app/**/page.tsx`
-  off the filesystem and FAILS unless the route is listed). A dashboard chart
-  option instead auto-generates its own tests from `DASHBOARD_VIEW_SPEC`.
-- **Seed the fixture first.** The e2e taxonomy has no `Family pass-through`, and
-  `unexplained` has no seeded non-zero case, so those bands would photograph as
-  structurally $0 in every baseline — the pass-53 blindness, exactly.
+Applied in two places:
 
-### Pass 63 — Runway, and the car priced all-in### Pass 63 — Runway, and the car priced all-in
+- **The bridge.** Bands the chart cannot draw get no rectangle; a diamond marks
+  where, and a strip below redraws them on their own axis with BOTH ceilings
+  printed so the factor is checkable.
+- **The per-account and split hero charts.** Lines cannot be tiered — two scales
+  in one frame is a dual axis, which misleads worse — so the chart names the
+  series it is failing to draw and points at the selector above it. 🔴 I wrote
+  the negative case as "split is comparable, so it discloses nothing" and was
+  wrong: assets ~$134k against ~$1.1k owed fires it too, correctly.
+
+> **⚠️ The adversarial review found six real defects in the first renderer, and
+> the worst was a lie of exactly the kind the pass exists to prevent.**
+>
+> - **Totals drawn as bars from a padded floor encode nothing.** The all-time
+>   window rendered the opening total as a **77.97px column labelled "$0.00"**
+>   beside a 205.23px column labelled "$109,322.37" — a drawn ratio of 0.380
+>   against a true ratio of 0.000. And where the opening was also the lowest
+>   running total, its height was a **constant 24.00px whatever the value**,
+>   determined entirely by the padding. Totals are RULES at their level now.
+> - **I floored the bars my own layout exists to refuse.** Sub-pixel bands were
+>   drawn as a 2.5px tick — bigger than the 2px floor `waterfall-layout` names as
+>   the thing it must not do — making drawn height non-monotone in value and
+>   drawing $0.00 and $110.21 identically.
+> - **`axisStartsAtZero` was computed and never rendered**, on a chart whose
+>   docstring promises the omission is "said out loud".
+> - **The magnification was print-only** — "77×" matched no rendered length.
+> - **The caption and the drawing used different denominators**, so the strip
+>   could say "too small to see above" over a visible 2.6px bar.
+> - Hover was never cleared inside the SVG; `negligible` had no consumer.
+>
+> And one I caused while fixing: rendering the padded floor crashed the dashboard
+> with `RangeError: Invalid cents value: 10259599.92`. Every money value here is
+> an integer number of cents and `formatCents` throws otherwise.
+
+**Still open on this track** — the same measurement applies to `/investments`'
+allocation donut, the holdings table, and `/accounts`. `magnitudeTiers` is built
+and tested; applying it is a scheduled slice of **pass 78** (the focus/lens sweep
+over those surfaces).
+
+### Pass 63 — Runway, and the car priced all-in### Pass 63 — Runway, and the car priced all-in### Pass 63 — Runway, and the car priced all-in
 
 Two decision cards over one new engine.
 
