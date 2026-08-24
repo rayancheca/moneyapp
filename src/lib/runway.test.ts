@@ -6,6 +6,8 @@ import { RUNWAY_STATED_MONTHS_MAX, runway, type RunwayInput } from "./runway";
  * existed:
  *
  *   liquid        $3,121.59   Chase $3,007.60 + RH Cash $113.88 + SoFi $0.11
+ *   cards owed      $925.61   Discover $557.62 + Venture X $367.99
+ *   net cash      $2,195.98
  *   investments $107,126.39   Robinhood Brokerage $70,291.75 + Crypto $36,834.64
  *   income rate   $4,537.00   incomeExpectation().basis, levelled
  *   spend         $8,025.92   monthlySpending, mean of the 6 complete months
@@ -13,8 +15,12 @@ import { RUNWAY_STATED_MONTHS_MAX, runway, type RunwayInput } from "./runway";
  *                             a measurement of behaviour rather than a rate
  *
  *   net burn      $3,488.92/month
- *   liquid runway      0.895 months → 27 days
- *   with investments  31.6  months → past the stated horizon
+ *   net-cash runway    0.629 months → 19 days
+ *   with investments  31.3  months → past the stated horizon
+ *
+ * Card debt is netted off the cash base and shown as its own subtraction. It is
+ * spending from months already past that has not settled, so no other term
+ * carries it — and at this scale it is eight days of a twenty-seven-day answer.
  *
  * ⛔ The two decisions behind this shape were the owner's, taken 2026-08-24:
  * BOTH cash bases are published (liquid headline, portfolio as a second line),
@@ -25,6 +31,7 @@ import { RUNWAY_STATED_MONTHS_MAX, runway, type RunwayInput } from "./runway";
  */
 const REAL: RunwayInput = {
   liquidCents: 312159,
+  cardDebtCents: 92561,
   investableCents: 10712639,
   monthlyIncomeCents: 453700,
   monthlySpendCents: 802592,
@@ -35,18 +42,32 @@ describe("runway — the real position", () => {
     expect(runway(REAL)).toMatchObject({ kind: "burning", netBurnCents: 348892 });
   });
 
-  test("the headline horizon spends down LIQUID cash only", () => {
-    const { liquid } = runway(REAL);
-    expect(liquid.cents).toBe(312159);
-    expect(liquid.months).toBeCloseTo(0.8947, 4);
-    expect(liquid.label).toBe("27 days");
-    expect(liquid.isBeyondHorizon).toBe(false);
+  test("the headline horizon spends down NET cash — cards already subtracted", () => {
+    const r = runway(REAL);
+    expect(r.netCashCents).toBe(219598);
+    expect(r.liquid.cents).toBe(219598);
+    expect(r.liquid.months).toBeCloseTo(0.6294, 4);
+    expect(r.liquid.label).toBe("19 days");
+    expect(r.liquid.isBeyondHorizon).toBe(false);
+  });
+
+  test("cards shorten the runway rather than being ignored", () => {
+    const ignored = runway({ ...REAL, cardDebtCents: 0 });
+    expect(ignored.liquid.label).toBe("27 days");
+    expect(runway(REAL).liquid.months).toBeLessThan(ignored.liquid.months ?? 0);
+  });
+
+  test("owing more than the cash on hand is no cash left, not negative runway", () => {
+    const r = runway({ ...REAL, cardDebtCents: 500000 });
+    expect(r.netCashCents).toBeLessThan(0);
+    expect(r.liquid).toMatchObject({ months: 0, label: "none left" });
+    expect(r.headline).toBe("No cash left");
   });
 
   test("the second horizon adds the portfolio, and refuses to date it precisely", () => {
     const { withInvestments } = runway(REAL);
-    expect(withInvestments.cents).toBe(312159 + 10712639);
-    expect(withInvestments.months).toBeCloseTo(31.6, 1);
+    expect(withInvestments.cents).toBe(219598 + 10712639);
+    expect(withInvestments.months).toBeCloseTo(31.3, 1);
     // 31.6 months is arithmetic, not a forecast: it extrapolates a six-month
     // spend average and a levelled rate two and a half years out. Publishing
     // "31.6 months" would claim a precision neither input carries.
@@ -56,13 +77,14 @@ describe("runway — the real position", () => {
 
   test("headline and explanation come from the same branch as the figure", () => {
     const r = runway(REAL);
-    expect(r.headline).toBe("27 days of cash");
+    expect(r.headline).toBe("19 days of cash");
     expect(r.explanation).toMatch(/spend more than you earn/i);
   });
 
   test("lists exactly the four inputs it used, as its assumptions", () => {
     expect(runway(REAL).assumptions).toEqual([
       { id: "liquid", label: "Cash you can spend today", cents: 312159 },
+      { id: "cards", label: "Less what you owe on cards", cents: 92561 },
       { id: "spend", label: "What you spend a month", cents: 802592 },
       { id: "income", label: "What you earn a month", cents: 453700 },
       { id: "investments", label: "What selling investments would add", cents: 10712639 },
@@ -110,18 +132,18 @@ describe("runway — income that covers spending", () => {
 
 describe("runway — cash that has already run out", () => {
   test("an empty account is zero months, never a negative one", () => {
-    const r = runway({ ...REAL, liquidCents: 0 });
+    const r = runway({ ...REAL, liquidCents: 0, cardDebtCents: 0 });
     expect(r.liquid).toMatchObject({ months: 0, label: "none left" });
   });
 
   test("an overdrawn account is zero months, never a negative one", () => {
-    const r = runway({ ...REAL, liquidCents: -25000 });
+    const r = runway({ ...REAL, liquidCents: -25000, cardDebtCents: 0 });
     expect(r.liquid).toMatchObject({ months: 0, label: "none left" });
     expect(r.headline).toBe("No cash left");
   });
 
   test("the portfolio still carries a horizon when the current account is empty", () => {
-    const r = runway({ ...REAL, liquidCents: 0 });
+    const r = runway({ ...REAL, liquidCents: 0, cardDebtCents: 0 });
     expect(r.withInvestments.months).toBeGreaterThan(0);
     expect(r.withInvestments.label).toBe("more than 2 years");
   });
@@ -134,7 +156,7 @@ describe("runway — cash that has already run out", () => {
  */
 describe("runway — how long is said", () => {
   const withBurn = (liquidCents: number): string =>
-    runway({ ...REAL, liquidCents }).liquid.label;
+    runway({ ...REAL, liquidCents, cardDebtCents: 0 }).liquid.label;
 
   test("under a month is said in days", () => {
     expect(withBurn(345000)).toBe("30 days");
@@ -170,8 +192,8 @@ describe("runway — how long is said", () => {
 
   test("the horizon cap is checkable, not magic", () => {
     expect(RUNWAY_STATED_MONTHS_MAX).toBe(24);
-    const at = runway({ ...REAL, liquidCents: 348892 * 24 });
-    const under = runway({ ...REAL, liquidCents: 348892 * 23 });
+    const at = runway({ ...REAL, liquidCents: 348892 * 24, cardDebtCents: 0 });
+    const under = runway({ ...REAL, liquidCents: 348892 * 23, cardDebtCents: 0 });
     expect(at.liquid.isBeyondHorizon).toBe(true);
     expect(under.liquid.isBeyondHorizon).toBe(false);
   });

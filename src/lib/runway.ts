@@ -45,6 +45,17 @@ const WHOLE_MONTHS_FROM = 10;
 export interface RunwayInput {
   /** cash spendable today without selling anything */
   liquidCents: number;
+  /**
+   * Positive magnitude owed on credit cards.
+   *
+   * SUBTRACTED from the cash base, and visibly. This is spending from months
+   * already past that has not been settled, so nothing else in the arithmetic
+   * carries it: the spend term is a rate for FUTURE months, and the committed
+   * book holds recurring series only. Measured 2026-08-24 it is $925.61 against
+   * $3,121.59 of cash — eight days of a twenty-seven-day answer, which is too
+   * much of the headline to leave out.
+   */
+  cardDebtCents: number;
   /** what liquidating the portfolio would add; negative (margin) adds nothing */
   investableCents: number;
   /** the income RATE per month — see `incomeBasis` */
@@ -56,7 +67,7 @@ export interface RunwayInput {
 export type RunwayKind = "burning" | "covered";
 
 export interface RunwayHorizon {
-  /** the cash base this horizon spends down */
+  /** the cash base this horizon spends down, cards already netted off */
   cents: number;
   /**
    * Months of runway, true and UNCAPPED, or null when nothing is burning.
@@ -70,7 +81,7 @@ export interface RunwayHorizon {
   isBeyondHorizon: boolean;
 }
 
-export type RunwayAssumptionId = "liquid" | "spend" | "income" | "investments";
+export type RunwayAssumptionId = "liquid" | "cards" | "spend" | "income" | "investments";
 
 /** One input the answer rests on, for the card to list and make clickable. */
 export interface RunwayAssumption {
@@ -81,6 +92,8 @@ export interface RunwayAssumption {
 
 export interface Runway {
   kind: RunwayKind;
+  /** `liquidCents − cardDebtCents`: what the headline horizon actually spends */
+  netCashCents: number;
   /** spend − income. Positive is burning; zero or less is covered. */
   netBurnCents: number;
   liquid: RunwayHorizon;
@@ -116,17 +129,19 @@ function horizon(cents: number, netBurnCents: number): RunwayHorizon {
 }
 
 export function runway(input: RunwayInput): Runway {
-  const { liquidCents, monthlyIncomeCents, monthlySpendCents } = input;
+  const { liquidCents, cardDebtCents, monthlyIncomeCents, monthlySpendCents } = input;
   // Margin debt is representable but must never LENGTHEN the runway: selling a
   // portfolio you owe more than cannot fund a month of groceries.
   const investableCents = Math.max(0, input.investableCents);
   const netBurnCents = monthlySpendCents - monthlyIncomeCents;
+  const netCashCents = liquidCents - cardDebtCents;
 
-  const liquid = horizon(liquidCents, netBurnCents);
-  const withInvestments = horizon(liquidCents + investableCents, netBurnCents);
+  const liquid = horizon(netCashCents, netBurnCents);
+  const withInvestments = horizon(netCashCents + investableCents, netBurnCents);
 
   const assumptions: RunwayAssumption[] = [
     { id: "liquid", label: "Cash you can spend today", cents: liquidCents },
+    { id: "cards", label: "Less what you owe on cards", cents: cardDebtCents },
     { id: "spend", label: "What you spend a month", cents: monthlySpendCents },
     { id: "income", label: "What you earn a month", cents: monthlyIncomeCents },
     { id: "investments", label: "What selling investments would add", cents: investableCents },
@@ -135,6 +150,7 @@ export function runway(input: RunwayInput): Runway {
   if (netBurnCents <= 0) {
     return {
       kind: "covered",
+      netCashCents,
       netBurnCents,
       liquid,
       withInvestments,
@@ -148,6 +164,7 @@ export function runway(input: RunwayInput): Runway {
 
   return {
     kind: "burning",
+    netCashCents,
     netBurnCents,
     liquid,
     withInvestments,

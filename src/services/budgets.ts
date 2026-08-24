@@ -747,6 +747,29 @@ export function budgetOverdue(
 ): BudgetTail {
   const seriesIds = recurringSeriesIdsForCategory(db, categoryId);
   if (seriesIds.size === 0) return { totalCents: 0, series: [] };
+  return overdueForSeries(db, seriesIds, periodStart, today);
+}
+
+/**
+ * The overdue rule itself, over an explicit set of series.
+ *
+ * Extracted from `budgetOverdue` so the committed book can ask the same
+ * question of EVERY bill series at once. It cannot reuse `budgetOverdue`
+ * directly: that is scoped to a category subtree, and unioning it over all
+ * categories double-counts every series whose category has a parent — measured
+ * 2026-08-24, walking the category tree reported $128.42 overdue where the
+ * truth is $64.21, because Utilities and its Internet/Electricity children each
+ * claimed the same two bills.
+ *
+ * One implementation, so "is this bill late?" cannot get two answers.
+ */
+export function overdueForSeries(
+  db: AppDatabase,
+  seriesIds: ReadonlySet<string>,
+  periodStart: string,
+  today: string,
+): BudgetTail {
+  if (seriesIds.size === 0) return { totalCents: 0, series: [] };
   if (compareDates(periodStart, today) > 0) return { totalCents: 0, series: [] };
 
   const rows = db
