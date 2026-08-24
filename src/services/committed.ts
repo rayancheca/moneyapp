@@ -65,10 +65,20 @@ export function spendBaseline(
 
   const byMonth = new Map<string, number>();
   for (const c of cells) {
-    if (c.month === currentMonth) continue;
     byMonth.set(c.month, (byMonth.get(c.month) ?? 0) + c.spentCents);
   }
 
+  /*
+   * The window, and the ONLY thing excluding the incomplete current month: it
+   * runs from `currentMonth − months` to `currentMonth − 1`, so the current key
+   * is never read out of `byMonth` above.
+   *
+   * ⚠️ There was a `if (c.month === currentMonth) continue;` filter here that
+   * looked like the exclusion and was dead — a mutation that deleted it changed
+   * no result. Dead code shaped like a guard is worse than none, because the
+   * next edit to this loop trusts it. Anything that shortens this list is what
+   * has to keep the current month out.
+   */
   const keys: string[] = [];
   for (let i = months; i >= 1; i--) keys.push(monthKey(addCalendarMonths(`${currentMonth}-01`, -i)));
 
@@ -81,14 +91,32 @@ export function spendBaseline(
   };
 }
 
-/** Every live series that bills money out — income deliberately excluded. */
+/**
+ * The kinds that mean "a recurring payment I owe".
+ *
+ * 🔴 NOT simply "everything that is not income". `transfer` series move money
+ * between accounts the owner already holds — nothing leaves, so committing them
+ * to an outflow book counts money that never goes anywhere. Measured on the e2e
+ * fixture, the looser filter admitted eight transfer series and published
+ * $7,530.90 a month of "committed" spending against a $4,799.17 total — a
+ * subset larger than the set it claims to be part of.
+ *
+ * `other` is excluded for a weaker but sufficient reason: it is the catch-all,
+ * it is where a misread transfer lands, and a runway should not lean on a
+ * series nobody has said what it is. A genuine bill sitting in `other` is fixed
+ * by classifying it, which the recurring UI already does.
+ */
+const COMMITTED_KINDS = ["bill", "subscription"] as const;
+
+/** Every live series that represents a payment owed. */
 function moneyOutSeriesIds(db: AppDatabase): Set<string> {
   const rows = db
     .select({ id: recurringSeries.id, kind: recurringSeries.kind })
     .from(recurringSeries)
     .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
     .all();
-  return new Set(rows.filter((r) => r.kind !== "income").map((r) => r.id));
+  const kinds = new Set<string>(COMMITTED_KINDS);
+  return new Set(rows.filter((r) => kinds.has(r.kind)).map((r) => r.id));
 }
 
 function toCommitted(o: {
@@ -233,6 +261,15 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
    * the bill he actually pays in September ($921.38) are different true numbers.
    * Taking the first occurrence of each series is what "what does it cost a
    * month" means.
+   */
+  /*
+   * ⚠️ Taking the FIRST occurrence per series is intent, not arithmetic: a
+   * mutation that took the last survived, because `projectOccurrences` copies
+   * one `nextExpectedAmountCents` onto every occurrence it emits, so a series'
+   * occurrences are all the same size and first and last cannot differ. An
+   * equivalent mutant, recorded rather than papered over with a test that would
+   * only assert the fixture back to itself. If per-occurrence amounts ever
+   * become real, "the next bill" is the answer this wants.
    */
   const firstByCadence = new Map<string, number>();
   for (const o of occurrences) {

@@ -50,7 +50,7 @@ export const RESERVED_JARGON_PHRASES = [
   "of cash",
   "Net cash",
   "Running down by",
-  "already committed",
+  "Committed bills",
   "all in",
   "a renewal is not in the ledger",
   "not charged yet",

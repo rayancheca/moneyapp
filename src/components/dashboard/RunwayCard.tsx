@@ -144,20 +144,33 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
         </dl>
       )}
 
+      {/* ⛔ This deliberately does NOT say "of that spending, X is committed".
+          Committed is a FORECAST and the spend baseline is a MEASUREMENT, so the
+          subset that phrasing asserts is not guaranteed: measured on the e2e
+          fixture, committed bills come to more per month than the six-month
+          spend average, and the sentence would have been simply false there.
+          The standalone claim is true either way, and the disagreement gets its
+          own line rather than being phrased around. */}
       {committed.totalCents > 0 && (
         <div className="mt-3 border-t border-line pt-3 text-xs leading-relaxed text-ink-muted">
           <p className="flex items-start gap-1.5">
             <span>
-              Of that spending, <Money cents={committed.perMonthCents} className="text-ink" /> a month is{" "}
-              <span className="text-ink">already committed</span> —{" "}
+              <span className="text-ink">Committed bills</span> come to{" "}
+              <Money cents={committed.perMonthCents} className="text-ink" /> a month —{" "}
               {committed.lines
                 .slice(0, 3)
                 .map((l) => l.name)
                 .join(", ")}
               {committed.lines.length > 3 ? `, and ${committed.lines.length - 3} more` : ""}.
             </span>
-            <InfoTip term="already committed">{RUNWAY_JARGON.committed}</InfoTip>
+            <InfoTip term="Committed bills">{RUNWAY_JARGON.committed}</InfoTip>
           </p>
+          {committed.perMonthCents > spend.monthlyCents && (
+            <p className="mt-1">
+              That is more than the monthly average above, so some of it has not been landing as
+              measured spending.
+            </p>
+          )}
           {committed.overdueCents > 0 && (
             <p className="mt-1 text-negative">
               {formatCents(committed.overdueCents)} of it came due this month and never posted.

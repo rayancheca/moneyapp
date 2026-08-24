@@ -69,7 +69,7 @@ function setBalance(accountId: string, day: string, balanceCents: number): void 
 
 function addSeries(opts: {
   name: string;
-  kind: "bill" | "income";
+  kind: "bill" | "income" | "subscription" | "transfer" | "other";
   nextExpectedOn: string;
   amountCents: number;
   userCategoryId?: string | null;
@@ -177,6 +177,31 @@ describe("committedBook", () => {
     expect(book.totalCents).toBe(1200000);
     expect(book.inflowCents).toBe(0);
     expect(book.inflowCount).toBe(0);
+  });
+
+  /**
+   * A transfer moves money between accounts the owner already holds — nothing
+   * leaves, so it is not a committed outflow. Measured on the e2e fixture, the
+   * looser "anything but income" filter admitted eight transfer series and
+   * published $7,530.90/month of committed spending against a $4,799.17/month
+   * total.
+   */
+  test("a transfer between own accounts is not a commitment", () => {
+    addSeries({ name: "Rent", kind: "bill", nextExpectedOn: "2026-09-01", amountCents: -100000 });
+    addSeries({ name: "To savings", kind: "transfer", nextExpectedOn: "2026-09-02", amountCents: -50000 });
+    const book = committedBook(bundle.db, TODAY, 12);
+    expect(book.lines.map((l) => l.name)).toEqual(["Rent"]);
+    expect(book.totalCents).toBe(1200000);
+  });
+
+  test("an unclassified series is not a commitment either", () => {
+    addSeries({ name: "Something", kind: "other", nextExpectedOn: "2026-09-02", amountCents: -50000 });
+    expect(committedBook(bundle.db, TODAY, 12).totalCents).toBe(0);
+  });
+
+  test("a subscription IS a commitment", () => {
+    addSeries({ name: "Netflix", kind: "subscription", nextExpectedOn: "2026-09-02", amountCents: -1549 });
+    expect(committedBook(bundle.db, TODAY, 12).totalCents).toBe(1549 * 12);
   });
 
   test("a series that ends inside the horizon stops there", () => {
