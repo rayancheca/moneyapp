@@ -6,6 +6,7 @@ import { DAILY_SERIES_RANGES, type ChartRange } from "@/lib/chart-range";
 import { sharedCoverageChange } from "@/lib/coverage-label";
 import { compareDates } from "@/lib/dates";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
+import { magnitudeTiers } from "@/lib/magnitude-tiers";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import type { BridgedDashboardSeries } from "@/lib/multi-series-bridge";
 import { scrubValueText } from "@/lib/scrub";
@@ -134,6 +135,41 @@ export function DashboardModePanel({
     () => new Map((primary?.points ?? []).map((p) => [p.day, p.inTransitCents] as const)),
     [primary],
   );
+
+  /**
+   * The lines this chart cannot show, named rather than left as a flat smear on
+   * the baseline.
+   *
+   * ⚠️ MEASURED on the real ledger: the active accounts span **seven million to
+   * one**, and at this chart's height five of ten draw under a single device
+   * pixel — Robinhood Cash at $113.88 is 0.34px against Robinhood Brokerage's
+   * $70,291.75. A reader cannot tell an empty account from one holding a hundred
+   * dollars, and nothing on screen admitted it.
+   *
+   * Lines cannot be tiered the way bars can — two lines on two scales in one
+   * frame is a dual axis, which is its own dishonesty. So the chart says which
+   * series it is failing to show, and the reader can select those on their own
+   * and get a frame scaled to them.
+   */
+  const tooSmallToSee = useMemo(() => {
+    if (series.length < 2) return [];
+    const latest = series.map((s) => {
+      const covered = s.points.filter((p) => p.valueCents !== null);
+      return {
+        key: s.key,
+        label: frameLabel(s),
+        cents: covered[covered.length - 1]?.valueCents ?? 0,
+      };
+    });
+    const tiers = magnitudeTiers(latest);
+    // tier 0 is what the shared axis can render; everything after it, plus what
+    // is too small even to magnify, is what this frame cannot show
+    const hidden = new Set([
+      ...tiers.tiers.slice(1).flatMap((t) => t.keys),
+      ...tiers.negligible,
+    ]);
+    return latest.filter((l) => hidden.has(l.key) && l.cents !== 0);
+  }, [series]);
 
   const owed = primary?.owedFrame ?? false;
   const accentOf = useCallback(
@@ -297,6 +333,25 @@ export function DashboardModePanel({
           );
         }}
       />
+      {tooSmallToSee.length > 0 && (
+        /* The chart admitting what it cannot draw. One shared linear axis is the
+           right frame for lines — a second scale in the same frame is a dual
+           axis, which misleads worse — so the honest move is to name the series
+           it is failing to show and point at the fix that already exists. */
+        <p className="mt-2 text-xs text-ink-faint">
+          Too small to see beside the rest:{" "}
+          {tooSmallToSee.map((t, i) => (
+            <span key={t.key}>
+              {i > 0 && ", "}
+              {t.label} <span className="figures">{formatCents(t.cents)}</span>
+            </span>
+          ))}
+          .{" "}
+          {tooSmallToSee.length === 1
+            ? "Pick it on its own above to read the line."
+            : "Pick them on their own above to read the lines."}
+        </p>
+      )}
     </div>
   );
 }
