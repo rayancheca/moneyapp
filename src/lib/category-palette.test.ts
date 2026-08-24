@@ -120,6 +120,60 @@ describe("contrast contract", () => {
     expect(contrastRatio(lightInfo, parseOklchToken(light, "--surface"))).toBeGreaterThanOrEqual(3);
     expect(contrastRatio(darkInfo, parseOklchToken(dark, "--surface"))).toBeGreaterThanOrEqual(3);
   });
+
+  /**
+   * The signed tones as GRAPHICAL OBJECTS — a bar, a wedge, a fill — which is a
+   * different bar from the two this file already holds. `--cat-*` solids are
+   * gated on every surface, and `--positive`/`--negative` are gated as TEXT on
+   * their own tint, but nothing asserted them as shapes on a page background.
+   *
+   * The measured values pass comfortably (≥4.98 light, ≥5.53 dark); the point is
+   * that they were ungated, so a token tweak could have quietly dropped a signed
+   * chart below the line with every test still green.
+   */
+  for (const [label, block] of [
+    ["light", light],
+    ["dark", dark],
+  ] as const) {
+    for (const tone of ["positive", "negative"] as const) {
+      test(`${label}/--${tone}: a filled shape on every surface ≥ 3`, () => {
+        const solid = parseOklchToken(block, `--${tone}`);
+        for (const surface of ["--surface", "--surface-raised", "--surface-sunken"] as const) {
+          expect(
+            contrastRatio(solid, parseOklchToken(block, surface)),
+            `--${tone} on ${surface}`,
+          ).toBeGreaterThanOrEqual(3);
+        }
+      });
+    }
+  }
+
+  test("⛔ --positive and --negative are NOT distinguishable from each other — hue can never be the only carrier", () => {
+    /*
+     * MEASURED, and deliberately asserted as a LIMIT rather than a target:
+     * light 1.00, dark 1.35. The two tones were chosen to sit at the same
+     * lightness so neither shouts louder than the other in a column of numbers,
+     * and that is the right call for text. It means a chart placing an up-shape
+     * beside a down-shape and relying on hue alone is unreadable in greyscale
+     * and to a protan or deutan reader, in BOTH themes.
+     *
+     * This test exists so that fact is written down where the next person to
+     * draw a signed chart will meet it, rather than discovered afterwards. The
+     * house answer is already established: PnlCalendar carries direction in an
+     * aria-hidden ▲/▼ with neutral numerals, and CategoryMassif's rule is
+     * "COLOUR — category identity (never the only carrier of a fact)".
+     *
+     * If a future change DOES separate them, this test failing is the signal to
+     * revisit that rule — not to raise the number here.
+     */
+    for (const [label, block] of [
+      ["light", light],
+      ["dark", dark],
+    ] as const) {
+      const ratio = contrastRatio(parseOklchToken(block, "--positive"), parseOklchToken(block, "--negative"));
+      expect(ratio, `${label}: --positive vs --negative`).toBeLessThan(3);
+    }
+  });
 });
 
 /**
