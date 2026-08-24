@@ -177,7 +177,13 @@ describe("the letterpress tokens are actually consumed", () => {
 describe("the dashboard hero's view dimension", () => {
   const options = DASHBOARD_VIEW_SPEC[0]!.options;
 
-  test("terrain is APPENDED — every view that existed before still exists, in order", () => {
+  test("every view is APPENDED — the ones that existed before still exist, in order", () => {
+    /*
+     * The guard doing its job: adding `bridge` turned this red, which is exactly
+     * what it is for. A view is only ever added to the END, because the option
+     * order is what the ViewSwitcher renders and what `/?chart=` addresses, and
+     * because two dashboard specs derive their whole test list from this array.
+     */
     expect(options).toEqual([
       "combined",
       "assets",
@@ -186,6 +192,7 @@ describe("the dashboard hero's view dimension", () => {
       "accounts",
       "sankey",
       "terrain",
+      "bridge",
     ]);
     // the default is untouched: a reader who never picks a view still gets the
     // net-worth line the dashboard has always opened on

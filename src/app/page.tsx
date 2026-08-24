@@ -8,6 +8,7 @@ import { formatCents } from "@/lib/money";
 import { dashboardData } from "@/services/dashboard";
 import { dashboardChartData } from "@/services/dashboard-series";
 import { spendingSankey } from "@/services/sankey";
+import { netWorthAttribution, type NetWorthAttribution } from "@/services/attribution";
 import { CHART_RANGES, rangeStartDay, type ChartRange } from "@/lib/chart-range";
 import type { SankeyGraph } from "@/lib/sankey-layout";
 import { resolveViewState } from "@/lib/view-state";
@@ -134,6 +135,33 @@ export default async function DashboardPage({
         CHART_RANGES.map((r) => [r, spendingSankey(db, { from: rangeStartDay(r, today) ?? EARLIEST_DAY, to: today })]),
       ) as Record<ChartRange, SankeyGraph>)
     : null;
+  /*
+   * The bridge, one decomposition per range pill, precomputed for the same
+   * reason the flow is: the pill is client-side ChartFocus state and a
+   * round-trip per click would make the switcher feel broken.
+   *
+   * ⚠️ The opening and closing totals come from the SAME bridged series the hero
+   * prints, read at the window's two ends — never re-derived. Two implementations
+   * of net worth is how a page ends up disagreeing with its own headline, and the
+   * bridge's entire claim is that its parts sum to that difference.
+   */
+  const bridgeByRange =
+    chartMode === "bridge"
+      ? (Object.fromEntries(
+          CHART_RANGES.map((r) => {
+            const from = rangeStartDay(r, today) ?? netWorth.series[0]?.day ?? today;
+            const at = (day: string): number => {
+              let cents = netWorth.series[0]?.totalCents ?? 0;
+              for (const p of netWorth.series) {
+                if (p.day > day) break;
+                cents = p.totalCents;
+              }
+              return cents;
+            };
+            return [r, netWorthAttribution(db, from, today, at(from), at(today))];
+          }),
+        ) as Record<ChartRange, NetWorthAttribution>)
+      : null;
   // On a partial "today" the two causes read completely differently: an account
   // that had not opened yet is a fact about the calendar (neutral), a day no
   // statement covers is missing data (warning). The split lives on the point the
@@ -252,6 +280,7 @@ export default async function DashboardPage({
                 chartData && !isTerrain ? chartData.selectedAccountIds.join(",") : acctsParam
               }
               sankeyByRange={sankeyByRange}
+              bridgeByRange={bridgeByRange}
               today={today}
             />
             <PeriodActivityPanel categories={pickerOptions} />

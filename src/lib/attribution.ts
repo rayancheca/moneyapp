@@ -124,6 +124,36 @@ export const ATTRIBUTION_BAND_ORDER = [
   "unexplained",
 ] as const satisfies readonly AttributionBandKey[];
 
+/**
+ * What each band is called on screen, and what it means.
+ *
+ * Here rather than in the component because the chart and its table render the
+ * same words, and a second copy is how a legend ends up disagreeing with the
+ * row beneath it. `jargon.ts` holds copy for terms a page prints once; these are
+ * printed once per band per lens, so they live with the data that selects them.
+ */
+export const ATTRIBUTION_BAND_LABEL: Record<AttributionBandKey, string> = {
+  earned: "Earned",
+  refunds: "Refunds",
+  spent: "Spent",
+  moved: "Moved",
+  market: "Market",
+  portfolioFlow: "Into holdings",
+  inTransit: "In transit",
+  unexplained: "Unexplained",
+};
+
+export const ATTRIBUTION_BAND_MEANING: Record<AttributionBandKey, string> = {
+  earned: "Money arriving in an income category. Only money in — a credit that claws back earlier pay is not negative earnings.",
+  refunds: "Credits inside spending categories. Money coming back, which is not the same as money earned.",
+  spent: "Debits in spending categories, before any refund is netted against them.",
+  moved: "Transfers and investment rows on accounts that replay. It nets to nothing when both legs are on the ledger, so whatever is left is money crossing the boundary of what is tracked.",
+  market: "What holdings gained or lost on price alone, with every buy and sell taken out first.",
+  portfolioFlow: "Money moving into or out of the holdings themselves. Its other leg is a transfer out of cash, so the two cancel.",
+  inTransit: "Money that had left one account and not yet arrived in another, at the close less at the open.",
+  unexplained: "Movement no band accounts for. Zero on a reconciled window; when it is not, what is known about it is named beside it.",
+};
+
 export type BandDirection = "up" | "down" | "flat";
 
 export interface AttributionBand {

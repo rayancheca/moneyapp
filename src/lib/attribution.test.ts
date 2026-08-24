@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { attribute, ATTRIBUTION_BAND_ORDER, type AttributionInput } from "./attribution";
+import {
+  ATTRIBUTION_BAND_LABEL,
+  ATTRIBUTION_BAND_MEANING,
+  ATTRIBUTION_BAND_ORDER,
+  attribute,
+  type AttributionInput,
+} from "./attribution";
 
 /**
  * A real window, measured on the live ledger 2026-07-01 → 2026-08-24 before any
@@ -226,5 +232,32 @@ describe("attribute — the bridge closes, or says by how much it does not", () 
     expect(got.deltaCents).toBe(-289_766);
     expect(got.unexplainedCents).toBeLessThan(0);
     expect(got.closes).toBe(false);
+  });
+});
+
+describe("band copy", () => {
+  test("every band has a label and a meaning, and no band has two of either", () => {
+    // Both maps are read by key from the chart AND from its table. A missing
+    // entry renders `undefined` in a legend rather than erroring.
+    expect(Object.keys(ATTRIBUTION_BAND_LABEL).sort()).toEqual([...ATTRIBUTION_BAND_ORDER].sort());
+    expect(Object.keys(ATTRIBUTION_BAND_MEANING).sort()).toEqual([...ATTRIBUTION_BAND_ORDER].sort());
+    expect(new Set(Object.values(ATTRIBUTION_BAND_LABEL)).size).toBe(ATTRIBUTION_BAND_ORDER.length);
+  });
+
+  test("a meaning says what the code does, at a length someone will actually read", () => {
+    for (const [key, body] of Object.entries(ATTRIBUTION_BAND_MEANING)) {
+      expect(body.trim().length, key).toBeGreaterThan(40);
+      expect(body.trim().endsWith("."), key).toBe(true);
+    }
+  });
+
+  test("no label collides with a phrase the dashboard grades by", () => {
+    // Same failure as a tooltip body: a legend word that an exact-count locator
+    // reads turns an unrelated spec red.
+    for (const label of Object.values(ATTRIBUTION_BAND_LABEL)) {
+      expect(["Net worth", "Assets", "Owed", "Split", "Accounts", "Flow", "Terrain"]).not.toContain(
+        label,
+      );
+    }
   });
 });

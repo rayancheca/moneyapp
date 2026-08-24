@@ -67,8 +67,63 @@ describe("computeWaterfallLayout — a running total that visibly closes", () =>
     const l = computeWaterfallLayout(REAL, OPTS);
     expect(l.axisStartsAtZero).toBe(false);
     const runs = l.steps.map((s) => s.runningCents);
-    expect(l.axisMinCents).toBe(Math.min(...runs));
-    expect(l.axisMaxCents).toBe(Math.max(...runs));
+    expect(l.dataMinCents).toBe(Math.min(...runs));
+    expect(l.dataMaxCents).toBe(Math.max(...runs));
+    // the DRAWING floor sits below the data, so the lowest total still has a bar
+    expect(l.axisMinCents).toBeLessThan(l.dataMinCents);
+    expect(l.axisMaxCents).toBe(l.dataMaxCents);
+  });
+
+  test("the lowest total column is drawn, not collapsed onto the floor", () => {
+    /*
+     * Found by looking at it. Net worth on the e2e ledger only rose, so the
+     * OPENING total was the minimum running total, sat exactly on the axis
+     * floor, and rendered with a height of precisely zero — the chart opened
+     * with an invisible bar where its starting point should be.
+     */
+    // a window that only ever rises — which is what the e2e ledger does, and
+    // exactly the shape that put an invisible bar on screen
+    const rising = computeWaterfallLayout(
+      {
+        openingCents: 6_558_800,
+        closingCents: 13_347_339,
+        bands: [
+          { key: "earned", label: "Earned", cents: 7_525_318 },
+          { key: "spent", label: "Spent", cents: -736_779 },
+        ],
+      },
+      OPTS,
+    );
+    const opening = rising.steps[0]!;
+    expect(opening.runningCents).toBe(rising.dataMinCents);
+    expect(opening.height).toBeGreaterThan(HAIRLINE_PX);
+    expect(opening.belowHairline).toBe(false);
+
+    // and in a window whose low point is a BAND, the totals are unaffected
+    const l = computeWaterfallLayout(REAL, OPTS);
+    expect(l.dataMinCents).toBeLessThan(l.steps[0]!.runningCents);
+    expect(l.steps[0]!.height).toBeGreaterThan(HAIRLINE_PX);
+  });
+
+  test("padding never pushes a non-negative axis below zero — it snaps to zero instead", () => {
+    // A net-worth axis dipping under zero when nothing did is a worse lie than a
+    // shorter column, and snapping makes `axisStartsAtZero` honestly true.
+    const l = computeWaterfallLayout(
+      { openingCents: 1_000, closingCents: 90_000, bands: [{ key: "a", label: "A", cents: 89_000 }] },
+      OPTS,
+    );
+    expect(l.axisMinCents).toBe(0);
+    expect(l.axisStartsAtZero).toBe(true);
+    expect(l.dataMinCents).toBe(1_000);
+  });
+
+  test("a window that really goes negative is allowed to pad below zero", () => {
+    const l = computeWaterfallLayout(
+      { openingCents: -50_000, closingCents: 10_000, bands: [{ key: "a", label: "A", cents: 60_000 }] },
+      OPTS,
+    );
+    expect(l.axisMinCents).toBeLessThan(-50_000);
+    expect(l.axisStartsAtZero).toBe(false);
   });
 
   test("a bridge that really does reach zero says THAT truthfully too", () => {

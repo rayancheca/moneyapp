@@ -12,6 +12,12 @@ import type { ViewSpec, ViewState } from "@/lib/view-state";
 export const DASHBOARD_SURFACE = "dashboard";
 
 /**
+ * `bridge` is likewise APPENDED: it is not a drawing of the net-worth SERIES at
+ * all but a decomposition of the DIFFERENCE between its two ends — earned, spent,
+ * moved, market, in transit and whatever is left over. It builds no multi-series
+ * (`dashboardSeriesMode` returns null) and, like `sankey`, carries its own range
+ * pills because it has no scrubbable time axis.
+ *
  * `terrain` (Direction A+, "Two years of every account") is APPENDED, never a
  * replacement: it is a second DRAWING of the per-account series — one ribbon
  * per account over time, assets above the zero plane and what is owed below it.
@@ -21,7 +27,7 @@ export const DASHBOARD_SURFACE = "dashboard";
 export const DASHBOARD_VIEW_SPEC: ViewSpec = [
   {
     key: "chart",
-    options: ["combined", "assets", "liabilities", "split", "accounts", "sankey", "terrain"],
+    options: ["combined", "assets", "liabilities", "split", "accounts", "sankey", "terrain", "bridge"],
   },
 ];
 

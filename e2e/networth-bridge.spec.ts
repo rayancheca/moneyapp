@@ -1,0 +1,84 @@
+import { test, expect } from "@playwright/test";
+
+/**
+ * The net-worth bridge — the dashboard's eighth hero view.
+ *
+ * ⚠️ The RANGE matters to what renders, and each of these picks its window for a
+ * reason. The suite would otherwise photograph one shape and call the chart
+ * covered, which is the fixture-blindness pass 53 recorded.
+ *
+ * ⚠️ NOT `zz`-prefixed, and that is load-bearing. Playwright runs files
+ * alphabetically, the `zz-*` specs are the ones that MUTATE the shared fixture
+ * (renaming accounts, categorising, editing budgets), and these assertions read
+ * exact dollar figures off a pristine seed. Filed as `zz-zz-zz-…` first, two of
+ * the four passed alone and failed in the full run for exactly that reason.
+ * Everything here is read-only: the range pills are ChartFocus's lifted state
+ * and the Bridge/Table switcher is local `useState`, so nothing persists a view
+ * preference the way the hero's own ViewSwitcher would.
+ */
+
+const bridgeRange = (page: import("@playwright/test").Page) =>
+  page.getByRole("group", { name: "Bridge range" });
+
+test("the bridge decomposes the hero number and states where it started and ended", async ({
+  page,
+}) => {
+  await page.goto("/?chart=bridge");
+  await expect(page.getByRole("group", { name: "Net worth chart view" })).toBeVisible();
+  await expect(bridgeRange(page)).toBeVisible();
+
+  // the two totals are PRINTED, not left to a hover: they are the question the
+  // chart answers, and there is no room to label ten columns at the 320 floor
+  await expect(page.getByText("$133,473.39").first()).toBeVisible();
+
+  // every band names itself and its signed amount, so a band whose bar is under
+  // one pixel is still readable
+  for (const label of ["Earned", "Refunds", "Spent", "Moved", "Market", "Unexplained"]) {
+    await expect(page.getByText(label, { exact: true })).toBeVisible();
+  }
+});
+
+test("a band too small to draw is redrawn on its own axis, with the magnification stated", async ({
+  page,
+}) => {
+  /*
+   * Year-to-date on this fixture puts Market at −$521.42 against $39,934.90 of
+   * earnings — 0.18px at the chart's height, which is no pixels at all. The
+   * magnified row is the whole answer to "a $300 balance beside a $100k account",
+   * and it must SAY how much it magnified or it is just a second, wronger chart.
+   */
+  await page.goto("/?chart=bridge");
+  await bridgeRange(page).getByRole("button", { name: "Year to date" }).click();
+
+  await expect(page.getByText(/Too small to see above — shown at 77× against \$521\.42\./)).toBeVisible();
+  await expect(page.getByText("-$521.42").first()).toBeVisible();
+});
+
+test("a residual is named rather than left as a bare hole", async ({ page }) => {
+  /*
+   * All-time on this fixture is +$61,765.55 that no transaction explains — five
+   * accounts opening with a balance and the holdings' first day. A bridge that
+   * printed only "Unexplained $61,765.55" would be reporting a defect that is
+   * not there, so the difference between "unaccounted for" and "accounted for,
+   * just not by a transaction" is on screen.
+   */
+  await page.goto("/?chart=bridge");
+  await bridgeRange(page).getByRole("button", { name: "All time" }).click();
+
+  await expect(page.getByText(/no transaction explains — and all of it has a name/)).toBeVisible();
+  await expect(page.getByText("balance restated").first()).toBeVisible();
+  await expect(page.getByText("entered coverage")).toBeVisible();
+});
+
+test("the table lens carries every band, including the ones the chart cannot draw", async ({
+  page,
+}) => {
+  await page.goto("/?chart=bridge");
+  await bridgeRange(page).getByRole("button", { name: "Year to date" }).click();
+  await page.getByRole("group", { name: "Bridge view" }).getByRole("button", { name: "Table" }).click();
+
+  const table = page.getByRole("table");
+  await expect(table).toBeVisible();
+  await expect(table.getByRole("row")).toHaveCount(9); // header + eight bands
+  await expect(table.getByText("-$521.42")).toBeVisible();
+});

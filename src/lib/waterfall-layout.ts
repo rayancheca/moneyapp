@@ -50,6 +50,15 @@ export interface WaterfallOptions {
   height: number;
   /** fraction of a column the bar occupies; the rest is the gap */
   barFraction?: number;
+  /**
+   * How far below the lowest running total the drawing floor sits, as a
+   * fraction of the span.
+   *
+   * Without it the lowest total column has a height of exactly ZERO and simply
+   * does not render — measured on the e2e ledger, where net worth only rose, so
+   * the opening total WAS the minimum and the chart opened with an invisible bar.
+   */
+  floorPadFraction?: number;
 }
 
 export type WaterfallStepKind = "total" | "band";
@@ -78,8 +87,12 @@ export interface WaterfallLayout {
   width: number;
   height: number;
   steps: WaterfallStep[];
+  /** where the drawing floor sits — padded below the data unless it snapped to zero */
   axisMinCents: number;
   axisMaxCents: number;
+  /** the lowest and highest running totals, before any padding */
+  dataMinCents: number;
+  dataMaxCents: number;
   /** the axis floor really is zero — otherwise the renderer must disclose it */
   axisStartsAtZero: boolean;
   /** the bands land exactly on the closing total */
@@ -89,6 +102,7 @@ export interface WaterfallLayout {
 }
 
 const BAR_FRACTION = 0.62;
+const FLOOR_PAD_FRACTION = 0.12;
 
 function directionOf(cents: number): WaterfallDirection {
   if (cents > 0) return "up";
@@ -100,7 +114,12 @@ export function computeWaterfallLayout(
   input: WaterfallInput,
   options: WaterfallOptions,
 ): WaterfallLayout {
-  const { width, height, barFraction = BAR_FRACTION } = options;
+  const {
+    width,
+    height,
+    barFraction = BAR_FRACTION,
+    floorPadFraction = FLOOR_PAD_FRACTION,
+  } = options;
 
   // levels[i] is the running total AFTER step i; levels[0] is the opening
   const levels: number[] = [input.openingCents];
@@ -115,8 +134,18 @@ export function computeWaterfallLayout(
    * `lib/attribution` refuses to build.
    */
   const runs = [...levels, input.closingCents];
-  const axisMinCents = Math.min(...runs);
-  const axisMaxCents = Math.max(...runs);
+  const dataMinCents = Math.min(...runs);
+  const dataMaxCents = Math.max(...runs);
+  /*
+   * The floor drops below the lowest running total so the lowest TOTAL column
+   * still has a bar. Where the data never goes negative the pad is clamped at
+   * zero instead — a net-worth axis that dips below zero when nothing did is a
+   * worse lie than a shorter column, and snapping to zero is strictly better
+   * because it makes `axisStartsAtZero` honestly true.
+   */
+  const padded = dataMinCents - (dataMaxCents - dataMinCents) * floorPadFraction;
+  const axisMinCents = dataMinCents >= 0 ? Math.max(0, padded) : padded;
+  const axisMaxCents = dataMaxCents;
   const span = axisMaxCents - axisMinCents;
 
   // A window where nothing moved has no extent: every level is the same point,
@@ -189,6 +218,8 @@ export function computeWaterfallLayout(
     steps,
     axisMinCents,
     axisMaxCents,
+    dataMinCents,
+    dataMaxCents,
     axisStartsAtZero: axisMinCents === 0,
     closes: shortfallCents === 0,
     shortfallCents,

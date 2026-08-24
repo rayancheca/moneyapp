@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { saveViewPreferenceAction } from "@/app/settings/actions";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { SankeyChart } from "@/components/charts/SankeyChart";
+import { NetWorthBridge } from "@/components/charts/NetWorthBridge";
 import { CATEGORY_HUE_NAMES, categoryHueVar } from "@/lib/category-palette";
 import { DAILY_SERIES_RANGES, rangeLabel, type ChartRange } from "@/lib/chart-range";
 import type { SankeyGraph } from "@/lib/sankey-layout";
@@ -12,6 +13,7 @@ import { viewHrefQuery, type ViewState } from "@/lib/view-state";
 import { DASHBOARD_SURFACE, DASHBOARD_VIEW_SPEC } from "./dashboard-view-spec";
 import type { NetWorthPoint } from "@/services/derivation";
 import type { DashboardAccountOption, DashboardChartData } from "@/services/dashboard-series";
+import type { NetWorthAttribution } from "@/services/attribution";
 import { useViewState } from "@/hooks/useViewState";
 import { ChartFocus } from "@/components/charts/ChartFocus";
 import { NetWorthTerrain } from "@/components/charts/NetWorthTerrain";
@@ -39,6 +41,7 @@ const MODE_LABELS: Record<string, string> = {
   accounts: "Accounts",
   sankey: "Flow",
   terrain: "Terrain",
+  bridge: "Bridge",
 };
 
 /** stride-5 walk over the 12-hue ramp — adjacent accounts get distant hues
@@ -62,6 +65,8 @@ interface DashboardChartSectionProps {
   acctsParam: string;
   /** money-flow graphs precomputed per range pill; present only in sankey mode */
   sankeyByRange: Record<ChartRange, SankeyGraph> | null;
+  /** one net-worth decomposition per range pill; present only in bridge mode */
+  bridgeByRange: Record<ChartRange, NetWorthAttribution> | null;
   today: string;
 }
 
@@ -73,6 +78,7 @@ export function DashboardChartSection({
   selectedAccountIds,
   acctsParam,
   sankeyByRange,
+  bridgeByRange,
   today,
 }: DashboardChartSectionProps) {
   const router = useRouter();
@@ -174,7 +180,46 @@ export function DashboardChartSection({
               </div>
             )}
           </div>
-          {mode === "sankey" ? (
+          {mode === "bridge" ? (
+            <div>
+              {/* Same shape as the Sankey below: no scrubbable time axis, so the
+                  bridge carries its OWN range pills driven by the
+                  ChartFocus-lifted range, and reads a server-precomputed
+                  decomposition per pill so a click costs no round-trip. */}
+              <div
+                role="group"
+                aria-label="Bridge range"
+                className="mb-3 flex w-fit flex-wrap gap-1 rounded-full bg-surface-sunken p-1"
+              >
+                {DAILY_SERIES_RANGES.map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    aria-pressed={activeRange === r}
+                    aria-label={rangeLabel(r)}
+                    onClick={() => onRangeChange(r)}
+                    className={`rounded-full px-3 py-1 text-xs transition-colors duration-(--duration-fast) ${
+                      activeRange === r ? "bg-surface-raised font-medium shadow-sm" : "text-ink-muted hover:text-ink"
+                    }`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+              {bridgeByRange?.[activeRange] ? (
+                <NetWorthBridge
+                  attribution={bridgeByRange[activeRange]}
+                  windowLabel={rangeLabel(activeRange).toLowerCase()}
+                  showTableToggle
+                  {...(heightClass ? { heightClass } : {})}
+                />
+              ) : (
+                <p className="py-8 text-center text-sm text-ink-muted">
+                  Net worth has not moved in this range.
+                </p>
+              )}
+            </div>
+          ) : mode === "sankey" ? (
             <div>
               {/* the Sankey has no scrubbable time axis, so it carries its OWN
                   range pills (same windows as the chart), controlled by the
