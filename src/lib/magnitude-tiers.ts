@@ -121,13 +121,23 @@ export function magnitudeTiers(
   const sorted = [...sized].sort((a, b) => b.magnitude - a.magnitude || a.order - b.order);
   const headMagnitude = sorted[0]!.magnitude;
 
-  const tiers: MagnitudeTier[] = [];
-  const negligible: string[] = [];
-  let current: MagnitudeTier | null = null;
+  /*
+   * Members are carried as {key, order} rather than as bare keys with a lookup
+   * table beside them. A `Map.get(key) ?? 0` here would be a fallback that can
+   * never fire — every member came from `sized`, which is what the map would be
+   * built from — and a branch that cannot execute is one the 100% gate can only
+   * be satisfied about by lying (the shape `income-budget` records). Keeping the
+   * order ON the item makes the fallback unrepresentable instead.
+   */
+  type Member = { key: string; order: number };
+  const tierMembers: { maxCents: number; magnification: number; members: Member[] }[] = [];
+  const negligibleMembers: Member[] = [];
+  let current: (typeof tierMembers)[number] | null = null;
 
   for (const item of sorted) {
+    const member: Member = { key: item.key, order: item.order };
     if (current !== null && item.magnitude >= current.maxCents / tierRatio) {
-      current.keys.push(item.key);
+      current.members.push(member);
       continue;
     }
     /*
@@ -138,28 +148,31 @@ export function magnitudeTiers(
      */
     const magnification = Math.round(headMagnitude / item.magnitude);
     if (magnification > maxMagnification) {
-      negligible.push(item.key);
+      negligibleMembers.push(member);
       continue;
     }
     current = {
-      index: tiers.length,
       maxCents: item.magnitude,
       // tier 0 is the reference and is by definition unmagnified, even though
       // the division would also give 1 — stated so the meaning does not depend
       // on the arithmetic happening to agree
-      magnification: tiers.length === 0 ? 1 : magnification,
-      keys: [item.key],
+      magnification: tierMembers.length === 0 ? 1 : magnification,
+      members: [member],
     };
-    tiers.push(current);
+    tierMembers.push(current);
   }
 
   // Restore the caller's order inside each tier: sorting was a means of finding
   // the boundaries, not a decision about how the tier should read.
-  const orderOf = new Map(sized.map((s) => [s.key, s.order] as const));
-  for (const tier of tiers) {
-    tier.keys.sort((a, b) => (orderOf.get(a) ?? 0) - (orderOf.get(b) ?? 0));
-  }
-  negligible.sort((a, b) => (orderOf.get(a) ?? 0) - (orderOf.get(b) ?? 0));
-
-  return { tiers, negligible, zero };
+  const byOrder = (a: Member, b: Member): number => a.order - b.order;
+  return {
+    tiers: tierMembers.map((t, index) => ({
+      index,
+      maxCents: t.maxCents,
+      magnification: t.magnification,
+      keys: [...t.members].sort(byOrder).map((m) => m.key),
+    })),
+    negligible: [...negligibleMembers].sort(byOrder).map((m) => m.key),
+    zero,
+  };
 }
