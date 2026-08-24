@@ -116,6 +116,62 @@ useless as a picture of what he earns.
 > baselines, so it is folded into **pass 75**'s state-coverage audit rather than
 > regenerated incidentally here.
 
+### ✅ The two open decisions, closed — SHIPPED 2026-08-24
+
+Both items §2 of the pass-60 handoff left open were the owner's to make, and he
+made them with the measured numbers in front of him.
+
+**1. A `series-stale` income series KEEPS feeding expected income.** Owner:
+*"Leave both pages as they are."* `/spending` says the cash job has banked
+nothing in eleven paydays and the money may not be coming; `/budgets` still
+projects a full month from it. They answer different questions, and suppressing
+the second would tell a working man he has no income. **No code changed** — the
+decision is recorded in `incomeExpectation`'s docstring so the next pass does not
+"fix" it. ⛔ Do not reopen without asking again.
+
+**2. The over-allocation header is graded against an ANNUALISED rate**
+(`01eca64`). Owner: *"Annualise, name the month underneath."* Measured twelve
+months forward before and after:
+
+| | before | after |
+|---|---|---|
+| 4-payday month (×8/yr) | over-allocated **$318.29** | **$30.71 left** |
+| 5-payday month (×4/yr) | **$728.71 left** | **$30.71 left** |
+
+`src/lib/income-basis.ts` returns the figure, its definition, the over-allocation
+clause and the month sentence from ONE branch. The calendar month is named
+underneath, not deleted: *"4 paydays fall in this month, scheduled at $4,188.00 —
+$349.00 under the annualised figure above."*
+
+> **⚠️ The adversarial review found two real defects in that commit, and the
+> worse one is the lesson.** Twenty agents, four lenses, sixteen findings.
+>
+> - **A rate is a FLOOR, not a ceiling** (`ca912ad`). The levelled branch
+>   published its rate unconditionally and dropped the old
+>   `max(posted + still-due, forecast)`. Reproduced end to end: $5,000.00 of
+>   salary posts, the detector picks up a **fourteen-cent** INTEREST PAYMENT
+>   series — one it creates by itself on the real fixture — and the header reads
+>   **$0.14 expected income** with every budget over-allocated behind it. The
+>   floor is `postedCents` and nothing else: flooring on the SCHEDULE hands back
+>   the very swing the levelling removes.
+> - **My own test asserted the rule that caused it.** *"Posted actuals never
+>   inflate the basis — a lumpy month is not a raise"* was a stricter rule than
+>   the app had ever had, and it is what deleted the floor. A test can encode a
+>   defect as confidently as code can.
+> - **The hard-coded clause.** *"— these budgets total more than this month is
+>   expected to bring in"* stayed in the JSX while the yardstick became a rate;
+>   in the four five-payday months a year it states the reverse of the note two
+>   lines beneath it. The commit claimed the one-branch rule and broke it in its
+>   own page.
+> - Three surviving mutants closed in `7e41fca` (`Math.round`→`floor`,
+>   `BASIS_HORIZON_MONTHS` 12→6, the three clauses collapsible into one).
+>
+> **Known and accepted, not defects:** a series with `user_ends_on` mid-month
+> keeps its full rate for that month (latent — `user_ends_on` has no writer in
+> the app; **pass 84's episode editor will create one, so fix it there**), and a
+> series whose cadence label disagrees with its measured gap levels from the
+> label (pinned as a decision, with the reasoning, in `budgets.test.ts`).
+
 ### Pass 62 — Net-worth attribution: the bridge
 
 *Net worth moved from X to Y. Why?*

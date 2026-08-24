@@ -225,12 +225,18 @@ verdict work). What is left is small:
 
 - **`budgetOverdue`** exists; there is no view of *which* bill is overdue from
   the budget row — it names a count, not the rows.
-- **Rollover is opt-in and per-budget** — no way to see, across all 11 budgets,
-  which ones roll and what the accumulated balance is.
-- 11 budgets cover Housing, Food, Shopping, Cash & ATM, Transport, Health,
-  Subscriptions, Entertainment, Travel, Fees, Car. **No Income-side budget** —
-  there is no target-earnings counterpart, which for a cash-paid job is arguably
-  the number that matters most.
+- **Rollover is opt-in and per-budget** — no way to see, across all 12 budgets,
+  which ones roll and what the accumulated balance is. Nine of the twelve now
+  roll (pass 61); the aggregate view is still missing.
+- 12 budgets cover Housing, Food, Shopping, Cash & ATM, Transport, Health,
+  Subscriptions, Entertainment, Travel, Fees, Car and Utilities, totalling
+  **$4,506.29** — sized from income rather than from trailing spend (pass 61).
+  **No Income-side budget** — there is no target-earnings counterpart, which for
+  a cash-paid job is arguably the number that matters most.
+- The header grades against an **annualised** income rate as of 2026-08-24, so it
+  reads `$30.71 left to allocate` in all twelve months of the year rather than
+  swinging between over- and under-allocated. See the closed decisions at the top
+  of [`program-passes-60-94.md`](program-passes-60-94.md).
 
 ## 10. Recurring — `/recurring` and `/recurring/[id]`
 
