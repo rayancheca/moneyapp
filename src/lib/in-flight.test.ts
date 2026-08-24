@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { applyInFlight, inFlightDeltaByDay, type InFlightAdjustment } from "./in-flight";
+import { applyInFlight, inFlightDeltaByDay, inFlightDeltaOn, type InFlightAdjustment } from "./in-flight";
 
 const win = (startDay: string, endDay: string | null, deltaCents: number): InFlightAdjustment => ({
   startDay,
@@ -147,5 +147,39 @@ describe("applyInFlight", () => {
       ["2026-01-01", 500],
       ["2026-01-02", 500],
     ]);
+  });
+});
+
+describe("inFlightDeltaOn — the half-open boundary, in the one place it lives", () => {
+  const float = { transferGroupId: "g", startDay: "2026-06-10", endDay: "2026-06-14", deltaCents: 5_000 };
+
+  test("the day money leaves is INSIDE the window", () => {
+    expect(inFlightDeltaOn("2026-06-10", [float])).toBe(5_000);
+  });
+
+  test("the day it lands is OUTSIDE it — both legs are posted by then", () => {
+    // The boundary that was written twice before this function existed. A copy
+    // disagreeing about this one day moves net worth by a whole transfer.
+    expect(inFlightDeltaOn("2026-06-13", [float])).toBe(5_000);
+    expect(inFlightDeltaOn("2026-06-14", [float])).toBe(0);
+  });
+
+  test("before the window, and an open-ended float that never closes", () => {
+    expect(inFlightDeltaOn("2026-06-09", [float])).toBe(0);
+    expect(inFlightDeltaOn("2030-01-01", [{ ...float, endDay: null }])).toBe(5_000);
+  });
+
+  test("overlapping floats add, and a zero-delta float is inert", () => {
+    const other = { transferGroupId: "h", startDay: "2026-06-11", endDay: null, deltaCents: -2_000 };
+    expect(inFlightDeltaOn("2026-06-12", [float, other])).toBe(3_000);
+    expect(inFlightDeltaOn("2026-06-12", [{ ...float, deltaCents: 0 }])).toBe(0);
+  });
+
+  test("it is the same function the series uses, not a second opinion", () => {
+    // The guarantee that makes lifting it worthwhile: whatever the per-day map
+    // says for a day, asking directly says too.
+    const days = ["2026-06-09", "2026-06-10", "2026-06-13", "2026-06-14"];
+    const byDay = inFlightDeltaByDay(days, [float]);
+    for (const d of days) expect(inFlightDeltaOn(d, [float])).toBe(byDay.get(d) ?? 0);
   });
 });

@@ -4,7 +4,7 @@ import { accounts } from "@/db/schema/accounts";
 import { dailyBalances, type BalanceBasis } from "@/db/schema/balances";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates } from "@/lib/dates";
-import { applyInFlight } from "@/lib/in-flight";
+import { applyInFlight, inFlightDeltaOn } from "@/lib/in-flight";
 import { latestBalances, netWorthSeries, type NetWorthPoint } from "./derivation";
 
 /**
@@ -310,10 +310,20 @@ export function latestBridgedNetWorthCents(db: AppDatabase, balances = latestBal
   let total = 0;
   for (const id of activeIds) total += balances.get(id)?.balanceCents ?? 0;
 
-  for (const f of transferFloats(db)) {
-    if (compareDates(lastDay, f.startDay) < 0) continue; // window hasn't opened yet
-    if (f.endDay !== null && compareDates(lastDay, f.endDay) >= 0) continue; // already resolved
-    total += f.deltaCents;
-  }
-  return total;
+  // the SAME half-open window test the series uses, called rather than restated
+  return total + inFlightDeltaOn(lastDay, transferFloats(db));
+}
+
+/**
+ * The in-transit STOCK on any day — how much of that day's net worth is money
+ * the ledger can see leaving one account and not yet arriving in another.
+ *
+ * A bridge between two net-worth readings needs the FLOW, which is this at the
+ * closing edge less this at the opening edge. Before it existed the only ways to
+ * ask were to build the whole 1,462-point series or to read the last point, and
+ * a third hand-rolled window test would have been the fourth copy of the same
+ * boundary.
+ */
+export function inTransitAt(db: AppDatabase, day: string): number {
+  return inFlightDeltaOn(day, transferFloats(db));
 }

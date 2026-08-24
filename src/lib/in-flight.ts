@@ -38,16 +38,40 @@ export function inFlightDeltaByDay(
   adjustments: readonly InFlightAdjustment[],
 ): Map<string, number> {
   const deltas = new Map<string, number>();
+  for (const day of days) {
+    const delta = inFlightDeltaOn(day, adjustments);
+    if (delta !== 0) deltas.set(day, delta);
+  }
+  return deltas;
+}
+
+/**
+ * The signed correction in force on ONE day — the half-open window test, in the
+ * one place it is allowed to live.
+ *
+ * It was written twice: here, inside the per-day loop, and again inside
+ * `latestBridgedNetWorthCents`, which needs the same answer for the final axis
+ * day without building the whole series. Two hand-copied implementations of a
+ * boundary test is the shape pass 54 recorded for dates — a float ending exactly
+ * ON a day is already resolved, and the two copies disagreeing about that would
+ * move net worth by a whole transfer while both looked right.
+ *
+ * ⚠️ Half-open by design: `startDay` inclusive, `endDay` EXCLUSIVE. The money is
+ * in transit from the day it leaves until the day it lands, and on the day it
+ * lands both legs are posted and the ledger no longer needs bridging.
+ */
+export function inFlightDeltaOn(
+  day: string,
+  adjustments: readonly InFlightAdjustment[],
+): number {
+  let delta = 0;
   for (const adj of adjustments) {
     if (adj.deltaCents === 0) continue;
-    for (const day of days) {
-      if (compareDates(day, adj.startDay) < 0) continue;
-      if (adj.endDay !== null && compareDates(day, adj.endDay) >= 0) continue;
-      deltas.set(day, (deltas.get(day) ?? 0) + adj.deltaCents);
-    }
+    if (compareDates(day, adj.startDay) < 0) continue;
+    if (adj.endDay !== null && compareDates(day, adj.endDay) >= 0) continue;
+    delta += adj.deltaCents;
   }
-  for (const [day, delta] of deltas) if (delta === 0) deltas.delete(day);
-  return deltas;
+  return delta;
 }
 
 /**

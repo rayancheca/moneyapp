@@ -1,0 +1,168 @@
+import { describe, expect, test } from "vitest";
+import { attribute, ATTRIBUTION_BAND_ORDER, type AttributionInput } from "./attribution";
+
+/**
+ * A real window, measured on the live ledger 2026-07-01 → 2026-08-24 before any
+ * of this was written. Every figure is a measurement, not an invention — a
+ * fixture that draws with a ruler makes every assertion over it blind (pass 53),
+ * and a bridge fixture whose bands are round numbers would hide exactly the
+ * rounding and sign errors this module can make.
+ *
+ *   net worth          $82,897.66 → $109,322.37   (Δ +$26,424.71)
+ *   earned                 +$52.95   4 rows — the cash job banks nothing
+ *   refunds               +$113.11   2 credits inside expense categories
+ *   spent             −$16,094.07   188 rows
+ *   moved             +$18,870.53   transfer +$23,527.03, investment −$4,656.50
+ *   market            +$18,869.69
+ *   portfolio flow       −$387.50
+ *   in transit              $0.00   every float in this window is settled
+ *   unexplained        +$5,000.00   a manual anchor on Cash on Hand, 2026-08-03
+ *
+ * Rows on holdings-valued accounts are excluded from every transaction band:
+ * those accounts do not replay, so their rows moved no balance.
+ */
+const REAL: AttributionInput = {
+  openingCents: 8_289_766,
+  closingCents: 10_932_237,
+  earnedCents: 5_295,
+  refundsCents: 11_311,
+  spentCents: -1_609_407,
+  movedCents: 1_887_053,
+  marketCents: 1_886_969,
+  portfolioFlowCents: -38_750,
+  inTransitDeltaCents: 0,
+  restatements: [{ accountName: "Cash on Hand", cents: 500_000, reason: "anchor" }],
+};
+
+describe("attribute — the bridge closes, or says by how much it does not", () => {
+  test("the residual is the delta minus every named band, never a plug", () => {
+    const got = attribute(REAL);
+    // 10,932,237 − 8,289,766 = 2,642,471 of movement.
+    expect(got.deltaCents).toBe(2_642_471);
+    // and the bands account for all but the $5,000.00 anchor
+    expect(got.unexplainedCents).toBe(500_000);
+    expect(got.closes).toBe(false);
+  });
+
+  test("a fully attributed residual is reported as attributed, not as closed", () => {
+    // The distinction the page has to draw: the ledger does not close, AND every
+    // cent of the shortfall has a name. Collapsing those two into one boolean is
+    // how a $5,000.00 hole gets rendered as a tick.
+    const got = attribute(REAL);
+    expect(got.attributedCents).toBe(500_000);
+    expect(got.unattributedCents).toBe(0);
+    expect(got.restatements.map((r) => r.accountName)).toEqual(["Cash on Hand"]);
+  });
+
+  test("a window with nothing unexplained closes", () => {
+    const got = attribute({ ...REAL, restatements: [], openingCents: 8_789_766 });
+    expect(got.unexplainedCents).toBe(0);
+    expect(got.closes).toBe(true);
+    expect(got.attributedCents).toBe(0);
+    expect(got.unattributedCents).toBe(0);
+  });
+
+  test("a restatement that does NOT cover the residual leaves the remainder unattributed", () => {
+    /*
+     * The failure this pins is the one that matters: an explanation that covers
+     * PART of a hole reads, at a glance, exactly like one that covers all of it.
+     * $4,000.00 of named anchor against $5,000.00 of residual is a $1,000.00 hole
+     * nobody has accounted for, and it must be its own number.
+     */
+    const got = attribute({
+      ...REAL,
+      restatements: [{ accountName: "Cash on Hand", cents: 400_000, reason: "anchor" }],
+    });
+    expect(got.unexplainedCents).toBe(500_000);
+    expect(got.attributedCents).toBe(400_000);
+    expect(got.unattributedCents).toBe(100_000);
+  });
+
+  test("over-attribution is reported too, and never silently clamped", () => {
+    // Σrestatements > residual means the attribution itself is wrong — two
+    // explanations for the same money. Clamping at zero would hide it.
+    const got = attribute({
+      ...REAL,
+      restatements: [{ accountName: "Cash on Hand", cents: 700_000, reason: "anchor" }],
+    });
+    expect(got.attributedCents).toBe(700_000);
+    expect(got.unattributedCents).toBe(-200_000);
+  });
+
+  test("the bands sum to the delta once the residual is included — the identity itself", () => {
+    const got = attribute(REAL);
+    const summed = got.bands.reduce((s, b) => s + b.cents, 0);
+    expect(summed).toBe(got.deltaCents);
+  });
+
+  test("every band key appears exactly once, in the declared order", () => {
+    // A waterfall is a running total: the order IS the arithmetic, so it cannot
+    // be left to a Map's iteration order or to a caller.
+    const got = attribute(REAL);
+    expect(got.bands.map((b) => b.key)).toEqual([...ATTRIBUTION_BAND_ORDER]);
+  });
+
+  test("a band that is exactly zero is still present, and marked", () => {
+    // Dropping empty bands makes two windows incomparable and makes a missing
+    // term indistinguishable from a zero one.
+    const got = attribute({ ...REAL, inTransitDeltaCents: 0 });
+    const transit = got.bands.find((b) => b.key === "inTransit");
+    expect(transit).toBeDefined();
+    expect(transit!.cents).toBe(0);
+    expect(transit!.isZero).toBe(true);
+  });
+
+  test("direction is derived from the sign, and zero is neither", () => {
+    const got = attribute(REAL);
+    const dir = (k: string) => got.bands.find((b) => b.key === k)!.direction;
+    expect(dir("earned")).toBe("up");
+    expect(dir("spent")).toBe("down");
+    expect(dir("inTransit")).toBe("flat");
+  });
+
+  test("an all-zero window is flat, closed, and says so without dividing by zero", () => {
+    const got = attribute({
+      openingCents: 0,
+      closingCents: 0,
+      earnedCents: 0,
+      spentCents: 0,
+      refundsCents: 0,
+      movedCents: 0,
+      marketCents: 0,
+      portfolioFlowCents: 0,
+      inTransitDeltaCents: 0,
+      restatements: [],
+    });
+    expect(got.deltaCents).toBe(0);
+    expect(got.closes).toBe(true);
+    expect(got.bands.every((b) => b.isZero)).toBe(true);
+    expect(got.bands.every((b) => b.sharePct === 0)).toBe(true);
+  });
+
+  test("share is measured against the GROSS movement, not the net delta", () => {
+    /*
+     * Measured, and the reason this is not `cents / deltaCents`: over July–August
+     * the net delta is $26,424.71 while the bands move $59,387.85 in total. A
+     * share over the net delta would put `market` at 71%, `moved` at 71% and
+     * `spent` at −61% — three bands each reading "most of it", and one of them
+     * off the end of any bar. Gross is the only denominator on which the shares
+     * are comparable and bounded.
+     */
+    const got = attribute(REAL);
+    const total = got.bands.reduce((s, b) => s + Math.abs(b.cents), 0);
+    expect(got.grossCents).toBe(total);
+    for (const b of got.bands) {
+      expect(Math.abs(b.sharePct)).toBeLessThanOrEqual(100);
+      expect(b.sharePct).toBeCloseTo((b.cents / total) * 100, 6);
+    }
+  });
+
+  test("a residual on the opposite side of the delta is still reported honestly", () => {
+    // Net worth FELL while the bands say it should have risen. The residual is
+    // negative and the reader has to be told, not shielded.
+    const got = attribute({ ...REAL, closingCents: 8_000_000, restatements: [] });
+    expect(got.deltaCents).toBe(-289_766);
+    expect(got.unexplainedCents).toBeLessThan(0);
+    expect(got.closes).toBe(false);
+  });
+});

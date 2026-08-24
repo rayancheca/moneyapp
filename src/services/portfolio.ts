@@ -7,11 +7,13 @@ import { transactions } from "@/db/schema/transactions";
 import { benchmarkAssetType } from "@/lib/benchmark-symbol";
 import { addDays, compareDates, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import {
+  aggregateReturn,
   dailyReturns,
   moneyWeightedReturn,
   totalReturn,
   type BenchmarkDay,
   type PortfolioDay,
+  type WindowReturn,
 } from "@/lib/portfolio-returns";
 import {
   realizedPnl,
@@ -251,6 +253,62 @@ export function portfolioSeries(db: AppDatabase, accountIds?: readonly string[])
 /** Flow-adjusted daily points for the whole portfolio (return math + calendar). */
 export function portfolioReturnDays(db: AppDatabase, accountIds?: readonly string[]): PortfolioDay[] {
   return buildPortfolio(db, accountIds).days;
+}
+
+/**
+ * How much of a window's holdings movement was the MARKET, and how much was
+ * money going in or out.
+ *
+ * The plan for the net-worth bridge assumed this already existed as
+ * `statement_periods.market_change_cents`. It does not: measured on the live
+ * ledger that column is populated on 16 of 219 rows, every one of them Robinhood
+ * Crypto, the newest period ends 2026-06-30, and Robinhood Brokerage — the
+ * larger account — has no statement periods at all. So it can answer "how much
+ * of THIS STATEMENT was the market" and never "how much of this month".
+ *
+ * The engine to answer it was already here and only ever sliced inside a client
+ * hook (`ReturnViewParts`). This is that slice, lifted so the server can ask.
+ *
+ * ⚠️ `from` behaves as a BASELINE, not as a counted day: `dailyReturns` starts at
+ * index 1, so the window is half-open `(from, to]`. That is the same convention
+ * balance replay uses, and it is why a bridge built on this closes against a
+ * net-worth delta rather than double-counting the opening day.
+ */
+export interface WindowMarketChange extends WindowReturn {
+  /**
+   * The portfolio's value on the first day it existed, when that day falls
+   * INSIDE this window.
+   *
+   * `dailyReturns` starts at index 1, so the first day of any slice is a
+   * baseline and contributes nothing. That is right for a window that opens
+   * mid-history and wrong for one that opens before the portfolio did: there the
+   * dropped day is the portfolio's own first, and its value entered net worth
+   * from nowhere — no gain, no flow, just an account beginning to be covered.
+   * Measured on the live ledger it is exactly $20.19, Robinhood Brokerage on
+   * 2024-07-10, and it is the entire residual on an all-time bridge.
+   *
+   * Zero on every window that starts on or after the portfolio's first day,
+   * which is every window a reader is likely to ask for.
+   */
+  openedInWindowCents: number;
+}
+
+export function marketChangeBetween(
+  db: AppDatabase,
+  from: string,
+  to: string,
+  accountIds?: readonly string[],
+): WindowMarketChange {
+  const all = portfolioReturnDays(db, accountIds);
+  const days = all.filter((d) => compareDates(d.day, from) >= 0 && compareDates(d.day, to) <= 0);
+  const window = aggregateReturn(dailyReturns(days));
+  // `days[0]` is the slice's baseline. It is an OPENING only when the portfolio
+  // had no value before it — i.e. when the slice begins after `from` because
+  // there was nothing earlier to begin at.
+  const first = days[0];
+  const openedInWindowCents =
+    first !== undefined && compareDates(first.day, from) > 0 ? first.navCents : 0;
+  return { ...window, openedInWindowCents };
 }
 
 /**

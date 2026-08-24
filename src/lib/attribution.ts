@@ -1,0 +1,219 @@
+/**
+ * Net worth moved from X to Y. WHY?
+ *
+ * The bridge between two net-worth readings, decomposed into bands that sum
+ * back to the movement — with the part that does NOT sum as a first-class
+ * output rather than a rounding note.
+ *
+ * ## The identity, and why it is provable rather than hopeful
+ *
+ * Measured on the live ledger before any of this was written, on five windows
+ * from one month to four years:
+ *
+ *     Δ net worth = transactions on REPLAYING accounts
+ *                 + market gain
+ *                 + portfolio net flow
+ *                 + Δ money in transit
+ *                 + unexplained
+ *
+ * and `unexplained` came back **exactly $0.00** on every window that did not
+ * span an account opening or a manual anchor. That is not an accident of one
+ * ledger: the cash and credit accounts are replayed from their transactions, so
+ * their balance change *is* their transaction sum, and the holdings-valued
+ * accounts are quantity × close, so their change is exactly gain plus flow.
+ *
+ * ⚠️ **Transactions on holdings-valued accounts must never enter this sum.**
+ * An investment account's daily balance is rebuilt from `holding_events` and
+ * cached closes, not from transaction replay, so its rows moved no balance and
+ * counting them double-counts the market term. The measured cost of getting this
+ * wrong on this ledger is $35,938.24 over four years. The divider is "is the
+ * account holdings-derived", NOT `investmentSideAccountIds()`, which includes
+ * the settlement-cash sibling and *is* replayed.
+ *
+ * ## Why `unexplained` is a residual and never a plug
+ *
+ * It would be trivial to make this always close: compute every band, then set
+ * the last one to whatever is left. That number would be meaningless, and the
+ * one output the bridge exists to produce would be the one output nobody could
+ * trust. So the residual is subtraction and nothing else, and the *explanations*
+ * for it (`restatements`) are a separate input that is CHECKED against it rather
+ * than folded into it. A restatement covering part of the hole reports the
+ * remainder; one covering more than the hole reports a negative remainder rather
+ * than clamping, because two explanations for the same money is itself the bug.
+ *
+ * Pure: no database, no clock. The service assembles the measurements.
+ */
+
+/**
+ * Why an account's balance moved with no transaction behind it.
+ *
+ * Both values are real on this ledger: `anchor` is the $5,000.00 manual anchor
+ * on Cash on Hand dated 2026-08-03 (the owner's untracked cash float — see
+ * MEMORY, it is deliberate and must not be "fixed"), and `opening` is Robinhood
+ * Brokerage entering coverage at $20.19 on 2024-07-10.
+ */
+export type RestatementReason = "anchor" | "opening";
+
+export interface Restatement {
+  accountName: string;
+  /** signed, net-worth-directed */
+  cents: number;
+  reason: RestatementReason;
+}
+
+export interface AttributionInput {
+  /** net worth at the window's opening edge */
+  openingCents: number;
+  /** net worth at the window's closing edge */
+  closingCents: number;
+  /** income-kind rows, money in, ≥ 0 */
+  earnedCents: number;
+  /** expense-kind debits, net-worth-signed, ≤ 0 */
+  spentCents: number;
+  /** credits inside expense categories — money back, not money earned, ≥ 0 */
+  refundsCents: number;
+  /**
+   * transfer-kind and investment-kind rows on replaying accounts, signed.
+   *
+   * ⚠️ NOT a neutral bucket that can be dropped. A transfer nets to zero only
+   * when BOTH legs sit inside the ledger; measured here, 1,244 transfer rows
+   * carry no counter-leg at all and come to +$86,941.15 all-time — money really
+   * crossing the boundary of what is tracked, which `periodTotals` excludes from
+   * both earned and spent by design.
+   */
+  movedCents: number;
+  /** holdings gain: Δ NAV less flow, from the portfolio return engine */
+  marketCents: number;
+  /** money moving into or out of the holdings themselves */
+  portfolioFlowCents: number;
+  /** in-transit stock at the close less at the open — a flow, not a stock */
+  inTransitDeltaCents: number;
+  /** what is known about balance movement no transaction explains */
+  restatements: readonly Restatement[];
+}
+
+export type AttributionBandKey =
+  | "earned"
+  | "refunds"
+  | "spent"
+  | "moved"
+  | "market"
+  | "portfolioFlow"
+  | "inTransit"
+  | "unexplained";
+
+/**
+ * The order the bands are read in, and therefore the order a running total
+ * accumulates them.
+ *
+ * Declared as a constant rather than assembled from an object's keys: a
+ * waterfall's order IS its arithmetic, and leaving it to iteration order makes
+ * the chart's meaning depend on a detail no test would notice changing. Money in
+ * first, money out next, then the parts that are not cash at all, then whatever
+ * is left over — which reads last because it is defined as what the others
+ * could not account for.
+ */
+export const ATTRIBUTION_BAND_ORDER = [
+  "earned",
+  "refunds",
+  "spent",
+  "moved",
+  "market",
+  "portfolioFlow",
+  "inTransit",
+  "unexplained",
+] as const satisfies readonly AttributionBandKey[];
+
+export type BandDirection = "up" | "down" | "flat";
+
+export interface AttributionBand {
+  key: AttributionBandKey;
+  /** signed, net-worth-directed */
+  cents: number;
+  direction: BandDirection;
+  /**
+   * Exactly zero. Kept and marked rather than dropped: two windows whose band
+   * lists differ in length cannot be compared, and a missing band is
+   * indistinguishable from an empty one.
+   */
+  isZero: boolean;
+  /** this band's share of GROSS movement, signed; 0 when nothing moved */
+  sharePct: number;
+}
+
+export interface Attribution {
+  /** closing − opening */
+  deltaCents: number;
+  bands: AttributionBand[];
+  /** Σ|band|, the denominator every share is measured against */
+  grossCents: number;
+  /** the residual: the delta less every named band. Zero on a closed window. */
+  unexplainedCents: number;
+  /** true when the residual is exactly zero */
+  closes: boolean;
+  /** Σ restatements — how much of the residual has a name */
+  attributedCents: number;
+  /**
+   * `unexplainedCents − attributedCents`. Positive is a hole nobody has
+   * accounted for; NEGATIVE means the explanations overlap and is a defect in
+   * the attribution rather than in the ledger. Never clamped.
+   */
+  unattributedCents: number;
+  restatements: readonly Restatement[];
+}
+
+function directionOf(cents: number): BandDirection {
+  if (cents > 0) return "up";
+  if (cents < 0) return "down";
+  return "flat";
+}
+
+export function attribute(input: AttributionInput): Attribution {
+  const deltaCents = input.closingCents - input.openingCents;
+
+  const named: Record<Exclude<AttributionBandKey, "unexplained">, number> = {
+    earned: input.earnedCents,
+    refunds: input.refundsCents,
+    spent: input.spentCents,
+    moved: input.movedCents,
+    market: input.marketCents,
+    portfolioFlow: input.portfolioFlowCents,
+    inTransit: input.inTransitDeltaCents,
+  };
+
+  const namedTotal = Object.values(named).reduce((sum, c) => sum + c, 0);
+  // Subtraction, and only subtraction — see the module docstring on why this
+  // must never be assembled from the explanations that describe it.
+  const unexplainedCents = deltaCents - namedTotal;
+
+  const cents = (k: AttributionBandKey): number =>
+    k === "unexplained" ? unexplainedCents : named[k];
+
+  const grossCents = ATTRIBUTION_BAND_ORDER.reduce((sum, k) => sum + Math.abs(cents(k)), 0);
+
+  const bands = ATTRIBUTION_BAND_ORDER.map((key) => {
+    const c = cents(key);
+    return {
+      key,
+      cents: c,
+      direction: directionOf(c),
+      isZero: c === 0,
+      // a window where nothing moved has no denominator, and every share of
+      // nothing is nothing — stated rather than divided
+      sharePct: grossCents === 0 ? 0 : (c / grossCents) * 100,
+    };
+  });
+
+  const attributedCents = input.restatements.reduce((sum, r) => sum + r.cents, 0);
+
+  return {
+    deltaCents,
+    bands,
+    grossCents,
+    unexplainedCents,
+    closes: unexplainedCents === 0,
+    attributedCents,
+    unattributedCents: unexplainedCents - attributedCents,
+    restatements: input.restatements,
+  };
+}
