@@ -748,9 +748,20 @@ describe("incomeExpectation — the term /budgets never had", () => {
     expect(july.basis.monthNote).toContain(`${july.scheduledOccurrences} paydays`);
   });
 
-  test("posted actuals never inflate the basis — a lumpy month is not a raise", () => {
-    // His mother's $6,900 landed in one July day. Grading budgets against that
-    // would licence a plan no ordinary month can fund.
+  test("posted money raises the basis only once it EXCEEDS the rate", () => {
+    /*
+     * ⚠️ This test previously asserted the opposite — "a lumpy month is not a
+     * raise" — and that stricter rule is what produced the defect the floor now
+     * guards: with actuals unable to raise the basis at all, one fourteen-cent
+     * interest series published $0.14 of expected income over five thousand
+     * dollars of banked salary.
+     *
+     * The worry behind the old rule was real (his mother's $6,900 landed in a
+     * single July day and does not licence a bigger plan), but it argues for
+     * classifying that deposit correctly, not for a header that can be talked
+     * below the ledger. And the app behaved this way before the levelling
+     * existed: `max(posted + still-due, forecast)` let actuals win too.
+     */
     const pay = createSeries({
       name: "Cash job (weekly pay)",
       nextExpectedOn: "2026-06-08",
@@ -759,11 +770,21 @@ describe("incomeExpectation — the term /budgets never had", () => {
       cadence: "weekly",
       intervalDaysAvg: 7,
     });
-    const lean = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-05").basis.cents;
+    const rate = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-05").basis;
+    expect(rate.kind).toBe("levelled");
+
+    // a deposit SMALLER than the rate leaves the rate in charge
+    spendLinked("2026-06-02", 50_000, "Income > Salary", pay);
+    const small = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-05").basis;
+    expect(small.kind).toBe("levelled");
+    expect(small.cents).toBe(rate.cents);
+
+    // one that exceeds it takes over, and says so
     spendLinked("2026-06-04", 690_000, "Income > Salary", pay);
     const fat = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-05");
-    expect(fat.postedCents).toBe(690_000);
-    expect(fat.basis.cents).toBe(lean);
+    expect(fat.postedCents).toBe(740_000);
+    expect(fat.basis.kind).toBe("banked");
+    expect(fat.basis.cents).toBe(740_000);
   });
 
   test("a user cadence override sets the basis, because it sets the projection", () => {
@@ -868,6 +889,57 @@ describe("incomeExpectation — the term /budgets never had", () => {
     const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-05");
     expect(got.basis.kind).toBe("calendar");
     expect(got.basis.cents).toBe(40_000);
+  });
+
+  test("a trivial detected series cannot bury five thousand dollars of banked salary", () => {
+    /*
+     * The end-to-end reproduction of the defect the levelling introduced. Nothing
+     * here is contrived: `INTEREST PAYMENT` is a series the detector creates by
+     * itself on the real fixture, and salary posting without an attributed series
+     * is the ordinary state of this ledger for weeks at a time.
+     *
+     * Before the floor: basis `levelled` $0.14, and every budget on the page
+     * reads over-allocated against fourteen cents.
+     */
+    spend("2026-08-05", 250_000, "Income > Salary");
+    spend("2026-08-19", 250_000, "Income > Salary");
+    createSeries({
+      name: "INTEREST PAYMENT",
+      nextExpectedOn: "2026-08-31",
+      nextExpectedAmountCents: 14,
+      kind: "income",
+      cadence: "monthly",
+      intervalDaysAvg: 30.4,
+      status: "detected",
+    });
+
+    const got = incomeExpectation(bundle.db, "2026-08-01", "2026-08-31", "2026-08-21");
+    expect(got.postedCents).toBe(500_000);
+    expect(got.basis.kind).toBe("banked");
+    expect(got.basis.cents).toBe(500_000);
+  });
+
+  test("the floor does not fire on the ledger's ordinary state, so the rate still holds still", () => {
+    // The control for the test above. His cash job has banked nothing since
+    // June, so `postedCents` is zero and the rate governs — which is the whole
+    // point of the rate.
+    createSeries({
+      name: "Cash job (weekly pay)",
+      nextExpectedOn: "2026-08-06",
+      nextExpectedAmountCents: 104_700,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    const august = incomeExpectation(bundle.db, "2026-08-01", "2026-08-31", "2026-08-21");
+    const october = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", "2026-10-21");
+    expect(august.postedCents).toBe(0);
+    expect(august.basis.kind).toBe("levelled");
+    // October 2026 schedules FIVE paydays against August's four, and the graded
+    // figure does not notice — which it would if the floor read the schedule.
+    expect(october.scheduledOccurrences).toBe(5);
+    expect(october.basis.cents).toBe(august.basis.cents);
+    expect(october.basis.cents).toBe(levelledMonthlyCents(104_700, "weekly"));
   });
 
   test("a window entirely in the past forecasts nothing and reports only actuals", () => {

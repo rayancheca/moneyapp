@@ -88,11 +88,15 @@ export const CATEGORY_KIND_JARGON: Record<string, string> = {
  *   that way is not marked over-allocated in the eight months a year that hold
  *   four weekly paydays and under-allocated in the four that hold five. Its
  *   definition says so, because a reader who counts the paydays on the calendar
- *   cannot otherwise reconcile them with the figure. With nothing to level it
- *   falls back to `max(posted + still-due, whole-period forecast)`, and the
- *   second definition states the max — the max is there because most of every
- *   month reads $0.00 posted while statements land weeks apart, and publishing
- *   that would assert a measured zero.
+ *   cannot otherwise reconcile them with the figure. That rate is FLOORED by the
+ *   income the window has already measured, because a rate published below money
+ *   the ledger can see is the one error this figure must never make — one
+ *   auto-detected interest series was enough to read fourteen cents over five
+ *   thousand dollars of banked salary. With nothing to level at all it falls back
+ *   to `max(posted + still-due, whole-period forecast)`, and the third definition
+ *   states the max — the max is there because most of every month reads $0.00
+ *   posted while statements land weeks apart, and publishing that would assert a
+ *   measured zero.
  * - `leftToAllocateCents` (page.tsx) subtracts MONTHLY budgets only. A weekly
  *   grocery budget does not reduce it — the single most surprising thing on the
  *   page, and nothing on screen says it.
@@ -113,14 +117,16 @@ const BAR_ANATOMY =
 
 export const BUDGET_JARGON = {
   /**
-   * ONE of these two ever renders, and `incomeBasis` picks which — the same
+   * ONE of these three ever renders, and `incomeBasis` picks which — the same
    * headline-and-its-definition-from-one-branch rule `budgetVerdict` follows.
    * They describe genuinely different arithmetic, and a single body covering
-   * both could only do it by being vague about the one that is on screen.
+   * all three could only do it by being vague about the one that is on screen.
    */
   expectedIncomeLevelled:
     "A year of your recurring pay spread evenly across twelve months, so the figure holds still instead of jumping whenever a month happens to hold an extra payday.",
-  expectedIncomeMeasured:
+  expectedIncomeBanked:
+    "Income that has already arrived in this window, used here because it came to more than your recurring pay adds up to — a plan is never graded against less money than the ledger has actually seen.",
+  expectedIncomeCalendar:
     "Money already in for this window plus the pay still due before it ends — or, when statements are behind, what your recurring income adds up to across the whole window, whichever is larger.",
   leftToAllocate:
     "That income minus the monthly total below. Budgets on any other cycle are left out, so a weekly or an annual one never moves this figure.",

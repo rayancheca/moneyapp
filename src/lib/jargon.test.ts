@@ -50,7 +50,8 @@ describe("jargon copy", () => {
       [
         // one per basis `incomeBasis` can select — exactly one renders
         "expectedIncomeLevelled",
-        "expectedIncomeMeasured",
+        "expectedIncomeBanked",
+        "expectedIncomeCalendar",
         "leftToAllocate",
         "totalBudgeted",
         // one per state `budgetVerdict` can return — a missing key is a row that

@@ -578,11 +578,15 @@ const BASIS_HORIZON_MONTHS = 12;
  * mean reads far below the confirmed weekly series — the series is the stated
  * fact, the deposits are its noisy shadow.
  *
- * **`basis` is what the header grades budgets against, and it is a RATE.** See
- * `lib/income-basis`: a plan sized from $1,047 × 52 ÷ 12 graded against the
- * paydays that happen to fall in a calendar month swings by $349.00 either way
- * and balances only across the year. The calendar month is still reported —
- * `scheduledCents`, and the note on the basis — it is simply not the yardstick.
+ * **`basis` is what the header grades budgets against, and it is a RATE floored
+ * by a measurement.** See `lib/income-basis`: a plan sized from $1,047 × 52 ÷ 12
+ * graded against the paydays that happen to fall in a calendar month swings by
+ * $349.00 either way and balances only across the year. The calendar month is
+ * still reported — `scheduledCents`, and the note on the basis — it is simply
+ * not the yardstick. `postedCents` goes in as the floor: a rate published below
+ * money the ledger has already seen is the one error this figure must never
+ * make, and one auto-detected fourteen-cent interest series was enough to cause
+ * it before the floor existed.
  *
  * ⛔ **A stale series still feeds this, and that is a decision rather than an
  * oversight.** The cash job has been silent for eleven paydays while the owner
@@ -684,7 +688,13 @@ export function incomeExpectation(
     expectedCents,
     scheduledCents,
     scheduledOccurrences,
-    basis: incomeBasis({ levelledCents, scheduledCents, scheduledOccurrences, measuredCents }),
+    basis: incomeBasis({
+      levelledCents,
+      postedCents,
+      scheduledCents,
+      scheduledOccurrences,
+      measuredCents,
+    }),
     series,
   };
 }

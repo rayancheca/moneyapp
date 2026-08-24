@@ -140,9 +140,14 @@ test("the header flips to over-allocated when the budgets outrun the income", as
 
   await expect(page.getByText("Over-allocated by")).toBeVisible();
   await expect(page.getByText("$3,356.67")).toBeVisible();
+  // The clause names what the plan outran, and it is chosen by the same branch
+  // that chose the figure. The seed grades against an ANNUALISED rate, so a
+  // clause about "this month" would be false here — in a five-payday month the
+  // month brings in more than the budgets do.
   await expect(
-    page.getByText(/these budgets total more than this month is expected to bring in/),
+    page.getByText(/these budgets total more than a year of your pay comes to/),
   ).toBeVisible();
+  await expect(page.getByText(/more than this month is expected to bring in/)).toHaveCount(0);
 
   // The ternary SWITCHED — it did not mount both halves. This is the assertion
   // the old alternation could not make.

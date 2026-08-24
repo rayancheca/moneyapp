@@ -135,7 +135,13 @@ export default async function BudgetsPage({
                 <InfoTip term="over-allocated" placement="bottom">
                   {BUDGET_JARGON.leftToAllocate}
                 </InfoTip>{" "}
-                — these budgets total more than this month is expected to bring in
+                {/* Named by the SAME branch that chose the figure. Hard-coded
+                    here, this clause said "more than this month is expected to
+                    bring in" while the grading figure was an annual rate — and
+                    in the four five-payday months a year the month brings in
+                    MORE than the budgets, so it stated the reverse of the note
+                    two lines below it. */}
+                — {income.basis.overAllocatedClause}
               </>
             )}
             {income.expectedCents > 0 && (
