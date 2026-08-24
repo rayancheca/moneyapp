@@ -301,7 +301,7 @@ allocation donut, the holdings table, and `/accounts`. `magnitudeTiers` is built
 and tested; applying it is a scheduled slice of **pass 78** (the focus/lens sweep
 over those surfaces).
 
-### Pass 63 — Runway, and the car priced all-in### Pass 63 — Runway, and the car priced all-in### Pass 63 — Runway, and the car priced all-in
+### ✅ Pass 63 — Runway, and the car priced all-in — SHIPPED 2026-08-24
 
 Two decision cards over one new engine.
 
@@ -313,6 +313,33 @@ Two decision cards over one new engine.
   only un-evidenced −$5,000 in the ledger), plus charging and any car-category
   spend → "$X/month all-in, Y% of everything you spend", with pre-car and
   post-car spend measured rather than assumed.
+
+> **⚠️ Two premises above were FALSE, and measuring said so before any code.**
+>
+> **1. Runway on committed outflows is not a number.** Committed bills are
+> $3,211.04/month against a $4,537.00/month income rate, so the burn is negative
+> and the card would report that the money never runs out — arithmetically
+> impeccable and false the first time he buys food. Asked as a concrete
+> either/or 2026-08-24; the owner chose **true measured spend** ($8,025.92/month,
+> the mean of six complete months) with the committed book kept as its own line,
+> and **both cash bases published** rather than one standing in for the other.
+> Shipped: **19 days of cash**, or more than 2 years if he sells investments.
+> ⛔ Do not re-scope this to committed outflows without asking him again.
+>
+> **2. There is no post-car spend to measure.** The Car category holds three
+> rows, all August 2026, all of them buying the car rather than running it, and
+> the first lease payment is 2026-09-11. So the card forecasts from the
+> registered commitments and publishes the date its evidence runs out
+> (2027-01-11, when the six-month policy ends). Shipped: **$921.38/month**
+> lease + insurance, **$1,190.45 all-in** with the $6,457.58 upfront amortised
+> over the 24-month lease, **12.9% of everything he spends**.
+>
+> **A third input nobody had specced: credit-card debt.** $925.61 owed against
+> $3,121.59 of cash is eight days of a twenty-seven-day answer, and no other
+> term carries it — the spend figure is a rate for future months and the
+> committed book is recurring series only. The runway spends NET cash and shows
+> the subtraction. Independent check: net cash + investable = $109,322.37, the
+> ledger's net worth to the cent.
 
 ### Pass 64 — The year-end summary
 
