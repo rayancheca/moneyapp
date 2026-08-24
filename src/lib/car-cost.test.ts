@@ -49,6 +49,13 @@ describe("carCost — the monthly figure", () => {
     expect(c.allInMonthlyCents).toBe(92138 + 26907);
   });
 
+  test("echoes the amortisation term back, so no caller re-derives it", () => {
+    // The card printed `months * 2`, right only because 12 and 24 are in that
+    // ratio. Changing the horizon must not silently change what the card claims.
+    expect(carCost(REAL).upfrontAmortisedOverMonths).toBe(24);
+    expect(carCost({ ...REAL, months: 6 }).upfrontAmortisedOverMonths).toBe(24);
+  });
+
   test("the all-in figure is never quietly the same as the committed one", () => {
     const c = carCost(REAL);
     expect(c.allInMonthlyCents).toBeGreaterThan(c.monthlyCents);

@@ -44,6 +44,13 @@ export interface CarCost {
   monthlyCents: number;
   /** money already handed over */
   upfrontCents: number;
+  /**
+   * The term `upfrontCents` is spread across, echoed back so no caller has to
+   * re-derive it. The card printed `months * 2` before this field existed —
+   * correct only because a twelve-month horizon and a twenty-four-month lease
+   * happen to be in that ratio, and silently wrong the moment either changed.
+   */
+  upfrontAmortisedOverMonths: number;
   /** that money spread across the term it buys */
   upfrontMonthlyCents: number;
   /** `monthlyCents + upfrontMonthlyCents` */
@@ -98,6 +105,7 @@ export function carCost(input: CarCostInput): CarCost {
     committedCents: input.committedCents,
     monthlyCents,
     upfrontCents: input.upfrontCents,
+    upfrontAmortisedOverMonths,
     upfrontMonthlyCents,
     allInMonthlyCents,
     projectedMonthlySpendCents,

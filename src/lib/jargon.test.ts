@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import * as jargon from "./jargon";
-import { BUDGET_JARGON, CATEGORY_KIND_JARGON, RESERVED_JARGON_PHRASES } from "./jargon";
+import { BUDGET_JARGON, CATEGORY_KIND_JARGON, RESERVED_JARGON_PHRASES, RUNWAY_JARGON } from "./jargon";
 import { RESERVED_NOTE_PHRASES } from "./section-notes";
 
 /**
@@ -29,10 +29,13 @@ describe("jargon copy", () => {
     // If this drops to the size of one map, the sweep silently stopped guarding
     // the other — the failure mode the reflection exists to prevent.
     expect(definitions.length).toBe(
-      Object.keys(CATEGORY_KIND_JARGON).length + Object.keys(BUDGET_JARGON).length,
+      Object.keys(CATEGORY_KIND_JARGON).length +
+        Object.keys(BUDGET_JARGON).length +
+        Object.keys(RUNWAY_JARGON).length,
     );
     expect(definitions.some(([name]) => name.startsWith("CATEGORY_KIND_JARGON."))).toBe(true);
     expect(definitions.some(([name]) => name.startsWith("BUDGET_JARGON."))).toBe(true);
+    expect(definitions.some(([name]) => name.startsWith("RUNWAY_JARGON."))).toBe(true);
   });
 
   test("covers every category kind the manager groups by", () => {

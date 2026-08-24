@@ -13,7 +13,14 @@ import { monthKey, todayIso } from "@/lib/dates";
  * S9 merged "upcoming" into the activity hub; normalizeOrder drops the stale
  * id from any previously saved layout.
  */
-export const DASHBOARD_SECTION_IDS = ["hero", "activity", "accounts", "recent"] as const;
+/**
+ * Order here is the FRESH-INSTALL order only. `normalizeOrder` keeps a saved
+ * layout's own sequence and appends canonical ids it has never seen to the END,
+ * so `decisions` (pass 63) renders third on a new database and last on one that
+ * saved a layout before the section existed. Moving it in this list changes the
+ * former and never the latter.
+ */
+export const DASHBOARD_SECTION_IDS = ["hero", "activity", "decisions", "accounts", "recent"] as const;
 export type DashboardSectionId = (typeof DASHBOARD_SECTION_IDS)[number];
 
 export const settingsSchema = z.object({

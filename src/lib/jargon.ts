@@ -46,6 +46,14 @@ export const RESERVED_JARGON_PHRASES = [
   "resolve this category by name",
   "Archived",
   "Locked",
+  // the two decision cards, each phrase printed exactly once on the dashboard
+  "of cash",
+  "Net cash",
+  "Running down by",
+  "already committed",
+  "all in",
+  "a renewal is not in the ledger",
+  "not charged yet",
 ] as const;
 
 /**
@@ -154,4 +162,26 @@ export const BUDGET_JARGON = {
   paceOver:
     "Spending has already passed the line, and no later import can undo that — this reading is measured rather than a forecast. The bar is full and no longer to scale, and the period mark is left off because there is nothing left for it to divide.",
   paceWithheld: `Days in this window have no imported spending yet, so the amount and the percentage can only rise — they are floors rather than measurements. No reading is offered over them, because calling an unimported month healthy is the one error this page must not make. ${BAR_ANATOMY}`,
+} as const;
+
+/**
+ * The two decision cards' terms — the pass-63 runway and car answers.
+ *
+ * Each is mounted where the term is printed EXACTLY ONCE, the rule the budget
+ * map follows and for the same measured reason: a tooltip body is live DOM text
+ * even while closed, so a definition repeated per row is furniture that also
+ * breaks somebody else's exact-count locator.
+ */
+export const RUNWAY_JARGON = {
+  runway:
+    "How long the money would last if what you spend and what you earn both carried on exactly as they have been.",
+  netCash:
+    "The cash in your accounts after taking off what is still owed on cards, because that money has already been spent.",
+  burn: "The gap between what leaves each month and what arrives, which is the rate your cash actually runs down at.",
+  committed:
+    "Money already agreed to: the bills a recurring schedule says are coming, plus any that fell due and never arrived.",
+  unevidenced:
+    "A commitment entered by hand which the bank has never billed, so the ledger has agreed to it without ever seeing one.",
+  allIn:
+    "The regular monthly bill plus the money handed over at the start, spread across the term that money buys.",
 } as const;

@@ -13,6 +13,7 @@ import { CHART_RANGES, rangeStartDay, type ChartRange } from "@/lib/chart-range"
 import type { SankeyGraph } from "@/lib/sankey-layout";
 import { resolveViewState } from "@/lib/view-state";
 import { recentLedgerRows } from "@/services/ledger-rows";
+import { carCard, runwayCard } from "@/services/committed";
 import { institutionGroups } from "@/services/institution-groups";
 import { DASHBOARD_SECTION_IDS, readSettings, type DashboardSectionId } from "@/services/settings";
 import { normalizeOrder } from "@/lib/reorder";
@@ -31,6 +32,8 @@ import {
 } from "@/components/dashboard/dashboard-view-spec";
 import { PeriodActivityPanel } from "@/components/dashboard/PeriodActivityPanel";
 import { SpendingPaceWidget } from "@/components/dashboard/SpendingPaceWidget";
+import { RunwayCard } from "@/components/dashboard/RunwayCard";
+import { CarCostCard } from "@/components/dashboard/CarCostCard";
 import { ToReviewCard } from "@/components/dashboard/ToReviewCard";
 import { UpcomingBillsStrip } from "@/components/dashboard/UpcomingBillsStrip";
 import { Money } from "@/components/ui/Money";
@@ -205,6 +208,8 @@ export default async function DashboardPage({
   }
 
   const groups = institutionGroups(db);
+  const runway = runwayCard(db, today);
+  const car = carCard(db, today);
   const pickerOptions = buildCategoryPickerOptions(db.select().from(categories).all());
   const reviewRows = recentLedgerRows(db, { limit: REVIEW_PREVIEW_LIMIT, needsReviewOnly: true });
   const recentRows = recentLedgerRows(db, { limit: RECENT_TXN_LIMIT });
@@ -323,6 +328,24 @@ export default async function DashboardPage({
       </section>
   );
 
+  /*
+   * Pass 63's decision layer: how long the money lasts, and what the car costs.
+   * The car half is CONDITIONAL — `carCard` returns null on a ledger with no Car
+   * category, and a card of zeroes is worse than no card. When it is absent the
+   * runway takes the full width rather than leaving a hole beside it.
+   */
+  const decisionsSection = (
+      <section aria-labelledby="decisions-heading">
+        <h2 id="decisions-heading" className="sr-only">
+          What this means
+        </h2>
+        <div className={`grid gap-4 *:min-w-0 ${car ? "lg:grid-cols-2" : ""}`}>
+          <RunwayCard data={runway} />
+          {car && <CarCostCard data={car} />}
+        </div>
+      </section>
+  );
+
   const accountsSection = (
       <section aria-labelledby="accounts-overview-heading">
         <div className="mb-2 flex items-baseline justify-between">
@@ -362,6 +385,7 @@ export default async function DashboardPage({
   const sectionsById: Record<DashboardSectionId, { label: string; node: React.ReactNode }> = {
     hero: { label: "Net worth", node: heroSection },
     activity: { label: "Activity", node: activitySection },
+    decisions: { label: "What this means", node: decisionsSection },
     accounts: { label: "Accounts", node: accountsSection },
     recent: { label: "Recent transactions", node: recentSection },
   };
