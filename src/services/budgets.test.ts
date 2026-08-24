@@ -942,6 +942,63 @@ describe("incomeExpectation — the term /budgets never had", () => {
     expect(october.basis.cents).toBe(levelledMonthlyCents(104_700, "weekly"));
   });
 
+  test("the horizon is a WHOLE year, and an annual series proves it has to be", () => {
+    /*
+     * Found by mutation: BASIS_HORIZON_MONTHS 12 -> 6 survived the whole suite,
+     * because every other income series here pays inside any horizon you pick.
+     * An annual one does not, and shortening the horizon makes it contribute in
+     * the months near its payday and vanish in the rest — which is the calendar
+     * swing this whole mechanism exists to remove, in its largest possible size.
+     *
+     * Graded month is 2026-08; the payday is 2027-06-15, ten months out. It is
+     * inside a twelve-month horizon and outside anything shorter than eleven.
+     */
+    createSeries({
+      name: "Annual bonus",
+      nextExpectedOn: "2027-06-15",
+      nextExpectedAmountCents: 1_200_000,
+      kind: "income",
+      cadence: "annual",
+      intervalDaysAvg: 365,
+    });
+    const got = incomeExpectation(bundle.db, "2026-08-01", "2026-08-31", "2026-08-21");
+    expect(got.scheduledOccurrences).toBe(0);
+    expect(got.basis.kind).toBe("levelled");
+    expect(got.basis.cents).toBe(levelledMonthlyCents(1_200_000, "annual"));
+  });
+
+  test("the nominal cadence sets the rate even when the measured gap disagrees", () => {
+    /*
+     * A deliberate, measured trade-off rather than an oversight — pinned so it is
+     * a decision a future reader can find rather than one they trip over.
+     *
+     * `stepPlan` walks a "monthly" series by its MEASURED average gap unless that
+     * gap is 29..32 days, so a series labelled monthly at 38.5 days (two exist on
+     * the real ledger, both dismissed) projects about nine occurrences a year
+     * while the rate below levels twelve. The alternative — deriving the rate from
+     * the walk — makes a weekly series yield 52 or 53 depending on which weekday
+     * the year starts on, moving the header by about $87 from one month to the
+     * next. That is the same disease in a smaller size, so the nominal table wins
+     * and `monthNote` states the difference on screen rather than hiding it.
+     */
+    createSeries({
+      name: "Irregular monthly",
+      nextExpectedOn: "2026-08-10",
+      nextExpectedAmountCents: 100_000,
+      kind: "income",
+      cadence: "monthly",
+      intervalDaysAvg: 38.5,
+    });
+    const got = incomeExpectation(bundle.db, "2026-08-01", "2026-08-31", "2026-08-01");
+    // the walk steps 39 days, so August holds exactly one occurrence...
+    expect(got.scheduledOccurrences).toBe(1);
+    expect(got.scheduledCents).toBe(100_000);
+    // ...while the rate reads the LABEL and levels twelve payments a year
+    expect(got.basis.cents).toBe(levelledMonthlyCents(100_000, "monthly"));
+    // and the gap between the two models is printed, not swallowed
+    expect(got.basis.monthNote).toContain("exactly the annualised figure above");
+  });
+
   test("a window entirely in the past forecasts nothing and reports only actuals", () => {
     spend("2026-06-03", 40_000, "Income > Salary");
     const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-08-11");

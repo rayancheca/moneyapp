@@ -57,6 +57,21 @@ describe("levelledMonthlyCents", () => {
     expect(levelledMonthlyCents(30_000, "quarterly")).toBe(10_000);
   });
 
+  test("a fractional cent rounds to NEAREST, and the rule is pinned in both directions", () => {
+    /*
+     * Found by mutation: `Math.round` -> `Math.floor` survived the entire suite,
+     * because $1,047.00 x 52 / 12 is exactly $4,537.00 and every other case here
+     * only checked integer-ness. A rule nothing can distinguish is a rule the
+     * next reader is free to change.
+     */
+    // $1,047.02 weekly = 453,708.67 cents: round 453,709, floor would give 453,708
+    expect(levelledMonthlyCents(104_702, "weekly")).toBe(453_709);
+    // exactly .5 rounds up, which is what Math.round does and what a reader expects
+    expect(levelledMonthlyCents(50_001, "biweekly")).toBe(108_336);
+    // and downward, so `Math.ceil` cannot pass either
+    expect(levelledMonthlyCents(104_701, "weekly")).toBe(453_704);
+  });
+
   test("always returns an integer number of cents", () => {
     // formatCents asserts an integer input, so a fractional cent is a thrown
     // error on the page rather than a rounding nit.
