@@ -214,6 +214,77 @@ describe("netWorthAttribution — the identity, on a ledger that can be checked 
     expect(got.restatements).toEqual([{ accountName: "Chk", cents: 200_000, reason: "anchor" }]);
   });
 
+  test("the CLOSING edge is inclusive — a row on `to` is inside the window", () => {
+    /*
+     * The opening edge had a test and the closing edge did not: `lte(postedOn,
+     * to)` could be weakened to `lt` and all thirteen tests stayed green. Both
+     * bounds now have to be right, because both are read by two queries that
+     * must agree — the transaction sum and `balanceAsOf`.
+     */
+    addManualAnchor(bundle.db, { accountId: chk, anchoredOn: "2026-06-01", enteredCents: 100_000 });
+    post(chk, "2026-06-30", -12_345, "Food");
+
+    const got = bridgeOver("2026-06-01", "2026-06-30");
+    expect(got.deltaCents).toBe(-12_345);
+    expect(got.bands.find((b) => b.key === "spent")!.cents).toBe(-12_345);
+    expect(got.closes).toBe(true);
+
+    // and a day short of it excludes the row from BOTH sides, so it still closes
+    const shorter = bridgeOver("2026-06-01", "2026-06-29");
+    expect(shorter.deltaCents).toBe(0);
+    expect(shorter.bands.find((b) => b.key === "spent")!.cents).toBe(0);
+    expect(shorter.closes).toBe(true);
+  });
+
+  test("an ARCHIVED account is read by neither side, exactly as net worth reads it", () => {
+    /*
+     * Found in review. Every net-worth surface in the app is active-only —
+     * `netWorthSeries` selects on `isActive`, `latestBridgedNetWorthCents` states
+     * the rule outright — while this service read the whole accounts table. An
+     * archived account's rows would then sit on one side of the identity and not
+     * the other, and the bridge would report a hole it had invented itself.
+     *
+     * Every account on the real ledger is active, which is precisely why this
+     * would have shipped green and failed the first time one was archived.
+     */
+    const inst = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const old = createAccount(bundle.db, { institutionId: inst.id, name: "Old", type: "checking" });
+    addManualAnchor(bundle.db, { accountId: chk, anchoredOn: "2026-06-01", enteredCents: 100_000 });
+    addManualAnchor(bundle.db, { accountId: old, anchoredOn: "2026-06-01", enteredCents: 900_000 });
+    post(old, "2026-06-10", -80_000, "Food");
+    bundle.db.update(accounts).set({ isActive: false }).where(eq(accounts.id, old)).run();
+
+    const got = bridgeOver("2026-06-01", "2026-06-30");
+    expect(got.deltaCents).toBe(0);
+    expect(got.bands.find((b) => b.key === "spent")!.cents).toBe(0);
+    expect(got.unexplainedCents).toBe(0);
+    expect(got.closes).toBe(true);
+  });
+
+  test("an account entering coverage inside the window IS an anchor restatement", () => {
+    /*
+     * There is no second branch here, and that is measured rather than assumed:
+     * a replaying account's balance is derived from its anchors plus its rows, so
+     * a residual always coincides with an anchor inside the window — the first
+     * anchor of a brand-new account included. A ternary falling back to
+     * "opening" survived every mutation, because nothing can reach it.
+     */
+    addManualAnchor(bundle.db, { accountId: chk, anchoredOn: "2026-06-01", enteredCents: 100_000 });
+    const inst = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const later = createAccount(bundle.db, { institutionId: inst.id, name: "Later", type: "checking" });
+    addManualAnchor(bundle.db, { accountId: later, anchoredOn: "2026-06-20", enteredCents: 7_500 });
+
+    const spanning = bridgeOver("2026-06-01", "2026-06-30");
+    expect(spanning.restatements).toEqual([
+      { accountName: "Later", cents: 7_500, reason: "anchor" },
+    ]);
+    expect(spanning.unexplainedCents).toBe(7_500);
+    expect(spanning.unattributedCents).toBe(0);
+
+    // a window opening after it sees a settled balance and no restatement at all
+    expect(bridgeOver("2026-06-21", "2026-06-30").restatements).toEqual([]);
+  });
+
   test("a window that runs backwards is refused rather than silently inverted", () => {
     expect(() => netWorthAttribution(bundle.db, "2026-06-30", "2026-06-01", 0, 0)).toThrow(
       /runs backwards/,

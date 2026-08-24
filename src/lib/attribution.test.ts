@@ -96,10 +96,72 @@ describe("attribute — the bridge closes, or says by how much it does not", () 
   });
 
   test("every band key appears exactly once, in the declared order", () => {
-    // A waterfall is a running total: the order IS the arithmetic, so it cannot
-    // be left to a Map's iteration order or to a caller.
+    /*
+     * A waterfall is a running total: the order IS the arithmetic, so it cannot
+     * be left to a Map's iteration order or to a caller.
+     *
+     * ⚠️ Written out LONGHAND rather than compared to `ATTRIBUTION_BAND_ORDER`.
+     * `attribute` builds its output BY MAPPING over that constant, so an
+     * assertion against it is structurally incapable of failing — deleting a key
+     * from the constant deletes it from both sides at once and the test stays
+     * green while the bridge silently stops accounting for a band. Caught in
+     * review; the first version of this test was exactly that tautology.
+     */
     const got = attribute(REAL);
-    expect(got.bands.map((b) => b.key)).toEqual([...ATTRIBUTION_BAND_ORDER]);
+    expect(got.bands.map((b) => b.key)).toEqual([
+      "earned",
+      "refunds",
+      "spent",
+      "moved",
+      "market",
+      "portfolioFlow",
+      "inTransit",
+      "unexplained",
+    ]);
+    // and the constant the renderer will read agrees with what was just pinned
+    expect([...ATTRIBUTION_BAND_ORDER]).toEqual(got.bands.map((b) => b.key));
+  });
+
+  test("`closes` is EXACT — one cent short is not closed", () => {
+    // The module's central promise, and it survived `Math.abs(x) < 100` until a
+    // review said so. A bridge that tolerates slack is a bridge that hides the
+    // smallest and most interesting holes.
+    const off = attribute({ ...REAL, closingCents: REAL.closingCents - 499_999 });
+    expect(off.unexplainedCents).toBe(1);
+    expect(off.closes).toBe(false);
+    const exact = attribute({ ...REAL, closingCents: REAL.closingCents - 500_000 });
+    expect(exact.unexplainedCents).toBe(0);
+    expect(exact.closes).toBe(true);
+  });
+
+  test("each band carries its OWN input, and none is wired to another's", () => {
+    /*
+     * Pins the assignment itself. Every band here gets a distinct prime-ish
+     * value, so swapping any two inputs — market for portfolioFlow is the easy
+     * mistake, they come out of one call — moves a number this test reads.
+     */
+    const got = attribute({
+      openingCents: 0,
+      closingCents: 0,
+      earnedCents: 11,
+      refundsCents: 22,
+      spentCents: -33,
+      movedCents: 44,
+      marketCents: 55,
+      portfolioFlowCents: -66,
+      inTransitDeltaCents: 77,
+      restatements: [],
+    });
+    const at = (k: string) => got.bands.find((b) => b.key === k)!.cents;
+    expect(at("earned")).toBe(11);
+    expect(at("refunds")).toBe(22);
+    expect(at("spent")).toBe(-33);
+    expect(at("moved")).toBe(44);
+    expect(at("market")).toBe(55);
+    expect(at("portfolioFlow")).toBe(-66);
+    expect(at("inTransit")).toBe(77);
+    // delta 0 less the named total is the residual, sign included
+    expect(at("unexplained")).toBe(-(11 + 22 - 33 + 44 + 55 - 66 + 77));
   });
 
   test("a band that is exactly zero is still present, and marked", () => {

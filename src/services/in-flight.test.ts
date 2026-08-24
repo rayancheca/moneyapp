@@ -13,7 +13,7 @@ import { compareDates } from "@/lib/dates";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
 import { rebuildAccount, netWorthSeries } from "./derivation";
-import { bridgedNetWorthSeries, latestBridgedNetWorthCents, transferFloats } from "./in-flight";
+import { bridgedNetWorthSeries, inTransitAt, latestBridgedNetWorthCents, transferFloats } from "./in-flight";
 
 const TODAY = "2026-07-08";
 
@@ -79,6 +79,36 @@ describe("transferFloats + bridgedNetWorthSeries", () => {
     rebuildAccount(bundle.db, b, TODAY);
     return { a, b };
   }
+
+  test("inTransitAt reports the STOCK on a day, and its sign follows the float", () => {
+    /*
+     * The bridge's in-transit BAND is `inTransitAt(to) − inTransitAt(from)`, so a
+     * reversed sign here reverses a band. Money out on the 2nd and in on the 4th
+     * is a dip the bridge fills: positive while it is in the air.
+     */
+    pairFixture({ outPostedOn: "2026-07-02", inPostedOn: "2026-07-04" });
+    expect(inTransitAt(bundle.db, "2026-07-01")).toBe(0);
+    expect(inTransitAt(bundle.db, "2026-07-02")).toBe(10_000);
+    expect(inTransitAt(bundle.db, "2026-07-03")).toBe(10_000);
+    // the day it lands, both legs are posted and nothing needs bridging
+    expect(inTransitAt(bundle.db, "2026-07-04")).toBe(0);
+
+    // …and as a FLOW over a window, which is what the bridge actually reads
+    const opened = inTransitAt(bundle.db, "2026-07-03") - inTransitAt(bundle.db, "2026-07-01");
+    const closed = inTransitAt(bundle.db, "2026-07-04") - inTransitAt(bundle.db, "2026-07-03");
+    expect(opened).toBe(10_000);
+    expect(closed).toBe(-10_000);
+  });
+
+  test("inTransitAt agrees with the series on every day, by construction", () => {
+    // Both read `inFlightDeltaOn`. This pins that they still both do — the two
+    // used to be hand-copied, and a copy disagreeing about the landing day moves
+    // net worth by a whole transfer.
+    pairFixture({ outPostedOn: "2026-07-02", inPostedOn: "2026-07-04" });
+    for (const p of bridgedNetWorthSeries(bundle.db)) {
+      expect(inTransitAt(bundle.db, p.day), p.day).toBe(p.inTransitCents);
+    }
+  });
 
   test("same-day pair -> no float (both ledgers restate together)", () => {
     pairFixture({ outPostedOn: "2026-07-03", inPostedOn: "2026-07-03" });

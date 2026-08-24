@@ -1,7 +1,7 @@
 import { and, eq, gt, inArray, lte, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
-import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
+import { dailyBalances } from "@/db/schema/balances";
 import { transactions } from "@/db/schema/transactions";
 import { attribute, type Attribution, type Restatement } from "@/lib/attribution";
 import { compareDates } from "@/lib/dates";
@@ -68,6 +68,28 @@ export function nonReplayingAccountIds(db: AppDatabase): Set<string> {
   return new Set(rows.map((r) => r.id));
 }
 
+/**
+ * The accounts this bridge reads: ACTIVE, and replayed from their own rows.
+ *
+ * ⚠️ The `isActive` half is not decoration, and it was missing until review.
+ * Every net-worth surface in the app is active-only — `netWorthSeries` selects
+ * on it, and `latestBridgedNetWorthCents` states the rule outright — so an
+ * archived account contributes nothing to the delta the bridge is trying to
+ * explain. Reading its transactions anyway puts money on one side of the
+ * identity and not the other, and the bridge reports a hole it invented itself.
+ * Every account on the ledger is active today, which is exactly why this would
+ * have shipped green and failed the first time one was archived.
+ */
+function bridgeAccounts(db: AppDatabase): { id: string; name: string }[] {
+  const nonReplaying = nonReplayingAccountIds(db);
+  return db
+    .select({ id: accounts.id, name: accounts.name })
+    .from(accounts)
+    .where(eq(accounts.isActive, true))
+    .all()
+    .filter((a) => !nonReplaying.has(a.id));
+}
+
 /** An account's balance as of `day`: its latest non-gap row on or before it. */
 function balanceAsOf(db: AppDatabase, accountId: string, day: string): number {
   const row = db
@@ -104,7 +126,12 @@ interface KindTotals {
  * discards +$18,870.53 of transfer- and investment-kind rows, which is seven
  * times the window's entire net movement.
  */
-function kindTotals(db: AppDatabase, from: string, to: string, skip: ReadonlySet<string>): KindTotals {
+function kindTotals(
+  db: AppDatabase,
+  from: string,
+  to: string,
+  eligible: ReadonlySet<string>,
+): KindTotals {
   const idx = loadCategoryIndex(db);
   const rows = db
     .select({
@@ -124,7 +151,7 @@ function kindTotals(db: AppDatabase, from: string, to: string, skip: ReadonlySet
 
   const t: KindTotals = { earnedCents: 0, refundsCents: 0, spentCents: 0, movedCents: 0 };
   for (const r of rows) {
-    if (skip.has(r.accountId)) continue;
+    if (!eligible.has(r.accountId)) continue;
     const kind = r.categoryId === null ? null : idx.topLevelOf(r.categoryId).kind;
     if (kind === "income" && r.amountCents > 0) {
       t.earnedCents += r.amountCents;
@@ -153,7 +180,8 @@ function kindTotals(db: AppDatabase, from: string, to: string, skip: ReadonlySet
  *
  * Investment accounts are skipped here as well as in the transaction sum: their
  * whole movement is the portfolio engine's to explain, as market gain plus flow,
- * and reporting it here as well would name the same money twice.
+ * and reporting it here as well would name the same money twice. Archived
+ * accounts are skipped too — see `bridgeAccounts`.
  *
  * Measured across the whole 1,462-day axis, this is nonzero on exactly ONE day
  * in four years: 2026-08-03, +$5,000.00, the manual anchor opening `Cash on
@@ -165,12 +193,10 @@ function restatementsIn(
   db: AppDatabase,
   from: string,
   to: string,
-  skip: ReadonlySet<string>,
+  eligible: readonly { id: string; name: string }[],
 ): Restatement[] {
-  const all = db.select({ id: accounts.id, name: accounts.name }).from(accounts).all();
   const out: Restatement[] = [];
-  for (const a of all) {
-    if (skip.has(a.id)) continue;
+  for (const a of eligible) {
     const delta = balanceAsOf(db, a.id, to) - balanceAsOf(db, a.id, from);
     const txn =
       db
@@ -187,21 +213,23 @@ function restatementsIn(
         .get()?.c ?? 0;
     const cents = delta - txn;
     if (cents === 0) continue;
-    // An anchor dated inside the window is the evidence; without one the only
-    // other way a replayed balance can move without a row is the account's own
-    // first covered day, which is an opening.
-    const anchored = db
-      .select({ n: sql<number>`count(*)` })
-      .from(balanceAnchors)
-      .where(
-        and(
-          eq(balanceAnchors.accountId, a.id),
-          gt(balanceAnchors.anchoredOn, from),
-          lte(balanceAnchors.anchoredOn, to),
-        ),
-      )
-      .get()?.n ?? 0;
-    out.push({ accountName: a.name, cents, reason: anchored > 0 ? "anchor" : "opening" });
+    /*
+     * Always "anchor", and that is a proof rather than a shortcut.
+     *
+     * A replaying account's every non-gap balance is derived from its anchors
+     * plus its rows, so a residual means an anchor restated the balance somewhere
+     * inside the window — including the case where the account's FIRST anchor is
+     * inside it, which is how an account enters coverage. I wrote this as a
+     * ternary falling back to "opening", and mutation testing showed that arm
+     * could be deleted with the whole suite green: no reachable state produces
+     * it. Dead code defended by a test that cannot see it is worse than no
+     * branch at all (pass 60), so the branch is gone.
+     *
+     * `"opening"` is still a real reason — it belongs to the HOLDINGS side, where
+     * the portfolio beginning to exist is genuinely not an anchor, and is
+     * produced there.
+     */
+    out.push({ accountName: a.name, cents, reason: "anchor" });
   }
   return out.sort((x, y) => Math.abs(y.cents) - Math.abs(x.cents) || x.accountName.localeCompare(y.accountName));
 }
@@ -231,11 +259,12 @@ export function netWorthAttribution(
   if (compareDates(from, to) > 0) {
     throw new Error(`netWorthAttribution: window runs backwards (${from} → ${to})`);
   }
-  const skip = nonReplayingAccountIds(db);
-  const totals = kindTotals(db, from, to, skip);
+  const eligible = bridgeAccounts(db);
+  const eligibleIds = new Set(eligible.map((a) => a.id));
+  const totals = kindTotals(db, from, to, eligibleIds);
   const market = marketChangeBetween(db, from, to);
 
-  const restatements = restatementsIn(db, from, to, skip);
+  const restatements = restatementsIn(db, from, to, eligible);
   /*
    * The holdings side has one opening the replay side cannot see: the portfolio
    * beginning to exist. It is named here rather than absorbed, because an

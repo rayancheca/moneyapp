@@ -12,19 +12,7 @@ import { transactions } from "@/db/schema/transactions";
 import { createAccount } from "./accounts";
 import { rebuildInvestmentHistory } from "./crypto-history";
 import { upsertHolding } from "./holdings";
-import {
-  hasBenchmark,
-  holdingRows,
-  pnlCalendarMonth,
-  pnlDayDetail,
-  portfolioBenchmarkDays,
-  portfolioOverview,
-  portfolioRealizedPl,
-  portfolioReturnDays,
-  portfolioSeries,
-  realizedLegKey,
-  topMovers,
-} from "./portfolio";
+import { hasBenchmark, holdingRows, marketChangeBetween, pnlCalendarMonth, pnlDayDetail, portfolioBenchmarkDays, portfolioOverview, portfolioRealizedPl, portfolioReturnDays, portfolioSeries, realizedLegKey, topMovers } from "./portfolio";
 
 process.env.MONEYAPP_FAKE_PRICES = "1";
 
@@ -124,6 +112,64 @@ describe("portfolioSeries — whole-portfolio value", () => {
       [D2, 11_000 + 210_000, true],
       [D3, 24_000 + 420_000, true],
     ]);
+  });
+});
+
+describe("marketChangeBetween — the windowed market term the bridge needs", () => {
+  /*
+   * The three terms have to ACCOUNT for the whole portfolio, and the mixed book
+   * makes each of them a different number so none can be wired to another:
+   *   D1  AAPL 1 @ $100 + ETH 1 @ $2,000  → NAV $2,100
+   *   D2  prices only                     → NAV $2,210, gain +$110, flow $0
+   *   D3  one more of each                → NAV $4,440, gain +$10, flow $2,220
+   */
+  test("gain and flow are separate measurements, not two names for one", () => {
+    seedMixedBook();
+    const w = marketChangeBetween(bundle.db, D1, D3);
+    expect(w.gainCents).toBe(11_000 + 1_000);
+    expect(w.netFlowCents).toBe(12_000 + 210_000);
+    // swap them and both assertions move — which is the point
+    expect(w.gainCents).not.toBe(w.netFlowCents);
+  });
+
+  test("the window is half-open: `from` is a baseline day, not a counted one", () => {
+    // Same convention as balance replay, and the reason a bridge built on this
+    // closes against a net-worth delta instead of double-counting the opening.
+    seedMixedBook();
+    expect(marketChangeBetween(bundle.db, D2, D3).gainCents).toBe(1_000);
+    expect(marketChangeBetween(bundle.db, D2, D3).netFlowCents).toBe(222_000);
+    // a zero-length window measures nothing at all
+    expect(marketChangeBetween(bundle.db, D3, D3).gainCents).toBe(0);
+  });
+
+  test("a window that predates the portfolio reports its opening, which is otherwise lost", () => {
+    /*
+     * `dailyReturns` starts at index 1, so the first day of any slice is a
+     * baseline. That is right for a window opening mid-history and wrong for one
+     * opening before the portfolio did — there the dropped day is the
+     * portfolio's own first, and its value entered net worth from nowhere. On the
+     * real ledger it is $20.19 and it is the entire residual of an all-time bridge.
+     */
+    seedMixedBook();
+    const all = marketChangeBetween(bundle.db, "2026-01-01", D3);
+    expect(all.openedInWindowCents).toBe(210_000);
+    // and the three terms now account for the whole portfolio, from nothing
+    expect(all.openedInWindowCents + all.gainCents + all.netFlowCents).toBe(444_000);
+  });
+
+  test("a window starting ON the first day reports no opening — it is a baseline", () => {
+    seedMixedBook();
+    expect(marketChangeBetween(bundle.db, D1, D3).openedInWindowCents).toBe(0);
+    expect(marketChangeBetween(bundle.db, D2, D3).openedInWindowCents).toBe(0);
+  });
+
+  test("an empty portfolio is flat and exact rather than a division by zero", () => {
+    expect(marketChangeBetween(bundle.db, D1, D3)).toMatchObject({
+      gainCents: 0,
+      netFlowCents: 0,
+      openedInWindowCents: 0,
+      exact: true,
+    });
   });
 });
 
