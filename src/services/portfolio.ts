@@ -546,8 +546,16 @@ export interface RealizedDaySale {
   clamped: boolean;
 }
 
-/** Every realized sale across the portfolio, grouped by day. */
-function realizedSalesByDay(db: AppDatabase): Map<string, RealizedDaySale[]> {
+/**
+ * Every realized sale across the portfolio, grouped by day.
+ *
+ * Exported so the year summary can total a CALENDAR YEAR from the same walk the
+ * holdings table, the calendar and the day sheet already read. A second
+ * average-cost walk would be a second answer to "what did this sale realize?",
+ * and the walk is intra-day order-sensitive — two implementations would diverge
+ * on any day holding both a buy and a sell.
+ */
+export function realizedSalesByDay(db: AppDatabase): Map<string, RealizedDaySale[]> {
   const byDay = new Map<string, RealizedDaySale[]>();
   for (const leg of realizedTradesByLeg(db).values()) {
     for (const s of realizedSales(leg.trades)) {
