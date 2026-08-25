@@ -332,7 +332,7 @@ a back link. Thinnest real page in the app.
   10:13:20, same day as the $1,320 Robinhood withdrawal and the −$1,300 card
   payment. Nine other rows on that rail are Internal Transfer / Investment
   Contribution. Which account did it leave?
-- **Dad's remaining ~$5k** via Arno Search Capital LLC. Family pass-through, not
+- **Dad's remaining ~$5k** via Arno Search Capital LLC. Pass-through, not
   income. Expect it; do not let it be classified as earnings.
 - **59 `needs_review` rows** — one sitting.
 - **Upload Robinhood July + August, SoFi August.**
@@ -384,7 +384,7 @@ already uses for carried prices. Never mixed into the reconciled figure.
 **b. Net-worth attribution — the bridge chart.** Net worth moved from X to Y.
 *Why?* Decompose it: earned · spent · market moves · family pass-through · in
 transit. Every one of those five components already exists in a service —
-`periodTotals`, `market_change_cents`, the Family pass-through category,
+`periodTotals`, `market_change_cents`, the Pass-through category,
 `inTransitCents`. Nobody has assembled the waterfall. It answers "am I actually
 getting richer, or is it just the market" — which for a portfolio that is now
 most of his net worth is *the* question, and it needs reconciled data to answer

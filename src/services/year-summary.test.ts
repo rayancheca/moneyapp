@@ -30,7 +30,7 @@ function catId(name: string): string {
 
 /**
  * ⚠️ `seedDatabase` predates four of the categories this page reads — Tutoring,
- * Financial Aid, Family pass-through and Gambling were all added to the real
+ * Financial Aid, Pass-through and Gambling were all added to the real
  * ledger by later passes. Creating them here rather than skipping them: a test
  * that quietly omitted the financial-aid line would pass on a database where
  * the partition this whole module exists for could never be exercised.
@@ -40,7 +40,7 @@ function addMissingCategories(): void {
   const rows = [
     { name: "Tutoring", parentId: parentOf("Income"), kind: "income" as const },
     { name: "Financial Aid", parentId: parentOf("Income"), kind: "income" as const },
-    { name: "Family pass-through", parentId: parentOf("Transfers"), kind: "transfer" as const },
+    { name: "Pass-through", parentId: parentOf("Transfers"), kind: "transfer" as const },
     { name: "Gambling", parentId: null, kind: "expense" as const },
   ];
   let order = 900;
@@ -179,8 +179,8 @@ describe("yearSummaryView — money in that was not earned", () => {
 
 describe("yearSummaryView — the pass-through shows both legs", () => {
   beforeEach(() => {
-    insert({ postedOn: "2025-02-01", amountCents: 500000, rawDescription: "WISE INC", categoryName: "Family pass-through" });
-    insert({ postedOn: "2025-02-10", amountCents: -300000, rawDescription: "WIRE OUT", categoryName: "Family pass-through" });
+    insert({ postedOn: "2025-02-01", amountCents: 500000, rawDescription: "WISE INC", categoryName: "Pass-through" });
+    insert({ postedOn: "2025-02-10", amountCents: -300000, rawDescription: "WIRE OUT", categoryName: "Pass-through" });
   });
 
   test("the inbound leg is the figure and the return leg travels beside it", () => {

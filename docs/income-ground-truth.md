@@ -37,7 +37,7 @@ are cents-exact from `data/moneyapp.db` at the 2026-07-16 snapshot unless noted.
 > so **"Salary" is no longer pure Fordham** — it is Fordham wages ($42,679.76) + the cash job. A confirmed weekly
 > paycheck series ("Cash job (weekly pay)" $1,046/wk) drives the forecast; Fordham + Knack are `ended` series. Also:
 > 92 peer Zelles were moved OUT of income (→ `Transfers › Reimbursements`), and dad's-money pass-throughs are now
-> `Transfers › Family pass-through`. Current all-time income total ≈ **$119,982.68**. The rule below still describes
+> `Transfers › Pass-through`. Current all-time income total ≈ **$119,982.68**. The rule below still describes
 > what counts as *earned* income; treat this note as the current state.
 
 ## 1. The rule — what the user counts as "earnings"
@@ -180,7 +180,7 @@ counts toward net worth.
 - `Income › Salary` = old Fordham work-study **+ the current cash-job pay** (pass 18).
 - `Income › Interest / Dividends` = real yield.
 - **NOT income:** ATM cash received (→ `Transfers › Gifts received`), dad's in→out remittances
-  (→ `Transfers › Family pass-through`), self-Zelles and account funding (→ `Transfers ›
+  (→ `Transfers › Pass-through`), self-Zelles and account funding (→ `Transfers ›
   Internal Transfer`), peer reimbursements (→ `Transfers › Reimbursements`).
 
 Session tallies: review queue **1185 → 416**; income **$119,982.68 → $119,462.68** (the −$520

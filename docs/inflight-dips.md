@@ -38,7 +38,7 @@ left (a wire to family, a real purchase) or when the market moved — those are 
 
 **Never-recovered drops the scan also surfaced — these are NOT dips and must NOT be bridged:**
 - 2026-03-04 −$22,446 and 2026-05-07 −$26,419 and 2025-12-12 −$18,670 → the **dad pass-through wires OUT**
-  (real money leaving; the matching inflow arrived earlier — see Transfers › Family pass-through).
+  (real money leaving; the matching inflow arrived earlier — see Transfers › Pass-through).
 - 2025-06-23 → 07-12 staircase (~$46k over 3 weeks) → the crypto/market decline + spending era; honest losses.
 - 1-day paired-transfer dips whose receiving account has sparse statement coverage may show as unrecovered
   (e.g. 2025-01-29 Chase→SoFi $10k) — the money arrived but the receiving account's daily coverage lags; these

@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
  *
  * The assertions here are STRUCTURAL, not figure-by-figure: the fixture's
  * categories and the real ledger's differ (the fixture predates Tutoring,
- * Financial Aid, Family pass-through and Gambling), so pinning amounts would
+ * Financial Aid, Pass-through and Gambling), so pinning amounts would
  * only assert the fixture back to itself. What is worth pinning is the property
  * the page exists for — that earned money and money-you-did-not-earn are never
  * added together — plus the disclaimer, which is the sentence that makes it

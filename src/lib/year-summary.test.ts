@@ -30,7 +30,7 @@ import {
  *   Realized gains          $2,082.72   31 sales — PARTIAL, a trade had no close
  *   Financial aid refund   $10,100.00    1 row
  *   Refunds/reimbursements  $1,333.00    1 row
- *   Family pass-through     $3,412.75    3 rows — kept OUT
+ *   Pass-through     $3,412.75    3 rows — kept OUT
  */
 const REAL: YearLineInput[] = [
   {
@@ -95,8 +95,8 @@ const REAL: YearLineInput[] = [
     basis: "Tuition is paid from an account this ledger does not hold; the balance is refunded.",
   },
   {
-    id: "family",
-    label: "Family pass-through",
+    id: "passthrough",
+    label: "Pass-through",
     section: "excluded",
     amountCents: 341275,
     rowCount: 3,
@@ -197,7 +197,7 @@ describe("yearSummary — provenance", () => {
 
 describe("yearSummary — a pass-through's return leg", () => {
   const withCounter: YearLineInput[] = [
-    { ...REAL.find((l) => l.id === "family")!, counterCents: 4880000, counterLabel: "sent back" },
+    { ...REAL.find((l) => l.id === "passthrough")!, counterCents: 4880000, counterLabel: "sent back" },
   ];
 
   test("the returning leg is carried through to the reader", () => {

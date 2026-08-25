@@ -144,7 +144,7 @@ The interactive "ask me a lot of questions" clarification session ran (5 themes,
   marked **Fordham + Knack income as ended**. Forecast now projects ~$2,115/rest-of-month. (Pass-17 §D closed.)
 - **The "$1,878/mo recurring in Shopping" mystery (pass-17) = the RENT.** 8 Hoffman rent rows were miscategorized in
   `Shopping › General`; moved to `Housing › Rent`. Housing budget now sees the rent; Shopping prediction is honest.
-- **Dad's money pass-through** correctly labeled (`Transfers › Family pass-through`), **Loans** category created,
+- **Dad's money pass-through** correctly labeled (`Transfers › Pass-through`), **Loans** category created,
   peer Zelles moved out of income, stale bills ended/dismissed. Income $122,054 → $119,982.68.
 
 **NEW user ask (queued — a real feature, not built):**

@@ -179,7 +179,7 @@ chart is 62b below, and the reason is at the end of this entry.
 
 > **⚠️ The plan's premise was partly false, and measuring said so before any
 > code.** It claimed "every component already exists in a service (`periodTotals`,
-> `market_change_cents`, the Family pass-through category, `inTransitCents`) —
+> `market_change_cents`, the Pass-through category, `inTransitCents`) —
 > this assembles them and proves they close." Measured:
 >
 > - **`market_change_cents` cannot supply a windowed market term.** Populated on

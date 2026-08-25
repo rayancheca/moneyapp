@@ -355,13 +355,13 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
       lineFor(db, year, { categoryName: "Other Income" }),
     ),
     (() => {
-      const inbound = lineFor(db, year, { categoryName: "Family pass-through" });
-      const outbound = lineFor(db, year, { categoryName: "Family pass-through", direction: "out" });
+      const inbound = lineFor(db, year, { categoryName: "Pass-through" });
+      const outbound = lineFor(db, year, { categoryName: "Pass-through", direction: "out" });
       return line(
-        "family",
-        "Family pass-through",
+        "passthrough",
+        "Pass-through",
         "excluded",
-        "Money your father sends, often wired back. A pass-through, not income — both legs largely cancel.",
+        "Money that moves through your accounts on its way to someone else — your father's wires, and money held briefly for someone and handed back. Not income; both legs largely cancel.",
         inbound,
         undefined,
         outbound.rowCount === 0
