@@ -55,6 +55,18 @@ export interface YearLineInput {
   basis: string;
   /** the figure is estimated or partial, and why. Travels WITH the number. */
   caveat?: string;
+  /**
+   * The RETURNING leg of a pass-through, shown beside the figure and summed
+   * into nothing.
+   *
+   * Without it the family line reads "$49,100.00 passed through" with the trip
+   * back invisible, which is a half-truth in the one section whose whole job is
+   * to say that money did not stay. It is deliberately not netted into
+   * `amountCents`: the gross that arrived and the gross that left are both real,
+   * and a single net figure would hide the size of the flow.
+   */
+  counterCents?: number;
+  counterLabel?: string;
 }
 
 export interface YearLine extends YearLineInput {

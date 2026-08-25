@@ -195,6 +195,34 @@ describe("yearSummary — provenance", () => {
   });
 });
 
+describe("yearSummary — a pass-through's return leg", () => {
+  const withCounter: YearLineInput[] = [
+    { ...REAL.find((l) => l.id === "family")!, counterCents: 4880000, counterLabel: "sent back" },
+  ];
+
+  test("the returning leg is carried through to the reader", () => {
+    const line = yearSummary({ year: 2025, lines: withCounter }).sections.find(
+      (x) => x.id === "excluded",
+    )!.lines[0]!;
+    expect(line.counterCents).toBe(4880000);
+    expect(line.counterLabel).toBe("sent back");
+  });
+
+  test("and is summed into nothing at all", () => {
+    const s = yearSummary({ year: 2025, lines: withCounter });
+    expect(s.sections.find((x) => x.id === "excluded")!.totalCents).toBe(341275);
+    expect(s.excludedCents).toBe(341275);
+    expect(s.totalReceivedCents).toBe(0);
+  });
+
+  test("a line with no return leg carries none", () => {
+    const line = yearSummary({ year: 2025, lines: REAL }).sections
+      .flatMap((x) => x.lines)
+      .find((l) => l.id === "fordham")!;
+    expect(line.counterCents).toBeUndefined();
+  });
+});
+
 describe("yearSummary — caveats travel with their figure", () => {
   test("a caveated line keeps its caveat", () => {
     const s = yearSummary({ year: 2025, lines: REAL });
