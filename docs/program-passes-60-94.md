@@ -341,7 +341,7 @@ Two decision cards over one new engine.
 > the subtraction. Independent check: net cash + investable = $109,322.37, the
 > ledger's net worth to the cent.
 
-### Pass 64 — The year-end summary
+### ✅ Pass 64 — The year-end summary — SHIPPED 2026-08-25
 
 January is coming and this turns a week of spreadsheet work into a page.
 
@@ -352,7 +352,32 @@ January is coming and this turns a week of spreadsheet work into a page.
   provenance, explicitly not advice, and the page says so in its own words.
 - Print stylesheet, because this one gets printed.
 
-### Pass 65 — Merchant intelligence
+> **Shipped as specced, with the partition as the product.** 2025 reads: earned
+> **$23,678.64**, all money in **$38,301.47**, and **$49,100.00** that merely
+> passed through. Adding the financial-aid refund to his wages would overstate
+> what he earned by 43%, so a line belongs to exactly one section and the
+> headline sums only the earned ones.
+>
+> **The grouping is quoted, not invented** — `docs/income-ground-truth.md`'s own
+> rule, with each line's `basis` naming the part it stands on. ⚠️ `Income ›
+> Salary` is no longer pure Fordham (work-study ended 2026-05-13; the cash job's
+> deposits live there too), so the split is by DESCRIPTOR and the two are
+> separate lines.
+>
+> **The XIRR is withheld unless both boundary valuations are complete.** 2025
+> opens on a day covering one of two investment accounts — $21.70 of visible
+> portfolio — so a return from it would read as an astronomical gain. 2026
+> computes **113.94%**, flagged as an annual rate from a part-year window.
+> Those refusals live in `lib/money-weighted-return` at 100%, because a mutation
+> deleting the guard survived the service's tests.
+>
+> **Three defects found by looking at the render:** the hero repeated the earned
+> figure verbatim; each line cited up to twelve filenames; and the print
+> stylesheet was wrong twice — first matching no shell selector at all, then
+> hiding the `<aside>` and leaving the sheet auto-placed into the shell grid's
+> 216px first column.
+
+### ✅ Pass 65 — Merchant intelligence — SHIPPED 2026-08-25
 
 `/merchants/[id]` is 91 lines across 893 merchants — the thinnest real page in
 the app.
@@ -362,6 +387,24 @@ the app.
   mix, year-over-year.
 - "You spend $X a month here" — the number a merchant page exists to give.
 - Reachable from somewhere other than a transaction row.
+
+> **Two measurements turned features into refusals.** 454 of 702 merchants have
+> exactly ONE visit (65%), so the monthly rate is **withheld** below 3 visits or
+> a 60-day span, with the sentence explaining why chosen by the same branch that
+> chose the figure. And the mean ticket runs **2–2.7× the median** — Target
+> $34.40 against $16.75 — so the MEDIAN leads and the mean appears only when
+> they materially disagree.
+>
+> **Reachability was the actual gap.** `/spending`'s Top merchants card linked
+> every row to the filtered LEDGER, so the only route to the merchant page was a
+> transaction row's sheet. A sibling `profileHref` link fixes it without nesting
+> a link inside a link.
+>
+> ⚠️ **Year-over-year marks the running year**; a partial 2026 beside a closed
+> 2025 invites the reader to call it a decline.
+>
+> **Shipped instead of the ScrubChart kit**: simple year bars scaled to the
+> largest year. The full scrub kit on a merchant page is still open.
 
 ---
 
