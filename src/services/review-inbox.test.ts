@@ -13,13 +13,7 @@ import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
 import { applyUndoPatch } from "./bulk-edit";
-import {
-  clusterMatchingIds,
-  confirmCluster,
-  recategorizeCluster,
-  reviewInbox,
-  type ClusterRef,
-} from "./review-inbox";
+import { clusterMatchingIds, clusterRows, confirmCluster, recategorizeCluster, reviewInbox, type ClusterRef } from "./review-inbox";
 
 let dir: string;
 let bundle: DbBundle;
@@ -289,5 +283,61 @@ describe("recategorizeCluster", () => {
     expect(() => recategorizeCluster(bundle.db, { kind: "merchant", merchantId: netflixId }, "nope")).toThrow(/Unknown category/);
     // @ts-expect-error — malformed ref must be rejected by the schema
     expect(() => recategorizeCluster(bundle.db, { kind: "bogus" }, groceriesId)).toThrow();
+  });
+});
+
+describe("clusterRows", () => {
+  test("returns EVERY member, not just the bounded sample", () => {
+    // The card samples four; a cluster of seven Zelle payments to four different
+    // people cannot be filed correctly until all seven are reachable.
+    for (let i = 0; i < 7; i += 1) {
+      insertTxn({ postedOn: `2026-07-0${i + 1}`, rawDescription: "ZELLE PAYMENT TO FRIEND", needsReview: true });
+    }
+    const inbox = reviewInbox(bundle.db);
+    const cluster = inbox.clusters.find((c) => c.count === 7)!;
+    expect(cluster.sample).toHaveLength(4);
+    expect(clusterRows(bundle.db, cluster.ref)).toHaveLength(7);
+  });
+
+  test("each row carries its OWN category, which the cluster's dominant one may not be", () => {
+    insertTxn({ postedOn: "2026-07-01", rawDescription: "ZELLE PAYMENT TO PEER", needsReview: true, categoryId: groceriesId });
+    insertTxn({ postedOn: "2026-07-02", rawDescription: "ZELLE PAYMENT TO PEER", needsReview: true });
+
+    const inbox = reviewInbox(bundle.db);
+    const cluster = inbox.clusters.find((c) => c.count === 2)!;
+    const rows = clusterRows(bundle.db, cluster.ref);
+    const labelled = rows.filter((r) => r.categoryId !== null);
+    expect(labelled).toHaveLength(1);
+    expect(labelled[0]!.categoryLabel).toBe(groceriesLabel);
+    expect(rows.filter((r) => r.categoryId === null)).toHaveLength(1);
+  });
+
+  test("reads the same rows in the same order as the inbox above it", () => {
+    // Two queries with their own ORDER BY is how an expanded list ends up
+    // disagreeing with the four rows printed directly above it.
+    for (let i = 0; i < 6; i += 1) {
+      insertTxn({ postedOn: `2026-07-1${i}`, rawDescription: "ZELLE PAYMENT TO C", needsReview: true });
+    }
+    const cluster = reviewInbox(bundle.db).clusters.find((c) => c.count === 6)!;
+    const rows = clusterRows(bundle.db, cluster.ref);
+    expect(rows.slice(0, cluster.sample.length).map((r) => r.id)).toEqual(
+      cluster.sample.map((r) => r.id),
+    );
+  });
+
+  test("a reviewed row drops out — the ref is recomputed, not remembered", () => {
+    const ids = [0, 1, 2].map((i) =>
+      insertTxn({ postedOn: `2026-07-0${i + 1}`, rawDescription: "ZELLE PAYMENT TO D", needsReview: true }),
+    );
+    const cluster = reviewInbox(bundle.db).clusters.find((c) => c.count === 3)!;
+    bundle.db.update(transactions).set({ needsReview: false }).where(eq(transactions.id, ids[0]!)).run();
+    expect(clusterRows(bundle.db, cluster.ref)).toHaveLength(2);
+  });
+
+  test("an emptied cluster returns nothing rather than throwing", () => {
+    const id = insertTxn({ postedOn: "2026-07-01", rawDescription: "ZELLE PAYMENT TO E", needsReview: true });
+    const cluster = reviewInbox(bundle.db).clusters.find((c) => c.count === 1)!;
+    bundle.db.update(transactions).set({ needsReview: false }).where(eq(transactions.id, id)).run();
+    expect(clusterRows(bundle.db, cluster.ref)).toEqual([]);
   });
 });

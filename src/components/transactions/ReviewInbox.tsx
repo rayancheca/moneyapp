@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -12,12 +12,18 @@ import { useKeyScope } from "@/components/ui/KeyScopeProvider";
 import { Icon } from "@/components/shell/Icon";
 import { PRIORITIES } from "@/lib/keyscope";
 import {
+  bulkApplyAction,
   bulkApplyByFilterAction,
+  clusterRowsAction,
   confirmClusterAction,
   markAllReviewedBeforeAction,
   recategorizeClusterAction,
 } from "@/app/transactions/actions";
-import type { ReviewCluster, ReviewInboxSummary } from "@/services/review-inbox";
+import type {
+  ReviewCluster,
+  ReviewClusterSampleRow,
+  ReviewInboxSummary,
+} from "@/services/review-inbox";
 import { CategoryPicker, type CategoryPickerOption } from "./CategoryPicker";
 import { offerUndoToast } from "./undo-toast";
 
@@ -173,6 +179,64 @@ interface ClusterCardProps {
 }
 
 function ClusterCard({ cluster, categories, onConfirm, onRecategorize }: ClusterCardProps) {
+  const router = useRouter();
+  const [, startTransition] = useTransition();
+  /*
+   * The expanded list is LOCAL and survives the router.refresh() a per-row
+   * categorize fires. Re-reading it from the server after every pick would
+   * collapse the card under the user mid-triage — and a row that has just been
+   * given a category leaves the needsReview backlog, so the refreshed cluster
+   * would be a row shorter each time and the list would shuffle under the
+   * cursor. Patching the local copy keeps the walk still.
+   */
+  const [expanded, setExpanded] = useState<ReviewClusterSampleRow[] | null>(null);
+  const [expanding, setExpanding] = useState(false);
+
+  const visible = expanded ?? cluster.sample;
+  const hidden = expanded ? 0 : cluster.count - cluster.sample.length;
+
+  function expand(): void {
+    setExpanding(true);
+    startTransition(async () => {
+      const result = await clusterRowsAction(cluster.ref);
+      setExpanding(false);
+      if (result.ok) setExpanded(result.data);
+      else toast({ title: result.error, tone: "negative" });
+    });
+  }
+
+  function onPickRow(row: ReviewClusterSampleRow, categoryId: string): void {
+    startTransition(async () => {
+      const result = await bulkApplyAction({ ids: [row.id], patch: { categoryId } });
+      if (!result.ok) {
+        toast({ title: result.error, tone: "negative" });
+        return;
+      }
+      const picked = categories.find((c) => c.id === categoryId);
+      setExpanded((prev) =>
+        (prev ?? cluster.sample).map((r) =>
+          r.id === row.id
+            ? { ...r, categoryId, categoryLabel: picked?.name ?? r.categoryLabel }
+            : r,
+        ),
+      );
+      /*
+       * `router.refresh()` on undo, NOT on the pick itself. The pick has to
+       * leave the card standing so the next row can be filed; an undo is the
+       * user stepping back out, and the server is the only thing that knows
+       * what the row reverted to.
+       */
+      offerUndoToast(
+        `${picked?.name ?? "Category"} · ${row.description}`,
+        result.data.undo,
+        () => {
+          setExpanded(null);
+          router.refresh();
+        },
+      );
+    });
+  }
+
   const categorized = cluster.dominantCategoryId !== null;
   const categoryOption = categorized
     ? categories.find((c) => c.id === cluster.dominantCategoryId)
@@ -211,17 +275,55 @@ function ClusterCard({ cluster, categories, onConfirm, onRecategorize }: Cluster
         <Money cents={cluster.netCents} flow className="figures shrink-0 text-sm" />
       </div>
 
-      <ul className="mt-3 space-y-1 border-t border-line pt-3">
-        {cluster.sample.map((row) => (
+      {/*
+       * ONE ROW AT A TIME.
+       *
+       * A cluster groups by merchant or descriptor, which is not the same thing
+       * as by PURPOSE. The owner's seven Zelle payments are one cluster and four
+       * different people: *"some are internal transfers some are payments to
+       * frineds some a payments for other things"*. Until this list was
+       * interactive the card offered "Confirm all 7" and "Recategorize" — both
+       * all-or-nothing — so the only way to file them correctly was to leave the
+       * inbox entirely.
+       *
+       * Each row now carries its OWN category and its own picker. The group
+       * actions stay, because a cluster that really is uniform is still the
+       * fastest thing on the page.
+       */}
+      <ul className="mt-3 space-y-0.5 border-t border-line pt-3">
+        {visible.map((row) => (
           <li key={row.id} className="flex items-center gap-2 text-xs text-ink-muted">
             <span className="figures shrink-0">{formatDay(row.postedOn)}</span>
             <span className="min-w-0 flex-1 truncate">{row.description}</span>
+            <CategoryPicker
+              options={categories}
+              currentId={row.categoryId}
+              onPick={(categoryId) => onPickRow(row, categoryId)}
+            >
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-transparent px-1.5 py-0.5 text-[11px] transition-colors duration-(--duration-fast) hover:border-line-strong hover:bg-surface-sunken">
+                {row.categoryLabel ? (
+                  <span className="max-w-[9rem] truncate">{row.categoryLabel}</span>
+                ) : (
+                  <span className="text-warning">Uncategorized</span>
+                )}
+                <Icon name="edit" className="size-3 text-ink-faint" />
+              </span>
+            </CategoryPicker>
             <span className="hidden shrink-0 sm:inline">{row.accountName}</span>
             <Money cents={row.amountCents} flow className="figures shrink-0" />
           </li>
         ))}
-        {cluster.count > cluster.sample.length ? (
-          <li className="text-[11px] text-ink-faint">+{cluster.count - cluster.sample.length} more</li>
+        {hidden > 0 ? (
+          <li>
+            <button
+              type="button"
+              onClick={expand}
+              disabled={expanding}
+              className="rounded-md px-1 py-0.5 text-[11px] text-ink-faint underline decoration-dotted underline-offset-2 transition-colors duration-(--duration-fast) hover:text-ink disabled:opacity-60"
+            >
+              {expanding ? "loading…" : `show all ${cluster.count}`}
+            </button>
+          </li>
         ) : null}
       </ul>
 

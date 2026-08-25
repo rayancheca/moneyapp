@@ -49,9 +49,11 @@ import {
 } from "@/services/transaction-splits";
 import {
   clusterRefSchema,
+  clusterRows,
   confirmCluster,
   recategorizeCluster,
   type ClusterRef,
+  type ReviewClusterSampleRow,
 } from "@/services/review-inbox";
 import {
   conditionsForCorrection,
@@ -499,6 +501,24 @@ export async function markAllReviewedBeforeAction(
  * handle — the service recomputes the live id set from it, so the blast
  * radius stays honest even if the queue shifted between load and click.
  * ---------------------------------------------------------------------- */
+
+/**
+ * Every live row in a cluster, for the card's "show all N".
+ *
+ * A read, deliberately behind an action rather than shipped with the page: a
+ * cluster can hold hundreds of rows and the inbox renders every cluster at once,
+ * so loading them all up front would pay for lists nobody opens.
+ */
+export async function clusterRowsAction(
+  ref: ClusterRef,
+): Promise<ActionResult<ReviewClusterSampleRow[]>> {
+  try {
+    const parsed = clusterRefSchema.parse(ref);
+    return { ok: true, data: clusterRows(getDb(), parsed) };
+  } catch (error: unknown) {
+    return failure(error);
+  }
+}
 
 export async function confirmClusterAction(ref: ClusterRef): Promise<ActionResult<BulkMutationData>> {
   try {

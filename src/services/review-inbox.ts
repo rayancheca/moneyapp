@@ -37,6 +37,18 @@ export interface ReviewClusterSampleRow {
   description: string;
   accountName: string;
   amountCents: number;
+  /**
+   * This row's OWN category, which a cluster's dominant one may not be.
+   *
+   * Needed because a cluster is a grouping by merchant or descriptor, not by
+   * purpose: the owner's seven Zelle payments are one cluster and four
+   * different people — some settling a shared bill, some paying a friend back,
+   * some neither. Categorising them as a block is the wrong tool, and until the
+   * card could show each row's current category there was no way to see that
+   * they disagreed.
+   */
+  categoryId: string | null;
+  categoryLabel: string | null;
 }
 
 export interface ReviewCluster {
@@ -164,9 +176,15 @@ function sortClusters(a: ReviewCluster, b: ReviewCluster): number {
   );
 }
 
-/** Loads and clusters the active needsReview backlog. */
-export function reviewInbox(db: AppDatabase, today: string = todayIso()): ReviewInboxSummary {
-  const rows: RawRow[] = db
+/**
+ * The active needsReview backlog, newest first.
+ *
+ * Extracted so `clusterRows` reads the SAME rows in the SAME order as the inbox
+ * that summarised them — a second query with its own ORDER BY is how a card's
+ * expanded list ends up disagreeing with the four rows printed above it.
+ */
+function loadBacklog(db: AppDatabase): RawRow[] {
+  return db
     .select({
       id: transactions.id,
       postedOn: transactions.postedOn,
@@ -195,6 +213,24 @@ export function reviewInbox(db: AppDatabase, today: string = todayIso()): Review
       desc(transactions.id),
     )
     .all();
+}
+
+/** One backlog row in the shape the cluster card renders. */
+function toSampleRow(row: RawRow, labels: ReadonlyMap<string, string>): ReviewClusterSampleRow {
+  return {
+    id: row.id,
+    postedOn: row.postedOn,
+    description: representativeLabel(row),
+    accountName: row.accountName,
+    amountCents: row.amountCents,
+    categoryId: row.categoryId,
+    categoryLabel: row.categoryId ? (labels.get(row.categoryId) ?? null) : null,
+  };
+}
+
+/** Loads and clusters the active needsReview backlog. */
+export function reviewInbox(db: AppDatabase, today: string = todayIso()): ReviewInboxSummary {
+  const rows = loadBacklog(db);
 
   const labels = buildCategoryLabels(db);
   const groups = new Map<string, { ref: ClusterRef; kind: ReviewClusterKind; rows: RawRow[] }>();
@@ -219,13 +255,7 @@ export function reviewInbox(db: AppDatabase, today: string = todayIso()): Review
       dominantCategoryId: categoryId,
       dominantCategoryLabel: categoryId ? (labels.get(categoryId) ?? null) : null,
       uniformCategory: uniform,
-      sample: group.rows.slice(0, SAMPLE_LIMIT).map((r) => ({
-        id: r.id,
-        postedOn: r.postedOn,
-        description: representativeLabel(r),
-        accountName: r.accountName,
-        amountCents: r.amountCents,
-      })),
+      sample: group.rows.slice(0, SAMPLE_LIMIT).map((r) => toSampleRow(r, labels)),
     });
   }
   clusters.sort(sortClusters);
@@ -247,6 +277,24 @@ export function reviewInbox(db: AppDatabase, today: string = todayIso()): Review
  * Recomputing (rather than trusting client ids) keeps confirm/recategorize
  * race-safe and idempotent: a re-confirm hits the now-empty set.
  */
+/**
+ * Every live member of a cluster, newest first — the full list behind the
+ * bounded `sample`.
+ *
+ * Separate from `reviewInbox` on purpose. A cluster can hold hundreds of rows
+ * and the inbox renders every cluster on the page, so shipping them all at load
+ * would pay for a list nobody has opened. This is what the card's "show all N"
+ * asks for, once.
+ */
+export function clusterRows(db: AppDatabase, ref: ClusterRef): ReviewClusterSampleRow[] {
+  const ids = new Set(clusterMatchingIds(db, ref));
+  if (ids.size === 0) return [];
+  const labels = buildCategoryLabels(db);
+  return loadBacklog(db)
+    .filter((r) => ids.has(r.id))
+    .map((r) => toSampleRow(r, labels));
+}
+
 export function clusterMatchingIds(db: AppDatabase, ref: ClusterRef): string[] {
   const base = and(eq(transactions.status, "active"), eq(transactions.needsReview, true))!;
   if (ref.kind === "merchant") {
