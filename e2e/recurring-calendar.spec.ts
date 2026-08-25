@@ -35,7 +35,10 @@ test("every day with activity prints its own signed total", async ({ page }) => 
    * The seeded July, in full. Each row is `<day> <glyph> <compact net> <series>`
    * — the series name is the DOMINANT entry on the day (calendar-day-weight),
    * which is unambiguous here because every seeded day carries exactly one:
-   *   Jul 5  Meal Kit  −$125.00   missed   (nextExpectedOn 07-05, before today)
+   *   Jul 5  Meal Kit  −$125.00   missed    (due 07-05, and the card IS imported
+   *                                            through 07-05 — a real absence)
+   *   Jul 6  Storage   −$45.00    not known (due, but SoFi Checking is imported
+   *                                            only through 07-04 — no evidence)
    *   Jul 9  Rent      −$1,800.00 upcoming
    *   Jul 10 Paycheck  +$3,200.00 upcoming (biweekly → 07-24 as well)
    *   Jul 16 Netflix   −$15.99    upcoming
@@ -47,6 +50,7 @@ test("every day with activity prints its own signed total", async ({ page }) => 
    */
   expect(await cellTexts(page)).toEqual([
     "5 ✕ -125 Meal Kit",
+    "6 ? -45 Storage unit",
     "9 • -1.8k Rent",
     "10 • 3.2k Paycheck",
     "16 • -16 Netflix",
@@ -54,14 +58,20 @@ test("every day with activity prints its own signed total", async ({ page }) => 
     "24 • 3.2k Paycheck",
   ]);
 
-  // …and the month footer totals them. Upcoming excludes the missed Meal Kit:
+  // …and the month footer totals them. Expected excludes the missed Meal Kit:
   // -1800 + 3200 - 15.99 - 49 + 3200 = 4535.01.
   // `innerText` applies text-transform, and the footer's labels are uppercased
-  // in CSS — so these read POSTED/UPCOMING, not Posted/Upcoming.
+  // in CSS — so these read SETTLED/EXPECTED, not Settled/Expected.
   const grid = page.getByRole("grid", { name: "July 2026" }).locator("..");
   const footer = (await grid.innerText()).replace(/\s+/g, " ");
-  expect(footer).toContain("POSTED $0.00");
-  expect(footer).toContain("UPCOMING +$4,535.01");
+  expect(footer).toContain("SETTLED $0.00");
+  expect(footer).toContain("EXPECTED +$4,535.01");
+  // The unmeasured money is named and totalled rather than left implicit. The
+  // old footer printed "POSTED $0.00" beside a bare "1 missed", which reads as a
+  // month in which nothing happened and one thing failed — both misleading, and
+  // mutually reinforcing.
+  expect(footer).toContain("NOT YET KNOWN $45.00");
+  expect(footer).toContain("1 missed");
   expect(footer).toContain("1 missed");
 });
 
@@ -144,8 +154,10 @@ for (const { width, expectNames } of NARROW_WIDTHS) {
     expect(tooTall, "these day cells cannot fit their own content").toEqual([]);
 
     // guard the guard: a filter over an empty set also returns [], which would
-    // make both assertions above vacuous the day a selector stops matching
-    expect(await amounts.count()).toBe(6);
+    // make both assertions above vacuous the day a selector stops matching.
+    // Seven populated days in July 2026 — the six recurring marks plus the
+    // "Storage unit" charge the ledger cannot settle.
+    expect(await amounts.count()).toBe(7);
 
     /*
      * …and the breakpoint itself, which every check above would pass without.
@@ -171,11 +183,26 @@ test("a day cell enumerates its series, state and amount for a screen reader", a
   // The cell TEXT is a magnitude for scanning ("-1.8k"); the aria-label is the
   // exact figure. Both matter, and only one of them is readable by a screen
   // reader — so the exact one is asserted here rather than assumed.
+  // The qualifier in brackets is the second channel: a future mark carries how
+  // firmly it is claimed, a past one carries why it could not be graded. Both
+  // ride in WORDS here because the cell has room for neither.
+  // `expected`, not `scheduled`: Rent is confirmed but every figure on it comes
+  // from posted history — nobody typed an amount or a date. The ladder ranks by
+  // who said it, so confirming alone does not reach the top rung.
   await expect(
-    page.getByRole("button", { name: "Jul 9, 2026 — 1 item: Rent upcoming -$1,800.00" }),
+    page.getByRole("button", { name: "Jul 9, 2026 — 1 item: Rent upcoming (expected) -$1,800.00" }),
   ).toBeVisible();
+  // A settled mark carries NO qualifier — it has an outcome, not a confidence.
   await expect(
     page.getByRole("button", { name: "Jul 5, 2026 — 1 item: Meal Kit missed -$125.00" }),
+  ).toBeVisible();
+  // …and an ungradeable one carries the REASON, which is the whole point of the
+  // state: "missed" and "not yet known" are different claims about the same
+  // silence, and only one of them is an accusation.
+  await expect(
+    page.getByRole("button", {
+      name: "Jul 6, 2026 — 1 item: Storage unit not yet known (not imported yet) -$45.00",
+    }),
   ).toBeVisible();
 
   // an empty day is labelled by its date alone — no phantom "0 items"
@@ -184,7 +211,7 @@ test("a day cell enumerates its series, state and amount for a screen reader", a
 
 /**
  * The `paid` state is not reachable in July 2026 — nothing seeded posts against
- * a series inside the month — so the one branch that renders a POSTED charge
+ * a series inside the month — so the one branch that renders a SETTLED charge
  * would otherwise be covered by neither a baseline nor a text assertion.
  *
  * It is reachable by paging: seedBudgets links the Netflix series to a single
@@ -208,6 +235,6 @@ test("paging back to a posted charge renders it as paid", async ({ page }) => {
   // a posted charge counts as Posted, never as Upcoming
   const grid = page.getByRole("grid", { name: "July 2024" }).locator("..");
   const footer = (await grid.innerText()).replace(/\s+/g, " ");
-  expect(footer).toContain("POSTED -$15.49");
-  expect(footer).toContain("UPCOMING $0.00");
+  expect(footer).toContain("SETTLED -$15.49");
+  expect(footer).toContain("EXPECTED $0.00");
 });

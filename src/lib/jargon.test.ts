@@ -1,6 +1,12 @@
 import { describe, expect, test } from "vitest";
 import * as jargon from "./jargon";
-import { BUDGET_JARGON, CATEGORY_KIND_JARGON, RESERVED_JARGON_PHRASES, RUNWAY_JARGON } from "./jargon";
+import {
+  BUDGET_JARGON,
+  CATEGORY_KIND_JARGON,
+  RECURRING_JARGON,
+  RESERVED_JARGON_PHRASES,
+  RUNWAY_JARGON,
+} from "./jargon";
 import { RESERVED_NOTE_PHRASES } from "./section-notes";
 
 /**
@@ -31,11 +37,31 @@ describe("jargon copy", () => {
     expect(definitions.length).toBe(
       Object.keys(CATEGORY_KIND_JARGON).length +
         Object.keys(BUDGET_JARGON).length +
-        Object.keys(RUNWAY_JARGON).length,
+        Object.keys(RUNWAY_JARGON).length +
+        Object.keys(RECURRING_JARGON).length,
     );
     expect(definitions.some(([name]) => name.startsWith("CATEGORY_KIND_JARGON."))).toBe(true);
     expect(definitions.some(([name]) => name.startsWith("BUDGET_JARGON."))).toBe(true);
     expect(definitions.some(([name]) => name.startsWith("RUNWAY_JARGON."))).toBe(true);
+    expect(definitions.some(([name]) => name.startsWith("RECURRING_JARGON."))).toBe(true);
+  });
+
+  test("covers every day-state and confidence the calendar can draw", () => {
+    // Same failure as the maps above: the legend reads these by key, and a
+    // missing one renders nothing at all rather than erroring. The state list is
+    // `OccurrenceState`; the confidence list is `ForecastConfidence`.
+    expect(Object.keys(RECURRING_JARGON).sort()).toEqual(
+      [
+        "paid",
+        "paidDifferent",
+        "missed",
+        "notYetKnown",
+        "upcoming",
+        "scheduled",
+        "expected",
+        "predicted",
+      ].sort(),
+    );
   });
 
   test("covers every category kind the manager groups by", () => {

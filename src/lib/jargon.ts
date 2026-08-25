@@ -185,3 +185,33 @@ export const RUNWAY_JARGON = {
   allIn:
     "The regular monthly bill plus the money handed over at the start, spread across the term that money buys.",
 } as const;
+
+/**
+ * The recurring calendar's two channels: what a mark SAYS happened, and how
+ * firmly the app is claiming what will.
+ *
+ * Mounted once each in the legend rather than per cell — the budget map's rule,
+ * for the same measured reason: a tooltip body is live DOM text even while
+ * closed, so a definition repeated across a 35-cell grid is furniture that also
+ * breaks somebody else's exact-count locator.
+ *
+ * `notYetKnown` is the entry that had to exist. The state it defines is the one
+ * this calendar previously did not have, and without a definition a grey "?"
+ * beside a payday is indistinguishable from a rendering failure.
+ */
+export const RECURRING_JARGON = {
+  paid: "A charge for this bill turned up on the expected day, for about the amount expected.",
+  paidDifferent:
+    "The charge turned up, but for enough more or less than usual to be worth a look — measured against how much this bill normally varies, not against a fixed percentage.",
+  missed:
+    "Nothing turned up, and the statements covering that day HAVE been imported — so the silence is an answer rather than a gap in the records.",
+  notYetKnown:
+    "Nothing turned up, but the ledger cannot say whether it should have. Either that day has not been imported yet, or the money is cash you were handed and have not deposited — neither of which is evidence that the payment failed.",
+  upcoming: "Expected on or after today, so nothing has had the chance to happen yet.",
+  scheduled:
+    "You told the app this amount or this date, which makes it the firmest kind of claim here — firmer than a bill with years of history behind it.",
+  expected:
+    "You confirmed this is a real recurring item, and the amount and date come from what it has charged before.",
+  predicted:
+    "The app spotted a pattern and nobody has agreed to it yet. Drawn with a striped bar, because it is a guess.",
+} as const;

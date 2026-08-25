@@ -360,6 +360,7 @@ async function seedBudgets(db: AppDatabase): Promise<void> {
   const { categories } = await import("../src/db/schema/categories");
   const { recurringSeries } = await import("../src/db/schema/recurring");
   const { transactions } = await import("../src/db/schema/transactions");
+  const { accounts: accountsTable } = await import("../src/db/schema/accounts");
   const { and, asc, eq, isNull, like } = await import("drizzle-orm");
 
   const topLevel = (name: string): string => {
@@ -422,9 +423,33 @@ async function seedBudgets(db: AppDatabase): Promise<void> {
    * budgetOverdue needs status detected|confirmed and those counts filter on
    * status alone.
    */
+  /*
+   * ⚠️ `accountId` is load-bearing, and was added after the calendar learned to
+   * tell a missed bill from an unimported day.
+   *
+   * The calendar will only call an occurrence `missed` where the ledger has
+   * actually been shown that day for the account the series bills on — and a
+   * series attached to NO account has never been observed charging anywhere, so
+   * it can never be graded (services/observation-frontier.ts). Without this
+   * column the fixture's only overdue bill rendered "not yet known", which is
+   * both the wrong state for a bill this file exists to prove is overdue and
+   * inconsistent with `budgetOverdue`, which still counted it.
+   *
+   * Chase Freedom Unlimited is imported through 2026-07-05 (newest charge
+   * 2026-07-04, statement closing 2026-07-05), so the 2026-07-05 occurrence
+   * lands exactly on the frontier and is genuinely, checkably absent.
+   */
+  const mealKitAccount = db
+    .select({ id: accountsTable.id })
+    .from(accountsTable)
+    .where(eq(accountsTable.name, "Chase Freedom Unlimited"))
+    .get();
+  if (!mealKitAccount) throw new Error("seedBudgets: missing Chase Freedom Unlimited");
+
   db.insert(recurringSeries)
     .values({
       name: "Meal Kit",
+      accountId: mealKitAccount.id,
       kind: "bill",
       cadence: "monthly",
       intervalDaysAvg: 30,
@@ -434,6 +459,72 @@ async function seedBudgets(db: AppDatabase): Promise<void> {
       lastMatchedOn: "2026-06-05",
       status: "confirmed",
       userCategoryId: topLevel("Food"),
+    })
+    .run();
+
+  /*
+   * A bill on an account that has NOT been imported that far — the `unsettled`
+   * state, which had no rendered path at all until this series existed.
+   *
+   * It is the case the whole day-state split was built for. Before it, an
+   * expected charge that had not posted was `missed` full stop, and on the real
+   * ledger that painted six red marks across August 2026 of which only two were
+   * real; the rest were days whose statements simply had not been uploaded yet,
+   * which in this ledger is the normal monthly rhythm.
+   *
+   * SoFi Checking is the account because the ledger stops short of the charge
+   * there: its newest imported row is 2026-07-04 and its newest statement closes
+   * 2026-06-30, so the frontier is 2026-07-04 and a 2026-07-06 occurrence sits
+   * two days past everything the app has been shown. That also makes this the
+   * only e2e exercising `observationFrontier` end to end — the income branch
+   * short-circuits before the frontier is ever consulted.
+   *
+   * ⚠️ It must be an account that exists by the time `seedBudgets` runs (§8).
+   * Venture X and Capital One 360 Checking are staler and would read better in
+   * the prose, and both are created LATER — the lookup below threw on the first
+   * attempt rather than silently attaching to nothing, which is why it is a
+   * hard failure and not a `?.`.
+   *
+   * Placed to cost nothing else on the page:
+   *   - 2026-07-06 is BEFORE E2E_FAKE_TODAY (2026-07-08), so it is already past
+   *     and gradeable, and `fixedComponents` projects from TODAY forward
+   *     (forecast.ts:158) — so no projected figure moves;
+   *   - `userEndsOn` caps it before the next monthly step (2026-08-06), keeping
+   *     it out of the 30-day Upcoming list and the dashboard's 14-day strip;
+   *   - it is money OUT, so `incomeBasis`' levelling skips it outright
+   *     (budgets.ts:664, `perOccurrenceCents <= 0`).
+   *
+   * ⚠️ Money out is not decoration here. An INCOME series in this slot moves the
+   * /budgets header by its full monthly rate even though it ends four days
+   * later: `stillPaying` (budgets.ts:665) is a BOOLEAN gate, so one remaining
+   * occurrence inside the horizon levels the same as a stream running all year.
+   * That is the known `user_ends_on` annualisation defect, and this fixture was
+   * very nearly its first writer.
+   *
+   * No `userCategoryId`, deliberately: that column is the only route from a
+   * series with no postings to a budget, and this one must not disturb the
+   * "exactly one overdue row" assertions.
+   */
+  const stale = db
+    .select({ id: accountsTable.id })
+    .from(accountsTable)
+    .where(eq(accountsTable.name, "SoFi Checking"))
+    .get();
+  if (!stale) throw new Error("seedBudgets: missing SoFi Checking");
+
+  db.insert(recurringSeries)
+    .values({
+      name: "Storage unit",
+      accountId: stale.id,
+      kind: "bill",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      amountCentsAvg: -45_00,
+      nextExpectedOn: "2026-07-06",
+      nextExpectedAmountCents: -45_00,
+      userEndsOn: "2026-07-10",
+      lastMatchedOn: "2026-06-06",
+      status: "confirmed",
     })
     .run();
 

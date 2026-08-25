@@ -183,3 +183,68 @@ describe("compactDayTotal", () => {
     expect(compactDayTotal(-250000000)).toBe("-2.5M");
   });
 });
+
+describe("dayWeight confidence", () => {
+  test("a day with no forecast on it carries no confidence", () => {
+    expect(
+      dayWeight([{ amountCents: -1549, state: "paid", name: "Netflix" }], 1549)!.confidence,
+    ).toBeNull();
+  });
+
+  test("takes the LEAST confident forecast on the day", () => {
+    // One bar per day, so a signed lease sharing a square with a detector guess
+    // must not lend the guess its certainty. Understating costs a second look;
+    // overstating is the app vouching for something nobody agreed to.
+    const w = dayWeight(
+      [
+        { amountCents: -55989, state: "upcoming", name: "Car lease", confidence: "scheduled" },
+        { amountCents: -1539, state: "upcoming", name: "YA-FIT", confidence: "predicted" },
+      ],
+      55989,
+    )!;
+    expect(w.confidence).toBe("predicted");
+  });
+
+  test("order does not change the answer", () => {
+    const entries = [
+      { amountCents: -1539, state: "upcoming" as const, name: "YA-FIT", confidence: "expected" as const },
+      { amountCents: -55989, state: "upcoming" as const, name: "Car lease", confidence: "scheduled" as const },
+    ];
+    expect(dayWeight(entries, 55989)!.confidence).toBe("expected");
+    expect(dayWeight([...entries].reverse(), 55989)!.confidence).toBe("expected");
+  });
+
+  test("a settled entry beside a forecast does not erase the forecast's confidence", () => {
+    const w = dayWeight(
+      [
+        { amountCents: -1549, state: "paid", name: "Netflix", confidence: null },
+        { amountCents: -600, state: "upcoming", name: "Rocket Money", confidence: "predicted" },
+      ],
+      2149,
+    )!;
+    expect(w.confidence).toBe("predicted");
+  });
+
+  test("an unsettled day outranks upcoming and paid for the cell's colour", () => {
+    // Attention order: a mark nobody can grade needs a look before one that
+    // went exactly as expected, and after one that definitely failed.
+    expect(
+      dayWeight(
+        [
+          { amountCents: -1549, state: "paid", name: "Netflix" },
+          { amountCents: 104700, state: "unsettled", name: "Cash job" },
+        ],
+        103151,
+      )!.state,
+    ).toBe("unsettled");
+    expect(
+      dayWeight(
+        [
+          { amountCents: -5000, state: "missed", name: "Breezeline" },
+          { amountCents: 104700, state: "unsettled", name: "Cash job" },
+        ],
+        99700,
+      )!.state,
+    ).toBe("missed");
+  });
+});

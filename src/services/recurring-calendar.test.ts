@@ -82,12 +82,22 @@ afterEach(() => {
 describe("classifyPostedAmount", () => {
   test("within the $1 floor is paid", () => {
     // 50c drift, tolerance floor is 100c → paid
-    expect(classifyPostedAmount(-1549, -1499, null)).toBe("paid");
+    expect(classifyPostedAmount(-1549, -1499, 0)).toBe("paid");
   });
 
   test("a cent of drift is paid (floor)", () => {
-    expect(classifyPostedAmount(-1549, -1548, null)).toBe("paid");
+    expect(classifyPostedAmount(-1549, -1548, 0)).toBe("paid");
     expect(classifyPostedAmount(-1549, -1549, 0)).toBe("paid");
+  });
+
+  test("an UNMEASURED series never reports a change, however wide the gap", () => {
+    // null ≠ 0. A σ of 0 is the measurement "this series never varies", which
+    // makes a $10 swing meaningful; a null is the absence of any measurement,
+    // which makes the same swing unclaimable. Reading them alike drew eight of
+    // April 2026's nine marks amber on a variable tutoring income.
+    expect(classifyPostedAmount(-1799, -1549, null)).toBe("paid");
+    expect(classifyPostedAmount(91800, 16705, null)).toBe("paid");
+    expect(classifyPostedAmount(-1799, -1549, 0)).toBe("paid_different");
   });
 
   test("a real price change beyond every band is paid_different", () => {
@@ -180,15 +190,186 @@ describe("recurringCalendar", () => {
     expect(july.missedCount).toBe(0);
   });
 
-  test("an overdue expected occurrence before today is missed", () => {
+  test("an overdue occurrence on an UNIMPORTED day is unsettled, not missed", () => {
     buildMonthlyNetflix();
     detectRecurringSeries(bundle.db, TODAY);
-    // view the same July but with a later 'today' so 07-15 is in the past
+    // The card's newest row is 2026-06-15 and it has no statement periods, so
+    // the ledger has never been shown 2026-07-15. Calling that a miss is the
+    // defect this state exists to remove — it is how August 2026 came to draw
+    // six red marks of which only two were real.
     const july = recurringCalendar(bundle.db, "2026-07", "2026-07-20");
     const day = july.entriesByDay["2026-07-15"];
-    expect(day![0]!.state).toBe("missed");
-    expect(july.missedCount).toBe(1);
+    expect(day![0]).toMatchObject({ state: "unsettled", unsettledReason: "not_imported" });
+    expect(july.missedCount).toBe(0);
+    expect(july.unsettledCount).toBe(1);
+    expect(july.unsettledGrossCents).toBe(1549);
     expect(july.upcomingNetCents).toBe(0);
+  });
+
+  test("an overdue occurrence on an IMPORTED day is still missed", () => {
+    // The pass-45 guard: $2,285.70 of overdue rent once hid behind a budget that
+    // read green, and narrowing `missed` must not resurrect that. A row on the
+    // same account dated after the occurrence proves the import walked past it,
+    // so the silence on the 15th is a real answer.
+    buildMonthlyNetflix();
+    insertTxn({ postedOn: "2026-07-18", amountCents: -2200, rawDescription: "GROCERY" });
+    detectRecurringSeries(bundle.db, TODAY);
+    const july = recurringCalendar(bundle.db, "2026-07", "2026-07-20");
+    const day = july.entriesByDay["2026-07-15"];
+    expect(day![0]).toMatchObject({ state: "missed", unsettledReason: null });
+    expect(july.missedCount).toBe(1);
+    expect(july.unsettledCount).toBe(0);
+  });
+
+  test("a payday the ledger cannot see is unbanked, never missed", () => {
+    // Cash income is handed over in person and reaches the ledger only when it
+    // is deposited; pass 60 measured eleven silent paydays against $12,552 of
+    // implied earnings. A red ✕ on each would be the app calling him unpaid.
+    // Note the day IS imported here — coverage is not what saves it.
+    for (const day of ["2026-06-05", "2026-06-12", "2026-06-19", "2026-06-26", "2026-07-03"]) {
+      insertTxn({ postedOn: day, amountCents: 104700, rawDescription: "CASH JOB WEEKLY PAY" });
+    }
+    insertTxn({ postedOn: "2026-07-19", amountCents: -2200, rawDescription: "GROCERY" });
+    detectRecurringSeries(bundle.db, TODAY);
+    bundle.db
+      .update(recurringSeries)
+      .set({ kind: "income" })
+      .where(eq(recurringSeries.name, "CASH JOB WEEKLY PAY"))
+      .run();
+
+    const july = recurringCalendar(bundle.db, "2026-07", "2026-07-20");
+    const unpaid = Object.values(july.entriesByDay)
+      .flat()
+      .filter((e) => e.name === "CASH JOB WEEKLY PAY" && e.transactionId === null);
+    expect(unpaid.length).toBeGreaterThan(0);
+    for (const e of unpaid) {
+      expect(e.state).not.toBe("missed");
+      if (e.state === "unsettled") expect(e.unsettledReason).toBe("unbanked");
+    }
+  });
+
+  test("an ENDED series keeps its history and loses its forecast", () => {
+    // The headline defect: `status IN ('detected','confirmed')` erased 172 of
+    // 274 tagged rows from the real ledger, which is why every month before
+    // 2025-09 drew literally nothing. An ended series did not stop having
+    // existed — Fordham work-study really did pay him 56 times.
+    buildMonthlyNetflix();
+    detectRecurringSeries(bundle.db, TODAY);
+    setSeriesStatus(bundle.db, netflix().id, "ended");
+
+    const march = recurringCalendar(bundle.db, "2026-03", TODAY);
+    expect(march.entriesByDay["2026-03-15"]).toHaveLength(1);
+    expect(march.entriesByDay["2026-03-15"]![0]).toMatchObject({ transactionId: expect.any(String) });
+    expect(march.postedNetCents).toBe(-1549);
+
+    // …and nothing is projected forward off it.
+    const july = recurringCalendar(bundle.db, "2026-07", TODAY);
+    expect(july.entriesByDay["2026-07-15"]).toBeUndefined();
+    expect(july.entryCount).toBe(0);
+  });
+
+  test("a DISMISSED series stays off the calendar entirely", () => {
+    // Dismiss is labelled "Not recurring" in the UI — the owner saying the
+    // detector was wrong. Its rows are real transactions that are not a series,
+    // so drawing them here would re-assert the claim he rejected.
+    buildMonthlyNetflix();
+    detectRecurringSeries(bundle.db, TODAY);
+    setSeriesStatus(bundle.db, netflix().id, "dismissed");
+
+    const march = recurringCalendar(bundle.db, "2026-03", TODAY);
+    expect(march.entryCount).toBe(0);
+    expect(march.postedNetCents).toBe(0);
+  });
+
+  test("a future occurrence carries a confidence and a past one never does", () => {
+    buildMonthlyNetflix();
+    detectRecurringSeries(bundle.db, TODAY);
+    const july = recurringCalendar(bundle.db, "2026-07", TODAY);
+    // detection-owned and unconfirmed → the weakest claim the app can make
+    expect(july.entriesByDay["2026-07-15"]![0]).toMatchObject({
+      state: "upcoming",
+      confidence: "predicted",
+    });
+
+    const march = recurringCalendar(bundle.db, "2026-03", TODAY);
+    expect(march.entriesByDay["2026-03-15"]![0]!.confidence).toBeNull();
+  });
+
+  test("confirming a series and setting an amount promotes it to scheduled", () => {
+    buildMonthlyNetflix();
+    detectRecurringSeries(bundle.db, TODAY);
+    setSeriesStatus(bundle.db, netflix().id, "confirmed");
+    bundle.db
+      .update(recurringSeries)
+      .set({ userAmountCents: -1999 })
+      .where(eq(recurringSeries.id, netflix().id))
+      .run();
+
+    const july = recurringCalendar(bundle.db, "2026-07", TODAY);
+    expect(july.entriesByDay["2026-07-15"]![0]!.confidence).toBe("scheduled");
+  });
+
+  test("the unsettled total is GROSS, so opposed unknowns cannot cancel to zero", () => {
+    // A net would publish "$0.00 not yet known (2)" for a month whose unknown
+    // income happened to balance its unknown bills — a measured zero standing
+    // over money nobody has measured, which is the reading the footer exists to
+    // remove.
+    // Through June, so the BILL has not lapsed by 2026-07-20 — money out stops
+    // being forecast once its evidence runs out, and a lapsed bill would leave
+    // the income side alone on the day and the test asserting nothing.
+    for (const day of ["2026-03-06", "2026-04-06", "2026-05-06", "2026-06-06"]) {
+      insertTxn({ postedOn: day, amountCents: 150_000, rawDescription: "PAYDAY" });
+      insertTxn({ postedOn: day, amountCents: -150_000, rawDescription: "BIG BILL" });
+    }
+    detectRecurringSeries(bundle.db, TODAY);
+    bundle.db
+      .update(recurringSeries)
+      .set({ kind: "income" })
+      .where(eq(recurringSeries.name, "PAYDAY"))
+      .run();
+
+    const july = recurringCalendar(bundle.db, "2026-07", "2026-07-20");
+    const unsettled = Object.values(july.entriesByDay)
+      .flat()
+      .filter((e) => e.state === "unsettled");
+    expect(unsettled.map((e) => e.amountCents).reduce((a, b) => a + b, 0)).toBe(0);
+    expect(july.unsettledCount).toBe(2);
+    expect(july.unsettledGrossCents).toBe(300_000);
+  });
+
+  test("staleness is independent of confidence, and rides only on the future", () => {
+    // The owner's cash job is the case that proves the two axes are separate: he
+    // typed the amount himself, so it is `scheduled` and correctly the firmest
+    // claim on the page, while it has not posted in 81 days. An income series
+    // keeps projecting when it goes quiet (money in never lapses), so this is a
+    // live combination, not a hypothetical.
+    for (const day of ["2026-01-02", "2026-01-09", "2026-01-16", "2026-01-23"]) {
+      insertTxn({ postedOn: day, amountCents: 104700, rawDescription: "CASH JOB WEEKLY PAY" });
+    }
+    detectRecurringSeries(bundle.db, "2026-01-30");
+    bundle.db
+      .update(recurringSeries)
+      .set({ kind: "income", status: "confirmed", userAmountCents: 104700 })
+      .where(eq(recurringSeries.name, "CASH JOB WEEKLY PAY"))
+      .run();
+
+    const future = recurringCalendar(bundle.db, "2026-07", TODAY);
+    const ahead = Object.values(future.entriesByDay)
+      .flat()
+      .filter((e) => e.state === "upcoming");
+    expect(ahead.length).toBeGreaterThan(0);
+    for (const e of ahead) {
+      expect(e.confidence).toBe("scheduled");
+      expect(e.isStale).toBe(true);
+    }
+
+    // A POSTED row never carries it — a charge that actually happened is not
+    // made doubtful by the series going quiet afterwards.
+    const january = recurringCalendar(bundle.db, "2026-01", TODAY);
+    const posted = january.entriesByDay["2026-01-09"]![0]!;
+    expect(posted.transactionId).not.toBeNull();
+    expect(posted.isStale).toBe(false);
+    expect(posted.confidence).toBeNull();
   });
 
   test("a long-inactive series stops projecting upcoming/missed but keeps its postings", () => {

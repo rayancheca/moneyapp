@@ -1,0 +1,216 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { eq } from "drizzle-orm";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { createDatabase, type DbBundle } from "@/db/client";
+import { seedDatabase } from "@/db/seed";
+import { importFiles, statementPeriods } from "@/db/schema/imports";
+import { institutions } from "@/db/schema/institutions";
+import { transactions } from "@/db/schema/transactions";
+import { dedupeHash } from "@/lib/hash";
+import { normalizeDescription } from "@/lib/normalize";
+import { createAccount } from "./accounts";
+import { frontierForSeries, observationFrontier, seriesAccountIds } from "./observation-frontier";
+
+let dir: string;
+let bundle: DbBundle;
+let institutionId: string;
+let seq = 0;
+
+function addAccount(name: string, type: "checking" | "credit" | "investment"): string {
+  return createAccount(bundle.db, { institutionId, name, type });
+}
+
+function addTxn(
+  accountId: string,
+  postedOn: string,
+  opts: { status?: "active" | "excluded"; seriesId?: string } = {},
+): string {
+  seq += 1;
+  return bundle.db
+    .insert(transactions)
+    .values({
+      accountId,
+      postedOn,
+      amountCents: -100,
+      rawDescription: `TXN ${seq}`,
+      normalizedDescription: normalizeDescription(`TXN ${seq}`),
+      status: opts.status ?? "active",
+      recurringSeriesId: opts.seriesId ?? null,
+      dedupeHash: dedupeHash({
+        accountId,
+        postedOn,
+        amountCents: -100,
+        rawDescription: `TXN ${seq}`,
+        occurrenceIndex: seq,
+      }),
+    })
+    .returning({ id: transactions.id })
+    .get().id;
+}
+
+function addStatement(accountId: string, periodStart: string, periodEnd: string): void {
+  seq += 1;
+  const now = new Date().toISOString();
+  const fileId = `f${seq}`;
+  bundle.db
+    .insert(importFiles)
+    .values({
+      id: fileId,
+      fileName: `s${seq}.pdf`,
+      fileSha256: `sha${seq}`,
+      format: "pdf",
+      institutionId,
+      parserVersion: 1,
+      status: "parsed",
+      storagePath: `/tmp/s${seq}.pdf`,
+      importedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .run();
+  bundle.db
+    .insert(statementPeriods)
+    .values({
+      id: `p${seq}`,
+      importFileId: fileId,
+      accountId,
+      periodStart,
+      periodEnd,
+      reconciliation: "reconciled",
+      createdAt: now,
+      updatedAt: now,
+    })
+    .run();
+}
+
+beforeEach(() => {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-frontier-"));
+  bundle = createDatabase(path.join(dir, "t.db"));
+  seedDatabase(bundle.db);
+  institutionId = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!.id;
+  seq = 0;
+});
+
+afterEach(() => {
+  bundle.sqlite.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+describe("observationFrontier", () => {
+  test("takes the LATER of the two arbiters", () => {
+    // Chase Sapphire on the real ledger: newest charge 2026-07-30, statement
+    // closing 2026-08-02. Transactions alone would call three genuinely-empty
+    // covered days unimported.
+    const a = addAccount("Card", "credit");
+    addTxn(a, "2026-07-30");
+    addStatement(a, "2026-07-03", "2026-08-02");
+    expect(observationFrontier(bundle.db).byAccount.get(a)).toBe("2026-08-02");
+  });
+
+  test("a CSV-only account with no statement is still observed", () => {
+    // Cash on Hand has never had a statement and is imported through 2026-08-11.
+    const a = addAccount("Wallet", "checking");
+    addTxn(a, "2026-08-11");
+    expect(observationFrontier(bundle.db).byAccount.get(a)).toBe("2026-08-11");
+  });
+
+  test("a statement with no charges in it still counts as shown", () => {
+    const a = addAccount("Quiet", "checking");
+    addStatement(a, "2026-07-01", "2026-07-31");
+    expect(observationFrontier(bundle.db).byAccount.get(a)).toBe("2026-07-31");
+  });
+
+  test("an account with neither arbiter is absent, not null-valued", () => {
+    // Absent rather than present-with-null so it cannot be mistaken for a
+    // frontier of "the beginning of time" by a caller taking a minimum.
+    const a = addAccount("Empty", "checking");
+    expect(observationFrontier(bundle.db).byAccount.has(a)).toBe(false);
+  });
+
+  test("investment accounts are excluded", () => {
+    // Their balances are marked to market, not walked from transactions, so
+    // "imported through" is not a fact about them.
+    const a = addAccount("Brokerage", "investment");
+    addTxn(a, "2026-08-25");
+    expect(observationFrontier(bundle.db).byAccount.has(a)).toBe(false);
+  });
+
+  test("excluded rows do not move the frontier", () => {
+    const a = addAccount("Card", "credit");
+    addTxn(a, "2026-07-31");
+    addTxn(a, "2026-08-20", { status: "excluded" });
+    expect(observationFrontier(bundle.db).byAccount.get(a)).toBe("2026-07-31");
+  });
+
+});
+
+describe("frontierForSeries", () => {
+  test("takes the EARLIEST of the accounts a series bills on", () => {
+    // Netflix names Chase Sapphire and posted to Discover too. To say a charge
+    // is missing from it, both have to have been looked at.
+    const stale = addAccount("SoFi", "checking");
+    const fresh = addAccount("Venture", "credit");
+    addTxn(stale, "2026-07-31");
+    addTxn(fresh, "2026-08-14");
+    const f = observationFrontier(bundle.db);
+    expect(frontierForSeries(f, new Set([stale, fresh]))).toBe("2026-07-31");
+    expect(frontierForSeries(f, new Set([fresh]))).toBe("2026-08-14");
+  });
+
+  test("an unattributable series gets NO frontier, not the ledger's earliest", () => {
+    // The rejected design: one dormant account dragging the floor back months,
+    // after which nothing unattributable could ever be graded again — pass 45's
+    // overdue-rent hazard rebuilt as a policy.
+    const stale = addAccount("SoFi", "checking");
+    const fresh = addAccount("Venture", "credit");
+    addTxn(stale, "2026-07-31");
+    addTxn(fresh, "2026-08-14");
+    const f = observationFrontier(bundle.db);
+    expect(frontierForSeries(f, undefined)).toBeNull();
+    expect(frontierForSeries(f, new Set())).toBeNull();
+  });
+
+  test("an account that has never been imported vouches for nothing", () => {
+    const fresh = addAccount("Venture", "credit");
+    const never = addAccount("New", "checking");
+    addTxn(fresh, "2026-08-14");
+    const f = observationFrontier(bundle.db);
+    // …and specifically does NOT borrow its live sibling's frontier.
+    expect(frontierForSeries(f, new Set([never]))).toBeNull();
+  });
+});
+
+describe("seriesAccountIds", () => {
+  test("unions the series' own column with every account its postings touched", () => {
+    const a = addAccount("A", "checking");
+    const b = addAccount("B", "credit");
+    const seriesId = "s-1";
+    const now = new Date().toISOString();
+    bundle.db.run(
+      `insert into recurring_series (id, name, account_id, kind, cadence, tolerance_days, status, created_at, updated_at)
+       values ('${seriesId}', 'Netflix', '${a}', 'subscription', 'monthly', 3, 'ended', '${now}', '${now}')`,
+    );
+    addTxn(b, "2026-05-01", { seriesId });
+
+    expect(seriesAccountIds(bundle.db).get(seriesId)).toEqual(new Set([a, b]));
+  });
+
+  test("a series with a column and no postings still reports its account", () => {
+    const a = addAccount("A", "checking");
+    const seriesId = "s-2";
+    const now = new Date().toISOString();
+    bundle.db.run(
+      `insert into recurring_series (id, name, account_id, kind, cadence, tolerance_days, status, created_at, updated_at)
+       values ('${seriesId}', 'Merged away', '${a}', 'subscription', 'monthly', 3, 'ended', '${now}', '${now}')`,
+    );
+    expect(seriesAccountIds(bundle.db).get(seriesId)).toEqual(new Set([a]));
+  });
+
+  test("untagged rows are not attributed to any series", () => {
+    const a = addAccount("A", "checking");
+    addTxn(a, "2026-05-01");
+    expect(seriesAccountIds(bundle.db).size).toBe(0);
+  });
+});

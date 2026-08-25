@@ -5,12 +5,15 @@ import Link from "next/link";
 import { loadRecurringMonthAction } from "@/app/recurring/actions";
 import { Badge } from "@/components/ui/Badge";
 import { CalendarGrid } from "@/components/ui/CalendarGrid";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { Sheet } from "@/components/ui/Sheet";
 import { toast } from "@/components/ui/Toast";
 import { compactDayTotal, dayWeight, heaviestDayCents } from "@/lib/calendar-day-weight";
 import type { CalendarDay } from "@/lib/calendar-math";
+import { RECURRING_JARGON } from "@/lib/jargon";
 import { formatCents } from "@/lib/money";
+import type { ForecastConfidence, UnsettledReason } from "@/lib/occurrence-verdict";
 import type {
   CalendarEntry,
   DayStateKind,
@@ -23,45 +26,133 @@ interface RecurringCalendarProps {
   today: string;
 }
 
-// Day-state grammar [MM]. The GLYPH (shape) carries the meaning so it survives
-// color-blindness (WCAG 1.4.1); color reinforces it. Each day cell's aria-label
-// (getCellLabel) already enumerates the state in words for screen readers.
+/**
+ * Day-state grammar [MM]. The GLYPH (shape) carries the meaning so it survives
+ * colour-blindness (WCAG 1.4.1); colour reinforces it. Each day cell's aria-label
+ * (getCellLabel) already enumerates the state in words for screen readers.
+ *
+ * ## Why `unsettled` is the one state with no colour
+ *
+ * Four of the five states are verdicts: it was paid, it was paid differently, it
+ * is coming, it did not happen. `unsettled` is the absence of a verdict — the
+ * ledger has not been shown the day, or the money is cash he has not banked yet.
+ * Spending a hue on it would put it in the same grammar as the four claims and
+ * invite the reader to treat "we do not know" as a finding.
+ *
+ * So it takes the page's faintest ink and a question mark, and it recedes. That
+ * is the whole design argument for the palette: **absence of evidence gets
+ * absence of colour.** It also keeps the swatch count at four, which is what
+ * makes a five-state legend readable at all.
+ */
 const STATE_GLYPH: Record<DayStateKind, string> = {
   paid: "✓",
   paid_different: "!",
   upcoming: "•",
   missed: "✕",
+  unsettled: "?",
 };
 const STATE_MARK_COLOR: Record<DayStateKind, string> = {
   paid: "text-positive",
   paid_different: "text-warning",
   upcoming: "text-info",
   missed: "text-negative",
+  unsettled: "text-ink-faint",
 };
 const STATE_WORD: Record<DayStateKind, string> = {
   paid: "paid",
   paid_different: "paid (amount changed)",
   upcoming: "upcoming",
   missed: "missed",
+  unsettled: "not yet known",
 };
-/** The magnitude bar's fill — the same grammar as the glyph, as a surface. */
+/**
+ * The magnitude bar's fill — the same grammar as the glyph, as a surface.
+ *
+ * ⚠️ `unsettled` is an OUTLINE, not a tint, and this was found by screenshotting
+ * rather than by reasoning. Filled grey at 45% still reads as a solid mass, and
+ * the unsettled marks happen to be the owner's $1,047 paydays — the largest
+ * amounts in August. The month therefore drew three big grey blocks for the
+ * things nobody can grade, while the two genuinely missed bills ($50 and $14.21)
+ * were the faintest marks on the page. Attention ran exactly backwards.
+ *
+ * A hollow bar keeps the magnitude — the rhythm the grid exists to show is still
+ * honest, and $1,047 still stands tall — while spending almost no ink on it. It
+ * is also the right metaphor: the space is reserved and not yet filled in.
+ */
 const BAR_TONE: Record<DayStateKind, string> = {
   paid: "bg-positive",
   paid_different: "bg-warning",
   upcoming: "bg-info",
   missed: "bg-negative",
+  unsettled: "border border-dashed border-ink-faint bg-transparent",
 };
 
 /** Contrast-safe tone per state (soft tint + tone text — state-contrast.test). */
-const STATE_TONE: Record<DayStateKind, "positive" | "warning" | "info" | "negative"> = {
+const STATE_TONE: Record<DayStateKind, "positive" | "warning" | "info" | "negative" | "neutral"> = {
   paid: "positive",
   paid_different: "warning",
   upcoming: "info",
   missed: "negative",
+  unsettled: "neutral",
+};
+
+/**
+ * Why an occurrence could not be graded — the sentence that belongs beside the
+ * "?" so it never reads as a shrug.
+ */
+const REASON_WORD: Record<UnsettledReason, string> = {
+  not_imported: "not imported yet",
+  unbanked: "not banked yet",
+};
+
+/**
+ * The FUTURE half's second channel, which the owner asked for by name.
+ *
+ * Confidence is deliberately NOT a colour. State already owns the palette, and
+ * crossing five states with three confidences would be fifteen swatches — the
+ * rainbow this redesign exists to avoid. It rides on the two channels colour is
+ * not using: **fill density and opacity**, both of which survive greyscale, a
+ * monochrome print, and every form of colour-blindness.
+ *
+ * A hatched bar reads as provisional in every charting tradition there is, which
+ * is exactly what `predicted` means: the app noticed a pattern and nobody has
+ * agreed to it.
+ */
+const CONFIDENCE_WORD: Record<ForecastConfidence, string> = {
+  scheduled: "scheduled",
+  expected: "expected",
+  predicted: "predicted",
+};
+const CONFIDENCE_HINT: Record<ForecastConfidence, string> = {
+  scheduled: "you set this amount or date",
+  expected: "confirmed by you, amount from history",
+  predicted: "detected by the app, not confirmed",
+};
+/**
+ * Widened from 100/70/50 after looking at it: at legend-swatch size the first
+ * two steps were indistinguishable, which makes a three-rung ladder a two-rung
+ * one. The hatch carries the rung that matters most — agreed to versus guessed —
+ * and opacity separates the two the owner HAS agreed to.
+ */
+const CONFIDENCE_OPACITY: Record<ForecastConfidence, string> = {
+  scheduled: "opacity-100",
+  expected: "opacity-60",
+  predicted: "opacity-40",
+};
+
+/** Surface-coloured stripes punched through the tone — see CONFIDENCE_WORD. */
+const HATCH: React.CSSProperties = {
+  backgroundImage:
+    "repeating-linear-gradient(135deg, transparent 0 2px, var(--color-surface-raised) 2px 4px)",
 };
 
 function entrySummary(e: CalendarEntry): string {
-  return `${e.name} ${STATE_WORD[e.state]} ${formatCents(e.amountCents)}`;
+  const qualifier = e.unsettledReason
+    ? ` (${REASON_WORD[e.unsettledReason]})`
+    : e.confidence
+      ? ` (${CONFIDENCE_WORD[e.confidence]}${e.isStale ? ", evidence stale" : ""})`
+      : "";
+  return `${e.name} ${STATE_WORD[e.state]}${qualifier} ${formatCents(e.amountCents)}`;
 }
 
 /**
@@ -153,7 +244,11 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
   function renderCell(day: CalendarDay): React.ReactNode {
     const w = dayWeight(month.entriesByDay[day.iso], heaviest);
     if (!w) return null;
-    const upcoming = w.state === "upcoming";
+    // Confidence dims and hatches the bar; an unsettled day is dimmed too,
+    // because it is a mark the app is not standing behind either.
+    // Unsettled carries its uncertainty in the outline, so it needs no dimming
+    // on top — dimming a hairline border only makes it disappear.
+    const dimmed = w.confidence !== null ? CONFIDENCE_OPACITY[w.confidence] : "";
     const flowTone =
       w.netCents < 0 ? "text-negative" : w.netCents > 0 ? "text-positive" : "text-ink-muted";
     return (
@@ -184,20 +279,36 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
             exactly the screen that most needs them. 400px is where a cell first
             gets wide enough (~46px) for a name to be worth truncating; at 320 it
             would be an ellipsis and the Day Sheet carries it instead. */}
-        <span className="hidden w-full truncate text-[9px] leading-tight text-ink-muted min-[400px]:block">
-          {w.count > 1 ? `${w.dominantName} +${w.count - 1}` : w.dominantName}
+        {/* The overflow count sits OUTSIDE the truncating span. Inside it, it was
+            the first thing the ellipsis ate: 2026-08-10 carries Breezeline and
+            FPL and rendered "Breezeline (internet) …", so the cell showed a −$64
+            total that its own caption could not account for. The name is the
+            part that degrades gracefully; "+1" is four pixels that must not. */}
+        <span className="hidden w-full items-baseline gap-0.5 text-[9px] leading-tight text-ink-muted min-[400px]:flex">
+          <span className="min-w-0 truncate">{w.dominantName}</span>
+          {w.count > 1 ? <span className="shrink-0">+{w.count - 1}</span> : null}
         </span>
 
         {/* The magnitude column. `items-end` stands it on the cell's bottom edge
             so the whole grid shares one baseline; `min-h-[2px]` keeps the
             smallest bill visible in a short cell, where 4% of ~11px rounds to
-            nothing. */}
+            nothing.
+
+            ⚠️ Still a √ scale against the month's heaviest day, NOT
+            `magnitudeTiers`. That module answers a different geometry: a list of
+            bars sharing one axis, where a tier can be magnified and its factor
+            printed beside it. A calendar is seven columns by five rows and there
+            is nowhere to put three axes or the sentence explaining them. The
+            honest trade here is the one `barWeight` already documents — the bar
+            answers "is this a heavy day?" and the figure printed directly above
+            it answers "how much?". */}
         <span className="flex min-h-0 flex-1 items-end pt-0.5">
           <span
-            className={`block min-h-[2px] w-full rounded-t-[2px] ${BAR_TONE[w.state]} ${
-              upcoming ? "opacity-55" : ""
-            }`}
-            style={{ height: `${Math.round(w.weight * 100)}%` }}
+            className={`block min-h-[2px] w-full rounded-t-[2px] ${BAR_TONE[w.state]} ${dimmed}`}
+            style={{
+              height: `${Math.round(w.weight * 100)}%`,
+              ...(w.confidence === "predicted" ? HATCH : null),
+            }}
           />
         </span>
       </span>
@@ -234,10 +345,28 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
                 >
                   <div className="min-w-0">
                     <span className="block truncate text-sm font-medium">{e.name}</span>
-                    <span className="mt-0.5 flex items-center gap-1.5">
-                      <Badge tone={STATE_TONE[e.state]}>{STATE_WORD[e.state]}</Badge>
+                    <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                      <Badge tone={STATE_TONE[e.state]}>
+                        {/* The state and its qualifier are printed from ONE
+                            entry, which carried them out of ONE `settledVerdict`
+                            call. A cell can therefore never show "not yet known"
+                            beside the wrong reason for it. */}
+                        {e.state === "unsettled" && e.unsettledReason
+                          ? `${STATE_WORD[e.state]} — ${REASON_WORD[e.unsettledReason]}`
+                          : STATE_WORD[e.state]}
+                      </Badge>
+                      {e.confidence ? (
+                        <Badge tone="neutral">{CONFIDENCE_WORD[e.confidence]}</Badge>
+                      ) : null}
+                      {e.isStale ? <Badge tone="warning">evidence stale</Badge> : null}
                       <span className="text-[11px] text-ink-faint">{KIND_LABEL[e.kind]}</span>
                     </span>
+                    {e.confidence ? (
+                      <span className="mt-0.5 block text-[11px] text-ink-faint">
+                        {CONFIDENCE_HINT[e.confidence]}
+                        {e.isStale ? " · evidence has gone quiet" : ""}
+                      </span>
+                    ) : null}
                   </div>
                   <div className="shrink-0 text-right">
                     <Money cents={e.amountCents} flow className="text-sm" />
@@ -255,44 +384,110 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
   );
 }
 
+/**
+ * The month's ledger, in the order a reader asks for it: what settled, what is
+ * still coming, and then — separately — what the app could not grade.
+ *
+ * The old footer printed "Posted $0.00" beside a bare "6 missed", which on
+ * August 2026 was the page saying nothing happened and six things failed. Both
+ * halves were misleading and they reinforced each other: the money was not zero,
+ * it was unmeasured, and four of the six failures were unimported days. Pass 62
+ * shipped a total drawn as a 77.97px bar labelled "$0.00" and this is the same
+ * error in text — a figure that is only true because the evidence is missing
+ * must say so where the figure is.
+ *
+ * So "not yet known" carries its own AMOUNT, not just a count. `$0.00 settled ·
+ * $3,147.00 not yet known` is a sentence about an unfinished import. `$0.00
+ * settled` alone is a false claim about a month.
+ *
+ * That amount is a GROSS magnitude rather than a net — see
+ * `unsettledGrossCents`. A net of unknowns can cancel to zero, which would
+ * reintroduce the very reading this footer was rewritten to remove.
+ */
 function CalendarFooter({ month }: { month: RecurringCalendarMonth }) {
   return (
-    <div className="mt-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-1 border-t border-line-strong pt-3 text-sm">
-      <span className="inline-flex items-baseline gap-1.5">
-        <span className="text-xs font-medium uppercase tracking-[0.1em] text-ink-faint">Posted</span>
+    <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-1 border-t border-line-strong pt-3 text-sm">
+      <FooterFigure label="Settled">
         <Money cents={month.postedNetCents} flow className="font-medium" />
-      </span>
-      <span className="inline-flex items-baseline gap-1.5">
-        <span className="text-xs font-medium uppercase tracking-[0.1em] text-ink-faint">Upcoming</span>
+      </FooterFigure>
+      <FooterFigure label="Expected">
         <Money cents={month.upcomingNetCents} flow className="font-medium" />
-      </span>
+      </FooterFigure>
+      {month.unsettledCount > 0 ? (
+        <FooterFigure label="Not yet known">
+          <span className="figures font-medium tabular-nums text-ink-muted">
+            {formatCents(month.unsettledGrossCents)}
+          </span>
+          <span className="ml-1 text-[11px] text-ink-faint">
+            ({month.unsettledCount})
+          </span>
+        </FooterFigure>
+      ) : null}
       {month.missedCount > 0 ? (
-        <span className="text-xs font-medium text-negative">
-          {month.missedCount} missed
-        </span>
+        <span className="text-xs font-medium text-negative">{month.missedCount} missed</span>
       ) : null}
     </div>
   );
 }
 
-const LEGEND: { state: DayStateKind; label: string }[] = [
-  { state: "paid", label: "Paid" },
-  { state: "paid_different", label: "Amount changed" },
-  { state: "upcoming", label: "Upcoming" },
-  { state: "missed", label: "Missed" },
+function FooterFigure({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-baseline gap-1.5">
+      <span className="text-xs font-medium uppercase tracking-[0.1em] text-ink-faint">{label}</span>
+      {children}
+    </span>
+  );
+}
+
+const LEGEND: { state: DayStateKind; label: string; tip: string }[] = [
+  { state: "paid", label: "Paid", tip: RECURRING_JARGON.paid },
+  { state: "paid_different", label: "Amount changed", tip: RECURRING_JARGON.paidDifferent },
+  { state: "missed", label: "Missed", tip: RECURRING_JARGON.missed },
+  { state: "upcoming", label: "Upcoming", tip: RECURRING_JARGON.upcoming },
+  { state: "unsettled", label: "Not yet known", tip: RECURRING_JARGON.notYetKnown },
 ];
 
+const CONFIDENCE_LEGEND: { key: ForecastConfidence; tip: string }[] = [
+  { key: "scheduled", tip: RECURRING_JARGON.scheduled },
+  { key: "expected", tip: RECURRING_JARGON.expected },
+  { key: "predicted", tip: RECURRING_JARGON.predicted },
+];
+
+/**
+ * Two rows, because the grid now carries two channels and collapsing them into
+ * one list would imply they are alternatives. State is what happened; confidence
+ * is how firmly the app is claiming what WILL happen, and only future marks
+ * carry it — so its row is labelled for the future rather than left to be
+ * inferred.
+ */
 function Legend() {
   return (
-    <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink-faint">
-      {LEGEND.map((l) => (
-        <li key={l.state} className="inline-flex items-center gap-1.5">
-          <span aria-hidden className={`text-xs font-bold leading-none ${STATE_MARK_COLOR[l.state]}`}>
-            {STATE_GLYPH[l.state]}
-          </span>
-          {l.label}
-        </li>
-      ))}
-    </ul>
+    <div className="mt-3 space-y-1.5">
+      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink-faint">
+        {LEGEND.map((l) => (
+          <li key={l.state} className="inline-flex items-center gap-1.5">
+            <span aria-hidden className={`text-xs font-bold leading-none ${STATE_MARK_COLOR[l.state]}`}>
+              {STATE_GLYPH[l.state]}
+            </span>
+            {l.label}
+            <InfoTip term={l.label}>{l.tip}</InfoTip>
+          </li>
+        ))}
+      </ul>
+      <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-ink-faint">
+        <li className="uppercase tracking-[0.08em]">Ahead</li>
+        {CONFIDENCE_LEGEND.map((c) => (
+          <li key={c.key} className="inline-flex items-center gap-1.5">
+            <span
+              aria-hidden
+              className={`h-2.5 w-4 rounded-[2px] bg-info ${CONFIDENCE_OPACITY[c.key]}`}
+              style={c.key === "predicted" ? HATCH : undefined}
+            />
+            {CONFIDENCE_WORD[c.key]}
+            <InfoTip term={CONFIDENCE_WORD[c.key]}>{c.tip}</InfoTip>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

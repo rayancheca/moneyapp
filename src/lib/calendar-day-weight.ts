@@ -1,3 +1,4 @@
+import { mostUrgentState, type ForecastConfidence } from "./occurrence-verdict";
 import type { DayStateKind } from "@/services/recurring-calendar";
 
 /**
@@ -54,14 +55,6 @@ export function compactDayTotal(cents: number): string {
   return `${sign}${(k / 1000).toFixed(1)}M`;
 }
 
-/** Missed first (needs attention), then drift, then upcoming, then paid. */
-const STATE_URGENCY: Record<DayStateKind, number> = {
-  missed: 0,
-  paid_different: 1,
-  upcoming: 2,
-  paid: 3,
-};
-
 export interface DayWeight {
   netCents: number;
   /** magnitude relative to the heaviest day in the month, 0..1 */
@@ -70,13 +63,31 @@ export interface DayWeight {
   count: number;
   /** the name of the largest-magnitude entry on the day */
   dominantName: string;
+  /**
+   * The LEAST confident forecast on the day, or null if nothing here is a
+   * forecast.
+   *
+   * Least, not dominant: the cell draws one bar for the whole day, and a day
+   * holding a signed lease beside a guess must not borrow the lease's certainty
+   * for the guess. Understating confidence can only cost the reader a second
+   * look; overstating it is the app vouching for something nobody agreed to.
+   */
+  confidence: ForecastConfidence | null;
 }
 
 export interface WeighableEntry {
   amountCents: number;
   state: DayStateKind;
   name: string;
+  confidence?: ForecastConfidence | null;
 }
+
+/** Least-confident-first, so `reduce` can pick a day's floor. */
+const CONFIDENCE_RANK: Record<ForecastConfidence, number> = {
+  predicted: 0,
+  expected: 1,
+  scheduled: 2,
+};
 
 /**
  * The heaviest single day in the month, by absolute net.
@@ -144,13 +155,17 @@ export function dayWeight(
   if (!entries || entries.length === 0) return null;
 
   const netCents = entries.reduce((n, e) => n + e.amountCents, 0);
-  const state = entries.reduce<DayStateKind>(
-    (worst, e) => (STATE_URGENCY[e.state] < STATE_URGENCY[worst] ? e.state : worst),
-    "paid",
-  );
+  const state = mostUrgentState(entries.map((e) => e.state));
   const dominant = entries.reduce((big, e) =>
     Math.abs(e.amountCents) > Math.abs(big.amountCents) ? e : big,
   );
+
+  let confidence: ForecastConfidence | null = null;
+  for (const e of entries) {
+    const c = e.confidence;
+    if (!c) continue;
+    if (confidence === null || CONFIDENCE_RANK[c] < CONFIDENCE_RANK[confidence]) confidence = c;
+  }
 
   return {
     netCents,
@@ -158,5 +173,6 @@ export function dayWeight(
     state,
     count: entries.length,
     dominantName: dominant.name,
+    confidence,
   };
 }
