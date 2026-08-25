@@ -1,9 +1,10 @@
 "use client";
 
-import { useId } from "react";
+import { useId, useRef, useState } from "react";
 import { Money } from "@/components/ui/Money";
 import { flowArea, flowPolyline, type MonthFlow } from "@/lib/month-flow";
 import { formatCents } from "@/lib/money";
+import { ratioToIndex, stepScrubIndex } from "@/lib/scrub";
 import { shortDate } from "./labels";
 
 const W = 1000;
@@ -55,6 +56,15 @@ export function MonthFlowStrip({ flow, monthLabel }: MonthFlowStripProps) {
   const gradientId = useId();
   const clipId = useId();
   const strokeId = useId();
+  /*
+   * Scrub, on the house kit (`lib/scrub`) rather than a bespoke pointer handler,
+   * because that kit is where the KEYBOARD contract lives: arrows step a day,
+   * up/down jump a week, Home/End reach the ends. A chart that only answers a
+   * mouse is a chart the owner cannot read on a keyboard, and this one carries
+   * the month's only running figure.
+   */
+  const [scrubIndex, setScrubIndex] = useState<number | null>(null);
+  const plotRef = useRef<HTMLDivElement>(null);
 
   if (!flow.hasMovement) {
     return (
@@ -75,24 +85,85 @@ export function MonthFlowStrip({ flow, monthLabel }: MonthFlowStripProps) {
   const down = flow.endCents < 0;
   const scheduledTone = down ? "var(--negative)" : "var(--positive)";
 
+  const scrubbed = scrubIndex === null ? null : flow.points[scrubIndex] ?? null;
+
+  function scrubTo(clientX: number): void {
+    const box = plotRef.current?.getBoundingClientRect();
+    if (!box || box.width === 0) return;
+    setScrubIndex(ratioToIndex((clientX - box.left) / box.width, flow.points.length));
+  }
+
   return (
     <figure className="mb-4">
       <figcaption className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-ink-faint">
           Through the month
         </span>
+        {/* The readout REPLACES the month totals rather than sitting beside
+            them. Two pairs of running figures, one following the pointer and one
+            not, is the drift `budgetVerdict` was written to make impossible —
+            and on a strip this small the reader cannot tell which pair answers
+            the day under their cursor. */}
         <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] text-ink-faint">
-          <span className="inline-flex items-baseline gap-1">
-            posted
-            <Money cents={flow.settledCents} flow className="text-xs font-semibold" />
-          </span>
-          <span className="inline-flex items-baseline gap-1">
-            as scheduled
-            <Money cents={flow.endCents} flow className="text-xs font-semibold" />
-          </span>
+          {scrubbed ? (
+            <>
+              <span className="figures text-ink-muted">{shortDate(scrubbed.iso)}</span>
+              <span className="inline-flex items-baseline gap-1">
+                posted
+                <Money cents={scrubbed.settledCents} flow className="text-xs font-semibold" />
+              </span>
+              <span className="inline-flex items-baseline gap-1">
+                as scheduled
+                <Money cents={scrubbed.scheduledCents} flow className="text-xs font-semibold" />
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="inline-flex items-baseline gap-1">
+                posted
+                <Money cents={flow.settledCents} flow className="text-xs font-semibold" />
+              </span>
+              <span className="inline-flex items-baseline gap-1">
+                as scheduled
+                <Money cents={flow.endCents} flow className="text-xs font-semibold" />
+              </span>
+            </>
+          )}
         </span>
       </figcaption>
 
+      <div
+        ref={plotRef}
+        role="slider"
+        tabIndex={0}
+        aria-label={`Scrub the running total through ${monthLabel}`}
+        aria-valuemin={1}
+        aria-valuemax={flow.points.length}
+        aria-valuenow={(scrubIndex ?? flow.points.length - 1) + 1}
+        aria-valuetext={
+          scrubbed
+            ? `${shortDate(scrubbed.iso)}: posted ${formatCents(
+                scrubbed.settledCents,
+              )}, as scheduled ${formatCents(scrubbed.scheduledCents)}`
+            : `${monthLabel}: posted ${formatCents(flow.settledCents)}, as scheduled ${formatCents(
+                flow.endCents,
+              )}`
+        }
+        className="relative cursor-crosshair rounded-sm outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        onPointerMove={(e) => scrubTo(e.clientX)}
+        onPointerLeave={() => setScrubIndex(null)}
+        onBlur={() => setScrubIndex(null)}
+        onKeyDown={(e) => {
+          const next = stepScrubIndex(
+            scrubIndex ?? flow.points.length - 1,
+            e.key,
+            flow.points.length,
+          );
+          if (next === null) return;
+          e.preventDefault();
+          setScrubIndex(next);
+        }}
+      >
       <svg
         viewBox={`0 0 ${W} ${H}`}
         preserveAspectRatio="none"
@@ -227,6 +298,20 @@ export function MonthFlowStrip({ flow, monthLabel }: MonthFlowStripProps) {
           />
         ) : null}
       </svg>
+
+        {/* The scrub mark, a SIBLING of the svg rather than a child of it: an
+            HTML element inside <svg> is not laid out at all, and this has to be
+            positioned in PERCENT because the plot is
+            `preserveAspectRatio="none"` — a rule placed in that stretched
+            coordinate system would be squashed along with it. */}
+        {scrubbed ? (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 w-px bg-ink opacity-40"
+            style={{ left: `${scrubbed.x * 100}%` }}
+          />
+        ) : null}
+      </div>
 
       <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-ink-faint">
         <span className="inline-flex items-center gap-1.5">
