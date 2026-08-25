@@ -365,6 +365,10 @@
   --ease-ink-exit: cubic-bezier(0.5, 0, 0.85, 0.35);
   --animate-fade-rise: fade-rise var(--duration-normal) var(--ease-out-expo) both;
   --animate-pulse-ring: pulse-ring 1.8s var(--ease-in-out-sine) infinite;
+  --animate-cell-in: cell-in 320ms var(--ease-out-expo) both;
+  --animate-bar-grow: bar-grow 460ms var(--ease-out-expo) both;
+  --animate-flow-draw: flow-draw 900ms var(--ease-out-expo) both;
+  --animate-flow-fill: flow-fill 500ms var(--ease-out-expo) both;
 }
 
 /* Chart motion (dashboard net-worth §7.1 vivid mode). Every keyframe's resting
@@ -394,6 +398,52 @@
 @keyframes transfer-drift {
   from { stroke-dashoffset: 0; }
   to   { stroke-dashoffset: -100; }
+}
+
+/* ── Recurring-calendar motion ───────────────────────────────────────────
+   The owner asked for the calendar to move: "make it animated as well. add
+   effects." Everything below obeys the same two rules the chart motion above
+   does, and for the same reasons.
+
+   1. THE RESTING FRAME IS THE CORRECT FINAL STATE. The reduced-motion collapse
+      further down sets animation-duration to 0.01ms, and Playwright's
+      `animations: "disabled"` fast-forwards to the end — so a keyframe whose
+      `to` is anything but the steady pose would ship a broken baseline and a
+      broken page for anyone who has asked their OS for less motion.
+   2. TRANSFORM AND OPACITY ONLY. A 31-cell grid animating width or height would
+      relayout the whole month per frame. `flow-draw` is the single exception and
+      is argued at its own definition. */
+
+/* Cells arrive as a wave across the month. The DELAY is set per cell inline
+   (--cell-delay) from its index, because 31 delays are not a finite class set. */
+@keyframes cell-in {
+  from { opacity: 0; transform: translateY(5px) scale(0.965); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Magnitude columns grow out of the baseline they stand on. `scaleY` about the
+   bottom edge, NOT a height animation: height would move every sibling in the
+   cell on every frame, and the bar's job is to be read against a fixed floor. */
+@keyframes bar-grow {
+  from { transform: scaleY(0); }
+  to   { transform: scaleY(1); }
+}
+
+/* The month line draws itself left to right.
+   stroke-dashoffset is not compositor-accelerated, which is the trade the
+   transfer arcs already documented — but this is ONE path, on one route, playing
+   once on mount rather than looping forever. The dash ARRAY is set inline to the
+   path's own measured length so the same keyframe works at every width. */
+@keyframes flow-draw {
+  from { stroke-dashoffset: var(--flow-length, 1000); }
+  to   { stroke-dashoffset: 0; }
+}
+
+/* The area under the line fades up after the stroke has passed over it, so the
+   fill reads as a consequence of the line rather than as a second animation. */
+@keyframes flow-fill {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 body {

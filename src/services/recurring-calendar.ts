@@ -1,7 +1,9 @@
 import { and, eq, gte, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
+import { categories } from "@/db/schema/categories";
 import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
+import { isCategoryHueName, type CategoryHueName } from "@/lib/category-palette";
 import { compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import {
   forecastConfidence,
@@ -11,6 +13,7 @@ import {
   type OccurrenceState,
   type UnsettledReason,
 } from "@/lib/occurrence-verdict";
+import { loadCategoryIndex } from "./analytics";
 import { frontierForSeries, observationFrontier, seriesAccountIds } from "./observation-frontier";
 import {
   effectiveSeries,
@@ -101,6 +104,15 @@ export interface CalendarEntry {
    * answer properly.
    */
   isStale: boolean;
+  /**
+   * The series' category hue, for the mark drawn beside it.
+   *
+   * Colour here is IDENTITY, not state — the same 12-hue ramp `/categories` and
+   * every chip in the app already use, so a violet tile means Travel on this
+   * page exactly as it does everywhere else. `null` for a series whose category
+   * cannot be determined, which draws a neutral tile rather than a guessed one.
+   */
+  hue: CategoryHueName | null;
 }
 
 export interface RecurringCalendarMonth {
@@ -229,6 +241,77 @@ export function scheduleIsProven(postingCount: number): boolean {
   return postingCount === 0 || postingCount >= MIN_OCCURRENCES;
 }
 
+/**
+ * Each series' category hue — its `user_category_id` where the owner set one,
+ * otherwise the top-level category most of its postings landed in.
+ *
+ * Modal rather than first or newest: a series' rows can disagree (a rent payment
+ * once filed under Transfers), and the majority is the honest read of where the
+ * ledger thinks this money goes. Ties keep whichever the scan met first, which
+ * is deterministic because the rows are ordered by the query.
+ *
+ * ⚠️ `loadCategoryIndex` rather than a self-join. `aliasedTable` breaks drizzle's
+ * row inference — the rows type as `never` while working perfectly at runtime,
+ * so `tsc` fails on code the tests all pass.
+ */
+function seriesHues(db: AppDatabase): Map<string, CategoryHueName> {
+  const index = loadCategoryIndex(db);
+  const colorById = new Map(
+    db.select({ id: categories.id, color: categories.color }).from(categories).all()
+      .map((c) => [c.id, c.color] as const),
+  );
+
+  const hueOf = (categoryId: string | null): CategoryHueName | null => {
+    if (!categoryId || !index.byId.has(categoryId)) return null;
+    const color = colorById.get(index.topLevelOf(categoryId).id);
+    return isCategoryHueName(color) ? color : null;
+  };
+
+  const out = new Map<string, CategoryHueName>();
+  const tally = new Map<string, Map<string, number>>();
+  for (const r of db
+    .select({
+      seriesId: transactions.recurringSeriesId,
+      categoryId: transactions.categoryId,
+      n: sql<number>`count(*)`,
+    })
+    .from(transactions)
+    .where(and(eq(transactions.status, "active"), isNotNull(transactions.recurringSeriesId)))
+    .groupBy(transactions.recurringSeriesId, transactions.categoryId)
+    .all()) {
+    if (!r.seriesId || !r.categoryId) continue;
+    const forSeries = tally.get(r.seriesId) ?? new Map<string, number>();
+    forSeries.set(r.categoryId, Number(r.n));
+    tally.set(r.seriesId, forSeries);
+  }
+  for (const [seriesId, counts] of tally) {
+    let best: string | null = null;
+    let bestN = 0;
+    for (const [categoryId, n] of counts) {
+      if (n > bestN) {
+        best = categoryId;
+        bestN = n;
+      }
+    }
+    const hue = hueOf(best);
+    if (hue) out.set(seriesId, hue);
+  }
+
+  // The owner's own answer wins over anything derived from postings — the same
+  // OVERRIDE-not-union rule `budgetTail` follows for this column.
+  for (const s of db
+    .select({ id: recurringSeries.id, userCategoryId: recurringSeries.userCategoryId })
+    .from(recurringSeries)
+    .where(isNotNull(recurringSeries.userCategoryId))
+    .all()) {
+    const hue = hueOf(s.userCategoryId);
+    if (hue) out.set(s.id, hue);
+    else out.delete(s.id);
+  }
+
+  return out;
+}
+
 function postingCountBySeries(db: AppDatabase): Map<string, number> {
   const out = new Map<string, number>();
   for (const r of db
@@ -291,6 +374,7 @@ export function recurringCalendar(
     historyRows.filter((s) => s.amountCentsStddev === null).map((s) => s.id),
   );
   const postingCounts = postingCountBySeries(db);
+  const hues = seriesHues(db);
 
   const entriesByDay: Record<string, CalendarEntry[]> = {};
   const pushEntry = (date: string, entry: CalendarEntry): void => {
@@ -336,6 +420,7 @@ export function recurringCalendar(
         unsettledReason: null,
         confidence: null,
         isStale: false,
+        hue: hues.get(s.id) ?? null,
       });
       const dates = postedDatesBySeries.get(s.id) ?? [];
       dates.push(p.postedOn);
@@ -399,6 +484,7 @@ export function recurringCalendar(
         unsettledReason: verdict?.reason ?? null,
         confidence: isFuture ? confidence : null,
         isStale: isFuture && isStale,
+        hue: hues.get(s.id) ?? null,
       });
     }
   }

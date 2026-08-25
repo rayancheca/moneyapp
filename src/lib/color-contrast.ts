@@ -60,3 +60,32 @@ export function contrastRatio(a: Oklch, b: Oklch): number {
   const lo = Math.min(ya, yb);
   return (hi + 0.05) / (lo + 0.05);
 }
+
+/**
+ * CSS `color-mix(in oklab, a p%, b)`, in the same OKLab space the browser uses.
+ *
+ * Needed because a contrast contract cannot be checked against a colour the
+ * stylesheet computes at paint time. The recurring calendar tints each day by
+ * how heavy it is — a continuous blend of a state tone into the card surface —
+ * and "does live text still clear AA on top of it" is answerable only if the
+ * blend can be reproduced here.
+ *
+ * OKLab is a Cartesian space, so the mix is a plain component-wise lerp of
+ * (L, a, b); the polar (L, C, H) form has to be converted in and out, and the
+ * hue must NOT be interpolated as an angle — that is `in oklch`, a different
+ * and non-equivalent function.
+ */
+export function mixOklab(a: Oklch, b: Oklch, aPercent: number): Oklch {
+  const t = aPercent / 100;
+  const toLab = ({ l, c, h }: Oklch) => {
+    const rad = (h * Math.PI) / 180;
+    return { l, a: c * Math.cos(rad), b: c * Math.sin(rad) };
+  };
+  const la = toLab(a);
+  const lb = toLab(b);
+  const l = lb.l + (la.l - lb.l) * t;
+  const ax = lb.a + (la.a - lb.a) * t;
+  const bx = lb.b + (la.b - lb.b) * t;
+  const hue = (Math.atan2(bx, ax) * 180) / Math.PI;
+  return { l, c: Math.hypot(ax, bx), h: hue < 0 ? hue + 360 : hue };
+}

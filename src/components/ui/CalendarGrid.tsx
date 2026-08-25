@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { IconButton } from "@/components/ui/Button";
 import {
   addMonths,
@@ -39,6 +39,16 @@ interface CalendarGridProps {
    * the cell a visible extent.
    */
   getCellClassName?: (iso: string) => string;
+  /**
+   * Inline style for a day's button — the escape hatch a class list cannot
+   * provide, because the value is CONTINUOUS. The recurring calendar tints each
+   * day by how heavy it is, which is a percentage derived from that month's own
+   * range; there is no finite set of utility classes for it, and Tailwind cannot
+   * generate one at runtime.
+   *
+   * Optional, and a consumer that does not pass it renders byte-identically.
+   */
+  getCellStyle?: (iso: string) => CSSProperties | undefined;
   onDayActivate?: (iso: string) => void;
   /** e.g. today ring — defaults to emphasizing the `today` prop */
   isDayEmphasized?: (iso: string) => boolean;
@@ -65,6 +75,7 @@ export function CalendarGrid({
   getCellLabel,
   renderCell,
   getCellClassName,
+  getCellStyle,
   onDayActivate,
   isDayEmphasized,
   weekStartsOn = 1,
@@ -196,6 +207,7 @@ export function CalendarGrid({
                   } ${emphasizeDay(day.iso) ? "ring-1 ring-accent" : ""} ${
                     getCellClassName?.(day.iso) ?? ""
                   }`.trim()}
+                  style={getCellStyle?.(day.iso)}
                 >
                   <span aria-hidden className="text-xs">
                     {Number(day.iso.slice(8))}

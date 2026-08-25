@@ -1,13 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  MonthKeyParseError,
-  addMonths,
-  monthLabel,
-  monthMatrix,
-  weekdayLabels,
-  type CalendarDay,
-  type WeekStart,
-} from "./calendar-math";
+import { MonthKeyParseError, addMonths, daysInMonthOf, monthLabel, monthMatrix, type CalendarDay, type WeekStart, weekdayLabels } from "./calendar-math";
 import { addDays } from "./dates";
 
 const INVALID_KEYS = ["", "2026", "2026-7", "202607", "2026-00", "2026-13", "2026-07-01", "abc"];
@@ -142,5 +134,26 @@ describe("monthMatrix", () => {
 
   test.each(INVALID_KEYS)("rejects invalid month key %j", (key) => {
     expect(() => monthMatrix(key)).toThrow(MonthKeyParseError);
+  });
+});
+
+describe("daysInMonthOf", () => {
+  test.each([
+    ["2026-01", 31],
+    ["2026-04", 30],
+    ["2026-02", 28],
+    ["2028-02", 29],
+    ["2026-12", 31],
+  ])("%s has %i days", (key, expected) => {
+    expect(daysInMonthOf(key)).toBe(expected);
+  });
+
+  test("agrees with the matrix it sits beside", () => {
+    // The two derive the same fact by different routes; if they ever disagree,
+    // the strip and the grid are drawing different months.
+    for (const key of ["2026-02", "2028-02", "2026-08", "2026-11"]) {
+      const inMonth = monthMatrix(key, 1).flat().filter((d) => d.inMonth).length;
+      expect(daysInMonthOf(key)).toBe(inMonth);
+    }
   });
 });

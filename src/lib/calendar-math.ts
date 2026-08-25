@@ -78,6 +78,21 @@ export function weekdayLabels(weekStartsOn: WeekStart): string[] {
  * Complete weeks covering the month (4-6 rows of 7), leading/trailing
  * out-of-month days included so the grid is always rectangular.
  */
+/**
+ * How many days a month has, 28–31 — derived from the calendar rather than a
+ * lookup table, so February's leap years need no special case.
+ *
+ * Exported because `monthMatrix` is the wrong shape for a caller that wants the
+ * month as a LINE rather than as weeks: the recurring calendar's running-total
+ * strip walks day 1 to day N on one axis, and counting the matrix's in-month
+ * cells to recover N would be deriving the same fact a second way.
+ */
+export function daysInMonthOf(monthKey: string): number {
+  const [year, month] = monthParts(monthKey);
+  const key = `${pad(year, 4)}-${pad(month, 2)}`;
+  return diffDays(`${key}-01`, `${addMonths(key, 1)}-01`);
+}
+
 export function monthMatrix(monthKey: string, weekStartsOn: WeekStart = 0): CalendarDay[][] {
   const [year, month] = monthParts(monthKey);
   const key = `${pad(year, 4)}-${pad(month, 2)}`;

@@ -48,14 +48,19 @@ test("every day with activity prints its own signed total", async ({ page }) => 
    * actually says about money, and a scale change, a sign flip or a lost digit
    * moves one of these strings while every baseline stays inside tolerance.
    */
+  // The token after the date is the MERCHANT TILE — a brand logo where the app
+  // has one and initials where it does not, in the charge's category hue. It is
+  // the fastest way to tell one day from another, and it reads as text here only
+  // because a monogram is letters; Netflix contributes no token at all because
+  // its tile is the brand's own mark.
   expect(await cellTexts(page)).toEqual([
-    "5 ✕ -125 Meal Kit",
-    "6 ? -45 Storage unit",
-    "9 • -1.8k Rent",
-    "10 • 3.2k Paycheck",
+    "5 MK ✕ -125 Meal Kit",
+    "6 SU ? -45 Storage unit",
+    "9 R • -1.8k Rent",
+    "10 P • 3.2k Paycheck",
     "16 • -16 Netflix",
-    "20 • -49 Gym Membership",
-    "24 • 3.2k Paycheck",
+    "20 GM • -49 Gym Membership",
+    "24 P • 3.2k Paycheck",
   ]);
 
   // …and the month footer totals them. Expected excludes the missed Meal Kit:

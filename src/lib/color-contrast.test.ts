@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { contrastRatio, isInSrgbGamut, oklchToLinearSrgb, wcagLuminance } from "./color-contrast";
+import { contrastRatio, isInSrgbGamut, mixOklab, oklchToLinearSrgb, wcagLuminance } from "./color-contrast";
 
 const WHITE = { l: 1, c: 0, h: 0 };
 const BLACK = { l: 0, c: 0, h: 0 };
@@ -71,5 +71,39 @@ describe("contrastRatio", () => {
 
   test("identical colors ratio 1", () => {
     expect(contrastRatio(WHITE, WHITE)).toBeCloseTo(1, 5);
+  });
+});
+
+describe("mixOklab", () => {
+  test("the endpoints are the endpoints", () => {
+    const a = { l: 0.5, c: 0.15, h: 30 };
+    const b = { l: 0.99, c: 0.002, h: 85 };
+    expect(mixOklab(a, b, 100).l).toBeCloseTo(a.l, 10);
+    expect(mixOklab(a, b, 0).l).toBeCloseTo(b.l, 10);
+  });
+
+  test("mixes in OKLab, not around the hue circle", () => {
+    // `in oklab` and `in oklch` are different CSS functions and do NOT agree:
+    // interpolating the ANGLE between 30° and 300° travels the long way round
+    // through green, while the Cartesian mix passes through grey. The browser
+    // does the latter, so this must too — a hue near neither input is the tell.
+    const mixed = mixOklab({ l: 0.6, c: 0.14, h: 30 }, { l: 0.6, c: 0.14, h: 300 }, 50);
+    expect(mixed.c).toBeLessThan(0.14);
+  });
+
+  test("a mix landing in the lower half-plane still reports a positive hue", () => {
+    // atan2 returns (-π, π]; a hue of -75° would be rejected by every consumer
+    // that expects degrees in [0, 360).
+    const mixed = mixOklab({ l: 0.6, c: 0.14, h: 300 }, { l: 0.6, c: 0.14, h: 280 }, 50);
+    expect(mixed.h).toBeGreaterThanOrEqual(0);
+    expect(mixed.h).toBeLessThan(360);
+  });
+
+  test("every mix of two in-gamut tones stays a usable colour", () => {
+    for (const pct of [0, 12, 50, 88, 100]) {
+      const m = mixOklab({ l: 0.53, c: 0.15, h: 30 }, { l: 0.996, c: 0.002, h: 85 }, pct);
+      expect(Number.isFinite(m.l) && Number.isFinite(m.c) && Number.isFinite(m.h)).toBe(true);
+      expect(m.h).toBeGreaterThanOrEqual(0);
+    }
   });
 });

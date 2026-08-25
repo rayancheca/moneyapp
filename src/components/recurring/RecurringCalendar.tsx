@@ -5,13 +5,16 @@ import Link from "next/link";
 import { loadRecurringMonthAction } from "@/app/recurring/actions";
 import { Badge } from "@/components/ui/Badge";
 import { CalendarGrid } from "@/components/ui/CalendarGrid";
+import { MerchantMark } from "@/components/ui/MerchantMark";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { Sheet } from "@/components/ui/Sheet";
 import { toast } from "@/components/ui/Toast";
 import { compactDayTotal, dayWeight, heaviestDayCents } from "@/lib/calendar-day-weight";
-import type { CalendarDay } from "@/lib/calendar-math";
+import { heatMixPercent } from "@/lib/calendar-heat";
+import { daysInMonthOf, type CalendarDay } from "@/lib/calendar-math";
 import { RECURRING_JARGON } from "@/lib/jargon";
+import { monthFlow } from "@/lib/month-flow";
 import { formatCents } from "@/lib/money";
 import type { ForecastConfidence, UnsettledReason } from "@/lib/occurrence-verdict";
 import type {
@@ -19,7 +22,8 @@ import type {
   DayStateKind,
   RecurringCalendarMonth,
 } from "@/services/recurring-calendar";
-import { KIND_LABEL, longDate } from "./labels";
+import { KIND_LABEL, longDate, monthLabel } from "./labels";
+import { MonthFlowStrip } from "./MonthFlowStrip";
 
 interface RecurringCalendarProps {
   initialMonth: RecurringCalendarMonth;
@@ -56,7 +60,10 @@ const STATE_MARK_COLOR: Record<DayStateKind, string> = {
   paid_different: "text-warning",
   upcoming: "text-info",
   missed: "text-negative",
-  unsettled: "text-ink-faint",
+  // --ink-muted, not --ink-faint: this glyph lands on a TINTED cell, and faint
+  // is the dimmest ink that clears AA on the app's plain surfaces — it has no
+  // headroom left once a tone is mixed under it (`calendar-heat.test`).
+  unsettled: "text-ink-muted",
 };
 const STATE_WORD: Record<DayStateKind, string> = {
   paid: "paid",
@@ -66,26 +73,51 @@ const STATE_WORD: Record<DayStateKind, string> = {
   unsettled: "not yet known",
 };
 /**
- * The magnitude bar's fill — the same grammar as the glyph, as a surface.
+ * How the magnitude column is FILLED — and the one place this redesign reversed
+ * an earlier decision in this same file.
  *
- * ⚠️ `unsettled` is an OUTLINE, not a tint, and this was found by screenshotting
- * rather than by reasoning. Filled grey at 45% still reads as a solid mass, and
- * the unsettled marks happen to be the owner's $1,047 paydays — the largest
- * amounts in August. The month therefore drew three big grey blocks for the
- * things nobody can grade, while the two genuinely missed bills ($50 and $14.21)
- * were the faintest marks on the page. Attention ran exactly backwards.
+ * The first version spent the fill on STATE: green for paid, red for missed,
+ * blue for upcoming. It was defensible and it was wrong for this reader. The
+ * owner's verdict on it was *"i can barely understand it"*, and the reason is
+ * that state is EPISTEMIC METADATA — how sure the app is — while the thing he
+ * opens the page to see is money moving. Metadata had the loudest channel and
+ * the content had none: a −$1,800 rent and a +$3,200 paycheque, the two largest
+ * and most opposite events of a month, both drew in the same blue because both
+ * were merely "upcoming".
  *
- * A hollow bar keeps the magnitude — the rhythm the grid exists to show is still
- * honest, and $1,047 still stands tall — while spending almost no ink on it. It
- * is also the right metaphor: the space is reserved and not yet filled in.
+ * Direction owns the fill now, at a saturation driven by the day's magnitude, so
+ * the grid reads as a heat map: heavy outgoing days deep and warm, quiet ones
+ * pale, money in green. State did not lose a channel — it keeps the glyph (what
+ * survives colour-blindness, and what the aria-label enumerates) and it keeps
+ * the column's TREATMENT: an outline for something ungradeable, a hatch for
+ * something merely predicted.
+ *
+ * ⚠️ `unsettled` stays an OUTLINE, and that was found by screenshotting rather
+ * than reasoning. Filled at 45% it still read as a solid mass, and the unsettled
+ * marks happen to be the owner's $1,047 paydays — the largest amounts in August.
+ * The month drew three big blocks for the things nobody can grade while the two
+ * bills that mattered were the faintest marks on the page.
  */
-const BAR_TONE: Record<DayStateKind, string> = {
-  paid: "bg-positive",
-  paid_different: "bg-warning",
-  upcoming: "bg-info",
-  missed: "bg-negative",
-  unsettled: "border border-dashed border-ink-faint bg-transparent",
-};
+/**
+ * The wave. Cells arrive in date order, ~10ms apart, so a month assembles left
+ * to right instead of appearing all at once — and so the reader's eye is walked
+ * across the very axis the month-flow strip above is drawn on.
+ *
+ * Capped at 320ms total: past that the last week is still arriving after the
+ * page has otherwise settled, which reads as jank rather than as choreography.
+ * Derived from the DATE rather than a render index so it is stable across
+ * re-renders and identical for the same month every time — a screenshot of it
+ * has to be reproducible.
+ */
+function cellDelayMs(iso: string): number {
+  return Math.min(320, (Number(iso.slice(8)) - 1) * 10);
+}
+
+function directionTone(netCents: number): string {
+  if (netCents > 0) return "var(--positive)";
+  if (netCents < 0) return "var(--negative)";
+  return "var(--ink-faint)";
+}
 
 /** Contrast-safe tone per state (soft tint + tone text — state-contrast.test). */
 const STATE_TONE: Record<DayStateKind, "positive" | "warning" | "info" | "negative" | "neutral"> = {
@@ -199,6 +231,23 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
    * raised, so a quiet week reads as a quiet week rather than as a rendering
    * failure.
    */
+  /**
+   * A day with money on it gets a surface of its own, tinted by how heavy it is.
+   *
+   * Three jobs. It bounds the cell, so a magnitude column standing on the bottom
+   * edge belongs visibly to THIS square and not to the date printed directly
+   * below it — without a boundary the two are indistinguishable, which is how
+   * the first version drew Jul 5's bar apparently on top of Jul 12. It gives the
+   * month a shape at a glance. And the tint's strength is the day's weight, so
+   * the grid reads as a heat map before a single figure is parsed.
+   *
+   * ⚠️ The tint tops out at 14%. It is behind live text — the date, the amount,
+   * the merchant name — and this app verifies its contrast rather than eyeballing
+   * it (`color-contrast.ts`, `state-contrast.test`). 14% of `--negative` over
+   * `--surface-raised` leaves every foreground on the cell above its AA bar in
+   * both themes; the loud channel is the COLUMN, which is opaque and answerable
+   * to the 3:1 graphical bar rather than the 4.5:1 text one.
+   */
   function cellClassName(iso: string): string {
     /*
      * A calendar cell does not have to be square, and below ~48px wide it must
@@ -208,106 +257,151 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
      *
      * `min-height` rather than an override of `aspect-ratio` — the two are not
      * in conflict, because a min-height larger than the aspect-derived height
-     * simply wins, and the aspect keeps applying everywhere it still fits. At
-     * 440px (the owner's phone) a cell is already ~52px and this is inert.
+     * simply wins, and the aspect keeps applying everywhere it still fits.
+     *
+     * 4.5rem, raised from 3rem when the merchant tiles arrived. At 440px — the
+     * owner's own phone, and above the 400px gate where the tiles appear — the
+     * cell's content measured 43px against 30px of square, and the overflow
+     * sweep caught every populated day. The tiles are the largest legibility win
+     * on this page and the right answer was to make room for them, not to hide
+     * them on the device the page is actually read on.
      */
-    const fitsFigures = "max-sm:min-h-12";
-    const tint = (month.entriesByDay[iso]?.length ?? 0) > 0 ? " bg-surface-sunken" : "";
-    return fitsFigures + tint;
+    const fitsFigures = "max-sm:min-h-[4.5rem]";
+    // Hover feedback as a LIFT rather than a background change: the tint below
+    // is an inline style and would win over any `hover:bg-*` class, so a
+    // populated day would have been the one cell in the grid that did not
+    // respond to the pointer.
+    const responds =
+      "group/cell [animation:var(--animate-cell-in)] transition-[transform,box-shadow] duration-(--duration-fast) ease-(--ease-out-expo) hover:-translate-y-px hover:shadow-(--shadow-overlay) motion-reduce:hover:translate-y-0";
+    return `${fitsFigures} ${responds}`;
   }
 
-  /**
-   * A day cell: the MONEY, the series that owns it, and a magnitude COLUMN
-   * standing on the bottom edge of the cell.
-   *
-   * Three things about the previous version were wrong once it was screenshotted
-   * rather than reasoned about:
-   *
-   * 1. It laid the figures out `justify-between`, which pushed the glyph and the
-   *    amount to opposite edges of the cell. At 320px that left the amount
-   *    17–21px for text needing 24–30, and all six ellipsised — the grid
-   *    rendered `-...` and `3...` where the money was supposed to be. They sit
-   *    adjacent now, so the pair reads as one thing and fits.
-   * 2. The bar was a 4px horizontal rule pinned to the TOP of a cell that is a
-   *    square — on a 1024px viewport roughly 25px of content above 75px of
-   *    nothing. A month of that reads as empty, which is exactly the complaint
-   *    the redesign started from. The magnitude is now a vertical column that
-   *    stands in that space, so the grid reads as a bar chart wrapped by weeks.
-   * 3. The amount took the STATE's colour, so a −$1,800 rent and a +$3,200
-   *    paycheque — the two biggest marks in the month, and opposite in meaning —
-   *    drew in the same blue. It takes the app's flow colour now (the same
-   *    green/red `Money flow` uses everywhere else), which puts direction on the
-   *    figure and leaves state to the glyph and the column.
-   *
-   * The glyph stays, small, because it is what survives colour-blindness
-   * (WCAG 1.4.1) and it is what the aria-label enumerates.
-   */
+  function cellStyle(iso: string): React.CSSProperties {
+    const w = dayWeight(month.entriesByDay[iso], heaviest);
+    const delay: React.CSSProperties = { animationDelay: `${cellDelayMs(iso)}ms` };
+    if (!w) return delay;
+    const tone = directionTone(w.netCents);
+    return {
+      ...delay,
+      backgroundColor: `color-mix(in oklab, ${tone} ${heatMixPercent(w.weight).toFixed(1)}%, var(--surface-raised))`,
+      /*
+       * The month's heaviest days lift off the page.
+       *
+       * Gated at 0.85 of the month's own range rather than at an absolute
+       * figure, so a quiet month still has a heaviest day and a month
+       * containing rent does not light up half the grid. It is the one purely
+       * decorative rule in the cell, and it is spent on the day the reader most
+       * needs to find.
+       */
+      ...(w.weight >= 0.85
+        ? {
+            boxShadow: `0 6px 18px -8px color-mix(in oklab, ${tone} 55%, transparent)`,
+          }
+        : null),
+    };
+  }
+
   function renderCell(day: CalendarDay): React.ReactNode {
-    const w = dayWeight(month.entriesByDay[day.iso], heaviest);
-    if (!w) return null;
-    // Confidence dims and hatches the bar; an unsettled day is dimmed too,
-    // because it is a mark the app is not standing behind either.
-    // Unsettled carries its uncertainty in the outline, so it needs no dimming
-    // on top — dimming a hairline border only makes it disappear.
-    const dimmed = w.confidence !== null ? CONFIDENCE_OPACITY[w.confidence] : "";
-    const flowTone =
-      w.netCents < 0 ? "text-negative" : w.netCents > 0 ? "text-positive" : "text-ink-muted";
+    const entries = month.entriesByDay[day.iso];
+    const w = dayWeight(entries, heaviest);
+    if (!w || !entries) return null;
+
+    const tone = directionTone(w.netCents);
+    // Confidence dims; an unsettled day is dim too, because it is a mark the app
+    // is not standing behind either.
+    const dimmed =
+      w.state === "unsettled" ? "opacity-60" : w.confidence ? CONFIDENCE_OPACITY[w.confidence] : "";
+    const hollow = w.state === "unsettled";
+    const marks = entries.slice(0, 2);
+
     return (
       <span className="flex h-full w-full flex-col gap-0.5">
-        {/* `flex-wrap` is doing real work at 320px: a ~38px cell leaves ~21px
-            beside the glyph, and "-1.8k" needs 30px — so the amount drops to its
-            own line there and keeps the cell's full width, rather than being
-            ellipsised (what `truncate` did) or spilling over the neighbouring
-            day (what removing `truncate` did instead). It re-joins the glyph on
-            one line as soon as there is room. */}
+        {/* WHO. The merchant tiles carry the category hue and, where the app has
+            one, the brand's own mark — so a charge is identifiable before a word
+            of it is read. Hidden below 400px, where a cell is ~38px wide and an
+            18px tile would crowd out the figure; the Day Sheet carries them
+            there. Two, then a count: three tiles fit at 1440px and nowhere else,
+            and a row that reflows by breakpoint reads as a different design at
+            each one. */}
+        <span className="hidden items-center gap-0.5 min-[400px]:flex">
+          {marks.map((e, i) => (
+            <MerchantMark
+              key={`${e.seriesId}-${i}`}
+              name={e.name}
+              hue={e.hue}
+              size={14}
+              muted={e.state === "unsettled"}
+              className="transition-transform duration-(--duration-fast) group-hover/cell:scale-110 motion-reduce:group-hover/cell:scale-100 sm:size-[17px]"
+            />
+          ))}
+          {w.count > marks.length ? (
+            <span className="figures text-[8px] leading-none text-ink-muted">
+              +{w.count - marks.length}
+            </span>
+          ) : null}
+        </span>
+
+        {/* HOW MUCH. The day's signed total, in the app's flow colours, and the
+            largest thing in the cell — it is the answer to the question the page
+            is opened with. The state glyph rides beside it, small, because it is
+            a qualifier on the figure rather than a peer of it.
+
+            `flex-wrap` is doing real work at 320px: a ~38px cell leaves ~21px
+            beside the glyph and "-1.8k" needs 30px, so the amount drops to its
+            own line there and keeps the cell's full width rather than being
+            ellipsised. It re-joins the glyph on one line as soon as there is room. */}
         <span className="flex flex-wrap items-center gap-x-0.5 leading-none">
           <span className={`text-[9px] font-bold leading-none ${STATE_MARK_COLOR[w.state]}`}>
             {STATE_GLYPH[w.state]}
           </span>
           <span
-            className={`figures whitespace-nowrap text-[9px] font-semibold leading-none tabular-nums sm:text-[10px] ${flowTone}`}
+            className="figures whitespace-nowrap text-[10px] font-semibold leading-none sm:text-[11px]"
+            style={{ color: tone }}
           >
             {compactDayTotal(w.netCents)}
           </span>
         </span>
 
-        {/* Which bill this is — the question a heavy day raises and the grid
-            could not answer without being opened.
+        {/* WHICH BILL. The breakpoint is 400px, NOT Tailwind's `sm` (640px). A
+            phone is the device this page gets read on and the owner's is 440px
+            logical — below `sm`, so an `sm:` gate would have hidden the names on
+            exactly the screen that most needs them.
 
-            The breakpoint is 400px, NOT Tailwind's `sm` (640px). A phone is the
-            device this page gets read on, and the owner's is 440px logical —
-            which is below `sm`, so an `sm:` gate would have hidden the names on
-            exactly the screen that most needs them. 400px is where a cell first
-            gets wide enough (~46px) for a name to be worth truncating; at 320 it
-            would be an ellipsis and the Day Sheet carries it instead. */}
-        {/* The overflow count sits OUTSIDE the truncating span. Inside it, it was
+            The overflow count sits OUTSIDE the truncating span. Inside it, it was
             the first thing the ellipsis ate: 2026-08-10 carries Breezeline and
             FPL and rendered "Breezeline (internet) …", so the cell showed a −$64
-            total that its own caption could not account for. The name is the
-            part that degrades gracefully; "+1" is four pixels that must not. */}
+            total that its own caption could not account for. */}
         <span className="hidden w-full items-baseline gap-0.5 text-[9px] leading-tight text-ink-muted min-[400px]:flex">
           <span className="min-w-0 truncate">{w.dominantName}</span>
           {w.count > 1 ? <span className="shrink-0">+{w.count - 1}</span> : null}
         </span>
 
-        {/* The magnitude column. `items-end` stands it on the cell's bottom edge
-            so the whole grid shares one baseline; `min-h-[2px]` keeps the
-            smallest bill visible in a short cell, where 4% of ~11px rounds to
-            nothing.
+        {/* THE WEIGHT. A column standing on the cell's bottom edge, so the whole
+            grid shares one baseline and the month reads as a bar chart wrapped by
+            weeks. It grows out of that baseline on mount — `scaleY` about the
+            bottom, never a height animation, which would relayout every sibling
+            on every frame.
 
             ⚠️ Still a √ scale against the month's heaviest day, NOT
             `magnitudeTiers`. That module answers a different geometry: a list of
-            bars sharing one axis, where a tier can be magnified and its factor
+            bars sharing one axis, where a tier is magnified and its factor
             printed beside it. A calendar is seven columns by five rows and there
-            is nowhere to put three axes or the sentence explaining them. The
-            honest trade here is the one `barWeight` already documents — the bar
-            answers "is this a heavy day?" and the figure printed directly above
-            it answers "how much?". */}
+            is nowhere to put three axes or the sentence explaining them. The bar
+            answers "is this a heavy day?" and the figure directly above it
+            answers "how much?". */}
         <span className="flex min-h-0 flex-1 items-end pt-0.5">
           <span
-            className={`block min-h-[2px] w-full rounded-t-[2px] ${BAR_TONE[w.state]} ${dimmed}`}
+            className={`block min-h-[3px] w-full origin-bottom rounded-t-[3px] [animation:var(--animate-bar-grow)] ${dimmed} ${
+              hollow ? "border border-dashed bg-transparent" : ""
+            }`}
             style={{
               height: `${Math.round(w.weight * 100)}%`,
+              animationDelay: `${cellDelayMs(day.iso)}ms`,
+              ...(hollow
+                ? { borderColor: `color-mix(in oklab, ${tone} 55%, transparent)` }
+                : {
+                    backgroundImage: `linear-gradient(to top, ${tone}, color-mix(in oklab, ${tone} 45%, transparent))`,
+                  }),
               ...(w.confidence === "predicted" ? HATCH : null),
             }}
           />
@@ -318,8 +412,26 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
 
   const openEntries = openDay ? month.entriesByDay[openDay] ?? [] : [];
 
+  /*
+   * `settled` is the POSTED flag, not "is it in the past". The two are not the
+   * same thing and the difference is the whole point of the second line: August
+   * 2026 has three cash paydays behind today that have never reached the ledger,
+   * so a line split by date climbed confidently to +$3,141 directly above a
+   * footer reading "SETTLED $0.00".
+   */
+  const flowEntries: Record<string, { amountCents: number; settled: boolean }[]> = {};
+  for (const [iso, entries] of Object.entries(month.entriesByDay)) {
+    flowEntries[iso] = entries.map((e) => ({
+      amountCents: e.amountCents,
+      settled: e.transactionId !== null,
+    }));
+  }
+  const flow = monthFlow(daysInMonthOf(month.monthKey), month.monthKey, flowEntries, today);
+
   return (
     <div className="rounded-(--radius-card) border border-line bg-surface-raised p-4 sm:p-5">
+      <MonthFlowStrip flow={flow} monthLabel={monthLabel(`${month.monthKey}-01`)} />
+
       <CalendarGrid
         monthKey={month.monthKey}
         today={today}
@@ -327,6 +439,7 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
         getCellLabel={cellLabel}
         renderCell={renderCell}
         getCellClassName={cellClassName}
+        getCellStyle={cellStyle}
         onDayActivate={(iso) => setOpenDay(iso)}
         footer={<CalendarFooter month={month} />}
       />
@@ -342,9 +455,19 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
               <li key={`${e.seriesId}-${i}`} className="py-2.5">
                 <Link
                   href={`/recurring/${e.seriesId}`}
-                  className="flex items-center justify-between gap-3 rounded-md px-1 py-1 transition-colors duration-(--duration-fast) hover:bg-surface-sunken"
+                  className="group/row flex items-center gap-3 rounded-md px-1 py-1 transition-colors duration-(--duration-fast) hover:bg-surface-sunken"
                 >
-                  <div className="min-w-0">
+                  {/* The same tile the grid draws, at reading size. It is what
+                      makes the sheet and the cell recognisably the same object
+                      rather than two views that happen to share a date. */}
+                  <MerchantMark
+                    name={e.name}
+                    hue={e.hue}
+                    size={30}
+                    muted={e.state === "unsettled"}
+                    className="transition-transform duration-(--duration-fast) group-hover/row:scale-105 motion-reduce:group-hover/row:scale-100"
+                  />
+                  <div className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{e.name}</span>
                     <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
                       <Badge tone={STATE_TONE[e.state]}>
@@ -372,7 +495,9 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
                   <div className="shrink-0 text-right">
                     <Money cents={e.amountCents} flow className="text-sm" />
                     {e.state === "paid_different" && e.expectedAmountCents !== null ? (
-                      <span className="block text-[11px] text-ink-faint">expected {formatCents(e.expectedAmountCents)}</span>
+                      <span className="block text-[11px] text-ink-faint">
+                        expected {formatCents(e.expectedAmountCents)}
+                      </span>
                     ) : null}
                   </div>
                 </Link>
@@ -380,6 +505,18 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
             ))}
           </ul>
         )}
+        {openEntries.length > 1 ? (
+          <p className="mt-3 flex items-baseline justify-between gap-3 border-t border-line-strong pt-3 text-sm">
+            <span className="text-xs font-medium uppercase tracking-[0.1em] text-ink-faint">
+              Day total
+            </span>
+            <Money
+              cents={openEntries.reduce((n, e) => n + e.amountCents, 0)}
+              flow
+              className="font-semibold"
+            />
+          </p>
+        ) : null}
       </Sheet>
     </div>
   );
