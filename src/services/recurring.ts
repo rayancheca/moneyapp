@@ -152,6 +152,22 @@ export interface GroupStats {
  * Returns null when the group is not a series: too few occurrences, median
  * gap outside every cadence bucket, or unstable amounts.
  */
+/**
+ * Is this set of amounts stable enough to be one recurring charge?
+ *
+ * Population stddev over |mean| at or under `AMOUNT_STABILITY_CV_MAX`, or every
+ * amount identical. Extracted from `analyzeGroup` so the absorption pass can
+ * hold a detected series to the SAME bar that admitted it — two copies of this
+ * rule would be two rules, and the second one would eventually drift looser.
+ */
+export function amountsAreStable(amounts: readonly number[]): boolean {
+  if (amounts.length === 0) return true;
+  if (amounts.every((a) => a === amounts[0])) return true;
+  const mean = amounts.reduce((a, b) => a + b, 0) / amounts.length;
+  if (mean === 0) return false;
+  return populationStddev(amounts) / Math.abs(mean) <= AMOUNT_STABILITY_CV_MAX;
+}
+
 export function analyzeGroup(txns: readonly AnalyzableTxn[]): GroupStats | null {
   if (txns.length < MIN_OCCURRENCES) return null;
   const sorted = [...txns].sort(
@@ -172,9 +188,7 @@ export function analyzeGroup(txns: readonly AnalyzableTxn[]): GroupStats | null 
   const stddev = populationStddev(amounts);
   const allIdentical = amounts.every((a) => a === amounts[0]);
   // stability: population stddev/|mean| ≤ 0.2, OR all amounts identical
-  if (!allIdentical && (mean === 0 || stddev / Math.abs(mean) > AMOUNT_STABILITY_CV_MAX)) {
-    return null;
-  }
+  if (!amountsAreStable(amounts)) return null;
   const cv = allIdentical ? 0 : stddev / Math.abs(mean);
 
   const toleranceDays = CADENCE_TOLERANCE_DAYS[cadence];
@@ -579,6 +593,7 @@ export function detectRecurringSeries(
         seriesId: transactions.recurringSeriesId,
         description: transactions.normalizedDescription,
         linkSource: transactions.seriesLinkSource,
+        amountCents: transactions.amountCents,
       })
       .from(transactions)
       .where(and(eq(transactions.status, "active"), lte(transactions.postedOn, today)))
@@ -603,7 +618,54 @@ export function detectRecurringSeries(
       if (list) list.push(r.id);
       else absorbBySeries.set(seriesId, [r.id]);
     }
+
+    /*
+     * ⚠️ A DETECTED series must still pass the bar that admitted it.
+     *
+     * Absorption's first version did not check, and it corrupted two series the
+     * day it shipped. "PURA VIDA BAY ROAD MIAMI BEACH" and "YA-FIT Smoothie Bar"
+     * are a café and a smoothie bar the owner visits often; each had four
+     * charges that happened to cost similar amounts, which squeaked under
+     * `AMOUNT_STABILITY_CV_MAX`. Absorbing seven more took their amount CV to
+     * 0.672 and 0.463 — three times the gate — and nothing re-ran it, so the app
+     * went on calling them subscriptions with worse evidence than it started
+     * with. Owner: *"the smoothie bat and pura vida are not recurring i just go
+     * eat there often ... you cant say doordash is recurring . its not a fixed
+     * subsription its just me getting food."*
+     *
+     * The check is CV over the series' FULL tagged set including the candidates,
+     * because that is the set the series would then be claiming to describe.
+     *
+     * CONFIRMED series are exempt, and that is the whole point of the split: the
+     * owner has vouched for them, and several are legitimately variable — his
+     * rent runs a CV of 0.326 and FPL is a utility bill that changes every
+     * month. A statistical gate must never override a human's answer; it only
+     * holds a DETECTOR to its own standard.
+     */
+    const amountsBySeries = new Map<string, number[]>();
+    for (const r of rows) {
+      if (!r.seriesId) continue;
+      const list = amountsBySeries.get(r.seriesId);
+      if (list) list.push(r.amountCents);
+      else amountsBySeries.set(r.seriesId, [r.amountCents]);
+    }
+    const statusById = new Map(
+      tx
+        .select({ id: recurringSeries.id, status: recurringSeries.status })
+        .from(recurringSeries)
+        .all()
+        .map((r) => [r.id, r.status] as const),
+    );
+    const amountById = new Map(rows.map((r) => [r.id, r.amountCents] as const));
+
     for (const [seriesId, ids] of absorbBySeries) {
+      if (statusById.get(seriesId) === "detected") {
+        const merged = [
+          ...(amountsBySeries.get(seriesId) ?? []),
+          ...ids.map((id) => amountById.get(id) ?? 0),
+        ];
+        if (!amountsAreStable(merged)) continue;
+      }
       summary.taggedTransactions += tagGroup(tx, ids, seriesId);
       touched.add(seriesId);
     }

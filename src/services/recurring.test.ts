@@ -14,6 +14,7 @@ import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
 import { categorizeAll, detectTransfers } from "./categorize";
 import {
+  amountsAreStable,
   analyzeGroup,
   detectRecurringSeries,
   fitCadence,
@@ -679,6 +680,47 @@ describe("a live series absorbs its own charges", () => {
     // …and neither existing link is disturbed.
     expect(seriesFor(claimed)).toBe(twinId);
     expect(bundle.db.select().from(recurringSeries).all().map((s) => s.id)).toContain(seriesId);
+  });
+
+  test("a DETECTED series refuses a charge that breaks its own stability bar", () => {
+    /*
+     * The defect absorption shipped with. "PURA VIDA" and "YA-FIT" are places
+     * the owner eats; each had four charges that happened to cost about the
+     * same, which squeaked under AMOUNT_STABILITY_CV_MAX. Absorbing seven more
+     * took their amount CV to 0.672 and 0.463 — three times the gate — and
+     * nothing re-ran it, so the app kept calling them subscriptions on worse
+     * evidence than it started with. Owner: "you cant say doordash is recurring
+     * . its not a fixed subsription its just me getting food."
+     */
+    const { seriesId } = buildDetected(); // three charges at -5000
+    const wild = insertTxn(cardB, "2026-07-06", -42000, "BREEZELINE 866-290-5400 MA");
+
+    detectRecurringSeries(bundle.db, TODAY);
+    expect(seriesFor(wild)).toBeNull();
+    // …and the series it refused is untouched, not damaged.
+    expect(
+      bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get()!.status,
+    ).toBe("detected");
+  });
+
+  test("a CONFIRMED series absorbs anyway — a gate must not overrule a human", () => {
+    // The owner's rent runs an amount CV of 0.326 and FPL is a utility bill that
+    // changes every month. Both are confirmed, and a statistical bar that
+    // silently overrode his answer would be the app arguing with him.
+    const { seriesId } = buildDetected();
+    setSeriesStatus(bundle.db, seriesId, "confirmed");
+    const wild = insertTxn(cardB, "2026-07-06", -42000, "BREEZELINE 866-290-5400 MA");
+
+    detectRecurringSeries(bundle.db, TODAY);
+    expect(seriesFor(wild)).toBe(seriesId);
+  });
+
+  test("a detected series still takes a charge that keeps it stable", () => {
+    const { seriesId } = buildDetected();
+    const normal = insertTxn(cardB, "2026-07-06", -5100, "BREEZELINE 866-290-5400 MA");
+
+    detectRecurringSeries(bundle.db, TODAY);
+    expect(seriesFor(normal)).toBe(seriesId);
   });
 
   test("running detection twice changes nothing the second time", () => {
