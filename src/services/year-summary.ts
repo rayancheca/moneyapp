@@ -4,7 +4,12 @@ import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { importFiles } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
-import { xirr, type CashFlow } from "@/lib/xirr";
+import {
+  moneyWeightedReturn,
+  type MoneyWeightedReturn,
+  type ReturnBoundary,
+} from "@/lib/money-weighted-return";
+import type { CashFlow } from "@/lib/xirr";
 import { yearSummary, type YearLineInput, type YearSummary } from "@/lib/year-summary";
 import { portfolioSeries, realizedSalesByDay } from "./portfolio";
 
@@ -51,21 +56,8 @@ export interface YearGambling {
   rowCount: number;
 }
 
-export type XirrStatus =
-  | {
-      computed: true;
-      /** an ANNUAL rate, even when the window below is shorter than a year */
-      rate: number;
-      openCents: number;
-      closeCents: number;
-      flowCount: number;
-      fromDay: string;
-      /** the last day valued — today, for a year still running */
-      throughDay: string;
-      /** the year has not finished, so `rate` annualises a partial window */
-      partial: boolean;
-    }
-  | { computed: false; reason: string };
+/** Re-exported so callers need not know which module decides this. */
+export type XirrStatus = MoneyWeightedReturn;
 
 export interface YearSummaryView {
   year: number;
@@ -197,55 +189,40 @@ function gamblingFor(db: AppDatabase, year: number): YearGambling {
 }
 
 /**
- * The year's money-weighted return, or an explicit refusal.
+ * Gathers the two boundary valuations and the year's external flows, then hands
+ * the DECISION to `lib/money-weighted-return`.
  *
- * ⛔ **Withheld unless BOTH boundary valuations are complete.** An XIRR is
- * dominated by its opening and closing values, and `portfolioSeries` marks a day
- * incomplete when it could not value every investment account that day.
- * Measured: 2025 opens on a day covering one of two accounts, so its return
- * would be computed against $21.70 of visible portfolio and read as an
- * astronomical gain. Reporting *why* there is no figure is the more useful
- * answer, and it is the same rule the coverage panels already follow.
+ * The withholding rules live there, not here, because they are the valuable
+ * part and they need the 100%-branch gate: a mutation that deleted the
+ * incomplete-opening guard survived this file's tests, since reaching that
+ * branch through the database takes a seeded portfolio with prices and holdings.
  */
 function moneyWeightedReturnFor(db: AppDatabase, year: number, today: string): XirrStatus {
   const series = portfolioSeries(db);
-  if (series.length === 0) return { computed: false, reason: "no portfolio history has been imported" };
-
-  const at = (day: string) => {
+  const at = (day: string): ReturnBoundary | null => {
     let found: (typeof series)[number] | undefined;
     for (const p of series) {
       if (p.day <= day) found = p;
       else break;
     }
-    return found;
+    return found
+      ? {
+          day: found.day,
+          valueCents: found.valueCents,
+          complete: found.complete,
+          coveredAccounts: found.coveredAccounts,
+          totalAccounts: found.totalAccounts,
+        }
+      : null;
   };
 
   const { from, to } = yearBounds(year);
-  const openDay = `${year - 1}-12-31`;
   const closeDay = to < today ? to : today;
 
-  const open = at(openDay);
-  const close = at(closeDay);
-  if (!open) return { computed: false, reason: `the portfolio has no valuation on or before ${openDay}` };
-  if (!close) return { computed: false, reason: `the portfolio has no valuation on or before ${closeDay}` };
-  if (!open.complete) {
-    return {
-      computed: false,
-      reason: `the portfolio's value on ${open.day} covers only ${open.coveredAccounts} of ${open.totalAccounts} investment accounts, so a return measured from it would be meaningless`,
-    };
-  }
-  if (!close.complete) {
-    return {
-      computed: false,
-      reason: `the portfolio's value on ${close.day} covers only ${close.coveredAccounts} of ${close.totalAccounts} investment accounts`,
-    };
-  }
-
   /*
-   * External flows only: money crossing INTO or OUT OF the investment side.
-   * Taken from the cash leg (a checking/savings row categorized Investment
-   * Contribution), because that is the side where the movement is external —
-   * the investment leg's mirror would double it.
+   * External flows only: money crossing INTO or OUT OF the investment side,
+   * taken from the CASH leg (a checking/savings row categorized Investment
+   * Contribution). The investment leg's mirror would double every movement.
    */
   const contributions = db
     .select({ day: transactions.postedOn, amountCents: transactions.amountCents })
@@ -270,32 +247,11 @@ function moneyWeightedReturnFor(db: AppDatabase, year: number, today: string): X
     // investor-signed negative flow. Money coming back is positive.
     byDay.set(c.day, (byDay.get(c.day) ?? 0) + c.amountCents);
   }
+  const flows: CashFlow[] = [...byDay.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([day, amountCents]) => ({ day, amountCents }));
 
-  const flows: CashFlow[] = [
-    { day: open.day, amountCents: -open.valueCents },
-    ...[...byDay.entries()]
-      .filter(([, cents]) => cents !== 0)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([day, amountCents]) => ({ day, amountCents })),
-    { day: close.day, amountCents: close.valueCents },
-  ];
-
-  const rate = xirr(flows);
-  if (rate === null) {
-    return { computed: false, reason: "the year's cash flows do not resolve to a single rate of return" };
-  }
-  return {
-    computed: true,
-    rate,
-    openCents: open.valueCents,
-    closeCents: close.valueCents,
-    flowCount: flows.length,
-    fromDay: open.day,
-    throughDay: close.day,
-    // XIRR is an annual rate by construction. Publishing 113.94% for eight
-    // months without saying it is annualised would read as money actually made.
-    partial: close.day < to,
-  };
+  return moneyWeightedReturn({ open: at(`${year - 1}-12-31`), close: at(closeDay), flows, windowEnd: to });
 }
 
 /** Every calendar year the ledger holds an active row for, newest first. */
