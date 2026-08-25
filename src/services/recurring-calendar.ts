@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
@@ -208,6 +208,40 @@ export function classifyPostedAmount(
  * so they keep reading `null` and keep making no claim — three points is
  * detection's own floor for calling something a statistic.
  */
+/**
+ * How many active rows are tagged to each series — the input to
+ * `ScheduleProven`, which is the only thing this is used for.
+ *
+ * Counted from the rows rather than read from a column, because there is no
+ * column: `listSeries` derives the same number the same way. Compared against
+ * `MIN_OCCURRENCES`, so the codebase keeps ONE definition of "enough
+ * occurrences to be a statistic" — the same threshold `measuredStddevs` uses
+ * below for the same reason.
+ */
+/**
+ * Is this series' expected DATE worth holding a biller to? See `ScheduleProven`
+ * for the full argument — in short, the count is a proxy for where the date came
+ * from: zero postings means a human authored it, one or two means detection
+ * extrapolated it from too little, and `MIN_OCCURRENCES` or more means it was
+ * measured.
+ */
+export function scheduleIsProven(postingCount: number): boolean {
+  return postingCount === 0 || postingCount >= MIN_OCCURRENCES;
+}
+
+function postingCountBySeries(db: AppDatabase): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const r of db
+    .select({ seriesId: transactions.recurringSeriesId, n: sql<number>`count(*)` })
+    .from(transactions)
+    .where(and(eq(transactions.status, "active"), isNotNull(transactions.recurringSeriesId)))
+    .groupBy(transactions.recurringSeriesId)
+    .all()) {
+    if (r.seriesId) out.set(r.seriesId, Number(r.n));
+  }
+  return out;
+}
+
 function measuredStddevs(db: AppDatabase, seriesIds: readonly string[]): Map<string, number> {
   const out = new Map<string, number>();
   if (seriesIds.length === 0) return out;
@@ -256,6 +290,7 @@ export function recurringCalendar(
     db,
     historyRows.filter((s) => s.amountCentsStddev === null).map((s) => s.id),
   );
+  const postingCounts = postingCountBySeries(db);
 
   const entriesByDay: Record<string, CalendarEntry[]> = {};
   const pushEntry = (date: string, entry: CalendarEntry): void => {
@@ -350,6 +385,7 @@ export function recurringCalendar(
             s.kind,
             o.date,
             frontier ? frontierForSeries(frontier, accountsBySeries?.get(s.id)) : null,
+            scheduleIsProven(postingCounts.get(s.id) ?? 0),
           );
 
       pushEntry(o.date, {

@@ -103,6 +103,7 @@ const STATE_TONE: Record<DayStateKind, "positive" | "warning" | "info" | "negati
 const REASON_WORD: Record<UnsettledReason, string> = {
   not_imported: "not imported yet",
   unbanked: "not banked yet",
+  schedule_unproven: "due date not established",
 };
 
 /**

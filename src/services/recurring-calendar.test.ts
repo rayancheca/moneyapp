@@ -190,6 +190,65 @@ describe("recurringCalendar", () => {
     expect(july.missedCount).toBe(0);
   });
 
+  test("a schedule extrapolated from one or two postings cannot be missed", () => {
+    // FPL on the real ledger: ONE posting, a due date extrapolated from it that
+    // was wrong by thirteen days, and a red ✕ reporting the biller delinquent on
+    // a date the app had invented.
+    insertTxn({ postedOn: "2026-06-15", amountCents: -1421, rawDescription: "FPL ELEC PYMT" });
+    insertTxn({ postedOn: "2026-07-18", amountCents: -2200, rawDescription: "GROCERY" });
+    const id = bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "FPL",
+        accountId: cardId,
+        kind: "bill",
+        cadence: "monthly",
+        nextExpectedOn: "2026-07-15",
+        nextExpectedAmountCents: -1421,
+        lastMatchedOn: "2026-06-15",
+        status: "confirmed",
+      })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    bundle.db
+      .update(transactions)
+      .set({ recurringSeriesId: id })
+      .where(eq(transactions.rawDescription, "FPL ELEC PYMT"))
+      .run();
+
+    const july = recurringCalendar(bundle.db, "2026-07", "2026-07-20");
+    const fpl = Object.values(july.entriesByDay)
+      .flat()
+      .find((e) => e.name === "FPL" && e.transactionId === null);
+    expect(fpl).toMatchObject({ state: "unsettled", unsettledReason: "schedule_unproven" });
+  });
+
+  test("a hand-registered commitment that has NEVER posted stays missable", () => {
+    // The car lease: registered by hand for a date the owner chose, with no
+    // postings at all. Nothing could have been extrapolated, so the date is his
+    // statement — and a payment that never arrives is a real miss.
+    insertTxn({ postedOn: "2026-07-18", amountCents: -2200, rawDescription: "GROCERY" });
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Car lease",
+        accountId: cardId,
+        kind: "bill",
+        cadence: "monthly",
+        nextExpectedOn: "2026-07-11",
+        nextExpectedAmountCents: -55989,
+        userAmountCents: -55989,
+        status: "confirmed",
+      })
+      .run();
+
+    const july = recurringCalendar(bundle.db, "2026-07", "2026-07-20");
+    const lease = Object.values(july.entriesByDay)
+      .flat()
+      .find((e) => e.name === "Car lease");
+    expect(lease).toMatchObject({ state: "missed", unsettledReason: null });
+  });
+
   test("an overdue occurrence on an UNIMPORTED day is unsettled, not missed", () => {
     buildMonthlyNetflix();
     detectRecurringSeries(bundle.db, TODAY);

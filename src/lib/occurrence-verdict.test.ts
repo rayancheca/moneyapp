@@ -23,7 +23,7 @@ describe("settledVerdict", () => {
   test("a bill absent from a day the ledger HAS been shown is missed", () => {
     // The pass-45 case, which must keep working: $2,285.70 of overdue rent hid
     // behind a green budget. A covered, empty day is a real answer.
-    expect(settledVerdict("bill", "2026-08-10", "2026-08-14")).toEqual({
+    expect(settledVerdict("bill", "2026-08-10", "2026-08-14", true)).toEqual({
       state: "missed",
       reason: null,
     });
@@ -33,18 +33,18 @@ describe("settledVerdict", () => {
     // Inclusive on purpose: `observedThrough` names a day that IS imported, not
     // the first day that is not. An exclusive read would misreport every bill
     // that lands exactly on the newest statement's closing day.
-    expect(settledVerdict("bill", "2026-08-14", "2026-08-14").state).toBe("missed");
+    expect(settledVerdict("bill", "2026-08-14", "2026-08-14", true).state).toBe("missed");
   });
 
   test("a bill past the frontier is unsettled, not missed", () => {
-    expect(settledVerdict("subscription", "2026-08-15", "2026-08-12")).toEqual({
+    expect(settledVerdict("subscription", "2026-08-15", "2026-08-12", true)).toEqual({
       state: "unsettled",
       reason: "not_imported",
     });
   });
 
   test("no frontier at all is the most cautious answer", () => {
-    expect(settledVerdict("bill", "2026-08-10", null)).toEqual({
+    expect(settledVerdict("bill", "2026-08-10", null, true)).toEqual({
       state: "unsettled",
       reason: "not_imported",
     });
@@ -54,7 +54,7 @@ describe("settledVerdict", () => {
     // The measured defect: three cash paydays drawn red in August 2026. Even a
     // day imported to the minute cannot disprove cash he was handed and has not
     // deposited.
-    expect(settledVerdict("income", "2026-08-06", "2026-12-31")).toEqual({
+    expect(settledVerdict("income", "2026-08-06", "2026-12-31", true)).toEqual({
       state: "unsettled",
       reason: "unbanked",
     });
@@ -63,15 +63,37 @@ describe("settledVerdict", () => {
   test("income with no coverage reports unbanked, not not_imported", () => {
     // Both branches would say "unsettled"; the REASON is the whole point, and
     // "we have not imported this" would be the wrong sentence under a payday.
-    expect(settledVerdict("income", "2026-08-20", null).reason).toBe("unbanked");
+    expect(settledVerdict("income", "2026-08-20", null, true).reason).toBe("unbanked");
+  });
+
+  test("a series with too few postings cannot support a missed claim", () => {
+    // FPL: ONE posting, from which the app extrapolated a due date that was
+    // wrong by thirteen days — and then reported the biller as delinquent on it.
+    expect(settledVerdict("bill", "2026-08-10", "2026-08-12", false)).toEqual({
+      state: "unsettled",
+      reason: "schedule_unproven",
+    });
+  });
+
+  test("an unimported day outranks an unproven schedule", () => {
+    // Both are true; "we have not been shown this day" is the stronger and more
+    // actionable answer, so it is the one reported.
+    expect(settledVerdict("bill", "2026-08-20", "2026-08-12", false).reason).toBe("not_imported");
+  });
+
+  test("a proven schedule on a covered day is still missed", () => {
+    expect(settledVerdict("bill", "2026-08-10", "2026-08-12", true)).toEqual({
+      state: "missed",
+      reason: null,
+    });
   });
 
   test("a reason is present exactly when the state is unsettled", () => {
     const cases = [
-      settledVerdict("bill", "2026-01-01", "2026-06-01"),
-      settledVerdict("bill", "2026-08-01", "2026-06-01"),
-      settledVerdict("income", "2026-08-01", "2026-06-01"),
-      settledVerdict("bill", "2026-08-01", null),
+      settledVerdict("bill", "2026-01-01", "2026-06-01", true),
+      settledVerdict("bill", "2026-08-01", "2026-06-01", true),
+      settledVerdict("income", "2026-08-01", "2026-06-01", true),
+      settledVerdict("bill", "2026-08-01", null, true),
     ];
     for (const v of cases) {
       expect(v.reason === null).toBe(v.state === "missed");

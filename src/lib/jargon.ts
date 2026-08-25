@@ -206,7 +206,7 @@ export const RECURRING_JARGON = {
   missed:
     "Nothing turned up, and the statements covering that day HAVE been imported — so the silence is an answer rather than a gap in the records.",
   notYetKnown:
-    "Nothing turned up, but the ledger cannot say whether it should have. Either that day has not been imported yet, or the money is cash you were handed and have not deposited — neither of which is evidence that the payment failed.",
+    "Nothing turned up, but the ledger cannot say whether it should have — the day may not be imported yet, the money may be cash you were handed and have not deposited, or this bill may not have charged often enough yet for its due date to be known. None of those is evidence that a payment failed.",
   upcoming: "Expected on or after today, so nothing has had the chance to happen yet.",
   scheduled:
     "You told the app this amount or this date, which makes it the firmest kind of claim here — firmer than a bill with years of history behind it.",

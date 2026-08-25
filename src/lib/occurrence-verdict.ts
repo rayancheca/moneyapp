@@ -39,7 +39,9 @@ export type UnsettledReason =
   /** the ledger has not been shown this day for the account(s) this bills on */
   | "not_imported"
   /** money IN: its absence from the ledger is never proof it did not happen */
-  | "unbanked";
+  | "unbanked"
+  /** too few postings to know when this is due — the date itself is a guess */
+  | "schedule_unproven";
 
 export type OccurrenceState =
   /** posted, within the series' own noise band of the expected amount */
@@ -102,11 +104,66 @@ export interface SettledVerdict {
 }
 
 /**
+ * Whether a series' expected DATE is established well enough to hold a biller
+ * to it — supplied by the caller, which decides it from the series' posting
+ * count (see `scheduleIsProven` in `recurring-calendar`).
+ *
+ * A boolean rather than the count, so the threshold has exactly one definition
+ * in the codebase and this module never has to import from a service.
+ *
+ * ## Why this gate exists
+ *
+ * Both of the two `missed` marks that survived the coverage narrowing on the
+ * real ledger were still wrong, and neither was a coverage problem:
+ *
+ * | series | postings | app expected | actually charged |
+ * |---|---|---|---|
+ * | FPL (electricity) | 1 | 2026-08-10, $14.21 | 2026-07-28, $56.22 |
+ * | Breezeline (internet) | 2 | 2026-08-10, $50.00 | 2026-08-10, $50.00 |
+ *
+ * FPL's due date was extrapolated from a SINGLE observation and was wrong by
+ * thirteen days; the calendar then reported the biller as delinquent on a date
+ * the app had invented. Breezeline's charge landed exactly where predicted and
+ * is sitting in the ledger untagged, because detection will not tag a
+ * description group holding fewer than `MIN_OCCURRENCES` rows — so a confirmed
+ * series with a hand-linked history cannot absorb its own new charges. With the
+ * gate, August 2026 draws ZERO missed marks, which is the measured truth: all
+ * six of the original red ✕ were false.
+ *
+ * One observation is not a cadence. `MIN_OCCURRENCES` is already this codebase's
+ * line between a statistic and an anecdote, and `classifyPostedAmount` was
+ * taught the same lesson about amounts in this pass.
+ *
+ * ## Why a series with NO postings is trusted, and one with two is not
+ *
+ * The rule is about where the date CAME FROM, and the posting count is the only
+ * proxy the schema offers — `next_expected_on` looks identical whether a human
+ * typed it or detection extrapolated it.
+ *
+ *  - **No postings at all**: nothing could have been extrapolated, so the date
+ *    is a human's statement. The owner's car lease ($559.89 from 2026-09-11) and
+ *    car insurance were registered by hand and have never charged; they are
+ *    among the most certain dates in the ledger and must stay missable.
+ *  - **One or two postings**: the date IS detection's estimate, drawn from too
+ *    few points to be one. This is the population that produced both false
+ *    accusations above.
+ *  - **`MIN_OCCURRENCES` or more**: a measured cadence. Hold the biller to it —
+ *    pass 45's $2,285.70 of overdue rent (three postings) still reads missed.
+ *
+ * A detected series always has at least `MIN_OCCURRENCES` rows by construction,
+ * so the middle band is reachable only by hand-created series, which is exactly
+ * where both defects were found.
+ */
+export type ScheduleProven = boolean;
+
+/**
  * The verdict on a PAST expected occurrence that did not post.
  *
  * `observedThrough` is the last day the ledger has actually been shown for the
  * account(s) this series bills on — `null` when nothing is known at all, which
  * is the most cautious input and yields the most cautious answer.
+ * `scheduleIsProven` says whether the expected DATE is worth holding a biller
+ * to; see `ScheduleProven`.
  *
  * The state and its reason are returned from ONE call on purpose. `budgetVerdict`
  * established the rule after a headline and its own definition drifted apart on
@@ -118,12 +175,18 @@ export function settledVerdict(
   kind: SeriesKind,
   occurrenceDate: string,
   observedThrough: string | null,
+  scheduleIsProven: ScheduleProven,
 ): SettledVerdict {
   if (!absenceIsEvidence(kind)) return { state: "unsettled", reason: "unbanked" };
+  // Coverage first: where the day has not been imported, nothing at all can be
+  // said, which is a stronger and more actionable answer than "we are unsure
+  // when this is due".
   if (observedThrough === null) return { state: "unsettled", reason: "not_imported" };
-  return compareDates(occurrenceDate, observedThrough) <= 0
-    ? { state: "missed", reason: null }
-    : { state: "unsettled", reason: "not_imported" };
+  if (compareDates(occurrenceDate, observedThrough) > 0) {
+    return { state: "unsettled", reason: "not_imported" };
+  }
+  if (!scheduleIsProven) return { state: "unsettled", reason: "schedule_unproven" };
+  return { state: "missed", reason: null };
 }
 
 /** The fields `forecastConfidence` reads — a subset of a `recurring_series` row. */
