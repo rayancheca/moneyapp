@@ -8,6 +8,12 @@ import type { TopMerchants } from "@/services/spending";
  * stripped-key for the still-unlinked rows (rendered distinctly, no icon), with
  * the linkage coverage stated honestly until the backfill pushes it high. Each
  * row drills to its filtered ledger.
+ *
+ * A linked merchant also carries a SECOND, sibling link to its own page — the
+ * only route to `/merchants/[id]` used to be a transaction row's sheet, which
+ * pass 65 named as the reason the richest page in the app went unvisited. It is
+ * a sibling and not a wrapper because the row is already a link, and a link
+ * inside a link is invalid HTML and an axe `nested-interactive` violation.
  */
 export function TopMerchantsCard({ data }: { data: TopMerchants }) {
   if (data.entries.length === 0) {
@@ -17,10 +23,10 @@ export function TopMerchantsCard({ data }: { data: TopMerchants }) {
     <div>
       <ul className="space-y-0.5">
         {data.entries.map((entry) => (
-          <li key={`${entry.kind}:${entry.id ?? entry.name}`}>
+          <li key={`${entry.kind}:${entry.id ?? entry.name}`} className="flex items-center gap-1">
             <Link
               href={entry.href}
-              className="group flex items-center gap-3 rounded-md px-1.5 py-2 transition-colors duration-(--duration-fast) hover:bg-surface-sunken"
+              className="group flex min-w-0 flex-1 items-center gap-3 rounded-md px-1.5 py-2 transition-colors duration-(--duration-fast) hover:bg-surface-sunken"
             >
               <span
                 className={`grid size-8 shrink-0 place-items-center rounded-full ${
@@ -39,6 +45,15 @@ export function TopMerchantsCard({ data }: { data: TopMerchants }) {
               </span>
               <Money cents={entry.spentCents} className="shrink-0 text-sm font-medium" />
             </Link>
+            {entry.profileHref && (
+              <Link
+                href={entry.profileHref}
+                aria-label={`${entry.name} merchant page`}
+                className="shrink-0 rounded-md p-1.5 text-ink-faint transition-colors duration-(--duration-fast) hover:bg-surface-sunken hover:text-ink"
+              >
+                <Icon name="chevron-right" className="size-4" />
+              </Link>
+            )}
           </li>
         ))}
       </ul>

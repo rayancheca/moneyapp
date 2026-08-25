@@ -2,11 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
-import { merchantSummary } from "@/services/merchants";
+import { merchantIntelligence, merchantSummary } from "@/services/merchants";
 import { categories } from "@/db/schema/categories";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { MerchantDefaultCategory } from "@/components/merchants/MerchantDefaultCategory";
 import { MerchantNameHeading } from "@/components/merchants/MerchantNameHeading";
+import { MerchantProfileCards } from "@/components/merchants/MerchantProfileCards";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
@@ -15,9 +16,12 @@ export const metadata: Metadata = { title: "Merchant" };
 export const dynamic = "force-dynamic";
 
 /**
- * Merchant detail (ux-overhaul-plan §3.6). Stage-1 v1: name, this-year total,
- * recent activity, and drill-in to the merchant-filtered ledger. Alias editing,
- * monthly-spend bars, linked recurring series, and merge-into are follow-ups.
+ * Merchant detail (ux-overhaul-plan §3.6).
+ *
+ * Pass 65 gave it the number it exists for — "you spend $X a month here" — plus
+ * the typical visit, the year-on-year and the category mix. All of the
+ * arithmetic, and every refusal in it, lives in `lib/merchant-profile` at 100%;
+ * this page renders what it is handed.
  */
 export default async function MerchantPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -29,6 +33,7 @@ export default async function MerchantPage({ params }: { params: Promise<{ id: s
       notFound();
     }
   })();
+  const intelligence = merchantIntelligence(db, id);
 
   return (
     <>
@@ -43,12 +48,7 @@ export default async function MerchantPage({ params }: { params: Promise<{ id: s
       />
 
       <div className="space-y-6">
-        <header>
-          <div className="text-xs font-medium uppercase tracking-[0.14em] text-ink-faint">This year</div>
-          <p className="figures mt-1 text-4xl font-semibold tracking-tight">
-            <Money cents={summary.totalCentsThisYear} flow />
-          </p>
-        </header>
+        <MerchantProfileCards intelligence={intelligence} />
 
         <MerchantDefaultCategory
           merchantId={id}

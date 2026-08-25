@@ -622,7 +622,18 @@ export interface MerchantEntry {
   /** net money out for the group, positive */
   spentCents: number;
   txnCount: number;
+  /** the filtered LEDGER for this group — every row behind the figure */
   href: string;
+  /**
+   * The merchant's own page, or null for a stripped-key group that has no
+   * merchant record to have a page.
+   *
+   * Separate from `href` rather than replacing it: a test in spending.test.ts
+   * follows `href` through the real ledger filter layer and asserts the row
+   * count it returns, which is a guarantee worth keeping. The card renders the
+   * two as sibling links so neither is nested inside the other.
+   */
+  profileHref: string | null;
 }
 
 export interface TopMerchants {
@@ -757,6 +768,7 @@ export function topMerchants(
       name: g.name,
       spentCents: g.spentCents,
       txnCount: g.txnCount,
+      profileHref: g.kind === "merchant" ? `/merchants/${g.id!}` : null,
       href:
         g.kind === "merchant"
           ? ledgerHref({ merchant: g.id!, from: range.from, to: range.to })

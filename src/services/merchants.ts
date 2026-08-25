@@ -1,12 +1,20 @@
-import { and, desc, eq, isNull, ne, or, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, or, type SQL } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { merchantAliases, merchants } from "@/db/schema/merchants";
+import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
+import { loadCategoryIndex } from "./analytics";
 import type { BulkResult } from "./bulk-edit";
 import { strippedDescriptionKey } from "@/lib/description-key";
 import { todayIso } from "@/lib/dates";
+import {
+  merchantProfile,
+  type MerchantProfile,
+  type MerchantVisit,
+} from "@/lib/merchant-profile";
+
 
 /**
  * Merchant surfaces for the transaction sheet (ux-overhaul-plan §3.2):
@@ -320,4 +328,88 @@ export function renameMerchant(
   });
 
   return { id: merchant.id, name, aliasCreated };
+}
+
+/**
+ * Everything `/merchants/[id]` needs beyond the row list: what the merchant
+ * costs a month, the typical visit, the category mix, and the year-over-year.
+ *
+ * The arithmetic — and every refusal in it — lives in `lib/merchant-profile` at
+ * 100%. This function is the query and the join, nothing more.
+ *
+ * Only EXPENSE-kind rows feed the profile. A refund at a merchant nets against
+ * its purchases (the rule `spendingBucket` already applies everywhere else), and
+ * a transfer or an investment row at a merchant is not spending at all — letting
+ * either in would make "you spend $X a month here" a different question from the
+ * one /spending answers about the same merchant.
+ */
+export interface MerchantIntelligence {
+  profile: MerchantProfile;
+  /** the recurring series this merchant bills through, when it has one */
+  cadence: { seriesId: string; name: string; cadence: string; status: string } | null;
+}
+
+export function merchantIntelligence(
+  db: AppDatabase,
+  merchantId: string,
+  today: string = todayIso(),
+): MerchantIntelligence {
+  /*
+   * The top-level category decides both the KIND and the label, and
+   * `loadCategoryIndex` is the one place that rollup is implemented — the same
+   * index `spendingBucket` reads. Resolving it here in TS rather than with a
+   * self-join keeps one answer to "what kind is this row?" and avoids an
+   * aliased-table join that drizzle cannot infer a row type for.
+   */
+  const idx = loadCategoryIndex(db);
+  const rows = db
+    .select({
+      day: transactions.postedOn,
+      amountCents: transactions.amountCents,
+      categoryId: transactions.categoryId,
+    })
+    .from(transactions)
+    .where(and(eq(transactions.merchantId, merchantId), eq(transactions.status, "active")))
+    .all();
+
+  const visits: MerchantVisit[] = rows
+    // money OUT only. A refund is a credit at the same merchant; counting it as
+    // a visit would report a day that cost nothing as a day that cost something.
+    .filter((r) => r.amountCents < 0 && r.categoryId !== null)
+    .map((r) => ({ row: r, top: idx.topLevelOf(r.categoryId!) }))
+    .filter(({ top }) => top.kind === "expense")
+    .map(({ row, top }) => ({
+      day: row.day,
+      amountCents: -row.amountCents,
+      categoryName: top.name,
+    }));
+
+  const series = db
+    .select({
+      id: recurringSeries.id,
+      name: recurringSeries.name,
+      cadence: recurringSeries.cadence,
+      userCadence: recurringSeries.userCadence,
+      status: recurringSeries.status,
+    })
+    .from(recurringSeries)
+    .where(
+      and(
+        eq(recurringSeries.merchantId, merchantId),
+        inArray(recurringSeries.status, ["detected", "confirmed"]),
+      ),
+    )
+    .get();
+
+  return {
+    profile: merchantProfile(visits, today),
+    cadence: series
+      ? {
+          seriesId: series.id,
+          name: series.name,
+          cadence: series.userCadence ?? series.cadence,
+          status: series.status,
+        }
+      : null,
+  };
 }
