@@ -38,17 +38,18 @@ const ASSUMPTION_HREF: Record<RunwayAssumptionId, string> = {
 /** Rows the card prints as a subtraction rather than as a balance. */
 const SUBTRACTED: ReadonlySet<RunwayAssumptionId> = new Set<RunwayAssumptionId>(["cards"]);
 
-function AssumptionRow({ a }: { a: RunwayAssumption }) {
+function AssumptionRow({ a, tip }: { a: RunwayAssumption; tip?: string }) {
   const subtracted = SUBTRACTED.has(a.id);
   return (
     <div className="flex items-baseline justify-between gap-3">
-      <dt className="min-w-0 truncate">
+      <dt className="flex min-w-0 items-center gap-1.5">
         <Link
           href={ASSUMPTION_HREF[a.id]}
-          className="text-ink-muted transition-colors duration-(--duration-fast) hover:text-ink"
+          className="truncate text-ink-muted transition-colors duration-(--duration-fast) hover:text-ink"
         >
           {a.label}
         </Link>
+        {tip && <InfoTip term={a.label}>{tip}</InfoTip>}
       </dt>
       <dd className="shrink-0">
         {/* an operand that is taken AWAY carries its sign, so the column below
@@ -63,8 +64,11 @@ function AssumptionRow({ a }: { a: RunwayAssumption }) {
 }
 
 export function RunwayCard({ data }: { data: RunwayCardData }) {
-  const { runway, committed, spend } = data;
+  const { runway, committed, spend, incomeBasisExplanation } = data;
   const burning = runway.kind === "burning";
+  // three states, not two: `unknown` is a WITHHELD verdict and must not borrow
+  // the positive tone `covered` earns by actually measuring something
+  const withheld = runway.kind === "unknown";
   const by = (id: RunwayAssumptionId): RunwayAssumption | undefined =>
     runway.assumptions.find((a) => a.id === id);
 
@@ -89,7 +93,7 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
 
       <p
         className={`figures mt-2 text-3xl font-semibold tracking-tight ${
-          burning ? "text-ink" : "text-positive"
+          withheld ? "text-ink-muted" : burning ? "text-ink" : "text-positive"
         }`}
       >
         {runway.headline}
@@ -112,18 +116,27 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
         </div>
       </dl>
 
-      {/* how fast it goes */}
+      {/* how fast it goes. The income row carries `incomeBasis`'s OWN
+          explanation of how its figure was chosen — the three arithmetics it
+          picks between have nothing in common, so the page must not paraphrase
+          whichever one is live. It was computed and dropped in the first
+          version of this card: the same defect pass 62 filed as
+          "axisStartsAtZero computed, never rendered". */}
       <dl className="mt-3 space-y-1.5 border-t border-line pt-3 text-sm">
         {flowRows.map((a) => (
-          <AssumptionRow key={a.id} a={a} />
+          <AssumptionRow key={a.id} a={a} tip={a.id === "income" ? incomeBasisExplanation : undefined} />
         ))}
         <div className="flex items-baseline justify-between gap-3 border-t border-line pt-1.5">
           <dt className="flex items-center gap-1.5 font-medium">
             {burning ? "Running down by" : "Covered by"}
             <InfoTip term="Running down by">{RUNWAY_JARGON.burn}</InfoTip>
           </dt>
-          <dd className={`figures font-semibold ${burning ? "text-negative" : "text-positive"}`}>
-            {formatCents(Math.abs(runway.netBurnCents))} a month
+          <dd
+            className={`figures font-semibold ${
+              withheld ? "text-ink-muted" : burning ? "text-negative" : "text-positive"
+            }`}
+          >
+            {withheld ? "—" : `${formatCents(Math.abs(runway.netBurnCents))} a month`}
           </dd>
         </div>
       </dl>

@@ -79,6 +79,12 @@ describe("runway — the real position", () => {
     const r = runway(REAL);
     expect(r.headline).toBe("19 days of cash");
     expect(r.explanation).toMatch(/spend more than you earn/i);
+    // the two terms are different kinds of thing and the sentence must say so:
+    // spending is measured, earning is a rate. Calling both "what already
+    // happened" lent the rate the authority of a measurement.
+    expect(r.explanation).toMatch(/measured from months already closed/i);
+    expect(r.explanation).toMatch(/a rate from your confirmed pay/i);
+    expect(r.explanation).not.toMatch(/arithmetic on what already happened/i);
   });
 
   test("lists exactly the four inputs it used, as its assumptions", () => {
@@ -127,6 +133,57 @@ describe("runway — income that covers spending", () => {
     const r = runway({ ...REAL, monthlySpendCents: -5000 });
     expect(r.kind).toBe("covered");
     expect(r.liquid.months).toBeNull();
+  });
+});
+
+/**
+ * A ledger with accounts but nothing measured yet — imported balances, no
+ * transactions. Zero spend against zero income makes `spend <= income` true, so
+ * the covered branch would announce "Your income covers your spending" to
+ * somebody the app knows nothing about. That is pass 43's defect in a new place:
+ * ten budgets read green `0% used` because the month held one transaction. A
+ * verdict with no evidence behind it is withheld, the way `budgetVerdict`
+ * withholds one.
+ */
+describe("runway — nothing measured yet", () => {
+  const fresh: RunwayInput = {
+    liquidCents: 500000,
+    cardDebtCents: 0,
+    investableCents: 0,
+    monthlyIncomeCents: 0,
+    monthlySpendCents: 0,
+  };
+
+  test("withholds the verdict instead of announcing one", () => {
+    const r = runway(fresh);
+    expect(r.kind).toBe("unknown");
+    expect(r.headline).toBe("Not enough spending to measure");
+    expect(r.explanation).toMatch(/once .*(month|spending)/i);
+  });
+
+  test("states no duration in either horizon", () => {
+    const r = runway(fresh);
+    expect(r.liquid.months).toBeNull();
+    expect(r.withInvestments.months).toBeNull();
+    expect(r.liquid.label).toBe("not yet measured");
+  });
+
+  test("still reports the cash it can see", () => {
+    expect(runway(fresh).netCashCents).toBe(500000);
+  });
+
+  test("income alone is not enough to make a verdict", () => {
+    // money coming in and nothing going out is still nothing to divide by
+    expect(runway({ ...fresh, monthlyIncomeCents: 453700 }).kind).toBe("unknown");
+  });
+
+  test("a single measured cent is enough to reason from", () => {
+    // the gate is "has anything been measured", not "is it a big number"
+    expect(runway({ ...fresh, monthlySpendCents: 1 }).kind).toBe("burning");
+  });
+
+  test("measured net refunds are a measurement, not an absence", () => {
+    expect(runway({ ...fresh, monthlySpendCents: -5000 }).kind).toBe("covered");
   });
 });
 

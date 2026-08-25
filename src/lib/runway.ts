@@ -64,7 +64,17 @@ export interface RunwayInput {
   monthlySpendCents: number;
 }
 
-export type RunwayKind = "burning" | "covered";
+/**
+ * `unknown` is a verdict WITHHELD, not a third arithmetic.
+ *
+ * Zero measured spending makes `spend <= income` true, so without this the
+ * covered branch would tell somebody whose ledger holds balances and no
+ * transactions that their income covers their spending. It knows nothing of the
+ * sort. Pass 43 shipped the same shape once — ten budgets read green `0% used`
+ * because the month held a single transaction — and `budgetVerdict` has carried
+ * a `withheld` state ever since.
+ */
+export type RunwayKind = "burning" | "covered" | "unknown";
 
 export interface RunwayHorizon {
   /** the cash base this horizon spends down, cards already netted off */
@@ -119,7 +129,10 @@ function durationLabel(months: number): { label: string; isBeyondHorizon: boolea
   return { label, isBeyondHorizon: false };
 }
 
-function horizon(cents: number, netBurnCents: number): RunwayHorizon {
+function horizon(cents: number, netBurnCents: number, measured: boolean): RunwayHorizon {
+  if (!measured) {
+    return { cents, months: null, label: "not yet measured", isBeyondHorizon: false };
+  }
   if (netBurnCents <= 0) {
     return { cents, months: null, label: "not running down", isBeyondHorizon: false };
   }
@@ -135,9 +148,16 @@ export function runway(input: RunwayInput): Runway {
   const investableCents = Math.max(0, input.investableCents);
   const netBurnCents = monthlySpendCents - monthlyIncomeCents;
   const netCashCents = liquidCents - cardDebtCents;
+  /*
+   * Exactly zero is "nothing has been measured"; anything else — including a
+   * NEGATIVE total, a window of net refunds — is a real measurement to reason
+   * from. Six closed months summing to precisely zero is not something a ledger
+   * with transactions in it does.
+   */
+  const measured = monthlySpendCents !== 0;
 
-  const liquid = horizon(netCashCents, netBurnCents);
-  const withInvestments = horizon(netCashCents + investableCents, netBurnCents);
+  const liquid = horizon(netCashCents, netBurnCents, measured);
+  const withInvestments = horizon(netCashCents + investableCents, netBurnCents, measured);
 
   const assumptions: RunwayAssumption[] = [
     { id: "liquid", label: "Cash you can spend today", cents: liquidCents },
@@ -146,6 +166,21 @@ export function runway(input: RunwayInput): Runway {
     { id: "income", label: "What you earn a month", cents: monthlyIncomeCents },
     { id: "investments", label: "What selling investments would add", cents: investableCents },
   ];
+
+  if (!measured) {
+    return {
+      kind: "unknown",
+      netCashCents,
+      netBurnCents,
+      liquid,
+      withInvestments,
+      headline: "Not enough spending to measure",
+      explanation:
+        "Nothing has been spent in the months counted below, so there is no rate to " +
+        "measure a runway against. This fills in once a month of spending is imported.",
+      assumptions,
+    };
+  }
 
   if (netBurnCents <= 0) {
     return {
@@ -169,9 +204,18 @@ export function runway(input: RunwayInput): Runway {
     liquid,
     withInvestments,
     headline: liquid.months === 0 ? "No cash left" : `${liquid.label} of cash`,
+    /*
+     * ⛔ The two terms are NOT the same kind of thing, and saying they are was
+     * the first version of this sentence. Spending is measured from closed
+     * months; earning is a levelled RATE from confirmed pay, and on this ledger
+     * the posted figure runs well below it — eleven paydays were silent when
+     * pass 60 measured. Describing both as "what already happened" quietly
+     * lent the rate the authority of a measurement.
+     */
     explanation:
-      "You spend more than you earn each month. This is how long the money lasts " +
-      "if both keep up — it is arithmetic on what already happened, not a prediction.",
+      "You spend more than you earn each month. The spending is measured from months " +
+      "already closed; the earning is a rate from your confirmed pay rather than what " +
+      "has landed, so this holds only for as long as both do.",
     assumptions,
   };
 }
