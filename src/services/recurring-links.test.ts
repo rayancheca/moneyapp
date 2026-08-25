@@ -566,7 +566,7 @@ describe("createSeriesFromTransaction — the 'Make recurring' button", () => {
   });
 
   test("thin pattern (below the evidence bar) → monthly fallback seeded from the txn, seed-only link", () => {
-    insertTxn({ postedOn: "2026-06-20", amountCents: -4032, rawDescription: "GYM MIAMI 001" });
+    const sibling = insertTxn({ postedOn: "2026-06-20", amountCents: -4032, rawDescription: "GYM MIAMI 001" });
     const seed = insertTxn({ postedOn: "2026-07-05", amountCents: -5000, rawDescription: "GYM MIAMI 001" });
     const result = createSeriesFromTransaction(bundle.db, seed, TODAY);
     expect(result.mode).toBe("created");
@@ -577,9 +577,34 @@ describe("createSeriesFromTransaction — the 'Make recurring' button", () => {
     expect(series.nextExpectedOn).toBe("2026-08-05"); // the seed's day-of-month, one month on
     expect(series.nextExpectedAmountCents).toBe(-5000);
     expect(series.confidence).toBeNull(); // honest: user-asserted, not evidenced
-    expect(taggedIds(result.seriesId)).toEqual([seed]); // sibling NOT swept in without evidence
+    // At creation the sibling is NOT swept in: `createSeriesFromTransaction`
+    // links the seed alone, because two points are not a pattern.
+    expect(taggedIds(result.seriesId)).toEqual([seed]);
 
-    // §4.3: a detection re-run neither dismantles the thin series nor re-groups its row
+    /*
+     * …but the next DETECTION run absorbs it, and that is the intended change.
+     *
+     * This assertion used to read `[seed]` after the re-run too. The reasoning
+     * was that a sibling should not be "swept in without evidence" — and the
+     * word doing the work there is EVIDENCE. Tagging a row is a claim that this
+     * charge is that series, not a claim that a cadence has been established;
+     * the sibling carries the identical descriptor, so the first claim is
+     * well-founded even though the second is not.
+     *
+     * Nothing about the series' honesty changes: `recomputeSeriesStats` still
+     * declines to write below MIN_OCCURRENCES, so the cadence, the interval and
+     * the confidence stay exactly as thin as they were. What changes is that the
+     * charge now appears in the series' own history — on the amount chart, and
+     * as a `paid` mark on the calendar for a day it really was paid.
+     */
+    detectRecurringSeries(bundle.db, TODAY);
+    expect(taggedIds(result.seriesId).sort()).toEqual([seed, sibling].sort());
+    const stillThin = seriesById(result.seriesId);
+    expect(stillThin.confidence).toBeNull();
+    expect(stillThin.cadence).toBe("monthly");
+    expect(stillThin.intervalDaysAvg).toBeNull();
+
+    // §4.3: and a SECOND re-run changes nothing at all.
     const after = snapshot();
     detectRecurringSeries(bundle.db, TODAY);
     expect(snapshot()).toEqual(after);

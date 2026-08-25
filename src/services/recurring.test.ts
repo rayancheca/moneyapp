@@ -523,6 +523,203 @@ const NOISE_WORDS = [
   "VARNISH9", "KOLPUT", "WREXIS", "YONDEL", "BLIMVER", "SORNAK",
 ] as const;
 
+describe("a live series absorbs its own charges", () => {
+  let dir: string;
+  let bundle: DbBundle;
+  let cardA: string;
+  let cardB: string;
+  let seq = 0;
+
+  function insertTxn(accountId: string, postedOn: string, amountCents: number, raw: string): string {
+    seq += 1;
+    return bundle.db
+      .insert(transactions)
+      .values({
+        accountId,
+        postedOn,
+        amountCents,
+        rawDescription: raw,
+        normalizedDescription: normalizeDescription(raw),
+        dedupeHash: dedupeHash({ accountId, postedOn, amountCents, rawDescription: raw, occurrenceIndex: seq }),
+      })
+      .returning({ id: transactions.id })
+      .get().id;
+  }
+
+  const seriesFor = (id: string) =>
+    bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!.recurringSeriesId;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-absorb-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    cardA = createAccount(bundle.db, { institutionId: chase.id, name: "Card A", type: "credit" });
+    cardB = createAccount(bundle.db, { institutionId: chase.id, name: "Card B", type: "credit" });
+    seq = 0;
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Three charges that detect into one series, plus a later one to absorb. */
+  function buildDetected(): { seriesId: string } {
+    for (const day of ["2026-04-10", "2026-05-10", "2026-06-10"]) {
+      insertTxn(cardA, day, -5000, "BREEZELINE 866-290-5400 MA");
+    }
+    detectRecurringSeries(bundle.db, TODAY);
+    const s = bundle.db.select().from(recurringSeries).all();
+    expect(s).toHaveLength(1);
+    return { seriesId: s[0]!.id };
+  }
+
+  test("a later charge on ANOTHER account still joins the series", () => {
+    // The measured case: PURA VIDA's six untagged rows sit on Chase Sapphire
+    // while its series lives on Venture X. The descriptor group key carries the
+    // account, so the same merchant on a second card is a stranger to its own
+    // series — and with an irregular gap the group cannot form a series of its
+    // own either, so the rows simply stay untagged forever.
+    const { seriesId } = buildDetected();
+    const later = insertTxn(cardB, "2026-07-01", -5000, "BREEZELINE 866-290-5400 MA");
+
+    detectRecurringSeries(bundle.db, TODAY);
+    expect(seriesFor(later)).toBe(seriesId);
+  });
+
+  test("a SINGLE later charge joins, though it could never form a series alone", () => {
+    // One row is below MIN_OCCURRENCES, so the group loop skips it outright —
+    // which is why a confirmed bill could not absorb its own new charges. The
+    // real Breezeline charge of 2026-08-10 landed on the exact expected day for
+    // the exact expected amount and stayed untagged; running detection against a
+    // backup copy of the live database tagged zero new rows.
+    const { seriesId } = buildDetected();
+    const later = insertTxn(cardA, "2026-07-06", -5000, "BREEZELINE 866-290-5400 MA");
+
+    detectRecurringSeries(bundle.db, TODAY);
+    expect(seriesFor(later)).toBe(seriesId);
+  });
+
+  test("a CONFIRMED series absorbs too — the owner already vouched for it", () => {
+    const { seriesId } = buildDetected();
+    setSeriesStatus(bundle.db, seriesId, "confirmed");
+    const later = insertTxn(cardA, "2026-07-06", -5000, "BREEZELINE 866-290-5400 MA");
+
+    detectRecurringSeries(bundle.db, TODAY);
+    expect(seriesFor(later)).toBe(seriesId);
+  });
+
+  test.each([["dismissed"], ["ended"]] as const)(
+    "a %s series absorbs nothing — neither should be quietly growing",
+    (status) => {
+      /*
+       * On cardB deliberately, so ABSORPTION is the only path that could reach
+       * the row. The pre-existing group loop still sinks a same-account group of
+       * ≥3 into a dismissed or ended series whatever this test says, and that
+       * behaviour is load-bearing: without it the group would form a NEW series
+       * on the next run and resurrect the very pattern the owner dismissed.
+       * Absorption never creates a series, so declining to feed them here costs
+       * nothing and cannot resurrect anything.
+       */
+      const { seriesId } = buildDetected();
+      setSeriesStatus(bundle.db, seriesId, status);
+      const later = insertTxn(cardB, "2026-07-06", -5000, "BREEZELINE 866-290-5400 MA");
+
+      detectRecurringSeries(bundle.db, TODAY);
+      expect(seriesFor(later)).toBeNull();
+    },
+  );
+
+  test("a DIFFERENT descriptor is never absorbed, however alike it looks", () => {
+    // The real FPL case: the tagged row reads "ORIG CO NAME:FPL DIRECT DEBIT…"
+    // and the untagged one "FPL DIRECT DEBIT ELEC PYMT PPD ID:…". A human can
+    // see they are the same bill; the ledger cannot, and guessing is how a wrong
+    // tag corrupts the calendar, the budget tail and the overdue detector at
+    // once. An untagged row is honest.
+    buildDetected();
+    const other = insertTxn(cardA, "2026-07-06", -5000, "BREEZELINE REACHPLATFORM MOBILE");
+
+    detectRecurringSeries(bundle.db, TODAY);
+    expect(seriesFor(other)).toBeNull();
+  });
+
+  test("a row the USER attached is never re-tagged", () => {
+    const { seriesId } = buildDetected();
+    const mine = insertTxn(cardA, "2026-07-06", -5000, "BREEZELINE 866-290-5400 MA");
+    bundle.db
+      .update(transactions)
+      .set({ recurringSeriesId: null, seriesLinkSource: "user" })
+      .where(eq(transactions.id, mine))
+      .run();
+
+    detectRecurringSeries(bundle.db, TODAY);
+    expect(seriesFor(mine)).toBeNull();
+  });
+
+  test("an ambiguous descriptor is left alone rather than guessed at", () => {
+    // Two live series carrying the same descriptor cannot both be right, and
+    // picking one would be inventing a link.
+    const { seriesId } = buildDetected();
+    const twinId = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "Twin", accountId: cardB, kind: "bill", cadence: "monthly", status: "confirmed" })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    const claimed = insertTxn(cardB, "2026-03-10", -5000, "BREEZELINE 866-290-5400 MA");
+    bundle.db
+      .update(transactions)
+      .set({ recurringSeriesId: twinId, seriesLinkSource: "detected" })
+      .where(eq(transactions.id, claimed))
+      .run();
+    const later = insertTxn(cardB, "2026-07-06", -5000, "BREEZELINE 866-290-5400 MA");
+
+    detectRecurringSeries(bundle.db, TODAY);
+    expect(seriesFor(later)).toBeNull();
+    // …and neither existing link is disturbed.
+    expect(seriesFor(claimed)).toBe(twinId);
+    expect(bundle.db.select().from(recurringSeries).all().map((s) => s.id)).toContain(seriesId);
+  });
+
+  test("running detection twice changes nothing the second time", () => {
+    // §4.3's idempotency promise, which an absorption pass could easily break.
+    //
+    // Asserted on the STATE, not on `summary.taggedTransactions`: that counter
+    // is `UPDATE … .changes`, which SQLite reports for a row whose value did not
+    // move, so it is non-zero on any re-run and always has been. The contract
+    // that matters is that no row's series changed.
+    const { seriesId } = buildDetected();
+    const later = insertTxn(cardB, "2026-07-06", -5000, "BREEZELINE 866-290-5400 MA");
+    const snapshot = () =>
+      bundle.db
+        .select({ id: transactions.id, seriesId: transactions.recurringSeriesId })
+        .from(transactions)
+        .all()
+        .map((r) => `${r.id}:${r.seriesId ?? "-"}`)
+        .sort();
+
+    detectRecurringSeries(bundle.db, TODAY);
+    const after = snapshot();
+    expect(seriesFor(later)).toBe(seriesId);
+
+    detectRecurringSeries(bundle.db, TODAY);
+    expect(snapshot()).toEqual(after);
+    expect(bundle.db.select().from(recurringSeries).all()).toHaveLength(1);
+  });
+
+  test("absorption resettles the series' stats over its FULL tagged set", () => {
+    // A row tagged without recomputing would leave last_matched_on and the
+    // amount statistics describing a set the series no longer has — pass 60's
+    // defect, in a new place.
+    const { seriesId } = buildDetected();
+    insertTxn(cardA, "2026-07-06", -5000, "BREEZELINE 866-290-5400 MA");
+
+    detectRecurringSeries(bundle.db, TODAY);
+    const s = bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get()!;
+    expect(s.lastMatchedOn).toBe("2026-07-06");
+  });
+});
+
 describe("detection on the synthetic corpus", () => {
   let dir: string;
   let bundle: DbBundle;

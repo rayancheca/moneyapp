@@ -17,6 +17,7 @@
     "db:generate": "drizzle-kit generate",
     "fixtures": "tsx scripts/fixtures/generate.ts",
     "brand-icons": "tsx scripts/generate-brand-icons.ts",
+    "absorb-orphans": "tsx scripts/absorb-orphan-charges.ts",
     "backup:statements": "tsx scripts/backup-statements.ts",
     "trial-import": "tsx scripts/trial-import.ts",
     "rh-sweep-check": "tsx scripts/rh-sweep-check.ts",
