@@ -50,7 +50,30 @@ export default defineConfig({
     toHaveScreenshot: {
       // deterministic UI (no motion in baselines)
       animations: "disabled",
-      maxDiffPixelRatio: 0.001,
+      /**
+       * FLAT, not a ratio. `maxDiffPixelRatio: 0.001` scaled the allowance with
+       * page AREA, so the taller the page the blinder the gate: /transactions at
+       * 1440x3487 is 5.0M pixels, which bought 5,021 pixels of silence. Three
+       * real changes lived in that silence for months — a whole `Categories` item
+       * added to the sidebar (0.00077 of a flow page, and therefore invisible on
+       * every page that has a sidebar), a `Duplicates` filter tab added to
+       * /transactions, and the dashboard's committed-bills figure moving
+       * $2,000.41 → $2,004.16 when recurring absorption shipped.
+       *
+       * ZERO is not aspirational, it is measured. Re-running the whole suite at
+       * `maxDiffPixelRatio: 0` put 435 of 458 tests green: every one of those
+       * baselines is byte-identical run to run. The 22 that failed were all real
+       * content, not anti-aliasing — the SMALLEST of them was 41 pixels. There is
+       * no CI; this gate runs on one Mac with one font stack, so there is no
+       * second renderer to be tolerant of.
+       *
+       * If an OS or font update ever makes this genuinely noisy, raise it to a
+       * flat number BELOW 41 — never back to a ratio, and never without first
+       * reading the diff: `node scripts/crop-visual-diff.mjs test-results/<dir>
+       * <baseline>` crops the changed region out of a full-page screenshot so you
+       * can see whether it is anti-aliasing or a whole missing nav item.
+       */
+      maxDiffPixels: 0,
     },
   },
   // Two projects, ONE spec apart. The row controls in the ledger are hidden
