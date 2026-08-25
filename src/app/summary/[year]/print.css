@@ -1,0 +1,127 @@
+/*
+ * The year summary is the one page in this app that gets PRINTED — the owner
+ * takes it to a desk in January. So it carries a print stylesheet rather than
+ * hoping the screen layout survives a paper size.
+ *
+ * Three things printing actually breaks here, all of them measured on a real
+ * render rather than guessed at:
+ *
+ *   1. The app shell. A sidebar and a year-picker are navigation, and neither
+ *      means anything on paper — they take a column of width and print as dead
+ *      ink. `.no-print` removes them.
+ *   2. Card surfaces. --surface-raised and the letterpress shadows exist to
+ *      separate sheets on a screen; on paper they become grey boxes that eat
+ *      toner and lower contrast. Cards flatten to white with a hairline rule.
+ *   3. Page breaks through a figure. A section split across two sheets can put
+ *      a total on a page without the lines that make it — the one failure that
+ *      turns a summary into a misleading document.
+ */
+
+@media print {
+  /*
+   * 1. The app shell is screen-only.
+   *
+   * ⚠️ Selected by what the shell ACTUALLY renders, checked against a print
+   * render rather than assumed: the sidebar is an <aside>, and the top bar is
+   * `header.sticky`. A blanket `header` rule would also hide `PageHeader`,
+   * which is a <header> too and carries the year and the disclaimer — the two
+   * things a printed sheet least wants missing. The first version of this file
+   * guessed at `nav[aria-label="Main navigation"]` and `header[role="banner"]`,
+   * matched neither, and printed a whole empty column of paper.
+   */
+  .no-print,
+  aside,
+  header.sticky,
+  .paper-grain,
+  dialog {
+    display: none !important;
+  }
+
+  /*
+   * …and the shell's GRID has to collapse with it.
+   *
+   * The shell is `md:grid-cols-[13.5rem_1fr]`. Hiding the <aside> does not
+   * remove its track, so the content auto-places into the first cell and prints
+   * as a 216px column down the left edge of the paper with every figure
+   * wrapping — measured, not imagined; that is exactly what the second draft of
+   * this file produced. Selected with :has(> aside) so it can only ever match
+   * the one container that holds the sidebar.
+   */
+  body div:has(> aside) {
+    display: block !important;
+  }
+
+  /* the sheet takes the paper, not a centred column inside it */
+  .summary-sheet,
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /*
+   * The paper is white. The app's ground is a warm cream (--surface), which is
+   * right on a screen and wrong on a sheet: it prints as a full-bleed tint over
+   * every page, costing toner for nothing and lowering the contrast of the one
+   * document here meant to be read on paper.
+   */
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  /* 2. flatten every surface: ink on white, no shadow, no fill */
+  .summary-sheet section {
+    background: #fff !important;
+    box-shadow: none !important;
+    border: 0 !important;
+    border-top: 1px solid #ccc !important;
+    border-radius: 0 !important;
+    padding: 0.6rem 0 !important;
+  }
+
+  /* 3. a section, and any single line inside it, stays on one sheet */
+  .summary-sheet section,
+  .summary-sheet dl > div {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .summary-sheet h1,
+  .summary-sheet h2 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  /*
+   * Force real black on real white. The token palette is defined in oklch and
+   * a printer's colour management makes --ink-muted a pale grey that is hard to
+   * read at 10pt; a printed record has to be legible, not tasteful.
+   */
+  .summary-sheet,
+  .summary-sheet * {
+    color: #000 !important;
+    background: transparent !important;
+  }
+
+  /* the one place colour carried meaning: a caveat must not read as body copy */
+  .summary-sheet .text-negative {
+    font-style: italic;
+  }
+
+  /*
+   * The disclaimer is the reason this page can be printed at all — it says the
+   * sheet is a summary of records rather than a tax document. On screen it is a
+   * quiet subtitle; on paper it is boxed so it cannot be mistaken for chrome
+   * and cannot be cropped off without the crop being obvious.
+   */
+  .summary-sheet header p {
+    border: 1px solid #000;
+    padding: 0.4rem 0.6rem;
+    font-size: 10pt;
+  }
+
+  @page {
+    margin: 16mm;
+  }
+}

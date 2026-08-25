@@ -166,6 +166,19 @@ for (const width of WIDTHS) {
  */
 const DYNAMIC: readonly { name: string; resolve: (page: Page) => Promise<string> }[] = [
   {
+    /*
+     * The year summary. Resolved from the ledger's own year list rather than
+     * hard-coded, because the fixture's newest year moves with E2E_FAKE_TODAY
+     * and a pinned year would quietly measure an empty page.
+     */
+    name: "/summary/[year]",
+    resolve: async (page) => {
+      await page.goto("/summary/2026");
+      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+      return "/summary/2026";
+    },
+  },
+  {
     name: "/categories/[id]",
     resolve: async (page) => {
       await page.goto("/spending?period=2026");

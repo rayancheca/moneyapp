@@ -94,7 +94,7 @@ beforeEach(() => {
       fileSha256: "a".repeat(64),
       format: "pdf",
       institutionId: chase.id,
-      status: "imported",
+      status: "parsed",
       storagePath: "/tmp/chase-2025.pdf",
       importedAt: "2026-01-02T00:00:00Z",
     })
