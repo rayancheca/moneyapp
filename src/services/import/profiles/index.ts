@@ -18,6 +18,7 @@ import { statementPdf } from "./pdf-profile";
 import { robinhoodBrokerageStatementPdf } from "./robinhood-brokerage-statement-profile";
 import { robinhoodCryptoStatementPdf } from "./robinhood-crypto-statement-profile";
 import { sofiCombinedStatementPdf } from "./sofi-statement-profile";
+import { wellsFargoCheckingStatementPdf } from "./wells-fargo-statement-profile";
 import { chaseSpendingReportPdf } from "./spending-report-profile";
 
 /** Ordered registry — most specific matchers first. */
@@ -61,6 +62,7 @@ export const PROFILES: ParserProfile[] = [
   // first means a future loosening cannot silently swallow it
   robinhoodBrokerageStatementPdf,
   sofiCombinedStatementPdf,
+  wellsFargoCheckingStatementPdf,
   // synthetic fixtures only — see isSyntheticStatementText
   statementPdf,
 ];
