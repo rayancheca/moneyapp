@@ -8,6 +8,9 @@ import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
+import { holdingEvents } from "@/db/schema/holding-events";
+import { holdings, priceCache } from "@/db/schema/holdings";
+import { recurringSeries } from "@/db/schema/recurring";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
@@ -607,5 +610,324 @@ describe("provenanceFor — a category total", () => {
 
   test("a category that does not exist is null", () => {
     expect(provenanceFor(bundle.db, { kind: "categorySpend", categoryId: "nope", from: "2026-01-01", to: "2026-12-31" })).toBeNull();
+  });
+});
+
+/* ── holdings ─────────────────────────────────────────────────────────── */
+
+function addHolding(accountId: string, symbol: string, assetType: string, quantityE8: number): void {
+  bundle.db
+    .insert(holdings)
+    .values({
+      id: `h-${accountId}-${symbol}`,
+      accountId,
+      symbol,
+      assetType: assetType as never,
+      quantityE8,
+      isActive: true,
+      createdAt: now(),
+      updatedAt: now(),
+    })
+    .run();
+}
+
+let evtSeq = 0;
+function addHoldingEvent(accountId: string, symbol: string, assetType: string, day: string, deltaE8: number): void {
+  evtSeq += 1;
+  bundle.db
+    .insert(holdingEvents)
+    .values({
+      id: `he-${evtSeq}`,
+      accountId,
+      symbol,
+      assetType: assetType as never,
+      occurredOn: day,
+      quantityDeltaE8: deltaE8,
+      createdAt: now(),
+      updatedAt: now(),
+    })
+    .run();
+}
+
+function addPrice(symbol: string, assetType: string, day: string, close: number, source = "yahoo"): void {
+  bundle.db
+    .insert(priceCache)
+    .values({
+      id: `p-${symbol}-${day}`,
+      symbol,
+      assetType: assetType as never,
+      quotedOn: day,
+      close,
+      source: source as never,
+      fetchedAt: now(),
+      createdAt: now(),
+      updatedAt: now(),
+    })
+    .run();
+}
+
+describe("provenanceFor — a holding", () => {
+  test("a share count that closes against its events reads as market value, and says the count adds up", () => {
+    const acct = addAccount("rh", "Robinhood Brokerage", "investment");
+    addHolding(acct, "AAPL", "stock", 200000000);
+    addHoldingEvent(acct, "AAPL", "stock", "2025-01-02", 150000000);
+    addHoldingEvent(acct, "AAPL", "stock", "2025-06-02", 50000000);
+    addPrice("AAPL", "stock", TODAY, 312.64);
+
+    const p = provenanceFor(bundle.db, { kind: "holding", symbol: "AAPL", assetType: "stock", day: TODAY })!;
+    expect(p.verdict).toBe("market_value");
+    expect(p.badgeWord).toBeUndefined();
+    expect(p.headline).toContain("2 shares × yahoo's $312.64 close");
+    expect(p.headline).toContain("The share count adds up");
+    // the price is never promoted to a proof, however fresh it is
+    expect(p.headline).toContain("an observation, not a document");
+  });
+
+  /**
+   * ⛔ THE guard. `0 === 0` is true, so a holding with no events at all would
+   * report "the share count adds up" on the strength of a check that never ran
+   * — pass 56's `Math.sign(0)` ruler in a new place. Both directions are pinned
+   * because only pinning the passing one is how that bug shipped last time.
+   */
+  test("a holding with NO events does not claim its share count adds up", () => {
+    const acct = addAccount("rh", "Robinhood Brokerage", "investment");
+    addHolding(acct, "ZERO", "stock", 0);
+    addPrice("ZERO", "stock", TODAY, 10);
+
+    const p = provenanceFor(bundle.db, { kind: "holding", symbol: "ZERO", assetType: "stock", day: TODAY })!;
+    expect(p.headline).not.toContain("adds up");
+    expect(p.headline).toContain("Nothing checks the share count");
+  });
+
+  test("a share count that does NOT close against its events is broken, and says so in the badge", () => {
+    const acct = addAccount("rh", "Robinhood Brokerage", "investment");
+    addHolding(acct, "AAPL", "stock", 300000000);
+    addHoldingEvent(acct, "AAPL", "stock", "2025-01-02", 150000000);
+    addPrice("AAPL", "stock", TODAY, 100);
+
+    const p = provenanceFor(bundle.db, { kind: "holding", symbol: "AAPL", assetType: "stock", day: TODAY })!;
+    expect(p.verdict).toBe("broken");
+    expect(p.badgeWord).toBe("share count is off");
+    expect(p.headline).toContain("does not add up");
+  });
+
+  test("no price at all is unknown — there is nothing to value the shares at", () => {
+    const acct = addAccount("rh", "Robinhood Brokerage", "investment");
+    addHolding(acct, "NOPX", "stock", 100000000);
+    addHoldingEvent(acct, "NOPX", "stock", "2025-01-02", 100000000);
+
+    const p = provenanceFor(bundle.db, { kind: "holding", symbol: "NOPX", assetType: "stock", day: TODAY })!;
+    expect(p.verdict).toBe("unknown");
+    expect(p.headline).toContain("No price has ever been recorded");
+  });
+
+  /**
+   * A closed position is worth $0 whatever the price does, so its price age is
+   * irrelevant rather than alarming. The generic sentence read "0 shares ×
+   * yahoo's $179.44 close … now 208 days old" for PM on the real ledger.
+   */
+  test("a closed position says it is closed instead of reporting a stale price", () => {
+    const acct = addAccount("rh", "Robinhood Brokerage", "investment");
+    addHolding(acct, "PM", "stock", 0);
+    addHoldingEvent(acct, "PM", "stock", "2025-01-02", 100000000);
+    addHoldingEvent(acct, "PM", "stock", "2025-09-02", -100000000);
+    addPrice("PM", "stock", "2026-01-30", 179.44);
+
+    const p = provenanceFor(bundle.db, { kind: "holding", symbol: "PM", assetType: "stock", day: TODAY })!;
+    expect(p.headline).toContain("This position is closed");
+    expect(p.headline).not.toContain("days old");
+  });
+
+  test("a stale price is named and aged, using the app's own staleness boundary", () => {
+    const acct = addAccount("rh", "Robinhood Brokerage", "investment");
+    addHolding(acct, "SPY", "stock", 100000000);
+    addHoldingEvent(acct, "SPY", "stock", "2025-01-02", 100000000);
+    addPrice("SPY", "stock", "2026-08-04", 765.14);
+
+    const p = provenanceFor(bundle.db, { kind: "holding", symbol: "SPY", assetType: "stock", day: TODAY })!;
+    // TODAY is 2026-08-05, so a 2026-08-04 close is one day old — and the app's
+    // boundary is `> 0 days`, not some looser threshold invented here
+    expect(p.headline).toContain("now 1 day old");
+    expect(p.sources.some((s) => s.detail?.includes("1 day old"))).toBe(true);
+  });
+
+  test("crypto is counted in coins, not shares", () => {
+    const acct = addAccount("rhc", "Robinhood Crypto", "investment");
+    addHolding(acct, "ETH", "crypto", 100000000);
+    addHoldingEvent(acct, "ETH", "crypto", "2025-11-01", 100000000);
+    addPrice("ETH", "crypto", TODAY, 2451.31, "coinbase");
+
+    const p = provenanceFor(bundle.db, { kind: "holding", symbol: "ETH", assetType: "crypto", day: TODAY })!;
+    expect(p.headline).toContain("1 coins");
+    expect(p.headline).toContain("The coin count adds up");
+  });
+
+  /**
+   * ⛔ `checkedThrough` renders as "Checked through <date>" — a claim the MONEY
+   * added up to that day. A price date is not that claim and must never be
+   * printed as one.
+   */
+  test("a holding never reports a checkedThrough date", () => {
+    const acct = addAccount("rh", "Robinhood Brokerage", "investment");
+    addHolding(acct, "AAPL", "stock", 100000000);
+    addHoldingEvent(acct, "AAPL", "stock", "2025-01-02", 100000000);
+    addPrice("AAPL", "stock", TODAY, 100);
+
+    expect(provenanceFor(bundle.db, { kind: "holding", symbol: "AAPL", assetType: "stock", day: TODAY })!.checkedThrough).toBeNull();
+  });
+
+  test("a symbol that was never held is null", () => {
+    expect(provenanceFor(bundle.db, { kind: "holding", symbol: "ZZZZ", assetType: "stock", day: TODAY })).toBeNull();
+  });
+});
+
+/* ── a recurring series' amount ───────────────────────────────────────── */
+
+let seriesSeq = 0;
+function addSeries(
+  name: string,
+  opts: { amountAvg?: number | null; userAmount?: number | null; nextAmount?: number | null } = {},
+): string {
+  seriesSeq += 1;
+  const id = `rs-${seriesSeq}`;
+  bundle.db
+    .insert(recurringSeries)
+    .values({
+      id,
+      name,
+      kind: "bill",
+      cadence: "monthly",
+      amountCentsAvg: opts.amountAvg ?? -1000,
+      nextExpectedAmountCents: opts.nextAmount ?? opts.amountAvg ?? -1000,
+      userAmountCents: opts.userAmount ?? null,
+      status: "confirmed",
+      confidence: 1,
+      toleranceDays: 3,
+      createdAt: now(),
+      updatedAt: now(),
+    } as never)
+    .run();
+  return id;
+}
+
+function tagToSeries(txnId: string, seriesId: string): void {
+  bundle.db.run(sql`UPDATE transactions SET recurring_series_id = ${seriesId} WHERE id = ${txnId}`);
+}
+
+describe("provenanceFor — a recurring series' amount", () => {
+  /**
+   * ⛔ THE floor. `MIN_OCCURRENCES` is the codebase's single definition of
+   * "enough occurrences to be a statistic" and this service imports it rather
+   * than re-picking one. Two postings must NOT read like a measured pattern,
+   * however identical they are.
+   */
+  test("below MIN_OCCURRENCES the evidence is an anecdote, not a pattern — even when every posting agrees", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const s = addSeries("Thin");
+    for (const d of ["2026-06-01", "2026-07-01"]) tagToSeries(addTxn(acct, d, { cents: -1000 }), s);
+
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: s })!;
+    expect(p.verdict).toBe("unverified");
+    expect(p.badgeWord).toBe("seen 2 times");
+    expect(p.headline).toContain("below the 3 this app requires");
+    expect(p.headline).toContain("anecdote rather than a statistic");
+  });
+
+  test("at MIN_OCCURRENCES with every posting identical, the forecast is backed by measured evidence", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const s = addSeries("Amazon Prime");
+    for (const d of ["2026-05-05", "2026-06-05", "2026-07-05"]) tagToSeries(addTxn(acct, d, { cents: -499 }), s);
+
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: s })!;
+    expect(p.verdict).toBe("derived");
+    expect(p.badgeWord).toBeUndefined();
+    expect(p.headline).toContain("All 3 tagged postings");
+    // ⛔ never `sourced` — no document states NEXT month's amount
+    expect(p.verdict).not.toBe("sourced");
+    expect(p.headline).toContain("a forecast, not a record");
+  });
+
+  /**
+   * ⛔ Rent: three postings at three different amounts. "nothing checks it" is
+   * FALSE — three documents check it and disagree — so the badge must say which
+   * of the two soft cases this is.
+   */
+  test("postings that disagree say so, instead of claiming nothing checks the figure", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const s = addSeries("Rent");
+    for (const [d, c] of [["2026-06-16", -228570], ["2026-06-30", -110000], ["2026-07-08", -150000]] as const) {
+      tagToSeries(addTxn(acct, d, { cents: c }), s);
+    }
+
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: s })!;
+    expect(p.verdict).toBe("unverified");
+    expect(p.badgeWord).toBe("3 different amounts");
+    expect(p.headline).toContain("3 different amounts");
+    expect(p.headline).toContain("an average, not a repeat");
+  });
+
+  test("an owner override is graded manual — he is the source, not an absence of one", () => {
+    const s = addSeries("Car lease", { amountAvg: null, userAmount: -55989 });
+
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: s })!;
+    expect(p.verdict).toBe("manual");
+    expect(p.headline).toContain("You set this amount yourself");
+    expect(p.headline).toContain("no evidence behind it at all");
+    expect(p.sources[0]!.kind).toBe("hand-entered");
+  });
+
+  /**
+   * The live ledger's "Cash job": the owner set $1,047.00 while the postings
+   * average $1,046.00. A popover that stays silent about that is hiding the one
+   * thing worth knowing.
+   */
+  test("an override that disagrees with what actually posted says so", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const s = addSeries("Cash job", { amountAvg: 104600, userAmount: 104700 });
+    tagToSeries(addTxn(acct, "2026-06-04", { cents: 104700 }), s);
+
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: s })!;
+    expect(p.verdict).toBe("manual");
+    expect(p.headline).toContain("The ledger's own average of what actually posted is $1,046.00");
+  });
+
+  test("an override that matches the observed average does NOT raise a disagreement", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const s = addSeries("Agreeing", { amountAvg: -1000, userAmount: -1000 });
+    tagToSeries(addTxn(acct, "2026-06-04", { cents: -1000 }), s);
+
+    expect(provenanceFor(bundle.db, { kind: "recurringSeries", id: s })!.headline).not.toContain("which is not what you set");
+  });
+
+  test("a series with nothing tagged and no override has no basis at all", () => {
+    const s = addSeries("Detected but never seen", { amountAvg: -2500 });
+
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: s })!;
+    expect(p.verdict).toBe("unknown");
+    expect(p.sources).toHaveLength(0);
+  });
+
+  test("a single posting is described in the singular", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const s = addSeries("FPL");
+    tagToSeries(addTxn(acct, "2026-07-10", { cents: -1421 }), s);
+
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: s })!;
+    expect(p.badgeWord).toBe("seen once");
+    // "every one of them" over a population of one is a plural claim
+    expect(p.sources[0]!.detail).toBe("it was -$14.21");
+  });
+
+  /** A forecast is never "checked through" a day — that phrase means the money added up. */
+  test("a series never reports a checkedThrough date", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const s = addSeries("Rocket Money");
+    for (const d of ["2026-05-15", "2026-06-15", "2026-07-15"]) tagToSeries(addTxn(acct, d, { cents: -600 }), s);
+
+    expect(provenanceFor(bundle.db, { kind: "recurringSeries", id: s })!.checkedThrough).toBeNull();
+  });
+
+  test("a series that does not exist is null", () => {
+    expect(provenanceFor(bundle.db, { kind: "recurringSeries", id: "nope" })).toBeNull();
   });
 });

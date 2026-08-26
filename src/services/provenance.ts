@@ -3,11 +3,16 @@ import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { balanceAnchors, dailyBalances, type BalanceBasis } from "@/db/schema/balances";
+import { holdingEvents } from "@/db/schema/holding-events";
+import { holdings, priceCache, type AssetType } from "@/db/schema/holdings";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
+import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import { todayIso } from "@/lib/dates";
+import { diffDays, todayIso } from "@/lib/dates";
+import { isStaleClose } from "@/lib/holding-price-age";
 import { formatCents } from "@/lib/money";
 import { accountCoverage, type CoverageGrade } from "./coverage";
+import { MIN_OCCURRENCES } from "./recurring";
 
 /**
  * "Prove it" — given a figure the app has rendered, what is it standing on?
@@ -140,7 +145,16 @@ export type FigureRef =
    * They are ONE figure kind because they are one question: which documents is
    * this sum standing on, and is any of it unchecked?
    */
-  | { kind: "categorySpend"; categoryId: string; from: string; to: string; label?: string };
+  | { kind: "categorySpend"; categoryId: string; from: string; to: string; label?: string }
+  /**
+   * A position's market value, aggregated across accounts by `(symbol,
+   * assetType)` exactly as `holdingDetail` reports it. NOT `categorySpend`: a
+   * holding's value is a share count times a price, and the two halves are
+   * proven — or not — in completely different ways.
+   */
+  | { kind: "holding"; symbol: string; assetType: AssetType; day?: string }
+  /** A recurring series' expected amount — a forecast, graded by its evidence. */
+  | { kind: "recurringSeries"; id: string };
 
 /**
  * Cash accounts only: what a day's `basis` proves about its balance.
@@ -565,6 +579,321 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
 }
 
 
+/* ── a holding ────────────────────────────────────────────────────────── */
+
+/**
+ * A holding's value stands on TWO independent things, and only one of them is
+ * checkable. Saying so is the whole reason this kind exists rather than
+ * borrowing `accountBalance`'s vocabulary.
+ *
+ *  - **the share count** — `holdings.quantity_e8` against the sum of every
+ *    `holding_events` delta. That is a real arithmetic gate and it either
+ *    closes or it does not. Measured on the live ledger: all ten active
+ *    holdings close EXACTLY, including AAPL's 244 events back to 2023-12-05.
+ *  - **the price** — a market observation from Yahoo or Coinbase. No document
+ *    in the ledger states it and none ever will, so no amount of checking can
+ *    promote it. It gets named, dated and aged instead.
+ *
+ * ⛔ Note this is strictly MORE than the account can say. `accountCoverage`
+ * grades every investment account `market_value` unconditionally, because
+ * `reconcileAccounts` absorbs a discrepancy into `market_change_cents` and
+ * cannot fail — so at account level there is no gate at all. At HOLDING level
+ * there is one, and it is the share count. A reader deserves the stronger
+ * statement where the stronger statement is true.
+ *
+ * Aggregated across accounts by `(symbol, assetType)`, matching `holdingDetail`
+ * — the figure on screen is the position, not one account's leg of it.
+ */
+function holdingProvenance(db: AppDatabase, symbol: string, assetType: AssetType, day: string | undefined): Provenance | null {
+  const legs = db
+    .select({
+      accountId: holdings.accountId,
+      accountName: accounts.name,
+      quantityE8: holdings.quantityE8,
+      isActive: holdings.isActive,
+    })
+    .from(holdings)
+    .innerJoin(accounts, eq(accounts.id, holdings.accountId))
+    .where(and(eq(holdings.symbol, symbol), eq(holdings.assetType, assetType)))
+    .all();
+  if (legs.length === 0) return null;
+
+  const asOf = day ?? todayIso();
+  const storedE8 = legs.reduce((t, l) => t + l.quantityE8, 0);
+
+  /* ── basis 1: does the share count add up against its own events? ── */
+  const events = db
+    .select({
+      accountId: holdingEvents.accountId,
+      occurredOn: holdingEvents.occurredOn,
+      deltaE8: holdingEvents.quantityDeltaE8,
+    })
+    .from(holdingEvents)
+    .where(
+      and(
+        inArray(
+          holdingEvents.accountId,
+          legs.map((l) => l.accountId),
+        ),
+        eq(holdingEvents.symbol, symbol),
+        eq(holdingEvents.assetType, assetType),
+      ),
+    )
+    .all();
+  const eventsE8 = events.reduce((t, e) => t + e.deltaE8, 0);
+  const countMatches = eventsE8 === storedE8;
+  /**
+   * ⛔ A holding with NO events has nothing to check against, and
+   * `0 === 0` would quietly report that as proof. That is the same shape as
+   * pass 56's `Math.sign(0)` ruler — a check that passes because it never ran.
+   * An unchecked count is `unknown`, never "adds up", and the two directions
+   * are pinned by their own tests.
+   */
+  const countIsChecked = events.length > 0;
+
+  /* ── basis 2: the price, which is an observation and cannot be promoted ── */
+  const price = db
+    .select({ close: priceCache.close, quotedOn: priceCache.quotedOn, source: priceCache.source })
+    .from(priceCache)
+    .where(and(eq(priceCache.symbol, symbol), eq(priceCache.assetType, assetType), lte(priceCache.quotedOn, asOf)))
+    .orderBy(desc(priceCache.quotedOn))
+    .limit(1)
+    .get();
+
+  /**
+   * ⛔ `isStaleClose` is imported, not re-derived. `lib/holding-price-age`
+   * exists precisely so the page note and the per-row date "can never disagree
+   * about where the boundary is", and a third opinion in this service would
+   * break the guarantee that docstring makes. The app's boundary is strict —
+   * anything not quoted TODAY is stale — and a looser one here would let the
+   * popover call a price fresh in the same breath the row beside it calls it
+   * old.
+   */
+  const priceIsStale = price !== undefined && isStaleClose(price.quotedOn, asOf, diffDays);
+  const priceAgeDays = price ? diffDays(price.quotedOn, asOf) : null;
+  const agePhrase = priceAgeDays === null ? "" : `${priceAgeDays} ${priceAgeDays === 1 ? "day" : "days"} old`;
+
+  const sources: ProvenanceSource[] = [];
+  if (price) {
+    sources.push({
+      kind: price.source === "manual" ? "hand-entered" : "document",
+      label: price.source === "manual" ? "a price you entered by hand" : `${price.source}'s close`,
+      detail: priceIsStale ? `$${price.close.toFixed(2)} — ${agePhrase}` : `$${price.close.toFixed(2)}`,
+      on: price.quotedOn,
+    });
+  }
+  if (countIsChecked) {
+    const firstDay = events.map((e) => e.occurredOn).sort()[0]!;
+    sources.push({
+      kind: "anchor",
+      label: `${events.length} recorded ${events.length === 1 ? "buy or sell" : "buys and sells"}`,
+      detail: countMatches
+        ? "they sum exactly to the share count above"
+        : `they sum to ${(eventsE8 / 1e8).toFixed(8).replace(/0+$/, "")}, not the share count above`,
+      on: firstDay,
+    });
+  }
+
+  /**
+   * ⛔ Verdict order matters. A share count that provably does NOT close is the
+   * loudest thing here and outranks any question about the price — the position
+   * itself is wrong, so what it is worth is beside the point.
+   */
+  const verdict: ProvenanceVerdict = countIsChecked && !countMatches ? "broken" : !price ? "unknown" : "market_value";
+
+  const shares = (storedE8 / 1e8).toFixed(8).replace(/\.?0+$/, "") || "0";
+  const unit = assetType === "crypto" ? "coins" : "shares";
+  const countSentence = countIsChecked
+    ? `The ${unit === "coins" ? "coin" : "share"} count adds up — ${events.length} recorded ${events.length === 1 ? "trade sums" : "trades sum"} exactly to it.`
+    : `Nothing checks the ${unit === "coins" ? "coin" : "share"} count: no buys or sells are recorded for it.`;
+
+  /**
+   * ⛔ A CLOSED position is its own sentence. The probe caught the generic one
+   * reading "0 shares × yahoo's $179.44 close … now 208 days old" for PM — a
+   * true statement that wastes the reader's attention on a price that cannot
+   * move a figure which is $0 whatever the price does. When the quantity is
+   * zero the price is not stale, it is IRRELEVANT, and saying "208 days old"
+   * invites a fix for something that is not broken.
+   */
+  const headline =
+    storedE8 === 0
+      ? `This position is closed — nothing is held, so it is worth $0 whatever ${symbol} is trading at. ${countSentence}`
+      : !price
+        ? `No price has ever been recorded for ${symbol}, so there is nothing to value ${shares} ${unit} at. ${countSentence}`
+        : countIsChecked && !countMatches
+          ? `⚠️ ${symbol}'s ${unit === "coins" ? "coin" : "share"} count does not add up: ${events.length} recorded buys and sells do not sum to the ${shares} on file. This value is ${shares} × a price, and the ${shares} is in doubt.`
+          : `${shares} ${unit} × ${price.source === "manual" ? "a price you entered" : `${price.source}'s $${price.close.toFixed(2)} close`} on ${readableDay(price.quotedOn)}${priceIsStale ? `, now ${agePhrase}` : ""}. ${countSentence} The price is an observation, not a document — no statement in the ledger states it.`;
+
+  const inputs: ProvenanceInput[] =
+    legs.length > 1
+      ? legs.map((l) => ({
+          label: l.accountName,
+          verdict,
+          detail: `${(l.quantityE8 / 1e8).toFixed(8).replace(/\.?0+$/, "") || "0"} ${assetType === "crypto" ? "coins" : "shares"}`,
+        }))
+      : [];
+
+  return {
+    verdict,
+    /**
+     * `market_value` already presents as "market value", which is exactly right
+     * here, so the badge is overridden for ONE state: a share count that
+     * provably does not close.
+     *
+     * ⛔ Deliberately NOT for price age. /investments already discloses that,
+     * twice — a page note gated on the newest close and a per-row date gated on
+     * the row's own (`lib/holding-price-age`) — and a badge repeating it would
+     * be a third disclosure of one fact, on the one column that has to stay
+     * scannable. The age is still named inside the panel, which the reader
+     * opened on purpose.
+     */
+    badgeWord: countIsChecked && !countMatches ? "share count is off" : undefined,
+    headline,
+    sources,
+    /**
+     * ⛔ `null`, always, and deliberately. `checkedThrough` renders as
+     * "Checked through <date>", which is a claim that the MONEY added up to
+     * that day. A price date is not that claim and must never be printed as
+     * one — the price's day is already named in `sources`, where it reads as
+     * what it is.
+     */
+    checkedThrough: null,
+    inputs,
+  };
+}
+
+/* ── a recurring series' amount ───────────────────────────────────────── */
+
+/**
+ * What a forecast amount is standing on.
+ *
+ * ⚠️ The handoff predicted this could reuse `categorySpend`'s "sum of rows"
+ * shape. It cannot, and the schema says why: the figure on screen is
+ * `user_amount_cents ?? next_expected_amount_cents` (`effectiveSeries`) — an
+ * owner override, or a forecast built from an average. It is not a sum of
+ * anything, so the question "which documents is this sum standing on?" is the
+ * wrong question. The right one is **how much evidence is behind the guess, and
+ * did the evidence agree?**
+ *
+ * ⛔ `MIN_OCCURRENCES` is imported rather than re-picked. `recurring-calendar`
+ * already reasons about exactly this — zero postings means a human authored it,
+ * one or two means detection extrapolated from too little, three or more means
+ * it was measured — and its docstring says outright that the threshold is
+ * shared so the codebase keeps ONE definition of "enough occurrences to be a
+ * statistic". A second opinion here would be a second definition.
+ *
+ * Measured on the live ledger: Rocket Money has 16 postings at ONE amount;
+ * Flamingo rent has 3 postings at THREE different amounts; the car lease and
+ * car insurance have ZERO and are pure owner assertions. Those three cases must
+ * not read alike, and before this they all read as a plain number.
+ */
+function recurringSeriesProvenance(db: AppDatabase, id: string): Provenance | null {
+  const series = db.select().from(recurringSeries).where(eq(recurringSeries.id, id)).get();
+  if (!series) return null;
+
+  const postings = db
+    .select({ amountCents: transactions.amountCents, postedOn: transactions.postedOn })
+    .from(transactions)
+    .where(and(eq(transactions.recurringSeriesId, id), eq(transactions.status, "active")))
+    .all();
+
+  const n = postings.length;
+  const distinct = new Set(postings.map((p) => p.amountCents));
+  const days = postings.map((p) => p.postedOn).sort();
+  const userSet = series.userAmountCents !== null;
+
+  const sources: ProvenanceSource[] = [];
+  if (userSet) {
+    sources.push({
+      kind: "hand-entered",
+      label: `you set this to ${formatCents(series.userAmountCents!)}`,
+      detail: "an override — detection does not get a vote on it",
+    });
+  }
+  if (n > 0) {
+    sources.push({
+      kind: "period",
+      label: `${n} tagged ${n === 1 ? "posting" : "postings"} in the ledger`,
+      detail:
+        distinct.size === 1
+          ? // ⚠️ "every one of them" over a single posting is a plural claim
+            // about a population of one — it read exactly that way for FPL.
+            n === 1
+            ? `it was ${formatCents([...distinct][0]!)}`
+            : `every one of them ${formatCents([...distinct][0]!)}`
+          : `${distinct.size} different amounts, ${formatCents(Math.min(...distinct))} to ${formatCents(Math.max(...distinct))}`,
+      on: days[0],
+    });
+  }
+
+  /**
+   * ⛔ The verdict grades the EVIDENCE, not the forecast. A forecast is always a
+   * guess about the future and no amount of evidence makes it a fact, so the
+   * strongest word available here is `derived` — never `sourced`, which would
+   * claim a document states next month's amount.
+   */
+  const verdict: ProvenanceVerdict = userSet
+    ? "manual"
+    : n === 0
+      ? "unknown"
+      : n < MIN_OCCURRENCES
+        ? "unverified"
+        : distinct.size === 1
+          ? "derived"
+          : "unverified";
+
+  /**
+   * ⛔ `unverified` presents as "nothing checks it", and that is FALSE of both
+   * populations it lands on here. Rent seen three times at three different
+   * amounts IS checked — by three documents that disagree. FPL seen once is
+   * checked by one document, which is too thin to be a pattern but is not
+   * nothing. That is the §2.4 mistake in miniature: a bucket right about the
+   * arithmetic and insulting to the source.
+   *
+   * The TONE stays soft in both cases, because thin evidence and disagreeing
+   * evidence both really do make a forecast soft. Only the word is corrected,
+   * to one that says which of the two it is.
+   */
+  const badgeWord = userSet
+    ? undefined
+    : n === 0
+      ? undefined
+      : n < MIN_OCCURRENCES
+        ? `seen ${n === 1 ? "once" : `${n} times`}`
+        : distinct.size > 1
+          ? `${distinct.size} different amounts`
+          : undefined;
+
+  const observed = (): string => {
+    if (n === 0) return "Nothing tagged to it has ever posted, so there is no evidence behind it at all.";
+    if (n < MIN_OCCURRENCES)
+      return `Only ${n} tagged ${n === 1 ? "posting has" : "postings have"} ever landed — below the ${MIN_OCCURRENCES} this app requires before calling a repeat a pattern, so it is an anecdote rather than a statistic.`;
+    if (distinct.size === 1)
+      return `All ${n} tagged postings since ${readableDay(days[0]!)} were ${formatCents([...distinct][0]!)}, exactly.`;
+    return `Its ${n} tagged postings since ${readableDay(days[0]!)} were ${distinct.size} different amounts, from ${formatCents(Math.min(...distinct))} to ${formatCents(Math.max(...distinct))} — so any single figure for it is an average, not a repeat.`;
+  };
+
+  const disagreement =
+    userSet && series.amountCentsAvg !== null && series.amountCentsAvg !== series.userAmountCents
+      ? ` ⚠️ The ledger's own average of what actually posted is ${formatCents(series.amountCentsAvg)}, which is not what you set.`
+      : "";
+
+  const headline = userSet
+    ? `You set this amount yourself, so it is exactly as right as you are. ${observed()}${disagreement}`
+    : `This is a forecast, not a record — it says what the app expects next, and nothing has happened yet to check it against. ${observed()}`;
+
+  return {
+    verdict,
+    badgeWord,
+    headline,
+    sources,
+    // a forecast is never "checked through" a day; the evidence's own dates are
+    // named in `sources`, where they read as evidence rather than as a guarantee
+    checkedThrough: null,
+    inputs: [],
+  };
+}
+
 /* ── an aggregate over transactions ───────────────────────────────────── */
 
 /** Top few documents named, the rest counted — a list of 40 files is not evidence. */
@@ -731,5 +1060,9 @@ export function provenanceFor(db: AppDatabase, ref: FigureRef): Provenance | nul
       return netWorthProvenance(db, ref.day);
     case "categorySpend":
       return categorySpendProvenance(db, ref.categoryId, ref.from, ref.to, ref.label);
+    case "holding":
+      return holdingProvenance(db, ref.symbol, ref.assetType, ref.day);
+    case "recurringSeries":
+      return recurringSeriesProvenance(db, ref.id);
   }
 }
