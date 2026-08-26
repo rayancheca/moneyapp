@@ -26,7 +26,7 @@ ranked candidates, best first:
    build notes in the prior brief's §3 are still correct, including the warning
    that the headerless five-column format is general knowledge and must be
    checked against a real file. `pnpm trial-import` first, always.
-2. **The 113 WeChat Pay rows** — see §4 below. A task chip is already filed.
+2. ~~The 113 WeChat Pay rows~~ — **DONE 2026-08-26**, see §5.
 3. **Pass 66 as originally scheduled** — `src/services/provenance.ts` plus a
    `<ProvenancePopover>`, never started. `docs/program-passes-60-94.md`.
 4. **The 69 unlinked exact-opposite transfer pairs** and the 24 transfer groups
@@ -202,10 +202,9 @@ never back to a ratio.
 
 - **The Wells Fargo importer** — owner has no export for about a week from
   2026-08-25. Ask first.
-- **113 `WEIXIN*` rows, $803.78**, sitting in a bare `Shopping` from
-  `bank_category` — the China trip. A task chip is filed with the full brief.
-  ⛔ Do not copy Rocket Money's categories for these; it labels metro fares as
-  dining.
+- **45 `WEIXIN*` rows, $340.00**, still in bare `Shopping` — and **deliberately
+  so** (§5). Nothing in the ledger can identify them. Only he can, and only from
+  memory.
 - ⚠️ **`docs/income-ground-truth.md:40` still says income ≈ $119,982.68.** The
   measured, guarded figure is **$117,924.62** and has been stable across three
   passes. That line is a dated pass-18 annotation; it was NOT corrected here
@@ -230,3 +229,39 @@ never back to a ratio.
 - **`/summary/[year]` has no visual baseline.** It has one now-verified figure
   (the Pass-through line) and no pixel coverage at all; with the gate finally
   strict, this is a cheap and worthwhile addition.
+
+
+---
+
+## 5. The China trip, sorted (added 2026-08-26, `e057363`)
+
+89 of the 202 `WEIXIN*` rows recategorised. Total spending unchanged to the cent
+— every source and target is expense-kind, so only the split moved, and a guard
+required the expense-kind signed total to be **equal** before and after.
+
+**The defect was a payment rail read as a merchant.** Chase's merchant-category
+code categorised WeChat Pay itself rather than the shop behind it, scattering one
+trip across a bare `Shopping` (113), `Personal Care` (10) and `Travel`. Two metro
+fares sat in `Travel`; three more, on the Shanghai transit card, sat in
+`Personal Care`; **Adidas** sat in `Travel`; the Songshan scenic area sat in
+`Personal Care`.
+
+His rule: **file by what it actually is** — metro and Didi are Transport, museums
+and temples are Entertainment, only rail and Ctrip stay Travel.
+
+🔴 **Applied to the whole trip, not just the 113 the task named.** Moving
+`subway operatio` to Transport while leaving `Hangang Metro` in Travel would have
+split his own metro taps by which wrong bucket the bank happened to pick.
+
+⛔ **45 rows were left in a bucket known to be wrong, on purpose, and a guard
+asserts it.** 23 read literally `WEIXIN*Scan QR code fo` — WeChat's placeholder
+for a merchant that never registered a name. The descriptor is **hard-truncated
+at 22 characters**, so no more evidence exists in the ledger and any category
+would be invented. $340.00 stays visibly unsorted rather than made up.
+
+The trip now reads **$1,696.90 over 202 rows** — Food $415.00, Travel $412.69,
+$340.00 honestly unidentified, Entertainment $92.95, Transport $43.84.
+
+`scripts/weixin-plan.ts` holds the mapping and its evidence as one source of
+truth, imported by both the probe that shows the plan and the script that applies
+it, so what is reviewed is what runs.
