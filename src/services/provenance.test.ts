@@ -1,10 +1,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
+import { categories } from "@/db/schema/categories";
 import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
@@ -476,5 +478,134 @@ describe("provenanceFor — net worth", () => {
     const p = provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!;
     expect(p.verdict).toBe("unknown");
     expect(p.inputs).toEqual([]);
+  });
+});
+
+/* ── a category total ─────────────────────────────────────────────────── */
+
+function addCategory(id: string, name: string, parentId: string | null = null): string {
+  bundle.db
+    .insert(categories)
+    .values({ id, name, parentId, kind: "expense", sortOrder: 0, createdAt: now(), updatedAt: now() })
+    .run();
+  return id;
+}
+
+function categorize(txnId: string, categoryId: string): void {
+  bundle.db.run(sql`UPDATE transactions SET category_id = ${categoryId} WHERE id = ${txnId}`);
+}
+
+describe("provenanceFor — a category total", () => {
+  test("names how many rows and how many documents are underneath it", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const cat = addCategory("c-food", "Fixture Food");
+    const file = addFile("f1", "20260801-statements-3522-.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [
+      { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-07-15", basis: "derived" },
+    ]);
+    for (const day of ["2026-07-10", "2026-07-15"]) categorize(addTxn(acct, day, { importFileId: file }), cat);
+
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
+    expect(p.headline).toMatch(/sum of 2 rows from 1 document/);
+    expect(p.verdict).toBe("derived");
+    expect(p.sources[0]!.label).toBe("20260801-statements-3522-.pdf");
+  });
+
+  /** A parent's total includes its children, the same way the app reports it. */
+  test("a parent total includes its children's rows", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const parent = addCategory("c-food", "Fixture Food");
+    const child = addCategory("c-dining", "Fixture Dining", parent);
+    addDays(acct, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-15", basis: "derived" }]);
+    const file = addFile("f1", "s.pdf", "chase-checking-statement-pdf");
+    categorize(addTxn(acct, "2026-07-10", { importFileId: file }), parent);
+    categorize(addTxn(acct, "2026-07-15", { importFileId: file }), child);
+
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: parent, from: "2026-07-01", to: "2026-07-31" })!;
+    expect(p.headline).toMatch(/sum of 2 rows/);
+  });
+
+  /**
+   * ⛔ Three buckets, not two. Folding `market_value` into "not checked" told
+   * the truth about arithmetic and lied about the figure — every
+   * `Investments > Buys` row read "0 of 404 checked" as though 404 rows were
+   * missing evidence, when they are priced from holdings.
+   */
+  test("priced-from-holdings rows are not reported as unchecked", () => {
+    const acct = addAccount("a", "Robinhood Brokerage", "investment");
+    const cat = addCategory("c-buys", "Fixture Buys");
+    const file = addFile("f1", "rh.pdf", "robinhood-brokerage-statement-pdf");
+    addDays(acct, [{ day: "2026-07-10", basis: "derived" }]);
+    categorize(addTxn(acct, "2026-07-10", { importFileId: file }), cat);
+
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
+    expect(p.headline).toMatch(/priced from holdings/);
+    expect(p.headline).not.toMatch(/nothing checking/);
+    // a category that is entirely market value reads "market value", not a fraction
+    expect(p.badgeWord).toBeUndefined();
+  });
+
+  /**
+   * ⛔ `manual` is a BASIS, not an absence. For cash in a safe the owner IS the
+   * best evidence that will ever exist, and calling his own count "nothing
+   * checking it" is both wrong and insulting to the only source there is. It
+   * read exactly that way on /budgets until a screenshot caught it — and every
+   * test here passed while it did, which is why this one exists.
+   */
+  test("a row the owner entered is a basis, not something unchecked", () => {
+    const acct = addAccount("a", "Cash on Hand", "cash");
+    const cat = addCategory("c-food", "Fixture Food");
+    addDays(acct, [{ day: "2026-07-10", basis: "anchored" }]);
+    categorize(addTxn(acct, "2026-07-10"), cat);
+
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
+    expect(p.sources.some((s) => s.kind === "hand-entered" && /1 row you entered/.test(s.label))).toBe(true);
+    expect(p.headline).toMatch(/1 you entered yourself/);
+    expect(p.headline).not.toMatch(/nothing checking/);
+  });
+
+  /** One row is "it", not "them" — the copy is the product here. */
+  test("the hand-entered source reads singular for one row", () => {
+    const acct = addAccount("a", "Cash on Hand", "cash");
+    const cat = addCategory("c-food", "Fixture Food");
+    addDays(acct, [{ day: "2026-07-10", basis: "anchored" }]);
+    categorize(addTxn(acct, "2026-07-10"), cat);
+    const one = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
+    expect(one.sources.find((s) => s.kind === "hand-entered")!.detail).toBe("no statement carries it");
+
+    categorize(addTxn(acct, "2026-07-11"), cat);
+    const two = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
+    expect(two.sources.find((s) => s.kind === "hand-entered")!.detail).toBe("no statement carries them");
+  });
+
+  /** An empty window is a ZERO, not an unproven figure — a real distinction. */
+  test("an empty window says the total is zero rather than unproven", () => {
+    const cat = addCategory("c-food", "Fixture Food");
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2019-01-01", to: "2019-12-31" })!;
+    expect(p.headline).toMatch(/zero rather than unproven/);
+    expect(p.sources).toEqual([]);
+  });
+
+  /** A row past its account's `verifiedThrough` is not covered by it. */
+  test("a row after the chain stops being checked drags the total", () => {
+    const acct = addAccount("a", "Robinhood Cash", "checking");
+    const cat = addCategory("c-food", "Fixture Food");
+    const file = addFile("f1", "s.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [
+      { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-07-10", basis: "derived" },
+      { day: "2026-07-20", basis: "derived_unverified" },
+    ]);
+    categorize(addTxn(acct, "2026-07-10", { importFileId: file }), cat);
+    categorize(addTxn(acct, "2026-07-20", { importFileId: file }), cat);
+
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
+    expect(p.verdict).toBe("unverified");
+    expect(p.badgeWord).toBe("1 of 2 checked");
+  });
+
+  test("a category that does not exist is null", () => {
+    expect(provenanceFor(bundle.db, { kind: "categorySpend", categoryId: "nope", from: "2026-01-01", to: "2026-12-31" })).toBeNull();
   });
 });

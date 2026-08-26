@@ -15,6 +15,7 @@ import {
   seriesInCategory,
   type CategoryHeader,
 } from "@/services/category-detail";
+import { provenanceFor } from "@/services/provenance";
 import { topMerchants } from "@/services/spending";
 import { loadSpendingCategoryTxns } from "@/app/spending/actions";
 import { CategoryChip } from "@/components/ui/CategoryChip";
@@ -23,6 +24,7 @@ import { CategoryNameHeading } from "@/components/categories/CategoryNameHeading
 import { moveDestinations as categoryMoveDestinations } from "@/services/category-edit";
 import { Icon } from "@/components/shell/Icon";
 import { Money } from "@/components/ui/Money";
+import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
 import { CategorySeriesList } from "@/components/spending/CategorySeriesList";
@@ -77,6 +79,13 @@ export default async function CategoryPage({
 
   const { spentCents, txnCount } = categorySpending(db, { categoryId: id, from: range.from, to: range.to });
   const flowCents = sign * spentCents;
+  const spendProvenance = provenanceFor(db, {
+    kind: "categorySpend",
+    categoryId: id,
+    from: range.from,
+    to: range.to,
+    label: header.name,
+  });
 
   const trend = categoryMonthlyTrend(db, id, TREND_MONTHS, today).map((p) => ({ ...p, spentCents: sign * p.spentCents }));
   const subcats = categorySubcategorySplit(db, id, range);
@@ -130,6 +139,15 @@ export default async function CategoryPage({
         <div className="text-right">
           <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-ink-faint">
             {flowLabel} · {period.label}
+            {/* the total's proof is the proof of the rows underneath it, and its
+                weakest row sets the verdict */}
+            {spendProvenance && (
+              <ProvenancePopover
+                label={`this ${flowLabel.toLowerCase()} total`}
+                provenance={spendProvenance}
+                placement="bottom-end"
+              />
+            )}
           </div>
           <Money cents={flowCents} className="figures text-2xl font-semibold" />
           <div className="text-xs text-ink-faint">{txnCount} {txnCount === 1 ? "transaction" : "transactions"}</div>

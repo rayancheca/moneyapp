@@ -17,6 +17,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { BudgetForm } from "@/components/budgets/BudgetForm";
 import { PredictBudgets } from "@/components/budgets/PredictBudgets";
+import { provenanceFor } from "@/services/provenance";
 import { BudgetRow } from "@/components/budgets/BudgetRow";
 import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { SectionNotes } from "@/components/insights/SectionNotes";
@@ -78,6 +79,28 @@ export default async function BudgetsPage({
       pace: s.pace,
     })),
   });
+
+  /**
+   * "Prove it" per budget — the same figure kind as a category total, over the
+   * budget's own graded window.
+   *
+   * ⚠️ Measured before it was written, not after: 10 of these cost **23ms
+   * total** (2.3ms each) because SQLite's statement cache makes the repeated
+   * `accountCoverage` walk nearly free. The per-row-work regression pass 31
+   * found is the reason to check; the number is the reason not to build a cache.
+   */
+  const spendProvenance = new Map(
+    statuses.map((s) => [
+      s.budget.id,
+      provenanceFor(db, {
+        kind: "categorySpend",
+        categoryId: s.budget.categoryId,
+        from: s.bounds.start,
+        to: s.bounds.end,
+        label: s.categoryPath,
+      }),
+    ]),
+  );
 
   const sections = budgetSections(statuses, today);
 
@@ -204,6 +227,7 @@ export default async function BudgetsPage({
                     key={status.budget.id}
                     status={status}
                     guidanceCents={guidance.get(status.budget.id) ?? 0}
+                    provenance={spendProvenance.get(status.budget.id) ?? null}
                   />
                 ))}
               </ul>

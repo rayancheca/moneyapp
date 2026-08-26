@@ -1,6 +1,7 @@
 import { and, asc, count, desc, eq, inArray, lte, gte, sum } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
+import { categories } from "@/db/schema/categories";
 import { balanceAnchors, dailyBalances, type BalanceBasis } from "@/db/schema/balances";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
@@ -132,7 +133,14 @@ export type FigureRef =
   | { kind: "transaction"; id: string }
   | { kind: "accountBalance"; accountId: string; day?: string }
   | { kind: "statementPeriod"; id: string }
-  | { kind: "netWorth"; day?: string };
+  | { kind: "netWorth"; day?: string }
+  /**
+   * Any total assembled by summing transactions in a category over a window —
+   * a category page's spend, a budget's actual, a month's line on /spending.
+   * They are ONE figure kind because they are one question: which documents is
+   * this sum standing on, and is any of it unchecked?
+   */
+  | { kind: "categorySpend"; categoryId: string; from: string; to: string; label?: string };
 
 /**
  * Cash accounts only: what a day's `basis` proves about its balance.
@@ -522,12 +530,15 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
   const counted = inputs.length;
   const proven = inputs.filter((i) => i.verdict === "derived" || i.verdict === "sourced").length;
   const marked = inputs.filter((i) => i.verdict === "market_value").length;
-  const weak = counted - proven - marked;
+  // `manual` is a basis, not an absence — see the note in categorySpendProvenance
+  const byHand = inputs.filter((i) => i.verdict === "manual").length;
+  const weak = counted - proven - marked - byHand;
 
   // A total is only as proven as its weakest part, and saying so plainly is the
   // whole reason this figure gets a popover at all.
   const parts = [`${proven} of ${counted} accounts add up against a document`];
   if (marked > 0) parts.push(`${marked} ${marked === 1 ? "is" : "are"} priced from holdings`);
+  if (byHand > 0) parts.push(`${byHand} you count yourself`);
   if (weak > 0) parts.push(`${weak} ${weak === 1 ? "has" : "have"} nothing checking ${weak === 1 ? "it" : "them"}`);
   const holeText = holes
     .map((h) => {
@@ -553,6 +564,155 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
   };
 }
 
+
+/* ── an aggregate over transactions ───────────────────────────────────── */
+
+/** Top few documents named, the rest counted — a list of 40 files is not evidence. */
+const SOURCES_NAMED = 4;
+
+/**
+ * A total's proof is the proof of the rows underneath it, and its weakest row
+ * sets the verdict.
+ *
+ * ⚠️ Per-ROW day lookups would be one query each, and a category page can hold
+ * hundreds. `accountCoverage` answers per account in one call and already
+ * carries the two dates that matter — `verifiedThrough` (the last day the chain
+ * closed) and `brokenSince` (the first day it did not) — so a row is graded by
+ * comparing its own date against its account's, with no extra query at all.
+ */
+function categorySpendProvenance(
+  db: AppDatabase,
+  categoryId: string,
+  from: string,
+  to: string,
+  label: string | undefined,
+): Provenance | null {
+  const category = db.select().from(categories).where(eq(categories.id, categoryId)).get();
+  if (!category) return null;
+
+  // a parent's total includes its children, the same way the app reports it
+  const childIds = db
+    .select({ id: categories.id })
+    .from(categories)
+    .where(eq(categories.parentId, categoryId))
+    .all()
+    .map((c) => c.id);
+  const ids = [categoryId, ...childIds];
+
+  const rows = db
+    .select({
+      id: transactions.id,
+      accountId: transactions.accountId,
+      postedOn: transactions.postedOn,
+      importFileId: transactions.importFileId,
+      amountCents: transactions.amountCents,
+    })
+    .from(transactions)
+    .where(
+      and(
+        inArray(transactions.categoryId, ids),
+        eq(transactions.status, "active"),
+        gte(transactions.postedOn, from),
+        lte(transactions.postedOn, to),
+      ),
+    )
+    .all();
+
+  const subject = label ?? category.name;
+  if (rows.length === 0) {
+    return {
+      verdict: "unknown",
+      headline: `No rows in ${subject} between ${readableDay(from)} and ${readableDay(to)}, so this total is zero rather than unproven.`,
+      sources: [],
+      checkedThrough: null,
+      inputs: [],
+    };
+  }
+
+  const coverage = new Map(accountCoverage(db, to).map((c) => [c.accountId, c]));
+  const gradeRow = (accountId: string, postedOn: string): ProvenanceVerdict => {
+    const c = coverage.get(accountId);
+    if (!c) return "unknown";
+    if (c.grade === "market_value" || c.grade === "manual") return GRADE_VERDICT[c.grade];
+    if (c.brokenSince !== null && postedOn >= c.brokenSince) return "broken";
+    if (c.verifiedThrough !== null && postedOn <= c.verifiedThrough) return "derived";
+    return c.grade === "unknown" ? "unknown" : "unverified";
+  };
+
+  const handEntered = rows.filter((r) => r.importFileId === null).length;
+  const verdicts = rows.map((r) => (r.importFileId === null ? "manual" : gradeRow(r.accountId, r.postedOn)));
+  const proven = verdicts.filter((v) => v === "derived" || v === "sourced").length;
+  /**
+   * ⛔ Three buckets, not two. Folding `market_value` into "not checked" told
+   * the truth about arithmetic and lied about the figure: every
+   * `Investments > Buys` row read "0 of 404 checked", as though 404 rows were
+   * missing evidence, when what they actually are is priced from holdings —
+   * a different kind of basis, not an absent one.
+   */
+  const marked = verdicts.filter((v) => v === "market_value").length;
+  /**
+   * ⛔ FOUR buckets. `manual` is a basis, not an absence — for cash in a safe
+   * the owner IS the best evidence that will ever exist, and calling his own
+   * count "nothing checking it" is both wrong and insulting to the only source
+   * there is. It read exactly that way on /budgets before this.
+   */
+  const byHand = verdicts.filter((v) => v === "manual").length;
+  const weak = rows.length - proven - marked - byHand;
+  const verdict = weakestVerdict(verdicts);
+
+  const fileIds = [...new Set(rows.map((r) => r.importFileId).filter((f): f is string => f !== null))];
+  const files =
+    fileIds.length === 0
+      ? []
+      : db.select().from(importFiles).where(inArray(importFiles.id, fileIds)).orderBy(desc(importFiles.importedAt)).all();
+
+  const sources: ProvenanceSource[] = files.slice(0, SOURCES_NAMED).map((f) => ({
+    kind: "document" as const,
+    label: f.fileName,
+    detail: `read by ${f.parserProfile ?? "an unnamed parser"}`,
+    on: f.importedAt.slice(0, 10),
+  }));
+  if (files.length > SOURCES_NAMED) {
+    sources.push({
+      kind: "document",
+      label: `and ${files.length - SOURCES_NAMED} more documents`,
+      detail: "not listed",
+    });
+  }
+  if (handEntered > 0) {
+    sources.push({
+      kind: "hand-entered",
+      label: `${handEntered} ${handEntered === 1 ? "row" : "rows"} you entered by hand`,
+      detail: handEntered === 1 ? "no statement carries it" : "no statement carries them",
+    });
+  }
+
+  const parts = [
+    `${rows.length} ${rows.length === 1 ? "row" : "rows"} from ${files.length} ${files.length === 1 ? "document" : "documents"}`,
+  ];
+  if (marked > 0) parts.push(`${marked} ${marked === 1 ? "is" : "are"} priced from holdings rather than checked by arithmetic`);
+  if (byHand > 0) parts.push(`${byHand} you entered yourself`);
+  if (weak > 0) parts.push(`${weak} ${weak === 1 ? "has" : "have"} nothing checking ${weak === 1 ? "it" : "them"}`);
+
+  // the last day EVERY contributing row is still covered — the first account to
+  // stop being checked bounds the whole total, exactly as it does for net worth
+  const closed = [...new Set(rows.map((r) => r.accountId))]
+    .map((a) => coverage.get(a)?.verifiedThrough)
+    .filter((d): d is string => typeof d === "string")
+    .sort();
+
+  return {
+    verdict,
+    // the badge only overrides when rows are genuinely UNCHECKED — a category
+    // that is entirely market value should read "market value", not a fraction
+    badgeWord: weak === 0 ? undefined : `${rows.length - weak} of ${rows.length} checked`,
+    headline: `This total is the sum of ${parts.join(", ")}. A total is only as proven as its weakest row.`,
+    sources,
+    checkedThrough: closed[0] ?? null,
+    inputs: [],
+  };
+}
+
 /* ── entry point ──────────────────────────────────────────────────────── */
 
 /**
@@ -569,5 +729,7 @@ export function provenanceFor(db: AppDatabase, ref: FigureRef): Provenance | nul
       return statementPeriodProvenance(db, ref.id);
     case "netWorth":
       return netWorthProvenance(db, ref.day);
+    case "categorySpend":
+      return categorySpendProvenance(db, ref.categoryId, ref.from, ref.to, ref.label);
   }
 }

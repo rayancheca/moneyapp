@@ -5,7 +5,9 @@ import { useState } from "react";
 import { deactivateBudgetAction } from "@/app/budgets/actions";
 import { Icon } from "@/components/shell/Icon";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
+import type { Provenance } from "@/services/provenance";
 import { Money } from "@/components/ui/Money";
+import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { NumberRoll } from "@/components/ui/NumberRoll";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { Popover, usePopover } from "@/components/ui/Popover";
@@ -57,6 +59,8 @@ function coverageSentence(status: BudgetPaceStatus): string {
 interface BudgetRowProps {
   status: BudgetPaceStatus;
   guidanceCents: number;
+  /** what the SPENT figure is standing on — null while none can be computed */
+  provenance: Provenance | null;
 }
 
 /**
@@ -70,7 +74,7 @@ interface BudgetRowProps {
  * The headline and the definition beside it both come from `budgetVerdict`, so
  * the words and their explanation are chosen by one branch.
  */
-export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
+export function BudgetRow({ status, guidanceCents, provenance }: BudgetRowProps) {
   const { budget, tail } = status;
   // Lifted out of BudgetRolloverToggle so the details panel reacts to the toggle
   // immediately. Left inside the toggle, the panel would read the stale server
@@ -276,6 +280,11 @@ export function BudgetRow({ status, guidanceCents }: BudgetRowProps) {
           <span>
             <span className="text-ink-faint">Spent </span>
             <Money cents={status.spentCents} />
+            {/* the actual is a SUM of rows, so it is only as proven as its
+                weakest one — beside the figure, never wrapping it */}
+            {provenance && (
+              <ProvenancePopover label={`${status.categoryPath} spent`} provenance={provenance} />
+            )}
           </span>
           {/* With a carry, "Budget $50 · Left $631" cannot be reconciled by the
               reader, so the row names the line it is actually graded against and
