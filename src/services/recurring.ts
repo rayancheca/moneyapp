@@ -912,6 +912,48 @@ export function toProjectable(
 const INACTIVE_MISS_LIMIT = 1.5;
 
 /**
+ * How many cycles a money-out series may miss before a forecast STOPS carrying
+ * it — a deliberately looser bar than `INACTIVE_MISS_LIMIT`, because the two
+ * decisions cost opposite things when they are wrong.
+ *
+ * 🔴 At 1.5 they were the same number, and it published a false answer on the
+ * owner's own dashboard: `Flamingo South Beach (rent)` last posted 2026-07-08,
+ * 49 days against a 48-day tolerance — ONE day over — so `upcomingOccurrences`
+ * dropped it and the runway card reported "Committed bills come to $782.41 a
+ * month" while the real figure including rent is $3,068.11. The largest bill in
+ * the ledger vanished from the forecast for being a day late, and nothing on
+ * the card said so. `FPL (electricity)` sat at 47 of 48 and would have gone the
+ * same way the next morning.
+ *
+ * ⚠️ The cause is structural, not a one-off. Statements arrive MONTHLY and each
+ * lands on its own date (docs: statement cadence), so `last_matched_on` trails
+ * reality by up to a full cycle simply because the evidence has not been
+ * imported yet. A limit of 1.5 cycles therefore condemns any monthly bill whose
+ * statement is a fortnight late — which is most of them, most of the time.
+ *
+ * Three is the smallest limit that survives that lag with room to spare: one
+ * cycle of import lag plus two genuinely missed charges. It is not fitted to
+ * the data, but it does separate it cleanly — measured 2026-08-26, the dead
+ * series sit at 7.5, 25.3, 26.0 and 27.6 cycles while every live one is under
+ * 1.7, so nothing lands anywhere near the boundary.
+ *
+ * ⛔ `isSeriesActive` deliberately does NOT use this. "Is there recent
+ * evidence?" is a question about the past and 1.5 cycles is a fair answer;
+ * "should I keep predicting this?" is a question about the future, and being
+ * wrong there deletes a real bill from a budget. Being too eager to call
+ * something dead is the expensive mistake, so only the forecast gate moves.
+ */
+const LAPSED_MISS_LIMIT = 3;
+
+/** The forecast's own, looser bar — see `LAPSED_MISS_LIMIT`. */
+function lapsedToleranceDays(staleness: SeriesStaleness): number {
+  // reconstructed from the same step the staleness used, so the two tolerances
+  // can only ever differ by their miss limit and never by their cadence maths
+  const grace = staleness.toleranceDays - staleness.stepDays * INACTIVE_MISS_LIMIT;
+  return staleness.stepDays * LAPSED_MISS_LIMIT + grace;
+}
+
+/**
  * How late a series is, measured against the same threshold the Active/Inactive
  * split uses. Status plays no part — a dismissed series can still be perfectly
  * fresh, and freshness is what this reports.
@@ -995,7 +1037,8 @@ export function seriesHasLapsed(
   today: string = todayIso(),
 ): boolean {
   const staleness = seriesStaleness(s, today);
-  return staleness.lastMatchedOn !== null && staleness.isStale;
+  if (staleness.lastMatchedOn === null || staleness.daysSinceLastMatch === null) return false;
+  return staleness.daysSinceLastMatch > lapsedToleranceDays(staleness);
 }
 
 /**

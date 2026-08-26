@@ -106,7 +106,7 @@ export function spendBaseline(
  * series nobody has said what it is. A genuine bill sitting in `other` is fixed
  * by classifying it, which the recurring UI already does.
  */
-const COMMITTED_KINDS = ["bill", "subscription"] as const;
+export const COMMITTED_KINDS = ["bill", "subscription"] as const;
 
 /** Every live series that represents a payment owed. */
 function moneyOutSeriesIds(db: AppDatabase): Set<string> {

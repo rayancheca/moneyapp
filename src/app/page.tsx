@@ -16,6 +16,9 @@ import { resolveViewState } from "@/lib/view-state";
 import { recentLedgerRows } from "@/services/ledger-rows";
 import { carCard, runwayCard } from "@/services/committed";
 import { eatingOutCard } from "@/services/eating-out";
+import { subscriptionsCard } from "@/services/subscriptions-card";
+import { cardsOwedCard } from "@/services/cards-owed";
+import { trustCard } from "@/services/trust-card";
 import { institutionGroups } from "@/services/institution-groups";
 import { DASHBOARD_SECTION_IDS, readSettings, type DashboardSectionId } from "@/services/settings";
 import { normalizeOrder } from "@/lib/reorder";
@@ -37,6 +40,9 @@ import { SpendingPaceWidget } from "@/components/dashboard/SpendingPaceWidget";
 import { RunwayCard } from "@/components/dashboard/RunwayCard";
 import { CarCostCard } from "@/components/dashboard/CarCostCard";
 import { EatingOutCard } from "@/components/dashboard/EatingOutCard";
+import { SubscriptionsCard } from "@/components/dashboard/SubscriptionsCard";
+import { CardsOwedCard } from "@/components/dashboard/CardsOwedCard";
+import { TrustCard } from "@/components/dashboard/TrustCard";
 import { ToReviewCard } from "@/components/dashboard/ToReviewCard";
 import { UpcomingBillsStrip } from "@/components/dashboard/UpcomingBillsStrip";
 import { Money } from "@/components/ui/Money";
@@ -218,6 +224,9 @@ export default async function DashboardPage({
   const runway = runwayCard(db, today);
   const car = carCard(db, today);
   const eatingOut = eatingOutCard(db, today);
+  const subscriptions = subscriptionsCard(db, today);
+  const cardsOwed = cardsOwedCard(db, today);
+  const trust = trustCard(db, today);
   const pickerOptions = buildCategoryPickerOptions(db.select().from(categories).all());
   const reviewRows = recentLedgerRows(db, { limit: REVIEW_PREVIEW_LIMIT, needsReviewOnly: true });
   const recentRows = recentLedgerRows(db, { limit: RECENT_TXN_LIMIT });
@@ -352,7 +361,8 @@ export default async function DashboardPage({
    * of sitting in a half-width column beside a hole.
    */
   const showEatingOut = eatingOut !== null && !eatingOut.isEmpty;
-  const decisionCardCount = 1 + (car ? 1 : 0) + (showEatingOut ? 1 : 0);
+  const decisionCardCount =
+    1 + (car ? 1 : 0) + (showEatingOut ? 1 : 0) + (subscriptions ? 1 : 0) + (cardsOwed ? 1 : 0) + (trust ? 1 : 0);
   const decisionsSection = (
       <section aria-labelledby="decisions-heading">
         <h2 id="decisions-heading" className="sr-only">
@@ -362,6 +372,9 @@ export default async function DashboardPage({
           <RunwayCard data={runway} />
           {car && <CarCostCard data={car} />}
           {showEatingOut && <EatingOutCard data={eatingOut} />}
+          {subscriptions && <SubscriptionsCard data={subscriptions} />}
+          {cardsOwed && <CardsOwedCard data={cardsOwed} />}
+          {trust && <TrustCard data={trust} />}
         </div>
       </section>
   );

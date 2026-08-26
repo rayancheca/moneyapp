@@ -430,6 +430,32 @@ describe("provenanceFor — net worth", () => {
   });
 
   /**
+   * ⛔ …and it must not be COUNTED as one either. Excluding an empty account
+   * from the verdict while leaving it inside `weak` made the sentence read
+   * "1 has nothing checking it" about a set of zero — which the dashboard's
+   * trust card then rendered above a note saying that same account has
+   * "nothing to check, and nothing missing from any total". The service
+   * disagreed with itself depending on which number you read.
+   *
+   * It stays inside the "of N" denominator on purpose: it IS one of his
+   * accounts, and quietly dropping it would hide one.
+   */
+  test("an empty account is counted as empty, never as unchecked", () => {
+    const good = addAccount("a", "Chase Checking", "checking");
+    addDays(good, [
+      { day: "2026-08-01", basis: "anchored" },
+      { day: "2026-08-04", basis: "derived" },
+    ]);
+    addTxn(good, "2026-08-04");
+    addAccount("b", "Capital One 360 Checking", "checking"); // no rows, no balances
+
+    const p = provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!;
+    expect(p.headline).toContain("1 of 2 accounts add up");
+    expect(p.headline).toContain("1 is empty");
+    expect(p.headline).not.toContain("nothing checking");
+  });
+
+  /**
    * The opposite case, and the most useful sentence this service can produce:
    * rows with no balance are money the total CANNOT SEE. Wells Fargo is exactly
    * this — 39 real rows and no anchor, because the app refuses to derive a

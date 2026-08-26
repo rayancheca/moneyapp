@@ -1093,6 +1093,44 @@ describe("seriesHasLapsed", () => {
     // while isSeriesActive, correctly, calls the same row inactive
     expect(isSeriesActive({ ...commitment, status: "confirmed" as const }, "2026-08-14")).toBe(false);
   });
+
+  /**
+   * 🔴 THE regression this predicate shipped. `Flamingo South Beach (rent)` last
+   * posted 2026-07-08 — 49 days against the old 48-day tolerance, ONE day over —
+   * so the forecast dropped it and the runway card reported committed bills of
+   * $782.41 a month against a real $3,068.11. The largest bill in the ledger
+   * vanished for being a day late.
+   *
+   * Statements arrive monthly and land on their own dates, so `lastMatchedOn`
+   * trails reality by up to a full cycle purely because the evidence is not
+   * imported yet. A bill one cycle quiet is late, not cancelled.
+   */
+  test("a monthly bill one cycle quiet is late, not lapsed — statements arrive monthly", () => {
+    // the rent's exact shape on 2026-08-26: 49 days quiet, ~1.6 cycles
+    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-07-08" }, "2026-08-26")).toBe(false);
+    // and FPL's, which was one day behind it
+    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-07-10" }, "2026-08-26")).toBe(false);
+  });
+
+  test("a bill that has missed several cycles has genuinely stopped", () => {
+    // DIRECT PAYMENT HOFFMAN: 230 days quiet, ~7.5 cycles — he moved
+    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-01-08" }, "2026-08-26")).toBe(true);
+    // CHATGPT SUBSCRIPTION: 841 days, ~27.6 cycles
+    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2024-05-07" }, "2026-08-26")).toBe(true);
+  });
+
+  /**
+   * ⛔ The two limits must stay apart. `isSeriesActive` answers "is there recent
+   * evidence?" about the past, where 1.5 cycles is fair; `seriesHasLapsed`
+   * answers "should I keep predicting this?", where being wrong deletes a real
+   * bill from a budget. Collapsing them back to one number is what caused the
+   * regression above, so the divergence is pinned rather than left implicit.
+   */
+  test("the forecast gate is looser than the active/inactive split, deliberately", () => {
+    const oneCycleQuiet = { ...base, lastMatchedOn: "2026-07-08" };
+    expect(isSeriesActive({ ...oneCycleQuiet, status: "confirmed" as const }, "2026-08-26")).toBe(false);
+    expect(seriesHasLapsed(oneCycleQuiet, "2026-08-26")).toBe(false);
+  });
 });
 
 describe("rollForwardNextExpected", () => {

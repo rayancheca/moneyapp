@@ -546,7 +546,24 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
   const marked = inputs.filter((i) => i.verdict === "market_value").length;
   // `manual` is a basis, not an absence — see the note in categorySpendProvenance
   const byHand = inputs.filter((i) => i.verdict === "manual").length;
-  const weak = counted - proven - marked - byHand;
+  /**
+   * ⛔ FIVE buckets, and the fifth is EMPTY. An account with no rows and no
+   * balance was already excluded from the verdict two lines above — "an empty
+   * account is not a weakness" — but it was still counted in `weak`, so the
+   * sentence read "3 have nothing checking them" about a set of two.
+   *
+   * That is not merely off by one: the /dashboard trust card names each weak
+   * account underneath the sentence, so the third one could never be found, and
+   * the card's own note about the empty account says the opposite in the next
+   * breath ("nothing to check, and nothing missing from any total"). Excluding
+   * it from the verdict but not from the count meant the service disagreed with
+   * itself depending on which number you read.
+   *
+   * It stays inside `counted` deliberately — it IS one of his accounts, and
+   * "7 of 11" would quietly hide one — so it gets named as what it is instead.
+   */
+  const empty = emptyAccountIds.size;
+  const weak = counted - proven - marked - byHand - empty;
 
   // A total is only as proven as its weakest part, and saying so plainly is the
   // whole reason this figure gets a popover at all.
@@ -554,6 +571,7 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
   if (marked > 0) parts.push(`${marked} ${marked === 1 ? "is" : "are"} priced from holdings`);
   if (byHand > 0) parts.push(`${byHand} you count yourself`);
   if (weak > 0) parts.push(`${weak} ${weak === 1 ? "has" : "have"} nothing checking ${weak === 1 ? "it" : "them"}`);
+  if (empty > 0) parts.push(`${empty} ${empty === 1 ? "is" : "are"} empty`);
   const holeText = holes
     .map((h) => {
       const r = rowSums.get(h.accountId)!;

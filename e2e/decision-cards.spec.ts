@@ -122,6 +122,70 @@ test.describe("dashboard decision cards", () => {
     await expect(card.getByText(/a month, all in/)).toHaveCount(0);
   });
 
+  /**
+   * The eating-out card, whose figures the fixture renders INVERTED relative to
+   * the owner's ledger: seeded, groceries ($3,262.12 over 45 trips in the
+   * window) outrun eating out ($871.27 over 46 visits), where his real database
+   * reads 10.1× the other way. That is the useful accident — the sub-1×
+   * branch of the ratio sentence gets exercised here and nowhere else, and a
+   * card that only ever rendered "10.1×" would never have proved it can render
+   * "0.3×" without saying something silly.
+   */
+  /**
+   * ⚠️ `SurfaceCard` renders a `<section>`, not a div — so each card is a
+   * nested section inside the one carrying `#decisions-heading`. Scoping to
+   * `div` and taking `.first()` selects the GRID container instead, which
+   * silently widens every row query to all three cards at once. The subtotal
+   * assertion below would then be summing rows that belong to the runway.
+   */
+  const eatingOutCard = (page: import("@playwright/test").Page) =>
+    page
+      .locator("section:has(#decisions-heading) section")
+      .filter({ has: page.getByRole("heading", { level: 3, name: "Eating out" }) })
+      .first();
+
+  test("the eating-out card separates eating out from groceries", async ({ page }) => {
+    const card = eatingOutCard(page);
+    await expect(card.getByRole("heading", { level: 3, name: "Eating out" })).toBeVisible();
+
+    const all = await rows(card);
+    // the subtotal row is the one labelled "Eating out"; groceries sit below it
+    expect(valueOf(all, "Eating out")).toMatch(MONEY);
+    expect(valueOf(all, "Groceries")).toMatch(MONEY);
+  });
+
+  /**
+   * ⛔ The subtotal must equal ONLY the eating-out rows. Groceries sit directly
+   * under it and are the thing being compared against, not a component — if
+   * they ever leak into the sum, the card's whole point (isolating one habit)
+   * is gone and the number silently becomes a different number.
+   */
+  test("the eating-out subtotal excludes groceries", async ({ page }) => {
+    const card = eatingOutCard(page);
+    const all = await rows(card);
+
+    const subtotal = toCents(valueOf(all, "Eating out"));
+    const groceries = toCents(valueOf(all, "Groceries"));
+    const components = all
+      .filter((r) => ["Dining", "Delivery", "Coffee"].some((n) => r.label.startsWith(n)))
+      .reduce((sum, r) => sum + toCents(r.value), 0);
+
+    expect(components).toBeGreaterThan(0);
+    expect(subtotal).toBe(components);
+    expect(subtotal).not.toBe(components + groceries);
+  });
+
+  /**
+   * `x / 0` is Infinity and would render as "Infinity× what you spend on
+   * groceries". The unit test pins the service; this pins that nothing on the
+   * way to the DOM reintroduces it.
+   */
+  test("the ratio never renders as Infinity or NaN", async ({ page }) => {
+    const card = eatingOutCard(page);
+    await expect(card.getByText(/Infinity|NaN|undefined/)).toHaveCount(0);
+    await expect(card.getByText(/× what you spend on groceries/)).toBeVisible();
+  });
+
   test("the section is reachable by keyboard and named for screen readers", async ({ page }) => {
     await expect(page.locator("#decisions-heading")).toHaveText("What this means");
     const link = page.locator("section:has(#decisions-heading)").getByRole("link").first();
