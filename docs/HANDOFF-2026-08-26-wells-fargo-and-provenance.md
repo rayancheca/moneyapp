@@ -2,26 +2,29 @@
 
 > **Supersedes `HANDOFF-2026-08-25-rocket-queue-and-the-blind-gate.md`.**
 >
-> **`main` = `f9b6920`**, tree clean, pushed. tsc clean ·
-> **189 files / 3,564 unit** · coverage gate exit 0 · `pnpm ledger-check` exit 0 ·
-> **E2E_GATE=1: 487 passed** at `maxDiffPixels: 0`.
+> **`main` = `01cc95b`**, tree clean, pushed. tsc clean ·
+> **189 files / 3,572 unit** · coverage gate exit 0 · `pnpm ledger-check` exit 0 ·
+> **E2E_GATE=1: 487 passed** at `maxDiffPixels: 0`, twice.
 >
 > Live ledger: **10,111 active rows** · net worth $35,530.89 · income
 > **$117,924.62** (unchanged all session) · 12 accounts · 12 flagged for review.
 > `daily_balances`: derived 6,333 · carried 784 · anchored 213 ·
 > derived_unverified 42 · **gap 0**.
 
-Eight commits. Nothing is half-built.
+Ten commits. Nothing is half-built.
 
 ---
 
 # ⛔ 0. THE JOB — what is next
 
-1. **Pass 67, the rest of the "prove it" sweep.** The service and the primitive
-   exist and four surfaces are wired (dashboard hero, account balance, statement
-   periods, transaction sheet). Still to do: **category totals, budget actuals,
-   holdings values, recurring amounts, the net-worth chart's scrub readout.**
-   Each needs a new `FigureRef` kind; §2.4 has the shape they should share.
+1. **Pass 67, the rest of the "prove it" sweep.** SIX surfaces are wired —
+   dashboard hero, account balance, statement periods, transaction sheet,
+   category detail, budget rows. Still to do: **holdings values, recurring
+   amounts, and the net-worth chart's scrub readout.**
+   ⚠️ Holdings want their own kind, not `categorySpend` — a holding's value is
+   a price walk, not a sum of rows, and it must say `market_value` rather than
+   borrowing the cash vocabulary. Recurring amounts ARE a sum of rows and can
+   reuse `categorySpend`'s aggregate shape (§2.4).
 2. **PHASE III-B — Insights everywhere**, newly added to
    `docs/program-passes-60-94.md` at the owner's request:
    *"i want ai inisghts everywhere . and i really mean everywhere"*.
@@ -180,13 +183,40 @@ unknown 39** (exactly the Wells Fargo rows) **· manual 3 · unverified 1**. 89%
 read as proven, so the badge is not crying wolf — which is the only way it stays
 worth reading.
 
-### 2.4 The shape the remaining pass-67 surfaces should share
+### 2.4 The aggregate shape — `categorySpend`, and its four buckets
 
-Category totals, budget actuals, holdings and recurring amounts are all
-**aggregates over transactions**, so they want one helper rather than four:
-given a row set, report *"N rows from M source documents; K entered by hand; the
-weakest day among them is X"*. `weakestVerdict` and `ProvenanceInput` already
-exist for it. Add the `FigureRef` kinds, not a second service.
+Category totals and budget actuals are ONE figure kind, because they are one
+question. A parent's total includes its children, the way the app reports it.
+
+🔴 **The buckets were wrong twice, each time in a way that insulted a source.**
+Two → three: folding `market_value` into "not checked" made every
+`Investments > Buys` row read *"0 of 404 checked"*, as though 404 rows were
+missing evidence when they are priced from holdings. Three → four: `manual`
+then landed in the same bucket and /budgets read *"1 has nothing checking it"*
+about a row **the owner entered** — for cash in a safe he IS the best evidence
+there will ever be.
+
+⛔ **Every provenance test passed while that was on screen.** A screenshot
+caught it; the tests came after. Anything new here needs its copy read on a real
+page, not just asserted.
+
+**Cost was measured before it was written**, because `/budgets` needs one call
+per budget and each walks `accountCoverage`:
+
+| | |
+|---|---|
+| `accountCoverage` alone | 32.5ms |
+| one `categorySpend` | 4.6ms |
+| **10 calls — what /budgets costs** | **22.9ms (2.3ms each)** |
+| `netWorth` | 7.5ms |
+
+SQLite's statement cache makes the repeats nearly free, so **no memoisation was
+built**. Per-row grading is query-free too: `accountCoverage` runs once and
+already carries `verifiedThrough` and `brokenSince`, so a row is graded by
+comparing its own date against its account's.
+
+⚠️ An empty window returns *"this total is zero rather than unproven"* — a real
+distinction a reader will otherwise make wrongly.
 
 ---
 
@@ -259,3 +289,4 @@ or trend claim is verifiable **even in principle**. Restart from the type
 - **`notFound()` returns HTTP 200** app-wide from force-dynamic pages.
 - **`/merchants/[id]` still has no visual baseline** — the last uncovered route
   now that `/imports`, `/categories` and `/summary/[year]` have landed.
+- **`provenanceFor` has no `holding` or `recurringSeries` kind yet** (§0.1).
