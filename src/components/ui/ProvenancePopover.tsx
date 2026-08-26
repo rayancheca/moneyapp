@@ -36,6 +36,20 @@ interface ProvenancePopoverProps {
  * `InfoTip` documents. The badge is an annotation on the number, not a new way
  * to click it.
  *
+ * ## ⛔ …and NEVER inside a `<p>`
+ *
+ * The panel below is a sibling of the trigger and it is a `<div popover>`,
+ * which a paragraph may not contain. HTML parsing CLOSES the `<p>` where the
+ * div begins, so the browser's DOM stops matching the server's string and React
+ * throws hydration error #418 — which does not merely warn, it discards the
+ * client tree for that subtree and takes its interactivity with it. Mounted in
+ * one headline `<p>` on the dashboard it failed eight chart-view tests and the
+ * net-worth drag test, none of which name this card.
+ *
+ * Use a `<div>` (or any flow container) for a headline that carries this badge.
+ * `<h1>`…`<h3>`, `<dt>`, `<li>` and `<span>` are all fine — a `<p>` is the one
+ * that auto-closes, and therefore the one that breaks.
+ *
  * ## The badge has to be legible before it is opened
  *
  * A reader should be able to scan a page and see which figures are standing on

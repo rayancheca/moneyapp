@@ -45,14 +45,24 @@ export function CardsOwedCard({ data }: { data: CardsOwedCardData }) {
         </Link>
       </div>
 
-      <p
+      {/**
+       * ⛔ A `<div>`, not a `<p>`, and only because of what is inside it.
+       * `ProvenancePopover` renders its panel as a SIBLING of the trigger, and
+       * that panel is a `<div popover="auto">` — which a `<p>` may not contain.
+       * The browser closes the paragraph where the div begins, so the parsed
+       * DOM stops matching the server's HTML and React throws a hydration
+       * error (#418) that takes the whole page's interactivity with it: eight
+       * dashboard chart views and the net-worth drag test all failed from this
+       * one tag. See the note in ProvenancePopover.
+       */}
+      <div
         className={`figures mt-2 text-3xl font-semibold tracking-tight ${
           data.nothingOwed ? "text-positive" : "text-ink"
         }`}
       >
         {data.headline}
         <ProvenancePopover label="what you owe" provenance={provenance} />
-      </p>
+      </div>
       <p className="mt-1 max-w-prose text-xs leading-relaxed text-ink-muted">{data.explanation}</p>
 
       <dl className="mt-4 space-y-1.5 border-t border-line pt-3 text-sm">
