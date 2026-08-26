@@ -15,6 +15,7 @@ import type { SankeyGraph } from "@/lib/sankey-layout";
 import { resolveViewState } from "@/lib/view-state";
 import { recentLedgerRows } from "@/services/ledger-rows";
 import { carCard, runwayCard } from "@/services/committed";
+import { eatingOutCard } from "@/services/eating-out";
 import { institutionGroups } from "@/services/institution-groups";
 import { DASHBOARD_SECTION_IDS, readSettings, type DashboardSectionId } from "@/services/settings";
 import { normalizeOrder } from "@/lib/reorder";
@@ -35,6 +36,7 @@ import { PeriodActivityPanel } from "@/components/dashboard/PeriodActivityPanel"
 import { SpendingPaceWidget } from "@/components/dashboard/SpendingPaceWidget";
 import { RunwayCard } from "@/components/dashboard/RunwayCard";
 import { CarCostCard } from "@/components/dashboard/CarCostCard";
+import { EatingOutCard } from "@/components/dashboard/EatingOutCard";
 import { ToReviewCard } from "@/components/dashboard/ToReviewCard";
 import { UpcomingBillsStrip } from "@/components/dashboard/UpcomingBillsStrip";
 import { Money } from "@/components/ui/Money";
@@ -215,6 +217,7 @@ export default async function DashboardPage({
   const groups = institutionGroups(db);
   const runway = runwayCard(db, today);
   const car = carCard(db, today);
+  const eatingOut = eatingOutCard(db, today);
   const pickerOptions = buildCategoryPickerOptions(db.select().from(categories).all());
   const reviewRows = recentLedgerRows(db, { limit: REVIEW_PREVIEW_LIMIT, needsReviewOnly: true });
   const recentRows = recentLedgerRows(db, { limit: RECENT_TXN_LIMIT });
@@ -339,19 +342,26 @@ export default async function DashboardPage({
   );
 
   /*
-   * Pass 63's decision layer: how long the money lasts, and what the car costs.
-   * The car half is CONDITIONAL — `carCard` returns null on a ledger with no Car
-   * category, and a card of zeroes is worse than no card. When it is absent the
-   * runway takes the full width rather than leaving a hole beside it.
+   * Pass 63's decision layer, extended: how long the money lasts, what the car
+   * costs, and what eating out costs.
+   *
+   * Every card here is CONDITIONAL — each service returns null on a ledger that
+   * cannot answer its question, and a card of zeroes is worse than no card. The
+   * grid therefore counts what actually renders rather than assuming: with a
+   * single card it stays one column, so the runway takes the full width instead
+   * of sitting in a half-width column beside a hole.
    */
+  const showEatingOut = eatingOut !== null && !eatingOut.isEmpty;
+  const decisionCardCount = 1 + (car ? 1 : 0) + (showEatingOut ? 1 : 0);
   const decisionsSection = (
       <section aria-labelledby="decisions-heading">
         <h2 id="decisions-heading" className="sr-only">
           What this means
         </h2>
-        <div className={`grid gap-4 *:min-w-0 ${car ? "lg:grid-cols-2" : ""}`}>
+        <div className={`grid gap-4 *:min-w-0 ${decisionCardCount > 1 ? "lg:grid-cols-2" : ""}`}>
           <RunwayCard data={runway} />
           {car && <CarCostCard data={car} />}
+          {showEatingOut && <EatingOutCard data={eatingOut} />}
         </div>
       </section>
   );
