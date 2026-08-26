@@ -13,6 +13,7 @@ import { chaseCardStatementPdf } from "./chase-card-statement-profile";
 import { chaseCheckingStatementPdf } from "./chase-checking-statement-profile";
 import { discoverItStatementPdf } from "./discover-statement-profile";
 import { ofxProfile } from "./ofx-profile";
+import { rocketMoneyCsv } from "./rocket-money-csv";
 import { statementPdf } from "./pdf-profile";
 import { robinhoodBrokerageStatementPdf } from "./robinhood-brokerage-statement-profile";
 import { robinhoodCryptoStatementPdf } from "./robinhood-crypto-statement-profile";
@@ -28,6 +29,14 @@ export const PROFILES: ParserProfile[] = [
   capOne360Csv,
   sofiCsv,
   robinhoodActivityCsv,
+  /*
+   * A secondary export, and the only source this ledger has for Wells Fargo.
+   * Its header is unlike any bank's, so ordering is not load-bearing — but it
+   * emits ONLY the accounts in its own allowlist, because its descriptions are
+   * rewritten and would therefore not dedupe against the seven accounts here
+   * that do have real statements. See the file's header comment.
+   */
+  rocketMoneyCsv,
   ofxProfile,
   /*
    * Every PDF profile below matches ALL pdfs and is separated by matchesContent

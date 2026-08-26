@@ -12,7 +12,7 @@ import { statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { latestBalances, netWorthSeries } from "@/services/derivation";
 import { listSplits, setSplits } from "@/services/transaction-splits";
-import { importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, resolveAccount, type ImportInput } from "./service";
+import { fidelityOf, importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, resolveAccount, type ImportInput } from "./service";
 import { PROFILES } from "./profiles";
 import { importFiles as importFilesTable } from "@/db/schema/imports";
 import { dedupeHash } from "@/lib/hash";
@@ -879,4 +879,46 @@ describe("the full 2-year backfill (golden acceptance)", () => {
       expect(active.length).toBe(expectedTxnTotal);
     },
   );
+});
+
+/* ── per-profile fidelity ─────────────────────────────────────────────── */
+
+describe("fidelityOf — a format can lie about how much a file can be trusted", () => {
+  /**
+   * The scenario this exists for, in full:
+   *
+   * `rocket-money-csv` is a third-party re-export covering Wells Fargo, the one
+   * account with no bank feed. Ranked by FORMAT it is a `csv` at priority 1 —
+   * more trustworthy than every PDF statement in the app. Ownership is decided
+   * by `coveredBy.some((r) => r.priority < myPriority)`, so the days it covers
+   * would be OWNED by it, and the real Wells Fargo statement — whenever it
+   * arrives — would have every one of its rows counted as `skippedOwned` and
+   * silently dropped. The export is already known to be incomplete: its 39 rows
+   * sum to $2,396.67 and the owner's bank app disagrees.
+   *
+   * ⚠️ The end-to-end takeover cannot be exercised yet: no Wells Fargo parser
+   * profile exists, and `ofxProfile` only ever hints Chase or Capital One, so
+   * there is no way to route a higher-fidelity file to that account in a test.
+   * What IS asserted here is the decision itself, which is the whole mechanism —
+   * plus the property that no OTHER profile's behaviour moved.
+   */
+  test("the Rocket Money export ranks below every real statement format", () => {
+    const rocket = fidelityOf("csv", "rocket-money-csv");
+    expect(rocket).toBeGreaterThan(fidelityOf("pdf", "chase-card-statement-pdf"));
+    expect(rocket).toBeGreaterThan(fidelityOf("csv", "chase-deposit-csv"));
+    expect(rocket).toBeGreaterThan(fidelityOf("qfx", "ofx-generic"));
+  });
+
+  test("every other profile still ranks exactly by its format", () => {
+    // the override map must be a scalpel, not a new ordering
+    expect(fidelityOf("qfx", "ofx-generic")).toBe(fidelityOf("qfx", null));
+    expect(fidelityOf("csv", "chase-deposit-csv")).toBe(fidelityOf("csv", null));
+    expect(fidelityOf("pdf", "sofi-combined-statement-pdf")).toBe(fidelityOf("pdf", null));
+    expect(fidelityOf("pdf", undefined)).toBe(fidelityOf("pdf", null));
+  });
+
+  test("ofx still outranks csv, and csv still outranks pdf, for unoverridden files", () => {
+    expect(fidelityOf("ofx", null)).toBeLessThan(fidelityOf("csv", null));
+    expect(fidelityOf("csv", null)).toBeLessThan(fidelityOf("pdf", null));
+  });
 });

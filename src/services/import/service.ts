@@ -40,6 +40,31 @@ import { ParseError, type AccountHint, type CanonicalTxn, type ParsedStatement, 
 
 const FORMAT_PRIORITY: Record<FileFormat, number> = { ofx: 0, qfx: 0, csv: 1, pdf: 2 };
 
+/**
+ * Per-PROFILE fidelity, for sources whose FORMAT lies about how much they can
+ * be trusted. Lower is more trustworthy, same scale as `FORMAT_PRIORITY`.
+ *
+ * ⛔ `rocket-money-csv` is a third-party re-export, not a bank's own file, and
+ * it is provably incomplete: the sum of its 39 Wells Fargo rows is $2,396.67
+ * and the owner's bank app disagrees. Ranked by format alone it would be a
+ * `csv` at priority 1 — MORE trustworthy than every PDF statement in the app —
+ * so the day it covers would "own" those days and a real Wells Fargo statement
+ * would have every one of its rows silently dropped as `skippedOwned`.
+ *
+ * Ranking it below `pdf` inverts that correctly, and does so through machinery
+ * that already exists: the takeover path below supersedes a lower-fidelity
+ * source's rows when a higher-fidelity file covers the same day. So when the
+ * real statement arrives, it REPLACES this export rather than being blocked by
+ * it, and nothing has to be deleted by hand first.
+ */
+const PROFILE_FIDELITY: Record<string, number> = { "rocket-money-csv": 9 };
+
+/** A file's trust rank: its profile's override, else its format's. */
+export function fidelityOf(format: FileFormat, parserProfile: string | null | undefined): number {
+  const override = parserProfile == null ? undefined : PROFILE_FIDELITY[parserProfile];
+  return override ?? FORMAT_PRIORITY[format];
+}
+
 export interface PeriodOutcome {
   accountName: string;
   start: string;
@@ -402,6 +427,7 @@ function coveredRanges(db: AppDatabase, accountId: string): CoveredRange[] {
     .select({
       importFileId: transactions.importFileId,
       format: importFiles.format,
+      parserProfile: importFiles.parserProfile,
       minDay: min(transactions.postedOn),
       maxDay: max(transactions.postedOn),
     })
@@ -420,7 +446,7 @@ function coveredRanges(db: AppDatabase, accountId: string): CoveredRange[] {
     .filter((r) => r.importFileId && r.minDay && r.maxDay)
     .map((r) => ({
       importFileId: r.importFileId!,
-      priority: FORMAT_PRIORITY[r.format],
+      priority: fidelityOf(r.format, r.parserProfile),
       minDay: r.minDay!,
       maxDay: r.maxDay!,
     }));
@@ -431,6 +457,7 @@ function coveredRanges(db: AppDatabase, accountId: string): CoveredRange[] {
     .select({
       importFileId: statementPeriods.importFileId,
       format: importFiles.format,
+      parserProfile: importFiles.parserProfile,
       periodStart: statementPeriods.periodStart,
       periodEnd: statementPeriods.periodEnd,
     })
@@ -446,7 +473,7 @@ function coveredRanges(db: AppDatabase, accountId: string): CoveredRange[] {
   const byFile = new Map<string, CoveredRange>();
   for (const r of [...fromTxns, ...declared.map((d) => ({
     importFileId: d.importFileId,
-    priority: FORMAT_PRIORITY[d.format],
+    priority: fidelityOf(d.format, d.parserProfile),
     minDay: d.periodStart,
     maxDay: d.periodEnd,
   }))]) {
@@ -808,7 +835,7 @@ async function importOneFile(
       touchedAccounts.add(accountId);
       fileAccountIds.add(accountId);
       const ranges = coveredRanges(db, accountId).filter((r) => r.importFileId !== fileRow.id);
-      const myPriority = FORMAT_PRIORITY[file.format];
+      const myPriority = fidelityOf(file.format, profile.id);
 
       const indexed = assignOccurrenceIndexes(statement.txns, (t) => ({
         accountId,

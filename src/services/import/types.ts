@@ -31,7 +31,7 @@ export interface CanonicalTxn {
 }
 
 export interface AccountHint {
-  institution: "Chase" | "Discover" | "Capital One" | "SoFi" | "Robinhood";
+  institution: "Chase" | "Discover" | "Capital One" | "SoFi" | "Robinhood" | "Wells Fargo";
   last4?: string;
   type?: AccountType;
   subtype?: AccountSubtype;
