@@ -331,18 +331,35 @@ export default async function DashboardPage({
             305px against its 291px share. Zeroing the items' minimum lets the
             tracks shrink; the rows inside already truncate. Same failure shape
             as `truncate` needing `min-w-0`, and page.test.ts gates it. */}
-        <div className="grid gap-4 *:min-w-0 lg:grid-cols-[1.5fr_1fr]">
+        {/* ⚠️ `items-start`, so a short column ENDS instead of stretching to the
+            tall one's height. Without it the review card's own box grows to
+            match the pace/statements/investments stack beside it and carries a
+            block of empty white under two rows.
+
+            The review queue sits in the NARROW track and on the right: it is
+            usually two or three rows and often zero, while the stack beside it
+            is three cards deep and never empty. Giving the short, frequently
+            empty thing the wide half is what put the hole in the middle of the
+            dashboard. Owner, 2026-08-26: "to review should be smaller i dont
+            like the empty space under it". */}
+        <div className="grid items-start gap-4 *:min-w-0 lg:grid-cols-[1.5fr_1fr]">
+          {/* ⚠️ `order-last lg:order-none` keeps the SINGLE-column layout the way
+              it already was. Below `lg` there is no left or right, only
+              sequence, and the review queue is the one thing here asking for an
+              action — burying it under three informational cards on a phone
+              would be a change nobody asked for. The swap is a two-column
+              concern, so it only applies where there are two columns. */}
+          <div className="order-last space-y-4 lg:order-none">
+            {data.pace && <SpendingPaceWidget pace={data.pace} />}
+            <StatementsTeaser pulls={data.statements} />
+            {data.investments && <InvestmentsTeaser data={data.investments} />}
+          </div>
           <ToReviewCard
             count={data.reviewCount}
             href={data.reviewHref}
             rows={reviewRows}
             categories={pickerOptions}
           />
-          <div className="space-y-4">
-            {data.pace && <SpendingPaceWidget pace={data.pace} />}
-            <StatementsTeaser pulls={data.statements} />
-            {data.investments && <InvestmentsTeaser data={data.investments} />}
-          </div>
         </div>
         <div className="mt-4">
           <UpcomingBillsStrip data={data.upcoming} />
