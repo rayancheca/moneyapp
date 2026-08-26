@@ -19,6 +19,9 @@ import { eatingOutCard } from "@/services/eating-out";
 import { subscriptionsCard } from "@/services/subscriptions-card";
 import { cardsOwedCard } from "@/services/cards-owed";
 import { trustCard } from "@/services/trust-card";
+import { incomeCard } from "@/services/income-card";
+import { concentrationCard } from "@/services/concentration-card";
+import { moversCard } from "@/services/movers-card";
 import { institutionGroups } from "@/services/institution-groups";
 import { DASHBOARD_SECTION_IDS, readSettings, type DashboardSectionId } from "@/services/settings";
 import { normalizeOrder } from "@/lib/reorder";
@@ -43,6 +46,9 @@ import { EatingOutCard } from "@/components/dashboard/EatingOutCard";
 import { SubscriptionsCard } from "@/components/dashboard/SubscriptionsCard";
 import { CardsOwedCard } from "@/components/dashboard/CardsOwedCard";
 import { TrustCard } from "@/components/dashboard/TrustCard";
+import { IncomeCard } from "@/components/dashboard/IncomeCard";
+import { ConcentrationCard } from "@/components/dashboard/ConcentrationCard";
+import { MoversCard } from "@/components/dashboard/MoversCard";
 import { ToReviewCard } from "@/components/dashboard/ToReviewCard";
 import { UpcomingBillsStrip } from "@/components/dashboard/UpcomingBillsStrip";
 import { Money } from "@/components/ui/Money";
@@ -227,6 +233,9 @@ export default async function DashboardPage({
   const subscriptions = subscriptionsCard(db, today);
   const cardsOwed = cardsOwedCard(db, today);
   const trust = trustCard(db, today);
+  const income = incomeCard(db, today);
+  const concentration = concentrationCard(db, today);
+  const movers = moversCard(db, today);
   const pickerOptions = buildCategoryPickerOptions(db.select().from(categories).all());
   const reviewRows = recentLedgerRows(db, { limit: REVIEW_PREVIEW_LIMIT, needsReviewOnly: true });
   const recentRows = recentLedgerRows(db, { limit: RECENT_TXN_LIMIT });
@@ -376,21 +385,38 @@ export default async function DashboardPage({
    * grid therefore counts what actually renders rather than assuming: with a
    * single card it stays one column, so the runway takes the full width instead
    * of sitting in a half-width column beside a hole.
+   *
+   * ⚠️ `items-start` for the same reason the activity grid has it: a grid item
+   * STRETCHES to its row's height by default, so a short card's own white box
+   * grows to match the tall one beside it and carries a block of nothing
+   * inside itself. Eating out ran ~390px of empty white under its last line
+   * next to the subscriptions card. Ragged bottoms are honest; padded ones are
+   * the thing the owner objected to.
    */
   const showEatingOut = eatingOut !== null && !eatingOut.isEmpty;
   const decisionCardCount =
-    1 + (car ? 1 : 0) + (showEatingOut ? 1 : 0) + (subscriptions ? 1 : 0) + (cardsOwed ? 1 : 0) + (trust ? 1 : 0);
+    1 +
+    [car, showEatingOut ? eatingOut : null, subscriptions, cardsOwed, trust, income, concentration, movers].filter(
+      Boolean,
+    ).length;
   const decisionsSection = (
       <section aria-labelledby="decisions-heading">
         <h2 id="decisions-heading" className="sr-only">
           What this means
         </h2>
-        <div className={`grid gap-4 *:min-w-0 ${decisionCardCount > 1 ? "lg:grid-cols-2" : ""}`}>
+        <div className={`grid items-start gap-4 *:min-w-0 ${decisionCardCount > 1 ? "lg:grid-cols-2" : ""}`}>
+          {/* Ordered by what a reader acts on, not by when they were built:
+              where the money stands (runway, car, income, cards), then what it
+              is being spent on (eating out, subscriptions, what changed), then
+              what it is invested in, and last how much of any of it is proven. */}
           <RunwayCard data={runway} />
           {car && <CarCostCard data={car} />}
+          {income && <IncomeCard data={income} />}
+          {cardsOwed && <CardsOwedCard data={cardsOwed} />}
           {showEatingOut && <EatingOutCard data={eatingOut} />}
           {subscriptions && <SubscriptionsCard data={subscriptions} />}
-          {cardsOwed && <CardsOwedCard data={cardsOwed} />}
+          {movers && <MoversCard data={movers} />}
+          {concentration && <ConcentrationCard data={concentration} />}
           {trust && <TrustCard data={trust} />}
         </div>
       </section>

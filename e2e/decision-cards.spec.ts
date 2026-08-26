@@ -18,6 +18,14 @@ import { expect, test } from "@playwright/test";
  */
 
 const MONEY = /^-?−?\$[\d,]+\.\d{2}$/;
+/**
+ * Money or a percentage, either of which may carry an explicit sign.
+ *
+ * The `+` matters: a DELTA prints its direction (`+$76.07`), where a balance
+ * does not. `MONEY` above stays strict because the runway's rows really are
+ * balances — a `+` there would be the bug, not the feature.
+ */
+const MONEY_OR_PCT = /^[+-−]?\$[\d,]+\.\d{2}$|^[+-−]?[\d,]+(\.\d+)?%$/;
 
 /**
  * Every dt/dd pair in the card, as plain data.
@@ -101,14 +109,28 @@ test.describe("dashboard decision cards", () => {
     );
   });
 
-  test("every figure on the card is real money, never a placeholder", async ({ page }) => {
+  /**
+   * ⚠️ Widened from "is money" to "is a real figure" when the section grew past
+   * the two cards it was written for. `.figures` is TYPOGRAPHIC — mono plus
+   * tabular numerals (globals.css) — not a claim that a value is a currency
+   * amount, and a percentage in a tabular column is exactly what it is for. The
+   * movers card publishes a `-15%` change beside its money and was right to.
+   *
+   * The assertion this test actually exists to make is unchanged: every figure
+   * is REAL DATA and never a placeholder. Loosening the shape while keeping the
+   * placeholder sweep below is the honest edit; deleting the test because a new
+   * card disagreed with its premise would not be.
+   */
+  test("every figure on the card is real data, never a placeholder", async ({ page }) => {
     const card = page.locator("section:has(#decisions-heading)");
     const figures = await card.locator("dd .figures, dd span.figures").allInnerTexts();
     expect(figures.length).toBeGreaterThan(0);
     for (const f of figures) {
-      expect(f.trim(), `"${f}" should be formatted money`).toMatch(MONEY);
+      expect(f.trim(), `"${f}" should be money or a percentage`).toMatch(MONEY_OR_PCT);
     }
     await expect(card.getByText(/NaN|Infinity|undefined|\$0\.00 of cash/)).toHaveCount(0);
+    // −0 renders as "-$0.00" and reads as a debt rounded down; it shipped once
+    await expect(card.getByText(/^-\$0\.00$|^−\$0\.00$/)).toHaveCount(0);
   });
 
   /**
