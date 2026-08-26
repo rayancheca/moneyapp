@@ -103,6 +103,30 @@ export interface ProvenanceInput {
   label: string;
   verdict: ProvenanceVerdict;
   detail?: string;
+  /**
+   * Stable identity of the contributor — an account id for `netWorth`.
+   *
+   * ⚠️ Present so a caller can JOIN to this list instead of guessing at it. The
+   * dashboard's trust card first matched by array index with a label fallback,
+   * which is an invariant across a service boundary rather than a contract:
+   * it holds only because `netWorthProvenance` happens to build `inputs` as
+   * `coverage.map(...)`, and nothing stops a future reorder or filter here from
+   * silently mispairing every row.
+   */
+  id?: string;
+  /**
+   * Contributes NOTHING and is missing nothing — no rows and no balance.
+   *
+   * ⛔ Published as data because it is a real distinction that was otherwise
+   * expressible only as PROSE ("empty — no rows, no balance" versus "N rows but
+   * no recorded balance"), and a caller that needs it was left parsing that
+   * sentence or re-deriving the predicate. Two definitions of one idea is a
+   * defect; this is the one definition.
+   *
+   * An empty account is excluded from the verdict and counted separately in the
+   * headline — see the five-bucket note in `netWorthProvenance`.
+   */
+  isEmpty?: boolean;
 }
 
 export interface Provenance {
@@ -518,8 +542,10 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
   );
 
   const inputs: ProvenanceInput[] = coverage.map((c) => ({
+    id: c.accountId,
     label: c.accountName,
     verdict: GRADE_VERDICT[c.grade],
+    isEmpty: emptyAccountIds.has(c.accountId),
     detail:
       c.grade === "verified" && c.verifiedThrough
         ? `adds up through ${readableDay(c.verifiedThrough)}`

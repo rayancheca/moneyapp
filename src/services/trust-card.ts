@@ -269,10 +269,15 @@ export function trustCard(db: AppDatabase, today: string = todayIso()): TrustCar
   // `netWorthProvenance` never returns null today; if it ever cannot answer,
   // this card has no sentence to print and must not invent one
   if (!netWorth) return null;
-  const inputs = netWorth.inputs;
-  const inputByName = new Map(inputs.map((i) => [i.label, i] as const));
-  const inputFor = (name: string, i: number) =>
-    inputs[i]?.label === name ? inputs[i] : inputByName.get(name);
+  /*
+   * Joined by ACCOUNT ID, which `ProvenanceInput` publishes for exactly this.
+   * The first version matched by array index with a label fallback — an
+   * invariant across a service boundary rather than a contract, holding only
+   * because netWorthProvenance happens to build `inputs` as `coverage.map(...)`.
+   * A reorder or filter there would have silently mispaired every row, and two
+   * accounts sharing a name would have collided.
+   */
+  const inputById = new Map(netWorth.inputs.filter((i) => i.id !== undefined).map((i) => [i.id!, i] as const));
 
   /*
    * Rows per account, for the empty-versus-hole split ONLY. `excluded` counts:
@@ -291,8 +296,8 @@ export function trustCard(db: AppDatabase, today: string = todayIso()): TrustCar
     ).map((r) => [r.accountId, r.n] as const),
   );
 
-  const lines: TrustAccountLine[] = coverage.map((c, i) => {
-    const input = inputFor(c.accountName, i);
+  const lines: TrustAccountLine[] = coverage.map((c) => {
+    const input = inputById.get(c.accountId);
     const rows = rowCounts.get(c.accountId) ?? 0;
     // stranded only while there is no balance to check the rows against; an
     // account with a derived history is in the total whatever its grade
@@ -306,7 +311,13 @@ export function trustCard(db: AppDatabase, today: string = todayIso()): TrustCar
       uncheckedDays: c.days.derived_unverified + c.days.gap,
       strandedRows: stranded,
       isHole: stranded > 0,
-      isEmpty: c.grade === "unknown" && rows === 0,
+      /*
+       * ⛔ Taken from provenance, not re-derived. `isEmpty` used to restate the
+       * predicate netWorthProvenance uses to drop an account from its verdict,
+       * so the two could drift and the card would disagree with the badge it
+       * exists to explain. One definition, published as data.
+       */
+      isEmpty: input?.isEmpty ?? (c.grade === "unknown" && rows === 0),
     };
   });
 
