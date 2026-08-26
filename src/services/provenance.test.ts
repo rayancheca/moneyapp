@@ -338,21 +338,42 @@ describe("provenanceFor — a transaction", () => {
   });
 
   /**
-   * A row can be sourced by a document that proves nothing about the totals
-   * around it. The row's verdict and the day's verdict are different questions,
-   * and folding them together would either overstate the row or understate the
-   * document.
+   * ⛔ A row is NOT proven merely because a file carried it. This shipped as
+   * `sourced` and put a green "on a statement" badge on a row from the Rocket
+   * Money export — a third-party re-export carrying no balances, the least
+   * trustworthy source in the app. Caught by opening the sheet and reading it,
+   * not by any assertion that existed at the time.
    */
-  test("a sourced row whose period proves nothing does not claim a check", () => {
+  test("a row from a file that carries no balances does not read as proven", () => {
     const id = addAccount("a", "Wells Fargo Everyday Checking", "checking");
     const file = addFile("f1", "rocket-money-export.csv", "rocket-money-csv");
     addPeriod("p1", id, file, "2026-07-27", "2026-08-24", "not_applicable");
     const txn = addTxn(id, "2026-08-03", { importFileId: file });
 
     const p = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;
-    expect(p.verdict).toBe("sourced");
-    expect(p.headline).not.toMatch(/reconcile/i);
+    expect(p.verdict).not.toBe("sourced");
+    expect(p.headline).toMatch(/nothing checks the total it sits in/i);
     expect(p.checkedThrough).toBeNull();
+  });
+
+  /**
+   * The other arbiter. A CSV import supplies its running balance as an ANCHOR
+   * and creates NO statement period, so judging by periods alone would call
+   * every CSV-imported row unchecked — while the anchor chain closes on it
+   * exactly. `accountCoverage` has always counted both; so must this.
+   */
+  test("a row with no period is still proven when the anchor chain closes on its day", () => {
+    const id = addAccount("a", "Chase Checking", "checking");
+    const file = addFile("f1", "Chase3522_Activity.CSV", "chase-deposit-csv");
+    addDays(id, [
+      { day: "2026-07-14", basis: "anchored" },
+      { day: "2026-07-15", basis: "derived" },
+    ]);
+    const txn = addTxn(id, "2026-07-15", { importFileId: file });
+
+    const p = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;
+    expect(p.verdict).toBe("derived");
+    expect(p.headline).toMatch(/chain closes across this day/i);
   });
 
   test("a row that does not exist is null", () => {

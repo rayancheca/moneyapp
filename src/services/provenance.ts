@@ -236,16 +236,38 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
     });
   }
 
-  // A row is sourced by the document that carried it. Whether the money AROUND
-  // it adds up is the day's question, and is reported separately rather than
-  // being folded into this row's verdict.
+  /**
+   * ⛔ A row is NOT proven merely because a file carried it, and treating it
+   * that way put a green "on a statement" badge on a row from the Rocket Money
+   * export — a third-party re-export that carries no balances and is the least
+   * trustworthy source in the app. Caught by opening the sheet and reading it.
+   *
+   * Both arbiters count, exactly as `accountCoverage` has them:
+   *
+   *  1. **The period reconciled** — opening + rows = closing, to the cent. That
+   *     is a document proving this row's neighbourhood adds up.
+   *  2. **The anchor chain** — the day's `basis`. A CSV import supplies a
+   *     running balance as an ANCHOR and creates no period at all, so judging
+   *     by periods alone would call every CSV-imported row unchecked when the
+   *     chain closes on it exactly.
+   *
+   * With neither, the honest answer is the day's own verdict — `unknown` for
+   * the Wells Fargo rows, which have no derived balance because the app refuses
+   * to invent one.
+   */
   const reconciled = period?.reconciliation === "reconciled";
+  const dayVerdict: ProvenanceVerdict =
+    day && account ? (isInvestment(account.type) ? "market_value" : BASIS_VERDICT[day.basis]) : "unknown";
+  const verdict: ProvenanceVerdict = reconciled ? "sourced" : dayVerdict;
+
   const headline = reconciled
     ? `This row came from ${file?.fileName ?? "a statement"}, and that statement's balances reconcile to the cent.`
-    : `This row came from ${file?.fileName ?? "an imported file"}.`;
+    : dayVerdict === "derived"
+      ? `This row came from ${file?.fileName ?? "an imported file"}. That file carries no balances of its own, but ${account?.name ?? "the account"}'s chain closes across this day.`
+      : `This row came from ${file?.fileName ?? "an imported file"} — which carries no balances, so nothing checks the total it sits in.`;
 
   return {
-    verdict: "sourced",
+    verdict,
     headline,
     sources,
     checkedThrough: reconciled ? period.periodEnd : null,
@@ -254,7 +276,7 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
         ? [
             {
               label: `${account.name} on ${readableDay(txn.postedOn)}`,
-              verdict: isInvestment(account.type) ? "market_value" : BASIS_VERDICT[day.basis],
+              verdict: dayVerdict,
               detail: `the day's balance is ${day.basis.replace(/_/g, " ")}`,
             },
           ]

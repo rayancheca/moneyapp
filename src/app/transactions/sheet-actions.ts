@@ -14,6 +14,7 @@ import {
   type MatchingRule,
   type TxnHistory,
 } from "@/services/txn-detail";
+import { provenanceFor, type Provenance } from "@/services/provenance";
 import type { ActionResult } from "./action-types";
 
 /**
@@ -48,6 +49,16 @@ export interface SheetPanel {
   history: TxnHistory | null;
   /** enabled rules that already fire on this exact row */
   matchingRules: MatchingRule[];
+  /**
+   * "Prove it" for this row — which file carried it, which period covers it,
+   * and what the day's balance basis says.
+   *
+   * ⚠️ It rides on the SHEET load, not on the ledger query, and that placement
+   * is the whole reason it is affordable: `provenanceFor` runs four queries,
+   * and the ledger renders up to a page of rows at a time. Serialising it into
+   * every row would repeat the per-row-work regression pass 31 already found.
+   */
+  provenance: Provenance | null;
 }
 
 export async function loadSheetPanel(
@@ -91,7 +102,9 @@ export async function loadSheetPanel(
     // the categorize learning loop: suggestion + history + matching rules
     const { suggestion, history, matchingRules } = categorizeContext(db, id);
 
-    return { ok: true, data: { merchant, siblings, similarCount, suggestion, history, matchingRules } };
+    const provenance = provenanceFor(db, { kind: "transaction", id });
+
+    return { ok: true, data: { merchant, siblings, similarCount, suggestion, history, matchingRules, provenance } };
   } catch (error: unknown) {
     return { ok: false, error: error instanceof Error ? error.message : "Failed to load panel" };
   }

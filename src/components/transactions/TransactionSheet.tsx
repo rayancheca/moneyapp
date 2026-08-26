@@ -9,6 +9,7 @@ import { Checkbox, Field, Input } from "@/components/ui/Field";
 import { InlineEditableText } from "@/components/ui/InlineEditableText";
 import { SeriesLinkPanel, TransferLinkPanel } from "./LinkPanels";
 import { Money } from "@/components/ui/Money";
+import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { Sheet } from "@/components/ui/Sheet";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { toast } from "@/components/ui/Toast";
@@ -174,6 +175,12 @@ export function TransactionSheet({
             <span aria-hidden>·</span>
             <span>{txn.accountName}</span>
             {txn.status !== "active" ? <Badge tone="warning">{txn.status}</Badge> : null}
+            {/* "prove it" for this row — beside the date and account it is a
+                claim about, never wrapping the amount. Arrives with the lazily
+                loaded panel, so the ledger pays nothing for it. */}
+            {panel?.provenance ? (
+              <ProvenancePopover label="this transaction" provenance={panel.provenance} />
+            ) : null}
           </p>
         </header>
 

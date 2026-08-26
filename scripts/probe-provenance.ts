@@ -46,3 +46,17 @@ for (const [label, q] of [
 }
 
 show("a figure that does not exist", provenanceFor(db, { kind: "transaction", id: "nope" }));
+
+// ── the spread across the real ledger: what fraction of rows read as proven? ──
+console.log("\n── VERDICT SPREAD over 400 sampled active rows");
+const sample = db.all(sql.raw(
+  "SELECT id FROM transactions WHERE status='active' ORDER BY posted_on DESC LIMIT 400",
+)) as { id: string }[];
+const spread = new Map<string, number>();
+for (const r of sample) {
+  const p = provenanceFor(db, { kind: "transaction", id: r.id });
+  if (p) spread.set(p.verdict, (spread.get(p.verdict) ?? 0) + 1);
+}
+for (const [v, n] of [...spread.entries()].sort((a, b) => b[1] - a[1])) {
+  console.log(`   ${v.padEnd(14)} ${String(n).padStart(4)}  ${"█".repeat(Math.round((n / sample.length) * 40))}`);
+}
