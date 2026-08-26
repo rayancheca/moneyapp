@@ -231,6 +231,18 @@ export function NetWorthChartPanel({
                 · no statement for {formatNameList(cov.gapAccounts)} on this date
               </span>
             )}
+            {/* (c) covered, counted, and CHECKED BY NOTHING — the balance was
+                replayed past the last anchor with nothing to land on. Distinct
+                from (b): the money is not missing and the arithmetic has not
+                failed, so it reads faint like the calendar fact above it rather
+                than in the warning tone a real hole earns. Until this clause the
+                series skipped only `gap`, so an unchecked total was drawn
+                identically to a reconciled one. */}
+            {cov && cov.unverifiedAccounts.length > 0 && cov.gapAccounts.length === 0 && (
+              <span className="font-normal text-ink-faint">
+                · nothing checks {formatNameList(cov.unverifiedAccounts)} on this date
+              </span>
+            )}
             {transit !== 0 && (
               <span className="font-normal text-ink-faint">
                 · {transit > 0

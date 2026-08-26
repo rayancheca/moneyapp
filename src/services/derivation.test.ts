@@ -411,6 +411,63 @@ describe("integration: rebuild + net worth against a real database", () => {
     expect(late?.coveredAccountNames).toEqual(["A", "B"]);
   });
 
+  /**
+   * 🔴 The regression that shipped. An account holding zero rows and zero
+   * balances has no first-known day, so it could never be "covered" — and the
+   * live dashboard therefore reported "no statement for Capital One 360
+   * Checking on this date" in the WARNING tone on all 1,464 days of the series,
+   * while ZERO of them could be `complete`.
+   *
+   * Nothing is missing from an account that has never held anything.
+   */
+  test("an account holding nothing does not make every day incomplete", () => {
+    const a = createAccount(bundle.db, { institutionId: institutionId("Chase"), name: "A", type: "checking" });
+    createAccount(bundle.db, { institutionId: institutionId("SoFi"), name: "Empty", type: "checking" });
+    addManualAnchor(bundle.db, { accountId: a, anchoredOn: "2026-07-01", enteredCents: 100_000 });
+
+    const day = netWorthSeries(bundle.db).find((p) => p.day === "2026-07-01")!;
+    expect(day.complete).toBe(true);
+    expect(day.gapAccounts).toEqual([]);
+    expect(day.missingAccounts).toEqual([]);
+    // named, so a surface CAN mention it — but never as a hole
+    expect(day.emptyAccounts).toEqual(["Empty"]);
+    // and it contributes nothing to the total
+    expect(day.totalCents).toBe(100_000);
+  });
+
+  /**
+   * ⛔ The other side of the line, which must not move: an account with ROWS but
+   * no placeable balance is money the total cannot see, and stays a hole.
+   */
+  test("an account with rows but no balances is still a hole", () => {
+    const a = createAccount(bundle.db, { institutionId: institutionId("Chase"), name: "A", type: "checking" });
+    const stranded = createAccount(bundle.db, { institutionId: institutionId("SoFi"), name: "Stranded", type: "checking" });
+    addManualAnchor(bundle.db, { accountId: a, anchoredOn: "2026-07-01", enteredCents: 100_000 });
+    bundle.db
+      .insert(transactions)
+      .values({
+        id: "stranded-1",
+        accountId: stranded,
+        importFileId: null,
+        postedOn: "2026-07-01",
+        amountCents: -2_500,
+        rawDescription: "ROW",
+        normalizedDescription: "ROW",
+        status: "active",
+        needsReview: false,
+        occurrenceIndex: 0,
+        dedupeHash: "stranded-hash",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+      .run();
+
+    const day = netWorthSeries(bundle.db).find((p) => p.day === "2026-07-01")!;
+    expect(day.gapAccounts).toEqual(["Stranded"]);
+    expect(day.emptyAccounts).toEqual([]);
+    expect(day.complete).toBe(false);
+  });
+
   test("a fresher account's trailing days carry the others forward (net worth stays assets − liabilities)", () => {
     // regression for the "only Venture X" bug: one account's statement runs past the
     // others', so the tail must still sum ALL accounts (carried forward), not collapse

@@ -367,6 +367,32 @@ export interface NetWorthPoint {
    *  life that no statement covers. This half is the real hole, and the only
    *  half that earns a warning. */
   gapAccounts: string[];
+  /**
+   * Active accounts holding no rows and no balances at all. Neither covered nor
+   * missing — there is nothing to cover. Named so a surface CAN mention them,
+   * but they must never carry the warning tone `gapAccounts` earns.
+   */
+  emptyAccounts: string[];
+  /**
+   * Covered accounts whose balance that day is `derived_unverified` — replayed
+   * past the last anchor with nothing left to check against.
+   *
+   * ⛔ A THIRD state, and it was invisible here. This series skips only `gap`,
+   * so `anchored`, `derived`, `carried` and `derived_unverified` were all folded
+   * into "covered" and read alike. But the first three rest on a closed chain
+   * and the fourth rests on nothing: the number is a replay nobody has confirmed.
+   *
+   * The distinction is small and real — 42 of 7,404 days on the live ledger,
+   * 41 of them Robinhood Cash's prehistory — and it is exactly the distinction
+   * the rest of the app now makes everywhere else. A chart that draws an
+   * unchecked total identically to a reconciled one is the last surface still
+   * saying "covered" when it means "present".
+   *
+   * ⚠️ NOT a defect and NOT a gap: the money is not missing and the arithmetic
+   * has not failed. Nobody has checked it. It reads faint, like `notYetOpen`,
+   * never in the warning tone `gapAccounts` earns.
+   */
+  unverifiedAccounts: string[];
 }
 
 /**
@@ -383,6 +409,19 @@ export function netWorthSeries(db: AppDatabase): NetWorthPoint[] {
   if (activeAccounts.length === 0) return [];
   const activeIds = activeAccounts.map((a) => a.id);
   const nameById = new Map(activeAccounts.map((a) => [a.id, a.name] as const));
+  /*
+   * Which accounts have ever held a row. `excluded` counts: an excluded row is
+   * hidden from analytics and still moves the balance replay, so an account
+   * holding only excluded rows has history and is not empty.
+   */
+  const accountsWithRows = new Set(
+    db
+      .selectDistinct({ accountId: transactions.accountId })
+      .from(transactions)
+      .where(inArray(transactions.status, ["active", "excluded"]))
+      .all()
+      .map((r) => r.accountId),
+  );
 
   const rows = db
     .select()
@@ -394,7 +433,7 @@ export function netWorthSeries(db: AppDatabase): NetWorthPoint[] {
   // `covered` maps account → its OWN balance that day: the same set membership
   // the totals have always used, plus the per-account figure a like-for-like
   // percentage needs (NetWorthPoint.coveredCents). Totals are untouched.
-  const byDay = new Map<string, { total: number; covered: Map<string, number> }>();
+  const byDay = new Map<string, { total: number; covered: Map<string, number>; unverified: Set<string> }>();
   // each account's most-recent known (non-gap) balance, for the trailing carry-forward below
   const lastKnown = new Map<string, { day: string; cents: number }>();
   // ...and its FIRST, which is the day the account opens as far as the data
@@ -402,9 +441,12 @@ export function netWorthSeries(db: AppDatabase): NetWorthPoint[] {
   const firstKnown = new Map<string, string>();
   for (const r of rows) {
     if (r.basis === "gap") continue;
-    const entry = byDay.get(r.day) ?? { total: 0, covered: new Map<string, number>() };
+    const entry = byDay.get(r.day) ?? { total: 0, covered: new Map<string, number>(), unverified: new Set<string>() };
     entry.total += r.balanceCents;
     entry.covered.set(r.accountId, r.balanceCents);
+    // the day IS covered — the balance is there and it counts toward the total.
+    // What it is not, is checked.
+    if (r.basis === "derived_unverified") entry.unverified.add(r.accountId);
     byDay.set(r.day, entry);
     const prev = lastKnown.get(r.accountId);
     if (!prev || compareDates(r.day, prev.day) > 0) lastKnown.set(r.accountId, { day: r.day, cents: r.balanceCents });
@@ -432,27 +474,48 @@ export function netWorthSeries(db: AppDatabase): NetWorthPoint[] {
   }
 
   return days.map((day) => {
-    const { total, covered } = byDay.get(day)!;
+    const { total, covered, unverified } = byDay.get(day)!;
     const coveredIds = activeIds.filter((id) => covered.has(id));
     const missingIds = activeIds.filter((id) => !covered.has(id));
     // WHY a day is partial decides how it must READ: an account that had not
     // opened yet is not lost data, and styling the two alike made a warning
     // fire on 1,440 of 1,443 days (lib/coverage-label).
-    const { notYetOpen, gapAccounts } = splitMissing(
+    const { notYetOpen, gapAccounts, emptyAccounts } = splitMissing(
       day,
-      missingIds.map((id) => ({ name: nameById.get(id)!, opensOn: firstKnown.get(id) ?? null })),
+      missingIds.map((id) => ({
+        name: nameById.get(id)!,
+        opensOn: firstKnown.get(id) ?? null,
+        hasHistory: accountsWithRows.has(id),
+      })),
     );
     return {
       day,
       totalCents: total,
       coveredAccounts: covered.size,
       totalAccounts: activeIds.length,
-      complete: covered.size === activeIds.length,
-      missingAccounts: missingIds.map((id) => nameById.get(id)!),
+      /*
+       * 🔴 Empty accounts do not make a day incomplete. Counting them did, and
+       * the result was that ZERO of 1,464 days were `complete` — the whole
+       * net-worth chart drawn as provisional forever because one account with
+       * no rows and no balances could never be "covered". Nothing is missing
+       * from an account that has never held anything, so nothing about it can
+       * make a total partial.
+       */
+      complete: covered.size === activeIds.length - emptyAccounts.length,
+      // …and for the same reason it is not "missing" either
+      missingAccounts: missingIds.map((id) => nameById.get(id)!).filter((n) => !emptyAccounts.includes(n)),
       coveredAccountNames: coveredIds.map((id) => nameById.get(id)!),
       coveredCents: coveredIds.map((id) => covered.get(id)!),
       notYetOpen,
       gapAccounts,
+      emptyAccounts,
+      /*
+       * Only accounts still ACTIVE, and named, so the label reads like the
+       * others. The carry-forward below adds accounts to days they have no row
+       * for; those carry a known balance forward and are not unverified — this
+       * set comes from real rows only.
+       */
+      unverifiedAccounts: activeIds.filter((id) => unverified.has(id)).map((id) => nameById.get(id)!),
     };
   });
 }

@@ -83,6 +83,7 @@ describe("splitMissing", () => {
     expect(splitMissing("2026-07-01", [{ name: "Cash on Hand", opensOn: "2026-08-03" }])).toEqual({
       notYetOpen: [{ name: "Cash on Hand", opensOn: "2026-08-03" }],
       gapAccounts: [],
+      emptyAccounts: [],
     });
   });
 
@@ -90,6 +91,7 @@ describe("splitMissing", () => {
     expect(splitMissing("2024-05-05", [{ name: "Discover", opensOn: "2023-09-30" }])).toEqual({
       notYetOpen: [],
       gapAccounts: ["Discover"],
+      emptyAccounts: [],
     });
   });
 
@@ -97,6 +99,7 @@ describe("splitMissing", () => {
     expect(splitMissing("2026-08-03", [{ name: "Cash on Hand", opensOn: "2026-08-03" }])).toEqual({
       notYetOpen: [],
       gapAccounts: ["Cash on Hand"],
+      emptyAccounts: [],
     });
   });
 
@@ -105,6 +108,7 @@ describe("splitMissing", () => {
     expect(splitMissing("2026-07-01", [{ name: "Ghost", opensOn: null }])).toEqual({
       notYetOpen: [],
       gapAccounts: ["Ghost"],
+      emptyAccounts: [],
     });
   });
 
@@ -117,6 +121,46 @@ describe("splitMissing", () => {
     ).toEqual({
       notYetOpen: [{ name: "Cash on Hand", opensOn: "2026-08-03" }],
       gapAccounts: ["Discover"],
+      emptyAccounts: [],
+    });
+  });
+
+  /**
+   * 🔴 The regression this bucket exists for. `Capital One 360 Checking` holds
+   * zero rows and zero balances, so it has no `opensOn`, so it fell through to
+   * `gapAccounts` on ALL 1,464 days of the live series: the dashboard published
+   * "no statement for Capital One 360 Checking on this date" in the warning tone
+   * every single day, and not one day of the net-worth chart could be complete.
+   */
+  test("an account holding nothing at all is EMPTY, not a hole", () => {
+    expect(
+      splitMissing("2026-07-01", [{ name: "Capital One 360 Checking", opensOn: null, hasHistory: false }]),
+    ).toEqual({
+      notYetOpen: [],
+      gapAccounts: [],
+      emptyAccounts: ["Capital One 360 Checking"],
+    });
+  });
+
+  /**
+   * ⛔ …and the other side of that line, which must NOT move. An account with
+   * rows the ledger cannot place is money a total cannot see — a real hole —
+   * and only the absence of history moves it to the empty bucket.
+   */
+  test("an account with history but no opening day is still a hole", () => {
+    expect(splitMissing("2026-07-01", [{ name: "Stranded", opensOn: null, hasHistory: true }])).toEqual({
+      notYetOpen: [],
+      gapAccounts: ["Stranded"],
+      emptyAccounts: [],
+    });
+  });
+
+  /** Omitting the flag keeps the old behaviour, so existing callers are unmoved. */
+  test("without the flag an account with no opening day stays a hole", () => {
+    expect(splitMissing("2026-07-01", [{ name: "Legacy", opensOn: null }])).toEqual({
+      notYetOpen: [],
+      gapAccounts: ["Legacy"],
+      emptyAccounts: [],
     });
   });
 });

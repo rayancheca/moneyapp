@@ -43,6 +43,17 @@ export interface AccountOpening {
 export interface MissingAccount {
   name: string;
   opensOn: string | null;
+  /**
+   * Has this account EVER held a row or a balance, anywhere in its history?
+   *
+   * ⛔ Optional so existing callers keep the old behaviour, but supplying it is
+   * what separates an empty shelf from a hole. An account with `opensOn: null`
+   * was previously always a gap — "claiming it opens would need a date nobody
+   * has" — and that is right for an account holding rows the ledger cannot
+   * place, and wrong for one holding nothing at all. Nothing is missing from an
+   * account that has never had anything.
+   */
+  hasHistory?: boolean;
 }
 
 export interface CoverageLabel {
@@ -119,24 +130,41 @@ export function openingLabel(
 }
 
 /**
- * Split a day's uncovered accounts into the two causes above. An account with no
- * covered day ANYWHERE (`opensOn: null`) never opened as far as the data knows,
- * so it counts as a hole — claiming it "opens" would need a date nobody has.
+ * Split a day's uncovered accounts by CAUSE, because the three read differently:
+ * an account that had not opened yet is calendar fact, one that is empty is an
+ * absence of anything at all, and only the third — open, with history, and no
+ * balance today — is a hole worth a warning.
+ *
+ * 🔴 The empty bucket is not a refinement; it was a false alarm firing on EVERY
+ * day. `Capital One 360 Checking` holds zero rows and zero balances, so it has
+ * no `opensOn`, so it fell through to `gapAccounts` on all 1,464 days of the
+ * live series: the dashboard published "no statement for Capital One 360
+ * Checking on this date" in the warning tone every single day, and not one day
+ * of the chart could be `complete`. That is exactly the failure this function
+ * was written to prevent, reintroduced by an account with nothing in it.
+ *
+ * ⚠️ `opensOn: null` ALONE still means a hole. An account with rows the ledger
+ * cannot place is money a total cannot see, and claiming it "opens" would need
+ * a date nobody has. Only `hasHistory === false` moves it — the same
+ * empty-versus-hole line `provenance` draws.
  */
 export function splitMissing(
   day: string,
   missing: readonly MissingAccount[],
-): { notYetOpen: AccountOpening[]; gapAccounts: string[] } {
+): { notYetOpen: AccountOpening[]; gapAccounts: string[]; emptyAccounts: string[] } {
   const notYetOpen: AccountOpening[] = [];
   const gapAccounts: string[] = [];
+  const emptyAccounts: string[] = [];
   for (const m of missing) {
     if (m.opensOn !== null && compareDates(day, m.opensOn) < 0) {
       notYetOpen.push({ name: m.name, opensOn: m.opensOn });
+    } else if (m.opensOn === null && m.hasHistory === false) {
+      emptyAccounts.push(m.name);
     } else {
       gapAccounts.push(m.name);
     }
   }
-  return { notYetOpen, gapAccounts };
+  return { notYetOpen, gapAccounts, emptyAccounts };
 }
 
 /**
