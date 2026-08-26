@@ -353,9 +353,29 @@ test("covers every route the visual baselines cover", async () => {
     [...block.matchAll(/path:\s*"([^"]+)"/g)].map((m) => m[1]!.split("?")[0]!),
   );
   const minePaths = new Set(ROUTES.map((r) => r.split("?")[0]!));
+  /**
+   * A visual route may be a CONCRETE url for a page this spec measures
+   * dynamically — `/summary/2026` here against `/summary/[year]` in DYNAMIC.
+   * Without this the only way to satisfy the guard is to add the literal to
+   * ROUTES, which measures the same page twice; `/summary/2026` was about to be
+   * added for exactly that reason.
+   */
+  const dynamicPatterns = DYNAMIC.map(
+    (d) => new RegExp(`^${d.name.replaceAll(/\[[^\]]+\]/g, "[^/]+")}$`),
+  );
+  const coveredDynamically = (path: string): boolean => dynamicPatterns.some((re) => re.test(path));
 
   expect(visualPaths.size, "failed to parse routes out of visual.spec.ts").toBeGreaterThan(5);
-  const missing = [...visualPaths].filter((p) => !minePaths.has(p));
+  /**
+   * ⛔ Guard the guard. `coveredDynamically` is an ESCAPE HATCH, and an escape
+   * hatch that widens swallows the whole assertion — mutation-tested: replacing
+   * its body with `true` left this test GREEN while an unmeasured route sat in
+   * visual.spec.ts. These two lines are what make that mutation fail.
+   */
+  expect(coveredDynamically("/totally-unmeasured"), "the dynamic matcher must stay narrow").toBe(false);
+  expect(coveredDynamically("/summary/2026"), "the dynamic matcher must still match its own case").toBe(true);
+
+  const missing = [...visualPaths].filter((p) => !minePaths.has(p) && !coveredDynamically(p));
   expect(
     missing,
     `visual.spec.ts screenshots these routes but overflow.spec.ts never measures them: ${missing.join(", ")}`,

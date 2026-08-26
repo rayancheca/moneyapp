@@ -58,6 +58,30 @@ const ROUTES: readonly VisualRoute[] = [
   { path: "/investments", name: "investments" }, // ALL range → a gain (green) accent
   { path: "/investments?range=1M", name: "investments-loss" }, // 1M → a loss (red) accent
   { path: "/settings", name: "settings" },
+  /**
+   * ⛔ `/imports` had NO pixel coverage at all until now, and it is the page
+   * the app's whole credibility rests on — the trust layer, where a reader goes
+   * to find out whether the numbers are checked. A card could be added, moved
+   * or broken there without moving a single baseline, and pass 66 added one.
+   *
+   * `/categories` is the same gap one level up: `category` below photographs
+   * `/categories/[id]`, so the LIST page — its tree, its per-row edit and
+   * reorder affordances — was never photographed either.
+   *
+   * ⚠️ Both are seed-bounded, like every baseline here. `/imports` renders the
+   * seeded files and their periods; it cannot show a failed parse or an open
+   * gap, because the seed has neither.
+   */
+  { path: "/imports", name: "imports" },
+  { path: "/categories", name: "categories" },
+  /**
+   * The printable year summary, deferred in an earlier handoff "until the
+   * tolerance fix" — which shipped in `803eeb2`, so it can land now. The year
+   * is pinned rather than resolved: `e2e/year-summary.spec.ts` already
+   * hardcodes 2026 against `E2E_FAKE_TODAY`, and a baseline whose URL moved
+   * with the clock would be regenerated every January for no reason.
+   */
+  { path: "/summary/2026", name: "summary-year" },
   {
     path: "/flow?shape=spine&measure=gross&lens=chart",
     name: "flow-spine",
