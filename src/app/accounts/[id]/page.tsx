@@ -26,7 +26,9 @@ import { RecentTransactions } from "@/components/transactions/RecentTransactions
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { countPhrase } from "@/components/ui/blast-radius";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
+import { provenanceFor } from "@/services/provenance";
 import { Money } from "@/components/ui/Money";
+import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { deleteAnchorAction, setAccountActiveAction } from "../actions";
 
@@ -116,6 +118,13 @@ export default async function AccountDetailPage({
 
   const series = accountSeries(db, id);
   const latest = series.at(-1) ?? null;
+  // asked for the day the figure is FOR, so a balance carried forward answers
+  // with the document that actually pins it
+  const balanceProvenance = provenanceFor(db, {
+    kind: "accountBalance",
+    accountId: account.id,
+    day: latest?.day,
+  });
   const previous = series.length > 1 ? series[series.length - 2]! : null;
   const dayChange = latest && previous ? sign * (latest.balanceCents - previous.balanceCents) : null;
 
@@ -177,6 +186,12 @@ export default async function AccountDetailPage({
         <header>
           <div className="text-xs font-medium uppercase tracking-[0.14em] text-ink-faint">
             {liability ? "Amount owed" : "Balance"}
+            {/* the day this figure is FOR, not today — a balance carried forward
+                from Aug 12 is proven by Aug 12's document, and asking about
+                today would answer a different question than the one on screen */}
+            {balanceProvenance && (
+              <ProvenancePopover label={liability ? "the amount owed" : "this balance"} provenance={balanceProvenance} />
+            )}
           </div>
           {latest ? (
             <>

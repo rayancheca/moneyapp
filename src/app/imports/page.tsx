@@ -8,12 +8,14 @@ import { transactions } from "@/db/schema/transactions";
 import { CoveragePanel } from "@/components/imports/CoveragePanel";
 import { StatementSchedule } from "@/components/imports/StatementSchedule";
 import { accountCoverage } from "@/services/coverage";
+import { provenanceFor } from "@/services/provenance";
 import { statementPulls } from "@/services/statement-pulls";
 import { countPhrase } from "@/components/ui/blast-radius";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Money } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { formatCents } from "@/lib/money";
@@ -113,6 +115,22 @@ export default async function ImportsPage({
   const coverage = accountCoverage(db);
   const pulls = statementPulls(db);
 
+  /**
+   * The newest periods, with what each one actually PROVED — the page has
+   * always fetched `periods` and rendered only three counts from it, so the
+   * question "what did this statement establish?" had no answer anywhere.
+   *
+   * ⚠️ Bounded at 12 deliberately. `provenanceFor` runs four queries per
+   * period, one of which scans the period's transactions; over all 219 periods
+   * that is a page-load cost nobody asked for, and pass 31 already found a 16x
+   * regression hiding behind exactly this shape of per-row work.
+   */
+  const RECENT_PERIODS = 12;
+  const recentPeriods = periods.slice(0, RECENT_PERIODS).map((p) => ({
+    ...p,
+    provenance: provenanceFor(db, { kind: "statementPeriod", id: p.id }),
+  }));
+
   const reconciled = periods.filter((p) => p.reconciliation === "reconciled").length;
   const valueAnchors = periods.filter((p) => p.reconciliation === "value_anchor").length;
   const gaps = periods.filter((p) => p.reconciliation === "gap");
@@ -182,6 +200,41 @@ export default async function ImportsPage({
               </p>
             </SurfaceCard>
           </div>
+        )}
+
+        {recentPeriods.length > 0 && (
+          <SurfaceCard>
+            <h2 className="mb-1 text-sm font-medium">What the statements proved</h2>
+            <p className="mb-3 text-xs text-ink-muted">
+              The {recentPeriods.length} most recent periods. A period is only evidence if something in it could
+              have failed — an investment statement records a value and absorbs any difference, so it never
+              proves the rows add up.
+            </p>
+            <ul className="space-y-1.5">
+              {recentPeriods.map((p) => (
+                <li key={p.id} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-[13px]">
+                  <span className="min-w-0">
+                    <span className="text-ink">{p.accountName}</span>{" "}
+                    <span className="figures text-ink-faint">
+                      {p.periodStart} → {p.periodEnd}
+                    </span>
+                  </span>
+                  {p.provenance && (
+                    <ProvenancePopover
+                      label={`${p.accountName}, ${p.periodStart} to ${p.periodEnd}`}
+                      provenance={p.provenance}
+                      placement="bottom-end"
+                    />
+                  )}
+                </li>
+              ))}
+            </ul>
+            {periods.length > recentPeriods.length && (
+              <p className="mt-3 text-xs text-ink-faint">
+                {periods.length - recentPeriods.length} older periods are not listed.
+              </p>
+            )}
+          </SurfaceCard>
         )}
 
         {gaps.length > 0 && (

@@ -69,10 +69,26 @@ const box = {
 };
 console.log(`${base}: ${changed} changed px · bbox x${x0}-${x1} y${y0}-${y1} (page ${width}x${height})`);
 
+/**
+ * ⚠️ Clamp per IMAGE, not once. When a change shifts the layout the expected
+ * and actual PNGs have different heights, and extracting one box from both
+ * fails with sharp's "bad extract area" — which is exactly the case you most
+ * want to look at, because a shifted layout is a bigger finding than a
+ * recoloured pixel.
+ */
 for (const tag of ["expected", "actual"]) {
   const file = `${dir}/${base}-${tag}.png`;
   if (!fs.existsSync(file)) continue;
+  const meta = await sharp(file).metadata();
+  const left = Math.min(box.left, Math.max(0, meta.width - 1));
+  const top = Math.min(box.top, Math.max(0, meta.height - 1));
+  const clamped = {
+    left,
+    top,
+    width: Math.min(box.width, meta.width - left),
+    height: Math.min(box.height, meta.height - top),
+  };
   const out = `/tmp/crop-${base}-${tag}.png`;
-  await sharp(file).extract(box).toFile(out);
-  console.log(`  ${out}`);
+  await sharp(file).extract(clamped).toFile(out);
+  console.log(`  ${out}  (${clamped.width}x${clamped.height} of ${meta.width}x${meta.height})`);
 }

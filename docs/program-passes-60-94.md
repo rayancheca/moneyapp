@@ -489,6 +489,88 @@ is the more valuable answer.
 
 ---
 
+# PHASE III-B — Insights everywhere
+
+*Owner, 2026-08-26: **"i want ai inisghts everywhere . and i really mean
+everywhere"**. Lettered rather than renumbered so the 22 passes after it keep
+their numbers; the priority is his, the placement is because of what it depends
+on.*
+
+> ## ⛔ READ THIS BEFORE WRITING A LINE OF IT
+>
+> **This has been attempted and it failed a review.** Pass 46 designed exactly
+> this feature, routed every figure through app-computed `{{f7}}` slots so the
+> model could never emit a digit, built a validator, and then **ran that
+> validator against 17 attack strings. SIXTEEN WERE ACCEPTED**:
+>
+> | accepted string | why it is false |
+> |---|---|
+> | `"{{f1}} is your largest spending category"` | f1 is the **third** largest |
+> | `"has been climbing since July"` | invented trend, no trend data exists |
+> | `"used about ½ of its plan"` | `/\d/` has no `u` flag, so `½` is not a digit |
+>
+> **Slots block fabricated NUMBERS and do nothing about fabricated
+> RELATIONSHIPS**, and a denylist of quantity words is unwinnable. The root
+> cause is that `Fact` carries only `display: string`, so no comparison,
+> ordering, delta or trend claim is verifiable **even in principle**. The work
+> was held, not shipped. Do not restart it from the top — restart it from the
+> type.
+
+### Pass 72a — Facts that can be checked
+
+- `Fact` gains `value?: number` and a `kind`: `scalar | rank | delta | trend |
+  share | count`. A claim is only expressible if a fact of the matching kind
+  backs it, so "largest" needs a `rank` fact whose value is 1, and "climbing
+  since July" needs a `trend` fact with a direction and a window.
+- An **allowlisted prose vocabulary**, not a denylist. The model composes from
+  a closed set of relational phrases, each bound to a fact kind; anything
+  outside the list is a rejection, not a warning.
+- The validator is rewritten against the SAME 17 attack strings, plus every new
+  one the rewrite suggests, and **the suite must go red first** — a validator
+  that passes its own attacks on the first run has not been tested.
+- ⚠️ Unicode: `/\d/u`, and normalize `½ ¼ ⅓ ⅔` and superscripts before testing.
+
+### Pass 72b — One insight surface, proven end to end
+
+- Ship it on **exactly one** page first — `/spending` — and prove it there.
+- Every insight carries a `<ProvenancePopover>` (pass 66). An insight the app
+  cannot prove does not render. That is the same rule as every figure, and it
+  is what makes "everywhere" affordable later: the honest answer is already a
+  first-class rendering.
+- The **fallback is `SectionNote`** — a measured predicate plus an app
+  formatter, no model. Pass 46 shipped that instead and it is still the right
+  floor: when the vocabulary cannot express a true sentence, say the measured
+  one.
+
+### Pass 72c — The sweep, surface by surface
+
+Dashboard hero · `/spending` · `/budgets` · `/categories` and each category ·
+`/transactions` and each row's sheet · `/recurring` and each series ·
+`/investments` and each holding · `/accounts` and each account · `/flow` ·
+`/merchants/[id]` · `/summary/[year]` · `/imports`.
+
+- Each surface gets its own fact set and its own golden-question test with
+  answers computed independently from the services — a regression is a failing
+  test, never a wrong sentence on his dashboard.
+- ⛔ **Neutral wording is the whole design** (pass 69, and
+  `owner-travel-and-micro-charges`): he travels and drives an EV, and three
+  "card-testing probes" once flagged were all legitimate. An insight describes;
+  it never accuses and never advises.
+
+### Pass 72d — Cost, caching and the kill switch
+
+- Cost is **measured, not estimated**: real statements extract to ~5,700 tokens
+  and a full month is ≈ **$0.18 at Haiku**. `claude-categorize.ts` already has
+  the shape to copy — a model constant, `EST_USD_PER_MERCHANT`, a run-state
+  machine, a re-entrancy guard that stops a second click double-spending, and a
+  stop request.
+- Insights cache on the **content hash of their fact set**, so an unchanged
+  page costs nothing and a changed figure invalidates exactly one insight.
+- A global off switch in `/settings`, and a per-surface one. The app must be
+  fully usable and fully honest with every insight disabled.
+
+---
+
 # PHASE IV — Finish the correctness program
 
 *Three sessions. After this, every account in the ledger can fail a check.*
@@ -699,13 +781,14 @@ Genuinely unknown until 92 lands; two sessions is the floor, not the estimate.
 | I — the decision layer | 6 | 60–65 |
 | II — provenance made visible | 4 | 66–69 |
 | III — ask the ledger | 3 | 70–72 |
+| **III-B — insights everywhere** | **4** | **72a–72d** |
 | IV — finish correctness | 3 | 73–75 |
 | V — queue: interaction | 5 | 76–80 |
 | VI — multi-episode recurring | 4 | 81–84 |
 | VII — explanation and polish | 4 | 85–88 |
 | VIII — motion and gesture | 2 | 89–90 |
 | IX — ship it | 3–4 | 91–94 |
-| **Total** | **34–35** | **60 → 94** |
+| **Total** | **38–39** | **60 → 94** |
 
 Phases I–IV are **16 sessions** and carry almost all of the value. Everything
 after is the standing queue, polish, and shipping.

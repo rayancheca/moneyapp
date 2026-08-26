@@ -9,6 +9,7 @@ import { dashboardData } from "@/services/dashboard";
 import { dashboardChartData } from "@/services/dashboard-series";
 import { spendingSankey } from "@/services/sankey";
 import { netWorthAttribution, type NetWorthAttribution } from "@/services/attribution";
+import { provenanceFor } from "@/services/provenance";
 import { CHART_RANGES, rangeStartDay, type ChartRange } from "@/lib/chart-range";
 import type { SankeyGraph } from "@/lib/sankey-layout";
 import { resolveViewState } from "@/lib/view-state";
@@ -38,6 +39,7 @@ import { ToReviewCard } from "@/components/dashboard/ToReviewCard";
 import { UpcomingBillsStrip } from "@/components/dashboard/UpcomingBillsStrip";
 import { Money } from "@/components/ui/Money";
 import { NumberRoll } from "@/components/ui/NumberRoll";
+import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 
 export const dynamic = "force-dynamic";
@@ -84,6 +86,9 @@ export default async function DashboardPage({
   const today = todayIso();
   const data = dashboardData(db, today);
   const { netWorth } = data;
+  // "prove it" for the headline: which accounts add up, which are priced from
+  // holdings, and which hold rows this total cannot see
+  const netWorthProvenance = provenanceFor(db, { kind: "netWorth", day: today });
 
   // hero chart view mode: URL > persisted preference > combined (NS#2 Pillar 2)
   const settings = readSettings(db);
@@ -222,6 +227,11 @@ export default async function DashboardPage({
         <header>
           <h1 id="net-worth-heading" className="text-xs font-medium uppercase tracking-[0.14em] text-ink-faint">
             Net worth
+            {/* beside the label, never around the figure — a button wrapping the
+                headline would be axe nested-interactive inside the header link
+                targets, and the badge annotates the number rather than
+                replacing a way to click it */}
+            {netWorthProvenance && <ProvenancePopover label="net worth" provenance={netWorthProvenance} />}
           </h1>
           {/* The size steps down below `sm` because NumberRoll gives every digit a
               fixed `w-[1ch]` slot (NumberRoll.tsx:52) — that is what stops the odometer
