@@ -9,6 +9,7 @@ import {
   RECURRING_SERIES_SURFACE,
   RECURRING_SERIES_VIEW_SPEC,
 } from "@/components/recurring/recurring-view-spec";
+import { provenanceFor } from "@/services/provenance";
 import { SeriesDetail } from "@/components/recurring/SeriesDetail";
 
 export const metadata: Metadata = { title: "Recurring series" };
@@ -45,5 +46,11 @@ export default async function RecurringSeriesPage({
     readSettings(db).viewPreferences[RECURRING_SERIES_SURFACE],
   );
 
-  return <SeriesDetail data={data} viewState={viewState} basePath={`/recurring/${id}`} />;
+  // a forecast is graded by its EVIDENCE — how many postings, and whether they
+  // agreed — which is a different question from every other figure on the page
+  const provenance = provenanceFor(getDb(), { kind: "recurringSeries", id });
+
+  return (
+    <SeriesDetail data={data} provenance={provenance} viewState={viewState} basePath={`/recurring/${id}`} />
+  );
 }

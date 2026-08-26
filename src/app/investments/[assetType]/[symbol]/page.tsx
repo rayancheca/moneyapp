@@ -16,6 +16,7 @@ import { holdingDetail } from "@/services/holding-detail";
 import { holdingSessionCents } from "@/services/intraday";
 import { sessionView } from "@/lib/intraday-axis";
 import { hasBenchmark, portfolioBenchmarkDays } from "@/services/portfolio";
+import { provenanceFor } from "@/services/provenance";
 import { readSettings } from "@/services/settings";
 import { HoldingChartPanel } from "@/components/investments/HoldingChartPanel";
 import { HoldingEventsList } from "@/components/investments/HoldingEventsList";
@@ -87,6 +88,15 @@ export default async function HoldingPage({
     .filter((m): m is typeof m & { closeCents: number } => m.closeCents !== null)
     .map((m) => ({ day: m.day, valueCents: m.closeCents, kind: m.kind }));
 
+  // what the market value is standing on: a share count the ledger CAN check
+  // against its own events, and a price it cannot check at all
+  const valueProvenance = provenanceFor(db, {
+    kind: "holding",
+    symbol: detail.symbol,
+    assetType: detail.assetType,
+    day: today,
+  });
+
   // per-share cents — the unit this page's price axis already speaks
   const rawSession = holdingSessionCents(db, detail.symbol, detail.assetType, today);
   const session = sessionView(today, rawSession.ticks, rawSession.priorCloseCents);
@@ -135,7 +145,7 @@ export default async function HoldingPage({
           </SurfaceCard>
         )}
 
-        <PositionCard detail={detail} />
+        <PositionCard detail={detail} provenance={valueProvenance} />
         {detail.realized.sellCount > 0 && (
           <RealizedSalesList sales={detail.realizedSales} totals={detail.realized} />
         )}

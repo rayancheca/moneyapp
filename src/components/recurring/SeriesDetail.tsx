@@ -8,10 +8,12 @@ import { isTableLens, LENS_DIMENSION, LENS_LABELS } from "@/components/charts/ch
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { useViewState } from "@/hooks/useViewState";
 import { formatCents } from "@/lib/money";
+import type { Provenance } from "@/services/provenance";
 import type { ViewState } from "@/lib/view-state";
 import { RECURRING_SERIES_SURFACE, RECURRING_SERIES_VIEW_SPEC } from "./recurring-view-spec";
 import { Badge } from "@/components/ui/Badge";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
+import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { CategoryChip } from "@/components/ui/CategoryChip";
 import { countPhrase } from "@/components/ui/blast-radius";
 import { Confirm } from "@/components/ui/Confirm";
@@ -54,10 +56,13 @@ const EMPTY_PARAMS: Record<string, string> = {};
 
 export function SeriesDetail({
   data,
+  provenance,
   viewState,
   basePath,
 }: {
   data: SeriesDetailData;
+  /** what the expected amount is standing on — computed server-side */
+  provenance?: Provenance | null;
   /** the RSC-resolved active view (URL > persisted > default) */
   viewState: ViewState;
   /** this series' own route (the lens switcher navigates within it) */
@@ -238,7 +243,10 @@ export function SeriesDetail({
             <Stat label="Annualized">
               {data.annualizedCents !== null ? <>~<Money cents={data.annualizedCents} />/yr</> : "—"}
             </Stat>
-            <Stat label="Per charge">
+            {/* the badge goes on PER CHARGE, the figure the forecast actually
+                publishes. "Annualized" is that number multiplied out, so a
+                second badge would answer one question twice. */}
+            <Stat label="Per charge" provenance={provenance}>
               {data.nextExpectedAmountCents !== null ? (
                 <>
                   <Money cents={data.nextExpectedAmountCents} flow />
@@ -314,10 +322,22 @@ export function SeriesDetail({
   );
 }
 
-function Stat({ label, children }: { label: string; children: React.ReactNode }) {
+function Stat({
+  label,
+  provenance,
+  children,
+}: {
+  label: string;
+  /** beside the LABEL, never around the figure — see ProvenancePopover */
+  provenance?: Provenance | null;
+  children: React.ReactNode;
+}) {
   return (
     <div>
-      <dt className="text-[11px] font-medium uppercase tracking-[0.1em] text-ink-faint">{label}</dt>
+      <dt className="text-[11px] font-medium uppercase tracking-[0.1em] text-ink-faint">
+        {label}
+        {provenance && <ProvenancePopover label={label.toLowerCase()} provenance={provenance} />}
+      </dt>
       <dd className="figures mt-0.5 text-sm font-medium text-ink">{children}</dd>
     </div>
   );

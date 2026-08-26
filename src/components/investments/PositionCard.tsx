@@ -1,8 +1,10 @@
 import { Money } from "@/components/ui/Money";
+import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { formatCents } from "@/lib/money";
 import { formatQuantityE8 } from "@/services/holdings";
 import type { HoldingDetail } from "@/services/holding-detail";
+import type { Provenance } from "@/services/provenance";
 
 /**
  * The position card (ux-overhaul-plan §6.4 [RH]): quantity, market value, avg
@@ -21,16 +23,28 @@ function toneClass(cents: number | null): string {
   return cents < 0 ? "text-negative" : "text-positive";
 }
 
-function Stat({ label, children }: { label: string; children: React.ReactNode }) {
+function Stat({
+  label,
+  provenance,
+  children,
+}: {
+  label: string;
+  /** mounted beside the LABEL, never around the figure — see ProvenancePopover */
+  provenance?: Provenance | null;
+  children: React.ReactNode;
+}) {
   return (
     <div>
-      <dt className="text-xs font-medium uppercase tracking-[0.08em] text-ink-faint">{label}</dt>
+      <dt className="text-xs font-medium uppercase tracking-[0.08em] text-ink-faint">
+        {label}
+        {provenance && <ProvenancePopover label={label.toLowerCase()} provenance={provenance} />}
+      </dt>
       <dd className="mt-1 text-sm font-medium">{children}</dd>
     </div>
   );
 }
 
-export function PositionCard({ detail }: { detail: HoldingDetail }) {
+export function PositionCard({ detail, provenance }: { detail: HoldingDetail; provenance?: Provenance | null }) {
   const { legs } = detail;
   return (
     <SurfaceCard>
@@ -39,7 +53,13 @@ export function PositionCard({ detail }: { detail: HoldingDetail }) {
         <Stat label="Quantity">
           <span className="figures">{formatQuantityE8(detail.quantityE8)}</span>
         </Stat>
-        <Stat label="Market value">{detail.valueCents !== null ? <Money cents={detail.valueCents} /> : "—"}</Stat>
+        {/* the badge sits on MARKET VALUE and nowhere else on this card: it is
+            the figure assembled from two different kinds of evidence — a share
+            count the ledger can check and a price it cannot — and the others
+            are either that figure restated or a plain input to it. */}
+        <Stat label="Market value" provenance={provenance}>
+          {detail.valueCents !== null ? <Money cents={detail.valueCents} /> : "—"}
+        </Stat>
         <Stat label="Avg cost / share">
           {detail.avgCostCents !== null ? (
             <span className="figures">{formatCents(detail.avgCostCents)}</span>

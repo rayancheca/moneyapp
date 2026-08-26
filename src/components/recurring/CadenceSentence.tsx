@@ -55,7 +55,18 @@ export function CadenceSentence(props: CadenceSentenceProps) {
   }
 
   return (
-    <p className="text-[15px] leading-relaxed text-ink-muted">
+    /**
+     * ⛔ A `<div>`, not the `<p>` this was: the tokens below open `Popover`s,
+     * and a Popover's panel is a `<div popover>` that a paragraph may not
+     * contain. The browser closes the `<p>` where the div begins, so the parsed
+     * DOM stops matching the server's HTML and React throws hydration error
+     * #418 — silent in production, and it discards the client tree for this
+     * subtree, which is the interactive half of this whole component.
+     *
+     * Pre-existing since the Phase 1 commit; found while mounting a
+     * ProvenancePopover on the same page. See ProvenancePopover's docstring.
+     */
+    <div className="text-[15px] leading-relaxed text-ink-muted">
       {seriesVerb(kind)}{" "}
       <CadenceToken
         cadence={cadence}
@@ -85,7 +96,7 @@ export function CadenceSentence(props: CadenceSentenceProps) {
         </>
       ) : null}
       {accountName ? <> from <span className="font-medium text-ink">{accountName}</span></> : null}.
-    </p>
+    </div>
   );
 }
 
