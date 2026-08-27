@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { countFact, deltaFact, rankFact, scalarFact, shareFact, trendFact } from "./insight-facts";
+import { countFact, deltaFact, multipleFact, rankFact, scalarFact, shareFact, trendFact } from "./insight-facts";
 import {
   CLAIMS,
   CLAIMS_BY_ID,
@@ -18,9 +18,10 @@ describe("the three fields a template can read", () => {
   const trend = trendFact("f4", "Dining", "rising", "March", 6);
   const count = countFact("f5", "Dining", 502, "purchase");
   const scalar = scalarFact("f6", "Dining", 196324, "money");
+  const multiple = multipleFact("f7", "This Target charge", 21.8, "your usual charge there");
 
   test("name is the subject, always", () => {
-    for (const f of [rank, share, delta, trend, count, scalar]) {
+    for (const f of [rank, share, delta, trend, count, scalar, multiple]) {
       expect(factField(f, "name")).toBe(f.subject);
     }
   });
@@ -31,6 +32,7 @@ describe("the three fields a template can read", () => {
     expect(factField(delta, "of")).toBe("June and July");
     expect(factField(trend, "of")).toBe("March");
     expect(factField(count, "of")).toBe("purchase");
+    expect(factField(multiple, "of")).toBe("your usual charge there");
   });
 
   test("a scalar has no frame, and asking for one fails loudly", () => {
@@ -80,7 +82,7 @@ describe("the vocabulary is closed and self-consistent", () => {
 
   test("every fact kind can say at least one thing", () => {
     const covered = new Set(CLAIMS.map((c) => c.binds.a));
-    for (const kind of ["scalar", "count", "share", "rank", "delta", "trend"] as const) {
+    for (const kind of ["scalar", "count", "share", "rank", "delta", "trend", "multiple"] as const) {
       expect(covered.has(kind), `nothing can be said about a ${kind} fact`).toBe(true);
     }
   });

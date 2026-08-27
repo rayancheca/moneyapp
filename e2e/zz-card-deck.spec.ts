@@ -153,6 +153,46 @@ test.describe("the card deck", () => {
   });
 });
 
+test.describe("neutral notices", () => {
+  test("⛔ describes, and never judges or advises", async ({ page }) => {
+    /*
+     * The owner travels and drives an EV; three charges once flagged as
+     * "card-testing probes" were every one of them legitimate. The vocabulary's
+     * own sweep test guards the TEMPLATES; this guards what actually reached
+     * the page, including the summary line the templates do not own.
+     */
+    await page.goto("/?cards=grid");
+    const card = page
+      .locator(`${SECTION} section`)
+      .filter({ has: page.getByRole("heading", { level: 3, name: "Worth a look" }) });
+
+    /*
+     * ⚠️ MEASURED, not assumed: the e2e fixture produces ZERO notices — no
+     * merchant in it has a single large first charge, none has six sightings
+     * with an eightfold outlier, and no series drifts. So this branch is the
+     * one that runs today, and an early `return` here would have been a silent
+     * pass dressed as coverage.
+     *
+     * The card's own content is covered by 18 unit tests against a ledger whose
+     * answers are known (`services/notices-card.test.ts`), and the wording is
+     * covered by the vocabulary's neutrality sweep. What is NOT covered is its
+     * rendering — noted in the handoff beside `/merchants/[id]`, which has the
+     * same gap for the same reason: seeding it would move every dashboard,
+     * spending and transactions baseline for one card.
+     */
+    if ((await card.count()) === 0) {
+      expect(await page.locator(`${SECTION} h3`).allInnerTexts()).not.toContain("Worth a look");
+      return;
+    }
+    const text = await card.innerText();
+    expect(text).not.toMatch(
+      /\b(should|must|need to|consider|suspicious|unusual|fraud|too much|excessive|worrying|alarming)\b/i,
+    );
+    // and it says what it looked at, so an empty card would be a measurement
+    expect(text).toMatch(/description, not a verdict/);
+  });
+});
+
 test.describe("reduced motion", () => {
   test("the stack still works, and nothing animates", async ({ page }) => {
     /*

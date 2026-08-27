@@ -15,6 +15,7 @@ import type { SankeyGraph } from "@/lib/sankey-layout";
 import { resolveViewState } from "@/lib/view-state";
 import type { DeckCard } from "@/components/dashboard/CardDeck";
 import { DecisionCards } from "@/components/dashboard/DecisionCards";
+import { NoticesCard } from "@/components/dashboard/NoticesCard";
 import { recentLedgerRows } from "@/services/ledger-rows";
 import { carCard, runwayCard } from "@/services/committed";
 import { eatingOutCard } from "@/services/eating-out";
@@ -27,6 +28,7 @@ import { moversCard } from "@/services/movers-card";
 import { transfersCard } from "@/services/transfers-card";
 import { performanceCard } from "@/services/performance-card";
 import { feesCard } from "@/services/fees-card";
+import { noticesCard } from "@/services/notices-card";
 import { institutionGroups } from "@/services/institution-groups";
 import { DASHBOARD_SECTION_IDS, readSettings, type DashboardSectionId } from "@/services/settings";
 import { normalizeOrder } from "@/lib/reorder";
@@ -254,6 +256,12 @@ export default async function DashboardPage({
   const transfers = transfersCard(db, today);
   const performance = performanceCard(db, today);
   const fees = feesCard(db, today);
+  /*
+   * PASS 69 — neutral notices. Sits LAST among the readings, before the trust
+   * card: it is the only one about individual events rather than about the
+   * shape of the whole ledger, and it is the one most likely to be empty.
+   */
+  const notices = noticesCard(db, today);
   const pickerOptions = buildCategoryPickerOptions(db.select().from(categories).all());
   const reviewRows = recentLedgerRows(db, { limit: REVIEW_PREVIEW_LIMIT, needsReviewOnly: true });
   const recentRows = recentLedgerRows(db, { limit: RECENT_TXN_LIMIT });
@@ -458,6 +466,7 @@ export default async function DashboardPage({
     ...(concentration
       ? [{ id: "concentration", label: "What you are riding on", node: <ConcentrationCard data={concentration} /> }]
       : []),
+    ...(notices ? [{ id: "notices", label: "Worth a look", node: <NoticesCard data={notices} /> }] : []),
     ...(trust ? [{ id: "trust", label: "Can you trust this?", node: <TrustCard data={trust} /> }] : []),
   ];
   const decisionsSection = (

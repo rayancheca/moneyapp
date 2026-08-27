@@ -48,8 +48,9 @@ import { formatCents, formatCentsSigned } from "./money";
  * - `rank`   — a position in a stated ordering (1st of 22 categories)
  * - `delta`  — a signed change between two stated points (+$3,053.26, Jun→Jul)
  * - `trend`  — a direction over a stated window with a stated number of points
+ * - `multiple` — how many times a stated other quantity something is (4.2×)
  */
-export type FactKind = "scalar" | "count" | "share" | "rank" | "delta" | "trend";
+export type FactKind = "scalar" | "count" | "share" | "rank" | "delta" | "trend" | "multiple";
 
 /** How a scalar or delta renders. Chosen by the caller; APPLIED here. */
 export type FactUnit = "money" | "percent" | "days" | "months" | "plain";
@@ -119,7 +120,15 @@ export interface TrendFact extends FactBase {
   readonly points: number;
 }
 
-export type Fact = ScalarFact | CountFact | ShareFact | RankFact | DeltaFact | TrendFact;
+export interface MultipleFact extends FactBase {
+  readonly kind: "multiple";
+  /** how many times `ofLabel` this is; 1 means "the same as" */
+  readonly value: number;
+  /** what it is a multiple OF, named so the sentence can say it */
+  readonly ofLabel: string;
+}
+
+export type Fact = ScalarFact | CountFact | ShareFact | RankFact | DeltaFact | TrendFact | MultipleFact;
 
 /** Every fact in a set, by slot id. Built by `factSet`, which enforces the ids. */
 export type FactSet = ReadonlyMap<string, Fact>;
@@ -219,6 +228,23 @@ export function shareFact(id: string, subject: string, value: number, ofLabel: s
    */
   if (!(value >= 0 && value <= 1)) throw new Error(`A share must be within 0–1, got ${value}`);
   return { kind: "share", id, subject, value, ofLabel, display: render(value, "percent", false) };
+}
+
+/**
+ * "4.2×" — how many times some other stated quantity this is.
+ *
+ * ⛔ Refuses a non-positive multiple rather than rendering "0.0×" or "-3.1×".
+ * A multiple is a ratio of two magnitudes, and a caller producing one at or
+ * below zero has divided by something that was not a magnitude — most often a
+ * median that netted to zero across refunds. Refusing is how that surfaces as a
+ * throw in a service test rather than as a sentence on his dashboard.
+ */
+export function multipleFact(id: string, subject: string, value: number, ofLabel: string): MultipleFact {
+  assertSlotId(id);
+  assertLabel("subject", subject);
+  assertLabel("ofLabel", ofLabel);
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`A multiple must be above zero, got ${value}`);
+  return { kind: "multiple", id, subject, value, ofLabel, display: `${value.toFixed(1)}×` };
 }
 
 export function rankFact(id: string, subject: string, value: number, outOf: number, amongLabel: string): RankFact {

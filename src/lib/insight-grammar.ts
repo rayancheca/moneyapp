@@ -58,6 +58,8 @@ export function factField(fact: Fact, field: FactField): string {
       return fact.sinceLabel;
     case "count":
       return fact.noun;
+    case "multiple":
+      return fact.ofLabel;
     case "scalar":
       throw new Error("A scalar fact has no frame of reference — it is a quantity, not a comparison");
   }
@@ -165,6 +167,34 @@ export const CLAIMS: readonly ClaimTemplate[] = [
     binds: { a: "delta" },
     holds: (a) => a.kind === "delta" && a.value === 0,
     why: "a delta fact of exactly zero",
+  },
+  // ── multiple ────────────────────────────────────────────────────────
+  {
+    id: "times_the_usual",
+    template: "{{a.name}} came to {{a.value}} {{a.of}}.",
+    binds: { a: "multiple" },
+    holds: (a) => a.kind === "multiple" && a.value >= 2,
+    why: "a multiple of at least two — anything nearer to one is not a difference worth a sentence",
+  },
+  // ── a first sighting ────────────────────────────────────────────────
+  {
+    id: "only_charge",
+    /*
+     * ⚠️ Slot a's VALUE is never printed, and that is the point: the count fact
+     * is what licenses the word "once" — `holds` requires it to be exactly one —
+     * without the sentence having to say "1 charge" out loud. A fact can back a
+     * claim without appearing in it.
+     *
+     * ⛔ It read "The only charge you have made at …" first, and the neutrality
+     * sweep REFUSED it: `only` is on the denylist because "you only spent $40"
+     * is a verdict. The determiner and the minimiser are the same five letters
+     * and no regex can separate them — so the sentence changed rather than the
+     * guard, which is the whole reason the guard is a test and not a habit.
+     */
+    template: "{{a.name}} appears once in your ledger, for {{b.value}}.",
+    binds: { a: "count", b: "scalar" },
+    holds: (a) => a.kind === "count" && a.value === 1,
+    why: "a count fact of exactly one — the sentence says it is the only one",
   },
   // ── trend ───────────────────────────────────────────────────────────
   {

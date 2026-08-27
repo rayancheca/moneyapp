@@ -6,6 +6,7 @@ import {
   rankFact,
   scalarFact,
   shareFact,
+  multipleFact,
   trendFact,
 } from "./insight-facts";
 
@@ -63,6 +64,21 @@ describe("a fact renders itself, and the caller cannot disagree with it", () => 
   test("a trend states how many observations it read", () => {
     expect(trendFact("f1", "Dining", "rising", "March", 6).display).toBe("rising across 6 months since March");
     expect(trendFact("f1", "Rent", "flat", "March", 12).display).toBe("flat across 12 months since March");
+  });
+});
+
+describe("a multiple", () => {
+  test("renders as a magnitude with a times sign", () => {
+    expect(multipleFact("f1", "This charge", 21.8, "your usual there").display).toBe("21.8×");
+    expect(multipleFact("f1", "This charge", 1, "your usual there").display).toBe("1.0×");
+  });
+
+  test("⛔ a multiple at or below zero is refused, not rendered", () => {
+    // a caller producing one has divided by something that was not a
+    // magnitude — most often a median that netted to zero across refunds
+    expect(() => multipleFact("f1", "x", 0, "y")).toThrow(/above zero/);
+    expect(() => multipleFact("f1", "x", -3, "y")).toThrow(/above zero/);
+    expect(() => multipleFact("f1", "x", Number.POSITIVE_INFINITY, "y")).toThrow(/above zero/);
   });
 });
 

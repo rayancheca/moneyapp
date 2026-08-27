@@ -92,7 +92,16 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
   useLayoutEffect(() => {
     const el = cardRefs.current[index];
     if (!el) return;
-    const measure = () => setHeight(el.getBoundingClientRect().height);
+    /*
+     * ⛔ CEIL, not the raw float. `getBoundingClientRect().height` is
+     * sub-pixel, and feeding it straight into a style makes the container's
+     * laid-out height depend on where the fraction happens to land — the
+     * dashboard's 768px dark baseline came out 3,269px in a full run and
+     * 3,270px on its own, a 5,638-pixel diff from ONE pixel of height. Ceiling
+     * it makes the height deterministic, and rounding up rather than down means
+     * a card is never clipped by half a pixel.
+     */
+    const measure = () => setHeight(Math.ceil(el.getBoundingClientRect().height));
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(el);
