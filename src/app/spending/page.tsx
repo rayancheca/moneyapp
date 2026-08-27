@@ -16,6 +16,7 @@ import { cashEarningsReadings } from "@/services/cash-earnings";
 import { spendingSankey } from "@/services/sankey";
 import { predictBudgetableCategories } from "@/services/category-forecast";
 import { readSettings } from "@/services/settings";
+import { spendingInsights } from "@/services/spending-insights";
 import {
   cashFlowByPeriod,
   dailySpendHeatmap,
@@ -27,6 +28,7 @@ import {
   ledgerFirstDay,
 } from "@/services/spending";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { InsightList } from "@/components/insights/InsightList";
 import { SectionNotes } from "@/components/insights/SectionNotes";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
@@ -78,6 +80,15 @@ export default async function SpendingPage({
    * reported $52.95 of income while a confirmed $1,046-a-week schedule ran the
    * whole month. The note is measured, never added to any total.
    */
+  /*
+   * PHASE III-B. Sentences the app wrote about its own ledger, each one checked
+   * against a typed fact before it could exist (`lib/insight-grammar`). It does
+   * NOT follow the period selector: its window is the newest month every
+   * account has been imported through, which `moversCard` owns, and every
+   * sentence names that window itself.
+   */
+  const insights = spendingInsights(db, today);
+
   const cashNotes = cashEarningsSectionNotes({
     rows: cashEarningsReadings(db, { from: range.from, to: range.to, today }),
     formatDay: formatDayLong,
@@ -269,6 +280,11 @@ export default async function SpendingPage({
               figure the reader has already seen, and a caveat printed before its
               subject reads as a page-level warning about the whole screen. */}
           <SectionNotes notes={cashNotes} label="What this page cannot see" />
+
+          {/* Under the notes, above the charts: a reader who has seen the
+              totals and their caveats is ready for sentences about them, and a
+              claim printed before its own subject reads as a page banner. */}
+          {insights && <InsightList data={insights} />}
 
           <SurfaceCard>
             <h2 className="mb-1 text-sm font-medium">Cash flow — {period.label}</h2>

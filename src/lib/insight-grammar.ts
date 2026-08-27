@@ -133,7 +133,7 @@ export const CLAIMS: readonly ClaimTemplate[] = [
   // ── count ───────────────────────────────────────────────────────────
   {
     id: "count_in_subject",
-    template: "{{a.name}} covers {{a.value}}.",
+    template: "{{a.value}} landed in {{a.name}}.",
     binds: { a: "count" },
     holds: (a) => a.kind === "count" && a.value > 0,
     why: "a count fact above zero — a measured zero is not a finding",
