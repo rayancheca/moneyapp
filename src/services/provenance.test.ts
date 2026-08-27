@@ -1273,3 +1273,151 @@ describe("provenanceFor — a budget's plan", () => {
     expect(provenanceFor(bundle.db, { kind: "budgetPlan", id: "nope" })).toBeNull();
   });
 });
+
+/**
+ * ⛔ A comparison rests on both of its windows. `spending-insights` renders a
+ * `rose_between` delta today and proves only its current window, which is a
+ * looseness these tests deliberately do not repeat: a year-over-year sentence
+ * stands on last year's documents exactly as much as on this year's.
+ */
+describe("provenanceFor — all spending, compared against another window", () => {
+  const JUL = { from: "2026-07-01", to: "2026-07-31" } as const;
+  const JUN = { from: "2026-06-01", to: "2026-06-30" } as const;
+
+  function twoMonths(): { acct: string; cat: string; file: string } {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const cat = addKindedCategory("c-food", "Fixture Food", "expense");
+    const file = addFile("f1", "both.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [{ day: "2026-06-01", basis: "anchored" }, { day: "2026-07-31", basis: "derived" }]);
+    return { acct, cat, file };
+  }
+
+  test("both windows are counted, and each is named with its own verdict", () => {
+    const { acct, cat, file } = twoMonths();
+    categorize(addTxn(acct, "2026-07-10", { importFileId: file }), cat);
+    categorize(addTxn(acct, "2026-07-20", { importFileId: file }), cat);
+    categorize(addTxn(acct, "2026-06-10", { importFileId: file }), cat);
+
+    const p = provenanceFor(bundle.db, {
+      kind: "allSpend",
+      ...JUL,
+      label: "Jul 2026",
+      against: { ...JUN, label: "Jun 2026" },
+    })!;
+    expect(p.headline).toMatch(/Jul 2026 holds 2 rows; Jun 2026 holds 1 row\./);
+    expect(p.inputs.map((i) => i.label)).toEqual(["Jul 2026", "Jun 2026"]);
+    expect(p.inputs[0]!.detail).toMatch(/^2 rows, Jul 1, 2026 to Jul 31, 2026$/);
+    expect(p.inputs[1]!.detail).toMatch(/^1 row, Jun 1, 2026 to Jun 30, 2026$/);
+    expect(p.inputs.every((i) => i.verdict === "derived")).toBe(true);
+  });
+
+  /**
+   * ⛔ THE reason the grading runs over both row sets at once. A badge saying
+   * "2 of 3 checked" has to be true of a real set of rows; taking the weaker of
+   * two separately-computed fractions would print one that is true of neither
+   * half.
+   */
+  test("the badge counts every row under the comparison, not one window's", () => {
+    const acct = addAccount("a", "Robinhood Cash", "checking");
+    const cat = addKindedCategory("c-food", "Fixture Food", "expense");
+    const file = addFile("f1", "both.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [
+      { day: "2026-06-01", basis: "anchored" },
+      { day: "2026-06-30", basis: "derived" },
+      { day: "2026-07-20", basis: "derived_unverified" },
+    ]);
+    // two proven rows in June, one unchecked row in July
+    categorize(addTxn(acct, "2026-06-10", { importFileId: file }), cat);
+    categorize(addTxn(acct, "2026-06-20", { importFileId: file }), cat);
+    categorize(addTxn(acct, "2026-07-20", { importFileId: file }), cat);
+
+    const p = provenanceFor(bundle.db, {
+      kind: "allSpend",
+      ...JUL,
+      label: "Jul 2026",
+      against: { ...JUN, label: "Jun 2026" },
+    })!;
+    expect(p.badgeWord).toBe("2 of 3 checked");
+    expect(p.verdict).toBe("unverified");
+    // …and the reader can see WHICH half is the weak one
+    expect(p.inputs[0]!.verdict).toBe("unverified");
+    expect(p.inputs[1]!.verdict).toBe("derived");
+  });
+
+  /**
+   * ⛔ The mirror of the test above, and it exists because a mutation survived
+   * without it: with only the current-window-is-weak case covered, replacing
+   * `inputs[0]`'s own verdict with the COMBINED verdict changed nothing, since
+   * in that direction the two happen to be equal. A reader has to be able to
+   * see which half is the weak one, and that is only falsifiable when the weak
+   * half is the one the composite verdict is NOT about.
+   */
+  test("a weak PRIOR window leaves the current one reading as proven", () => {
+    /*
+     * Two accounts, deliberately. `verifiedThrough` stops at the FIRST untrusted
+     * day and never resumes, so one account cannot be broken in June and sound
+     * in July — a single-account fixture makes both halves weak and proves
+     * nothing about which one the composite is naming.
+     */
+    const solid = addAccount("a", "Chase Checking", "checking");
+    const shaky = addAccount("b", "Robinhood Cash", "checking");
+    const cat = addKindedCategory("c-food", "Fixture Food", "expense");
+    const file = addFile("f1", "both.pdf", "chase-checking-statement-pdf");
+    addDays(solid, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-31", basis: "derived" }]);
+    addDays(shaky, [{ day: "2026-06-01", basis: "anchored" }, { day: "2026-06-15", basis: "derived_unverified" }]);
+    categorize(addTxn(shaky, "2026-06-20", { importFileId: file }), cat);
+    categorize(addTxn(solid, "2026-07-10", { importFileId: file }), cat);
+
+    const p = provenanceFor(bundle.db, {
+      kind: "allSpend",
+      ...JUL,
+      label: "Jul 2026",
+      against: { ...JUN, label: "Jun 2026" },
+    })!;
+    expect(p.verdict).toBe("unverified");
+    expect(p.inputs[0]!.verdict).not.toBe(p.verdict);
+    expect(p.inputs[1]!.verdict).toBe("unverified");
+  });
+
+  /** An empty half is an absence, and it says so rather than hiding. */
+  test("a window with nothing in it is named as having no basis", () => {
+    const { acct, cat, file } = twoMonths();
+    categorize(addTxn(acct, "2026-07-10", { importFileId: file }), cat);
+
+    const p = provenanceFor(bundle.db, {
+      kind: "allSpend",
+      ...JUL,
+      label: "Jul 2026",
+      against: { ...JUN, label: "Jun 2026" },
+    })!;
+    expect(p.headline).toMatch(/Jun 2026 holds 0 rows/);
+    expect(p.inputs[1]!.verdict).toBe("unknown");
+  });
+
+  /** Without `against` it is the plain single-window total it has always been. */
+  test("no comparison window means no comparison sentence", () => {
+    const { acct, cat, file } = twoMonths();
+    categorize(addTxn(acct, "2026-07-10", { importFileId: file }), cat);
+
+    const p = provenanceFor(bundle.db, { kind: "allSpend", ...JUL, label: "Jul 2026" })!;
+    expect(p.headline).not.toMatch(/compares two windows/);
+    expect(p.inputs).toEqual([]);
+  });
+
+  /**
+   * The union bounds decide which day `accountCoverage` is asked about. Asked
+   * about the EARLIER window's end, every row in the later one would be graded
+   * against a frontier that has not reached it yet.
+   */
+  test("the earlier window may be the one passed as the comparison", () => {
+    const { acct, cat, file } = twoMonths();
+    categorize(addTxn(acct, "2026-06-10", { importFileId: file }), cat);
+    categorize(addTxn(acct, "2026-07-10", { importFileId: file }), cat);
+
+    const forward = provenanceFor(bundle.db, { kind: "allSpend", ...JUL, against: { ...JUN } })!;
+    const backward = provenanceFor(bundle.db, { kind: "allSpend", ...JUN, against: { ...JUL } })!;
+    expect(forward.verdict).toBe("derived");
+    expect(backward.verdict).toBe("derived");
+    expect(forward.checkedThrough).toBe(backward.checkedThrough);
+  });
+});

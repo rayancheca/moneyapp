@@ -196,7 +196,26 @@ export type FigureRef =
    * spending total is the union of every top-level `expense` category AND every
    * uncategorized outflow, and no category id names that set.
    */
-  | { kind: "allSpend"; from: string; to: string; label?: string }
+  | {
+      kind: "allSpend";
+      from: string;
+      to: string;
+      label?: string;
+      /**
+       * A second window this figure is COMPARED against — a year-over-year
+       * line, where the claim rests on both halves equally.
+       *
+       * ⛔ Present because proving one half of a comparison is proving half the
+       * claim. `spending-insights` already renders a `rose_between` delta and
+       * proves only its current window, which is a looseness this deliberately
+       * does not extend to a sentence about a whole year: "spending rose by
+       * $34,849.14 between the same days of 2025 and 2026" stands on 2025's
+       * documents exactly as much as on 2026's, and a proof that named only one
+       * year would be quietly answering a different question than the one the
+       * badge is attached to.
+       */
+      against?: { from: string; to: string; label?: string };
+    }
   /**
    * A budget's PLAN amount — the one figure in this app that is a decision
    * rather than a measurement.
@@ -1086,12 +1105,7 @@ function merchantSpendProvenance(
  * its transaction once, which is correct — the document carries the whole row,
  * and the proof's subject is the document.
  */
-function allSpendProvenance(
-  db: AppDatabase,
-  from: string,
-  to: string,
-  label: string | undefined,
-): Provenance {
+function allSpendRows(db: AppDatabase, from: string, to: string): SummedRow[] {
   const idx = loadCategoryIndex(db);
   const contributing = new Set<string>();
   for (const txn of activeTxnsInRange(db, from, to)) {
@@ -1107,14 +1121,89 @@ function allSpendProvenance(
    * long period. The window predicate is bounded by the dates instead, and the
    * set does the filtering in memory where it costs nothing.
    */
-  const rows = db
+  return db
     .select(SUM_ROW_COLUMNS)
     .from(transactions)
     .where(and(eq(transactions.status, "active"), gte(transactions.postedOn, from), lte(transactions.postedOn, to)))
     .all()
     .filter((r) => contributing.has(r.id));
+}
 
-  return summedRowsProvenance(db, rows, label ?? "your spending", from, to);
+function allSpendProvenance(
+  db: AppDatabase,
+  from: string,
+  to: string,
+  label: string | undefined,
+  against: { from: string; to: string; label?: string } | undefined,
+): Provenance {
+  const rows = allSpendRows(db, from, to);
+  const subject = label ?? "your spending";
+  if (!against) return summedRowsProvenance(db, rows, subject, from, to);
+
+  const priorRows = allSpendRows(db, against.from, against.to);
+  const priorSubject = against.label ?? "the window it is compared against";
+
+  /**
+   * ⛔ The grading runs over BOTH windows' rows at once, and that is the point
+   * rather than a shortcut. A comparison is one claim standing on two sets of
+   * documents, so its verdict, its "N of M checked" badge and the day it is
+   * checked through all have to answer for every row underneath it — exactly
+   * the rule `netWorthProvenance` applies across accounts. Taking the weaker of
+   * two separately-computed badges would give a fraction that is true of
+   * neither half and of no real set of rows.
+   *
+   * ⚠️ The union bounds passed below buy LESS than they look like they buy, and
+   * the difference is worth writing down because it is a trap. It reads as
+   * though the span decides what the rows are graded against — it does not.
+   * `accountCoverage(db, day)` takes a TODAY, not an as-of: measured against the
+   * real ledger, moving that argument from 2026 to 2023 changes `grade`,
+   * `verifiedThrough`, `unverifiedSince` and `brokenSince` on none of the twelve
+   * accounts. The only field it moves is `daysSinceVerified`, which this path
+   * never reads (and which goes NEGATIVE for a past day). Coverage is a fact
+   * about the ledger as it stands now, which is the right thing for a proof to
+   * report — but a future caller reaching for historical grading by passing an
+   * old date will get today's answer and no warning.
+   *
+   * The union is passed anyway because it is the only span that is TRUE of both
+   * halves. Handing `summedRowsProvenance` the current window's dates while
+   * giving it the other window's rows would be a lie in an argument, waiting for
+   * the day someone makes that argument matter.
+   */
+  const combined = summedRowsProvenance(
+    db,
+    [...rows, ...priorRows],
+    subject,
+    from < against.from ? from : against.from,
+    to > against.to ? to : against.to,
+  );
+
+  const count = (n: number): string => `${n} ${n === 1 ? "row" : "rows"}`;
+  return {
+    verdict: combined.verdict,
+    badgeWord: combined.badgeWord,
+    headline:
+      `This compares two windows, so it stands on both — and is only as proven as the weaker of them. ` +
+      `${subject} holds ${count(rows.length)}; ${priorSubject} holds ${count(priorRows.length)}. ` +
+      `A change between two figures cannot be better evidenced than the figures themselves.`,
+    sources: combined.sources,
+    checkedThrough: combined.checkedThrough,
+    /*
+     * Each window named with its OWN verdict, so a reader can see which half is
+     * the weak one instead of being told only that one of them is.
+     */
+    inputs: [
+      {
+        label: subject,
+        verdict: summedRowsProvenance(db, rows, subject, from, to).verdict,
+        detail: `${count(rows.length)}, ${readableDay(from)} to ${readableDay(to)}`,
+      },
+      {
+        label: priorSubject,
+        verdict: summedRowsProvenance(db, priorRows, priorSubject, against.from, against.to).verdict,
+        detail: `${count(priorRows.length)}, ${readableDay(against.from)} to ${readableDay(against.to)}`,
+      },
+    ],
+  };
 }
 
 /** The columns every summed-rows proof grades. Named so two selectors cannot drift. */
@@ -1355,7 +1444,7 @@ export function provenanceFor(db: AppDatabase, ref: FigureRef): Provenance | nul
     case "recurringSeries":
       return recurringSeriesProvenance(db, ref.id);
     case "allSpend":
-      return allSpendProvenance(db, ref.from, ref.to, ref.label);
+      return allSpendProvenance(db, ref.from, ref.to, ref.label, ref.against);
     case "budgetPlan":
       return budgetPlanProvenance(db, ref.id, ref.label);
   }
