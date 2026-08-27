@@ -1,0 +1,320 @@
+import { formatCents, formatCentsSigned } from "./money";
+
+/**
+ * A fact an insight is allowed to speak about — carrying a MACHINE-READABLE
+ * value, not only a rendered string.
+ *
+ * ⛔ This module exists because of a specific, executed failure. Pass 46 built
+ * this feature the other way round: a `Fact` carried `display: string` and
+ * nothing else, every figure reached the model as an opaque `{{f1}}` slot so it
+ * could never emit a digit, and a validator scanned the result for fabricated
+ * numbers. That validator was then run against 17 adversarial strings and
+ * **accepted 16 of them**, including:
+ *
+ *     "{{f1}} is your largest spending category."   ← f1 was the THIRD largest
+ *     "{{f1}} has been climbing since July."        ← no trend data existed
+ *
+ * Neither sentence contains a fabricated number. Both are false. Slots
+ * constrain fabricated NUMBERS and say nothing whatever about fabricated
+ * RELATIONSHIPS, and a denylist of English quantity words ("largest",
+ * "climbing", "most", "doubled", …) is unwinnable — the language always has
+ * another word.
+ *
+ * The root cause was the TYPE. With only a string, "is your largest" is not
+ * merely unverified, it is **unverifiable even in principle**: nothing in the
+ * fact set can be consulted to decide it. So this file starts again from the
+ * type, and the rule it enforces is:
+ *
+ *   ⛔ A CLAIM IS EXPRESSIBLE ONLY IF A FACT OF THE MATCHING KIND BACKS IT.
+ *
+ * "is the largest" needs a `rank` fact whose value is 1. "has been rising since
+ * July" needs a `trend` fact with a direction and a window. A sentence that
+ * makes a relational claim with no fact of that kind behind it is not a warning
+ * and not a lower-confidence rendering — it is a rejection.
+ *
+ * The second rule is that `display` is DERIVED here rather than accepted from a
+ * caller, so the words and the number cannot drift apart. That is the same move
+ * `budget-verdict` made after a headline and its own explanation disagreed at
+ * exactly 100%: make the drift unrepresentable rather than fix an instance of
+ * it.
+ */
+
+/**
+ * What a fact is a fact ABOUT — which determines which claims can bind to it.
+ *
+ * - `scalar` — one measured quantity ($1,963.24 of Dining)
+ * - `count`  — how many of something (502 purchases)
+ * - `share`  — a part of a stated whole (32.3% of everything owned)
+ * - `rank`   — a position in a stated ordering (1st of 22 categories)
+ * - `delta`  — a signed change between two stated points (+$3,053.26, Jun→Jul)
+ * - `trend`  — a direction over a stated window with a stated number of points
+ */
+export type FactKind = "scalar" | "count" | "share" | "rank" | "delta" | "trend";
+
+/** How a scalar or delta renders. Chosen by the caller; APPLIED here. */
+export type FactUnit = "money" | "percent" | "days" | "months" | "plain";
+
+interface FactBase {
+  /** slot name as it appears in a sentence: `f1`, `f2`, … */
+  readonly id: string;
+  /**
+   * What the fact is about, in the app's own words — a category name, a month,
+   * an account. Rendered as-is, so it must already be a real label from the
+   * ledger and never a model-supplied string.
+   */
+  readonly subject: string;
+  /** the app's own formatting of `value`, derived — never passed in */
+  readonly display: string;
+}
+
+export interface ScalarFact extends FactBase {
+  readonly kind: "scalar";
+  readonly value: number;
+  readonly unit: FactUnit;
+}
+
+export interface CountFact extends FactBase {
+  readonly kind: "count";
+  readonly value: number;
+  /** what is being counted, singular — "purchase", "day", "account" */
+  readonly noun: string;
+}
+
+export interface ShareFact extends FactBase {
+  readonly kind: "share";
+  /** 0–1. A share above 1 is a bug in the caller, not a big share. */
+  readonly value: number;
+  /** the whole this is a share OF, named so the sentence can say it */
+  readonly ofLabel: string;
+}
+
+export interface RankFact extends FactBase {
+  readonly kind: "rank";
+  /** 1-based position. 1 means largest/first. */
+  readonly value: number;
+  /** how many were ranked — a rank of 1 out of 1 is not a finding */
+  readonly outOf: number;
+  /** the set that was ranked — "spending categories", "accounts" */
+  readonly amongLabel: string;
+}
+
+export interface DeltaFact extends FactBase {
+  readonly kind: "delta";
+  /** signed: negative means it fell */
+  readonly value: number;
+  readonly unit: FactUnit;
+  readonly fromLabel: string;
+  readonly toLabel: string;
+}
+
+export interface TrendFact extends FactBase {
+  readonly kind: "trend";
+  readonly direction: "rising" | "falling" | "flat";
+  /** where the window starts, in the app's words — "July", "Feb 2026" */
+  readonly sinceLabel: string;
+  /**
+   * How many observations the direction was read from. Two points are a line
+   * through two points, not a trend; `trendFact` refuses fewer than three.
+   */
+  readonly points: number;
+}
+
+export type Fact = ScalarFact | CountFact | ShareFact | RankFact | DeltaFact | TrendFact;
+
+/** Every fact in a set, by slot id. Built by `factSet`, which enforces the ids. */
+export type FactSet = ReadonlyMap<string, Fact>;
+
+const SLOT_PATTERN = /^f[1-9][0-9]*$/;
+
+function assertSlotId(id: string): void {
+  if (!SLOT_PATTERN.test(id)) {
+    throw new Error(`Fact id must look like "f1", got ${JSON.stringify(id)}`);
+  }
+}
+
+/**
+ * `subject` and the various labels are rendered verbatim into a sentence, so
+ * they are the one place a caller could smuggle markup or a fake figure into an
+ * insight. They come from the ledger — a category name, a month — and the
+ * ledger's own name rules already forbid the interesting characters, but this
+ * module is downstream of every caller and cannot rely on that.
+ *
+ * Digits are allowed: "Feb 2026" and "SoFi 9067" are real labels. What is
+ * refused is anything that could open a tag, an entity or a slot.
+ */
+const FORBIDDEN_IN_LABEL = /[<>{}\\]/;
+
+function assertLabel(what: string, value: string): void {
+  if (value.trim() === "") throw new Error(`Fact ${what} cannot be empty`);
+  if (FORBIDDEN_IN_LABEL.test(value)) {
+    throw new Error(`Fact ${what} cannot contain < > { } or a backslash: ${JSON.stringify(value)}`);
+  }
+}
+
+/**
+ * Render a magnitude the way the rest of the app renders it.
+ *
+ * `signed` is separate from the unit because a scalar and a delta of the same
+ * unit print differently on purpose: $120 of spending is "$120.00", a change of
+ * $120 is "+$120.00". A delta that dropped its sign would read as a rise.
+ *
+ * The sign is an ASCII hyphen, matching `formatCentsSigned` exactly — a typographic
+ * minus would survive NFKC normalisation as a DIFFERENT character from the one
+ * the money formatter emits, and the validator compares these renderings for
+ * equality.
+ */
+function render(value: number, unit: FactUnit, signed: boolean): string {
+  // zero is not an increase — `formatCentsSigned` drops the sign there and every
+  // other unit follows it, so "+0.0%" can never claim a rise that did not happen
+  const sign = !signed || value === 0 ? "" : value < 0 ? "-" : "+";
+  switch (unit) {
+    case "money":
+      return signed ? formatCentsSigned(value) : formatCents(value);
+    case "percent":
+      return `${sign}${Math.abs(value * 100).toFixed(1)}%`;
+    case "days":
+    case "months": {
+      const n = Math.abs(value);
+      const noun = n === 1 ? unit.slice(0, -1) : unit;
+      return `${sign}${Number.isInteger(n) ? n : n.toFixed(1)} ${noun}`;
+    }
+    case "plain": {
+      const n = Math.abs(value);
+      return `${sign}${Number.isInteger(n) ? n : n.toFixed(1)}`;
+    }
+  }
+}
+
+export function scalarFact(id: string, subject: string, value: number, unit: FactUnit): ScalarFact {
+  assertSlotId(id);
+  assertLabel("subject", subject);
+  if (!Number.isFinite(value)) throw new Error("A scalar fact needs a finite value");
+  return { kind: "scalar", id, subject, value, unit, display: render(value, unit, false) };
+}
+
+export function countFact(id: string, subject: string, value: number, noun: string): CountFact {
+  assertSlotId(id);
+  assertLabel("subject", subject);
+  assertLabel("noun", noun);
+  if (!Number.isInteger(value) || value < 0) throw new Error("A count fact needs a non-negative integer");
+  return {
+    kind: "count",
+    id,
+    subject,
+    value,
+    noun,
+    display: `${value.toLocaleString("en-US")} ${value === 1 ? noun : `${noun}s`}`,
+  };
+}
+
+export function shareFact(id: string, subject: string, value: number, ofLabel: string): ShareFact {
+  assertSlotId(id);
+  assertLabel("subject", subject);
+  assertLabel("ofLabel", ofLabel);
+  /*
+   * A share outside 0–1 is a caller bug every time — a percentage passed as 32.3
+   * instead of 0.323 would render "3230.0%" and back a "more than half" claim
+   * that is arithmetically impossible. Refused rather than clamped, because
+   * clamping would turn the bug into a plausible-looking sentence.
+   */
+  if (!(value >= 0 && value <= 1)) throw new Error(`A share must be within 0–1, got ${value}`);
+  return { kind: "share", id, subject, value, ofLabel, display: render(value, "percent", false) };
+}
+
+export function rankFact(id: string, subject: string, value: number, outOf: number, amongLabel: string): RankFact {
+  assertSlotId(id);
+  assertLabel("subject", subject);
+  assertLabel("amongLabel", amongLabel);
+  if (!Number.isInteger(value) || value < 1) throw new Error("A rank starts at 1");
+  if (!Number.isInteger(outOf) || outOf < value) throw new Error("A rank cannot exceed the size of its set");
+  return {
+    kind: "rank",
+    id,
+    subject,
+    value,
+    outOf,
+    amongLabel,
+    display: `${ordinal(value)} of ${outOf}`,
+  };
+}
+
+export function deltaFact(
+  id: string,
+  subject: string,
+  value: number,
+  unit: FactUnit,
+  fromLabel: string,
+  toLabel: string,
+): DeltaFact {
+  assertSlotId(id);
+  assertLabel("subject", subject);
+  assertLabel("fromLabel", fromLabel);
+  assertLabel("toLabel", toLabel);
+  if (!Number.isFinite(value)) throw new Error("A delta fact needs a finite value");
+  return { kind: "delta", id, subject, value, unit, fromLabel, toLabel, display: render(value, unit, true) };
+}
+
+export function trendFact(
+  id: string,
+  subject: string,
+  direction: TrendFact["direction"],
+  sinceLabel: string,
+  points: number,
+): TrendFact {
+  assertSlotId(id);
+  assertLabel("subject", subject);
+  assertLabel("sinceLabel", sinceLabel);
+  /*
+   * ⛔ Three points, not two. Any two observations define a direction, so a
+   * two-point "trend" is a tautology dressed as a finding — and "has been
+   * climbing since July" was one of the strings that got this feature held. If
+   * the ledger has two months, the honest sentence is a `delta`, which says
+   * exactly what changed between two named points and claims nothing about the
+   * shape between them.
+   */
+  if (!Number.isInteger(points) || points < 3) {
+    throw new Error(`A trend needs at least 3 observations, got ${points}`);
+  }
+  const word = direction === "flat" ? "flat" : direction;
+  return {
+    kind: "trend",
+    id,
+    subject,
+    direction,
+    sinceLabel,
+    points,
+    display: `${word} across ${points} months since ${sinceLabel}`,
+  };
+}
+
+function ordinal(n: number): string {
+  const rem100 = n % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  switch (n % 10) {
+    case 1:
+      return `${n}st`;
+    case 2:
+      return `${n}nd`;
+    case 3:
+      return `${n}rd`;
+    default:
+      return `${n}th`;
+  }
+}
+
+/**
+ * Assemble a fact set, refusing duplicate slots.
+ *
+ * A duplicate `f1` would make a sentence's meaning depend on map insertion
+ * order — two different claims about two different subjects rendering through
+ * the same slot — which is precisely the kind of ambiguity this whole module
+ * exists to make impossible.
+ */
+export function factSet(facts: readonly Fact[]): FactSet {
+  const map = new Map<string, Fact>();
+  for (const f of facts) {
+    if (map.has(f.id)) throw new Error(`Duplicate fact slot ${f.id}`);
+    map.set(f.id, f);
+  }
+  return map;
+}
