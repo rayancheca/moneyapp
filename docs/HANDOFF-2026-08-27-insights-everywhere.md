@@ -18,7 +18,36 @@
 
 # ⛔ 0. THE JOB — what is next
 
-1. **PHASE III-B is BUILT and SHIPPING on four surfaces** (§1). What is left of
+1. ⛔ **LINK THE TRANSFERS. Owner-approved 2026-08-27, do this first** — see
+   §4.1 for the full brief and the trap. Scope, re-measured against the live DB
+   after this session's writes:
+
+   ```
+   A. exactly one own-transfer mirror     20 legs   $3,814.64
+   B. the Wells Fargo opening deposit      1 leg       $25.00
+                                          21 legs   $3,839.64   ← LINK THESE
+   C. two identical rival mirrors          4 legs    $1,462.00   ← LEAVE
+   ```
+
+   ⚠️ **The arithmetic is 21, not 23.** He said "the 20 plus the Wells Fargo
+   trio", and **two of that trio are already inside the 20** — the $1.00 and
+   $199.00 Zelles each have exactly one own-transfer mirror. Only the $25.00
+   opening deposit is outside it (its Wells Fargo side is uncategorized, so it
+   has no *own-transfer* mirror). Adding "the trio" to "the 20" adds one leg.
+
+   ⛔ **Never `transferCandidates(...)[0]`.** Resolve each leg to a NAMED
+   counterpart id and assert it before writing. On 2026-05-13 the SoFi
+   −$615.13 Zelle has two exact mirrors — the Chase arrival and the **Fordham
+   payroll deposit** — and the tie breaks on `id.localeCompare`. Linking that
+   one wrong converts $615.13 of SALARY into a transfer.
+
+   Guards the write must hold: **income unchanged at $117,924.62**, net row sum
+   unchanged, `daily_balances` untouched, exactly 21 groups created, exactly 42
+   rows gain a `transfer_group_id`, and no row that already had one changes.
+   `linkTransferPair` returns a lossless undo patch; `pnpm ledger-check` exit 0
+   after. Playbook: `scripts/file-taxes-government-2026-08-27.ts`.
+
+2. **PHASE III-B is BUILT and SHIPPING on four surfaces** (§1). What is left of
    it is the sweep: `/investments`, `/recurring/[id]`, `/budgets`,
    `/summary/[year]`, `/flow`, `/transactions`, `/imports`, and the dashboard
    hero. Each is now a **fact builder and nothing else** — the loop, the cap,
@@ -27,14 +56,12 @@
    ⛔ Read `merchant-insights.ts`'s header before writing one: its first version
    restated figures the page already printed, and one of those restatements
    actively misled.
-2. **Pass 72d — cost, caching and the kill switch.** Nothing here calls a model
+3. **Pass 72d — cost, caching and the kill switch.** Nothing here calls a model
    yet: every sentence is composed by the app from measured facts. That was the
    right order (a vocabulary first, a model second), and it means the model can
    now be introduced as a SELECTOR over already-true claims rather than as a
    writer. `claude-categorize.ts` still has the shape to copy.
-3. **Pass 73** (the Robinhood Brokerage arbiter) and **74** as scheduled.
-4. Two data questions from the previous handoff: one is **done** (§2.1), one is
-   **his** and he has the list (§4.1).
+4. **Pass 73** (the Robinhood Brokerage arbiter) and **74** as scheduled.
 
 ---
 
@@ -207,9 +234,13 @@ sorted before `visual` and would have rebased eight dashboard baselines.
 
 ## 4. ⛔ What is HIS call
 
-### 4.1 The 25 unpaired transfers — he asked to see the list first
+### 4.1 The 25 unpaired transfers — ✅ DECIDED, and it is job #1
 
-He has it. The measured split, re-derived from the ledger:
+Owner, 2026-08-27, after seeing the list: **"link the 20 unambiguous ones plus
+the wells fargo trio FOR THE NEXT PASS."** That is buckets **A + B — 21 legs,
+$3,839.64**. Bucket C is deliberately left alone.
+
+The split, re-measured against the live DB after this session's writes:
 
 ```
 A. exactly one own-transfer mirror     20 legs   $3,814.64
@@ -228,9 +259,22 @@ available (Feb 4↔Feb 4 and Feb 18↔Feb 18; Mar 30↔Mar 30 and Apr 9↔Apr 9)
 same-day-first assignment resolves all four uniquely.
 
 Only the three Chase→Wells Fargo legs are provable by document — the Zelle REF
-appears on both legs (`Jpm99Cqxlsrm`, `Jpm99Cqxln8W`) plus the card-7782
-opening deposit. SoFi truncates its descriptor at "to Rayan", so the ref test is
-unavailable for the other 22.
+appears on both legs (`Jpm99Cqxlsrm` for the $1.00, `Jpm99Cqxln8W` for the
+$199.00) plus the card-7782 opening deposit for the $25.00. SoFi truncates its
+descriptor at "to Rayan", so the ref test is unavailable for the other 22; those
+rest on amount + date + direction + the counterpart being an own-account
+transfer, which is the same evidence `linkTransferPair` was built for.
+
+⚠️ **Two of the "trio" are already inside the 20** ($1.00 and $199.00 each have
+exactly one own-transfer mirror). The job is 21 legs, not 23.
+
+⛔ **Do not resolve a leg with `transferCandidates(...)[0]`.** Four of the 25
+have more than one exact mirror and three of those include an INCOME row —
+2026-02-12 ($201.00, three `Tutoring` deposits), 2026-03-04 ($695.03, Fordham
+payroll) and 2026-05-13 ($615.13, Fordham payroll). All three are in bucket A,
+so they ARE in scope: their single *own-transfer* mirror is the right answer and
+the payroll deposit is the wrong one, and only the own-account filter separates
+them.
 
 ### 4.2 HBO Max is registered as RENEWING
 

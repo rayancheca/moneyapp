@@ -4,13 +4,13 @@ Read `docs/HANDOFF-2026-08-27-insights-everywhere.md` first — it is the brief.
 
 The job, in order:
 
-1. **Finish the insight sweep.** PHASE III-B is built and shipping on `/spending`, `/categories/[id]`, `/merchants/[id]` and `/accounts/[id]`. The machinery is done: a surface is now a **fact builder and nothing else** — the loop, the cap, the drop-if-unprovable rule and the key scheme all live in `services/insights.ts`. Left: `/investments`, `/recurring/[id]`, `/budgets`, `/summary/[year]`, `/flow`, `/transactions`, `/imports`, dashboard hero. ⛔ Read `merchant-insights.ts`'s header before writing one — its first version restated figures the page already printed, and one of those restatements actively misled.
+1. ⛔ **LINK THE TRANSFERS FIRST — I approved this, do it.** Buckets A + B from §4.1: **21 legs, $3,839.64**. Leave bucket C (the 4 rivals, $1,462.00) alone. ⚠️ It is 21 legs, not 23 — two of the Wells Fargo trio are already inside the 20. ⛔ Never `transferCandidates(...)[0]`: three of the legs in scope have a payroll or tutoring deposit as a rival exact mirror, and linking one wrong turns SALARY into a transfer. Guard on income staying $117,924.62.
 
-2. **Pass 72d — cost, caching, the kill switch.** No model is called yet; every sentence is composed by the app from measured facts. That was the right order, and it means a model can now be introduced as a SELECTOR over already-true claims rather than as a writer.
+2. **Finish the insight sweep.** PHASE III-B is built and shipping on `/spending`, `/categories/[id]`, `/merchants/[id]` and `/accounts/[id]`. The machinery is done: a surface is now a **fact builder and nothing else** — the loop, the cap, the drop-if-unprovable rule and the key scheme all live in `services/insights.ts`. Left: `/investments`, `/recurring/[id]`, `/budgets`, `/summary/[year]`, `/flow`, `/transactions`, `/imports`, dashboard hero. ⛔ Read `merchant-insights.ts`'s header before writing one — its first version restated figures the page already printed, and one of those restatements actively misled.
 
-3. Then pass 73 (the Robinhood Brokerage arbiter) and 74 as scheduled.
+3. **Pass 72d — cost, caching, the kill switch.** No model is called yet; every sentence is composed by the app from measured facts. That was the right order, and it means a model can now be introduced as a SELECTOR over already-true claims rather than as a writer.
 
-4. **I still owe you an answer on the 25 unpaired transfers** — you have the list in §4.1. Nothing has been linked.
+4. Then pass 73 (the Robinhood Brokerage arbiter) and 74 as scheduled.
 
 How I want you to work:
 
