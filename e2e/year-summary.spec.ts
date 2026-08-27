@@ -98,6 +98,59 @@ test.describe("year summary", () => {
   });
 
   /**
+   * The one thread of money OUT on a page that is otherwise all money in.
+   *
+   * ⛔ The window has to be inside the SENTENCE. The whole reason this strip
+   * needed owner approval is that a naive year-over-year line sets eight months
+   * of 2026 beside twelve of 2025 — measured on the real ledger, that reads
+   * "+$24,486.91" where like-for-like is "+$34,849.14". A reader scanning the
+   * line must meet the window without having to find a caption.
+   *
+   * ⚠️ Shaped from what the fixture ACTUALLY renders, not guessed: at
+   * E2E_FAKE_TODAY the frontier is 2026-07-04, so both years are cut there
+   * (scripts/probe-e2e-year-insights.ts).
+   */
+  test("the spending strip names its window in every sentence", async ({ page }) => {
+    await page.goto("/summary/2026");
+    const strip = page.locator("section:has(#ledger-insights)");
+    await expect(strip.getByRole("heading", { name: "What you spent" })).toBeVisible();
+
+    const lines = await strip.locator("li").allInnerTexts();
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) {
+      expect(line).not.toMatch(/\{\{|undefined|NaN|\[object/);
+      // never a bare year on its own — the cut day travels with the figure
+      expect(line).toMatch(/Jan 1 – \w{3} \d+, 20\d\d/);
+    }
+    // and the reader is told this is a different subject from every total above
+    await expect(strip.getByText(/counted in none of this page's totals/)).toBeVisible();
+  });
+
+  /** A comparison stands on both of its windows, so its proof names both. */
+  test("the comparison's proof opens and names both years", async ({ page }) => {
+    await page.goto("/summary/2026");
+    const strip = page.locator("section:has(#ledger-insights)");
+    await strip.getByRole("button", { name: /^How Spending (rose|fell) by/ }).click();
+    const panel = page.getByRole("dialog");
+    await expect(panel).toContainText("compares two windows");
+    await expect(panel).toContainText("Assembled from 2");
+  });
+
+  /**
+   * ⛔ Gate three, in a browser. The e2e ledger starts 2024-07-01, so 2025's
+   * predecessor is only half covered — a comparison there would measure when
+   * importing started rather than when spending changed, and the page says
+   * nothing instead. Nothing to say is not a weakness and must not render as
+   * one, so there is no empty card and no "no insights" placeholder either.
+   */
+  test("a year whose predecessor is only half imported shows no strip at all", async ({ page }) => {
+    await page.goto("/summary/2025");
+    await expect(page.getByRole("heading", { level: 1, name: "2025" })).toBeVisible();
+    await expect(page.locator("section:has(#ledger-insights)")).toHaveCount(0);
+    await expect(page.getByText(/no insights/i)).toHaveCount(0);
+  });
+
+  /**
    * The print stylesheet is the reason this route exists as its own page. Two
    * things it must do, both of which the first two drafts got wrong: hide the
    * app shell, and NOT hide the page's own header — which is also a <header>,
