@@ -75,6 +75,52 @@ test.describe("what the ledger says", () => {
     await expect(strip).toContainText(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4}\b/);
   });
 
+  test("a category page says where THAT category sits", async ({ page }) => {
+    await page.goto("/categories");
+    const href = await page.locator('a[href^="/categories/"]').first().getAttribute("href");
+    if (!href) throw new Error("no category link on /categories");
+    await page.goto(href);
+    const strip = page.locator(STRIP);
+    await expect(strip).toBeVisible();
+    // the heading names the category, so the strip cannot be read as page-level
+    await expect(strip.locator("h2")).toContainText("What the ledger says about");
+    const text = await strip.innerText();
+    expect(text).not.toMatch(BROKEN);
+    /*
+     * ⛔ The rank sentence must be the RANKED one, not the largest one, unless
+     * this category really is first. Both are true of a rank of 1 and only one
+     * is true of any other, which is the distinction the whole feature exists
+     * for — pass 46 shipped "is your largest" over a third-place category.
+     */
+    expect(text).toMatch(/is the (largest|\d+(st|nd|rd|th) largest) of your \d+ spending categories/);
+  });
+
+  test("a merchant page says what the cards beside it cannot", async ({ page }) => {
+    await page.goto("/spending");
+    const href = await page.locator('a[href^="/merchants/"]').first().getAttribute("href");
+    if (!href) throw new Error("no merchant link on /spending");
+    await page.goto(href);
+    /*
+     * ⚠️ Not `if (count === 0) return` — an early exit here would turn a
+     * regression into a silent pass. A merchant with one visit legitimately has
+     * nothing to say (65% of the real ledger's merchants are that), but the
+     * link followed is the TOP merchant on /spending, which is a multi-visit
+     * merchant by construction, so the strip has to be there.
+     */
+    const strip = page.locator(STRIP);
+    await expect(strip).toBeVisible();
+
+    const text = await strip.innerText();
+    expect(text).not.toMatch(BROKEN);
+    /*
+     * ⛔ The page's own cards already print this merchant's visit count, total
+     * and median ticket. A strip repeating them would be saying the same thing
+     * twice in two voices, which is the mistake the first version of
+     * `merchant-insights` made — so the strip must state a RELATIONSHIP.
+     */
+    expect(text).toMatch(/regular merchants|% of what you spent on/);
+  });
+
   test("the period selector does not silently change what the strip claims", async ({ page }) => {
     await page.goto("/spending");
     const before = await page.locator(STRIP).innerText();

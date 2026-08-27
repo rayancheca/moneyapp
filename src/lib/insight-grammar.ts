@@ -112,7 +112,7 @@ export const CLAIMS: readonly ClaimTemplate[] = [
   },
   {
     id: "ranked_in_set",
-    template: "{{a.name}} sits {{a.value}} of your {{a.of}}, at {{b.value}}.",
+    template: "{{a.name}} is the {{a.value}} largest of your {{a.of}}, at {{b.value}}.",
     binds: { a: "rank", b: "scalar" },
     holds: (a) => a.kind === "rank" && a.outOf >= 2,
     why: "a rank fact among at least two",

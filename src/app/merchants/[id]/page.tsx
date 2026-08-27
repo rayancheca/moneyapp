@@ -2,11 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
+import { merchantInsights } from "@/services/merchant-insights";
 import { merchantIntelligence, merchantSummary } from "@/services/merchants";
 import { categories } from "@/db/schema/categories";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { MerchantDefaultCategory } from "@/components/merchants/MerchantDefaultCategory";
 import { MerchantNameHeading } from "@/components/merchants/MerchantNameHeading";
+import { InsightList } from "@/components/insights/InsightList";
 import { MerchantProfileCards } from "@/components/merchants/MerchantProfileCards";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
@@ -34,6 +36,12 @@ export default async function MerchantPage({ params }: { params: Promise<{ id: s
     }
   })();
   const intelligence = merchantIntelligence(db, id);
+  /*
+   * PHASE III-B. Only what the cards below cannot say — where this merchant
+   * sits among the rest, and how much of a category it accounts for. Its own
+   * figures are `MerchantProfileCards`' job and are not restated here.
+   */
+  const insights = merchantInsights(db, id);
 
   return (
     <>
@@ -49,6 +57,8 @@ export default async function MerchantPage({ params }: { params: Promise<{ id: s
 
       <div className="space-y-6">
         <MerchantProfileCards intelligence={intelligence} />
+
+        {insights && <InsightList data={insights} heading={`What the ledger says about ${summary.name}`} />}
 
         <MerchantDefaultCategory
           merchantId={id}

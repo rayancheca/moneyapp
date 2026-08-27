@@ -44,16 +44,20 @@ describe("a fact renders itself, and the caller cannot disagree with it", () => 
     expect(countFact("f1", "Rows", 10111, "row").display).toBe("10,111 rows");
   });
 
-  test("a rank says where, out of how many", () => {
-    expect(rankFact("f1", "Dining", 1, 22, "categories").display).toBe("1st of 22");
-    expect(rankFact("f1", "Dining", 2, 22, "categories").display).toBe("2nd of 22");
-    expect(rankFact("f1", "Dining", 3, 22, "categories").display).toBe("3rd of 22");
-    expect(rankFact("f1", "Dining", 4, 22, "categories").display).toBe("4th of 22");
+  test("a rank displays the ordinal alone — the set size is its frame, not its value", () => {
+    // "3rd of 22" in the display AND "22 categories" in the frame produced
+    // "sits 1st of 2 of your 2 spending categories" the first time one template
+    // read both
+    expect(rankFact("f1", "Dining", 1, 22, "categories").display).toBe("1st");
+    expect(rankFact("f1", "Dining", 2, 22, "categories").display).toBe("2nd");
+    expect(rankFact("f1", "Dining", 3, 22, "categories").display).toBe("3rd");
+    expect(rankFact("f1", "Dining", 4, 22, "categories").display).toBe("4th");
     // the teens are the case an ordinal helper always gets wrong
-    expect(rankFact("f1", "Dining", 11, 22, "categories").display).toBe("11th of 22");
-    expect(rankFact("f1", "Dining", 12, 22, "categories").display).toBe("12th of 22");
-    expect(rankFact("f1", "Dining", 13, 22, "categories").display).toBe("13th of 22");
-    expect(rankFact("f1", "Dining", 21, 22, "categories").display).toBe("21st of 22");
+    expect(rankFact("f1", "Dining", 11, 22, "categories").display).toBe("11th");
+    expect(rankFact("f1", "Dining", 12, 22, "categories").display).toBe("12th");
+    expect(rankFact("f1", "Dining", 13, 22, "categories").display).toBe("13th");
+    expect(rankFact("f1", "Dining", 21, 22, "categories").display).toBe("21st");
+    expect(rankFact("f1", "Dining", 111, 222, "categories").display).toBe("111th");
   });
 
   test("a trend states how many observations it read", () => {
@@ -82,6 +86,29 @@ describe("what a fact refuses to be", () => {
     expect(() => trendFact("f1", "D", "rising", "<a", 3)).toThrow(/cannot contain/);
     // digits are fine — "Feb 2026" and "SoFi 9067" are real labels
     expect(scalarFact("f1", "SoFi 9067", 1, "money").subject).toBe("SoFi 9067");
+  });
+
+  test("a real share never rounds away to zero, or up to the whole", () => {
+    // $4.24 of $10,240.85 is 0.041% — "0.0%" asserts a measured zero about
+    // money that was really spent, and it was on a category page before this
+    expect(shareFact("f1", "Health", 4.24 / 10_240.85, "everything").display).toBe("<0.1%");
+    expect(shareFact("f1", "Health", 0.0004, "everything").display).toBe("<0.1%");
+    // and the mirror: 99.96% is not the whole of anything
+    expect(shareFact("f1", "Rent", 0.9996, "everything").display).toBe(">99.9%");
+    // the boundaries themselves are exact and print normally
+    expect(shareFact("f1", "X", 0, "everything").display).toBe("0.0%");
+    expect(shareFact("f1", "X", 1, "everything").display).toBe("100.0%");
+    expect(shareFact("f1", "X", 0.0005, "everything").display).toBe("0.1%");
+    expect(shareFact("f1", "X", 0.9995, "everything").display).toBe(">99.9%");
+  });
+
+  test("a delta in percent obeys the same floor", () => {
+    // "rose by 0.0%" is the same false sentence with a direction attached.
+    // ⚠️ No surface renders a percent DELTA today — every delta in the app is
+    // money — so this shape is PINNED rather than chosen. If one ever does,
+    // "+<0.1%" is the thing to look at first.
+    expect(deltaFact("f1", "Rent", 0.0002, "percent", "Jun", "Jul").display).toBe("+<0.1%");
+    expect(deltaFact("f1", "Rent", -0.0002, "percent", "Jun", "Jul").display).toBe("-<0.1%");
   });
 
   test("a share outside 0–1 is refused, not clamped", () => {

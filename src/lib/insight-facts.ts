@@ -171,7 +171,7 @@ function render(value: number, unit: FactUnit, signed: boolean): string {
     case "money":
       return signed ? formatCentsSigned(value) : formatCents(value);
     case "percent":
-      return `${sign}${Math.abs(value * 100).toFixed(1)}%`;
+      return `${sign}${renderPercent(Math.abs(value))}`;
     case "days":
     case "months": {
       const n = Math.abs(value);
@@ -227,15 +227,14 @@ export function rankFact(id: string, subject: string, value: number, outOf: numb
   assertLabel("amongLabel", amongLabel);
   if (!Number.isInteger(value) || value < 1) throw new Error("A rank starts at 1");
   if (!Number.isInteger(outOf) || outOf < value) throw new Error("A rank cannot exceed the size of its set");
-  return {
-    kind: "rank",
-    id,
-    subject,
-    value,
-    outOf,
-    amongLabel,
-    display: `${ordinal(value)} of ${outOf}`,
-  };
+  /*
+   * The display is the ordinal ALONE — "3rd", not "3rd of 22". The set size is
+   * the fact's frame of reference and belongs in `of`, which is what a template
+   * reads when it needs it. Carrying it in both places produced
+   * "sits 1st of 2 of your 2 spending categories" the first time a template
+   * used them together.
+   */
+  return { kind: "rank", id, subject, value, outOf, amongLabel, display: ordinal(value) };
 }
 
 export function deltaFact(
@@ -285,6 +284,26 @@ export function trendFact(
     points,
     display: `${word} across ${points} months since ${sinceLabel}`,
   };
+}
+
+/**
+ * A percentage that never rounds a real quantity away, in either direction.
+ *
+ * ⛔ `$4.24 of $10,240.85` is 0.041%, and `toFixed(1)` prints it as "0.0%" —
+ * a sentence asserting a measured zero about money that was really spent. The
+ * mirror case is worse: 99.96% prints as "100.0%" and claims the whole of
+ * something it does not account for. Both were on screen before this existed.
+ *
+ * The `<` and `>` here are the ONLY place a display carries them. Labels forbid
+ * both (`FORBIDDEN_IN_LABEL`) because a label could otherwise open a tag; a
+ * display is written by this module, never by a caller or a model, and React
+ * escapes it as a text node.
+ */
+function renderPercent(magnitude: number): string {
+  const pct = magnitude * 100;
+  if (pct > 0 && pct < 0.05) return "<0.1%";
+  if (pct < 100 && pct >= 99.95) return ">99.9%";
+  return `${pct.toFixed(1)}%`;
 }
 
 function ordinal(n: number): string {

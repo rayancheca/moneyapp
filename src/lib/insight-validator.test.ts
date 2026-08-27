@@ -308,7 +308,7 @@ describe("what the app is allowed to say", () => {
     const v = checkClaim({ claimId: "ranked_in_set", a: "f1", b: "f2" }, FACTS);
     expect(v.ok).toBe(true);
     if (!v.ok) return;
-    expect(v.text).toBe("Dining sits 3rd of 22 of your 22 spending categories, at $1,963.24.");
+    expect(v.text).toBe("Dining is the 3rd largest of your 22 spending categories, at $1,963.24.");
   });
 
   /*

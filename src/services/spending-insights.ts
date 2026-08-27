@@ -4,18 +4,17 @@ import { formatMonthYear } from "@/lib/format-date";
 import {
   countFact,
   deltaFact,
-  factSet,
   rankFact,
   scalarFact,
   shareFact,
   trendFact,
   type Fact,
 } from "@/lib/insight-facts";
-import { checkClaim, type Accepted } from "@/lib/insight-validator";
 import { categoryBreakdown } from "./analytics";
 import { categoryMonthlyTrend } from "./category-detail";
+import { runInsights, type InsightCandidate, type SurfaceInsights } from "./insights";
 import { moversCard, type MoversCard } from "./movers-card";
-import { provenanceFor, type Provenance } from "./provenance";
+import { provenanceFor } from "./provenance";
 
 /**
  * What /spending can say about itself, and prove.
@@ -49,9 +48,6 @@ import { provenanceFor, type Provenance } from "./provenance";
  * it once more in plain words.
  */
 
-/** How many of the accepted claims reach the page. A wall of text is not an insight. */
-export const MAX_INSIGHTS = 4;
-
 /**
  * A trend needs every step to move the same way.
  *
@@ -63,38 +59,7 @@ export const MAX_INSIGHTS = 4;
  */
 export const TREND_MONTHS = 6;
 
-export interface SpendingInsight {
-  /**
-   * Stable across renders — the React key, and a dismissal id later.
-   *
-   * Claim id AND slots, not the claim id alone: two candidates may legitimately
-   * use one template about different facts (two categories, both risen), and a
-   * duplicate key silently makes React reuse the wrong node.
-   */
-  id: string;
-  /** the sentence, rendered by the app from its own vocabulary */
-  text: string;
-  /** which template said it — for the tests, and for a future per-claim opt-out */
-  claimId: string;
-  /**
-   * The chain behind the figures in this sentence. An insight the app cannot
-   * prove does not render, which is the same rule every other figure follows;
-   * `null` is therefore a reason to DROP the insight, not to show it bare.
-   */
-  provenance: Provenance;
-}
-
-export interface SpendingInsights {
-  /** the month every claim is about, e.g. "July 2026" */
-  windowLabel: string;
-  /**
-   * Why that month and not the running one — measured, in the app's own words.
-   * Null when the window IS the running month and needs no explanation.
-   */
-  windowNote: string | null;
-  insights: SpendingInsight[];
-}
-
+/** A candidate before its proof is wired — the surface knows the category, not the chain. */
 interface Candidate {
   claimId: string;
   a: string;
@@ -113,6 +78,16 @@ interface Candidate {
 function buildCandidates(
   db: AppDatabase,
   card: MoversCard,
+  /**
+   * Which category the sentences are about. `"largest"` is /spending's
+   * question ("what dominated the month?"); a category id is
+   * /categories/[id]'s ("where does this one sit?").
+   *
+   * ⛔ ONE builder for both, so the two pages cannot disagree about a rank, a
+   * share or a trend. A second copy of this arithmetic would be a second
+   * opinion, and the app's rule is that a figure has one.
+   */
+  subject: string | "largest" = "largest",
 ): { facts: Fact[]; candidates: Candidate[]; from: string; to: string } | null {
   const from = `${card.month}-01`;
   // `periodBounds` owns the calendar, exactly as `moversCard` defers to it
@@ -129,11 +104,15 @@ function buildCandidates(
     .sort((x, y) => y.spentCents - x.spentCents || x.name.localeCompare(y.name));
   if (rows.length === 0) return null;
 
-  const top = rows[0]!;
+  const top = subject === "largest" ? rows[0]! : rows.find((r) => r.categoryId === subject);
+  // a category with no spend in the observed month is not a weakness and not an
+  // error — there is simply nothing measured to say about it
+  if (!top) return null;
+  const rank = rows.indexOf(top) + 1;
   const totalCents = rows.reduce((sum, r) => sum + r.spentCents, 0);
 
   const facts: Fact[] = [
-    rankFact("f1", top.name, 1, rows.length, "spending categories"),
+    rankFact("f1", top.name, rank, rows.length, "spending categories"),
     scalarFact("f2", top.name, top.spentCents, "money"),
     shareFact("f3", top.name, top.spentCents / totalCents, `everything you spent in ${monthLabel}`),
     /*
@@ -143,8 +122,22 @@ function buildCandidates(
      */
     countFact("f4", top.name, top.txnCount, "transaction"),
   ];
+  /*
+   * ONE rank claim, chosen here rather than offered to the gate.
+   *
+   * ⛔ The division of labour matters. The gate decides what is TRUE — it would
+   * accept both of these for a first-place category, because "is the largest"
+   * and "is the 1st largest" are both true of a rank of 1. What it cannot know
+   * is that printing both says the same thing twice, and redundancy is an
+   * editorial judgement, which is this module's job and not the validator's.
+   */
   const candidates: Candidate[] = [
-    { claimId: "largest_in_set", a: "f1", b: "f2", categoryId: top.categoryId! },
+    {
+      claimId: rank === 1 ? "largest_in_set" : "ranked_in_set",
+      a: "f1",
+      b: "f2",
+      categoryId: top.categoryId!,
+    },
     { claimId: "share_of_whole", a: "f3", categoryId: top.categoryId! },
   ];
 
@@ -154,7 +147,16 @@ function buildCandidates(
    * thin is skipped: its "usual" is two spends in six months, which is
    * lumpiness rather than a change, and the card says so in its own words.
    */
-  const mover = card.movers.find((m) => m.categoryId !== null && m.thinNote === null && m.deltaCents !== 0);
+  const mover = card.movers.find(
+    (m) =>
+      m.categoryId !== null &&
+      m.thinNote === null &&
+      m.deltaCents !== 0 &&
+      // on a category page the delta has to be about THAT category; the
+      // cross-slot rule would refuse a sentence stapling another one's move to
+      // this one's name, but offering it at all would be a bug worth not having
+      (subject === "largest" || m.categoryId === subject),
+  );
   if (mover) {
     facts.push(
       deltaFact("f5", mover.categoryName, mover.deltaCents, "money", "its usual month", monthLabel),
@@ -203,45 +205,51 @@ export function monotonicDirection(values: readonly number[]): "rising" | "falli
   return null;
 }
 
-export function spendingInsights(db: AppDatabase, today: string = todayIso()): SpendingInsights | null {
+/**
+ * The strip on /spending: what dominated the newest fully-observed month.
+ *
+ * ⚠️ It does NOT follow the period selector, and every sentence names its own
+ * window so it cannot be read as being about the period on screen.
+ */
+export function spendingInsights(db: AppDatabase, today: string = todayIso()): SurfaceInsights | null {
+  return categoryInsights(db, "largest", today);
+}
+
+/**
+ * The strip on /categories/[id]: where THIS category sits, in the same window
+ * and through the same measurements /spending uses.
+ */
+export function categoryInsights(
+  db: AppDatabase,
+  subject: string | "largest",
+  today: string = todayIso(),
+): SurfaceInsights | null {
   const card = moversCard(db, today);
   // no fully-observed month means no window, and a window is what every claim
   // here names. Nothing to say is not a weakness — it renders as nothing.
   if (card === null) return null;
 
-  const built = buildCandidates(db, card);
+  const built = buildCandidates(db, card, subject);
   if (built === null) return null;
-  const facts = factSet(built.facts);
 
-  const insights: SpendingInsight[] = [];
-  for (const candidate of built.candidates) {
-    if (insights.length >= MAX_INSIGHTS) break;
-    const verdict = checkClaim(candidate, facts);
-    if (!verdict.ok) continue;
-    const provenance = provenanceFor(db, {
-      kind: "categorySpend",
-      categoryId: candidate.categoryId,
-      from: built.from,
-      to: built.to,
-      label: (verdict as Accepted).text,
-    });
-    // an insight the app cannot prove does not render — the same rule as every
-    // other figure on this page
-    if (!provenance) continue;
-    insights.push({
-      id: `${candidate.claimId}:${verdict.factIds.join("+")}`,
-      text: verdict.text,
-      claimId: verdict.claimId,
-      provenance,
-    });
-  }
-  if (insights.length === 0) return null;
+  const candidates: InsightCandidate[] = built.candidates.map((c) => ({
+    claimId: c.claimId,
+    a: c.a,
+    b: c.b,
+    prove: () =>
+      provenanceFor(db, {
+        kind: "categorySpend",
+        categoryId: c.categoryId,
+        from: built.from,
+        to: built.to,
+      }),
+  }));
 
-  const windowLabel = card.monthLabel;
-  const windowNote =
-    card.month === monthKey(today)
-      ? null
-      : `${card.currentMonthLabel} is still being imported, so these read ${windowLabel} — the newest month every account has been shown through.`;
-
-  return { windowLabel, windowNote, insights };
+  return runInsights(built.facts, candidates, {
+    label: card.monthLabel,
+    note:
+      card.month === monthKey(today)
+        ? null
+        : `${card.currentMonthLabel} is still being imported, so these read ${card.monthLabel} — the newest month every account has been shown through.`,
+  });
 }

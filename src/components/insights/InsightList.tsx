@@ -1,7 +1,7 @@
 import { Icon } from "@/components/shell/Icon";
 import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
-import type { SpendingInsights } from "@/services/spending-insights";
+import type { SurfaceInsights } from "@/services/insights";
 
 /**
  * Sentences the app wrote about itself, each standing on a proof.
@@ -24,12 +24,12 @@ import type { SpendingInsights } from "@/services/spending-insights";
  * The sentence therefore lives in a `<span>` inside an `<li>`, both of which
  * are flow containers a popover may sit beside.
  */
-export function InsightList({ data }: { data: SpendingInsights }) {
+export function InsightList({ data, heading = "What the ledger says" }: { data: SurfaceInsights; heading?: string }) {
   return (
     <SurfaceCard>
       <div className="mb-1 flex flex-wrap items-baseline gap-x-2">
         <h2 id="ledger-insights" className="text-sm font-medium">
-          What the ledger says
+          {heading}
         </h2>
         <span className="text-xs text-ink-faint">{data.windowLabel}</span>
       </div>

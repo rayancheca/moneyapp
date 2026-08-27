@@ -10,7 +10,8 @@ import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { validateProse } from "@/lib/insight-validator";
-import { MAX_INSIGHTS, monotonicDirection, spendingInsights } from "./spending-insights";
+import { MAX_INSIGHTS } from "./insights";
+import { monotonicDirection, spendingInsights } from "./spending-insights";
 
 /**
  * What this page is allowed to SAY, proven against a ledger whose answers are

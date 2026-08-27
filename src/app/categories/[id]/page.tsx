@@ -16,6 +16,7 @@ import {
   type CategoryHeader,
 } from "@/services/category-detail";
 import { provenanceFor } from "@/services/provenance";
+import { categoryInsights } from "@/services/spending-insights";
 import { topMerchants } from "@/services/spending";
 import { loadSpendingCategoryTxns } from "@/app/spending/actions";
 import { CategoryChip } from "@/components/ui/CategoryChip";
@@ -25,6 +26,7 @@ import { moveDestinations as categoryMoveDestinations } from "@/services/categor
 import { Icon } from "@/components/shell/Icon";
 import { Money } from "@/components/ui/Money";
 import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
+import { InsightList } from "@/components/insights/InsightList";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
 import { CategorySeriesList } from "@/components/spending/CategorySeriesList";
@@ -88,6 +90,14 @@ export default async function CategoryPage({
   });
 
   const trend = categoryMonthlyTrend(db, id, TREND_MONTHS, today).map((p) => ({ ...p, spentCents: sign * p.spentCents }));
+
+  /*
+   * PHASE III-B. Where this category sits, through the SAME builder /spending
+   * uses — so the two pages cannot disagree about a rank, a share or a trend.
+   * Like /spending's, its window is the newest fully-imported month rather than
+   * the period selector's, and every sentence names it.
+   */
+  const insights = categoryInsights(db, id, today);
   const subcats = categorySubcategorySplit(db, id, range);
   const series = seriesInCategory(db, id, today);
   const budget = categoryBudgetRef(db, id, today);
@@ -159,6 +169,8 @@ export default async function CategoryPage({
       </div>
 
       <div className="space-y-6">
+        {insights && <InsightList data={insights} heading={`What the ledger says about ${header.name}`} />}
+
         <SurfaceCard>
           <h2 className="mb-4 text-sm font-medium">12-month trend</h2>
           <MonthlyTrendBars points={trend} />

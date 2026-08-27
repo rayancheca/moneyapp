@@ -2,6 +2,7 @@ import { and, asc, count, desc, eq, inArray, lte, gte, sum } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
+import { merchants } from "@/db/schema/merchants";
 import { balanceAnchors, dailyBalances, type BalanceBasis } from "@/db/schema/balances";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings, priceCache, type AssetType } from "@/db/schema/holdings";
@@ -170,6 +171,12 @@ export type FigureRef =
    * this sum standing on, and is any of it unchecked?
    */
   | { kind: "categorySpend"; categoryId: string; from: string; to: string; label?: string }
+  /**
+   * One merchant's spend over a window. Same shape and same grading as
+   * `categorySpend` — a different set of rows, and therefore a different answer
+   * to "how many rows is this, and which documents carry them?"
+   */
+  | { kind: "merchantSpend"; merchantId: string; from: string; to: string; label?: string }
   /**
    * A position's market value, aggregated across accounts by `(symbol,
    * assetType)` exactly as `holdingDetail` reports it. NOT `categorySpend`: a
@@ -973,13 +980,7 @@ function categorySpendProvenance(
   const ids = [categoryId, ...childIds];
 
   const rows = db
-    .select({
-      id: transactions.id,
-      accountId: transactions.accountId,
-      postedOn: transactions.postedOn,
-      importFileId: transactions.importFileId,
-      amountCents: transactions.amountCents,
-    })
+    .select(SUM_ROW_COLUMNS)
     .from(transactions)
     .where(
       and(
@@ -991,7 +992,78 @@ function categorySpendProvenance(
     )
     .all();
 
-  const subject = label ?? category.name;
+  return summedRowsProvenance(db, rows, label ?? category.name, from, to);
+}
+
+/**
+ * What backs one merchant's spend — the same grading as a category total, over
+ * a different set of rows.
+ *
+ * ⛔ NOT `categorySpend` with the merchant's dominant category id, which is what
+ * `merchant-insights` reached for first. That would have graded the CATEGORY's
+ * rows and printed their count — "the sum of 470 rows from 9 documents" beside
+ * a merchant with four visits. The rows a proof names have to be the rows the
+ * figure was summed from.
+ */
+function merchantSpendProvenance(
+  db: AppDatabase,
+  merchantId: string,
+  from: string,
+  to: string,
+  label: string | undefined,
+): Provenance | null {
+  const merchant = db.select().from(merchants).where(eq(merchants.id, merchantId)).get();
+  if (!merchant) return null;
+
+  const rows = db
+    .select(SUM_ROW_COLUMNS)
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.merchantId, merchantId),
+        eq(transactions.status, "active"),
+        gte(transactions.postedOn, from),
+        lte(transactions.postedOn, to),
+      ),
+    )
+    .all();
+
+  return summedRowsProvenance(db, rows, label ?? merchant.canonicalName, from, to);
+}
+
+/** The columns every summed-rows proof grades. Named so two selectors cannot drift. */
+const SUM_ROW_COLUMNS = {
+  id: transactions.id,
+  accountId: transactions.accountId,
+  postedOn: transactions.postedOn,
+  importFileId: transactions.importFileId,
+  amountCents: transactions.amountCents,
+};
+
+interface SummedRow {
+  id: string;
+  accountId: string;
+  postedOn: string;
+  importFileId: string | null;
+  amountCents: number;
+}
+
+/**
+ * The proof behind ANY total assembled by summing transactions over a window.
+ *
+ * Extracted when merchant spend became the second such figure. Everything from
+ * here down is independent of WHICH rows were selected — how each is graded,
+ * which documents are named, how many are unchecked, and how far the total is
+ * checked through. A second copy of it would be a second opinion about whether
+ * a figure adds up, and the app's rule is that a figure has one.
+ */
+function summedRowsProvenance(
+  db: AppDatabase,
+  rows: readonly SummedRow[],
+  subject: string,
+  from: string,
+  to: string,
+): Provenance {
   if (rows.length === 0) {
     return {
       verdict: "unknown",
@@ -1104,6 +1176,8 @@ export function provenanceFor(db: AppDatabase, ref: FigureRef): Provenance | nul
       return netWorthProvenance(db, ref.day);
     case "categorySpend":
       return categorySpendProvenance(db, ref.categoryId, ref.from, ref.to, ref.label);
+    case "merchantSpend":
+      return merchantSpendProvenance(db, ref.merchantId, ref.from, ref.to, ref.label);
     case "holding":
       return holdingProvenance(db, ref.symbol, ref.assetType, ref.day);
     case "recurringSeries":

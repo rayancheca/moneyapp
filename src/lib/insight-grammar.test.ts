@@ -41,7 +41,7 @@ describe("the three fields a template can read", () => {
   test("a trend's value is its window — it has no other number", () => {
     expect(factField(trend, "value")).toBe("6 months");
     expect(factField(scalar, "value")).toBe("$1,963.24");
-    expect(factField(rank, "value")).toBe("3rd of 22");
+    expect(factField(rank, "value")).toBe("3rd");
   });
 });
 
