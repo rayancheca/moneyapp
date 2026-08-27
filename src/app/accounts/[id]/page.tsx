@@ -6,6 +6,7 @@ import { isLiability } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
 import { formatCents, formatCentsSigned } from "@/lib/money";
+import { accountInsights } from "@/services/account-insights";
 import { getAccount, listAccounts, listInstitutions } from "@/services/accounts";
 import { listAnchors } from "@/services/anchors";
 import { accountSeries } from "@/services/derivation";
@@ -16,6 +17,7 @@ import { readSettings } from "@/services/settings";
 import { resolveViewState } from "@/lib/view-state";
 import { ACCOUNT_SURFACE, ACCOUNT_VIEW_SPEC } from "@/components/accounts/accounts-view-spec";
 import { AccountHoldingsTable } from "@/components/accounts/AccountHoldingsTable";
+import { InsightList } from "@/components/insights/InsightList";
 import { AccountNameHeading } from "@/components/accounts/AccountNameHeading";
 import { AnchorForm } from "@/components/accounts/AnchorForm";
 import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
@@ -120,6 +122,14 @@ export default async function AccountDetailPage({
   const latest = series.at(-1) ?? null;
   // asked for the day the figure is FOR, so a balance carried forward answers
   // with the document that actually pins it
+  /*
+   * PHASE III-B — checked claims about this account's PLACE, never its own
+   * figures. Its balance, chart and rows are already on this page; restating
+   * them would say the same thing twice (see `merchant-insights`, which made
+   * exactly that mistake first).
+   */
+  const insights = accountInsights(db, id, today);
+
   const balanceProvenance = provenanceFor(db, {
     kind: "accountBalance",
     accountId: account.id,
@@ -212,6 +222,11 @@ export default async function AccountDetailPage({
             </p>
           )}
         </header>
+
+        {/* PHASE III-B. Where this account sits among the others and how much of
+            what he holds it is — neither is a figure this page prints, and the
+            balance above is deliberately not restated. */}
+        {insights && <InsightList data={insights} heading={`What the ledger says about ${account.name}`} />}
 
         {series.length > 1 && (
           <section aria-labelledby="balance-history-heading">

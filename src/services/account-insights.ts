@@ -1,0 +1,123 @@
+import { and, eq } from "drizzle-orm";
+import type { AppDatabase } from "@/db/client";
+import { transactions } from "@/db/schema/transactions";
+import { todayIso } from "@/lib/dates";
+import { formatDayLong } from "@/lib/format-date";
+import { countFact, rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts";
+import { listAccounts } from "./accounts";
+import { runInsights, type InsightCandidate, type SurfaceInsights } from "./insights";
+import { provenanceFor } from "./provenance";
+
+/**
+ * What `/accounts/[id]` can say that its own numbers do not.
+ *
+ * ⛔ Read `lib/insight-grammar.ts` first, and `merchant-insights.ts` second —
+ * that module's mistake was restating figures the page already printed, and the
+ * same trap is right here. This page shows the balance, the chart, the anchors
+ * and the recent rows. What it does NOT show is where this account sits among
+ * the others, or how much of what he owns it is.
+ *
+ * ## ⛔ Assets and liabilities are ranked apart
+ *
+ * A card's balance is negative and a savings account's is positive, so one
+ * ranking over both would sort a $5,000 debt below a $0 chequing account and
+ * call it "the smallest". They are two questions — "how much do I have here"
+ * and "how much do I owe here" — and the sentence names which set it ranked in,
+ * so a reader is never left guessing.
+ *
+ * ## What a share is a share OF
+ *
+ * An asset's share is of total ASSETS, never of net worth. Net worth is assets
+ * minus liabilities and can be small or negative while an account is large;
+ * dividing by it produces shares over 100% and, below zero, shares with the
+ * wrong sign. `shareFact` refuses a value outside 0–1 rather than clamping, so
+ * that mistake would throw rather than render — but it is stated here because
+ * the throw would be the SECOND place it was caught.
+ */
+
+/** Below two accounts on a side, a rank is not a ranking. */
+const MIN_ACCOUNTS_TO_RANK = 2;
+
+export function accountInsights(
+  db: AppDatabase,
+  accountId: string,
+  today: string = todayIso(),
+): SurfaceInsights | null {
+  /*
+   * ⛔ An account with NO balance at all is not an account holding zero.
+   * `Capital One 360 Checking` on the real ledger is exactly that: zero rows
+   * and zero `daily_balances`, which `listAccounts` reports as `balance: null`.
+   * Reading it as $0 would rank it last among his accounts, state a figure
+   * nobody measured, and add one to every other account's denominator. Empty is
+   * not zero — the distinction that has now bitten four services here.
+   *
+   * ⚠️ `balanceCents` is typed `number | null` and the column is NOT NULL, so
+   * the second half of this narrowing can never fire on real data. It is kept
+   * because the TYPE permits it and a future basis might: what it must never do
+   * is silently become a zero.
+   */
+  const all = listAccounts(db).filter(
+    (a): a is typeof a & { balance: { balanceCents: number; asOf: string | null } } =>
+      a.isActive && a.balance !== null && a.balance.balanceCents !== null,
+  );
+  const self = all.find((a) => a.id === accountId);
+  if (!self) return null;
+
+  const side = all.filter((a) => a.isLiability === self.isLiability);
+  const sideLabel = self.isLiability ? "cards and loans" : "accounts holding money";
+
+  /*
+   * A liability's balance is stored negative, so both sides are ranked by
+   * MAGNITUDE — largest debt first, largest balance first. Ranking a liability
+   * by its signed value would put the biggest debt last and call it smallest.
+   */
+  const ranked = [...side].sort(
+    (a, b) => Math.abs(b.balance.balanceCents) - Math.abs(a.balance.balanceCents) || a.name.localeCompare(b.name),
+  );
+  const rank = ranked.findIndex((a) => a.id === accountId) + 1;
+  const magnitude = Math.abs(self.balance.balanceCents);
+
+  const facts: Fact[] = [];
+  const candidates: InsightCandidate[] = [];
+  const prove = () => provenanceFor(db, { kind: "accountBalance", accountId, day: self.balance.asOf ?? undefined });
+
+  if (rank > 0 && ranked.length >= MIN_ACCOUNTS_TO_RANK && magnitude > 0) {
+    facts.push(rankFact("f1", self.name, rank, ranked.length, sideLabel));
+    facts.push(scalarFact("f2", self.name, magnitude, "money"));
+    // one rank claim: both are true of a rank of 1, and printing both would say
+    // the same thing twice
+    candidates.push({ claimId: rank === 1 ? "largest_in_set" : "ranked_in_set", a: "f1", b: "f2", prove });
+  }
+
+  /*
+   * Its share of the side it belongs to. Assets over assets, debts over debts —
+   * never over net worth, which is a difference and not a whole.
+   */
+  const sideTotal = side.reduce((sum, a) => sum + Math.abs(a.balance.balanceCents), 0);
+  if (sideTotal > 0 && magnitude > 0 && magnitude <= sideTotal) {
+    facts.push(
+      shareFact("f3", self.name, magnitude / sideTotal, self.isLiability ? "everything you owe" : "everything you hold"),
+    );
+    candidates.push({ claimId: "share_of_whole", a: "f3", prove });
+  }
+
+  /*
+   * How much of the ledger this account is, by rows. A big balance on an
+   * account with four rows a year is a different object from a small balance on
+   * the one everything goes through, and no figure on this page separates them.
+   */
+  const rowCount = db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(and(eq(transactions.accountId, accountId), eq(transactions.status, "active")))
+    .all().length;
+  if (rowCount > 0) {
+    facts.push(countFact("f4", self.name, rowCount, "transaction"));
+    candidates.push({ claimId: "count_in_subject", a: "f4", prove });
+  }
+
+  return runInsights(facts, candidates, {
+    label: self.balance.asOf ? `as of ${formatDayLong(self.balance.asOf)}` : self.name,
+    note: null,
+  });
+}

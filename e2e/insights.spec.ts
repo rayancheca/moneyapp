@@ -121,6 +121,24 @@ test.describe("what the ledger says", () => {
     expect(text).toMatch(/regular merchants|% of what you spent on/);
   });
 
+  test("an account page says where that account sits, and which side it is on", async ({ page }) => {
+    await page.goto("/accounts");
+    const href = await page.locator('a[href^="/accounts/"]').first().getAttribute("href");
+    if (!href) throw new Error("no account link on /accounts");
+    await page.goto(href);
+    const strip = page.locator(STRIP);
+    await expect(strip).toBeVisible();
+    const text = await strip.innerText();
+    expect(text).not.toMatch(BROKEN);
+    /*
+     * ⛔ The set has to be NAMED. A card's balance is negative and a savings
+     * account's is positive, so a ranking that did not say which of the two it
+     * ranked in would leave the reader guessing whether "largest" meant the
+     * most money or the most debt.
+     */
+    expect(text).toMatch(/accounts holding money|cards and loans|transactions? landed in/);
+  });
+
   test("the period selector does not silently change what the strip claims", async ({ page }) => {
     await page.goto("/spending");
     const before = await page.locator(STRIP).innerText();
