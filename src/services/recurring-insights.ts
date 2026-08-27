@@ -1,0 +1,183 @@
+import type { AppDatabase } from "@/db/client";
+import { recurringSeries } from "@/db/schema/recurring";
+import { todayIso } from "@/lib/dates";
+import { rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts";
+import { runInsights, type InsightCandidate, type SurfaceInsights } from "./insights";
+import { provenanceFor } from "./provenance";
+import {
+  lapsedSeriesShouldStopForecasting,
+  listSeries,
+  seriesHasLapsed,
+  type SeriesOverrides,
+  type SeriesView,
+} from "./recurring";
+
+/** Exactly what `seriesHasLapsed` reads — the stored row, overrides intact. */
+type LapseInput = SeriesOverrides & { lastMatchedOn: string | null };
+
+/**
+ * What `/recurring/[id]` can say that the series' own figures do not.
+ *
+ * ⛔ Read `lib/insight-grammar.ts` first and `merchant-insights.ts` second. That
+ * module's mistake was restating figures the page already printed, and this
+ * page prints a lot of them: `SeriesDetail` renders the annualized cost, the
+ * cadence, the confidence, the linked-transaction count and the amount history
+ * chart. A sentence about any of those says the same thing twice in two voices.
+ *
+ * What no figure on this page can show is where this commitment sits among the
+ * others, and how much of a year's committed money it is. That is the whole
+ * subject of this module: its place, never its own numbers.
+ *
+ * ## ⛔ Money out and money in are ranked apart
+ *
+ * `annualizedCents` is a MAGNITUDE — `Math.abs` — so a $54,444/yr cash job and
+ * a $27,428/yr rent are the same size to a sort, and one ranking over both
+ * would tell him his income is the largest thing he pays for. They are two
+ * questions, so they are two sets, and the sentence names which one it ranked
+ * in. Income kind here is the one `lapsedSeriesShouldStopForecasting` already
+ * distinguishes; this module does not invent a second test for direction.
+ *
+ * ## ⛔ "Your commitments" is the LIVE set, and most of them are not
+ *
+ * Of 38 series on the real ledger, 11 are dismissed and 12 ended — 23 of 38 are
+ * over. Ranking against all 38 would say "the largest of your 38 commitments"
+ * about a set two thirds of which he has already cancelled, and would put every
+ * dead subscription into the denominator of the share. So the set is the one
+ * that is still running, decided by the rules the app ALREADY owns:
+ * `status` confirmed or detected, and — for money out only —
+ * `lapsedSeriesShouldStopForecasting` + `seriesHasLapsed`, the same pair
+ * `upcomingOccurrences` gates its forecast on. Naming a fresh condition here
+ * would be a second definition of "still running" that could drift from the
+ * calendar's without either being wrong on its own.
+ *
+ * ⛔ A series that is NOT in that set — ended, dismissed, or lapsed — gets no
+ * strip at all. It is not ranked last among the living, and it is not given a
+ * 0% share: it is simply not a member of the set the sentence is about. Nothing
+ * to say is not a weakness, which is the distinction that has now cost five
+ * services in this codebase.
+ *
+ * ## The ranking basis is IN the sentence, not beside it
+ *
+ * Rent is $2,285.70 a month and $27,428.40 a year, and `largest_in_set` prints
+ * only "at {{b.value}}". A sentence reading "…at $27,428.40" over a page whose
+ * every other figure is per-occurrence would be true of the fact and wrong to a
+ * reader — the exact shape of the bug that printed "rose by +$1,185.70" over a
+ * month he paid LESS. So the basis is carried in the rank's own `amongLabel`
+ * ("by what they cost in a year"), which the grammar renders inside the
+ * sentence, rather than in the window label beside it where a reader scanning
+ * the line would never meet it.
+ */
+
+/** Below two, a rank is not a ranking and a share is 100% of one thing. */
+const MIN_SERIES_TO_COMPARE = 2;
+
+/**
+ * Still running, by the rules the forecast already uses — never a fresh test.
+ *
+ * ⚠️ `seriesHasLapsed` is handed the RAW row, not the `SeriesView`. A view
+ * carries the EFFECTIVE cadence with the override already folded in and its
+ * `userCadence` gone, and `seriesStaleness` reads that field to decide whether
+ * the tolerance steps by the detected interval or by the cadence's nominal
+ * length. Rebuilding an overrides-shaped object out of a view would silently
+ * take the other branch, so this series' liveness could differ from the same
+ * series' liveness on the calendar — two functions computing one date, which is
+ * the pass-54 mistake. The row is the input every other caller passes.
+ */
+function isLive(view: SeriesView, row: LapseInput | undefined, today: string): boolean {
+  if (view.status !== "confirmed" && view.status !== "detected") return false;
+  if (view.annualizedCents === null) return false;
+  if (!row) return false;
+  return !(lapsedSeriesShouldStopForecasting(view.kind) && seriesHasLapsed(row, today));
+}
+
+export function recurringInsights(
+  db: AppDatabase,
+  seriesId: string,
+  today: string = todayIso(),
+): SurfaceInsights | null {
+  const all = listSeries(db, today);
+  /*
+   * ⛔ Every row, unfiltered. `isLive` is the ONE place that decides what is
+   * still running, and a `where` clause here would quietly become a second one:
+   * the status test below would then be dead code that still LOOKED
+   * load-bearing, and a later change to either would silently disagree with the
+   * other. Measured — with the query filtered, deleting the status test broke
+   * no test at all.
+   */
+  const rows = new Map(db.select().from(recurringSeries).all().map((r) => [r.id, r as LapseInput]));
+  const self = all.find((s) => s.id === seriesId);
+  if (!self || !isLive(self, rows.get(seriesId), today)) return null;
+
+  const isIncome = self.kind === "income";
+  const side = all.filter((s) => isLive(s, rows.get(s.id), today) && (s.kind === "income") === isIncome);
+  if (side.length < MIN_SERIES_TO_COMPARE) return null;
+
+  const annualized = self.annualizedCents!;
+  if (annualized <= 0) return null;
+
+  /*
+   * Ties broken by name so the rank is stable across renders — two commitments
+   * at the same yearly cost must not swap places between two page loads and
+   * make one of them "the largest" only sometimes.
+   *
+   * ⚠️ Redundant TODAY and kept anyway: `listSeries` already ends its own sort
+   * with the same name comparison and JS sort is stable, so deleting this line
+   * changes no output and breaks no test — measured, not assumed. It stays
+   * because the guarantee would otherwise be INHERITED from an upstream sort
+   * that has no reason to keep it, and the failure would be a rank that flickers
+   * between renders with every test still green.
+   */
+  const ranked = [...side].sort(
+    (a, b) => b.annualizedCents! - a.annualizedCents! || a.name.localeCompare(b.name),
+  );
+  const rank = ranked.findIndex((s) => s.id === seriesId) + 1;
+  const sideTotal = side.reduce((sum, s) => sum + s.annualizedCents!, 0);
+
+  const amongLabel = isIncome
+    ? "scheduled deposits, by what they bring in over a year"
+    : "scheduled commitments, by what they cost in a year";
+  const ofLabel = isIncome
+    ? "what your scheduled deposits bring in over a year"
+    : "what your scheduled commitments cost in a year";
+
+  const facts: Fact[] = [];
+  const candidates: InsightCandidate[] = [];
+  const prove = () => provenanceFor(db, { kind: "recurringSeries", id: seriesId });
+
+  facts.push(rankFact("f1", self.name, rank, ranked.length, amongLabel));
+  facts.push(scalarFact("f2", self.name, annualized, "money"));
+  // one rank claim, not both: "the largest" and "the 1st largest" are the same
+  // sentence, and printing both would say it twice
+  candidates.push({ claimId: rank === 1 ? "largest_in_set" : "ranked_in_set", a: "f1", b: "f2", prove });
+
+  /*
+   * Its share of the side it belongs to. `shareFact` refuses anything outside
+   * 0–1 rather than clamping, and the guard here is the same one stated: every
+   * member's annualized figure is a magnitude, so no member can exceed the sum
+   * and the share cannot pass 1 — but the check is written because the THROW
+   * would be the second place it was caught, not the first.
+   */
+  if (sideTotal > 0 && annualized <= sideTotal) {
+    facts.push(shareFact("f3", self.name, annualized / sideTotal, ofLabel));
+    // above half, the stronger template says the same measurement in one fewer
+    // step for a reader; below it, the plain share is the only honest form
+    candidates.push({
+      claimId: annualized / sideTotal > 0.5 ? "more_than_half" : "share_of_whole",
+      a: "f3",
+      prove,
+    });
+  }
+
+  /*
+   * The note explains the DENOMINATOR, which is the one thing a reader cannot
+   * check from the sentence. Counted here rather than described, so it cannot
+   * drift from the set the ranking actually used.
+   */
+  const retired = all.filter((s) => s.status === "ended" || s.status === "dismissed").length;
+  const note =
+    retired > 0
+      ? `Ranked against the ${side.length} still running. The ${retired} you have ended or dismissed are not counted.`
+      : null;
+
+  return runInsights(facts, candidates, { label: "a year at today's amounts", note });
+}

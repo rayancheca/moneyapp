@@ -10,6 +10,8 @@ import {
   RECURRING_SERIES_VIEW_SPEC,
 } from "@/components/recurring/recurring-view-spec";
 import { provenanceFor } from "@/services/provenance";
+import { recurringInsights } from "@/services/recurring-insights";
+import { InsightList } from "@/components/insights/InsightList";
 import { SeriesDetail } from "@/components/recurring/SeriesDetail";
 
 export const metadata: Metadata = { title: "Recurring series" };
@@ -50,7 +52,20 @@ export default async function RecurringSeriesPage({
   // agreed — which is a different question from every other figure on the page
   const provenance = provenanceFor(getDb(), { kind: "recurringSeries", id });
 
+  // PHASE III-B: this series' place among the ones still running. Null — and so
+  // absent — for anything ended, dismissed or lapsed, which is not a member of
+  // that set rather than a member scoring zero.
+  const insights = recurringInsights(db, id, todayIso());
+
   return (
-    <SeriesDetail data={data} provenance={provenance} viewState={viewState} basePath={`/recurring/${id}`} />
+    <SeriesDetail
+      data={data}
+      provenance={provenance}
+      insights={
+        insights && <InsightList data={insights} heading={`What the ledger says about ${data.name}`} />
+      }
+      viewState={viewState}
+      basePath={`/recurring/${id}`}
+    />
   );
 }

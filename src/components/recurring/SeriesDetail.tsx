@@ -57,12 +57,22 @@ const EMPTY_PARAMS: Record<string, string> = {};
 export function SeriesDetail({
   data,
   provenance,
+  insights,
   viewState,
   basePath,
 }: {
   data: SeriesDetailData;
   /** what the expected amount is standing on — computed server-side */
   provenance?: Provenance | null;
+  /**
+   * PHASE III-B's strip, rendered on the server and passed in as a slot.
+   *
+   * A node rather than the data: `InsightList` is a server component and this
+   * one is `"use client"`, so importing it here would pull it — and
+   * `ProvenancePopover` behind it — into the client bundle for a card that
+   * never changes after render.
+   */
+  insights?: React.ReactNode;
   /** the RSC-resolved active view (URL > persisted > default) */
   viewState: ViewState;
   /** this series' own route (the lens switcher navigates within it) */
@@ -225,6 +235,11 @@ export function SeriesDetail({
       ) : null}
 
       <div className="mt-6 space-y-6">
+        {/* PHASE III-B. Where this commitment sits among the others and how much
+            of a year's committed money it is — neither is a figure this page
+            prints, and the annualized cost in the stats below is deliberately
+            not restated. */}
+        {insights}
         <SurfaceCard>
           <CadenceSentence
             seriesId={data.id}

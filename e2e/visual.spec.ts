@@ -142,6 +142,39 @@ async function resolveAccountUrl(page: Page): Promise<string> {
   return href;
 }
 
+/**
+ * Resolve the Rent series detail (`/recurring/[id]`).
+ *
+ * ⛔ This route had ZERO pixel coverage until PHASE III-B put a card on it —
+ * `hydration` and `overflow` both visit it, and neither photographs it, so a
+ * full rewrite of the page would have moved nothing. Same shape as the
+ * `?tab=calendar` gap pass 58 found.
+ *
+ * Rent is chosen because it is the fixture's largest commitment, so its strip
+ * exercises BOTH the rank-1 template and the above-half share; a middling
+ * series would leave `largest_in_set` and `more_than_half` unphotographed.
+ * Matched by name rather than by id — the fixture's ids are minted per seed.
+ *
+ * ⚠️ The proof badges in these baselines read "no basis yet", and that is a
+ * property of the FIXTURE, not of the page: its series carry no tagged
+ * postings, so `recurringSeriesProvenance` returns the `unknown` verdict. On
+ * the real ledger all ten live series come back `unverified`, `manual` or
+ * `derived`, every one with a named source — measured, `scripts/probe-series-provenance.ts`.
+ * So this baseline photographs a state the owner does not see here, and it is
+ * the weakest of the four provenance states rather than a missing one.
+ */
+async function resolveSeriesUrl(page: Page): Promise<string> {
+  await page.goto("/recurring?tab=all");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  const href = await page
+    .locator('a[href^="/recurring/"]')
+    .filter({ hasText: /^Rent$/ })
+    .first()
+    .getAttribute("href");
+  if (!href) throw new Error("no Rent series link on /recurring?tab=all");
+  return href;
+}
+
 async function openHydrated(page: Page, path: string, theme: string, width: number) {
   await page.addInitScript((t) => window.localStorage.setItem("theme", t), theme);
   await page.setViewportSize({ width, height: 900 });
@@ -234,6 +267,17 @@ for (const theme of THEMES) {
       const url = await resolveAccountUrl(page);
       await openHydrated(page, url, theme, width);
       await expect(page).toHaveScreenshot(`account-detail-${theme}-${width}.png`, { fullPage: true });
+    });
+  }
+}
+
+// series detail (`/recurring/[id]`) — resolved dynamically, fixed snapshot name
+for (const theme of THEMES) {
+  for (const width of WIDTHS) {
+    test(`series-detail ${theme} @${width}`, async ({ page }) => {
+      const url = await resolveSeriesUrl(page);
+      await openHydrated(page, url, theme, width);
+      await expect(page).toHaveScreenshot(`series-detail-${theme}-${width}.png`, { fullPage: true });
     });
   }
 }

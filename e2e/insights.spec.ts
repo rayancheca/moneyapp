@@ -152,3 +152,59 @@ test.describe("what the ledger says", () => {
     expect(await page.locator(STRIP).innerText()).toBe(before);
   });
 });
+
+/**
+ * The same strip on `/recurring/[id]`, which is a different rendering path: the
+ * page is a server component, `SeriesDetail` is `"use client"`, and the card is
+ * passed across that boundary as a SLOT. A strip that rendered on /spending and
+ * silently vanished here would be invisible to every unit test — the service
+ * would still return its sentences and nothing would put them on screen.
+ *
+ * ⚠️ The fixture holds no ended or dismissed series, so `windowNote` is null
+ * here and has NO pixel coverage. Measured, not assumed — and said out loud
+ * rather than left as a gap a reader would mistake for coverage.
+ */
+test.describe("what the ledger says about a commitment", () => {
+  async function openRent(page: import("@playwright/test").Page): Promise<void> {
+    await page.goto("/recurring?tab=all");
+    const href = await page
+      .locator('a[href^="/recurring/"]')
+      .filter({ hasText: /^Rent$/ })
+      .first()
+      .getAttribute("href");
+    if (!href) throw new Error("no Rent series link on /recurring?tab=all");
+    await page.goto(href);
+  }
+
+  test("crosses the server/client boundary and renders whole sentences", async ({ page }) => {
+    await openRent(page);
+    const strip = page.locator(STRIP);
+    await expect(strip).toBeVisible();
+
+    const items = strip.locator("li");
+    // ⛔ not `> 0` with an early return: the fixture's Rent series is measured to
+    // produce exactly two sentences, and a strip that quietly rendered none
+    // would pass a count-agnostic check
+    await expect(items).toHaveCount(2);
+    for (const text of await items.allInnerTexts()) {
+      expect(text, "an unrendered slot or a broken figure").not.toMatch(BROKEN);
+    }
+  });
+
+  test("states the yearly basis inside the sentence, not beside it", async ({ page }) => {
+    await openRent(page);
+    const first = page.locator(STRIP).locator("li").first();
+    // the page's own stats print the per-occurrence amount; a rank sentence
+    // carrying a yearly figure without saying so is the "rose by +$1,185.70
+    // over a month he paid less" bug in another costume
+    await expect(first).toContainText("by what they cost in a year");
+    await expect(first).toContainText("is the largest of your");
+  });
+
+  test("the proof opens and names its documents", async ({ page }) => {
+    await openRent(page);
+    const strip = page.locator(STRIP);
+    await strip.locator("li").first().getByRole("button").click();
+    await expect(strip.locator("[popover]").first()).toBeVisible();
+  });
+});
