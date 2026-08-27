@@ -1176,6 +1176,13 @@ describe("provenanceFor — a budget's plan", () => {
 
     const p = provenanceFor(bundle.db, { kind: "budgetPlan", id: "b1" })!;
     expect(p.verdict).toBe("manual");
+    /*
+     * ⛔ `manual`'s stock word is "you entered it", which over-claims here:
+     * these budgets were proposed by a script and kept, and the headline is
+     * deliberately careful not to say he typed them. A badge that said it anyway
+     * would contradict the sentence it opens.
+     */
+    expect(p.badgeWord).toBe("a plan");
     expect(p.headline).toMatch(/This is a plan, not a record: \$1,200\.00 a month for Fixture Housing/);
     expect(p.sources[0]!.kind).toBe("hand-entered");
     expect(p.sources[0]!.label).toBe("$1,200.00 a month for Fixture Housing");

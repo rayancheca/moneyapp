@@ -556,3 +556,48 @@ test("Predict budgets reviews forecast amounts, creates one, and restores", asyn
   // back to the four seeded budgets
   await expect(page.getByRole("progressbar")).toHaveCount(4);
 });
+
+/**
+ * ⛔ A budget row now carries TWO proofs, and they answer different questions.
+ * The actual is a sum of documented rows; the plan is a decision he made. One
+ * badge cannot stand for both, and the mistake worth preventing is a plan
+ * reading "adds up" because the spending beside it does.
+ *
+ * ⚠️ Shaped from what the fixture ACTUALLY renders
+ * (scripts/probe-e2e-budget-insights.ts): four monthly budgets, Housing the
+ * largest at $2,000.00 and 64.7% of the plan.
+ */
+test("the plan and the spending beside it are proven separately", async ({ page }) => {
+  await page.goto("/budgets");
+  const row = budgetRow(page, "Housing");
+
+  // the plan's badge says what it is rather than borrowing `manual`'s stock
+  // "you entered it" — these were proposed by a script and kept
+  const plan = row.getByRole("button", { name: /^How Housing budget is proven/ });
+  await expect(plan).toBeVisible();
+  await expect(plan).toHaveAccessibleName(/a plan$/);
+  await plan.click();
+  const panel = page.getByRole("dialog");
+  await expect(panel).toContainText("This is a plan, not a record");
+  await expect(panel).toContainText("$2,000.00 a month for Housing");
+  // a summed-rows proof would say this; a plan's must not
+  await expect(panel).not.toContainText(/sum of \d+ rows/);
+  await page.keyboard.press("Escape");
+
+  // …and the actual keeps its own, unchanged
+  await expect(row.getByRole("button", { name: /^How Housing spent is proven/ })).toBeVisible();
+});
+
+/** Where the biggest plan sits — two facts the page holds and never states. */
+test("the strip ranks the plans the page orders by category", async ({ page }) => {
+  await page.goto("/budgets");
+  const strip = page.locator("section:has(#ledger-insights)");
+  await expect(strip.getByRole("heading", { name: "How the plan is shaped" })).toBeVisible();
+
+  const lines = await strip.locator("li").allInnerTexts();
+  expect(lines.length).toBeGreaterThan(0);
+  for (const line of lines) expect(line).not.toMatch(/\{\{|undefined|NaN|\[object/);
+  // the basis travels inside the sentence, not in a caption beside it
+  expect(lines[0]).toMatch(/largest of your \d+ monthly budgets, by what you planned to spend/);
+  await expect(strip.getByText(/A plan is a decision, so none of these are checked against a document/)).toBeVisible();
+});

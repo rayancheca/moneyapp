@@ -41,6 +41,8 @@ import { LargestPurchases, type LargestPurchaseRow } from "@/components/spending
 import { PeriodSelector } from "@/components/spending/PeriodSelector";
 import { SpendHeatmap } from "@/components/spending/SpendHeatmap";
 import { SpendingCategoriesTable, type CategoryTableRow } from "@/components/spending/SpendingCategoriesTable";
+import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
+import { provenanceFor } from "@/services/provenance";
 import { SpendingStatCards } from "@/components/spending/SpendingStatCards";
 import { TopMerchantsCard } from "@/components/spending/TopMerchantsCard";
 
@@ -251,6 +253,27 @@ export default async function SpendingPage({
     };
   });
 
+  /**
+   * What the period's WHOLE spending is standing on — the biggest figure on
+   * this page, and until now the only one with no way to check it.
+   *
+   * ⛔ Mounted on the heading, not on a StatCard. `StatCard` wraps its entire
+   * tile in a `<Link>` when it has an href, and every card here does; a
+   * `<button>` inside one is axe `nested-interactive` (serious), which is the
+   * trap `ProvenancePopover` documents. The `<h2>` below is a flow container
+   * and is not inside a link.
+   *
+   * ⚠️ Measured before it was mounted, not after: 8ms for a full year and 15ms
+   * for the whole four-year ledger — it walks the window twice, once through the
+   * classifier and once for the documents. A month costs about 2ms.
+   */
+  const spendProvenance = provenanceFor(db, {
+    kind: "allSpend",
+    from: range.from,
+    to: range.to,
+    label: period.label,
+  });
+
   const hasActivity =
     cashFlow.totals.spentCents !== 0 ||
     cashFlow.totals.earnedCents !== 0 ||
@@ -335,7 +358,14 @@ export default async function SpendingPage({
 
           <SurfaceCard>
             <div className="mb-2 flex items-baseline justify-between">
-              <h2 className="text-sm font-medium">Where it went</h2>
+              <h2 className="text-sm font-medium">
+                Where it went
+                {/* the section's subject IS the period's whole spending, and a
+                    total is only as proven as its weakest row */}
+                {spendProvenance && (
+                  <ProvenancePopover label="this period's spending" provenance={spendProvenance} />
+                )}
+              </h2>
               <span className="text-xs text-ink-faint">tap a category to open its page</span>
             </div>
             {/* three lenses on one set of rows: the ranked list this card has

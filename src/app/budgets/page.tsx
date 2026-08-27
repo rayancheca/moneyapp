@@ -17,8 +17,10 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { BudgetForm } from "@/components/budgets/BudgetForm";
 import { PredictBudgets } from "@/components/budgets/PredictBudgets";
+import { budgetInsights } from "@/services/budget-insights";
 import { provenanceFor } from "@/services/provenance";
 import { BudgetRow } from "@/components/budgets/BudgetRow";
+import { InsightList } from "@/components/insights/InsightList";
 import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { SectionNotes } from "@/components/insights/SectionNotes";
 import { InfoTip } from "@/components/ui/InfoTip";
@@ -101,6 +103,29 @@ export default async function BudgetsPage({
       }),
     ]),
   );
+
+  /**
+   * …and what the PLAN is standing on, which is a different question with a
+   * different answer. The actual is a sum of documented rows; the plan is a
+   * decision, so its honest verdict is `manual` and its badge reads "a plan"
+   * rather than the stock "you entered it" — these were sized by
+   * `pnpm propose-budgets` and kept, and no column can tell a typed plan from an
+   * accepted proposal.
+   *
+   * ⚠️ Free next to the block above: `budgetPlanProvenance` is two indexed
+   * lookups and no coverage walk. Measured — all 12 monthly plans together cost
+   * 1ms, against 23ms for the twelve `categorySpend` proofs.
+   */
+  const planProvenance = new Map(
+    statuses.map((s) => [
+      s.budget.id,
+      provenanceFor(db, { kind: "budgetPlan", id: s.budget.id, label: s.categoryPath }),
+    ]),
+  );
+
+  // where the biggest plan sits among the others — two facts the page holds
+  // and never states, because it orders its rows by category and not by amount
+  const insights = budgetInsights(db, today);
 
   const sections = budgetSections(statuses, today);
 
@@ -189,6 +214,12 @@ export default async function BudgetsPage({
 
       <SectionNotes notes={notes} label="What this page noticed" />
 
+      {/* Under the totals and their caveats, above the rows: a reader who has
+          seen what is budgeted against what is expected is ready for sentences
+          about the shape of it, and a claim printed before its own subject reads
+          as a page banner. Same order /spending settled on. */}
+      {insights && <InsightList data={insights} heading="How the plan is shaped" />}
+
       <div className="space-y-6">
         {sections.length === 0 ? (
           <EmptyState
@@ -227,7 +258,8 @@ export default async function BudgetsPage({
                     key={status.budget.id}
                     status={status}
                     guidanceCents={guidance.get(status.budget.id) ?? 0}
-                    provenance={spendProvenance.get(status.budget.id) ?? null}
+                    spentProvenance={spendProvenance.get(status.budget.id) ?? null}
+                    planProvenance={planProvenance.get(status.budget.id) ?? null}
                   />
                 ))}
               </ul>

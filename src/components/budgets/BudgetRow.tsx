@@ -60,7 +60,14 @@ interface BudgetRowProps {
   status: BudgetPaceStatus;
   guidanceCents: number;
   /** what the SPENT figure is standing on — null while none can be computed */
-  provenance: Provenance | null;
+  spentProvenance: Provenance | null;
+  /**
+   * What the PLAN is standing on. A separate proof on purpose: the actual is a
+   * sum of documented rows and the plan is a decision he made, so one badge
+   * cannot answer for both. Null only when the budget has vanished underneath
+   * the render.
+   */
+  planProvenance: Provenance | null;
 }
 
 /**
@@ -74,7 +81,7 @@ interface BudgetRowProps {
  * The headline and the definition beside it both come from `budgetVerdict`, so
  * the words and their explanation are chosen by one branch.
  */
-export function BudgetRow({ status, guidanceCents, provenance }: BudgetRowProps) {
+export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenance }: BudgetRowProps) {
   const { budget, tail } = status;
   // Lifted out of BudgetRolloverToggle so the details panel reacts to the toggle
   // immediately. Left inside the toggle, the panel would read the stale server
@@ -282,8 +289,8 @@ export function BudgetRow({ status, guidanceCents, provenance }: BudgetRowProps)
             <Money cents={status.spentCents} />
             {/* the actual is a SUM of rows, so it is only as proven as its
                 weakest one — beside the figure, never wrapping it */}
-            {provenance && (
-              <ProvenancePopover label={`${status.categoryPath} spent`} provenance={provenance} />
+            {spentProvenance && (
+              <ProvenancePopover label={`${status.categoryPath} spent`} provenance={spentProvenance} />
             )}
           </span>
           {/* With a carry, "Budget $50 · Left $631" cannot be reconciled by the
@@ -298,6 +305,18 @@ export function BudgetRow({ status, guidanceCents, provenance }: BudgetRowProps)
                 {formatCents(budget.amountCents)} plan + {formatCents(status.rolloverCents)} rolled
                 over)
               </span>
+            )}
+            {/* ⛔ Proves the PLAN, never the figure beside it when a carry is on.
+                With rollover the label reads "Available" and the number is plan
+                + carry, so the badge is named for what it actually answers for
+                and its panel says in words that the carry is measured from the
+                ledger rather than chosen. */}
+            {planProvenance && (
+              <ProvenancePopover
+                label={`${status.categoryPath} ${status.rolloverCents > 0 ? "plan" : "budget"}`}
+                provenance={planProvenance}
+                placement="bottom-end"
+              />
             )}
           </span>
           <span>

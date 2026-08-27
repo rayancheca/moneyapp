@@ -208,3 +208,24 @@ test.describe("what the ledger says about a commitment", () => {
     await expect(strip.locator("[popover]").first()).toBeVisible();
   });
 });
+
+/**
+ * The biggest figure on /spending, and until now the only one with no way to
+ * check it. Its proof has to name the whole period's rows — not one category's.
+ *
+ * ⛔ Mounted on the HEADING, not on a StatCard: every stat tile here is wrapped
+ * in a `<Link>`, and a `<button>` inside one is axe `nested-interactive`
+ * (serious). `e2e/a11y.spec.ts` would catch the regression; this catches the
+ * absence.
+ */
+test("the period's whole spending can be proven", async ({ page }) => {
+  await page.goto("/spending");
+  const trigger = page.getByRole("button", { name: /^How this period's spending is proven/ });
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+
+  const panel = page.getByRole("dialog");
+  // the rows underneath it, and the documents they came from
+  await expect(panel).toContainText(/sum of \d+ rows from \d+ documents?/);
+  await expect(panel).toContainText("only as proven as its weakest row");
+});

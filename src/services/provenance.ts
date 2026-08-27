@@ -1407,6 +1407,15 @@ function budgetPlanProvenance(db: AppDatabase, id: string, label: string | undef
 
   return {
     verdict: "manual",
+    /*
+     * ⛔ `manual`'s stock word is "you entered it", and this is the one figure
+     * where that over-claims. The headline is careful not to say he typed it —
+     * the real budgets were sized by `pnpm propose-budgets` and kept, and no
+     * column can tell a typed plan from an accepted proposal — so the badge
+     * must not say it either, or the two disagree at a glance. The TONE is
+     * unchanged: a plan is neither proven nor weak, which is what neutral means.
+     */
+    badgeWord: "a plan",
     headline:
       `This is a plan, not a record: ${amount} ${per} for ${subject}, decided rather than measured. ` +
       `Nothing checks it, because until the period ends there is nothing for it to be checked against — ` +
