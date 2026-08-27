@@ -1,0 +1,86 @@
+"use client";
+
+import { useCallback, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { saveViewPreferenceAction } from "@/app/settings/actions";
+import { CardDeck, type DeckCard } from "@/components/dashboard/CardDeck";
+import {
+  DASHBOARD_SURFACE,
+  DECISIONS_VIEW_LABELS,
+  DECISIONS_VIEW_SPEC,
+} from "@/components/dashboard/dashboard-view-spec";
+import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
+import { viewHrefQuery, type ViewState } from "@/lib/view-state";
+
+/**
+ * The decision cards, as a deck you swipe or a grid you scan.
+ *
+ * Owner, 2026-08-27, on the twelve-card grid: *"instead of having the cards take
+ * up al the space in teh world and having to scroll down to see them just stack
+ * them on thop of each other"*. The deck is the default because he asked for it;
+ * the grid stays because it is a genuinely different reading — all twelve at
+ * once, and the one that prints.
+ *
+ * ⚠️ The cards themselves are SERVER-rendered and arrive as nodes. Nothing about
+ * a card crosses the client boundary except its layout: every figure on them is
+ * still computed by the same services, on the server, exactly as before.
+ */
+export function DecisionCards({
+  cards,
+  state,
+}: {
+  cards: readonly DeckCard[];
+  state: ViewState;
+}) {
+  const router = useRouter();
+  const [, startTransition] = useTransition();
+
+  const select = useCallback(
+    (value: string) => {
+      const next = { ...state, cards: value };
+      const href = `/${viewHrefQuery(DECISIONS_VIEW_SPEC, next)}`;
+      startTransition(async () => {
+        try {
+          await saveViewPreferenceAction(DASHBOARD_SURFACE, next);
+        } catch {
+          /* persistence is best-effort — the URL drives the render */
+        }
+        router.push(href, { scroll: false });
+      });
+    },
+    [state, router],
+  );
+
+  const mode = state.cards === "grid" ? "grid" : "deck";
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-ink-faint">
+          {mode === "deck"
+            ? `${cards.length} readings — swipe, scroll or use ← →`
+            : `${cards.length} readings`}
+        </p>
+        <ViewSwitcher
+          dimension={DECISIONS_VIEW_SPEC[0]!}
+          value={mode}
+          onSelect={select}
+          labels={DECISIONS_VIEW_LABELS}
+          ariaLabel="How the cards are laid out"
+        />
+      </div>
+
+      {mode === "deck" ? (
+        <CardDeck cards={cards} ariaLabel="What this means" />
+      ) : (
+        <div className={`grid items-start gap-4 *:min-w-0 ${cards.length > 1 ? "lg:grid-cols-2" : ""}`}>
+          {cards.map((c) => (
+            <div key={c.id} className="*:min-w-0">
+              {c.node}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

@@ -24,6 +24,22 @@ export const DASHBOARD_SURFACE = "dashboard";
  * It is therefore URL-addressable (`/?chart=terrain`) and persisted like every
  * other view, and it builds from mode "accounts" (see `dashboardSeriesMode`).
  */
+/**
+ * How the twelve decision cards are laid out.
+ *
+ * A separate dimension from the hero chart because it is a separate question,
+ * and the DEFAULT is the deck: the owner asked for it on 2026-08-27 after the
+ * grid ran the dashboard past three screens. `grid` is kept, not as a fallback
+ * but as the honest second lens — it is the one you print, the one you scan all
+ * of at once, and the one a keyboard reader may simply prefer.
+ */
+export const DECISIONS_VIEW_SPEC: ViewSpec = [{ key: "cards", options: ["deck", "grid"] }];
+
+export const DECISIONS_VIEW_LABELS: Record<string, string> = {
+  deck: "Deck",
+  grid: "Grid",
+};
+
 export const DASHBOARD_VIEW_SPEC: ViewSpec = [
   {
     key: "chart",

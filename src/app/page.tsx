@@ -13,6 +13,8 @@ import { provenanceFor } from "@/services/provenance";
 import { CHART_RANGES, rangeStartDay, type ChartRange } from "@/lib/chart-range";
 import type { SankeyGraph } from "@/lib/sankey-layout";
 import { resolveViewState } from "@/lib/view-state";
+import type { DeckCard } from "@/components/dashboard/CardDeck";
+import { DecisionCards } from "@/components/dashboard/DecisionCards";
 import { recentLedgerRows } from "@/services/ledger-rows";
 import { carCard, runwayCard } from "@/services/committed";
 import { eatingOutCard } from "@/services/eating-out";
@@ -39,6 +41,7 @@ import { DashboardChartSection } from "@/components/dashboard/DashboardChartSect
 import {
   DASHBOARD_SURFACE,
   DASHBOARD_VIEW_SPEC,
+  DECISIONS_VIEW_SPEC,
   dashboardSeriesMode,
 } from "@/components/dashboard/dashboard-view-spec";
 import { PeriodActivityPanel } from "@/components/dashboard/PeriodActivityPanel";
@@ -118,6 +121,12 @@ export default async function DashboardPage({
     settings.viewPreferences[DASHBOARD_SURFACE],
   );
   const chartMode = chartView.chart ?? "combined";
+  // the cards' own lens, resolved through the same three layers as the chart's
+  const decisionsView = resolveViewState(
+    DECISIONS_VIEW_SPEC,
+    { cards: firstParam(raw.cards) ?? undefined },
+    settings.viewPreferences[DASHBOARD_SURFACE],
+  );
   const isSankey = chartMode === "sankey";
   const acctsParam = firstParam(raw.accts) ?? settings.viewPreferences[DASHBOARD_SURFACE]?.accts ?? "";
   // A hero VIEW is not a net-worth SERIES mode, and the difference is a crash.
@@ -418,29 +427,45 @@ export default async function DashboardPage({
       performance,
       fees,
     ].filter(Boolean).length;
+  /*
+   * PASS 72-UI. Twelve cards ran the dashboard past three screens, so they are
+   * a DECK by default — one card tall whatever it holds, which is what lets a
+   * thirteenth cost nothing. The grid is still one switch away.
+   *
+   * Every card is still built here, on the server: only the LAYOUT crosses the
+   * client boundary, and each card's figures come from the same services they
+   * always did.
+   */
+  const decisionCards: DeckCard[] = [
+    // Ordered by what a reader acts on, not by when they were built: where the
+    // money stands (runway, car, income, cards), then what it is being spent on
+    // (eating out, subscriptions, what changed), then what it is invested in,
+    // and last how much of any of it is proven.
+    { id: "runway", label: "Runway", node: <RunwayCard data={runway} /> },
+    ...(car ? [{ id: "car", label: "The car", node: <CarCostCard data={car} /> }] : []),
+    ...(income ? [{ id: "income", label: "Earned vs banked", node: <IncomeCard data={income} /> }] : []),
+    ...(cardsOwed ? [{ id: "cards-owed", label: "On your cards", node: <CardsOwedCard data={cardsOwed} /> }] : []),
+    ...(showEatingOut ? [{ id: "eating-out", label: "Eating out", node: <EatingOutCard data={eatingOut} /> }] : []),
+    ...(subscriptions
+      ? [{ id: "subscriptions", label: "Subscriptions", node: <SubscriptionsCard data={subscriptions} /> }]
+      : []),
+    ...(movers ? [{ id: "movers", label: "What changed", node: <MoversCard data={movers} /> }] : []),
+    ...(fees ? [{ id: "fees", label: "What the banks charge you", node: <FeesCard data={fees} /> }] : []),
+    ...(transfers ? [{ id: "transfers", label: "Your own money, moving", node: <TransfersCard data={transfers} /> }] : []),
+    ...(performance
+      ? [{ id: "performance", label: "How the investments are doing", node: <PerformanceCard data={performance} /> }]
+      : []),
+    ...(concentration
+      ? [{ id: "concentration", label: "What you are riding on", node: <ConcentrationCard data={concentration} /> }]
+      : []),
+    ...(trust ? [{ id: "trust", label: "Can you trust this?", node: <TrustCard data={trust} /> }] : []),
+  ];
   const decisionsSection = (
       <section aria-labelledby="decisions-heading">
         <h2 id="decisions-heading" className="sr-only">
           What this means
         </h2>
-        <div className={`grid items-start gap-4 *:min-w-0 ${decisionCardCount > 1 ? "lg:grid-cols-2" : ""}`}>
-          {/* Ordered by what a reader acts on, not by when they were built:
-              where the money stands (runway, car, income, cards), then what it
-              is being spent on (eating out, subscriptions, what changed), then
-              what it is invested in, and last how much of any of it is proven. */}
-          <RunwayCard data={runway} />
-          {car && <CarCostCard data={car} />}
-          {income && <IncomeCard data={income} />}
-          {cardsOwed && <CardsOwedCard data={cardsOwed} />}
-          {showEatingOut && <EatingOutCard data={eatingOut} />}
-          {subscriptions && <SubscriptionsCard data={subscriptions} />}
-          {movers && <MoversCard data={movers} />}
-          {fees && <FeesCard data={fees} />}
-          {transfers && <TransfersCard data={transfers} />}
-          {performance && <PerformanceCard data={performance} />}
-          {concentration && <ConcentrationCard data={concentration} />}
-          {trust && <TrustCard data={trust} />}
-        </div>
+        <DecisionCards cards={decisionCards} state={decisionsView} />
       </section>
   );
 
