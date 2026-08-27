@@ -2,8 +2,8 @@
 
 > **Supersedes `HANDOFF-2026-08-27-transfers-and-commitments.md`.**
 >
-> **`main` = `1309ace`**, tree clean, pushed. tsc clean ·
-> **214 files / 4,113 unit** · coverage **99.76% stmts, 100% funcs** ·
+> **`main` = `8546606`**, tree clean, pushed. tsc clean ·
+> **214 files / 4,115 unit** · coverage **99.76% stmts, 100% funcs** ·
 > **E2E_GATE=1: 540 passed at `maxDiffPixels: 0`** (7.9m, clean box) — §5 records
 > why three earlier runs did not, and it was my own concurrent load.
 >
