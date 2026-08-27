@@ -47,7 +47,7 @@ function addPeriod(accountId: string, start: string, end: string): void {
       fileSha256: `sha-${seq}`,
       format: "pdf",
       institutionId: bundle.db.select().from(institutions).all()[0]!.id,
-      status: "imported",
+      status: "parsed",
       storagePath: `/tmp/s-${seq}.pdf`,
       importedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
