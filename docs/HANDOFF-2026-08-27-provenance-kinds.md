@@ -4,8 +4,8 @@
 >
 > **`main` = `1309ace`**, tree clean, pushed. tsc clean ·
 > **214 files / 4,113 unit** · coverage **99.76% stmts, 100% funcs** ·
-> **E2E_GATE=1: 540 tests, 538–540 passing** — see §5, which is an honest
-> report of flake and not a green claim.
+> **E2E_GATE=1: 540 passed at `maxDiffPixels: 0`** (7.9m, clean box) — §5 records
+> why three earlier runs did not, and it was my own concurrent load.
 >
 > Live ledger unchanged by this pass: **10,111 active rows** · income
 > **$117,924.62** · zero DB writes. Nothing was written to the database at all.
@@ -222,37 +222,44 @@ notice, so the rows inserted fine and every assertion passed.
 
 ---
 
-## 5. ⚠️ The e2e suite flakes under a full serial run — an honest report
+## 5. ✅ E2E: 540 passed, and why three earlier runs did not
 
-The previous handoff recorded a clean **534 passed**. This pass adds 6 tests
-(540 total). Across three full `E2E_GATE=1` runs:
+Final clean run on this HEAD: **`E2E_GATE=1 pnpm e2e:fresh` — 540 passed, 0
+failed, 7.9 minutes** at `maxDiffPixels: 0`. The suite is green.
 
-| run | result | failing |
-|---|---|---|
-| 1 | 507 passed, 33 failed | 32 expected visual baselines + `zz-card-deck` "the deck is a fraction of the grid" |
-| 2 | 538 passed, 2 failed | `zz-zz-view-switcher` (holding's table), `zz-zz-zz-cash-wallet-opening` |
-| 3 | *(see below)* | |
+It took four runs to get there, and the three before it are worth recording
+because I nearly wrote them up as a pre-existing flake:
 
-⛔ **Three different tests failed across two runs and not one reproduced.** Each
-passes in isolation, and re-running them together passes:
+| run | result | failing | wall clock |
+|---|---|---|---|
+| 1 | 507 / 33 failed | 32 expected visual baselines + `zz-card-deck` | 8.5m |
+| 2 | 538 / 2 failed | `zz-zz-view-switcher`, `zz-zz-zz-cash-wallet-opening` | 10.0m |
+| 3 | 539 / 1 failed | `zz-zz-merchant-default` | **24.1m** |
+| 4 | **540 / 0** | — | **7.9m** |
 
-- `zz-card-deck` fails on `boundingBox()` returning null — a call with **no
-  auto-wait**, which is the same class of trap pass 38 already recorded
-  (`isVisible()` doesn't auto-wait).
-- None of the three is on a route this pass touched.
+⛔ **The cause was me.** I ran `npx tsx` probes and a full `vitest run` on the
+same machine while runs 2 and 3 were in flight. Run 3's single spec file took
+**16.1 minutes on its own** against 7.9 minutes for the entire suite when the
+box was quiet. Three different non-reproducing failures, each on a route this
+pass never touched, each passing in isolation — that is CPU starvation tipping
+timing-sensitive assertions, not a regression.
 
-I measured whether my changes could have slowed a page enough to tip a timing
-test (`scripts/probe-insight-cost.ts`): **+2.4ms on /spending, +2.4ms on
-/budgets, +11.4ms on /summary/[year]**. That cannot be the cause.
+⚠️ **Two lessons, both mine:**
 
-**So this reads as pre-existing flake surfaced by a longer suite, not a
-regression — but I did not prove that, and I am not calling the suite green.**
-The concrete next step if it bothers you: replace bare `boundingBox()` calls with
-an `expect(locator).toBeVisible()` first, which does auto-wait.
+1. **Do not run anything else while the e2e suite runs.** It is `workers: 1` and
+   serial by design; a concurrent `vitest run --coverage` is enough to double its
+   wall clock and start knocking over timing-sensitive specs.
+2. **`boundingBox()` has no auto-wait** — the first failure was
+   `Cannot read properties of null (reading 'height')`, the same class of trap
+   pass 38 recorded for `isVisible()`. It is fine today, but any bare
+   `boundingBox()` in this suite is the first thing to fall over under load.
+   `expect(locator).toBeVisible()` first would harden it.
 
-The 32 visual failures in run 1 were expected and are resolved — see §6.
+I measured whether this pass could have slowed a page enough to matter
+(`scripts/probe-insight-cost.ts`): **+2.4ms /spending, +2.4ms /budgets,
++11.4ms /summary/[year]**. It could not, and the clean run confirms it.
 
----
+The 32 visual failures in run 1 were expected — see §6.
 
 ## 6. Visual baselines — 32 regenerated, every diff read first
 
