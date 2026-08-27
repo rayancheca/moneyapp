@@ -4,6 +4,7 @@ import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { merchants } from "@/db/schema/merchants";
 import { balanceAnchors, dailyBalances, type BalanceBasis } from "@/db/schema/balances";
+import { budgets, type BudgetPeriodKind } from "@/db/schema/budgets";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings, priceCache, type AssetType } from "@/db/schema/holdings";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
@@ -12,6 +13,7 @@ import { transactions } from "@/db/schema/transactions";
 import { diffDays, todayIso } from "@/lib/dates";
 import { isStaleClose } from "@/lib/holding-price-age";
 import { formatCents } from "@/lib/money";
+import { activeTxnsInRange, loadCategoryIndex, spendingBucket } from "./analytics";
 import { accountCoverage, type CoverageGrade } from "./coverage";
 import { MIN_OCCURRENCES } from "./recurring";
 
@@ -185,7 +187,26 @@ export type FigureRef =
    */
   | { kind: "holding"; symbol: string; assetType: AssetType; day?: string }
   /** A recurring series' expected amount — a forecast, graded by its evidence. */
-  | { kind: "recurringSeries"; id: string };
+  | { kind: "recurringSeries"; id: string }
+  /**
+   * ALL spending in a window — no category and no merchant filter. The figure
+   * `/spending` puts on its "Spent" card and states under its relief.
+   *
+   * ⛔ NOT `categorySpend` over some root, because there is no root: the app's
+   * spending total is the union of every top-level `expense` category AND every
+   * uncategorized outflow, and no category id names that set.
+   */
+  | { kind: "allSpend"; from: string; to: string; label?: string }
+  /**
+   * A budget's PLAN amount — the one figure in this app that is a decision
+   * rather than a measurement.
+   *
+   * ⛔ Deliberately not `categorySpend` over the budget's window, which is what
+   * `/budgets` already mounts beside the ACTUAL. The two numbers on a budget row
+   * are proven in completely different ways: the actual is a sum of documented
+   * rows, the plan is a thing he chose, and one proof cannot cover both.
+   */
+  | { kind: "budgetPlan"; id: string; label?: string };
 
 /**
  * Cash accounts only: what a day's `basis` proves about its balance.
@@ -1031,6 +1052,71 @@ function merchantSpendProvenance(
   return summedRowsProvenance(db, rows, label ?? merchant.canonicalName, from, to);
 }
 
+/**
+ * What backs EVERY dollar the app calls spending in a window.
+ *
+ * ## ⛔ The predicate is borrowed, never rewritten
+ *
+ * "What counts as spending" is `spendingBucket` plus a debit — a row whose
+ * TOP-LEVEL category is an expense, or an uncategorized outflow. Restating that
+ * as a SQL `where` here would be a second definition of the largest number in
+ * the app, and this codebase has paid for a duplicated definition three times
+ * now: two functions computing one due date (pass 54), a ruler that graded
+ * itself (pass 56), a `where` clause that made a liveness test dead code while
+ * it still looked load-bearing (`recurring-insights`). So this walks the SAME
+ * rows through the SAME classifier the figure walks, and adds only the join
+ * back to the documents.
+ *
+ * That borrowing is also why the second query exists. `activeTxnsInRange`
+ * does not select `importFileId` — a proof's whole subject — and widening the
+ * shared analytics row to carry a column only this file wants would push the
+ * cost onto every aggregate in the app. One extra pass over the same window is
+ * cheaper than that and leaves the hot path alone.
+ *
+ * ## ⛔ A SPLIT transaction is ONE row, not three
+ *
+ * `activeTxnsInRange` explodes a split into a pseudo-row per part so each part
+ * lands in its own category. That is right for the SUM and wrong for a PROOF,
+ * which counts rows and names documents: a $50 charge split three ways is one
+ * line on one statement, and "the sum of 3 rows from 1 document" would be a
+ * count of something that does not exist. Contributing transactions are
+ * collected as a SET of ids for exactly this reason.
+ *
+ * A split with one spending part and one Pass-through part still contributes
+ * its transaction once, which is correct — the document carries the whole row,
+ * and the proof's subject is the document.
+ */
+function allSpendProvenance(
+  db: AppDatabase,
+  from: string,
+  to: string,
+  label: string | undefined,
+): Provenance {
+  const idx = loadCategoryIndex(db);
+  const contributing = new Set<string>();
+  for (const txn of activeTxnsInRange(db, from, to)) {
+    // gross money out, matching `periodTotals` exactly: a credit in an expense
+    // category is a REFUND and never nets this total down
+    if (txn.amountCents < 0 && spendingBucket(idx, txn)) contributing.add(txn.id);
+  }
+
+  /*
+   * Re-selected by WINDOW rather than by the id set: a four-year window holds
+   * thousands of contributing rows, and an `IN (…)` list that long is a
+   * SQLITE_MAX_VARIABLE_NUMBER failure waiting for the first person to open a
+   * long period. The window predicate is bounded by the dates instead, and the
+   * set does the filtering in memory where it costs nothing.
+   */
+  const rows = db
+    .select(SUM_ROW_COLUMNS)
+    .from(transactions)
+    .where(and(eq(transactions.status, "active"), gte(transactions.postedOn, from), lte(transactions.postedOn, to)))
+    .all()
+    .filter((r) => contributing.has(r.id));
+
+  return summedRowsProvenance(db, rows, label ?? "your spending", from, to);
+}
+
 /** The columns every summed-rows proof grades. Named so two selectors cannot drift. */
 const SUM_ROW_COLUMNS = {
   id: transactions.id,
@@ -1158,6 +1244,92 @@ function summedRowsProvenance(
   };
 }
 
+/* ── a plan, rather than a measurement ────────────────────────────────── */
+
+/** How a budget's period reads inside a sentence about its amount. */
+const PLAN_PER: Record<BudgetPeriodKind, string> = {
+  daily: "a day",
+  weekly: "a week",
+  monthly: "a month",
+  annual: "a year",
+};
+
+/**
+ * What backs a BUDGET's plan amount — the only figure in this app that is a
+ * decision instead of a measurement.
+ *
+ * ⛔ The honest answer is "nothing checks it", and here that is not a weakness.
+ * Every other figure this service grades is a claim about something that
+ * happened, so an absent document is a hole. A budget is a claim about what he
+ * INTENDS, and there is nothing in the world it could be checked against until
+ * the period ends — at which point the thing that closes against a document is
+ * the ACTUAL, which `/budgets` already proves separately with `categorySpend`.
+ * `manual` is the right verdict for the same reason it is right for cash in a
+ * safe: the owner is not a missing source, he is the source.
+ *
+ * ⚠️ The wording deliberately does NOT say "you typed this". The real budgets
+ * were sized by `pnpm propose-budgets` from measured income and then kept, and
+ * the schema carries no column that could tell a typed plan from an accepted
+ * proposal. A proof that claimed to know which one it was would be asserting
+ * something the database cannot support — the exact move this service exists to
+ * refuse. So it says what is true of both: a plan is a decision.
+ *
+ * ⛔ It proves the PLAN and nothing else. When rollover is on, the line the
+ * period is actually graded against is the plan PLUS a carry computed from
+ * closed periods, and that carry is derived from the ledger rather than chosen.
+ * The headline says so, and says it in WORDS rather than in a figure: reading
+ * the carry would mean recomputing `budgetStatuses` here, and a proof that
+ * quietly re-derives its subject's neighbour is how two definitions of one
+ * number get born.
+ */
+function budgetPlanProvenance(db: AppDatabase, id: string, label: string | undefined): Provenance | null {
+  const budget = db.select().from(budgets).where(eq(budgets.id, id)).get();
+  if (!budget) return null;
+  const category = db.select().from(categories).where(eq(categories.id, budget.categoryId)).get();
+
+  const subject = label ?? category?.name ?? "this budget";
+  const amount = formatCents(budget.amountCents);
+  const per = PLAN_PER[budget.period];
+  // the day he decided, not the day the plan starts running — `startsOn` is
+  // backdatable and says when the money is planned FOR, which is a different fact
+  const decidedOn = budget.createdAt.slice(0, 10);
+
+  const sources: ProvenanceSource[] = [
+    {
+      kind: "hand-entered",
+      label: `${amount} ${per} for ${subject}`,
+      detail: "a plan you set — no document states it",
+      on: decidedOn,
+    },
+  ];
+  if (budget.rolloverEnabled) {
+    sources.push({
+      kind: "period",
+      label: "rollover is on",
+      detail: "unspent plan from closed periods is added to this one, and that carry is computed from your ledger",
+    });
+  }
+
+  const started = `It has been running since ${readableDay(budget.startsOn)}`;
+  const ended = budget.endsOn ? `, and it stops after ${readableDay(budget.endsOn)}` : "";
+  const carry = budget.rolloverEnabled
+    ? " Rollover is on, so what this period is graded against is this plan plus whatever you underspent in closed periods — that carry is measured from your ledger and is not part of what you chose."
+    : "";
+
+  return {
+    verdict: "manual",
+    headline:
+      `This is a plan, not a record: ${amount} ${per} for ${subject}, decided rather than measured. ` +
+      `Nothing checks it, because until the period ends there is nothing for it to be checked against — ` +
+      `what closes against a document is the spending beside it, not the budget. ${started}${ended}.${carry}`,
+    sources,
+    // a plan is never "checked through" a day; the day it was decided is named
+    // in `sources`, where it reads as a decision rather than as a guarantee
+    checkedThrough: null,
+    inputs: [],
+  };
+}
+
 /* ── entry point ──────────────────────────────────────────────────────── */
 
 /**
@@ -1182,5 +1354,9 @@ export function provenanceFor(db: AppDatabase, ref: FigureRef): Provenance | nul
       return holdingProvenance(db, ref.symbol, ref.assetType, ref.day);
     case "recurringSeries":
       return recurringSeriesProvenance(db, ref.id);
+    case "allSpend":
+      return allSpendProvenance(db, ref.from, ref.to, ref.label);
+    case "budgetPlan":
+      return budgetPlanProvenance(db, ref.id, ref.label);
   }
 }

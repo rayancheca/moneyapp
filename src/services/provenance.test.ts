@@ -8,12 +8,14 @@ import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
+import { budgets } from "@/db/schema/budgets";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings, priceCache } from "@/db/schema/holdings";
 import { recurringSeries } from "@/db/schema/recurring";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
+import { transactionSplits } from "@/db/schema/transaction-splits";
 import { provenanceFor, weakestVerdict, type ProvenanceVerdict } from "./provenance";
 
 /**
@@ -955,5 +957,319 @@ describe("provenanceFor — a recurring series' amount", () => {
 
   test("a series that does not exist is null", () => {
     expect(provenanceFor(bundle.db, { kind: "recurringSeries", id: "nope" })).toBeNull();
+  });
+});
+
+/* ── all spending in a window ─────────────────────────────────────────── */
+
+function addKindedCategory(id: string, name: string, kind: "expense" | "income" | "transfer"): string {
+  bundle.db
+    .insert(categories)
+    .values({ id, name, parentId: null, kind, sortOrder: 0, createdAt: now(), updatedAt: now() })
+    .run();
+  return id;
+}
+
+function addSplit(txnId: string, categoryId: string, cents: number, seq: number): void {
+  bundle.db
+    .insert(transactionSplits)
+    .values({
+      id: `sp-${txnId}-${seq}`,
+      transactionId: txnId,
+      categoryId,
+      amountCents: cents,
+      sortOrder: seq,
+      createdAt: now(),
+      updatedAt: now(),
+    })
+    .run();
+}
+
+/**
+ * ⛔ These pin the SET of rows the proof is about, not the arithmetic — the
+ * arithmetic is `summedRowsProvenance`, already covered by the category tests.
+ * What is new and worth guarding is which transactions get to be underneath the
+ * app's largest number: every expense category rather than one, uncategorized
+ * outflows but not uncategorized credits, and a split counted once.
+ */
+describe("provenanceFor — all spending in a window", () => {
+  const WINDOW = { from: "2026-07-01", to: "2026-07-31" } as const;
+
+  test("spans every expense category, not one", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const food = addKindedCategory("c-food", "Fixture Food", "expense");
+    const rent = addKindedCategory("c-rent", "Fixture Rent", "expense");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
+    categorize(addTxn(acct, "2026-07-10", { importFileId: file }), food);
+    categorize(addTxn(acct, "2026-07-11", { importFileId: file }), rent);
+
+    const p = provenanceFor(bundle.db, { kind: "allSpend", ...WINDOW })!;
+    expect(p.headline).toMatch(/sum of 2 rows from 1 document/);
+    expect(p.verdict).toBe("derived");
+  });
+
+  /** The app's spending total counts uncategorized OUTFLOWS; its proof must too. */
+  test("an uncategorized outflow is spending and an uncategorized credit is not", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
+    addTxn(acct, "2026-07-10", { importFileId: file, cents: -500 });
+    addTxn(acct, "2026-07-11", { importFileId: file, cents: 900 });
+
+    const p = provenanceFor(bundle.db, { kind: "allSpend", ...WINDOW })!;
+    expect(p.headline).toMatch(/sum of 1 row from 1 document/);
+  });
+
+  test("income rows and transfer rows are not spending", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const food = addKindedCategory("c-food", "Fixture Food", "expense");
+    const pay = addKindedCategory("c-pay", "Fixture Salary", "income");
+    const move = addKindedCategory("c-move", "Fixture Transfer", "transfer");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
+    categorize(addTxn(acct, "2026-07-10", { importFileId: file }), food);
+    categorize(addTxn(acct, "2026-07-11", { importFileId: file, cents: 5000 }), pay);
+    // a transfer LEG is a debit like any purchase — only its category keeps it out
+    categorize(addTxn(acct, "2026-07-12", { importFileId: file, cents: -2000 }), move);
+
+    const p = provenanceFor(bundle.db, { kind: "allSpend", ...WINDOW })!;
+    expect(p.headline).toMatch(/sum of 1 row from 1 document/);
+  });
+
+  /**
+   * ⛔ A credit in an expense category is a REFUND, and `periodTotals` keeps it
+   * out of "Spent" entirely rather than netting it down. A proof that counted
+   * its row would name a document underneath a figure that document did not
+   * contribute a cent to.
+   */
+  test("a refund inside an expense category is not a row underneath the total", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const food = addKindedCategory("c-food", "Fixture Food", "expense");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
+    categorize(addTxn(acct, "2026-07-10", { importFileId: file }), food);
+    categorize(addTxn(acct, "2026-07-11", { importFileId: file, cents: 4000 }), food);
+
+    const p = provenanceFor(bundle.db, { kind: "allSpend", ...WINDOW })!;
+    expect(p.headline).toMatch(/sum of 1 row from 1 document/);
+  });
+
+  /**
+   * ⛔ THE reason this is not a thin wrapper. `activeTxnsInRange` explodes a
+   * split into one pseudo-row per part so each part lands in its own category;
+   * counting those would report three rows from one document for one charge.
+   */
+  test("a transaction split three ways is one row, not three", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const food = addKindedCategory("c-food", "Fixture Food", "expense");
+    const rent = addKindedCategory("c-rent", "Fixture Rent", "expense");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
+    const txn = addTxn(acct, "2026-07-10", { importFileId: file, cents: -6000 });
+    categorize(txn, food);
+    addSplit(txn, food, -2000, 1);
+    addSplit(txn, rent, -3000, 2);
+    addSplit(txn, food, -1000, 3);
+
+    const p = provenanceFor(bundle.db, { kind: "allSpend", ...WINDOW })!;
+    expect(p.headline).toMatch(/sum of 1 row from 1 document/);
+  });
+
+  /**
+   * A split that sends part of a charge somewhere that is not spending still
+   * rests on the one document carrying the whole line — so the transaction
+   * contributes exactly once, and having a non-spending part does not delete it.
+   */
+  test("a split with one spending part still contributes its transaction once", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const food = addKindedCategory("c-food", "Fixture Food", "expense");
+    const through = addKindedCategory("c-through", "Fixture Pass-through", "transfer");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-20", basis: "derived" }]);
+    const txn = addTxn(acct, "2026-07-10", { importFileId: file, cents: -5000 });
+    categorize(txn, food);
+    addSplit(txn, food, -4000, 1);
+    addSplit(txn, through, -1000, 2);
+
+    const p = provenanceFor(bundle.db, { kind: "allSpend", ...WINDOW })!;
+    expect(p.headline).toMatch(/sum of 1 row from 1 document/);
+  });
+
+  test("a window with no spending in it is zero rather than unproven", () => {
+    addAccount("a", "Chase Checking", "checking");
+    const p = provenanceFor(bundle.db, { kind: "allSpend", from: "2019-01-01", to: "2019-12-31" })!;
+    expect(p.headline).toMatch(/zero rather than unproven/);
+    expect(p.verdict).toBe("unknown");
+    expect(p.sources).toEqual([]);
+  });
+
+  /** Graded like every other total: the first unchecked row bounds the whole thing. */
+  test("a row past its account's coverage drags the total", () => {
+    const acct = addAccount("a", "Robinhood Cash", "checking");
+    const food = addKindedCategory("c-food", "Fixture Food", "expense");
+    const file = addFile("f1", "july.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [
+      { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-07-10", basis: "derived" },
+      { day: "2026-07-20", basis: "derived_unverified" },
+    ]);
+    categorize(addTxn(acct, "2026-07-10", { importFileId: file }), food);
+    categorize(addTxn(acct, "2026-07-20", { importFileId: file }), food);
+
+    const p = provenanceFor(bundle.db, { kind: "allSpend", ...WINDOW })!;
+    expect(p.verdict).toBe("unverified");
+    expect(p.badgeWord).toBe("1 of 2 checked");
+  });
+
+  test("the window's own label is used when one is given", () => {
+    addAccount("a", "Chase Checking", "checking");
+    const p = provenanceFor(bundle.db, { kind: "allSpend", from: "2019-01-01", to: "2019-12-31", label: "Jul 2026" })!;
+    expect(p.headline).toMatch(/No rows in Jul 2026/);
+  });
+});
+
+/* ── a budget's plan ──────────────────────────────────────────────────── */
+
+function addBudget(
+  id: string,
+  categoryId: string,
+  opts: {
+    amountCents?: number;
+    period?: "daily" | "weekly" | "monthly" | "annual";
+    startsOn?: string;
+    endsOn?: string | null;
+    rolloverEnabled?: boolean;
+    createdAt?: string;
+  } = {},
+): string {
+  bundle.db
+    .insert(budgets)
+    .values({
+      id,
+      categoryId,
+      period: opts.period ?? "monthly",
+      amountCents: opts.amountCents ?? 120000,
+      startsOn: opts.startsOn ?? "2026-01-01",
+      endsOn: opts.endsOn ?? null,
+      isActive: true,
+      rolloverEnabled: opts.rolloverEnabled ?? false,
+      rolloverStartsOn: null,
+      rolloverCapCents: null,
+      createdAt: opts.createdAt ?? "2026-01-01T09:00:00.000Z",
+      updatedAt: now(),
+    })
+    .run();
+  return id;
+}
+
+/**
+ * ⛔ A budget is the one figure this service grades that is a DECISION rather
+ * than a measurement, and "nothing checks it" is the right answer rather than a
+ * hole. These tests pin that distinction: `manual`, never `unverified`, and no
+ * `checkedThrough` date — a plan is not something that adds up through a day.
+ */
+describe("provenanceFor — a budget's plan", () => {
+  test("a plan is the owner's own, not something unchecked", () => {
+    const cat = addCategory("c-house", "Fixture Housing");
+    addBudget("b1", cat);
+
+    const p = provenanceFor(bundle.db, { kind: "budgetPlan", id: "b1" })!;
+    expect(p.verdict).toBe("manual");
+    expect(p.headline).toMatch(/This is a plan, not a record: \$1,200\.00 a month for Fixture Housing/);
+    expect(p.sources[0]!.kind).toBe("hand-entered");
+    expect(p.sources[0]!.label).toBe("$1,200.00 a month for Fixture Housing");
+  });
+
+  /** Each period gets its own words — "$1,200.00 a monthly" is not a sentence. */
+  test("the period is spelled the way a sentence needs it", () => {
+    const cat = addCategory("c-house", "Fixture Housing");
+    for (const [i, [period, words]] of (
+      [
+        ["daily", "a day"],
+        ["weekly", "a week"],
+        ["monthly", "a month"],
+        ["annual", "a year"],
+      ] as const
+    ).entries()) {
+      const child = addCategory(`c-${period}`, `Fixture ${period}`, cat);
+      addBudget(`b-${i}`, child, { period });
+      const p = provenanceFor(bundle.db, { kind: "budgetPlan", id: `b-${i}` })!;
+      expect(p.headline).toContain(`$1,200.00 ${words} for Fixture ${period}`);
+    }
+  });
+
+  /**
+   * ⛔ The day he DECIDED, not the day the plan starts running. `startsOn` is
+   * backdatable and says when the money is planned for, which is a different
+   * fact — a proof dated by it would claim he made a decision on a day it can
+   * only prove he planned FOR.
+   */
+  test("the source is dated when the budget was created, not when it starts", () => {
+    const cat = addCategory("c-house", "Fixture Housing");
+    addBudget("b1", cat, { startsOn: "2025-06-01", createdAt: "2026-02-14T09:00:00.000Z" });
+
+    const p = provenanceFor(bundle.db, { kind: "budgetPlan", id: "b1" })!;
+    expect(p.sources[0]!.on).toBe("2026-02-14");
+    expect(p.headline).toMatch(/running since Jun 1, 2025/);
+  });
+
+  /** A plan never "adds up through" a day — that phrase means money reconciled. */
+  test("a plan reports no checkedThrough date", () => {
+    const cat = addCategory("c-house", "Fixture Housing");
+    addBudget("b1", cat);
+    expect(provenanceFor(bundle.db, { kind: "budgetPlan", id: "b1" })!.checkedThrough).toBeNull();
+  });
+
+  /**
+   * ⛔ With rollover on, the line the period is graded against is the plan PLUS
+   * a carry measured from the ledger. A proof that silently covered only the
+   * chosen half would be the "basis in a caption" mistake — true of the fact and
+   * wrong to the reader looking at the bigger number.
+   */
+  test("rollover is named, because it changes what the reader is looking at", () => {
+    const cat = addCategory("c-house", "Fixture Housing");
+    addBudget("b1", cat, { rolloverEnabled: true });
+
+    const p = provenanceFor(bundle.db, { kind: "budgetPlan", id: "b1" })!;
+    expect(p.headline).toMatch(/Rollover is on/);
+    expect(p.headline).toMatch(/measured from your ledger and is not part of what you chose/);
+    expect(p.sources.some((s) => s.label === "rollover is on")).toBe(true);
+    // still the owner's decision — the carry does not make the plan a measurement
+    expect(p.verdict).toBe("manual");
+  });
+
+  test("with rollover off nothing is said about a carry", () => {
+    const cat = addCategory("c-house", "Fixture Housing");
+    addBudget("b1", cat);
+
+    const p = provenanceFor(bundle.db, { kind: "budgetPlan", id: "b1" })!;
+    expect(p.headline).not.toMatch(/[Rr]ollover/);
+    expect(p.sources).toHaveLength(1);
+  });
+
+  test("an end date is stated when the budget has one", () => {
+    const cat = addCategory("c-house", "Fixture Housing");
+    addBudget("b1", cat, { endsOn: "2026-12-31" });
+    const p = provenanceFor(bundle.db, { kind: "budgetPlan", id: "b1" })!;
+    expect(p.headline).toMatch(/stops after Dec 31, 2026/);
+
+    addBudget("b2", cat, { endsOn: null, period: "annual" });
+    expect(provenanceFor(bundle.db, { kind: "budgetPlan", id: "b2" })!.headline).not.toMatch(/stops after/);
+  });
+
+  /** /budgets shows "Food > Dining", and the proof should say what the page says. */
+  test("a caller's label wins over the bare category name", () => {
+    const parent = addCategory("c-food", "Fixture Food");
+    const child = addCategory("c-dining", "Fixture Dining", parent);
+    addBudget("b1", child);
+
+    const p = provenanceFor(bundle.db, { kind: "budgetPlan", id: "b1", label: "Fixture Food > Fixture Dining" })!;
+    expect(p.headline).toContain("for Fixture Food > Fixture Dining");
+    expect(p.sources[0]!.label).toBe("$1,200.00 a month for Fixture Food > Fixture Dining");
+  });
+
+  test("a budget that does not exist is null", () => {
+    expect(provenanceFor(bundle.db, { kind: "budgetPlan", id: "nope" })).toBeNull();
   });
 });
