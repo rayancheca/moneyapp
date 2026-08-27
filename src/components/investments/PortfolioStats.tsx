@@ -87,9 +87,18 @@ export function PortfolioStats({ overview, today }: { overview: PortfolioOvervie
             </span>
             <Money cents={overview.twrGainCents} flow className="text-xs" />
           </span>
+          {/**
+           * 🔴 "in total" is load-bearing. These two percentages are stacked one
+           * above the other and they are NOT the same kind of number: TWR is
+           * CUMULATIVE across the whole span, XIRR is a rate PER YEAR. Measured
+           * 2026-08-27 over a 2.13-year book they read 30.42% and 28.56%, so
+           * bare they invite the conclusion that the first beat the second —
+           * when annualized the first is 13.30%/yr, less than half of it.
+           * Neither label said so until now.
+           */}
           {overview.twrAnchor && (
             <span className="mt-0.5 block text-[11px] font-normal text-ink-faint">
-              time-weighted · since {formatMonthYear(overview.twrAnchor)}
+              time-weighted · in total since {formatMonthYear(overview.twrAnchor)}
             </span>
           )}
           {/* money-weighted (XIRR) companion — the growth rate of YOUR dollars,
@@ -111,7 +120,7 @@ export function PortfolioStats({ overview, today }: { overview: PortfolioOvervie
                 )}
               </span>
               <span className="mt-0.5 block text-[11px] font-normal text-ink-faint">
-                money-weighted · your dollars
+                money-weighted · a year, your dollars
               </span>
             </span>
           )}

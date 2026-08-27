@@ -22,6 +22,9 @@ import { trustCard } from "@/services/trust-card";
 import { incomeCard } from "@/services/income-card";
 import { concentrationCard } from "@/services/concentration-card";
 import { moversCard } from "@/services/movers-card";
+import { transfersCard } from "@/services/transfers-card";
+import { performanceCard } from "@/services/performance-card";
+import { feesCard } from "@/services/fees-card";
 import { institutionGroups } from "@/services/institution-groups";
 import { DASHBOARD_SECTION_IDS, readSettings, type DashboardSectionId } from "@/services/settings";
 import { normalizeOrder } from "@/lib/reorder";
@@ -49,6 +52,9 @@ import { TrustCard } from "@/components/dashboard/TrustCard";
 import { IncomeCard } from "@/components/dashboard/IncomeCard";
 import { ConcentrationCard } from "@/components/dashboard/ConcentrationCard";
 import { MoversCard } from "@/components/dashboard/MoversCard";
+import { TransfersCard } from "@/components/dashboard/TransfersCard";
+import { PerformanceCard } from "@/components/dashboard/PerformanceCard";
+import { FeesCard } from "@/components/dashboard/FeesCard";
 import { ToReviewCard } from "@/components/dashboard/ToReviewCard";
 import { UpcomingBillsStrip } from "@/components/dashboard/UpcomingBillsStrip";
 import { Money } from "@/components/ui/Money";
@@ -236,6 +242,9 @@ export default async function DashboardPage({
   const income = incomeCard(db, today);
   const concentration = concentrationCard(db, today);
   const movers = moversCard(db, today);
+  const transfers = transfersCard(db, today);
+  const performance = performanceCard(db, today);
+  const fees = feesCard(db, today);
   const pickerOptions = buildCategoryPickerOptions(db.select().from(categories).all());
   const reviewRows = recentLedgerRows(db, { limit: REVIEW_PREVIEW_LIMIT, needsReviewOnly: true });
   const recentRows = recentLedgerRows(db, { limit: RECENT_TXN_LIMIT });
@@ -396,9 +405,19 @@ export default async function DashboardPage({
   const showEatingOut = eatingOut !== null && !eatingOut.isEmpty;
   const decisionCardCount =
     1 +
-    [car, showEatingOut ? eatingOut : null, subscriptions, cardsOwed, trust, income, concentration, movers].filter(
-      Boolean,
-    ).length;
+    [
+      car,
+      showEatingOut ? eatingOut : null,
+      subscriptions,
+      cardsOwed,
+      trust,
+      income,
+      concentration,
+      movers,
+      transfers,
+      performance,
+      fees,
+    ].filter(Boolean).length;
   const decisionsSection = (
       <section aria-labelledby="decisions-heading">
         <h2 id="decisions-heading" className="sr-only">
@@ -416,6 +435,9 @@ export default async function DashboardPage({
           {showEatingOut && <EatingOutCard data={eatingOut} />}
           {subscriptions && <SubscriptionsCard data={subscriptions} />}
           {movers && <MoversCard data={movers} />}
+          {fees && <FeesCard data={fees} />}
+          {transfers && <TransfersCard data={transfers} />}
+          {performance && <PerformanceCard data={performance} />}
           {concentration && <ConcentrationCard data={concentration} />}
           {trust && <TrustCard data={trust} />}
         </div>

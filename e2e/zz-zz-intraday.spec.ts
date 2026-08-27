@@ -185,6 +185,25 @@ test("the daily-only surfaces still offer no 1D pill at all", async ({ page }) =
  * Waiting for EITHER the button or a loaded session first makes the branch a
  * property of the data (has this run priced AAPL yet?) rather than of timing.
  */
+/**
+ * Clear any toast before a card capture.
+ *
+ * ⚠️ Loading the session raises a "Today's session loaded" toast, and the toast
+ * is `position: fixed` — so it overlaps the chart card and lands INSIDE an
+ * element screenshot whenever the shot happens before it auto-dismisses. That
+ * is a race: the baseline was recorded without it and a rerun caught it, which
+ * makes the shot non-deterministic in both directions. Dismissing explicitly is
+ * what removes the timing from the picture; waiting a fixed interval would only
+ * move the race.
+ */
+async function dismissToasts(page: Page): Promise<void> {
+  const dismiss = page.getByRole("button", { name: "Dismiss" });
+  for (let i = await dismiss.count(); i > 0; i = await dismiss.count()) {
+    await dismiss.first().click();
+    await expect(dismiss).toHaveCount(i - 1);
+  }
+}
+
 async function ensureSessionLoaded(page: Page): Promise<void> {
   const load = page.getByRole("button", { name: "Load today's session" });
   await expect(load.or(page.getByText(/Today's session ·/)).first()).toBeVisible();
@@ -239,6 +258,7 @@ for (const width of [440, 1280]) {
     await gotoHydrated(page, "/investments?range=1D");
     await ensureSessionLoaded(page);
     await expect(page.getByText(/Today's session ·/)).toBeVisible();
+    await dismissToasts(page);
     await settleAnimations(page);
     await scrollHome(page);
 

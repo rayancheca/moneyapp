@@ -33,7 +33,7 @@ test("money-weighted (XIRR) return is shown alongside the time-weighted return",
   // the Total-return stat pairs the flow-insensitive TWR with the money-weighted
   // (XIRR) return — both stated, never conflated
   await expect(page.getByText(/time-weighted/)).toBeVisible();
-  await expect(page.getByText("money-weighted · your dollars")).toBeVisible();
+  await expect(page.getByText("money-weighted · a year, your dollars")).toBeVisible();
 });
 
 test("keyboard scrub moves the hairline and announces the point", async ({ page }) => {
@@ -90,7 +90,7 @@ test("the portfolio chart opens a focus modal that carries the same view + foote
   // the same scrub chart renders inside (default Value view → value slider)
   await expect(dialog.getByRole("slider", { name: /Portfolio value over time/ })).toBeVisible();
   // the summary footer (TWR/XIRR/P/L) renders in the modal too — footer parity
-  await expect(dialog.getByText("money-weighted · your dollars")).toBeVisible();
+  await expect(dialog.getByText("money-weighted · a year, your dollars")).toBeVisible();
   // the open modal must be axe-clean (critical/serious only)
   const results = await analyzeSettled(page);
   const gating = results.violations.filter((v) => v.impact === "critical" || v.impact === "serious");

@@ -19,13 +19,24 @@ import { expect, test } from "@playwright/test";
 
 const MONEY = /^-?−?\$[\d,]+\.\d{2}$/;
 /**
- * Money or a percentage, either of which may carry an explicit sign.
+ * A real figure: money or a percentage, optionally signed, optionally marked
+ * approximate, optionally carrying a short unit qualifier.
  *
- * The `+` matters: a DELTA prints its direction (`+$76.07`), where a balance
- * does not. `MONEY` above stays strict because the runway's rows really are
- * balances — a `+` there would be the bug, not the feature.
+ * Built by DUMPING every `.figures` value this section actually renders rather
+ * than by guessing — the shapes are `$0.00`, `+$15,430.28`, `-$205.40`, `+12%`,
+ * `12.7%`, and `+66.22% in total` / `+25.21% a year` / `+39.36% of cost`.
+ *
+ * The `+` matters: a DELTA prints its direction where a balance does not.
+ * The trailing qualifier matters more: those three percentages are a cumulative
+ * total, a rate per year and a ratio to cost, and stacking them WITHOUT their
+ * units is the misreading the performance card exists to prevent — bare, 66%
+ * looks like it beat 25%. The words are the figure.
+ *
+ * Still tight on purpose: at most three lowercase words, so `—`, `N/A`, `TBD`,
+ * `NaN` and `Infinity` all fail. `MONEY` above stays stricter for the runway's
+ * rows, which really are balances.
  */
-const MONEY_OR_PCT = /^[+-−]?\$[\d,]+\.\d{2}$|^[+-−]?[\d,]+(\.\d+)?%$/;
+const MONEY_OR_PCT = /^(≈ ?)?[+-−]?(\$[\d,]+\.\d{2}|[\d,]+(\.\d+)?%)( [a-z]+){0,3}$/;
 
 /**
  * Every dt/dd pair in the card, as plain data.

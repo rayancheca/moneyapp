@@ -14,7 +14,11 @@ test("the net-worth hero and every teaser render", async ({ page }) => {
   await expect(page.getByRole("slider", { name: /Net worth over time/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: /^Upcoming/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: /^Spending pace/ })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Investments" })).toBeVisible();
+  // ⚠️ `exact` matters here. getByRole's `name` matches on SUBSTRING, so a bare
+  // "Investments" also hits the decision card headed "How the investments are
+  // doing" — a card that legitimately belongs on this page. The teaser is the
+  // thing under test, and it carries its own id.
+  await expect(page.getByRole("heading", { name: "Investments", exact: true })).toBeVisible();
 });
 
 test("To Review → the clustered review queue", async ({ page }) => {
@@ -57,7 +61,10 @@ test("the investments teaser → /investments, and the top mover → its holding
   await page.goto("/");
   const teaser = page
     .locator("section")
-    .filter({ has: page.getByRole("heading", { name: "Investments" }) });
+    // scoped by the teaser's own id: two cards on this dashboard now link to
+    // /investments with the same "Portfolio →" label, which is fine for a reader
+    // and ambiguous for a locator
+    .filter({ has: page.locator("#investments-teaser-heading") });
   await teaser.getByRole("link", { name: /Portfolio/ }).click();
   await expect(page).toHaveURL(/\/investments$/);
 
