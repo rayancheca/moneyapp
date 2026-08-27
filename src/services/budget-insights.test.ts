@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { budgets, type BudgetPeriodKind } from "@/db/schema/budgets";
@@ -151,6 +152,28 @@ describe("budgetInsights — where the biggest plan sits", () => {
       // a summed-rows proof would say this; a plan's must not
       expect(insight.provenance.headline).not.toMatch(/sum of \d+ rows/);
     }
+  });
+
+  /**
+   * ⛔ A share is REFUSED outside 0–1 rather than clamped, so a plan larger than
+   * the total it is a share of throws inside a server component — a 500 on his
+   * budgets page rather than a missing sentence. Cannot happen through the
+   * schema (`budgetInputSchema` requires a positive amount) and the column is a
+   * bare `integer notNull` with no CHECK, so it is guarded rather than assumed.
+   */
+  test("a plan larger than the whole drops the share instead of throwing", () => {
+    addBudget(addCategory("c-house", "Fix Housing"), 100_000);
+    // written around the schema, exactly as a script could
+    bundle.db.run(
+      sql`INSERT INTO budgets (id, category_id, period, amount_cents, starts_on, is_active, rollover_enabled, created_at, updated_at)
+          VALUES ('b-neg', ${addCategory("c-food", "Fix Food")}, 'monthly', -40000, '2026-01-01', 1, 0, '2026-01-01T09:00:00.000Z', '2026-01-01T09:00:00.000Z')`,
+    );
+
+    const r = budgetInsights(bundle.db, TODAY)!;
+    // the rank still stands — it needs no denominator
+    expect(r.insights[0]!.text).toContain("Fix Housing is the largest of your 2 monthly budgets");
+    // …and the share, whose denominator is now smaller than its numerator, is gone
+    expect(r.insights).toHaveLength(1);
   });
 
   /** One budget is not a ranking, and it is 100% of itself. */

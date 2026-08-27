@@ -256,6 +256,27 @@ describe("yearInsights — a year against the one before it", () => {
   });
 
   /**
+   * ⛔ The route accepts any four-digit year (`/^\d{4}$/` then `notFound()`), so
+   * every one of them reaches this module — and the labels are built by string
+   * concatenation, where `year - 1` at the bottom of the range produces `"0-…"`
+   * and `"-1-…"` rather than a padded year. `sameDayIn` refusing an invalid date
+   * is what keeps those out of a rendered label, and this pins it: a throw here
+   * is a 500 on a page he prints.
+   */
+  test("no four-digit year throws, however far outside the ledger", () => {
+    const a = addAccount("a");
+    spend(a, "2025-01-01", 10_000);
+    spend(a, "2026-03-01", 15_000);
+    shownThrough(a, "2026-07-31");
+
+    for (const y of [0, 1, 99, 100, 1899, 1900, 2021, 2027, 9999]) {
+      expect(() => yearInsights(bundle.db, y)).not.toThrow();
+      expect(yearInsights(bundle.db, y)).toBeNull();
+    }
+    expect(yearInsights(bundle.db, 2026)).not.toBeNull();
+  });
+
+  /**
    * ⛔ A measured zero is not a finding. `measured_total` has no `holds` guard —
    * a scalar is a quantity, full stop — so without this the page would print
    * "Spending in 2025 came to $0.00" as an insight.

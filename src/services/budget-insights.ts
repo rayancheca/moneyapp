@@ -86,19 +86,32 @@ export function budgetInsights(db: AppDatabase, today: string = todayIso()): Sur
      */
     rankFact("f1", top.categoryPath, 1, ranked.length, "monthly budgets, by what you planned to spend"),
     scalarFact("f2", top.categoryPath, planCents, "money"),
-    shareFact("f3", top.categoryPath, planCents / totalCents, "everything you have budgeted for a month"),
   ];
 
   const candidates: InsightCandidate[] = [
     // always rank 1 by construction, so the ranked_in_set branch is unreachable
     // here and is not offered — the gate would accept it and say the same thing
     { claimId: "largest_in_set", a: "f1", b: "f2", prove },
-    {
+  ];
+
+  /*
+   * ⛔ Guarded, not assumed. Every counted plan is a term of `totalCents` and
+   * `budgetInputSchema` requires a positive amount, so the largest cannot exceed
+   * the sum — but the column is a bare `integer notNull` with no CHECK, and
+   * `shareFact` REFUSES a share outside 0–1 rather than clamping it. A single
+   * non-positive amount written around the schema would therefore turn this into
+   * a throw inside a server component, which is a 500 on his budgets page rather
+   * than a missing sentence. Same guard `recurring-insights` writes for the same
+   * reason: the throw would be the second place it was caught, not the first.
+   */
+  if (planCents <= totalCents) {
+    facts.push(shareFact("f3", top.categoryPath, planCents / totalCents, "everything you have budgeted for a month"));
+    candidates.push({
       claimId: planCents / totalCents > 0.5 ? "more_than_half" : "share_of_whole",
       a: "f3",
       prove,
-    },
-  ];
+    });
+  }
 
   const excluded = monthly.length - counted.length;
   const overlap =
