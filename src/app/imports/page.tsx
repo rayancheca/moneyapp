@@ -5,7 +5,9 @@ import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors } from "@/db/schema/balances";
 import { importFiles, statementPeriods, type ImportStatus } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
+import { statementGaps } from "@/services/statement-gaps";
 import { CoveragePanel } from "@/components/imports/CoveragePanel";
+import { StatementGapsPanel } from "@/components/imports/StatementGapsPanel";
 import { StatementSchedule } from "@/components/imports/StatementSchedule";
 import { accountCoverage } from "@/services/coverage";
 import { provenanceFor } from "@/services/provenance";
@@ -113,6 +115,9 @@ export default async function ImportsPage({
     .all();
 
   const coverage = accountCoverage(db);
+  // ⚠️ NOT the `gaps` below: that is statements that arrived and did not
+  // reconcile. This is statements that never arrived at all.
+  const missingStatements = statementGaps(db);
   const pulls = statementPulls(db);
 
   /**
@@ -182,6 +187,11 @@ export default async function ImportsPage({
         <StatementSchedule pulls={pulls} />
 
         <CoveragePanel coverage={coverage} />
+
+        {/* PASS 68. Coverage answers "does the money close"; this answers "which
+            documents do I not have". They disagree on this ledger — Discover is
+            VERIFIED and missing five statements — so both have to be asked. */}
+        <StatementGapsPanel gaps={missingStatements} />
 
         {periods.length > 0 && (
           <div className="grid gap-3 sm:grid-cols-3">

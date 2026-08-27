@@ -1,3 +1,4 @@
+import { coverageDetail } from "@/lib/coverage-detail";
 import type { AccountCoverage, CoverageGrade } from "@/services/coverage";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 
@@ -28,40 +29,6 @@ const GRADE_META: Record<CoverageGrade, { label: string; dot: string; text: stri
   manual: { label: "Manual", dot: "bg-ink-faint", text: "text-ink-muted" },
   verified: { label: "Verified", dot: "bg-positive", text: "text-positive" },
 };
-
-function detail(c: AccountCoverage): string {
-  switch (c.grade) {
-    case "broken":
-      // `brokenSince`, NOT `unverifiedSince`. This sentence pairs a date with a
-      // count, and they were drawn from two different populations:
-      // `unverifiedSince` is the first `derived_unverified` OR `gap` day, while
-      // `days.gap` counts only the latter. On Robinhood Cash that rendered "the
-      // balance chain stops closing at 2023-12-05 — 264 days cannot be trusted"
-      // when every one of those 264 days is 2025-11 or later, and 2023-12-05 is
-      // merely where the replay starts, before the account's first anchor. The
-      // date accused a year and a half of reconciled history of being the break.
-      return `the balance chain stops closing at ${c.brokenSince} — ${c.days.gap} day${c.days.gap === 1 ? "" : "s"} cannot be trusted`;
-    case "unverified":
-      return `nothing has checked this account since ${c.unverifiedSince} — ${c.days.derived_unverified} days rest on an export with no closing balance`;
-    case "market_value":
-      return "priced from holdings; statements here set a value, they never prove the transactions add up";
-    case "manual":
-      return c.lastManualUpdate
-        ? `you are the statement — last counted ${c.lastManualUpdate}`
-        : "you are the statement — no balance recorded yet";
-    case "unknown":
-      return "no balances derived yet — import a statement to start the chain";
-    case "verified":
-      // Deliberately says nothing about whether the NEXT statement is late. It
-      // used to, off a flat 45-day rule, which is not a fact about any
-      // particular account: a cycle that closes on the 2nd is 45 days quiet
-      // every single month by construction. The Statement schedule panel above
-      // answers that question from each account's own close dates, and two
-      // panels asserting "overdue" against different definitions is the shape
-      // that lets them drift apart.
-      return `balances close to the cent through ${c.verifiedThrough}`;
-  }
-}
 
 export function CoveragePanel({ coverage }: { coverage: AccountCoverage[] }) {
   if (coverage.length === 0) return null;
@@ -102,7 +69,21 @@ export function CoveragePanel({ coverage }: { coverage: AccountCoverage[] }) {
               <span className="figures ml-auto text-xs text-ink-faint">
                 {c.statementsThrough ? `statements → ${c.statementsThrough}` : "no statements"}
               </span>
-              <p className="w-full text-xs text-ink-muted">{detail(c)}</p>
+              <p className="w-full text-xs text-ink-muted">
+                {/* the words live in `lib/coverage-detail` under the 100% gate:
+                    the shipped versions of two of them were false on his own
+                    ledger and no component test could have seen it */}
+                {coverageDetail({
+                  grade: c.grade,
+                  verifiedThrough: c.verifiedThrough,
+                  unverifiedSince: c.unverifiedSince,
+                  brokenSince: c.brokenSince,
+                  daysSinceVerified: c.daysSinceVerified,
+                  lastManualUpdate: c.lastManualUpdate,
+                  gapDays: c.days.gap,
+                  unverifiedDays: c.days.derived_unverified,
+                })}
+              </p>
             </li>
           );
         })}
