@@ -24,10 +24,9 @@ both surfaces shipped. What remains:
    from measured facts. That remains the right order, and it means a model can
    be introduced as a SELECTOR over already-true claims rather than as a writer.
 2. **Pass 73** (the Robinhood Brokerage arbiter) and **74** as scheduled.
-3. **12 of the 13 decision cards have ZERO pixel coverage** — found while fixing
-   §4.2 and recorded in §7. The dashboard baseline photographs the DECK, which
-   shows one card at a time, so eleven cards behind the front one can be broken
-   silently. `/?cards=grid` would photograph all of them for 8 baselines.
+3. **Give the fixture a `notices`, a `car` and an `income` card.** All three
+   return null on the e2e seed, so they have no pixel coverage and no spec
+   change can give it to them (§7). A seed job.
 4. **HOSTING goes last** — unchanged. `docs/deploy-plan-gcp-firebase-auth.md`.
 
 ⛔ **The insight sweep is finished as a sweep.** Seven surfaces now carry
@@ -314,41 +313,61 @@ no overflow. `git status` confirms exactly 32 files modified and nothing else.
 
 ---
 
-## 7. 🔴 Twelve of the thirteen decision cards have ZERO pixel coverage
+## 7. ✅ The decision cards had almost no pixel coverage — 16 baselines added
 
-Found while regenerating baselines for §4.2, and it is a bigger gap than the
-standing list said ("the notices card has no visual baseline").
+Found while regenerating for §4.2, and the first explanation I wrote for it was
+**wrong**. Both halves are worth having.
 
-The dashboard is a **deck** — one card at a time, the rest at `opacity: 0`
-behind it. `visual.spec` photographs `/`, so the eight `dashboard-*` baselines
-capture **Runway and nothing else**. Runway, the car, income, cards owed, eating
-out, subscriptions, what changed, fees, transfers, performance, concentration,
-notices and trust are thirteen cards; twelve of them could be rewritten, broken,
-or emptied without moving a single pixel of any baseline.
+### What I claimed, and what is actually true
 
-Confirmed by this pass, not theorised: the delta fix changed the wording of
-`notices-card`'s sentence, and **the dashboard baselines did not fail** — only
-spending, spending-year and summary-year did. A real text change on a real card
-was invisible to the whole visual suite.
+The dashboard baselines did not move when the delta fix changed
+`notices-card`'s wording, and I wrote that the DECK hid it — one card at a time,
+the rest at `opacity: 0`. Measured (`scripts/probe-e2e-deck.ts`), the real reason
+is simpler and different: **`noticesCard` returns null on the e2e fixture**. The
+card is not hidden behind the deck; it is not there at all. Nothing on `/`
+changed, so nothing could fail.
 
-This is the exact shape of the gap pass 58 found behind `?tab=calendar` and the
-last session found on `/recurring/[id]`. The fix is one route entry:
+The deck problem is real anyway, and the measurement sharpens it rather than
+excusing it:
 
-```ts
-{ path: "/?cards=grid", name: "dashboard-grid" },
-```
+| | on the fixture |
+|---|---|
+| decision cards defined | 13 |
+| cards that render | **10** — `car`, `income` and `notices` return null |
+| cards a baseline saw before this | **1** (Runway, the deck's front card) |
 
-⚠️ Safe to add, checked: `?cards=grid` is READ through `resolveViewState` and
-does not write the preference — only `saveViewPreferenceAction` does, on click.
-So it does not make `visual.spec` a fixture mutator and needs no `zz-` prefix.
-The cost is churn: any change to any card would move 8 tall baselines. This
-codebase has taken that trade four times already, on the grounds that zero
-coverage is worse than churn.
+So nine rendering cards — cards owed, eating out, subscriptions, what changed,
+fees, transfers, performance, concentration, trust — could be rewritten, broken
+or emptied without moving a pixel. `/imports`, `/categories`, `?tab=calendar`
+and `/recurring/[id]` were all the same shape.
 
-Not taken here because it is 8 new baselines on top of the 24 this fix already
-moved, and bundling them would make one commit's diff unreadable.
+### What was added
 
----
+- **`/?cards=grid` → 8 `dashboard-grid-*` baselines**, photographing all ten.
+  ⚠️ Safe without a `zz-` prefix, checked rather than assumed: `?cards=grid` is
+  READ through `resolveViewState` (url → persisted → default, a pure function);
+  only `saveViewPreferenceAction` writes, and only on click.
+- **`/merchants/[id]` → 8 `merchant-detail-*` baselines.** Pass 65 called this
+  "the richest page in the app" and it had none. Whole Foods rather than the
+  first link in DOM order (Westview Apartments): the choice is the one
+  `resolveSeriesUrl` makes — pick the instance that exercises the most page.
+  Westview is rank 1 with a round 100.0% share, and `largest_in_set` is already
+  photographed by `series-detail`; **Whole Foods is 2nd of 17 at 42.3%, so these
+  are the only baselines anywhere in the suite that capture `ranked_in_set`, the
+  ordinal template.** The name is asserted, not assumed — a reorder would
+  otherwise swap which merchant these eight document while the run stayed green.
+
+⚠️ **`notices`, `car` and `income` still have no pixel coverage**, and no spec
+change can give it to them — the fixture has to produce them first. That is a
+seed job, not a spec job, and it is on the open list now rather than buried.
+
+⚠️ **The merchant page already answers the partial-year problem differently
+from `/summary/[year]`.** It draws 2026 / 2025 / 2024 as bars with the current
+year marked *"so far"* and a caption saying it is not like-for-like; the year
+page truncates BOTH windows to the same days so the comparison is valid rather
+than caveated. Both are defensible for their shapes — a chart showing three
+years cannot truncate — but the app now has two treatments of one question, and
+a future pass should decide deliberately rather than discover it.
 
 ## 8. Still open (unchanged unless noted)
 
@@ -359,7 +378,7 @@ moved, and bundling them would make one commit's diff unreadable.
 - **`docs/income-ground-truth.md:40` still says income ≈ $119,982.68.** The
   measured figure is **$117,924.62**, now stable across nine passes.
 - **The merchant map calls his rent "Flamingos Restaurant"**.
-- **`/merchants/[id]` and the notices card have no visual baseline.**
+- **The `notices`, `car` and `income` decision cards have no visual baseline** — they return null on the e2e fixture (§7). `/merchants/[id]` and the card grid are covered now.
 - **`notFound()` returns HTTP 200** app-wide from force-dynamic pages.
 - **45 `WEIXIN*` rows, $340.00**, deliberately in bare `Shopping`.
 - **HBO Max is registered as RENEWING** — one click on `/recurring` ends it if

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { visibleBox } from "./box-helpers";
 
 /**
  * The dashboard net-worth chart's rich controls (§7.1): visible axes, a
@@ -22,13 +23,12 @@ test("renders visible axes controls: range pills + From/To inputs", async ({ pag
 
 test("dragging the plot zooms to a custom window, and Reset restores the range", async ({ page }) => {
   await page.goto("/");
-  const box = await plot(page).boundingBox();
-  expect(box).not.toBeNull();
-  const y = box!.y + box!.height / 2;
+  const box = await visibleBox(plot(page), "the net-worth plot");
+  const y = box.y + box.height / 2;
   // drag across the middle of the plot to select a sub-range
-  await page.mouse.move(box!.x + box!.width * 0.3, y);
+  await page.mouse.move(box.x + box.width * 0.3, y);
   await page.mouse.down();
-  await page.mouse.move(box!.x + box!.width * 0.7, y, { steps: 12 });
+  await page.mouse.move(box.x + box.width * 0.7, y, { steps: 12 });
   await page.mouse.up();
 
   const reset = page.getByRole("button", { name: /Reset/ });

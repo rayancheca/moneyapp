@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { visibleBox } from "./box-helpers";
 
 /**
  * The decision cards as a stack you swipe, wheel or arrow through.
@@ -60,9 +61,9 @@ test.describe("the card deck", () => {
      * doing the one thing it was built for — and no content test would notice.
      */
     await page.goto("/?cards=deck");
-    const deckHeight = (await page.locator(SECTION).boundingBox())!.height;
+    const deckHeight = (await visibleBox(page.locator(SECTION), "the deck's section")).height;
     await page.goto("/?cards=grid");
-    const gridHeight = (await page.locator(SECTION).boundingBox())!.height;
+    const gridHeight = (await visibleBox(page.locator(SECTION), "the grid's section")).height;
     expect(deckHeight).toBeLessThan(gridHeight / 2);
   });
 
@@ -100,7 +101,7 @@ test.describe("the card deck", () => {
     await page.goto("/?cards=deck");
     const deck = page.locator(DECK);
     await deck.scrollIntoViewIfNeeded();
-    const box = (await deck.boundingBox())!;
+    const box = await visibleBox(deck, "the card deck");
     const y = box.y + 60;
 
     const drag = async (dx: number) => {

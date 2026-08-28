@@ -37,6 +37,27 @@ async function settleFlow(page: Page): Promise<void> {
 
 const ROUTES: readonly VisualRoute[] = [
   { path: "/", name: "dashboard" },
+  /**
+   * ⛔ `/` photographs the DECK, and a deck shows ONE card at a time — so the
+   * eight `dashboard-*` baselines above capture Runway and nothing else. Twelve
+   * of the thirteen decision cards sit behind it at `opacity: 0` and could be
+   * rewritten, broken or emptied without moving a pixel.
+   *
+   * Not theorised. The delta-sign fix changed the wording of `notices-card`'s
+   * own sentence and **no dashboard baseline failed** — only /spending,
+   * /spending?period=2026 and /summary/2026 did. A real text change on a real
+   * card was invisible to this entire file.
+   *
+   * Same shape as the `?tab=calendar` gap pass 58 found and the
+   * `/recurring/[id]` gap the pass before this one found: a lens that lives in a
+   * query param is a route like any other.
+   *
+   * ⚠️ Safe here, and checked rather than assumed: `?cards=grid` is READ through
+   * `resolveViewState` (url → persisted → default, a pure function). Only
+   * `saveViewPreferenceAction` writes, and only on click — which is why
+   * `zz-card-deck.spec.ts` needs its `zz-` prefix and this does not.
+   */
+  { path: "/?cards=grid", name: "dashboard-grid" },
   { path: "/accounts", name: "accounts" },
   { path: "/transactions", name: "transactions" },
   { path: "/transactions?view=review", name: "transactions-review" }, // the categorize walk launcher + inbox
@@ -278,6 +299,58 @@ for (const theme of THEMES) {
       const url = await resolveSeriesUrl(page);
       await openHydrated(page, url, theme, width);
       await expect(page).toHaveScreenshot(`series-detail-${theme}-${width}.png`, { fullPage: true });
+    });
+  }
+}
+
+/**
+ * Resolve the Whole Foods merchant page (`/merchants/[id]`).
+ *
+ * ⛔ This route had ZERO pixel coverage, and pass 65 already named it "the
+ * richest page in the app" while noting that the only way in used to be a
+ * transaction sheet. Its profile cards, its cadence figures, its default-category
+ * control and its insight strip were all unphotographed.
+ *
+ * ⚠️ Whole Foods rather than the first link in DOM order, which is Westview
+ * Apartments. The choice is the same one `resolveSeriesUrl` makes: pick the
+ * instance that exercises the most of the page. Westview is rank 1 with a
+ * 100.0% share — and `largest_in_set` is ALREADY photographed by
+ * `series-detail` (Rent), while a round 100% is the least interesting share
+ * there is. Whole Foods is **2nd of 17 at 42.3%**, so these eight baselines are
+ * the only place `ranked_in_set` — the ordinal template — is captured anywhere
+ * in this suite, and a multi-visit grocer exercises the ticket and cadence
+ * figures that a once-a-month rent charge cannot.
+ *
+ * Matched by name, because the fixture's merchant ids are minted per seed, and
+ * the name is ASSERTED: which merchant these baselines document is part of what
+ * they mean, and a reorder would otherwise swap it while the run stayed green.
+ */
+const EXPECTED_MERCHANT = "Whole Foods";
+
+async function resolveMerchantUrl(page: Page): Promise<string> {
+  await page.goto("/spending");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  /*
+   * By accessible NAME, not by DOM order. `TopMerchantsCard` renders a sibling
+   * chevron link labelled "<name> merchant page" beside each linked row, and the
+   * FIRST of those is Westview Apartments — taking `.first()` and then asserting
+   * the name would simply fail. Naming it here makes the identity of these eight
+   * baselines a precondition rather than an afterthought.
+   */
+  const link = page.getByRole("link", { name: `${EXPECTED_MERCHANT} merchant page` });
+  await expect(link, "the merchant baselines are captured against this page").toBeVisible();
+  const href = await link.getAttribute("href");
+  if (!href) throw new Error(`no /merchants link for ${EXPECTED_MERCHANT} on /spending`);
+  return href;
+}
+
+// merchant detail (`/merchants/[id]`) — resolved dynamically, fixed snapshot name
+for (const theme of THEMES) {
+  for (const width of WIDTHS) {
+    test(`merchant-detail ${theme} @${width}`, async ({ page }) => {
+      const url = await resolveMerchantUrl(page);
+      await openHydrated(page, url, theme, width);
+      await expect(page).toHaveScreenshot(`merchant-detail-${theme}-${width}.png`, { fullPage: true });
     });
   }
 }

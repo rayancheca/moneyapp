@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { visibleBox } from "./box-helpers";
 
 /**
  * Popover mounts its panel only WHILE open, so a closed CategoryPicker no
@@ -40,7 +41,10 @@ test("opening a category picker puts focus in its search input", async ({ page }
   // one side or the other (the util flips it above when the row sits low).
   // Measured against a panel that has already MOUNTED its list, so this also
   // catches a flip decided against an empty, zero-height box.
-  const [trigger, box] = [(await chip.boundingBox())!, (await panel.boundingBox())!];
+  const [trigger, box] = [
+    await visibleBox(chip, "the trigger chip"),
+    await visibleBox(panel, "the anchored panel"),
+  ];
   const gap = Math.min(
     Math.abs(box.y - (trigger.y + trigger.height)),
     Math.abs(trigger.y - (box.y + box.height)),

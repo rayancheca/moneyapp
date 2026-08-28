@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { visibleBox } from "./box-helpers";
 import { analyzeSettled } from "./axe-helpers";
 
 /**
@@ -14,12 +15,11 @@ function plot(page: Page) {
 
 /** Drag a horizontal range across the plot at [x0..x1] fractions of its width. */
 async function brush(page: Page, x0: number, x1: number): Promise<void> {
-  const box = await plot(page).boundingBox();
-  expect(box).not.toBeNull();
-  const y = box!.y + box!.height / 2;
-  await page.mouse.move(box!.x + box!.width * x0, y);
+  const box = await visibleBox(plot(page), "the net-worth plot");
+  const y = box.y + box.height / 2;
+  await page.mouse.move(box.x + box.width * x0, y);
   await page.mouse.down();
-  await page.mouse.move(box!.x + box!.width * x1, y, { steps: 14 });
+  await page.mouse.move(box.x + box.width * x1, y, { steps: 14 });
   await page.mouse.up();
 }
 
