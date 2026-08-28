@@ -13,6 +13,13 @@ import {
   type PreMutationSnapshotResult,
 } from "@/db/backup";
 import { DASHBOARD_SECTION_IDS, readSettings, writeSetting } from "@/services/settings";
+import {
+  clearInsightSelections,
+  refreshInsightSelections,
+  requestInsightSelectStop,
+  type InsightSelectRunResult,
+} from "@/services/insight-selection";
+import { INSIGHT_SURFACES } from "@/services/insights";
 import { normalizeOrder } from "@/lib/reorder";
 import { matchesRestorePhrase } from "@/components/settings/restore-phrase";
 import {
@@ -75,6 +82,90 @@ export async function updateSettingsAction(formData: FormData): Promise<void> {
   if (result.ok) return;
   // redirect() throws NEXT_REDIRECT by design — it must stay outside any catch
   redirect(`/settings?error=${encodeURIComponent(result.error)}`);
+}
+
+/* ── PASS 72d — insights: the kill switch, and the model that orders them ── */
+
+/**
+ * ⛔ Checkboxes are ABSENT from a form when unticked, so a schema that read them
+ * as booleans would treat "unticked" and "not on this form" identically. The
+ * form therefore posts the surface ids it rendered in a hidden field, and the
+ * absent ones are the ones turned off — which is also why the stored map records
+ * OFF rather than ON: a surface added later is on until somebody says otherwise.
+ */
+const insightSettingsSchema = z.object({
+  insightsEnabled: z.boolean(),
+  insightModelEnabled: z.boolean(),
+  offSurfaces: z.array(z.enum(INSIGHT_SURFACES.map((s) => s.id) as [string, ...string[]])),
+});
+
+export async function updateInsightSettingsResultAction(
+  formData: FormData,
+): Promise<ActionResult<{ off: string[] }>> {
+  const rendered = String(formData.get("renderedSurfaces") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const parsed = insightSettingsSchema.safeParse({
+    insightsEnabled: formData.get("insightsEnabled") !== null,
+    insightModelEnabled: formData.get("insightModelEnabled") !== null,
+    offSurfaces: rendered.filter((id) => formData.get(`surface:${id}`) === null),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: firstIssueMessage(parsed.error.issues, SETTINGS_LABELS) };
+  }
+  try {
+    const db = getDb();
+    writeSetting(db, "insightsEnabled", parsed.data.insightsEnabled);
+    writeSetting(db, "insightModelEnabled", parsed.data.insightModelEnabled);
+    writeSetting(
+      db,
+      "insightSurfaces",
+      Object.fromEntries(parsed.data.offSurfaces.map((id) => [id, false])),
+    );
+    /*
+     * ⛔ Turning the model off FORGETS its opinions. Leaving them stored would
+     * mean "off" still changed the order of every page it had already touched —
+     * a switch that does not switch anything off is worse than no switch.
+     */
+    if (!parsed.data.insightModelEnabled) clearInsightSelections(db);
+  } catch (error: unknown) {
+    return { ok: false, error: actionErrorMessage(error, SETTINGS_LABELS, "Could not save insight settings") };
+  }
+  revalidatePath("/", "layout");
+  return { ok: true, data: { off: parsed.data.offSurfaces } };
+}
+
+export async function updateInsightSettingsAction(formData: FormData): Promise<void> {
+  const result = await updateInsightSettingsResultAction(formData);
+  if (result.ok) return;
+  redirect(`/settings?error=${encodeURIComponent(result.error)}`);
+}
+
+/** Fill the selection cache. Value-returning so the button can report honestly. */
+export async function runInsightSelectionAction(): Promise<
+  { ok: true; data: InsightSelectRunResult } | { ok: false; error: string }
+> {
+  try {
+    const data = await refreshInsightSelections(getDb());
+    revalidatePath("/", "layout");
+    return { ok: true, data };
+  } catch (error: unknown) {
+    return { ok: false, error: actionErrorMessage(error, SETTINGS_LABELS, "Could not order insights") };
+  }
+}
+
+export async function stopInsightSelectionAction(): Promise<{ ok: true }> {
+  requestInsightSelectStop(getDb());
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+/** Forget every stored order — the app returns to its own editorial sequence. */
+export async function clearInsightSelectionsAction(): Promise<{ ok: true; data: { removed: number } }> {
+  const removed = clearInsightSelections(getDb());
+  revalidatePath("/", "layout");
+  return { ok: true, data: { removed } };
 }
 
 const dashboardLayoutSchema = z

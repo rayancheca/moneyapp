@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 describe("migrations from zero", () => {
-  test("all 22 tables exist", () => {
+  test("all 23 tables exist", () => {
     const rows = bundle.sqlite
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__drizzle%'")
       .all() as { name: string }[];
@@ -43,6 +43,7 @@ describe("migrations from zero", () => {
         "holding_events",
         "holdings",
         "import_files",
+        "insight_selections",
         "institutions",
         "merchant_aliases",
         "merchants",

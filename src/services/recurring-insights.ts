@@ -3,7 +3,8 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { todayIso } from "@/lib/dates";
 import { rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts";
 import { isPrintableName } from "@/lib/printable-name";
-import { runInsights, type InsightCandidate, type SurfaceInsights } from "./insights";
+import { surfaceInsights, type InsightInput } from "./insight-surface";
+import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { provenanceFor } from "./provenance";
 import {
   lapsedSeriesShouldStopForecasting,
@@ -96,6 +97,15 @@ export function recurringInsights(
   seriesId: string,
   today: string = todayIso(),
 ): SurfaceInsights | null {
+  return surfaceInsights(db, "recurring", recurringInsightInput(db, seriesId, today));
+}
+
+/** What the page measured, before the kill switch and before any proof. */
+export function recurringInsightInput(
+  db: AppDatabase,
+  seriesId: string,
+  today: string = todayIso(),
+): InsightInput | null {
   const all = listSeries(db, today);
   /*
    * ⛔ Every row, unfiltered. `isLive` is the ONE place that decides what is
@@ -189,5 +199,5 @@ export function recurringInsights(
       ? `Ranked against the ${side.length} still running. The ${retired} you have ended or dismissed are not counted.`
       : null;
 
-  return runInsights(facts, candidates, { label: "a year at today's amounts", note });
+  return { facts, candidates, window: { label: "a year at today's amounts", note } };
 }

@@ -37,9 +37,12 @@ const {
   backUpNowAction,
   downloadSnapshotAction,
   restoreSnapshotAction,
+  updateInsightSettingsResultAction,
   updateSettingsAction,
   updateSettingsResultAction,
 } = await import("./actions");
+const { insightSelections } = await import("@/db/schema/insights");
+const { INSIGHT_SURFACES } = await import("@/services/insights");
 
 beforeAll(() => {
   seedDatabase(getDbBundle().db);
@@ -233,5 +236,76 @@ describe("downloadSnapshotAction", () => {
   test("refuses a name that reaches outside the archive", async () => {
     const result = await downloadSnapshotAction("../t.db");
     expect(result.ok).toBe(false);
+  });
+});
+
+/**
+ * PASS 72d — the insight switches.
+ *
+ * ⛔ A checkbox is ABSENT from a form when unticked, so "off" and "not on this
+ * form" arrive identically. The form posts the surface ids it rendered and the
+ * missing ones are the ones turned off — which is also why the stored map
+ * records OFF: a surface added after a save is on until somebody says otherwise.
+ */
+describe("updateInsightSettingsResultAction", () => {
+  const RENDERED = INSIGHT_SURFACES.map((s) => s.id).join(",");
+
+  function insightForm(over: Record<string, string> = {}): FormData {
+    const fd = new FormData();
+    fd.set("renderedSurfaces", RENDERED);
+    for (const [k, v] of Object.entries(over)) fd.set(k, v);
+    return fd;
+  }
+
+  function storeOrder(hash: string): void {
+    getDb()
+      .insert(insightSelections)
+      .values({ factHash: hash, surface: "spending", claimKeys: "[]", model: "test" })
+      .run();
+  }
+
+  test("an unticked surface is recorded as off; the ticked ones are not recorded at all", async () => {
+    const ticked = Object.fromEntries(
+      INSIGHT_SURFACES.filter((s) => s.id !== "budgets").map((s) => [`surface:${s.id}`, "on"]),
+    );
+    const result = await updateInsightSettingsResultAction(
+      insightForm({ insightsEnabled: "on", insightModelEnabled: "on", ...ticked }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(readSettings(getDb()).insightSurfaces).toEqual({ budgets: false });
+    expect(readSettings(getDb()).insightsEnabled).toBe(true);
+    expect(readSettings(getDb()).insightModelEnabled).toBe(true);
+  });
+
+  test("an absent global checkbox turns insights off", async () => {
+    await updateInsightSettingsResultAction(insightForm({ insightModelEnabled: "on" }));
+    expect(readSettings(getDb()).insightsEnabled).toBe(false);
+  });
+
+  /*
+   * ⛔ Turning the model off FORGETS its opinions. Leaving them stored would
+   * mean "off" still changed the order of every page it had already touched —
+   * a switch that does not switch anything off is worse than no switch.
+   */
+  test("turning the model off forgets every stored order", async () => {
+    await updateInsightSettingsResultAction(insightForm({ insightsEnabled: "on", insightModelEnabled: "on" }));
+    storeOrder("hash-a");
+    storeOrder("hash-b");
+    expect(getDb().select().from(insightSelections).all().length).toBe(2);
+
+    await updateInsightSettingsResultAction(insightForm({ insightsEnabled: "on" }));
+
+    expect(readSettings(getDb()).insightModelEnabled).toBe(false);
+    expect(getDb().select().from(insightSelections).all()).toEqual([]);
+  });
+
+  test("leaving the model ON keeps them", async () => {
+    await updateInsightSettingsResultAction(insightForm({ insightsEnabled: "on", insightModelEnabled: "on" }));
+    storeOrder("hash-c");
+
+    await updateInsightSettingsResultAction(insightForm({ insightsEnabled: "on", insightModelEnabled: "on" }));
+
+    expect(getDb().select().from(insightSelections).all().length).toBe(1);
   });
 });

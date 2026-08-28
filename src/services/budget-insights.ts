@@ -3,7 +3,8 @@ import { todayIso } from "@/lib/dates";
 import { rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts";
 import { isPrintableName } from "@/lib/printable-name";
 import { budgetStatuses, totalBudgetedCents, type BudgetStatus } from "./budgets";
-import { runInsights, type InsightCandidate, type SurfaceInsights } from "./insights";
+import { surfaceInsights, type InsightInput } from "./insight-surface";
+import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { provenanceFor } from "./provenance";
 
 /**
@@ -40,6 +41,11 @@ import { provenanceFor } from "./provenance";
 const MIN_BUDGETS_TO_COMPARE = 2;
 
 export function budgetInsights(db: AppDatabase, today: string = todayIso()): SurfaceInsights | null {
+  return surfaceInsights(db, "budgets", budgetInsightInput(db, today));
+}
+
+/** What /budgets measured, before the kill switch and before any proof. */
+export function budgetInsightInput(db: AppDatabase, today: string = todayIso()): InsightInput | null {
   const monthly = budgetStatuses(db, today).filter((s) => s.budget.period === "monthly");
 
   /*
@@ -129,13 +135,17 @@ export function budgetInsights(db: AppDatabase, today: string = todayIso()): Sur
       ? ` ${excluded} ${excluded === 1 ? "budget sits" : "budgets sit"} inside another budgeted category and ${excluded === 1 ? "is" : "are"} counted in neither.`
       : "";
 
-  return runInsights(facts, candidates, {
-    label: "your monthly plan",
-    /*
-     * The denominator is the one thing a reader cannot check from the sentence,
-     * so it is counted here rather than described — a phrase like "all your
-     * budgets" would stop being true the first time a weekly one is added.
-     */
-    note: `Ranked against the ${counted.length} monthly budgets — the set this page sizes against your income. A plan is a decision, so none of these are checked against a document.${overlap}`,
-  });
+  return {
+    facts,
+    candidates,
+    window: {
+      label: "your monthly plan",
+      /*
+       * The denominator is the one thing a reader cannot check from the sentence,
+       * so it is counted here rather than described — a phrase like "all your
+       * budgets" would stop being true the first time a weekly one is added.
+       */
+      note: `Ranked against the ${counted.length} monthly budgets — the set this page sizes against your income. A plan is a decision, so none of these are checked against a document.${overlap}`,
+    },
+  };
 }

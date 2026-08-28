@@ -14,4 +14,5 @@ export * from "./holding-events";
 export * from "./duplicate-candidates";
 export * from "./transfer-ambiguities";
 export * from "./ai";
+export * from "./insights";
 export * from "./settings";

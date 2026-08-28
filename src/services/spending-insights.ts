@@ -13,7 +13,8 @@ import {
 import { isPrintableName } from "@/lib/printable-name";
 import { categoryBreakdown } from "./analytics";
 import { categoryMonthlyTrend } from "./category-detail";
-import { runInsights, type InsightCandidate, type SurfaceInsights } from "./insights";
+import { surfaceInsights, type InsightInput } from "./insight-surface";
+import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { moversCard, type MoversCard } from "./movers-card";
 import { provenanceFor } from "./provenance";
 
@@ -228,6 +229,11 @@ export function spendingInsights(db: AppDatabase, today: string = todayIso()): S
   return categoryInsights(db, "largest", today);
 }
 
+/** What /spending measured, before the kill switch and before any proof. */
+export function spendingInsightInput(db: AppDatabase, today: string = todayIso()): InsightInput | null {
+  return categoryInsightInput(db, "largest", today);
+}
+
 /**
  * The strip on /categories/[id]: where THIS category sits, in the same window
  * and through the same measurements /spending uses.
@@ -237,6 +243,22 @@ export function categoryInsights(
   subject: string | "largest",
   today: string = todayIso(),
 ): SurfaceInsights | null {
+  /*
+   * ⛔ Two surfaces, one builder, and therefore two kill-switch keys off the
+   * same call. `/spending` asks "what dominated the month?" and a category page
+   * asks "where does this one sit?" — the same measurement, but turning one off
+   * must not silence the other, so the surface id follows the QUESTION rather
+   * than the module.
+   */
+  return surfaceInsights(db, subject === "largest" ? "spending" : "category", categoryInsightInput(db, subject, today));
+}
+
+/** What a category page measured, before the kill switch and before any proof. */
+export function categoryInsightInput(
+  db: AppDatabase,
+  subject: string | "largest",
+  today: string = todayIso(),
+): InsightInput | null {
   const card = moversCard(db, today);
   // no fully-observed month means no window, and a window is what every claim
   // here names. Nothing to say is not a weakness — it renders as nothing.
@@ -258,11 +280,15 @@ export function categoryInsights(
       }),
   }));
 
-  return runInsights(built.facts, candidates, {
-    label: card.monthLabel,
-    note:
-      card.month === monthKey(today)
-        ? null
-        : `${card.currentMonthLabel} is still being imported, so these read ${card.monthLabel} — the newest month every account has been shown through.`,
-  });
+  return {
+    facts: built.facts,
+    candidates,
+    window: {
+      label: card.monthLabel,
+      note:
+        card.month === monthKey(today)
+          ? null
+          : `${card.currentMonthLabel} is still being imported, so these read ${card.monthLabel} — the newest month every account has been shown through.`,
+    },
+  };
 }

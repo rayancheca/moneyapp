@@ -52,6 +52,31 @@ export const settingsSchema = z.object({
    * history actually exists before writing.
    */
   benchmarkSymbol: z.string().default("SPY"),
+  /**
+   * PASS 72d — the insight kill switch, global half.
+   *
+   * ⛔ Off must be a FULLY HONEST app, not a degraded one: every figure keeps
+   * its provenance badge, every chart keeps its numbers, and the only thing
+   * that disappears is the prose. `.default(true)` and absent from
+   * DEFAULT_SETTINGS, so an existing database needs no settings migration.
+   */
+  insightsEnabled: z.boolean().default(true),
+  /**
+   * The per-surface half, surface id → on. Read-tolerant plain keys for the
+   * same reason `viewPreferences` is: a preference saved before a surface
+   * existed, or after one was removed, must never crash `readSettings`.
+   * ABSENT means on — the switch records a decision to turn something OFF.
+   */
+  insightSurfaces: z.record(z.string(), z.boolean()).default({}),
+  /**
+   * Whether a model may re-order a surface's sentences (pass 72d).
+   *
+   * ⛔ Defaults to OFF, unlike the insights themselves. Insights cost nothing
+   * and are the app's own writing; this is the only setting in the file that
+   * spends money, and a feature that starts spending because it shipped is not
+   * a feature anybody chose.
+   */
+  insightModelEnabled: z.boolean().default(false),
 });
 export type AppSettingsShape = z.infer<typeof settingsSchema>;
 

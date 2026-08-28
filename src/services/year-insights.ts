@@ -2,7 +2,8 @@ import type { AppDatabase } from "@/db/client";
 import { isValidIsoDate } from "@/lib/dates";
 import { formatDayShort } from "@/lib/format-date";
 import { deltaFact, scalarFact, type Fact } from "@/lib/insight-facts";
-import { runInsights, type InsightCandidate, type SurfaceInsights } from "./insights";
+import { surfaceInsights, type InsightInput } from "./insight-surface";
+import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { observationFrontier } from "./observation-frontier";
 import { provenanceFor } from "./provenance";
 import { ledgerFirstDay, periodTotals } from "./spending";
@@ -134,7 +135,34 @@ function comparedWindows(db: AppDatabase, year: number): ComparedWindows | null 
   };
 }
 
+/**
+ * Which years this ledger can speak about at all.
+ *
+ * ⛔ Derived from `comparedWindows`' own three gates rather than from a range of
+ * years, because the gates are the answer: a year with no predecessor wholly
+ * inside the ledger publishes a measurement of when importing started, and this
+ * is the function that must not disagree with the page about which years those
+ * are. Used by the selection run so it does not pay for a year that renders
+ * nothing.
+ */
+export function yearsWithInsights(db: AppDatabase): number[] {
+  const first = ledgerFirstDay(db);
+  if (first === null) return [];
+  const frontier = [...observationFrontier(db).byAccount.values()].sort()[0];
+  if (frontier === undefined) return [];
+  const out: number[] = [];
+  for (let year = Number(first.slice(0, 4)); year <= Number(frontier.slice(0, 4)); year += 1) {
+    if (yearInsightInput(db, year) !== null) out.push(year);
+  }
+  return out;
+}
+
 export function yearInsights(db: AppDatabase, year: number): SurfaceInsights | null {
+  return surfaceInsights(db, "year", yearInsightInput(db, year));
+}
+
+/** What the year page measured, before the kill switch and before any proof. */
+export function yearInsightInput(db: AppDatabase, year: number): InsightInput | null {
   const w = comparedWindows(db, year);
   if (w === null) return null;
 
@@ -205,5 +233,5 @@ export function yearInsights(db: AppDatabase, year: number): SurfaceInsights | n
     ? `${year} is still being imported, so both years are measured through ${formatDayShort(w.to)} — the last day every account has been shown to the ledger. A part-year set beside a whole one is not a comparison. `
     : "";
 
-  return runInsights(facts, candidates, { label: w.label, note: `${window}${direction}` });
+  return { facts, candidates, window: { label: w.label, note: `${window}${direction}` } };
 }

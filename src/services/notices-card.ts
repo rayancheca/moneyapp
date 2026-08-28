@@ -7,6 +7,7 @@ import { formatDayShort } from "@/lib/format-date";
 import { isPrintableName } from "@/lib/printable-name";
 import { countFact, deltaFact, multipleFact, scalarFact, type Fact } from "@/lib/insight-facts";
 import { loadCategoryIndex } from "./analytics";
+import { insightsEnabled } from "./insight-surface";
 import { runInsights, type InsightCandidate } from "./insights";
 import { provenanceFor, type Provenance } from "./provenance";
 import { recurringCalendar } from "./recurring-calendar";
@@ -94,6 +95,16 @@ interface Candidate {
 }
 
 export function noticesCard(db: AppDatabase, today: string = todayIso()): NoticesCard | null {
+  /*
+   * PASS 72d — the kill switch, before any work is done rather than after.
+   *
+   * ⛔ A notice is an insight: same closed vocabulary, same write gate, same
+   * proof. Leaving it outside the switch would mean "turn insights off" left
+   * app-written prose on the dashboard, which is the one place the owner looks
+   * every day. The ORDER is not selected here — newest-first is a measurement,
+   * not an editorial guess, and there is nothing for a model to improve.
+   */
+  if (!insightsEnabled(db, "notices")) return null;
   const from = addDays(today, -NOTICE_WINDOW_DAYS);
   const idx = loadCategoryIndex(db);
   const merchantNames = new Map(db.select().from(merchants).all().map((m) => [m.id, m.canonicalName]));

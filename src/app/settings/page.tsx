@@ -8,15 +8,24 @@ import {
   type SnapshotState,
 } from "@/db/backup";
 import { aiSpend, readSettings } from "@/services/settings";
+import { insightSelections } from "@/db/schema/insights";
+import { EST_USD_PER_POOL, insightSelectRunState } from "@/services/insight-selection";
 import { listRules } from "@/services/rules-manager";
 import { Field, Input } from "@/components/ui/Field";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
+import { InsightsManager } from "@/components/settings/InsightsManager";
 import { RulesManager } from "@/components/settings/RulesManager";
 import { BackupsManager } from "@/components/settings/BackupsManager";
 import { describeState, retentionSentence, toBackupRow } from "@/components/settings/backup-rows";
 import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
-import { updateSettingsAction } from "./actions";
+import {
+  clearInsightSelectionsAction,
+  runInsightSelectionAction,
+  stopInsightSelectionAction,
+  updateInsightSettingsAction,
+  updateSettingsAction,
+} from "./actions";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
@@ -49,6 +58,8 @@ export default async function SettingsPage({
   const rules = listRules(db);
   const hasApiKey = Boolean(process.env.ANTHROPIC_API_KEY);
   const archive = listSnapshots(defaultBackupsDir(), SNAPSHOT_LIST_LIMIT);
+  const selectState = insightSelectRunState(db);
+  const storedOrders = db.select({ hash: insightSelections.factHash }).from(insightSelections).all().length;
 
   return (
     <>
@@ -87,6 +98,24 @@ export default async function SettingsPage({
           <p className="mt-3 text-xs text-ink-faint">
             Weeks start Monday (ISO). What the backup archive keeps is spelled out below it.
           </p>
+        </SurfaceCard>
+
+        <SurfaceCard>
+          <InsightsManager
+            enabled={settings.insightsEnabled}
+            modelEnabled={settings.insightModelEnabled}
+            surfaces={settings.insightSurfaces}
+            storedOrders={storedOrders}
+            hasApiKey={hasApiKey}
+            overCap={spend.overCap}
+            lastRun={selectState.lastRun}
+            isRunning={selectState.isRunning}
+            estPerPoolUsd={EST_USD_PER_POOL}
+            save={updateInsightSettingsAction}
+            run={runInsightSelectionAction}
+            stop={stopInsightSelectionAction}
+            clear={clearInsightSelectionsAction}
+          />
         </SurfaceCard>
 
         <SurfaceCard>

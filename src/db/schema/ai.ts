@@ -1,7 +1,8 @@
 import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { createdAt, id } from "./common";
 
-export const AI_PURPOSES = ["categorize", "pdf_extract", "annotate"] as const;
+/** ⛔ `select_insights` never writes prose — it orders sentences the app already wrote. */
+export const AI_PURPOSES = ["categorize", "pdf_extract", "annotate", "select_insights"] as const;
 export type AiPurpose = (typeof AI_PURPOSES)[number];
 
 /** Every Claude call is logged — surfaces monthly AI spend; settings cap warns. */

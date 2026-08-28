@@ -6,7 +6,8 @@ import { formatDayLong } from "@/lib/format-date";
 import { countFact, rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts";
 import { isPrintableName } from "@/lib/printable-name";
 import { listAccounts } from "./accounts";
-import { runInsights, type InsightCandidate, type SurfaceInsights } from "./insights";
+import { surfaceInsights, type InsightInput } from "./insight-surface";
+import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { provenanceFor } from "./provenance";
 
 /**
@@ -44,6 +45,15 @@ export function accountInsights(
   accountId: string,
   today: string = todayIso(),
 ): SurfaceInsights | null {
+  return surfaceInsights(db, "account", accountInsightInput(db, accountId, today));
+}
+
+/** What the page measured, before the kill switch and before any proof. */
+export function accountInsightInput(
+  db: AppDatabase,
+  accountId: string,
+  today: string = todayIso(),
+): InsightInput | null {
   /*
    * ⛔ An account with NO balance at all is not an account holding zero.
    * `Capital One 360 Checking` on the real ledger is exactly that: zero rows
@@ -126,8 +136,12 @@ export function accountInsights(
     candidates.push({ claimId: "count_in_subject", a: "f4", prove });
   }
 
-  return runInsights(facts, candidates, {
-    label: self.balance.asOf ? `as of ${formatDayLong(self.balance.asOf)}` : self.name,
-    note: null,
-  });
+  return {
+    facts,
+    candidates,
+    window: {
+      label: self.balance.asOf ? `as of ${formatDayLong(self.balance.asOf)}` : self.name,
+      note: null,
+    },
+  };
 }

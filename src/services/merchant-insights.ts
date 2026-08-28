@@ -6,7 +6,8 @@ import { formatMonthYear } from "@/lib/format-date";
 import { isPrintableName } from "@/lib/printable-name";
 import { rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts";
 import { categorySpending, loadCategoryIndex } from "./analytics";
-import { runInsights, type InsightCandidate, type SurfaceInsights } from "./insights";
+import { surfaceInsights, type InsightInput } from "./insight-surface";
+import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { merchantIntelligence, merchantSummary } from "./merchants";
 import { provenanceFor } from "./provenance";
 
@@ -52,6 +53,15 @@ export function merchantInsights(
   merchantId: string,
   today: string = todayIso(),
 ): SurfaceInsights | null {
+  return surfaceInsights(db, "merchant", merchantInsightInput(db, merchantId, today));
+}
+
+/** What the page measured, before the kill switch and before any proof. */
+export function merchantInsightInput(
+  db: AppDatabase,
+  merchantId: string,
+  today: string = todayIso(),
+): InsightInput | null {
   const summary = merchantSummary(db, merchantId);
   const { profile } = merchantIntelligence(db, merchantId, today);
   // no spending ever recorded here — nothing measured to say, which is not the
@@ -145,10 +155,14 @@ export function merchantInsights(
     }
   }
 
-  return runInsights(facts, candidates, {
-    label: `${formatMonthYear(profile.firstSeen)} – ${formatMonthYear(profile.lastSeen)}`,
-    note: null,
-  });
+  return {
+    facts,
+    candidates,
+    window: {
+      label: `${formatMonthYear(profile.firstSeen)} – ${formatMonthYear(profile.lastSeen)}`,
+      note: null,
+    },
+  };
 }
 
 interface MerchantTotal {
