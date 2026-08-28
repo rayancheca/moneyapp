@@ -437,9 +437,26 @@ a future pass should decide deliberately rather than discover it.
 - **The delta sign** — §4.2.
 - **`accountCoverage`'s day argument** — §4.1, documented not changed.
 - **Discover is missing five statements**, 152 days, named on `/imports`.
-- **`docs/income-ground-truth.md:40` still says income ≈ $119,982.68.** The
-  measured figure is **$117,924.62**, now stable across nine passes.
-- **The merchant map calls his rent "Flamingos Restaurant"**.
+- ✅ **`docs/income-ground-truth.md` said income ≈ $119,982.68 — FIXED.** Stale by
+  **$2,058.06** and carried unchanged through six handoffs. The doc now leads
+  with a dated re-measurement: the total, a cents-exact per-category breakdown
+  over 278 rows, and the two definitions that differ by 79 cents
+  (**$117,924.62** net, the figure the app publishes, vs $117,925.41
+  positive-only). ⚠️ The whole difference is ONE row — a `-$0.79` "RETURNED
+  INTERNET PMT" — and it is the ledger's **only** outflow sitting in an income
+  category. The mirror case the Rocket Money pass fixed (inflows in expense
+  categories) is 51 rows worth $7,031.51, all legitimate refunds that
+  `periodTotals` reports separately. The income side is clean.
+- ✅ **The merchant map calls his rent "Flamingos Restaurant"** — measured, and a
+  rehearsed fix is ready but **NOT APPLIED** (a real-DB write needs your yes):
+  `npx tsx scripts/rename-flamingo-merchant.ts --apply`, with the dev server
+  stopped. Only the NAME is wrong — the row is already `Rent` and already linked
+  to the series `Flamingo South Beach (rent)`, so the new name is borrowed from
+  the app's own data rather than invented. ⛔ There is a SECOND, real Flamingo
+  (`Flamingo Food Market`, 2 rows, $17.95, a Miami Beach corner shop); a guard
+  asserts it is untouched, because merging them would file his rent as
+  groceries. The dry run rehearses on a SQLite `.backup` copy and all 12 guards
+  pass.
 - **The `notices`, `car` and `income` decision cards have no visual baseline** — they return null on the e2e fixture (§7). `/merchants/[id]` and the card grid are covered now.
 - **`notFound()` returns HTTP 200** app-wide from force-dynamic pages.
 - **45 `WEIXIN*` rows, $340.00**, deliberately in bare `Shopping`.

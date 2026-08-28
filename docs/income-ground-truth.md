@@ -11,6 +11,46 @@ are cents-exact from `data/moneyapp.db` at the 2026-07-16 snapshot unless noted.
 
 ---
 
+> **⚠️ RE-MEASURED (2026-08-28) — the all-time total below is STALE.**
+> The pass-18 note further down says "Current all-time income total ≈ **$119,982.68**". Measured
+> against `data/moneyapp.db` today it is **$117,924.62**, so that figure is stale by **$2,058.06**
+> and has been carried forward unchanged through six handoffs. The rules in this document are
+> unaffected — only the running total moved, as later passes reclassified rows out of income
+> (gambling winnings, ATM deposits mislabelled `Salary`, peer Zelles). This figure has now been
+> stable across nine passes.
+>
+> **Two definitions, and they differ by 79 cents.** Both are correct; say which one you mean:
+>
+> | | |
+> |---|---|
+> | **$117,924.62** | every income-kind row, **both signs** — what the app publishes |
+> | $117,925.41 | positive rows only |
+>
+> The whole difference is ONE row: `2024-09-18  -$0.79  Refunds & Reimbursements
+> "RETURNED INTERNET PMT"` on the Discover card. It is the ledger's **only** outflow sitting in
+> an income category — checked ledger-wide, and the mirror case (inflows in expense categories,
+> the "silent negative expense" the Rocket Money pass found) is 51 rows worth $7,031.51, all of
+> them legitimate refunds that `periodTotals` reports separately and never nets against spending.
+>
+> **Composition, cents-exact over 2022-08-25 → 2026-08-24, 278 rows** — re-run it with
+> `scripts/probe-open-items.ts`:
+>
+> | category | rows | total |
+> |---|---:|---:|
+> | Financial Aid | 6 | $51,872.00 |
+> | Salary | 59 | $45,514.86 |
+> | Tutoring | 60 | $10,023.00 |
+> | Refunds & Reimbursements | 6 | $6,650.21 |
+> | Interest | 68 | $2,439.68 |
+> | Other Income | 35 | $850.81 |
+> | Dividends | 44 | $574.06 |
+> | **TOTAL** | **278** | **$117,924.62** |
+>
+> ⚠️ `Financial Aid` is the largest line and is **money in that was not earned** — it is excluded
+> from "earned" everywhere in the app (`/summary/[year]` puts it under "Money in that you did not
+> earn"). Whether any of it is a loan rather than a grant is still OPEN, and this document has
+> never answered it.
+
 > **⚠️ PASS-45 UPDATE (2026-08-11) — GAMBLING WINNINGS ARE NO LONGER INCOME.**
 > Seven credits totalling **$1,053.82** sat in `Income > Other Income`. They are not earnings —
 > they are money coming back from a betting platform (DraftKings / Kalshi), the return leg of
@@ -37,8 +77,9 @@ are cents-exact from `data/moneyapp.db` at the 2026-07-16 snapshot unless noted.
 > so **"Salary" is no longer pure Fordham** — it is Fordham wages ($42,679.76) + the cash job. A confirmed weekly
 > paycheck series ("Cash job (weekly pay)" $1,046/wk) drives the forecast; Fordham + Knack are `ended` series. Also:
 > 92 peer Zelles were moved OUT of income (→ `Transfers › Reimbursements`), and dad's-money pass-throughs are now
-> `Transfers › Pass-through`. Current all-time income total ≈ **$119,982.68**. The rule below still describes
-> what counts as *earned* income; treat this note as the current state.
+> `Transfers › Pass-through`. ~~Current all-time income total ≈ **$119,982.68**~~ — ⚠️ **STALE, see the
+> 2026-08-28 re-measurement at the top: it is $117,924.62.** The rule below still describes
+> what counts as *earned* income; treat this note as the state **as of pass 18**, not as current.
 
 ## 1. The rule — what the user counts as "earnings"
 
