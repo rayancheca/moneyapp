@@ -327,6 +327,18 @@ watching**, on top of 1.4 GB of `data/` and 63 MB of baselines. Caught in the
 act: `bird` (the iCloud sync daemon) at **59% CPU** with none of my processes
 running, alongside `mediaanalysisd` at 88% and Spotlight indexing.
 
+⛔ **And later in the session it stopped being merely slow and broke a build
+outright**:
+
+```
+Error: ENOTEMPTY: directory not empty, rmdir '.../.next/server'
+```
+
+`next build` could not remove its own output directory, because something else
+held files inside it. `rm -rf .next` and a rebuild fixed it. That is the same
+contention, one notch worse — and it is worth knowing that a build failure here
+may be the filesystem rather than the code.
+
 That explains everything §5 could only describe:
 
 - why a run right after `e2e:fresh` is slower than one that is not — the build
@@ -430,6 +442,53 @@ page truncates BOTH windows to the same days so the comparison is valid rather
 than caveated. Both are defensible for their shapes — a chart showing three
 years cannot truncate — but the app now has two treatments of one question, and
 a future pass should decide deliberately rather than discover it.
+
+## 7b. ✅ The coverage class closed at BOTH axes, not just the routes
+
+Having found two instances (§7), I audited the class instead of hunting a third.
+
+**Axis 1 — routes.** Every page route in `src/app` now carries visual baselines.
+The only `page.tsx` without one is `/design/stage-0a`, a design stage rather
+than a product surface. Nothing to do.
+
+**Axis 2 — view dimensions, and this is where the gap was.** A route can be
+photographed while a sub-view inside it has never been opened; that is what the
+deck was. `zz-zz-dashboard-chart-options.spec.ts` already exists for exactly
+this reason and states the lesson in its own docstring — *a view dimension is a
+PROMISE that every option renders, and the promise is only worth what
+enumerates it* — after `/?chart=terrain` shipped as a 500 that **246 e2e tests
+passed over**.
+
+⛔ **That lesson had been applied to ONE of the app's nine view specs.** Measured:
+only `DASHBOARD_VIEW_SPEC` and `FLOW_VIEW_SPEC` are imported by any e2e spec,
+and **`?cash=` and `?where=` appear in no spec at all** — so
+`/spending?cash=graph` and the "Where it went" relief were reachable,
+persistable URLs that nothing ever opened.
+
+`e2e/view-options.spec.ts` now enumerates the other seven, 26 shallow render
+checks driven off the specs themselves. **All 26 pass — there is no live
+terrain-style bug today.** Its value is that adding an option to any of those
+specs is covered the same day, with nobody having to remember.
+
+⚠️ Verified on both axes rather than trusted, because a green first run proves
+nothing:
+- **it grows with the spec** — appending a bogus option to `CASH_VIEW_SPEC` took
+  the run from 26 tests to 27, so the loop really does read the vocabulary;
+- **its assertions bite** — pointing one surface at a route that does not exist
+  fails 4 tests, so they are not vacuous.
+
+⚠️ Interesting non-finding from the first mutation: `/spending?cash=bogus`
+*renders fine*. Unlike the dashboard's exhaustive switch, that panel degrades to
+a default. So the failure this guards against is per-page, not universal — which
+is the argument for enumerating rather than reasoning about which pages are
+robust.
+
+⛔ `DASHBOARD_VIEW_SPEC` and `FLOW_VIEW_SPEC` are deliberately absent from the
+new file: they have their own enumerating specs that assert more than "it
+rendered", and a shallower second copy would be a second definition of one
+promise.
+
+---
 
 ## 8. Still open (unchanged unless noted)
 
