@@ -10,7 +10,20 @@ export type AnchorSource = (typeof ANCHOR_SOURCES)[number];
  * Ground-truth balances at known dates (net-worth-signed). Same-date
  * precedence: statement > ofx_ledger > manual > live — enforced in the
  * derivation service; ofx_ledger/live are moments, excluded from exact
- * chain-closure checks; 'live' is only ever written for today.
+ * chain-closure checks.
+ *
+ * ⚠️ `live` means the number came from a live fetch, NOT that it is stamped
+ * today. This note used to say "'live' is only ever written for today", and the
+ * ledger disagrees: of 29 live anchors, one — Robinhood Cash on 2026-07-10 —
+ * was written on the 11th, by a fetch that ran past midnight.
+ *
+ * ⛔ It was left as `live` rather than reclassified `manual`, because `manual`
+ * means a PERSON typed the number and this one nobody did; relabelling it would
+ * have made the row lie about where it came from in order to make a comment
+ * true. Nothing depends on the claim either: `deriveBalances` lets a live
+ * moment win the display only when `anchoredOn === today`, so a past-dated one
+ * is inert by construction rather than by luck — asserted in
+ * `derivation.test.ts` rather than promised here.
  */
 export const balanceAnchors = sqliteTable(
   "balance_anchors",

@@ -22,6 +22,7 @@ const ERA_C = [
   "Account Summary",
   "Brokerage Cash Balance * $192.22 $1,679.93",
   "Deposit Sweep Balance $0.07 $0.45",
+  "Total Securities ** $59,329.88 $67,859.26",
   "Portfolio Value $59,522.17 $69,539.64",
   // the allocation table repeats both labels with ONE amount and a percentage
   "Brokerage Cash Balance $1,679.93 2.42%",
@@ -38,6 +39,7 @@ const ERA_B = [
   "Account Summary",
   "Brokerage Cash Balance $0.00 $35.00",
   "Deposit Sweep Balance $15,246.18 $41,532.16",
+  "Total Securities * $6,243.57 $20,431.79",
   "Portfolio Value $21,489.75 $61,998.95",
 ];
 
@@ -299,5 +301,71 @@ describe("parseSweepActivity", () => {
         "Closing Sweep Balance 03/31/2025 $0.52",
       ])!.movements,
     ).toEqual([]);
+  });
+});
+
+/**
+ * PASS 73 — the securities anchor, which is the arbiter `Robinhood Brokerage`
+ * has never had.
+ *
+ * ⛔ Two traps, both hit while measuring the real archive rather than imagined:
+ *
+ *  1. **The footnote marker is one asterisk in 2025 and two in 2026.** A regex
+ *     accepting `\*?` does not fail on the 2026 line — it falls through to the
+ *     NEXT line that does match, which is a different table entirely.
+ *  2. **`Total Securities` appears a second time under `Loaned Securities`**,
+ *     where the columns are value / estimated dividend / share of portfolio.
+ *     Reading it printed 2026-03's closing balance as **$421.61** — an annual
+ *     dividend estimate — instead of $44,521.74. The end anchor after exactly
+ *     two money tokens is what excludes it, the same guard
+ *     `BROKERAGE_CASH_RE` already uses against the allocation table.
+ */
+describe("the securities anchor", () => {
+  test("era B: reads the opening and closing securities value", () => {
+    const parsed = parseRobinhoodBrokerageLines(ERA_B);
+    expect(parsed.openingSecuritiesCents).toBe(624_357);
+    expect(parsed.closingSecuritiesCents).toBe(2_043_179);
+  });
+
+  test("era C: two asterisks are still a footnote marker", () => {
+    const parsed = parseRobinhoodBrokerageLines(ERA_C);
+    expect(parsed.openingSecuritiesCents).toBe(5_932_988);
+    expect(parsed.closingSecuritiesCents).toBe(6_785_926);
+  });
+
+  test("⛔ the Loaned Securities subtotal is not an opening/closing pair", () => {
+    const parsed = parseRobinhoodBrokerageLines([
+      ...ERA_C,
+      "Portfolio Summary",
+      "Loaned Securities Sym/Cusip Acct Type Qty Price Mkt Value Est. Dividend Yield % of Total Portfolio",
+      // value, ESTIMATED DIVIDEND, share of portfolio — three tokens, not two
+      "Total Securities * $44,521.74 $421.61 84.37%",
+    ]);
+    expect(parsed.closingSecuritiesCents).toBe(6_785_926);
+  });
+
+  test("⛔ and it is not read even when it comes FIRST", () => {
+    const parsed = parseRobinhoodBrokerageLines([
+      "Total Securities * $44,521.74 $421.61 84.37%",
+      ...ERA_C,
+    ]);
+    expect(parsed.closingSecuritiesCents).toBe(6_785_926);
+  });
+
+  test("era A has no securities line at all, which is not a failure", () => {
+    const parsed = parseRobinhoodBrokerageLines(ERA_A);
+    expect(parsed.openingSecuritiesCents).toBeNull();
+    expect(parsed.closingSecuritiesCents).toBeNull();
+    // and the cash it DOES print is unaffected
+    expect(parsed.closingCashCents).toBe(8);
+  });
+
+  test("a printed N/A opening is no anchor, not a zero", () => {
+    const parsed = parseRobinhoodBrokerageLines([
+      ...ERA_B.filter((l) => !l.startsWith("Total Securities")),
+      "Total Securities * N/A $20,431.79",
+    ]);
+    expect(parsed.openingSecuritiesCents).toBeNull();
+    expect(parsed.closingSecuritiesCents).toBeNull();
   });
 });

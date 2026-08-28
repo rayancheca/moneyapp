@@ -32,10 +32,13 @@ import {
   type ChainBreak,
   type LedgerBaseline,
   type StaleVerdict,
+  type ValueAnchor,
   compareToBaseline,
   findChainBreaks,
+  findValueAnchorDrift,
   formatLedgerFailures,
 } from "@/lib/ledger-integrity";
+import { portfolioSeries } from "@/services/portfolio";
 import { formatCents } from "@/lib/money";
 
 /**
@@ -65,9 +68,45 @@ const BASELINE: LedgerBaseline = {
     "Chase Sapphire": 968_091,
     "Cash on Hand": -500_000,
   },
+  /*
+   * PASS 73 — where the app's own valuation disagrees with what a statement
+   * printed, on the day it printed it. Every entry names what the money IS: an
+   * entry without a reason is a check that has been quieted rather than passed.
+   *
+   * ⛔ **Robinhood Crypto was already carrying nine of these and nobody knew.**
+   * This check was built for `Robinhood Brokerage` — the last account with no
+   * arbiter — and fired on the account next door before that import happened.
+   *
+   *   2025-10-31  -$1,505.00  ⛔ NOT a rounding difference. The statement prints
+   *               $1,505.00 of crypto and the ledger values the account at
+   *               $0.00: its holdings book starts later than its statements do,
+   *               so a whole month of positions is missing. The one entry here
+   *               that is a HOLE rather than a disagreement, and the one worth
+   *               a pass of its own.
+   *   the other 8  -$24.65 … +$18.94 against printed values of $3,480 → $27,360
+   *               — 0.01% to 0.7%. Crypto has no closing auction: the app marks
+   *               a daily close from its own source and Robinhood marks its own
+   *               venue at its own instant, so two honest numbers differ. Kept
+   *               to the cent anyway (see VALUE_ANCHOR_TOLERANCE_CENTS): a band
+   *               wide enough to swallow these would be wide enough to swallow
+   *               a missing position.
+   */
+  valueAnchors: {
+    "Robinhood Crypto": [
+      { on: "2025-10-31", offByCents: -150_500 },
+      { on: "2025-11-30", offByCents: -240 },
+      { on: "2025-12-31", offByCents: 38 },
+      { on: "2026-01-31", offByCents: 246 },
+      { on: "2026-02-28", offByCents: -2_465 },
+      { on: "2026-03-31", offByCents: 1_894 },
+      { on: "2026-04-30", offByCents: -1_618 },
+      { on: "2026-05-31", offByCents: 40 },
+      { on: "2026-06-30", offByCents: -2_449 },
+    ],
+  },
 };
 
-const { sqlite } = createDatabase(process.env.MONEYAPP_DB_PATH ?? "data/moneyapp.db");
+const { db, sqlite } = createDatabase(process.env.MONEYAPP_DB_PATH ?? "data/moneyapp.db");
 
 const accounts = sqlite
   .prepare(`SELECT id, name, type FROM accounts ORDER BY name`)
@@ -177,7 +216,70 @@ for (const [name, cents] of Object.entries(syntheticNetCents)) {
 }
 console.log(`stale verdicts: ${staleVerdicts.length}`);
 
-const failures = compareToBaseline({ breaks, syntheticNetCents, staleVerdicts }, BASELINE);
+/*
+ * PASS 73 — the printed market value against the app's own, on the same day.
+ *
+ * `portfolioSeries` is the app's OWN valuation — the one the value chart draws —
+ * so a disagreement here is a disagreement a reader can already see, not a
+ * second opinion invented by this checker. An account with no securities
+ * anchors imported yet simply contributes nothing.
+ */
+const anchors: ValueAnchor[] = [];
+for (const account of accounts.filter((a) => a.type === "investment")) {
+  const points = portfolioSeries(db, [account.id]);
+  const series = new Map(points.map((p) => [p.day, p.valueCents]));
+  /*
+   * ⚠️ OUTSIDE the book is zero; INSIDE it and missing is unknown.
+   *
+   * `portfolioSeries` starts on the account's first holding day, so a statement
+   * that predates it is a statement from before anything was held — and the
+   * app's answer for that day is $0.00, not "no idea". Reporting it as unvalued
+   * made seven $0.00 anchors on Robinhood Crypto read as findings when the two
+   * sides agreed exactly. A gap in the MIDDLE of the book is a different thing
+   * and stays unknown.
+   */
+  const first = points[0]?.day ?? null;
+  const last = points[points.length - 1]?.day ?? null;
+  const derivedOn = (day: string): number | null => {
+    const hit = series.get(day);
+    if (hit !== undefined) return hit;
+    if (first === null || last === null) return 0;
+    return day < first || day > last ? 0 : null;
+  };
+  const periods = sqlite
+    .prepare(
+      `SELECT period_end e, ending_balance_cents c FROM statement_periods
+        WHERE account_id = ? AND ending_balance_cents IS NOT NULL ORDER BY period_end`,
+    )
+    .all(account.id) as { e: string; c: number }[];
+  for (const p of periods) {
+    anchors.push({ account: account.name, on: p.e, printedCents: p.c, derivedCents: derivedOn(p.e) });
+  }
+}
+const { drifts: valueAnchors, unpriced } = findValueAnchorDrift(anchors);
+console.log(
+  `value anchors: ${anchors.length} checked · ${Object.values(valueAnchors).flat().length} disagree · ${unpriced.length} the app cannot value`,
+);
+for (const [name, list] of Object.entries(valueAnchors)) {
+  for (const d of list) console.log(`  ${name} ${d.on}  off by ${formatCents(d.offByCents)}`);
+}
+
+const failures = compareToBaseline(
+  { breaks, syntheticNetCents, staleVerdicts, valueAnchors },
+  BASELINE,
+).concat(
+  /*
+   * An anchor the app cannot value is its own finding. It is not a drift — a
+   * missing valuation reported as a drift of the whole printed amount would
+   * read as a total loss — and it is not nothing, because an anchor nobody can
+   * check is an anchor that is not doing its job.
+   */
+  unpriced.map((a) => ({
+    kind: "unpriced-anchor" as const,
+    account: a.account,
+    detail: `${a.on} prints ${formatCents(a.printedCents)} of securities and the ledger has no valuation for that day`,
+  })),
+);
 if (failures.length > 0) {
   console.error(`\nLEDGER CHECK FAILED — ${failures.length} finding(s):`);
   console.error(formatLedgerFailures(failures));

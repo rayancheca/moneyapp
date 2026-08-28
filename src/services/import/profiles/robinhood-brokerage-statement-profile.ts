@@ -97,6 +97,38 @@ const ORPHAN_PAIR_RE = new RegExp(String.raw`^(N/A|${MONEY}) ${MONEY}$`);
 const BROKERAGE_CASH_RE = new RegExp(String.raw`^Brokerage Cash Balance \*? ?${MONEY} ${MONEY}$`);
 const DEPOSIT_SWEEP_RE = new RegExp(String.raw`^Deposit Sweep Balance \*? ?${MONEY} ${MONEY}$`);
 
+/**
+ * PASS 73 — the securities anchor, and the two traps that make it look easy.
+ *
+ * `Total Securities` is the printed market value of everything held, opening and
+ * closing. It is what gives `Robinhood Brokerage` — the last account in the
+ * ledger without one — something to be checked against.
+ *
+ * ⛔ **The footnote marker is one asterisk in 2025 and TWO in 2026.** A regex
+ * accepting `\*?` does not fail on the 2026 line; it falls through to the next
+ * line that does match, which belongs to a different table.
+ *
+ * ⛔ **The same label appears again under `Loaned Securities`**, where the
+ * columns are value / estimated dividend / share of portfolio:
+ *
+ *     Total Securities * $44,521.74 $421.61 84.37%
+ *
+ * Measured on the real archive, reading that line printed 2026-03's closing
+ * balance as **$421.61** — an annual dividend estimate — instead of
+ * $44,521.74. Requiring EXACTLY two money tokens to the end of the line is what
+ * excludes it, which is the same guard `BROKERAGE_CASH_RE` above already uses
+ * against the allocation table, for the same reason.
+ *
+ * ⚠️ Era A′ (2023-12 → 2024-07) prints the value in the orphaned two-column
+ * layout, and is deliberately NOT read. `findOrphanedNetAccountBalance` pairs a
+ * label with the line above it, which is an inference the cash figures earn by
+ * chaining across all eight statements; the securities there are $16–$19 in an
+ * account that held almost nothing, and a second adjacency inference for that
+ * is risk without a reader. Those eight statements simply yield no securities
+ * anchor — 24 of the 32 do, which is every statement with money in it.
+ */
+const TOTAL_SECURITIES_RE = new RegExp(String.raw`^Total Securities ?\*{0,3} ?(N/A|${MONEY}) ${MONEY}$`);
+
 /** Era C only — the running cash ledger's own opening/closing and column totals. */
 const LEDGER_OPEN_RE = new RegExp(String.raw`^Opening Brokerage-held Cash Balance \d{2}/\d{2}/\d{4} ${MONEY}$`);
 const LEDGER_CLOSE_RE = new RegExp(String.raw`^Closing Brokerage-held Cash Balance \d{2}/\d{2}/\d{4} ${MONEY}$`);
@@ -330,6 +362,14 @@ export interface RobinhoodBrokerageParse {
    */
   openingCashCents: number | null;
   closingCashCents: number;
+  /**
+   * PASS 73 — the printed market value of everything held, opening and closing.
+   * `null` when the statement prints no `Total Securities` line at all (era A
+   * and A′) or prints `N/A` for the opening: there is then no securities period
+   * to anchor, which is different from one that anchors at zero.
+   */
+  openingSecuritiesCents: number | null;
+  closingSecuritiesCents: number | null;
   /** true when the Era-C running ledger was present and its identity held */
   ledgerVerified: boolean;
 }
@@ -368,12 +408,29 @@ export function parseRobinhoodBrokerageLines(texts: readonly string[]): Robinhoo
     closingCashCents = parseAmountToCents(m[2] as string) + sweepClose;
   }
 
+  /*
+   * Both halves or neither. A closing value with no opening is an observation
+   * rather than a period, and this profile already has a shape for that — the
+   * cash `ledger` branch — so a half-anchor here would be a second, quieter
+   * way to say the same thing.
+   */
+  const securities = firstMatch(lines, TOTAL_SECURITIES_RE);
+  const securitiesOpen = securities && securities[1] !== "N/A" ? parseAmountToCents(securities[1] as string) : null;
+
   return {
     accountNumber,
     periodStart,
     periodEnd,
     openingCashCents,
     closingCashCents,
+    openingSecuritiesCents: securitiesOpen,
+    /*
+     * ⚠️ Group 3, not 2. `MONEY` is itself a capture group, so the `(N/A|MONEY)`
+     * alternation nests one inside another and index 2 is the OPENING again —
+     * which reads as a securities value that never moved all month.
+     * `NET_ACCOUNT_RE` above is the same shape and indexes the same way.
+     */
+    closingSecuritiesCents: securitiesOpen === null ? null : parseAmountToCents(securities![3] as string),
     ledgerVerified: verifyLedgerIdentity(lines),
   };
 }
@@ -434,9 +491,12 @@ export function isRobinhoodBrokerageStatementText(text: string): boolean {
 
 export const robinhoodBrokerageStatementPdf: ParserProfile = {
   id: PROFILE_ID,
-  // v2: emits Crypto Money Movement rows. A parser fix never reaches an
-  // already-imported file, so the bump is what makes the archive re-importable.
-  version: 2,
+  /*
+   * v3: emits a second ParsedStatement carrying the securities anchor (pass 73).
+   * A parser fix never reaches an already-imported file, so the bump is what
+   * makes the 32-statement archive re-importable — the same reason v2 existed.
+   */
+  version: 3,
   // Robinhood ships opaque UUID filenames, so content decides routing entirely
   matches: (f) => f.format === "pdf",
   matchesContent: isRobinhoodBrokerageStatementText,
@@ -465,6 +525,48 @@ export const robinhoodBrokerageStatementPdf: ParserProfile = {
       preferName: "Robinhood Cash",
     } as const;
 
+    /*
+     * PASS 73 — a SECOND statement, for the securities the same document
+     * prints. `Robinhood Brokerage` was the last account in the ledger with no
+     * arbiter: its holdings were rebuilt from the activity CSV and nothing has
+     * ever checked them against a document.
+     *
+     * ⛔ It carries NO transactions. The trades are in the CSV, the crypto
+     * movements go to the cash account above, and a period whose movement is
+     * zero is exactly right for an investment anchor — `periodVerdict` grades an
+     * investment period as a `value_anchor` and records the residual as market
+     * change rather than accusing it of being a gap. What this adds is the two
+     * printed endpoints, which is what `pnpm ledger-check` compares the app's
+     * own holdings valuation against.
+     *
+     * ⚠️ `preferName` routes to the account that already exists. Without it a
+     * second Robinhood investment account is one import away, and this profile's
+     * header already records that auto-creating an account from a statement is
+     * how a duplicate gets born.
+     */
+    const securities: ParsedStatement[] =
+      parsed.openingSecuritiesCents === null || parsed.closingSecuritiesCents === null
+        ? []
+        : [
+            {
+              accountHint: {
+                institution: "Robinhood",
+                type: "investment",
+                subtype: "brokerage",
+                name: "Robinhood Brokerage",
+                preferName: "Robinhood Brokerage",
+              },
+              txns: [],
+              period: {
+                start: parsed.periodStart,
+                end: parsed.periodEnd,
+                // an investment portfolio value is a positive asset, not flipped
+                beginCents: parsed.openingSecuritiesCents,
+                endCents: parsed.closingSecuritiesCents,
+              },
+            },
+          ];
+
     // no opening balance printed: an observation, not a period to reconcile
     if (parsed.openingCashCents === null) {
       return [
@@ -474,6 +576,7 @@ export const robinhoodBrokerageStatementPdf: ParserProfile = {
           declaredRange: { start: parsed.periodStart, end: parsed.periodEnd },
           ledger: { cents: parsed.closingCashCents, asOf: parsed.periodEnd },
         },
+        ...securities,
       ];
     }
 
@@ -488,6 +591,7 @@ export const robinhoodBrokerageStatementPdf: ParserProfile = {
           endCents: parsed.closingCashCents,
         },
       },
+      ...securities,
     ];
   },
 };

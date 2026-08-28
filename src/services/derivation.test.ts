@@ -220,6 +220,35 @@ describe("deriveDailyRows — cash accounts", () => {
     );
     expect(rows.at(-1)).toEqual({ day: TODAY, balanceCents: 10_500, basis: "anchored" });
   });
+
+  /*
+   * ⛔ PASS 73 — the claim `schema/balances.ts` used to make in prose.
+   *
+   * That comment said "'live' is only ever written for today", and the ledger
+   * disagrees: one of 29 live anchors is stamped the day before it was written,
+   * by a fetch that ran past midnight. It was left as `live` rather than
+   * relabelled `manual`, because `manual` means a person typed the number and
+   * nobody typed this one — so what has to be true is that a past-dated live
+   * anchor changes NOTHING. Asserted here rather than promised there.
+   */
+  test("a live anchor for a PAST day is inert — it neither overrides nor chains", () => {
+    const withoutIt = deriveDailyRows(
+      [{ anchoredOn: "2026-07-06", balanceCents: 10_000, source: "statement" }],
+      new Map([["2026-07-07", -2_500]]),
+      opts,
+    );
+    const withIt = deriveDailyRows(
+      [
+        { anchoredOn: "2026-07-06", balanceCents: 10_000, source: "statement" },
+        // a real reading of a real day, recorded a day late
+        { anchoredOn: "2026-07-07", balanceCents: 999_999, source: "live" },
+      ],
+      new Map([["2026-07-07", -2_500]]),
+      opts,
+    );
+    expect(withIt).toEqual(withoutIt);
+    expect(withIt.find((r) => r.day === "2026-07-07")?.balanceCents).toBe(7_500);
+  });
 });
 
 describe("deriveDailyRows — investment accounts", () => {

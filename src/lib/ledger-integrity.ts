@@ -47,23 +47,102 @@ export interface StaleVerdict {
   freshGapCents: number | null;
 }
 
+/**
+ * PASS 73 — one investment period's printed market value against the app's own.
+ *
+ * ⛔ This is the arbiter `Robinhood Brokerage` never had. Its holdings were
+ * rebuilt from an activity CSV and nothing had ever checked them against a
+ * document; the statements print `Total Securities` at both ends of every
+ * month, and the app can value its own holdings on the same day.
+ *
+ * ⚠️ An investment period can never be graded `gap` (`periodVerdict`), and that
+ * is right — a residual there is market movement, not missing money. So this
+ * check is NOT the same question: it compares the two sides' opinion of the
+ * SAME instant, where any disagreement is a disagreement about the holdings or
+ * about a price, and one of the two is wrong.
+ */
+export interface ValueAnchor {
+  account: string;
+  /** the day the statement priced, and the day the app was asked about */
+  on: string;
+  printedCents: number;
+  /** null when the app has no valuation for that day at all */
+  derivedCents: number | null;
+}
+
+export interface ValueAnchorDrift {
+  on: string;
+  /** the app's valuation minus the printed one; sign says which way */
+  offByCents: number;
+}
+
 export interface LedgerObservation {
   breaks: Record<string, ChainBreak[]>;
   /** net cents of replay-status rows with no import file, per account */
   syntheticNetCents: Record<string, number>;
   staleVerdicts: StaleVerdict[];
+  /** printed-vs-derived market value, per account (pass 73) */
+  valueAnchors: Record<string, ValueAnchorDrift[]>;
 }
 
 export interface LedgerBaseline {
   breaks: Record<string, ChainBreak[]>;
   syntheticNetCents: Record<string, number>;
+  valueAnchors: Record<string, ValueAnchorDrift[]>;
 }
 
 export type LedgerFailure = {
-  kind: "new-break" | "changed-break" | "fixed-break" | "synthetic-drift" | "stale-verdict";
+  kind:
+    | "new-break"
+    | "changed-break"
+    | "fixed-break"
+    | "synthetic-drift"
+    | "stale-verdict"
+    | "new-value-drift"
+    | "changed-value-drift"
+    | "fixed-value-drift"
+    | "unpriced-anchor";
   account: string;
   detail: string;
 };
+
+/**
+ * A cent, and no more.
+ *
+ * ⛔ Deliberately not a percentage. A tolerance that scaled with the position
+ * would be loosest exactly where the money is, and the three largest
+ * disagreements on this ledger are a stock split — a 10× error that a
+ * percentage band would have to be absurd to catch. A cent is what a rounding
+ * difference between two people multiplying the same quantity by the same price
+ * can produce; anything larger is a different opinion about the holdings.
+ */
+export const VALUE_ANCHOR_TOLERANCE_CENTS = 1;
+
+/**
+ * Every anchor whose two sides disagree by more than a cent.
+ *
+ * ⚠️ An anchor the app cannot value at all is NOT a drift — it is a missing
+ * answer, and calling it a drift of `printedCents` would make an absent
+ * valuation look like a total loss. It is reported separately.
+ */
+export function findValueAnchorDrift(
+  anchors: readonly ValueAnchor[],
+  toleranceCents: number = VALUE_ANCHOR_TOLERANCE_CENTS,
+): { drifts: Record<string, ValueAnchorDrift[]>; unpriced: ValueAnchor[] } {
+  const drifts: Record<string, ValueAnchorDrift[]> = {};
+  const unpriced: ValueAnchor[] = [];
+  for (const a of anchors) {
+    if (a.derivedCents === null) {
+      unpriced.push(a);
+      continue;
+    }
+    const offByCents = a.derivedCents - a.printedCents;
+    if (Math.abs(offByCents) <= toleranceCents) continue;
+    (drifts[a.account] ??= []).push({ on: a.on, offByCents });
+  }
+  for (const list of Object.values(drifts)) list.sort((x, y) => x.on.localeCompare(y.on));
+  return { drifts, unpriced };
+}
 
 /**
  * Every consecutive anchor pair whose replay does not land on the printed
@@ -147,6 +226,49 @@ export function compareToBaseline(
         `money in the balance chain with no source document moved ` +
         `${formatCents(then)} → ${formatCents(now)} (${formatCents(now - then)})`,
     });
+  }
+
+  /*
+   * Same three-way comparison as a chain break, and for the same reason: a
+   * baseline that listed a disagreement which has since been fixed has stopped
+   * describing the ledger, and would call that disagreement expected the next
+   * time it returned.
+   */
+  const anchorAccounts = new Set([
+    ...Object.keys(observed.valueAnchors),
+    ...Object.keys(baseline.valueAnchors),
+  ]);
+  for (const account of [...anchorAccounts].sort()) {
+    const seen = new Map((observed.valueAnchors[account] ?? []).map((d) => [d.on, d]));
+    const known = new Map((baseline.valueAnchors[account] ?? []).map((d) => [d.on, d]));
+    for (const [on, d] of seen) {
+      const before = known.get(on);
+      if (before === undefined) {
+        failures.push({
+          kind: "new-value-drift",
+          account,
+          detail: `on ${on} the ledger values the holdings ${formatCents(d.offByCents)} away from what the statement printed`,
+        });
+      } else if (before.offByCents !== d.offByCents) {
+        failures.push({
+          kind: "changed-value-drift",
+          account,
+          detail:
+            `${on} is a known disagreement, but its size moved ` +
+            `${formatCents(before.offByCents)} → ${formatCents(d.offByCents)}`,
+        });
+      }
+    }
+    for (const [on, d] of known) {
+      if (seen.has(on)) continue;
+      failures.push({
+        kind: "fixed-value-drift",
+        account,
+        detail:
+          `${on} (${formatCents(d.offByCents)}) is recorded as a known disagreement but now agrees — ` +
+          `remove it from the baseline so its return would be noticed`,
+      });
+    }
   }
 
   for (const s of observed.staleVerdicts) {
