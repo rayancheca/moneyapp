@@ -4,7 +4,7 @@
 >
 > **`main` = `8546606`**, tree clean, pushed. tsc clean ·
 > **214 files / 4,119 unit** · coverage **99.76% stmts, 100% funcs** ·
-> **E2E_GATE=1: 540 passed at `maxDiffPixels: 0`** (7.9m, quiet box) — ⛔ §5 is the
+> **E2E_GATE=1: 556 passed at `maxDiffPixels: 0`** (8.2m, quiet box) — ⛔ §5 is the
 > most useful thing this session learned: **under load both suites lie**, and
 > `uptime` is the first thing to check before believing a red run.
 >
@@ -285,14 +285,76 @@ mechanism also rules this pass out as a cause: the work added here is 2–11ms o
 READ on three routes and touches no server action
 (`scripts/probe-insight-cost.ts`).
 
-⚠️ **`boundingBox()` has no auto-wait** — the very first failure was
-`Cannot read properties of null (reading 'height')`, the same class of trap
-pass 38 recorded for `isVisible()`. It is the first thing in the e2e suite to
-fall over under load, and `await expect(locator).toBeVisible()` in front of the
-bare calls would harden them.
+✅ **`boundingBox()` has no auto-wait — six bare call sites, now hardened.** The
+very first failure of the session was `Cannot read properties of null (reading
+'height')`, which names neither the element nor the reason. Same class of trap
+pass 38 recorded for `isVisible()`, and the pattern is worth naming: **a
+Playwright call that RETURNS a value rather than asserting one usually does not
+retry.** All six now go through `e2e/box-helpers.ts` → `visibleBox(locator,
+what)`, which asserts visibility (retrying to the expect timeout — precisely the
+missing wait) and names the element if the box is still null.
+
+⚠️ Mutation-tested both halves, and only one of them is coverable: fabricating
+the returned box fails four specs, so the callers really do read it — but
+DELETING the wait breaks nothing on an idle machine, because the element is
+already painted by the time the box is read. That is the nature of the guard,
+and the helper says so in a comment rather than carrying a test that would pass
+either way.
 
 **Rule for next time: stop the dev server, wait for `uptime` to drop below ~4,
 then run. Nothing else while either suite runs.**
+
+## 5b. ⛔ ROOT CAUSE FOUND: the repo lives in iCloud Drive
+
+§5 says "the box gets loaded" and leaves it there. It is worth being specific,
+because the cause is fixable and it is not really about load at all.
+
+**`~/Desktop` is the iCloud-synced Desktop.** macOS Desktop-&-Documents sync is
+on, and the repo is reachable at both `~/Desktop/Dev/MoneyApp` and
+`~/Library/Mobile Documents/com~apple~CloudDocs/Desktop/Dev/MoneyApp`.
+
+⚠️ Stated to exactly the strength of the evidence: `stat` reports *different
+inodes* for the two Desktop paths, so I am **not** claiming a single directory —
+what is measured is that the contents are the same and live. `data/moneyapp.db`
+is **13,991,936 bytes with an identical mtime** through both paths, and the
+iCloud-side `.next` carries `Aug 28 10:11`, the minute my build ran. Whether
+that is a firmlink or a bidirectionally-synced pair does not change the
+conclusion, and both readings lead to it: the repo's bytes are in iCloud Drive
+and moving.
+
+So every run of `pnpm build` rewrites **1.7 GB inside a folder iCloud is
+watching**, on top of 1.4 GB of `data/` and 63 MB of baselines. Caught in the
+act: `bird` (the iCloud sync daemon) at **59% CPU** with none of my processes
+running, alongside `mediaanalysisd` at 88% and Spotlight indexing.
+
+That explains everything §5 could only describe:
+
+- why a run right after `e2e:fresh` is slower than one that is not — the build
+  is what triggers the sync storm;
+- why one spec FILE took 16.1 minutes;
+- why the failures cluster on the I/O-bound tests (DB-heavy unit files,
+  server-action mutator specs) and never on read-only ones;
+- why it is intermittent and never reproduces.
+
+### ⚠️ And a second thing, which is not about tests at all
+
+The app's own footer, on every page, reads **"Local-first · your data never
+leaves this Mac."** It is in the baselines I captured today.
+
+`data/moneyapp.db` — the whole ledger — is inside iCloud Drive and syncing. So
+is `.env`, which holds an `ANTHROPIC_API_KEY`. Neither is in git (both are
+gitignored), and iCloud does not read `.gitignore`.
+
+That is a placement fact, not a code defect, and **not mine to change** — moving
+the repo or changing an iCloud setting is the owner's decision, and iCloud Drive
+is encrypted in transit and at rest. But the sentence the app prints is not true
+while the database sits there, and that is worth knowing.
+
+**Both problems have the same one-line fix: move the repo off the Desktop** (for
+example to `~/Dev/MoneyApp`). It would end the sync contention and make the
+footer true again.
+
+---
 
 ## 6. Visual baselines — 32 regenerated, every diff read first
 
