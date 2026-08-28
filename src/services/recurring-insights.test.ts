@@ -241,3 +241,24 @@ describe("the ranking is stable", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 });
+
+/**
+ * ⛔ A subject the app cannot NAME.
+ *
+ * `insight-facts` refuses `< > { } \\` in a label BY THROWING, so a surface that
+ * builds a fact from a ledger name without checking renders its route's error
+ * boundary instead of a page. That is not hypothetical: `claude-categorize`
+ * wrote a merchant literally called `<UNKNOWN>` and `/merchants/019f4ccc…`
+ * was broken by it. Every surface that names a ledger entity carries the same
+ * guard now, and this is what proves each one still does.
+ */
+describe("a series the app cannot name", () => {
+  test("declines rather than throwing", () => {
+    const bad = addSeries({ name: "<UNKNOWN>", amountCents: -50_000 });
+    const ok = addSeries({ name: "Rent", amountCents: -100_000 });
+    addSeries({ name: "Gym", amountCents: -5_000 });
+
+    expect(recurringInsights(bundle.db, bad, TODAY)).toBeNull();
+    expect(recurringInsights(bundle.db, ok, TODAY)).not.toBeNull();
+  });
+});

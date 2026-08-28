@@ -10,6 +10,7 @@ import {
   trendFact,
   type Fact,
 } from "@/lib/insight-facts";
+import { isPrintableName } from "@/lib/printable-name";
 import { categoryBreakdown } from "./analytics";
 import { categoryMonthlyTrend } from "./category-detail";
 import { runInsights, type InsightCandidate, type SurfaceInsights } from "./insights";
@@ -108,6 +109,15 @@ function buildCandidates(
   // a category with no spend in the observed month is not a weakness and not an
   // error — there is simply nothing measured to say about it
   if (!top) return null;
+  /*
+   * A subject this app cannot NAME is one it cannot write a sentence about, and
+   * `insight-facts` refuses `< > { } \` in a label by THROWING — so without this
+   * the page renders its error boundary. See `lib/printable-name`: the write
+   * boundaries refuse such a name, but a bank prints what it prints and a row
+   * already in the table predates any guard. Silence is not a weakness; a page
+   * that will not render is.
+   */
+  if (!isPrintableName(top.name)) return null;
   const rank = rows.indexOf(top) + 1;
   const totalCents = rows.reduce((sum, r) => sum + r.spentCents, 0);
 
@@ -155,7 +165,10 @@ function buildCandidates(
       // on a category page the delta has to be about THAT category; the
       // cross-slot rule would refuse a sentence stapling another one's move to
       // this one's name, but offering it at all would be a bug worth not having
-      (subject === "largest" || m.categoryId === subject),
+      (subject === "largest" || m.categoryId === subject) &&
+      // the mover names a DIFFERENT category from `top`, so it needs its own
+      // check — see the guard above
+      isPrintableName(m.categoryName),
   );
   if (mover) {
     facts.push(

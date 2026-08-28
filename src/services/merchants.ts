@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, isNull, ne, or, type SQL } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
+import { assertPrintableName } from "@/lib/printable-name";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { merchantAliases, merchants } from "@/db/schema/merchants";
@@ -296,7 +297,15 @@ export function renameMerchant(
   newName: string,
 ): RenameMerchantResult {
   const name = newName.trim();
-  if (name === "") throw new Error("Merchant name cannot be empty");
+  /*
+   * ⛔ The write boundary for a name a PERSON chose. The insight surfaces put a
+   * merchant's name straight into a sentence, and `insight-facts` refuses
+   * `< > { } \` by throwing — so a name accepted here is a page that will not
+   * render later. Rejected at the boundary, the way `category-edit` rejects its
+   * own two characters: one guard makes the property true everywhere instead of
+   * at each place that happens to print a name. See `lib/printable-name`.
+   */
+  assertPrintableName("Merchant name", name);
 
   const merchant = db.select().from(merchants).where(eq(merchants.id, merchantId)).get();
   if (!merchant) throw new Error("Unknown merchant");

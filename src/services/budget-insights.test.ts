@@ -204,3 +204,23 @@ describe("budgetInsights — where the biggest plan sits", () => {
     for (let i = 0; i < 3; i++) expect(texts()[0]).toContain("Fix Aardvark is the largest");
   });
 });
+
+/**
+ * ⛔ A subject the app cannot NAME.
+ *
+ * `insight-facts` refuses `< > { } \\` in a label BY THROWING, so a surface that
+ * builds a fact from a ledger name without checking renders its route's error
+ * boundary instead of a page. That is not hypothetical: `claude-categorize`
+ * wrote a merchant literally called `<UNKNOWN>` and `/merchants/019f4ccc…`
+ * was broken by it. Every surface that names a ledger entity carries the same
+ * guard now, and this is what proves each one still does.
+ */
+describe("a budget the app cannot name", () => {
+  test("declines rather than throwing when the largest plan's category cannot be printed", () => {
+    addBudget(addCategory("c-house", "Fix <Housing>"), 200_000);
+    addBudget(addCategory("c-food", "Fix Food"), 50_000);
+    addBudget(addCategory("c-fun", "Fix Fun"), 25_000);
+
+    expect(budgetInsights(bundle.db, TODAY)).toBeNull();
+  });
+});

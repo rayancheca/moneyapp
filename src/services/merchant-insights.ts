@@ -3,6 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { transactions } from "@/db/schema/transactions";
 import { todayIso } from "@/lib/dates";
 import { formatMonthYear } from "@/lib/format-date";
+import { isPrintableName } from "@/lib/printable-name";
 import { rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts";
 import { categorySpending, loadCategoryIndex } from "./analytics";
 import { runInsights, type InsightCandidate, type SurfaceInsights } from "./insights";
@@ -56,6 +57,22 @@ export function merchantInsights(
   // no spending ever recorded here — nothing measured to say, which is not the
   // same as something being wrong
   if (profile.visitCount === 0 || profile.firstSeen === null || profile.lastSeen === null) return null;
+  /*
+   * ⛔ A merchant this app cannot NAME is one it cannot write a sentence about.
+   *
+   * `claude-categorize` wrote a merchant called `<UNKNOWN>` with four real rows
+   * behind it, and this page rendered the error boundary rather than a page:
+   * every sentence here puts `summary.name` in a fact's subject, and a subject
+   * carrying `{ }` could be re-read as a slot by the READ gate, so
+   * `insight-facts` refuses it — correctly, and by throwing.
+   *
+   * The write boundaries now refuse such a name (`renameMerchant`, and the
+   * model's own output in `claude-categorize`), but a guard added today cannot
+   * un-write a row already in the table, and a bank is free to print anything.
+   * So the honest behaviour is the one every other empty case here already has:
+   * say nothing. Silence is not a weakness; a page that will not render is.
+   */
+  if (!isPrintableName(summary.name)) return null;
 
   const facts: Fact[] = [];
   const candidates: InsightCandidate[] = [];

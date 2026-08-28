@@ -4,6 +4,7 @@ import { merchants } from "@/db/schema/merchants";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, todayIso } from "@/lib/dates";
 import { formatDayShort } from "@/lib/format-date";
+import { isPrintableName } from "@/lib/printable-name";
 import { countFact, deltaFact, multipleFact, scalarFact, type Fact } from "@/lib/insight-facts";
 import { loadCategoryIndex } from "./analytics";
 import { runInsights, type InsightCandidate } from "./insights";
@@ -113,7 +114,9 @@ export function noticesCard(db: AppDatabase, today: string = todayIso()): Notice
   for (const [merchantId, rows] of byMerchant) {
     rows.sort((a, b) => a.day.localeCompare(b.day) || a.id.localeCompare(b.id));
     const name = merchantNames.get(merchantId);
-    if (name === undefined) continue;
+    // see `lib/printable-name`: a merchant the app cannot name is one it cannot
+    // write a notice about, and a fact constructor would throw on the dashboard
+    if (name === undefined || !isPrintableName(name)) continue;
 
     // ── the only charge ────────────────────────────────────────────────
     const first = rows[0]!;
@@ -149,6 +152,8 @@ export function noticesCard(db: AppDatabase, today: string = todayIso()): Notice
 
   // ── a recurring charge that posted at a different amount ─────────────
   for (const entry of driftedOccurrences(db, from, today)) {
+    // a series named from raw bank text, same reason as the merchant loop above
+    if (!isPrintableName(entry.name)) continue;
     /*
      * ⛔ MAGNITUDES, not signed amounts. A bill is stored negative, so his rent
      * posting $1,100.00 against an expected $2,285.70 gives a signed difference

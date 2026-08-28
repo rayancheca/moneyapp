@@ -93,6 +93,43 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+describe("a name the app cannot print", () => {
+  /*
+   * ⛔ A live crash, not a hypothesis. `claude-categorize` wrote a merchant
+   * whose canonical name is literally `<UNKNOWN>` — four real transactions hang
+   * off it — and `/merchants/019f4ccc…` rendered the error boundary instead of a
+   * page, because `rankFact` refuses `< > { } \\` in a subject and throws.
+   *
+   * The ledger does not get to refuse a name: a bank prints what it prints, and
+   * a row already in the table cannot be un-written by a guard added today. So
+   * the surface DECLINES. Nothing to say is not a weakness; a page that will not
+   * render is.
+   */
+  test("declines rather than throwing when the merchant cannot be named", () => {
+    addMerchant("m-1", "<UNKNOWN>");
+    addMerchant("m-2", "Zzz Deli");
+    addTxn("2026-01-10", -6_000, "Food", "m-1");
+    addTxn("2026-02-10", -4_000, "Food", "m-1");
+    addTxn("2026-01-11", -1_000, "Food", "m-2");
+    addTxn("2026-02-11", -1_000, "Food", "m-2");
+
+    expect(merchantInsights(bundle.db, "m-1", TODAY)).toBeNull();
+  });
+
+  test("its rivals are unaffected — one unprintable name silences one page", () => {
+    addMerchant("m-1", "<UNKNOWN>");
+    addMerchant("m-2", "Zzz Deli");
+    addTxn("2026-01-10", -6_000, "Food", "m-1");
+    addTxn("2026-02-10", -4_000, "Food", "m-1");
+    addTxn("2026-01-11", -1_000, "Food", "m-2");
+    addTxn("2026-02-11", -1_000, "Food", "m-2");
+
+    const out = merchantInsights(bundle.db, "m-2", TODAY)!;
+    expect(out.insights.length).toBeGreaterThan(0);
+    expect(out.insights.every((i) => !i.text.includes("<UNKNOWN>"))).toBe(true);
+  });
+});
+
 describe("what a merchant page adds", () => {
   test("names where the merchant sits among the rest, and its share of a category", () => {
     addMerchant("m-1", "Zzz Eats");

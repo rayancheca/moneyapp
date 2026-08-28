@@ -8,6 +8,7 @@ import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
 import { institutions } from "@/db/schema/institutions";
 import {
+  updateAccount,
   createAccount,
   createInstitution,
   editAccount,
@@ -177,5 +178,39 @@ describe("editAccount — type/subtype (S3, guarded)", () => {
       type: "checking",
     });
     expect(result.rederived).toBe(false);
+  });
+});
+
+/**
+ * ⛔ `/accounts/[id]` writes the account's name into a fact subject, and
+ * `insight-facts` refuses `< > { } \\` by THROWING — so a name accepted here is
+ * a page that renders its error boundary instead of a balance. The charset is
+ * part of the schema for the same reason the length is. See
+ * `lib/printable-name`.
+ */
+describe("a name the app could never print", () => {
+  test("is refused on create and on update, and nothing is written", () => {
+    const before = bundle.db.select().from(accounts).all().length;
+    /*
+     * ⚠️ The message is asserted, not just "it threw". `updateAccount` was
+     * missing from this file's imports on the first run and the bare `.toThrow()`
+     * passed on the ReferenceError — a test that asserted nothing, caught by
+     * `tsc` rather than by the suite.
+     */
+    expect(() => createAccount(bundle.db, { institutionId: instId, name: "<UNKNOWN>", type: "checking" })).toThrow(
+      /cannot contain/,
+    );
+    expect(bundle.db.select().from(accounts).all().length).toBe(before);
+
+    const id = createAccount(bundle.db, { institutionId: instId, name: "Real Checking", type: "checking" });
+    expect(() => updateAccount(bundle.db, id, { name: "Che{cking}" })).toThrow(/cannot contain/);
+    /*
+     * ⛔ And through `editAccount`, which is the schema the rename UI actually
+     * uses — the create-path guard alone would have left the reachable path open.
+     */
+    expect(() =>
+      editAccount(bundle.db, id, { name: "Che<cking>", institutionId: instId, last4: null }),
+    ).toThrow(/cannot contain/);
+    expect(bundle.db.select().from(accounts).where(eq(accounts.id, id)).get()!.name).toBe("Real Checking");
   });
 });

@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
+import { assertPrintableName } from "@/lib/printable-name";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
@@ -55,6 +56,15 @@ function assertNameIsPrintable(name: string): void {
       throw new Error(`Category names cannot contain "${char}" — it is how paths and lists are punctuated`);
     }
   }
+  /*
+   * A SECOND rule, layered under the first rather than merged into it, because
+   * the two forbid `>` for different reasons and the specific reason is the
+   * useful one. This half is about the sentences on /spending, /budgets and
+   * /categories/[id]: a name carrying `{ }` could be re-read as a slot by the
+   * insight READ gate, and `insight-facts` refuses it by THROWING — which is a
+   * broken page, not a missing sentence. See `lib/printable-name`.
+   */
+  assertPrintableName("Category names", name);
 }
 
 /** Names the import profiles resolve by (parent, and "parent > sub"). */

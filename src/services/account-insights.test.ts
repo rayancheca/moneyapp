@@ -176,3 +176,27 @@ describe("what it refuses to say", () => {
     expect(accountInsights(bundle.db, "no-such-account", TODAY)).toBeNull();
   });
 });
+
+/**
+ * ⛔ A subject the app cannot NAME.
+ *
+ * `insight-facts` refuses `< > { } \\` in a label BY THROWING, so a surface that
+ * builds a fact from a ledger name without checking renders its route's error
+ * boundary instead of a page. That is not hypothetical: `claude-categorize`
+ * wrote a merchant literally called `<UNKNOWN>` and `/merchants/019f4ccc…`
+ * was broken by it. Every surface that names a ledger entity carries the same
+ * guard now, and this is what proves each one still does.
+ */
+describe("an account the app cannot name", () => {
+  test("declines rather than throwing", () => {
+    addAccount("a-1", "Big Savings", "checking");
+    addAccount("a-2", "<UNKNOWN>", "checking");
+    setBalance("a-1", 90_000);
+    setBalance("a-2", 10_000);
+    addTxn("a-2", -500);
+
+    expect(accountInsights(bundle.db, "a-2", TODAY)).toBeNull();
+    // its neighbour is unaffected: one unprintable name silences one page
+    expect(accountInsights(bundle.db, "a-1", TODAY)).not.toBeNull();
+  });
+});

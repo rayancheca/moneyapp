@@ -7,6 +7,7 @@ import { categories } from "@/db/schema/categories";
 import { merchantAliases, merchants } from "@/db/schema/merchants";
 import { appSettings } from "@/db/schema/settings";
 import { transactions } from "@/db/schema/transactions";
+import { isPrintableName } from "@/lib/printable-name";
 import { notUserOwned } from "./merchants";
 
 /**
@@ -231,6 +232,18 @@ export async function classifyPendingMerchants(
         // selector — it must be exactly one of the descriptions we sent, or a
         // hostile bank string could poison OTHER merchants' mappings
         if (!submitted.has(m.description)) continue;
+        /*
+         * ⛔ And the model's NAME is content the app will print, not just a
+         * selector. This exact path wrote a merchant called `<UNKNOWN>`, four
+         * real rows landed on it, and `/merchants/019f4ccc…` rendered its error
+         * boundary from then on: every insight surface puts a merchant name in
+         * a fact subject, and `insight-facts` refuses `< > { } \` by throwing.
+         *
+         * Skipped rather than sanitised — a name the app rewrote would be the
+         * app's invention, and the queue leaving the merchant unclassified is
+         * the honest outcome. See `lib/printable-name`.
+         */
+        if (!isPrintableName(m.canonicalName)) continue;
         const categoryId = resolveCategoryPath(db, m.category);
         if (!categoryId) continue;
 

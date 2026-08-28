@@ -279,6 +279,20 @@ describe("renameMerchant", () => {
 
   test("rejects empty names, unknown merchants, and clashes with existing names", () => {
     expect(() => renameMerchant(bundle.db, netflixId, "   ")).toThrow(/cannot be empty/);
+  });
+
+  /*
+   * ⛔ A name a person chose is still a name the app will PRINT. Every insight
+   * surface puts a merchant name into a fact subject and `insight-facts` refuses
+   * `< > { } \\` by throwing, so a name accepted here is a page that renders its
+   * error boundary later. See `lib/printable-name`.
+   */
+  test("refuses a name the app could never print in a sentence", () => {
+    const before = bundle.db.select().from(merchants).where(eq(merchants.id, netflixId)).get()!.canonicalName;
+    for (const bad of ["<UNKNOWN>", "Net{flix}", "Net\\flix", "a>b"]) {
+      expect(() => renameMerchant(bundle.db, netflixId, bad)).toThrow(/cannot contain/);
+    }
+    expect(bundle.db.select().from(merchants).where(eq(merchants.id, netflixId)).get()!.canonicalName).toBe(before);
     expect(() => renameMerchant(bundle.db, "nope", "X")).toThrow(/Unknown merchant/);
     expect(() => renameMerchant(bundle.db, netflixId, "Spotify")).toThrow(/already exists/);
   });

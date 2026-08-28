@@ -289,3 +289,53 @@ describe("monotonicDirection", () => {
     expect(monotonicDirection([1, 2, 2, 3])).toBeNull();
   });
 });
+
+/**
+ * ⛔ A subject the app cannot NAME.
+ *
+ * `insight-facts` refuses `< > { } \` in a label BY THROWING, so a surface that
+ * builds a fact from a ledger name without checking renders its route's error
+ * boundary instead of a page. That is not hypothetical: `claude-categorize`
+ * wrote a merchant literally called `<UNKNOWN>` and `/merchants/019f4ccc…` was
+ * broken by it. Every surface that names a ledger entity carries the same guard
+ * now, and this is what proves each one still does.
+ */
+describe("a category the app cannot name", () => {
+  /** a top-level category outside the seeded taxonomy, named unprintably */
+  function addUnprintableCategory(): void {
+    bundle.db
+      .insert(categories)
+      .values({
+        id: "c-bad",
+        name: "<UNKNOWN>",
+        parentId: null,
+        kind: "expense",
+        sortOrder: 99,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      })
+      .run();
+  }
+
+  test("declines rather than throwing when the largest category cannot be printed", () => {
+    addUnprintableCategory();
+    ordinaryLedger();
+    // bigger than Food's $300, so it becomes the subject the page would name
+    addTxn("2026-07-11", -50_000, "<UNKNOWN>");
+
+    expect(spendingInsights(bundle.db, TODAY)).toBeNull();
+  });
+
+  test("a MOVER it cannot name is skipped, and the rest of the page still speaks", () => {
+    addUnprintableCategory();
+    ordinaryLedger();
+    // a big move in the unnameable category — smaller than Food overall, so
+    // Food is still the subject and only the delta sentence is at risk
+    spendAllBaselineMonths("<UNKNOWN>", 1_000);
+    addTxn("2026-07-11", -25_000, "<UNKNOWN>");
+
+    const out = spendingInsights(bundle.db, TODAY)!;
+    expect(out.insights.every((i) => !i.text.includes("<UNKNOWN>"))).toBe(true);
+    expect(out.insights[0]!.text).toBe("Food is the largest of your 3 spending categories, at $300.00.");
+  });
+});

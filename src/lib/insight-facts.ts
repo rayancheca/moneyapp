@@ -1,4 +1,5 @@
 import { formatCents, formatCentsSigned } from "./money";
+import { UNPRINTABLE_NAME_CHARS } from "./printable-name";
 
 /**
  * A fact an insight is allowed to speak about — carrying a MACHINE-READABLE
@@ -163,18 +164,23 @@ function assertSlotId(id: string): void {
 /**
  * `subject` and the various labels are rendered verbatim into a sentence, so
  * they are the one place a caller could smuggle markup or a fake figure into an
- * insight. They come from the ledger — a category name, a month — and the
- * ledger's own name rules already forbid the interesting characters, but this
- * module is downstream of every caller and cannot rely on that.
+ * insight. They come from the ledger — a category name, a month — and this
+ * module is downstream of every caller, so it checks rather than assuming.
  *
  * Digits are allowed: "Feb 2026" and "SoFi 9067" are real labels. What is
  * refused is anything that could open a tag, an entity or a slot.
+ *
+ * ⛔ The rule itself lives in `printable-name`, imported rather than restated.
+ *
+ * It has to be enforced in two other places this module cannot reach — the
+ * write boundaries that accept a name from a person or a model, and the
+ * surfaces that must DECLINE to speak about a name a bank printed — and three
+ * copies of one character class is how they drift apart. `printable-name`'s
+ * header carries the reasoning for the set.
  */
-const FORBIDDEN_IN_LABEL = /[<>{}\\]/;
-
 function assertLabel(what: string, value: string): void {
   if (value.trim() === "") throw new Error(`Fact ${what} cannot be empty`);
-  if (FORBIDDEN_IN_LABEL.test(value)) {
+  if (UNPRINTABLE_NAME_CHARS.test(value)) {
     throw new Error(`Fact ${what} cannot contain < > { } or a backslash: ${JSON.stringify(value)}`);
   }
 }

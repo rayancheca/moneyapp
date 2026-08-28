@@ -6,11 +6,23 @@ import { holdingEvents } from "@/db/schema/holding-events";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { isInvestmentSide } from "@/lib/account-side";
+import { isPrintableName } from "@/lib/printable-name";
 import { latestBalances, rebuildAccount, type AccountBalance } from "./derivation";
 
 export const accountInputSchema = z.object({
   institutionId: z.string().min(1),
-  name: z.string().trim().min(1).max(80),
+  /*
+   * ⛔ The charset matters as much as the length. `/accounts/[id]` writes the
+   * account's name into a fact's subject, and `insight-facts` refuses
+   * `< > { } \` by THROWING — so a name accepted here is a page that renders
+   * its error boundary instead of a balance. See `lib/printable-name`.
+   */
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(80)
+    .refine(isPrintableName, { message: "Account names cannot contain < > { } or a backslash" }),
   type: z.enum(ACCOUNT_TYPES),
   subtype: z.enum(ACCOUNT_SUBTYPES).nullish(),
   last4: z
@@ -146,7 +158,17 @@ export function updateAccount(db: AppDatabase, id: string, input: Partial<Accoun
  */
 export const accountEditSchema = z
   .object({
-    name: z.string().trim().min(1).max(80),
+    /*
+     * ⛔ The SAME charset rule as `accountInputSchema`, and this is the schema
+     * the rename UI actually goes through — guarding only the create path would
+     * have left the reachable one open. See `lib/printable-name`.
+     */
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(80)
+      .refine(isPrintableName, { message: "Account names cannot contain < > { } or a backslash" }),
     institutionId: z.string().min(1),
     last4: z
       .string()

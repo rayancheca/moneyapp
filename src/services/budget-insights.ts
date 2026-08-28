@@ -1,6 +1,7 @@
 import type { AppDatabase } from "@/db/client";
 import { todayIso } from "@/lib/dates";
 import { rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts";
+import { isPrintableName } from "@/lib/printable-name";
 import { budgetStatuses, totalBudgetedCents, type BudgetStatus } from "./budgets";
 import { runInsights, type InsightCandidate, type SurfaceInsights } from "./insights";
 import { provenanceFor } from "./provenance";
@@ -73,6 +74,15 @@ export function budgetInsights(db: AppDatabase, today: string = todayIso()): Sur
   const top: BudgetStatus = ranked[0]!;
   const planCents = top.budget.amountCents;
   if (planCents <= 0) return null;
+  /*
+   * A subject this app cannot NAME is one it cannot write a sentence about, and
+   * `insight-facts` refuses `< > { } \` in a label by THROWING — so without this
+   * the page renders its error boundary. See `lib/printable-name`: the write
+   * boundaries refuse such a name, but a bank prints what it prints and a row
+   * already in the table predates any guard. Silence is not a weakness; a page
+   * that will not render is.
+   */
+  if (!isPrintableName(top.categoryPath)) return null;
 
   const prove = () => provenanceFor(db, { kind: "budgetPlan", id: top.budget.id, label: top.categoryPath });
 

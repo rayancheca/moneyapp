@@ -76,6 +76,21 @@ describe("renameCategory", () => {
     expect(byName("Food")?.id).toBe(food.id);
   });
 
+  /*
+   * ⛔ A SECOND rule with a different reason, layered under the punctuation one.
+   * A category name is written into a fact subject on /spending, /budgets and
+   * /categories/[id], and `insight-facts` refuses `< > { } \\` by THROWING —
+   * a broken page, not a missing sentence. See `lib/printable-name`.
+   */
+  test("refuses a name the insight surfaces could never print", () => {
+    const food = byName("Food")!;
+    for (const name of ["<Fun>", "Fo{o}d", "Foo\\d"]) {
+      expect(() => renameCategory(bundle.db, food.id, name)).toThrow(/cannot contain/);
+      expect(() => createCategory(bundle.db, { name, kind: "expense" })).toThrow(/cannot contain/);
+    }
+    expect(byName("Food")?.id).toBe(food.id);
+  });
+
   test("rejects empty and unknown", () => {
     const food = byName("Food")!;
     expect(() => renameCategory(bundle.db, food.id, "   ")).toThrow(/cannot be empty/);

@@ -2,6 +2,7 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { todayIso } from "@/lib/dates";
 import { rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts";
+import { isPrintableName } from "@/lib/printable-name";
 import { runInsights, type InsightCandidate, type SurfaceInsights } from "./insights";
 import { provenanceFor } from "./provenance";
 import {
@@ -107,6 +108,15 @@ export function recurringInsights(
   const rows = new Map(db.select().from(recurringSeries).all().map((r) => [r.id, r as LapseInput]));
   const self = all.find((s) => s.id === seriesId);
   if (!self || !isLive(self, rows.get(seriesId), today)) return null;
+  /*
+   * A subject this app cannot NAME is one it cannot write a sentence about, and
+   * `insight-facts` refuses `< > { } \` in a label by THROWING — so without this
+   * the page renders its error boundary. See `lib/printable-name`: the write
+   * boundaries refuse such a name, but a bank prints what it prints and a row
+   * already in the table predates any guard. Silence is not a weakness; a page
+   * that will not render is.
+   */
+  if (!isPrintableName(self.name)) return null;
 
   const isIncome = self.kind === "income";
   const side = all.filter((s) => isLive(s, rows.get(s.id), today) && (s.kind === "income") === isIncome);

@@ -229,6 +229,19 @@ describe("a recurring bill that posted at a different amount", () => {
     expect(drift?.text).toContain("fell by $1,185.70");
   });
 
+  /*
+   * The other half of the unprintable-name guard, and the one the first
+   * mutation run showed nothing covered. A series is named from the merchant
+   * map or from raw bank text, so this name is not the app's choice either.
+   */
+  test("a series the app cannot name produces no drift notice", () => {
+    const seriesId = addSeries("<UNKNOWN>", -228_570);
+    const txnId = addTxn("2026-08-16", -110_000, "Housing", null);
+    bundle.db.update(transactions).set({ recurringSeriesId: seriesId }).where(eq(transactions.id, txnId)).run();
+
+    expect(noticesCard(bundle.db, TODAY)).toBeNull();
+  });
+
   test("a bill that posted MORE is a rise", () => {
     // the band is the widest of $1, 2% and 2σ — here $10, so $10 is INSIDE it
     const seriesId = addSeries("Zzz Internet", -5_000);
@@ -297,5 +310,29 @@ describe("monthsBetween", () => {
   test("a reversed window does not run away", () => {
     // the guard, not the arithmetic: a `to` before `from` must terminate
     expect(monthsBetween("2026-08-01", "2026-01-01").length).toBeLessThanOrEqual(24);
+  });
+});
+
+/**
+ * ⛔ A subject the app cannot NAME.
+ *
+ * `insight-facts` refuses `< > { } \` in a label BY THROWING, so a surface that
+ * builds a fact from a ledger name without checking renders its route's error
+ * boundary instead of a page. That is not hypothetical: `claude-categorize`
+ * wrote a merchant literally called `<UNKNOWN>` and `/merchants/019f4ccc…` was
+ * broken by it. Every surface that names a ledger entity carries the same guard
+ * now, and this is what proves each one still does.
+ */
+describe("a merchant the dashboard cannot name", () => {
+  test("no notice is built, and the card is not taken down with it", () => {
+    addMerchant("m-bad", "<UNKNOWN>");
+    addTxn("2026-08-12", -35_758, "Transport", "m-bad");
+    addMerchant("m-ok", "Zzz Insurance");
+    addTxn("2026-08-13", -35_758, "Transport", "m-ok");
+
+    const out = noticesCard(bundle.db, TODAY)!;
+    expect(out.notices.map((n) => n.text)).toEqual([
+      "Zzz Insurance appears once in your ledger, for $357.58.",
+    ]);
   });
 });

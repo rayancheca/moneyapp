@@ -248,3 +248,63 @@ describe("classifyPendingMerchants — a failed run is recorded as failed", () =
     expect(lastRun!.classified).toBe(1);
   });
 });
+
+/**
+ * ⛔ The model's canonical name is CONTENT the app will print, not only a key.
+ *
+ * This exact path wrote a merchant literally called `<UNKNOWN>` into the real
+ * ledger — four transactions hang off it — and `/merchants/019f4ccc…` rendered
+ * its error boundary from then on, because every insight surface puts a
+ * merchant name into a fact subject and `insight-facts` refuses `< > { } \\` by
+ * throwing. The prompt-injection guard above covers the model's `description`
+ * because that is a WRITE SELECTOR; this covers the half that is prose.
+ */
+describe("a name the app could never print", () => {
+  test("the merchant is skipped, and the row stays in the queue rather than being named wrongly", async () => {
+    const rowId = insertTxn();
+    mockBatch([
+      {
+        description: normalizeDescription(COFFEE_RAW),
+        canonicalName: "<UNKNOWN>",
+        category: "Food > Coffee",
+        confidence: 0.99,
+      },
+    ]);
+
+    const result = await classifyPendingMerchants(bundle.db);
+
+    expect(result.classified).toBe(0);
+    expect(bundle.db.select().from(merchants).all().map((m) => m.canonicalName)).not.toContain("<UNKNOWN>");
+    const row = bundle.db.select().from(transactions).where(eq(transactions.id, rowId)).get()!;
+    expect(row.merchantId).toBeNull();
+    expect(row.categoryId).toBeNull();
+    // still queued: an unnameable answer is no answer, not a decision
+    expect(pendingMerchantQueue(bundle.db).map((q) => q.description)).toContain(normalizeDescription(COFFEE_RAW));
+  });
+
+  test("a well-named merchant in the SAME batch is unaffected", async () => {
+    const OTHER_RAW = "WHOLE FOODS MKT 102";
+    insertTxn();
+    insertTxn(OTHER_RAW);
+    mockBatch([
+      {
+        description: normalizeDescription(COFFEE_RAW),
+        canonicalName: "<UNKNOWN>",
+        category: "Food > Coffee",
+        confidence: 0.99,
+      },
+      {
+        description: normalizeDescription(OTHER_RAW),
+        canonicalName: "Whole Foods Market",
+        category: "Food > Groceries",
+        confidence: 0.95,
+      },
+    ]);
+
+    await classifyPendingMerchants(bundle.db);
+
+    const names = bundle.db.select().from(merchants).all().map((m) => m.canonicalName);
+    expect(names).toContain("Whole Foods Market");
+    expect(names).not.toContain("<UNKNOWN>");
+  });
+});
