@@ -323,7 +323,15 @@ export async function seedInvestments(db: AppDatabase, today: string): Promise<v
 async function seedRecurring(db: AppDatabase): Promise<void> {
   const { recurringSeries } = await import("../src/db/schema/recurring");
   const rows = [
-    { name: "Paycheck", kind: "income" as const, cadence: "biweekly" as const, nextExpectedOn: "2026-07-10", nextExpectedAmountCents: 3_200_00, lastMatchedOn: "2026-06-26", intervalDaysAvg: 14 },
+    /*
+     * ⚠️ $2,943.19, which is what the ACME deposits in the corpus actually are.
+     * It was $3,200.00 while nothing was linked to this series, and §9 links the
+     * deposits so `incomeCard` has evidence — at which point a round number
+     * nobody was ever paid became a $256.81 "drift" on every payday, and three
+     * near-identical notices crowded the notices card. A schedule should agree
+     * with its own evidence.
+     */
+    { name: "Paycheck", kind: "income" as const, cadence: "biweekly" as const, nextExpectedOn: "2026-07-10", nextExpectedAmountCents: 2_943_19, lastMatchedOn: "2026-06-26", intervalDaysAvg: 14 },
     { name: "Rent", kind: "bill" as const, cadence: "monthly" as const, nextExpectedOn: "2026-07-09", nextExpectedAmountCents: -1_800_00, lastMatchedOn: "2026-06-09", intervalDaysAvg: 30 },
     { name: "Netflix", kind: "subscription" as const, cadence: "monthly" as const, nextExpectedOn: "2026-07-16", nextExpectedAmountCents: -15_99, lastMatchedOn: "2026-06-16", intervalDaysAvg: 30 },
     { name: "Gym Membership", kind: "subscription" as const, cadence: "monthly" as const, nextExpectedOn: "2026-07-20", nextExpectedAmountCents: -49_00, lastMatchedOn: "2026-06-20", intervalDaysAvg: 30 },
@@ -342,6 +350,159 @@ async function seedRecurring(db: AppDatabase): Promise<void> {
         status: "confirmed" as const,
       })),
     )
+    .run();
+}
+
+/**
+ * §9 — the three decision cards that had NO pixel coverage anywhere, and could
+ * not be given any by a spec change.
+ *
+ * ⛔ `noticesCard`, `carCard` and `incomeCard` all returned null on this
+ * fixture, so nine of the deck's ten rendering cards could be photographed and
+ * these three could not: a spec can only open a card the seed produces. Measured
+ * first (`scripts/probe-e2e-missing-cards.ts`) rather than guessed, because each
+ * one was waiting for something different.
+ *
+ * ⚠️ **Not one cent moves here.** Every change below is a LINK, a column, or a
+ * commitment with no posted rows. That is deliberate: a new transaction would
+ * re-derive daily balances and move net worth, the bridge, runway, every account
+ * chart and every spending total — dozens of baselines, to photograph three
+ * cards. Income and spending are identical before and after.
+ */
+async function seedMissingCards(db: AppDatabase): Promise<void> {
+  const { categories } = await import("../src/db/schema/categories");
+  const { recurringSeries } = await import("../src/db/schema/recurring");
+  const { transactions } = await import("../src/db/schema/transactions");
+  const { and, eq, like } = await import("drizzle-orm");
+
+  const seriesId = (name: string): string => {
+    const row = db.select({ id: recurringSeries.id }).from(recurringSeries).where(eq(recurringSeries.name, name)).get();
+    if (!row) throw new Error(`seedMissingCards: missing series ${name}`);
+    return row.id;
+  };
+
+  /*
+   * ── income ──────────────────────────────────────────────────────────
+   *
+   * `incomeCard` needs a confirmed income series with EVIDENCE: without a
+   * single linked deposit there is no schedule to reconcile against, and
+   * `cashEarningsReadings` returns nothing. The Paycheck series existed; nothing
+   * had ever been attributed to it.
+   *
+   * The ACME direct deposits only, and that is the story rather than an
+   * oversight: they stop on 2026-05-08 and ATM cash deposits carry the wage from
+   * 2026-05-14 onwards. So the schedule keeps implying paydays the bank never
+   * shows, which is exactly the gap this card exists to name — and it is the
+   * owner's own ledger's shape (docs/income-ground-truth.md).
+   */
+  db.update(transactions)
+    .set({ recurringSeriesId: seriesId("Paycheck") })
+    .where(
+      and(
+        eq(transactions.status, "active"),
+        like(transactions.normalizedDescription, "ACME CORP PAYROLL%"),
+      ),
+    )
+    .run();
+
+  /*
+   * ── notices ─────────────────────────────────────────────────────────
+   *
+   * A notice needs one of three things, and two of them were unreachable here:
+   * no merchant in this corpus has a single expense charge (every one has 23+),
+   * and none has a charge eight times its own median. The third is a recurring
+   * bill that posted at a different amount, which costs no money at all.
+   *
+   * Rent is expected at $1,800.00 and posts at $2,150.00 — a $350.00 gap that
+   * was invisible because nothing linked the posting to the schedule and because
+   * `classifyPostedAmount` returns "paid" on a null spread: a series nobody has
+   * measured has no normal to depart from.
+   *
+   * ⚠️ The JUNE posting, not July. June's occurrence (2026-06-09) is in the past
+   * at E2E_FAKE_TODAY and inside the card's 90-day window, so it can be graded;
+   * July's (2026-07-09) is tomorrow and a bill that has not come due yet cannot
+   * have been paid differently. Tolerance is widened to 10 days on this series
+   * alone because the rent posts on the 1st and the schedule expects the 9th —
+   * the same eight-day lag the real ledger has, and the reason pass 57 had to
+   * separate a bill's DUE day from its POSTING day.
+   */
+  db.update(recurringSeries)
+    .set({ amountCentsStddev: 500, toleranceDays: 10 })
+    .where(eq(recurringSeries.id, seriesId("Rent")))
+    .run();
+  db.update(transactions)
+    .set({ recurringSeriesId: seriesId("Rent") })
+    .where(
+      and(
+        eq(transactions.status, "active"),
+        eq(transactions.postedOn, "2026-06-01"),
+        // ⚠️ the DAY is not the identity. Matching on the date alone linked
+        // every row posted that morning to the rent schedule, and the notice
+        // then read "Rent fell by $1,793.32" — the drift of somebody else's
+        // charge, in rent's name.
+        like(transactions.normalizedDescription, "%WESTVIEW APARTMENTS%"),
+      ),
+    )
+    .run();
+
+  /*
+   * ── car ─────────────────────────────────────────────────────────────
+   *
+   * `carCard` returns null the moment there is no top-level `Car` category, and
+   * a fresh ledger has none. The category is one level deep, matching the real
+   * ledger's own shape.
+   *
+   * ⛔ `userCategoryId` is the ONLY way a series with no posted rows can reach a
+   * category: membership is otherwise derived FROM postings. That is not a
+   * workaround — it is the documented case the column exists for, a lease signed
+   * before its first charge — and it keeps every spending total untouched.
+   */
+  const carId = "e2e-car-category";
+  db.insert(categories)
+    .values({
+      id: carId,
+      name: "Car",
+      parentId: null,
+      kind: "expense",
+      sortOrder: 50,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    })
+    .run();
+  db.insert(recurringSeries)
+    .values([
+      {
+        name: "Car Lease",
+        kind: "bill" as const,
+        cadence: "monthly" as const,
+        intervalDaysAvg: 30,
+        amountCentsAvg: -450_00,
+        nextExpectedOn: "2026-07-22",
+        nextExpectedAmountCents: -450_00,
+        lastMatchedOn: "2026-06-22",
+        status: "confirmed" as const,
+        userCategoryId: carId,
+      },
+      {
+        name: "Car Insurance",
+        kind: "bill" as const,
+        cadence: "monthly" as const,
+        intervalDaysAvg: 30,
+        amountCentsAvg: -128_00,
+        /*
+         * ⚠️ The 26th, not the 24th. On the 24th it shared a calendar day with a
+         * payday and the cell collapsed to one signed total ("2.8k Paycheck +1"),
+         * which broke `recurring-schedule`'s premise that every monthly series
+         * sits on its own day of month — a fixture should not manufacture the
+         * collision a spec exists to rule out.
+         */
+        nextExpectedOn: "2026-07-26",
+        nextExpectedAmountCents: -128_00,
+        lastMatchedOn: "2026-06-26",
+        status: "confirmed" as const,
+        userCategoryId: carId,
+      },
+    ])
     .run();
 }
 
@@ -613,6 +774,10 @@ export async function seedE2eDatabase(dbPath: string): Promise<SeedSummary> {
 
     // §8 Budgets: pace bars in all three tones + one expected-recurring tail
     await seedBudgets(db);
+
+    // §9 the three decision cards no baseline has ever seen — a car, an income
+    // schedule with evidence behind it, and a notice worth reading
+    await seedMissingCards(db);
 
     // the synthetic corpus categorizes too cleanly to leave a review queue;
     // seed a deterministic clustered backlog so the §3.3 inbox + drain render

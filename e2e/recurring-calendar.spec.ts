@@ -40,9 +40,11 @@ test("every day with activity prints its own signed total", async ({ page }) => 
    *   Jul 6  Storage   −$45.00    not known (due, but SoFi Checking is imported
    *                                            only through 07-04 — no evidence)
    *   Jul 9  Rent      −$1,800.00 upcoming
-   *   Jul 10 Paycheck  +$3,200.00 upcoming (biweekly → 07-24 as well)
+   *   Jul 10 Paycheck  +$2,943.19 upcoming (biweekly → 07-24 as well)
    *   Jul 16 Netflix   −$15.99    upcoming
    *   Jul 20 Gym       −$49.00    upcoming
+   *   Jul 22 Car Lease −$450.00   upcoming (§9 — the car card had no fixture)
+   *   Jul 26 Car Ins.  −$128.00   upcoming
    *
    * The compact figures are the assertion that matters: they are what the grid
    * actually says about money, and a scale change, a sign flip or a lost digit
@@ -57,20 +59,22 @@ test("every day with activity prints its own signed total", async ({ page }) => 
     "5 MK ✕ -125 Meal Kit",
     "6 SU ? -45 Storage unit",
     "9 R • -1.8k Rent",
-    "10 P • 3.2k Paycheck",
+    "10 P • 2.9k Paycheck",
     "16 • -16 Netflix",
     "20 GM • -49 Gym Membership",
-    "24 P • 3.2k Paycheck",
+    "22 CL • -450 Car Lease",
+    "24 P • 2.9k Paycheck",
+    "26 CI • -128 Car Insurance",
   ]);
 
   // …and the month footer totals them. Expected excludes the missed Meal Kit:
-  // -1800 + 3200 - 15.99 - 49 + 3200 = 4535.01.
+  // -1800 + 2943.19 - 15.99 - 49 - 450 + 2943.19 - 128 = 3443.39.
   // `innerText` applies text-transform, and the footer's labels are uppercased
   // in CSS — so these read SETTLED/EXPECTED, not Settled/Expected.
   const grid = page.getByRole("grid", { name: "July 2026" }).locator("..");
   const footer = (await grid.innerText()).replace(/\s+/g, " ");
   expect(footer).toContain("SETTLED $0.00");
-  expect(footer).toContain("EXPECTED +$4,535.01");
+  expect(footer).toContain("EXPECTED +$3,443.39");
   // The unmeasured money is named and totalled rather than left implicit. The
   // old footer printed "POSTED $0.00" beside a bare "1 missed", which reads as a
   // month in which nothing happened and one thing failed — both misleading, and
@@ -160,9 +164,10 @@ for (const { width, expectNames } of NARROW_WIDTHS) {
 
     // guard the guard: a filter over an empty set also returns [], which would
     // make both assertions above vacuous the day a selector stops matching.
-    // Seven populated days in July 2026 — the six recurring marks plus the
-    // "Storage unit" charge the ledger cannot settle.
-    expect(await amounts.count()).toBe(7);
+    // Nine populated days in July 2026 — the eight recurring marks (the six that
+    // were here plus §9's two car commitments) and the "Storage unit" charge the
+    // ledger cannot settle.
+    expect(await amounts.count()).toBe(9);
 
     /*
      * …and the breakpoint itself, which every check above would pass without.
@@ -235,11 +240,27 @@ test("paging back to a posted charge renders it as paid", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Jul 3, 2024 — 1 item: Netflix paid -$15.49" }),
   ).toBeVisible();
-  expect(await cellTexts(page)).toEqual(["3 ✓ -15 Netflix"]);
+  /*
+   * ⚠️ July 2024 also carries two paydays now. §9 links the ACME direct deposits
+   * to the Paycheck series so `incomeCard` has evidence to reconcile against —
+   * and a linked deposit is a posted charge, so the calendar settles it exactly
+   * as it settles the Netflix row this test was written for. Enumerated rather
+   * than loosened: "and nothing else" is half of what this assertion is worth.
+   */
+  expect(await cellTexts(page)).toEqual([
+    "3 ✓ -15 Netflix",
+    "5 P ✓ 2.9k Paycheck",
+    "19 P ✓ 2.9k Paycheck",
+  ]);
 
-  // a posted charge counts as Posted, never as Upcoming
+  /*
+   * A posted charge counts as Posted, never as Upcoming — and EXPECTED is the
+   * half of that which is actually the claim. The settled TOTAL now sums two
+   * paydays alongside the Netflix charge, so the proof that this particular
+   * charge settled is the day button's own accessible name, asserted above.
+   */
   const grid = page.getByRole("grid", { name: "July 2024" }).locator("..");
   const footer = (await grid.innerText()).replace(/\s+/g, " ");
-  expect(footer).toContain("SETTLED -$15.49");
+  expect(footer).toContain("SETTLED +$5,870.89");
   expect(footer).toContain("EXPECTED $0.00");
 });

@@ -145,14 +145,28 @@ test.describe("dashboard decision cards", () => {
   });
 
   /**
-   * `carCard` returns null when the ledger has no top-level Car category, and
-   * the fixture has none. A card of zeroes would be worse than no card, so the
-   * absence is the correct render and is asserted rather than assumed.
+   * ⛔ This test used to assert the OPPOSITE — that the car card is absent —
+   * because the fixture had no top-level Car category and `carCard` returns null
+   * without one. That made it one of three cards no baseline had ever seen, so
+   * §9 of the seed gives the fixture a car: the category plus two commitments
+   * overridden into it with `userCategoryId`, which is how a lease signed before
+   * its first charge reaches a category at all. Not a cent moves.
+   *
+   * The absence case is still covered — by `committed.test.ts`, against a ledger
+   * built without a Car category, which is where a null-return belongs.
    */
-  test("the car card is absent on a ledger with no car", async ({ page }) => {
+  test("the car card names what the car costs a month", async ({ page }) => {
     const card = page.locator("section:has(#decisions-heading)");
-    await expect(card.getByText("The car", { exact: true })).toHaveCount(0);
-    await expect(card.getByText(/a month, all in/)).toHaveCount(0);
+    await expect(card.getByText("The car", { exact: true })).toHaveCount(1);
+    // $450.00 lease + $128.00 insurance, and the card says what it is measuring
+    await expect(card.getByText(/a month, all in/)).toHaveCount(1);
+    /*
+     * ⚠️ Counted, not `toBeVisible`. The deck shows ONE card at a time and holds
+     * the rest at `opacity: 0` — which is exactly why nine of its ten cards had
+     * no pixel coverage until `?cards=grid` was photographed. A visibility
+     * assertion here would be asserting which card the deck happens to open on.
+     */
+    await expect(card.getByText("$578.00", { exact: true })).toHaveCount(1);
   });
 
   /**

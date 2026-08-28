@@ -65,9 +65,19 @@ export function LinkedTransactions({
     <ul className="divide-y divide-line">
       {txns.map((t) => (
         <li key={t.id} className="flex items-center justify-between gap-2 py-2 text-sm">
-          <div className="min-w-0">
+          {/*
+            ⛔ `truncate` belongs on this BLOCK, not on the inline span below it.
+            On an inline element `overflow`/`text-overflow` do nothing and only
+            the `white-space: nowrap` half applies — so the misplaced utility was
+            not merely inert, it was the CAUSE: the row could no longer wrap and
+            pushed /recurring/[id] to 378px inside a 320px viewport. Invisible
+            until a linked row carried a long descriptor ("ACH PYMT WESTVIEW
+            APARTMENTS RENT" plus an account name); the one seeded before it was
+            short enough to fit.
+          */}
+          <div className="min-w-0 truncate">
             <span className="figures mr-2 text-xs text-ink-faint">{t.postedOn}</span>
-            <span className="truncate">{t.description}</span>
+            <span>{t.description}</span>
             <span className="ml-2 text-[11px] text-ink-faint">{t.accountName}</span>
           </div>
           <div className="flex shrink-0 items-center gap-1">

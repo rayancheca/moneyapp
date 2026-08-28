@@ -75,19 +75,21 @@ test("the header grades against the ANNUALISED rate, and names the month underne
   page,
 }) => {
   await page.goto("/budgets");
-  // The seed's one live income series is Paycheck, biweekly at $3,200.00.
-  // $3,200.00 × 26 ÷ 12 = $6,933.33 — the figure the header grades against, and
+  // The seed's one live income series is Paycheck, biweekly at $2,943.19 — the
+  // amount the ACME deposits in the corpus actually are, since §9 links them to
+  // this series and a schedule should agree with its own evidence.
+  // $2,943.19 × 26 ÷ 12 = $6,376.91 — the figure the header grades against, and
   // the SAME figure in every month of the year. July 2026 holds two of its
-  // paydays (the 10th and the 24th), worth $6,400.00, and the old header graded
-  // against $7,662.00: posted-plus-still-due for this particular month, which
-  // moved whenever the calendar did.
-  await expect(page.getByText("$6,933.33")).toBeVisible();
+  // paydays (the 10th and the 24th), worth $5,886.38, and the old header graded
+  // against posted-plus-still-due for this particular month, which moved
+  // whenever the calendar did.
+  await expect(page.getByText("$6,376.91")).toBeVisible();
   await expect(page.getByText("$7,662.00")).toHaveCount(0);
 
   // The calendar month is named, not deleted — the levelling is disclosed on
-  // screen rather than only in a tooltip. $6,933.33 − $6,400.00 = $533.33.
+  // screen rather than only in a tooltip. $6,376.91 − $5,886.38 = $490.53.
   await expect(
-    page.getByText("2 paydays fall in this month, scheduled at $6,400.00 — $533.33 under"),
+    page.getByText("2 paydays fall in this month, scheduled at $5,886.38 — $490.53 under"),
   ).toBeVisible();
 
   // and the tooltip mounted on the term describes the arithmetic that produced
@@ -101,7 +103,7 @@ test("the header grades against the ANNUALISED rate, and names the month underne
 
 test("the header flips to over-allocated when the budgets outrun the income", async ({ page }) => {
   // The negative branch of the same line, which no fixture state reaches: the
-  // seed budgets $3,090.00 against $6,933.33 of expected income. Rather than
+  // seed budgets $3,090.00 against $6,376.91 of expected income. Rather than
   // inflate the shared fixture — which would churn the budgets baselines, flip
   // Housing's `over` verdict that five assertions here depend on, and merely
   // TRADE which branch goes unrendered — this drives the amount editor the app
@@ -112,8 +114,8 @@ test("the header flips to over-allocated when the budgets outrun the income", as
   // Pin the pre-state first, so everything below is arithmetic rather than
   // assumption. If the seeded income ever moves, this fails loudly instead of
   // quietly exercising the wrong branch.
-  // $6,933.33 − $3,090.00 = $3,843.33
-  await expect(page.getByText("$3,843.33")).toBeVisible();
+  // $6,376.91 − $3,090.00 = $3,286.91
+  await expect(page.getByText("$3,286.91")).toBeVisible();
 
   const setFoodBudget = async (value: string): Promise<void> => {
     await food.getByRole("button", { name: "Edit Food budget amount" }).click();
@@ -126,20 +128,20 @@ test("the header flips to over-allocated when the budgets outrun the income", as
   const original = await page.getByRole("textbox", { name: "Food budget amount" }).inputValue();
   await page.getByRole("button", { name: "Cancel" }).click();
 
-  // EXACTLY zero first. $3,090.00 − $800.00 + $4,643.33 = $6,933.33, precisely
+  // EXACTLY zero first. $3,090.00 − $800.00 + $4,086.91 = $6,376.91, precisely
   // the expected income, which is where the ternary's `>= 0` lives. Without
   // this step the boundary is untested and `>= 0` could be weakened to `> 0`
   // with every test still green — and at zero that reads "Over-allocated by
   // $0.00", which is absurd on its face.
-  await setFoodBudget("4643.33");
+  await setFoodBudget("4086.91");
   await expect(page.getByText("$0.00 left to allocate")).toBeVisible();
   await expect(page.getByText(/Over-allocated by/)).toHaveCount(0);
 
-  // $3,090.00 − $800.00 + $8,000.00 = $10,290.00 against $6,933.33 → over by $3,356.67
+  // $3,090.00 − $800.00 + $8,000.00 = $10,290.00 against $6,376.91 → over by $3,913.09
   await setFoodBudget("8000.00");
 
   await expect(page.getByText("Over-allocated by")).toBeVisible();
-  await expect(page.getByText("$3,356.67")).toBeVisible();
+  await expect(page.getByText("$3,913.09")).toBeVisible();
   // The clause names what the plan outran, and it is chosen by the same branch
   // that chose the figure. The seed grades against an ANNUALISED rate, so a
   // clause about "this month" would be false here — in a five-payday month the
@@ -159,7 +161,7 @@ test("the header flips to over-allocated when the budgets outrun the income", as
   // this file reads Food's LIVE amount as its own restore target, so a value
   // left dirty here would be laundered into the seed for the rest of the run.
   await setFoodBudget(original);
-  await expect(page.getByText("$3,843.33")).toBeVisible();
+  await expect(page.getByText("$3,286.91")).toBeVisible();
   await expect(page.getByText(/Over-allocated by/)).toHaveCount(0);
 });
 
@@ -168,9 +170,17 @@ test("the hollow tail opens a popover of contributing series → its recurring p
 }) => {
   await page.goto("/budgets");
 
-  // Subscriptions is the only budget with an expected-but-unposted recurring
-  // tail (Netflix), so exactly one "expected before" trigger exists.
-  const tail = page.getByRole("button", { name: /expected before/ });
+  /*
+   * ⚠️ TWO budgets carry a forward tail now, and the second one arrived with
+   * §9's seed change: linking a rent posting to the Rent series is what gives
+   * that series a category at all (membership is derived FROM postings), so
+   * Housing gained the 2026-07-09 occurrence as an expected-but-unposted tail.
+   *
+   * Scoped to Subscriptions rather than counted globally, because the thing this
+   * test is about is what the popover DOES — a bare count of 1 was pinning a
+   * fixture fact next to the behaviour it meant to check.
+   */
+  const tail = budgetRow(page, "Subscriptions").getByRole("button", { name: /expected before/ });
   await expect(tail).toHaveCount(1);
   await expect(tail).toHaveAttribute("aria-expanded", "false");
 
@@ -201,9 +211,11 @@ test("a bill that came due and never posted is disclosed on its budget row", asy
   await expect(page.getByText(/expected by now, not imported/)).toHaveCount(1);
 
   // overdue is NOT the forward tail: budgetTail opens strictly AFTER today, so
-  // Food gains no "expected before" trigger and Subscriptions keeps the only one
+  // Food gains no "expected before" trigger while the two budgets that have one
+  // — Subscriptions (Netflix, Jul 16) and Housing (Rent, Jul 9) — keep theirs
   await expect(food.getByRole("button", { name: /expected before/ })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /expected before/ })).toHaveCount(1);
+  await expect(budgetRow(page, "Subscriptions").getByRole("button", { name: /expected before/ })).toHaveCount(1);
+  await expect(budgetRow(page, "Housing").getByRole("button", { name: /expected before/ })).toHaveCount(1);
 
   // the screen reader is told the same thing the sighted reader is
   await expect(food.getByRole("progressbar")).toHaveAttribute(
