@@ -77,13 +77,19 @@ const BASELINE: LedgerBaseline = {
    * This check was built for `Robinhood Brokerage` — the last account with no
    * arbiter — and fired on the account next door before that import happened.
    *
-   *   2025-10-31  -$1,505.00  ⛔ NOT a rounding difference. The statement prints
-   *               $1,505.00 of crypto and the ledger values the account at
-   *               $0.00: its holdings book starts later than its statements do,
-   *               so a whole month of positions is missing. The one entry here
-   *               that is a HOLE rather than a disagreement, and the one worth
-   *               a pass of its own.
-   *   the other 8  -$24.65 … +$18.94 against printed values of $3,480 → $27,360
+   *   ✅ 2025-10-31 was -$1,505.00 and is -$0.14 now — FIXED, and it was the one
+   *               entry here that was a HOLE rather than a disagreement. The
+   *               cause was written down in the data: the book's first
+   *               `holding_events` row was a placeholder, honestly labelled
+   *               "opening balance per Nov 2025 statement (pre-Nov history
+   *               unknown)", written when November was the earliest statement
+   *               imported. October has since arrived, and its ten trades sum
+   *               to 0.39130100 ETH — the placeholder's own quantity, to the
+   *               eighth decimal — so `backfill-october-crypto-history.ts`
+   *               replaced one with the other. Sixteen days of October gained a
+   *               value they always had; not one day the book already covered
+   *               moved. The 14¢ left is a price mark, like the rest.
+   *   all nine    -$24.65 … +$18.94 against printed values of $1,505 → $27,360
    *               — 0.01% to 0.7%. Crypto has no closing auction: the app marks
    *               a daily close from its own source and Robinhood marks its own
    *               venue at its own instant, so two honest numbers differ. Kept
@@ -92,8 +98,39 @@ const BASELINE: LedgerBaseline = {
    *               a missing position.
    */
   valueAnchors: {
+    /*
+     * ⛔ **THREE OF THESE SIX ARE ONE STOCK SPLIT.** Coca-Cola Consolidated
+     * (COKE) split 10-for-1 in May 2025. Yahoo back-adjusts price history, so
+     * the app holds COKE at $135.58 on 2025-04-30 where the statement printed
+     * $1,355.81 — exactly a tenth — while the position of that era is the
+     * un-split one. On each of the three dates the whole account's disagreement
+     * equals the COKE line's, to the cent:
+     *
+     *   2025-02-28   -$91.21   COKE  printed $1,417.12  ledger $141.712
+     *   2025-03-31  -$445.12   COKE  printed $1,350.00  ledger $135.00
+     *   2025-04-30  -$667.86   COKE  printed $1,355.81  ledger $135.581
+     *
+     * A split-adjusted price multiplied by an unadjusted quantity is a 10×
+     * error, and it is a real defect in how this app values history — worth its
+     * own pass, not a line in a baseline. Recorded so a SEVENTH disagreement is
+     * what fails, not so this one is forgotten.
+     *
+     * The other three are cached closes that differ from the broker's marks
+     * (2025-08-31 is NVDA at $181.60 against a printed $174.18; 2026-07-31 is
+     * eight symbols each a few tenths of a percent apart). Every QUANTITY
+     * matches the statement exactly on all six dates — measured — so none of
+     * this is a missing position.
+     */
+    "Robinhood Brokerage": [
+      { on: "2025-02-28", offByCents: -9_121 },
+      { on: "2025-03-31", offByCents: -44_512 },
+      { on: "2025-04-30", offByCents: -66_786 },
+      { on: "2025-08-31", offByCents: 816 },
+      { on: "2026-02-28", offByCents: -8_915 },
+      { on: "2026-07-31", offByCents: -19_762 },
+    ],
     "Robinhood Crypto": [
-      { on: "2025-10-31", offByCents: -150_500 },
+      { on: "2025-10-31", offByCents: -14 },
       { on: "2025-11-30", offByCents: -240 },
       { on: "2025-12-31", offByCents: 38 },
       { on: "2026-01-31", offByCents: 246 },
