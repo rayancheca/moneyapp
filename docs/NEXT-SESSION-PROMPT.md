@@ -1,6 +1,6 @@
 Read `docs/HANDOFF-2026-08-27-provenance-kinds.md` first — it is the brief. Then §0 of it is the job.
 
-`main` = `6419934`, clean and pushed. 214 files / 4,119 unit · coverage 99.76% stmts, 100% funcs · tsc clean · E2E_GATE=1: **582 passed at `maxDiffPixels: 0`** in 8.4m · income $117,924.62 · spending $167,828.49 · 10,111 active rows. **Zero DB writes last session.**
+`main` = `d74f446`, clean and pushed. 214 files / 4,119 unit · coverage 99.76% stmts, 100% funcs · tsc clean · E2E_GATE=1: **582 passed at `maxDiffPixels: 0`** in 8.4m · income $117,924.62 · spending $167,828.49 · 10,111 active rows. **Zero DB writes last session.**
 
 ## ⛔ Before you run anything: this box lies when it is loaded
 
