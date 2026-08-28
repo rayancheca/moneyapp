@@ -4,7 +4,7 @@
 >
 > **`main` = `8546606`**, tree clean, pushed. tsc clean ·
 > **214 files / 4,119 unit** · coverage **99.76% stmts, 100% funcs** ·
-> **E2E_GATE=1: 556 passed at `maxDiffPixels: 0`** (8.2m, quiet box) — ⛔ §5 is the
+> **E2E_GATE=1: 582 passed at `maxDiffPixels: 0`** (8.4m) — ⛔ §5 is the
 > most useful thing this session learned: **under load both suites lie**, and
 > `uptime` is the first thing to check before believing a red run.
 >
@@ -467,7 +467,7 @@ persistable URLs that nothing ever opened.
 
 `e2e/view-options.spec.ts` now enumerates the other seven, 26 shallow render
 checks driven off the specs themselves. **All 26 pass — there is no live
-terrain-style bug today.** Its value is that adding an option to any of those
+terrain-style bug today**, and the full gate is **582 passed** (556 + these 26). Its value is that adding an option to any of those
 specs is covered the same day, with nobody having to remember.
 
 ⚠️ Verified on both axes rather than trusted, because a green first run proves
