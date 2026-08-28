@@ -45,7 +45,24 @@ export function factField(fact: Fact, field: FactField): string {
   if (field === "name") return fact.subject;
   if (field === "value") {
     // a trend's magnitude IS its window — there is no other number in it
-    return fact.kind === "trend" ? `${fact.points} months` : fact.display;
+    if (fact.kind === "trend") return `${fact.points} months`;
+    /*
+     * ⛔ A delta prints its MAGNITUDE, not its signed display, and the reason is
+     * that its direction is already in the words. Every delta template says
+     * which way it went — `rose_between`, `fell_between`, `unchanged_between` —
+     * so `display` inside one produced **"Travel fell by -$42.00 between June
+     * and July"**, a double negative that shipped on three surfaces.
+     *
+     * ⚠️ This does NOT weaken the read gate, which was the thing to check
+     * before touching it. `validateProse` binds a slot to a fact and then runs
+     * the claim's own `holds` predicate against the fact's SIGNED `value` —
+     * `rose_between` requires `value > 0`. A fabricated "Travel rose by $42.00"
+     * over a fact that fell is refused by that predicate, not by the rendered
+     * sign, and two deltas of equal magnitude and opposite sign are separated
+     * the same way. Verified by the round-trip tests either side of this line.
+     */
+    if (fact.kind === "delta") return fact.magnitude;
+    return fact.display;
   }
   switch (fact.kind) {
     case "rank":
@@ -282,6 +299,22 @@ export function assertTemplatesWellFormed(claims: readonly ClaimTemplate[]): voi
     if (!letters.has("a")) throw new Error(`Claim "${claim.id}" reads no facts at all`);
     if (claim.binds.b !== undefined && !letters.has("b")) {
       throw new Error(`Claim "${claim.id}" binds a second fact that no slot reads`);
+    }
+    /*
+     * ⛔ A delta prints an UNSIGNED magnitude (see `factField`), so the sentence
+     * is the only thing left saying which way it went — and a template that
+     * accepts either direction would print "Travel moved by $42.00" over a rise
+     * and a fall alike. `holds` is what pins it: `rose_between` requires
+     * `value > 0`, `fell_between` `value < 0`, `unchanged_between` exactly zero.
+     *
+     * Checked at import rather than trusted, because the mistake is one you can
+     * only make while WRITING a template, and nothing downstream would notice —
+     * the gate would accept the sentence and the sentence would be ambiguous.
+     */
+    if ((claim.binds.a === "delta" || claim.binds.b === "delta") && claim.holds === undefined) {
+      throw new Error(
+        `Claim "${claim.id}" binds a delta without a holds predicate, so its direction is unpinned`,
+      );
     }
     const words = claim.template.replace(new RegExp(SLOT_RE.source, "gu"), " ");
     if (/\d/u.test(words)) throw new Error(`Claim "${claim.id}" states a figure of its own`);

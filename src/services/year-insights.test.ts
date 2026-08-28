@@ -147,7 +147,7 @@ describe("yearInsights — a year against the one before it", () => {
     );
     expect(texts(2025)).toEqual([
       "Spending in 2025 came to $150.00.",
-      "Spending rose by +$50.00 between 2024 and 2025.",
+      "Spending rose by $50.00 between 2024 and 2025.",
     ]);
   });
 
@@ -156,7 +156,7 @@ describe("yearInsights — a year against the one before it", () => {
     spend(a, "2024-01-01", 15_000);
     spend(a, "2025-03-01", 10_000);
     shownThrough(a, "2026-01-31");
-    expect(texts(2025)[1]).toBe("Spending fell by -$50.00 between 2024 and 2025.");
+    expect(texts(2025)[1]).toBe("Spending fell by $50.00 between 2024 and 2025.");
   });
 
   /**
@@ -177,7 +177,7 @@ describe("yearInsights — a year against the one before it", () => {
     expect(r.windowNote).toMatch(/counted in none of this page's totals/);
     expect(texts(2026)).toEqual([
       "Spending in Jan 1 – Jul 31, 2026 came to $150.00.",
-      "Spending rose by +$50.00 between Jan 1 – Jul 31, 2025 and Jan 1 – Jul 31, 2026.",
+      "Spending rose by $50.00 between Jan 1 – Jul 31, 2025 and Jan 1 – Jul 31, 2026.",
     ]);
   });
 
@@ -328,7 +328,7 @@ describe("yearInsights — a year against the one before it", () => {
 
     const r = yearInsights(bundle.db, 2028)!;
     expect(r.windowLabel).toBe("Jan 1 – Feb 29, 2028");
-    expect(texts(2028)[1]).toBe("Spending rose by +$50.00 between Jan 1 – Feb 28, 2027 and Jan 1 – Feb 29, 2028.");
+    expect(texts(2028)[1]).toBe("Spending rose by $50.00 between Jan 1 – Feb 28, 2027 and Jan 1 – Feb 29, 2028.");
   });
 
   /**

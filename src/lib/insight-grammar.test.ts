@@ -30,6 +30,17 @@ describe("the three fields a template can read", () => {
     expect(factField(rank, "of")).toBe("22 spending categories");
     expect(factField(share, "of")).toBe("everything you spend");
     expect(factField(delta, "of")).toBe("June and July");
+    /*
+     * ⛔ The MAGNITUDE, not the signed display. Every delta template already
+     * states the direction, so `display` inside one read "fell by -$42.00" —
+     * a double negative that shipped on three surfaces. The fact keeps its
+     * honest signed rendering; the grammar prints the unsigned one.
+     */
+    expect(factField(delta, "value")).toBe("$998.00");
+    expect(delta.display).toBe("+$998.00");
+    const fell = deltaFact("f8", "Travel", -99800, "money", "June", "July");
+    expect(factField(fell, "value")).toBe("$998.00");
+    expect(fell.display).toBe("-$998.00");
     expect(factField(trend, "of")).toBe("March");
     expect(factField(count, "of")).toBe("purchase");
     expect(factField(multiple, "of")).toBe("your usual charge there");
@@ -136,5 +147,28 @@ describe("a malformed vocabulary fails at import, not at render", () => {
   test("two sentences pretending to be one claim", () => {
     expect(bad({ template: "{{a.name}} came to {{a.value}}. That is a lot." })).toThrow(/exactly one sentence/);
     expect(bad({ template: "{{a.name}} came to {{a.value}}" })).toThrow(/exactly one sentence/);
+  });
+
+  /**
+   * ⛔ A delta prints an UNSIGNED magnitude, so the sentence is the only thing
+   * left saying which way it went. A template that accepts either direction
+   * would print "Travel moved by $42.00" over a rise and a fall alike — and
+   * nothing downstream would notice, because the gate would accept it and the
+   * sentence would simply be ambiguous. `holds` is what pins it.
+   */
+  test("a delta template that does not pin its direction", () => {
+    expect(bad({ binds: { a: "delta" } })).toThrow(/direction is unpinned/);
+    expect(bad({ template: "{{a.name}} is bigger than {{b.value}}.", binds: { a: "scalar", b: "delta" } })).toThrow(
+      /direction is unpinned/,
+    );
+    // …and one that DOES pin it passes
+    expect(bad({ binds: { a: "delta" }, holds: (a) => a.kind === "delta" && a.value > 0 })).not.toThrow();
+  });
+
+  /** Every delta claim the app actually ships pins its direction. */
+  test("the shipped vocabulary already satisfies it", () => {
+    for (const c of CLAIMS) {
+      if (c.binds.a === "delta" || c.binds.b === "delta") expect(c.holds, c.id).toBeTruthy();
+    }
   });
 });

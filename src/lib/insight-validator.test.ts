@@ -423,11 +423,56 @@ describe("the delta and trend claims that need a direction", () => {
     trendFact("f4", "Rent", "flat", "March", 12),
   ]);
 
-  test("a fall renders as a fall", () => {
+  /**
+   * ⛔ "fell by $42.00", never "fell by -$42.00". The word already carries the
+   * direction, so the signed rendering made it a double negative — it shipped on
+   * three surfaces and reached his year summary before anyone read it aloud. The
+   * fact still holds the signed `display`; the GRAMMAR prints the magnitude.
+   */
+  test("a fall renders as a fall, and says so once", () => {
     const v = checkClaim({ claimId: "fell_between", a: "f1" }, set);
     expect(v.ok).toBe(true);
     if (!v.ok) return;
-    expect(v.text).toBe("Travel fell by -$42.00 between June and July.");
+    expect(v.text).toBe("Travel fell by $42.00 between June and July.");
+    expect(v.text).not.toContain("-$");
+  });
+
+  /** …and a rise does not announce itself twice either. */
+  test("a rise renders without a redundant plus", () => {
+    const rising = factSet([deltaFact("f1", "Travel", 4200, "money", "June", "July")]);
+    const v = checkClaim({ claimId: "rose_between", a: "f1" }, rising);
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    expect(v.text).toBe("Travel rose by $42.00 between June and July.");
+  });
+
+  /**
+   * ⛔ The check that had to pass before the sign could be removed. Direction is
+   * pinned by the claim's `holds` predicate against the fact's SIGNED `value`,
+   * not by the rendered sign — so an unsigned magnitude cannot let a fabricated
+   * direction through, and two deltas of equal magnitude and opposite sign are
+   * still told apart.
+   */
+  test("an unsigned magnitude does not let a fabricated direction through", () => {
+    const both = factSet([
+      deltaFact("f1", "Travel", -4200, "money", "June", "July"),
+      deltaFact("f2", "Travel", 4200, "money", "June", "July"),
+    ]);
+    // both facts render "$42.00", so only `holds` can separate them
+    expect((both.get("f1") as { magnitude: string }).magnitude).toBe(
+      (both.get("f2") as { magnitude: string }).magnitude,
+    );
+
+    const fell = validateProse("Travel fell by $42.00 between June and July.", both);
+    const rose = validateProse("Travel rose by $42.00 between June and July.", both);
+    expect(fell.ok).toBe(true);
+    expect(rose.ok).toBe(true);
+    if (fell.ok) expect(fell.factIds).toEqual(["f1"]);
+    if (rose.ok) expect(rose.factIds).toEqual(["f2"]);
+
+    // …and with only the falling fact present, the rise is refused outright
+    const fallingOnly = factSet([deltaFact("f1", "Travel", -4200, "money", "June", "July")]);
+    expect(validateProse("Travel rose by $42.00 between June and July.", fallingOnly).ok).toBe(false);
   });
 
   test("a fall cannot be called a rise", () => {

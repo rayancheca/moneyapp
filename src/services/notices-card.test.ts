@@ -226,7 +226,7 @@ describe("a recurring bill that posted at a different amount", () => {
     const out = noticesCard(bundle.db, TODAY);
     const drift = out?.notices.find((n) => n.text.includes("Zzz Rent"));
     expect(drift?.claimId).toBe("fell_between");
-    expect(drift?.text).toContain("fell by -$1,185.70");
+    expect(drift?.text).toContain("fell by $1,185.70");
   });
 
   test("a bill that posted MORE is a rise", () => {
@@ -237,7 +237,7 @@ describe("a recurring bill that posted at a different amount", () => {
 
     const drift = noticesCard(bundle.db, TODAY)?.notices.find((n) => n.text.includes("Zzz Internet"));
     expect(drift?.claimId).toBe("rose_between");
-    expect(drift?.text).toContain("rose by +$20.00");
+    expect(drift?.text).toContain("rose by $20.00");
   });
 });
 

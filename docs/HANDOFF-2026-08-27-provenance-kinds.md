@@ -3,9 +3,10 @@
 > **Supersedes `HANDOFF-2026-08-27-transfers-and-commitments.md`.**
 >
 > **`main` = `8546606`**, tree clean, pushed. tsc clean ·
-> **214 files / 4,115 unit** · coverage **99.76% stmts, 100% funcs** ·
-> **E2E_GATE=1: 540 passed at `maxDiffPixels: 0`** (7.9m, clean box) — §5 records
-> why three earlier runs did not, and it was my own concurrent load.
+> **214 files / 4,119 unit** · coverage **99.76% stmts, 100% funcs** ·
+> **E2E_GATE=1: 540 passed at `maxDiffPixels: 0`** (7.9m, quiet box) — ⛔ §5 is the
+> most useful thing this session learned: **under load both suites lie**, and
+> `uptime` is the first thing to check before believing a red run.
 >
 > Live ledger unchanged by this pass: **10,111 active rows** · income
 > **$117,924.62** · zero DB writes. Nothing was written to the database at all.
@@ -23,9 +24,10 @@ both surfaces shipped. What remains:
    from measured facts. That remains the right order, and it means a model can
    be introduced as a SELECTOR over already-true claims rather than as a writer.
 2. **Pass 73** (the Robinhood Brokerage arbiter) and **74** as scheduled.
-3. **A small, real copy defect is named in §4.2** — "fell by -$587.96" — with
-   the exact one-line fix. Deliberately not taken: it changes shared sentence
-   grammar across three already-reviewed surfaces and is your call.
+3. **12 of the 13 decision cards have ZERO pixel coverage** — found while fixing
+   §4.2 and recorded in §7. The dashboard baseline photographs the DECK, which
+   shows one card at a time, so eleven cards behind the front one can be broken
+   silently. `/?cards=grid` would photograph all of them for 8 baselines.
 4. **HOSTING goes last** — unchanged. `docs/deploy-plan-gcp-firebase-auth.md`.
 
 ⛔ **The insight sweep is finished as a sweep.** Seven surfaces now carry
@@ -198,22 +200,45 @@ reaching for historical grading by passing an old date gets today's answer and n
 warning.** My own first comment in `allSpendProvenance` asserted the opposite;
 it now states the trap.
 
-### 4.2 🔴 "Spending fell by **-$587.96**" — a double negative, on screen
+### 4.2 ✅ "Spending fell by **-$587.96**" — found, then fixed on request
 
-`deltaFact` renders signed (`+$X` / `-$X`) and its docstring explains why: *"A
-delta that dropped its sign would read as a rise."* True of a delta rendered
-alone. But **every delta template already states the direction in words** —
-`rose_between`, `fell_between`, `unchanged_between` — so inside them the sign is
-redundant on the way up and a double negative on the way down.
+`deltaFact` rendered signed (`+$X` / `-$X`) and its docstring explained why:
+*"A delta that dropped its sign would read as a rise."* True of a delta rendered
+ALONE — and false inside a sentence, because **every delta template already
+states the direction in words** (`rose_between`, `fell_between`, and
+`unchanged_between`, which prints no figure at all, are the entire delta
+vocabulary). So the sign was redundant on the way up and a double negative on
+the way down, and it had shipped on three surfaces.
 
-**Deliberately not fixed.** It is established across three shipped surfaces
-(`spending-insights`, `notices-card`, and now this) with seven test assertions
-pinning it, and `notices-card`'s own comment shows this text was scrutinised in a
-prior pass and the sign survived. The fix is one line —
-`factField(fact, "value")` returns the magnitude for `kind === "delta"`, with a
-`magnitude` field derived on `DeltaFact` beside `display` — plus ~7 test
-assertions and probably some dashboard baselines. **Your call, not mine to make
-while shipping something else.**
+I flagged it rather than fixing it mid-feature; the owner asked for the fix and
+it is in.
+
+**The shape of the fix matters.** The fact keeps its honest signed `display` —
+that field is documented as the app's own formatting of `value`, and `value` is
+signed. What changed is what the GRAMMAR prints: `DeltaFact` now derives a
+`magnitude` beside `display`, from the same formatter and never by stripping a
+character off it, and `factField` returns the magnitude for a delta's `value`
+slot. That is the same decision `factField` already makes for a trend, in the
+same place.
+
+⛔ **The thing to check before removing a sign is whether the READ gate leaned
+on it. It does not.** `validateProse` binds a slot to a fact and then runs the
+claim's own `holds` predicate against the fact's SIGNED `value` — `rose_between`
+requires `value > 0`. A fabricated "Travel rose by $42.00" over a fact that fell
+is refused by that predicate, and two deltas of equal magnitude and opposite
+sign are separated the same way. There is now a test that drives exactly that
+case, with both facts in one set so only `holds` can tell them apart.
+
+⛔ **And a new import-time guard, because the sentence is now the only thing
+carrying the direction.** `assertTemplatesWellFormed` refuses a template that
+binds a delta without a `holds` predicate — a future "X moved by $42.00" would
+print identically over a rise and a fall, the gate would accept it, and nothing
+downstream would notice.
+
+Blast radius: **2 source files, 5 test files, 24 baselines** (spending,
+spending-year, summary-year × 2 themes × 4 widths). No service and no component
+changed, because the fix belongs entirely to the grammar layer. The dashboard
+baselines did NOT move — see §7, which is why.
 
 ### 4.3 ⚠️ tsc caught fixture data that twelve green tests accepted
 
@@ -222,44 +247,53 @@ notice, so the rows inserted fine and every assertion passed.
 
 ---
 
-## 5. ✅ E2E: 540 passed, and why three earlier runs did not
+## 5. ⛔ THIS BOX GETS LOADED, AND BOTH SUITES LIE WHEN IT IS
 
-Final clean run on this HEAD: **`E2E_GATE=1 pnpm e2e:fresh` — 540 passed, 0
-failed, 7.9 minutes** at `maxDiffPixels: 0`. The suite is green.
+The single most useful thing this session learned, and it cost four hours.
 
-It took four runs to get there, and the three before it are worth recording
-because I nearly wrote them up as a pre-existing flake:
+**Green, on a quiet box:** `tsc` clean · **214 files / 4,119 unit** ·
+99.76% stmts / 100% funcs · **E2E_GATE=1: 540 passed in 7.9m** at
+`maxDiffPixels: 0`. Twice, reproducibly.
 
-| run | result | failing | wall clock |
-|---|---|---|---|
-| 1 | 507 / 33 failed | 32 expected visual baselines + `zz-card-deck` | 8.5m |
-| 2 | 538 / 2 failed | `zz-zz-view-switcher`, `zz-zz-zz-cash-wallet-opening` | 10.0m |
-| 3 | 539 / 1 failed | `zz-zz-merchant-default` | **24.1m** |
-| 4 | **540 / 0** | — | **7.9m** |
+**Under load, both suites produce non-reproducing failures.** Across five e2e
+runs and four unit runs, **fifteen different tests failed once each and not one
+reproduced**; every single one passes in isolation.
 
-⛔ **The cause was me.** I ran `npx tsx` probes and a full `vitest run` on the
-same machine while runs 2 and 3 were in flight. Run 3's single spec file took
-**16.1 minutes on its own** against 7.9 minutes for the entire suite when the
-box was quiet. Three different non-reproducing failures, each on a route this
-pass never touched, each passing in isolation — that is CPU starvation tipping
-timing-sensitive assertions, not a regression.
+| suite | quiet | loaded |
+|---|---|---|
+| e2e | 540 passed, **7.9m** | 507 / 538 / 539 / 514 passed, **8.5–24.1m** |
+| unit | 4,119 passed | 12, then 9, then 2, then 1 failure — a different set each time |
 
-⚠️ **Two lessons, both mine:**
+⛔ **Diagnose with `uptime` before believing a red run.** A 1-minute load average
+above ~8 on this box is enough. Sources seen this session, in order of size:
 
-1. **Do not run anything else while the e2e suite runs.** It is `workers: 1` and
-   serial by design; a concurrent `vitest run --coverage` is enough to double its
-   wall clock and start knocking over timing-sensitive specs.
-2. **`boundingBox()` has no auto-wait** — the first failure was
-   `Cannot read properties of null (reading 'height')`, the same class of trap
-   pass 38 recorded for `isVisible()`. It is fine today, but any bare
-   `boundingBox()` in this suite is the first thing to fall over under load.
-   `expect(locator).toBeVisible()` first would harden it.
+1. **A freshly started `pnpm dev`.** Turbopack's initial compile took the unit
+   suite from 0 failures to **12**, including six `[vitest-pool]: Failed to
+   start forks worker` — not assertion failures at all.
+2. **My own concurrent work** — `npx tsx` probes and a second `vitest run`
+   alongside an e2e run. One e2e spec FILE took **16.1 minutes** against 7.9
+   for the whole suite when idle.
+3. **Whatever else is on the machine.** Load sat at 13.17 with none of my
+   processes running, 46 days into an uptime.
 
-I measured whether this pass could have slowed a page enough to matter
-(`scripts/probe-insight-cost.ts`): **+2.4ms /spending, +2.4ms /budgets,
-+11.4ms /summary/[year]**. It could not, and the clean run confirms it.
+⚠️ **The failures are not random — they are the heaviest tests.** All six flaky
+e2e specs are `zz-*` MUTATORS that click, write through a server action and
+restore; no read-only spec has ever flaked. On the unit side it is the DB-heavy
+files (`bulk-edit`'s past-the-variable-cap walk, `backup`'s snapshot,
+`schema`'s constraint test). Under contention a server round-trip or a large
+transaction takes longer and the timeout-bounded test tips over first. That
+mechanism also rules this pass out as a cause: the work added here is 2–11ms of
+READ on three routes and touches no server action
+(`scripts/probe-insight-cost.ts`).
 
-The 32 visual failures in run 1 were expected — see §6.
+⚠️ **`boundingBox()` has no auto-wait** — the very first failure was
+`Cannot read properties of null (reading 'height')`, the same class of trap
+pass 38 recorded for `isVisible()`. It is the first thing in the e2e suite to
+fall over under load, and `await expect(locator).toBeVisible()` in front of the
+bare calls would harden them.
+
+**Rule for next time: stop the dev server, wait for `uptime` to drop below ~4,
+then run. Nothing else while either suite runs.**
 
 ## 6. Visual baselines — 32 regenerated, every diff read first
 
@@ -280,7 +314,43 @@ no overflow. `git status` confirms exactly 32 files modified and nothing else.
 
 ---
 
-## 7. Still open (unchanged unless noted)
+## 7. 🔴 Twelve of the thirteen decision cards have ZERO pixel coverage
+
+Found while regenerating baselines for §4.2, and it is a bigger gap than the
+standing list said ("the notices card has no visual baseline").
+
+The dashboard is a **deck** — one card at a time, the rest at `opacity: 0`
+behind it. `visual.spec` photographs `/`, so the eight `dashboard-*` baselines
+capture **Runway and nothing else**. Runway, the car, income, cards owed, eating
+out, subscriptions, what changed, fees, transfers, performance, concentration,
+notices and trust are thirteen cards; twelve of them could be rewritten, broken,
+or emptied without moving a single pixel of any baseline.
+
+Confirmed by this pass, not theorised: the delta fix changed the wording of
+`notices-card`'s sentence, and **the dashboard baselines did not fail** — only
+spending, spending-year and summary-year did. A real text change on a real card
+was invisible to the whole visual suite.
+
+This is the exact shape of the gap pass 58 found behind `?tab=calendar` and the
+last session found on `/recurring/[id]`. The fix is one route entry:
+
+```ts
+{ path: "/?cards=grid", name: "dashboard-grid" },
+```
+
+⚠️ Safe to add, checked: `?cards=grid` is READ through `resolveViewState` and
+does not write the preference — only `saveViewPreferenceAction` does, on click.
+So it does not make `visual.spec` a fixture mutator and needs no `zz-` prefix.
+The cost is churn: any change to any card would move 8 tall baselines. This
+codebase has taken that trade four times already, on the grounds that zero
+coverage is worse than churn.
+
+Not taken here because it is 8 new baselines on top of the 24 this fix already
+moved, and bundling them would make one commit's diff unreadable.
+
+---
+
+## 8. Still open (unchanged unless noted)
 
 - **Pass 72d** — no model is called yet; the vocabulary is ready for one.
 - **The delta sign** — §4.2.
@@ -299,7 +369,7 @@ no overflow. `git status` confirms exactly 32 files modified and nothing else.
 
 ---
 
-## 8. Notes that keep costing time
+## 9. Notes that keep costing time
 
 - ⚠️ **A green first run on new tests is when to mutate them, not to trust
   them.** 45 mutants this pass; 3 survivors were real test gaps and 2 are

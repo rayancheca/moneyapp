@@ -106,6 +106,25 @@ export interface DeltaFact extends FactBase {
   readonly unit: FactUnit;
   readonly fromLabel: string;
   readonly toLabel: string;
+  /**
+   * The same quantity WITHOUT its sign — "$42.00", never "-$42.00".
+   *
+   * ⛔ This exists because a delta is the one kind whose direction gets stated
+   * TWICE. `display` is signed and must stay signed: it is documented as the
+   * app's own formatting of `value`, and `value` is signed. But every template
+   * that prints a delta already says which way it went — `rose_between`,
+   * `fell_between`, and `unchanged_between` (which prints no figure at all) are
+   * the whole delta vocabulary — so printing `display` inside one produced
+   * **"Travel fell by -$42.00 between June and July"**, a double negative that
+   * shipped on three surfaces before anyone read it aloud.
+   *
+   * So the fact keeps the honest signed rendering of its own value, and the
+   * GRAMMAR decides that a sentence stating a direction prints the magnitude.
+   * That decision lives in `factField`, beside the same choice already made for
+   * a trend, and `assertTemplatesWellFormed` refuses a delta template that does
+   * not pin its direction with a `holds` predicate.
+   */
+  readonly magnitude: string;
 }
 
 export interface TrendFact extends FactBase {
@@ -276,7 +295,20 @@ export function deltaFact(
   assertLabel("fromLabel", fromLabel);
   assertLabel("toLabel", toLabel);
   if (!Number.isFinite(value)) throw new Error("A delta fact needs a finite value");
-  return { kind: "delta", id, subject, value, unit, fromLabel, toLabel, display: render(value, unit, true) };
+  return {
+    kind: "delta",
+    id,
+    subject,
+    value,
+    unit,
+    fromLabel,
+    toLabel,
+    display: render(value, unit, true),
+    // derived from the same formatter as `display`, never by stripping a
+    // character off it — a second way to render one number is how the two
+    // drift apart, which is the whole reason `display` is derived here at all
+    magnitude: render(Math.abs(value), unit, false),
+  };
 }
 
 export function trendFact(

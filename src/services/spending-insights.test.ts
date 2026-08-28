@@ -121,7 +121,7 @@ describe("what /spending says about a ledger whose answers are known", () => {
     expect(out.insights.map((i) => i.text)).toEqual([
       "Food is the largest of your 2 spending categories, at $300.00.",
       "Food is 60.0% of everything you spent in Jul 2026.",
-      "Food rose by +$200.00 between its usual month and Jul 2026.",
+      "Food rose by $200.00 between its usual month and Jul 2026.",
       "1 transaction landed in Food.",
     ]);
   });
@@ -226,7 +226,7 @@ describe("what it refuses to say", () => {
     importedThrough("2026-08-20");
     const out = spendingInsights(bundle.db, TODAY)!;
     const fell = out.insights.find((i) => i.claimId === "fell_between");
-    expect(fell?.text).toBe("Food fell by -$200.00 between its usual month and Jul 2026.");
+    expect(fell?.text).toBe("Food fell by $200.00 between its usual month and Jul 2026.");
   });
 
   test("a trend appears only when every month agrees, and names its start", () => {
