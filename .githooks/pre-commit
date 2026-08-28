@@ -1,0 +1,47 @@
+#!/bin/sh
+#
+# PASS 74 — `pnpm ledger-check` on every commit, instead of when somebody
+# thinks to run it.
+#
+# ⛔ What it is guarding. `statement_periods.reconciliation` and `gap_cents`
+# were written once at import and nothing revisited them, so a hand-entered
+# +$3,579.67 plug held July 2026 at a stored gap of $231.85 while the real
+# figure was $3,811.52. Pass 74 stops that drift being POSSIBLE (rebuildAccount
+# re-grades); this stops the other findings — a chain break, money in the
+# balance chain with no source document, a statement whose printed market value
+# the ledger disagrees with — sitting undiscovered between sessions.
+#
+# It takes about three quarters of a second and needs no network.
+#
+# ⚠️ SILENT when there is no database. A fresh clone, a CI runner and a
+# worktree all have no `data/moneyapp.db` (it is gitignored), and a hook that
+# failed there would be a hook everybody turns off.
+#
+# To commit past a failure — which should be a deliberate act, not a habit:
+#
+#     git commit --no-verify
+#
+# Wired by `pnpm run prepare` (git config core.hooksPath .githooks), so it
+# arrives with an install rather than having to be copied into .git/hooks by
+# hand, where it would be untracked and invisible.
+set -e
+
+DB="${MONEYAPP_DB_PATH:-data/moneyapp.db}"
+if [ ! -s "$DB" ]; then
+  exit 0
+fi
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "pre-commit: pnpm not on PATH — skipping the ledger check" >&2
+  exit 0
+fi
+
+# Quiet on success. A hook that prints fifteen lines of healthy ledger on every
+# commit is a hook that stops being read, and then stops being kept.
+OUT=$(pnpm --silent ledger-check 2>&1) || {
+  echo "$OUT" >&2
+  echo "" >&2
+  echo "The ledger does not match its recorded baseline (scripts/ledger-check.ts)." >&2
+  echo "Understand what the money is before committing; 'git commit --no-verify' if you must." >&2
+  exit 1
+}

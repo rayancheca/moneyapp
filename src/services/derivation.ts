@@ -8,6 +8,7 @@ import { splitMissing, type AccountOpening } from "@/lib/coverage-label";
 import { assertWithinFinancialWindow } from "@/lib/date-window";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
 import { rebuildInvestmentHistory } from "./crypto-history";
+import { regradeStatementPeriods } from "./statement-periods";
 
 /**
  * The balance-derivation engine (schema.md daily_balances):
@@ -285,6 +286,13 @@ export function rebuildAccount(db: AppDatabase, accountId: string, today: string
       .get();
     if (hasEvents) {
       rebuildInvestmentHistory(db, accountId, today);
+      /*
+       * ⚠️ The early return needs the re-grade too, and this is the branch where
+       * it matters most: Robinhood Brokerage and Robinhood Crypto BOTH take it,
+       * and they are the two accounts whose periods are `value_anchor` — the
+       * verdict pass 73 built an arbiter around.
+       */
+      regradeStatementPeriods(db, accountId);
       return;
     }
   }
@@ -329,6 +337,20 @@ export function rebuildAccount(db: AppDatabase, accountId: string, today: string
         .run();
     }
   });
+
+  /*
+   * PASS 74 — a stored verdict cannot outlive the ledger beneath it.
+   *
+   * Every path that can change a balance comes through here, so this is the one
+   * place that makes `statement_periods.reconciliation` describe the CURRENT
+   * transactions rather than the ones that were there at import. `ledger-check`
+   * already detected the drift; this is what stops it happening.
+   *
+   * ⛔ `regradeStatementPeriods`, NOT `reconcileAccounts`. The latter also
+   * quarantines, and quarantining from inside a rebuild would let a rebuild
+   * change statuses that nothing then rebuilds for — see that module's header.
+   */
+  regradeStatementPeriods(db, accountId);
 }
 
 /**
