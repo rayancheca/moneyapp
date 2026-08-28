@@ -458,7 +458,27 @@ a future pass should decide deliberately rather than discover it.
   groceries. The dry run rehearses on a SQLite `.backup` copy and all 12 guards
   pass.
 - **The `notices`, `car` and `income` decision cards have no visual baseline** — they return null on the e2e fixture (§7). `/merchants/[id]` and the card grid are covered now.
-- **`notFound()` returns HTTP 200** app-wide from force-dynamic pages.
+- ⚖️ **`notFound()` returns HTTP 200** — investigated properly this time, and
+  **closed as framework behaviour rather than left vague.** It reproduces in a
+  real `next start` production server, not just `next dev`: `/merchants/nope`,
+  `/accounts/nonexistent-id` and `/summary/banana` all answer **200** with the
+  not-found page in the body, while a genuinely unmatched `/no-such-route-at-all`
+  answers **404**. Both carry identical `Cache-Control` and `Content-Type`.
+
+  ⛔ **Two hypotheses tested and BOTH refuted**, so do not repeat them:
+  1. *"The body has already started streaming, so move the check earlier."*
+     Converted `/merchants/[id]` to do its existence check inside
+     `generateMetadata`, which runs before the body. Still 200.
+  2. *"`force-dynamic` is the cause."* Removed it from that page entirely.
+     Still 200.
+
+  So it is neither where the check lives nor the rendering strategy, and any fix
+  from here is exploratory. ⛔ **It is also not worth one.** The lever a future
+  pass would reach for is dropping `force-dynamic` — and that flag is there
+  because these pages read a live SQLite database, so trading it for a status
+  code would risk serving cached financial figures. This app is local-first,
+  single-user and uncrawled; nothing consumes the status. `e2e/year-summary.spec`
+  already asserts on the RENDER for exactly this reason, and that remains right.
 - **45 `WEIXIN*` rows, $340.00**, deliberately in bare `Shopping`.
 - **HBO Max is registered as RENEWING** — one click on `/recurring` ends it if
   it does not auto-renew.
