@@ -106,6 +106,13 @@
       "when": 1787935263815,
       "tag": "0014_tidy_thing",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1788206533940,
+      "tag": "0015_naive_mephistopheles",
+      "breakpoints": true
     }
   ]
 }

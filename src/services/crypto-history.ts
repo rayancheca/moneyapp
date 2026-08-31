@@ -5,6 +5,7 @@ import { dailyBalances } from "@/db/schema/balances";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { priceCache } from "@/db/schema/holdings";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
+import { adjustedHoldingEvents } from "./holding-timeline";
 import { valueCentsOf } from "./holdings";
 
 /**
@@ -28,12 +29,19 @@ export function rebuildInvestmentHistory(
     throw new Error(`rebuildInvestmentHistory: ${accountId} is not an investment account`);
   }
 
-  const events = db
-    .select()
-    .from(holdingEvents)
-    .where(eq(holdingEvents.accountId, accountId))
-    .orderBy(asc(holdingEvents.occurredOn), asc(holdingEvents.createdAt))
-    .all();
+  /*
+   * ⛔ Split-adjusted before a single quantity is summed. The closes in
+   * `price_cache` are split-adjusted all the way back — Yahoo returns them that
+   * way, and COKE proves it: $114.36 on 2025-05-23 and $112.93 on 2025-05-27,
+   * continuous across a 10-for-1. The stored quantities are as-traded, so
+   * multiplying the two published a TENTH of the truth for the 60 trading days
+   * before that split. Today's position is untouched; only the path to it.
+   *
+   * `adjustedHoldingEvents` is the one loader for this, shared with the flow,
+   * the realized walk and the P&L calendar — see its docstring for why all four
+   * had to move together.
+   */
+  const events = adjustedHoldingEvents(db, accountId);
 
   db.transaction((tx) => {
     tx.delete(dailyBalances).where(eq(dailyBalances.accountId, accountId)).run();

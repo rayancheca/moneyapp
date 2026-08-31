@@ -1,0 +1,1 @@
+ALTER TABLE `holding_events` ADD `event_kind` text DEFAULT 'trade' NOT NULL;

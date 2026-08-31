@@ -25,6 +25,7 @@ import {
 } from "@/lib/realized-pnl";
 import { investmentSideAccountIds } from "./accounts";
 import { accountSeries } from "./derivation";
+import { adjustedHoldingEvents } from "./holding-timeline";
 import { valueCentsOf } from "./holdings";
 
 /**
@@ -71,16 +72,23 @@ export function investmentAccounts(db: AppDatabase): InvestmentAccountInfo[] {
  * is handled by the caller (first day = full NAV), so this covers day > firstDay.
  */
 function flowsByDay(db: AppDatabase, accountId: string): Map<string, number> {
-  const events = db
-    .select({
-      day: holdingEvents.occurredOn,
-      symbol: holdingEvents.symbol,
-      assetType: holdingEvents.assetType,
-      deltaE8: holdingEvents.quantityDeltaE8,
-    })
-    .from(holdingEvents)
-    .where(eq(holdingEvents.accountId, accountId))
-    .all();
+  /*
+   * ⛔ Split-adjusted, so a split contributes NO flow. Valued as stored, COKE's
+   * 2025-05-27 delta of +9.013095 read as a $1,017.85 contribution on a day
+   * nothing was bought: the real trades came to $1,109.89 and this reported
+   * $2,127.74.
+   *
+   * ⚠️ And it had to move WITH the NAV, not after it. `return = ΔNAV − flow`,
+   * so the fake $1,017.42 step in the level and the fake $1,017.85 of flow very
+   * nearly annihilated — fixing the NAV alone would have turned a cancelled
+   * pair of errors into a $1,017.85 loss on a day the market did nothing.
+   */
+  const events = adjustedHoldingEvents(db, accountId).map((e) => ({
+    day: e.occurredOn,
+    symbol: e.symbol,
+    assetType: e.assetType,
+    deltaE8: e.quantityDeltaE8,
+  }));
   const map = new Map<string, number>();
   const earliestCloseCache = new Map<string, string | null>();
   for (const e of events) {
@@ -493,17 +501,22 @@ interface LegTrades {
  * UNROUNDED so the walk's product-rounding matches valueCentsOf to the cent.
  */
 function realizedTradesByLeg(db: AppDatabase): Map<string, LegTrades> {
-  const events = db
-    .select({
-      accountId: holdingEvents.accountId,
-      symbol: holdingEvents.symbol,
-      assetType: holdingEvents.assetType,
-      day: holdingEvents.occurredOn,
-      deltaE8: holdingEvents.quantityDeltaE8,
-    })
-    .from(holdingEvents)
-    .orderBy(asc(holdingEvents.occurredOn), asc(holdingEvents.createdAt), asc(holdingEvents.id))
-    .all();
+  /*
+   * ⛔ Split-adjusted, and splits DROPPED rather than zeroed. A split is not a
+   * trade: fed to the cost walk as stored it was a purchase of 9.013095 COKE
+   * shares at the day's close, $1,017.85 of basis for money that never moved.
+   * Adjusting alone would leave a zero-quantity trade in the walk — a row that
+   * means nothing and that every future reader would have to reason about.
+   */
+  const events = adjustedHoldingEvents(db)
+    .filter((e) => e.eventKind !== "split")
+    .map((e) => ({
+      accountId: e.accountId,
+      symbol: e.symbol,
+      assetType: e.assetType,
+      day: e.occurredOn,
+      deltaE8: e.quantityDeltaE8,
+    }));
   const closesFor = new Map<string, { day: string; close: number }[]>();
   const seriesOf = (assetType: AssetType, symbol: string): { day: string; close: number }[] => {
     const key = `${assetType}|${symbol}`;
@@ -911,15 +924,15 @@ export function pnlDayDetail(db: AppDatabase, day: string): PnlDayDetail {
  * reconciles to the header. Positions active that day but since sold still appear.
  */
 function holdingDeltasBetween(db: AppDatabase, prevDay: string, day: string): PnlHoldingDelta[] {
-  const events = db
-    .select({
-      symbol: holdingEvents.symbol,
-      assetType: holdingEvents.assetType,
-      deltaE8: holdingEvents.quantityDeltaE8,
-      occurredOn: holdingEvents.occurredOn,
-    })
-    .from(holdingEvents)
-    .all();
+  // split-adjusted: the quantity entering a day is in today's shares, matching
+  // the adjusted closes it is about to be valued against on BOTH sides of the
+  // difference — see services/holding-timeline.ts
+  const events = adjustedHoldingEvents(db).map((e) => ({
+    symbol: e.symbol,
+    assetType: e.assetType,
+    deltaE8: e.quantityDeltaE8,
+    occurredOn: e.occurredOn,
+  }));
   const qtyByKey = new Map<string, { symbol: string; assetType: AssetType; qtyE8: number }>();
   for (const e of events) {
     if (compareDates(e.occurredOn, prevDay) > 0) continue; // qty entering `day`
