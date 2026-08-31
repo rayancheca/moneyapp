@@ -1,4 +1,5 @@
 import { isoWeekday } from "@/lib/dates";
+import { formatCents } from "@/lib/money";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
@@ -116,6 +117,35 @@ export function stalenessSentence(s: SeriesStaleness): string {
     return `${expects}, but no charge has ever matched it — still projected, on the schedule alone`;
   }
   return `${expects}, but nothing has matched since ${longDate(s.lastMatchedOn)} — ${s.daysSinceLastMatch} days, past the ${Math.round(s.toleranceDays)}-day tolerance. Still projected: a late import looks exactly like a cancelled series, so this says which numbers rest on old evidence rather than dropping them.`;
+}
+
+/**
+ * How much of one side's SCHEDULED money rests on evidence past tolerance,
+ * phrased for the composition band. Null when none of it does — an always-on
+ * "$0.00 running late" would train the eye to skip the one time it matters,
+ * which is the same reason `StaleFooter` renders nothing when nothing is stale.
+ *
+ * ⛔ "all of it" is a separate sentence from the figure, and it earns its place
+ * on this ledger: September's scheduled income is $4,188.00, every cent of it
+ * from `Cash job (weekly pay)`, last matched 2026-06-05. Printing "$4,188.00
+ * running late" beside a scheduled total of $4,188.00 makes the reader compare
+ * two identical numbers to learn the thing that matters most about the card.
+ *
+ * ⚠️ Compares MAGNITUDES. The two figures are net-worth signed and always share
+ * a sign within a side, so the comparison is safe either way — but writing it
+ * on the magnitudes says out loud that this is a question about size, not about
+ * direction.
+ */
+export function stalePartLabel(side: {
+  fixedCents: number;
+  fixedStaleCents: number;
+  fixedStaleCount: number;
+}): string | null {
+  if (side.fixedStaleCount === 0 || side.fixedStaleCents === 0) return null;
+  const stale = Math.abs(side.fixedStaleCents);
+  return stale === Math.abs(side.fixedCents)
+    ? "all of it running late"
+    : `${formatCents(stale)} of it running late`;
 }
 
 /** One stale series, as the disclosure footer lists it. */

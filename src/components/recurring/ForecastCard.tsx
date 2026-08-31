@@ -1,6 +1,8 @@
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
+import { forecastSplit } from "@/lib/forecast-split";
 import type { MonthForecast } from "@/services/forecast";
+import { ForecastComposition } from "./ForecastComposition";
 import { monthLabel, staleComponentEntries } from "./labels";
 import { StaleFooter, StaleMark } from "./StalenessNote";
 
@@ -19,6 +21,16 @@ interface ForecastCardProps {
  */
 export function ForecastCard({ forecast: f }: ForecastCardProps) {
   const stale = staleComponentEntries(f.components);
+  /*
+   * Derived from the SAME array the totals above were summed from, so the band
+   * and the tiles cannot drift: `forecastSplit` partitions by sign first, which
+   * is exactly how `services/forecast` derives `projectedIncomeCents` and
+   * `projectedSpendCents`. See lib/forecast-split.ts for why that makes the
+   * identity arithmetic rather than a coincidence worth re-checking here.
+   */
+  const split = forecastSplit(
+    f.components.map((c) => ({ kind: c.kind, cents: c.cents, isStale: c.staleness?.isStale })),
+  );
 
   return (
     <SurfaceCard>
@@ -71,6 +83,8 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
           </dd>
         </div>
       </dl>
+
+      <ForecastComposition split={split} />
 
       <details className="group mt-6 rounded-md border border-line bg-surface">
         <summary className="cursor-pointer select-none px-4 py-2.5 text-xs font-medium text-ink-muted transition-colors duration-(--duration-fast) hover:text-ink">
