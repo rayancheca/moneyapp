@@ -16,6 +16,7 @@ import {
   toProjectable,
   type SeriesOccurrence,
   type SeriesStaleness,
+  lapsedSeriesShouldStopForecasting,
   seriesHasLapsed,
 } from "./recurring";
 import { activeSplitsInRange } from "./transaction-splits";
@@ -217,9 +218,23 @@ function fixedComponents(
      * (cash-earnings) built on the fact that his pay arrives as cash and reaches
      * the ledger late or not at all. An income series going quiet is evidence
      * about the IMPORTS, not about the job.
+     *
+     * ⛔ Money-out is `lapsedSeriesShouldStopForecasting(kind)`, NOT the sign of
+     * the amount, and this line used to test the sign. Four other callers —
+     * `subscriptions-card`, `recurring-insights`, `recurring-calendar` and
+     * `upcomingOccurrences` — already ask that function; this was a fifth
+     * phrasing of a rule that has one home, which is the exact shape of the
+     * defect that left a previous landlord in the forecast for seven months
+     * while two of three callers already knew better.
+     *
+     * The two phrasings agree on every series in the ledger today — measured
+     * 2026-08-31, all eighteen live ones have a sign matching their kind — so
+     * this changes no published figure. They come apart where it costs most: an
+     * `income` series whose stored amount is negative is DELETED by the sign
+     * test and kept by the kind test, and that is the $4,233.69 → $45.69
+     * collapse arriving by a different door.
      */
-    const effective = series.userAmountCents ?? series.nextExpectedAmountCents ?? 0;
-    if (effective < 0 && seriesHasLapsed(series, today)) continue;
+    if (lapsedSeriesShouldStopForecasting(series.kind) && seriesHasLapsed(series, today)) continue;
     // forecast reads user overrides first (§4.4): amount, cadence, next-expected
     const staleness = seriesStaleness(series, today);
     const occurrences: SeriesOccurrence[] = projectOccurrences(

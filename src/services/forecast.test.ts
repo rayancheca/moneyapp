@@ -664,6 +664,55 @@ describe("forecastForMonth", () => {
     expect(labels).toContain("Cash job");
   });
 
+  /**
+   * The lapse gate reads the series' KIND, not the sign of its amount.
+   *
+   * Both series below are lapsed and both have a sign that contradicts their
+   * kind, which is the only shape that can tell the two rules apart — the
+   * eighteen live series on the real ledger all have a sign that agrees with
+   * their kind, so nothing there could ever fail this.
+   *
+   * ⛔ The income row is the expensive direction. A sign test DELETES it, and
+   * deleting the owner's only income series is how a $4,233.69 projection
+   * became $45.69 once already.
+   */
+  test("lapse is decided by kind, even when the amount's sign disagrees", () => {
+    const lapsedLongAgo = "2025-01-01";
+    bundle.db
+      .insert(recurringSeries)
+      .values([
+        {
+          // a bill that projects a CREDIT — still money-out by kind, still dead
+          name: "Positive-amount bill",
+          kind: "bill",
+          cadence: "monthly",
+          intervalDaysAvg: 30,
+          nextExpectedOn: "2026-08-08",
+          nextExpectedAmountCents: 5_000,
+          status: "detected",
+          toleranceDays: 3,
+          lastMatchedOn: lapsedLongAgo,
+        },
+        {
+          // income stored negative — quiet imports must not delete it
+          name: "Negative-amount income",
+          kind: "income",
+          cadence: "weekly",
+          intervalDaysAvg: 7,
+          nextExpectedOn: "2026-08-06",
+          nextExpectedAmountCents: -104_700,
+          status: "confirmed",
+          toleranceDays: 3,
+          lastMatchedOn: lapsedLongAgo,
+        },
+      ])
+      .run();
+
+    const labels = forecastForMonth(bundle.db, "2026-09", TODAY)!.components.map((c) => c.label);
+    expect(labels).not.toContain("Positive-amount bill");
+    expect(labels).toContain("Negative-amount income");
+  });
+
   test("beyond the horizon there is no projection", () => {
     rent();
     expect(forecastForMonth(bundle.db, "2028-07", TODAY)).not.toBeNull();
