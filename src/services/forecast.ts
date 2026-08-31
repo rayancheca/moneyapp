@@ -4,7 +4,7 @@ import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import { addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { addCalendarMonths, addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { projectOngoingIncome } from "@/lib/income-forecast";
 import { formatCents } from "@/lib/money";
 import { allocationsFor } from "@/lib/transaction-splits";
@@ -16,6 +16,7 @@ import {
   toProjectable,
   type SeriesOccurrence,
   type SeriesStaleness,
+  seriesHasLapsed,
 } from "./recurring";
 import { activeSplitsInRange } from "./transaction-splits";
 
@@ -97,8 +98,24 @@ export interface ForecastComponent {
   staleness?: SeriesStaleness;
 }
 
+/**
+ * Which month a projection is ABOUT, and how to read it.
+ *
+ * - `current` — the running month: what has already happened plus what remains.
+ * - `future`  — a whole month still ahead, projected end to end.
+ *
+ * A PAST month has no third value on purpose: `forecastForMonth` returns null
+ * for one. A month that has finished is not a forecast, and dressing what
+ * actually posted up as a projection would be the app claiming to predict
+ * something it can simply read.
+ */
+export type ForecastBasis = "current" | "future";
+
 export interface MonthForecast {
   today: string;
+  /** the month this projects, `YYYY-MM` */
+  monthKey: string;
+  basis: ForecastBasis;
   monthStart: string;
   monthEnd: string;
   daysInMonth: number;
@@ -140,7 +157,22 @@ const CADENCE_LABEL: Record<string, string> = {
   annual: "annual",
 };
 
-function fixedComponents(db: AppDatabase, today: string, monthEnd: string): ForecastComponent[] {
+/**
+ * ⚠️ `today` and `from` are different things and both are needed.
+ *
+ * `from` bounds the OCCURRENCE window — for the running month that is today,
+ * and for a future month it is that month's first day. `today` is what
+ * staleness is measured against, and staleness is a fact about now: a series
+ * last seen 87 days ago is 87 days stale whether you are looking at September
+ * or at next June. Passing the window start to `seriesStaleness` would make
+ * every commitment look fresher the further ahead you paged.
+ */
+function fixedComponents(
+  db: AppDatabase,
+  today: string,
+  from: string,
+  monthEnd: string,
+): ForecastComponent[] {
   // status only — staleness is disclosed per component, never used to exclude
   const live = db
     .select()
@@ -151,11 +183,48 @@ function fixedComponents(db: AppDatabase, today: string, monthEnd: string): Fore
   const components: { component: ForecastComponent; firstDate: string }[] = [];
   for (const series of live) {
     if (series.kind === "transfer") continue;
+    /*
+     * ⛔ A series that STOPPED CHARGING is not a forecast, and this was the one
+     * surface that had not been told.
+     *
+     * `budgets.ts` and `recurring-calendar.ts` both skip lapsed series already;
+     * the forecast did not, so the three disagreed about which commitments are
+     * alive. On the owner's own ledger that put **$1,779.49 a month** of a
+     * previous landlord (`DIRECT PAYMENT HOFFMAN LL`, last charged 2026-01-08)
+     * into every future month alongside his current rent, plus three 2024-era
+     * subscriptions that have not charged in over two years.
+     *
+     * ⚠️ NOT the staleness bar, and the difference is the whole point.
+     * `LAPSED_MISS_LIMIT` is 3 cycles where staleness is 1.5, and it exists
+     * because those two decisions cost opposite things: dropping a bill whose
+     * statement is a fortnight late is how rent once vanished from the runway
+     * for being ONE DAY over. Three missed cycles is not a late statement.
+     *
+     * Staleness itself is still only DISCLOSED, never used to exclude — the
+     * "N series are running late — still projected" note is the same as ever.
+     *
+     * ⛔ **MONEY-OUT ONLY**, which `LAPSED_MISS_LIMIT`'s own docstring says and
+     * I did not read carefully enough the first time. Applying it to everything
+     * dropped `Cash job (weekly pay)` — the owner's ONLY income series, whose
+     * deposits have not been imported since July — and the September projection
+     * fell from $4,233.69 of income to **$45.69**. That is not a forecast, it is
+     * a false alarm.
+     *
+     * The asymmetry is real and it is the whole reason for the rule. A dead
+     * outflow that keeps projecting overstates what you owe, which is
+     * conservative. A live inflow dropped for want of an IMPORT understates what
+     * you earn, and there is a whole disclosure elsewhere in this app
+     * (cash-earnings) built on the fact that his pay arrives as cash and reaches
+     * the ledger late or not at all. An income series going quiet is evidence
+     * about the IMPORTS, not about the job.
+     */
+    const effective = series.userAmountCents ?? series.nextExpectedAmountCents ?? 0;
+    if (effective < 0 && seriesHasLapsed(series, today)) continue;
     // forecast reads user overrides first (§4.4): amount, cadence, next-expected
     const staleness = seriesStaleness(series, today);
     const occurrences: SeriesOccurrence[] = projectOccurrences(
       toProjectable(series, staleness),
-      today,
+      from,
       monthEnd,
     );
     if (occurrences.length === 0) continue;
@@ -326,13 +395,135 @@ function variableIncomeComponents(
     .filter((c) => c.cents > 0);
 }
 
+/**
+ * How far ahead the calendar may be paged and still get a projection.
+ *
+ * ⛔ A bound, not a preference. `projectedEomCashCents` for a future month is
+ * CHAINED — it sums every intervening month's net — so an unbounded horizon is
+ * an unbounded loop over the whole forecast machinery, one page-turn at a time.
+ * Two years is well past the last payment of the longest commitment in the
+ * ledger (a 24-payment lease), which is the point at which the projection stops
+ * describing anything the app actually knows.
+ */
+export const FORECAST_HORIZON_MONTHS = 24;
+
+/** `YYYY-MM` for the month `n` months after `key`. */
+function addMonthKey(key: string, n: number): string {
+  return monthKey(addCalendarMonths(`${key}-01`, n));
+}
+
+/** Whole months from `from` to `to` inclusive; negative when `to` is earlier. */
+function monthsBetweenKeys(from: string, to: string): number {
+  const [fy, fm] = from.split("-").map(Number) as [number, number];
+  const [ty, tm] = to.split("-").map(Number) as [number, number];
+  return (ty - fy) * 12 + (tm - fm);
+}
+
+/**
+ * A whole month still ahead, projected end to end.
+ *
+ * ⛔ The difference from the running month is the WINDOW, not the arithmetic.
+ * Here the whole month is remaining, so the variable pace is a full month's
+ * worth rather than a prorated tail, and the fixed occurrences are the ones due
+ * between the 1st and the last — not the ones left after today.
+ */
+function futureMonthParts(
+  db: AppDatabase,
+  today: string,
+  key: string,
+): { components: ForecastComponent[]; monthStart: string; monthEnd: string; daysInMonth: number; net: number } {
+  const monthStart = `${key}-01`;
+  const monthEnd = periodBounds(monthStart, "monthly").end;
+  const daysInMonth = diffDays(monthStart, monthEnd) + 1;
+  const components = [
+    ...fixedComponents(db, today, monthStart, monthEnd),
+    // the whole month remains, so the trailing pace applies in full
+    ...variableIncomeComponents(db, today, daysInMonth, daysInMonth),
+    ...variableComponents(db, today, daysInMonth, daysInMonth),
+  ];
+  const income = components.reduce((sum, c) => (c.cents > 0 ? sum + c.cents : sum), 0);
+  const spend = components.reduce((sum, c) => (c.cents < 0 ? sum + c.cents : sum), 0);
+  return { components, monthStart, monthEnd, daysInMonth, net: income + spend };
+}
+
+/**
+ * The projection for ANY month the calendar can be paged to.
+ *
+ * Returns null for a month that has already ended: a finished month is not a
+ * forecast, and the calendar beneath it already shows what actually posted.
+ *
+ * ⛔ **The end-of-month cash figure is CHAINED, and it has to be.** "What will
+ * I have at the end of October" cannot be answered from October alone — it
+ * depends on September. So a future month's `projectedEomCashCents` is today's
+ * cash plus every intervening month's projected net, this one included. Showing
+ * October's net against today's balance would be a number that is wrong by a
+ * whole month and looks entirely reasonable.
+ */
+export function forecastForMonth(
+  db: AppDatabase,
+  key: string,
+  today: string = todayIso(),
+): MonthForecast | null {
+  const current = monthKey(today);
+  const ahead = monthsBetweenKeys(current, key);
+  if (ahead < 0) return null;
+  if (ahead > FORECAST_HORIZON_MONTHS) return null;
+  if (ahead === 0) return forecastCurrentMonth(db, today);
+
+  const parts = futureMonthParts(db, today, key);
+
+  /*
+   * The running month's own remainder starts the chain — the months between
+   * are whole ones. `forecastCurrentMonth` is called once here rather than per
+   * step; the loop below only needs each future month's NET.
+   */
+  let chainedNet = forecastCurrentMonth(db, today).projectedNetCents;
+  for (let i = 1; i < ahead; i++) {
+    chainedNet += futureMonthParts(db, today, addMonthKey(current, i)).net;
+  }
+  chainedNet += parts.net;
+
+  const cashTypes = new Set(["checking", "savings"]);
+  const activeAccounts = db
+    .select({ id: accounts.id, type: accounts.type })
+    .from(accounts)
+    .where(eq(accounts.isActive, true))
+    .all();
+  const balances = latestBalances(db);
+  let cashCents = 0;
+  for (const a of activeAccounts) {
+    if (!cashTypes.has(a.type)) continue;
+    cashCents += balances.get(a.id)?.balanceCents ?? 0;
+  }
+
+  const income = parts.components.reduce((sum, c) => (c.cents > 0 ? sum + c.cents : sum), 0);
+  const spend = parts.components.reduce((sum, c) => (c.cents < 0 ? sum + c.cents : sum), 0);
+
+  return {
+    today,
+    monthKey: key,
+    basis: "future",
+    monthStart: parts.monthStart,
+    monthEnd: parts.monthEnd,
+    daysInMonth: parts.daysInMonth,
+    // the whole month is ahead of today
+    remainingDays: parts.daysInMonth,
+    projectedIncomeCents: income,
+    projectedSpendCents: spend,
+    projectedNetCents: parts.net,
+    projectedEomCashCents: cashCents + chainedNet,
+    projectedEomNetWorthCents: latestBridgedNetWorthCents(db, balances) + chainedNet,
+    components: parts.components,
+  };
+}
+
 export function forecastCurrentMonth(db: AppDatabase, today: string = todayIso()): MonthForecast {
   const { start: monthStart, end: monthEnd } = periodBounds(today, "monthly");
   const daysInMonth = diffDays(monthStart, monthEnd) + 1;
   const remainingDays = diffDays(today, monthEnd) + 1;
 
   const components = [
-    ...fixedComponents(db, today, monthEnd),
+    ...fixedComponents(db, today, today, monthEnd),
     ...variableIncomeComponents(db, today, remainingDays, daysInMonth),
     ...variableComponents(db, today, remainingDays, daysInMonth),
   ];
@@ -363,6 +554,8 @@ export function forecastCurrentMonth(db: AppDatabase, today: string = todayIso()
 
   return {
     today,
+    monthKey: monthKey(today),
+    basis: "current",
     monthStart,
     monthEnd,
     daysInMonth,

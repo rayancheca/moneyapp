@@ -2,7 +2,10 @@ import { expect, test, type Page } from "@playwright/test";
 import { ACCOUNT_VIEW_SPEC } from "../src/components/accounts/accounts-view-spec";
 import { DECISIONS_VIEW_SPEC } from "../src/components/dashboard/dashboard-view-spec";
 import { HOLDING_VIEW_SPEC, PORTFOLIO_VIEW_SPEC } from "../src/components/investments/investments-view-spec";
-import { RECURRING_SERIES_VIEW_SPEC } from "../src/components/recurring/recurring-view-spec";
+import {
+  CALENDAR_VIEW_SPEC,
+  RECURRING_SERIES_VIEW_SPEC,
+} from "../src/components/recurring/recurring-view-spec";
 import { CASH_VIEW_SPEC } from "../src/components/spending/spending-view-spec";
 import { WHERE_VIEW_SPEC } from "../src/lib/massif-layout";
 import type { ViewSpec } from "../src/lib/view-state";
@@ -95,6 +98,9 @@ const SURFACES: readonly Surface[] = [
   { label: "holding detail", spec: HOLDING_VIEW_SPEC, path: holdingPath },
   { label: "account detail", spec: ACCOUNT_VIEW_SPEC, path: accountPath },
   { label: "series detail", spec: RECURRING_SERIES_VIEW_SPEC, path: seriesPath },
+  // the calendar's row height — added with the dimension, which is the whole
+  // point of this file: an option nobody enumerates is an option nobody opens
+  { label: "recurring calendar", spec: CALENDAR_VIEW_SPEC, path: fixed("/recurring?tab=calendar") },
 ];
 
 test("every surface below has options to enumerate", () => {

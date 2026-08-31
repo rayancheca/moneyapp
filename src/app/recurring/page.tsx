@@ -4,10 +4,16 @@ import { getDb } from "@/db/client";
 import { monthKey, todayIso } from "@/lib/dates";
 import { forecastCurrentMonth } from "@/services/forecast";
 import { listSeries, upcomingOccurrences } from "@/services/recurring";
+import { readSettings } from "@/services/settings";
+import { resolveViewState } from "@/lib/view-state";
 import { recurringCalendar } from "@/services/recurring-calendar";
 import { AllSeriesView } from "@/components/recurring/AllSeriesView";
 import { ForecastCard } from "@/components/recurring/ForecastCard";
-import { RecurringCalendar } from "@/components/recurring/RecurringCalendar";
+import { ForecastAndCalendar } from "@/components/recurring/ForecastAndCalendar";
+import {
+  CALENDAR_VIEW_SPEC,
+  RECURRING_CALENDAR_SURFACE,
+} from "@/components/recurring/recurring-view-spec";
 import { RecurringTabs, type RecurringTab } from "@/components/recurring/RecurringTabs";
 import { UpcomingList } from "@/components/recurring/UpcomingList";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -17,6 +23,11 @@ import { detectNowAction } from "./actions";
 
 export const metadata: Metadata = { title: "Recurring" };
 export const dynamic = "force-dynamic";
+
+/** the first value of a repeated query param — Next gives arrays for `?a=1&a=2` */
+function firstParam(value: string | string[] | undefined): string | null {
+  return Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
+}
 
 const searchSchema = z.object({ tab: z.enum(["upcoming", "all", "calendar"]).catch("upcoming") });
 
@@ -35,6 +46,11 @@ export default async function RecurringPage({
 
   const db = getDb();
   const today = todayIso();
+  const calendarView = resolveViewState(
+    CALENDAR_VIEW_SPEC,
+    { cal: firstParam(raw.cal) ?? undefined },
+    readSettings(db).viewPreferences[RECURRING_CALENDAR_SURFACE],
+  );
   const series = listSeries(db, today);
   const upcoming = upcomingOccurrences(db, today, 30);
   const forecast = forecastCurrentMonth(db, today);
@@ -67,24 +83,41 @@ export default async function RecurringPage({
       {error && <ErrorBanner message={error} />}
 
       <div className="space-y-6">
-        <ForecastCard forecast={forecast} />
-
+        {/*
+          ⛔ The calendar tab renders its OWN forecast card, because on that tab
+          the card follows the month the grid is showing — and the card sits
+          above the tab strip, so the two cannot share state without something
+          wrapping both. The tabs are passed through as a prop precisely so the
+          DOM order is unchanged: card, tabs, content, on every tab.
+        */}
         {!hasSeries ? (
-          <EmptyState
-            title="Nothing detected yet"
-            description="Detection needs transaction history: stable cadence plus stable amount, at least three occurrences. Run “Detect now” after importing or categorizing."
+          <>
+            <ForecastCard forecast={forecast} />
+            <EmptyState
+              title="Nothing detected yet"
+              description="Detection needs transaction history: stable cadence plus stable amount, at least three occurrences. Run “Detect now” after importing or categorizing."
+            />
+          </>
+        ) : tab === "calendar" ? (
+          <ForecastAndCalendar
+            initialForecast={forecast}
+            initialMonth={calendarMonth}
+            today={today}
+            view={calendarView}
+            tabs={<RecurringTabs tab={tab} counts={counts} />}
           />
         ) : (
-          <div className="space-y-4">
-            <RecurringTabs tab={tab} counts={counts} />
-            {tab === "upcoming" ? (
-              <UpcomingList occurrences={upcoming} />
-            ) : tab === "all" ? (
-              <AllSeriesView series={series} />
-            ) : (
-              <RecurringCalendar initialMonth={calendarMonth} today={today} />
-            )}
-          </div>
+          <>
+            <ForecastCard forecast={forecast} />
+            <div className="space-y-4">
+              <RecurringTabs tab={tab} counts={counts} />
+              {tab === "upcoming" ? (
+                <UpcomingList occurrences={upcoming} />
+              ) : (
+                <AllSeriesView series={series} />
+              )}
+            </div>
+          </>
         )}
       </div>
     </>

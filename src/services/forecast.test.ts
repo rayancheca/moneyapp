@@ -12,7 +12,7 @@ import { recurringSeries, type Cadence, type SeriesKind, type SeriesStatus } fro
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
-import { forecastCurrentMonth, trailingFullMonths } from "./forecast";
+import { forecastCurrentMonth, forecastForMonth, trailingFullMonths } from "./forecast";
 
 const TODAY = "2026-07-08"; // July 2026: 31 days, 24 remaining (incl. today)
 
@@ -492,5 +492,181 @@ describe("forecastCurrentMonth", () => {
     const f = forecastCurrentMonth(bundle.db, TODAY);
     expect(f.components.find((c) => c.label === "Salary")).toBeUndefined();
     expect(f.projectedIncomeCents).toBe(0);
+  });
+});
+
+/**
+ * PASS — the forecast follows the calendar.
+ *
+ * ⛔ The card said "Forecast · August 2026" while the grid under it showed
+ * October. Two different months, stacked, with nothing saying so.
+ */
+describe("forecastForMonth", () => {
+  let dir: string;
+  let bundle: DbBundle;
+  let checkingId: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-ffm-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    checkingId = createAccount(bundle.db, { institutionId: chase.id, name: "Checking", type: "checking" });
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const rent = (): string =>
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Rent",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        nextExpectedOn: "2026-08-01",
+        nextExpectedAmountCents: -200_000,
+        status: "confirmed",
+        toleranceDays: 3,
+      })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+
+  test("the running month is exactly what forecastCurrentMonth says", () => {
+    rent();
+    const viaMonth = forecastForMonth(bundle.db, "2026-07", TODAY)!;
+    const viaCurrent = forecastCurrentMonth(bundle.db, TODAY);
+    expect(viaMonth).toEqual(viaCurrent);
+    expect(viaMonth.basis).toBe("current");
+    expect(viaMonth.monthKey).toBe("2026-07");
+  });
+
+  /*
+   * ⛔ A month that has ended is not a forecast. The calendar below it already
+   * shows what actually posted, and dressing that up as a projection would be
+   * the app claiming to predict something it can simply read.
+   */
+  test("a past month has no projection at all", () => {
+    rent();
+    expect(forecastForMonth(bundle.db, "2026-06", TODAY)).toBeNull();
+    expect(forecastForMonth(bundle.db, "2025-01", TODAY)).toBeNull();
+  });
+
+  test("a future month is projected END TO END, not from today", () => {
+    rent();
+    const f = forecastForMonth(bundle.db, "2026-09", TODAY)!;
+    expect(f.basis).toBe("future");
+    expect(f.monthStart).toBe("2026-09-01");
+    expect(f.monthEnd).toBe("2026-09-30");
+    expect(f.daysInMonth).toBe(30);
+    // the WHOLE month is ahead — not the 24 days remaining of the current one
+    expect(f.remainingDays).toBe(30);
+    // September's rent is due on the 1st, which is BEFORE today+n — it is only
+    // in this projection because the window starts at the month, not at today
+    expect(f.components.find((c) => c.label === "Rent")?.cents).toBe(-200_000);
+  });
+
+  /*
+   * ⛔ The chain. "What will I have at the end of October" cannot be answered
+   * from October alone — it depends on September. Projecting October's net
+   * against today's balance would be wrong by a whole month and look entirely
+   * reasonable.
+   */
+  test("end-of-month cash is CHAINED through every intervening month", () => {
+    rent();
+    const jul = forecastCurrentMonth(bundle.db, TODAY);
+    const aug = forecastForMonth(bundle.db, "2026-08", TODAY)!;
+    const sep = forecastForMonth(bundle.db, "2026-09", TODAY)!;
+    const oct = forecastForMonth(bundle.db, "2026-10", TODAY)!;
+
+    /*
+     * ⚠️ AUGUST is in the chain and it is easy to forget: today is 2026-07-08,
+     * so September is TWO months out. My own first assertion here skipped it and
+     * failed — which is the whole reason the figure has to be chained rather
+     * than added to today's balance.
+     */
+    expect(aug.projectedEomCashCents).toBe(jul.projectedEomCashCents + aug.projectedNetCents);
+    expect(sep.projectedEomCashCents).toBe(aug.projectedEomCashCents + sep.projectedNetCents);
+    expect(oct.projectedEomCashCents).toBe(sep.projectedEomCashCents + oct.projectedNetCents);
+    // …and each month's own net is about that month alone
+    expect(oct.projectedNetCents).not.toBe(oct.projectedEomCashCents);
+  });
+
+  test("a commitment that has ended is not projected past its last payment", () => {
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Lease",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        nextExpectedOn: "2026-08-15",
+        nextExpectedAmountCents: -50_000,
+        status: "confirmed",
+        toleranceDays: 3,
+        userEndsOn: "2026-09-15",
+      })
+      .run();
+
+    expect(forecastForMonth(bundle.db, "2026-09", TODAY)!.components.some((c) => c.label === "Lease")).toBe(true);
+    expect(forecastForMonth(bundle.db, "2026-10", TODAY)!.components.some((c) => c.label === "Lease")).toBe(false);
+  });
+
+  /*
+   * ⛔ A bound, not a preference: the EOM figure is chained, so an unbounded
+   * horizon is an unbounded loop over the whole forecast machinery, one
+   * page-turn at a time.
+   */
+  /*
+   * ⛔ The asymmetry, and it is not a nicety.
+   *
+   * A dead OUTFLOW that keeps projecting overstates what you owe — conservative.
+   * A live INFLOW dropped for want of an import understates what you earn, and
+   * on the owner's ledger that turned $4,233.69 of projected income into
+   * $45.69, because his pay arrives as cash and reaches the ledger late.
+   * An income series going quiet is evidence about the IMPORTS, not the job.
+   */
+  test("a lapsed OUTFLOW stops projecting; a lapsed INCOME series does not", () => {
+    const lapsedLongAgo = "2025-01-01";
+    bundle.db
+      .insert(recurringSeries)
+      .values([
+        {
+          name: "Old landlord",
+          kind: "bill",
+          cadence: "monthly",
+          intervalDaysAvg: 30,
+          nextExpectedOn: "2026-08-08",
+          nextExpectedAmountCents: -177_949,
+          status: "detected",
+          toleranceDays: 3,
+          lastMatchedOn: lapsedLongAgo,
+        },
+        {
+          name: "Cash job",
+          kind: "income",
+          cadence: "weekly",
+          intervalDaysAvg: 7,
+          nextExpectedOn: "2026-08-06",
+          nextExpectedAmountCents: 104_700,
+          status: "confirmed",
+          toleranceDays: 3,
+          lastMatchedOn: lapsedLongAgo,
+        },
+      ])
+      .run();
+
+    const labels = forecastForMonth(bundle.db, "2026-09", TODAY)!.components.map((c) => c.label);
+    expect(labels).not.toContain("Old landlord");
+    expect(labels).toContain("Cash job");
+  });
+
+  test("beyond the horizon there is no projection", () => {
+    rent();
+    expect(forecastForMonth(bundle.db, "2028-07", TODAY)).not.toBeNull();
+    expect(forecastForMonth(bundle.db, "2028-08", TODAY)).toBeNull();
   });
 });

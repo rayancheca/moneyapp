@@ -15,6 +15,7 @@ import { heatMixPercent } from "@/lib/calendar-heat";
 import { daysInMonthOf, type CalendarDay } from "@/lib/calendar-math";
 import { RECURRING_JARGON } from "@/lib/jargon";
 import { monthFlow } from "@/lib/month-flow";
+import { CALENDAR_DENSITY_CLASS } from "./recurring-view-spec";
 import { formatCents } from "@/lib/money";
 import type { ForecastConfidence, UnsettledReason } from "@/lib/occurrence-verdict";
 import type {
@@ -28,6 +29,23 @@ import { MonthFlowStrip } from "./MonthFlowStrip";
 interface RecurringCalendarProps {
   initialMonth: RecurringCalendarMonth;
   today: string;
+  /**
+   * How tall a day cell may be: `compact`, `regular` or `tall`. Defaults to
+   * `tall`, which is the uncapped square this grid rendered before the option
+   * existed — so a caller that does not pass it is unchanged.
+   */
+  density?: string;
+  /**
+   * Called after a month is loaded, so the forecast card ABOVE this grid can
+   * follow it.
+   *
+   * ⚠️ The month deliberately stays client state rather than moving into the
+   * URL like `?cal=`. Paging is a rapid, repeated action: a navigation per
+   * arrow-press would remount `CalendarGrid` and drop its roving-tabindex
+   * focus, which is the whole keyboard story of the grid. The density is the
+   * opposite — a rare, deliberate choice worth putting in a link.
+   */
+  onMonthLoaded?: (monthKey: string) => void;
 }
 
 /**
@@ -195,7 +213,7 @@ function entrySummary(e: CalendarEntry): string {
  * a month footer of posted / upcoming totals. Month paging fetches the new
  * month through a server action (the grid never reaches the wall clock itself).
  */
-export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProps) {
+export function RecurringCalendar({ initialMonth, today, density = "tall", onMonthLoaded }: RecurringCalendarProps) {
   const [month, setMonth] = useState(initialMonth);
   const [openDay, setOpenDay] = useState<string | null>(null);
   const [, startTransition] = useTransition();
@@ -203,8 +221,12 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
   function changeMonth(monthKey: string): void {
     startTransition(async () => {
       const r = await loadRecurringMonthAction({ monthKey });
-      if (r.ok) setMonth(r.data);
-      else toast({ title: r.error, tone: "negative" });
+      if (r.ok) {
+        setMonth(r.data);
+        onMonthLoaded?.(monthKey);
+      } else {
+        toast({ title: r.error, tone: "negative" });
+      }
     });
   }
 
@@ -273,7 +295,7 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
     // respond to the pointer.
     const responds =
       "group/cell [animation:var(--animate-cell-in)] transition-[transform,box-shadow] duration-(--duration-fast) ease-(--ease-out-expo) hover:-translate-y-px hover:shadow-(--shadow-overlay) motion-reduce:hover:translate-y-0";
-    return `${fitsFigures} ${responds}`;
+    return `${fitsFigures} ${CALENDAR_DENSITY_CLASS[density] ?? ""} ${responds}`;
   }
 
   function cellStyle(iso: string): React.CSSProperties {
@@ -313,6 +335,17 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
       w.state === "unsettled" ? "opacity-60" : w.confidence ? CONFIDENCE_OPACITY[w.confidence] : "";
     const hollow = w.state === "unsettled";
     const marks = entries.slice(0, 2);
+    /*
+     * ⛔ Compact DROPS things; it does not squeeze them.
+     *
+     * Capping the height alone left the name line and the weight column still
+     * in the box, and they simply spilled into the row below — the owner's
+     * first compact screenshot has "Breezeline (internet)" sitting on top of
+     * the 17th. A cell half the height has to carry half the content, and the
+     * half worth keeping is WHO (the tile) and HOW MUCH (the figure); the name
+     * is already in the tile's hue and the Day Sheet has all of it.
+     */
+    const compact = density === "compact";
 
     return (
       <span className="flex h-full w-full flex-col gap-0.5">
@@ -355,7 +388,11 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
             {STATE_GLYPH[w.state]}
           </span>
           <span
-            className="figures whitespace-nowrap text-[10px] font-semibold leading-none sm:text-[11px]"
+            className={`figures whitespace-nowrap font-semibold leading-none ${
+              // the figure is the answer the page is opened with, and in compact
+              // it is the ONLY thing left — so it gets the room the name gave up
+              compact ? "text-[11px] sm:text-[13px]" : "text-[10px] sm:text-[11px]"
+            }`}
             style={{ color: tone }}
           >
             {compactDayTotal(w.netCents)}
@@ -371,10 +408,12 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
             the first thing the ellipsis ate: 2026-08-10 carries Breezeline and
             FPL and rendered "Breezeline (internet) …", so the cell showed a −$64
             total that its own caption could not account for. */}
-        <span className="hidden w-full items-baseline gap-0.5 text-[9px] leading-tight text-ink-muted min-[400px]:flex">
-          <span className="min-w-0 truncate">{w.dominantName}</span>
-          {w.count > 1 ? <span className="shrink-0">+{w.count - 1}</span> : null}
-        </span>
+        {compact ? null : (
+          <span className="hidden w-full items-baseline gap-0.5 text-[9px] leading-tight text-ink-muted min-[400px]:flex">
+            <span className="min-w-0 truncate">{w.dominantName}</span>
+            {w.count > 1 ? <span className="shrink-0">+{w.count - 1}</span> : null}
+          </span>
+        )}
 
         {/* THE WEIGHT. A column standing on the cell's bottom edge, so the whole
             grid shares one baseline and the month reads as a bar chart wrapped by
@@ -389,6 +428,7 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
             is nowhere to put three axes or the sentence explaining them. The bar
             answers "is this a heavy day?" and the figure directly above it
             answers "how much?". */}
+        {compact ? null : (
         <span className="flex min-h-0 flex-1 items-end pt-0.5">
           <span
             className={`block min-h-[3px] w-full origin-bottom rounded-t-[3px] [animation:var(--animate-bar-grow)] ${dimmed} ${
@@ -406,6 +446,7 @@ export function RecurringCalendar({ initialMonth, today }: RecurringCalendarProp
             }}
           />
         </span>
+        )}
       </span>
     );
   }

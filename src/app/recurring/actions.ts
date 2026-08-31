@@ -15,6 +15,7 @@ import {
   recurringCalendar,
   type RecurringCalendarMonth,
 } from "@/services/recurring-calendar";
+import { forecastForMonth, type MonthForecast } from "@/services/forecast";
 import {
   renameSeries,
   searchAttachCandidates,
@@ -298,6 +299,25 @@ export async function searchAttachCandidatesAction(
 }
 
 const monthSchema = z.object({ monthKey: z.string().regex(/^\d{4}-\d{2}$/, "Expected YYYY-MM") });
+
+/**
+ * The projection for one month, so the forecast card can follow the calendar.
+ *
+ * Returns `null` DATA — not a failure — for a month that has already ended.
+ * That is a real answer ("there is nothing to project"), and modelling it as an
+ * error would make the card show a toast every time the owner paged into the
+ * past to look at what actually happened.
+ */
+export async function loadMonthForecastAction(
+  input: z.input<typeof monthSchema>,
+): Promise<ActionResult<MonthForecast | null>> {
+  try {
+    const { monthKey } = monthSchema.parse(input);
+    return { ok: true, data: forecastForMonth(getDb(), monthKey) };
+  } catch (error: unknown) {
+    return failure(error, "Failed to load that month's forecast");
+  }
+}
 
 export async function loadRecurringMonthAction(
   input: z.input<typeof monthSchema>,
