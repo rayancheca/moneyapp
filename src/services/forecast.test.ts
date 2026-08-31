@@ -307,8 +307,8 @@ describe("forecastCurrentMonth", () => {
     insertTxn(checkingId, "2026-06-21", 7000, {}); // review queue's problem, not income
     const f = forecastCurrentMonth(bundle.db, TODAY);
     const uncat = f.components.find((c) => c.label === "Uncategorized");
-    // spend [0, 0, 5000] → avg 1666.67 + trend 2500 → 4166.67 × 24/31 → 3226
-    expect(uncat).toMatchObject({ kind: "variable", cents: -3226 });
+    // spend [0, 0, 5000] → avg 1666.67, median 0 so no upward trend → × 24/31
+    expect(uncat).toMatchObject({ kind: "variable", cents: -1290 });
     expect(f.projectedIncomeCents).toBe(0);
   });
 
@@ -318,8 +318,8 @@ describe("forecastCurrentMonth", () => {
     const f = forecastCurrentMonth(bundle.db, TODAY);
     const labels = f.components.map((c) => c.label);
     expect(labels).toEqual(["Food"]);
-    // spend [0, 0, 30000] → avg 10000 + trend 15000 → 25000 × 24/31 → 19355
-    expect(f.components[0]!.cents).toBe(-19355);
+    // spend [0, 0, 30000] → avg 10000, median 0 so no upward trend → × 24/31
+    expect(f.components[0]!.cents).toBe(-7742);
   });
 
   test("current-month, non-active, and non-expense transactions never enter variable", () => {
@@ -362,8 +362,15 @@ describe("forecastCurrentMonth", () => {
     expect(f.projectedSpendCents).toBe(sumOut);
     expect(f.projectedNetCents).toBe(sumAll);
     expect(f.projectedNetCents).toBe(f.projectedIncomeCents + f.projectedSpendCents);
-    // fixed: +320000 −1549; variable: −38710 (Food) −3226 (Uncategorized)
-    expect(f.projectedNetCents).toBe(320000 - 1549 - 38710 - 3226);
+    /*
+     * fixed: +320000 −1549; variable: −38710 (Food) −1290 (Uncategorized).
+     *
+     * Food's history [30000, 40000, 50000] rises steadily, so its +10000 slope
+     * is well under the 40000 median and passes through UNCAPPED — the cap is
+     * meant to bound a spike, not to flatten a real trend. Uncategorized's
+     * [0, 0, 5000] is the spike shape and loses its nudge entirely.
+     */
+    expect(f.projectedNetCents).toBe(320000 - 1549 - 38710 - 1290);
   });
 
   test("EOM cash and net worth build on the latest derived balances", () => {

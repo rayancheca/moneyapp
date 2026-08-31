@@ -182,6 +182,127 @@ export function projectPace(input: PaceInput): Projection {
 
 // ── method: trailingAverage (Engine B) ──────────────────────────────────────
 
+/**
+ * The trailing pace of a lumpy series: its mean, and how far a trend may move
+ * that mean.
+ *
+ * ⛔ **A trend may move the projection by at most ONE TYPICAL MONTH.** The
+ * nudge used to be `(newest − oldest) / 2` with nothing bounding it, and on a
+ * category that fires a few times a year that is not a trend estimator — it is
+ * a two-point slope that ignores the middle period entirely and is unbounded in
+ * both directions.
+ *
+ * Measured on the owner's `Travel` bucket, 2026-08-31: nineteen of twenty-three
+ * months carry spend, the median of those is about $131, and the all-time mean
+ * is $332.84 — but July 2026 holds $2,448.88, of which $2,374.89 is TWO flight
+ * bookings and the rest is $2-$17 parking. The trailing three months are
+ * $15.75, $590.24, $2,448.88, so the mean is $1,018.29, the raw nudge is
+ * $1,216.57, and the projection came out at $2,234.86: the nudge more than
+ * DOUBLED the average, off one month that was two discrete purchases.
+ *
+ * ## ⛔ ONLY THE UPWARD NUDGE IS CAPPED, and that asymmetry is the whole rule
+ *
+ * The downward direction is already bounded, by the `Math.max(0, …)` floor
+ * below: a category that collapses to nothing projects nothing, which is the
+ * correct answer — it stopped. Capping downward as well BREAKS that. A window
+ * of [$600, $0, $0] has a median of $0, so a symmetric cap is a cap of zero, it
+ * kills the −$300 slope, and the estimate comes back as the $200 mean: a
+ * cancelled habit that keeps costing money on the forecast forever. That is the
+ * same defect class as the dead landlord and the 449-day Uber One, arriving
+ * through the arithmetic instead of through the lapse rule.
+ *
+ * Upward has no such floor. Nothing bounds `(newest − oldest) / 2` from above,
+ * so one big month becomes a permanent monthly rate.
+ *
+ * ## Why the median, measured rather than chosen
+ *
+ * Backtested over 36 months and 19 root buckets on the real ledger, scoring the
+ * absolute error of the MONTHLY TOTAL — the figure the card actually publishes:
+ *
+ *   | rule                        | MAE total | MAE/cat |  over | under | dead-category |
+ *   |-----------------------------|----------:|--------:|------:|------:|--------------:|
+ *   | ± median (symmetric)        |    $1,194 |  $2,707 |  $512 |  $682 |  ⛔ $200.00   |
+ *   | **up-only median**          |    $1,239 |  $2,630 |  $427 |  $812 |  ✅ $0.00     |
+ *   | ± ½·mean                    |    $1,250 |  $2,708 |  $557 |  $694 |  ⛔ $100.00   |
+ *   | no trend at all             |    $1,290 |  $2,623 |  $547 |  $743 |  ⛔ $200.00   |
+ *   | up-only mean                |    $1,320 |  $2,823 |  $591 |  $729 |  ✅ $0.00     |
+ *   | raw trend (the old rule)    |    $1,372 |  $2,918 |  $675 |  $697 |  ✅ $0.00     |
+ *
+ * Against the old rule the chosen one is 10% better on the published figure,
+ * 10% better per category, and over-predicts 37% less ($427 against $675). It
+ * gives back $115/month of under-prediction for that, which is the honest cost
+ * and worth naming. It is stable across halves of the window ($1,196 then
+ * $1,282, against the old rule's $1,377 and $1,368), so it is not fitted to a
+ * recent stretch.
+ *
+ * The symmetric variant scores 4% better still and is rejected anyway: an
+ * aggregate score does not buy the right to tell someone a habit they quit is
+ * still costing them $200 a month.
+ *
+ * ⚠️ A single month of spend in three now gets NO upward nudge, because the
+ * median of [$0, $0, $50] is $0. That is deliberate and it matches what the
+ * INCOME side of this app already does — `projectOngoingIncome` requires a
+ * bucket in ≥2 of 3 months and applies no upward trend at all. One month is
+ * thin evidence in both directions.
+ *
+ * ⚠️ `Math.abs` on the cap is load-bearing. A bucket whose refunds outweigh its
+ * spend has a NEGATIVE median, and a negative cap turns `Math.min(lim, t)` into
+ * a rule that FORCES the trend negative rather than bounding it.
+ */
+export interface TrailingPace {
+  /** mean of the window */
+  averageCents: number;
+  /** `(newest − oldest) / 2`, before the cap */
+  rawTrendCents: number;
+  /** the nudge actually applied — a RISING `rawTrendCents` capped at `typicalCents` */
+  trendCents: number;
+  /** the median of the window: what one ordinary period looks like */
+  typicalCents: number;
+  /** `max(0, average + trend)`, rounded — never a negative typical */
+  expectedCents: number;
+  /**
+   * The same figure UNROUNDED, for callers that scale it before presenting it.
+   *
+   * ⚠️ Rounding to the cent and then multiplying by `remaining/total` is not the
+   * same as multiplying and then rounding, and `variableComponents` does the
+   * second — it always did, and this field exists so that adopting the shared
+   * rule did not quietly change a published number by a cent alongside it.
+   */
+  expectedExactCents: number;
+  /** the cap bound: the slope was rising and bigger than one ordinary period */
+  trendWasCapped: boolean;
+}
+
+/** Median of a copy — never sorts the caller's array. */
+function median(values: readonly number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+export function trailingPace(
+  totals: readonly number[],
+  applyTrend: boolean = true,
+): TrailingPace {
+  const n = totals.length;
+  const averageCents = mean(totals);
+  const typicalCents = median(totals);
+  const rawTrendCents = applyTrend && n >= 2 ? (totals[n - 1]! - totals[0]!) / 2 : 0;
+  // upward only — the zero floor below already bounds a falling series, and
+  // capping that direction too would keep a stopped category alive
+  const trendCents = Math.min(Math.abs(typicalCents), rawTrendCents);
+  return {
+    averageCents,
+    rawTrendCents,
+    trendCents,
+    typicalCents,
+    expectedCents: Math.max(0, Math.round(averageCents + trendCents)),
+    expectedExactCents: Math.max(0, averageCents + trendCents),
+    trendWasCapped: trendCents !== rawTrendCents,
+  };
+}
+
 export interface TrailingAverageInput {
   /** per prior full period, oldest → newest, integer cents (magnitude) */
   trailingTotalsCents: readonly number[];
@@ -198,10 +319,14 @@ export interface TrailingAverageInput {
 export function projectTrailingAverage(input: TrailingAverageInput): Projection {
   const totals = input.trailingTotalsCents;
   const n = totals.length;
-  const avg = mean(totals);
   const applyTrend = input.applyTrend !== false;
-  const trend = applyTrend && n >= 2 ? (totals[n - 1]! - totals[0]!) / 2 : 0;
-  const expected = Math.max(0, Math.round(avg + trend));
+  // ONE definition of the pace, shared with forecast.ts's variableComponents —
+  // which used to re-derive this same nudge inline, so the recurring card and
+  // /spending could disagree about the very same category.
+  const pace = trailingPace(totals, applyTrend);
+  const avg = pace.averageCents;
+  const trend = pace.trendCents;
+  const expected = pace.expectedCents;
 
   // coefficient of variation → confidence: a lumpy history reads fainter.
   let cv = 1;
@@ -214,7 +339,8 @@ export function projectTrailingAverage(input: TrailingAverageInput): Projection 
 
   // sign-aware trend note so a declining history reads "− trend N¢", never "+ trend −N¢".
   const roundedTrend = Math.round(trend);
-  const trendNote = roundedTrend !== 0 ? ` ${roundedTrend > 0 ? "+" : "-"} trend ${Math.abs(roundedTrend)}¢` : "";
+  const capNote = pace.trendWasCapped ? " (capped)" : "";
+  const trendNote = roundedTrend !== 0 ? ` ${roundedTrend > 0 ? "+" : "-"} trend ${Math.abs(roundedTrend)}¢${capNote}` : "";
   return {
     method: "trailingAverage",
     expectedTotalCents: expected,

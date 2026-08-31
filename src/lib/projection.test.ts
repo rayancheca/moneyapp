@@ -11,6 +11,7 @@ import {
   projectTrailingAverage,
   reindexByPosition,
   sumOccurrencesInWindow,
+  trailingPace,
 } from "./projection";
 
 // Money literals use _ separators: 120_000 = $1,200.00 (integer cents everywhere).
@@ -131,6 +132,107 @@ describe("projectPace", () => {
   });
 });
 
+describe("trailingPace", () => {
+  /**
+   * `Travel` exactly as the real ledger held it on 2026-08-31: May $15.75,
+   * June $590.24, July $2,448.88 — of which July is 97% two flight bookings
+   * ($1,843.10 + $531.79) and the remainder is $2-$17 Miami Beach parking.
+   *
+   * The old rule read a $1,216.57 slope off that and MORE THAN DOUBLED the
+   * mean, publishing $2,234.86 as a monthly rate for a category whose median
+   * month is about $131 and whose all-time mean is $332.84.
+   */
+  test("caps a spike's upward nudge at one typical month", () => {
+    const pace = trailingPace([1_575, 59_024, 244_888]);
+    expect(pace.averageCents).toBeCloseTo(101_829, 0);
+    expect(pace.typicalCents).toBe(59_024);
+    expect(pace.rawTrendCents).toBeCloseTo(121_656.5, 1);
+    expect(pace.trendCents).toBe(59_024);
+    expect(pace.trendWasCapped).toBe(true);
+    expect(pace.expectedCents).toBe(160_853); // $1,608.53, not $2,234.86
+  });
+
+  /**
+   * ⛔ The case that rejected the symmetric cap. A category that stopped must
+   * project nothing; the `Math.max(0, …)` floor is what delivers that, and a
+   * symmetric cap of `|median| = 0` would delete the −$300 slope and republish
+   * the $200 mean forever — a cancelled habit still costing money.
+   */
+  test("never caps a falling slope — a stopped category projects nothing", () => {
+    const pace = trailingPace([60_000, 0, 0]);
+    expect(pace.typicalCents).toBe(0);
+    expect(pace.rawTrendCents).toBe(-30_000);
+    expect(pace.trendCents).toBe(-30_000);
+    expect(pace.trendWasCapped).toBe(false);
+    expect(pace.expectedCents).toBe(0);
+  });
+
+  test("a genuine steady rise passes through uncapped", () => {
+    const pace = trailingPace([30_000, 40_000, 50_000]);
+    expect(pace.trendCents).toBe(10_000); // well under the 40_000 median
+    expect(pace.trendWasCapped).toBe(false);
+    expect(pace.expectedCents).toBe(50_000);
+  });
+
+  /** One month of spend in three is thin evidence: the median is 0, so is the cap. */
+  test("a single month in the window earns no upward nudge", () => {
+    const pace = trailingPace([0, 0, 5_000]);
+    expect(pace.rawTrendCents).toBe(2_500);
+    expect(pace.trendCents).toBe(0);
+    expect(pace.trendWasCapped).toBe(true);
+    expect(pace.expectedCents).toBe(1_667);
+  });
+
+  /**
+   * ⚠️ `Math.abs` on the cap, proved. A bucket whose refunds outweigh its spend
+   * has a NEGATIVE median, and `Math.min(median, trend)` without the magnitude
+   * does not bound the nudge — it FORCES it to the negative median, turning a
+   * rising bucket into a projection of $0.00.
+   */
+  test("a negative median bounds the nudge by magnitude, never by sign", () => {
+    const pace = trailingPace([-1_000, -2_000, 5_000]);
+    expect(pace.typicalCents).toBe(-1_000);
+    expect(pace.rawTrendCents).toBe(3_000);
+    expect(pace.trendCents).toBe(1_000); // |−1_000|, not −1_000
+    expect(pace.expectedCents).toBe(1_667);
+  });
+
+  test("applyTrend:false leaves the mean alone", () => {
+    const pace = trailingPace([1_575, 59_024, 244_888], false);
+    expect(pace.rawTrendCents).toBe(0);
+    expect(pace.trendCents).toBe(0);
+    expect(pace.trendWasCapped).toBe(false);
+    expect(pace.expectedCents).toBe(101_829);
+  });
+
+  /**
+   * ⚠️ Rounded and exact are BOTH published because scaling then rounding is not
+   * the same as rounding then scaling, and `variableComponents` does the first.
+   */
+  test("carries the estimate rounded and exact", () => {
+    const pace = trailingPace([0, 0, 5_000]);
+    expect(pace.expectedExactCents).toBeCloseTo(1_666.667, 3);
+    expect(pace.expectedCents).toBe(1_667);
+  });
+
+  test("an even-length window takes the mean of the two middle periods", () => {
+    expect(trailingPace([10, 20, 30, 40]).typicalCents).toBe(25);
+  });
+
+  test("thin windows have no slope to read", () => {
+    expect(trailingPace([]).expectedCents).toBe(0);
+    expect(trailingPace([7_000]).rawTrendCents).toBe(0);
+    expect(trailingPace([7_000]).expectedCents).toBe(7_000);
+  });
+
+  test("does not reorder the caller's window", () => {
+    const totals = [244_888, 1_575, 59_024];
+    const copy = [...totals];
+    trailingPace(totals);
+    expect(totals).toEqual(copy);
+  });
+});
+
 describe("projectTrailingAverage", () => {
   test("no prior periods → zero total, ZERO confidence (no data ⇒ no confidence), honest basis", () => {
     const p = projectTrailingAverage({ trailingTotalsCents: [] });
@@ -170,7 +272,14 @@ describe("projectTrailingAverage", () => {
   test("a wildly scattered history clamps confidence to zero (cv > 1)", () => {
     const p = projectTrailingAverage({ trailingTotalsCents: [0, 0, 150_000] });
     expect(p.confidence).toBe(0);
-    expect(p.expectedTotalCents).toBe(125_000); // avg 50_000 + trend 75_000
+    /*
+     * avg 50_000, and NO trend: the median of [0, 0, 150_000] is 0, so the
+     * upward cap is 0. One month of spend in three is thin evidence, and the
+     * old rule turned it into 125_000 — two and a half times the mean, off a
+     * single period. `trailingPace` documents the backtest behind the cap.
+     */
+    expect(p.expectedTotalCents).toBe(50_000);
+    expect(p.basis).toBe("avg of last 3 periods");
   });
 
   test("applyTrend:false drops the trend nudge", () => {

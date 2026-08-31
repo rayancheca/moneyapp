@@ -6,6 +6,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addCalendarMonths, addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { projectOngoingIncome } from "@/lib/income-forecast";
+import { trailingPace } from "@/lib/projection";
 import { formatCents } from "@/lib/money";
 import { allocationsFor } from "@/lib/transaction-splits";
 import { latestBalances } from "./derivation";
@@ -36,9 +37,11 @@ import { activeSplitsInRange } from "./transaction-splits";
  *
  * VARIABLE: per top-level expense bucket, trailing average of the last 3
  * FULL months of active expense spending excluding recurring-tagged rows,
- * plus a simple trend adjustment ((newest − oldest)/2, clamped at zero),
- * scaled by remaining days / days in month. Uncategorized negative amounts
- * form an explicit "Uncategorized" bucket — never hidden.
+ * plus a trend adjustment capped at one typical (median) month and floored at
+ * zero, scaled by remaining days / days in month. The pace itself is
+ * `projection.ts::trailingPace` — shared with /spending and /budgets, so one
+ * category cannot be projected two ways. Uncategorized negative amounts form an
+ * explicit "Uncategorized" bucket — never hidden.
  */
 
 const TRAILING_FULL_MONTHS = 3;
@@ -310,18 +313,35 @@ function variableComponents(
   for (const [label, perMonth] of buckets) {
     // spend magnitudes per trailing month (outflow negative → positive spend)
     const spend = windows.map((w) => -(perMonth.get(w.key) ?? 0));
-    const oldest = spend[0]!;
-    const newest = spend.at(-1)!;
-    const avg = spend.reduce((a, b) => a + b, 0) / spend.length;
-    const trend = (newest - oldest) / 2;
-    const monthlyEstimate = Math.max(0, avg + trend); // never project negative spend
-    const projected = Math.round((monthlyEstimate * remainingDays) / daysInMonth);
+    /*
+     * ⛔ ONE definition of the pace, and it does not live here.
+     *
+     * This loop used to compute `(newest − oldest) / 2` itself, while
+     * `projection.ts` — whose own header names "Engine B forecast.ts
+     * variableComponents" as the formula it was written to absorb — computed
+     * the same nudge for `/spending` and `/budgets`. Two implementations of one
+     * rule, so the recurring card and the spending page could disagree about
+     * the very same category. `trailingPace` is now the only place that
+     * decides, and the cap it applies is measured rather than chosen: see its
+     * docstring for the 36-month backtest.
+     */
+    const pace = trailingPace(spend);
+    const projected = Math.round((pace.expectedExactCents * remainingDays) / daysInMonth);
     if (projected <= 0) continue;
+    /*
+     * The detail names the RAW slope as well as the applied one whenever they
+     * differ. "+ trend $590.24" alone would be a number the reader cannot
+     * reproduce from the three months in front of them, which is the opposite
+     * of what the visible-math table is for.
+     */
+    const trendNote = pace.trendWasCapped
+      ? `${formatCents(Math.round(pace.trendCents))} (slope ${formatCents(Math.round(pace.rawTrendCents))}, capped at one typical month)`
+      : formatCents(Math.round(pace.trendCents));
     components.push({
       label,
       kind: "variable",
       cents: -projected,
-      detail: `3-mo avg ${formatCents(Math.round(avg))} + trend ${formatCents(Math.round(trend))}, × ${remainingDays}/${daysInMonth} days`,
+      detail: `3-mo avg ${formatCents(Math.round(pace.averageCents))} + trend ${trendNote}, × ${remainingDays}/${daysInMonth} days`,
     });
   }
 
