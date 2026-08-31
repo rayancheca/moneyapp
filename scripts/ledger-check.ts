@@ -99,32 +99,34 @@ const BASELINE: LedgerBaseline = {
    */
   valueAnchors: {
     /*
-     * ⛔ **THREE OF THESE SIX ARE ONE STOCK SPLIT.** Coca-Cola Consolidated
-     * (COKE) split 10-for-1 in May 2025. Yahoo back-adjusts price history, so
-     * the app holds COKE at $135.58 on 2025-04-30 where the statement printed
-     * $1,355.81 — exactly a tenth — while the position of that era is the
-     * un-split one. On each of the three dates the whole account's disagreement
-     * equals the COKE line's, to the cent:
+     * ✅ **THREE ENTRIES LEFT THIS LIST ON 2026-08-31 — the split is fixed.**
+     *
+     * They used to read:
      *
      *   2025-02-28   -$91.21   COKE  printed $1,417.12  ledger $141.712
      *   2025-03-31  -$445.12   COKE  printed $1,350.00  ledger $135.00
      *   2025-04-30  -$667.86   COKE  printed $1,355.81  ledger $135.581
      *
-     * A split-adjusted price multiplied by an unadjusted quantity is a 10×
-     * error, and it is a real defect in how this app values history — worth its
-     * own pass, not a line in a baseline. Recorded so a SEVENTH disagreement is
-     * what fails, not so this one is forgotten.
+     * — Coca-Cola Consolidated's 10-for-1, where a split-ADJUSTED price met an
+     * unadjusted quantity and published exactly a tenth. The note here said it
+     * was "worth its own pass, not a line in a baseline", and that pass landed:
+     * `event_kind` now distinguishes a split from a trade (migration 0015),
+     * `lib/split-adjust.ts` restates the timeline in today's shares, and
+     * `scripts/mark-coke-split-2026-08-31.ts` marked the one row.
      *
-     * The other three are cached closes that differ from the broker's marks
+     * ⭐ THIS CHECK IS THE INDEPENDENT WITNESS. The fix was designed against the
+     * price cache and the event timeline; these three lines come from
+     * ROBINHOOD'S OWN month-end statements, which the fix never consulted. All
+     * three now agree to the cent, and this file failed loudly to say so —
+     * exactly what a baseline of known disagreements is for.
+     *
+     * The three that remain are cached closes differing from the broker's marks
      * (2025-08-31 is NVDA at $181.60 against a printed $174.18; 2026-07-31 is
      * eight symbols each a few tenths of a percent apart). Every QUANTITY
-     * matches the statement exactly on all six dates — measured — so none of
-     * this is a missing position.
+     * matches the statement exactly on every date — measured — so none of this
+     * is a missing position.
      */
     "Robinhood Brokerage": [
-      { on: "2025-02-28", offByCents: -9_121 },
-      { on: "2025-03-31", offByCents: -44_512 },
-      { on: "2025-04-30", offByCents: -66_786 },
       { on: "2025-08-31", offByCents: 816 },
       { on: "2026-02-28", offByCents: -8_915 },
       { on: "2026-07-31", offByCents: -19_762 },
