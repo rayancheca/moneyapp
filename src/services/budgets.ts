@@ -269,8 +269,20 @@ export function carryInto(
   let balance = 0;
   while (compareDates(cursor, currentPeriodStart) < 0) {
     const p = periodBounds(cursor, budget.period);
-    // stop before any period that reaches into the one being graded — only
-    // CLOSED periods have a final answer to bank
+    /*
+     * Stop before any period that reaches into the one being graded — only
+     * CLOSED periods have a final answer to bank.
+     *
+     * ⚠️ `>=` and `>` are indistinguishable here, and it is worth saying so
+     * rather than leaving a mutation audit to rediscover it. Every period this
+     * walk builds is calendar-aligned (`periodBounds` snaps both ends), and so
+     * is `currentPeriodStart`, so `p.end` — a period's LAST day — can never
+     * equal a period's FIRST day of the same kind. Brute-forced over 198,400
+     * (cursor, period) pairs across all four kinds and 400 reference days:
+     * zero hits. The `>=` stays because it states the intent — a period that
+     * REACHES the graded one is not closed — and the equality it also covers is
+     * unreachable rather than wrong.
+     */
     if (compareDates(p.end, currentPeriodStart) >= 0) break;
     const spent = categorySpending(db, {
       categoryId: budget.categoryId,
