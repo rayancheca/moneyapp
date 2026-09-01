@@ -970,7 +970,23 @@ describe("detection on the synthetic corpus", () => {
     expect(upcoming.some((o) => o.name === "Netflix" && o.date === "2026-07-15")).toBe(true);
     const dates = upcoming.map((o) => o.date);
     expect([...dates].sort()).toEqual(dates);
-    const windowEnd = addDays(TODAY, 30);
+    /*
+     * ⛔ `addDays(TODAY, 29)`, not 30. `windowDays` counts days and today is
+     * the FIRST of them, so a 30-day window's last legal date is day thirty.
+     *
+     * 🔴 This read `<= addDays(TODAY, 30)` — an assertion true of BOTH the
+     * 30-day window and the 31-day one that shipped, so it could never have
+     * caught the defect it sits next to. Its e2e twin was tightened when that
+     * defect was fixed; this one was left behind.
+     *
+     * ⚠️ Tightening it adds no coverage on its own, and that was MEASURED
+     * rather than assumed: with the 31-day mutant applied this test passes
+     * either way, because no series in this fixture ever projects onto the
+     * extra day. The boundary is pinned two tests below, by a series moved onto
+     * it deliberately. This is corrected because a bound that misstates the
+     * contract misleads the next reader, not because it catches anything.
+     */
+    const windowEnd = addDays(TODAY, 29);
     expect(dates.every((d) => d >= TODAY && d <= windowEnd)).toBe(true);
   });
 
