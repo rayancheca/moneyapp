@@ -1,5 +1,5 @@
 import type { AppDatabase } from "@/db/client";
-import { addCalendarMonths, monthKey, todayIso } from "@/lib/dates";
+import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryIndex } from "./analytics";
 import { SPEND_BASELINE_MONTHS } from "./committed";
 
@@ -125,7 +125,9 @@ export function eatingOutCard(
   const fromMonth = monthKey(addCalendarMonths(`${currentMonth}-01`, -months));
   const toMonth = monthKey(addCalendarMonths(`${currentMonth}-01`, -1));
   const from = `${fromMonth}-01`;
-  const to = `${toMonth}-31`;
+  // the month's real last day — `${toMonth}-31` worked as a string upper bound
+  // but is not a date, and the day count below has to be able to trust it
+  const to = periodBounds(`${toMonth}-01`, "monthly").end;
 
   const txns = activeTxnsInRange(db, from, to);
   const inChild = (childId: string | undefined): AnalyticsTxn[] =>
@@ -144,11 +146,20 @@ export function eatingOutCard(
   const monthlyCents = Math.round(totalSpentCents / months);
   const groceriesMonthlyCents = Math.round(groceries.spentCents / months);
 
-  // days in the window, for "how often" — calendar days, not transaction days
-  const windowDays = Math.max(
-    1,
-    Math.round((Date.parse(`${toMonth}-28T00:00:00Z`) - Date.parse(`${fromMonth}-01T00:00:00Z`)) / 86_400_000) + 3,
-  );
+  /*
+   * Days in the window the sentence NAMES — calendar days, not transaction days,
+   * counted inclusively over exactly [from, to].
+   *
+   * 🔴 This was `diffDays(fromMonth-01, toMonth-28) + 3`, i.e. the diff to a
+   * notional "toMonth-31". The error is exactly `30 − daysInMonth(toMonth)`:
+   * one day long when the window ends in a 31-day month, one short in a 30-day
+   * one, two or three short in February. Measured on the real ledger at
+   * today = 2026-03-10 the card printed "1.9 purchases a day. Averaged over 6
+   * complete months, 2025-09 to 2026-02" — those six months are 181 days, it
+   * divided 353 by 183, and 353/181 rounds to 2.0. The figure and the window
+   * printed beside it in one sentence disagreed by a whole tenth.
+   */
+  const windowDays = Math.max(1, diffDays(from, to) + 1);
 
   return {
     monthlyCents,

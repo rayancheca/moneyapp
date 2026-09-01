@@ -9,7 +9,10 @@ import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { eq, and, isNull } from "drizzle-orm";
+import { addDays } from "@/lib/dates";
 import { eatingOutCard } from "./eating-out";
+
+const dayOffset = (from: string, n: number): string => addDays(from, n);
 
 /**
  * The card's job is to separate two habits the `Food` total merges, so the
@@ -199,5 +202,62 @@ describe("eatingOutCard", () => {
       .where(and(eq(categories.name, "Food"), isNull(categories.parentId)))
       .run();
     expect(eatingOutCard(bundle.db, TODAY)).toBeNull();
+  });
+});
+
+/*
+ * 🔴 "That is N purchases a day" divided by a hand-rolled day count that
+ * assumed every window ends on the 31st: `diffDays(fromMonth-01, toMonth-28)
+ * + 3`. The error is exactly `30 − daysInMonth(toMonth)` — one day long when
+ * the window ends in a 31-day month, one short in a 30-day one, and two or
+ * three short in February.
+ *
+ * Measured on the real ledger at today = 2026-03-10: the card prints
+ * "1.9 purchases a day. Averaged over 6 complete months, 2025-09 to 2026-02."
+ * The six months it names are 181 days (30+31+30+31+31+28); it divided by 183.
+ * 353 / 181 = 1.95, which prints as 2.0 — the figure and the window beside it
+ * in the same sentence disagreed by a whole tenth.
+ *
+ * ⚠️ `purchasesPerDay` had no test at all, which is why the divisor could be
+ * built out of a notional 31st for as long as it was.
+ */
+describe("purchases a day divides by the window the sentence names", () => {
+  test("a February end month is 28 days, not 31", () => {
+    // window for today = 2026-03-10 is 2025-09-01 … 2026-02-28: 181 days
+    for (let i = 0; i < 181; i++) addTxn(dayOffset("2025-09-01", i), -1000, "Dining");
+    const card = eatingOutCard(bundle.db, "2026-03-10", 6)!;
+    expect(card.fromMonth).toBe("2025-09");
+    expect(card.toMonth).toBe("2026-02");
+    expect(card.totalCount).toBe(181);
+    // one purchase on every day of the window it names
+    expect(card.purchasesPerDay).toBe(1);
+  });
+
+  test("a 31-day end month is 31 days, not 31 assumed everywhere else", () => {
+    // window for today = 2026-04-10 is 2025-10-01 … 2026-03-31: 182 days
+    for (let i = 0; i < 182; i++) addTxn(dayOffset("2025-10-01", i), -1000, "Dining");
+    const card = eatingOutCard(bundle.db, "2026-04-10", 6)!;
+    expect(card.fromMonth).toBe("2025-10");
+    expect(card.toMonth).toBe("2026-03");
+    expect(card.totalCount).toBe(182);
+    expect(card.purchasesPerDay).toBe(1);
+  });
+
+  test("a 30-day end month is 30 days", () => {
+    // window for today = 2026-05-10 is 2025-11-01 … 2026-04-30: 181 days
+    for (let i = 0; i < 181; i++) addTxn(dayOffset("2025-11-01", i), -1000, "Dining");
+    const card = eatingOutCard(bundle.db, "2026-05-10", 6)!;
+    expect(card.toMonth).toBe("2026-04");
+    expect(card.totalCount).toBe(181);
+    expect(card.purchasesPerDay).toBe(1);
+  });
+
+  test("a leap February is 29 days", () => {
+    // window for today = 2028-03-10 is 2027-09-01 … 2028-02-29: 182 days
+    for (let i = 0; i < 182; i++) addTxn(dayOffset("2027-09-01", i), -1000, "Dining");
+    const card = eatingOutCard(bundle.db, "2028-03-10", 6)!;
+    expect(card.toMonth).toBe("2028-02");
+    expect(card.totalCount).toBe(182);
+    expect(card.purchasesPerDay).toBe(1);
   });
 });
