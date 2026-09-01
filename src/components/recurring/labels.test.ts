@@ -7,6 +7,7 @@ import {
   staleLabel,
   staleOccurrenceEntries,
   stalenessSentence,
+  stalePartLabel,
   staleSummaryLabel,
   type StaleEntry,
 } from "./labels";
@@ -179,5 +180,42 @@ describe("staleSummaryLabel", () => {
     expect(staleSummaryLabel([late(88), never(1)])).toBe(
       "1 series is running late and 1 has never charged — all still projected",
     );
+  });
+});
+
+/*
+ * The composition band's half of the same conflation. Measured on the real
+ * ledger at today = 2026-09-01, September's committed MONEY OUT read
+ * "$1,402.60 of it running late" over $1,338.74 that had never been billed.
+ */
+describe("stalePartLabel separates late money from never-billed money", () => {
+  test("all of a side late, and none of it never-billed, reads as it always did", () => {
+    expect(
+      stalePartLabel({ fixedCents: 418800, fixedStaleCents: 418800, fixedStaleCount: 1, fixedNeverChargedCents: 0, fixedNeverChargedCount: 0 }),
+    ).toBe("all of it running late");
+  });
+
+  test("part late, part never billed, names both", () => {
+    expect(
+      stalePartLabel({ fixedCents: -356760, fixedStaleCents: -140260, fixedStaleCount: 6, fixedNeverChargedCents: -133874, fixedNeverChargedCount: 4 }),
+    ).toBe("$63.86 of it running late · $1,338.74 never billed");
+  });
+
+  test("stale money that has ALL never been billed does not claim anything is late", () => {
+    const label = stalePartLabel({ fixedCents: -200000, fixedStaleCents: -100000, fixedStaleCount: 2, fixedNeverChargedCents: -100000, fixedNeverChargedCount: 2 })!;
+    expect(label).toBe("$1,000.00 of it never billed");
+    expect(label).not.toContain("late");
+  });
+
+  test("all of it never billed says so, rather than 'all of it running late'", () => {
+    expect(
+      stalePartLabel({ fixedCents: -100000, fixedStaleCents: -100000, fixedStaleCount: 2, fixedNeverChargedCents: -100000, fixedNeverChargedCount: 2 }),
+    ).toBe("all of it never billed");
+  });
+
+  test("nothing stale is still no sentence at all", () => {
+    expect(
+      stalePartLabel({ fixedCents: -100000, fixedStaleCents: 0, fixedStaleCount: 0, fixedNeverChargedCents: 0, fixedNeverChargedCount: 0 }),
+    ).toBeNull();
   });
 });

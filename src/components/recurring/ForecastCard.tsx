@@ -110,7 +110,14 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
    * identity arithmetic rather than a coincidence worth re-checking here.
    */
   const split = forecastSplit(
-    f.components.map((c) => ({ kind: c.kind, cents: c.cents, isStale: c.staleness?.isStale })),
+    f.components.map((c) => ({
+      kind: c.kind,
+      cents: c.cents,
+      isStale: c.staleness?.isStale,
+      // never CHARGED, not never seen: `daysSinceLastMatch` is null exactly
+      // when no charge has ever matched the series
+      neverCharged: c.staleness?.daysSinceLastMatch === null,
+    })),
   );
 
   return (

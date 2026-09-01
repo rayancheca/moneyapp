@@ -60,6 +60,19 @@ export interface SplittableComponent {
    * missing value as "not stale", never as "unknown".
    */
   isStale?: boolean;
+  /**
+   * Fixed components only: no charge has EVER matched the series. Absent reads
+   * as "it has charged", never as "unknown", the same as `isStale`.
+   *
+   * ⛔ A subset of `isStale`, not a sibling of it. `seriesStaleness` calls a
+   * never-charged series stale — correctly, because both mean the projection
+   * rests on something other than a recent charge — but "running late" is only
+   * true of the half that has charged before. Measured on the real ledger,
+   * September's committed money out was $1,402.60 "running late" of which
+   * $1,338.74 had never been billed, and three of those four bills were not
+   * due yet.
+   */
+  neverCharged?: boolean;
 }
 
 export interface ForecastSplitSide {
@@ -108,6 +121,13 @@ export interface ForecastSplitSide {
   fixedStaleCents: number;
   /** how many of `fixedCount` are stale */
   fixedStaleCount: number;
+  /**
+   * The part of `fixedStaleCents` that has never charged at all — a SUBSET of
+   * it, never a sibling. Net-worth signed, like everything else here.
+   */
+  fixedNeverChargedCents: number;
+  /** how many of `fixedStaleCount` have never charged */
+  fixedNeverChargedCount: number;
 }
 
 export interface ForecastSplit {
@@ -124,6 +144,8 @@ const EMPTY_SIDE = (): ForecastSplitSide => ({
   variableCount: 0,
   fixedStaleCents: 0,
   fixedStaleCount: 0,
+  fixedNeverChargedCents: 0,
+  fixedNeverChargedCount: 0,
 });
 
 /**
@@ -157,6 +179,13 @@ export function forecastSplit(components: readonly SplittableComponent[]): Forec
       if (c.isStale === true) {
         side.fixedStaleCents += c.cents;
         side.fixedStaleCount += 1;
+        // inside the stale branch on purpose: a component that has charged
+        // recently cannot be never-charged, and counting one outside would let
+        // the subset exceed the set it is part of
+        if (c.neverCharged === true) {
+          side.fixedNeverChargedCents += c.cents;
+          side.fixedNeverChargedCount += 1;
+        }
       }
     } else {
       side.variableCents += c.cents;

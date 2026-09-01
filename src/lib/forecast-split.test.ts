@@ -259,3 +259,71 @@ describe("forecastSplit", () => {
     expect(input).toEqual(copy);
   });
 });
+
+/*
+ * 🔴 "$1,402.60 of it running late" over $1,338.74 that had never been billed.
+ *
+ * `isStale` is the union of two facts — the evidence is past tolerance, and
+ * there is no evidence at all — and reducing a component to that boolean left
+ * the card unable to tell them apart. Measured on the real ledger at
+ * today = 2026-09-01, September's committed MONEY OUT:
+ *
+ *     running late    $63.86    Amazon Prime $4.99 · FPL (electricity) $58.87
+ *     never charged $1,338.74   Car lease $695.04 · Car insurance $361.49 ·
+ *                               Rent utilities & fees $182.21 · Gym $100.00
+ *
+ * 95% of the money the card called late had never been billed by a bank, and
+ * three of those four bills were not due yet. The MONEY IN side is genuinely
+ * all late, so the two sides must be able to say different things.
+ *
+ * ⛔ The TYPE could not express it, which is the same shape as this session's
+ * budgets bill count: no fixture over `SplittableComponent` could distinguish
+ * one case from the other while the only field was a boolean.
+ */
+describe("never charged is not the same as running late", () => {
+  const fixed = (cents: number, over: Partial<SplittableComponent> = {}): SplittableComponent => ({
+    kind: "fixed",
+    cents,
+    ...over,
+  });
+
+  test("splits the stale part into charged-but-late and never-charged", () => {
+    const split = forecastSplit([
+      fixed(-499, { isStale: true, neverCharged: false }),
+      fixed(-5887, { isStale: true, neverCharged: false }),
+      fixed(-69504, { isStale: true, neverCharged: true }),
+      fixed(-36149, { isStale: true, neverCharged: true }),
+      fixed(-18221, { isStale: true, neverCharged: true }),
+      fixed(-10000, { isStale: true, neverCharged: true }),
+      fixed(-216500), // fresh
+    ]);
+    expect(split.spending.fixedStaleCents).toBe(-140260);
+    expect(split.spending.fixedStaleCount).toBe(6);
+    expect(split.spending.fixedNeverChargedCents).toBe(-133874);
+    expect(split.spending.fixedNeverChargedCount).toBe(4);
+    // the never-charged part is a SUBSET of the stale part, always
+    expect(Math.abs(split.spending.fixedNeverChargedCents)).toBeLessThanOrEqual(
+      Math.abs(split.spending.fixedStaleCents),
+    );
+  });
+
+  test("a side that is all late reports no never-charged part", () => {
+    const split = forecastSplit([fixed(418800, { isStale: true, neverCharged: false })]);
+    expect(split.income.fixedStaleCents).toBe(418800);
+    expect(split.income.fixedNeverChargedCents).toBe(0);
+    expect(split.income.fixedNeverChargedCount).toBe(0);
+  });
+
+  test("a missing flag reads as 'has charged', never as unknown", () => {
+    const split = forecastSplit([fixed(-1000, { isStale: true })]);
+    expect(split.spending.fixedStaleCount).toBe(1);
+    expect(split.spending.fixedNeverChargedCount).toBe(0);
+  });
+
+  test("never-charged only counts inside the stale set", () => {
+    // a fresh component cannot be never-charged — freshness IS a charge
+    const split = forecastSplit([fixed(-1000, { isStale: false, neverCharged: true })]);
+    expect(split.spending.fixedStaleCount).toBe(0);
+    expect(split.spending.fixedNeverChargedCount).toBe(0);
+  });
+});

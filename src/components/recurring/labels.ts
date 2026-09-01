@@ -140,12 +140,30 @@ export function stalePartLabel(side: {
   fixedCents: number;
   fixedStaleCents: number;
   fixedStaleCount: number;
+  fixedNeverChargedCents: number;
+  fixedNeverChargedCount: number;
 }): string | null {
   if (side.fixedStaleCount === 0 || side.fixedStaleCents === 0) return null;
   const stale = Math.abs(side.fixedStaleCents);
-  return stale === Math.abs(side.fixedCents)
-    ? "all of it running late"
-    : `${formatCents(stale)} of it running late`;
+  const never = Math.abs(side.fixedNeverChargedCents);
+  const late = stale - never;
+  const whole = Math.abs(side.fixedCents);
+
+  /*
+   * 🔴 "$1,402.60 of it running late" over $1,338.74 that had never been
+   * billed. Measured on the real ledger at today = 2026-09-01, September's
+   * committed money out: $63.86 genuinely late (Amazon Prime, FPL) and
+   * $1,338.74 never billed (car lease, car insurance, rent utilities, gym) —
+   * and three of those four were not due yet. 95% of the money the card called
+   * late had never been charged by a bank. The MONEY IN side on the same card
+   * IS all late, so the two must be able to say different things.
+   */
+  const part = (cents: number, phrase: string): string =>
+    cents === whole ? `all of it ${phrase}` : `${formatCents(cents)} of it ${phrase}`;
+  if (never === 0) return part(late, "running late");
+  if (late === 0) return part(never, "never billed");
+  // both, and each named with its own figure — a reader can add them up
+  return `${formatCents(late)} of it running late · ${formatCents(never)} never billed`;
 }
 
 /** One stale series, as the disclosure footer lists it. */
