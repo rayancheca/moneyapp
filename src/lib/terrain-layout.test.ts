@@ -26,6 +26,8 @@ import {
   unionDays,
   type TerrainLayoutOptions,
   type TerrainRibbonInput,
+  terrainRowFigures,
+  terrainTableCaption,
 } from "./terrain-layout";
 
 /**
@@ -767,5 +769,73 @@ describe("nearestVertex", () => {
 
   test("nothing drawn, nothing picked", () => {
     expect(nearestVertex([], { x: 0, y: 0 })).toBeNull();
+  });
+});
+
+describe("terrainRowFigures", () => {
+  const FMT = {
+    cents: (c: number) => `$${(c / 100).toFixed(2)}`,
+    signed: (c: number) => `${c < 0 ? "−" : "+"}$${Math.abs(c / 100).toFixed(2)}`,
+    monthYear: (d: string) => d.slice(0, 7),
+  };
+
+  test("prints the figures when the ribbon has a drawn span", () => {
+    const cells = terrainRowFigures(
+      { firstDay: "2026-01-01", firstCents: 10_000, lastDay: "2026-09-01", lastCents: 25_000, deltaCents: 15_000 },
+      FMT,
+    );
+    expect(cells).toEqual({
+      first: "2026-01 · $100.00",
+      today: "$250.00",
+      change: "+$150.00",
+      changeSign: 1,
+    });
+  });
+
+  /**
+   * 🔴 The defect: an account the ledger cannot reconstruct one day for read
+   * "$0.00" under "Today" and "$0.00" under "Change", beside a "First day"
+   * column that had already refused to answer. Measured on the owner's ledger
+   * 2026-09-01 — Capital One 360 Checking, active, zero balances, zero rows.
+   */
+  test("a ribbon with nothing drawn says nothing, in every column", () => {
+    const cells = terrainRowFigures(
+      { firstDay: null, firstCents: 0, lastDay: null, lastCents: 0, deltaCents: 0 },
+      FMT,
+    );
+    expect(cells).toEqual({ first: "—", today: "—", change: "—", changeSign: null });
+    expect(Object.values(cells)).not.toContain("$0.00");
+  });
+
+  /** ⛔ A real account CAN sit at exactly zero, and that zero is worth printing. */
+  test("a real zero balance is still printed", () => {
+    const cells = terrainRowFigures(
+      { firstDay: "2026-01-01", firstCents: 0, lastDay: "2026-09-01", lastCents: 0, deltaCents: 0 },
+      FMT,
+    );
+    expect(cells.today).toBe("$0.00");
+    expect(cells.changeSign).toBe(0);
+  });
+});
+
+describe("terrainTableCaption", () => {
+  test("promises a first day for every account only when there is one", () => {
+    const all = terrainTableCaption([{ firstDay: "2026-01-01" }, { firstDay: "2026-02-01" }], "1 September 2026");
+    expect(all).toBe(
+      "Every account from its first reconstructed day to 1 September 2026 — the same numbers the terrain is drawn from.",
+    );
+  });
+
+  test("counts the accounts it reconstructed nothing for, in the singular", () => {
+    const one = terrainTableCaption([{ firstDay: "2026-01-01" }, { firstDay: null }], "1 September 2026");
+    expect(one).toContain("1 account has no reconstructed day at all");
+    expect(one).toContain("its row is");
+    expect(one).toContain("rather than read as zero");
+  });
+
+  test("and in the plural", () => {
+    const two = terrainTableCaption([{ firstDay: null }, { firstDay: null }], "1 September 2026");
+    expect(two).toContain("2 accounts have no reconstructed day at all");
+    expect(two).toContain("their rows are");
   });
 });

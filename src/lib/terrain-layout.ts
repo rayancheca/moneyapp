@@ -835,3 +835,58 @@ function sum(values: readonly number[]): number {
 function round(v: number): number {
   return Math.round(v * 100) / 100;
 }
+
+/**
+ * What the terrain's TABLE lens prints for one ribbon.
+ *
+ * 🔴 A RIBBON WITH NOTHING DRAWN IS NOT A BALANCE OF ZERO. An account the
+ * ledger cannot reconstruct a single day for has no vertices, so `lastCents`
+ * and `deltaCents` are both the zero they were initialised to — and the table
+ * printed "$0.00" under a header that says "Today" and "$0.00" under "Change".
+ * Two claims about money, made about an account nobody has any figure for.
+ *
+ * The "First day" column already refused to answer, which is what made the
+ * other two visible: three columns of one row disagreed about whether there
+ * was anything to say. Measured on the owner's ledger 2026-09-01: Capital One
+ * 360 Checking is active with zero balances and zero transactions, and read
+ * "— · $0.00 · $0.00" across the row.
+ *
+ * ⛔ `lastDay`, not `lastCents === 0`, is the test. A real account can sit at
+ * exactly zero, and that zero is worth printing.
+ */
+export interface TerrainRowFigures {
+  first: string;
+  today: string;
+  change: string;
+  /** sign of the change for colour, or null when there is no change to colour */
+  changeSign: -1 | 0 | 1 | null;
+}
+
+export function terrainRowFigures(
+  r: Pick<TerrainRibbon, "firstDay" | "firstCents" | "lastDay" | "lastCents" | "deltaCents">,
+  fmt: { cents: (c: number) => string; signed: (c: number) => string; monthYear: (day: string) => string },
+): TerrainRowFigures {
+  if (r.firstDay === null || r.lastDay === null) {
+    return { first: "—", today: "—", change: "—", changeSign: null };
+  }
+  return {
+    first: `${fmt.monthYear(r.firstDay)} · ${fmt.cents(r.firstCents)}`,
+    today: fmt.cents(r.lastCents),
+    change: fmt.signed(r.deltaCents),
+    changeSign: r.deltaCents === 0 ? 0 : r.deltaCents > 0 ? 1 : -1,
+  };
+}
+
+/**
+ * The table's caption. Says how many accounts it could reconstruct nothing for
+ * rather than claiming a first day for every one of them — the row for such an
+ * account is three em dashes, and a caption that promises "every account from
+ * its first reconstructed day" does not describe it. One of the owner's twelve
+ * active accounts was in that state when this was written.
+ */
+export function terrainTableCaption(ribbons: readonly Pick<TerrainRibbon, "firstDay">[], todayLabel: string): string {
+  const blank = ribbons.filter((r) => r.firstDay === null).length;
+  const base = `Every account from its first reconstructed day to ${todayLabel} — the same numbers the terrain is drawn from.`;
+  if (blank === 0) return base;
+  return `${base} ${blank} ${blank === 1 ? "account has" : "accounts have"} no reconstructed day at all, and ${blank === 1 ? "its row is" : "their rows are"} left blank rather than read as zero.`;
+}

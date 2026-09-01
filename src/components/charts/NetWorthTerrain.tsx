@@ -22,6 +22,8 @@ import {
   pointsAttr,
   reconcileTerrain,
   ribbonsFromSeries,
+  terrainRowFigures,
+  terrainTableCaption,
   type TerrainLayout,
   type TerrainReferencePoint,
   type TerrainRibbon,
@@ -658,6 +660,10 @@ function TerrainTable({
   layout: TerrainLayout;
   today: string;
 }) {
+  // ⛔ ONE ANSWER FOR THE WHOLE ROW. Three columns used to decide separately
+  // whether this ribbon had anything to say, and two of them said "$0.00".
+  const cells = (r: TerrainRibbon) =>
+    terrainRowFigures(r, { cents: formatCents, signed: formatCentsSigned, monthYear: formatMonthYear });
   const columns: Column<TerrainRibbon>[] = [
     {
       key: "account",
@@ -674,27 +680,26 @@ function TerrainTable({
       key: "from",
       header: "First day",
       align: "right",
-      render: (r) => (
-        <span className="figures text-ink-faint">
-          {r.firstDay === null ? "—" : `${formatMonthYear(r.firstDay)} · ${formatCents(r.firstCents)}`}
-        </span>
-      ),
+      render: (r) => <span className="figures text-ink-faint">{cells(r).first}</span>,
     },
     {
       key: "today",
       header: "Today",
       align: "right",
-      render: (r) => <span className="figures font-medium">{formatCents(r.lastCents)}</span>,
+      render: (r) => <span className="figures font-medium">{cells(r).today}</span>,
     },
     {
       key: "change",
       header: "Change",
       align: "right",
-      render: (r) => (
-        <span className={`figures ${r.deltaCents === 0 ? "" : r.deltaCents > 0 ? "text-positive" : "text-negative"}`}>
-          {formatCentsSigned(r.deltaCents)}
-        </span>
-      ),
+      render: (r) => {
+        const c = cells(r);
+        return (
+          <span className={`figures ${!c.changeSign ? "" : c.changeSign > 0 ? "text-positive" : "text-negative"}`}>
+            {c.change}
+          </span>
+        );
+      },
     },
     {
       key: "verified",
@@ -714,7 +719,7 @@ function TerrainTable({
         rows={ribbons}
         rowKey={(r) => r.id}
         rowHref={(r) => `/accounts/${encodeURIComponent(r.id)}`}
-        caption={`Every account from its first reconstructed day to ${formatDayLong(today)} — the same numbers the terrain is drawn from.`}
+        caption={terrainTableCaption(ribbons, formatDayLong(today))}
         emptyState="No account history to draw yet."
       />
       <p className="mt-2 text-micro text-ink-faint">
