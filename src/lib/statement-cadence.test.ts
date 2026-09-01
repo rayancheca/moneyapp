@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
+import { addDays } from "./dates";
 import {
   MAX_TRACKED_CLOSES,
+  MONTHLY_GAP_MAX,
+  MONTHLY_GAP_MIN,
   nextCloseAfter,
   pullDemand,
   pullSentence,
@@ -279,5 +282,62 @@ describe("the words", () => {
     expect(pullSentence(statementPull(["2026-07-31"], "2026-08-14"))).toBe(
       "last one closed Jul 31, 14 days ago",
     );
+  });
+});
+
+/*
+ * ⛔ THE MONTHLY BAND'S OWN EDGES, and the trim's threshold. All three were
+ * found by mutation: each comparison could be relaxed or tightened with nothing
+ * red, because every fixture sits comfortably inside its band and comfortably
+ * past the trim's five.
+ *
+ * The rhythm decides `nextCloseAfter`, so a card whose closes average exactly
+ * 26 or 35 days apart gets a different predicted statement date and a different
+ * `status` on the /imports pull panel. A 26-day gap is a February close pair
+ * and a 35-day gap is a close that slipped a long month — both are real shapes,
+ * not invented ones.
+ */
+describe("the monthly band, at its edges", () => {
+  /** N closes exactly `gap` days apart, ending 2026-08-01. */
+  const everyNDays = (gap: number, n = 6): string[] => {
+    const out: string[] = [];
+    let d = "2026-08-01";
+    for (let i = 0; i < n; i++) {
+      out.unshift(d);
+      d = addDays(d, -gap);
+    }
+    return out;
+  };
+
+  test("exactly MONTHLY_GAP_MIN days apart is still monthly", () => {
+    expect(MONTHLY_GAP_MIN).toBe(26);
+    expect(statementCadence(everyNDays(26)).rhythm.kind).toBe("day-of-month");
+    // …and one day tighter is not
+    expect(statementCadence(everyNDays(25)).rhythm).toEqual({ kind: "every-n-days", days: 25 });
+  });
+
+  test("exactly MONTHLY_GAP_MAX days apart is still monthly", () => {
+    expect(MONTHLY_GAP_MAX).toBe(35);
+    expect(statementCadence(everyNDays(35)).rhythm.kind).toBe("day-of-month");
+    // …and one day wider is not
+    expect(statementCadence(everyNDays(36)).rhythm).toEqual({ kind: "every-n-days", days: 36 });
+  });
+
+  /*
+   * The outlier trim turns on at exactly five deviations. Below it the raw
+   * maximum stands, which is what the trim exists to prevent: one late close
+   * would hold the reminder back by its own lateness every month after.
+   */
+  test("the trim turns on at exactly five observations", () => {
+    // five closes → four gaps and five days-of-month, so five deviations
+    const wanderer = ["2026-03-02", "2026-04-02", "2026-05-02", "2026-06-02", "2026-07-10"];
+    const trimmed = statementCadence(wanderer);
+    expect(trimmed.rhythm).toEqual({ kind: "day-of-month", day: 2 });
+    // the 8-day outlier is dropped, so the tolerance is the slack alone
+    expect(trimmed.toleranceDays).toBeLessThan(8);
+
+    // four closes → four deviations, below the trim: the outlier stands
+    const untrimmed = statementCadence(["2026-04-02", "2026-05-02", "2026-06-02", "2026-07-10"]);
+    expect(untrimmed.toleranceDays).toBeGreaterThanOrEqual(8);
   });
 });
