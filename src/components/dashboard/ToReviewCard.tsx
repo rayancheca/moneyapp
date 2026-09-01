@@ -15,11 +15,16 @@ export function ToReviewCard({
   href,
   rows,
   categories,
+  uncategorizedCount,
+  uncategorizedHref,
 }: {
   count: number;
   href: string;
   rows: readonly LedgerRow[];
   categories: readonly CategoryPickerOption[];
+  /** active rows with NO category — a different backlog from `count` */
+  uncategorizedCount: number;
+  uncategorizedHref: string;
 }) {
   return (
     <section aria-labelledby="to-review-heading" className="space-y-3">
@@ -42,10 +47,32 @@ export function ToReviewCard({
         )}
       </div>
 
+      {/* ⛔ THE COUNT AND THE CLAIM. `count` is the REVIEW FLAG; "every
+          transaction is categorized" is a claim about CATEGORIES, and a flag
+          count cannot know it. Measured on the real ledger at today =
+          2026-09-01: 0 rows flagged and NINE active rows with no category —
+          nine real purchases from early August, in the same Uncategorized
+          bucket /spending prints one page over. The all-clear is now the state
+          where BOTH backlogs are empty; an empty review queue with
+          uncategorized rows left says so, and links to them. */}
       {count === 0 ? (
         <div className="flex items-center gap-2 rounded-(--radius-card) border border-line bg-surface-raised px-4 py-5 text-sm text-ink-muted">
-          <Icon name="check" className="size-4 text-positive" />
-          Nothing to review — every transaction is categorized and confirmed.
+          <Icon
+            name="check"
+            className={`size-4 ${uncategorizedCount === 0 ? "text-positive" : "text-ink-faint"}`}
+          />
+          {uncategorizedCount === 0 ? (
+            "Nothing to review — every transaction is categorized and confirmed."
+          ) : (
+            <span>
+              Nothing flagged for review —{" "}
+              <Link href={uncategorizedHref} className="text-ink underline underline-offset-2">
+                {uncategorizedCount} transaction{uncategorizedCount === 1 ? " has" : "s have"} no
+                category
+              </Link>{" "}
+              yet.
+            </span>
+          )}
         </div>
       ) : (
         <RecentTransactions rows={rows} categories={categories} />

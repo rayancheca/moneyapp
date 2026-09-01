@@ -12,7 +12,7 @@ import { ledgerReaches } from "./observation-frontier";
 import { portfolioOverview, portfolioSeries, topMovers } from "./portfolio";
 import { upcomingOccurrences } from "./recurring";
 import { statementPulls, type AccountStatementPull } from "./statement-pulls";
-import { needsReviewCount } from "./review-count";
+import { needsReviewCount, uncategorizedCount } from "./review-count";
 import { cashFlowByPeriod } from "./spending";
 
 /**
@@ -133,6 +133,13 @@ export interface DashboardData {
   netWorth: NetWorthSummary;
   reviewCount: number;
   reviewHref: string;
+  /**
+   * Active rows with NO CATEGORY — a different backlog from `reviewCount`, and
+   * the reason the all-clear had to stop being built from one count. See
+   * `review-count.ts::uncategorizedCount`.
+   */
+  uncategorizedCount: number;
+  uncategorizedHref: string;
   upcoming: UpcomingBills;
   pace: SpendingPace | null;
   investments: InvestmentsTeaser | null;
@@ -304,6 +311,8 @@ export function dashboardData(db: AppDatabase, today: string = todayIso()): Dash
     netWorth: netWorthSummary(db),
     reviewCount: needsReviewCount(db),
     reviewHref: "/transactions?view=review",
+    uncategorizedCount: uncategorizedCount(db),
+    uncategorizedHref: "/transactions?category=uncategorized",
     upcoming: upcomingBills(db, today),
     pace: spendingPace(db, today),
     investments: investmentsTeaser(db, today),

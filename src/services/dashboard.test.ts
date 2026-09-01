@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries, type Cadence, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
@@ -92,6 +93,57 @@ describe("dashboardData: static drill targets", () => {
     const data = dashboardData(bundle.db, TODAY);
     expect(data.reviewHref).toBe("/transactions?view=review");
     expect(data.pace?.href).toBe("/spending");
+  });
+
+  /*
+   * ⛔ TWO BACKLOGS, TWO COUNTS. The all-clear on this card claimed "every
+   * transaction is categorized" from the REVIEW FLAG count. Measured on the
+   * real ledger at today = 2026-09-01: 0 flagged, 9 with no category.
+   */
+  test("the uncategorized backlog is counted apart from the review flag", () => {
+    /*
+     * ⚠️ `spend()` leaves `category_id` NULL — its first argument is the
+     * DESCRIPTION, not a category. Every existing row this fixture makes is
+     * therefore uncategorized, which is why a categorized one has to be built
+     * by hand here.
+     */
+    const groceries = bundle.db
+      .select()
+      .from(categories)
+      .where(eq(categories.name, "Groceries"))
+      .get()!.id;
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId: checking,
+        postedOn: "2026-07-02",
+        amountCents: -50_00,
+        rawDescription: "CATEGORISED",
+        normalizedDescription: "CATEGORISED",
+        categoryId: groceries,
+        dedupeHash: "cat-1",
+      })
+      .run();
+    const data = dashboardData(bundle.db, TODAY);
+    expect(data.reviewCount).toBe(0);
+    expect(data.uncategorizedCount).toBe(0);
+    expect(data.uncategorizedHref).toBe("/transactions?category=uncategorized");
+
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId: checking,
+        postedOn: "2026-07-03",
+        amountCents: -12_00,
+        rawDescription: "UNCATEGORISED",
+        normalizedDescription: "UNCATEGORISED",
+        categoryId: null,
+        dedupeHash: "uncat-1",
+      })
+      .run();
+    const after = dashboardData(bundle.db, TODAY);
+    expect(after.reviewCount).toBe(0); // still nothing FLAGGED…
+    expect(after.uncategorizedCount).toBe(1); // …and one row with no category
   });
 
   test("investments teaser is null without an investment position", () => {

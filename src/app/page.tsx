@@ -396,6 +396,8 @@ export default async function DashboardPage({
           <ToReviewCard
             count={data.reviewCount}
             href={data.reviewHref}
+            uncategorizedCount={data.uncategorizedCount}
+            uncategorizedHref={data.uncategorizedHref}
             rows={reviewRows}
             categories={pickerOptions}
           />
