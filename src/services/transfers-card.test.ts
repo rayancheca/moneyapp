@@ -40,6 +40,25 @@ beforeEach(() => {
   A = createAccount(bundle.db, { institutionId: inst.id, name: "Alpha Checking", type: "checking" });
   B = createAccount(bundle.db, { institutionId: inst.id, name: "Bravo Savings", type: "savings" });
   CARD = createAccount(bundle.db, { institutionId: inst.id, name: "Charlie Card", type: "credit" });
+  /*
+   * ⛔ THE LEDGER HAS TO OPEN ON A MONTH BOUNDARY, or the card's window is not
+   * six months long. `baselineWindow` floors at the first month the ledger
+   * covers IN FULL — a stub month is not a month — so without this row the
+   * earliest leg in a test dates the ledger and the window collapses. It is
+   * UNCATEGORISED, so no transfer resolver claims it and no figure moves.
+   */
+  bundle.db
+    .insert(transactions)
+    .values({
+      accountId: A,
+      postedOn: "2025-01-01",
+      amountCents: -1,
+      rawDescription: "LEDGER OPENS",
+      normalizedDescription: "LEDGER OPENS",
+      categoryId: null,
+      dedupeHash: "h-ledger-opens",
+    })
+    .run();
 });
 
 afterEach(() => {

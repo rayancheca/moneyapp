@@ -85,6 +85,32 @@ beforeEach(() => {
     })
     .run();
   seq = 0;
+  /*
+   * ⛔ THE LEDGER HAS TO OPEN ON A MONTH BOUNDARY, or the card's window is not
+   * six months long. `baselineWindow` floors at the first month the ledger
+   * covers IN FULL — a stub month is not a month — so without this row the
+   * earliest transaction in a test dates the ledger and the window collapses to
+   * whatever is left. This row is UNCATEGORISED, so it is in neither the
+   * eating-out children nor Groceries and changes no figure the card prints.
+   */
+  bundle.db
+    .insert(transactions)
+    .values({
+      id: "t-ledger-opens",
+      accountId,
+      postedOn: "2025-01-01",
+      amountCents: -1,
+      rawDescription: "LEDGER OPENS",
+      normalizedDescription: "LEDGER OPENS",
+      categoryId: null,
+      status: "active",
+      needsReview: false,
+      occurrenceIndex: 0,
+      dedupeHash: "h-ledger-opens",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+    .run();
 });
 
 afterEach(() => {

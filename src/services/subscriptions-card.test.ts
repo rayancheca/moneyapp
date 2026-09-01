@@ -55,6 +55,31 @@ beforeEach(() => {
     })
     .run();
   categoryId = bundle.db.select().from(categories).all()[0]!.id;
+  /*
+   * ⛔ THE LEDGER HAS TO OPEN ON A MONTH BOUNDARY, or the card's posted window
+   * is not six months long. `baselineWindow` floors at the first month the
+   * ledger covers IN FULL — a stub month is not a month — so without this row
+   * the earliest charge in a test dates the ledger and the window collapses.
+   * It carries no `recurringSeriesId`, so no series claims it.
+   */
+  bundle.db
+    .insert(transactions)
+    .values({
+      id: "t-ledger-opens",
+      accountId,
+      postedOn: "2025-01-01",
+      amountCents: -1,
+      rawDescription: "LEDGER OPENS",
+      normalizedDescription: "LEDGER OPENS",
+      categoryId: null,
+      status: "active",
+      needsReview: false,
+      occurrenceIndex: 0,
+      dedupeHash: "h-ledger-opens",
+      createdAt: now(),
+      updatedAt: now(),
+    })
+    .run();
 });
 
 afterEach(() => {

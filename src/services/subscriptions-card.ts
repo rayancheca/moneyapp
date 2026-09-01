@@ -5,7 +5,7 @@ import { transactions } from "@/db/schema/transactions";
 import { addCalendarMonths, monthKey, todayIso } from "@/lib/dates";
 import { levelledMonthlyCents } from "@/lib/income-basis";
 import { activeTxnsInRange } from "./analytics";
-import { COMMITTED_KINDS, SPEND_BASELINE_MONTHS } from "./committed";
+import { COMMITTED_KINDS, SPEND_BASELINE_MONTHS, baselineWindow } from "./committed";
 import {
   effectiveSeries,
   lapsedSeriesShouldStopForecasting,
@@ -227,8 +227,13 @@ export function subscriptionsCard(
   const currentMonth = monthKey(today);
   // the window runs from `currentMonth − months` to the last day before the
   // current month begins, so the incomplete current month is never read
-  const fromMonth = monthKey(addCalendarMonths(`${currentMonth}-01`, -months));
-  const toMonth = monthKey(addCalendarMonths(`${currentMonth}-01`, -1));
+  /*
+   * ⛔ ONE WINDOW, ONE PLACE — `baselineWindow` floors this at the first month
+   * the ledger covers in full. Building it from the constant alone let a young
+   * ledger put two different windows in two captions on one dashboard.
+   */
+  const window = baselineWindow(db, today, months);
+  const { fromMonth, toMonth } = window;
   const posted = postedBySeries(db, `${fromMonth}-01`, `${toMonth}-31`);
 
   const live: SubscriptionLine[] = [];
@@ -352,7 +357,8 @@ export function subscriptionsCard(
     postedCount: all.reduce((sum, l) => sum + l.postedCount, 0),
     unforecastableCount,
     endedCount,
-    months,
+    // the window's OWN month count, which the ledger may have shortened
+    months: window.months,
     fromMonth,
     toMonth,
     today,

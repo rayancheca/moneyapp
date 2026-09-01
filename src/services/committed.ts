@@ -63,69 +63,57 @@ export interface SpendBaseline {
  * sample: dividing by "months that had rows" would let a quiet month RAISE the
  * average, which is the opposite of what happened.
  */
-export function spendBaseline(
+export interface BaselineWindow {
+  /** complete months the window actually spans — never more than asked for */
+  months: number;
+  /** 'YYYY-MM' keys, oldest first; empty when the ledger holds no whole month */
+  keys: string[];
+  /** first day of the first month, for a range query */
+  from: string;
+  /** last day of the last month */
+  to: string;
+  fromMonth: string;
+  toMonth: string;
+}
+
+/**
+ * The trailing window EVERY card shares: the last `months` COMPLETE calendar
+ * months, floored at the first month the ledger covers in full.
+ *
+ * ⛔ ONE WINDOW, ONE PLACE. Five services import `SPEND_BASELINE_MONTHS`
+ * precisely so they cannot quote different windows for one ledger — and a
+ * constant is not enough on its own, because the floor is data-dependent. When
+ * `spendBaseline` learned to shrink and the cards did not, a young ledger could
+ * put "3 complete months" and "6 complete months" in two captions on one
+ * dashboard.
+ *
+ * 🔴 The floor exists because a month BEFORE the ledger began is not a
+ * measurement at all: at today = 2022-11-01 on the owner's ledger (which opens
+ * 2022-08-25), $1,961.04 of spending sat in three of six month keys and
+ * published $326.84 a month — half the $653.68 those three come to, and the
+ * runway divides net cash by that rate.
+ *
+ * ⛔ And the ledger's OPENING MONTH is only a month if the ledger opened on its
+ * FIRST day. A seven-day stub averaged in as a whole month is the same defect
+ * one step smaller: at 2022-10-01 it published $519.61 over "2 complete months"
+ * where the one month covered in full spent $992.78.
+ *
+ * ⚠️ A month with no spending INSIDE the window is still a real zero — that is
+ * why this counts whole months rather than months-that-had-rows. Only months
+ * the ledger cannot speak for are dropped.
+ */
+export function baselineWindow(
   db: AppDatabase,
   today: string = todayIso(),
   months: number = SPEND_BASELINE_MONTHS,
-): SpendBaseline {
+): BaselineWindow {
   const currentMonth = monthKey(today);
-  // one extra month back, because the current (incomplete) one is dropped
-  const cells = monthlySpending(db, { months: months + 1, refDate: today });
-
-  const byMonth = new Map<string, number>();
-  for (const c of cells) {
-    byMonth.set(c.month, (byMonth.get(c.month) ?? 0) + c.spentCents);
-  }
-
-  /*
-   * The window, and the ONLY thing excluding the incomplete current month: it
-   * runs from `currentMonth − months` to `currentMonth − 1`, so the current key
-   * is never read out of `byMonth` above.
-   *
-   * ⚠️ There was a `if (c.month === currentMonth) continue;` filter here that
-   * looked like the exclusion and was dead — a mutation that deleted it changed
-   * no result. Dead code shaped like a guard is worse than none, because the
-   * next edit to this loop trusts it. Anything that shortens this list is what
-   * has to keep the current month out.
-   */
+  // the window runs from `currentMonth − months` to `currentMonth − 1`, so the
+  // incomplete current month is never in it
   const asked: string[] = [];
   for (let i = months; i >= 1; i--) asked.push(monthKey(addCalendarMonths(`${currentMonth}-01`, -i)));
 
-  /*
-   * ⛔ The window cannot reach back further than the ledger does, and the
-   * DENOMINATOR is the window that survives — not the one that was asked for.
-   *
-   * 🔴 A month with no spending is a real zero, which is why this averages over
-   * whole months rather than months-that-had-rows. A month BEFORE the ledger
-   * began is not a measurement at all, and counting it as a zero divides real
-   * spending by imports that were never made. Measured at today = 2022-11-01 on
-   * the owner's own ledger (which opens 2022-08-25): $1,961.04 of spending sat
-   * in three of the six month keys and published $326.84 a month, half the
-   * $653.68 those three months come to — and the runway divides net cash by
-   * that rate, so it read roughly twice as long as it should.
-   *
-   * ⚠️ `moversCard` already stated this rule and applied it — the third surface
-   * asking one question, and the only one answering it. `ledgerOpens` is now
-   * shared rather than restated, so there is one place to disagree with.
-   *
-   * The shrunken window is DISCLOSED, not hidden: `months`, `fromMonth` and
-   * `toMonth` are what the runway card prints, so the caption says "3 complete
-   * months" the moment the average is over three.
-   */
   const opens = ledgerOpens(db);
-  /*
-   * ⛔ The ledger's OPENING MONTH is only a month if the ledger opened on its
-   * first day. This figure's caption says "averaged over N COMPLETE months"; a
-   * stub is not one, and averaging it in divides real spending by days nobody
-   * imported.
-   *
-   * 🔴 Measured on the owner's ledger, which opens 2022-08-25 with $46.44 of
-   * spending in its seven days: at today = 2022-10-01 this published $519.61 a
-   * month over "2 complete months, 2022-08 to 2022-09", where the one month
-   * covered in full spent $992.78; at 2022-11-01, $653.68 against $957.30. The
-   * runway divides net cash by this rate, so it read roughly twice as long on a
-   * ledger's first weeks — which is exactly when a new user is looking.
-   */
   const firstWholeMonth =
     opens === null
       ? null
@@ -134,14 +122,42 @@ export function spendBaseline(
         : monthKey(addCalendarMonths(`${monthKey(opens)}-01`, 1));
   const keys = firstWholeMonth === null ? [] : asked.filter((k) => k >= firstWholeMonth);
 
-  const totalCents = keys.reduce((sum, k) => sum + (byMonth.get(k) ?? 0), 0);
+  const fromMonth = keys[0] ?? currentMonth;
+  const toMonth = keys[keys.length - 1] ?? currentMonth;
+  return {
+    months: keys.length,
+    keys,
+    from: `${fromMonth}-01`,
+    to: periodBounds(`${toMonth}-01`, "monthly").end,
+    fromMonth,
+    toMonth,
+  };
+}
+
+/**
+ * Mean spend over the last complete calendar months.
+ *
+ * The window is `baselineWindow`'s — shared with every card that quotes one, so
+ * two captions on one dashboard cannot name different months.
+ */
+export function spendBaseline(
+  db: AppDatabase,
+  today: string = todayIso(),
+  months: number = SPEND_BASELINE_MONTHS,
+): SpendBaseline {
+  const cells = monthlySpending(db, { months: months + 1, refDate: today });
+  const byMonth = new Map<string, number>();
+  for (const c of cells) byMonth.set(c.month, (byMonth.get(c.month) ?? 0) + c.spentCents);
+
+  const w = baselineWindow(db, today, months);
+  const totalCents = w.keys.reduce((sum, k) => sum + (byMonth.get(k) ?? 0), 0);
   return {
     // no complete month inside the ledger means no measured rate; the total is
     // necessarily zero there, so this divides by one rather than by nothing
-    monthlyCents: Math.round(totalCents / Math.max(1, keys.length)),
-    months: keys.length,
-    fromMonth: keys[0] ?? currentMonth,
-    toMonth: keys[keys.length - 1] ?? currentMonth,
+    monthlyCents: Math.round(totalCents / Math.max(1, w.months)),
+    months: w.months,
+    fromMonth: w.fromMonth,
+    toMonth: w.toMonth,
   };
 }
 

@@ -6,7 +6,7 @@ import { formatMonthYear } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import { listAccounts } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryIndex } from "./analytics";
-import { SPEND_BASELINE_MONTHS } from "./committed";
+import { baselineWindow, SPEND_BASELINE_MONTHS } from "./committed";
 import { transferFlow } from "./transfer-flow";
 import { transferCandidates, transferCategoryResolver } from "./transfer-links";
 
@@ -288,10 +288,13 @@ export function transfersCard(
   // `transferCategoryResolver` would throw rather than answer
   if (transfersTop === undefined) return null;
 
-  const currentMonth = monthKey(today);
-  const fromMonth = monthKey(addCalendarMonths(`${currentMonth}-01`, -months));
-  const toMonth = monthKey(addCalendarMonths(`${currentMonth}-01`, -1));
-  const from = `${fromMonth}-01`;
+  /*
+   * ⛔ ONE WINDOW, ONE PLACE — `baselineWindow` floors this at the first month
+   * the ledger covers in full. Building it here from the constant alone let a
+   * young ledger put two different windows in two captions on one dashboard.
+   */
+  const window = baselineWindow(db, today, months);
+  const { fromMonth, toMonth, from } = window;
   // the calendar owns month lengths, not this module
   const to = periodBounds(`${toMonth}-01`, "monthly").end;
 
@@ -444,7 +447,8 @@ export function transfersCard(
         ? null
         : `${otherParty.length} more transfer ${plural(otherParty.length, "row", "rows")} — ${formatCents(otherPartyIn)} in, ${formatCents(otherPartyOut)} out — sit in categories the pairer never stamps, and ${otherPartyPaired === 0 ? "not one of them is paired" : `${otherPartyPaired} of them ${plural(otherPartyPaired, "is", "are")} paired`}. Money moves there too, but nothing here can tell which of it went between two of your own accounts and which went to somebody else, so none of it is counted above.`,
 
-    months,
+    // the window's OWN month count, which the ledger may have shortened
+    months: window.months,
     fromMonth,
     toMonth,
     fromLabel,

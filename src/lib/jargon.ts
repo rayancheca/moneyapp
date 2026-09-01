@@ -178,8 +178,15 @@ export const RUNWAY_JARGON = {
   netCash:
     "The cash in your accounts after taking off what is still owed on cards, because that money has already been spent.",
   burn: "The gap between what leaves each month and what arrives, which is the rate your cash actually runs down at.",
+  /*
+   * 🔴 This said "…plus any that fell due and never arrived" — the arrears the
+   * rate no longer contains. Once arrears left `totalCents` the tooltip
+   * contradicted the sentence three lines below it on the same card, which says
+   * "A further $X came due earlier this month and never posted". A definition
+   * that outlives the figure it defines is worse than none.
+   */
   committed:
-    "Money already agreed to: the bills a recurring schedule says are coming, plus any that fell due and never arrived.",
+    "Money already agreed to, as a monthly rate: what a recurring schedule says is coming over the next twelve months, divided by twelve. Bills that fell due and never arrived are not in it — they are named separately, because a debt already owed is not part of a rate.",
   unevidenced:
     "A commitment entered by hand which the bank has never billed, so the ledger has agreed to it without ever seeing one.",
   allIn:

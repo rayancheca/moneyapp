@@ -4,7 +4,7 @@ import { formatMonthYear } from "@/lib/format-date";
 import { ledgerHref } from "@/lib/ledger-href";
 import { formatCents } from "@/lib/money";
 import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryIndex } from "./analytics";
-import { SPEND_BASELINE_MONTHS } from "./committed";
+import { baselineWindow, SPEND_BASELINE_MONTHS } from "./committed";
 import { provenanceFor, type Provenance } from "./provenance";
 
 /**
@@ -364,8 +364,13 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
   const currentMonth = monthKey(today);
   // the window runs to the last day BEFORE the current month begins, so the
   // incomplete current month is never read — the runway card's own convention
-  const fromMonth = monthKey(addCalendarMonths(`${currentMonth}-01`, -months));
-  const toMonth = monthKey(addCalendarMonths(`${currentMonth}-01`, -1));
+  /*
+   * ⛔ ONE WINDOW, ONE PLACE — `baselineWindow` floors this at the first month
+   * the ledger covers in full. Building it from the constant alone let a young
+   * ledger put two different windows in two captions on one dashboard.
+   */
+  const window = baselineWindow(db, today, months);
+  const { fromMonth, toMonth } = window;
   const recentFrom = `${fromMonth}-01`;
   const recentTo = lastDayOf(toMonth);
 
@@ -549,7 +554,8 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
     recent,
     allTime,
     allTimeFromLabel: formatMonthYear(firstOn),
-    months,
+    // the window's OWN month count, which the ledger may have shortened
+    months: window.months,
     fromMonth,
     toMonth,
 

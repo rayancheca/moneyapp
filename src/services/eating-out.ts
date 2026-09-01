@@ -1,7 +1,7 @@
 import type { AppDatabase } from "@/db/client";
 import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryIndex } from "./analytics";
-import { SPEND_BASELINE_MONTHS } from "./committed";
+import { baselineWindow, SPEND_BASELINE_MONTHS } from "./committed";
 
 /**
  * What eating out actually costs — the dashboard's biggest real spend, and the
@@ -119,12 +119,13 @@ export function eatingOutCard(
     [...idx.byId.values()].filter((c) => c.parentId === food.id).map((c) => [c.name, c.id] as const),
   );
 
-  const currentMonth = monthKey(today);
-  // the window runs from `currentMonth − months` to the last day before the
-  // current month begins, so the incomplete current month is never read
-  const fromMonth = monthKey(addCalendarMonths(`${currentMonth}-01`, -months));
-  const toMonth = monthKey(addCalendarMonths(`${currentMonth}-01`, -1));
-  const from = `${fromMonth}-01`;
+  /*
+   * ⛔ ONE WINDOW, ONE PLACE — `baselineWindow` floors this at the first month
+   * the ledger covers in full. Building it here from the constant alone let a
+   * young ledger put two different windows in two captions on one dashboard.
+   */
+  const window = baselineWindow(db, today, months);
+  const { fromMonth, toMonth, from } = window;
   // the month's real last day — `${toMonth}-31` worked as a string upper bound
   // but is not a date, and the day count below has to be able to trust it
   const to = periodBounds(`${toMonth}-01`, "monthly").end;
@@ -171,9 +172,10 @@ export function eatingOutCard(
     totalCount,
     averageTicketCents: totalCount === 0 ? null : Math.round(totalSpentCents / totalCount),
     purchasesPerDay: totalCount / windowDays,
-    months,
+    // the window's OWN month count, which the ledger may have shortened
+    months: window.months,
     fromMonth,
     toMonth,
-    isEmpty: totalCount === 0 && groceries.count === 0,
+    isEmpty: totalCount === 0 || groceries.count === 0,
   };
 }

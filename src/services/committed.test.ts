@@ -13,7 +13,7 @@ import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
-import { carCard, committedBook, runwayCard, spendBaseline, SPEND_BASELINE_MONTHS } from "./committed";
+import { baselineWindow, carCard, committedBook, runwayCard, spendBaseline, SPEND_BASELINE_MONTHS } from "./committed";
 import { forecastCurrentMonth } from "./forecast";
 
 /**
@@ -741,5 +741,57 @@ describe("carCard", () => {
     const c = carCard(bundle.db, TODAY)!;
     // baseline is $8,000 + ($600 ÷ 6 months) = $8,100 gross; the car's $100 comes out
     expect(c.baseline.monthlyCents).toBe(800000);
+  });
+});
+
+/*
+ * ⭐ THE WHOLE POINT OF SHARING A WINDOW: five cards on one dashboard, one
+ * ledger, one set of months. Five services import `SPEND_BASELINE_MONTHS`
+ * precisely so they cannot quote different windows — and a constant is not
+ * enough on its own, because the FLOOR is data-dependent. When `spendBaseline`
+ * learned to shrink and the cards did not, a young ledger could put "3 complete
+ * months" and "6 complete months" in two captions a reader can see at once.
+ */
+describe("baselineWindow — one window for every card that quotes one", () => {
+  test("a ledger older than the window gets the whole window", () => {
+    const w = baselineWindow(bundle.db, TODAY);
+    expect(w.months).toBe(SPEND_BASELINE_MONTHS);
+    expect(w.fromMonth).toBe("2026-02");
+    expect(w.toMonth).toBe("2026-07");
+    expect(w.from).toBe("2026-02-01");
+    expect(w.to).toBe("2026-07-31"); // the real last day, never a notional 31st
+    expect(w.keys).toHaveLength(SPEND_BASELINE_MONTHS);
+  });
+
+  test("a ledger younger than the window gets what it can prove", () => {
+    bundle.db.delete(transactions).run();
+    insertTxn({ postedOn: "2026-05-01", amountCents: -1000, rawDescription: "SUPERMARKET" });
+    const w = baselineWindow(bundle.db, TODAY);
+    expect(w.months).toBe(3); // May, June, July
+    expect(w.fromMonth).toBe("2026-05");
+    expect(w.toMonth).toBe("2026-07");
+  });
+
+  test("the last month's real length is the window's end, February included", () => {
+    // today in March: the window closes at the end of February
+    expect(baselineWindow(bundle.db, "2026-03-15").to).toBe("2026-02-28");
+    expect(baselineWindow(bundle.db, "2028-03-15").to).toBe("2028-02-29");
+  });
+
+  test("an empty ledger has no window at all, and says so rather than guessing", () => {
+    bundle.db.delete(transactions).run();
+    const w = baselineWindow(bundle.db, TODAY);
+    expect(w.months).toBe(0);
+    expect(w.keys).toEqual([]);
+  });
+
+  test("spendBaseline reports exactly this window, never its own", () => {
+    for (const today of [TODAY, "2026-03-15", "2022-11-01"]) {
+      const w = baselineWindow(bundle.db, today);
+      const b = spendBaseline(bundle.db, today);
+      expect(b.months, today).toBe(w.months);
+      expect(b.fromMonth, today).toBe(w.fromMonth);
+      expect(b.toMonth, today).toBe(w.toMonth);
+    }
   });
 });
