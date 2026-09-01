@@ -122,10 +122,17 @@ export default async function YearSummaryPage({
                 </dd>
               </div>
             </dl>
+            {/* ⛔ THE SENTENCE DEFINES A THREE-TERM TOTAL AND MUST NAME THREE.
+                `totalReceivedCents` is `earned + investment + notEarned`
+                (lib/year-summary.ts, pinned by its own identity test), and this
+                named only two: on the owner's ledger the investment term is
+                7.5% of the 2025 headline ($2,866.35 of $38,409.23) and 4.7% of
+                2026's, sitting under a section heading of its own while the
+                definition of the figure above it did not mention it. */}
             <p className="mt-4 max-w-prose border-t border-line pt-3 text-sm leading-relaxed text-ink-muted">
               <span className="text-ink">Earned</span> is wages, tutoring and savings interest.{" "}
-              <span className="text-ink">All money in</span> adds what you received without earning
-              it — a financial-aid refund is not a wage.{" "}
+              <span className="text-ink">All money in</span> adds what your investments returned and
+              what you received without earning it — a financial-aid refund is not a wage.{" "}
               <span className="text-ink">Passed through</span> is in neither: money that arrived and
               left again.
             </p>

@@ -127,6 +127,15 @@ describe("yearSummary — the real 2025 shape", () => {
   test("money kept OUT is never in any total the page adds up", () => {
     const s = yearSummary({ year: 2025, lines: REAL });
     expect(s.excludedCents).toBe(341275);
+    /*
+     * ⛔ THREE TERMS, and the page's own definition of this figure has to name
+     * all three. It named two — "All money in adds what you received without
+     * earning it" — while `investmentCents` was 7.5% of the owner's 2025
+     * headline ($2,866.35 of $38,409.23). The identity below is what makes that
+     * a copy defect rather than an arithmetic one, so it is stated here beside
+     * the identity: if a fourth term is ever added, the sentence in
+     * `app/summary/[year]/page.tsx` is the other place to change.
+     */
     expect(s.earnedCents + s.investmentCents + s.notEarnedCents).toBe(s.totalReceivedCents);
     // and the load-bearing half: removing the excluded line moves NO total
     const without = yearSummary({ year: 2025, lines: REAL.filter((l) => l.section !== "excluded") });
