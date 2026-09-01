@@ -112,7 +112,9 @@ function median(values: readonly number[]): number {
 }
 
 /**
- * The largest deviation once the single worst observation is dropped.
+ * The largest deviation once the single worst HISTORICAL observation is
+ * dropped. `deviations` must be in chronological order; the last element is the
+ * newest close.
  *
  * A trimmed maximum, because one outlier is not a rhythm and the untrimmed
  * maximum lets it set the tolerance for every future month. Measured on the
@@ -120,14 +122,34 @@ function median(values: readonly number[]): number {
  * 10th, and the raw maximum would have held its reminder back eight days every
  * month thereafter. Below five observations there is not enough to trim.
  *
+ * ⛔ THE NEWEST CLOSE IS NEVER THE ONE TRIMMED, and that is the whole
+ * refinement. A permanent change of cycle looks EXACTLY like a single outlier
+ * in the month it happens — it is one close in the wrong place — so trimming
+ * the largest deviation blindly erases the only evidence that anything moved.
+ *
+ * 🔴 Measured on the real ledger: `Discover` is issued by Capital One now and
+ * its August 2026 statement closed on the 9th after eleven closes on the 2nd.
+ * The trim dropped that 7-day deviation, leaving `toleranceDays = 1` — removing
+ * the newest close from the input entirely produced the IDENTICAL rhythm and
+ * tolerance, which is what "contributes nothing" means. /imports then read
+ * "Ready to pull" from 2026-09-03, six days before the statement exists, every
+ * month until enough new closes move the median.
+ *
+ * ⚠️ The cost, stated: a genuinely one-off late close now holds the reminder
+ * back by its own lateness — for exactly ONE cycle, until it stops being the
+ * newest. The old rule's cost was six months of a wrong reminder for a real
+ * change. A historical outlier is still trimmed, so the case this function was
+ * written for is unaffected: Chase Sapphire keeps `toleranceDays = 9`.
+ *
  * Never called with an empty list: every caller is past the MIN_CLOSES = 3 bar,
  * which leaves at least two gaps and three days-of-month, so trimming one still
  * leaves something to take a maximum of.
  */
 function trimmedMaxDeviation(deviations: readonly number[]): number {
-  const sorted = [...deviations].sort((a, b) => a - b);
-  const kept = sorted.length >= 5 ? sorted.slice(0, -1) : sorted;
-  return kept.at(-1)!;
+  const newest = deviations.at(-1)!;
+  const older = [...deviations.slice(0, -1)].sort((a, b) => a - b);
+  const kept = deviations.length >= 5 ? older.slice(0, -1) : older;
+  return Math.max(newest, kept.at(-1) ?? 0);
 }
 
 /**

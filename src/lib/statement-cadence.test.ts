@@ -329,15 +329,64 @@ describe("the monthly band, at its edges", () => {
    * would hold the reminder back by its own lateness every month after.
    */
   test("the trim turns on at exactly five observations", () => {
-    // five closes → four gaps and five days-of-month, so five deviations
-    const wanderer = ["2026-03-02", "2026-04-02", "2026-05-02", "2026-06-02", "2026-07-10"];
+    /*
+     * ⚠️ The outlier is in the MIDDLE, not at the end. My first version of this
+     * test put it last and asserted it was trimmed — encoding the very
+     * behaviour the next commit had to change, because the newest close is
+     * never the one trimmed. A fixture that puts the outlier where the rule
+     * exempts it cannot test the rule.
+     */
+    // five closes → five days-of-month, so five deviations
+    const wanderer = ["2026-03-02", "2026-04-10", "2026-05-02", "2026-06-02", "2026-07-02"];
     const trimmed = statementCadence(wanderer);
     expect(trimmed.rhythm).toEqual({ kind: "day-of-month", day: 2 });
     // the 8-day outlier is dropped, so the tolerance is the slack alone
     expect(trimmed.toleranceDays).toBeLessThan(8);
 
     // four closes → four deviations, below the trim: the outlier stands
-    const untrimmed = statementCadence(["2026-04-02", "2026-05-02", "2026-06-02", "2026-07-10"]);
+    const untrimmed = statementCadence(["2026-04-10", "2026-05-02", "2026-06-02", "2026-07-02"]);
     expect(untrimmed.toleranceDays).toBeGreaterThanOrEqual(8);
+  });
+
+  /*
+   * ⛔ A PERMANENT CHANGE OF CYCLE LOOKS EXACTLY LIKE A SINGLE OUTLIER in the
+   * month it happens, so the newest close is never the one trimmed.
+   *
+   * 🔴 Measured on the real ledger: `Discover` is issued by Capital One now and
+   * its August 2026 statement closed on the 9th after eleven closes on the 2nd.
+   * The trim dropped that 7-day deviation and left `toleranceDays = 1` —
+   * removing the newest close from the input entirely produced the IDENTICAL
+   * rhythm AND tolerance, which is what "contributes nothing" means. /imports
+   * then read "Ready to pull" from 2026-09-03, six days before the statement
+   * exists, and would have done so every month until the median moved.
+   */
+  describe("the newest close is never trimmed", () => {
+    const ELEVEN_ON_THE_SECOND = [
+      "2025-10-02", "2025-11-02", "2025-12-02", "2026-01-02", "2026-02-02", "2026-03-02",
+      "2026-04-02", "2026-05-02", "2026-06-02", "2026-07-02",
+    ];
+
+    test("a cycle that has just moved widens the tolerance instead of vanishing", () => {
+      const moved = statementCadence([...ELEVEN_ON_THE_SECOND, "2026-08-09"]);
+      // one close is not enough to move the median — the rhythm is still the 2nd
+      expect(moved.rhythm).toEqual({ kind: "day-of-month", day: 2 });
+      // …but the seven days it moved by are held, not thrown away
+      expect(moved.toleranceDays).toBeGreaterThanOrEqual(7);
+      // and the reminder waits until the day the statement actually closed
+      expect(nextCloseAfter(moved.rhythm, "2026-08-09")).toBe("2026-09-02");
+    });
+
+    test("the same outlier in the PAST is still trimmed — the old rule survives for history", () => {
+      const historical = statementCadence([
+        "2025-10-09", ...ELEVEN_ON_THE_SECOND.slice(1), "2026-08-02",
+      ]);
+      expect(historical.rhythm).toEqual({ kind: "day-of-month", day: 2 });
+      expect(historical.toleranceDays).toBeLessThan(7);
+    });
+
+    test("a settled cycle keeps a tight tolerance", () => {
+      const settled = statementCadence([...ELEVEN_ON_THE_SECOND, "2026-08-02"]);
+      expect(settled.toleranceDays).toBeLessThan(3);
+    });
   });
 });
