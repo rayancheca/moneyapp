@@ -16,6 +16,7 @@ import { runway, type Runway } from "@/lib/runway";
 import { listAccounts } from "./accounts";
 import { loadCategoryIndex, monthlySpending, recurringSeriesIdsForCategory } from "./analytics";
 import { incomeExpectation, overdueForSeries } from "./budgets";
+import { ledgerOpens } from "./observation-frontier";
 import { seriesStaleness, upcomingOccurrences } from "./recurring";
 
 /**
@@ -87,13 +88,39 @@ export function spendBaseline(
    * next edit to this loop trusts it. Anything that shortens this list is what
    * has to keep the current month out.
    */
-  const keys: string[] = [];
-  for (let i = months; i >= 1; i--) keys.push(monthKey(addCalendarMonths(`${currentMonth}-01`, -i)));
+  const asked: string[] = [];
+  for (let i = months; i >= 1; i--) asked.push(monthKey(addCalendarMonths(`${currentMonth}-01`, -i)));
+
+  /*
+   * ⛔ The window cannot reach back further than the ledger does, and the
+   * DENOMINATOR is the window that survives — not the one that was asked for.
+   *
+   * 🔴 A month with no spending is a real zero, which is why this averages over
+   * whole months rather than months-that-had-rows. A month BEFORE the ledger
+   * began is not a measurement at all, and counting it as a zero divides real
+   * spending by imports that were never made. Measured at today = 2022-11-01 on
+   * the owner's own ledger (which opens 2022-08-25): $1,961.04 of spending sat
+   * in three of the six month keys and published $326.84 a month, half the
+   * $653.68 those three months come to — and the runway divides net cash by
+   * that rate, so it read roughly twice as long as it should.
+   *
+   * ⚠️ `moversCard` already stated this rule and applied it — the third surface
+   * asking one question, and the only one answering it. `ledgerOpens` is now
+   * shared rather than restated, so there is one place to disagree with.
+   *
+   * The shrunken window is DISCLOSED, not hidden: `months`, `fromMonth` and
+   * `toMonth` are what the runway card prints, so the caption says "3 complete
+   * months" the moment the average is over three.
+   */
+  const opens = ledgerOpens(db);
+  const keys = opens === null ? [] : asked.filter((k) => k >= monthKey(opens));
 
   const totalCents = keys.reduce((sum, k) => sum + (byMonth.get(k) ?? 0), 0);
   return {
-    monthlyCents: Math.round(totalCents / months),
-    months,
+    // no complete month inside the ledger means no measured rate; the total is
+    // necessarily zero there, so this divides by one rather than by nothing
+    monthlyCents: Math.round(totalCents / Math.max(1, keys.length)),
+    months: keys.length,
     fromMonth: keys[0] ?? currentMonth,
     toMonth: keys[keys.length - 1] ?? currentMonth,
   };

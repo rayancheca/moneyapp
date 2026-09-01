@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { statementPeriods } from "@/db/schema/imports";
@@ -112,6 +112,35 @@ export function observationFrontier(db: AppDatabase): ObservationFrontier {
  * And the column alone is wrong even where it is set: Netflix names Chase
  * Sapphire while its history posted to Chase Sapphire AND Discover.
  */
+/**
+ * The day the ledger begins: the earliest ACTIVE transaction, or null when
+ * there is none.
+ *
+ * ⛔ Anything that averages "the last N months" has to compare its window
+ * against this, or its early months are averaging imports that were never made.
+ * A month with no spending is a real zero; a month before the ledger began is
+ * not a measurement at all — and the difference is the whole reason this is a
+ * function rather than a comment. `moversCard` stated the rule and applied it;
+ * `spendBaseline` did not, and published a runway roughly twice as long on a
+ * ledger younger than its own six-month window.
+ *
+ * ⚠️ Earliest ACTIVE TRANSACTION, not earliest month with spending: two quiet
+ * months at the front of a long ledger are not the same thing as a ledger that
+ * had not started, and the second reading would blank a card over an ordinary
+ * quiet January.
+ */
+export function ledgerOpens(db: AppDatabase): string | null {
+  return (
+    db
+      .select({ postedOn: transactions.postedOn })
+      .from(transactions)
+      .where(eq(transactions.status, "active"))
+      .orderBy(asc(transactions.postedOn))
+      .limit(1)
+      .get()?.postedOn ?? null
+  );
+}
+
 export function seriesAccountIds(db: AppDatabase): Map<string, Set<string>> {
   const bySeries = new Map<string, Set<string>>();
   const add = (seriesId: string, accountId: string): void => {

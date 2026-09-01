@@ -7,7 +7,7 @@ import { formatCents } from "@/lib/money";
 import { listAccounts } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, monthlySpending, spendingBucket, transactionsHref } from "./analytics";
 import { SPEND_BASELINE_MONTHS } from "./committed";
-import { observationFrontier } from "./observation-frontier";
+import { ledgerOpens, observationFrontier } from "./observation-frontier";
 import { MIN_OCCURRENCES } from "./recurring";
 
 /**
@@ -142,18 +142,6 @@ function cents(value: number): number {
  * only because that one is module-private and its file is in flight. Exporting
  * it and deleting this is a one-line follow-up.
  */
-function ledgerOpens(db: AppDatabase): string | null {
-  return (
-    db
-      .select({ postedOn: transactions.postedOn })
-      .from(transactions)
-      .where(eq(transactions.status, "active"))
-      .orderBy(asc(transactions.postedOn))
-      .limit(1)
-      .get()?.postedOn ?? null
-  );
-}
-
 /** The last day of a month key — `periodBounds` owns the calendar, not this. */
 function lastDayOf(month: string): string {
   return periodBounds(`${month}-01`, "monthly").end;

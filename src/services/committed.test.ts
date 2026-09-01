@@ -155,6 +155,56 @@ describe("spendBaseline", () => {
   test("the window length is the published one", () => {
     expect(spendBaseline(bundle.db, TODAY).months).toBe(SPEND_BASELINE_MONTHS);
   });
+
+  /*
+   * 🔴 A month with no spending is a real zero — that is why this averages over
+   * whole months rather than months-that-had-rows. A month BEFORE THE LEDGER
+   * BEGAN is not a measurement at all, and counting it as a zero divides real
+   * spending by imports that were never made.
+   *
+   * Measured on the owner's own ledger at today = 2022-11-01 (it opens
+   * 2022-08-25): $1,961.04 of spending sat in three of the six month keys and
+   * published $326.84 a month against the $653.68 those three come to. The
+   * runway divides net cash by that rate, so it read roughly twice as long.
+   *
+   * ⚠️ `moversCard` already stated the rule and applied it. This was the third
+   * surface asking one question and the only one answering it.
+   */
+  test("the window cannot reach back further than the ledger does", () => {
+    // wipe the fixture's history and give the ledger a single, later start
+    bundle.db.delete(transactions).run();
+    insertTxn({ postedOn: "2026-06-10", amountCents: -300000, rawDescription: "SUPERMARKET" });
+    insertTxn({ postedOn: "2026-07-10", amountCents: -300000, rawDescription: "SUPERMARKET" });
+
+    const b = spendBaseline(bundle.db, TODAY);
+    // June and July are the only complete months inside the ledger
+    expect(b.months).toBe(2);
+    expect(b.fromMonth).toBe("2026-06");
+    expect(b.toMonth).toBe("2026-07");
+    expect(b.monthlyCents).toBe(300000);
+  });
+
+  test("a quiet month inside the ledger is still a zero, not a missing sample", () => {
+    bundle.db.delete(transactions).run();
+    // the ledger opens in February, so all six months are inside it — and the
+    // four with nothing in them are real zeroes that must pull the average down
+    insertTxn({ postedOn: "2026-02-10", amountCents: -300000, rawDescription: "SUPERMARKET" });
+    insertTxn({ postedOn: "2026-07-10", amountCents: -300000, rawDescription: "SUPERMARKET" });
+
+    const b = spendBaseline(bundle.db, TODAY);
+    expect(b.months).toBe(SPEND_BASELINE_MONTHS);
+    expect(b.monthlyCents).toBe(Math.round(600000 / SPEND_BASELINE_MONTHS));
+  });
+
+  test("a ledger with no complete month behind it reports no months rather than NaN", () => {
+    bundle.db.delete(transactions).run();
+    insertTxn({ postedOn: "2026-08-10", amountCents: -300000, rawDescription: "SUPERMARKET" });
+
+    const b = spendBaseline(bundle.db, TODAY);
+    expect(b.months).toBe(0);
+    expect(b.monthlyCents).toBe(0);
+  });
+
 });
 
 describe("committedBook", () => {
