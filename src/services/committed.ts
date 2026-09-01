@@ -292,8 +292,24 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
   const carSeries = recurringSeriesIdsForCategory(db, car.id);
   const months = COMMITTED_HORIZON_MONTHS;
   const to = addCalendarMonths(today, months);
+  /*
+   * ⛔ Half-open, the same as `committedBook` — and this was the SECOND phrasing
+   * of one boundary, left behind when the first was fixed.
+   *
+   * 🔴 Measured on the real ledger: on 2026-09-15, the lease's own anchor day,
+   * the twelve-month horizon `[2026-09-15, 2027-09-15]` caught THIRTEEN lease
+   * payments and the card published **$10,481.48** where the days either side
+   * both say $9,786.44 — a $695.04 spike, exactly one payment, on one day per
+   * month per series.
+   *
+   * ⚠️ Only the horizon half applies here. `committedBook` ALSO has to skip an
+   * occurrence dated `today`, because its overdue leg already owns that day;
+   * this function has no overdue leg, so a bill due today belongs in its book
+   * and skipping it would silently lose a payment.
+   */
+  const horizonEnd = addDays(to, -1);
 
-  const occurrences = upcomingOccurrences(db, today, diffDays(today, to))
+  const occurrences = upcomingOccurrences(db, today, diffDays(today, horizonEnd))
     .filter((o) => carSeries.has(o.seriesId))
     .map(toCommitted);
   const book = committedOutflows({ from: today, to, months, occurrences, overdue: [] });

@@ -179,6 +179,76 @@ as a percentage.
 
 ---
 
+## 2b. 🔴 The runway counted rent THREE times — found by checking my own work
+
+⭐ **How it was found is the transferable part.** Having made the forecast card
+publish committed bills, I pointed the repo's own "three surfaces can disagree"
+rule at MY OWN change and asked the dashboard the same question. At
+today = 2026-09-01 on the real ledger:
+
+| surface | committed bills, September |
+|---|---:|
+| forecast card | **$3,567.60** |
+| dashboard runway (`committedBook`) | **$8,150.02** |
+
+Two independently-computed paths, one question, **2.3× apart** — and the loud
+one was the dashboard. Rent appeared THREE times in a single month, from two
+off-by-ones that can only fire when a bill falls on `today`:
+
+1. **The windows OVERLAPPED on `today`.** Overdue covers `[monthStart, today]`,
+   the upcoming projection covered `[today, …]`. `budgets.ts` already had this
+   right — `budgetTail` opens at `addDays(today, 1)` with the comment *"strictly
+   after today = not yet posted"* — and `committedBook` had simply never been
+   told. A THIRD caller of a rule two callers already shared.
+2. **The horizon end was INCLUSIVE.** `addCalendarMonths(today, 12)` from the
+   1st is the 1st twelve months later, so the projection caught a THIRTEENTH
+   first-of-month.
+
+**Dashboard-visible impact, measured both ways rather than reasoned:**
+
+| | before | after |
+|---|---:|---:|
+| Committed bills | **$3,924.07**/mo | **$3,542.21**/mo |
+| rent | 14× → $2,460.50/mo | 12× → **$2,109.00**/mo |
+| rent utilities & fees | 14× → $212.58/mo | 12× → **$182.21**/mo |
+
+`committedBook(months=1)` now equals the forecast card's committed spend TO THE
+CENT. The two share no arithmetic, so that agreement is evidence, not tautology.
+
+### 🔴 …and there was a SECOND phrasing of the same boundary
+
+Fixing `committedBook` and stopping would have been the trap this repo keeps
+naming. `carCard` — same file, same constant — had the horizon half of it too.
+
+On **2026-09-15**, the lease's own anchor day, a twelve-month horizon caught
+THIRTEEN lease payments and the card published **$10,481.48** where the days
+either side both say **$9,786.44**. One $695.04 spike — exactly one payment — on
+one day per month per series.
+
+⚠️ **The two need DIFFERENT fixes, and copying one onto the other is a bug.**
+`committedBook` must also skip an occurrence dated `today`, because its overdue
+leg already owns that day. `carCard` has no overdue leg, so a bill due today
+belongs in its book and skipping it would silently lose a payment. There is a
+mutation test for exactly that wrong fix.
+
+### ⛔ The lesson: a fixture that cannot express a condition cannot test it
+
+Neither boundary was REACHABLE by any fixture in the repo. `committed.test.ts`
+uses `TODAY = 2026-08-24` — the **24th** — while every bill in it is anchored on
+the 1st or 2nd, so no bill can coincide with today and no anchor can land on the
+horizon's last day. The e2e fixture uses 2026-07-08 the same way.
+
+**23 green unit tests and 590 green e2e tests, with both boundaries structurally
+impossible.** The proof: the full gate still passes with **zero baseline
+movement** after a fix that moves the real dashboard by $381.86 a month.
+
+Six new tests use a today that sits ON the anchor. Five mutants die — including
+two that pin the horizon's far edge to a single day in BOTH directions, which
+the first version missed: shrinking the horizon by an extra day broke nothing
+until a bill was anchored on it.
+
+---
+
 ## 3. ✅ A trend may move the projection by at most one typical month
 
 `Travel` projected **$2,234.86** for September off a 3-month average of

@@ -446,6 +446,64 @@ describe("carCard", () => {
     expect(c.cost.monthlyCents).not.toBe(Math.round(c.cost.committedCents / 12));
   });
 
+  /**
+   * 🔴 The SECOND phrasing of one boundary, left behind when `committedBook`'s
+   * was fixed — and the reason to grep for who else answers a question before
+   * fixing one caller.
+   *
+   * Measured on the real ledger: on 2026-09-15, the lease's own anchor day, a
+   * twelve-month horizon `[2026-09-15, 2027-09-15]` caught THIRTEEN lease
+   * payments and the card published $10,481.48 where the days either side both
+   * said $9,786.44. One spike, $695.04 — exactly one payment — on one day per
+   * month per series.
+   *
+   * ⚠️ `TODAY` is the 24th and the fixture bills are anchored on the 11th, so
+   * this could not fire there either. It takes a today ON the anchor.
+   */
+  test("a twelve-month horizon holds twelve payments, even on the anchor day", () => {
+    const carId = createCarCategory();
+    const ANCHOR = "2026-09-15";
+    addSeries({
+      name: "Car lease",
+      kind: "bill",
+      nextExpectedOn: ANCHOR,
+      amountCents: -69504,
+      userCategoryId: carId,
+    });
+
+    const onAnchor = carCard(bundle.db, ANCHOR)!;
+    expect(onAnchor.cost.committedCents).toBe(69504 * 12);
+
+    // …and it does not spike relative to the days either side
+    const before = carCard(bundle.db, "2026-09-14")!;
+    const after = carCard(bundle.db, "2026-09-16")!;
+    expect(onAnchor.cost.committedCents).toBe(before.cost.committedCents);
+    expect(onAnchor.cost.committedCents).toBe(after.cost.committedCents);
+  });
+
+  /**
+   * ⚠️ And the OPPOSITE mistake must not be made here. `committedBook` skips an
+   * occurrence dated `today` because its overdue leg already owns that day;
+   * `carCard` has no overdue leg, so a bill due today belongs in its book and
+   * skipping it would silently lose a payment. Same file, same constant, two
+   * deliberately different rules.
+   */
+  test("a car bill due TODAY is inside the book, not skipped", () => {
+    const carId = createCarCategory();
+    const ANCHOR = "2026-09-15";
+    addSeries({
+      name: "Car lease",
+      kind: "bill",
+      nextExpectedOn: ANCHOR,
+      amountCents: -69504,
+      userCategoryId: carId,
+      userEndsOn: "2026-09-15",
+    });
+    const c = carCard(bundle.db, ANCHOR)!;
+    expect(c.cost.committedCents).toBe(69504);
+    expect(c.cost.monthlyCents).toBe(69504);
+  });
+
   test("discloses the first date a car commitment runs out", () => {
     const carId = createCarCategory();
     addSeries({
