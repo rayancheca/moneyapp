@@ -218,7 +218,8 @@ CENT. The two share no arithmetic, so that agreement is evidence, not tautology.
 ### 🔴 …and there was a SECOND phrasing of the same boundary
 
 Fixing `committedBook` and stopping would have been the trap this repo keeps
-naming. `carCard` — same file, same constant — had the horizon half of it too.
+naming. There turned out to be **THREE** phrasings of one boundary. `carCard` —
+same file, same constant — had the horizon half of it too.
 
 On **2026-09-15**, the lease's own anchor day, a twelve-month horizon caught
 THIRTEEN lease payments and the card published **$10,481.48** where the days
@@ -230,6 +231,26 @@ one day per month per series.
 leg already owns that day. `carCard` has no overdue leg, so a bill due today
 belongs in its book and skipping it would silently lose a payment. There is a
 mutation test for exactly that wrong fix.
+
+### 🔴 …and a THIRD, in `upcomingOccurrences` itself
+
+`windowDays` ended the window at `today + windowDays` — one day too many, in the
+function every caller goes through. At today = 2026-09-01 the list headed
+**"Upcoming 30 days" ran to 2026-10-01** and showed `Flamingo South Beach (rent)`
+TWICE, with `Rent utilities & fees` alongside. 16 rows → 13. The dashboard's
+"next 14 days" strip had the same extra day.
+
+⚠️ **An existing e2e test had ENCODED the defect.**
+`recurring-schedule.spec.ts` asserted a list of dates ending `Aug 7` — but from
+E2E_FAKE_TODAY = 2026-07-08, day one is the 8th and day thirty is **Aug 6**, so
+Aug 7 is day THIRTY-ONE. The expectation changed rather than the code; the
+dropped row is named in the file so nobody adds it back. Its neighbouring
+assertion, `d <= addDays(TODAY, 30)`, could never have caught this — it is true
+of both windows. **An assertion loose enough to survive the bug is not coverage.**
+
+⚠️ Callers holding an END DATE rather than a length must now pass
+`diffDays(today, end) + 1`; `committedBook` and `carCard` both do, and both say
+why.
 
 ### ⛔ The lesson: a fixture that cannot express a condition cannot test it
 
