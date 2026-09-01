@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { statementPeriods } from "@/db/schema/imports";
@@ -136,6 +136,31 @@ export function ledgerOpens(db: AppDatabase): string | null {
       .from(transactions)
       .where(eq(transactions.status, "active"))
       .orderBy(asc(transactions.postedOn))
+      .limit(1)
+      .get()?.postedOn ?? null
+  );
+}
+
+/**
+ * The newest day the ledger holds an ACTIVE transaction for — how far the
+ * import has actually walked. Null when the ledger is empty.
+ *
+ * ⛔ The sibling of `ledgerOpens`, and the same warning applies at the other
+ * end: days after this are days nobody has looked at, not days on which
+ * nothing happened. A surface that averages, projects or grades across them is
+ * publishing a lower bound as a measurement.
+ *
+ * ⚠️ Whole-ledger and transactions-only, unlike `observationFrontier` above,
+ * which is per-account and takes statement periods as a second arbiter. The
+ * question here is narrower: has any spending been imported for this day.
+ */
+export function ledgerReaches(db: AppDatabase): string | null {
+  return (
+    db
+      .select({ postedOn: transactions.postedOn })
+      .from(transactions)
+      .where(eq(transactions.status, "active"))
+      .orderBy(desc(transactions.postedOn))
       .limit(1)
       .get()?.postedOn ?? null
   );

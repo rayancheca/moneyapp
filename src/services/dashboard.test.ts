@@ -157,6 +157,66 @@ describe("dashboardData: spending pace", () => {
     // income: 2 × 2000 remaining; spend so far: 80; upcoming fixed bill: 1500
     // free = 4000 - 80 - 1500 = 2420
     expect(pace!.freeToSpendCents).toBe(2420_00);
+    // the newest row here is 2026-07-02 against a today of the 8th, so six of
+    // the eight elapsed days are unimported — the figure still stands, because
+    // part of the window IS measured, and the widget says how much is not
+    expect(pace!.uncoveredDays).toBe(6);
+  });
+
+  /*
+   * 🔴 THE TILE ASSERTED "$0.00 spent" OVER DAYS NOTHING HAD BEEN IMPORTED FOR.
+   *
+   * /budgets already refuses to grade those days — "Their spend and percentages
+   * are lower bounds, not measurements, so no verdict is shown for them" — and
+   * the income card says the same thing in words: "An empty month is what an
+   * unimported month looks like as well as what an unpaid one looks like." The
+   * dashboard's spending tile was the surface that did not ask.
+   *
+   * Measured on the real ledger, whose newest active row is 2026-08-24:
+   *
+   *     today = 2026-09-01   0 of 1 elapsed days imported → "$0.00 spent"
+   *     today = 2026-09-20   0 of 20 elapsed days imported → "$0.00 spent",
+   *                          "$0.00 projected", "≈ $947.00 free to spend"
+   *
+   * Twenty days into a month with nothing imported, the tile read as a
+   * measurement of a month in which he had spent nothing.
+   *
+   * ⚠️ Unreachable in e2e: every account in the fixture is imported through
+   * E2E_FAKE_TODAY, so all 8 elapsed days are covered and this branch cannot
+   * render in any of the 590 pixel tests.
+   */
+  describe("days the ledger has not reached", () => {
+    test("counts the elapsed days no import covers", () => {
+      spend("Groceries", "2026-07-02", -80_00);
+      // newest active row is 2026-07-02; today is the 8th
+      const { pace } = dashboardData(bundle.db, TODAY);
+      expect(pace!.uncoveredDays).toBe(6);
+      // …and the figure still stands, because part of the window IS measured
+      expect(pace!.freeToSpendCents).not.toBeNull();
+      expect(pace!.actualToDateCents).toBe(80_00);
+    });
+
+    test("a month with nothing imported at all has no free-to-spend figure", () => {
+      // every row is in a PREVIOUS month: July is entirely unimported
+      spend("Groceries", "2026-06-20", -80_00);
+      const { pace } = dashboardData(bundle.db, TODAY);
+      expect(pace!.uncoveredDays).toBe(8); // all eight elapsed days of July
+      /*
+       * ⛔ null, not 0. "$0.00 spent, so you have $X free" is a claim about a
+       * month nobody has looked at. The em dash is the same refusal
+       * `dayChangeLabel` makes for a portfolio with no prior close — an
+       * omission costs no information, an assertion costs the truth.
+       */
+      expect(pace!.freeToSpendCents).toBeNull();
+      expect(pace!.actualToDateCents).toBe(0);
+    });
+
+    test("an import that reaches today leaves nothing uncovered", () => {
+      spend("Groceries", TODAY, -80_00);
+      const { pace } = dashboardData(bundle.db, TODAY);
+      expect(pace!.uncoveredDays).toBe(0);
+      expect(pace!.freeToSpendCents).not.toBeNull();
+    });
   });
 });
 

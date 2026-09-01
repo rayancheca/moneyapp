@@ -42,18 +42,50 @@ export function SpendingPaceWidget({ pace }: { pace: SpendingPace }) {
         <div className="flex items-end justify-between gap-4">
           <div>
             <div className="text-[11px] uppercase tracking-wide text-ink-faint">Free to spend</div>
-            <div
-              className={`figures mt-0.5 text-2xl font-semibold tracking-tight ${
-                free < 0 ? "text-negative" : "text-ink"
-              }`}
-            >
-              {/* always approximate (a projection): a negative value = over pace */}
-              ≈ {free < 0 ? "−" : ""}
-              {formatCents(Math.abs(free))}
-            </div>
-            <div className="mt-0.5 text-[11px] text-ink-muted">
-              {formatCents(pace.actualToDateCents)} spent · {formatCents(pace.projectedCents)} projected
-            </div>
+            {/* ⛔ An em dash, not a $0.00. When not one elapsed day of the
+                month is imported, "you have spent nothing, so $X is free" is a
+                claim about a month nobody has looked at — and it is the figure
+                the eye lands on. Measured on the real ledger at today =
+                2026-09-20 this tile read "≈ $947.00 · $0.00 spent · $0.00
+                projected" over twenty unimported days. /budgets already
+                refuses to grade the same days; this is that refusal. */}
+            {free === null ? (
+              <div className="figures mt-0.5 text-2xl font-semibold tracking-tight text-ink-faint">—</div>
+            ) : (
+              <div
+                className={`figures mt-0.5 text-2xl font-semibold tracking-tight ${
+                  free < 0 ? "text-negative" : "text-ink"
+                }`}
+              >
+                {/* always approximate (a projection): a negative value = over pace */}
+                ≈ {free < 0 ? "−" : ""}
+                {formatCents(Math.abs(free))}
+              </div>
+            )}
+            {/* With NOTHING measured the figures are not lower bounds worth
+                printing — "at least $0.00" is true of every month there has
+                ever been. The reason replaces them; with part of the window
+                measured they stand, marked as the bounds they are. */}
+            {free === null ? (
+              <div className="mt-0.5 text-[11px] text-ink-muted">
+                {pace.monthLabel} is not imported yet
+              </div>
+            ) : (
+              <>
+                <div className="mt-0.5 text-[11px] text-ink-muted">
+                  {pace.uncoveredDays > 0 && "at least "}
+                  {formatCents(pace.actualToDateCents)} spent ·{" "}
+                  {pace.uncoveredDays > 0 && "at least "}
+                  {formatCents(pace.projectedCents)} projected
+                </div>
+                {pace.uncoveredDays > 0 && (
+                  <div className="mt-0.5 text-[11px] text-ink-faint">
+                    {pace.uncoveredDays} {pace.uncoveredDays === 1 ? "day" : "days"} of {pace.monthLabel} not
+                    imported yet
+                  </div>
+                )}
+              </>
+            )}
           </div>
           {geo && (
             <svg

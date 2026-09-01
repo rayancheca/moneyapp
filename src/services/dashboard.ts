@@ -1,13 +1,14 @@
 import type { AppDatabase } from "@/db/client";
 import type { AssetType } from "@/db/schema/holdings";
 import type { SeriesKind } from "@/db/schema/recurring";
-import { compareDates, todayIso } from "@/lib/dates";
+import { addDays, compareDates, diffDays, todayIso } from "@/lib/dates";
 import { dayChangeTerm } from "@/lib/day-change-label";
 import { formatDayShort } from "@/lib/format-date";
 import { resolvePeriod } from "@/lib/period";
 import { listAccounts } from "./accounts";
 import { bridgedNetWorthSeries, type BridgedNetWorthPoint } from "./in-flight";
 import { forecastCurrentMonth } from "./forecast";
+import { ledgerReaches } from "./observation-frontier";
 import { portfolioOverview, portfolioSeries, topMovers } from "./portfolio";
 import { upcomingOccurrences } from "./recurring";
 import { statementPulls, type AccountStatementPull } from "./statement-pulls";
@@ -81,9 +82,21 @@ export interface SpendingPace {
   monthLabel: string;
   actualToDateCents: number;
   projectedCents: number;
+  /**
+   * Elapsed days of this month the ledger holds no import for. >0 means
+   * `actualToDateCents` and `projectedCents` are LOWER BOUNDS, not
+   * measurements — the same rule /budgets grades by, applied to the same days.
+   */
+  uncoveredDays: number;
   points: PacePoint[];
   /** income (actual + expected) minus spend-so-far and upcoming fixed bills */
-  freeToSpendCents: number;
+  /**
+   * Null when NO elapsed day of the month is imported: "$0.00 spent, so you
+   * have $X free" is a claim about a month nobody has looked at. The em dash
+   * is the refusal `dayChangeLabel` already makes for a portfolio with no prior
+   * close — an omission costs no information, an assertion costs the truth.
+   */
+  freeToSpendCents: number | null;
   href: string;
 }
 
@@ -215,12 +228,32 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
     cashFlow.totals.spentCents +
     remainingFixedBills;
 
+  /*
+   * 🔴 The tile asserted "$0.00 spent" over days nothing had been imported for.
+   * Measured on the real ledger, whose newest active row is 2026-08-24: at
+   * today = 2026-09-20 it read "$0.00 spent · $0.00 projected · ≈ $947.00 free
+   * to spend" over twenty days nobody had looked at.
+   *
+   * ⚠️ The arithmetic is `/budgets`' own, deliberately: data ending before the
+   * window opens leaves the WHOLE elapsed window uncovered, and data running
+   * past today leaves none. Two surfaces grading the same days must not grade
+   * them two ways.
+   */
+  const reaches = ledgerReaches(db);
+  const coveredThrough =
+    reaches !== null && compareDates(reaches, period.from) >= 0 ? reaches : addDays(period.from, -1);
+  const uncoveredDays =
+    compareDates(coveredThrough, today) >= 0 ? 0 : Math.max(0, diffDays(coveredThrough, today));
+  const elapsedDays = diffDays(period.from, today) + 1;
+
   return {
     monthLabel: period.label,
     actualToDateCents: cashFlow.pace.actualToDateCents,
     projectedCents: cashFlow.pace.projectedCents,
     points,
-    freeToSpendCents,
+    uncoveredDays,
+    // not one elapsed day measured: there is no figure, only an assumption
+    freeToSpendCents: uncoveredDays >= elapsedDays ? null : freeToSpendCents,
     href: "/spending",
   };
 }
