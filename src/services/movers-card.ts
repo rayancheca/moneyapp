@@ -1,6 +1,4 @@
-import { asc, eq } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
-import { transactions } from "@/db/schema/transactions";
 import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";

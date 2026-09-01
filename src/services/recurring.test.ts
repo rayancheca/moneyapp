@@ -1198,7 +1198,7 @@ describe("seriesHasLapsed", () => {
 });
 
 describe("rollForwardNextExpected", () => {
-  const eff = { cadence: "monthly" as const, intervalDaysAvg: 30, nextExpectedOn: "2026-07-16", nextExpectedAmountCents: -1549, anchorDay: null };
+  const eff = { cadence: "monthly" as const, intervalDaysAvg: 30, nextExpectedOn: "2026-07-16", nextExpectedAmountCents: -1549, anchorDay: null, userEndsOn: null };
 
   test("a future stored date is returned untouched", () => {
     expect(rollForwardNextExpected(eff, "2026-07-08")).toBe("2026-07-16");

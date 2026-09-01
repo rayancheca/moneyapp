@@ -883,8 +883,14 @@ export interface EffectiveSeries {
    * anchor and the cadence, because a projection needs all four — a caller that
    * had to remember to apply the end separately is a caller that can forget,
    * and one did. See `rollForwardNextExpected`.
+   *
+   * ⛔ REQUIRED, not optional. Optional would leave exactly the hole this field
+   * was added to close: an `EffectiveSeries` built without the key gets
+   * `undefined`, skips the end test, and projects a commitment that is over —
+   * silently, and only for whoever forgot. `null` is the way to say
+   * "open-ended", and it has to be said.
    */
-  userEndsOn?: string | null;
+  userEndsOn: string | null;
 }
 
 export function effectiveSeries(s: SeriesOverrides): EffectiveSeries {

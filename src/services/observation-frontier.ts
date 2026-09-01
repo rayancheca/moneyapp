@@ -102,17 +102,6 @@ export function observationFrontier(db: AppDatabase): ObservationFrontier {
 }
 
 /**
- * Which accounts a series' charges land on — its own `account_id` if it has one,
- * plus every account its tagged postings have actually touched.
- *
- * Both, not either. Ten of the twenty-six live series carry no `account_id` at
- * all — including every commitment the owner registered by hand, which is to say
- * rent, the car lease, the car insurance, FPL, Breezeline and the cash job — so
- * the column alone answers nothing for exactly the series that matter most.
- * And the column alone is wrong even where it is set: Netflix names Chase
- * Sapphire while its history posted to Chase Sapphire AND Discover.
- */
-/**
  * The day the ledger begins: the earliest ACTIVE transaction, or null when
  * there is none.
  *
@@ -166,6 +155,17 @@ export function ledgerReaches(db: AppDatabase): string | null {
   );
 }
 
+/**
+ * Which accounts a series' charges land on — its own `account_id` if it has one,
+ * plus every account its tagged postings have actually touched.
+ *
+ * Both, not either. Ten of the twenty-six live series carry no `account_id` at
+ * all — including every commitment the owner registered by hand, which is to say
+ * rent, the car lease, the car insurance, FPL, Breezeline and the cash job — so
+ * the column alone answers nothing for exactly the series that matter most.
+ * And the column alone is wrong even where it is set: Netflix names Chase
+ * Sapphire while its history posted to Chase Sapphire AND Discover.
+ */
 export function seriesAccountIds(db: AppDatabase): Map<string, Set<string>> {
   const bySeries = new Map<string, Set<string>>();
   const add = (seriesId: string, accountId: string): void => {

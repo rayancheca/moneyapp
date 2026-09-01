@@ -276,11 +276,23 @@ export function committedBook(
    * today and unposted is not late — it is due — and it is counted once, in
    * the forward leg.
    *
-   * ⚠️ `/budgets` splits the same instant the other way round: `budgetOverdue`
-   * closes on `today` inclusive and `budgetTail` opens at `today + 1`. That is
-   * not a disagreement worth reconciling, because budgets ADDS the two
-   * (`expectedTailCents = tail + overdue`) and so cannot see the difference.
-   * Here the two are published separately, which is what makes the day matter.
+   * 🔴 `/budgets` SPLITS THE SAME INSTANT THE OTHER WAY ROUND, and the first
+   * version of this comment was wrong about why that is tolerable. It said
+   * budgets "cannot see the difference" because it ADDS the two
+   * (`expectedTailCents = tail + overdue`). Its ARITHMETIC cannot; its PROSE
+   * can: `budgetSectionNotes` prints "One bill totalling $X came due this
+   * period and no import has covered it yet" straight off `overdueCents`. So
+   * on the 1st of every month — reproduced on 2026-09-01 and 2026-10-01 — the
+   * dashboard reports no arrears while /budgets says $2,291.21 came due, over
+   * the same rent, from the same ledger, on the same day.
+   *
+   * ⛔ Left as it stands, deliberately, and this is the open question rather
+   * than a settled one. Reconciling it means deciding ONCE whether a bill due
+   * today and unposted is late, and then saying so on both surfaces —
+   * `budgetOverdue` is shared with `carryInto` and the budget projection, so
+   * moving its edge is not a one-line change and is not worth making blind.
+   * Recorded here so the next reader finds a stated disagreement rather than
+   * an unstated one.
    */
   const monthStart = periodBounds(today, "monthly").start;
   const late = overdueForSeries(db, moneyOut, monthStart, addDays(today, -1));

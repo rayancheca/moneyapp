@@ -114,7 +114,15 @@ export interface CommittedOutflows {
   overdueCents: number;
   /** how many arrears payments `overdueCents` is made of */
   overdueCount: number;
-  /** committed money whose series has never posted — registered, not evidenced */
+  /**
+   * Committed money INSIDE THE HORIZON whose series has never posted —
+   * registered, not evidenced.
+   *
+   * ⚠️ Sums `lines[].totalCents`, so it narrowed when arrears left that figure:
+   * a never-posted series' arrears are no longer part of it. That is consistent
+   * — the horizon is what this describes — and it is stated because the change
+   * happened underneath this field rather than to it.
+   */
   unevidencedCents: number;
   /** largest commitment first */
   lines: CommittedLine[];
