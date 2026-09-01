@@ -602,6 +602,44 @@ describe("forecastForMonth", () => {
     expect(oct.projectedNetCents).not.toBe(oct.projectedEomCashCents);
   });
 
+  /*
+   * ⛔ THE CHAIN STARTS AT THE MONTH AFTER THIS ONE. The running month's net is
+   * already in `chainedNet` before the loop opens, so the loop must begin at
+   * `i = 1`; starting at 0 adds the current month a second time.
+   *
+   * ⚠️ The chain test above cannot see it, and that is worth knowing: with
+   * `i = 0` EVERY future month gains the same extra term, so all the
+   * month-to-month DIFFERENCES it asserts are unchanged and only the very first
+   * step is wrong. It survived because `rent()` is anchored on 2026-08-01, so
+   * the running month's own net is exactly zero and the double count adds
+   * nothing. A relationship between consecutive months cannot pin a term that
+   * is common to all of them.
+   */
+  test("the chain does not count the running month twice", () => {
+    rent();
+    // something due in JULY, after today, so the running month has a net at all
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Insurance",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        nextExpectedOn: "2026-07-20",
+        nextExpectedAmountCents: -30_000,
+        status: "confirmed",
+        toleranceDays: 3,
+      })
+      .run();
+
+    const jul = forecastCurrentMonth(bundle.db, TODAY);
+    const aug = forecastForMonth(bundle.db, "2026-08", TODAY)!;
+    expect(jul.projectedNetCents).not.toBe(0); // the term that would be doubled
+    expect(aug.projectedEomCashCents).toBe(jul.projectedEomCashCents + aug.projectedNetCents);
+    // the same for the committed reading, which is chained separately
+    expect(aug.committed.eomCashCents).toBe(jul.committed.eomCashCents + aug.committed.netCents);
+  });
+
   test("a commitment that has ended is not projected past its last payment", () => {
     bundle.db
       .insert(recurringSeries)
