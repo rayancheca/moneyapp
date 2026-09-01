@@ -12,6 +12,7 @@ import { createAccount } from "./accounts";
 import { addManualAnchor } from "./anchors";
 import { dashboardData } from "./dashboard";
 import { rebuildAccount } from "./derivation";
+import { addDays } from "@/lib/dates";
 
 const TODAY = "2026-07-08";
 
@@ -112,6 +113,45 @@ describe("dashboardData: upcoming bills", () => {
     expect(upcoming.beforePaycheck).toEqual({ date: "2026-07-10", cents: -1500_00 });
   });
 
+  /*
+   * ⛔ "ON OR BEFORE" — and only a bill that lands ON payday can say so. Rent
+   * and a paycheque routinely share a day (both are 1st-of-month or mid-month
+   * anchored), and on the owner's ledger the pay is weekly, so the collision is
+   * common rather than exotic. Found by mutation: tightening `<= 0` to `< 0`
+   * changed no test, because no fixture bill and paycheque shared a date.
+   *
+   * The cost is the dashboard understating what he must cover before the money
+   * arrives — by a whole rent payment, on the day it matters most.
+   */
+  test("a bill due ON the paycheck day is counted before it, not after", () => {
+    seedSeries({ name: "Rent", kind: "bill", cadence: "monthly", nextExpectedOn: "2026-07-10", amountCents: -1500_00, lastMatchedOn: "2026-06-10", intervalDaysAvg: 30 });
+    seedSeries({ name: "Payroll", kind: "income", cadence: "biweekly", nextExpectedOn: "2026-07-10", amountCents: 2000_00, lastMatchedOn: "2026-06-26", intervalDaysAvg: 14 });
+
+    const { upcoming } = dashboardData(bundle.db, TODAY);
+    expect(upcoming.beforePaycheck).toEqual({ date: "2026-07-10", cents: -1500_00 });
+  });
+
+  /*
+   * ⛔ THE HEADING AND THE LIST DESCRIBE ONE WINDOW. `UpcomingBillsStrip`
+   * prints "next {windowDays} days" beside the rows the query returned, and
+   * nothing tied the two together: widening the query alone changed no test.
+   * That is precisely this session's `section-notes` defect — a count from one
+   * set standing over another.
+   */
+  test("the window the heading names is the window the rows come from", () => {
+    seedSeries({ name: "Edge", kind: "bill", cadence: "monthly", nextExpectedOn: "2026-07-21", amountCents: -10_00, lastMatchedOn: "2026-06-21", intervalDaysAvg: 30 });
+    seedSeries({ name: "Beyond", kind: "bill", cadence: "monthly", nextExpectedOn: "2026-07-22", amountCents: -20_00, lastMatchedOn: "2026-06-22", intervalDaysAvg: 30 });
+
+    const { upcoming } = dashboardData(bundle.db, TODAY);
+    // today is day one, so a 14-day window's last day is 2026-07-21
+    expect(upcoming.windowDays).toBe(14);
+    expect(upcoming.items.map((i) => i.name)).toContain("Edge");
+    expect(upcoming.items.map((i) => i.name)).not.toContain("Beyond");
+    // and every row really is inside the window the heading names
+    const last = addDays(TODAY, upcoming.windowDays - 1);
+    expect(upcoming.items.every((i) => i.date >= TODAY && i.date <= last)).toBe(true);
+  });
+
   test("no income series → no before-paycheck line", () => {
     seedSeries({ name: "Rent", kind: "bill", cadence: "monthly", nextExpectedOn: "2026-07-09", amountCents: -1500_00, lastMatchedOn: "2026-06-09", intervalDaysAvg: 30 });
     expect(dashboardData(bundle.db, TODAY).upcoming.beforePaycheck).toBeNull();
@@ -145,6 +185,25 @@ describe("dashboardData: spending pace", () => {
     const actuals = beforeToday.map((p) => p.actualCents!);
     for (let i = 1; i < actuals.length; i++) expect(actuals[i]!).toBeGreaterThanOrEqual(actuals[i - 1]!);
     expect(pace!.actualToDateCents).toBe(80_00);
+  });
+
+  /*
+   * ⛔ TODAY IS PART OF "SO FAR". The pace line marks a bucket as past with
+   * `b.from <= today`; with `<` today's cumulative point disappears every day,
+   * and on the FIRST of a month every point becomes null — the actual-spend
+   * line vanishes from the dashboard entirely while the projection still draws.
+   * Found by mutation; nothing asserted the count of non-null points.
+   */
+  test("today's bucket is part of the line, and the 1st of a month still draws one", () => {
+    spend("Groceries", "2026-07-08", -25_00); // today
+    const { pace } = dashboardData(bundle.db, TODAY);
+    // eight days of July have passed, today included
+    expect(pace!.points.filter((p) => p.actualCents !== null)).toHaveLength(8);
+    expect(pace!.points[7]!.actualCents).toBe(25_00);
+
+    // and on the 1st, exactly one point is drawn rather than none
+    const firstOfMonth = dashboardData(bundle.db, "2026-07-01").pace!;
+    expect(firstOfMonth.points.filter((p) => p.actualCents !== null)).toHaveLength(1);
   });
 
   test("free-to-spend = full-month income minus spend-so-far and upcoming fixed bills", () => {

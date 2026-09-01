@@ -66,6 +66,27 @@ describe("monthFlow", () => {
     expect(f.highCents).toBe(0);
   });
 
+  /*
+   * ⛔ A TROUGH PLATEAU IS THE COMMON CASE, not an edge one: nothing moves on
+   * most days, so the cumulative line sits flat at its minimum for the whole
+   * rest of the month. `MonthFlowStrip` prints "lowest {date} at {amount}" and
+   * puts a marker dot on that day, so which day of the plateau wins is a DATE
+   * on the screen — and with `<=` instead of `<` it becomes the last day of the
+   * month instead of the day the money actually left.
+   *
+   * Found by mutation: the amount stays right either way, which is why nothing
+   * caught it. The FIRST day at the minimum is the one that means something.
+   */
+  test("a flat trough names the day the money left, not the last day it stayed gone", () => {
+    const f = monthFlow(20, M, {
+      [day(3)]: [{ settled: false, amountCents: -8000 }],
+    }, day(1));
+    // days 3..20 all sit at -8000; the third is where it happened
+    expect(f.troughIndex).toBe(2);
+    expect(f.points[f.troughIndex]!.iso).toBe(day(3));
+    expect(f.points.at(-1)!.scheduledCents).toBe(-8000);
+  });
+
   test("the settled/forecast split falls on today, and today counts as future", () => {
     // `upcoming` in the calendar means "on or after today", and the line must
     // agree with the grid it sits above — a seam one day out reads as a bug.

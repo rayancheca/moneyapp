@@ -255,6 +255,28 @@ describe("accountCoverage", () => {
 
     expect(c.grade).toBe("manual");
     expect(c.lastManualUpdate).toBe("2026-08-03");
+
+    /*
+     * ⛔ The same single-row blindness on the other query. "You last counted it
+     * on <date>" is spoken in three places — /imports, the provenance popover
+     * and the cards-owed card — and Cash on Hand is a hand-counted account with
+     * a running history, so on the real ledger this is the date he last opened
+     * the safe. Reversing the sort changed no test while only one anchor
+     * existed.
+     */
+    bundle.db
+      .insert(balanceAnchors)
+      .values({
+        id: "anchor-manual-older",
+        accountId: id,
+        anchoredOn: "2026-07-01",
+        balanceCents: 150000,
+        source: "manual",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+    expect(only(id).lastManualUpdate).toBe("2026-08-03");
   });
 
   test("statementsThrough reports the newest period end and is null when none exist", () => {
@@ -297,6 +319,45 @@ describe("accountCoverage", () => {
 
     expect(only(withPeriod).statementsThrough).toBe("2026-07-31");
     expect(only(without).statementsThrough).toBeNull();
+
+    /*
+     * ⛔ "NEWEST" NEEDS TWO ROWS TO MEAN ANYTHING. With one period on file the
+     * sort direction is unobservable, and reversing it changed no test — while
+     * on the real ledger every card has dozens of periods, so the /imports
+     * panel would have printed the FIRST statement ever filed as the coverage
+     * frontier: "statements → 2024-07-18" against a card imported through
+     * 2026-08-14.
+     */
+    bundle.db
+      .insert(importFiles)
+      .values({
+        id: "f0",
+        fileName: "older.pdf",
+        fileSha256: "sha0",
+        format: "pdf",
+        institutionId,
+        parserVersion: 1,
+        status: "parsed",
+        storagePath: "/tmp/older.pdf",
+        importedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+    bundle.db
+      .insert(statementPeriods)
+      .values({
+        id: "p0",
+        importFileId: "f0",
+        accountId: withPeriod,
+        periodStart: "2026-06-01",
+        periodEnd: "2026-06-30",
+        reconciliation: "reconciled",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+    expect(only(withPeriod).statementsThrough).toBe("2026-07-31");
   });
 
   test("an account with no derived cache at all is graded unknown rather than verified", () => {
