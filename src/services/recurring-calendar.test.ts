@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { addDays } from "@/lib/dates";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
@@ -13,7 +14,8 @@ import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
 import { detectRecurringSeries, setSeriesStatus } from "./recurring";
-import { classifyPostedAmount, recurringCalendar } from "./recurring-calendar";
+import { MIN_OCCURRENCES } from "./recurring";
+import { classifyPostedAmount, recurringCalendar, scheduleIsProven } from "./recurring-calendar";
 
 const TODAY = "2026-07-08";
 const MONTHS = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"] as const;
@@ -115,6 +117,49 @@ describe("classifyPostedAmount", () => {
     expect(classifyPostedAmount(-183000, -180000, 0)).toBe("paid");
     expect(classifyPostedAmount(-184000, -180000, 0)).toBe("paid_different");
   });
+
+  /*
+   * ⛔ The band's own EDGE, which every test above steps over or under. Found
+   * by mutation: tightening `<= tolerance` to `<` changed nothing, because no
+   * fixture sat exactly on it. A charge at exactly its tolerance would draw
+   * with the `paid_different` glyph and tell the reader a fixed commitment
+   * changed price when it did not.
+   */
+  test("a drift EXACTLY at the tolerance is paid, and one cent more is not", () => {
+    // floor band: $1.00 on a $15.49 charge with σ=0
+    expect(classifyPostedAmount(-1649, -1549, 0)).toBe("paid");
+    expect(classifyPostedAmount(-1650, -1549, 0)).toBe("paid_different");
+    // 2% band: $36.00 on $1,800.00
+    expect(classifyPostedAmount(-183600, -180000, 0)).toBe("paid");
+    expect(classifyPostedAmount(-183601, -180000, 0)).toBe("paid_different");
+    // 2σ band: σ=200 → $4.00
+    expect(classifyPostedAmount(-1949, -1549, 200)).toBe("paid");
+    expect(classifyPostedAmount(-1950, -1549, 200)).toBe("paid_different");
+  });
+});
+
+/*
+ * ⛔ `scheduleIsProven` decides whether a past occurrence reads as `missed` —
+ * a date worth holding a biller to — or as `unsettled` with a hedged reason.
+ * Its threshold was never asserted AT the threshold, so `>= MIN_OCCURRENCES`
+ * could be tightened to `>` and nothing went red: a series sitting exactly on
+ * the measured-vs-extrapolated line would be graded, and worded, as the other
+ * kind.
+ */
+describe("scheduleIsProven — the threshold, at the threshold", () => {
+  test("zero postings is a human-authored schedule, which is proven by definition", () => {
+    expect(scheduleIsProven(0)).toBe(true);
+  });
+
+  test("one short of the threshold is extrapolated, and the threshold itself is measured", () => {
+    expect(scheduleIsProven(MIN_OCCURRENCES - 1)).toBe(false);
+    expect(scheduleIsProven(MIN_OCCURRENCES)).toBe(true);
+    expect(scheduleIsProven(MIN_OCCURRENCES + 1)).toBe(true);
+  });
+
+  test("the threshold is a checkable number, not a magic one", () => {
+    expect(MIN_OCCURRENCES).toBe(3);
+  });
 });
 
 describe("recurringCalendar", () => {
@@ -146,6 +191,59 @@ describe("recurringCalendar", () => {
 
     const july = recurringCalendar(bundle.db, "2026-07", TODAY);
     expect(july.entriesByDay["2026-07-15"]?.[0]).toMatchObject({ state: "upcoming" });
+  });
+
+  /*
+   * ⛔ AN OCCURRENCE DUE TODAY IS A FORECAST, NOT A PAST EVENT — and today is
+   * the only day that can say so. Found by mutation: tightening
+   * `compareDates(o.date, today) >= 0` to `> 0` changed no test, because no
+   * fixture series was ever due on the reference day.
+   *
+   * The cost is the cell drawing as `unsettled` on the day the bill falls due,
+   * losing its `scheduled` confidence badge and dropping out of the month's
+   * upcoming total. `month-flow.ts` pins the same instant on its own side of
+   * the seam ("upcoming means on or after today"); the grid did not.
+   */
+  test("a bill due TODAY is upcoming, not something the ledger has failed to settle", () => {
+    buildMonthlyNetflix();
+    detectRecurringSeries(bundle.db, TODAY);
+    // move the schedule onto today itself
+    bundle.db
+      .update(recurringSeries)
+      .set({ nextExpectedOn: TODAY, userNextExpectedOn: TODAY })
+      .where(eq(recurringSeries.name, "Netflix"))
+      .run();
+
+    const july = recurringCalendar(bundle.db, "2026-07", TODAY);
+    const cell = july.entriesByDay[TODAY]?.[0];
+    expect(cell).toMatchObject({ state: "upcoming" });
+    // …and it is counted as money still to come, not as a settled verdict
+    expect(july.upcomingNetCents).toBeLessThan(0);
+    expect(july.missedCount).toBe(0);
+  });
+
+  /*
+   * The calendar's own "already posted" tolerance, at its edge. `budgets.ts`
+   * states in writing that this rule must match `overdueForSeries`'; both were
+   * untested AT the limit, and both are now pinned. A bill paid at the outer
+   * edge of its own tolerance would otherwise be drawn as unpaid while the
+   * charge for it sits in the ledger.
+   */
+  test("a posting EXACTLY toleranceDays from the due date settles the occurrence", () => {
+    buildMonthlyNetflix();
+    detectRecurringSeries(bundle.db, TODAY);
+    const s = netflix();
+    // the schedule says the 15th; the charge landed `toleranceDays` later
+    const due = "2026-03-15";
+    const paid = addDays(due, s.toleranceDays);
+    bundle.db.delete(transactions).where(eq(transactions.postedOn, due)).run();
+    insertTxn({ postedOn: paid, amountCents: -1549, rawDescription: "NETFLIX.COM", merchantId: netflixId });
+
+    const march = recurringCalendar(bundle.db, "2026-03", TODAY);
+    // the projected occurrence on the 15th is settled by that charge, so the
+    // month holds the posted row and no unpaid twin
+    expect(march.entriesByDay[due]).toBeUndefined();
+    expect(march.missedCount).toBe(0);
   });
 
   test("a lapsed BILL drops off the calendar, a lapsed INCOME series does not", () => {
