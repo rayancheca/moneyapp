@@ -1221,4 +1221,55 @@ describe("rollForwardNextExpected", () => {
   test("a series without a next-expected date stays null", () => {
     expect(rollForwardNextExpected({ ...eff, nextExpectedOn: null }, "2026-07-08")).toBeNull();
   });
+
+  /*
+   * 🔴 A COMMITMENT THAT IS OVER HAS NO NEXT DATE, and this function was the
+   * one read path that did not know it.
+   *
+   * `projectOccurrences` clamps its walk at `userEndsOn` — "a 24-payment lease
+   * is not monthly forever". This stepped from the anchor with no end test at
+   * all, so /recurring's "Next" column published a date for a series whose own
+   * occurrence list on the same page was empty.
+   *
+   * Measured on the real ledger, two series:
+   *   Car insurance (ends 2027-01-11) at today = 2027-02-20 → "next 2027-03-11",
+   *     zero occurrences in the following 400 days.
+   *   Car lease (ends 2028-08-15) at today = 2028-10-01 → "next 2028-10-15",
+   *     zero occurrences in the following 400 days.
+   *
+   * ⚠️ `subscriptions-card` already had the test, at the CALL SITE — the third
+   * surface asking one question, and the only one answering it. Held there, two
+   * places had to agree about a date; held here, none do.
+   */
+  describe("a commitment that has ended has no next date", () => {
+    const ending = { ...eff, nextExpectedOn: "2026-07-16", userEndsOn: "2026-09-16" };
+
+    test("the last occurrence is still the next one, on its own day", () => {
+      expect(rollForwardNextExpected(ending, "2026-09-16")).toBe("2026-09-16");
+      expect(rollForwardNextExpected(ending, "2026-09-01")).toBe("2026-09-16");
+    });
+
+    test("the day after the end there is nothing left", () => {
+      expect(rollForwardNextExpected(ending, "2026-09-17")).toBeNull();
+      expect(rollForwardNextExpected(ending, "2027-03-01")).toBeNull();
+    });
+
+    test("no end at all still rolls forever", () => {
+      expect(rollForwardNextExpected({ ...eff, userEndsOn: null }, "2027-09-01")).toBe("2027-09-16");
+      expect(rollForwardNextExpected(eff, "2027-09-01")).toBe("2027-09-16");
+    });
+
+    /**
+     * ⭐ The agreement is the point: `projectOccurrences` and this function are
+     * two ways to ask "when next?", so they are checked against each other
+     * rather than against a hand-written date.
+     */
+    test("agrees with projectOccurrences, which owns the same rule", () => {
+      const projectable = { ...ending, id: "s1", name: "Ending", kind: "bill" as const, nextExpectedAmountCents: -1549 };
+      for (const today of ["2026-08-01", "2026-09-15", "2026-09-16", "2026-09-17", "2026-12-31"]) {
+        const projected = projectOccurrences(projectable, today, "2099-12-31")[0]?.date ?? null;
+        expect(rollForwardNextExpected(ending, today), `at ${today}`).toBe(projected);
+      }
+    });
+  });
 });

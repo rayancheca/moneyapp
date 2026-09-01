@@ -233,18 +233,23 @@ export function subscriptionsCard(
     }
 
     /*
-     * A commitment that is OVER costs nothing going forward, and this is the
-     * same test `projectOccurrences` applies: it starts at the rolled-forward
-     * anchor and breaks the moment that date passes `userEndsOn`. So a series
-     * whose next date is past its own end emits no occurrences, and levelling a
-     * monthly figure out of it would publish a bill that cannot happen.
+     * A commitment that is OVER costs nothing going forward, and levelling a
+     * monthly figure out of one would publish a bill that cannot happen.
+     *
+     * ⚠️ The end test used to be RIGHT HERE, and it was the only place that had
+     * it: `rollForwardNextExpected` stepped from the anchor with no end test, so
+     * this card was correct while /recurring's own "Next" column published a
+     * date for a series whose occurrence list was empty. Two places had to
+     * agree about a date and one did not, which is the defect pass 54 was
+     * written to stop. The test now lives in the function, next to the anchor
+     * arithmetic that needs it, and `null` here covers both reasons a series
+     * has no next date: it never had one, or it is over.
      */
     const nextOn = rollForwardNextExpected(eff, today);
     if (nextOn === null) {
       unforecastableCount += 1;
       continue;
     }
-    if (s.userEndsOn !== null && nextOn > s.userEndsOn) continue;
 
     const staleness = seriesStaleness(s, today);
     const totals = posted.get(s.id) ?? { cents: 0, count: 0 };

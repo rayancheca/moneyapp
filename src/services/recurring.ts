@@ -878,6 +878,13 @@ export interface EffectiveSeries {
   nextExpectedOn: string | null;
   nextExpectedAmountCents: number | null;
   anchorDay: number | null;
+  /**
+   * Last day the series can occur; null = open-ended. Carried HERE, beside the
+   * anchor and the cadence, because a projection needs all four — a caller that
+   * had to remember to apply the end separately is a caller that can forget,
+   * and one did. See `rollForwardNextExpected`.
+   */
+  userEndsOn?: string | null;
 }
 
 export function effectiveSeries(s: SeriesOverrides): EffectiveSeries {
@@ -893,6 +900,7 @@ export function effectiveSeries(s: SeriesOverrides): EffectiveSeries {
     // re-dayed to the 31st and the override would look ignored. Same shape as
     // the cadence override abandoning the detected interval, just above.
     anchorDay: s.userNextExpectedOn ? null : (s.anchorDay ?? null),
+    userEndsOn: s.userEndsOn ?? null,
   };
 }
 
@@ -1047,11 +1055,27 @@ export function seriesHasLapsed(
  * the detector's output as of its last run and goes stale between runs — the
  * READ path must never surface a date in the past as "next". Returns null when
  * the series has no expected date at all.
+ *
+ * 🔴 …and null when the series is OVER. `projectOccurrences` has always
+ * clamped its walk at `userEndsOn` — "a 24-payment lease is not monthly
+ * forever" — and this stepped from the anchor with no end test, so /recurring's
+ * "Next" column published a date for a commitment whose own occurrence list on
+ * the same page was empty. Measured on the real ledger: Car insurance (ends
+ * 2027-01-11) reads "next 2027-03-11" at today = 2027-02-20, and Car lease
+ * (ends 2028-08-15) reads "next 2028-10-15" at today = 2028-10-01, both with
+ * zero occurrences in the following 400 days.
+ *
+ * ⚠️ `subscriptions-card` already applied the test at its CALL SITE. Held
+ * there, two places had to agree about a date and only one did; held here,
+ * none do.
  */
 export function rollForwardNextExpected(eff: EffectiveSeries, today: string = todayIso()): string | null {
   if (!eff.nextExpectedOn) return null;
   const plan = stepPlan(eff.cadence, eff.intervalDaysAvg, eff.anchorDay);
-  return stepFrom(eff.nextExpectedOn, plan, stepsToReach(eff.nextExpectedOn, plan, today));
+  const next = stepFrom(eff.nextExpectedOn, plan, stepsToReach(eff.nextExpectedOn, plan, today));
+  // inclusive: a series ends ON its end date, so that day's charge still happens
+  if (eff.userEndsOn && compareDates(next, eff.userEndsOn) > 0) return null;
+  return next;
 }
 
 /**
