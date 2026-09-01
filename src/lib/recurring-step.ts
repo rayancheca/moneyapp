@@ -52,6 +52,44 @@ export const CALENDAR_MONTH_GAP_MIN = 29;
 export const CALENDAR_MONTH_GAP_MAX = 32;
 
 /**
+ * How many calendar months one step of a month-like cadence is, and the gap
+ * band that cadence must measure inside before its dates are read as calendar
+ * months at all. The bands are the same argument as the monthly one above,
+ * scaled: wide enough to admit every real billing pattern, narrow enough that a
+ * series billed some other way keeps day stepping.
+ *
+ * 🔴 `quarterly` and `annual` were deliberately EXCLUDED, on a premise that has
+ * since been falsified by the ledger: "zero live series carry either". Four do
+ * now — Chase Sapphire annual fee, Venture X annual fee, HBO Max and Parking —
+ * and all four drift. Measured from their own stored anchors:
+ *
+ *   Chase Sapphire annual fee  2027-03-01 → 2028-02-29, 2029-02-28, 2030-02-28
+ *   HBO Max                    2027-07-18 → 2028-07-17 … 2032-07-16
+ *   Venture X annual fee       2027-01-16 → 2029-01-15 … 2032-01-15
+ *   Parking (quarterly)        2026-10-20 → 2027-01-19, then 2027-10-19
+ *
+ * 365 days is not a year and 91 is not a quarter. The Chase fee is the one that
+ * bites: it is anchored on the 1st, so a day of drift moves it into the
+ * PREVIOUS month and $95.00 with it — Feb 2028's committed spend gains it and
+ * March 2028's loses it, on a card the owner pages through month by month. Its
+ * two real postings are 2025-03-02 and 2026-03-01, so March is where it belongs.
+ */
+export const CALENDAR_STEP_MONTHS: Partial<Record<Cadence, number>> = {
+  monthly: 1,
+  quarterly: 3,
+  annual: 12,
+};
+
+/** Inclusive average-gap band per calendar-stepped cadence. */
+export const CALENDAR_GAP_BAND: Partial<Record<Cadence, readonly [number, number]>> = {
+  monthly: [CALENDAR_MONTH_GAP_MIN, CALENDAR_MONTH_GAP_MAX],
+  // a quarter is 90–92 days; the band admits a bill that wanders a few days
+  quarterly: [85, 97],
+  // a year is 365 or 366; the band admits an anniversary that slips a fortnight
+  annual: [350, 380],
+};
+
+/**
  * The lowest day-of-month the calendar can ever clamp. February is the only
  * short month that matters and its shortest length is 28, so a series anchored
  * on the 28th or below lands on its own day in every month of every year — and
@@ -64,6 +102,14 @@ export interface StepPlan {
   readonly calendarMonths: boolean;
   /** the fixed day step, used only when `calendarMonths` is false */
   readonly stepDays: number;
+  /**
+   * Calendar months per step: 1 monthly, 3 quarterly, 12 annual. Only read when
+   * `calendarMonths` is true — a step of "one" is not the same thing as a step
+   * of one MONTH once quarterly and annual are calendar-stepped too, and
+   * leaving it implicit is how `stepFrom` and `stepsToReach` would come to
+   * disagree about the size of a step.
+   */
+  readonly stepMonths: number;
   /**
    * The series' TRUE day-of-month, when it is known to differ from whatever day
    * the stored anchor happens to carry. Null means "inherit the anchor's day",
@@ -108,10 +154,11 @@ export function deriveAnchorDay(postedOns: readonly string[]): number | null {
 }
 
 /**
- * ⛔ Only `quarterly` and `annual` are deliberately left on day stepping among
- * the month-like cadences: zero live series carry either, their buckets are
- * wide (85–97 and 350–380 days), and a calendar model for them would be shipped
- * untested against real data.
+ * ⛔ A cadence is calendar-stepped only when it has a `CALENDAR_STEP_MONTHS`
+ * entry AND its measured gap sits inside that cadence's own band. Weekly,
+ * biweekly and semimonthly stay on days because they genuinely are day-shaped;
+ * a monthly series averaging 53 days is not being billed monthly whatever
+ * bucket it fell into, and the band is what says so.
  */
 export function stepPlan(
   cadence: Cadence,
@@ -119,12 +166,15 @@ export function stepPlan(
   anchorDay: number | null = null,
 ): StepPlan {
   const gap = intervalDaysAvg ?? CADENCE_NOMINAL_DAYS[cadence];
-  const inBand = gap >= CALENDAR_MONTH_GAP_MIN && gap <= CALENDAR_MONTH_GAP_MAX;
-  const calendarMonths = cadence === "monthly" && inBand;
+  const stepMonths = CALENDAR_STEP_MONTHS[cadence];
+  const band = CALENDAR_GAP_BAND[cadence];
+  const calendarMonths =
+    stepMonths !== undefined && band !== undefined && gap >= band[0] && gap <= band[1];
   return {
     calendarMonths,
     // a zero or negative measured gap would never terminate a projection walk
     stepDays: Math.max(1, Math.round(gap)),
+    stepMonths: stepMonths ?? 1,
     // day stepping never reads it; carrying it there would be a value that
     // silently does nothing, which is worse than not having it
     anchorDay: calendarMonths ? anchorDay : null,
@@ -134,7 +184,7 @@ export function stepPlan(
 /** The occurrence `steps` steps after `anchor`; step 0 is the anchor itself. */
 export function stepFrom(anchor: string, plan: StepPlan, steps: number): string {
   if (!plan.calendarMonths) return addDays(anchor, steps * plan.stepDays);
-  const hopped = addCalendarMonths(anchor, steps);
+  const hopped = addCalendarMonths(anchor, steps * plan.stepMonths);
   return plan.anchorDay === null ? hopped : withDayOfMonth(hopped, plan.anchorDay);
 }
 
@@ -156,8 +206,11 @@ export function stepsToReach(anchor: string, plan: StepPlan, boundary: string): 
     if (behindDays <= 0) return 0;
     return Math.ceil(behindDays / plan.stepDays);
   }
-  const n = calendarMonthsBetween(anchor, boundary);
-  // only the day WITHIN the target month is in question, so the true answer is
-  // n or n+1 — never a walk
+  // whole STEPS, not whole months: n steps put the anchor in or after
+  // boundary's month, n−1 steps put it in a month strictly before it, so only
+  // the day WITHIN the target month is in question and the true answer is n or
+  // n+1 — never a walk. The check goes through `stepFrom` rather than
+  // re-deriving the date, so the two can never disagree about a step's size.
+  const n = Math.ceil(calendarMonthsBetween(anchor, boundary) / plan.stepMonths);
   return compareDates(stepFrom(anchor, plan, n), boundary) >= 0 ? n : n + 1;
 }

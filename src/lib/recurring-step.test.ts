@@ -9,6 +9,7 @@ import {
   stepPlan,
   stepsToReach,
 } from "./recurring-step";
+import { addDays } from "./dates";
 
 describe("stepPlan", () => {
   test("a monthly series inside the band walks by calendar months", () => {
@@ -26,7 +27,7 @@ describe("stepPlan", () => {
   test("a four-weekly series is BELOW the band and keeps day stepping", () => {
     // 28 days really does walk backwards through the month; fitCadence still
     // buckets it "monthly", which is why the low side has to be guarded too
-    expect(stepPlan("monthly", 28)).toEqual({ calendarMonths: false, stepDays: 28, anchorDay: null });
+    expect(stepPlan("monthly", 28)).toEqual({ calendarMonths: false, stepDays: 28, stepMonths: 1, anchorDay: null });
     // and a raw average that merely ROUNDS into the band is still outside it:
     // no calendar-monthly series can average under 29.5 days
     expect(stepPlan("monthly", 28.6).calendarMonths).toBe(false);
@@ -34,7 +35,7 @@ describe("stepPlan", () => {
 
   test("a long-gap series is ABOVE the band — where every dangerous row sits", () => {
     // Rocket Money Premium's stored 53.25, and the 33 that fitCadence admits
-    expect(stepPlan("monthly", 53.25)).toEqual({ calendarMonths: false, stepDays: 53, anchorDay: null });
+    expect(stepPlan("monthly", 53.25)).toEqual({ calendarMonths: false, stepDays: 53, stepMonths: 1, anchorDay: null });
     expect(stepPlan("monthly", 33).calendarMonths).toBe(false);
   });
 
@@ -47,8 +48,8 @@ describe("stepPlan", () => {
   test("a missing interval falls back to the cadence nominal", () => {
     // monthly's nominal 30 is inside the band — "monthly" with no measured gap
     // means a calendar month, which is what the word means
-    expect(stepPlan("monthly", null)).toEqual({ calendarMonths: true, stepDays: 30, anchorDay: null });
-    expect(stepPlan("weekly", null)).toEqual({ calendarMonths: false, stepDays: 7, anchorDay: null });
+    expect(stepPlan("monthly", null)).toEqual({ calendarMonths: true, stepDays: 30, stepMonths: 1, anchorDay: null });
+    expect(stepPlan("weekly", null)).toEqual({ calendarMonths: false, stepDays: 7, stepMonths: 1, anchorDay: null });
     expect(stepPlan("annual", null).stepDays).toBe(CADENCE_NOMINAL_DAYS.annual);
   });
 
@@ -203,5 +204,82 @@ describe("a month-end series, anchored on the clamp", () => {
   test("day stepping refuses to carry an anchor day it would silently ignore", () => {
     expect(stepPlan("monthly", 53.25, 31).anchorDay).toBeNull();
     expect(stepPlan("weekly", 7, 31).anchorDay).toBeNull();
+  });
+});
+
+/*
+ * 🔴 365 IS NOT A YEAR AND 91 IS NOT A QUARTER.
+ *
+ * `quarterly` and `annual` were deliberately left on day stepping, on a premise
+ * the ledger has since falsified: "zero live series carry either". Four do —
+ * and all four drift. Measured from their own stored anchors under the shipped
+ * plan:
+ *
+ *   Chase Sapphire annual fee  2027-03-01 → 2028-02-29, 2029-02-28, 2030-02-28
+ *   HBO Max                    2027-07-18 → 2028-07-17 … 2032-07-16
+ *   Venture X annual fee       2027-01-16 → 2029-01-15 … 2032-01-15
+ *   Parking (quarterly)        2026-10-20 → 2027-01-19, then 2027-10-19
+ *
+ * The Chase fee is the one that bites: anchored on the 1st, a single day of
+ * drift moves it into the PREVIOUS month and $95.00 with it — Feb 2028's
+ * committed spend gains it and March 2028's loses it. Its two real postings are
+ * 2025-03-02 and 2026-03-01.
+ */
+describe("quarterly and annual step by the calendar too", () => {
+  test("an annual series lands on its own day every year, leap years included", () => {
+    const plan = stepPlan("annual", 365, 1);
+    expect(plan.calendarMonths).toBe(true);
+    expect(plan.stepMonths).toBe(12);
+    // 2028 is a leap year: 365 days from 2027-03-01 is 2028-02-29, a month early
+    expect(stepFrom("2027-03-01", plan, 1)).toBe("2028-03-01");
+    expect(stepFrom("2027-03-01", plan, 5)).toBe("2032-03-01");
+  });
+
+  test("a quarterly series lands on its own day every quarter", () => {
+    const plan = stepPlan("quarterly", 91, 20);
+    expect(plan.stepMonths).toBe(3);
+    expect(stepFrom("2026-10-20", plan, 1)).toBe("2027-01-20");
+    expect(stepFrom("2026-10-20", plan, 4)).toBe("2027-10-20");
+  });
+
+  test("a gap outside the cadence's own band keeps day stepping", () => {
+    // an "annual" series billed every 200 days is not being billed annually
+    expect(stepPlan("annual", 200).calendarMonths).toBe(false);
+    // …nor is a "quarterly" one billed every 30
+    expect(stepPlan("quarterly", 30).calendarMonths).toBe(false);
+    // the edges of each band, both sides
+    expect(stepPlan("annual", 350).calendarMonths).toBe(true);
+    expect(stepPlan("annual", 349).calendarMonths).toBe(false);
+    expect(stepPlan("annual", 380).calendarMonths).toBe(true);
+    expect(stepPlan("annual", 381).calendarMonths).toBe(false);
+    expect(stepPlan("quarterly", 85).calendarMonths).toBe(true);
+    expect(stepPlan("quarterly", 84).calendarMonths).toBe(false);
+    expect(stepPlan("quarterly", 97).calendarMonths).toBe(true);
+    expect(stepPlan("quarterly", 98).calendarMonths).toBe(false);
+  });
+
+  test("weekly, biweekly and semimonthly are still day-shaped", () => {
+    for (const c of ["weekly", "biweekly", "semimonthly"] as const) {
+      expect(stepPlan(c, null).calendarMonths, c).toBe(false);
+    }
+  });
+
+  /**
+   * ⭐ `stepsToReach` counts whole STEPS, not whole months, and it is checked
+   * against `stepFrom` rather than against a hand-written date — the two must
+   * agree about the size of a step or a projection walks over a real charge.
+   */
+  test("stepsToReach counts steps, and agrees with stepFrom about every one", () => {
+    for (const [cadence, gap, anchor] of [["annual", 365, "2027-03-01"], ["quarterly", 91, "2026-10-20"]] as const) {
+      const plan = stepPlan(cadence, gap, Number(anchor.slice(8, 10)));
+      for (let k = 0; k <= 8; k++) {
+        const at = stepFrom(anchor, plan, k);
+        expect(stepsToReach(anchor, plan, at), `${cadence} step ${k} lands on itself`).toBe(k);
+        expect(stepsToReach(anchor, plan, addDays(at, -1)), `${cadence} the day before step ${k}`).toBe(k);
+        if (k > 0) {
+          expect(stepsToReach(anchor, plan, addDays(stepFrom(anchor, plan, k - 1), 1)), `${cadence} just after step ${k - 1}`).toBe(k);
+        }
+      }
+    }
   });
 });
