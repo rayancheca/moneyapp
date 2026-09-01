@@ -265,6 +265,87 @@ describe("transferFloats + bridgedNetWorthSeries", () => {
     expect(transferFloats(bundle.db)).toEqual([]);
   });
 
+  /*
+   * ⛔ THE FLOAT OPENS ON THE DAY THE MONEY LEAVES, and only a sender that is
+   * INVISIBLE on its own posting day can prove it. Found by mutation:
+   * `compareDates(day, out.postedOn) >= 0` could be tightened to `> 0` with
+   * nothing red, because in every other fixture the sender is visible that day
+   * and the `holders` branch happens to return the same 1.
+   *
+   * Here the sender's interior span derives as `gap` — its statement chain
+   * misses by a cent — so on 2026-07-02 the money is in NOBODY's visible
+   * ledger: the sender's balance is dropped from the total, and the receiver
+   * has not credited it yet. That is what "in the air" means, and it is exactly
+   * the day the bridge exists to fill. With `>` the window opens a day late and
+   * leaves a one-day $50.00 notch in the net-worth curve.
+   */
+  test("a float opens on the out leg's own posting day, even when the sender is invisible there", () => {
+    const a = createAccount(bundle.db, { institutionId: institutionId("Chase"), name: "A", type: "checking" });
+    const b = createAccount(bundle.db, { institutionId: institutionId("SoFi"), name: "B", type: "savings" });
+    anchor(a, "2026-07-01", 100_000);
+    anchor(a, "2026-07-06", 95_001); // a cent off replay -> the interior is 'gap'
+    anchor(b, "2026-07-01", 50_000);
+    anchor(b, "2026-07-06", 55_000);
+    txn(a, "2026-07-02", -5_000, "g1");
+    txn(b, "2026-07-05", 5_000, "g1");
+    rebuildAccount(bundle.db, a, TODAY);
+    rebuildAccount(bundle.db, b, TODAY);
+
+    // the condition the fixture exists for: the sender really is invisible on
+    // the day it sent
+    const senderBasis = bundle.db
+      .select()
+      .from(dailyBalances)
+      .where(eq(dailyBalances.accountId, a))
+      .all()
+      .find((r) => r.day === "2026-07-02")!.basis;
+    expect(senderBasis).toBe("gap");
+
+    const floats = transferFloats(bundle.db);
+    expect(floats).toHaveLength(1);
+    expect(floats[0]).toMatchObject({
+      kind: "missing",
+      startDay: "2026-07-02",
+      endDay: "2026-07-05",
+      deltaCents: 5_000,
+    });
+    // …and the correction really is in the air on that first day
+    expect(inTransitAt(bundle.db, "2026-07-01")).toBe(0);
+    expect(inTransitAt(bundle.db, "2026-07-02")).toBe(5_000);
+    expect(inTransitAt(bundle.db, "2026-07-05")).toBe(0);
+  });
+
+  /*
+   * ⭐ THE SAME FIXTURE PINS THE GAP RUN'S FAR EDGE, and that was not the plan.
+   * `visibleOn` excludes `[run.start, run.end]` inclusive; relaxing the end to
+   * `<` makes the LAST day of a gap run visible, and on 2026-07-05 the sender
+   * would then be counted alongside the receiver's own credit — a spurious
+   * `doubled` float on the day the money lands. One fixture, two edges,
+   * because both are questions about the same span.
+   *
+   * ⚠️ A THIRD edge is NOT pinned and is left recorded rather than faked:
+   * `compareDates(day, view.firstVisible) < 0` → `<= 0`. `firstVisible` is by
+   * construction the first non-gap day, which is always an anchor or a
+   * backward-derived day — both replay-grade — so on that day `effOut`/`effIn`
+   * make `target` and `counted` move together and the factor is unchanged.
+   * Three fixtures were built for it (two by a reviewer, one here) and none
+   * moved a float. The argument for equivalence is structural, not exhaustive.
+   */
+  test("the last day of a gap run is still invisible — no doubled float on the landing day", () => {
+    const a = createAccount(bundle.db, { institutionId: institutionId("Chase"), name: "A", type: "checking" });
+    const b = createAccount(bundle.db, { institutionId: institutionId("SoFi"), name: "B", type: "savings" });
+    anchor(a, "2026-07-01", 100_000);
+    anchor(a, "2026-07-06", 95_001);
+    anchor(b, "2026-07-01", 50_000);
+    anchor(b, "2026-07-06", 55_000);
+    txn(a, "2026-07-02", -5_000, "g1");
+    txn(b, "2026-07-05", 5_000, "g1"); // lands on the gap run's LAST day
+    rebuildAccount(bundle.db, a, TODAY);
+    rebuildAccount(bundle.db, b, TODAY);
+
+    expect(transferFloats(bundle.db).filter((f) => f.kind === "doubled")).toEqual([]);
+  });
+
   test("an anchor-less sender (no curve at all) never yields a doubled float — real money is not hidden", () => {
     // adversarial-review regression (2026-07-18): the sender has transactions
     // but zero balance anchors, so it contributes nothing to the total on any
