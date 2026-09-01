@@ -13,6 +13,19 @@ import { addManualAnchor } from "./anchors";
 import { dashboardData } from "./dashboard";
 import { rebuildAccount } from "./derivation";
 import { addDays } from "@/lib/dates";
+import { formatDayShort } from "@/lib/format-date";
+import { priceCache } from "@/db/schema/holdings";
+import { rebuildInvestmentHistory } from "./crypto-history";
+import { upsertHolding } from "./holdings";
+import { portfolioOverview } from "./portfolio";
+
+/*
+ * Deterministic prices for the investments teaser's fixture. Set at module
+ * scope the way `performance-card.test.ts` does — vitest gives each file its own
+ * worker, so this cannot leak into another suite, and no other test in this file
+ * holds a position.
+ */
+process.env.MONEYAPP_FAKE_PRICES = "1";
 
 const TODAY = "2026-07-08";
 
@@ -323,5 +336,175 @@ describe("dashboardData: net worth summary", () => {
     expect(last.inTransitCents).toBe(50_00);
     // bridged headline = stored assets − liabilities + the in-transit money
     expect(netWorth.latestCents).toBe(netWorth.assetsCents - netWorth.liabilitiesCents + 50_00);
+  });
+});
+
+/*
+ * ⛔ `investmentsTeaser` HAD NO UNIT COVERAGE AT ALL.
+ *
+ * Found by mutation audit: two independent edits to `services/dashboard.ts`
+ * changed nothing anywhere in the suite —
+ *
+ *   `portfolioSeries(db).slice(-SPARKLINE_DAYS)` → `.slice(0, SPARKLINE_DAYS)`
+ *       the card draws the OLDEST thirty days instead of the newest, so the
+ *       line beside "today's move" describes a month that ended long ago;
+ *   `dayChangeTerm(overview.asOf, overview.dayChangeVsDay, …)` → the two dates
+ *       swapped, so the phrase names the interval backwards.
+ *
+ * ⚠️ The second is this session's first defect wearing a different coat. The
+ * whole point of `dayChangeTerm` is that a figure names the days it was
+ * measured between; naming them in the wrong order is the same lie in a
+ * different tense, and the e2e fixture cannot see it — every price there is
+ * quoted through `E2E_FAKE_TODAY`, so the term is always the literal "today"
+ * and the interval branch never renders.
+ */
+describe("dashboardData: the investments teaser", () => {
+  /** `price_cache.close` is a per-share DOLLAR price; one share is worth 100× it in cents. */
+  const cache = (symbol: string, day: string, close: number): void => {
+    bundle.db
+      .insert(priceCache)
+      .values({ symbol, assetType: "stock", quotedOn: day, close, source: "yahoo", fetchedAt: `${day}T20:00:00.000Z` })
+      .run();
+  };
+
+  const hold = (day: string, symbol: string, quantityE8: number, avgCostCents: number): void => {
+    upsertHolding(bundle.db, {
+      accountId: brokerage(),
+      symbol,
+      assetType: "stock",
+      quantityE8,
+      avgCostCents,
+      occurredOn: day,
+    });
+  };
+
+  let brokerageId: string | null = null;
+  const brokerage = (): string => {
+    if (brokerageId === null) {
+      const rh = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+      brokerageId = createAccount(bundle.db, {
+        institutionId: rh.id,
+        name: "Robinhood Brokerage",
+        type: "investment",
+        subtype: "brokerage",
+      });
+    }
+    return brokerageId;
+  };
+
+  beforeEach(() => {
+    brokerageId = null;
+  });
+
+  /**
+   * 40 daily closes ending 2026-07-06 — two days BEFORE today on purpose, so
+   * the "today" branch of the term is not the one under test. One share, so the
+   * portfolio's value in cents is the close itself and every point is
+   * recognisable by eye.
+   */
+  const seedFortyDays = (): { days: string[]; closes: number[] } => {
+    const days: string[] = [];
+    const closes: number[] = [];
+    for (let i = 39; i >= 0; i--) {
+      const day = addDays("2026-07-06", -i);
+      const close = 1_000 + (39 - i); // dollars, strictly rising, all distinct
+      days.push(day);
+      closes.push(close);
+      cache("AAPL", day, close);
+    }
+    hold(days[0]!, "AAPL", 100_000_000, 90_000);
+    rebuildInvestmentHistory(bundle.db, brokerage(), "2026-07-06");
+    return { days, closes };
+  };
+
+  test("returns null when there is no portfolio at all", () => {
+    expect(dashboardData(bundle.db, TODAY).investments).toBeNull();
+  });
+
+  /*
+   * ⛔ TWO reasons the card is withheld, and only one of them is "no account".
+   * A book that has been sold down to nothing still has an `asOf` — every price
+   * it was ever marked at is still cached — so the value guard is the one doing
+   * the work here. Without it the dashboard prints a card headlined $0.00 with
+   * an empty sparkline, which is the shape the guard's own comment rejects: a
+   * card of zeroes is worse than no card.
+   */
+  test("a book sold down to nothing is withheld, not headlined as $0.00", () => {
+    for (let i = 2; i >= 0; i--) cache("AAPL", addDays("2026-07-06", -i), 1_000);
+    hold("2026-07-04", "AAPL", 100_000_000, 90_000);
+    hold("2026-07-06", "AAPL", 0, 90_000); // sold out
+    rebuildInvestmentHistory(bundle.db, brokerage(), "2026-07-06");
+
+    const overview = portfolioOverview(bundle.db);
+    expect(overview.asOf).not.toBeNull(); // it HAS a history…
+    expect(overview.valueCents).toBe(0); // …and it is worth nothing
+    expect(dashboardData(bundle.db, TODAY).investments).toBeNull();
+  });
+
+  test("the sparkline is the NEWEST 30 days, ending on the value the headline shows", () => {
+    const { closes } = seedFortyDays();
+    const teaser = dashboardData(bundle.db, TODAY).investments!;
+
+    expect(teaser.sparkline).toHaveLength(30);
+    // the last point IS the headline, not a number from a month ago
+    expect(teaser.sparkline.at(-1)).toBe(teaser.valueCents);
+    expect(teaser.sparkline.at(-1)).toBe(closes.at(-1)! * 100);
+    // …and the first point is the 30th day back, not the 40th
+    expect(teaser.sparkline[0]).toBe(closes[closes.length - 30]! * 100);
+    expect(teaser.sparkline).not.toContain(closes[0]! * 100); // the oldest day is OUT
+  });
+
+  test("the term names the two days in the order they happened, newest first", () => {
+    seedFortyDays();
+    const teaser = dashboardData(bundle.db, TODAY).investments!;
+
+    // the newest close is 2026-07-06 and today is the 8th, so this is NOT today
+    expect(teaser.dayChangeTerm).not.toBe("today");
+    const [newer, older] = teaser.dayChangeTerm.split(" vs ");
+    expect(newer).toBe(formatDayShort("2026-07-06"));
+    expect(older).toBe(formatDayShort("2026-07-05"));
+    // and the figure it names really is the move between those two closes: $1
+    expect(teaser.dayChangeCents).toBe(100);
+  });
+
+  test("a portfolio priced through today says the word, and names no dates", () => {
+    for (let i = 2; i >= 0; i--) cache("AAPL", addDays(TODAY, -i), 1_000 + (2 - i));
+    hold(addDays(TODAY, -2), "AAPL", 100_000_000, 90_000);
+    rebuildInvestmentHistory(bundle.db, brokerage(), TODAY);
+
+    const teaser = dashboardData(bundle.db, TODAY).investments!;
+    expect(teaser.dayChangeTerm).toBe("today");
+    expect(teaser.dayChangeTerm).not.toContain("vs");
+  });
+
+  /*
+   * ⚠️ ONE EQUIVALENT MUTANT, RECORDED RATHER THAN PAPERED OVER.
+   * `dayChangeExact: true` in place of `overview.dayChangeExact` survives, and
+   * it survives because it is currently true by construction: `buildPortfolio`
+   * writes `flowByDay.set(day, { flowCents, exact: true })` unconditionally
+   * (portfolio.ts:169) and nothing else ever sets it false, so the "≈" the
+   * teaser renders for an estimated move cannot be reached from any fixture.
+   * A test for it would assert the fixture back to itself. If a producer ever
+   * marks a day inexact, this is the assertion to add.
+   */
+
+  /**
+   * The mover is the biggest move by MAGNITUDE across winners and losers, not
+   * the biggest winner. A 4% fall matters more than a 1% rise, and the card has
+   * room for exactly one.
+   */
+  test("the top mover is the largest by magnitude, loser or winner", () => {
+    for (let i = 1; i >= 0; i--) {
+      cache("AAPL", addDays("2026-07-06", -i), i === 1 ? 10_000 : 10_100); // +1%
+      cache("TSLA", addDays("2026-07-06", -i), i === 1 ? 10_000 : 9_600); // −4%
+    }
+    hold("2026-07-05", "AAPL", 100_000_000, 9_000);
+    hold("2026-07-05", "TSLA", 100_000_000, 9_000);
+    rebuildInvestmentHistory(bundle.db, brokerage(), "2026-07-06");
+
+    const teaser = dashboardData(bundle.db, TODAY).investments!;
+    expect(teaser.topMover?.symbol).toBe("TSLA");
+    expect(teaser.topMover?.dayChangePct).toBeLessThan(0);
+    expect(teaser.topMover?.href).toBe("/investments/stock/TSLA");
   });
 });
