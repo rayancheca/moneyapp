@@ -2,8 +2,9 @@
 
 > **Supersedes `HANDOFF-2026-08-31b-forecast-and-calendar.md`.**
 >
-> **`main` = `GATE_PENDING`**, tree clean, pushed. tsc clean · **4,283 unit** ·
-> **E2E_GATE=1: E2E_PENDING** · `pnpm ledger-check` exit 0, on every commit.
+> **`main` = `2fcd432`**, tree clean, pushed. tsc clean · **4,284 unit** ·
+> **E2E_GATE=1: 590 passed at `maxDiffPixels: 0`** (8.3m, green on the first
+> confirming run) · `pnpm ledger-check` exit 0, on every commit.
 >
 > Repo: **`/Users/rayankarimcheca/dev/MoneyApp`**.
 > Ledger: 10,111 active rows · income $117,924.62 · spending $167,828.49 ·
