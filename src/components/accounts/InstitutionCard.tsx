@@ -19,13 +19,31 @@ function toneOf(dayChangeCents: number | null): SparklineTone {
   return dayChangeCents > 0 ? "positive" : "negative";
 }
 
-function DayChange({ cents }: { cents: number | null }) {
+/**
+ * ⛔ The period is NAMED, never assumed — `term` comes from the service, which
+ * built it from the same two days the figure was measured between.
+ *
+ * 🔴 This said "today" unconditionally. Measured on the owner's real ledger at
+ * today = 2026-09-01: the Chase row read "-$50.00 today" for a move between
+ * 2026-08-04 and 2026-08-05 while both of its children read "$0.00 today", and
+ * the Robinhood row read "+$585.31 today" (2026-08-27 → 2026-08-28) while the
+ * investments teaser on the same screen read "-$447.83 today" for the same
+ * holdings. `daily_balances` is a cached derivation that stops wherever `today`
+ * stood at the last rebuild, so on this ledger those two days are routinely
+ * weeks old — and for a GROUP they are older still, because the combined series
+ * only keeps days every account covers.
+ *
+ * The same rule already lives in `lib/day-change-label.ts`, written for the
+ * portfolio header after it made exactly this claim. This was the third surface
+ * asking the question and the only one still answering it by hand.
+ */
+function DayChange({ cents, term }: { cents: number | null; term: string }) {
   if (cents === null) return null;
   const tone =
     cents > 0 ? "text-positive" : cents < 0 ? "text-negative" : "text-ink-muted";
   return (
     <span className={`figures text-xs ${tone}`}>
-      {formatCentsSigned(cents)} <span className="text-ink-faint">today</span>
+      {formatCentsSigned(cents)} <span className="text-ink-faint">{term}</span>
     </span>
   );
 }
@@ -75,7 +93,7 @@ function SubCard({ account }: { account: AccountCardData }) {
         ) : (
           <span className="text-xs text-ink-faint">no balance yet</span>
         )}
-        <DayChange cents={account.dayChangeCents} />
+        <DayChange cents={account.dayChangeCents} term={account.dayChangeTerm} />
       </div>
     </Link>
   );
@@ -120,7 +138,7 @@ export function InstitutionCard({ group }: { group: InstitutionGroup }) {
           <div className="text-right">
             <Money cents={group.totalCents} className="text-lg font-semibold" />
             <div className="min-h-4">
-              <DayChange cents={group.dayChangeCents} />
+              <DayChange cents={group.dayChangeCents} term={group.dayChangeTerm} />
             </div>
           </div>
           <svg

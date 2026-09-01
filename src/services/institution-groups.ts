@@ -4,7 +4,9 @@ import { accounts, isLiability, type AccountSubtype, type AccountType } from "@/
 import { dailyBalances } from "@/db/schema/balances";
 import { holdings } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
-import { compareDates } from "@/lib/dates";
+import { compareDates, todayIso } from "@/lib/dates";
+import { dayChangeTerm } from "@/lib/day-change-label";
+import { formatDayShort } from "@/lib/format-date";
 import { formatQuantityE8 } from "./holdings";
 import { unreviewedByAccount } from "./review-count";
 
@@ -40,6 +42,12 @@ export interface AccountCard {
   asOf: string | null;
   /** latest covered day minus the covered day before it; null when unknowable */
   dayChangeCents: number | null;
+  /** the newer of the two days `dayChangeCents` was measured between */
+  dayChangeAsOf: string | null;
+  /** the older of them */
+  dayChangeVsDay: string | null;
+  /** what to CALL that figure — "today", or the two dates it really spans */
+  dayChangeTerm: string;
   spark: SparkPoint[];
   /** e.g. "8 positions · MSFT SPY AMZN…" or "14.619066 ETH"; null for non-investment */
   holdingsSummary: string | null;
@@ -51,6 +59,15 @@ export interface InstitutionGroup {
   institutionName: string;
   totalCents: number;
   dayChangeCents: number | null;
+  /**
+   * ⚠️ NOT `asOf`. `asOf` is the NEWEST day any child covers; the change is
+   * measured on the combined series, which ends at the newest day EVERY child
+   * covers — the oldest of them. On the real ledger the Chase group is as of
+   * 2026-08-14 and its change spans 2026-08-04 → 2026-08-05.
+   */
+  dayChangeAsOf: string | null;
+  dayChangeVsDay: string | null;
+  dayChangeTerm: string;
   asOf: string | null;
   spark: SparkPoint[];
   accounts: AccountCard[];
@@ -70,11 +87,30 @@ function shortNameOf(accountName: string, institutionName: string): string {
   return accountName;
 }
 
-function dayChangeOf(series: readonly SparkPoint[]): number | null {
-  if (series.length < 2) return null;
+interface DayChange {
+  cents: number | null;
+  asOf: string | null;
+  vsDay: string | null;
+}
+
+/**
+ * The move between the last two covered days — AND the two days it was measured
+ * between, from one read of the same array.
+ *
+ * ⛔ The figure and the word for it are returned together on purpose. A caller
+ * that took the cents here and read the date off `AccountCard.asOf` (or, worse,
+ * `InstitutionGroup.asOf`) would be two places agreeing about a date, which is
+ * the defect pass 54 was written to stop — and for a GROUP the two are not even
+ * the same day.
+ */
+function dayChangeOf(series: readonly SparkPoint[]): DayChange {
+  // Fewer than two covered days is no measured change at all, so there is no
+  // pair of days to name either — null, not the single day, which would invite
+  // a caller to print "as of X" over a figure that does not exist.
+  if (series.length < 2) return { cents: null, asOf: null, vsDay: null };
   const last = series[series.length - 1]!;
   const prev = series[series.length - 2]!;
-  return last.cents - prev.cents;
+  return { cents: last.cents - prev.cents, asOf: last.day, vsDay: prev.day };
 }
 
 /** top holdings by |quantity×cost| are noise — summarize by count + tickers */
@@ -89,7 +125,10 @@ function summarizeHoldings(rows: readonly { symbol: string; quantityE8: number }
   return `${rows.length} positions · ${tickers}${suffix}`;
 }
 
-export function institutionGroups(db: AppDatabase): InstitutionGroup[] {
+export function institutionGroups(
+  db: AppDatabase,
+  today: string = todayIso(),
+): InstitutionGroup[] {
   const accountRows = db
     .select({
       id: accounts.id,
@@ -156,6 +195,7 @@ export function institutionGroups(db: AppDatabase): InstitutionGroup[] {
   for (const a of accountRows) {
     const series = seriesByAccount.get(a.id) ?? [];
     const latest = series.at(-1) ?? null;
+    const change = dayChangeOf(series);
     const card: AccountCard = {
       id: a.id,
       institutionId: a.institutionId,
@@ -168,7 +208,10 @@ export function institutionGroups(db: AppDatabase): InstitutionGroup[] {
       isLiability: isLiability(a.type),
       balanceCents: latest?.cents ?? null,
       asOf: latest?.day ?? null,
-      dayChangeCents: dayChangeOf(series),
+      dayChangeCents: change.cents,
+      dayChangeAsOf: change.asOf,
+      dayChangeVsDay: change.vsDay,
+      dayChangeTerm: dayChangeTerm(change.asOf, change.vsDay, today, formatDayShort),
       spark: series.slice(-SPARK_WINDOW_DAYS),
       holdingsSummary:
         a.type === "investment"
@@ -181,6 +224,9 @@ export function institutionGroups(db: AppDatabase): InstitutionGroup[] {
       institutionName: a.institutionName,
       totalCents: 0,
       dayChangeCents: null,
+      dayChangeAsOf: null,
+      dayChangeVsDay: null,
+      dayChangeTerm: "",
       asOf: null,
       spark: [],
       accounts: [],
@@ -210,10 +256,14 @@ export function institutionGroups(db: AppDatabase): InstitutionGroup[] {
       null,
     );
 
+    const change = dayChangeOf(combined);
     return {
       ...group,
       totalCents,
-      dayChangeCents: dayChangeOf(combined),
+      dayChangeCents: change.cents,
+      dayChangeAsOf: change.asOf,
+      dayChangeVsDay: change.vsDay,
+      dayChangeTerm: dayChangeTerm(change.asOf, change.vsDay, today, formatDayShort),
       asOf,
       spark: combined.slice(-SPARK_WINDOW_DAYS),
     };

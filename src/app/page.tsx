@@ -243,7 +243,7 @@ export default async function DashboardPage({
     );
   }
 
-  const groups = institutionGroups(db);
+  const groups = institutionGroups(db, today);
   const runway = runwayCard(db, today);
   const car = carCard(db, today);
   const eatingOut = eatingOutCard(db, today);
