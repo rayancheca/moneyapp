@@ -164,7 +164,7 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
           spend average, and the sentence would have been simply false there.
           The standalone claim is true either way, and the disagreement gets its
           own line rather than being phrased around. */}
-      {committed.totalCents > 0 && (
+      {(committed.totalCents > 0 || committed.overdueCents > 0) && (
         <div className="mt-3 border-t border-line pt-3 text-xs leading-relaxed text-ink-muted">
           <p className="flex items-start gap-1.5">
             <span>
@@ -184,9 +184,14 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
               measured spending.
             </p>
           )}
+          {/* ⛔ "of it" would be false. Arrears sit BESIDE the rate above, not
+              inside it: the rate covers [today, today + 12 months) and this
+              money came due before today. Folding it in is what published
+              $2,284.75 a month for a $2,109.00 bill. */}
           {committed.overdueCents > 0 && (
             <p className="mt-1 text-negative">
-              {formatCents(committed.overdueCents)} of it came due this month and never posted.
+              A further {formatCents(committed.overdueCents)} came due earlier this month and never
+              posted.
             </p>
           )}
         </div>

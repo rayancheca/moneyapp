@@ -193,8 +193,29 @@ describe("committedOutflows — overdue bills", () => {
   };
   const overdue: CommittedInput = { ...REAL, overdue: [RENT_LATE] };
 
-  test("overdue money joins the total", () => {
-    expect(committedOutflows(overdue).totalCents).toBe(1926625 + 228570);
+  /*
+   * ⛔ ARREARS ARE COUNTED, REPORTED, AND LEFT OUT — the same treatment an
+   * inflow gets, and for the same reason.
+   *
+   * 🔴 They used to join `totalCents`. The horizon is `[from, to)`, exactly
+   * `months` calendar months, and a payment that came due BEFORE `from` is not
+   * inside it — the input type has always said so ("payments that came due
+   * before `from`"). Adding it to the numerator while `months` stayed the
+   * denominator is how a $2,109.00 rent came to publish $2,284.75 as its
+   * monthly cost on the owner's dashboard, every day of the month but the 1st.
+   */
+  test("arrears are reported beside the total, never inside it", () => {
+    const book = committedOutflows(overdue);
+    expect(book.totalCents).toBe(1926625);
+    expect(book.overdueCents).toBe(228570);
+    expect(book.overdueCount).toBe(1);
+    // and a caller that wants "everything still owed" adds the two itself
+    expect(book.totalCents + book.overdueCents).toBe(1926625 + 228570);
+  });
+
+  test("a per-month figure divides only what the months actually contain", () => {
+    const book = committedOutflows(overdue);
+    expect(book.perMonthCents).toBe(Math.round(1926625 / book.months));
   });
 
   test("an overdue bill folds into its own series' line, not a second row", () => {
@@ -202,7 +223,9 @@ describe("committedOutflows — overdue bills", () => {
       (l) => l.name === "Flamingo South Beach (rent)",
     );
     expect(rent).toHaveLength(1);
-    expect(rent[0]).toMatchObject({ occurrences: 7, totalCents: 1371420 + 228570, overdueCents: 228570 });
+    // one row, and the arrears sit BESIDE its horizon total rather than in it —
+    // so the occurrence count still counts only payments inside the horizon
+    expect(rent[0]).toMatchObject({ occurrences: 6, totalCents: 1371420, overdueCents: 228570 });
   });
 
   test("a line carries no overdue when nothing is late", () => {
@@ -218,7 +241,11 @@ describe("committedOutflows — overdue bills", () => {
     };
     const result = committedOutflows(gone);
     expect(result.lines).toHaveLength(1);
-    expect(result.lines[0]).toMatchObject({ occurrences: 1, totalCents: 228570, overdueCents: 228570 });
+    // the debt is real and named, but nothing of it falls inside the horizon, so
+    // the horizon total is zero — the line exists to carry the arrears
+    expect(result.lines[0]).toMatchObject({ occurrences: 0, totalCents: 0, overdueCents: 228570 });
+    expect(result.totalCents).toBe(0);
+    expect(result.overdueCents).toBe(228570);
   });
 
   test("an overdue inflow is partitioned exactly like an upcoming one", () => {

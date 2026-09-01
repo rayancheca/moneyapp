@@ -192,6 +192,46 @@ export function committedBook(
   today: string = todayIso(),
   months: number = COMMITTED_HORIZON_MONTHS,
 ): CommittedOutflows {
+  /*
+   * ⛔ THE FORWARD WINDOW OPENS ON `today` AND SPANS EXACTLY `months` CALENDAR
+   * MONTHS, AND ARREARS ARE NOT INSIDE IT. This was the fourth phrasing.
+   *
+   * 🔴 The overdue leg opened at `monthStart` while the horizon was anchored on
+   * `today`, so the numerator spanned `[monthStart, today + N months)` — N
+   * months PLUS however far into the month it happened to be — against a
+   * divisor of N. An overdue monthly bill contributed N+1 payments to an
+   * N-month average. Measured on the real ledger, which holds no September rows
+   * at all, so nothing changed between these days but the day of the question:
+   *
+   *     2026-09-01   $3,542.21 a month   (rent: 12 payments, $2,109.00/mo)
+   *     2026-09-02   $3,733.14 a month   (rent: 13 payments, $2,284.75/mo)
+   *     2026-09-23   $3,809.38 a month
+   *     2026-10-01   $3,512.08 a month   ← and it resets
+   *
+   * A $267.17 sawtooth on the runway card's headline every month, and a rent
+   * line publishing $2,284.75 as the monthly burden of a $2,109.00 bill. A
+   * monthly series cannot cost more per month than its own bill.
+   *
+   * ⚠️ ANCHORING THE WINDOW ON THE MONTH START INSTEAD IS THE SAME DEFECT
+   * MIRRORED, and it was measured before it was rejected. `[monthStart,
+   * monthStart + N)` is a whole number of months, but a bill already paid this
+   * month has no occurrence left in it, so on 2026-08-25 the same rent reads
+   * ELEVEN payments and $1,933.25 a month. Less than the bill is as false as
+   * more than it. Only a window that opens on `today` holds exactly N
+   * occurrences of a monthly series whatever day you ask on.
+   *
+   * That forces the other half: `[today, today + N)` cannot contain a payment
+   * that came due before today, so ARREARS ARE NOT IN THE TOTAL. They are
+   * counted, reported and left out — the same treatment this module already
+   * gives an inflow handed to an outflow roll-up, and for the same reason: a
+   * figure that mixes a one-off debt into a monthly rate is arithmetic that
+   * defends itself around a number that is false.
+   *
+   * ⚠️ `carCard` does NOT share any of this. It has no overdue leg, so its
+   * window already opened on `today` and already spanned its own denominator;
+   * swept day by day across September on the real ledger its all-in figure is
+   * constant at $1,325.60. Three surfaces, one rule, and still not one fix.
+   */
   const to = addCalendarMonths(today, months);
   // half-open: the horizon's last day is the day BEFORE `to`, so a monthly bill
   // anchored on today's day-of-month is projected `months` times, not months+1
@@ -201,12 +241,22 @@ export function committedBook(
   const occurrences = // +1: `windowDays` counts days and today is the first — see its docstring
     upcomingOccurrences(db, today, diffDays(today, horizonEnd) + 1)
     .filter((o) => moneyOut.has(o.seriesId))
-    // strictly after today — `today` itself belongs to the overdue window below
-    .filter((o) => compareDates(o.date, today) > 0)
     .map(toCommitted);
 
+  /*
+   * Strictly BEFORE today. The forward window owns `today`, so the two abut
+   * exactly: no day belongs to both, no day belongs to neither. A bill due
+   * today and unposted is not late — it is due — and it is counted once, in
+   * the forward leg.
+   *
+   * ⚠️ `/budgets` splits the same instant the other way round: `budgetOverdue`
+   * closes on `today` inclusive and `budgetTail` opens at `today + 1`. That is
+   * not a disagreement worth reconciling, because budgets ADDS the two
+   * (`expectedTailCents = tail + overdue`) and so cannot see the difference.
+   * Here the two are published separately, which is what makes the day matter.
+   */
   const monthStart = periodBounds(today, "monthly").start;
-  const late = overdueForSeries(db, moneyOut, monthStart, today);
+  const late = overdueForSeries(db, moneyOut, monthStart, addDays(today, -1));
   const lateRows = db
     .select()
     .from(recurringSeries)

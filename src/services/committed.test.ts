@@ -232,9 +232,15 @@ describe("committedBook", () => {
     const rent = book.lines.find((l) => l.name === "Rent")!;
     expect(rent.occurrences).toBe(1);
     expect(rent.totalCents).toBe(210900);
-    // it is the OVERDUE leg that owns it — unposted, and due on or before today
-    expect(book.overdueCents).toBe(210900);
     expect(book.totalCents).toBe(210900);
+    /*
+     * ⚠️ It is the FORWARD leg that owns it, and this assertion flipped when
+     * the horizon became a rate window. A bill due today and unposted is not
+     * late — it is due. The arrears leg closes the day BEFORE today so the two
+     * still abut exactly, and "nothing is late" on the day rent falls due is
+     * the honest reading of the runway card's own sentence.
+     */
+    expect(book.overdueCents).toBe(0);
   });
 
   /**
@@ -285,6 +291,91 @@ describe("committedBook", () => {
   });
 
   /**
+   * 🔴 THE FOURTH PHRASING — and the six tests above could not see it, because
+   * every one of them asks on 2026-09-01, the single day of the month where it
+   * does not fire.
+   *
+   * The overdue leg opens at `periodBounds(today,"monthly").start` and the
+   * horizon was anchored on `today`, so the numerator spanned
+   * `[monthStart, today + N months)` — N months PLUS however many days into the
+   * month it happens to be — while the divisor stayed `N`. A monthly bill that
+   * is overdue therefore contributes N+1 payments to an N-month average.
+   *
+   * Measured on the owner's real ledger, with NO September rows in it at all —
+   * nothing changed between these two days except the question:
+   *
+   *     2026-09-01   $3,542.21 a month   (rent: 12 payments, $2,109.00/mo)
+   *     2026-09-02   $3,733.14 a month   (rent: 13 payments, $2,284.75/mo)
+   *     2026-09-23   $3,809.38 a month
+   *     2026-10-01   $3,512.08 a month   ← and it resets
+   *
+   * A $267.17 sawtooth on the runway card's headline, every month. The rent
+   * line published $2,284.75 as the monthly burden of a $2,109.00 bill: a
+   * monthly series can never cost more per month than its own bill.
+   * `CommittedLine.perMonthCents` defends `total ÷ months` with the insurance
+   * case — a series that ENDS inside the horizon and gets FEWER than N — and
+   * never contemplated a series getting MORE.
+   *
+   * ⚠️ `carCard` does NOT share this and must not be "fixed" the same way: it
+   * has no overdue leg, so its window really does start at `today` and its
+   * denominator really does span it. Swept day by day across September on the
+   * real ledger, its all-in monthly figure is constant at $1,325.60. Copying
+   * this fix onto it would move its window a month backwards for nothing.
+   */
+  test("a per-month figure does not depend on which day of the month you ask", () => {
+    // rent anchored on the 1st, unposted — so it is overdue from the 2nd onward
+    rentDueOn("2026-09-01");
+    addSeries({ name: "Netflix", kind: "subscription", nextExpectedOn: "2026-09-15", amountCents: -1549 });
+
+    for (const months of [1, 3, 12]) {
+      const onTheFirst = committedBook(bundle.db, "2026-09-01", months);
+      for (const day of ["2026-09-02", "2026-09-08", "2026-09-15", "2026-09-16", "2026-09-30"]) {
+        const book = committedBook(bundle.db, day, months);
+        expect(book.perMonthCents, `${months}mo asked on ${day}`).toBe(onTheFirst.perMonthCents);
+        expect(book.totalCents, `${months}mo asked on ${day}`).toBe(onTheFirst.totalCents);
+        const rent = book.lines.find((l) => l.name === "Rent")!;
+        expect(rent.occurrences, `${months}mo asked on ${day}`).toBe(months);
+        // the bill's own amount, never a fraction more
+        expect(rent.perMonthCents, `${months}mo asked on ${day}`).toBe(210900);
+      }
+    }
+  });
+
+  /**
+   * The horizon opens on `today` and the arrears leg closes the day before, so
+   * the two abut with no day in both and no day in neither. Pinned on a today
+   * deep inside the month, which is the only place the alternatives differ.
+   */
+  test("the arrears leg and the horizon abut on today, and arrears stay outside", () => {
+    const MID = "2026-09-16";
+    rentDueOn("2026-09-01"); // unposted since the 1st: arrears by the 16th
+    const book = committedBook(bundle.db, MID, 12);
+
+    const rent = book.lines.find((l) => l.name === "Rent")!;
+    // twelve months from 2026-09-16 hold twelve first-of-months: 2026-10 … 2027-09
+    expect(rent.occurrences).toBe(12);
+    expect(rent.totalCents).toBe(210900 * 12);
+    // …and the payment it slid past is arrears, once, beside the total
+    expect(rent.overdueCents).toBe(210900);
+    expect(book.overdueCents).toBe(210900);
+    expect(book.overdueCount).toBe(1);
+    expect(book.totalCents).toBe(210900 * 12);
+  });
+
+  /** The far edge of the forward window, pinned to a single day from a mid-month today. */
+  test("the horizon's far edge is exactly N months after today", () => {
+    const MID = "2026-09-16";
+    addSeries({ name: "Edge", kind: "bill", nextExpectedOn: "2027-09-15", amountCents: -700 });
+    addSeries({ name: "Beyond", kind: "bill", nextExpectedOn: "2027-09-16", amountCents: -900 });
+
+    const book = committedBook(bundle.db, MID, 12);
+    // 2027-09-15 is the last day of [2026-09-16, 2027-09-16) — inside it
+    expect(book.lines.find((l) => l.name === "Edge")?.occurrences).toBe(1);
+    // …and the very next day is outside, which fixes the edge to one day
+    expect(book.lines.find((l) => l.name === "Beyond")).toBeUndefined();
+  });
+
+  /**
    * ⭐ The check that actually caught this: two independently-computed surfaces
    * answering one question. `committedBook` walks `upcomingOccurrences` plus an
    * overdue leg; the forecast card partitions `forecastCurrentMonth`'s own
@@ -322,8 +413,18 @@ describe("committedBook", () => {
       .run();
 
     const book = committedBook(bundle.db, DUE_TODAY, 1);
-    expect(book.lines.find((l) => l.name === "Rent")).toBeUndefined();
-    expect(book.totalCents).toBe(0);
+    /*
+     * ⚠️ This assertion flipped too, and it is the honest consequence of the
+     * horizon being a RATE. A rent paid on the 1st still cost $2,109.00 that
+     * month, so it belongs in "committed bills come to $X a month"; what it is
+     * NOT is arrears. The alternative — dropping a bill from the rate the
+     * moment it posts — is what made the same $2,109.00 bill read $1,933.25 a
+     * month when the window was anchored on the month's start instead. Measured
+     * on the real ledger before it was rejected.
+     */
+    expect(book.lines.find((l) => l.name === "Rent")?.occurrences).toBe(1);
+    expect(book.totalCents).toBe(210900);
+    // …and nothing is late: it posted
     expect(book.overdueCents).toBe(0);
   });
 

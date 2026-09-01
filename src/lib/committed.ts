@@ -51,20 +51,20 @@ export interface CommittedOccurrence {
 export interface CommittedInput {
   /** iso, inclusive — the first day of the horizon */
   from: string;
-  /** iso, inclusive — the last day of the horizon */
+  /** iso, EXCLUSIVE — the horizon is `[from, to)`, exactly `months` months */
   to: string;
-  /** whole calendar months spanned by [from, to]; the per-month denominator */
+  /** whole calendar months spanned by [from, to); the per-month denominator */
   months: number;
   /** projected payments inside the horizon */
   occurrences: readonly CommittedOccurrence[];
-  /** payments that came due before `from` and never posted */
+  /** payments that came due before `from` and never posted — ARREARS, outside it */
   overdue: readonly CommittedOccurrence[];
 }
 
 export interface CommittedLine {
   seriesId: string;
   name: string;
-  /** payments in the horizon, overdue ones included */
+  /** payments inside the horizon; arrears are not among them */
   occurrences: number;
   /** positive magnitude of money out across the whole horizon */
   totalCents: number;
@@ -79,7 +79,8 @@ export interface CommittedLine {
    * answer, and it is reported separately so the reader can see both.
    */
   perMonthCents: number;
-  /** the part of `totalCents` that is already late */
+  /** arrears on this series — money that came due before the horizon opened and
+   *  never posted. ⛔ NOT part of `totalCents`; see `CommittedOutflows`. */
   overdueCents: number;
   /** the series' evidence is stale or absent */
   isStale: boolean;
@@ -91,12 +92,28 @@ export interface CommittedOutflows {
   from: string;
   to: string;
   months: number;
-  /** positive magnitude of all committed money out */
+  /** positive magnitude of all committed money out INSIDE the horizon */
   totalCents: number;
   /** `totalCents ÷ months` */
   perMonthCents: number;
-  /** the part of `totalCents` that is already late */
+  /**
+   * Arrears: money that came due before the horizon opened and never posted.
+   *
+   * ⛔ NOT part of `totalCents`, and this is the whole point of the split. The
+   * horizon is `[from, to)` — exactly `months` calendar months — so a monthly
+   * series contributes exactly `months` payments to it whatever day it is
+   * asked on. A debt that came due BEFORE `from` is not inside those months,
+   * and adding it to the numerator while leaving `months` as the denominator
+   * is how a $2,109.00 rent came to publish $2,284.75 as its monthly cost.
+   *
+   * Counted, reported, left out — the treatment `inflowCents` already gets,
+   * for the same reason. A caller that wants "everything I still owe" adds the
+   * two; a caller that wants a RATE uses `perMonthCents` and says the arrears
+   * separately, which is what the runway card does.
+   */
   overdueCents: number;
+  /** how many arrears payments `overdueCents` is made of */
+  overdueCount: number;
   /** committed money whose series has never posted — registered, not evidenced */
   unevidencedCents: number;
   /** largest commitment first */
@@ -129,6 +146,7 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
   const bySeries = new Map<string, Accumulator>();
   let inflowCents = 0;
   let inflowCount = 0;
+  let overdueCount = 0;
 
   const take = (o: CommittedOccurrence, origin: CommittedOrigin): void => {
     if (o.amountCents > 0) {
@@ -142,6 +160,8 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
     if (o.amountCents === 0) return;
 
     const magnitude = -o.amountCents;
+    const isArrears = origin === "overdue";
+    if (isArrears) overdueCount += 1;
     const acc = bySeries.get(o.seriesId) ?? {
       seriesId: o.seriesId,
       name: o.name,
@@ -153,9 +173,11 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
     };
     bySeries.set(o.seriesId, {
       ...acc,
-      occurrences: acc.occurrences + 1,
-      totalCents: acc.totalCents + magnitude,
-      overdueCents: acc.overdueCents + (origin === "overdue" ? magnitude : 0),
+      // ⛔ arrears fall OUTSIDE the horizon, so they raise neither the count
+      // nor the total the per-month figure is divided from
+      occurrences: acc.occurrences + (isArrears ? 0 : 1),
+      totalCents: acc.totalCents + (isArrears ? 0 : magnitude),
+      overdueCents: acc.overdueCents + (isArrears ? magnitude : 0),
     });
   };
 
@@ -173,7 +195,12 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
       isStale: a.isStale,
       neverPosted: a.neverPosted,
     }))
-    .sort((x, y) => y.totalCents - x.totalCents || x.name.localeCompare(y.name));
+    // arrears-only lines have a zero horizon total; they still rank by the money
+    // they represent rather than tying at zero in name order
+    .sort(
+      (x, y) =>
+        y.totalCents - x.totalCents || y.overdueCents - x.overdueCents || x.name.localeCompare(y.name),
+    );
 
   const totalCents = lines.reduce((s, l) => s + l.totalCents, 0);
 
@@ -184,6 +211,7 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
     totalCents,
     perMonthCents: Math.round(totalCents / months),
     overdueCents: lines.reduce((s, l) => s + l.overdueCents, 0),
+    overdueCount,
     unevidencedCents: lines.reduce((s, l) => s + (l.neverPosted ? l.totalCents : 0), 0),
     lines,
     inflowCents,
