@@ -1099,6 +1099,24 @@ export function projectOccurrences(
 /**
  * All live (detected|confirmed) series' occurrences in the next N days.
  *
+ * ⛔ `windowDays` is a COUNT OF DAYS, and today is the first of them. The window
+ * is `[today, today + windowDays - 1]`, so 30 days means thirty days.
+ *
+ * 🔴 It used to end at `today + windowDays`, which is thirty-ONE days, and the
+ * extra day was visible: measured on the real ledger at today = 2026-09-01, the
+ * "Upcoming 30 days" list on /recurring showed **`Flamingo South Beach (rent)`
+ * twice** — 2026-09-01 and 2026-10-01 — along with `Rent utilities & fees`. A
+ * reader would take that as owing rent twice in a month. The dashboard's "next
+ * 14 days" widget had the same extra day.
+ *
+ * ⚠️ A monthly bill is the only shape that can show it, and only when its
+ * anchor day equals today's. That is why it survived: every fixture in this repo
+ * uses a `TODAY` (the 8th, the 24th) that no fixture bill is anchored on.
+ *
+ * ⚠️ A caller that already has an END DATE rather than a length must pass
+ * `diffDays(today, end) + 1` — `committedBook` and `carCard` both do, and both
+ * name it. Two functions that must agree about a date must not both compute it.
+ *
  * Liveness here is STATUS ONLY, deliberately: a series whose evidence has gone
  * stale still projects, carrying its `staleness` so the reader is told how old
  * the evidence is. Filtering on isSeriesActive instead would silently delete
@@ -1118,7 +1136,8 @@ export function upcomingOccurrences(
     .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
     .all();
 
-  const to = addDays(today, windowDays);
+  // today is day ONE of the window — see the docstring's rent-twice measurement
+  const to = addDays(today, windowDays - 1);
   return live
     // A series whose evidence has run out is not a forecast. UBER *ONE last
     // charged 2025-05-25 and was still listed as a bill due next week, wearing

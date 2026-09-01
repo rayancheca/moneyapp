@@ -974,6 +974,54 @@ describe("detection on the synthetic corpus", () => {
     expect(dates.every((d) => d >= TODAY && d <= windowEnd)).toBe(true);
   });
 
+  /* ── the window's far edge, pinned to a single day ──────────────────────
+     🔴 `windowDays` used to end at `today + windowDays`, which is one day too
+     many. Measured on the real ledger at today = 2026-09-01, the "Upcoming 30
+     days" list showed `Flamingo South Beach (rent)` on BOTH 2026-09-01 and
+     2026-10-01, and `Rent utilities & fees` likewise — a reader would take that
+     as owing rent twice in a month.
+
+     ⚠️ Only a monthly bill anchored on today's own day-of-month can show it,
+     which is why no fixture caught it: every `TODAY` in this repo (the 8th, the
+     24th) is a day no fixture bill is anchored on. The assertion that existed
+     used `d <= addDays(TODAY, 30)`, which stays true either way. */
+
+  /** Points Netflix (monthly, fresh) at an exact date. */
+  function netflixDue(on: string): void {
+    bundle.db
+      .update(recurringSeries)
+      .set({ nextExpectedOn: on, userNextExpectedOn: null })
+      .where(eq(recurringSeries.id, seriesByName("Netflix").id))
+      .run();
+  }
+
+  test("the last day of an N-day window is day N-1, and it is included", () => {
+    netflixDue(addDays(TODAY, 29));
+    const dates = upcomingOccurrences(bundle.db, TODAY, 30)
+      .filter((o) => o.name === "Netflix")
+      .map((o) => o.date);
+    expect(dates).toEqual([addDays(TODAY, 29)]);
+  });
+
+  test("day N is outside it", () => {
+    netflixDue(addDays(TODAY, 30));
+    const hit = upcomingOccurrences(bundle.db, TODAY, 30).some((o) => o.name === "Netflix");
+    expect(hit).toBe(false);
+  });
+
+  /**
+   * The symptom itself: a monthly bill anchored on TODAY appears once in a
+   * 30-day window, not twice. Under the old bound the window spanned 31 days and
+   * caught the next month's charge as well.
+   */
+  test("a monthly bill due today appears ONCE in a 30-day window", () => {
+    netflixDue(TODAY);
+    const dates = upcomingOccurrences(bundle.db, TODAY, 30)
+      .filter((o) => o.name === "Netflix")
+      .map((o) => o.date);
+    expect(dates).toEqual([TODAY]);
+  });
+
   test("a series whose evidence has run out is not forecast at all", () => {
     // the UBER *ONE shape: monthly, last charged far beyond its own tolerance.
     // It used to appear as a bill due next week with a staleness chip attached.

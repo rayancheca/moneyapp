@@ -198,7 +198,8 @@ export function committedBook(
   const horizonEnd = addDays(to, -1);
   const moneyOut = moneyOutSeriesIds(db);
 
-  const occurrences = upcomingOccurrences(db, today, diffDays(today, horizonEnd))
+  const occurrences = // +1: `windowDays` counts days and today is the first — see its docstring
+    upcomingOccurrences(db, today, diffDays(today, horizonEnd) + 1)
     .filter((o) => moneyOut.has(o.seriesId))
     // strictly after today — `today` itself belongs to the overdue window below
     .filter((o) => compareDates(o.date, today) > 0)
@@ -309,7 +310,8 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
    */
   const horizonEnd = addDays(to, -1);
 
-  const occurrences = upcomingOccurrences(db, today, diffDays(today, horizonEnd))
+  const occurrences = // +1: `windowDays` counts days and today is the first — see its docstring
+    upcomingOccurrences(db, today, diffDays(today, horizonEnd) + 1)
     .filter((o) => carSeries.has(o.seriesId))
     .map(toCommitted);
   const book = committedOutflows({ from: today, to, months, occurrences, overdue: [] });
