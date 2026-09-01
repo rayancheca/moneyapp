@@ -155,3 +155,43 @@ describe("holdingDetail", () => {
     expect(() => holdingDetail(bundle.db, "bogus", "AAPL")).toThrow(UnknownHoldingError);
   });
 });
+
+/*
+ * ⛔ THE FIFTH SURFACE TO SAY "TODAY" over a figure that has nothing to do with
+ * the calendar. `todayReturnCents` is the move between the last two rows in
+ * `price_cache`; the card labelled it "Today" whatever day it was.
+ *
+ * 🔴 Measured on the real ledger at today = 2026-09-01: **23 of 33 holding
+ * pages** named a move that did not happen today. `ADBE` read "Today −$37.44"
+ * for 2026-05-11 — 113 days earlier — and the worst, `VEU`, was priced
+ * 2025-04-03, 516 days before. These are mostly closed positions whose last
+ * price is frozen where the position ended.
+ *
+ * `9017021` fixed three surfaces, `fcf0192` a fourth. This is the fifth, and
+ * the reason the grep missed it again: the word is a component PROP.
+ */
+describe("the day-change figure names its own two days", () => {
+  test("a holding priced through today says Today, with no interval", () => {
+    const d = holdingDetail(bundle.db, "stock", "AAPL", "2026-03-04")!;
+    expect(d.quotedOn).toBe("2026-03-04");
+    expect(d.todayReturnLabel).toBe("Today");
+    expect(d.todayReturnInterval).toBeNull();
+  });
+
+  test("a holding whose newest close is older names the two days it spans", () => {
+    // the price is four months stale — the FIGURE is unchanged, the word is not
+    const fresh = holdingDetail(bundle.db, "stock", "AAPL", "2026-03-04")!;
+    const stale = holdingDetail(bundle.db, "stock", "AAPL", "2026-07-01")!;
+    expect(stale.todayReturnCents).toBe(fresh.todayReturnCents);
+    expect(stale.todayReturnLabel).not.toBe("Today");
+    expect(stale.todayReturnInterval).toBe("Mar 4 vs Mar 3");
+  });
+
+  test("one close is no interval at all rather than a wrong one", () => {
+    bundle.db.delete(priceCache).where(eq(priceCache.quotedOn, "2026-03-04")).run();
+    bundle.db.delete(priceCache).where(eq(priceCache.quotedOn, "2026-03-03")).run();
+    const d = holdingDetail(bundle.db, "stock", "AAPL", "2026-07-01")!;
+    expect(d.todayReturnCents).toBeNull();
+    expect(d.todayReturnInterval).toBeNull();
+  });
+});

@@ -26,11 +26,14 @@ function toneClass(cents: number | null): string {
 function Stat({
   label,
   provenance,
+  hint,
   children,
 }: {
   label: string;
   /** mounted beside the LABEL, never around the figure — see ProvenancePopover */
   provenance?: Provenance | null;
+  /** the dated interval a figure was measured over, when it is not "today" */
+  hint?: string | null;
   children: React.ReactNode;
 }) {
   return (
@@ -40,6 +43,7 @@ function Stat({
         {provenance && <ProvenancePopover label={label.toLowerCase()} provenance={provenance} />}
       </dt>
       <dd className="mt-1 text-sm font-medium">{children}</dd>
+      {hint && <div className="mt-0.5 text-[11px] text-ink-faint">{hint}</div>}
     </div>
   );
 }
@@ -67,7 +71,13 @@ export function PositionCard({ detail, provenance }: { detail: HoldingDetail; pr
             <span className="text-ink-faint">—</span>
           )}
         </Stat>
-        <Stat label="Today">
+        {/* ⛔ The period is NAMED, never assumed. This figure is the move
+            between the last two rows in `price_cache` and does not depend on
+            the calendar at all; measured on the real ledger, 23 of 33 holding
+            pages called it "Today" when it was not, the worst by 516 days.
+            `dayChangeLabel` is the same rule the /investments header and the
+            dashboard teaser already use. */}
+        <Stat label={detail.todayReturnLabel} hint={detail.todayReturnInterval}>
           {detail.todayReturnCents !== null ? (
             <span className="flex items-baseline gap-1.5">
               <Money cents={detail.todayReturnCents} flow />

@@ -5,6 +5,8 @@ import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings, priceCache, ASSET_TYPES, type AssetType } from "@/db/schema/holdings";
 import { transactions } from "@/db/schema/transactions";
 import { compareDates, todayIso } from "@/lib/dates";
+import { dayChangeLabel } from "@/lib/day-change-label";
+import { formatDayShort } from "@/lib/format-date";
 import { holdingReturnDays } from "@/lib/holding-returns";
 import { moneyWeightedReturn, type PortfolioDay } from "@/lib/portfolio-returns";
 import { carryForwardTo } from "@/lib/price-series";
@@ -78,6 +80,24 @@ export interface HoldingDetail {
   costCents: number | null;
   todayReturnCents: number | null;
   todayReturnPct: number | null;
+  /**
+   * What to CALL `todayReturnCents` — "Today" only when the newest close is
+   * today's, otherwise the two dates it was measured between.
+   *
+   * 🔴 The card said "Today" unconditionally. Measured on the real ledger at
+   * today = 2026-09-01: **23 of 33 holding pages** labelled a move that did not
+   * happen today, the worst by 516 days (VEU, priced 2025-04-03). `ADBE` read
+   * "Today −$37.44" for 2026-05-11. This figure does not depend on the calendar
+   * at all — it is the move between the last two rows in `price_cache` — so the
+   * word was never anything but an assumption.
+   *
+   * Resolved here rather than in the component, the way `dashboard.ts` resolves
+   * the same phrase for the investments teaser: the naming rule needs `today`,
+   * which this service already has and the card's props do not.
+   */
+  todayReturnLabel: string;
+  /** the dated interval, or null when the figure really is today's */
+  todayReturnInterval: string | null;
   totalPlCents: number | null;
   totalPlPct: number | null;
   diversityPct: number | null;
@@ -284,6 +304,8 @@ export function holdingDetail(
         : null,
     }));
 
+  const dayNaming = dayChangeLabel(latest?.quotedOn ?? null, previous?.quotedOn ?? null, today, formatDayShort);
+
   const returnDays = holdingReturnDays(
     events.map((e) => ({ day: e.occurredOn, deltaE8: e.quantityDeltaE8 })),
     closes.map((c) => ({ day: c.quotedOn, close: c.close })),
@@ -305,6 +327,8 @@ export function holdingDetail(
     costCents,
     todayReturnCents,
     todayReturnPct,
+    todayReturnLabel: dayNaming.label,
+    todayReturnInterval: dayNaming.interval,
     totalPlCents,
     totalPlPct,
     diversityPct,
