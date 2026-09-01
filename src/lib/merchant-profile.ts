@@ -16,6 +16,8 @@
  *   is shown beside it whenever the two disagree.
  */
 
+import { diffDays } from "./dates";
+
 /** Visits below this cannot establish a rate, however long the span. */
 export const MIN_VISITS_FOR_RATE = 3;
 /** Nor can a span shorter than this, however many visits are in it. */
@@ -53,7 +55,16 @@ export interface MerchantProfile {
   totalCents: number;
   firstSeen: string | null;
   lastSeen: string | null;
-  /** days from first to last visit, inclusive of neither end's partial month */
+  /**
+   * Days the merchant was observed over: first visit through last, BOTH ENDS
+   * INCLUDED. Purchases all on one day span one day.
+   *
+   * 🔴 This was the exclusive difference while both sentences it feeds name a
+   * count of days from first to last. Measured on the real ledger, all 152
+   * merchants printing one of those sentences printed a count one short, and
+   * four printed "N visits inside 0 days" over purchases that all fell on a
+   * single day — a sentence that refutes itself.
+   */
   spanDays: number;
   /**
    * The headline — spend per month across the ACTIVE span, or null when the
@@ -74,11 +85,6 @@ export interface MerchantProfile {
   categoryMix: MerchantCategorySlice[];
   /** newest year first */
   years: MerchantYear[];
-}
-
-/** Whole days between two iso days. */
-function daysBetween(from: string, to: string): number {
-  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 }
 
 export function merchantProfile(visits: readonly MerchantVisit[], today: string): MerchantProfile {
@@ -103,7 +109,10 @@ export function merchantProfile(visits: readonly MerchantVisit[], today: string)
   const days = visits.map((v) => v.day).sort();
   const firstSeen = days[0]!;
   const lastSeen = days[days.length - 1]!;
-  const spanDays = daysBetween(firstSeen, lastSeen);
+  // +1: an inclusive count of days, so one day of purchases is one day. The
+  // rate below divides by this same number — see the branch comment further
+  // down: the figure and the sentence describing it are chosen together.
+  const spanDays = diffDays(firstSeen, lastSeen) + 1;
   const totalCents = visits.reduce((t, v) => t + v.amountCents, 0);
 
   /*
@@ -133,7 +142,7 @@ export function merchantProfile(visits: readonly MerchantVisit[], today: string)
         ? "One visit. A single purchase is not a rate, so none is given."
         : `${visits.length} visits. Too few to describe a monthly habit.`;
   } else if (spanDays < MIN_SPAN_DAYS_FOR_RATE) {
-    monthlyBasis = `${visits.length} visits inside ${spanDays} days — too short a stretch to call it monthly.`;
+    monthlyBasis = `${visits.length} visits inside ${spanDays} ${spanDays === 1 ? "day" : "days"} — too short a stretch to call it monthly.`;
   } else {
     // spread across the span that was actually observed, not a calendar window
     monthlyCents = Math.round(totalCents / (spanDays / DAYS_PER_MONTH));

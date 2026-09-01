@@ -28,13 +28,14 @@ function weekly(count: number, amountCents: number, from = "2025-01-01"): Mercha
 
 describe("merchantProfile — the number a merchant page exists to give", () => {
   test("states a monthly rate across the span actually observed", () => {
-    // 53 weekly $10 visits spans 364 days = 11.96 months → ~$44.34/month
+    // 53 weekly $10 visits, first 2025-01-01 and last 2025-12-31 — 365 days
+    // observed, both ends included, = 12.0 months → ~$44.19/month
     const p = merchantProfile(weekly(53, 1000), TODAY);
     expect(p.visitCount).toBe(53);
     expect(p.totalCents).toBe(53000);
-    expect(p.spanDays).toBe(364);
-    expect(p.monthlyCents).toBeCloseTo(4434, -1);
-    expect(p.monthlyBasis).toMatch(/364 days/);
+    expect(p.spanDays).toBe(365);
+    expect(p.monthlyCents).toBeCloseTo(4419, -1);
+    expect(p.monthlyBasis).toMatch(/365 days/);
   });
 
   test("the rate is spread over the SPAN, not over a calendar year", () => {
@@ -59,7 +60,8 @@ describe("merchantProfile — the number a merchant page exists to give", () => 
     const p = merchantProfile(weekly(10, 500), TODAY);
     expect(p.firstSeen).toBe("2025-01-01");
     expect(p.lastSeen).toBe("2025-03-05");
-    expect(p.spanDays).toBe(63);
+    // Jan 1 through Mar 5 inclusive: 31 + 28 + 5
+    expect(p.spanDays).toBe(64);
   });
 });
 
@@ -84,9 +86,9 @@ describe("merchantProfile — when it refuses to state a rate", () => {
   });
 
   test("enough visits inside too short a stretch is not a rate", () => {
-    // 8 visits in 49 days: plenty of visits, not enough elapsed time
+    // 8 visits over 50 observed days: plenty of visits, not enough of a stretch
     const p = merchantProfile(weekly(8, 1000), TODAY);
-    expect(p.spanDays).toBe(49);
+    expect(p.spanDays).toBe(50);
     expect(p.monthlyCents).toBeNull();
     expect(p.monthlyBasis).toMatch(/too short a stretch/i);
   });
@@ -99,12 +101,76 @@ describe("merchantProfile — when it refuses to state a rate", () => {
       [
         { day: "2025-01-01", amountCents: 1000, categoryName: "Food" },
         { day: "2025-02-01", amountCents: 1000, categoryName: "Food" },
-        { day: "2025-03-02", amountCents: 1000, categoryName: "Food" },
+        // Jan 1 through Mar 1 inclusive is exactly 60 observed days
+        { day: "2025-03-01", amountCents: 1000, categoryName: "Food" },
       ],
       TODAY,
     );
     expect(at.spanDays).toBe(60);
     expect(at.monthlyCents).not.toBeNull();
+
+    // …and one day less is one day short
+    const under = merchantProfile(
+      [
+        { day: "2025-01-01", amountCents: 1000, categoryName: "Food" },
+        { day: "2025-02-01", amountCents: 1000, categoryName: "Food" },
+        { day: "2025-02-28", amountCents: 1000, categoryName: "Food" },
+      ],
+      TODAY,
+    );
+    expect(under.spanDays).toBe(59);
+    expect(under.monthlyCents).toBeNull();
+  });
+
+  /*
+   * 🔴 `spanDays` was the EXCLUSIVE difference while both sentences it feeds
+   * name a count of days from first to last with both ends included.
+   *
+   * Measured on the real ledger at today = 2026-09-01: all 152 merchants that
+   * print one of those sentences printed a count exactly one short, and four
+   * printed a sentence that refutes itself —
+   *
+   *     Kalshi              "5 visits inside 0 days — too short a stretch…"
+   *     Fanatics Sportsbook "4 visits inside 0 days — …"
+   *     Gotham Burger NYC   "3 visits inside 0 days — …"
+   *     L Train Vintage     "3 visits inside 0 days — …"
+   *
+   * Every one of those merchants' purchases fell on a single day. Five visits
+   * happened inside ONE day; zero days hold nothing at all.
+   *
+   * ⚠️ The figure and the divisor are the same number on purpose — the branch
+   * above picks the rate and the sentence together so a figure can never sit
+   * beside a description of a different figure. Fixing only the sentence would
+   * break that.
+   */
+  test("visits on a single day span one day, not zero", () => {
+    const p = merchantProfile(
+      [
+        { day: "2026-02-04", amountCents: 1000, categoryName: "Food" },
+        { day: "2026-02-04", amountCents: 2000, categoryName: "Food" },
+        { day: "2026-02-04", amountCents: 3000, categoryName: "Food" },
+      ],
+      TODAY,
+    );
+    expect(p.spanDays).toBe(1);
+    // the whole sentence, so "1 days" cannot pass as "1 day" plus an s
+    expect(p.monthlyBasis).toBe("3 visits inside 1 day — too short a stretch to call it monthly.");
+    expect(p.monthlyCents).toBeNull();
+  });
+
+  test("the sentence counts the same days the divisor does", () => {
+    const p = merchantProfile(
+      [
+        { day: "2025-01-01", amountCents: 3000, categoryName: "Food" },
+        { day: "2025-03-01", amountCents: 3000, categoryName: "Food" },
+        { day: "2025-04-30", amountCents: 3000, categoryName: "Food" },
+      ],
+      TODAY,
+    );
+    // 2025-01-01 through 2025-04-30 inclusive: 31 + 28 + 31 + 30
+    expect(p.spanDays).toBe(120);
+    expect(p.monthlyBasis).toBe("Spread across the 120 days from 2025-01-01 to 2025-04-30.");
+    expect(p.monthlyCents).toBe(Math.round(9000 / (120 / (365.2425 / 12))));
   });
 
   test("a merchant with no visits at all is empty, not an error", () => {
