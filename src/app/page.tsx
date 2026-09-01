@@ -10,7 +10,7 @@ import { dashboardChartData } from "@/services/dashboard-series";
 import { spendingSankey } from "@/services/sankey";
 import { netWorthAttribution, type NetWorthAttribution } from "@/services/attribution";
 import { provenanceFor } from "@/services/provenance";
-import { CHART_RANGES, rangeStartDay, type ChartRange } from "@/lib/chart-range";
+import { CHART_RANGES, rangeAggregateStartDay, rangeStartDay, type ChartRange } from "@/lib/chart-range";
 import type { SankeyGraph } from "@/lib/sankey-layout";
 import { resolveViewState } from "@/lib/view-state";
 import type { DeckCard } from "@/components/dashboard/CardDeck";
@@ -169,9 +169,13 @@ export default async function DashboardPage({
   // round-trip (the pill is client-side ChartFocus state). Only runs in sankey
   // mode; 5 aggregations over local SQLite is cheap for a single-user desktop
   // app — revisit (build once + slice, or a per-range server action) if hosted.
+  // ⛔ `rangeAggregateStartDay`, NOT `rangeStartDay`. The Sankey SUMS a closed
+  // [from, to]; the chart and the bridge below difference two endpoints and
+  // need the extra day to hold the change across it. Sharing one day made the
+  // "1 month" flow span thirty-ONE days and count the owner's rent twice.
   const sankeyByRange = isSankey
     ? (Object.fromEntries(
-        CHART_RANGES.map((r) => [r, spendingSankey(db, { from: rangeStartDay(r, today) ?? EARLIEST_DAY, to: today })]),
+        CHART_RANGES.map((r) => [r, spendingSankey(db, { from: rangeAggregateStartDay(r, today) ?? EARLIEST_DAY, to: today })]),
       ) as Record<ChartRange, SankeyGraph>)
     : null;
   /*

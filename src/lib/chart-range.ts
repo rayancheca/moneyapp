@@ -58,6 +58,33 @@ export function rangeStartDay(range: ChartRange, today: string): string | null {
   return addDays(today, -TRAILING_DAYS[range]!);
 }
 
+/**
+ * The inclusive first day of an N-DAY window ending on `today`, for callers
+ * that SUM OVER DAYS rather than difference two endpoints.
+ *
+ * ⛔ This is not the same day as `rangeStartDay`, and the difference is the
+ * whole point. A chart or a bridge asks what CHANGED between two moments, so
+ * "1 month" needs 31 daily points to hold 30 daily changes — and
+ * `netWorthAttribution` sums its flows over `(from, to]` for the same reason.
+ * A total over a window asks how much money moved, and summing `[from, to]`
+ * inclusive over `rangeStartDay`'s day gives thirty-ONE days of it.
+ *
+ * 🔴 Measured on the real ledger, the dashboard's Flow view at the "1 month"
+ * pill: at today = 2025-08-06 it summed [2025-07-07 … 2025-08-06] = $9,148.10
+ * where the thirty days it names come to $5,353.72. The extra day holds
+ * `Direct Payment Hoffman LL` −$1,779.49, the previous landlord's rent, while
+ * 2025-08-04 inside the window holds the next one — rent twice in a window
+ * labelled one month, and the total 71% high.
+ *
+ * YTD and ALL are anchored rather than trailing, so both functions agree about
+ * them; only the trailing pills differ.
+ */
+export function rangeAggregateStartDay(range: ChartRange, today: string): string | null {
+  if (range === "ALL") return null;
+  if (range === "YTD") return `${today.slice(0, 4)}-01-01`;
+  return addDays(today, -(TRAILING_DAYS[range]! - 1));
+}
+
 /** Human label for a range pill's accessible name / summary. */
 const RANGE_LABEL: Record<ChartRange, string> = {
   "1D": "1 day",
