@@ -5,6 +5,7 @@ import { categories } from "@/db/schema/categories";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addCalendarMonths, addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { forecastSplit } from "@/lib/forecast-split";
 import { projectOngoingIncome } from "@/lib/income-forecast";
 import { trailingPace } from "@/lib/projection";
 import { formatCents } from "@/lib/money";
@@ -115,6 +116,15 @@ export interface ForecastComponent {
  */
 export type ForecastBasis = "current" | "future";
 
+/** One internally consistent reading of a month: net === income + spend. */
+export interface ForecastTotals {
+  incomeCents: number;
+  spendCents: number;
+  netCents: number;
+  eomCashCents: number;
+  eomNetWorthCents: number;
+}
+
 export interface MonthForecast {
   today: string;
   /** the month this projects, `YYYY-MM` */
@@ -130,6 +140,29 @@ export interface MonthForecast {
   projectedNetCents: number;
   projectedEomCashCents: number;
   projectedEomNetWorthCents: number;
+  /**
+   * The SCHEDULE alone: money the owner has agreed to pay and pay the deposits
+   * he is due, with no trailing pace in it at all.
+   *
+   * ⛔ This is the headline the card shows, at the owner's instruction and over
+   * my stated objection — recorded here because a future reader will otherwise
+   * "fix" it back. His words: *"projected income is 1047*4 a month. projected
+   * spend is the actual monthlies i have you so around 3.5k"*. For September
+   * 2026 that is **+$4,188.00** and **−$3,567.60**, netting **+$620.40**.
+   *
+   * ⭐ It is also the figure the calendar strip DIRECTLY BELOW the card has been
+   * printing all along — "as scheduled +$620.40" — so before this change the two
+   * halves of one screen disagreed about the same month by $7,417.48, and the
+   * one the eye lands on first was the one with the pace baked in.
+   *
+   * ⚠️ What it is NOT: a prediction of his balance. Groceries, petrol and
+   * restaurants are real money leaving a real account, and they are not in this
+   * number. `projected*Cents` above still carries them, the card still shows
+   * them on their own row, and `eomCashCents` here is what the month ends at IF
+   * nothing discretionary happens — which is never. Read the two together or
+   * neither.
+   */
+  committed: ForecastTotals;
   components: ForecastComponent[];
 }
 
@@ -466,7 +499,14 @@ function futureMonthParts(
   db: AppDatabase,
   today: string,
   key: string,
-): { components: ForecastComponent[]; monthStart: string; monthEnd: string; daysInMonth: number; net: number } {
+): {
+  components: ForecastComponent[];
+  monthStart: string;
+  monthEnd: string;
+  daysInMonth: number;
+  net: number;
+  committedNet: number;
+} {
   const monthStart = `${key}-01`;
   const monthEnd = periodBounds(monthStart, "monthly").end;
   const daysInMonth = diffDays(monthStart, monthEnd) + 1;
@@ -478,7 +518,15 @@ function futureMonthParts(
   ];
   const income = components.reduce((sum, c) => (c.cents > 0 ? sum + c.cents : sum), 0);
   const spend = components.reduce((sum, c) => (c.cents < 0 ? sum + c.cents : sum), 0);
-  return { components, monthStart, monthEnd, daysInMonth, net: income + spend };
+  const split = forecastSplit(components);
+  return {
+    components,
+    monthStart,
+    monthEnd,
+    daysInMonth,
+    net: income + spend,
+    committedNet: split.income.fixedCents + split.spending.fixedCents,
+  };
 }
 
 /**
@@ -512,11 +560,22 @@ export function forecastForMonth(
    * are whole ones. `forecastCurrentMonth` is called once here rather than per
    * step; the loop below only needs each future month's NET.
    */
-  let chainedNet = forecastCurrentMonth(db, today).projectedNetCents;
+  const running = forecastCurrentMonth(db, today);
+  let chainedNet = running.projectedNetCents;
+  /*
+   * ⛔ The committed reading is chained SEPARATELY, never derived from the full
+   * one. "Today's cash plus every month's committed net" and "the full chain
+   * minus the pace" are the same number only when the pace is zero, and the
+   * whole reason this figure exists is that it is not.
+   */
+  let chainedCommittedNet = running.committed.netCents;
   for (let i = 1; i < ahead; i++) {
-    chainedNet += futureMonthParts(db, today, addMonthKey(current, i)).net;
+    const between = futureMonthParts(db, today, addMonthKey(current, i));
+    chainedNet += between.net;
+    chainedCommittedNet += between.committedNet;
   }
   chainedNet += parts.net;
+  chainedCommittedNet += parts.committedNet;
 
   const cashTypes = new Set(["checking", "savings"]);
   const activeAccounts = db
@@ -533,6 +592,8 @@ export function forecastForMonth(
 
   const income = parts.components.reduce((sum, c) => (c.cents > 0 ? sum + c.cents : sum), 0);
   const spend = parts.components.reduce((sum, c) => (c.cents < 0 ? sum + c.cents : sum), 0);
+  const split = forecastSplit(parts.components);
+  const netWorthCents = latestBridgedNetWorthCents(db, balances);
 
   return {
     today,
@@ -547,7 +608,14 @@ export function forecastForMonth(
     projectedSpendCents: spend,
     projectedNetCents: parts.net,
     projectedEomCashCents: cashCents + chainedNet,
-    projectedEomNetWorthCents: latestBridgedNetWorthCents(db, balances) + chainedNet,
+    projectedEomNetWorthCents: netWorthCents + chainedNet,
+    committed: {
+      incomeCents: split.income.fixedCents,
+      spendCents: split.spending.fixedCents,
+      netCents: parts.committedNet,
+      eomCashCents: cashCents + chainedCommittedNet,
+      eomNetWorthCents: netWorthCents + chainedCommittedNet,
+    },
     components: parts.components,
   };
 }
@@ -567,6 +635,10 @@ export function forecastCurrentMonth(db: AppDatabase, today: string = todayIso()
   const projectedIncomeCents = components.reduce((sum, c) => (c.cents > 0 ? sum + c.cents : sum), 0);
   const projectedSpendCents = components.reduce((sum, c) => (c.cents < 0 ? sum + c.cents : sum), 0);
   const projectedNetCents = projectedIncomeCents + projectedSpendCents;
+  // the SCHEDULE alone — same array, partitioned; see MonthForecast.committed
+  const committedSplit = forecastSplit(components);
+  const committedNetCents =
+    committedSplit.income.fixedCents + committedSplit.spending.fixedCents;
 
   const cashTypes = new Set(["checking", "savings"]);
   const activeAccounts = db
@@ -600,6 +672,13 @@ export function forecastCurrentMonth(db: AppDatabase, today: string = todayIso()
     projectedNetCents,
     projectedEomCashCents: cashCents + projectedNetCents,
     projectedEomNetWorthCents: latestNetWorth + projectedNetCents,
+    committed: {
+      incomeCents: committedSplit.income.fixedCents,
+      spendCents: committedSplit.spending.fixedCents,
+      netCents: committedNetCents,
+      eomCashCents: cashCents + committedNetCents,
+      eomNetWorthCents: latestNetWorth + committedNetCents,
+    },
     components,
   };
 }

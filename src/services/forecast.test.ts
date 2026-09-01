@@ -725,4 +725,147 @@ describe("forecastForMonth", () => {
     expect(forecastForMonth(bundle.db, "2028-07", TODAY)).not.toBeNull();
     expect(forecastForMonth(bundle.db, "2028-08", TODAY)).toBeNull();
   });
+
+  /* ── the committed reading ───────────────────────────────────────────────
+     ⛔ The five headline tiles show THIS, at the owner's instruction:
+     *"projected income is 1047*4 a month. projected spend is the actual
+     monthlies i have you so around 3.5k"*. The trailing pace keeps its own row
+     and its own end-of-month cash, so nothing is deleted — but the number his
+     eye lands on is now the schedule. */
+
+  /** A cash job paying $1,047 weekly, plus a month of discretionary spending. */
+  function scheduleAndPace(): void {
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Cash job (weekly pay)",
+        kind: "income",
+        cadence: "weekly",
+        intervalDaysAvg: 7,
+        nextExpectedOn: "2026-08-06",
+        nextExpectedAmountCents: 104_700,
+        status: "confirmed",
+        toleranceDays: 3,
+      })
+      .run();
+    // three full trailing months of uncategorised outflow → a variable bucket
+    for (const day of ["2026-04-15", "2026-05-15", "2026-06-15"]) {
+      const raw = `PACE ${day}`;
+      bundle.db
+        .insert(transactions)
+        .values({
+          accountId: checkingId,
+          postedOn: day,
+          amountCents: -31_000,
+          rawDescription: raw,
+          normalizedDescription: raw,
+          status: "active",
+          dedupeHash: dedupeHash({
+            accountId: checkingId,
+            postedOn: day,
+            amountCents: -31_000,
+            rawDescription: raw,
+            occurrenceIndex: 0,
+          }),
+        })
+        .run();
+    }
+  }
+
+  test("committed carries the schedule alone, with no trailing pace in it", () => {
+    rent();
+    scheduleAndPace();
+    const aug = forecastForMonth(bundle.db, "2026-08", TODAY)!;
+
+    // Aug 6, 13, 20, 27 — four paydays
+    expect(aug.committed.incomeCents).toBe(4 * 104_700);
+    expect(aug.committed.spendCents).toBe(-200_000);
+    expect(aug.committed.netCents).toBe(4 * 104_700 - 200_000);
+
+    // the pace is REAL and still reported — just not in the headline
+    expect(aug.projectedSpendCents).toBeLessThan(aug.committed.spendCents);
+    expect(aug.projectedIncomeCents).toBe(aug.committed.incomeCents);
+  });
+
+  test("committed.net is its own row's arithmetic, never the full net", () => {
+    rent();
+    scheduleAndPace();
+    for (const key of ["2026-08", "2026-09", "2026-10"]) {
+      const m = forecastForMonth(bundle.db, key, TODAY)!;
+      expect(m.committed.netCents).toBe(m.committed.incomeCents + m.committed.spendCents);
+      expect(m.committed.netCents).not.toBe(m.projectedNetCents);
+    }
+  });
+
+  /*
+   * ⛔ The committed end-of-month cash is CHAINED SEPARATELY. Deriving it as
+   * "the full chain minus this month's pace" is the obvious shortcut and it is
+   * wrong by every EARLIER month's pace — a mistake that grows the further ahead
+   * you page, which is exactly when nobody is checking.
+   */
+  test("committed end-of-month cash chains through its own months only", () => {
+    rent();
+    scheduleAndPace();
+    const jul = forecastCurrentMonth(bundle.db, TODAY);
+    const aug = forecastForMonth(bundle.db, "2026-08", TODAY)!;
+    const sep = forecastForMonth(bundle.db, "2026-09", TODAY)!;
+    const oct = forecastForMonth(bundle.db, "2026-10", TODAY)!;
+
+    expect(aug.committed.eomCashCents).toBe(jul.committed.eomCashCents + aug.committed.netCents);
+    expect(sep.committed.eomCashCents).toBe(aug.committed.eomCashCents + sep.committed.netCents);
+    expect(oct.committed.eomCashCents).toBe(sep.committed.eomCashCents + oct.committed.netCents);
+
+    // and the shortcut really is wrong — by more than one month's pace
+    const shortcut = oct.projectedEomCashCents - (oct.projectedNetCents - oct.committed.netCents);
+    expect(oct.committed.eomCashCents).not.toBe(shortcut);
+  });
+
+  /*
+   * ⛔ The RUNNING month's committed reading needs pinning on its own, and this
+   * is the test that was missing: the chain assertions above verify only that
+   * each month's cash equals the previous month's plus its net, and that
+   * identity survives feeding the FULL July net into the committed chain —
+   * both sides shift together. Found by mutation; the chain tests all stayed
+   * green while the first link was quietly the wrong number.
+   *
+   * At TODAY = 2026-07-08 neither commitment has started (rent 2026-08-01, the
+   * cash job 2026-08-06), so July's committed net is exactly zero while its
+   * full net is the trailing pace.
+   */
+  test("the running month's committed net excludes its own pace", () => {
+    rent();
+    scheduleAndPace();
+    const jul = forecastCurrentMonth(bundle.db, TODAY);
+    expect(jul.committed.incomeCents).toBe(0);
+    expect(jul.committed.spendCents).toBe(0);
+    expect(jul.committed.netCents).toBe(0);
+    expect(jul.projectedNetCents).toBeLessThan(0);
+    expect(jul.committed.netCents).not.toBe(jul.projectedNetCents);
+  });
+
+  test("net worth chains on the committed reading too", () => {
+    rent();
+    scheduleAndPace();
+    const jul = forecastCurrentMonth(bundle.db, TODAY);
+    const aug = forecastForMonth(bundle.db, "2026-08", TODAY)!;
+    expect(aug.committed.eomNetWorthCents).toBe(
+      jul.committed.eomNetWorthCents + aug.committed.netCents,
+    );
+  });
+
+  /*
+   * With nothing discretionary in the ledger the two readings are the same
+   * month, so they must agree to the cent. A card that showed two different
+   * numbers here would be inventing a distinction rather than reporting one.
+   */
+  test("with no trailing pace at all, committed equals the full projection", () => {
+    rent();
+    const aug = forecastForMonth(bundle.db, "2026-08", TODAY)!;
+    expect(aug.committed.incomeCents).toBe(aug.projectedIncomeCents);
+    expect(aug.committed.spendCents).toBe(aug.projectedSpendCents);
+    expect(aug.committed.netCents).toBe(aug.projectedNetCents);
+    expect(aug.committed.eomCashCents).toBe(aug.projectedEomCashCents);
+    expect(aug.committed.eomNetWorthCents).toBe(aug.projectedEomNetWorthCents);
+  });
+
 });

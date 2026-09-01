@@ -1,10 +1,9 @@
-# Handoff — the income question, answered; and the split that hid behind its own error
+# Handoff — the income question, answered; and a headline that had to be told twice
 
 > **Supersedes `HANDOFF-2026-08-31b-forecast-and-calendar.md`.**
 >
-> **`main` = `cda9429`**, tree clean, pushed. tsc clean · **4,278 unit** ·
-> **E2E_GATE=1: 585 passed at `maxDiffPixels: 0`** (8.3m, green on the first
-> confirming run) · `pnpm ledger-check` exit 0, on every commit.
+> **`main` = `GATE_PENDING`**, tree clean, pushed. tsc clean · **4,283 unit** ·
+> **E2E_GATE=1: E2E_PENDING** · `pnpm ledger-check` exit 0, on every commit.
 >
 > Repo: **`/Users/rayankarimcheca/dev/MoneyApp`**.
 > Ledger: 10,111 active rows · income $117,924.62 · spending $167,828.49 ·
@@ -95,16 +94,51 @@ does now: see §2.
 
 ---
 
-## 2. ✅ The forecast card says what its numbers are MADE OF
+## 2. ✅ The forecast card's HEADLINE is the schedule — and I got this wrong once
 
-The card published one spending figure. For September that figure is
-**$11,030.77**, read against an expectation of "3-5k". He was right about his
-bills; the card just never separated them.
+⛔ **Read this before touching `ForecastCard`.** I shipped the split as a BAND
+under a headline that still showed the total, and the owner's reply was:
+
+> *"can you please do what i fucking told yu. projected income is 1047*4 a
+> month. projected spend is the actual monthlies i have you so arouund 3.5k"*
+
+He was right, and the lesson generalises: **a disclosure underneath does not
+undo a wrong number on top.** The tiles are what the eye lands on. Splitting a
+figure into a footnote is not the same as answering the question.
+
+The five tiles now read `MonthForecast.committed` — the schedule alone:
+
+    PROJECTED INCOME   +$4,188.00     (Cash job, 4 × $1,047.00)
+    PROJECTED SPENDING −$3,567.60     (9 commitments)
+    PROJECTED NET        +$620.40
+    EOM CASH           $6,138.66
+    EOM NET WORTH      $113,658.83
+
+    Your bills and scheduled pay only — 9 commitments and 1 series.
 
     MONEY IN   ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░   all of it running late
-               Scheduled $4,188.00 (1 line) · Recent pace $45.69 (2 lines)
     MONEY OUT  ▓▓▓▓▓▓░░░░░░░░░░░░░░░   $1,402.60 of it running late
-               Committed $3,567.60 (9 lines) · Recent pace $7,463.17 (15 lines)
+
+    IF YOU ALSO SPEND AT YOUR RECENT PACE
+    Income +$4,220.75 · Spending −$7,716.62 · Net −$3,495.87 · EOM cash $2,022.39
+
+⭐ **This settled a contradiction older than the card.** The calendar strip
+DIRECTLY BELOW has always printed *"as scheduled +$620.40"* while the tiles above
+it said −$6,797.08. One screen, one month, two answers $7,417.48 apart, and the
+one the eye reaches first had the pace baked in. They finally agree.
+
+⚠️ **The pace is NOT deleted.** Groceries, petrol and restaurants are real money
+leaving a real account, and a card showing only the schedule would predict a
+September ending $6,138.66 up. So the pace keeps a full row of its own, with its
+own end-of-month cash. Two EOM-cash figures on one card is a genuine hazard —
+this app has been bitten by one quantity with two definitions — and what makes it
+safe is that neither is a subtotal of the other: each is a COMPLETE, internally
+consistent reading, labelled with the assumption that produced it.
+
+⛔ **`committed.eomCashCents` is chained SEPARATELY**, never derived as "the full
+chain minus this month's pace". That shortcut is wrong by every EARLIER month's
+pace, and it grows the further ahead you page — which is exactly when nobody is
+checking. There is a test that fails on the shortcut specifically.
 
 Both halves were always in `f.components`, which has carried a `kind` of
 `"fixed" | "variable"` since it was written. `lib/forecast-split.ts` partitions
@@ -116,10 +150,25 @@ that array by **sign first, kind second** — which is exactly how
 
 hold by arithmetic, not by luck, with no rounding anywhere.
 
-**A band, not two more tiles.** Seven tiles is a wall, and the split is the
-working rather than a seventh headline. Putting money in and money out on one
-picture is also the only way the asymmetry shows: spending is 30.3% committed,
-income is 98.9% one stale series.
+### 🔴 The card had NO behavioural test at all
+
+Five figures, covered only by PIXEL baselines. A baseline pins that a number did
+not move; it cannot tell you the number is under the wrong label — which is
+precisely the defect he reported. `e2e/zz-forecast-headline.spec.ts` now asserts
+by label and by relationship, and 4 of its 5 tests go red on the exact
+regression.
+
+⚠️ **And its first version was too weak.** `net === income + spending` holds for
+BOTH readings, so a test that stopped there stayed green on the mutant. The
+assertion that bites is the tiles matching the band's committed/scheduled parts
+to the cent.
+
+⚠️ **The real date rolled from 2026-08-31 to 2026-09-01 mid-session**, which
+moved the trailing window from May-Jul to Jun-Aug and changed every pace figure
+(September's total spend $11,030.77 → $7,716.62). The COMMITTED figures were
+identical across the rollover — $4,188.00 / −$3,567.60 / +$620.40 — because they
+come from the schedule, not the pace. Any pace number quoted in this document is
+as-of its date; re-measure rather than quote.
 
 ⛔ `fixedShare` is **null**, not zero, for an empty side — "nothing is projected"
 and "none of what is projected is committed" are different claims. And the
@@ -166,10 +215,10 @@ recurring card and `/spending` could project one category two ways.
 `trailingPace` is now the single home.
 
 **It binds on exactly two categories:** Travel $2,234.86 → **$1,608.53**,
-Entertainment $329.85 → $221.61. September variable spend $8,197.74 →
-**$7,463.17**; total $11,765.34 → **$11,030.77**; net −$7,531.65 → **−$6,797.08**.
-`/budgets` and `/spending` are unchanged — all four budgeted categories have
-slopes under their medians.
+Entertainment $329.85 → $221.61 (measured at today = 2026-08-31; the trailing
+window has since moved — see §2's rollover note — so re-measure rather than
+quote). `/budgets` and `/spending` are unchanged: all four budgeted categories
+have slopes under their medians.
 
 ⚠️ If Travel still reads high, the lever is the CENTRE, not the cap: median3
 gives $1,180.48, at the cost of under-predicting the total by ~$1,175/month.
