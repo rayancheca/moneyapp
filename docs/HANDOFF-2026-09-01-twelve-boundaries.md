@@ -1,4 +1,4 @@
-# Handoff — fourteen more phrasings of one boundary, and where they were hiding
+# Handoff — eighteen more phrasings of one boundary, and where they were hiding
 
 > **Supersedes `HANDOFF-2026-08-31c-the-income-answer-and-the-split.md`.**
 >
@@ -13,35 +13,26 @@
 
 # ⛔ 0. THE JOB — what is next
 
-**Nothing here is urgent and nothing is half-finished.** In order:
+**Nothing here is urgent and nothing is half-finished.** Every item the first
+half of this session left open has since been closed — see §9. What is left:
 
-1. **`investmentsTeaser` has NO unit coverage at all** — `services/dashboard.ts`
-   around line 266. Two mutants survive: the sparkline can be reversed
-   (`slice(-30)` → `slice(0, 30)`, drawing the OLDEST thirty days) and
-   `dayChangeTerm`'s two dates can be swapped. It is a card on your dashboard,
-   and the second mutant is the exact defect this session's first fix was about.
-   §7 lists four more surviving mutants with their exact edits.
-2. **Take the free fixture widening** — the one-day merchant, 0 baselines, §6.
-   It is the only condition in the "cannot express" table that costs nothing.
-3. **Decide the today boundary once.** `/budgets` calls a bill due today
-   "came due this period"; the runway card now says nothing is late until
-   tomorrow. Both are defensible, they disagree on the 1st of every month, and
-   `committed.ts` now states the disagreement instead of the false reason it
-   used to give for tolerating it. `budgetOverdue` is shared with `carryInto`
-   and the budget projection, so moving its edge is not a one-line change —
-   which is why I did not make it blind.
-4. **`spendBaseline`'s floor keeps the ledger's OPENING month whole** even when
-   only part of it was observed. At today = 2022-10-01 it publishes $519.61 a
-   month captioned "2 complete months, 2022-08 to 2022-09" while the one month
-   the ledger covered in full spent $992.78. Cannot fire on your ledger as it
-   stands; fires on any young one.
-5. **Pass 75 onward** — `docs/program-passes-60-94.md`. **HOSTING LAST.**
+1. **Pass 75 onward** — `docs/program-passes-60-94.md`. **HOSTING LAST.**
+2. **Two decisions that are yours, not mine** (both measured, neither changed):
+   - `year-summary` counts **realized gains** inside "All money in". $2,190.48
+     of 2025's $38,409.23 headline is an accounting result, not money that
+     arrived; the other two lines in that section (dividends, brokerage cash
+     interest) are real inflows. Naming the term was a copy fix (§9); deciding
+     whether a gain belongs in a money-in total would move the headline.
+   - The statement-reminder trade in §9: a one-off late close now delays the
+     reminder for one cycle. Reversing it is one line.
+3. **Three mutants recorded as equivalent, with their arguments** (§7 and §9).
+   If any turns out not to be, the argument is written down to be attacked.
 
 ---
 
 ## 1. The queue was empty, so the job was to find what is wrong
 
-Fourteen defects, every one the class the last session named: **a date window
+Eighteen defects, every one the class the last session named: **a date window
 whose two ends disagree, or two surfaces answering one question differently.**
 Ranked by what they put on the owner's screen.
 
@@ -61,9 +52,13 @@ Ranked by what they put on the owner's screen.
 | 12 | /spending YTD stepped back on a leap day | silently lands on the current month |
 | 13 | recurring: "**7 series are running late**" | 3 were; 4 had never charged, and 3 of those were not due yet |
 | 14 | recurring: "**$1,402.60 of it running late**" | $63.86 was; $1,338.74 had never been billed |
+| 15 | runway on a ledger's first weeks | its OPENING month averaged in as a whole one |
+| 16 | budgets: "**came due** this period" | past tense on the morning a bill falls due |
+| 17 | summary: "All money in adds what you received without earning it" | a three-term total, two terms named |
+| 18 | imports: Discover "**Ready to pull**" from Sep 3 | the statement closes on the 9th now |
 
 Two more came out of re-checking those fourteen — §5b. One of them this
-session created.
+session created. §9 has 15–18 and the rest of the second half.
 
 ---
 
@@ -226,7 +221,7 @@ its two days together, so no caller can date it from the wrong one.
 
 ---
 
-## 5b. 🔴 Two more, from re-checking the fourteen — one of them self-inflicted
+## 5b. 🔴 Two more, from re-checking the first fourteen — one of them self-inflicted
 
 - **The `userEndsOn` fix broke the subscriptions card.** Moving the end test
   into `rollForwardNextExpected` was right, but it turned a bare `continue` into
@@ -388,7 +383,90 @@ back to itself is worse than recording it.**
 
 ---
 
-## 8. Notes that keep costing time
+## 9. ⭐ Closing the list — everything §0 asked for, and four more defects
+
+Every item the first half of this session left open is done.
+
+### `investmentsTeaser` had no unit coverage at all — six tests, four mutants dead
+
+The card on your dashboard that nothing exercised. The two mutants the audit
+found both survive no longer, and two more turned out to be equally unpinned:
+- `slice(-30)` → `slice(0, 30)` drew the OLDEST thirty days beside "today's
+  move";
+- `dayChangeTerm`'s two dates SWAPPED — this session's first defect in a
+  different tense, and unreachable in e2e because every price there is quoted
+  through `E2E_FAKE_TODAY`;
+- the top mover taken as the biggest WINNER rather than the biggest move (a 4%
+  fall beats a 1% rise and the card has room for one);
+- the `valueCents === 0` guard — a book sold down to nothing still has an
+  `asOf`, so without it the dashboard headlines a card at $0.00.
+
+⚠️ One EQUIVALENT mutant recorded rather than papered over: `dayChangeExact` is
+true by construction (`buildPortfolio` writes `exact: true` unconditionally and
+nothing sets it false), so the "≈" the teaser renders cannot be reached.
+
+### The four other surviving mutants — two killed, two argued
+
+`in-flight`'s float now pins both of its own edges, from ONE fixture: a sender
+whose span derives as `gap` because its statement chain misses by a cent. The
+float must open on the day the money LEAVES (the sender is invisible then, so
+the money is in nobody's ledger), and the last day of a gap run must stay
+invisible (or the sender is counted beside the receiver's own credit).
+
+Two are recorded as equivalent with their arguments: `in-flight`'s
+`firstVisible` edge (three fixtures built, none moved a float) and `carryInto`'s
+`p.end >= currentPeriodStart` break — **brute-forced over 198,400 (cursor,
+period) pairs across all four period kinds: zero hits**, because a period's LAST
+day can never equal a period's FIRST day of the same kind.
+
+### 🔴 Four more defects, found after the list was closed
+
+- **`spendBaseline` kept the ledger's OPENING MONTH whole.** At today =
+  2022-10-01 it published $519.61/mo over "2 complete months, 2022-08 to
+  2022-09" — the one month covered in full spent $992.78. ⚠️ The fixture had the
+  same stub and hid it: every baseline row sat on the 5th, so the test ledger
+  opened 2026-02-05 and the fix shrank the file's core window from six months to
+  five, breaking five tests.
+- **The /budgets note said "came due"** — past tense, on the morning a bill
+  falls due. ⭐ And the reason the two surfaces split that instant differently is
+  NOT the calendar: **only the overdue leg checks postings.** `budgetTail`
+  projects the schedule and nothing else, so a bill due today that has already
+  posted would be counted twice against `spentCents` if it sat there;
+  `committedBook`'s forward leg is a RATE, has no such hazard, and can safely own
+  today. Both boundaries are right, the reason is now written into both, and only
+  the sentence was wrong.
+- **`year-summary` defined a three-term total with two terms.**
+  `totalReceivedCents` is `earned + investment + notEarned` — an identity with
+  its own test — and the lede named two: "All money in adds what you received
+  without earning it". The unnamed term is 7.5% of the 2025 headline
+  ($2,866.35 of $38,409.23) and sits on the same page under a heading of its own.
+- **The statement-cadence trim erased the only evidence a cycle had changed.**
+  A permanent change looks EXACTLY like a single outlier in the month it happens.
+  `Discover` is issued by Capital One now and closed on the 9th after eleven
+  closes on the 2nd; the trim dropped that 7-day deviation and left
+  `toleranceDays = 1` — **removing the newest close from the input produced the
+  IDENTICAL rhythm and tolerance**, which is what "contributes nothing" means.
+  /imports read "Ready to pull" from 2026-09-03, six days before the statement
+  existed. It now waits until the 10th. On the real ledger the change touches
+  exactly one account; every other tolerance is identical.
+
+### ⛔ Three more traps, from doing the work
+
+- **My own test encoded the old behaviour, twice in one day.** The
+  trim-threshold test I wrote in the morning put its outlier LAST — exactly where
+  the afternoon's rule exempts it. A fixture that puts the case where the rule
+  does not apply cannot test the rule.
+- **A raw-table dump is not the production path.** The trim change looked like
+  it moved two e2e accounts from `tol=4` to `tol=27` — until I ran it through
+  `statementPulls`, which filters `not_applicable` periods. Through the real
+  caller the e2e output is byte-identical. I nearly reported a consequence the
+  app cannot have.
+- **A test that passes over an EMPTY collection is agreement with nothing** —
+  §7, and it cost a commit to catch.
+
+---
+
+## 10. Notes that keep costing time
 
 - ⛔ **Widening a fixture to reach one boundary can land it exactly where the
   next one hides.** §2.
