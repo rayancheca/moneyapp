@@ -233,17 +233,37 @@ describe("recurringCalendar", () => {
     buildMonthlyNetflix();
     detectRecurringSeries(bundle.db, TODAY);
     const s = netflix();
-    // the schedule says the 15th; the charge landed `toleranceDays` later
-    const due = "2026-03-15";
-    const paid = addDays(due, s.toleranceDays);
-    bundle.db.delete(transactions).where(eq(transactions.postedOn, due)).run();
-    insertTxn({ postedOn: paid, amountCents: -1549, rawDescription: "NETFLIX.COM", merchantId: netflixId });
+    expect(s.nextExpectedOn).toBe("2026-07-15");
 
-    const march = recurringCalendar(bundle.db, "2026-03", TODAY);
-    // the projected occurrence on the 15th is settled by that charge, so the
-    // month holds the posted row and no unpaid twin
-    expect(march.entriesByDay[due]).toBeUndefined();
-    expect(march.missedCount).toBe(0);
+    // the charge lands exactly `toleranceDays` after the scheduled day, and is
+    // linked the way an import would link it
+    const due = "2026-07-15";
+    const paid = addDays(due, s.toleranceDays);
+    const id = insertTxn({ postedOn: paid, amountCents: -1549, rawDescription: "NETFLIX.COM", merchantId: netflixId });
+    bundle.db.update(transactions).set({ recurringSeriesId: s.id }).where(eq(transactions.id, id)).run();
+
+    const july = recurringCalendar(bundle.db, "2026-07", TODAY);
+    // settled: the projection on the 15th is gone, and only the posted row
+    // remains on the day it actually landed
+    expect(july.entriesByDay[due]).toBeUndefined();
+    expect(july.entriesByDay[paid]?.[0]).toMatchObject({ state: "paid", transactionId: id });
+  });
+
+  test("a posting one day PAST the tolerance leaves the occurrence standing", () => {
+    buildMonthlyNetflix();
+    detectRecurringSeries(bundle.db, TODAY);
+    const s = netflix();
+    const due = "2026-07-15";
+    const id = insertTxn({
+      postedOn: addDays(due, s.toleranceDays + 1),
+      amountCents: -1549,
+      rawDescription: "NETFLIX.COM",
+      merchantId: netflixId,
+    });
+    bundle.db.update(transactions).set({ recurringSeriesId: s.id }).where(eq(transactions.id, id)).run();
+
+    const july = recurringCalendar(bundle.db, "2026-07", TODAY);
+    expect(july.entriesByDay[due]?.[0]).toMatchObject({ state: "upcoming" });
   });
 
   test("a lapsed BILL drops off the calendar, a lapsed INCOME series does not", () => {
