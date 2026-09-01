@@ -116,7 +116,17 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
       id: "budgets-overdue",
       body:
         `${bills === 1 ? "One bill" : `${bills} bills`} totalling ` +
-        `${formatCents(total)} came due this period and no import has covered ` +
+        /*
+         * ⛔ "DUE BY TODAY", not "came due". The overdue leg here closes on
+         * `today` INCLUSIVE — deliberately, because it is the only leg that
+         * checks postings, so a bill due today has to sit in it or `budgetTail`
+         * would count it twice against `spentCents`. But that makes the past
+         * tense false on the morning a bill falls due, and it read as a
+         * contradiction of the runway card, which on the same day reports no
+         * arrears at all. Both boundaries are right; only this sentence was
+         * wrong. See `services/budgets.ts::budgetTail`.
+         */
+        `${formatCents(total)} due by today and no import has covered ` +
         `${bills === 1 ? "it" : "them"} yet — ${where}. That money is committed, so ` +
         `the room left is smaller than it looks.`,
     });

@@ -305,13 +305,22 @@ export function committedBook(
    * dashboard reports no arrears while /budgets says $2,291.21 came due, over
    * the same rent, from the same ledger, on the same day.
    *
-   * ⛔ Left as it stands, deliberately, and this is the open question rather
-   * than a settled one. Reconciling it means deciding ONCE whether a bill due
-   * today and unposted is late, and then saying so on both surfaces —
-   * `budgetOverdue` is shared with `carryInto` and the budget projection, so
-   * moving its edge is not a one-line change and is not worth making blind.
-   * Recorded here so the next reader finds a stated disagreement rather than
-   * an unstated one.
+   * ⛔ AND BOTH ARE RIGHT, for a reason that is not about the calendar. The
+   * difference is that `budgetTail` does NOT check postings and
+   * `overdueForSeries` does: it drops an occurrence a linked charge already
+   * covers. A bill due today may already have posted, in which case
+   * `spentCents` holds it — so on `/budgets` it must sit in the leg that can
+   * see that, or it is counted twice.
+   *
+   * This leg has no such hazard. It is a RATE over N whole months, not a list
+   * of what is still to pay, so a posted bill still belongs in it and today can
+   * safely open the forward window. Moving either edge to match the other would
+   * lose a bill on `/budgets` (no leg would own today) or break the rate here.
+   *
+   * What WAS wrong was the wording: `/budgets` said a bill due today "came due
+   * this period", past tense, on the morning it fell due. It now says "due by
+   * today", which is true whether it is late or due, and no longer reads as a
+   * contradiction of a card that reports no arrears on the same day.
    */
   const monthStart = periodBounds(today, "monthly").start;
   const late = overdueForSeries(db, moneyOut, monthStart, addDays(today, -1));

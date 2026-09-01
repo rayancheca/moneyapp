@@ -850,7 +850,25 @@ export function budgetTail(
   const seriesIds = recurringSeriesIdsForCategory(db, categoryId);
   if (seriesIds.size === 0) return { totalCents: 0, series: [] };
 
-  const from = addDays(today, 1); // strictly after today = not yet posted
+  /*
+   * ⛔ STRICTLY AFTER TODAY, AND THE REASON IS NOT THE CALENDAR — it is that
+   * this leg does NOT check postings and the overdue leg does.
+   *
+   * `overdueForSeries` drops an occurrence a linked charge already covers
+   * (within the series' own tolerance); this walk projects the schedule and
+   * nothing else. A bill due TODAY may already have posted, in which case
+   * `spentCents` holds it — so it belongs in the leg that can see that, and
+   * putting it here would count it twice.
+   *
+   * ⚠️ That is why `/budgets` and the runway card split the same instant
+   * differently and BOTH are right. `committedBook`'s forward leg is a RATE
+   * over N whole months, not a list of what is still to pay, so double-counting
+   * against actuals is not a risk there and its arrears leg closes the day
+   * BEFORE today. Reconciling the two by moving one edge would either lose a
+   * bill here (no leg would own today) or break the rate there. See
+   * `services/committed.ts`.
+   */
+  const from = addDays(today, 1);
   if (compareDates(from, periodEnd) > 0) return { totalCents: 0, series: [] };
 
   // Only live series forecast a tail — a dismissed/ended series whose past rows
