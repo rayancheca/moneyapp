@@ -45,7 +45,6 @@ export function CategoryDeviation({
   }
 
   const description = deviationDescription(layout, formatCents);
-  const up = layout.bars.filter((b) => b.isIncrease).length;
 
   return (
     <figure className="space-y-2">
@@ -53,8 +52,15 @@ export function CategoryDeviation({
         <span className="text-sm text-ink-muted">
           {currentLabel} against {previousLabel} — biggest moves first
         </span>
+        {/* ⛔ The counts are of what MOVED, not of what was drawn. Measured on
+            the real ledger, /spending?period=2026 read "8 up · 0 down" while
+            twenty categories moved and FIVE fell — every one of them outside
+            the eight biggest. The cap is named rather than left silent. */}
         <span className="text-xs text-ink-muted">
-          {up} up · {layout.bars.length - up} down
+          {layout.upCount} up · {layout.downCount} down
+          {layout.movedCount > layout.bars.length && (
+            <span className="text-ink-faint"> · {layout.bars.length} biggest shown</span>
+          )}
         </span>
       </figcaption>
 

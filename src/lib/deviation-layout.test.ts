@@ -170,3 +170,61 @@ describe("deviationDescription", () => {
     expect(desc).not.toContain("FOOD, up");
   });
 });
+
+/*
+ * ⛔ `bars.length` IS WHAT WAS DRAWN. Counting the drawn bars and calling them
+ * the categories that moved is the defect this session kept finding: a count
+ * taken from one collection standing over another.
+ *
+ * 🔴 Measured on the real ledger, `/spending?period=2026` against 2025: the
+ * caption read "8 up · 0 down" and the accessible description read "8
+ * categories moved against the previous period: 8 up, 0 down" — while TWENTY
+ * moved, fifteen up and FIVE down. Every one of the five falls was outside the
+ * eight biggest moves, so a spending card said nothing had fallen in a year
+ * when five things had.
+ */
+describe("the counts are of what moved, not of what was drawn", () => {
+  /** 12 risers of decreasing size, then 5 small fallers — the real shape. */
+  const manyMoves = () => {
+    const rows = [];
+    for (let i = 0; i < 12; i++) {
+      rows.push({ key: `up${i}`, label: `Up ${i}`, currentCents: 100_00 * (12 - i), previousCents: 0 });
+    }
+    for (let i = 0; i < 5; i++) {
+      rows.push({ key: `dn${i}`, label: `Down ${i}`, currentCents: 0, previousCents: 1_00 });
+    }
+    // …and one that did not move at all
+    rows.push({ key: "flat", label: "Flat", currentCents: 50_00, previousCents: 50_00 });
+    return rows;
+  };
+
+  test("movedCount counts every mover, and the bars are only the biggest", () => {
+    const layout = computeDeviationLayout(manyMoves(), { width: 640 });
+    expect(layout.bars).toHaveLength(8); // DEFAULT_LIMIT
+    expect(layout.movedCount).toBe(17); // 12 up + 5 down; the flat one is not a mover
+    expect(layout.upCount).toBe(12);
+    expect(layout.downCount).toBe(5);
+    // the drawn bars really are all risers — which is exactly why the old count lied
+    expect(layout.bars.every((b) => b.isIncrease)).toBe(true);
+  });
+
+  test("the description reports the movers and names the cut", () => {
+    const d = deviationDescription(computeDeviationLayout(manyMoves(), { width: 640 }), (c) => `$${c / 100}`);
+    expect(d).toContain("17 categories moved");
+    expect(d).toContain("12 up, 5 down");
+    expect(d).toContain("Showing the 8 biggest");
+  });
+
+  test("nothing is cut when everything fits, and the cut is not mentioned", () => {
+    const layout = computeDeviationLayout(
+      [
+        { key: "a", label: "A", currentCents: 500, previousCents: 0 },
+        { key: "b", label: "B", currentCents: 0, previousCents: 300 },
+      ],
+      { width: 640 },
+    );
+    expect(layout.movedCount).toBe(2);
+    expect(layout.bars).toHaveLength(2);
+    expect(deviationDescription(layout, (c) => `$${c / 100}`)).not.toContain("Showing");
+  });
+});

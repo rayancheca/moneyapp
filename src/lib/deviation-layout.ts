@@ -51,6 +51,23 @@ export interface DeviationLayout {
   bars: DeviationBar[];
   /** the largest absolute move, which sets the scale */
   peakCents: number;
+  /**
+   * How many categories MOVED, before the top-N cut — and how they split.
+   *
+   * ⛔ `bars.length` is what was DRAWN. Counting the drawn bars and calling them
+   * the categories that moved is the defect this session kept finding: a count
+   * taken from one collection standing over another.
+   *
+   * 🔴 Measured on the real ledger, `/spending?period=2026` against 2025: the
+   * caption read "8 up · 0 down" and the accessible description read "8
+   * categories moved against the previous period: 8 up, 0 down" — while TWENTY
+   * moved, fifteen up and **five down**. A spending card said nothing had
+   * fallen in a year when five things had, because all five were outside the
+   * eight biggest moves.
+   */
+  movedCount: number;
+  upCount: number;
+  downCount: number;
 }
 
 export interface DeviationOptions {
@@ -88,11 +105,13 @@ export function computeDeviationLayout(
   // Order by the SIZE of the move. A category that barely shifted is not news
   // however much it costs, which is exactly what every other spending view
   // already tells you.
-  const ranked = rows
+  const moved = rows
     .map((r) => ({ ...r, deltaCents: r.currentCents - r.previousCents }))
     .filter((r) => r.deltaCents !== 0)
-    .sort((a, b) => Math.abs(b.deltaCents) - Math.abs(a.deltaCents) || a.label.localeCompare(b.label))
-    .slice(0, limit);
+    .sort((a, b) => Math.abs(b.deltaCents) - Math.abs(a.deltaCents) || a.label.localeCompare(b.label));
+  // counted BEFORE the cut — see `movedCount` on the layout
+  const upCount = moved.filter((r) => r.deltaCents > 0).length;
+  const ranked = moved.slice(0, limit);
 
   const peakCents = ranked.reduce((m, r) => Math.max(m, Math.abs(r.deltaCents)), 0);
 
@@ -129,7 +148,17 @@ export function computeDeviationLayout(
 
   const height = bars.length === 0 ? 0 : bars.length * (rowHeight + rowGap) - rowGap;
 
-  return { width: options.width, height, centreX, labelWidth, bars, peakCents };
+  return {
+    width: options.width,
+    height,
+    centreX,
+    labelWidth,
+    bars,
+    peakCents,
+    movedCount: moved.length,
+    upCount,
+    downCount: moved.length - upCount,
+  };
 }
 
 /** The chart's own summary sentence, used as the SVG description. */
@@ -138,12 +167,15 @@ export function deviationDescription(
   fmt: (cents: number) => string,
 ): string {
   if (layout.bars.length === 0) return "Nothing changed against the previous period.";
-  const up = layout.bars.filter((b) => b.isIncrease);
-  const down = layout.bars.filter((b) => !b.isIncrease);
   const biggest = layout.bars[0]!;
+  // ⛔ the counts are of what MOVED, the "showing" clause is of what was DRAWN.
+  // Saying only the second is how this described a year with five falls as
+  // having none.
+  const shown =
+    layout.movedCount > layout.bars.length ? ` Showing the ${layout.bars.length} biggest.` : "";
   return (
-    `${layout.bars.length} categories moved against the previous period: ` +
-    `${up.length} up, ${down.length} down. ` +
+    `${layout.movedCount} categories moved against the previous period: ` +
+    `${layout.upCount} up, ${layout.downCount} down.${shown} ` +
     `The largest move is ${biggest.label}, ${biggest.isIncrease ? "up" : "down"} ` +
     `${fmt(Math.abs(biggest.deltaCents))}.`
   );
