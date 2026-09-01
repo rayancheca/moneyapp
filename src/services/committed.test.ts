@@ -112,9 +112,18 @@ beforeEach(() => {
   groceriesId = bundle.db.select().from(categories).where(eq(categories.name, "Groceries")).get()!.id;
   seq = 0;
 
-  // $8,000 of spending in each of the six complete baseline months
+  /*
+   * $8,000 of spending in each of the six complete baseline months.
+   *
+   * ⚠️ On the FIRST, not the fifth. `spendBaseline` excludes the ledger's
+   * opening month unless the ledger opened on that month's first day — a stub
+   * is not a month — and with these rows on the 5th the ledger opened
+   * 2026-02-05, which made February this window's partial first month and
+   * shrank it to five. The day of the month carries no meaning here; the
+   * amounts and the months do.
+   */
   for (const m of BASELINE_MONTHS) {
-    insertTxn({ postedOn: `${m}-05`, amountCents: -800000, rawDescription: "SUPERMARKET" });
+    insertTxn({ postedOn: `${m}-01`, amountCents: -800000, rawDescription: "SUPERMARKET" });
   }
   // …and a smaller, incomplete August, which must NOT drag the average down
   insertTxn({ postedOn: "2026-08-05", amountCents: -100000, rawDescription: "SUPERMARKET" });
@@ -142,7 +151,7 @@ describe("spendBaseline", () => {
   });
 
   test("a month with no spending counts as a zero, not as a missing sample", () => {
-    bundle.db.delete(transactions).where(eq(transactions.postedOn, "2026-04-05")).run();
+    bundle.db.delete(transactions).where(eq(transactions.postedOn, "2026-04-01")).run();
     // five months of $8,000 over a SIX month window = $6,666.67, not $8,000
     expect(spendBaseline(bundle.db, TODAY).monthlyCents).toBe(666667);
   });
@@ -171,9 +180,10 @@ describe("spendBaseline", () => {
    * surface asking one question and the only one answering it.
    */
   test("the window cannot reach back further than the ledger does", () => {
-    // wipe the fixture's history and give the ledger a single, later start
+    // wipe the fixture's history and give the ledger a start on a month's FIRST
+    // day, so nothing is partial and only the floor is under test
     bundle.db.delete(transactions).run();
-    insertTxn({ postedOn: "2026-06-10", amountCents: -300000, rawDescription: "SUPERMARKET" });
+    insertTxn({ postedOn: "2026-06-01", amountCents: -300000, rawDescription: "SUPERMARKET" });
     insertTxn({ postedOn: "2026-07-10", amountCents: -300000, rawDescription: "SUPERMARKET" });
 
     const b = spendBaseline(bundle.db, TODAY);
@@ -184,11 +194,54 @@ describe("spendBaseline", () => {
     expect(b.monthlyCents).toBe(300000);
   });
 
+  /*
+   * ⛔ THE LEDGER'S OPENING MONTH IS NOT A MONTH unless the ledger opened on its
+   * first day. The caption this figure carries says "averaged over N COMPLETE
+   * months"; a stub is not one, and averaging it in as if it were divides real
+   * spending by days nobody imported.
+   *
+   * Measured on the owner's own ledger, which opens 2022-08-25 with $46.44 of
+   * spending in its seven days:
+   *
+   *     today = 2022-10-01   $519.61/mo over "2 complete months, 2022-08 to
+   *                          2022-09" — the one month covered in full spent
+   *                          $992.78
+   *     today = 2022-11-01   $653.68/mo where the two complete months come to
+   *                          $957.30
+   *
+   * The runway divides net cash by this rate, so it reads roughly twice as long
+   * on a ledger's first weeks — which is exactly when a new user is looking.
+   */
+  test("a ledger that opened mid-month does not count that month as a whole one", () => {
+    bundle.db.delete(transactions).run();
+    insertTxn({ postedOn: "2026-06-25", amountCents: -10000, rawDescription: "SUPERMARKET" }); // 6 days
+    insertTxn({ postedOn: "2026-07-10", amountCents: -300000, rawDescription: "SUPERMARKET" });
+
+    const b = spendBaseline(bundle.db, TODAY);
+    // June is a six-day stub; July is the only complete month the ledger holds
+    expect(b.months).toBe(1);
+    expect(b.fromMonth).toBe("2026-07");
+    expect(b.toMonth).toBe("2026-07");
+    expect(b.monthlyCents).toBe(300000);
+  });
+
+  test("a ledger that opened ON the first is complete from that month", () => {
+    bundle.db.delete(transactions).run();
+    insertTxn({ postedOn: "2026-06-01", amountCents: -10000, rawDescription: "SUPERMARKET" });
+    insertTxn({ postedOn: "2026-07-10", amountCents: -300000, rawDescription: "SUPERMARKET" });
+
+    const b = spendBaseline(bundle.db, TODAY);
+    expect(b.months).toBe(2);
+    expect(b.fromMonth).toBe("2026-06");
+    expect(b.monthlyCents).toBe(Math.round(310000 / 2));
+  });
+
   test("a quiet month inside the ledger is still a zero, not a missing sample", () => {
     bundle.db.delete(transactions).run();
-    // the ledger opens in February, so all six months are inside it — and the
-    // four with nothing in them are real zeroes that must pull the average down
-    insertTxn({ postedOn: "2026-02-10", amountCents: -300000, rawDescription: "SUPERMARKET" });
+    // the ledger opens on February's FIRST day, so all six months are inside it
+    // whole — and the four with nothing in them are real zeroes that must pull
+    // the average down
+    insertTxn({ postedOn: "2026-02-01", amountCents: -300000, rawDescription: "SUPERMARKET" });
     insertTxn({ postedOn: "2026-07-10", amountCents: -300000, rawDescription: "SUPERMARKET" });
 
     const b = spendBaseline(bundle.db, TODAY);

@@ -113,7 +113,26 @@ export function spendBaseline(
    * months" the moment the average is over three.
    */
   const opens = ledgerOpens(db);
-  const keys = opens === null ? [] : asked.filter((k) => k >= monthKey(opens));
+  /*
+   * ⛔ The ledger's OPENING MONTH is only a month if the ledger opened on its
+   * first day. This figure's caption says "averaged over N COMPLETE months"; a
+   * stub is not one, and averaging it in divides real spending by days nobody
+   * imported.
+   *
+   * 🔴 Measured on the owner's ledger, which opens 2022-08-25 with $46.44 of
+   * spending in its seven days: at today = 2022-10-01 this published $519.61 a
+   * month over "2 complete months, 2022-08 to 2022-09", where the one month
+   * covered in full spent $992.78; at 2022-11-01, $653.68 against $957.30. The
+   * runway divides net cash by this rate, so it read roughly twice as long on a
+   * ledger's first weeks — which is exactly when a new user is looking.
+   */
+  const firstWholeMonth =
+    opens === null
+      ? null
+      : periodBounds(opens, "monthly").start === opens
+        ? monthKey(opens)
+        : monthKey(addCalendarMonths(`${monthKey(opens)}-01`, 1));
+  const keys = firstWholeMonth === null ? [] : asked.filter((k) => k >= firstWholeMonth);
 
   const totalCents = keys.reduce((sum, k) => sum + (byMonth.get(k) ?? 0), 0);
   return {
