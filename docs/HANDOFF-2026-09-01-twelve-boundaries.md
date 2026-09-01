@@ -2,7 +2,7 @@
 
 > **Supersedes `HANDOFF-2026-08-31c-the-income-answer-and-the-split.md`.**
 >
-> **`main` = `6bbda77`** (this doc), tree clean, pushed. tsc clean · **4,368 unit** ·
+> **`main` = `f609bbd`** (this doc), tree clean, pushed. tsc clean · **4,368 unit** ·
 > **E2E_GATE=1: 590 passed at `maxDiffPixels: 0`** (8.3m, green on the confirming run) · 24 baselines regenerated, every diff cropped and read first · `pnpm ledger-check` exit 0, on every commit.
 >
 > Repo: **`/Users/rayankarimcheca/dev/MoneyApp`**.
