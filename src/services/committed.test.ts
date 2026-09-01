@@ -14,6 +14,7 @@ import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
 import { carCard, committedBook, runwayCard, spendBaseline, SPEND_BASELINE_MONTHS } from "./committed";
+import { forecastCurrentMonth } from "./forecast";
 
 /**
  * A seeded ledger shaped like the real one at 2026-08-24, small enough to reason
@@ -202,6 +203,128 @@ describe("committedBook", () => {
   test("a subscription IS a commitment", () => {
     addSeries({ name: "Netflix", kind: "subscription", nextExpectedOn: "2026-09-02", amountCents: -1549 });
     expect(committedBook(bundle.db, TODAY, 12).totalCents).toBe(1549 * 12);
+  });
+
+  /* ── the two window boundaries ───────────────────────────────────────────
+     🔴 Both of these were live on the dashboard, and NEITHER could be reached
+     by the fixture above: `TODAY` is the 24th while every bill in these tests is
+     anchored on the 1st or 2nd, so no bill can coincide with today and no anchor
+     can land on the horizon's last day. Twenty-three green tests with both
+     boundaries structurally unreachable — so these use a today that is
+     deliberately ON the anchor. */
+
+  /** A month-anchored bill whose due day IS `on`. */
+  const rentDueOn = (on: string) =>
+    addSeries({ name: "Rent", kind: "bill", nextExpectedOn: on, amountCents: -210900 });
+
+  /**
+   * 🔴 Measured on the real ledger at today = 2026-09-01: rent counted THREE
+   * times in one month, publishing $8,150.02/month of committed bills against
+   * the forecast card's $3,567.60 for the same series and the same month.
+   * One of the three was this — the overdue window `[monthStart, today]` and the
+   * upcoming window `[today, …]` both claiming the bill due today.
+   */
+  test("a bill due TODAY is counted once, not once per window", () => {
+    const DUE_TODAY = "2026-09-01";
+    rentDueOn(DUE_TODAY);
+    const book = committedBook(bundle.db, DUE_TODAY, 1);
+
+    const rent = book.lines.find((l) => l.name === "Rent")!;
+    expect(rent.occurrences).toBe(1);
+    expect(rent.totalCents).toBe(210900);
+    // it is the OVERDUE leg that owns it — unposted, and due on or before today
+    expect(book.overdueCents).toBe(210900);
+    expect(book.totalCents).toBe(210900);
+  });
+
+  /**
+   * The second of the three. `addCalendarMonths("2026-09-01", 6)` is
+   * 2027-03-01, and projecting through it INCLUSIVE catches a seventh
+   * first-of-month. Six calendar months must mean six payments.
+   */
+  test("an N-month horizon projects exactly N payments of a monthly bill", () => {
+    const DUE_TODAY = "2026-09-01";
+    rentDueOn(DUE_TODAY);
+    for (const months of [1, 3, 6, 12]) {
+      const book = committedBook(bundle.db, DUE_TODAY, months);
+      const rent = book.lines.find((l) => l.name === "Rent")!;
+      expect(rent.occurrences, `${months}-month horizon`).toBe(months);
+      expect(rent.perMonthCents, `${months}-month horizon`).toBe(210900);
+    }
+  });
+
+  /**
+   * ⚠️ The FAR edge, pinned exactly. The near edge (a bill due today) and the
+   * payment count both survive a horizon that is a day too short, because every
+   * other bill here is anchored on the 1st and nothing sits near the end. Found
+   * by mutation: shrinking `horizonEnd` by one more day broke nothing until a
+   * bill was anchored ON it.
+   *
+   * today = 2026-09-01 with a 1-month horizon ends on 2026-09-30, so a bill due
+   * that day is the last one inside it — and it belongs there.
+   */
+  test("a bill due on the horizon's last day is inside it", () => {
+    const DUE_TODAY = "2026-09-01";
+    addSeries({ name: "Late bill", kind: "bill", nextExpectedOn: "2026-09-30", amountCents: -5000 });
+    const book = committedBook(bundle.db, DUE_TODAY, 1);
+    const line = book.lines.find((l) => l.name === "Late bill");
+    expect(line?.occurrences).toBe(1);
+    expect(book.totalCents).toBe(5000);
+  });
+
+  /**
+   * …and the day AFTER it is outside. Together these two fix the boundary to a
+   * single day rather than "somewhere around the end of the month".
+   */
+  test("a bill due the day after the horizon is outside it", () => {
+    const DUE_TODAY = "2026-09-01";
+    addSeries({ name: "Next month", kind: "bill", nextExpectedOn: "2026-10-01", amountCents: -5000 });
+    const book = committedBook(bundle.db, DUE_TODAY, 1);
+    expect(book.lines.find((l) => l.name === "Next month")).toBeUndefined();
+    expect(book.totalCents).toBe(0);
+  });
+
+  /**
+   * ⭐ The check that actually caught this: two independently-computed surfaces
+   * answering one question. `committedBook` walks `upcomingOccurrences` plus an
+   * overdue leg; the forecast card partitions `forecastCurrentMonth`'s own
+   * components. They share no arithmetic, so agreement is evidence rather than
+   * tautology — and before the fix they disagreed by 2.3×.
+   */
+  test("agrees with the forecast card about the running month", () => {
+    const DUE_TODAY = "2026-09-01";
+    rentDueOn(DUE_TODAY);
+    addSeries({ name: "Netflix", kind: "subscription", nextExpectedOn: "2026-09-15", amountCents: -1549 });
+
+    const book = committedBook(bundle.db, DUE_TODAY, 1);
+    const card = forecastCurrentMonth(bundle.db, DUE_TODAY);
+    expect(book.totalCents).toBe(-card.committed.spendCents);
+  });
+
+  /**
+   * ⚠️ A bill that already POSTED today belongs to neither window. `overdue`
+   * drops it because it is paid; `upcoming` must not resurrect it as a future
+   * commitment simply because its date is not strictly in the past.
+   */
+  test("a bill that posted today is counted nowhere", () => {
+    const DUE_TODAY = "2026-09-01";
+    const rentId = rentDueOn(DUE_TODAY);
+    insertTxn({
+      postedOn: DUE_TODAY,
+      amountCents: -210900,
+      rawDescription: "FLAMINGO RENT",
+      categoryId: null,
+    });
+    bundle.db
+      .update(transactions)
+      .set({ recurringSeriesId: rentId })
+      .where(eq(transactions.rawDescription, "FLAMINGO RENT"))
+      .run();
+
+    const book = committedBook(bundle.db, DUE_TODAY, 1);
+    expect(book.lines.find((l) => l.name === "Rent")).toBeUndefined();
+    expect(book.totalCents).toBe(0);
+    expect(book.overdueCents).toBe(0);
   });
 
   test("a series that ends inside the horizon stops there", () => {

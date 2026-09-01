@@ -3,7 +3,15 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { carCost, type CarCost } from "@/lib/car-cost";
 import { committedOutflows, type CommittedOccurrence, type CommittedOutflows } from "@/lib/committed";
-import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import {
+  addCalendarMonths,
+  addDays,
+  compareDates,
+  diffDays,
+  monthKey,
+  periodBounds,
+  todayIso,
+} from "@/lib/dates";
 import { runway, type Runway } from "@/lib/runway";
 import { listAccounts } from "./accounts";
 import { loadCategoryIndex, monthlySpending, recurringSeriesIdsForCategory } from "./analytics";
@@ -148,6 +156,36 @@ function toCommitted(o: {
  * Overdue is scoped to the current calendar month, matching `/budgets`. Reaching
  * further back would resurrect bills that are far more likely to be import gaps
  * than debts still owed.
+ *
+ * ## ⛔ The two windows ABUT. They must never overlap, and they used to.
+ *
+ * 🔴 Measured on the real ledger at today = 2026-09-01, this published
+ * **$8,150.02 a month** of committed bills while the forecast card, reading the
+ * same series for the same month, said **$3,567.60**. Two surfaces, one
+ * question, a 2.3× disagreement — and the dashboard was the loud one.
+ *
+ * Rent was counted THREE times in a single month, from two independent
+ * off-by-ones that only appear when a bill falls on `today`:
+ *
+ *   1. **The windows overlapped on `today`.** Overdue covers `[monthStart,
+ *      today]` and the upcoming projection covered `[today, …]`, so a bill due
+ *      exactly today landed in both. `budgets.ts` already had this right —
+ *      `budgetTail` opens at `addDays(today, 1)` with the comment "strictly
+ *      after today = not yet posted" — and this function simply did not follow
+ *      it. Filtering strictly after `today` is correct whichever way the bill
+ *      went: unposted it is counted once, as overdue; posted it is PAID and
+ *      belongs in neither.
+ *
+ *   2. **The horizon end was inclusive.** `addCalendarMonths(today, 6)` from
+ *      the 1st is the 1st six months later, and projecting through it inclusive
+ *      catches a SEVENTH first-of-month. The horizon is now half-open, so
+ *      `months` calendar months means exactly that many payments.
+ *
+ * ⚠️ Neither could fire in the test fixture, and that is the lesson worth
+ * keeping: `TODAY` there is the **24th** while every bill is anchored on the
+ * 1st or 2nd, so no bill can ever coincide with today and no anchor can ever
+ * land on the horizon's last day. Twenty-three green tests, both boundaries
+ * unreachable. A fixture that cannot express a condition cannot test it.
  */
 export function committedBook(
   db: AppDatabase,
@@ -155,10 +193,15 @@ export function committedBook(
   months: number = COMMITTED_HORIZON_MONTHS,
 ): CommittedOutflows {
   const to = addCalendarMonths(today, months);
+  // half-open: the horizon's last day is the day BEFORE `to`, so a monthly bill
+  // anchored on today's day-of-month is projected `months` times, not months+1
+  const horizonEnd = addDays(to, -1);
   const moneyOut = moneyOutSeriesIds(db);
 
-  const occurrences = upcomingOccurrences(db, today, diffDays(today, to))
+  const occurrences = upcomingOccurrences(db, today, diffDays(today, horizonEnd))
     .filter((o) => moneyOut.has(o.seriesId))
+    // strictly after today — `today` itself belongs to the overdue window below
+    .filter((o) => compareDates(o.date, today) > 0)
     .map(toCommitted);
 
   const monthStart = periodBounds(today, "monthly").start;
