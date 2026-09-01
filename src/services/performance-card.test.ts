@@ -455,6 +455,43 @@ describe("performanceCard — the span", () => {
     expect(card.spanLabel).toBe("1 month");
   });
 
+  /*
+   * 🔴 A WHOLE MONTH VANISHED ON THE ANNIVERSARY ITSELF.
+   *
+   * `calendarMonthsToReach` is the smallest n with `anchor + n >= asOf`, and
+   * the span took `n − 1` as "the last month that has actually completed".
+   * That is right while `anchor + n` is strictly AFTER `asOf` — the Jan 31 →
+   * Mar 1 case above — and wrong on the one day where it lands exactly ON it,
+   * because that month HAS completed.
+   *
+   * The real ledger's TWR anchor is 2024-07-10, so this fires whenever the
+   * portfolio's newest covered day is the 10th of a month: on 2026-07-10 the
+   * dashboard read "Time-weighted, over 1 year and 11 months since Jul 2024"
+   * over exactly two years.
+   *
+   * ⚠️ Nothing here is a "roughly": the label steps a whole unit, and on an
+   * anniversary it steps DOWN. Both sides of the boundary are pinned.
+   */
+  test("the anniversary day is a completed month, not one short of it", () => {
+    cache("AAPL", "2026-01-15", 100);
+    cache("AAPL", "2026-04-14", 110);
+    cache("AAPL", "2026-04-15", 120);
+    cache("AAPL", "2026-04-16", 130);
+    hold("2026-01-15", 100_000_000, 10_000);
+
+    const labelAt = (asOf: string): string => {
+      rebuildInvestmentHistory(bundle.db, brokerage, asOf);
+      return performanceCard(bundle.db, asOf)!.spanLabel;
+    };
+
+    // the day BEFORE the third-month anniversary: two whole months
+    expect(labelAt("2026-04-14")).toBe("2 months");
+    // ON it: three
+    expect(labelAt("2026-04-15")).toBe("3 months");
+    // and after it, still three
+    expect(labelAt("2026-04-16")).toBe("3 months");
+  });
+
   test("the anchor is labelled the way /investments labels it", () => {
     seedRising();
     const card = performanceCard(bundle.db, TODAY)!;

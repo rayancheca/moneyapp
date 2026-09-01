@@ -1,5 +1,5 @@
 import type { AppDatabase } from "@/db/client";
-import { calendarMonthsToReach, diffDays, todayIso } from "@/lib/dates";
+import { addCalendarMonths, calendarMonthsToReach, compareDates, diffDays, todayIso } from "@/lib/dates";
 import { formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { isStaleClose } from "@/lib/holding-price-age";
 import { formatCents } from "@/lib/money";
@@ -193,11 +193,21 @@ function pctLabelOf(pct: number, scale: string): string {
 
 /** "2 years and 1 month" / "7 months" / "12 days". */
 function spanLabelOf(anchor: string, asOf: string, days: number): string {
-  // whole elapsed months, day-aware: `calendarMonthsToReach` is the smallest n
-  // with anchor+n ≥ asOf, so n−1 is the last one that has actually completed.
-  // (`calendarMonthsBetween` compares month numbers only and would call
-  // Jul 31 → Aug 1 a whole month.)
-  const months = Math.max(0, calendarMonthsToReach(anchor, asOf) - 1);
+  /*
+   * Whole elapsed months, day-aware. `calendarMonthsToReach` is the smallest n
+   * with `anchor + n >= asOf`, so n−1 is the last one that has completed —
+   * EXCEPT on the day it lands exactly ON `asOf`, where n itself has.
+   * (`calendarMonthsBetween` compares month numbers only and would call
+   * Jul 31 → Aug 1 a whole month.)
+   *
+   * 🔴 Taking n−1 unconditionally lost a whole month on every anniversary. The
+   * real ledger's TWR anchor is 2024-07-10, so on 2026-07-10 the dashboard read
+   * "Time-weighted, over 1 year and 11 months since Jul 2024" over exactly two
+   * years — one day per month, and always downward.
+   */
+  const reach = calendarMonthsToReach(anchor, asOf);
+  const landsOnAsOf = compareDates(addCalendarMonths(anchor, reach), asOf) === 0;
+  const months = Math.max(0, landsOnAsOf ? reach : reach - 1);
   if (months === 0) return `${days} ${days === 1 ? "day" : "days"}`;
   const years = Math.floor(months / 12);
   const rest = months % 12;
