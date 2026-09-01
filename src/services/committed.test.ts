@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { addCalendarMonths, addDays, daysInMonthOf, monthKey } from "@/lib/dates";
 import { dailyBalances } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
@@ -618,6 +619,196 @@ function createCarCategory(): string {
     .returning({ id: categories.id })
     .get().id;
 }
+
+/**
+ * ⛔ THE SWEEP THE FIXTURES COULD NOT DO.
+ *
+ * Every fixture in this repo pins `today` to a day no fixture bill is anchored
+ * on — the 8th and the 24th — and three live boundary bugs shipped underneath
+ * that. A fixture that cannot express a condition cannot test it, and the
+ * condition here is a PAIR: which day of the month the bill falls on, and which
+ * day of the month you happen to ask on. Every hand-written test fixes both.
+ *
+ * So this fixes neither. It states the invariant the three bugs each broke — a
+ * monthly bill is exactly `months` payments in a `months`-month book — and
+ * grades it over every (anchor day, asking day) pair across a 62-day span:
+ * 31 series × 62 days, on days no hand-written fixture picked.
+ */
+describe("committedBook, over every day of the month", () => {
+  const FROM = "2026-08-15";
+  const SPAN_DAYS = 62;
+  const HORIZON = 6;
+
+  /**
+   * ⛔ ONE SERIES IS DELIBERATELY LATE, on every asking day. Without it the
+   * sweep pays every bill on time, the arrears leg is empty on all 62 days, and
+   * "arrears are never inside the horizon" asserts nothing at all — the shape
+   * this repo keeps finding, an assertion loose enough to survive the bug. Its
+   * anchor moves with `today`, so it is late by ten days from every day of the
+   * month in turn.
+   */
+  const LATE = "Bill 99";
+
+  function seedOnePerAnchorDay(): void {
+    addSeries({ name: LATE, kind: "bill", nextExpectedOn: "2026-08-05", amountCents: -99000 });
+    for (let day = 1; day <= 31; day++) {
+      addSeries({
+        name: `Bill ${String(day).padStart(2, "0")}`,
+        kind: "bill",
+        nextExpectedOn: `2026-08-${String(day).padStart(2, "0")}`,
+        amountCents: -1000 * day,
+        lastMatchedOn: `2026-07-${String(day).padStart(2, "0")}`,
+      });
+    }
+  }
+
+  /**
+   * ⚠️ A SERIES NOBODY PAYS STOPS BEING FORECAST, and rightly — `seriesHasLapsed`
+   * ends a projection whose evidence has run out. A static fixture therefore
+   * dissolves partway through a two-month sweep and the sweep reads that as a
+   * boundary bug. Advancing the evidence is what an import does, so the sweep
+   * does it too: on each asking day every series has last posted on its own most
+   * recent anchor day.
+   */
+  function payEveryoneThrough(today: string): void {
+    for (const s of bundle.db.select().from(recurringSeries).all()) {
+      if (s.name === LATE) {
+        // due ten days ago and unpaid for forty — late, and still well inside
+        // the lapse threshold, so it is forecast AND in arrears
+        bundle.db
+          .update(recurringSeries)
+          .set({ nextExpectedOn: addDays(today, -10), lastMatchedOn: addDays(today, -40) })
+          .where(eq(recurringSeries.id, s.id))
+          .run();
+        continue;
+      }
+      const day = Number(s.nextExpectedOn!.slice(8));
+      /*
+       * ⛔ STRICTLY GREATER: a bill due TODAY has not posted yet. Paying it on
+       * its own anchor day is what a fixture does and a bank does not, and it
+       * hides the condition the two legs meet at — a payment that is due today
+       * is inside the horizon and must not ALSO be in arrears. With `>=` here
+       * the sweep survived an overdue leg widened to include today.
+       */
+      const month = Number(today.slice(8)) > day ? today.slice(0, 7) : monthKey(addCalendarMonths(`${today.slice(0, 7)}-01`, -1));
+      // the calendar clamps a 31st into a 30-day month, exactly as the engine does
+      const posted = Math.min(day, daysInMonthOf(`${month}-01`));
+      bundle.db
+        .update(recurringSeries)
+        .set({ lastMatchedOn: `${month}-${String(posted).padStart(2, "0")}` })
+        .where(eq(recurringSeries.id, s.id))
+        .run();
+    }
+  }
+
+  /**
+   * 🔴 FOUND BY THIS SWEEP, MEASURED, AND DELIBERATELY NOT FIXED HERE.
+   *
+   * `addCalendarMonths` clamps: 29 August + 6 months is 28 February, because 29
+   * February 2027 does not exist. The horizon is then a day short of six whole
+   * months, and a bill anchored on the 28th loses its sixth payment while the
+   * rate still divides by six — 5 payments over a 6-month divisor, the exact
+   * shape of the three bugs above.
+   *
+   * ⛔ THE OBVIOUS FIX TRADES ONE ERROR FOR ANOTHER, and that is why it is not
+   * applied. Measured: the recurring engine clamps too, so on 2027-02-28 the
+   * series anchored on the 28th, 29th, 30th AND 31st all fall on the same day.
+   * Including that day fixes the 28th and gives the 29th and 30th a SEVENTH
+   * payment. No date cut can separate four anchors that share a date; an exact
+   * fix has to bound each series by its own step index, which `SeriesOccurrence`
+   * does not carry.
+   *
+   * ⚠️ Latent on the owner's ledger: his latest anchor day is the 22nd, so
+   * nothing he owes can reach it (measured 2026-09-01).
+   *
+   * Pinned exactly rather than excused, so a future fix has to come here and
+   * empty this list on purpose.
+   */
+  const KNOWN_CLAMP_SHORTFALLS = [
+    "2026-08-29 Bill 28",
+    "2026-08-30 Bill 28",
+    "2026-08-30 Bill 29",
+    "2026-08-31 Bill 28",
+    "2026-08-31 Bill 29",
+    "2026-08-31 Bill 30",
+  ];
+
+  test("a monthly bill is exactly `months` payments, whatever day it falls on and whatever day you ask", () => {
+    seedOnePerAnchorDay();
+    const short: string[] = [];
+    const other: string[] = [];
+    for (let i = 0; i < SPAN_DAYS; i++) {
+      const today = addDays(FROM, i);
+      payEveryoneThrough(today);
+      const book = committedBook(bundle.db, today, HORIZON);
+      expect(book.months).toBe(HORIZON);
+      // every series is live on every asking day: none may vanish
+      expect(book.lines.length).toBe(32);
+      for (const line of book.lines) {
+        if (line.occurrences === HORIZON) continue;
+        (line.occurrences === HORIZON - 1 ? short : other).push(`${today} ${line.name}`);
+      }
+    }
+    // nothing is ever LONG, and nothing is ever short by more than one
+    expect(other).toEqual([]);
+    expect([...short].sort()).toEqual(KNOWN_CLAMP_SHORTFALLS);
+  });
+
+  /**
+   * The other half of the same boundary: the two legs must ABUT. A payment that
+   * is late is not also scheduled — otherwise one bill is two rows, and the rate
+   * divides a numerator that reaches back before the window by a divisor that
+   * does not.
+   */
+  test("arrears are never inside the horizon they are reported beside", () => {
+    seedOnePerAnchorDay();
+    const wrong: string[] = [];
+    let arrearsDays = 0;
+    for (let i = 0; i < SPAN_DAYS; i++) {
+      const today = addDays(FROM, i);
+      payEveryoneThrough(today);
+      const book = committedBook(bundle.db, today, HORIZON);
+      /*
+       * ⛔ THE ARREARS LEG IS SCOPED TO THE CALENDAR MONTH, and the card says so
+       * — "a further $X came due earlier this month and never posted". So a bill
+       * due on the 22nd is arrears on the 31st and NOT arrears on the 1st, with
+       * nothing paid in between. Pinned here rather than asserted away: it is
+       * the wording's own scope, and whether an unpaid bill should survive the
+       * turn of the month is the owner's call, not a bug to fix quietly.
+       */
+      const lateInThisMonth = monthKey(addDays(today, -10)) === monthKey(today);
+      // and there are real arrears on plenty of the sweep's days, or every
+      // assertion about them below is vacuous
+      arrearsDays += book.overdueCount >= 1 ? 1 : 0;
+      for (const line of book.lines) {
+        // the horizon total is `occurrences` payments of one bill and nothing
+        // else; arrears live in their own field or the rate is wrong
+        const perPayment = 1000 * Number(line.name.slice(-2));
+        if (line.totalCents !== line.occurrences * perPayment) wrong.push(`${today} ${line.name} total`);
+        if (line.perMonthCents !== Math.round(line.totalCents / HORIZON)) wrong.push(`${today} ${line.name} rate`);
+        if (line.name === LATE && line.overdueCents !== (lateInThisMonth ? perPayment : 0)) {
+          wrong.push(`${today} ${line.name} arrears ${line.overdueCents}`);
+        }
+        /*
+         * ⛔ THE DAY THE TWO LEGS MEET. The bill anchored on today's own day of
+         * the month is due TODAY, which is the first day of the horizon — so it
+         * is scheduled, and it must not ALSO be late. This is the one condition
+         * the fixtures could never state: every `TODAY` in this repo is a day no
+         * fixture bill is anchored on, and here every asking day is some bill's
+         * anchor day. `payEveryoneThrough` deliberately leaves it unpaid.
+         */
+        if (line.name === `Bill ${today.slice(8)}` && line.overdueCents !== 0) {
+          wrong.push(`${today} ${line.name} is due today AND ${line.overdueCents} late`);
+        }
+      }
+      // and the book's own total never borrows from the arrears it reports
+      expect(book.totalCents).toBe(book.lines.reduce((s2, l) => s2 + l.totalCents, 0));
+    }
+    expect(wrong).toEqual([]);
+    // 62 days, and the late bill is genuinely in arrears on most of them
+    expect(arrearsDays).toBeGreaterThan(40);
+  });
+});
 
 describe("carCard", () => {
   test("is absent without a Car category, and present once there is one", () => {
