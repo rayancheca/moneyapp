@@ -157,6 +157,37 @@ export interface StaleEntry {
 }
 
 /**
+ * What to call a set of stale entries in ONE summary line.
+ *
+ * ⛔ `isStale` covers two different facts — "the evidence is past tolerance" and
+ * "there is no evidence at all" — and that union is right, because both mean the
+ * projection rests on something other than a recent charge. What is not right is
+ * calling them all LATE.
+ *
+ * 🔴 Measured on the real ledger at today = 2026-09-01 the footer read
+ * "7 series are running late — still projected" over three that were and four
+ * that had never charged: `Rent utilities & fees` (first due 2026-09-01),
+ * `Car insurance` (2026-09-11), `Car lease` (2026-09-15) and `Gym`
+ * (2026-09-22). Three of those are not late by any reading — they are due in
+ * the FUTURE, and the lease's first payment was a fortnight away.
+ *
+ * The per-row text already distinguishes them — `stalenessSentence` has a
+ * branch for each and the inline badge reads "never seen". Only the count that
+ * stands over them did not.
+ */
+export function staleSummaryLabel(entries: readonly StaleEntry[]): string {
+  const never = entries.filter((e) => e.staleness.daysSinceLastMatch === null).length;
+  const late = entries.length - never;
+  const lateClause = `${late} ${late === 1 ? "series is" : "series are"} running late`;
+  const neverClause = `${never} ${never === 1 ? "has" : "have"} never charged`;
+  if (never === 0) return `${lateClause} — still projected`;
+  if (late === 0) {
+    return `${never} ${never === 1 ? "series has" : "series have"} never charged — still projected`;
+  }
+  return `${lateClause} and ${neverClause} — all still projected`;
+}
+
+/**
  * One entry per stale SERIES, not per occurrence — a weekly series contributes
  * four rows to a 30-day window and would otherwise be named four times. The
  * first occurrence wins; every occurrence of a series shares its staleness.

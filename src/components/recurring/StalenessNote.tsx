@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/Badge";
 import type { SeriesStaleness } from "@/services/recurring";
-import { staleLabel, stalenessSentence, type StaleEntry } from "./labels";
+import { staleLabel, stalenessSentence, staleSummaryLabel, type StaleEntry } from "./labels";
 
 /**
  * Staleness disclosure (item 13a). The forecast and the upcoming list keep
@@ -44,9 +44,10 @@ export function StaleFooter({ entries, className }: { entries: StaleEntry[]; cla
   return (
     <details className={`group rounded-md border border-line bg-surface ${className ?? ""}`.trim()}>
       <summary className="cursor-pointer select-none px-4 py-2.5 text-xs font-medium text-warning transition-colors duration-(--duration-fast) hover:text-ink">
-        {entries.length === 1
-          ? "1 series is running late — still projected"
-          : `${entries.length} series are running late — still projected`}
+        {/* ⛔ The count and the WORD for it: a series that has never charged is
+            not late, and three of the four on the owner's ledger are not even
+            due yet. `staleSummaryLabel` owns the split — see its docstring. */}
+        {staleSummaryLabel(entries)}
         <span className="ml-2 font-normal text-ink-faint group-open:hidden">
           why these numbers rest on old evidence
         </span>

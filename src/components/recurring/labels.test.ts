@@ -7,6 +7,8 @@ import {
   staleLabel,
   staleOccurrenceEntries,
   stalenessSentence,
+  staleSummaryLabel,
+  type StaleEntry,
 } from "./labels";
 
 const staleness = (over: Partial<SeriesStaleness> = {}): SeriesStaleness => ({
@@ -121,5 +123,61 @@ describe("staleComponentEntries", () => {
 
   test("nothing stale means no footer at all", () => {
     expect(staleComponentEntries([component({ staleness: staleness({ isStale: false }) })])).toEqual([]);
+  });
+});
+
+/*
+ * 🔴 "7 SERIES ARE RUNNING LATE" OVER THREE THAT WERE, AND FOUR THAT HAVE NEVER
+ * CHARGED — three of which are not due yet.
+ *
+ * `seriesStaleness.isStale` is true for both "the evidence is past tolerance"
+ * and "there is no evidence at all", which is right: both mean the projection
+ * rests on something other than a recent charge. The per-row sentence already
+ * says which — `stalenessSentence` has a branch for each, and the inline badge
+ * reads "never seen". The SUMMARY conflated them.
+ *
+ * Measured on the real ledger at today = 2026-09-01:
+ *
+ *   running late (3)  Cash job (weekly pay) 88d · Amazon Prime 58d · FPL 53d
+ *   never charged (4) Rent utilities & fees (first due 2026-09-01) ·
+ *                     Car insurance (2026-09-11) · Car lease (2026-09-15) ·
+ *                     Gym (2026-09-22)
+ *
+ * Three of those four are not late by any reading — they are due in the FUTURE.
+ * The car lease's first payment is a fortnight away and the page called it late.
+ */
+describe("staleSummaryLabel", () => {
+  const late = (days: number): StaleEntry => ({
+    key: `late-${days}`,
+    name: `Late ${days}`,
+    staleness: { lastMatchedOn: "2026-06-05", daysSinceLastMatch: days, stepDays: 7, toleranceDays: 14, isStale: true },
+  });
+  const never = (n: number): StaleEntry => ({
+    key: `never-${n}`,
+    name: `Never ${n}`,
+    staleness: { lastMatchedOn: null, daysSinceLastMatch: null, stepDays: 30, toleranceDays: 48, isStale: true },
+  });
+
+  test("the real ledger's mix names both, and neither count is the other's", () => {
+    expect(staleSummaryLabel([late(88), late(58), late(53), never(1), never(2), never(3), never(4)])).toBe(
+      "3 series are running late and 4 have never charged — all still projected",
+    );
+  });
+
+  test("only late reads as it always did", () => {
+    expect(staleSummaryLabel([late(88), late(58)])).toBe("2 series are running late — still projected");
+    expect(staleSummaryLabel([late(88)])).toBe("1 series is running late — still projected");
+  });
+
+  test("only never-charged does not claim anything is late", () => {
+    expect(staleSummaryLabel([never(1), never(2)])).toBe("2 series have never charged — still projected");
+    expect(staleSummaryLabel([never(1)])).toBe("1 series has never charged — still projected");
+    expect(staleSummaryLabel([never(1)])).not.toContain("late");
+  });
+
+  test("one of each still says one of each", () => {
+    expect(staleSummaryLabel([late(88), never(1)])).toBe(
+      "1 series is running late and 1 has never charged — all still projected",
+    );
   });
 });
