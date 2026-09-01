@@ -7,7 +7,7 @@
  * the sum of the bar-chart buckets always reconciles to the period total.
  */
 
-import { addDays, compareDates, diffDays, isValidIsoDate, monthKey, periodBounds } from "./dates";
+import { addCalendarMonths, addDays, compareDates, diffDays, isValidIsoDate, monthKey, periodBounds } from "./dates";
 import { addMonths, monthLabel } from "./calendar-math";
 
 export type PeriodGranularity = "day" | "week" | "month" | "quarter" | "year" | "ytd" | "all" | "custom";
@@ -244,10 +244,19 @@ export function stepPeriodParams(period: ResolvedPeriod, delta: number): PeriodP
     case "year":
       return { period: pad(Number(period.key) + delta, 4) };
     case "ytd": {
-      // the useful comparison is the SAME window a year earlier ("2025 to
-      // date"), not the previous N days
+      /*
+       * The useful comparison is the SAME window a year earlier ("2025 to
+       * date"), not the previous N days.
+       *
+       * 🔴 The end used to be spliced as `${y}${period.to.slice(4)}`, which on
+       * a leap day builds the string "2027-02-29" — not a date. `resolvePeriod`
+       * rejects it and falls back to the CURRENT MONTH, so a reader asking for
+       * the prior year to date silently gets four weeks instead. Stepping by
+       * calendar months clamps instead of fabricating, and gets 2024-02-29 back
+       * four years later, which splicing also could not do.
+       */
       const y = Number(period.from.slice(0, 4)) + delta;
-      return { from: `${pad(y, 4)}-01-01`, to: `${pad(y, 4)}${period.to.slice(4)}` };
+      return { from: `${pad(y, 4)}-01-01`, to: addCalendarMonths(period.to, delta * 12) };
     }
     case "all":
     case "custom": {

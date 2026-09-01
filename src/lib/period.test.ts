@@ -318,6 +318,33 @@ describe("anchored ranges — YTD and All time", () => {
     expect(stepPeriodParams(p, -1)).toEqual({ from: "2025-01-01", to: "2025-08-06" });
   });
 
+  /*
+   * 🔴 On a leap day the prior-year window was built as `${y-1}${to.slice(4)}`
+   * — the string "2027-02-29", which is not a date. `resolvePeriod` rejects it
+   * and falls back to the CURRENT MONTH, so a reader asking for the prior year
+   * to date silently gets four weeks instead, with nothing saying so.
+   *
+   * ⚠️ Not reachable by clicking: `PeriodSelector` suppresses both pager arrows
+   * for the anchored ranges. It IS reachable by URL, and by any future caller
+   * of `stepPeriodParams` — which is why this is fixed rather than filed.
+   */
+  test("a leap-day YTD steps to a real date, clamped", () => {
+    const leap = resolvePeriod({ period: "YTD" }, "2028-02-29");
+    expect(leap.to).toBe("2028-02-29");
+    const prior = stepPeriodParams(leap, -1);
+    expect(prior).toEqual({ from: "2027-01-01", to: "2027-02-28" });
+    // and it must survive the round trip that the invalid date failed
+    const resolved = resolvePeriod(prior as { from: string; to: string }, "2028-02-29");
+    expect(resolved.granularity).toBe("custom");
+    expect(resolved.from).toBe("2027-01-01");
+    expect(resolved.to).toBe("2027-02-28");
+  });
+
+  test("a leap-day YTD stepped back four years lands on the leap day again", () => {
+    const leap = resolvePeriod({ period: "YTD" }, "2028-02-29");
+    expect(stepPeriodParams(leap, -4)).toEqual({ from: "2024-01-01", to: "2024-02-29" });
+  });
+
   test("All time steps to the window before the ledger began — genuinely empty", () => {
     // that emptiness is the point: the prior-period comparison finds nothing
     // and the surface omits it, rather than comparing all time against itself
