@@ -416,6 +416,41 @@ describe("budgetStatuses — startsOn clamps the graded window", () => {
     expect(status.expectedTailCents).toBe(0); // 07-20 falls before the budget's window
     expect(status.tail).toEqual([]);
   });
+
+  /*
+   * ⛔ THE TAIL AND THE OVERDUE WINDOW ABUT, AND A BUDGET CREATED TODAY IS THE
+   * ONLY SHAPE THAT CAN SHOW IT.
+   *
+   * `tailFrom` is `refDate` normally, and `startsOn − 1` for a budget that
+   * opens LATER in the period, so `budgetTail`'s strictly-after-anchor window
+   * begins exactly on `startsOn`. When the budget opens TODAY the two readings
+   * collide: relaxing `start > refDate` to `>=` anchors a day early and the
+   * tail opens on today — the same day the overdue leg already owns.
+   *
+   * Found by mutation; no fixture had a budget whose clamped start equalled the
+   * reference day. The cost is a doubled projection on a budget's first day,
+   * and `pace` is graded from that projection, so a brand-new budget could open
+   * at "at-risk" over a bill that exists once.
+   */
+  test("a budget created TODAY does not project today's unpaid bill twice", () => {
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Housing"),
+      period: "monthly",
+      amountCents: 200_000,
+      startsOn: "2026-07-08", // today
+    });
+    const rent = createSeries({ name: "Rent", nextExpectedOn: "2026-07-08", nextExpectedAmountCents: -12_500 });
+    spendLinked("2026-06-08", -12_500, "Housing > Rent", rent); // maps the series to Housing, last month
+
+    const status = budgetPaceStatuses(bundle.db, "2026-07-08").find((s) => s.budget.id === id)!;
+    // today's unpaid bill belongs to the OVERDUE leg…
+    expect(status.overdueCents).toBe(12_500);
+    // …so the forward tail, which opens strictly after today, holds nothing
+    expect(status.expectedTailCents).toBe(0);
+    expect(status.tail).toEqual([]);
+    // and the projection counts it exactly once
+    expect(status.projectedCents).toBe(12_500);
+  });
 });
 
 describe("parent/child overlap semantics", () => {
@@ -710,6 +745,58 @@ describe("incomeExpectation — the term /budgets never had", () => {
     // not know about
     expect(got.scheduledOccurrences).toBe(4);
     expect(got.scheduledCents).toBe(104_600 * 4);
+  });
+
+  /*
+   * ⛔ THE TWO WINDOWS ABUT ON `today`, AND ONLY A PAYDAY THAT LANDS ON IT CAN
+   * SHOW IT. `postedCents` covers `[start, today]` and the expected walk opens
+   * at `today + 1`. Found by mutation: relaxing that open to `today` changed no
+   * test, because no fixture had a payday on the reference day.
+   *
+   * On this owner's ledger the pay is WEEKLY, so a payday falls on `today` once
+   * a week — the card would show $4,188.00 of income for a month the schedule
+   * pays $3,141.00, the deposit counted once as arrived and again as still to
+   * come.
+   */
+  test("a paycheque that lands ON today is posted, never also expected", () => {
+    const pay = createSeries({
+      name: "Cash job (weekly pay)",
+      nextExpectedOn: "2026-06-01",
+      nextExpectedAmountCents: 104_600,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    // today IS a payday, and it has already landed
+    spendLinked("2026-06-08", 104_600, "Income > Salary", pay);
+
+    const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-08");
+    expect(got.postedCents).toBe(104_600);
+    // 06-15, 06-22, 06-29 — three, not four: today's is already in `postedCents`
+    expect(got.expectedCents).toBe(104_600 * 3);
+    expect(got.postedCents + got.expectedCents).toBe(104_600 * 4);
+  });
+
+  /*
+   * The other end of the same window. `if (from <= end)` guards the walk; with
+   * `<` it skips the whole block on the one day where `from === end` — the day
+   * before the period closes.
+   */
+  test("a payday on the period's LAST day is still expected on the day before", () => {
+    createSeries({
+      name: "Cash job (weekly pay)",
+      nextExpectedOn: "2026-06-30",
+      nextExpectedAmountCents: 104_600,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-29");
+    // tomorrow is payday and tomorrow is inside the period
+    expect(got.expectedCents).toBe(104_600);
+    expect(got.series).toHaveLength(1);
+    // …and on the last day itself there is nothing left to come
+    expect(incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-30").expectedCents).toBe(0);
   });
 
   test("the basis is the annualised rate, not the paydays that happen to fall in the month", () => {
@@ -1030,6 +1117,41 @@ describe("budgetOverdue — the bill that came due and never arrived", () => {
     bindSeries(bill, "Housing");
     // default toleranceDays is 3 — landing on the 10th is the same bill
     spendLinked("2026-06-10", -5_000, "Housing", bill);
+    expect(budgetOverdue(bundle.db, catId("Housing"), "2026-06-01", "2026-06-20").totalCents).toBe(0);
+  });
+
+  /*
+   * ⛔ THE TOLERANCE EDGE, PINNED IN BOTH DIRECTIONS. The rule is
+   * `|posted − due| <= toleranceDays`, and the day EXACTLY at the limit is the
+   * only one that separates it from `<`. Found by mutation: tightening the
+   * comparison changed no test, because every fixture posting sat comfortably
+   * inside or comfortably outside.
+   *
+   * The cost of getting it wrong is money that has already left the account
+   * being reported as an unpaid bill on /budgets AND added to `projectedCents`
+   * a second time on top of the charge already in `spentCents`. This is also
+   * the committed book's overdue rule, so the runway card inherits it, and
+   * `recurring-calendar` documents itself as having to agree with it.
+   */
+  test("a posting EXACTLY toleranceDays late is paid, and one day further is not", () => {
+    const bill = createSeries({ name: "Wifi", nextExpectedOn: "2026-06-08", nextExpectedAmountCents: -5_000 });
+    bindSeries(bill, "Housing");
+    // default toleranceDays is 3: the 11th is exactly at the limit
+    spendLinked("2026-06-11", -5_000, "Housing", bill);
+    expect(budgetOverdue(bundle.db, catId("Housing"), "2026-06-01", "2026-06-20").totalCents).toBe(0);
+  });
+
+  test("a posting one day PAST toleranceDays leaves the bill overdue", () => {
+    const bill = createSeries({ name: "Wifi", nextExpectedOn: "2026-06-08", nextExpectedAmountCents: -5_000 });
+    bindSeries(bill, "Housing");
+    spendLinked("2026-06-12", -5_000, "Housing", bill);
+    expect(budgetOverdue(bundle.db, catId("Housing"), "2026-06-01", "2026-06-20").totalCents).toBe(5_000);
+  });
+
+  test("the tolerance is symmetric — EARLY by exactly the limit is paid too", () => {
+    const bill = createSeries({ name: "Wifi", nextExpectedOn: "2026-06-08", nextExpectedAmountCents: -5_000 });
+    bindSeries(bill, "Housing");
+    spendLinked("2026-06-05", -5_000, "Housing", bill);
     expect(budgetOverdue(bundle.db, catId("Housing"), "2026-06-01", "2026-06-20").totalCents).toBe(0);
   });
 
