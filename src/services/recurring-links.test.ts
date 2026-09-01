@@ -396,6 +396,9 @@ describe("user overrides shadow detection (§4.4)", () => {
       nextExpectedOn: "2026-07-15",
       nextExpectedAmountCents: -1549,
       anchorDay: null,
+      // carried alongside the anchor so a projection has everything it needs in
+      // one value — see rollForwardNextExpected
+      userEndsOn: null,
     });
   });
 
@@ -407,6 +410,7 @@ describe("user overrides shadow detection (§4.4)", () => {
       nextExpectedOn: "2026-07-20",
       nextExpectedAmountCents: -2000,
       anchorDay: null,
+      userEndsOn: null,
     });
     // projection honors the override end-to-end
     const occ = projectOccurrences(toProjectable(overridden), "2026-07-08", "2026-07-31");
