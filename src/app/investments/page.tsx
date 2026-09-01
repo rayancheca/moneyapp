@@ -161,6 +161,10 @@ export default async function InvestmentsPage({
     formatDay: formatDayLong,
   });
   const movers = topMovers(db);
+  // ⛔ ONE CALL, TWO CONSUMERS. The movers strip and the holdings header both
+  // date the SAME `dayChangePct`; computing the label twice is how they came to
+  // disagree, the strip saying "today" under a header reading "Last close".
+  const moversDayChange = dayChangeLabel(overview.asOf, overview.dayChangeVsDay, today, formatDayShort);
   const allocation = allocationSlices(db);
   const calendarMonth = pnlCalendarMonth(db, monthKey(overview.asOf ?? today), today);
 
@@ -233,7 +237,11 @@ export default async function InvestmentsPage({
 
         {(movers.winners.length > 0 || movers.losers.length > 0) && (
           <SurfaceCard>
-            <TopMovers winners={movers.winners} losers={movers.losers} />
+            <TopMovers
+              winners={movers.winners}
+              losers={movers.losers}
+              dayChange={moversDayChange}
+            />
           </SurfaceCard>
         )}
 
@@ -251,7 +259,7 @@ export default async function InvestmentsPage({
             <h2 className="mb-4 text-sm font-medium">Holdings</h2>
             <PortfolioHoldingsTable
               rows={rows}
-              dayChangeLabel={dayChangeLabel(overview.asOf, overview.dayChangeVsDay, today, formatDayShort).label}
+              dayChangeLabel={moversDayChange.label}
               today={today}
             />
           </SurfaceCard>

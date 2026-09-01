@@ -2,13 +2,32 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import type { DayChangeLabel } from "@/lib/day-change-label";
 import type { Mover } from "@/services/portfolio";
 
 /**
  * Top movers strip (ux-overhaul-plan §6.3 [MO]): a Winners/Losers toggle over
- * the day's biggest percentage moves; each chip opens its holding page.
+ * the biggest percentage moves between the two newest covered days; each chip
+ * opens its holding page.
+ *
+ * 🔴 NOT "the day's". This strip said "No winners today." and printed undated
+ * percentages while the holdings table a few elements BELOW it on the same page
+ * already read "Last close · 30 Aug vs 29 Aug" — one page, two answers to when
+ * the move happened. The moves are the same `dayChangePct` the header dates, so
+ * the strip takes the same `dayChangeLabel` and dates them once, at the top.
+ *
+ * The empty state then makes no time claim of its own: the header owns the
+ * date, so "Nothing rose." stays true whichever branch that header took.
  */
-export function TopMovers({ winners, losers }: { winners: Mover[]; losers: Mover[] }) {
+export function TopMovers({
+  winners,
+  losers,
+  dayChange,
+}: {
+  winners: Mover[];
+  losers: Mover[];
+  dayChange: DayChangeLabel;
+}) {
   const [side, setSide] = useState<"winners" | "losers">("winners");
   const movers = side === "winners" ? winners : losers;
 
@@ -17,7 +36,14 @@ export function TopMovers({ winners, losers }: { winners: Mover[]; losers: Mover
   return (
     <div>
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-sm font-medium">Top movers</h2>
+        <div>
+          <h2 className="text-sm font-medium">
+            Top movers <span className="text-ink-faint">· {dayChange.label}</span>
+          </h2>
+          {dayChange.interval !== null && (
+            <p className="mt-0.5 text-[11px] text-ink-faint">{dayChange.interval}</p>
+          )}
+        </div>
         <div role="group" aria-label="Movers side" className="inline-flex rounded-full bg-surface-sunken p-0.5 text-xs">
           {(["winners", "losers"] as const).map((s) => (
             <button
@@ -35,7 +61,7 @@ export function TopMovers({ winners, losers }: { winners: Mover[]; losers: Mover
         </div>
       </div>
       {movers.length === 0 ? (
-        <p className="text-sm text-ink-muted">No {side} today.</p>
+        <p className="text-sm text-ink-muted">Nothing {side === "winners" ? "rose" : "fell"}.</p>
       ) : (
         <ul className="flex flex-wrap gap-2">
           {movers.map((m) => {
