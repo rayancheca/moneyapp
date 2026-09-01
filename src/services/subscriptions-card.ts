@@ -144,6 +144,16 @@ export interface SubscriptionsCard {
    * report.
    */
   unforecastableCount: number;
+  /**
+   * Series whose commitment is OVER — a known `userEndsOn` already passed.
+   *
+   * ⛔ NOT `unforecastableCount`. An ended lease has an expected amount and an
+   * expected date pattern; what it lacks is a FUTURE occurrence, and the card
+   * says so in different words. Folding the two together made it claim Car
+   * insurance ($361.49, monthly on the 11th) and Car lease ($695.04, monthly on
+   * the 15th) had "no expected amount or no expected date".
+   */
+  endedCount: number;
   months: number;
   fromMonth: string;
   toMonth: string;
@@ -224,6 +234,7 @@ export function subscriptionsCard(
   const live: SubscriptionLine[] = [];
   const lapsed: SubscriptionLine[] = [];
   let unforecastableCount = 0;
+  let endedCount = 0;
 
   for (const s of rows) {
     const eff = effectiveSeries(s);
@@ -247,7 +258,14 @@ export function subscriptionsCard(
      */
     const nextOn = rollForwardNextExpected(eff, today);
     if (nextOn === null) {
-      unforecastableCount += 1;
+      /*
+       * ⛔ Two different reasons wear one null, and they earn different
+       * sentences. No stored date at all is unforecastable; a stored date the
+       * series has outlived is ENDED — it has an amount and a rhythm, and only
+       * the future is missing.
+       */
+      if (eff.nextExpectedOn === null) unforecastableCount += 1;
+      else endedCount += 1;
       continue;
     }
 
@@ -333,6 +351,7 @@ export function subscriptionsCard(
     postedCents: all.reduce((sum, l) => sum + l.postedCents, 0),
     postedCount: all.reduce((sum, l) => sum + l.postedCount, 0),
     unforecastableCount,
+    endedCount,
     months,
     fromMonth,
     toMonth,

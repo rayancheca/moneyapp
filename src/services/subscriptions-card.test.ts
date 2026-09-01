@@ -303,6 +303,48 @@ describe("subscriptionsCard — what it refuses to answer", () => {
     });
     expect(card()).toBeNull();
   });
+
+  /*
+   * 🔴 A DEFECT THIS SESSION'S OWN FIX CREATED, found by re-checking it.
+   *
+   * Moving the `userEndsOn` test into `rollForwardNextExpected` (8a7cef8) was
+   * right, but it turned a bare `continue` here into a `null` that fell through
+   * to the unforecastable bucket — and the card prints that bucket as
+   * "N more have no expected amount or no expected date, so nothing could be
+   * levelled from them."
+   *
+   * An ended lease has BOTH. What it lacks is a FUTURE date, which is a
+   * different fact and deserves a different sentence: on the real ledger the
+   * card would have said that about Car insurance ($361.49, monthly on the
+   * 11th) and Car lease ($695.04, monthly on the 15th) — the two largest
+   * commitments in the book.
+   */
+  test("an ended commitment is counted as ended, not as unpriced", () => {
+    addSeries({ name: "Breezeline", kind: "bill", amountCents: -5000, lastMatchedOn: FRESH });
+    addSeries({
+      name: "Finished lease",
+      kind: "bill",
+      amountCents: -55989,
+      lastMatchedOn: FRESH,
+      nextExpectedOn: "2026-09-10",
+      userEndsOn: "2026-08-01",
+    });
+    addSeries({ name: "Unpriced", kind: "bill", amountCents: null, lastMatchedOn: FRESH });
+
+    const c = card()!;
+    expect(c.endedCount).toBe(1);
+    expect(c.unforecastableCount).toBe(1);
+    expect(c.live.map((l) => l.name)).toEqual(["Breezeline"]);
+  });
+
+  test("a series with no expected DATE at all is unforecastable, not ended", () => {
+    addSeries({ name: "Breezeline", kind: "bill", amountCents: -5000, lastMatchedOn: FRESH });
+    addSeries({ name: "Dateless", kind: "bill", amountCents: -1000, lastMatchedOn: FRESH, nextExpectedOn: null });
+
+    const c = card()!;
+    expect(c.unforecastableCount).toBe(1);
+    expect(c.endedCount).toBe(0);
+  });
 });
 
 describe("subscriptionsCard — division guards", () => {

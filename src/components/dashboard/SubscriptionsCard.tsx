@@ -57,6 +57,7 @@ export function SubscriptionsCard({ data }: { data: SubscriptionsCardData }) {
     postedCents,
     postedCount,
     unforecastableCount,
+    endedCount,
     months,
     fromMonth,
     toMonth,
@@ -176,7 +177,12 @@ export function SubscriptionsCard({ data }: { data: SubscriptionsCardData }) {
         months, {fromMonth} to {toMonth}, refunds netted off. That is a total, not a rate — a bill that started
         or ended inside the window did not charge for all of it.
         {unforecastableCount > 0 &&
-          ` ${unforecastableCount} more have no expected amount or no expected date, so nothing could be levelled from them.`}
+          ` ${unforecastableCount} more ${unforecastableCount === 1 ? "has" : "have"} no expected amount or no expected date, so nothing could be levelled from ${unforecastableCount === 1 ? "it" : "them"}.`}
+        {/* ⛔ A separate sentence: an ended commitment has both an amount and a
+            rhythm — what it lacks is a future. Saying it "has no expected
+            amount" would be false about the two largest bills in the book. */}
+        {endedCount > 0 &&
+          ` ${endedCount} ${endedCount === 1 ? "has" : "have"} already ended, so ${endedCount === 1 ? "it costs" : "they cost"} nothing going forward.`}
       </p>
     </SurfaceCard>
   );

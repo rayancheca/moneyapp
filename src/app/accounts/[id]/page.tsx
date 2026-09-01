@@ -5,6 +5,8 @@ import { getDb } from "@/db/client";
 import { isLiability } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
+import { dayChangeLabel } from "@/lib/day-change-label";
+import { formatDayShort } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { accountInsights } from "@/services/account-insights";
 import { getAccount, listAccounts, listInstitutions } from "@/services/accounts";
@@ -137,6 +139,19 @@ export default async function AccountDetailPage({
   });
   const previous = series.length > 1 ? series[series.length - 2]! : null;
   const dayChange = latest && previous ? sign * (latest.balanceCents - previous.balanceCents) : null;
+  /*
+   * ⛔ The FOURTH surface to ask "what do I call this figure", and the one the
+   * dashboard's own row links to. `daily_balances` is a cached derivation that
+   * stops wherever `today` stood at the last rebuild, so these two days are
+   * routinely weeks old: measured on the real ledger at today = 2026-09-01,
+   * Cash on Hand's move is between 2026-08-10 and 2026-08-11 and this chip
+   * called it "Today −$5,000.00" — the very figure the fix one page up quotes
+   * as the defect it was closing.
+   */
+  const dayTerm =
+    latest && previous
+      ? (dayChangeLabel(latest.day, previous.day, today, formatDayShort).interval ?? "Today")
+      : "Today";
 
   let monthChange: number | null = null;
   if (latest) {
@@ -209,7 +224,7 @@ export default async function AccountDetailPage({
                 <Money cents={sign * latest.balanceCents} className={liability ? "text-negative" : ""} />
               </p>
               <p className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-                <ChangeChip label="Today" cents={dayChange} liability={liability} />
+                <ChangeChip label={dayTerm} cents={dayChange} liability={liability} />
                 <ChangeChip label="30 days" cents={monthChange} liability={liability} />
                 <span className="text-xs text-ink-faint">
                   as of {latest.day} · {BASIS_LABEL[latest.basis] ?? latest.basis}
