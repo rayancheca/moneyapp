@@ -17,6 +17,7 @@ import {
 const row = (over: Partial<Parameters<typeof budgetSectionNotes>[0]["rows"][number]> = {}) => ({
   categoryPath: "Food",
   overdueCents: 0,
+  overdueBills: 0,
   uncoveredDays: 0,
   pace: "under" as const,
   ...over,
@@ -36,8 +37,8 @@ describe("budgetSectionNotes", () => {
   test("totals overdue bills across rows and names them", () => {
     const notes = budgetSectionNotes({
       rows: [
-        row({ categoryPath: "Housing", overdueCents: 228_570 }),
-        row({ categoryPath: "Subscriptions", overdueCents: 499 }),
+        row({ categoryPath: "Housing", overdueCents: 228_570, overdueBills: 1 }),
+        row({ categoryPath: "Subscriptions", overdueCents: 499, overdueBills: 1 }),
         row({ categoryPath: "Food" }),
       ],
     });
@@ -45,12 +46,62 @@ describe("budgetSectionNotes", () => {
     expect(overdue.body).toContain("2 bills");
     expect(overdue.body).toContain("$2,290.69");
     expect(overdue.body).toContain("Housing, Subscriptions");
+    // two bills across two budgets: the counts already agree, so the sentence
+    // does not repeat itself — the clause exists to resolve a mismatch, and
+    // saying "2 budgets" here would be noise the reader has to reconcile
+    expect(overdue.body).not.toContain("budgets:");
   });
 
   test("reads singular for one overdue bill", () => {
-    const notes = budgetSectionNotes({ rows: [row({ overdueCents: 1_000 })] });
+    const notes = budgetSectionNotes({ rows: [row({ overdueCents: 1_000, overdueBills: 1 })] });
     expect(notes[0]!.body).toContain("One bill");
     expect(notes[0]!.body).toContain("it yet");
+  });
+
+  /*
+   * 🔴 The count was the number of BUDGET ROWS and the noun was "bill".
+   *
+   * Measured on the owner's real ledger at today = 2026-09-16, the page read
+   * "4 bills totalling $3,467.60" over EIGHT overdue bills — Car held two, so
+   * did Housing, Subscriptions and Utilities. At today = 2026-09-01 it read
+   * "One bill totalling $2,291.21" over rent AND rent utilities & fees.
+   *
+   * ⛔ The type could not express the condition: `BudgetNoteInput` carried no
+   * bill count, so no fixture over it could tell one bill from four in a row.
+   * This module's own header names the same failure in a sibling sentence —
+   * "2 categories hold no transactions: Food, Drink, Pets" says two, lists
+   * three. Here the count agreed with the LIST and disagreed with the NOUN.
+   */
+  test("counts BILLS, not the budgets they are spread across", () => {
+    const notes = budgetSectionNotes({
+      rows: [
+        row({ categoryPath: "Car", overdueCents: 105_653, overdueBills: 2 }),
+        row({ categoryPath: "Housing", overdueCents: 229_121, overdueBills: 2 }),
+        row({ categoryPath: "Subscriptions", overdueCents: 1_099, overdueBills: 2 }),
+        row({ categoryPath: "Utilities", overdueCents: 10_887, overdueBills: 2 }),
+      ],
+    });
+    const overdue = notes.find((n) => n.id === "budgets-overdue")!;
+    expect(overdue.body).toContain("8 bills");
+    expect(overdue.body).not.toContain("4 bills");
+    expect(overdue.body).toContain("$3,467.60");
+    // and the budget count is stated too, so the four names are not read as
+    // four bills — the list length always equals the number said beside it
+    expect(overdue.body).toContain("4 budgets");
+    expect(overdue.body).toContain("Car, Housing, Subscriptions, Utilities");
+  });
+
+  test("two bills in ONE budget still name one budget", () => {
+    const notes = budgetSectionNotes({
+      rows: [row({ categoryPath: "Housing", overdueCents: 229_121, overdueBills: 2 })],
+    });
+    const body = notes.find((n) => n.id === "budgets-overdue")!.body;
+    expect(body).toContain("2 bills");
+    expect(body).toContain("1 budget");
+    expect(body).not.toContain("1 budgets");
+    expect(body).toContain("Housing");
+    // the pronoun follows the BILLS, not the rows — one row, two bills
+    expect(body).toContain("them yet");
   });
 
   test("counts under-measured rows, exempting `over` the same way the row does", () => {

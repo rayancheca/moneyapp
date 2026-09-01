@@ -70,6 +70,17 @@ export interface BudgetNoteInput {
   rows: readonly {
     categoryPath: string;
     overdueCents: number;
+    /**
+     * How many BILLS make up `overdueCents` in this row — `BudgetTailSeries`
+     * occurrences, not series, because a quarterly bill can be twice overdue.
+     *
+     * 🔴 Without this the note counted ROWS and called them bills. Measured on
+     * the real ledger at today = 2026-09-16 it read "4 bills totalling
+     * $3,467.60" over EIGHT: Car, Housing, Subscriptions and Utilities each
+     * held two. The type could not express the difference, so no fixture over
+     * it could catch it.
+     */
+    overdueBills: number;
     uncoveredDays: number;
     pace: "under" | "at-risk" | "over";
   }[];
@@ -86,13 +97,27 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
   const overdue = input.rows.filter((r) => r.overdueCents > 0);
   if (overdue.length > 0) {
     const total = overdue.reduce((sum, r) => sum + r.overdueCents, 0);
+    // Summed the same way `total` is — per row, not deduplicated. If a parent
+    // and a child budget ever both claim one series, the money is double-counted
+    // in the total already; a bill count that disagreed with it would be worse
+    // than one that shares its arithmetic.
+    const bills = overdue.reduce((sum, r) => sum + r.overdueBills, 0);
     const names = overdue.map((r) => r.categoryPath).join(NAME_LIST_SEPARATOR);
+    /*
+     * ⛔ The count and the LIST must be readable as the same claim. `names` has
+     * one entry per BUDGET, and the bill count is routinely larger, so the
+     * budget count is said out loud beside the names: every number in the
+     * sentence can then be checked against something the reader can see. A bare
+     * "8 bills — Car, Housing, Subscriptions, Utilities" invites the reader to
+     * count four, which is the mis-read this module's header already names.
+     */
+    const where = bills === overdue.length ? names : `${overdue.length} budget${overdue.length === 1 ? "" : "s"}: ${names}`;
     notes.push({
       id: "budgets-overdue",
       body:
-        `${overdue.length === 1 ? "One bill" : `${overdue.length} bills`} totalling ` +
+        `${bills === 1 ? "One bill" : `${bills} bills`} totalling ` +
         `${formatCents(total)} came due this period and no import has covered ` +
-        `${overdue.length === 1 ? "it" : "them"} yet — ${names}. That money is committed, so ` +
+        `${bills === 1 ? "it" : "them"} yet — ${where}. That money is committed, so ` +
         `the room left is smaller than it looks.`,
     });
   }

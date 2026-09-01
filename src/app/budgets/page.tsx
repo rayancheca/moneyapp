@@ -77,6 +77,9 @@ export default async function BudgetsPage({
     rows: statuses.map((s) => ({
       categoryPath: s.categoryPath,
       overdueCents: s.overdueCents,
+      // occurrences, not series — the same rows `overdueCents` was summed from,
+      // so the count and the money it describes cannot drift apart
+      overdueBills: s.overdue.reduce((n, o) => n + o.occurrenceCount, 0),
       uncoveredDays: s.uncoveredDays,
       pace: s.pace,
     })),
