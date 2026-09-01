@@ -226,3 +226,30 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
     inflowCount,
   };
 }
+
+/**
+ * What to CALL the trailing window a spending average was taken over.
+ *
+ * ⛔ ZERO MONTHS IS NOT A RANGE. `baselineWindow` floors the window at the
+ * first month the ledger covers in full and falls back to the CURRENT month
+ * for its labels when there is no such month — so the obvious sentence reads
+ * "0 complete months, 2022-09 to 2022-09. This month is still running and is
+ * not counted", naming as the range it averaged the one month it says it did
+ * not count. A caption is a claim like any other figure on the card.
+ *
+ * Pure, and here rather than inside the card, because the branch a pinned e2e
+ * clock can never render is exactly the one worth a test — the same reason
+ * `pace-geometry` lives in `lib`.
+ */
+export function baselineCaption(window: { months: number; fromMonth: string; toMonth: string }): string {
+  if (window.months < 1) {
+    return "No complete month has been imported yet, so there is no spending average to stand on.";
+  }
+  const span =
+    window.fromMonth === window.toMonth
+      ? window.fromMonth
+      : `${window.fromMonth} to ${window.toMonth}`;
+  return `Spending averaged over ${window.months} complete month${
+    window.months === 1 ? "" : "s"
+  }, ${span}. This month is still running and is not counted.`;
+}

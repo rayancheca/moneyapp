@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  baselineCaption,
   COMMITTED_ORIGIN_LABEL,
   committedOutflows,
   type CommittedInput,
@@ -262,5 +263,33 @@ describe("COMMITTED_ORIGIN_LABEL", () => {
   test("names both origins without repeating a reserved page phrase", () => {
     expect(COMMITTED_ORIGIN_LABEL.overdue).toBe("already late");
     expect(COMMITTED_ORIGIN_LABEL.upcoming).toBe("scheduled");
+  });
+});
+
+describe("baselineCaption", () => {
+  test("names the months it averaged", () => {
+    expect(baselineCaption({ months: 6, fromMonth: "2026-03", toMonth: "2026-08" })).toBe(
+      "Spending averaged over 6 complete months, 2026-03 to 2026-08. This month is still running and is not counted.",
+    );
+  });
+
+  test("a one-month window is singular, and is not a range", () => {
+    const c = baselineCaption({ months: 1, fromMonth: "2022-09", toMonth: "2022-09" });
+    expect(c).toContain("1 complete month,");
+    expect(c).not.toContain("months");
+    expect(c).not.toContain("2022-09 to 2022-09");
+  });
+
+  /**
+   * 🔴 The caption `baselineWindow`'s own fallback would have produced: "0
+   * complete months, 2022-09 to 2022-09. This month is still running and is
+   * not counted" — a range made of the single month the same sentence says was
+   * excluded. It cannot be a range because there is nothing in it.
+   */
+  test("an empty window names no months at all", () => {
+    const c = baselineCaption({ months: 0, fromMonth: "2022-09", toMonth: "2022-09" });
+    expect(c).toBe("No complete month has been imported yet, so there is no spending average to stand on.");
+    expect(c).not.toContain("2022-09");
+    expect(c).not.toContain("0 complete");
   });
 });

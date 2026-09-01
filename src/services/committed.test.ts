@@ -626,6 +626,44 @@ describe("carCard", () => {
     expect(carCard(bundle.db, TODAY)).not.toBeNull();
   });
 
+  /**
+   * 🔴 A NUMERATOR THAT FOLLOWS THE WINDOW AND A DENOMINATOR THAT DOES NOT.
+   *
+   * The "before the car" figure removes car spending from the baseline so the
+   * car is not counted twice — once inside the average and again as its own
+   * amortised cost. The removal was divided by the CONSTANT six while the
+   * average it is subtracted from was divided by `baseline.months`, which
+   * shrinks to the months the ledger can prove. On a ledger under seven months
+   * old that leaves most of the car spending inside the total whose whole job
+   * is to have it taken out.
+   */
+  test("subtracts car spending over the window's own months, not the constant six", () => {
+    const carId = createCarCategory();
+    addSeries({
+      name: "Car lease",
+      kind: "bill",
+      nextExpectedOn: "2026-05-11",
+      amountCents: -55989,
+      userCategoryId: carId,
+    });
+    // $600 of car spending inside a window the ledger has shortened to THREE
+    // months (2026-02 … 2026-04): $200 a month, not $100.
+    insertTxn({
+      postedOn: "2026-03-10",
+      amountCents: -60000,
+      rawDescription: "CAR PAYMENT",
+      categoryId: carId,
+    });
+
+    const asked = spendBaseline(bundle.db, "2026-05-15");
+    expect(asked.months).toBe(3);
+
+    const c = carCard(bundle.db, "2026-05-15")!;
+    expect(c.baseline.months).toBe(3);
+    expect(c.baseline.monthlyCents).toBe(asked.monthlyCents - 20000);
+    expect(c.baseline.monthlyCents).not.toBe(asked.monthlyCents - 10000);
+  });
+
   test("prices the monthly bill from the commitments, not from the horizon average", () => {
     const carId = createCarCategory();
     addSeries({

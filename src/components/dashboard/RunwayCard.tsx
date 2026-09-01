@@ -2,6 +2,7 @@ import Link from "next/link";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
+import { baselineCaption } from "@/lib/committed";
 import { RUNWAY_JARGON } from "@/lib/jargon";
 import { formatCents } from "@/lib/money";
 import type { RunwayAssumption, RunwayAssumptionId } from "@/lib/runway";
@@ -197,10 +198,9 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
         </div>
       )}
 
-      <p className="mt-2 text-[11px] text-ink-faint">
-        Spending averaged over {spend.months} complete months, {spend.fromMonth} to {spend.toMonth}. This
-        month is still running and is not counted.
-      </p>
+      {/* ⛔ The sentence is built in `lib/committed`, where a test can reach
+          the zero-month branch a pinned e2e clock never renders. */}
+      <p className="mt-2 text-[11px] text-ink-faint">{baselineCaption(spend)}</p>
     </SurfaceCard>
   );
 }

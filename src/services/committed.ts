@@ -490,8 +490,19 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
     .filter((c) => c.month >= baseline.fromMonth)
     .filter((c) => c.categoryId !== null && subtree.has(c.categoryId))
     .reduce((s, c) => s + c.spentCents, 0);
+  /*
+   * ⛔ DIVIDED BY THE WINDOW'S OWN MONTHS, not the constant. `baseline.months`
+   * shrinks to what the ledger can prove, and the numerator above already
+   * follows it (`c.month >= baseline.fromMonth`); dividing the two by different
+   * numbers leaves car spending inside a figure whose whole job is to have it
+   * removed. Its own test measures the size of that: on a window the ledger
+   * has shortened to three months, $600 of car spending was removed at $100 a
+   * month instead of $200, leaving half of it inside the total — money then
+   * counted a second time as the amortised up-front cost. Unchanged on the
+   * owner's ledger, where the window is a full six months.
+   */
   const baselineMonthlySpendCents =
-    baseline.monthlyCents - Math.round(baselineCarCents / SPEND_BASELINE_MONTHS);
+    baseline.monthlyCents - Math.round(baselineCarCents / Math.max(1, baseline.months));
 
   /*
    * The first date a car commitment runs out — the six-month insurance policy,
