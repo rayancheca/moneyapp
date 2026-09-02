@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { assertQuietBox } from "../scripts/quiet-box";
 import { E2E_FAKE_TODAY, seedE2eDatabase } from "./seed-helpers";
 
 /**
@@ -72,6 +73,13 @@ function assertBundleIsFresh(): void {
 }
 
 export default async function globalSetup(): Promise<void> {
+  const load = assertQuietBox({ suite: "e2e", escapeHatch: "E2E_ALLOW_LOAD" });
+  if (load.verdict !== "quiet") {
+    console.warn(
+      `[e2e] load average ${load.load1.toFixed(1)} across ${load.cores} cores — timings and any timeout ` +
+        "failure in this run should be read as the machine, not the app.",
+    );
+  }
   assertBundleIsFresh();
   const dbPath = path.join(process.cwd(), "data", "e2e.db");
   // NB: the db file is deliberately NOT unlinked — seedE2eDatabase wipes its

@@ -28,6 +28,12 @@ export default defineConfig({
      * today and fails loudly the moment someone reintroduces the bug class.
      */
     env: { TZ: "Pacific/Kiritimati" },
+    /**
+     * ⛔ REFUSE TO RUN ON A SATURATED BOX. See `scripts/quiet-box.ts` for the
+     * measurement: three runs, three different sets of failures, all of them
+     * passing alone. Set VITEST_ALLOW_LOAD=1 to run anyway.
+     */
+    globalSetup: ["./scripts/vitest-global-setup.ts"],
     coverage: {
       provider: "v8",
       include: ["src/lib/**", "src/db/backup.ts", "src/db/derive/**"],
