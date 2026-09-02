@@ -235,6 +235,43 @@ describe("institutionGroups", () => {
     expect(group!.accounts[0]!.shortName).toBe("Everyday Checking");
   });
 
+  /*
+   * 🔴 "Cash on Hand" under the institution "Cash" rendered as a sub-card headed
+   * "on Hand" — a sentence fragment where a name should be, live on the
+   * dashboard. The prefix strip is right for "Wells Fargo Everyday Checking";
+   * it is wrong whenever the institution's name is the first WORD of a phrase
+   * rather than a prefix, and the remainder tells you which: a name starts with
+   * a capital (or a digit, as in Capital One's "360 Checking"), a phrase
+   * continues in lower case.
+   */
+  test("an institution name that is the first word of a phrase is not stripped", () => {
+    const cash = bundle.db
+      .insert(institutions)
+      .values({ name: "Cash" })
+      .returning({ id: institutions.id })
+      .get().id;
+    const wallet = createAccount(bundle.db, {
+      institutionId: cash,
+      name: "Cash on Hand",
+      type: "checking",
+    });
+    addManualAnchor(bundle.db, { accountId: wallet, anchoredOn: TODAY, enteredCents: 180_000 });
+    const group = institutionGroups(bundle.db).find((g) => g.institutionName === "Cash");
+    expect(group!.accounts[0]!.shortName).toBe("Cash on Hand");
+  });
+
+  test("a remainder that opens with a digit is still a name", () => {
+    const capitalOne = institutionId("Capital One");
+    const checking = createAccount(bundle.db, {
+      institutionId: capitalOne,
+      name: "Capital One 360 Checking",
+      type: "checking",
+    });
+    addManualAnchor(bundle.db, { accountId: checking, anchoredOn: TODAY, enteredCents: 100 });
+    const group = institutionGroups(bundle.db).find((g) => g.institutionName === "Capital One");
+    expect(group!.accounts[0]!.shortName).toBe("360 Checking");
+  });
+
   test("archived accounts are excluded from groups", () => {
     const rh = institutionId("Robinhood");
     const cash = createAccount(bundle.db, { institutionId: rh, name: "Robinhood Cash", type: "checking" });

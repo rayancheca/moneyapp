@@ -79,12 +79,33 @@ interface DayRow {
   balanceCents: number;
 }
 
+/**
+ * The account's name with its institution's name off the front — "Wells Fargo
+ * Everyday Checking" under a card headed "Wells Fargo" is the institution said
+ * twice.
+ *
+ * 🔴 Except when the institution's name is not a PREFIX but the first WORD of a
+ * phrase. "Cash on Hand" under the institution "Cash" rendered as a sub-card
+ * headed "on Hand", live on the dashboard: a sentence fragment where a name
+ * should be, and the only account on the ledger whose institution name is an
+ * ordinary noun.
+ *
+ * The remainder itself says which case this is. A name opens with a capital —
+ * "Everyday Checking", "Sapphire" — or with a digit, as Capital One's "360
+ * Checking" does. A phrase carries on in lower case, and there is nothing to
+ * strip.
+ */
 function shortNameOf(accountName: string, institutionName: string): string {
   const prefix = `${institutionName} `;
-  if (accountName.startsWith(prefix) && accountName.length > prefix.length) {
-    return accountName.slice(prefix.length);
-  }
-  return accountName;
+  if (!accountName.startsWith(prefix) || accountName.length <= prefix.length) return accountName;
+  const rest = accountName.slice(prefix.length);
+  const head = rest[0]!;
+  // `head !== head.toLowerCase()` IS "an upper-case letter": a lower-case letter
+  // equals its own lower-casing and so does an uncased character. The longer
+  // `head === head.toUpperCase() && …` form was measured EQUIVALENT by mutation
+  // rather than argued, so the shorter one stands.
+  const startsAName = head !== head.toLowerCase() || /[0-9]/.test(head);
+  return startsAName ? rest : accountName;
 }
 
 interface DayChange {
