@@ -3,7 +3,7 @@
 > **Supersedes `HANDOFF-2026-09-01-twelve-boundaries.md`.**
 >
 > Repo: **`/Users/rayankarimcheca/dev/MoneyApp`**, `main`, tree clean, pushed.
-> tsc clean · **4,490 unit** · coverage gate exit 0 ·
+> tsc clean · **4,491 unit** · coverage gate exit 0 ·
 > **E2E_GATE=1: 598 passed at `maxDiffPixels: 0`** · `pnpm ledger-check` exit 0
 > on every commit via `.githooks/pre-commit`.
 >
@@ -11,7 +11,7 @@
 > $167,828.49 · ZERO DB writes this session.** The only thing this session wrote
 > to your database is view preferences, which is the feature you asked for.
 >
-> 73 baselines regenerated, every diff cropped and read first.
+> 81 baselines regenerated, every diff cropped and read first.
 
 ---
 
@@ -96,7 +96,7 @@ starts from predates the payment — so the money still has to leave EOM cash.
 
     PROJECTED SPENDING  -$1,276.39  ->  -$3,567.60
     EOM CASH             $8,429.87  ->   $6,138.66
-    EOM NET WORTH      $114,601.31  ->  $112,310.10
+    EOM NET WORTH      $114,601.31  ->  $112,310.10   (both read in one minute; see §10)
     committed lines              7  ->           9
 
 ### How it is built, and the three things that constrain it
@@ -366,3 +366,103 @@ should mean.
 - ⚠️ **`npx vitest run --maxWorkers=4`** remains the reliable invocation on this
   box; 4,490 tests in ~20s.
 - ⛔ The dev server on :3000 is left running, as it was found.
+
+---
+
+## 10. What was measured, and when
+
+Every figure in this document is **as of 2026-09-02**, and two classes of them
+move on their own:
+
+- ⚠️ **Crypto re-prices intraday on your ledger.** Between two reads three hours
+  apart in this session, ETH went $2,455.96 → $2,395.19, the portfolio
+  $107,097.05 → $106,251.52, and net worth $111,689.70 → $110,844.17. Nothing
+  wrote to the database. Any EOM-net-worth figure quoted here is only paired
+  with the one measured in the same minute — the DELTA ($2,291.21) is the stable
+  fact, not the endpoints.
+- ⚠️ **Every trailing window moves with the date.** The runway's six complete
+  months, the insight panel's newest fully-observed month, the arrears leg's
+  calendar month: all of them roll. Re-derive before quoting any of it.
+
+Confirmed live at the end of the session:
+
+    /recurring   PROJECTED SPENDING -$3,567.60 · EOM CASH $6,138.66
+    dashboard    "Committed bills come to $3,542.21 a month"
+    dashboard    "$3,753.08 a month, still forecast"   ← the $210.87 in §7
+    dashboard    "13 paydays, Jun 4 – Aug 27" · "52 days unchecked"
+    /budgets     "no spending imported since Aug 12 · 2 days of this period unaccounted"
+    /categories  exactly two rows read "—", which is what its note says
+
+---
+
+# 📋 THE PROMPT FOR THE NEXT SESSION
+
+> Read `docs/HANDOFF-2026-09-02-the-forecast-hole.md` first — it is the brief.
+> §0 of it is the job.
+> Repo `/Users/rayankarimcheca/dev/MoneyApp`, `main` clean and pushed. Baseline:
+> 4,491 unit in ~20s · tsc clean · coverage gate exit 0 · `E2E_GATE=1`: 598
+> passed at `maxDiffPixels: 0` in 8.2m · `pnpm ledger-check` exit 0 on every
+> commit. Ledger: 10,111 active rows · income $117,924.62 · spending
+> $167,828.49.
+>
+> My queue is empty again — so the job is to find what is wrong. Three sessions
+> running have emptied it and then found more by checking their own work. Do
+> that. Do not invent features.
+>
+> 1. ⭐ **OPEN THE APP AND READ IT BEFORE YOU GREP IT.** My dev server runs on
+>    :3000 with real data. Ten of last session's eleven defects came from
+>    navigating each page and reading the sentences, including the only one that
+>    moved money. Every one was a pair of true statements made false by sitting
+>    next to each other. That is a property of a PAGE.
+> 2. **Read a BASELINE as a sentence, not as pixels.** The e2e fixture had been
+>    printing "it Card" for *Discover it Card* in eight committed baselines, and
+>    a gate at `maxDiffPixels: 0` was perfectly happy: it proves a page has not
+>    CHANGED and says nothing about whether it was ever right.
+> 3. **Keep hunting the boundary class.** Two more phrasings shipped wrong
+>    numbers this month. Ask what else answers one question two ways — and
+>    ⛔ before making any control persistent, grep for the tests that PRESS it.
+> 4. **One decision is waiting on me in §7** — the $210.87 between two cards.
+>    Put it to me early, not at the end.
+> 5. HOSTING goes last. Never propose a hosted-DB migration.
+>
+> How I want you to work
+>
+> * ONE long session, ONE handoff at the very end. Commit and push to `main`
+>   between items without asking.
+> * No fabricated numbers. Re-derive rather than quote — correct me rather than
+>   inherit me. **Crypto re-prices intraday**, so any figure standing on the
+>   portfolio moves without a write.
+> * Measure before you assert, and look at the page. Do NOT read money off a
+>   screenshot.
+> * Mutation-test every new guard. A green first run is when to break it — two
+>   of last session's guards survived their first pass and needed their own tests.
+> * Explain a visual diff before regenerating a baseline
+>   (`scripts/crop-visual-diff.mjs`), and regenerate WITHOUT `E2E_GATE=1`.
+> * ⚠️ The pre-commit hook runs `ledger-check`, NOT coverage. `src/lib/**` is
+>   gated at 100% and nothing will remind you.
+> * Real-DB writes: rehearse on a `.backup` copy with guards, show me, then ask.
+> * I run my own dev server on :3000. Standing permission to stop it; put it back.
+>
+> Rules that keep biting
+>
+> * ⛔⛔ `BTLEServer` has been at 100% of a core for **51 days** and the box has
+>   not been rebooted. Both suites refuse to start above 1.5 load per core; if
+>   one refuses, that is the guard working. Reboot.
+> * A fixture that cannot express a condition cannot test it — and one that
+>   expresses it by COINCIDENCE hides it. `/budgets` read "since Jul 4 · 4 days"
+>   in the fixture, four uncovered days against five elapsed, so the wrong
+>   reading was invisible there and obvious on my ledger at "since Aug 12 · 2 days".
+> * A test can ENCODE the bug, and an assertion loose enough to survive it is not
+>   coverage.
+> * A disclosure underneath does not undo a wrong number on top.
+> * Grep for who else answers a question before fixing one caller.
+> * ⛔ `react`'s `cache`, never a module-level Map.
+> * `git checkout -- <file>` destroys uncommitted work.
+> * TWO DEFINITIONS OF SPENDING: the headline $167,828.49 is the expense-KIND
+>   signed sum; `periodTotals().spentCents` reads $175,018.27 on the same ledger.
+> * `user_category_id` is an OVERRIDE, not the membership.
+> * My income is cash I spend. $0 recorded is correct, not a bug.
+> * ⚖️ **Arrears stay scoped to the calendar month** — I decided that on
+>   2026-09-02. Do not widen the leg and do not "fix" the cliff.
+> * A Playwright call that RETURNS a value usually does not retry.
+> * `pnpm e2e` refuses a stale `.next` — use `pnpm e2e:fresh`, or build first.
