@@ -262,6 +262,127 @@ describe("forecastCurrentMonth", () => {
     expect(f.projectedSpendCents).toBe(0);
   });
 
+  /* ── arrears: what came due earlier this month and never posted ──────────
+     Found by reading the running app on 2026-09-02. The fixed leg opened on
+     `today` and the variable leg excludes every recurring-tagged row, so a bill
+     that came due EARLIER THIS MONTH and never posted was in neither: rent
+     ($2,109.00, due Sep 1) and its utilities ($182.21) were missing from
+     September's projected spending and from EOM cash, while /budgets and the
+     runway card both published the same $2,291.21 as "due by today and no
+     import has covered it". Three surfaces, one bill, two answers. */
+
+  test("a bill that came due earlier this month and never posted is still projected", () => {
+    insertSeries({
+      name: "Rent",
+      kind: "bill",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-01", // a week before TODAY, and nothing posted
+      nextExpectedAmountCents: -210900,
+      status: "confirmed",
+    });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    const rentLine = f.components.find((c) => c.label === "Rent");
+    expect(rentLine).toMatchObject({ kind: "fixed", cents: -210900 });
+    expect(rentLine!.detail).toContain("came due");
+    expect(f.projectedSpendCents).toBe(-210900);
+    // it is a COMMITMENT, not a pace: the schedule-only reading owns it too
+    expect(f.committed.spendCents).toBe(-210900);
+  });
+
+  test("a bill that came due AND posted is not projected on top of what it cost", () => {
+    const seriesId = insertSeries({
+      name: "Rent",
+      kind: "bill",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-01",
+      nextExpectedAmountCents: -210900,
+      status: "confirmed",
+      lastMatchedOn: "2026-07-02",
+    });
+    // landed a day late — inside the series' own 3-day tolerance
+    insertTxn(checkingId, "2026-07-02", -210900, { recurringSeriesId: seriesId });
+
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.components.find((c) => c.label === "Rent")).toBeUndefined();
+    expect(f.projectedSpendCents).toBe(0);
+  });
+
+  /* ⛔ The two legs must ABUT, never overlap: a bill due TODAY is DUE, not late,
+     and the forward leg already owns it. Counting it in both would double the
+     largest bill on the ledger on exactly one day a month. */
+  test("a bill due TODAY is projected exactly once", () => {
+    insertSeries({
+      name: "Rent",
+      kind: "bill",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: TODAY,
+      nextExpectedAmountCents: -210900,
+      status: "confirmed",
+    });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.components.filter((c) => c.label === "Rent")).toHaveLength(1);
+    expect(f.projectedSpendCents).toBe(-210900);
+  });
+
+  /* ⛔ MONEY-OUT ONLY, the same asymmetry `fixedComponents` already states: a
+     dead outflow that keeps projecting overstates what you owe, which is
+     conservative. A payday that did not arrive is evidence about the IMPORTS,
+     and projecting it as still-to-come would inflate EOM cash. */
+  test("a payday that came and went without a deposit is NOT projected as arrears", () => {
+    insertSeries({
+      name: "Payroll",
+      kind: "income",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-01",
+      nextExpectedAmountCents: 300000,
+      status: "confirmed",
+    });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.components.find((c) => c.label === "Payroll")).toBeUndefined();
+    expect(f.projectedIncomeCents).toBe(0);
+  });
+
+  /* A transfer moves money between the owner's own accounts; it is never
+     spending, forward OR overdue. Found by mutation: without the kind filter a
+     card payment that came due on the 1st and had not yet imported posted
+     itself into September's projected spending. */
+  test("a transfer that came due and never posted is not spending either", () => {
+    insertSeries({
+      name: "Card payment",
+      kind: "transfer",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-01",
+      nextExpectedAmountCents: -50000,
+      status: "confirmed",
+    });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.components).toHaveLength(0);
+    expect(f.projectedSpendCents).toBe(0);
+  });
+
+  /* A whole month still ahead has no "earlier this month" at all — every
+     occurrence is in the forward leg, and an arrears leg there would be a
+     second reading of the same money. */
+  test("a future month projects the bill once, with no arrears leg", () => {
+    insertSeries({
+      name: "Rent",
+      kind: "bill",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-01",
+      nextExpectedAmountCents: -210900,
+      status: "confirmed",
+    });
+    const aug = forecastForMonth(bundle.db, "2026-08", TODAY)!;
+    expect(aug.components.filter((c) => c.label === "Rent")).toHaveLength(1);
+    expect(aug.components.find((c) => c.label === "Rent")!.cents).toBe(-210900);
+  });
+
   test("variable: trailing 3-month average with trend, scaled by remaining days", () => {
     insertTxn(cardId, "2026-04-10", -30000, { categoryName: "Groceries" });
     insertTxn(cardId, "2026-05-10", -40000, { categoryName: "Groceries" });

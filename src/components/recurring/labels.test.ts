@@ -123,6 +123,22 @@ describe("staleComponentEntries", () => {
     expect(entries).toEqual([{ key: "Cash job", name: "Cash job", staleness: staleness() }]);
   });
 
+  /*
+   * 🔴 The docstring said "keyed by label ... one per series" and nothing keyed
+   * anything. It was harmless while `fixedComponents` emitted exactly one
+   * component per series — and stopped being harmless the moment the forecast
+   * grew an ARREARS leg, because a weekly bill that came due on the 1st and
+   * falls due again on the 8th produces two components with one name. The
+   * footer would then have counted one series as two running late.
+   */
+  test("a series with two components is named once, not twice", () => {
+    const entries = staleComponentEntries([
+      component({ label: "Rent", staleness: staleness(), detail: "came due 2026-07-01" }),
+      component({ label: "Rent", staleness: staleness(), detail: "1 × ..., next 2026-07-08" }),
+    ]);
+    expect(entries).toEqual([{ key: "Rent", name: "Rent", staleness: staleness() }]);
+  });
+
   test("nothing stale means no footer at all", () => {
     expect(staleComponentEntries([component({ staleness: staleness({ isStale: false }) })])).toEqual([]);
   });

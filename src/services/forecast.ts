@@ -21,6 +21,7 @@ import {
   lapsedSeriesShouldStopForecasting,
   seriesHasLapsed,
 } from "./recurring";
+import { overdueForSeries } from "./arrears";
 import { activeSplitsInRange } from "./transaction-splits";
 
 /**
@@ -295,6 +296,70 @@ function fixedComponents(
   return components
     .sort((a, b) => compareDates(a.firstDate, b.firstDate) || a.component.label.localeCompare(b.component.label))
     .map((c) => c.component);
+}
+
+/**
+ * ARREARS — what came due EARLIER THIS MONTH and that no posting covers.
+ *
+ * 🔴 Found by reading the running app on 2026-09-02, and it was a hole rather
+ * than a decision: this module contained no notion of arrears at all. The fixed
+ * leg of the running month opens on `today`, and the variable leg excludes
+ * every recurring-tagged row (`isNull(recurringSeriesId)`, so the pace cannot
+ * double-count a bill). A bill that came due on the 1st and never posted was
+ * therefore in NEITHER, and it left the projection entirely — measured on the
+ * real ledger, September's projected spending was missing $2,291.21 of rent and
+ * rent utilities, and EOM cash was overstated by exactly that. The same app
+ * published the same $2,291.21 twice on other screens: `/budgets` as "due by
+ * today and no import has covered them yet", and the runway card as "came due
+ * earlier this month and never posted".
+ *
+ * It is wrong in both worlds, which is why it is not a judgement call. If the
+ * bill has not been paid, it will be, and the month owes it. If it HAS been
+ * paid but the statement has not been imported, then the cash balance this
+ * projection starts from predates the payment — so the money still has to come
+ * out of EOM cash.
+ *
+ * ⛔ THE TWO LEGS ABUT, NEVER OVERLAP. Forward is `[today, monthEnd]`; arrears
+ * closes the day BEFORE today. A bill due today and unposted is not late — it
+ * is DUE, and the forward leg already owns it. This is the same edge
+ * `committedBook` pins, stated the same way, so the two cannot disagree about
+ * the one day a month where they meet.
+ *
+ * ⛔ MONEY-OUT ONLY. `overdueForSeries` keeps only negative occurrences, which
+ * is the same asymmetry `fixedComponents` argues at length: a payday that came
+ * and went without a deposit is evidence about the IMPORTS, and projecting it
+ * as still-to-come would inflate EOM cash on a ledger whose owner is paid in
+ * cash.
+ */
+function arrearsComponents(db: AppDatabase, today: string, monthStart: string): ForecastComponent[] {
+  // every live series the forecast would project; `overdueForSeries` applies the
+  // money-out and lapsed rules itself, and transfers are never spending here
+  const live = db
+    .select()
+    .from(recurringSeries)
+    .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
+    .all()
+    .filter((s) => s.kind !== "transfer");
+  const byId = new Map(live.map((s) => [s.id, s]));
+  const late = overdueForSeries(db, new Set(byId.keys()), monthStart, addDays(today, -1));
+
+  return late.series.map((s) => {
+    const series = byId.get(s.id)!;
+    /*
+     * Exact, not an estimate: `projectOccurrences` gives every occurrence of one
+     * series the same amount, so a window's total divides by its count with no
+     * remainder. Stated because a division inside a money figure is exactly the
+     * kind of line that earns a second look.
+     */
+    const perOccurrenceCents = -s.amountCents / s.occurrenceCount;
+    return {
+      label: s.name,
+      kind: "fixed" as const,
+      cents: -s.amountCents,
+      detail: `${s.occurrenceCount} × ${formatCents(perOccurrenceCents)} (${CADENCE_LABEL[series.cadence] ?? series.cadence}), came due ${s.nextDate} and has not posted`,
+      staleness: seriesStaleness(series, today),
+    };
+  });
 }
 
 const UNCATEGORIZED_LABEL = "Uncategorized";
@@ -626,6 +691,9 @@ export function forecastCurrentMonth(db: AppDatabase, today: string = todayIso()
   const remainingDays = diffDays(today, monthEnd) + 1;
 
   const components = [
+    // arrears first: they are dated before every forward occurrence, and the
+    // math table reads in the order this array is built
+    ...arrearsComponents(db, today, monthStart),
     ...fixedComponents(db, today, today, monthEnd),
     ...variableIncomeComponents(db, today, remainingDays, daysInMonth),
     ...variableComponents(db, today, remainingDays, daysInMonth),

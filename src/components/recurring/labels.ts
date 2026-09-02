@@ -240,13 +240,19 @@ export function staleOccurrenceEntries(occurrences: readonly SeriesOccurrence[])
 
 /**
  * The fixed forecast components still projecting on evidence past tolerance.
- * Keyed by label because that is a fixed component's identity (one per series).
- * Order follows the components array, so the footer reads like the table.
+ * Keyed by label because that is a fixed component's identity, and DEDUPED on
+ * it: since the forecast grew an arrears leg a single series can contribute two
+ * components to one month — what came due on the 1st and never posted, and what
+ * falls due again on the 8th. The footer counts SERIES, so one name is one
+ * entry. Order follows the components array, so the footer reads like the table.
  */
 export function staleComponentEntries(components: readonly ForecastComponent[]): StaleEntry[] {
   const entries: StaleEntry[] = [];
+  const seen = new Set<string>();
   for (const c of components) {
-    if (c.staleness?.isStale) entries.push({ key: c.label, name: c.label, staleness: c.staleness });
+    if (!c.staleness?.isStale || seen.has(c.label)) continue;
+    seen.add(c.label);
+    entries.push({ key: c.label, name: c.label, staleness: c.staleness });
   }
   return entries;
 }
