@@ -63,8 +63,14 @@ export function CarCostCard({ data }: { data: CarCardData }) {
               bottom — and a disclosure underneath does not undo a wrong label on
               top. `monthlyCents` is the sum of ONE occurrence of each series,
               which is exactly "a month while both are billed". */}
-          <dt className="min-w-0 truncate text-ink-muted">
-            Lease and insurance, a month while both are billed
+          {/* ⚠️ The qualifier goes on its OWN line, the shape the row beneath
+              already uses. As one truncating line it rendered "Lease and
+              insurance, a month while …" in the grid lens at 1024 — clipped at
+              exactly the words that carry the meaning, which is worse than the
+              wrong label it replaced. */}
+          <dt className="min-w-0 text-ink-muted">
+            <span className="block truncate">Lease and insurance</span>
+            <span className="block text-[11px] text-ink-faint">a month, while both are billed</span>
           </dt>
           <dd className="shrink-0">
             <Money cents={cost.monthlyCents} />
