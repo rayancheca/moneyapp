@@ -1,8 +1,10 @@
 import { describe, expect, test } from "vitest";
+import type { Cadence } from "@/db/schema/recurring";
 import {
   baselineCaption,
   COMMITTED_ORIGIN_LABEL,
   monthHorizon,
+  shrinkCaption,
   withinMonthHorizon,
   committedOutflows,
   type CommittedInput,
@@ -35,6 +37,8 @@ function occ(
   amountCents: number,
   dates: readonly string[],
   lastMatchedOn: string | null,
+  /** the series' own cadence and end day — what a FULL horizon would have billed */
+  over: { cadence?: Cadence; endsOn?: string | null } = {},
 ): CommittedOccurrence[] {
   return dates.map((date) => ({
     seriesId: seriesIdOf(name),
@@ -43,6 +47,8 @@ function occ(
     amountCents,
     lastMatchedOn,
     isStale: lastMatchedOn === null,
+    cadence: over.cadence ?? "monthly",
+    endsOn: over.endsOn ?? null,
   }));
 }
 
@@ -56,7 +62,7 @@ const REAL: CommittedInput = {
   occurrences: [
     ...occ("Flamingo South Beach (rent)", -228570, monthly("01"), "2026-07-08"),
     ...occ("Car lease", -55989, monthly("11"), null),
-    ...occ("Car insurance", -36149, monthly("11", 5), null),
+    ...occ("Car insurance", -36149, monthly("11", 5), null, { endsOn: "2027-01-11" }),
     ...occ("Breezeline (internet)", -5000, monthly("10"), "2026-07-10"),
     ...occ("FPL (electricity)", -1421, monthly("10"), "2026-07-10"),
   ],
@@ -192,6 +198,8 @@ describe("committedOutflows — overdue bills", () => {
     date: "2026-08-01",
     amountCents: -228570,
     lastMatchedOn: "2026-07-08",
+    cadence: "monthly",
+    endsOn: null,
     isStale: false,
   };
   const overdue: CommittedInput = { ...REAL, overdue: [RENT_LATE] };
@@ -387,5 +395,146 @@ describe("withinMonthHorizon", () => {
     }
     expect(graded).toBe(730 * 3 * 31);
     expect(late).toEqual([]);
+  });
+});
+
+/*
+ * ⭐ WHAT SHRANK THE RATE — the owner's call on 2026-09-02.
+ *
+ * Two cards on his dashboard state the monthly cost of the SAME thirteen series
+ * and differ by $210.87: the runway card publishes a RATE over a twelve-month
+ * horizon, the subscriptions card LEVELS each bill to a month. Both are right,
+ * and the whole difference is one series that stops inside the horizon — car
+ * insurance is evidenced through 2027-01-11 with no renewal in the ledger, so
+ * it is billed five times out of twelve. He asked the runway card to say so.
+ *
+ * ⛔ The predicate is the CAUSE (a series that ends inside the horizon), never
+ * an arithmetic comparison. `levelledMonthlyCents` rounds, so a full-horizon
+ * annual line can miss its rate by a cent, and a threshold on that difference
+ * would be a magic number standing where a fact belongs.
+ */
+describe("committedOutflows — the series that shrink the rate", () => {
+  test("a line that runs the whole horizon has no shortfall at all", () => {
+    const book = committedOutflows(REAL);
+    for (const l of book.lines.filter((x) => x.name !== "Car insurance")) {
+      expect(l.shortfallPerMonthCents, `${l.name} claims a shortfall`).toBe(0);
+      expect(l.endsInHorizon, `${l.name} claims to end`).toBe(false);
+    }
+  });
+
+  test("a line that ends inside the horizon carries the whole difference", () => {
+    const book = committedOutflows(REAL);
+    const ins = book.lines.find((l) => l.name === "Car insurance")!;
+    expect(ins.endsInHorizon).toBe(true);
+    expect(ins.endsOn).toBe("2027-01-11");
+    expect(ins.occurrences).toBe(5);
+    expect(ins.perOccurrenceCents).toBe(36149);
+    // five payments over a SIX month horizon
+    expect(ins.perMonthCents).toBe(Math.round((36149 * 5) / 6));
+    expect(ins.levelledPerMonthCents).toBe(36149);
+    expect(ins.shortfallPerMonthCents).toBe(36149 - Math.round((36149 * 5) / 6));
+    // and it is the only one, so it IS the book's shortfall
+    expect(book.shortfallPerMonthCents).toBe(ins.shortfallPerMonthCents);
+  });
+
+  /* ⚠️ An ending series with a NON-monthly cadence must level by its cadence,
+     not by its occurrence count — the trap `levelledMonthlyCents` exists for. */
+  test("a quarterly bill that ends is levelled by its cadence", () => {
+    const book = committedOutflows({
+      ...REAL,
+      occurrences: occ("Parking", -36886, ["2026-09-20", "2026-12-20"], "2026-06-20", {
+        cadence: "quarterly",
+        endsOn: "2027-01-01",
+      }),
+    });
+    const line = book.lines[0]!;
+    expect(line.occurrences).toBe(2);
+    // a quarterly $368.86 is $122.95 a month levelled; two payments over six
+    // months is $122.95 a month too — an ending series is not automatically short
+    expect(line.levelledPerMonthCents).toBe(12295);
+    expect(line.shortfallPerMonthCents).toBe(0);
+  });
+
+  /*
+   * ⛔ THE MUTANT THAT SURVIVED THE FIRST PASS, and the whole reason the gate is
+   * on the CAUSE. A quarterly bill whose payments happen to land only once in a
+   * six-month window is NOT ending — it bills every three months for ever — but
+   * its levelled monthly ($122.95) is twice what a single payment spread over
+   * six months comes to ($61.48). Ungated, that arithmetic would report a
+   * $61.47-a-month "shrink" and the caption would name a series with no end
+   * date at all, as the reason a rate is lower.
+   */
+  test("a line that is merely SPARSE in the window is not short", () => {
+    const book = committedOutflows({
+      ...REAL,
+      occurrences: occ("Parking", -36886, ["2027-02-20"], "2026-11-20", { cadence: "quarterly" }),
+    });
+    const line = book.lines[0]!;
+    expect(line.endsOn).toBeNull();
+    expect(line.endsInHorizon).toBe(false);
+    expect(line.levelledPerMonthCents).toBeGreaterThan(line.perMonthCents);
+    expect(line.shortfallPerMonthCents).toBe(0);
+    expect(book.shortfallPerMonthCents).toBe(0);
+    expect(shrinkCaption(book)).toBeNull();
+  });
+
+  test("a series ending exactly at the horizon's end is not short", () => {
+    const book = committedOutflows({
+      ...REAL,
+      occurrences: occ("Gym", -10000, monthly("05"), "2026-08-05", { endsOn: "2027-02-24" }),
+    });
+    // `to` is EXCLUSIVE, so an end ON it is outside the horizon
+    expect(book.lines[0]!.endsInHorizon).toBe(false);
+    expect(book.shortfallPerMonthCents).toBe(0);
+  });
+});
+
+describe("shrinkCaption", () => {
+  test("a book with nothing ending says nothing", () => {
+    const book = committedOutflows({
+      ...REAL,
+      occurrences: occ("Rent", -228570, monthly("01"), "2026-07-08"),
+    });
+    expect(shrinkCaption(book)).toBeNull();
+  });
+
+  test("it names the series, its end, the count and BOTH per-month figures", () => {
+    const caption = shrinkCaption(committedOutflows(REAL))!;
+    expect(caption).toContain("Car insurance");
+    expect(caption).toContain("2027-01-11");
+    expect(caption).toContain("billed 5 times");
+    expect(caption).toContain("$301.24"); // its contribution to the rate
+    expect(caption).toContain("$361.49"); // what it actually charges
+    expect(caption).toContain("$60.25"); // how much lower the rate is for it
+  });
+
+  /* ⛔ It must not say "the rate is $X lower" when a SECOND series is also
+     short — the named one would then be credited with the whole difference. */
+  test("more than one ending series is counted, and the rest are not silently dropped", () => {
+    const book = committedOutflows({
+      ...REAL,
+      occurrences: [
+        ...occ("Car insurance", -36149, monthly("11", 5), null, { endsOn: "2027-01-11" }),
+        ...occ("Storage unit", -9000, monthly("03", 3), "2026-08-03", { endsOn: "2026-12-01" }),
+      ],
+    });
+    const caption = shrinkCaption(book)!;
+    expect(caption).toContain("Car insurance");
+    expect(caption).toContain("one other");
+    expect(book.shortfallPerMonthCents).toBeGreaterThan(
+      book.lines.find((l) => l.name === "Car insurance")!.shortfallPerMonthCents,
+    );
+  });
+
+  test("three or more ending series are counted in the plural", () => {
+    const book = committedOutflows({
+      ...REAL,
+      occurrences: [
+        ...occ("Car insurance", -36149, monthly("11", 5), null, { endsOn: "2027-01-11" }),
+        ...occ("Storage unit", -9000, monthly("03", 3), "2026-08-03", { endsOn: "2026-12-01" }),
+        ...occ("Locker", -1000, monthly("04", 2), "2026-08-04", { endsOn: "2026-11-01" }),
+      ],
+    });
+    expect(shrinkCaption(book)!).toContain("2 others");
   });
 });

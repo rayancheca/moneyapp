@@ -21,7 +21,10 @@
  * disagreement is disclosed, never clamped away.
  */
 
-import { addCalendarMonths, daysInMonthOf, monthKey, withDayOfMonth } from "@/lib/dates";
+import type { Cadence } from "@/db/schema/recurring";
+import { addCalendarMonths, compareDates, daysInMonthOf, monthKey, withDayOfMonth } from "@/lib/dates";
+import { levelledMonthlyCents } from "@/lib/income-basis";
+import { formatCents } from "@/lib/money";
 
 /** Where a committed payment came from — already late, or still to come. */
 export const COMMITTED_ORIGIN_LABEL = {
@@ -48,6 +51,16 @@ export interface CommittedOccurrence {
   lastMatchedOn: string | null;
   /** the series' evidence is older than its own tolerance, or absent entirely */
   isStale: boolean;
+  /**
+   * The series' own cadence — what a FULL horizon would have billed. Carried
+   * rather than inferred from the occurrence count, because the two differ for
+   * exactly the series this exists to describe: one that STOPS inside the
+   * horizon bills fewer times than its cadence says, and inferring the cadence
+   * from the count would make every such series look like it runs throughout.
+   */
+  cadence: Cadence;
+  /** the day the series stops, or null when it runs on past this horizon */
+  endsOn: string | null;
 }
 
 export interface CommittedInput {
@@ -88,6 +101,34 @@ export interface CommittedLine {
   isStale: boolean;
   /** nothing has ever posted against this series */
   neverPosted: boolean;
+  /** the series' cadence, so a reader can check the two figures below */
+  cadence: Cadence;
+  /** the day the series stops, or null */
+  endsOn: string | null;
+  /**
+   * The series stops BEFORE the horizon closes, so it is billed across only
+   * part of the window the rate is divided over.
+   *
+   * ⛔ This is the CAUSE, and every claim about a shrunken rate is gated on it
+   * rather than on an arithmetic comparison. `levelledMonthlyCents` rounds, so
+   * a full-horizon annual line can miss its own rate by a cent — and a
+   * threshold on that difference would be a magic number standing where a fact
+   * belongs.
+   */
+  endsInHorizon: boolean;
+  /** what ONE payment costs, as a positive magnitude */
+  perOccurrenceCents: number;
+  /**
+   * What this line would contribute per month if it ran the WHOLE horizon —
+   * its cadence annualised, which is the basis the subscriptions card publishes.
+   * Equal to `perMonthCents` (to rounding) for every line that does run it.
+   */
+  levelledPerMonthCents: number;
+  /**
+   * How much LOWER this line's contribution to the rate is than its own bill
+   * levels to. Zero unless `endsInHorizon` — see the note there.
+   */
+  shortfallPerMonthCents: number;
 }
 
 export interface CommittedOutflows {
@@ -126,6 +167,17 @@ export interface CommittedOutflows {
    * happened underneath this field rather than to it.
    */
   unevidencedCents: number;
+  /**
+   * How much the ending series lower `perMonthCents` between them.
+   *
+   * 🔴 THIS IS THE $210.87 BETWEEN TWO CARDS ON HIS DASHBOARD. The runway card
+   * publishes a RATE over the horizon; the subscriptions card LEVELS each bill
+   * to a month. Both are right, and on 2026-09-02 the whole difference was one
+   * series — car insurance, evidenced through 2027-01-11 with no renewal in the
+   * ledger, billed five times out of twelve. He asked this card to say so, so
+   * the figure is computed here rather than left for a reader to subtract.
+   */
+  shortfallPerMonthCents: number;
   /** largest commitment first */
   lines: CommittedLine[];
   /**
@@ -145,6 +197,8 @@ interface Accumulator {
   overdueCents: number;
   isStale: boolean;
   neverPosted: boolean;
+  cadence: Cadence;
+  endsOn: string | null;
 }
 
 export function committedOutflows(input: CommittedInput): CommittedOutflows {
@@ -180,6 +234,8 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
       overdueCents: 0,
       isStale: o.isStale,
       neverPosted: o.lastMatchedOn === null,
+      cadence: o.cadence,
+      endsOn: o.endsOn,
     };
     bySeries.set(o.seriesId, {
       ...acc,
@@ -195,16 +251,39 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
   for (const o of input.occurrences) take(o, "upcoming");
 
   const lines: CommittedLine[] = [...bySeries.values()]
-    .map((a) => ({
-      seriesId: a.seriesId,
-      name: a.name,
-      occurrences: a.occurrences,
-      totalCents: a.totalCents,
-      perMonthCents: Math.round(a.totalCents / months),
-      overdueCents: a.overdueCents,
-      isStale: a.isStale,
-      neverPosted: a.neverPosted,
-    }))
+    .map((a) => {
+      const perMonthCents = Math.round(a.totalCents / months);
+      /*
+       * ⛔ `totalCents / occurrences`, NOT the series' stored amount: this line
+       * is built from the occurrences that landed inside the horizon, and the
+       * two agree only when nothing else does. An arrears-only line has no
+       * occurrences at all, so it is guarded rather than divided by zero.
+       */
+      const perOccurrenceCents = a.occurrences === 0 ? 0 : Math.round(a.totalCents / a.occurrences);
+      const levelledPerMonthCents = levelledMonthlyCents(perOccurrenceCents, a.cadence);
+      // `to` is EXCLUSIVE, so a series ending ON it runs the whole horizon
+      const endsInHorizon = a.endsOn !== null && compareDates(a.endsOn, input.to) < 0;
+      return {
+        seriesId: a.seriesId,
+        name: a.name,
+        occurrences: a.occurrences,
+        totalCents: a.totalCents,
+        perMonthCents,
+        overdueCents: a.overdueCents,
+        isStale: a.isStale,
+        neverPosted: a.neverPosted,
+        cadence: a.cadence,
+        endsOn: a.endsOn,
+        endsInHorizon,
+        perOccurrenceCents,
+        levelledPerMonthCents,
+        // gated on the CAUSE, and floored: an ending series whose remaining
+        // payments happen to over-cover the window is not "short" by a negative
+        shortfallPerMonthCents: endsInHorizon
+          ? Math.max(0, levelledPerMonthCents - perMonthCents)
+          : 0,
+      };
+    })
     // arrears-only lines have a zero horizon total; they still rank by the money
     // they represent rather than tying at zero in name order
     .sort(
@@ -223,10 +302,62 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
     overdueCents: lines.reduce((s, l) => s + l.overdueCents, 0),
     overdueCount,
     unevidencedCents: lines.reduce((s, l) => s + (l.neverPosted ? l.totalCents : 0), 0),
+    shortfallPerMonthCents: lines.reduce((s, l) => s + l.shortfallPerMonthCents, 0),
     lines,
     inflowCents,
     inflowCount,
   };
+}
+
+/**
+ * ⭐ WHAT SHRANK THE RATE — the sentence the owner asked for on 2026-09-02.
+ *
+ * Two cards on his dashboard state the monthly cost of the same thirteen
+ * recurring series and differ by $210.87:
+ *
+ *     RUNWAY         "Committed bills come to $3,542.21 a month"
+ *     SUBSCRIPTIONS  "$3,753.08 a month, still forecast"
+ *
+ * Both are right. The runway card publishes a RATE over its twelve-month
+ * horizon, so a series that stops inside it contributes fewer payments; the
+ * subscriptions card LEVELS each bill to a month, which is the right basis for
+ * a list of what he pays. He chose to have this card name what shrank it.
+ *
+ * ⛔ IT NAMES ONLY WHAT THIS BOOK CAN PROVE. Every figure comes from the line
+ * itself — the series' end day, its payments inside the horizon, its own two
+ * per-month figures. It deliberately does NOT quote the other card's total: the
+ * two cards choose their series independently (`COMMITTED_KINDS` here), so a
+ * sentence asserting a number computed on the other side would be one card
+ * speaking for another, and would go quietly false the day the sets diverge.
+ *
+ * ⛔ AND IT DOES NOT CREDIT ONE SERIES WITH THE WHOLE DIFFERENCE. When more than
+ * one ends inside the horizon, the named one carries only its own shortfall and
+ * the rest are counted out loud.
+ *
+ * Null when nothing ends — silence, never "nothing shrank it", which is the
+ * measured-zero rule the rest of this file follows.
+ */
+export function shrinkCaption(book: {
+  lines: readonly CommittedLine[];
+  shortfallPerMonthCents: number;
+}): string | null {
+  const ending = book.lines
+    .filter((l) => l.endsInHorizon && l.shortfallPerMonthCents > 0)
+    .sort((a, b) => b.shortfallPerMonthCents - a.shortfallPerMonthCents);
+  const lead = ending[0];
+  if (lead === undefined || lead.endsOn === null) return null;
+
+  const others = ending.length - 1;
+  const rest =
+    others === 0 ? "" : others === 1 ? ", and one other does too" : `, and ${others} others do too`;
+  const times = lead.occurrences === 1 ? "once" : `${lead.occurrences} times`;
+
+  return (
+    `${lead.name} stops inside that window — evidenced through ${lead.endsOn}, with no renewal ` +
+    `in the ledger${rest} — so it is billed ${times} rather than throughout, and counts ` +
+    `${formatCents(lead.perMonthCents)} a month here against the ${formatCents(lead.perOccurrenceCents)} ` +
+    `it charges. The rate above is ${formatCents(book.shortfallPerMonthCents)} a month lower for it.`
+  );
 }
 
 /**

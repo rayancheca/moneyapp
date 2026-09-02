@@ -1,6 +1,6 @@
 import { inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
-import { recurringSeries } from "@/db/schema/recurring";
+import { recurringSeries, type Cadence } from "@/db/schema/recurring";
 import { carCost, type CarCost } from "@/lib/car-cost";
 import {
   committedOutflows,
@@ -195,13 +195,35 @@ function moneyOutSeriesIds(db: AppDatabase): Set<string> {
   return new Set(rows.filter((r) => kinds.has(r.kind)).map((r) => r.id));
 }
 
-function toCommitted(o: {
-  seriesId: string;
-  name: string;
-  date: string;
-  amountCents: number;
-  staleness?: { lastMatchedOn: string | null; isStale: boolean };
-}): CommittedOccurrence {
+/** Every live series' own end day, by id — `userEndsOn`, the only one there is. */
+function endsOnBySeries(db: AppDatabase): Map<string, string | null> {
+  return new Map(
+    db
+      .select({ id: recurringSeries.id, endsOn: recurringSeries.userEndsOn })
+      .from(recurringSeries)
+      .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
+      .all()
+      .map((r) => [r.id, r.endsOn ?? null] as const),
+  );
+}
+
+/**
+ * ⚠️ `endsOn` is `userEndsOn` and nothing else, because that is the only end day
+ * the ledger holds — `projectOccurrences` clamps its own walk on exactly this
+ * column (`recurring.ts`), so a line that says it stops inside the horizon and
+ * the occurrences that stop there are reading one fact, not two that agree.
+ */
+function toCommitted(
+  o: {
+    seriesId: string;
+    name: string;
+    date: string;
+    amountCents: number;
+    cadence: Cadence;
+    staleness?: { lastMatchedOn: string | null; isStale: boolean };
+  },
+  endsOn: string | null,
+): CommittedOccurrence {
   return {
     seriesId: o.seriesId,
     name: o.name,
@@ -209,6 +231,8 @@ function toCommitted(o: {
     amountCents: o.amountCents,
     lastMatchedOn: o.staleness?.lastMatchedOn ?? null,
     isStale: o.staleness?.isStale ?? false,
+    cadence: o.cadence,
+    endsOn,
   };
 }
 
@@ -313,12 +337,13 @@ export function committedBook(
   const horizon = monthHorizon(today, months);
   const to = horizon.nominalEnd;
   const moneyOut = moneyOutSeriesIds(db);
+  const endsById = endsOnBySeries(db);
 
   const occurrences = // +1: `windowDays` counts days and today is the first — see its docstring
     upcomingOccurrences(db, today, diffDays(today, horizon.projectThrough) + 1)
     .filter((o) => moneyOut.has(o.seriesId))
     .filter((o) => withinMonthHorizon(horizon, o.date, o.anchorDayOfMonth))
-    .map(toCommitted);
+    .map((o) => toCommitted(o, endsById.get(o.seriesId) ?? null));
 
   /*
    * Strictly BEFORE today. The forward window owns `today`, so the two abut
@@ -371,6 +396,10 @@ export function committedBook(
     amountCents: -s.amountCents,
     lastMatchedOn: staleById.get(s.id)?.lastMatchedOn ?? null,
     isStale: staleById.get(s.id)?.isStale ?? false,
+    // `BudgetTailSeries.cadence` is the occurrence's own, from the same
+    // projection walk the forward leg reads
+    cadence: s.cadence as Cadence,
+    endsOn: endsById.get(s.id) ?? null,
   }));
 
   return committedOutflows({ from: today, to, months, occurrences, overdue });
@@ -461,12 +490,13 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
   // a twelve-month horizon opened on the 29th, 30th or 31st ran a day short of
   // twelve whole months for every car bill anchored below that day.
   const horizon = monthHorizon(today, months);
+  const carEndsById = endsOnBySeries(db);
 
   const occurrences = // +1: `windowDays` counts days and today is the first — see its docstring
     upcomingOccurrences(db, today, diffDays(today, horizon.projectThrough) + 1)
     .filter((o) => carSeries.has(o.seriesId))
     .filter((o) => withinMonthHorizon(horizon, o.date, o.anchorDayOfMonth))
-    .map(toCommitted);
+    .map((o) => toCommitted(o, carEndsById.get(o.seriesId) ?? null));
   const book = committedOutflows({ from: today, to, months, occurrences, overdue: [] });
 
   /*

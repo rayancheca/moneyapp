@@ -2,7 +2,7 @@ import Link from "next/link";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
-import { baselineCaption } from "@/lib/committed";
+import { baselineCaption, shrinkCaption } from "@/lib/committed";
 import { RUNWAY_JARGON } from "@/lib/jargon";
 import { formatCents } from "@/lib/money";
 import type { RunwayAssumption, RunwayAssumptionId } from "@/lib/runway";
@@ -66,6 +66,7 @@ function AssumptionRow({ a, tip }: { a: RunwayAssumption; tip?: string }) {
 
 export function RunwayCard({ data }: { data: RunwayCardData }) {
   const { runway, committed, spend, incomeBasisExplanation } = data;
+  const shrink = shrinkCaption(committed);
   const burning = runway.kind === "burning";
   // three states, not two: `unknown` is a WITHHELD verdict and must not borrow
   // the positive tone `covered` earns by actually measuring something
@@ -179,6 +180,15 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
             </span>
             <InfoTip term="Committed bills">{RUNWAY_JARGON.committed}</InfoTip>
           </p>
+          {/* ⛔ WHY THIS RATE IS LOWER THAN THE BILLS THEMSELVES COME TO — his
+              call on 2026-09-02. The subscriptions card on this same screen
+              levels each bill to a month and read $210.87 higher, and both were
+              right: this is a RATE over the horizon, so a series that stops
+              inside it contributes fewer payments. The sentence is built in
+              `lib/committed`, where a test can reach the branches a pinned e2e
+              clock never renders — and it names only what THIS book can prove,
+              never the other card's total. */}
+          {shrink !== null && <p className="mt-1">{shrink}</p>}
           {committed.perMonthCents > spend.monthlyCents && (
             <p className="mt-1">
               That is more than the monthly average above, so some of it has not been landing as
