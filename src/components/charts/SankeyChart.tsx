@@ -62,7 +62,8 @@ interface Tooltip {
   share: string;
 }
 
-const TABLE_DIMENSION = { key: "sankey", options: ["flow", "table"] } as const;
+// ⛔ NO `key`: held in `useState`, not in the URL.
+const TABLE_DIMENSION = { options: ["flow", "table"] } as const;
 const TABLE_LABELS = { flow: "Flow", table: "Table" };
 
 export function SankeyChart({

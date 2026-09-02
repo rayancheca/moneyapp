@@ -79,7 +79,9 @@ const MIN_HIT_WIDTH = 14;
 const TOOLTIP_W = 210;
 const TOOLTIP_H_ESTIMATE = 74;
 
-const VIEWPOINT_DIMENSION = { key: "viewpoint", options: [...TOWER_VIEWPOINT_ORDER] };
+// ⛔ NO `key`: held in `useState`, and "viewpoint" was declared by three
+// different components at once.
+const VIEWPOINT_DIMENSION = { options: [...TOWER_VIEWPOINT_ORDER] };
 const VIEWPOINT_LABELS: Record<string, string> = {
   quarter: "Quarter",
   front: "Front",

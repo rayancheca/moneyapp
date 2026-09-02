@@ -144,8 +144,11 @@ const DIM_OPACITY = 0.3;
 /** a footprint narrower than this cannot hold its own name */
 const LABEL_MIN_PX = 46;
 
+// ⛔ NO `key`: this viewpoint is `useState`, unlike this file's "where"
+// dimension a few lines up, which really is URL-backed through `useViewState`.
+// One component, both kinds — which is why the type had to stop asking for a
+// key the ephemeral one does not have.
 const VIEWPOINT_DIMENSION = {
-  key: "viewpoint",
   options: ["quarter", "front", "plan"] as const,
 };
 const VIEWPOINT_LABELS: Record<string, string> = {

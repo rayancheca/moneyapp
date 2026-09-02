@@ -86,8 +86,10 @@ function columnBudget(width: number): number {
   return 104;
 }
 
+// ⛔ NO `key`: held in `useState`. Three components declared "viewpoint" —
+// this one, CategoryMassif and TransferTower — so wiring any of them naively
+// would have put three surfaces on one URL param.
 const VIEWPOINT_DIMENSION = {
-  key: "viewpoint",
   options: ["front", "quarter", "side", "plan"] as const,
 };
 const VIEWPOINT_LABELS: Record<string, string> = {
@@ -96,7 +98,9 @@ const VIEWPOINT_LABELS: Record<string, string> = {
   side: "Side",
   plan: "Plan",
 };
-const LENS_DIMENSION = { key: "terrainLens", options: ["relief", "table"] as const };
+// ⛔ NO `key`: this lens lives in `useState`, so naming a URL param would
+// promise a link that does not work. See ViewSwitcher's `dimension` prop.
+const LENS_DIMENSION = { options: ["relief", "table"] as const };
 const LENS_LABELS: Record<string, string> = { relief: "Terrain", table: "Table" };
 
 /** a crest narrower than a hairline reads as noise, not as a balance */

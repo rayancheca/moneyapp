@@ -10,7 +10,24 @@ import { PRESSED_SLOT } from "./letterpress";
  * aria-pressed (keyboard-native), styled like PeriodSelector's granularity pills.
  */
 interface ViewSwitcherProps {
-  dimension: ViewDimension;
+  /**
+   * ⛔ ONLY `options`, because that is all this component reads.
+   *
+   * 🔴 It used to require a whole `ViewDimension`, whose `key` is documented as
+   * "the URL param key AND the app_settings key". Four switchers that hold their
+   * value in `useState` invented a key to satisfy that type and kept neither
+   * half of the promise: `terrainLens`, `sankey`, and `viewpoint` — declared by
+   * `NetWorthTerrain`, `CategoryMassif` AND `TransferTower`, three surfaces on
+   * one param had any of them ever been wired. `/?chart=terrain&terrainLens=table`
+   * opens on the relief, measured 2026-09-02.
+   *
+   * A `ViewDimension` still satisfies this, so the switchers that ARE
+   * URL-backed pass one unchanged. What is gone is the obligation to name a key
+   * you do not have — the type no longer asks a component to claim something
+   * untrue, which is the only half of this that can be fixed without changing
+   * what the app remembers between visits.
+   */
+  dimension: Pick<ViewDimension, "options">;
   /** the currently active option value */
   value: string;
   onSelect: (value: string) => void;
