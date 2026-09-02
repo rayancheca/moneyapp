@@ -2,9 +2,11 @@
 
 > **Supersedes `HANDOFF-2026-08-31c-the-income-answer-and-the-split.md`.**
 >
-> **`main` = `PENDING`** (this doc), tree clean, pushed. tsc clean ·
-> **PENDING unit** · **E2E: PENDING** · 40 baselines regenerated, every diff
-> cropped and read first · `pnpm ledger-check` exit 0, on every commit.
+> **`main` = `c325b67`** (last code commit; this doc follows it), tree clean,
+> pushed. tsc clean · **4,415 unit in 18.4s** ·
+> **E2E_GATE=1: 591 passed at `maxDiffPixels: 0` in 8.2m, zero failures** ·
+> 40 baselines regenerated, every diff cropped and read first ·
+> `pnpm ledger-check` exit 0, on every commit.
 >
 > Repo: **`/Users/rayankarimcheca/dev/MoneyApp`**.
 > Ledger unchanged: 10,111 active rows · income $117,924.62 ·
@@ -41,7 +43,11 @@ is decisions and one scoped repair:
    a different set each time and the first e2e gate took **2.9 hours** instead of
    8.4 minutes. Nothing in the repo caused it and I did not touch a system
    daemon. A reboot is the obvious move.
-5. **Pass 75 onward** — `docs/program-passes-60-94.md`. **HOSTING LAST.**
+   ✅ The proof it was the box and not the code: on the quiet machine the same
+   tree runs **4,415 unit in 18.4s** and **591 e2e in 8.2m, zero failures**.
+5. **❓ Five view dimensions declare a URL key nothing reads** (§13), three of
+   them the SAME key. Wiring them changes what your dashboard remembers.
+6. **Pass 75 onward** — `docs/program-passes-60-94.md`. **HOSTING LAST.**
 
 ## 1. The queue was empty, so the job was to find what is wrong
 
