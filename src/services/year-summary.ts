@@ -280,11 +280,39 @@ export function summaryYears(db: AppDatabase): number[] {
  */
 const WORK_STUDY_ENDED = "2026-05-13";
 
-function cashJobBasis(year: number): string {
+/**
+ * ⛔ AND THE LABEL IS A CLAIM TOO — the half the fix above left behind.
+ *
+ * 🔴 With only the sentence made year-aware, `/summary/2022` read, on two
+ * adjacent lines:
+ *
+ *     Cash job                                          $1,388.10
+ *     Salary rows that are not Fordham payroll. In 2022 that is not yet the
+ *     cash job — work-study ran until 2026-05-13.
+ *
+ * The row denied its own heading, and a caveat underneath does not undo a wrong
+ * name on top — the heading is what a reader scanning the page takes away.
+ *
+ * ⛔ ONE decision, not two that agree. The label and the sentence come out of
+ * this function together, so a later edit cannot move one and leave the other
+ * behind, which is exactly how the first half shipped alone.
+ *
+ * The early label names the RULE (`Salary, not Fordham payroll`), which is true
+ * of every year and claims no job at all — and the early sentence no longer has
+ * to deny a heading that no longer says anything to deny.
+ */
+export function cashJobNaming(year: number): { label: string; basis: string } {
   const rule = "Salary rows that are not Fordham payroll.";
-  return year >= Number(WORK_STUDY_ENDED.slice(0, 4))
-    ? `${rule} Work-study ended ${WORK_STUDY_ENDED} and these deposits are the job that replaced it.`
-    : `${rule} In ${year} that is not yet the cash job — work-study ran until ${WORK_STUDY_ENDED}.`;
+  if (year >= Number(WORK_STUDY_ENDED.slice(0, 4))) {
+    return {
+      label: "Cash job",
+      basis: `${rule} Work-study ended ${WORK_STUDY_ENDED} and these deposits are the job that replaced it.`,
+    };
+  }
+  return {
+    label: "Salary, not Fordham payroll",
+    basis: `${rule} Work-study ran until ${WORK_STUDY_ENDED}, so in ${year} these are an earlier job — which one, this ledger does not say.`,
+  };
 }
 
 export function yearSummaryView(db: AppDatabase, year: number, today: string): YearSummaryView {
@@ -311,9 +339,9 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
     ),
     line(
       "cash-job",
-      "Cash job",
+      cashJobNaming(year).label,
       "earned",
-      cashJobBasis(year),
+      cashJobNaming(year).basis,
       lineFor(db, year, { categoryName: "Salary", descriptorNotLike: FORDHAM_DESCRIPTOR }),
       "Deposited irregularly, so a calendar year captures what reached the bank rather than what was worked.",
     ),

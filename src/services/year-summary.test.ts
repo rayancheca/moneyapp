@@ -12,7 +12,7 @@ import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
-import { SUMMARY_DISCLAIMER, summaryYears, yearSummaryView } from "./year-summary";
+import { cashJobNaming, SUMMARY_DISCLAIMER, summaryYears, yearSummaryView } from "./year-summary";
 
 const TODAY = "2026-08-25";
 const YEAR = 2025;
@@ -200,7 +200,10 @@ describe("yearSummaryView — the cash job's story is only told where it happene
       .find((l) => l.id === "cash-job")!;
     expect(cashJob.basis).toContain("Salary rows that are not Fordham payroll.");
     expect(cashJob.basis).not.toContain("the job that replaced it");
-    expect(cashJob.basis).toContain("work-study ran until 2026-05-13");
+    expect(cashJob.basis).toContain("Work-study ran until 2026-05-13");
+    // it says an earlier job existed and refuses to name it, rather than
+    // naming one the ledger cannot support
+    expect(cashJob.basis).toContain("this ledger does not say");
   });
 
   test("the year work-study ended, and after it, keeps the history", () => {
@@ -211,6 +214,45 @@ describe("yearSummaryView — the cash job's story is only told where it happene
       .flatMap((sec) => sec.lines)
       .find((l) => l.id === "cash-job")!;
     expect(cashJob.basis).toContain("the job that replaced it");
+    expect(cashJob.label).toBe("Cash job");
+  });
+
+  /*
+   * 🔴 AND THE LABEL IS A CLAIM TOO — the half the first fix left behind.
+   * `/summary/2022` read, on two adjacent lines:
+   *
+   *     Cash job                                          $1,388.10
+   *     Salary rows that are not Fordham payroll. In 2022 that is not yet
+   *     the cash job — work-study ran until 2026-05-13.
+   *
+   * The row denies its own name. A caveat underneath does not undo a wrong
+   * heading on top, and the heading is the part a reader scanning the page
+   * actually takes away.
+   */
+  test("a year before the cash job existed does not head the row with its name", () => {
+    insert({ postedOn: "2022-08-25", amountCents: 138810, rawDescription: "Deposit 1183713709", categoryName: "Salary" });
+
+    const v = yearSummaryView(bundle.db, 2022, TODAY);
+    const cashJob = v.summary.sections
+      .flatMap((sec) => sec.lines)
+      .find((l) => l.id === "cash-job")!;
+    expect(cashJob.label).not.toBe("Cash job");
+    // it names the RULE, which is true of every year, and claims no job at all
+    expect(cashJob.label).toBe("Salary, not Fordham payroll");
+    // …and the basis no longer has to deny the heading above it
+    expect(cashJob.basis).not.toContain("not yet the cash job");
+    expect(cashJob.basis).toContain("2026-05-13");
+  });
+
+  /* ⛔ ONE decision, not two that agree. The label and the sentence are chosen
+     together, so a future edit cannot move one and leave the other. */
+  test("the label and the basis are chosen from the same fact", () => {
+    for (const year of [2021, 2025, 2026, 2027]) {
+      const naming = cashJobNaming(year);
+      const early = year < 2026;
+      expect(naming.label === "Cash job", `label for ${year}`).toBe(!early);
+      expect(naming.basis.includes("the job that replaced it"), `basis for ${year}`).toBe(!early);
+    }
   });
 });
 
