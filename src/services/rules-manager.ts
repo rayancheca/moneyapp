@@ -12,7 +12,7 @@ import {
   type RuleConditions,
 } from "@/db/schema/rules";
 import { humanizeDescriptionKey } from "@/lib/description-key";
-import { countRuleMatches } from "./rule-corrections";
+import { countRuleChanges } from "./rule-corrections";
 
 /**
  * The rules manager (ux-overhaul-plan §3.4): list rules as readable sentences,
@@ -135,7 +135,16 @@ export function previewRuleMatches(
   act: RuleActions,
 ): number {
   if (!hasRowAction(act)) return 0;
-  return countRuleMatches(db, cond, { excludeUserSet: true });
+  /*
+   * ⛔ `countRuleChanges`, NOT `countRuleMatches`. The badge over this number
+   * says "would change N", and `RuleView.matchCount` documents itself as "rows
+   * a retro-apply would actually CHANGE now" — but the count was of CONDITION
+   * matches, so /settings advertised "would change 19 · applied 11×" over a
+   * rule that would move only the eight rows imported since. `countRuleChanges`
+   * shares `retroApplyRule`'s own per-field guard, so the badge and the button
+   * cannot disagree.
+   */
+  return countRuleChanges(db, cond, act);
 }
 
 /** The one precedence order — listRules and moveRule MUST agree on it. */

@@ -7,6 +7,7 @@ import {
   rules,
   ruleActionsSchema,
   ruleConditionsSchema,
+  type RuleActions,
   type RuleConditions,
 } from "@/db/schema/rules";
 import {
@@ -196,6 +197,86 @@ export interface RetroApplyResult {
 }
 
 /**
+ * What a rule's actions would ACTUALLY move on one row — the write, and the
+ * undo that reverses it. An empty `set` means the row already carries the
+ * rule's outcome and would not be touched.
+ *
+ * ⛔ ONE PREDICATE, TWO CALLERS, and they used to be two predicates that
+ * disagreed. `retroApplyRule` has always guarded every field on a real change;
+ * the PREVIEW counted condition matches, so /settings advertised "would change
+ * 19" over a rule that had already changed eleven of them and would move only
+ * the eight imported since. `RuleView.matchCount` even documents itself as
+ * "rows a retro-apply would actually CHANGE now".
+ *
+ * ⚠️ This module's header already names the same over-report for the
+ * rename-only case ("countRuleMatches counts condition matches, not row
+ * changes") and fixed it with `hasRowAction`. The settled-row case was the
+ * other half of it, and it is why this is a shared function rather than a
+ * second count that happens to agree today.
+ *
+ * Fields are guarded individually because a row can already sit in the right
+ * category while still being flagged for review or stamped by a weaker source —
+ * settling those IS a change.
+ */
+function pendingWrite(
+  row: MatchableTxn,
+  actions: RuleActions,
+): { prev: UndoFields; set: Partial<typeof transactions.$inferInsert> } {
+  const prev: UndoFields = {};
+  const set: Partial<typeof transactions.$inferInsert> = {};
+  if (actions.categoryId !== undefined) {
+    if (row.categoryId !== actions.categoryId) {
+      prev.categoryId = row.categoryId;
+      set.categoryId = actions.categoryId;
+    }
+    if (row.categorizationSource !== "rule") {
+      prev.categorizationSource = row.categorizationSource;
+      set.categorizationSource = "rule";
+    }
+    if (row.categorizationConfidence !== 1) {
+      prev.categorizationConfidence = row.categorizationConfidence;
+      set.categorizationConfidence = 1;
+    }
+    if (row.needsReview) {
+      prev.needsReview = row.needsReview;
+      set.needsReview = false;
+    }
+  }
+  if (actions.merchantId !== undefined && row.merchantId !== actions.merchantId) {
+    prev.merchantId = row.merchantId;
+    set.merchantId = actions.merchantId;
+  }
+  if (actions.exclude && row.status !== "excluded") {
+    prev.status = row.status;
+    set.status = "excluded";
+  }
+  if (
+    actions.markRecurringSeriesId !== undefined &&
+    row.recurringSeriesId !== actions.markRecurringSeriesId
+  ) {
+    prev.recurringSeriesId = row.recurringSeriesId;
+    set.recurringSeriesId = actions.markRecurringSeriesId;
+  }
+  return { prev, set };
+}
+
+/**
+ * Rows a retro-apply would actually CHANGE — the number a "would change N"
+ * badge may print. `countRuleMatches` answers a different question (how many
+ * rows the CONDITION selects) and remains right for the prompt shown before a
+ * rule exists, where nothing has been applied yet.
+ */
+export function countRuleChanges(
+  db: AppDatabase,
+  conditions: RuleConditions,
+  actions: RuleActions,
+): number {
+  return matchingRows(db, ruleConditionsSchema.parse(conditions), { excludeUserSet: true }).filter(
+    (row) => Object.keys(pendingWrite(row, actions).set).length > 0,
+  ).length;
+}
+
+/**
  * Applies a rule's actions to every matching non-user active row. Honors
  * categoryId / merchantId / exclude (mirroring the live engine) plus the new
  * markRecurringSeriesId; renameTo acts on merchant entities, not transaction
@@ -213,47 +294,7 @@ export function retroApplyRule(db: AppDatabase, ruleId: string): RetroApplyResul
   const apply = () => {
     db.transaction((tx) => {
       for (const row of rows) {
-        const prev: UndoFields = {};
-        const set: Partial<typeof transactions.$inferInsert> = {};
-        // Every assignment is guarded on a REAL change: a row that already
-        // carries the rule's outcome has not moved, and writing it anyway
-        // inflates timesApplied and reports a blast radius ("re-applied to N")
-        // that no row actually felt. Fields are guarded individually because a
-        // row can already sit in the right category while still being flagged
-        // for review or stamped by a weaker source — settling those IS a change.
-        if (actions.categoryId !== undefined) {
-          if (row.categoryId !== actions.categoryId) {
-            prev.categoryId = row.categoryId;
-            set.categoryId = actions.categoryId;
-          }
-          if (row.categorizationSource !== "rule") {
-            prev.categorizationSource = row.categorizationSource;
-            set.categorizationSource = "rule";
-          }
-          if (row.categorizationConfidence !== 1) {
-            prev.categorizationConfidence = row.categorizationConfidence;
-            set.categorizationConfidence = 1;
-          }
-          if (row.needsReview) {
-            prev.needsReview = row.needsReview;
-            set.needsReview = false;
-          }
-        }
-        if (actions.merchantId !== undefined && row.merchantId !== actions.merchantId) {
-          prev.merchantId = row.merchantId;
-          set.merchantId = actions.merchantId;
-        }
-        if (actions.exclude && row.status !== "excluded") {
-          prev.status = row.status;
-          set.status = "excluded";
-        }
-        if (
-          actions.markRecurringSeriesId !== undefined &&
-          row.recurringSeriesId !== actions.markRecurringSeriesId
-        ) {
-          prev.recurringSeriesId = row.recurringSeriesId;
-          set.recurringSeriesId = actions.markRecurringSeriesId;
-        }
+        const { prev, set } = pendingWrite(row, actions);
         if (Object.keys(set).length === 0) continue;
         tx.update(transactions).set(set).where(eq(transactions.id, row.id)).run();
         undoRows.push({ id: row.id, prev });

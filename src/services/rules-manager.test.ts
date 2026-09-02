@@ -22,6 +22,7 @@ import {
   restoreRule,
   setRuleEnabled,
 } from "./rules-manager";
+import { countRuleMatches, retroApplyRule } from "./rule-corrections";
 
 let dir: string;
 let bundle: DbBundle;
@@ -183,6 +184,85 @@ describe("listRules", () => {
     insertRule({ conditions: { descriptionContains: "UBER" }, actions: { markTransfer: true } });
     insertTxn("UBER TRIP");
     expect(listRules(bundle.db)[0]!.matchCount).toBe(0);
+  });
+});
+
+/*
+ * 🔴 THE BADGE SAID "would change 19" OVER A RULE THAT HAD ALREADY CHANGED THEM.
+ *
+ * Measured on the owner's /settings, 2026-09-02: "LA PISCINE MIAMI BEACH …
+ * would change 19 · applied 11×", and "CPI*CANTEEN … would change 38 ·
+ * applied 15×". `matchCount` was `countRuleMatches`, which counts CONDITION
+ * matches — while `retroApplyRule` guards every field on a real change and
+ * skips a row that already carries the rule's outcome. So the badge counted
+ * rows the button would not touch, and `RuleView.matchCount` documented itself
+ * as "rows a retro-apply would actually CHANGE now".
+ *
+ * ⚠️ This module's own header already names the same over-report for the
+ * rename-only case — "countRuleMatches counts condition matches, not row
+ * changes" — and fixed it with `hasRowAction`. The settled-row case was the
+ * other half of it.
+ */
+describe("the preview counts rows that would MOVE, not rows that match", () => {
+  test("a rule already applied to every match advertises nothing to do", () => {
+    const id = insertRule({
+      conditions: { descriptionContains: "STARBUCKS" },
+      actions: { categoryId: groceriesId },
+    });
+    insertTxn("STARBUCKS STORE");
+    insertTxn("STARBUCKS RESERVE");
+    expect(listRules(bundle.db).find((r) => r.id === id)!.matchCount).toBe(2);
+
+    retroApplyRule(bundle.db, id);
+
+    // the rows still MATCH the condition; not one of them would move again
+    expect(countRuleMatches(bundle.db, { descriptionContains: "STARBUCKS" }, { excludeUserSet: true })).toBe(2);
+    expect(listRules(bundle.db).find((r) => r.id === id)!.matchCount).toBe(0);
+  });
+
+  test("a new row arriving after the apply is the only one counted", () => {
+    const id = insertRule({
+      conditions: { descriptionContains: "STARBUCKS" },
+      actions: { categoryId: groceriesId },
+    });
+    insertTxn("STARBUCKS STORE");
+    retroApplyRule(bundle.db, id);
+    insertTxn("STARBUCKS AIRPORT"); // imported since
+
+    expect(listRules(bundle.db).find((r) => r.id === id)!.matchCount).toBe(1);
+  });
+
+  /* ⛔ A row can sit in the right category and still have something to settle —
+     a weaker source, a review flag. Those ARE changes, and the apply guards
+     each field separately; the preview must agree field for field. */
+  test("a row already in the right category but flagged for review still counts", () => {
+    const id = insertRule({
+      conditions: { descriptionContains: "STARBUCKS" },
+      actions: { categoryId: groceriesId },
+    });
+    const txnId = insertTxn("STARBUCKS STORE");
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: groceriesId, categorizationSource: "claude", needsReview: true })
+      .where(eq(transactions.id, txnId))
+      .run();
+
+    expect(listRules(bundle.db).find((r) => r.id === id)!.matchCount).toBe(1);
+  });
+
+  /* The number the badge shows IS the number the button reports moving. */
+  test("the preview equals what a re-apply actually affects", () => {
+    const id = insertRule({
+      conditions: { descriptionContains: "STARBUCKS" },
+      actions: { categoryId: groceriesId },
+    });
+    insertTxn("STARBUCKS STORE");
+    insertTxn("STARBUCKS RESERVE");
+    retroApplyRule(bundle.db, id);
+    insertTxn("STARBUCKS AIRPORT");
+
+    const previewed = listRules(bundle.db).find((r) => r.id === id)!.matchCount;
+    expect(retroApplyRule(bundle.db, id).affected).toBe(previewed);
   });
 });
 
