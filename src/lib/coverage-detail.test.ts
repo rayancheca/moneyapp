@@ -30,8 +30,69 @@ describe("an unverified account states BOTH halves", () => {
         unverifiedDays: 1,
       }),
     ).toBe(
-      "closes to the cent through Aug 3, 2026 (24 days ago); the first day it does not is Aug 11, 2026 — 1 day rests on an export with no closing balance",
+      "closes to the cent through Aug 3, 2026 (24 days ago), then carries that balance forward for 7 days; the first day it does not is Aug 11, 2026 — 1 day rests on an export with no closing balance",
     );
+  });
+
+  /*
+   * 🔴 SEVEN DAYS FELL BETWEEN TWO TRUE CLAUSES. The sentence said it closes
+   * through Aug 3 and that the first day it does not is Aug 11, leaving Aug 4–10
+   * in a limbo a reader has to invent an explanation for.
+   *
+   * They are CARRIED, and that is not a guess: `verifiedThrough` is the last day
+   * on a closed chain, so nothing after it is verified, and `unverifiedSince` is
+   * the FIRST derived-unverified or gap day, so nothing before it is either.
+   * Every day strictly between them has one remaining basis — the balance held
+   * forward, which the trust card already calls "as proven as that balance, and
+   * not a gap".
+   */
+  test("the days between the two dates are named, not left as a hole", () => {
+    const gap = detail({
+      grade: "unverified",
+      verifiedThrough: "2026-08-03",
+      unverifiedSince: "2026-08-11",
+      daysSinceVerified: 24,
+      unverifiedDays: 1,
+    });
+    expect(gap).toContain("carries that balance forward for 7 days");
+  });
+
+  test("consecutive dates leave no days to name", () => {
+    const abutting = detail({
+      grade: "unverified",
+      verifiedThrough: "2026-08-10",
+      unverifiedSince: "2026-08-11",
+      daysSinceVerified: 17,
+      unverifiedDays: 1,
+    });
+    expect(abutting).not.toContain("carries that balance forward");
+    expect(abutting).toContain("closes to the cent through Aug 10, 2026 (17 days ago); the first day");
+  });
+
+  test("one carried day is singular", () => {
+    expect(
+      detail({
+        grade: "unverified",
+        verifiedThrough: "2026-08-09",
+        unverifiedSince: "2026-08-11",
+        daysSinceVerified: 18,
+        unverifiedDays: 1,
+      }),
+    ).toContain("carries that balance forward for 1 day;");
+  });
+
+  /* Nothing to carry FROM: an account that never closed has no balance to hold
+     forward, and the clause must not appear at all. */
+  test("an account that never closed carries nothing", () => {
+    expect(
+      detail({
+        grade: "unverified",
+        verifiedThrough: null,
+        unverifiedSince: "2023-12-05",
+        daysSinceVerified: null,
+        unverifiedDays: 41,
+      }),
+    ).not.toContain("carries that balance forward");
   });
 
   test("one day 'rests', many days 'rest' — the shipped line said '1 days'", () => {

@@ -1,3 +1,4 @@
+import { diffDays } from "./dates";
 import { MONTHS_SHORT } from "./format-date";
 
 /**
@@ -111,7 +112,27 @@ export function coverageDetail(input: CoverageDetailInput): string {
       const n = input.unverifiedDays;
       const first =
         input.unverifiedSince === null ? "a day the record does not name" : dayWithYear(input.unverifiedSince);
-      return `${closesClause(input)}; the first day it does not is ${first} — ${n} ${plural(n, "day rests", "days rest")} on an export with no closing balance`;
+      /*
+       * 🔴 SEVEN DAYS ONCE FELL BETWEEN THE TWO CLAUSES. On Cash on Hand this
+       * read "closes to the cent through Aug 3, 2026 …; the first day it does
+       * not is Aug 11, 2026", leaving Aug 4–10 in a limbo the reader has to
+       * invent an explanation for — the same shape as the trust card's bare
+       * "52 days" beside a date.
+       *
+       * ⛔ They are CARRIED, and that is a deduction rather than a guess:
+       * `verifiedThrough` is the last day on a CLOSED chain, so nothing after it
+       * is verified; `unverifiedSince` is the FIRST derived-unverified or gap
+       * day, so nothing before it is either. One basis remains — the balance
+       * held forward, which the trust card already calls "as proven as that
+       * balance, and not a gap". Naming it closes the hole without new data.
+       */
+      const carried =
+        input.verifiedThrough === null || input.unverifiedSince === null
+          ? 0
+          : Math.max(0, diffDays(input.verifiedThrough, input.unverifiedSince) - 1);
+      const held =
+        carried === 0 ? "" : `, then carries that balance forward for ${carried} ${plural(carried, "day", "days")}`;
+      return `${closesClause(input)}${held}; the first day it does not is ${first} — ${n} ${plural(n, "day rests", "days rest")} on an export with no closing balance`;
     }
     case "market_value":
       return "priced from holdings; statements here set a value, they never prove the transactions add up";
