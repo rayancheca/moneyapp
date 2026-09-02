@@ -911,3 +911,79 @@ anyway.
   machine was saturated — which is now what the guard is for, so the flag is no
   longer the advice.
 
+
+---
+
+## 16. ⭐ Four more, found by READING THE RUNNING APP on your real ledger
+
+Not by grepping, not by a mutation audit — by opening the dev server and reading
+the sentences. All four are the same class as everything above: two figures that
+are each true, made to contradict each other by where they sit or how they are
+worded.
+
+### 🔴 "-$0.00" on /accounts
+
+Chase Sapphire's balance is exactly zero. Liability rows render
+`-balanceCents`, and negating an exact zero gives **`-0`** — which JavaScript
+keeps and `Intl` prints **with its sign**. The Venture X row two lines up
+printed a plain "$367.99", so one card stated that it owed nothing in a notation
+nothing else on the page used.
+
+`formatCentsSigned` had already guarded its own zero and written down why;
+`formatCents` had not. ⛔ Fixed with `+ 0`, not `Math.abs` — this must normalise
+NEGATIVE ZERO and nothing else, and `Math.abs` would silently print a real debt
+as a credit. Both mutants die.
+
+### 🔴 "2 charges, latest Sep 18 — 714 days ago"
+
+On the dashboard's cards card. The charge is from **September 2024**, and
+`formatDayShort` never prints a year — so in September 2026 the bare "Sep 18"
+reads as a date **sixteen days in the future**, inside the same phrase that
+calls it two years old.
+
+`formatDayShortIn(iso, reference)` names the year outside the reference year and
+stays short inside it. ⛔ It takes a reference day rather than reading the clock,
+because a formatter that calls `todayIso()` cannot be used from a client
+component — and the surfaces that need this already hold `today` to compute the
+age they print beside the date.
+
+⚠️ Every fixture in `cards-owed.test.ts` dates its rows inside `TODAY`'s own
+year. That is why a formatter that never prints one went unnoticed — the same
+fixture blindness as §12, in a new costume.
+
+### 🔴 The same sentence said 3 and 4, a screen apart
+
+`/recurring`, over the September forecast: *"4 series are running late and **3**
+have never charged — all still projected."* Under the 30-day list, in identical
+words: *"…and **4** have never charged."*
+
+Both true. `Rent utilities & fees` first falls due on 1 October — inside thirty
+days, outside September. Neither sentence said which set it had counted.
+`staleSummaryLabel` and `StaleFooter` now REQUIRE the window, so a third caller
+cannot reintroduce it by omission.
+
+⛔ The window LEADS the sentence. "…and 3 have never charged in September" would
+say they had never charged IN SEPTEMBER — weaker, and false.
+
+### 🔴 "14.7% of everything you spend" was a projection
+
+The car card printed "against a monthly total of **$9,019.90**" two tiles from
+the runway card's "What you spend a month **$8,770.56**".
+
+Both right for what they are: the runway prints the MEASURED six-month average;
+the car card's denominator is the same baseline with car spending taken out and
+the car's full monthly cost put back in — a projection of a month in which the
+lease, the insurance and the amortised deposit are all paid. The field is called
+`allInProjectedMonthlySpendCents`. The sentence did not say so, and now does.
+
+### ⚖️ One left deliberately, and why
+
+`/investments`' chart readout says **"Wed, Sep 2, 2026: $107,097.05"** for a
+value whose prices are Sep 1's — the series ends 2026-09-01 and `carryForwardTo`
+extends a dashed tail to today. It is the app's documented model (net worth
+carries forward the same way), the tail is drawn dashed from its own
+`complete: false`, and the page's own header states the price age in the first
+sentence you read. I could not call the number false, so I left it. If you want
+the readout to name a carried point, `ScrubSummary` would need to carry
+`complete` through — small, and it is the kind of change worth wanting rather
+than inferring.
