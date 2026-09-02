@@ -159,6 +159,34 @@ describe("feesCard", () => {
   });
 
   /**
+   * 🔴 THE WINDOW HAS TWO ENDS AND THE ROWS MUST USE BOTH OF THEM.
+   *
+   * `windowOf` filters `postedOn >= from`; the loop that builds the per-category
+   * breakdown filters separately, and nothing tested its FROM end. A one-
+   * character slip there (`<` → `<=`) left all 37 tests green while the card
+   * rendered lines summing to $218.45 directly beneath a $313.45 total it also
+   * rendered — the $95.00 Card Annual Fee posted on the window's own first day
+   * dropped out of the breakdown and stayed in the sum. Measured on the owner's
+   * ledger, whose recent window opens on 2026-03-01 and holds exactly that fee.
+   *
+   * Both ends, and the reconciliation, in one test: a total that disagrees with
+   * the rows under it is the failure worth naming.
+   */
+  test("a fee on the window's first day, and on its last, is in the rows AND the total", () => {
+    fee("2026-02-01", 9500); // the first day the window covers
+    fee("2026-07-31", 1500); // the last
+    fee("2026-01-31", 7700); // the day BEFORE it opens — outside, and must stay out
+    fee("2026-08-01", 6600); // the day after it closes — likewise
+
+    const card = feesCard(bundle.db, TODAY)!;
+    expect(card.recent.paidCents).toBe(9500 + 1500);
+    expect(card.recent.paidCharges).toBe(2);
+    // and the breakdown adds up to the headline it sits under
+    expect(card.lines.reduce((sum, l) => sum + l.cents, 0)).toBe(card.recent.paidCents);
+    expect(card.lines.reduce((sum, l) => sum + l.charges, 0)).toBe(card.recent.paidCharges);
+  });
+
+  /**
    * ⛔ THE trap on the fee side. `WHERE amount_cents < 0` is the obvious query
    * and it is wrong: an inflow inside an expense category is a silent NEGATIVE
    * expense, and this ledger was understated $487.50 by exactly that shape.

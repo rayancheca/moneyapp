@@ -116,3 +116,43 @@ test("the terrain does not overwrite the account selection", async ({ page }) =>
     .click();
   await expect(page.getByRole("slider", { name: /Net worth over time/ })).toBeVisible();
 });
+
+/**
+ * The TABLE lens is the terrain's other half and it had no coverage at all —
+ * not a pixel, not an assertion — while the relief above it had both.
+ *
+ * 🔴 What that hid: an account the ledger cannot reconstruct a single day for
+ * printed "$0.00" under a header reading **Today** and "$0.00" under **Change**,
+ * beside a "First day" column that had already refused to answer with an em
+ * dash. Three columns of one row, three separate decisions about whether there
+ * was anything to say. Measured on the owner's ledger 2026-09-01: Capital One
+ * 360 Checking, active, zero balances, zero transactions.
+ *
+ * ⛔ The em-dash branch is DATA-DEPENDENT and this fixture may hold no such
+ * account, so the assertion here is the one that holds for every fixture: the
+ * three columns AGREE. A row that names a first day prints a figure for today;
+ * a row that does not, does not. `terrainRowFigures` is unit-tested on both
+ * sides — this is the promise that the table renders and obeys it.
+ */
+test("the terrain's table lens agrees with itself about what it knows", async ({ page }) => {
+  await page.goto("/?chart=terrain&terrainLens=table");
+
+  const table = page.getByRole("table");
+  await expect(table).toBeVisible();
+  await expect(table).toContainText("Every account from its first reconstructed day to");
+
+  const rows = table.getByRole("row");
+  const count = await rows.count();
+  expect(count, "the table must draw the accounts, not an empty state").toBeGreaterThan(1);
+
+  // header is row 0; columns are Account · Side · First day · Today · Change
+  for (let i = 1; i < count; i++) {
+    const cells = rows.nth(i).getByRole("cell");
+    const firstDay = (await cells.nth(2).innerText()).trim();
+    const today = (await cells.nth(3).innerText()).trim();
+    const change = (await cells.nth(4).innerText()).trim();
+    const known = firstDay !== "—";
+    expect(today === "—", `row ${i}: "Today" must be blank exactly when "First day" is`).toBe(!known);
+    expect(change === "—", `row ${i}: "Change" must be blank exactly when "First day" is`).toBe(!known);
+  }
+});

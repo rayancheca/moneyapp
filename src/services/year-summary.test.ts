@@ -157,6 +157,30 @@ describe("yearSummaryView — the earned partition", () => {
   });
 });
 
+/**
+ * 🔴 A YEAR HAS TWO ENDS AND NEITHER WAS PINNED.
+ *
+ * `yearBounds(2025)` is `[2025-01-01, 2025-12-31]`, and both mutations survived
+ * the suite: moving `from` to the 2nd, and moving `to` to the 30th. Every
+ * fixture above dates its rows to the 1st of a middle month, so a January-1st
+ * paycheque or a December-31st one could be silently dropped from the year's
+ * headline and nothing would go red.
+ *
+ * Written as one test over four rows: the two days INSIDE that are easiest to
+ * lose, and the two days OUTSIDE that are easiest to gain.
+ */
+describe("yearSummaryView — the year includes 1 January and 31 December", () => {
+  test("a deposit on each end of the year is counted, and neither neighbour is", () => {
+    insert({ postedOn: "2024-12-31", amountCents: 400, rawDescription: "KNACK PAYOUT", categoryName: "Tutoring" });
+    insert({ postedOn: "2025-01-01", amountCents: 1100, rawDescription: "KNACK PAYOUT", categoryName: "Tutoring" });
+    insert({ postedOn: "2025-12-31", amountCents: 2200, rawDescription: "KNACK PAYOUT", categoryName: "Tutoring" });
+    insert({ postedOn: "2026-01-01", amountCents: 800, rawDescription: "KNACK PAYOUT", categoryName: "Tutoring" });
+
+    const v = yearSummaryView(bundle.db, YEAR, TODAY);
+    expect(v.summary.earnedCents).toBe(1100 + 2200);
+  });
+});
+
 describe("yearSummaryView — money in that was not earned", () => {
   test("a financial-aid refund is never added to earnings", () => {
     insert({ postedOn: "2025-01-28", amountCents: 1010000, rawDescription: "FORDHAM UNIVERSI INVOICE", categoryName: "Financial Aid" });

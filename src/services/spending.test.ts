@@ -177,6 +177,29 @@ describe("cashFlowByPeriod", () => {
     expect(cf.pace!.projectedCents).toBe(Math.round(5_000 / (8 / 31))); // 19_375
   });
 
+  /**
+   * 🔴 THE DAY THE NUMERATOR AND THE DENOMINATOR HAVE TO AGREE ABOUT.
+   *
+   * `elapsedFraction` is 8/31 on the 8th — today IS an elapsed day. So spending
+   * posted today has to be inside `actualToDateCents`, or the tile divides a
+   * seven-day total by an eight-day fraction and under-projects the month.
+   *
+   * Nothing tested it: `TODAY` is 2026-07-08 and no fixture row in this file is
+   * dated the 8th, so `<= 0` → `< 0` on that bound survived the whole suite.
+   * The same blindness dropped the whole of today's spending from the tile the
+   * dashboard leads with.
+   */
+  test("spending posted TODAY is inside the pace, because today is inside the elapsed days", () => {
+    insertTxn({ postedOn: "2026-07-03", amountCents: -5_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-08", amountCents: -2_000, category: "Food > Dining" }); // today
+    insertTxn({ postedOn: "2026-07-09", amountCents: -9_000, category: "Food > Dining" }); // tomorrow
+
+    const cf = cashFlowByPeriod(bundle.db, JULY, TODAY);
+    expect(cf.pace!.elapsedFraction).toBeCloseTo(8 / 31, 6);
+    expect(cf.pace!.actualToDateCents).toBe(7_000);
+    expect(cf.pace!.projectedCents).toBe(Math.round(7_000 / (8 / 31)));
+  });
+
   test("past period has no pace", () => {
     const june = resolvePeriod({ period: "2026-06" }, TODAY);
     insertTxn({ postedOn: "2026-06-03", amountCents: -5_000, category: "Food > Dining" });
@@ -516,5 +539,35 @@ describe("spendingProjection", () => {
     expect(flow.totals.spentCents).toBe(51_000);
     const proj = spendingProjection(bundle.db, JULY, TODAY, flow.pace, flow.totals.spentCents);
     expect(proj.projectedSpendCents).toBe(51_000); // floored at committed, never below the visible "Spent"
+  });
+});
+
+/**
+ * 🔴 BOTH ENDS OF THE ONLY WINDOW BEHIND TWO SURFACES.
+ *
+ * `spendingRowsInRange` is the single row source under Top merchants and
+ * Largest purchases, and NOTHING pinned either end of its `[from, to]`. Both
+ * mutations survive the suite: dropping the row posted ON `from` and dropping
+ * the row posted ON `to`. Every fixture in this file puts its rows comfortably
+ * inside the month, which is the same blindness that let three live boundary
+ * bugs ship — `TODAY` here is 2026-07-08 and no fixture row sits on the 1st or
+ * the 31st.
+ *
+ * A month is INCLUSIVE of both its ends: spend on 1 July belongs to July, and so
+ * does spend on the 31st.
+ */
+describe("the spending window includes both of its ends", () => {
+  test("a purchase on the first day of the period, and on the last, are both in it", () => {
+    insertTxn({ postedOn: "2026-06-30", amountCents: -11_000, category: "Food > Dining", normalized: "JUNE" });
+    insertTxn({ postedOn: "2026-07-01", amountCents: -12_000, category: "Food > Dining", normalized: "FIRST" });
+    insertTxn({ postedOn: "2026-07-31", amountCents: -13_000, category: "Food > Dining", normalized: "LAST" });
+    insertTxn({ postedOn: "2026-08-01", amountCents: -14_000, category: "Food > Dining", normalized: "AUGUST" });
+
+    const largest = largestTransactions(bundle.db, JULY, 5);
+    expect(largest.map((l) => l.rawDescription).sort()).toEqual(["FIRST", "LAST"]);
+    expect(largest.map((l) => l.amountCents).sort((a, b) => a - b)).toEqual([-13_000, -12_000]);
+
+    const top = topMerchants(bundle.db, JULY, 8);
+    expect(top.entries.map((e) => e.name).sort()).toEqual(["FIRST", "LAST"]);
   });
 });

@@ -86,6 +86,28 @@ describe("resolvePeriod", () => {
     expect(resolvePeriod({ period: "2025-01" }, TODAY).isCurrent).toBe(false);
     expect(resolvePeriod({ period: "2024" }, TODAY).isCurrent).toBe(false);
   });
+
+  /**
+   * 🔴 `isCurrent` HAS TWO ENDS AND NEITHER WAS PINNED.
+   *
+   * Every fixture asks on 2026-07-08 — comfortably inside July, on neither the
+   * 1st nor the 31st — so both `>= 0` → `> 0` on the lower bound and `<= 0` →
+   * `< 0` on the upper survived the suite. A month you are standing on the
+   * first day of is the CURRENT month, and so is one on its last day; getting
+   * either wrong turns off the pace tile and the "so far" wording on the two
+   * days of the month a reader is most likely to be looking.
+   */
+  test("a period is current on its own first day and on its own last", () => {
+    expect(resolvePeriod({ period: "2026-07" }, "2026-07-01").isCurrent).toBe(true);
+    expect(resolvePeriod({ period: "2026-07" }, "2026-07-31").isCurrent).toBe(true);
+    // …and not on the days either side of it
+    expect(resolvePeriod({ period: "2026-07" }, "2026-06-30").isCurrent).toBe(false);
+    expect(resolvePeriod({ period: "2026-07" }, "2026-08-01").isCurrent).toBe(false);
+    // the same at year granularity, where the ends are eleven months apart
+    expect(resolvePeriod({ period: "2026" }, "2026-01-01").isCurrent).toBe(true);
+    expect(resolvePeriod({ period: "2026" }, "2026-12-31").isCurrent).toBe(true);
+    expect(resolvePeriod({ period: "2026" }, "2025-12-31").isCurrent).toBe(false);
+  });
 });
 
 describe("stepPeriodParams", () => {

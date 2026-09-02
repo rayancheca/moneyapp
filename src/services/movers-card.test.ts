@@ -186,6 +186,54 @@ describe("moversCard — which month it compares", () => {
     expect(card.baselineFromLabel).toBe("Dec 2025");
     expect(card.baselineToLabel).toBe("May 2026");
     expect(card.monthTotalCents).toBe(25_000);
+    /*
+     * ⛔ WHAT THE WINDOW AVERAGES, not what it is LABELLED. `baselineKeys` is
+     * computed independently of how many months are actually loaded, so a grid
+     * one month too shallow still prints "the mean of the 6 complete months
+     * before it, Dec 2025 to May 2026" and averages FIVE — December silently a
+     * zero inside a window the sentence names by date. Six months at $100 is
+     * $100, and $83.33 is the shape of that bug. The labels above cannot see it.
+     *
+     * This is the deepest the card ever reaches (the fallback month, two behind),
+     * and it is the ONLY test that gets here — which is why `monthsLoaded`'s
+     * `+ 1` survived every one of the other 24.
+     */
+    expect(card.usualMonthlyCents).toBe(10_000);
+    // and every category is seen in all six, not five
+    expect(card.movers.every((m) => m.monthsSeen === 6)).toBe(true);
+  });
+
+  /**
+   * 🔴 "WHAT MOVED MOST" IS A MAGNITUDE, and nothing pinned the `Math.abs`.
+   *
+   * Dropping it — sorting by the signed delta — puts every rise above every
+   * fall, so the single largest FALL drops off a card whose whole job is to
+   * show the biggest moves, and lands in the "smaller moves" line instead.
+   * Every other fixture in this file happens to sort identically under both
+   * comparators, which is why the mutant survived all 25 of them.
+   *
+   * Six categories against five slots, and the biggest mover of all is the one
+   * that went DOWN.
+   */
+  test("the biggest FALL outranks a smaller rise", () => {
+    for (const name of ["Food", "Travel", "Shopping", "Health", "Utilities", "Education"]) {
+      spendAllBaselineMonths(name, 10_000);
+    }
+    addTxn("2026-07-10", -60_000, "Food"); // +$500 — the biggest rise
+    addTxn("2026-07-10", -1_000, "Travel"); // −$90
+    addTxn("2026-07-10", -12_000, "Shopping"); // +$20
+    addTxn("2026-07-10", -13_000, "Health"); // +$30
+    addTxn("2026-07-10", -14_000, "Utilities"); // +$40
+    // Education: nothing at all in July — −$100, the biggest move on the card
+    importedThrough("2026-08-20", MAIN);
+
+    const card = moversCard(bundle.db, TODAY)!;
+    expect(card.movers[0]!.categoryName).toBe("Food");
+    const names = card.movers.map((m) => m.categoryName);
+    expect(names).toContain("Education");
+    // …and it is the SECOND row, not swept below the cut by five smaller rises
+    expect(names[1]).toBe("Education");
+    expect(card.movers.find((m) => m.categoryName === "Education")!.deltaCents).toBe(-10_000);
   });
 
   test("returns null when no month within reach has been imported through", () => {

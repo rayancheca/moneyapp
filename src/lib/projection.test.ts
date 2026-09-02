@@ -319,6 +319,30 @@ describe("sumOccurrencesInWindow", () => {
       count: 2,
     });
   });
+
+  /**
+   * 🔴 THE FIXTURE ABOVE STANDS ONE DAY OUTSIDE EACH END AND NEVER ON EITHER.
+   *
+   * That is enough to prove a row outside is excluded and nothing at all about
+   * a row ON the boundary, so both `< 0` → `<= 0` and `> 0` → `>= 0` survived
+   * it. `[from, to]` is INCLUSIVE — a bill due on the first of the month is due
+   * in that month, and so is one due on the last.
+   */
+  test("an occurrence ON either end is inside the window", () => {
+    const ends = [
+      { day: "2026-07-01", amountCents: 1_100 },
+      { day: "2026-07-31", amountCents: 2_200 },
+    ];
+    expect(sumOccurrencesInWindow(ends, "2026-07-01", "2026-07-31")).toEqual({
+      totalCents: 3_300,
+      count: 2,
+    });
+    // and a one-day window holds the day it names
+    expect(sumOccurrencesInWindow(ends, "2026-07-01", "2026-07-01")).toEqual({
+      totalCents: 1_100,
+      count: 1,
+    });
+  });
 });
 
 describe("projectRecurringDriven", () => {
