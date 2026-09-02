@@ -1,9 +1,9 @@
-# Handoff — a $2,291.21 hole in the month's forecast, six switchers made real, and eleven more found by reading
+# Handoff — a $2,291.21 hole in the month's forecast, six switchers made real, and seventeen defects found by reading
 
 > **Supersedes `HANDOFF-2026-09-01-twelve-boundaries.md`.**
 >
 > Repo: **`/Users/rayankarimcheca/dev/MoneyApp`**, `main`, tree clean, pushed.
-> tsc clean · **4,491 unit** · coverage gate exit 0 ·
+> tsc clean · **4,527 unit** · coverage gate exit 0 ·
 > **E2E_GATE=1: 598 passed at `maxDiffPixels: 0`** · `pnpm ledger-check` exit 0
 > on every commit via `.githooks/pre-commit`.
 >
@@ -11,7 +11,7 @@
 > $167,828.49 · ZERO DB writes this session.** The only thing this session wrote
 > to your database is view preferences, which is the feature you asked for.
 >
-> 81 baselines regenerated, every diff cropped and read first.
+> 97 baselines regenerated, every diff cropped and read first.
 
 ---
 
@@ -22,20 +22,21 @@ month-scoped, and wire the view dimensions URL + sticky. Both are done, and the
 first one is now written down in the code so a future session cannot re-open it
 by accident.
 
+**And the third one is closed too.** You said have the runway card name what
+shrank its rate, and it does — §7 is now a record of what shipped rather than a
+question.
+
 What is left for you:
 
-1. **❓ Two cards on your dashboard state the monthly cost of the same 13
-   recurring series, and differ by $210.87** (§7). Both are right. Only you can
-   say whether they should be made to look different or made to agree.
-2. **❓ Three smaller things I looked at and deliberately did not change**, each
+1. **❓ Three smaller things I looked at and deliberately did not change**, each
    with the measurement behind it (§8).
-3. **Two decisions carried from earlier sessions**: realized gains inside "All
+2. **Two decisions carried from earlier sessions**: realized gains inside "All
    money in" on `/summary/[year]`, and the statement-reminder trade.
-4. **⛔⛔ `BTLEServer` HAS NOW BEEN AT 100% OF A CORE FOR 51 DAYS.** `uptime`
+3. **⛔⛔ `BTLEServer` HAS NOW BEEN AT 100% OF A CORE FOR 51 DAYS.** `uptime`
    reports 51 days without a reboot and the daemon has been pinned the whole
    time. Nothing in this repo causes it. **A reboot is the fix**, and it is
    eating a core of every build you run.
-5. **Pass 76 onward** — `docs/program-passes-60-94.md`. **HOSTING LAST.**
+4. **Pass 76 onward** — `docs/program-passes-60-94.md`. **HOSTING LAST.**
 
 ---
 
@@ -283,37 +284,123 @@ persistence, not after.
 
 ---
 
-## 7. ❓ THE ONE QUESTION FOR YOU — two cards, thirteen series, $210.87 apart
+## 7. ✅ THE RUNWAY CARD NAMES WHAT SHRANK IT — you asked, and it does
 
-On your dashboard, right now, two cards state the monthly cost of the **same
-thirteen recurring series** and neither mentions the other:
+Two cards on your dashboard stated the monthly cost of the **same thirteen
+series** and differed by **$210.87** with nothing on the page to reconcile them:
 
     RUNWAY         "Committed bills come to $3,542.21 a month"
     SUBSCRIPTIONS  "$3,753.08 a month, still forecast"
 
-Both are correct, and the difference is exactly **$210.87 = $361.49 × 7/12**.
-Your car insurance is evidenced through 2027-01-11 and there is no renewal in
-the ledger, so only **five** of the next twelve months carry it:
+Both right. The runway card publishes a RATE over its twelve-month horizon, so a
+series that stops inside it contributes fewer payments; the subscriptions card
+LEVELS each bill to a month, which is the right basis for a list of what you
+pay. Measured line by line, **every other commitment is short by exactly
+$0.00** — the whole difference is one series. It now reads:
 
-- the runway card is a RATE over a 12-month horizon, so a series that ends
-  inside the horizon contributes fewer payments;
-- the subscriptions card LEVELS each row to a month — what these cost per month
-  *right now* — which is the right basis for the list of rows beneath it.
+> Car insurance stops inside that window — evidenced through 2027-01-11, with no
+> renewal in the ledger — so it is billed 5 times rather than throughout, and
+> counts $150.62 a month here against the $361.49 it charges. The rate above is
+> $210.87 a month lower for it.
 
-Neither is wrong and I did not guess which you meant. **Three options:**
+$3,542.21 + $210.87 = $3,753.08. **The two cards reconcile on the page now.**
 
-1. Leave it. The car card already discloses the insurance end date, and each
-   card's tooltip states its own basis.
-2. Have the subscriptions card name the other basis in a clause — costs a line
-   of prose on a card that is already dense.
-3. Have the runway card name what shrank it ("…$3,542.21 a month, because car
-   insurance is only evidenced for five more of the next twelve").
+⛔ **It names only what THIS book can prove.** Every figure comes from the line
+itself — the end day, the payments inside the horizon, its own two per-month
+figures. It deliberately does NOT quote the other card's total: the two cards
+choose their series independently, so a sentence asserting a number computed on
+the other side would be one card speaking for another, and would go quietly
+false the day the sets diverge.
 
-⚖️ This is the same shape as the arrears question you just answered: two
-defensible readings, one money figure, and only you can say which the card
-should mean.
+⛔ **The predicate is the CAUSE, never an arithmetic comparison — and that gate
+was the one mutant that survived the first pass.** A quarterly bill whose
+payments happen to land only once in a six-month window is NOT ending, but its
+levelled monthly is twice what one payment spread over six months comes to;
+ungated, the arithmetic reports a $61.47 "shrink" and names a series with no end
+date as the reason a rate is lower. `levelledMonthlyCents` also rounds, so a
+threshold on that difference would be a magic number standing where a fact
+belongs.
+
+⛔ And it does not credit one series with the whole difference: when more than
+one ends, the named line carries only its own shortfall and the rest are counted
+out loud ("and one other does too").
+
+⚠️ **Unreachable in the e2e fixture** — no fixture series has an end date inside
+the horizon, so the sentence renders in unit tests only and moved no baseline.
+Another entry for the list in §6 of the previous handoff.
 
 ---
+
+## 7b. Six more, from carrying on after the queue was empty a second time
+
+| # | what the screen said | what is true |
+|---|---|---|
+| 12 | /settings: five rules offering to change **140 rows** between them | **3**. Five of six had nothing left to do |
+| 13 | /summary/2022: a row headed **"Cash job"** | its own note said "in 2022 that is not yet the cash job" |
+| 14 | /recurring/[id]: "ANNUALIZED **~$4,337.88/yr**" | the series is evidenced only to 2027-01-11, and the page never said |
+| 15 | /imports: "through Aug 3 … the first day it does not is **Aug 11**" | Aug 4–10 were in neither clause |
+| 16 | /recurring: "**9 commitments**" | a component count, and one series can now be two |
+| 17 | the runway/subscriptions $210.87 (§7) | now reconciled on the page |
+
+### 🔴 #12 — "would change 19" over a rule that had already changed them
+
+`/settings` advertised *"LA PISCINE MIAMI BEACH · would change 19 · applied
+11×"* and *"CPI\*CANTEEN · would change 38 · applied 15×"*. Across every rule the
+badges claimed **140 rows**. Measured against what a re-apply would actually
+move: **three**. Five of the six rules had nothing to do and still offered a
+Re-apply button sized to the whole history.
+
+`matchCount` was `countRuleMatches`, which counts CONDITION matches — while
+`retroApplyRule` guards every field on a real change and skips a row already
+carrying the outcome. The field even documents itself as *"rows a retro-apply
+would actually CHANGE now"*.
+
+⚠️ **The module's own header already names this over-report** for the
+rename-only case ("countRuleMatches counts condition matches, not row changes")
+and fixed it with `hasRowAction`. The settled-row case was the other half, and
+nobody had gone back for it. `pendingWrite(row, actions)` is now extracted from
+the apply loop and is what the preview filters on — one predicate, two callers,
+rather than two counts that agree today.
+
+### 🔴 #13 — a row that denied its own heading
+
+`/summary/2022`, on two adjacent lines:
+
+    Cash job                                          $1,388.10
+    Salary rows that are not Fordham payroll. In 2022 that is not yet the cash
+    job — work-study ran until 2026-05-13.
+
+An earlier session found half of this and made the SENTENCE year-aware while
+leaving the label hardcoded. **A caveat underneath does not undo a wrong name on
+top**, and the heading is the part a reader scanning the page takes away. The
+early label names the RULE — "Salary, not Fordham payroll" — which is true of
+every year and claims no job at all. `cashJobNaming(year)` returns both together,
+so a later edit cannot move one and leave the other behind, which is exactly how
+the first half shipped alone.
+
+### 🔴 #14 — the series page never said when the series ends
+
+`/recurring/<car insurance>` headlined "ANNUALIZED ~$4,337.88/yr" over three
+upcoming charges and never mentioned 2027-01-11 — while the runway card and the
+car card both name it. **The page that OWNS the series was the one place its end
+was invisible**, and the annualised figure it headlines is exactly the number
+that end invalidates. It now carries an "Ends 2027-01-11" badge and, under the
+stat, "a full year — this one is scheduled only to 2027-01-11".
+
+### 🔴 #16 — a defect this session created
+
+The arrears leg means one series can contribute TWO fixed components to a month,
+and `ForecastCard` printed the component count as "9 commitments" — a claim about
+SERIES. Latent on your ledger (nine distinct series, no weekly money-out), and
+wrong the first month a weekly bill goes unpaid. `ForecastSplit` carries
+`fixedSeriesCount` beside `fixedCount` now, because BOTH readings are published
+on the same page: `ForecastComposition` prints "(9 lines)" of components.
+
+⭐ **That is the second time this session one array was counted two ways** — the
+first was `staleComponentEntries`, whose docstring claimed a dedupe it did not
+do. Both were created or exposed by the same change. **A new leg in a
+projection is a new way to double-count everything downstream of it**, and the
+place to look is every consumer that counts the array rather than sums it.
 
 ## 8. ⚖️ Three more I looked at and did NOT change, with the measurement
 
@@ -365,6 +452,21 @@ should mean.
   committed baselines the whole time.
 - ⚠️ **`npx vitest run --maxWorkers=4`** remains the reliable invocation on this
   box; 4,490 tests in ~20s.
+- ⚠️ **The pre-commit hook runs `ledger-check`, NOT coverage.** `src/lib/**` is
+  gated at 100% and one new helper shipped a commit with the gate red before the
+  next commit caught it. `npx vitest run --coverage` is a separate step and
+  nothing in the hook chain will remind you.
+- ⛔ **Making a control persistent turns every test that PRESSES it into a
+  fixture mutation** — 87 e2e failures from one press, and twenty minutes spent
+  on the wrong hypothesis because the symptom (a missing net-worth slider) looks
+  nothing like the cause. `grep -n "pressed\]"` on the `error-context.md` beside
+  the failure named the state in one line.
+- ⭐ **A new leg in a projection is a new way to double-count everything
+  downstream of it.** The arrears leg broke two counts of the same array —
+  `staleComponentEntries` (which claimed a dedupe it never did) and
+  `ForecastSplit.fixedCount` (printed as "commitments" on one card and "lines" on
+  another). Look at every consumer that COUNTS the components rather than sums
+  them.
 - ⛔ The dev server on :3000 is left running, as it was found.
 
 ---
@@ -387,11 +489,15 @@ move on their own:
 Confirmed live at the end of the session:
 
     /recurring   PROJECTED SPENDING -$3,567.60 · EOM CASH $6,138.66
-    dashboard    "Committed bills come to $3,542.21 a month"
-    dashboard    "$3,753.08 a month, still forecast"   ← the $210.87 in §7
+    dashboard    "Committed bills come to $3,542.21 a month" … "$210.87 a month lower for it"
+    dashboard    "$3,753.08 a month, still forecast"   ← and 3,542.21 + 210.87 = that
     dashboard    "13 paydays, Jun 4 – Aug 27" · "52 days unchecked"
     /budgets     "no spending imported since Aug 12 · 2 days of this period unaccounted"
     /categories  exactly two rows read "—", which is what its note says
+    /settings    five rules now offer nothing; one still offers 3
+    /summary/2022 "Salary, not Fordham payroll", and the note agrees with it
+    /recurring/… "Ends 2027-01-11" · "a full year — this one is scheduled only to…"
+    /imports     "…through Aug 3, then carries that balance forward for 7 days;…"
 
 ---
 
@@ -410,7 +516,7 @@ Confirmed live at the end of the session:
 > that. Do not invent features.
 >
 > 1. ⭐ **OPEN THE APP AND READ IT BEFORE YOU GREP IT.** My dev server runs on
->    :3000 with real data. Ten of last session's eleven defects came from
+>    :3000 with real data. Sixteen of last session's seventeen defects came from
 >    navigating each page and reading the sentences, including the only one that
 >    moved money. Every one was a pair of true statements made false by sitting
 >    next to each other. That is a property of a PAGE.
@@ -421,8 +527,9 @@ Confirmed live at the end of the session:
 > 3. **Keep hunting the boundary class.** Two more phrasings shipped wrong
 >    numbers this month. Ask what else answers one question two ways — and
 >    ⛔ before making any control persistent, grep for the tests that PRESS it.
-> 4. **One decision is waiting on me in §7** — the $210.87 between two cards.
->    Put it to me early, not at the end.
+> 4. **Nothing is waiting on me** — all three of last session's decisions are
+>    closed. If you find one, put it to me EARLY with the measurement, not at the
+>    end.
 > 5. HOSTING goes last. Never propose a hosted-DB migration.
 >
 > How I want you to work
@@ -434,12 +541,15 @@ Confirmed live at the end of the session:
 >   portfolio moves without a write.
 > * Measure before you assert, and look at the page. Do NOT read money off a
 >   screenshot.
-> * Mutation-test every new guard. A green first run is when to break it — two
->   of last session's guards survived their first pass and needed their own tests.
+> * Mutation-test every new guard. A green first run is when to break it — FOUR
+>   of last session's guards survived their first pass and needed their own tests,
+>   including the one that decides whether a rate was "shrunk" by a series ending.
 > * Explain a visual diff before regenerating a baseline
 >   (`scripts/crop-visual-diff.mjs`), and regenerate WITHOUT `E2E_GATE=1`.
 > * ⚠️ The pre-commit hook runs `ledger-check`, NOT coverage. `src/lib/**` is
->   gated at 100% and nothing will remind you.
+>   gated at 100% and nothing will remind you — it caught me once.
+> * ⛔ Before making any control persistent, grep for the tests that PRESS it: a
+>   press writes the whole resolved view, and 87 e2e failures came from one.
 > * Real-DB writes: rehearse on a `.backup` copy with guards, show me, then ask.
 > * I run my own dev server on :3000. Standing permission to stop it; put it back.
 >

@@ -508,6 +508,19 @@ describe("shrinkCaption", () => {
     expect(caption).toContain("$60.25"); // how much lower the rate is for it
   });
 
+  /* A commitment with one payment left is billed "once", not "1 times" — the
+     branch a horizon with a single remaining charge takes, and the one the
+     coverage gate on src/lib refused to let ship unstated. */
+  test("a series with one payment left is billed once", () => {
+    const book = committedOutflows({
+      ...REAL,
+      occurrences: occ("Storage unit", -9000, ["2026-09-03"], "2026-08-03", { endsOn: "2026-10-01" }),
+    });
+    const caption = shrinkCaption(book)!;
+    expect(caption).toContain("billed once rather than throughout");
+    expect(caption).not.toContain("1 times");
+  });
+
   /* ⛔ It must not say "the rate is $X lower" when a SECOND series is also
      short — the named one would then be credited with the whole difference. */
   test("more than one ending series is counted, and the rest are not silently dropped", () => {
