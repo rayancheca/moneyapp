@@ -37,13 +37,20 @@ function assertBundleIsFresh(): void {
   let newestFile = "";
   // Only `src` — Playwright runs e2e/ directly, so editing a spec does not make
   // the served bundle stale and must not block a run.
+  //
+  // ⛔ AND NOT `src`'s OWN TESTS, for exactly the same reason. `*.test.ts` lives
+  // beside the code it tests but is never bundled, so touching one cannot make
+  // the served pages stale — yet it tripped this guard and refused an e2e run
+  // that had nothing wrong with it. A guard that blocks on a file it has already
+  // reasoned is irrelevant is a guard people learn to skip with
+  // E2E_ALLOW_STALE=1, which is worse than not having it.
   const roots = [path.join(process.cwd(), "src")];
   const walk = (dir: string): void => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         walk(full);
-      } else if (/\.(ts|tsx|css)$/.test(entry.name)) {
+      } else if (/\.(ts|tsx|css)$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
         const m = fs.statSync(full).mtimeMs;
         if (m > newest) {
           newest = m;
