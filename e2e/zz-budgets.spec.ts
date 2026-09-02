@@ -42,7 +42,15 @@ test("every active budget renders a pace bar, and states a verdict only where co
   // `over` is deliberately exempt: money already spent is measured, not inferred,
   // so Housing still speaks.
   await expect(page.getByText(/Over budget/).first()).toBeVisible();
-  await expect(page.getByText(/days? unaccounted/).first()).toBeVisible();
+  /*
+   * ⚠️ The QUALIFIER is asserted, not just the count. The row used to read
+   * "· 4 days unaccounted" beside "no spending imported since Jul 4", and in
+   * THIS fixture those two nearly coincide — four uncovered days of the period,
+   * five days elapsed since the import — so the wrong reading was invisible
+   * here and obvious on the real ledger, where it read "since Aug 12 · 2 days".
+   * `uncoveredDays` is scoped to the budget PERIOD; the words say so now.
+   */
+  await expect(page.getByText(/days? of this period unaccounted/).first()).toBeVisible();
   await expect(page.getByText(/On track/)).toHaveCount(0);
   await expect(page.getByText(/Off pace/)).toHaveCount(0);
 });
