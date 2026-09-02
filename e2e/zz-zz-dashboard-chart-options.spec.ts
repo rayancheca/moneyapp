@@ -147,20 +147,25 @@ test("the terrain does not overwrite the account selection", async ({ page }) =>
  * baseline on the site.
  */
 test("the terrain's table lens agrees with itself about what it knows", async ({ page }) => {
-  await page.goto("/?chart=terrain");
-
   /*
-   * ⚠️ CLICKED, NOT LINKED. `LENS_DIMENSION` declares `key: "terrainLens"`, and
-   * `ViewDimension.key` is documented as "the URL param key AND the app_settings
-   * key" — but the terrain holds this in `useState`, so `?terrainLens=table`
-   * does nothing and the lens is lost on reload. That gap is reported in the
-   * handoff rather than closed here: making the param real changes what his
-   * dashboard remembers, which is his call, not a test's.
+   * ✅ LINKED, NOT CLICKED — and that is the fix landing, not a shortcut.
+   *
+   * This used to click the pill, with a comment explaining why it had to:
+   * `terrainLens` was declared as a URL key while the lens lived in `useState`,
+   * so `?terrainLens=table` did nothing and the choice was lost on reload. The
+   * owner said wire it on 2026-09-02, so the param is real and the link is now
+   * the stronger assertion — it proves the URL is honoured, which the click
+   * never could.
+   *
+   * ⛔ It also persists NOTHING. A press writes the whole resolved view to
+   * `app_settings`, and this suite shares one database: the clicking version
+   * left every later spec looking at the terrain's TABLE, which is 74 failures
+   * from one press, including the net-worth slider being absent on /.
    */
-  await page
-    .getByRole("group", { name: "Terrain lens" })
-    .getByRole("button", { name: "Table", exact: true })
-    .click();
+  await page.goto("/?chart=terrain&terrainLens=table");
+  await expect(
+    page.getByRole("group", { name: "Terrain lens" }).getByRole("button", { name: "Table", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
 
   const table = page.getByRole("table");
   await expect(table).toBeVisible();

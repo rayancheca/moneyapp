@@ -12,9 +12,17 @@ import { test, expect } from "@playwright/test";
  * (renaming accounts, categorising, editing budgets), and these assertions read
  * exact dollar figures off a pristine seed. Filed as `zz-zz-zz-…` first, two of
  * the four passed alone and failed in the full run for exactly that reason.
- * Everything here is read-only: the range pills are ChartFocus's lifted state
- * and the Bridge/Table switcher is local `useState`, so nothing persists a view
- * preference the way the hero's own ViewSwitcher would.
+ * ⛔ THAT WAS TRUE UNTIL 2026-09-02 AND IS NOT ANY MORE. The Bridge/Table
+ * switcher used to be local `useState`; it is now a real view dimension
+ * (`bridgeLens`), so pressing it persists — and `setView` persists the WHOLE
+ * resolved state, `chart: "bridge"` included. This file is not `zz`-prefixed,
+ * so it runs early, and the leak left the dashboard on the bridge's TABLE for
+ * every later spec: 87 tests failed on one press, from the net-worth slider
+ * being absent to eight visual baselines of a page nobody had changed.
+ *
+ * The last test therefore RESTORES what it presses, the way
+ * `zz-zz-sankey.spec.ts` already does for the flow lens. The range pills are
+ * still ChartFocus's lifted state and still persist nothing.
  */
 
 const bridgeRange = (page: import("@playwright/test").Page) =>
@@ -100,4 +108,16 @@ test("the table lens carries every band, including the ones the chart cannot dra
   await expect(table).toBeVisible();
   await expect(table.getByRole("row")).toHaveCount(9); // header + eight bands
   await expect(table.getByText("-$521.42")).toBeVisible();
+
+  // ⛔ RESTORE BOTH, in order: the lens first (so the persisted state written by
+  // the second press still carries `bridgeLens: chart`), then the hero mode. A
+  // press persists the whole resolved view, so leaving either behind hands every
+  // later spec a dashboard with no net-worth chart on it.
+  await page.getByRole("group", { name: "Bridge view" }).getByRole("button", { name: "Bridge" }).click();
+  await page
+    .getByRole("group", { name: "Net worth chart view" })
+    .getByRole("button", { name: "Net worth" })
+    .click();
+  await page.goto("/");
+  await expect(page.getByRole("slider", { name: /Net worth over time/ })).toBeVisible();
 });

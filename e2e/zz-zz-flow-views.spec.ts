@@ -34,6 +34,10 @@ const DEFAULTS = specDefaults(FLOW_VIEW_SPEC);
 const SWITCHER_LABEL: Record<string, string> = {
   measure: "Transfer measure",
   shape: "Transfer shape",
+  // the tower's CAMERA became a real dimension on 2026-09-02 (it declared a URL
+  // key over a `useState` before), and its pill lives inside TransferTower —
+  // beside the drawing it turns, not in the panel with the other three
+  towerView: "Tower viewpoint",
   lens: "Transfer lens",
 };
 
@@ -45,6 +49,18 @@ const SWITCHER_LABEL: Record<string, string> = {
  * `zz-zz-flow.spec.ts` presses "Table" mid-test, so that state is reachable
  * inside a single run whenever a test between the press and the restore fails.
  */
+/**
+ * Dimensions whose SWITCHER only exists inside another dimension's value.
+ *
+ * The tower's camera pill is rendered by `TransferTower`, beside the drawing it
+ * turns — so `?towerView=plan` with the default `shape=spine` renders no group
+ * at all and the check below would fail for the wrong reason. Declared rather
+ * than special-cased inline, so the next such pill has somewhere to go.
+ */
+const REQUIRES: Record<string, Record<string, string>> = {
+  towerView: { shape: "tower" },
+};
+
 function url(overrides: Record<string, string>): string {
   const params = new URLSearchParams({ ...DEFAULTS, ...overrides });
   return `/flow?${params.toString()}`;
@@ -107,7 +123,14 @@ test("every dimension is honoured from the URL, not merely from its pill", async
     const nonDefault = dim.options[dim.options.length - 1]!;
     // ask in the CHART lens: the shape switcher is deliberately not rendered
     // beside the matrix, since the matrix is the same matrix either way
-    await page.goto(url({ [dim.key]: nonDefault, lens: dim.key === "lens" ? nonDefault : "chart" }));
+    await page.goto(
+      url({
+        [dim.key]: nonDefault,
+        lens: dim.key === "lens" ? nonDefault : "chart",
+        // a pill that lives INSIDE a drawing needs that drawing on screen
+        ...(REQUIRES[dim.key] ?? {}),
+      }),
+    );
 
     const group = SWITCHER_LABEL[dim.key];
     expect(group, `unmapped dimension "${dim.key}"`).toBeDefined();
