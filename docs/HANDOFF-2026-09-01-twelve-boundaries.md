@@ -1,53 +1,62 @@
-# Handoff — twenty-four phrasings of one boundary, and the fixtures that could not see them
+# Handoff — twenty-five phrasings of one boundary, a 15% faster app, and a harness that stops lying
 
 > **Supersedes `HANDOFF-2026-08-31c-the-income-answer-and-the-split.md`.**
 >
-> **`main` = `c325b67`** (last code commit; this doc follows it), tree clean,
-> pushed. tsc clean · **4,415 unit in 18.4s** ·
+> **`main` = `4801441`** (last code commit; this doc follows it), tree clean,
+> pushed. tsc clean · **4,432 unit in 13.4s** · coverage gate exit 0 ·
 > **E2E_GATE=1: 591 passed at `maxDiffPixels: 0` in 8.2m, zero failures** ·
 > 40 baselines regenerated, every diff cropped and read first ·
 > `pnpm ledger-check` exit 0, on every commit.
+>
+> ⚡ **`/` 569ms → 484ms, `/spending` 118 → 95ms, `/investments` 163 → 116ms**
+> (§15), measured against a production build on the real ledger.
 >
 > Repo: **`/Users/rayankarimcheca/dev/MoneyApp`**.
 > Ledger unchanged: 10,111 active rows · income $117,924.62 ·
 > spending $167,828.49 · **zero DB writes this session**.
 >
-> ⛔ **Run the suites with `npx vitest run --maxWorkers=4`** — see §11. The bare
-> command failed nine files on this box, a different nine each run, and every one
-> of them passed alone.
+> ⛔ **Both suites now REFUSE to start on a saturated box** (§15) — that is what
+> turned a 8.4-minute gate into a 2.9-hour one and made three unit runs fail a
+> different set of files each. On a quiet box vitest's default worker count is
+> the fastest there is; no flag needed.
 
 ---
 
 # ⛔ 0. THE JOB — what is next
 
-**Nothing here is half-finished.** The list closed three times and reopened
-twice; §9, §11 and §12 each record what was found after it closed. What is left
-is decisions and one scoped repair:
+**Nothing here is half-finished.** The clamp is closed (§14), the app is 15–29%
+faster (§15), and the harness now refuses to run on a box that would lie about
+the result. What is left is decisions:
 
-1. **❓ THE CLAMP (§11) — the one defect found and deliberately NOT fixed.**
-   `addCalendarMonths` clamps 29 August + 6 months to 28 February, so a bill
-   anchored on the 28th loses its sixth payment while the rate still divides by
-   six. ⛔ The obvious fix is measured to be the mirrored defect: the engine
-   clamps too, and four anchors share 2027-02-28. An exact fix needs each series
-   bounded by its own **step index**, which `SeriesOccurrence` does not carry.
-   ⚠️ Latent for you — your latest anchor day is the 22nd. The exact shortfall
-   list is asserted in `committed.test.ts`, so a fix has to empty it on purpose.
-2. **❓ Should an unpaid bill survive the turn of the month?** (§11) The arrears
-   leg is scoped to the calendar month and the card says so, so a bill due on the
-   22nd is late on the 31st and not late on the 1st. One line either way.
-3. **Two decisions from the first half** (§0 of the previous revision, kept):
-   realized gains inside "All money in" on `/summary/[year]`, and the
-   statement-reminder trade in §9.
-4. **⛔⛔ YOUR MAC IS THE FLAKE.** `BTLEServer` has been pegged at **100% CPU for
-   35 days**, with `mds` and `mobileassetd` alongside it. Three unit runs failed
-   a different set each time and the first e2e gate took **2.9 hours** instead of
-   8.4 minutes. Nothing in the repo caused it and I did not touch a system
-   daemon. A reboot is the obvious move.
-   ✅ The proof it was the box and not the code: on the quiet machine the same
-   tree runs **4,415 unit in 18.4s** and **591 e2e in 8.2m, zero failures**.
-5. **❓ Five view dimensions declare a URL key nothing reads** (§13), three of
-   them the SAME key. Wiring them changes what your dashboard remembers.
-6. **Pass 75 onward** — `docs/program-passes-60-94.md`. **HOSTING LAST.**
+1. **❓ Should an unpaid bill survive the turn of the month?** (§11) The arrears
+   leg is scoped to the calendar month and the card says so — *"came due earlier
+   this month"* — so a bill due on the 22nd is disclosed as late on the 31st and
+   is **not** late on the 1st, with nothing paid in between. Internally honest,
+   which is why I left it. One line either way.
+2. **❓ Five view dimensions declare a URL key nothing reads** (§13), and three
+   of them declare the SAME key (`viewpoint`), so they cannot be wired one file
+   at a time. Either give them distinct keys and wire them, or drop `key` from
+   the ones that are deliberately ephemeral so the type stops claiming
+   something untrue. Wiring them changes what your dashboard remembers.
+3. **Two decisions carried from the first half**: realized gains inside "All
+   money in" on `/summary/[year]`, and the statement-reminder trade in §9.
+4. **⛔⛔ `BTLEServer` HAS BEEN AT 100% CPU FOR 35 DAYS ON YOUR MAC**, with `mds`
+   and `mobileassetd` alongside it. Nothing in this repo caused it and I did not
+   touch a system daemon. **A reboot is the fix.** The guard in §15 now stops a
+   suite from starting under it rather than spending 2.9 hours failing, but the
+   daemon is still eating a core of every build you run.
+5. **Pass 75 onward** — `docs/program-passes-60-94.md`. **HOSTING LAST.**
+
+### Where the next performance work is, if you want it
+
+The dashboard is **484ms** and drizzle-orm's query BUILDING is still the largest
+share of it. The memos removed the repeated calls; what remains is that every
+surviving query is constructed and prepared from scratch. Drizzle's `.prepare()`
+would fix that, and it is a wide, mechanical change — worth doing deliberately,
+not in passing. The e2e gate is **8.2 minutes at `workers: 1`**, held there
+because the specs share one database; per-worker databases and servers would cut
+it ~4× in wall time at the cost of more total CPU, which is a trade only you can
+price.
 
 ## 1. The queue was empty, so the job was to find what is wrong
 
@@ -785,3 +794,120 @@ promise the lens had none of before — that the table renders, names its window
 and that its three columns agree about what is known.
 
 This is the strongest argument yet for the fixture widening costed in §6.
+
+---
+
+## 14. ✅ THE CLAMP IS CLOSED — and the fix is not the one that was obvious
+
+You said fix it, so it is fixed, and the shape of the fix is the point.
+
+`addCalendarMonths("2026-08-29", 6)` is `2027-02-28`, because 29 February 2027
+does not exist. A half-open `[today, to)` was therefore a DAY SHORT of six whole
+months, and a bill anchored on the 28th lost its sixth payment while the rate
+still divided by six.
+
+⛔ **A DATE CUT CANNOT EXPRESS THIS WINDOW.** The recurring engine clamps too —
+asked for its own projected dates, the series anchored on the **28th, 29th, 30th
+and 31st all land on 2027-02-28**:
+
+```
+Bill 28  2027-01-28  2027-02-28  2027-03-28
+Bill 29  2027-01-29  2027-02-28  2027-03-29
+Bill 30  2027-01-30  2027-02-28  2027-03-30
+Bill 31  2027-01-31  2027-02-28  2027-03-31
+```
+
+Making that day inclusive fixes the 28th and hands the 29th and 30th a SEVENTH
+payment. So the window stopped being a pair of dates. **`MonthHorizon` decides
+membership in month space**: every month before the last is inside, and inside
+the last month an occurrence is in iff *the day the series is really billed on*
+precedes the day the window opened on. That is exactly the date comparison
+whenever nothing clamps, and it is the only thing that separates the four when
+something does.
+
+- `SeriesOccurrence` now carries **`anchorDayOfMonth`** — the engine's own
+  anchor day, so this exposes a fact rather than re-deriving one, and inherits
+  `deriveAnchorDay`'s limits exactly rather than adding new ones.
+- ⛔ **TWO SURFACES, ONE RULE.** `carCard` kept its own copy of the horizon and
+  its own copy of this bug with it. Both read `monthHorizon` now.
+- ✅ **Nothing moves on your ledger**, measured: the runway holds $3,542.21/mo on
+  2026-09-01, 09-02 and 08-29 alike, and the car card is constant at $1,325.60
+  across the clamp days. Your latest anchor day is the 22nd.
+- The sweep runs **400 asking days** rather than 62, so every month-length
+  pairing the calendar can produce is asked at least once, and its
+  known-shortfall list is **empty on purpose**.
+- Eleven mutants, ten dead. The eleventh is EQUIVALENT and proved so rather than
+  argued: a property test grades **67,890** (asking day, horizon, anchor day)
+  triples and nothing the horizon admits ever falls after the nominal end.
+
+---
+
+## 15. ⚡ THE APP IS 15–29% FASTER, and the harness now refuses to lie
+
+### What was actually slow — from `--cpu-prof`, not from reading the code
+
+| Page | before | after |
+|---|---|---|
+| `/` | 569ms | **484ms** (−15%) |
+| `/spending` | 118ms | **95ms** (−20%) |
+| `/investments` | 163ms | **116ms** (−29%) |
+
+Measured end to end against a production build serving your real ledger.
+
+🔴 **drizzle-orm was 44% of all active CPU** — not the queries, the *building*
+of them, over and over. Counted per dashboard render: `activeTxnsInRange` **×14**
+at 5ms each, `accountCoverage` ×7, `monthlySpending` ×5, `observationFrontier`
+×4, `loadCategoryIndex` ×20, `buildPortfolio` ×2 at **57ms each** — for a
+handful of distinct arguments.
+
+🔴 **`dates.ts` was 14%** — `digitsAt` alone 458ms of 5.2s. Every `compareDates`,
+`diffDays` and `addDays` re-reads its arguments character by character, and a
+sort re-reads them O(n log n) times, across a ledger spanning only a few
+thousand distinct days.
+
+### How it is cached, and why that is not a staleness bug waiting to happen
+
+⛔ **`react`'s `cache`, never a module-level Map.** A result that outlives the
+request is a wrong number the moment an import lands, and this app has no
+invalidation signal worth trusting — SQLite's `data_version` does not move for
+writes on our own connection, which is every write it makes. `cache()` is scoped
+to one React request and **measurably does not memoise outside one**, so tests,
+scripts and `ledger-check` are untouched. The date memo needs none of that
+care: it is a pure function of a string, so it has only a bound, which is capped.
+
+⛔ **Two traps, both measured, both worth remembering:**
+
+1. **`cache()` keys on the arguments AS PASSED.** `buildPortfolio(db)` and
+   `buildPortfolio(db, undefined)` are different calls and miss each other — the
+   counter still read TWO builds per request with the memo naively in place. An
+   array key misses too, because `[...]` is a fresh identity every call. The
+   scope is a normalised **string** now.
+2. **A cached array is shared.** One caller sorting it in place would rewrite
+   what the next one reads, so `activeTxnsInRange` and `accountCoverage` return
+   a `.slice()` — a few thousand references against the 5ms query it replaces.
+
+### ⛔ And the harness now refuses to start on a box that will lie
+
+`scripts/quiet-box.ts`. Both suites read the load average **before their workers
+spawn** — so they see what they are about to compete with, not what they create
+— and refuse above 1.5 runnable processes per core. The message names the three
+busiest processes, because diagnosing this by hand took most of an hour: the
+failures pointed at tests, `uptime` pointed at a number, and only `ps` pointed at
+`BTLEServer`, which had been spinning at 100% for 35 days.
+
+⛔ **NOT a retry policy, deliberately.** A retry spends more of the CPU that is
+already the problem and turns a machine fault into a test that "sometimes
+passes". `E2E_ALLOW_LOAD=1` / `VITEST_ALLOW_LOAD=1` when you want the answer
+anyway.
+
+⚠️ Two method notes that cost real time this session, so they are written down:
+
+- **`kill %1` does not reap a backgrounded `next start`** from a non-interactive
+  shell. A first before/after comparison read "no difference" because every later
+  measurement was still being served by the FIRST server. Kill by port
+  (`lsof -ti:PORT`) and check the port is free before believing a measurement.
+- **On a quiet box vitest's DEFAULT worker count is fastest** (11.9s at ~14
+  workers vs 21.5s at 4). `--maxWorkers=4` was the right answer only while the
+  machine was saturated — which is now what the guard is for, so the flag is no
+  longer the advice.
+
