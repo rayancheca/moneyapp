@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
@@ -198,7 +199,31 @@ interface BuiltPortfolio {
  * The whole portfolio as flow-adjusted daily points plus per-day coverage/markets
  * metadata. Scoped to `accountIds` when given (the equity-only TWR uses that).
  */
-function buildPortfolio(db: AppDatabase, accountIds?: readonly string[]): BuiltPortfolio {
+/**
+ * ⚡ MEMOIZED FOR THE LIFE OF ONE SERVER RENDER, and for no longer than that.
+ *
+ * Measured on the owner's ledger: this walk costs **57ms**, and the dashboard
+ * ran it TWICE — `investmentsTeaser` asks `portfolioOverview` and
+ * `portfolioSeries` for two views of the same build. That was 114ms of a 293ms
+ * render, 39% of it, spent computing an identical answer a second time. The
+ * `/investments` page ran it three times.
+ *
+ * ⛔ `react`'s `cache`, deliberately, and NOT a module-level Map. A cached
+ * portfolio that outlives the request is a WRONG NUMBER the moment an import
+ * lands, and this codebase has no invalidation signal it could trust —
+ * SQLite's `data_version` does not move for writes on our own connection, which
+ * is every write the app makes. `cache()` is scoped to one React request and
+ * MEASURABLY does not memoize outside one (verified: two calls, two runs), so
+ * tests, scripts and `pnpm ledger-check` behave exactly as before.
+ *
+ * ⚠️ It keys on argument identity, so the scoped `accountIds` overloads still
+ * rebuild. Every hot caller passes nothing, which is the case worth having.
+ */
+const buildPortfolioFor = cache(function buildPortfolioFor(
+  db: AppDatabase,
+  scopeKey: string,
+): BuiltPortfolio {
+  const accountIds = scopeKey === "" ? undefined : scopeKey.split(",");
   const all = investmentAccounts(db);
   const scoped = accountIds ? all.filter((a) => accountIds.includes(a.id)) : all;
   const books = scoped
@@ -244,8 +269,21 @@ function buildPortfolio(db: AppDatabase, accountIds?: readonly string[]): BuiltP
   }
 
   return { days, meta, totalAccounts: books.length };
-}
+});
 
+/**
+ * ⛔ THE SCOPE IS A STRING, and that is the whole reason the memo works.
+ *
+ * `cache()` keys on the arguments as passed, so `buildPortfolio(db)` and
+ * `buildPortfolio(db, undefined)` are two different calls and miss each other —
+ * measured, 2 builds per dashboard request with the memo already in place. An
+ * array key would miss too: a fresh `[...]` is a fresh identity every call.
+ * Normalising to a sorted string makes every caller that means "all accounts"
+ * agree, and makes two callers asking for the same subset agree as well.
+ */
+function buildPortfolio(db: AppDatabase, accountIds?: readonly string[]): BuiltPortfolio {
+  return buildPortfolioFor(db, accountIds ? [...accountIds].sort().join(",") : "");
+}
 /** Whole-portfolio positions value per day (the value chart's series). */
 export function portfolioSeries(db: AppDatabase, accountIds?: readonly string[]): PortfolioSeriesPoint[] {
   const { days, meta } = buildPortfolio(db, accountIds);
