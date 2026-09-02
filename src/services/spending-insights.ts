@@ -123,7 +123,16 @@ function buildCandidates(
   const totalCents = rows.reduce((sum, r) => sum + r.spentCents, 0);
 
   const facts: Fact[] = [
-    rankFact("f1", top.name, rank, rows.length, "spending categories"),
+    /*
+     * ⛔ The window belongs in the SENTENCE, not only in the panel header.
+     * "Housing is the largest of your 12 spending categories, at $2,653.58"
+     * sat one screen above /spending's own table reading "Car 70% $6,457.58"
+     * for the period on the selector — this panel does not follow that
+     * selector, and a superlative with no window reads as a standing fact
+     * about the ledger. Its sibling share fact already names the month; this
+     * one now does too, in the same words.
+     */
+    rankFact("f1", top.name, rank, rows.length, `spending categories in ${monthLabel}`),
     scalarFact("f2", top.name, top.spentCents, "money"),
     shareFact("f3", top.name, top.spentCents / totalCents, `everything you spent in ${monthLabel}`),
     /*
@@ -285,10 +294,23 @@ export function categoryInsightInput(
     candidates,
     window: {
       label: card.monthLabel,
+      /*
+       * 🔴 This used to read "Sep 2026 is still being imported, so these read
+       * Jul 2026", and the two halves are a two-month jump explained by a
+       * one-month reason. A reader with August on screen — the period selector
+       * does not move this panel — asks what happened to August, and the note
+       * had skipped it silently.
+       *
+       * `moversCard` walks BACK from the current month and takes the first
+       * candidate every live spending account is imported through, so every
+       * month between the window and today failed that test by construction.
+       * The note now says exactly that, and names the current month only as the
+       * thing these figures are NOT.
+       */
       note:
         card.month === monthKey(today)
           ? null
-          : `${card.currentMonthLabel} is still being imported, so these read ${card.monthLabel} — the newest month every account has been shown through.`,
+          : `${card.monthLabel} is the newest month every account has been shown through, and no month after it is fully imported yet — so these read ${card.monthLabel} rather than ${card.currentMonthLabel}.`,
     },
   };
 }

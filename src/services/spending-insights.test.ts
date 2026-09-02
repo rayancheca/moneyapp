@@ -119,7 +119,7 @@ describe("what /spending says about a ledger whose answers are known", () => {
 
     expect(out.windowLabel).toBe("Jul 2026");
     expect(out.insights.map((i) => i.text)).toEqual([
-      "Food is the largest of your 2 spending categories, at $300.00.",
+      "Food is the largest of your 2 spending categories in Jul 2026, at $300.00.",
       "Food is 60.0% of everything you spent in Jul 2026.",
       "Food rose by $200.00 between its usual month and Jul 2026.",
       "1 transaction landed in Food.",
@@ -161,8 +161,16 @@ describe("what /spending says about a ledger whose answers are known", () => {
     const out = spendingInsights(bundle.db, TODAY)!;
     // TODAY is in August; the frontier only reaches 2026-08-20, so July is the
     // newest month that has actually been looked at
-    expect(out.windowNote).toContain("Aug 2026 is still being imported");
-    expect(out.windowNote).toContain("Jul 2026");
+    expect(out.windowNote).toContain("Jul 2026 is the newest month every account has been shown through");
+    /*
+     * ⛔ It must not explain a multi-month jump with a single month's reason.
+     * On the real ledger at 2026-09-02 the window was Jul 2026 and the note
+     * said only "Sep 2026 is still being imported" — leaving a reader with
+     * August selected to wonder what happened to August. The clause below is
+     * what covers every skipped month at once.
+     */
+    expect(out.windowNote).toContain("no month after it is fully imported yet");
+    expect(out.windowNote).toContain("rather than Aug 2026");
   });
 });
 
@@ -188,7 +196,7 @@ describe("what it refuses to say", () => {
     const out = spendingInsights(bundle.db, TODAY)!;
     // the $900 hole is larger than everything categorized and is still not the
     // largest CATEGORY, because it is not one
-    expect(out.insights[0]!.text).toBe("Food is the largest of your 2 spending categories, at $20.00.");
+    expect(out.insights[0]!.text).toBe("Food is the largest of your 2 spending categories in Jul 2026, at $20.00.");
     for (const i of out.insights) expect(i.text).not.toContain("Uncategorized");
   });
 
@@ -200,7 +208,7 @@ describe("what it refuses to say", () => {
     importedThrough("2026-08-20");
     const out = spendingInsights(bundle.db, TODAY)!;
     // three categories hold rows in July; only two of them SPENT
-    expect(out.insights[0]!.text).toContain("of your 2 spending categories");
+    expect(out.insights[0]!.text).toContain("of your 2 spending categories in Jul 2026");
   });
 
   test("a single spending category is not ranked — first of one is not a ranking", () => {
@@ -269,7 +277,7 @@ describe("the sentences are checkable against the vocabulary, not just against t
 
   test("an invented sentence over the same shape is refused", () => {
     // the negative control for the test above: same wording, no facts behind it
-    expect(validateProse("Food is the largest of your 2 spending categories, at $300.00.", new Map()).ok).toBe(false);
+    expect(validateProse("Food is the largest of your 2 spending categories in Jul 2026, at $300.00.", new Map()).ok).toBe(false);
   });
 });
 
@@ -336,6 +344,6 @@ describe("a category the app cannot name", () => {
 
     const out = spendingInsights(bundle.db, TODAY)!;
     expect(out.insights.every((i) => !i.text.includes("<UNKNOWN>"))).toBe(true);
-    expect(out.insights[0]!.text).toBe("Food is the largest of your 3 spending categories, at $300.00.");
+    expect(out.insights[0]!.text).toBe("Food is the largest of your 3 spending categories in Jul 2026, at $300.00.");
   });
 });
