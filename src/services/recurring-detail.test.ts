@@ -126,6 +126,34 @@ describe("seriesDetail", () => {
     expect(d.nextExpected.every((o) => o.amountCents === -1549)).toBe(true);
   });
 
+  /*
+   * 🔴 THE PAGE THAT OWNS THE SERIES WAS THE ONE PLACE ITS END WAS INVISIBLE.
+   * Measured 2026-09-02 on `/recurring/<car insurance>`: "ANNUALIZED
+   * ~$4,337.88/yr" over three upcoming charges, with no mention that the series
+   * is evidenced only through 2027-01-11 — while the runway card and the car
+   * card both named that date. The annualised figure it headlines is exactly
+   * the number the end invalidates.
+   */
+  test("a series with an end day reports it, so the page can qualify its annual figure", () => {
+    bundle.db
+      .update(recurringSeries)
+      .set({ userEndsOn: "2026-08-15" })
+      .where(eq(recurringSeries.id, netflix().id))
+      .run();
+
+    const d = seriesDetail(bundle.db, netflix().id, TODAY);
+    expect(d.endsOn).toBe("2026-08-15");
+    // and the projection already stops there — the badge describes the same
+    // fact the occurrence list is walking, not a second one
+    expect(d.nextExpected.every((o) => o.date <= "2026-08-15")).toBe(true);
+    // the walk stops at the end day: Jul 15 and Aug 15, and no September
+    expect(d.nextExpected).toHaveLength(2);
+  });
+
+  test("a series that runs on reports no end day at all", () => {
+    expect(seriesDetail(bundle.db, netflix().id, TODAY).endsOn).toBeNull();
+  });
+
   test("throws on an unknown series", () => {
     expect(() => seriesDetail(bundle.db, "nope", TODAY)).toThrow(/Unknown recurring series/);
   });

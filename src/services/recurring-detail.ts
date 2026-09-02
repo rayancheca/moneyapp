@@ -89,6 +89,19 @@ export interface SeriesDetail {
   confidence: number | null;
   lastMatchedOn: string | null;
   isActive: boolean;
+  /**
+   * The day this series stops, or null when it runs on — `userEndsOn`, the only
+   * end day the ledger holds and the one `projectOccurrences` clamps its walk
+   * on.
+   *
+   * 🔴 It was on no surface a reader would go looking. Measured 2026-09-02:
+   * `/recurring/<car insurance>` showed "ANNUALIZED ~$4,337.88/yr", three
+   * upcoming charges and no hint that the series is evidenced only through
+   * 2027-01-11 — while the runway card and the car card both said so. The page
+   * that OWNS the series was the one place its end was invisible, and the
+   * annualised figure it headlines is exactly the number that end invalidates.
+   */
+  endsOn: string | null;
   annualizedCents: number | null;
   /** the next few projected occurrences (override-aware) */
   nextExpected: SeriesOccurrence[];
@@ -265,6 +278,7 @@ export function seriesDetail(
     confidence: s.confidence,
     lastMatchedOn: s.lastMatchedOn,
     isActive: isSeriesActive(s, today),
+    endsOn: s.userEndsOn ?? null,
     annualizedCents: annualizedCentsOf(eff),
     nextExpected,
     linkedTxns,

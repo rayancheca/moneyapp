@@ -143,6 +143,12 @@ export function SeriesDetail({
             {(data.status === "detected" || data.status === "confirmed") && !data.isActive ? (
               <Badge tone="warning">Inactive</Badge>
             ) : null}
+            {/* 🔴 The one place a reader would go to check when a series stops,
+                and the only surface that did not say. The runway card and the
+                car card both name this date; this page headlined
+                "~$4,337.88/yr" over three upcoming charges and never mentioned
+                that the series is evidenced only to 2027-01-11. */}
+            {data.endsOn !== null ? <Badge tone="warning">Ends {data.endsOn}</Badge> : null}
             {data.merchant ? (
               <Link
                 href={`/merchants/${data.merchant.id}`}
@@ -257,6 +263,15 @@ export function SeriesDetail({
           <dl className="mt-4 grid grid-cols-2 gap-4 border-t border-line pt-4 sm:grid-cols-4">
             <Stat label="Annualized">
               {data.annualizedCents !== null ? <>~<Money cents={data.annualizedCents} />/yr</> : "—"}
+              {/* ⛔ the figure this qualifies, not the header: "a year at
+                  today's amounts" is a HYPOTHETICAL year for a series with an
+                  end date inside one, and the reader deserves that beside the
+                  number rather than a screen away */}
+              {data.endsOn !== null && data.annualizedCents !== null ? (
+                <span className="mt-0.5 block text-[11px] font-normal text-ink-faint">
+                  a full year — this one is scheduled only to {data.endsOn}
+                </span>
+              ) : null}
             </Stat>
             {/* the badge goes on PER CHARGE, the figure the forecast actually
                 publishes. "Annualized" is that number multiplied out, so a
