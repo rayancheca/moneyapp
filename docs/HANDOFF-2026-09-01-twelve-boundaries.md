@@ -2,7 +2,7 @@
 
 > **Supersedes `HANDOFF-2026-08-31c-the-income-answer-and-the-split.md`.**
 >
-> **`main` = `e94f1ad`** (last code commit; this doc follows it), tree clean,
+> **`main` = `b5396f5`** (last code commit; this doc follows it), tree clean,
 > pushed. tsc clean · **4,442 unit in ~13s** · coverage gate exit 0 ·
 > **E2E_GATE=1: 591 passed at `maxDiffPixels: 0` in 8.2m, zero failures** ·
 > 56 baselines regenerated across three cycles, every diff cropped and read
@@ -31,13 +31,25 @@ the result. What is left is decisions:
 1. **❓ Should an unpaid bill survive the turn of the month?** (§11) The arrears
    leg is scoped to the calendar month and the card says so — *"came due earlier
    this month"* — so a bill due on the 22nd is disclosed as late on the 31st and
-   is **not** late on the 1st, with nothing paid in between. Internally honest,
-   which is why I left it. One line either way.
-2. **❓ Five view dimensions declare a URL key nothing reads** (§13), and three
-   of them declare the SAME key (`viewpoint`), so they cannot be wired one file
-   at a time. Either give them distinct keys and wire them, or drop `key` from
-   the ones that are deliberately ephemeral so the type stops claiming
-   something untrue. Wiring them changes what your dashboard remembers.
+   is **not** late on the 1st, with nothing paid in between. Live for you: `Gym`
+   is anchored on the 22nd and has never billed.
+
+   ⚖️ **This one I did not take even under "your call"**, and the reason is the
+   rule this codebase runs on. Widening the leg changes a MONEY FIGURE on your
+   dashboard, and which answer is right depends on what you want the card to
+   mean — a running tally of everything still owed, or this month's misses. Both
+   are defensible; only one is what you meant. Everything else in this session
+   was a case where the app contradicted itself and there was a demonstrably
+   true answer. This is a case where there is not, so guessing it would be
+   putting a number you did not choose in front of you. One line either way once
+   you say which.
+2. **❓ Should the four ephemeral view switchers become real URL state?** (§13)
+   ✅ HALF DONE on your "everything else is your call": `ViewSwitcher` only ever
+   read `options`, so it asks for only that now and the four switchers holding
+   their value in `useState` no longer invent a key they never honoured. ⚖️ What
+   I did NOT do is wire them — that starts writing `app_settings` and changes
+   what your dashboard remembers between visits, and the three `viewpoint`
+   declarations would need distinct names first. That half is still yours.
 3. **Two decisions carried from the first half**: realized gains inside "All
    money in" on `/summary/[year]`, and the statement-reminder trade in §9.
 4. **⛔⛔ `BTLEServer` HAS BEEN AT 100% CPU FOR 35 DAYS ON YOUR MAC**, with `mds`
@@ -1036,7 +1048,7 @@ Copy everything below this line.
 Read `docs/HANDOFF-2026-09-01-twelve-boundaries.md` first — it is the brief.
 §0 of it is the job.
 
-Repo `/Users/rayankarimcheca/dev/MoneyApp`, `main` = `e94f1ad`, clean and
+Repo `/Users/rayankarimcheca/dev/MoneyApp`, `main` = `b5396f5`, clean and
 pushed. Baseline: **4,442 unit in ~13s** · tsc clean · coverage gate exit 0 ·
 `E2E_GATE=1`: **591 passed at `maxDiffPixels: 0` in 8.2m** · `pnpm ledger-check` exit 0 on every commit via
 `.githooks/pre-commit`. Ledger: 10,111 active rows · income $117,924.62 ·
