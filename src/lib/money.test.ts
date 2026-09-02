@@ -104,3 +104,30 @@ describe("formatting", () => {
     expect(formatCentsSigned(-0)).toBe("$0.00");
   });
 });
+
+describe("negative zero is not an amount", () => {
+  /**
+   * 🔴 MEASURED ON /accounts, 2026-09-02: Chase Sapphire's row read **"-$0.00"**.
+   * Liability rows render `-balanceCents`, and negating an exact zero gives
+   * `-0`, which JavaScript keeps and `Intl` prints with its sign. The card
+   * beside it printed a plain "$367.99", so one row said it owed nothing in a
+   * notation nothing else on the page used.
+   */
+  test("formatCents normalises -0 to zero", () => {
+    expect(formatCents(-0)).toBe("$0.00");
+    expect(formatCents(0)).toBe("$0.00");
+    expect(formatCents(-0)).toBe(formatCents(0));
+  });
+
+  /** ⛔ And ONLY -0: a real debt must keep its sign. */
+  test("a real negative keeps its sign", () => {
+    expect(formatCents(-1)).toBe("-$0.01");
+    expect(formatCents(-55_762)).toBe("-$557.62");
+  });
+
+  test("formatCentsSigned already refused it, and still does", () => {
+    expect(formatCentsSigned(-0)).toBe("$0.00");
+    expect(formatCentsSigned(-1)).toBe("-$0.01");
+    expect(formatCentsSigned(1)).toBe("+$0.01");
+  });
+});

@@ -371,6 +371,24 @@ describe("what the cards cost", () => {
     expect(alpha.fees!.summary).toBe("1 annual fee, Mar 1 — 162 days ago");
   });
 
+  /**
+   * 🔴 MEASURED ON THE OWNER'S DASHBOARD 2026-09-02: this card printed
+   * "2 charges, latest Sep 18 — 714 days ago" for a charge from September
+   * 2024. Read as this year, "Sep 18" is a date sixteen days in the FUTURE —
+   * so one phrase called the same charge both next fortnight and two years
+   * old. Every fixture in this file dates its rows inside `TODAY`'s own year,
+   * which is why a formatter that never prints a year went unnoticed.
+   */
+  test("a charge from another year says which year, beside the age it claims", () => {
+    twoCards();
+    addTxn("acct-alpha", "2024-09-18", -3_194, catId("Bank Fees"));
+
+    const alpha = cardsOwedCard(bundle.db, TODAY)!.cards.find((c) => c.name === "Alpha")!;
+    expect(alpha.fees!.summary).toBe("1 charge, Sep 18, 2024 — 691 days ago");
+    // …and the same date inside this year stays short
+    expect(alpha.fees!.summary).not.toContain("Sep 18, 2026");
+  });
+
   test("a fee reversed in full nets to nothing rather than vanishing", () => {
     twoCards();
     const bank = catId("Bank Fees");

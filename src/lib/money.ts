@@ -73,7 +73,20 @@ const USD = new Intl.NumberFormat("en-US", {
 /** "$1,234.56" / "-$43.64". Display only — never parsed back. */
 export function formatCents(cents: number): string {
   assertValidCents(cents);
-  return USD.format(cents / 100);
+  /*
+   * 🔴 `-0` IS A NUMBER JAVASCRIPT KEEPS AND `Intl` PRINTS: `USD.format(-0)` is
+   * "-$0.00". Measured on the owner's /accounts page 2026-09-02 — Chase
+   * Sapphire, whose balance is exactly zero, rendered **"-$0.00"** because the
+   * liability rows negate what they display and `-0 !== 0` only under
+   * `Object.is`. There is no such amount as negative zero dollars, and the row
+   * beside it printed a plain "$367.99", so one card said it owed nothing in a
+   * different notation from every other figure on the page.
+   *
+   * ⛔ `+ 0` rather than `Math.abs`: this must normalise NEGATIVE ZERO and
+   * nothing else. `Math.abs` would silently print a real debt as a credit.
+   * `formatCentsSigned` already guards its own zero for the same reason.
+   */
+  return USD.format(cents / 100 + 0);
 }
 
 /** "+$120.00" for positive, "-$43.64" for negative, "$0.00" for zero — flow displays. */

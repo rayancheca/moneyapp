@@ -2,7 +2,7 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { transactions } from "@/db/schema/transactions";
 import { diffDays, todayIso } from "@/lib/dates";
-import { formatDayShort } from "@/lib/format-date";
+import { formatDayShortIn } from "@/lib/format-date";
 import { isStaleClose } from "@/lib/holding-price-age";
 import { formatCents } from "@/lib/money";
 import { listAccounts } from "./accounts";
@@ -221,9 +221,12 @@ function plural(n: number, one: string, many: string): string {
  * not aged: "0 days ago" is noise, and a future date is not old, it is wrong.
  */
 function dated(day: string, today: string): string {
-  if (!isStaleClose(day, today, diffDays)) return formatDayShort(day);
+  // ⛔ `formatDayShortIn`, not `formatDayShort`. A charge from another year
+  // printed as a bare "Sep 18" beside "714 days ago" is one phrase disagreeing
+  // with itself — and in September it reads as a date still to come.
+  if (!isStaleClose(day, today, diffDays)) return formatDayShortIn(day, today);
   const days = diffDays(day, today);
-  return `${formatDayShort(day)} — ${days} ${plural(days, "day", "days")} ago`;
+  return `${formatDayShortIn(day, today)} — ${days} ${plural(days, "day", "days")} ago`;
 }
 
 /**
