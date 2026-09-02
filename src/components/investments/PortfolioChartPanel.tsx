@@ -10,6 +10,7 @@ import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { useViewState } from "@/hooks/useViewState";
 import { viewHrefQuery, type ViewState } from "@/lib/view-state";
 import { DEFAULT_BENCHMARK } from "@/lib/benchmark-symbol";
+import { carriedFromDay } from "@/lib/price-series";
 import { formatDayLong } from "@/lib/format-date";
 import { sessionSummarize, type SessionChartView } from "@/lib/intraday-axis";
 import { formatCents, formatCentsSigned } from "@/lib/money";
@@ -160,14 +161,29 @@ export function PortfolioChartPanel({
     [isReturns, isPercent],
   );
 
+  /*
+   * 🔴 The spoken readout dated a CARRIED day as if it were measured. The value
+   * line is extended flat to today when prices have not been refreshed
+   * (`carryForwardTo`), and a sighted reader is told so three ways — the tail is
+   * dashed, the hover chip reads "● Partial", the page banner names the close it
+   * is holding. The `<figcaption className="sr-only">` said only
+   * "Wed, Sep 2, 2026: $107,097.05, up 30.0%". `NetWorthChartPanel`'s own
+   * valueText has named its incomplete days since it shipped; this one now does
+   * too, out of the same helper so the two charts cannot drift.
+   */
   const valueText = useCallback(
-    (summary: ScrubSummary): string =>
-      scrubValueText(
+    (summary: ScrubSummary): string => {
+      const base = scrubValueText(
         summary.atLabel ?? formatDayLong(summary.day),
         heroText(summary),
         isPercent ? null : summary.deltaPct,
-      ),
-    [heroText, isPercent],
+      );
+      const heldFrom = carriedFromDay(chartPoints, summary.day);
+      return heldFrom === null
+        ? base
+        : `${base} — carried forward from the close on ${formatDayLong(heldFrom)}`;
+    },
+    [chartPoints, heroText, isPercent],
   );
 
   // ONE header for both lenses — the table's readout IS the chart's readout

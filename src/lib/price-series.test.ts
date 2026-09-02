@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { carryForwardTo } from "./price-series";
+import { carriedFromDay, carryForwardTo } from "./price-series";
 
 describe("carryForwardTo", () => {
   test("extends flat to today, tagging the tail dashed and real points solid", () => {
@@ -62,5 +62,47 @@ describe("carryForwardTo", () => {
 
   test("empty input returns empty", () => {
     expect(carryForwardTo([], "2026-07-10")).toEqual([]);
+  });
+});
+
+describe("carriedFromDay", () => {
+  const series = [
+    { day: "2026-08-31", valueCents: 100, complete: true },
+    { day: "2026-09-01", valueCents: 200, complete: true },
+    { day: "2026-09-02", valueCents: 200, complete: false },
+    { day: "2026-09-03", valueCents: 200, complete: false },
+  ];
+
+  test("a carried day names the last real day it is holding", () => {
+    expect(carriedFromDay(series, "2026-09-02")).toBe("2026-09-01");
+  });
+
+  test("a carried day two past the close still names the close, not the day before it", () => {
+    expect(carriedFromDay(series, "2026-09-03")).toBe("2026-09-01");
+  });
+
+  test("a measured day is holding nothing", () => {
+    expect(carriedFromDay(series, "2026-09-01")).toBeNull();
+    expect(carriedFromDay(series, "2026-08-31")).toBeNull();
+  });
+
+  test("a day outside the series is not answered", () => {
+    expect(carriedFromDay(series, "2026-07-04")).toBeNull();
+    expect(carriedFromDay([], "2026-09-02")).toBeNull();
+  });
+
+  /* A series with no `complete` at all is exact by omission — the flag defaults
+     to true everywhere it is read, so nothing here may report a hold. */
+  test("a series that never flags a day reports no holds", () => {
+    const exact = [{ day: "2026-09-01" }, { day: "2026-09-02" }];
+    expect(carriedFromDay(exact, "2026-09-02")).toBeNull();
+  });
+
+  /* The output of `carryForwardTo` is the real input to this, so they are
+     checked together rather than against a hand-built shape. */
+  test("it reads the tail carryForwardTo actually produces", () => {
+    const carried = carryForwardTo([{ day: "2026-09-01", valueCents: 500 }], "2026-09-03");
+    expect(carriedFromDay(carried, "2026-09-03")).toBe("2026-09-01");
+    expect(carriedFromDay(carried, "2026-09-01")).toBeNull();
   });
 });

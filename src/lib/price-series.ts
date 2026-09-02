@@ -45,3 +45,35 @@ export function carryForwardTo<T extends { day: string }>(
   }
   return out;
 }
+
+/**
+ * The day a carried point is HOLDING — the last real day before it, or null when
+ * the day named is a measurement rather than a hold.
+ *
+ * 🔴 The carry-forward is disclosed everywhere a sighted reader looks and
+ * nowhere a screen reader does. Measured on /investments at 2026-09-02: the
+ * value line is drawn dashed past the last close, the hover chip reads
+ * "● Partial", the page banner says "Every position on this page still carries
+ * its close from Tue, Sep 1, 2026" — and the chart's own `<figcaption
+ * className="sr-only">` said "Wed, Sep 2, 2026: $107,097.05, up 30.0%", dating
+ * the figure to a day the series never measured, with nothing to mark it as
+ * held. `NetWorthChartPanel`'s spoken readout already names its incomplete
+ * days; the two investment charts did not.
+ *
+ * Returns the ANCHOR rather than a sentence, so the two panels that need it
+ * share the decision and each keeps its own wording.
+ */
+export function carriedFromDay<T extends { day: string; complete?: boolean }>(
+  points: readonly T[],
+  day: string,
+): string | null {
+  const idx = points.findIndex((p) => p.day === day);
+  // a day that is not in this series, or one that was really measured, is not
+  // being held — and neither is a carried FIRST point, which has nothing behind
+  // it to hold (an impossible input today, answered rather than assumed)
+  if (idx < 0 || points[idx]!.complete !== false) return null;
+  for (let i = idx - 1; i >= 0; i -= 1) {
+    if (points[i]!.complete !== false) return points[i]!.day;
+  }
+  return null;
+}

@@ -48,9 +48,17 @@ function paceSentence(status: BudgetPaceStatus): string {
  * "no spending imported since 8 Jul · 11 days of this period unaccounted".
  * Statement lag is normal here — accounts land on different dates each month —
  * so this reads as a fact about coverage, never as an error.
+ *
+ * 🔴 THE DOCSTRING WAS RIGHT AND THE CODE DROPPED THREE WORDS. It rendered
+ * "· 2 days unaccounted" beside "no spending imported since Aug 12", and on
+ * 2026-09-02 that pair invited a reader to compute 21 days and find the card
+ * wrong about itself. `uncoveredDays` is scoped to the BUDGET PERIOD — Sep 1
+ * and Sep 2 — and never to the elapsed gap since the last import. Same shape as
+ * the trust card's bare "52 days" next to "since Dec 5, 2023": two true numbers
+ * that a reader joins into one false one. The qualifier is what separates them.
  */
 function coverageSentence(status: BudgetPaceStatus): string {
-  const days = `${status.uncoveredDays} day${status.uncoveredDays === 1 ? "" : "s"} unaccounted`;
+  const days = `${status.uncoveredDays} day${status.uncoveredDays === 1 ? "" : "s"} of this period unaccounted`;
   return status.dataThroughOn
     ? `no spending imported since ${formatDayShort(status.dataThroughOn)} · ${days}`
     : `nothing imported for this category yet · ${days}`;
