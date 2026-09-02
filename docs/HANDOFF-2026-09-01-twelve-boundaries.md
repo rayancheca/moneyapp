@@ -1,12 +1,12 @@
-# Handoff — twenty-five phrasings of one boundary, a 15% faster app, and a harness that stops lying
+# Handoff — the clamp closed, a 15% faster app, a harness that stops lying, and eight defects found by READING the app
 
 > **Supersedes `HANDOFF-2026-08-31c-the-income-answer-and-the-split.md`.**
 >
-> **`main` = `4801441`** (last code commit; this doc follows it), tree clean,
-> pushed. tsc clean · **4,432 unit in 13.4s** · coverage gate exit 0 ·
+> **`main` = `e94f1ad`** (last code commit; this doc follows it), tree clean,
+> pushed. tsc clean · **4,442 unit in ~13s** · coverage gate exit 0 ·
 > **E2E_GATE=1: 591 passed at `maxDiffPixels: 0` in 8.2m, zero failures** ·
-> 40 baselines regenerated, every diff cropped and read first ·
-> `pnpm ledger-check` exit 0, on every commit.
+> 56 baselines regenerated across three cycles, every diff cropped and read
+> first · `pnpm ledger-check` exit 0, on every commit.
 >
 > ⚡ **`/` 569ms → 484ms, `/spending` 118 → 95ms, `/investments` 163 → 116ms**
 > (§15), measured against a production build on the real ledger.
@@ -1024,3 +1024,80 @@ than inferring.
   the card over), and one moved close cannot move a median of twelve. The
   TOLERANCE widened this session so it is not flagged "Behind"; the PREDICTION
   is still the old rhythm, and that is the documented limit of a median.
+
+---
+
+# 📋 THE PROMPT FOR THE NEXT SESSION
+
+Copy everything below this line.
+
+---
+
+Read `docs/HANDOFF-2026-09-01-twelve-boundaries.md` first — it is the brief.
+§0 of it is the job.
+
+Repo `/Users/rayankarimcheca/dev/MoneyApp`, `main` = `e94f1ad`, clean and
+pushed. Baseline: **4,442 unit in ~13s** · tsc clean · coverage gate exit 0 ·
+`E2E_GATE=1`: **591 passed at `maxDiffPixels: 0` in 8.2m** · `pnpm ledger-check` exit 0 on every commit via
+`.githooks/pre-commit`. Ledger: 10,111 active rows · income $117,924.62 ·
+spending $167,828.49.
+
+**My queue is empty again — so the job is to find what is wrong.** The last two
+sessions each emptied it and then found more by checking their own work. Do
+that. Do not invent features.
+
+1. **⭐ OPEN THE APP AND READ IT BEFORE YOU GREP IT.** My dev server runs on
+   :3000 with real data. Last session's highest-yield twenty minutes was
+   navigating each page and reading the sentences — eight defects, and only two
+   of them moved a pixel baseline. Every one was a pair of true statements made
+   false by sitting next to each other. That is a property of a PAGE, and only a
+   page shows it.
+2. **Keep hunting the boundary class.** Twenty-five phrasings of one date window
+   have shipped wrong numbers now. Ask what else answers a question two ways.
+3. **Two decisions are waiting on me in §0 — put them to me early**, not at the
+   end. The arrears month-scope one and the view-dimension keys.
+4. **HOSTING goes last.** Never propose a hosted-DB migration.
+
+**How I want you to work**
+
+- ONE long session, ONE handoff at the very end. Commit and push to `main`
+  between items without asking.
+- **No fabricated numbers.** Re-derive rather than quote — correct me rather
+  than inherit me. Every figure in that handoff is as-of its date; the real date
+  rolls and every trailing window moves with it.
+- **Measure before you assert, and look at the page.** Do NOT read money off a
+  screenshot, and do not `tail` your own diagnostic and conclude from it.
+- **Mutation-test every new guard.** A green first run is when to break it.
+- **Explain a visual diff before regenerating a baseline**
+  (`scripts/crop-visual-diff.mjs`), and regenerate WITHOUT `E2E_GATE=1`.
+- **Real-DB writes**: rehearse on a `.backup` copy with guards, show me, then
+  ask.
+- I run my own dev server on :3000. Standing permission to stop it; put it back.
+
+**Rules that keep biting**
+
+- ⛔⛔ **`BTLEServer` may still be at 100% of a core** — it had been for 35 days.
+  Both suites now REFUSE to start above 1.5 load per core and name the busiest
+  processes; if one refuses, that is the guard working, not a bug. Reboot.
+- **A fixture that cannot express a condition cannot test it.** Three of last
+  session's display fixes are unreachable in the e2e fixture forever: no
+  zero-balance card, no row dated outside `TODAY`'s year, no stale-series footer.
+- **A test can ENCODE the bug** — and an assertion loose enough to survive it is
+  not coverage. Two sweeps last session asserted nothing until mutation said so.
+- **A disclosure underneath does not undo a wrong number on top.**
+- **Grep for who else answers a question before fixing one caller.** `carCard`
+  had its own copy of the horizon and its own copy of the clamp bug with it.
+- ⛔ **`react`'s `cache`, never a module-level Map** — SQLite's `data_version`
+  does not move for writes on our own connection.
+- **`git checkout -- <file>` destroys uncommitted work.** Restore from a
+  scratchpad copy while a change is in flight.
+- **TWO DEFINITIONS OF SPENDING.** The headline $167,828.49 is the expense-KIND
+  signed sum; `periodTotals().spentCents` reads $175,018.27 on the same ledger.
+- **`user_category_id` is an OVERRIDE, not the membership** — use
+  `recurringSeriesIdsForCategory`.
+- **My income is cash I spend.** $0 recorded is correct, not a bug. Do NOT
+  reclassify my parents' money.
+- **A Playwright call that RETURNS a value usually does not retry.** Use
+  `e2e/box-helpers.ts`.
+- **`pnpm e2e` refuses a stale `.next`** — use `pnpm e2e:fresh`, or build first.
+
