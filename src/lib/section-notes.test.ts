@@ -4,6 +4,7 @@ import { FORBIDDEN_NAME_CHARS } from "@/services/category-edit";
 import {
   budgetSectionNotes,
   cashEarningsSectionNotes,
+  categoryCountLabel,
   categoryNoteRows,
   type CashEarningsNoteInput,
   categorySectionNotes,
@@ -594,5 +595,41 @@ describe("cashEarningsSectionNotes", () => {
     });
     expect(out).toHaveLength(2);
     expect(new Set(out.map((n) => n.id)).size).toBe(2);
+  });
+});
+
+describe("categoryCountLabel", () => {
+  const leaf = (txnCount: number) => ({ txnCount, children: [] });
+
+  test("a category holding rows itself reads as a count", () => {
+    expect(categoryCountLabel(leaf(1882))).toEqual({ text: "1,882 txn", title: null });
+  });
+
+  test("a genuinely empty category reads as an em dash", () => {
+    expect(categoryCountLabel(leaf(0))).toEqual({ text: "—", title: null });
+  });
+
+  /*
+   * The pair that made this necessary: the note above the list says "2
+   * categories hold no transactions" from SUBTREE counts, while the rows showed
+   * a bare em dash from DIRECT ones. Subscriptions is the live example — zero
+   * of its own, 259 across three children.
+   */
+  test("a parent whose children hold rows is not empty, and does not read as empty", () => {
+    const label = categoryCountLabel({ txnCount: 0, children: [leaf(95), leaf(147), leaf(17)] });
+    expect(label.text).toBe("none direct");
+    expect(label.title).toBe("259 transactions sit in its subcategories");
+  });
+
+  test("a parent with one child transaction reads in the singular", () => {
+    expect(categoryCountLabel({ txnCount: 0, children: [leaf(1)] }).title).toBe(
+      "1 transaction sits in its subcategories",
+    );
+  });
+
+  /* A parent that files rows of its OWN still reports them, children or not —
+     the count cell is about this row, and the subcategories have their own. */
+  test("a parent with both reports its own count", () => {
+    expect(categoryCountLabel({ txnCount: 7, children: [leaf(16)] }).text).toBe("7 txn");
   });
 });

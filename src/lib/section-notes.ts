@@ -281,6 +281,39 @@ export function categoryNoteRows<T extends { id: string; name: string; isArchive
 }
 
 /**
+ * What a category row's count cell says — and, when it is zero, WHICH zero.
+ *
+ * 🔴 The manager printed a bare em dash for every row whose own `txnCount` is
+ * zero, and the note above the list counts SUBTREES. On the real ledger that
+ * put "2 categories hold no transactions" directly over a list showing eight em
+ * dashes: `Subscriptions` reads zero directly while Streaming, Software and
+ * Memberships hold 259 rows between them. Both figures were right and the pair
+ * was not — one screen, two meanings of "holds transactions", three centimetres
+ * apart.
+ *
+ * The note cannot move to direct counts (that would call a parent holding
+ * thousands empty), so the ROW says which zero it is. A parent whose
+ * subcategories hold rows is not empty; it is unused as a filing destination,
+ * which is a different fact and worth a different word.
+ */
+export function categoryCountLabel(node: {
+  txnCount: number;
+  children: readonly { txnCount: number }[];
+}): { text: string; title: string | null } {
+  if (node.txnCount > 0) {
+    return { text: `${node.txnCount.toLocaleString("en-US")} txn`, title: null };
+  }
+  // categories nest one level deep, which the page says in its own header — so
+  // a child's own count IS its subtree
+  const inChildren = node.children.reduce((sum, c) => sum + c.txnCount, 0);
+  if (inChildren === 0) return { text: "—", title: null };
+  return {
+    text: "none direct",
+    title: `${inChildren.toLocaleString("en-US")} ${inChildren === 1 ? "transaction sits" : "transactions sit"} in its subcategories`,
+  };
+}
+
+/**
  * The one thing the category manager cannot show per row: which categories are
  * holding nothing.
  *

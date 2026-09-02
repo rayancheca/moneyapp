@@ -12,6 +12,7 @@ import { Disclosure, DisclosureChevron } from "@/components/ui/Disclosure";
 import { InlineEditableText } from "@/components/ui/InlineEditableText";
 import { toast } from "@/components/ui/Toast";
 import { moveItem } from "@/lib/reorder";
+import { categoryCountLabel } from "@/lib/section-notes";
 import type { CategoryTreeNode } from "@/services/category-edit";
 import { CategoryMoveMenu } from "./CategoryMoveMenu";
 import type { MoveDestination } from "@/services/category-edit";
@@ -53,6 +54,7 @@ export function CategoryRow({
   parentId,
 }: CategoryRowProps) {
   const router = useRouter();
+  const countLabel = categoryCountLabel(node);
   const index = siblingIds.indexOf(node.id);
   const canMoveUp = index > 0;
   const canMoveDown = index >= 0 && index < siblingIds.length - 1;
@@ -103,8 +105,12 @@ export function CategoryRow({
             )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <span className="figures text-xs text-ink-faint">
-              {node.txnCount > 0 ? `${node.txnCount.toLocaleString()} txn` : "—"}
+            {/* which zero it is, when it is zero — the note above this list
+                counts SUBTREES, so a bare em dash on a parent whose children
+                hold 259 rows put two meanings of "holds transactions" on one
+                screen. See `categoryCountLabel`. */}
+            <span className="figures text-xs text-ink-faint" title={countLabel.title ?? undefined}>
+              {countLabel.text}
             </span>
             {/* the trigger's accessible name is FROZEN — it must not change with
                 `open`, or axe's label-content-name-mismatch (serious) fires on a
