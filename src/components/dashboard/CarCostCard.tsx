@@ -39,9 +39,18 @@ export function CarCostCard({ data }: { data: CarCardData }) {
           <InfoTip term="all in">{RUNWAY_JARGON.allIn}</InfoTip>
         </span>
       </p>
+      {/* ⛔ "WOULD SPEND", NOT "SPEND". The denominator is
+          `allInProjectedMonthlySpendCents` — the measured baseline with car
+          spending taken OUT and the car's full monthly cost put back in — so it
+          is a projection, not a measurement. Called "everything you spend" it
+          contradicted the runway card two tiles away, which prints the measured
+          average: $9,019.90 here against "What you spend a month $8,770.56"
+          there, on one dashboard, with nothing saying they were different
+          questions. Measured on the owner's ledger 2026-09-02. */}
       <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-        That is {cost.allInSharePct.toFixed(1)}% of everything you spend, against a monthly total of{" "}
-        <Money cents={cost.allInProjectedMonthlySpendCents} className="text-ink" />.
+        That is {cost.allInSharePct.toFixed(1)}% of the{" "}
+        <Money cents={cost.allInProjectedMonthlySpendCents} className="text-ink" /> a month you would spend
+        with the car fully paid every month — not what the last six months measured.
       </p>
 
       <dl className="mt-4 space-y-1.5 border-t border-line pt-3 text-sm">
