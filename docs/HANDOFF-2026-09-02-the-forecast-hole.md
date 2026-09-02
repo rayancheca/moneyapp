@@ -1,4 +1,4 @@
-# Handoff — a $2,291.21 hole in the month's forecast, six switchers made real, and seventeen defects found by reading
+# Handoff — a $2,291.21 hole in the month's forecast, six switchers made real, and eighteen defects found by reading
 
 > **Supersedes `HANDOFF-2026-09-01-twelve-boundaries.md`.**
 >
@@ -331,7 +331,7 @@ Another entry for the list in §6 of the previous handoff.
 
 ---
 
-## 7b. Six more, from carrying on after the queue was empty a second time
+## 7b. Seven more, from carrying on after the queue was empty a second time
 
 | # | what the screen said | what is true |
 |---|---|---|
@@ -340,7 +340,8 @@ Another entry for the list in §6 of the previous handoff.
 | 14 | /recurring/[id]: "ANNUALIZED **~$4,337.88/yr**" | the series is evidenced only to 2027-01-11, and the page never said |
 | 15 | /imports: "through Aug 3 … the first day it does not is **Aug 11**" | Aug 4–10 were in neither clause |
 | 16 | /recurring: "**9 commitments**" | a component count, and one series can now be two |
-| 17 | the runway/subscriptions $210.87 (§7) | now reconciled on the page |
+| 17 | THE CAR: "Lease and insurance, **every month**" | its own list two rows below reads "× 5" |
+| 18 | the runway/subscriptions $210.87 (§7) | now reconciled on the page |
 
 ### 🔴 #12 — "would change 19" over a rule that had already changed them
 
@@ -395,6 +396,24 @@ SERIES. Latent on your ledger (nine distinct series, no weekly money-out), and
 wrong the first month a weekly bill goes unpaid. `ForecastSplit` carries
 `fixedSeriesCount` beside `fixedCount` now, because BOTH readings are published
 on the same page: `ForecastComposition` prints "(9 lines)" of components.
+
+### 🔴 #17 — the label the runway card's new sentence exposed
+
+THE CAR card labelled $1,056.53 "Lease and insurance, **every month**", and two
+rows below the SAME card lists `Car lease $8,340.48 × 12` against `Car insurance
+$1,807.45 × 5`. Once the runway card started saying "billed 5 times rather than
+throughout", three statements on one screen disagreed and the label was the
+odd one out. The card already discloses the end date at the bottom — and a
+disclosure underneath does not undo a wrong label on top.
+
+`monthlyCents` is the sum of ONE occurrence of each car series, which is exactly
+"a month, while both are billed". That is what it says now.
+
+⚠️ **And the first attempt made it worse.** As one `truncate`d line the grid lens
+clipped it to "Lease and insurance, a month while …" — cut at exactly the words
+carrying the meaning. The qualifier sits on its own faint sub-line now, the shape
+the row beneath already used. **A label that does not fit is not a label**, and
+only the baseline diff showed it.
 
 ⭐ **That is the second time this session one array was counted two ways** — the
 first was `staleComponentEntries`, whose docstring claimed a dedupe it did not
@@ -467,6 +486,16 @@ place to look is every consumer that counts the array rather than sums it.
   `ForecastSplit.fixedCount` (printed as "commitments" on one card and "lines" on
   another). Look at every consumer that COUNTS the components rather than sums
   them.
+- ⚠️ **A label that does not fit is not a label.** The car card's new qualifier
+  read "Lease and insurance, a month while …" in the grid lens — clipped by
+  `truncate` at exactly the words carrying the meaning, and worse than the wrong
+  label it replaced. Nothing but the baseline diff showed it; the deck lens was
+  fine. **Check the narrow lens of any surface with two.**
+- ⚠️ **I left your dashboard on the terrain for a while.** Driving the newly
+  persistent switchers writes your `app_settings`, and the chart mode came back
+  as `terrain` on a cold load until I noticed and reset it. Everything is back to
+  its default — net-worth line, Deck cards, Quarter camera — but that is the cost
+  of the feature working, and worth knowing before you test one yourself.
 - ⛔ The dev server on :3000 is left running, as it was found.
 
 ---
@@ -516,7 +545,7 @@ Confirmed live at the end of the session:
 > that. Do not invent features.
 >
 > 1. ⭐ **OPEN THE APP AND READ IT BEFORE YOU GREP IT.** My dev server runs on
->    :3000 with real data. Sixteen of last session's seventeen defects came from
+>    :3000 with real data. Seventeen of last session's eighteen defects came from
 >    navigating each page and reading the sentences, including the only one that
 >    moved money. Every one was a pair of true statements made false by sitting
 >    next to each other. That is a property of a PAGE.
