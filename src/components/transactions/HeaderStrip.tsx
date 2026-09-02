@@ -3,6 +3,7 @@ import {
   runCategorizationAction,
   stopClassifyAction,
 } from "@/app/transactions/actions";
+import { formatCents } from "@/lib/money";
 import type { CoverageStats } from "@/services/categorize";
 import {
   EST_USD_PER_MERCHANT,
@@ -29,8 +30,15 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
   );
 }
 
+/**
+ * ⛔ THROUGH `formatCents`, like every other figure in the app. These are
+ * DOLLARS, not cents, which is why this had its own formatter — and its own
+ * formatter meant no thousands separator, so an AI cap set to 1500 would have
+ * printed "$1500.00" beside a page of "$1,500.00"s. The unit conversion belongs
+ * here; the notation does not.
+ */
 function usd(n: number): string {
-  return `$${n.toFixed(2)}`;
+  return formatCents(Math.round(n * 100));
 }
 
 /** a provider error body runs to thousands of characters; the strip has to stay

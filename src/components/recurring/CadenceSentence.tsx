@@ -5,7 +5,7 @@ import { setSeriesOverridesAction } from "@/app/recurring/actions";
 import { CADENCES, type Cadence, type SeriesKind } from "@/db/schema/recurring";
 import { Popover, usePopover } from "@/components/ui/Popover";
 import { toast } from "@/components/ui/Toast";
-import { parseAmountToCents } from "@/lib/money";
+import { formatCents, parseAmountToCents } from "@/lib/money";
 import { CADENCE_LABEL, schedulePhrase, seriesVerb } from "./labels";
 
 interface CadenceSentenceProps {
@@ -381,7 +381,20 @@ function AmountToken({
   );
 }
 
-/** Signed, no leading + (the sentence context already conveys direction). */
+/**
+ * 🔴 THIS HAND-ROLLED `$${(cents/100).toFixed(2)}` HAD NO THOUSANDS SEPARATOR,
+ * and the page it sits on prints the same money three ways because of it.
+ * Measured on the owner's `/recurring/019f72f5…`: the insight above read
+ * "$25,308.00", the PER CHARGE tile read "-$2,109.00", and this sentence read
+ * "about **$2109.00**" — one rent, two notations, one screen.
+ *
+ * ⛔ `formatCents` is the app's only money formatter and it is the reason
+ * `formatCentsSigned` and the `-0` guard exist at all. A second one in a leaf
+ * component is a second place for money to be wrong.
+ *
+ * The magnitude, deliberately: the sentence context already conveys direction
+ * ("charges monthly around the 1st, about $2,109.00").
+ */
 function formatMoney(cents: number): string {
-  return `$${(Math.abs(cents) / 100).toFixed(2)}`;
+  return formatCents(Math.abs(cents));
 }
