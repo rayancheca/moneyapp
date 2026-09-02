@@ -987,3 +987,40 @@ sentence you read. I could not call the number false, so I left it. If you want
 the readout to name a carried point, `ScrubSummary` would need to carry
 `complete` through — small, and it is the kind of change worth wanting rather
 than inferring.
+
+### Four more from the same pass — reading kept paying
+
+- 🔴 **`/summary/2022`**: *"Cash job $1,388.10 — Salary rows that are not
+  Fordham payroll. **Work-study ended 2026-05-13 and these deposits are the job
+  that replaced it.**"* The row behind that figure is one `Deposit 1183713709`
+  from 2022-08-25. It cannot be from a job that replaced something which ended
+  four years later. The rule sentence always shows; the history now appears only
+  from 2026 on. ⚠️ 2025 and 2026 read correctly — the sentence was only false on
+  the years nobody opens.
+- 🔴 **`/recurring/[id]`**: one rent in two notations, three lines apart —
+  "$25,308.00" in the insight, "-$2,109.00" in the tile, and "about
+  **$2109.00**" in the cadence sentence between them. `CadenceSentence` had its
+  own hand-rolled `` `$${(cents/100).toFixed(2)}` ``. ⛔ `formatCents` is the
+  app's ONLY money formatter and is the reason `formatCentsSigned` and this
+  session's `-0` guard exist — a second one in a leaf component is a second
+  place for money to be wrong, and it already was. Same smell fixed in
+  `HeaderStrip`'s `usd()`.
+- 🔴 **`/categories/[id]` for a month with nothing in it**: header "$0.00 · 0
+  transactions", and two sections down "**Nothing left to categorize here.**"
+  The list is every transaction in the period, not a queue — so a month nobody
+  imported and a month fully categorized read identically.
+
+### ⚖️ Two more looked at and left, with reasons
+
+- **`/imports`, Cash on Hand**: *"closes to the cent through Aug 3, 2026 (30
+  days ago); the first day it does not is Aug 11, 2026"* leaves Aug 4–10
+  unexplained. But `lib/coverage-detail`'s docstring shows this is deliberate —
+  it exists precisely to print BOTH facts, "what closes, and where it stops",
+  after a previous version said "nothing has checked this account" over an
+  account that closes through last week. Second-guessing that needs evidence I
+  do not have.
+- **`/imports`, Discover**: *"closes around the 2nd … last one closed Aug 9 …
+  next closes Sep 2"*. The cycle really did move to the 9th (Capital One took
+  the card over), and one moved close cannot move a median of twelve. The
+  TOLERANCE widened this session so it is not flagged "Behind"; the PREDICTION
+  is still the old rhythm, and that is the documented limit of a median.
