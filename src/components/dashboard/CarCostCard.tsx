@@ -55,7 +55,17 @@ export function CarCostCard({ data }: { data: CarCardData }) {
 
       <dl className="mt-4 space-y-1.5 border-t border-line pt-3 text-sm">
         <div className="flex items-baseline justify-between gap-3">
-          <dt className="min-w-0 truncate text-ink-muted">Lease and insurance, every month</dt>
+          {/* 🔴 "every month" is the one thing this figure is NOT. Two rows below,
+              this same card lists "Car insurance $1,807.45 × 5" against "Car
+              lease $8,340.48 × 12", and since 2026-09-02 the runway card two
+              tiles away says out loud that insurance "is billed 5 times rather
+              than throughout". The card already discloses the end date at the
+              bottom — and a disclosure underneath does not undo a wrong label on
+              top. `monthlyCents` is the sum of ONE occurrence of each series,
+              which is exactly "a month while both are billed". */}
+          <dt className="min-w-0 truncate text-ink-muted">
+            Lease and insurance, a month while both are billed
+          </dt>
           <dd className="shrink-0">
             <Money cents={cost.monthlyCents} />
           </dd>
