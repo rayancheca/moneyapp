@@ -114,6 +114,14 @@ export interface CashEarnings {
   unbankedCents: number;
   /** whole pay periods of the window that have actually elapsed */
   periodsCovered: number;
+  /**
+   * The span `periodsCovered` actually covers — the first and last covered
+   * payday, or null when none is. NOT the window: a window that opens before
+   * the job began is bounded by the job, and a line that names the window over
+   * a count bounded by the series says something false about both.
+   */
+  firstPeriodOn: string | null;
+  lastPeriodOn: string | null;
   /** most recent attributed deposit at or before `today`, or null */
   lastBankedOn: string | null;
   /** whole pay periods since `lastBankedOn`, or since the series started */
@@ -126,6 +134,8 @@ const EMPTY: CashEarnings = {
   bankedCents: 0,
   unbankedCents: 0,
   periodsCovered: 0,
+  firstPeriodOn: null,
+  lastPeriodOn: null,
   lastBankedOn: null,
   periodsSinceBanked: 0,
 };
@@ -144,20 +154,42 @@ const earlierOf = (a: string, b: string): string => (compareDates(a, b) <= 0 ? a
  * The practical payoff is that a monthly cash arrangement steps by the calendar
  * and keeps its day-of-month, exactly as the recurring projection does.
  */
-function occurrencesBetween(series: PaySeries, from: string, to: string): number {
+interface CoveredPeriods {
+  count: number;
+  /** the first covered occurrence's own date, or null when none is covered */
+  firstOn: string | null;
+  /** the last covered occurrence's own date, or null when none is covered */
+  lastOn: string | null;
+}
+
+function occurrencesBetween(series: PaySeries, from: string, to: string): CoveredPeriods {
   // Belt and braces, and named as such: the `Math.max(0, …)` below already
   // returns 0 for an inverted window, because `stepsToReach` is monotonic in its
   // boundary and so `first` can never come out below `last` when `from > to`.
   // This states the precondition at the boundary rather than leaving a caller
   // error to be absorbed silently three lines further down.
-  if (compareDates(from, to) > 0) return 0;
+  if (compareDates(from, to) > 0) return { count: 0, firstOn: null, lastOn: null };
   const plan = stepPlan(series.cadence, series.intervalDaysAvg, series.anchorDay);
   const first = stepsToReach(series.startedOn, plan, from);
   // `stepsToReach` lands on or AFTER `to`; when it overshoots, the last
   // occurrence inside the window is the step before it.
   const reach = stepsToReach(series.startedOn, plan, to);
   const last = compareDates(stepFrom(series.startedOn, plan, reach), to) <= 0 ? reach : reach - 1;
-  return Math.max(0, last - first + 1);
+  const count = Math.max(0, last - first + 1);
+  /*
+   * The DATES of the endpoints, not just how many there are, because the count
+   * alone cannot say what it counted. A window opening before the job began is
+   * bounded by `startedOn` (see the note in `cashEarnings` about the missing
+   * clamp), so "13 paydays" over a six-month window is right and reads as wrong
+   * until the line can name Jun 4 – Aug 27. Same walk, same plan — the span is
+   * read off the very steps that were counted rather than re-derived.
+   */
+  if (count === 0) return { count: 0, firstOn: null, lastOn: null };
+  return {
+    count,
+    firstOn: stepFrom(series.startedOn, plan, first),
+    lastOn: stepFrom(series.startedOn, plan, last),
+  };
 }
 
 export function cashEarnings({
@@ -211,7 +243,8 @@ export function cashEarnings({
    * comes back with a test that can finally fail without it.
    */
   const liveTo = series.endedOn === null ? end : earlierOf(end, series.endedOn);
-  const periodsCovered = occurrencesBetween(series, from, liveTo);
+  const covered = occurrencesBetween(series, from, liveTo);
+  const periodsCovered = covered.count;
   const impliedCents = periodsCovered * series.amountCents;
 
   /*
@@ -229,7 +262,7 @@ export function cashEarnings({
    * Measured 2026-08-21 — the honest answer is eleven, the subtraction said ten.
    */
   const silenceFrom = lastBankedOn ?? series.startedOn;
-  const periodsSinceBanked = occurrencesBetween(series, addDays(silenceFrom, 1), today);
+  const periodsSinceBanked = occurrencesBetween(series, addDays(silenceFrom, 1), today).count;
 
   return {
     basis: periodsSinceBanked >= STALE_PERIODS ? "series-stale" : "series-live",
@@ -237,6 +270,8 @@ export function cashEarnings({
     bankedCents,
     unbankedCents: impliedCents - bankedCents,
     periodsCovered,
+    firstPeriodOn: covered.firstOn,
+    lastPeriodOn: covered.lastOn,
     lastBankedOn,
     periodsSinceBanked,
   };

@@ -55,9 +55,9 @@ export function IncomeCard({ data }: { data: IncomeCardData }) {
           <div key={l.seriesId} className="flex items-baseline justify-between gap-3">
             <dt className="min-w-0 text-ink-muted">
               <span className="truncate">{l.name}</span>
-              <span className="block text-[11px] text-ink-faint">
-                {l.paydays} {l.paydays === 1 ? "payday" : "paydays"} in this window
-              </span>
+              {/* the SERVICE names the span, because the count is bounded by the
+                  series' own life rather than by the window the summary names */}
+              <span className="block text-[11px] text-ink-faint">{l.paydaysLabel}</span>
             </dt>
             <dd className="shrink-0 text-right">
               <Money cents={l.bankedCents} />

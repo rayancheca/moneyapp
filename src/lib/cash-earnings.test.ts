@@ -25,6 +25,63 @@ const read = (over: Partial<CashEarningsInput> = {}) =>
     ...over,
   });
 
+/*
+ * 🔴 The card printed "13 paydays in this window" directly under "Measured from
+ * Mar 2026 to today" — and thirteen WEEKLY paydays cannot span twenty-six
+ * weeks. Both halves were true: `occurrencesBetween` anchors its walk on the
+ * series' own `startedOn`, so the count is bounded by the job's life rather
+ * than by the window's. The window was named, the count's own span was not.
+ *
+ * So the line has to be able to say where its paydays actually run.
+ */
+describe("cashEarnings — the span the count covers", () => {
+  test("a window that opens before the job began reports the JOB's span", () => {
+    const r = read({ from: "2026-03-01", to: "2026-08-31", today: "2026-08-31" });
+    // weekly from 2026-06-04: Jun 4 … Aug 27 is 13 Thursdays
+    expect(r.periodsCovered).toBe(13);
+    expect(r.firstPeriodOn).toBe("2026-06-04");
+    expect(r.lastPeriodOn).toBe("2026-08-27");
+  });
+
+  test("a window that opens after the job began reports the WINDOW's span", () => {
+    const r = read({ from: "2026-06-15", to: "2026-06-30", today: "2026-06-30" });
+    expect(r.periodsCovered).toBe(2);
+    expect(r.firstPeriodOn).toBe("2026-06-18");
+    expect(r.lastPeriodOn).toBe("2026-06-25");
+  });
+
+  test("no covered payday means no span to name", () => {
+    const r = read({ from: "2026-05-01", to: "2026-05-31", today: "2026-05-31" });
+    expect(r.periodsCovered).toBe(0);
+    expect(r.firstPeriodOn).toBeNull();
+    expect(r.lastPeriodOn).toBeNull();
+  });
+
+  test("a single covered payday opens and closes the span on one day", () => {
+    const r = read({ from: "2026-06-01", to: "2026-06-08", today: "2026-06-08" });
+    expect(r.periodsCovered).toBe(1);
+    expect(r.firstPeriodOn).toBe("2026-06-04");
+    expect(r.lastPeriodOn).toBe("2026-06-04");
+  });
+
+  test("a series that ENDED closes its span on its own last payday, not the window's", () => {
+    const r = read({
+      series: { ...WEEKLY, endedOn: "2026-06-20" },
+      from: "2026-06-01",
+      to: "2026-06-30",
+      today: "2026-06-30",
+    });
+    expect(r.periodsCovered).toBe(3);
+    expect(r.lastPeriodOn).toBe("2026-06-18");
+  });
+
+  test("without a series there is no span", () => {
+    const r = read({ series: null });
+    expect(r.firstPeriodOn).toBeNull();
+    expect(r.lastPeriodOn).toBeNull();
+  });
+});
+
 describe("cashEarnings — the basis", () => {
   test("without a confirmed series it estimates nothing at all", () => {
     // The whole point of the module is that a cash job leaves no bank trail. If

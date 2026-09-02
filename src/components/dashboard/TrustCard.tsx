@@ -94,10 +94,21 @@ function AccountRow({ account }: { account: TrustAccountLine }) {
       <span className="min-w-0 truncate text-ink">{account.name}</span>
       <span className="flex shrink-0 items-baseline gap-2 text-xs text-ink-muted">
         {account.detail}
+        {/*
+          🔴 "52 days" on its own, sitting immediately after "nothing checks it
+          since Dec 5, 2023", reads as the SPAN — and that span is 1,001 days,
+          not 52. Both halves were true and the pair was not. Worse, the card's
+          own closing sentence uses `<date> — N days ago` for an elapsed count
+          ("checked through 2026-07-31 — 33 days ago"), so one card was using
+          the same shape for two different quantities.
+
+          The word is the fix, and it is the vocabulary /imports already uses
+          for this exact number: "52 days rest on an export with no closing
+          balance". */}
         {account.uncheckedDays > 0 && (
           <span className="figures text-warning">
             {account.uncheckedDays.toLocaleString("en-US")} day
-            {account.uncheckedDays === 1 ? "" : "s"}
+            {account.uncheckedDays === 1 ? "" : "s"} unchecked
           </span>
         )}
         {/* a HOLE, not an absence: rows the ledger holds that no total can

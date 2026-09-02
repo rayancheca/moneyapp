@@ -90,7 +90,20 @@ export function SubscriptionsCard({ data }: { data: SubscriptionsCardData }) {
           so it gets the sentence, and it names the loudest line that fell out */}
       <p className="mt-1 max-w-prose text-xs leading-relaxed text-ink-muted">
         {largestLapsed === null ? (
-          <>Every recurring payment on the books has charged recently enough to still be counted.</>
+          /*
+           * 🔴 This used to read "Every recurring payment on the books has
+           * charged recently enough to still be counted", and the card
+           * refuted itself twice on the owner's own dashboard: five rows below
+           * it wore a "never billed" badge, and the footnote at the bottom
+           * said $1,461.69 of the headline "has never been billed by a bank".
+           *
+           * The branch condition is that nothing has LAPSED — and a series
+           * that never charged cannot lapse, which is exactly why it survives
+           * into `live`. So the sentence may speak about going quiet; it may
+           * not claim anything has charged. What has never been billed is the
+           * footnote's job, and it already does it.
+           */
+          <>Nothing on the books has gone quiet long enough to stop being counted.</>
         ) : (
           <>
             Another <Money cents={lapsedMonthlyCents} className="text-ink" /> a month is registered and no longer

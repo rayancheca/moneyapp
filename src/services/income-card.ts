@@ -135,6 +135,12 @@ export interface IncomePayLine extends Gap {
   impliedCents: number;
   /** how many of the series' own paydays the window actually contains */
   paydays: number;
+  /**
+   * That count with the span it actually covers — "13 paydays, Jun 4 – Aug 27".
+   * The count is bounded by the SERIES' life, not by the window, so a line that
+   * named the window over it said something false about both.
+   */
+  paydaysLabel: string;
   /** what reached a bank inside the window, attributed deposits only */
   bankedCents: number;
   /** `cashEarnings`' own word for which world these numbers live in */
@@ -200,6 +206,25 @@ const CAVEAT =
   "A difference is not money the app has found. Cash pay can sit undeposited, be spent without ever touching a bank, or the arrangement can have quietly ended — nothing here can tell those three apart.";
 
 const paydayWord = (n: number): string => (n === 1 ? "payday" : "paydays");
+
+/**
+ * 🔴 The row read "13 paydays in this window" while the summary one line above
+ * read "Measured from Mar 2026 to today". Thirteen WEEKLY paydays cannot span
+ * twenty-six weeks, and a reader who does the arithmetic finds the card wrong
+ * about itself. Both halves were true — `cashEarnings` bounds a series by its
+ * own life, so the count starts at the job's first payday, not the window's
+ * first day — and the pair was not.
+ *
+ * The window is already named by `summaryFor` as a trailing clause. The row
+ * names its OWN span instead, which is the only one it measured, and a reader
+ * can now check it: Jun 4 to Aug 27 is twelve weeks, and thirteen Thursdays.
+ */
+function paydaysLabelFor(paydays: number, firstOn: string | null, lastOn: string | null): string {
+  if (paydays === 0 || firstOn === null || lastOn === null) return "no paydays in this window";
+  const span =
+    firstOn === lastOn ? formatDayShort(firstOn) : `${formatDayShort(firstOn)} – ${formatDayShort(lastOn)}`;
+  return `${paydays} ${paydayWord(paydays)}, ${span}`;
+}
 
 /**
  * The verdict: is pay arriving, did the ledger look and find nothing, or has it
@@ -332,6 +357,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
       name: r.seriesName,
       impliedCents: r.impliedCents,
       paydays: r.periodsCovered,
+      paydaysLabel: paydaysLabelFor(r.periodsCovered, r.firstPeriodOn, r.lastPeriodOn),
       bankedCents: r.bankedCents,
       basis: r.basis,
       lastBankedOn: r.lastBankedOn,

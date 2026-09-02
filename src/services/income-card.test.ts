@@ -287,6 +287,43 @@ describe("incomeCard", () => {
     expect(card.summary).toContain("nothing to reconcile yet");
   });
 
+  /*
+   * 🔴 The row said "13 paydays in this window" one line under a summary saying
+   * "Measured from Mar 2026 to today". Thirteen WEEKLY paydays cannot span
+   * twenty-six weeks — `cashEarnings` bounds the count by the series' own life
+   * (`PAY_START`), and only the window was ever named. The row names its own
+   * span now, and a reader can check it: Jun 4 to Aug 20 is eleven weeks and
+   * twelve Thursdays.
+   */
+  test("a payday count names the span it covers, not the window that contains it", () => {
+    addSeries();
+    addTxn(PAY_START, 100_000); // one deposit, so the card has something to report
+    coverThrough(CHASE, "2026-06-01", "2026-08-26");
+
+    const card = incomeCard(bundle.db, TODAY)!;
+    const line = card.pay[0]!;
+    // the window opens months before the job did — the summary says so
+    expect(card.summary).toContain("Measured from Feb 2026 to today.");
+    expect(card.windowFrom < PAY_START).toBe(true);
+    // …and the row does NOT borrow that window for its own count
+    expect(line.paydaysLabel).toBe(`${line.paydays} paydays, Jun 4 – Aug 20`);
+    expect(line.paydaysLabel).not.toContain("this window");
+  });
+
+  /* One payday is a DAY, not a range. "1 payday, Aug 20 – Aug 20" reads as two
+     dates for one event; found by mutation, which collapsed the branch and
+     survived every other assertion. */
+  test("a single covered payday names one day, not a range", () => {
+    // a schedule that starts a week before today has exactly one payday behind it
+    addSeries({ nextExpectedOn: "2026-08-20" });
+    addTxn("2026-08-20", 100_000);
+    coverThrough(CHASE, "2026-08-01", "2026-08-26");
+
+    const card = incomeCard(bundle.db, TODAY)!;
+    expect(card.pay[0]!.paydays).toBe(1);
+    expect(card.pay[0]!.paydaysLabel).toBe("1 payday, Aug 20");
+  });
+
   /**
    * ⛔ NEGATIVE ZERO. `-0` formats as "-$0.00" while every total stays correct,
    * because `-0 + 0 === 0` — it is invisible to arithmetic and visible only on
