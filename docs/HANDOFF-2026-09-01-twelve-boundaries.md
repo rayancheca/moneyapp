@@ -1,34 +1,47 @@
-# Handoff — eighteen more phrasings of one boundary, and where they were hiding
+# Handoff — twenty-four phrasings of one boundary, and the fixtures that could not see them
 
 > **Supersedes `HANDOFF-2026-08-31c-the-income-answer-and-the-split.md`.**
 >
-> **`main` = `f609bbd`** (this doc), tree clean, pushed. tsc clean · **4,368 unit** ·
-> **E2E_GATE=1: 590 passed at `maxDiffPixels: 0`** (8.3m, green on the confirming run) · 24 baselines regenerated, every diff cropped and read first · `pnpm ledger-check` exit 0, on every commit.
+> **`main` = `PENDING`** (this doc), tree clean, pushed. tsc clean ·
+> **PENDING unit** · **E2E: PENDING** · 40 baselines regenerated, every diff
+> cropped and read first · `pnpm ledger-check` exit 0, on every commit.
 >
 > Repo: **`/Users/rayankarimcheca/dev/MoneyApp`**.
 > Ledger unchanged: 10,111 active rows · income $117,924.62 ·
 > spending $167,828.49 · **zero DB writes this session**.
+>
+> ⛔ **Run the suites with `npx vitest run --maxWorkers=4`** — see §11. The bare
+> command failed nine files on this box, a different nine each run, and every one
+> of them passed alone.
 
 ---
 
 # ⛔ 0. THE JOB — what is next
 
-**Nothing here is urgent and nothing is half-finished.** Every item the first
-half of this session left open has since been closed — see §9. What is left:
+**Nothing here is half-finished.** The list closed three times and reopened
+twice; §9, §11 and §12 each record what was found after it closed. What is left
+is decisions and one scoped repair:
 
-1. **Pass 75 onward** — `docs/program-passes-60-94.md`. **HOSTING LAST.**
-2. **Two decisions that are yours, not mine** (both measured, neither changed):
-   - `year-summary` counts **realized gains** inside "All money in". $2,190.48
-     of 2025's $38,409.23 headline is an accounting result, not money that
-     arrived; the other two lines in that section (dividends, brokerage cash
-     interest) are real inflows. Naming the term was a copy fix (§9); deciding
-     whether a gain belongs in a money-in total would move the headline.
-   - The statement-reminder trade in §9: a one-off late close now delays the
-     reminder for one cycle. Reversing it is one line.
-3. **Three mutants recorded as equivalent, with their arguments** (§7 and §9).
-   If any turns out not to be, the argument is written down to be attacked.
-
----
+1. **❓ THE CLAMP (§11) — the one defect found and deliberately NOT fixed.**
+   `addCalendarMonths` clamps 29 August + 6 months to 28 February, so a bill
+   anchored on the 28th loses its sixth payment while the rate still divides by
+   six. ⛔ The obvious fix is measured to be the mirrored defect: the engine
+   clamps too, and four anchors share 2027-02-28. An exact fix needs each series
+   bounded by its own **step index**, which `SeriesOccurrence` does not carry.
+   ⚠️ Latent for you — your latest anchor day is the 22nd. The exact shortfall
+   list is asserted in `committed.test.ts`, so a fix has to empty it on purpose.
+2. **❓ Should an unpaid bill survive the turn of the month?** (§11) The arrears
+   leg is scoped to the calendar month and the card says so, so a bill due on the
+   22nd is late on the 31st and not late on the 1st. One line either way.
+3. **Two decisions from the first half** (§0 of the previous revision, kept):
+   realized gains inside "All money in" on `/summary/[year]`, and the
+   statement-reminder trade in §9.
+4. **⛔⛔ YOUR MAC IS THE FLAKE.** `BTLEServer` has been pegged at **100% CPU for
+   35 days**, with `mds` and `mobileassetd` alongside it. Three unit runs failed
+   a different set each time and the first e2e gate took **2.9 hours** instead of
+   8.4 minutes. Nothing in the repo caused it and I did not touch a system
+   daemon. A reboot is the obvious move.
+5. **Pass 75 onward** — `docs/program-passes-60-94.md`. **HOSTING LAST.**
 
 ## 1. The queue was empty, so the job was to find what is wrong
 
@@ -492,3 +505,277 @@ day can never equal a period's FIRST day of the same kind.
 - ⚠️ Everything carried forward from the previous handoff still holds: the two
   definitions of spending, `user_category_id` as an override, the income answer,
   `pnpm e2e` refusing a stale `.next`, and the WAL read-only gotcha.
+
+---
+
+## 11. ⭐ The third block — six more defects, and one the sweep found that I did NOT fix
+
+Written after §9 closed the list a second time. Same class every time: something
+answers one question two ways.
+
+| # | Surface | What it said | Commit |
+|---|---|---|---|
+| 19 | runway tooltip | arrears are "inside the rate" — three lines above the sentence saying they are not | `7b132fd` |
+| 20 | 5 spending cards | one ledger, two window lengths: runway "1 complete month", subscriptions "6" | `7b132fd` |
+| 21 | car card | car spend removed at $100/mo from a total built at $200/mo | `0af85d0` |
+| 22 | runway caption | "0 complete months, 2022-09 to 2022-09" — a range made of the month it excluded | `0af85d0` |
+| 23 | net-worth terrain | **"$0.00" under "Today"** for an account with no history at all | `413fb93` |
+| 24 | top movers | "No winners today." above a header reading "Last close" | `78085a5` |
+
+### 🔴 #23 is live on his ledger right now
+
+**Capital One 360 Checking is an ACTIVE account with zero daily balances and
+zero transactions** (measured 2026-09-01 on a `.backup` snapshot). The terrain's
+table lens printed `$0.00` under **Today** and `$0.00` under **Change** for it —
+two claims about money, about an account nobody has a single figure for.
+
+What made it findable is that the row disagreed with itself: the **First day**
+column had already refused to answer with an em dash, two columns left of two
+that claimed a balance. Three columns, three separate decisions about whether
+there was anything to say. `terrainRowFigures` makes that decision once.
+
+⛔ It keys on `lastDay`, **not** on `lastCents === 0`. A real account can sit at
+exactly zero and that zero is worth printing — its own test.
+
+### 🔴 #20 was created by this session's own fix, and only re-checking found it
+
+`spendBaseline` learned to shrink its window to the months the ledger covers
+(§9). Five services import `SPEND_BASELINE_MONTHS` **precisely so they cannot
+quote different windows** — and a constant is not enough on its own, because the
+FLOOR is data-dependent. Measured at `today = 2022-10-01` before the fix: runway
+"1 complete month", subscriptions "6". `baselineWindow(db, today, months)` is
+now the one place; all five read it. Unchanged on his ledger (all five still say
+2026-03 … 2026-08 at 2026-09-01).
+
+⚠️ Four fixtures had the same stub the floor exists to catch — their earliest
+row dated the ledger mid-window, so ~20 tests went red. Each now opens on a
+month boundary and says why.
+
+### ⭐ The sweep the fixtures could not do — and the one thing it found that is still open
+
+`committed.test.ts` now grades the boundary over **every day of the month**: 32
+series (one per anchor day, plus one that is late on every asking day) × 62
+consecutive asking days. Every hand-written test in this repo fixes both halves
+of the pair — which day the bill falls on, and which day you ask on — and all
+three of the session's live bugs hid in the gap.
+
+**It found a seventh defect. I did not fix it, deliberately.**
+
+🔴 `addCalendarMonths` **clamps**: 29 August + 6 months is 28 February, because
+29 February 2027 does not exist. The horizon is then a day short of six whole
+months, a bill anchored on the 28th loses its sixth payment, and the rate still
+divides by six — a 5-payment window over a 6-month divisor, the exact shape of
+the three bugs above. Six (day, bill) pairs inside the 62-day span:
+
+```
+2026-08-29  Bill 28        2026-08-31  Bill 28
+2026-08-30  Bill 28        2026-08-31  Bill 29
+2026-08-30  Bill 29        2026-08-31  Bill 30
+```
+
+⛔ **THE OBVIOUS FIX TRADES ONE ERROR FOR ANOTHER — measured, not guessed.** The
+recurring engine clamps too. Asked for the actual projected dates, the series
+anchored on the 28th, 29th, 30th **and** 31st all fall on **2027-02-28**:
+
+```
+Bill 28  2027-01-28  2027-02-28  2027-03-28
+Bill 29  2027-01-29  2027-02-28  2027-03-29
+Bill 30  2027-01-30  2027-02-28  2027-03-30
+Bill 31  2027-01-31  2027-02-28  2027-03-31
+```
+
+Including that day fixes the 28th and hands the 29th and 30th a **seventh**
+payment. No date cut can separate four anchors sharing one date. An exact fix
+has to bound each series by its own **step index**, which `SeriesOccurrence` does
+not carry — a real change to `projectOccurrences` and every consumer, and
+exactly the kind this codebase gets wrong when it is rushed.
+
+⚠️ **Latent for him either way: his latest anchor day is the 22nd** (measured —
+Gym 22, Parking 20, HBO 18, Venture X fee 16, car lease 15, the rest ≤ 8).
+Nothing he owes can reach the condition.
+
+The exact shortfall list is **asserted**, not excused, so a fix has to come here
+and empty it on purpose.
+
+### ⚠️ Two ways that sweep was VACUOUS before it was right
+
+Both found by mutation, both the shape §7 keeps finding.
+
+1. **A static fixture LAPSES.** `seriesHasLapsed` correctly stops forecasting a
+   series nobody pays, so a two-month sweep dissolved partway through and read
+   that as a boundary bug. The sweep now re-pays every series on each asking day,
+   as an import would.
+2. **Paying a bill ON its anchor day** — which a fixture does and a bank does not
+   — hid the day the two legs meet. The bill due today is inside the horizon and
+   must not *also* be in arrears; with `>=` there, an overdue leg widened to
+   include today **survived**. It is `>` now, and that mutant dies.
+
+Seven mutants; six die to the sweep alone.
+
+### ❓ ONE QUESTION FOR YOU — the arrears leg stops at the 1st
+
+Pinned by the sweep, not changed. The overdue leg is scoped to the **calendar
+month**, and the card says so: *"A further $X came due earlier this month and
+never posted."* So a bill due on the **22nd** is disclosed as late on the 31st
+and **is not late on the 1st**, with nothing paid in between. The debt did not
+go away; the calendar turned.
+
+It is internally honest — the wording owns its scope — which is why I left it.
+**Should an unpaid bill survive the turn of the month?** One line either way.
+
+### 🔴 A memory file was telling future sessions to break your ledger
+
+`moneyapp-car-lease-and-insurance.md` still led with **$559.89 on the 11th** —
+what you said on 2026-08-11 — while the ledger holds **$695.04 on the 15th**,
+which the 2026-08-31 session read off the Mercedes-Benz statement. A number
+stated from memory lost to a number printed on a statement, correctly. But the
+memory file would have talked the next session into "fixing" the right figure
+back to the wrong one, $135.15/month and four days. Corrected, with the reason
+and a ⛔ against reverting it.
+
+### ⛔⛔ `pnpm test` OVER-SUBSCRIBES A BUSY BOX — use `--maxWorkers=4`
+
+Not a code finding — an environment one, and it nearly cost a false bug report.
+
+`uptime` reported **load averages 44.65 / 31.10 / 18.02** with **5 users** and two
+other interactive Claude sessions live. Three consecutive full unit runs failed
+**different** tests each time — 4 files, then 8, then 9 — and every one of them
+**passed alone**. The failures were uniform **208.7-second stalls**, one per file:
+an I/O wall, not an assertion. The reported test COUNT moved between runs
+(4,349 / 4,396 / 4,408) because a file that dies in `beforeEach` never registers
+its tests at all.
+
+✅ **The fix is one flag, and it is also three times faster:**
+
+```
+npx vitest run --maxWorkers=4     # 221 files · 4,408 tests · ALL PASSED · 56.8s
+npx vitest run                    # 9 files failed · 261s   (same tree, same minute)
+```
+
+Vitest's default worker count assumes it owns the machine. It does not here.
+⚠️ Worth making the default in `vitest.config.ts` — **not done**, because
+changing how the suite runs is not a change to make in the same breath as
+reading its result.
+
+The standing rule in memory — *"NEVER run anything else during a suite run;
+quiet box = 582/582 in 8.4m"* — is the same lesson; this is the number behind it.
+
+---
+
+## 12. ⭐ Eight more boundaries, pinned — and the guard that refused a good run
+
+A mutation audit over the screen-facing services (53 agents, adversarially
+verified) found the same blind spot everywhere, and it is the brief's item 2
+stated in general form:
+
+> **Every fixture dates its rows comfortably INSIDE the window it tests.**
+
+That proves a row outside is excluded and says *nothing* about a row ON the
+edge. Nine one-character mutations went green across the whole suite. Each test
+below was written against the exact mutation that survived; all thirteen
+mutants now die (`36c661f`).
+
+| Boundary | What the surviving mutant did |
+|---|---|
+| `spending.ts` pace basis | dropped **all of today's spending** from the tile the dashboard leads with, while `elapsedFraction` still counted today as elapsed |
+| `movers-card.ts` grid depth | printed *"the mean of the 6 complete months before it, Jan 2026 to Jun 2026"* and averaged **five** |
+| `movers-card.ts` sort | sorted by signed delta, pushing the **biggest fall** off a card whose job is the biggest moves |
+| `fees-card.ts` row loop | rendered lines summing to **$218.45 under a $313.45 total** |
+| `spendingRowsInRange` ×2 | dropped the first / last day from Top merchants and Largest purchases |
+| `yearBounds` ×2 | put 1 January and 31 December outside their own year |
+| `sumOccurrencesInWindow` ×2 | dropped an occurrence on the day the window opens / closes |
+| `within()` (isCurrent) ×2 | said a period is not current on its own first or last day |
+
+### 🔴 The two that are load-bearing on HIS ledger today
+
+**The movers grid.** `MAX_MONTHS_BEHIND + months + 1` matters only on the
+FALLBACK path — and his ledger is on it (it compares 2026-07 against a running
+2026-09). The one test that reaches that path asserted the window's LABELS,
+which the bug cannot move. It now asserts what the window AVERAGES. Verified
+non-equivalent on a real snapshot: headline $3,040.49 → $3,841.81, and a
+coverage note reading *"106% of your usual spending"* — a share of a whole
+larger than the whole, because the ratio's numerator and denominator read
+different windows.
+
+**The pace tile.** `TODAY` in `spending.test.ts` is 2026-07-08 and no fixture
+row was dated the 8th.
+
+### ⛔ The terrain's table lens had NO coverage at all
+
+Not a pixel, not an assertion — while the relief above it had both. That is what
+hid #23. The new e2e test asserts the invariant that holds for **any** fixture:
+the three columns agree about whether there is anything to say. (The em-dash
+branch itself is data-dependent, so it is unit-tested on both sides instead.)
+
+### ⛔ A guard that refused a run it had already reasoned was fine
+
+`assertBundleIsFresh` walks `src/**/*.{ts,tsx,css}` — **including
+`src/**/*.test.ts`, which is never bundled.** Editing a unit test therefore made
+it declare the served pages stale and refuse the e2e run. Its own comment says a
+file that cannot affect the bundle must not block a run; that is now true of test
+files too. A guard people learn to skip with `E2E_ALLOW_STALE=1` is worse than
+no guard.
+
+### The 40 baselines, each cropped and read before regenerating
+
+`budgets` ×8 (*"came due this period"* → *"due by today"*), `summary-year` ×8
+(the lede now names all three terms), `spending-year` ×8 (the deviation caption
+on its own line, *"0 up · 10 down · 8 biggest shown"* — it used to count AFTER
+the cut), `investments` + `investments-loss` ×16 (*"Top movers · Today"*).
+
+⚠️ That last one renders as **"Today"** because the fixture is priced through its
+own fake today — the branch that was WRONG cannot appear in any Playwright run,
+which is exactly why the rule lives in `lib/day-change-label` under unit test.
+
+---
+
+## 13. ❓ Five view dimensions declare a URL key that nothing reads — and three share one
+
+Found by writing the terrain table-lens test: `/?chart=terrain&terrainLens=table`
+opens on the **relief**. The lens is `useState("relief")`, so the param does
+nothing and the choice is lost on reload.
+
+That is not a naming accident. `ViewDimension.key` is documented in
+`src/lib/view-state.ts` as:
+
+> *"the URL param key AND the app_settings key for this dimension"*
+
+Five declarations make that promise and nothing keeps it:
+
+| Component | `key` | held in |
+|---|---|---|
+| `NetWorthTerrain` lens | `terrainLens` | `useState` |
+| `NetWorthTerrain` viewpoint | `viewpoint` | `useState` |
+| `CategoryMassif` viewpoint | `viewpoint` | `useState` |
+| `TransferTower` viewpoint | `viewpoint` | `useState` |
+| `SankeyChart` flow/table | `sankey` | `useState` |
+
+⚠️ **`viewpoint` is declared by three different components.** Wiring any of them
+naively would put three surfaces on one URL param, so this cannot be fixed by
+swapping in `useViewState` one file at a time — the keys have to be made
+distinct first.
+
+The app already does this correctly elsewhere: `CategoryMassif`'s *own* "where"
+dimension and `TransferFlowPanel`'s two both go through `useViewState` and are
+linkable and persisted. So the same question — *is a view choice part of the
+address?* — is answered two ways inside one component.
+
+⛔ **Not changed, and this one is genuinely yours.** Making these real changes
+what your dashboard remembers between visits (they would start writing
+`app_settings`), and it is the exact promise `zz-zz-dashboard-chart-options.spec.ts`
+was written to defend: *"a view dimension is a PROMISE."* Either wire them with
+distinct keys, or drop `key` from the declarations that are deliberately
+ephemeral so the type stops claiming something untrue.
+
+### ⚠️ And the honest limit of the new terrain test
+
+**Measured:** the e2e fixture holds no account without history, so the em-dash
+branch cannot render in any Playwright run — a mutation reverting the "Today"
+column to `formatCents(r.lastCents)` **survives** it. Said out loud rather than
+left implied. The decision therefore lives in `terrainRowFigures`, unit-tested on
+both sides (blank, and a real balance of exactly zero); the component is a
+one-line pass-through with no branch left to get wrong; and the e2e test adds the
+promise the lens had none of before — that the table renders, names its window,
+and that its three columns agree about what is known.
+
+This is the strongest argument yet for the fixture widening costed in §6.

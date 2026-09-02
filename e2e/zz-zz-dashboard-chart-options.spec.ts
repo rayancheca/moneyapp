@@ -128,14 +128,39 @@ test("the terrain does not overwrite the account selection", async ({ page }) =>
  * was anything to say. Measured on the owner's ledger 2026-09-01: Capital One
  * 360 Checking, active, zero balances, zero transactions.
  *
- * ⛔ The em-dash branch is DATA-DEPENDENT and this fixture may hold no such
- * account, so the assertion here is the one that holds for every fixture: the
- * three columns AGREE. A row that names a first day prints a figure for today;
- * a row that does not, does not. `terrainRowFigures` is unit-tested on both
- * sides — this is the promise that the table renders and obeys it.
+ * ⛔ MEASURED: this fixture holds NO account without history, so the em-dash
+ * branch cannot render in any Playwright run — a mutation that reverts the
+ * "Today" column to `formatCents(r.lastCents)` survives this test. Said out
+ * loud rather than left implied, because an assertion loose enough to survive
+ * the bug it names is not coverage.
+ *
+ * So the split is deliberate: the DECISION lives in `terrainRowFigures`, which
+ * is unit-tested on both sides (blank, and a real balance of exactly zero) and
+ * where the small mutations die; the component is a one-line pass-through with
+ * no branch of its own left to get wrong. What this test adds is the promise
+ * the lens had none of before — that the table renders, names its window, and
+ * that its three columns AGREE about what is known. A row that names a first
+ * day prints a figure for today; a row that does not, does not.
+ *
+ * ⚠️ The fixture widening that WOULD reach the branch is costed in the handoff
+ * (§6) and is the owner's call — it adds an account to every account-bearing
+ * baseline on the site.
  */
 test("the terrain's table lens agrees with itself about what it knows", async ({ page }) => {
-  await page.goto("/?chart=terrain&terrainLens=table");
+  await page.goto("/?chart=terrain");
+
+  /*
+   * ⚠️ CLICKED, NOT LINKED. `LENS_DIMENSION` declares `key: "terrainLens"`, and
+   * `ViewDimension.key` is documented as "the URL param key AND the app_settings
+   * key" — but the terrain holds this in `useState`, so `?terrainLens=table`
+   * does nothing and the lens is lost on reload. That gap is reported in the
+   * handoff rather than closed here: making the param real changes what his
+   * dashboard remembers, which is his call, not a test's.
+   */
+  await page
+    .getByRole("group", { name: "Terrain lens" })
+    .getByRole("button", { name: "Table", exact: true })
+    .click();
 
   const table = page.getByRole("table");
   await expect(table).toBeVisible();
