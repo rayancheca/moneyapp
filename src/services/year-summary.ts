@@ -265,6 +265,28 @@ export function summaryYears(db: AppDatabase): number[] {
   return rows.map((r) => Number(r.y)).sort((a, b) => b - a);
 }
 
+/**
+ * ⛔ THE SECOND SENTENCE IS A FACT ABOUT 2026, and it was printed on every year.
+ *
+ * 🔴 Measured on the owner's `/summary/2022`: "Cash job $1,388.10 — Salary rows
+ * that are not Fordham payroll. **Work-study ended 2026-05-13 and these deposits
+ * are the job that replaced it.**" The row behind that figure is a single
+ * `Deposit 1183713709` from 2022-08-25 — it cannot be from a job that replaced
+ * something which ended four years later. A description printed unconditionally
+ * became a false claim about the world the moment it was read on an early year.
+ *
+ * The first sentence is the RULE and is true of every year, so it always shows.
+ * The history only appears where the history had happened.
+ */
+const WORK_STUDY_ENDED = "2026-05-13";
+
+function cashJobBasis(year: number): string {
+  const rule = "Salary rows that are not Fordham payroll.";
+  return year >= Number(WORK_STUDY_ENDED.slice(0, 4))
+    ? `${rule} Work-study ended ${WORK_STUDY_ENDED} and these deposits are the job that replaced it.`
+    : `${rule} In ${year} that is not yet the cash job — work-study ran until ${WORK_STUDY_ENDED}.`;
+}
+
 export function yearSummaryView(db: AppDatabase, year: number, today: string): YearSummaryView {
   const line = (
     id: string,
@@ -291,7 +313,7 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
       "cash-job",
       "Cash job",
       "earned",
-      "Salary rows that are not Fordham payroll. Work-study ended 2026-05-13 and these deposits are the job that replaced it.",
+      cashJobBasis(year),
       lineFor(db, year, { categoryName: "Salary", descriptorNotLike: FORDHAM_DESCRIPTOR }),
       "Deposited irregularly, so a calendar year captures what reached the bank rather than what was worked.",
     ),

@@ -181,6 +181,39 @@ describe("yearSummaryView — the year includes 1 January and 31 December", () =
   });
 });
 
+/**
+ * 🔴 A DESCRIPTION IS A CLAIM, and this one was printed on every year.
+ *
+ * Measured on `/summary/2022`: "Cash job $1,388.10 — Salary rows that are not
+ * Fordham payroll. **Work-study ended 2026-05-13 and these deposits are the job
+ * that replaced it.**" The row behind that figure is one `Deposit 1183713709`
+ * from 2022-08-25. It cannot be from a job that replaced something ending four
+ * years later.
+ */
+describe("yearSummaryView — the cash job's story is only told where it happened", () => {
+  test("a year before work-study ended says so instead of claiming the cash job", () => {
+    insert({ postedOn: "2022-08-25", amountCents: 138810, rawDescription: "Deposit 1183713709", categoryName: "Salary" });
+
+    const v = yearSummaryView(bundle.db, 2022, TODAY);
+    const cashJob = v.summary.sections
+      .flatMap((sec) => sec.lines)
+      .find((l) => l.id === "cash-job")!;
+    expect(cashJob.basis).toContain("Salary rows that are not Fordham payroll.");
+    expect(cashJob.basis).not.toContain("the job that replaced it");
+    expect(cashJob.basis).toContain("work-study ran until 2026-05-13");
+  });
+
+  test("the year work-study ended, and after it, keeps the history", () => {
+    insert({ postedOn: "2026-06-05", amountCents: 104700, rawDescription: "Deposit 999", categoryName: "Salary" });
+
+    const v = yearSummaryView(bundle.db, 2026, TODAY);
+    const cashJob = v.summary.sections
+      .flatMap((sec) => sec.lines)
+      .find((l) => l.id === "cash-job")!;
+    expect(cashJob.basis).toContain("the job that replaced it");
+  });
+});
+
 describe("yearSummaryView — money in that was not earned", () => {
   test("a financial-aid refund is never added to earnings", () => {
     insert({ postedOn: "2025-01-28", amountCents: 1010000, rawDescription: "FORDHAM UNIVERSI INVOICE", categoryName: "Financial Aid" });
