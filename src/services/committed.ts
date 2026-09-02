@@ -2,7 +2,13 @@ import { inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { carCost, type CarCost } from "@/lib/car-cost";
-import { committedOutflows, type CommittedOccurrence, type CommittedOutflows } from "@/lib/committed";
+import {
+  committedOutflows,
+  monthHorizon,
+  withinMonthHorizon,
+  type CommittedOccurrence,
+  type CommittedOutflows,
+} from "@/lib/committed";
 import {
   addCalendarMonths,
   addDays,
@@ -294,15 +300,24 @@ export function committedBook(
    * swept day by day across September on the real ledger its all-in figure is
    * constant at $1,325.60. Three surfaces, one rule, and still not one fix.
    */
-  const to = addCalendarMonths(today, months);
-  // half-open: the horizon's last day is the day BEFORE `to`, so a monthly bill
-  // anchored on today's day-of-month is projected `months` times, not months+1
-  const horizonEnd = addDays(to, -1);
+  /*
+   * ⛔ THE WINDOW IS A `MonthHorizon`, NOT A PAIR OF DATES — see its docstring
+   * in `lib/committed`. A half-open `[today, addCalendarMonths(today, months))`
+   * is a day SHORT of `months` whole months whenever the end month is too short
+   * to hold today's day-of-month, and a bill anchored just below it loses its
+   * last payment while the rate still divides by `months`. Measured over every
+   * (anchor day, asking day) pair in a 62-day span: six pairs were five
+   * payments over a six-month divisor. Occurrences are therefore projected
+   * through the whole end month and admitted by MONTH SLOT.
+   */
+  const horizon = monthHorizon(today, months);
+  const to = horizon.nominalEnd;
   const moneyOut = moneyOutSeriesIds(db);
 
   const occurrences = // +1: `windowDays` counts days and today is the first — see its docstring
-    upcomingOccurrences(db, today, diffDays(today, horizonEnd) + 1)
+    upcomingOccurrences(db, today, diffDays(today, horizon.projectThrough) + 1)
     .filter((o) => moneyOut.has(o.seriesId))
+    .filter((o) => withinMonthHorizon(horizon, o.date, o.anchorDayOfMonth))
     .map(toCommitted);
 
   /*
@@ -441,11 +456,16 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
    * this function has no overdue leg, so a bill due today belongs in its book
    * and skipping it would silently lose a payment.
    */
-  const horizonEnd = addDays(to, -1);
+  // ⛔ THE SAME `MonthHorizon`, and not a second phrasing of it. This card has
+  // its own copy of the window and had its own copy of the clamp bug with it —
+  // a twelve-month horizon opened on the 29th, 30th or 31st ran a day short of
+  // twelve whole months for every car bill anchored below that day.
+  const horizon = monthHorizon(today, months);
 
   const occurrences = // +1: `windowDays` counts days and today is the first — see its docstring
-    upcomingOccurrences(db, today, diffDays(today, horizonEnd) + 1)
+    upcomingOccurrences(db, today, diffDays(today, horizon.projectThrough) + 1)
     .filter((o) => carSeries.has(o.seriesId))
+    .filter((o) => withinMonthHorizon(horizon, o.date, o.anchorDayOfMonth))
     .map(toCommitted);
   const book = committedOutflows({ from: today, to, months, occurrences, overdue: [] });
 

@@ -813,6 +813,17 @@ export interface SeriesOccurrence {
   date: string;
   amountCents: number;
   /**
+   * The day-of-month the series is really billed on, for a calendar-stepped
+   * cadence — null when the cadence steps in DAYS (weekly, biweekly), where
+   * nothing clamps and `date`'s own day is already the truth.
+   *
+   * ⛔ It exists because `date` alone cannot answer whether an occurrence is
+   * inside a window of whole calendar months. February clamps the 28th, 29th,
+   * 30th and 31st onto ONE date, and those four series need different answers
+   * at the boundary — see `MonthHorizon` in `lib/committed`.
+   */
+  anchorDayOfMonth: number | null;
+  /**
    * How old the evidence behind this projection is, when the caller supplied
    * it (see toProjectable). Undefined means "not measured here", never "fresh".
    */
@@ -1109,6 +1120,20 @@ export function projectOccurrences(
   // every forecast that reaches beyond it
   const last = series.userEndsOn && compareDates(series.userEndsOn, to) < 0 ? series.userEndsOn : to;
 
+  /*
+   * The series' TRUE day-of-month, published so a caller can tell a clamped
+   * occurrence from an unclamped one. `plan.anchorDay` when the postings proved
+   * a clampable day; otherwise the anchor's own day, which is what every step
+   * of this walk uses. Null for day-stepped cadences, which never clamp.
+   *
+   * ⚠️ It inherits `deriveAnchorDay`'s limit exactly: an anchor that was itself
+   * clamped reports the clamped day. That is the same answer the walk already
+   * gives, so this adds no new error — it exposes the one already there.
+   */
+  const anchorDayOfMonth = plan.calendarMonths
+    ? (plan.anchorDay ?? Number(anchor.slice(8, 10)))
+    : null;
+
   const occurrences: SeriesOccurrence[] = [];
   for (let i = stepsToReach(anchor, plan, from); ; i++) {
     const date = stepFrom(anchor, plan, i);
@@ -1120,6 +1145,7 @@ export function projectOccurrences(
       cadence: series.cadence,
       date,
       amountCents: series.nextExpectedAmountCents,
+      anchorDayOfMonth,
       staleness: series.staleness,
     });
   }

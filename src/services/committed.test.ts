@@ -636,7 +636,7 @@ function createCarCategory(): string {
  */
 describe("committedBook, over every day of the month", () => {
   const FROM = "2026-08-15";
-  const SPAN_DAYS = 62;
+  const SPAN_DAYS = 400;
   const HORIZON = 6;
 
   /**
@@ -702,36 +702,30 @@ describe("committedBook, over every day of the month", () => {
   }
 
   /**
-   * 🔴 FOUND BY THIS SWEEP, MEASURED, AND DELIBERATELY NOT FIXED HERE.
+   * ✅ THE CLAMP, FOUND BY THIS SWEEP AND NOW FIXED — and the list below is
+   * empty on purpose, because it used to have six entries in it.
    *
-   * `addCalendarMonths` clamps: 29 August + 6 months is 28 February, because 29
-   * February 2027 does not exist. The horizon is then a day short of six whole
-   * months, and a bill anchored on the 28th loses its sixth payment while the
-   * rate still divides by six — 5 payments over a 6-month divisor, the exact
-   * shape of the three bugs above.
+   * `addCalendarMonths("2026-08-29", 6)` is `2027-02-28`, because 29 February
+   * 2027 does not exist, so a half-open `[today, to)` ran a day short of six
+   * whole months and a bill anchored on the 28th lost its sixth payment while
+   * the rate still divided by six:
    *
-   * ⛔ THE OBVIOUS FIX TRADES ONE ERROR FOR ANOTHER, and that is why it is not
-   * applied. Measured: the recurring engine clamps too, so on 2027-02-28 the
-   * series anchored on the 28th, 29th, 30th AND 31st all fall on the same day.
-   * Including that day fixes the 28th and gives the 29th and 30th a SEVENTH
-   * payment. No date cut can separate four anchors that share a date; an exact
-   * fix has to bound each series by its own step index, which `SeriesOccurrence`
-   * does not carry.
+   *     2026-08-29  Bill 28      2026-08-31  Bill 28
+   *     2026-08-30  Bill 28      2026-08-31  Bill 29
+   *     2026-08-30  Bill 29      2026-08-31  Bill 30
    *
-   * ⚠️ Latent on the owner's ledger: his latest anchor day is the 22nd, so
-   * nothing he owes can reach it (measured 2026-09-01).
+   * ⛔ THE OBVIOUS FIX WAS THE MIRRORED DEFECT, and it was measured before it
+   * was rejected: the recurring engine clamps too, so the series anchored on
+   * the 28th, 29th, 30th AND 31st all project onto 2027-02-28. Making that day
+   * inclusive fixes the 28th and hands the 29th and 30th a SEVENTH payment. No
+   * date cut can separate four anchors that share a date — which is why
+   * membership moved into MONTH SPACE (`MonthHorizon`), judged against the day
+   * each series is really billed on rather than the day the calendar could fit.
    *
-   * Pinned exactly rather than excused, so a future fix has to come here and
-   * empty this list on purpose.
+   * Keep this list empty. Both halves are graded below: `short` catches a
+   * window that has lost a payment, `other` catches one that has gained one.
    */
-  const KNOWN_CLAMP_SHORTFALLS = [
-    "2026-08-29 Bill 28",
-    "2026-08-30 Bill 28",
-    "2026-08-30 Bill 29",
-    "2026-08-31 Bill 28",
-    "2026-08-31 Bill 29",
-    "2026-08-31 Bill 30",
-  ];
+  const KNOWN_CLAMP_SHORTFALLS: string[] = [];
 
   test("a monthly bill is exactly `months` payments, whatever day it falls on and whatever day you ask", () => {
     seedOnePerAnchorDay();
@@ -805,8 +799,8 @@ describe("committedBook, over every day of the month", () => {
       expect(book.totalCents).toBe(book.lines.reduce((s2, l) => s2 + l.totalCents, 0));
     }
     expect(wrong).toEqual([]);
-    // 62 days, and the late bill is genuinely in arrears on most of them
-    expect(arrearsDays).toBeGreaterThan(40);
+    // the late bill is genuinely in arrears on most of the swept days
+    expect(arrearsDays).toBeGreaterThan(SPAN_DAYS / 2);
   });
 });
 

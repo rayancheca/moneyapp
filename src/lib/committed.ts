@@ -21,6 +21,8 @@
  * disagreement is disclosed, never clamped away.
  */
 
+import { addCalendarMonths, daysInMonthOf, monthKey, withDayOfMonth } from "@/lib/dates";
+
 /** Where a committed payment came from — already late, or still to come. */
 export const COMMITTED_ORIGIN_LABEL = {
   overdue: "already late",
@@ -252,4 +254,91 @@ export function baselineCaption(window: { months: number; fromMonth: string; toM
   return `Spending averaged over ${window.months} complete month${
     window.months === 1 ? "" : "s"
   }, ${span}. This month is still running and is not counted.`;
+}
+
+/**
+ * A window of exactly `months` CALENDAR MONTHS opening on `from`.
+ *
+ * 🔴 IT CANNOT BE EXPRESSED AS A PAIR OF DATES, and that is the whole reason
+ * this type exists. `addCalendarMonths("2026-08-29", 6)` is `2027-02-28`,
+ * because 29 February 2027 does not exist — so a half-open `[from, to)` is a
+ * day short of six whole months, and a bill anchored on the 28th loses its
+ * sixth payment while the rate still divides by six. Five payments over a
+ * six-month divisor: the same shape as every other defect in this file.
+ *
+ * ⛔ AND THE OBVIOUS FIX IS THE SAME DEFECT MIRRORED — measured, not guessed.
+ * The recurring engine clamps too, so the series anchored on the 28th, 29th,
+ * 30th AND 31st all project onto 2027-02-28. Making that day inclusive fixes
+ * the 28th and hands the 29th and 30th a SEVENTH payment. No date cut can
+ * separate four anchors that share a date.
+ *
+ * So membership is decided in MONTH SPACE, against the day the series is really
+ * billed on rather than the day the calendar could fit:
+ *
+ *   - any month strictly before `endMonth` is inside;
+ *   - inside `endMonth`, an occurrence is in iff its ANCHOR day-of-month is
+ *     before `endDay` — the day-of-month the window opened on.
+ *
+ * That is exactly the date comparison whenever nothing clamps (the occurrence's
+ * own day IS its anchor day), and it is the only thing that separates the four
+ * when something does.
+ */
+export interface MonthHorizon {
+  /** inclusive first day */
+  from: string;
+  /** whole calendar months spanned; the per-month denominator */
+  months: number;
+  /** "YYYY-MM" — the last month any occurrence can fall in */
+  endMonth: string;
+  /** the day-of-month the window opened on, and so ends BEFORE */
+  endDay: number;
+  /**
+   * The last day occurrences must be PROJECTED to, so none inside the window is
+   * missed. Always the end of `endMonth`: a clamped occurrence can land after
+   * the nominal end and still be inside.
+   */
+  projectThrough: string;
+  /**
+   * `addCalendarMonths(from, months)`, kept for reporting only.
+   * ⚠️ NOT the membership test — see the class docstring. It is what a reader
+   * means by "six months from today" and it is what `CommittedOutflows.to`
+   * publishes, but a day inside `endMonth` after it may still be in the window.
+   */
+  nominalEnd: string;
+}
+
+export function monthHorizon(from: string, months: number): MonthHorizon {
+  if (!Number.isInteger(months) || months < 1) {
+    throw new RangeError(`monthHorizon: months must be a positive integer, got ${months}`);
+  }
+  const nominalEnd = addCalendarMonths(from, months);
+  const endMonth = monthKey(nominalEnd);
+  return {
+    from,
+    months,
+    endMonth,
+    endDay: Number(from.slice(8, 10)),
+    projectThrough: withDayOfMonth(`${endMonth}-01`, daysInMonthOf(`${endMonth}-01`)),
+    nominalEnd,
+  };
+}
+
+/**
+ * Is one occurrence inside the horizon?
+ *
+ * `anchorDayOfMonth` is the day the series is really billed on — null for a
+ * day-stepped cadence (weekly, biweekly), which never clamps, so the
+ * occurrence's own day is the truth and the test degrades to the plain date
+ * comparison.
+ */
+export function withinMonthHorizon(
+  h: MonthHorizon,
+  day: string,
+  anchorDayOfMonth: number | null,
+): boolean {
+  if (day < h.from) return false;
+  const month = monthKey(day);
+  if (month < h.endMonth) return true;
+  if (month > h.endMonth) return false;
+  return (anchorDayOfMonth ?? Number(day.slice(8, 10))) < h.endDay;
 }

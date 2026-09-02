@@ -73,6 +73,7 @@ describe("staleOccurrenceEntries", () => {
     cadence: "weekly",
     date: "2026-07-09",
     amountCents: 104600,
+    anchorDayOfMonth: null, // weekly: day-stepped, so it never clamps
     ...over,
   });
 

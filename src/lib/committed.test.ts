@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import {
   baselineCaption,
   COMMITTED_ORIGIN_LABEL,
+  monthHorizon,
+  withinMonthHorizon,
   committedOutflows,
   type CommittedInput,
   type CommittedOccurrence,
@@ -291,5 +293,99 @@ describe("baselineCaption", () => {
     expect(c).toBe("No complete month has been imported yet, so there is no spending average to stand on.");
     expect(c).not.toContain("2022-09");
     expect(c).not.toContain("0 complete");
+  });
+});
+
+describe("monthHorizon", () => {
+  test("spans whole calendar months from the day it opens", () => {
+    const h = monthHorizon("2026-09-15", 6);
+    expect(h).toEqual({
+      from: "2026-09-15",
+      months: 6,
+      endMonth: "2027-03",
+      endDay: 15,
+      projectThrough: "2027-03-31",
+      nominalEnd: "2027-03-15",
+    });
+  });
+
+  /** 🔴 The clamp: 29 August + 6 months has no 29 February to land on. */
+  test("records the end MONTH even when the calendar cannot hold the end DAY", () => {
+    const h = monthHorizon("2026-08-29", 6);
+    expect(h.nominalEnd).toBe("2027-02-28"); // clamped, and a day short of six months
+    expect(h.endMonth).toBe("2027-02");
+    expect(h.endDay).toBe(29); // …but the window still ends before the 29th of it
+    expect(h.projectThrough).toBe("2027-02-28");
+  });
+
+  test("refuses a window that is not a positive whole number of months", () => {
+    expect(() => monthHorizon("2026-09-15", 0)).toThrow(RangeError);
+    expect(() => monthHorizon("2026-09-15", 1.5)).toThrow(RangeError);
+  });
+});
+
+describe("withinMonthHorizon", () => {
+  const h = monthHorizon("2026-08-29", 6); // endMonth 2027-02, endDay 29
+
+  test("every month before the last one is inside, and every month after is not", () => {
+    expect(withinMonthHorizon(h, "2026-09-28", 28)).toBe(true);
+    expect(withinMonthHorizon(h, "2027-01-31", 31)).toBe(true);
+    expect(withinMonthHorizon(h, "2027-03-01", 1)).toBe(false);
+    // and nothing before the day it opened
+    expect(withinMonthHorizon(h, "2026-08-28", 28)).toBe(false);
+  });
+
+  /**
+   * 🔴 THE FOUR ANCHORS THAT SHARE ONE DATE. February 2027 clamps the 28th,
+   * 29th, 30th and 31st all onto 2027-02-28 — and they need different answers,
+   * which is the whole reason this is not a date comparison. The 28th's sixth
+   * payment is inside a six-month window opened on 29 August; the 29th's,
+   * 30th's and 31st's would be a SEVENTH.
+   */
+  test("separates four series that the calendar put on the same day", () => {
+    expect(withinMonthHorizon(h, "2027-02-28", 28)).toBe(true);
+    expect(withinMonthHorizon(h, "2027-02-28", 29)).toBe(false);
+    expect(withinMonthHorizon(h, "2027-02-28", 30)).toBe(false);
+    expect(withinMonthHorizon(h, "2027-02-28", 31)).toBe(false);
+  });
+
+  /** A day-stepped cadence never clamps, so its own day IS its anchor day. */
+  test("with no anchor day it falls back to the date's own day", () => {
+    expect(withinMonthHorizon(h, "2027-02-28", null)).toBe(true); // 28 < 29
+    expect(withinMonthHorizon(monthHorizon("2026-08-15", 6), "2027-02-20", null)).toBe(false);
+  });
+
+  /**
+   * ⛔ WHY `projectThrough` REACHES THE END OF THE MONTH and admitting nothing
+   * new is not an accident worth deleting.
+   *
+   * Occurrences are projected through the whole end month and then filtered, so
+   * a clamped one cannot be missed. This proves the over-fetch is SAFE rather
+   * than load-bearing: over every asking day of two years, three horizon
+   * lengths and all 31 anchor days — 67,890 gradings — nothing admitted by the
+   * horizon ever falls after `nominalEnd`. A mutation that projected only to
+   * `nominalEnd` therefore survives the service sweep, and is equivalent for
+   * exactly this reason. If the engine's clamping ever changes, this fails
+   * first and the over-fetch starts earning its keep.
+   */
+  test("over-fetching past the nominal end admits nothing new, on any day of two years", () => {
+    const daysInMonth = (m: string): number => new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate();
+    let graded = 0;
+    const late: string[] = [];
+    for (let d = 0; d < 730; d++) {
+      const today = new Date(Date.UTC(2026, 0, 1 + d)).toISOString().slice(0, 10);
+      for (const months of [1, 6, 12]) {
+        const win = monthHorizon(today, months);
+        for (let anchor = 1; anchor <= 31; anchor++) {
+          // the engine's own clamp: an occurrence lands on the anchor day, or on
+          // the month's last day when the month is too short to hold it
+          const day = `${win.endMonth}-${String(Math.min(anchor, daysInMonth(win.endMonth))).padStart(2, "0")}`;
+          graded += 1;
+          if (withinMonthHorizon(win, day, anchor) && day > win.nominalEnd) late.push(`${today}/${months}/${anchor}`);
+        }
+      }
+    }
+    expect(graded).toBe(730 * 3 * 31);
+    expect(late).toEqual([]);
   });
 });
