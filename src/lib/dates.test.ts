@@ -335,3 +335,30 @@ describe("MONEYAPP_FAKE_TODAY (frozen e2e clock)", () => {
     expect(todayIso(new Date(2025, 0, 2, 12, 0))).toBe("2025-01-02");
   });
 });
+
+describe("the date-parse memo", () => {
+  /**
+   * ⛔ THE CAP HAS TO BE REACHABLE, or it is a branch nobody has ever run in a
+   * codebase whose `lib` gate is 100%. Dates are generated as well as read — a
+   * projection walking forward, a chart axis — so an uncapped cache would grow
+   * without bound in a long-lived server, and the clear-and-continue path is
+   * the one that keeps it safe. 8,192 distinct days is ~22 years.
+   */
+  test("stays correct across a full clear of its cache", () => {
+    const day = "2026-09-01";
+    expect(toEpochDay(day)).toBe(toEpochDay(day)); // seed a hit
+    // 8,193 distinct valid dates: enough to fill the cache and clear it at
+    // least once, with every answer still the arithmetic one
+    let checked = 0;
+    for (let i = 0; i < 8_193; i++) {
+      const d = addDays("2000-01-01", i);
+      expect(diffDays("2000-01-01", d)).toBe(i);
+      checked += 1;
+    }
+    expect(checked).toBe(8_193);
+    // …and a date parsed before the clear still parses the same way after it
+    expect(toEpochDay(day)).toBe(toEpochDay("2026-09-01"));
+    expect(isValidIsoDate("2026-02-30")).toBe(false); // a cached MISS is a hit
+    expect(isValidIsoDate("2026-02-30")).toBe(false);
+  });
+});

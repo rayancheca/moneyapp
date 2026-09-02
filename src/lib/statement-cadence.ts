@@ -149,7 +149,12 @@ function trimmedMaxDeviation(deviations: readonly number[]): number {
   const newest = deviations.at(-1)!;
   const older = [...deviations.slice(0, -1)].sort((a, b) => a - b);
   const kept = deviations.length >= 5 ? older.slice(0, -1) : older;
-  return Math.max(newest, kept.at(-1) ?? 0);
+  // ⛔ NOT `?? 0`. The docstring above states the invariant — three closes leave
+  // at least two gaps and three days-of-month — and a fallback the invariant
+  // makes unreachable is a branch no test can ever run, which in a 100%-covered
+  // module is a lie about how much of this has been exercised. If the bar ever
+  // drops below three closes, this throws where it used to publish a silent 0.
+  return Math.max(newest, kept.at(-1)!);
 }
 
 /**

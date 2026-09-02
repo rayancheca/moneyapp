@@ -807,6 +807,15 @@ describe("terrainRowFigures", () => {
     expect(Object.values(cells)).not.toContain("$0.00");
   });
 
+  test("a fall is signed and coloured as one", () => {
+    const cells = terrainRowFigures(
+      { firstDay: "2026-01-01", firstCents: 25_000, lastDay: "2026-09-01", lastCents: 10_000, deltaCents: -15_000 },
+      FMT,
+    );
+    expect(cells.change).toBe("−$150.00");
+    expect(cells.changeSign).toBe(-1);
+  });
+
   /** ⛔ A real account CAN sit at exactly zero, and that zero is worth printing. */
   test("a real zero balance is still printed", () => {
     const cells = terrainRowFigures(

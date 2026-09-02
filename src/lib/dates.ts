@@ -92,10 +92,41 @@ function daysFromCivil(y: number, m: number, d: number): number {
 }
 
 /**
+ * ⚡ MEMOISED, and safely, because this is a PURE FUNCTION OF A STRING — there
+ * is no invalidation question to get wrong, only a bound to choose.
+ *
+ * Measured on the owner's ledger with `--cpu-prof` over nine dashboard renders:
+ * `dates.ts` was **14% of all active CPU** (`digitsAt` 458ms, `daysFromCivil`
+ * 127ms, `parseEpochDay` 138ms), because every `compareDates`, `diffDays` and
+ * `addDays` re-reads its arguments character by character and a sort re-reads
+ * them O(n log n) times. A ledger of 10,111 rows spans a few thousand distinct
+ * dates and asks about them over and over.
+ *
+ * The cap exists so a long-lived process cannot grow this without bound —
+ * generated dates (a projection walking forward, a chart axis) are unbounded in
+ * principle. Clearing wholesale rather than evicting one entry keeps it O(1)
+ * and needs no ordering structure; at this size it happens rarely enough that
+ * the amortised cost is nil.
+ */
+const EPOCH_DAY_CACHE = new Map<string, number | null>();
+const EPOCH_DAY_CACHE_MAX = 8192;
+
+function parseEpochDay(s: string): number | null {
+  // ⛔ `undefined` means MISS and nothing else: the stored value is
+  // `number | null`, so a cached "not a date" (null) is a hit like any other.
+  const hit = EPOCH_DAY_CACHE.get(s);
+  if (hit !== undefined) return hit;
+  const parsed = parseEpochDayUncached(s);
+  if (EPOCH_DAY_CACHE.size >= EPOCH_DAY_CACHE_MAX) EPOCH_DAY_CACHE.clear();
+  EPOCH_DAY_CACHE.set(s, parsed);
+  return parsed;
+}
+
+/**
  * The single place a date string is read. Returns the epoch day, or null when
  * `s` is not a real 'YYYY-MM-DD' calendar date — allocating nothing either way.
  */
-function parseEpochDay(s: string): number | null {
+function parseEpochDayUncached(s: string): number | null {
   if (s.length !== ISO_LENGTH) return null;
   if (s.charCodeAt(4) !== DASH) return null;
   if (s.charCodeAt(7) !== DASH) return null;
