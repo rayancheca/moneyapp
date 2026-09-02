@@ -327,3 +327,58 @@ describe("never charged is not the same as running late", () => {
     expect(split.spending.fixedNeverChargedCount).toBe(0);
   });
 });
+
+/*
+ * 🔴 ONE NUMBER, TWO READINGS, ON ONE PAGE — and the divergence arrived with the
+ * forecast's arrears leg (2026-09-02). A series can now contribute TWO fixed
+ * components to one month: what came due on the 1st and never posted, and what
+ * falls due again on the 8th. `ForecastComposition` prints `fixedCount` as
+ * "(9 lines)", true of components; `ForecastCard` printed the same number as
+ * "9 commitments", which is a claim about SERIES.
+ */
+describe("forecastSplit — components against series", () => {
+  const fixed = (label: string, cents: number) => ({ kind: "fixed" as const, label, cents });
+
+  test("a series with two components is one commitment and two lines", () => {
+    const split = forecastSplit([fixed("Rent", -210900), fixed("Rent", -210900)]);
+    expect(split.spending.fixedCount).toBe(2);
+    expect(split.spending.fixedSeriesCount).toBe(1);
+  });
+
+  test("different series are counted separately", () => {
+    const split = forecastSplit([fixed("Rent", -210900), fixed("Gym", -10000)]);
+    expect(split.spending.fixedCount).toBe(2);
+    expect(split.spending.fixedSeriesCount).toBe(2);
+  });
+
+  /* ⛔ Each SIDE keeps its own set: a payroll and a bill that happen to share a
+     name are two different things, and one must not suppress the other. */
+  test("the same name on both sides is one series on each", () => {
+    const split = forecastSplit([fixed("Acme", 500000), fixed("Acme", -210900)]);
+    expect(split.income.fixedSeriesCount).toBe(1);
+    expect(split.spending.fixedSeriesCount).toBe(1);
+  });
+
+  /* An unlabelled component cannot be matched to a sibling, so it counts as its
+     own — never merged with every other unlabelled one. */
+  test("unlabelled fixed components each count once", () => {
+    const split = forecastSplit([
+      { kind: "fixed", cents: -1000 },
+      { kind: "fixed", cents: -2000 },
+    ]);
+    expect(split.spending.fixedCount).toBe(2);
+    expect(split.spending.fixedSeriesCount).toBe(2);
+  });
+
+  test("a zero-amount component is neither a line nor a series", () => {
+    const split = forecastSplit([fixed("Rent", 0), fixed("Rent", -210900)]);
+    expect(split.spending.fixedCount).toBe(1);
+    expect(split.spending.fixedSeriesCount).toBe(1);
+  });
+
+  test("variable components never reach the series count", () => {
+    const split = forecastSplit([{ kind: "variable", label: "Food", cents: -5000 }]);
+    expect(split.spending.variableCount).toBe(1);
+    expect(split.spending.fixedSeriesCount).toBe(0);
+  });
+});

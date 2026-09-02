@@ -138,9 +138,15 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
       </dl>
 
       <p className="mt-2 text-xs text-ink-faint">
-        Your bills and scheduled pay only — {split.spending.fixedCount}{" "}
-        {split.spending.fixedCount === 1 ? "commitment" : "commitments"} and{" "}
-        {split.income.fixedCount} {split.income.fixedCount === 1 ? "series" : "series"}.
+        {/* ⛔ `fixedSeriesCount`, not `fixedCount`. A commitment is a SERIES, and
+            since the forecast grew an arrears leg a series can contribute two
+            components to one month — what came due on the 1st and never posted,
+            and what falls due again on the 8th. `ForecastComposition` below
+            prints the component count as "(N lines)", the other true reading of
+            the same set. */}
+        Your bills and scheduled pay only — {split.spending.fixedSeriesCount}{" "}
+        {split.spending.fixedSeriesCount === 1 ? "commitment" : "commitments"} and{" "}
+        {split.income.fixedSeriesCount} {split.income.fixedSeriesCount === 1 ? "series" : "series"}.
       </p>
 
       <ForecastComposition split={split} />

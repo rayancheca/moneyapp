@@ -52,6 +52,14 @@ export type ForecastComponentKind = "fixed" | "variable";
  */
 export interface SplittableComponent {
   kind: ForecastComponentKind;
+  /**
+   * The series' name, and the identity a FIXED component is counted by.
+   *
+   * ⚠️ Optional so a variable component (which has no series) and every
+   * existing caller stay valid — a missing label counts as its own line, which
+   * is right for a variable bucket and is the safe reading for a fixed one.
+   */
+  label?: string;
   /** net-worth signed: income positive, spending negative */
   cents: number;
   /**
@@ -98,6 +106,18 @@ export interface ForecastSplitSide {
   fixedShare: number | null;
   /** components counted into `fixedCents` (zero-amount ones are not) */
   fixedCount: number;
+  /**
+   * DISTINCT SERIES behind `fixedCount`, keyed on the component label.
+   *
+   * ⛔ Not the same number, and the difference arrived with the forecast's
+   * arrears leg: a series can now contribute TWO fixed components to one month
+   * — what came due on the 1st and never posted, and what falls due again on
+   * the 8th. `ForecastComposition` prints `fixedCount` as "(9 lines)", which is
+   * true of components; `ForecastCard` prints it as "9 commitments", which is a
+   * claim about SERIES and would double-count that bill. Two readings of one
+   * number on one page, so there are two numbers.
+   */
+  fixedSeriesCount: number;
   /** components counted into `variableCents` (zero-amount ones are not) */
   variableCount: number;
   /**
@@ -137,6 +157,7 @@ export interface ForecastSplit {
 
 const EMPTY_SIDE = (): ForecastSplitSide => ({
   fixedCents: 0,
+  fixedSeriesCount: 0,
   variableCents: 0,
   totalCents: 0,
   fixedShare: null,
@@ -164,6 +185,10 @@ const EMPTY_SIDE = (): ForecastSplitSide => ({
 export function forecastSplit(components: readonly SplittableComponent[]): ForecastSplit {
   const income = EMPTY_SIDE();
   const spending = EMPTY_SIDE();
+  // one set per SIDE: the same series never appears on both, and sharing one
+  // set would let an income line suppress a spending one of the same name
+  const incomeLabels = new Set<string>();
+  const spendingLabels = new Set<string>();
 
   for (const c of components) {
     if (c.cents === 0) continue;
@@ -173,9 +198,17 @@ export function forecastSplit(components: readonly SplittableComponent[]): Forec
     // stated rather than tightened, because the zero-skip is the guard that
     // carries the meaning and a second one pretending to would just be noise.
     const side = c.cents > 0 ? income : spending;
+    const seen = c.cents > 0 ? incomeLabels : spendingLabels;
     if (c.kind === "fixed") {
       side.fixedCents += c.cents;
       side.fixedCount += 1;
+      // a component with no label cannot be matched to a sibling, so it counts
+      // as its own series rather than silently merging with every other unlabelled one
+      const key = c.label ?? `\u0000${side.fixedCount}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        side.fixedSeriesCount += 1;
+      }
       if (c.isStale === true) {
         side.fixedStaleCents += c.cents;
         side.fixedStaleCount += 1;
