@@ -22,8 +22,22 @@ export function InlineCategorizeList({
   categories: readonly CategoryPickerOption[];
   onChanged: () => void;
 }) {
+  /*
+   * 🔴 "Nothing left to categorize here" ANSWERED A QUESTION NOBODY ASKED.
+   *
+   * This list is every transaction in the category for the period — not a queue
+   * of uncategorized ones — and its only caller is the category page. So an
+   * empty list means the period holds nothing, and the old message told the
+   * owner his categorizing was finished on a page whose own header two sections
+   * up read "$0.00 · 0 transactions". Measured on `/categories/…` for September
+   * 2026, a month with no imported rows at all.
+   *
+   * ⚠️ The docstring above still describes an expanded `/spending` bucket. That
+   * caller is gone; this component has exactly one, and the message now says
+   * what an empty list means for that one.
+   */
   if (data.rows.length === 0) {
-    return <p className="px-1 py-3 text-xs text-ink-faint">Nothing left to categorize here.</p>;
+    return <p className="px-1 py-3 text-xs text-ink-faint">No transactions in this period.</p>;
   }
 
   function recategorize(id: string, categoryId: string): void {
