@@ -53,7 +53,7 @@ export function UpcomingList({ occurrences }: UpcomingListProps) {
             </span>
             <Money cents={totalCents} flow className="text-sm font-medium" />
           </div>
-          <StaleFooter entries={stale} className="m-3" />
+          <StaleFooter window="In the next 30 days" entries={stale} className="m-3" />
         </>
       )}
     </SurfaceCard>

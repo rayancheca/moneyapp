@@ -161,28 +161,55 @@ describe("staleSummaryLabel", () => {
   });
 
   test("the real ledger's mix names both, and neither count is the other's", () => {
-    expect(staleSummaryLabel([late(88), late(58), late(53), never(1), never(2), never(3), never(4)])).toBe(
-      "3 series are running late and 4 have never charged — all still projected",
+    expect(staleSummaryLabel([late(88), late(58), late(53), never(1), never(2), never(3), never(4)], "In September")).toBe(
+      "In September, 3 series are running late and 4 have never charged — all still projected",
     );
   });
 
   test("only late reads as it always did", () => {
-    expect(staleSummaryLabel([late(88), late(58)])).toBe("2 series are running late — still projected");
-    expect(staleSummaryLabel([late(88)])).toBe("1 series is running late — still projected");
+    expect(staleSummaryLabel([late(88), late(58)], "In September")).toBe(
+      "In September, 2 series are running late — still projected");
+    expect(staleSummaryLabel([late(88)], "In September")).toBe(
+      "In September, 1 series is running late — still projected");
   });
 
   test("only never-charged does not claim anything is late", () => {
-    expect(staleSummaryLabel([never(1), never(2)])).toBe("2 series have never charged — still projected");
-    expect(staleSummaryLabel([never(1)])).toBe("1 series has never charged — still projected");
-    expect(staleSummaryLabel([never(1)])).not.toContain("late");
+    expect(staleSummaryLabel([never(1), never(2)], "In September")).toBe(
+      "In September, 2 series have never charged — still projected");
+    expect(staleSummaryLabel([never(1)], "In September")).toBe(
+      "In September, 1 series has never charged — still projected");
+    expect(staleSummaryLabel([never(1)], "In September")).not.toContain("late");
   });
 
   test("one of each still says one of each", () => {
-    expect(staleSummaryLabel([late(88), never(1)])).toBe(
-      "1 series is running late and 1 has never charged — all still projected",
+    expect(staleSummaryLabel([late(88), never(1)], "In September")).toBe(
+      "In September, 1 series is running late and 1 has never charged — all still projected",
     );
   });
+
+  /**
+   * 🔴 THE DEFECT THIS ARGUMENT EXISTS FOR. `/recurring` renders this sentence
+   * twice — once over the September forecast, once under the 30-day list — and
+   * on 2026-09-02 they read "…3 have never charged" and "…4 have never charged"
+   * a screen apart, in identical words. Both were true: `Rent utilities & fees`
+   * first falls due on 1 October, inside thirty days and outside September.
+   *
+   * ⛔ The window LEADS the sentence. Trailing it — "…3 have never charged in
+   * September" — would say they had never charged IN SEPTEMBER, a different and
+   * weaker claim than the true one.
+   */
+  test("the same counts over two windows are two different sentences", () => {
+    const september = staleSummaryLabel([late(88), never(1)], "In September");
+    const thirtyDays = staleSummaryLabel([late(88), never(1), never(2)], "In the next 30 days");
+    expect(september).toBe("In September, 1 series is running late and 1 has never charged — all still projected");
+    expect(thirtyDays).toBe(
+      "In the next 30 days, 1 series is running late and 2 have never charged — all still projected",
+    );
+    // neither can be read as the other, which is the whole point
+    expect(september).not.toBe(thirtyDays.replace("In the next 30 days", "In September"));
+  });
 });
+
 
 /*
  * The composition band's half of the same conflation. Measured on the real

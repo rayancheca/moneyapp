@@ -39,7 +39,17 @@ export function StaleMark({
  * nothing is stale — an always-present "0 stale" row would train the eye to
  * skip the one time it matters.
  */
-export function StaleFooter({ entries, className }: { entries: StaleEntry[]; className?: string }) {
+export function StaleFooter({
+  entries,
+  window,
+  className,
+}: {
+  entries: StaleEntry[];
+  /** ⛔ REQUIRED. Two of these render on `/recurring` over different windows and
+   *  disagreed about the same count — see `staleSummaryLabel`. */
+  window: string;
+  className?: string;
+}) {
   if (entries.length === 0) return null;
   return (
     <details className={`group rounded-md border border-line bg-surface ${className ?? ""}`.trim()}>
@@ -47,7 +57,7 @@ export function StaleFooter({ entries, className }: { entries: StaleEntry[]; cla
         {/* ⛔ The count and the WORD for it: a series that has never charged is
             not late, and three of the four on the owner's ledger are not even
             due yet. `staleSummaryLabel` owns the split — see its docstring. */}
-        {staleSummaryLabel(entries)}
+        {staleSummaryLabel(entries, window)}
         <span className="ml-2 font-normal text-ink-faint group-open:hidden">
           why these numbers rest on old evidence
         </span>

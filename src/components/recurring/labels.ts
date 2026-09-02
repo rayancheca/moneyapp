@@ -193,16 +193,35 @@ export interface StaleEntry {
  * branch for each and the inline badge reads "never seen". Only the count that
  * stands over them did not.
  */
-export function staleSummaryLabel(entries: readonly StaleEntry[]): string {
+/**
+ * 🔴 AND IT MUST NAME THE WINDOW IT COUNTED, because two of these sit on one
+ * page over two different windows.
+ *
+ * Measured on the real ledger 2026-09-02, `/recurring` printed
+ * "4 series are running late and **3** have never charged" over the September
+ * forecast and "4 series are running late and **4** have never charged" under
+ * the 30-day list, in the same words, a screen apart. Both were true: `Rent
+ * utilities & fees` first falls due on 1 October, inside thirty days and
+ * outside September. Nothing in either sentence said which set it had counted,
+ * so the page contradicted itself about a fact a reader would take as one.
+ *
+ * The window leads the sentence rather than trailing it: "…and 3 have never
+ * charged in September" would say they had never charged IN SEPTEMBER, which is
+ * a different and weaker claim than the true one — they have never charged at
+ * all.
+ */
+export function staleSummaryLabel(entries: readonly StaleEntry[], window: string): string {
   const never = entries.filter((e) => e.staleness.daysSinceLastMatch === null).length;
   const late = entries.length - never;
   const lateClause = `${late} ${late === 1 ? "series is" : "series are"} running late`;
   const neverClause = `${never} ${never === 1 ? "has" : "have"} never charged`;
-  if (never === 0) return `${lateClause} — still projected`;
-  if (late === 0) {
-    return `${never} ${never === 1 ? "series has" : "series have"} never charged — still projected`;
-  }
-  return `${lateClause} and ${neverClause} — all still projected`;
+  const body =
+    never === 0
+      ? `${lateClause} — still projected`
+      : late === 0
+        ? `${never} ${never === 1 ? "series has" : "series have"} never charged — still projected`
+        : `${lateClause} and ${neverClause} — all still projected`;
+  return `${window}, ${body}`;
 }
 
 /**

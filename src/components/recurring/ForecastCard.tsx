@@ -210,7 +210,7 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
         )}
       </details>
 
-      <StaleFooter entries={stale} className="mt-3" />
+      <StaleFooter window={`In ${monthLabel(f.monthStart)}`} entries={stale} className="mt-3" />
     </SurfaceCard>
   );
 }
