@@ -13,6 +13,8 @@ import { categoryHueVar, isCategoryHueName } from "@/lib/category-palette";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { type ViewState } from "@/lib/view-state";
 import {
+  MASSIF_VIEW_DIMENSION,
+  MASSIF_VIEW_LABELS,
   MASSIF_VIEWPOINTS,
   WHERE_VIEW_LABELS,
   WHERE_VIEW_SPEC,
@@ -106,7 +108,16 @@ export function WhereItWentPanel({
         />
       </div>
       {active === "relief" ? (
-        <CategoryMassif rows={rows} totals={totals} periodLabel={periodLabel} priorLabel={priorLabel} />
+        <CategoryMassif
+          rows={rows}
+          totals={totals}
+          periodLabel={periodLabel}
+          priorLabel={priorLabel}
+          /* the camera belongs to the SURFACE, beside the lens above it — so it
+             is linkable and remembered rather than lost on reload */
+          viewpoint={state[MASSIF_VIEW_DIMENSION.key] ?? "quarter"}
+          onSelectViewpoint={(v) => setView(MASSIF_VIEW_DIMENSION.key, v)}
+        />
       ) : active === "table" ? (
         <MassifTable rows={rows} periodLabel={periodLabel} priorLabel={priorLabel} />
       ) : (
@@ -123,6 +134,13 @@ interface CategoryMassifProps {
   totals: MassifTotalsInput;
   periodLabel: string;
   priorLabel: string;
+  /**
+   * The camera is the SURFACE's view state, resolved by the RSC (URL >
+   * persisted > default) and written back through its `setView` — not a local
+   * `useState` that a reload forgets while declaring a URL key nothing read.
+   */
+  viewpoint: string;
+  onSelectViewpoint: (value: string) => void;
 }
 
 const DEFAULT_WIDTH = 720;
@@ -144,25 +162,25 @@ const DIM_OPACITY = 0.3;
 /** a footprint narrower than this cannot hold its own name */
 const LABEL_MIN_PX = 46;
 
-// ⛔ NO `key`: this viewpoint is `useState`, unlike this file's "where"
-// dimension a few lines up, which really is URL-backed through `useViewState`.
-// One component, both kinds — which is why the type had to stop asking for a
-// key the ephemeral one does not have.
-const VIEWPOINT_DIMENSION = {
-  options: ["quarter", "front", "plan"] as const,
-};
-const VIEWPOINT_LABELS: Record<string, string> = {
-  quarter: "Quarter",
-  front: "Front",
-  plan: "Plan",
-};
+// The camera's options and labels live with the SPEC (`massif-layout`), the one
+// the RSC resolves — so the pills and the resolver cannot name different sets.
 
-export function CategoryMassif({ rows, totals, periodLabel, priorLabel }: CategoryMassifProps) {
+export function CategoryMassif({
+  rows,
+  totals,
+  periodLabel,
+  priorLabel,
+  viewpoint: viewpointValue,
+  onSelectViewpoint,
+}: CategoryMassifProps) {
   const router = useRouter();
   const reducedMotion = usePrefersReducedMotion();
   const stageRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
-  const [viewpoint, setViewpoint] = useState<MassifViewpoint>("quarter");
+  // the resolver only ever returns a declared option; a value that somehow is
+  // not one falls to the default rather than indexing the camera table with it
+  const viewpoint: MassifViewpoint =
+    viewpointValue in MASSIF_VIEWPOINTS ? (viewpointValue as MassifViewpoint) : "quarter";
   const [hovered, setHovered] = useState<string | null>(null);
 
   useLayoutEffect(() => {
@@ -215,10 +233,10 @@ export function CategoryMassif({ rows, totals, periodLabel, priorLabel }: Catego
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <Slug layout={layout} active={active} periodLabel={periodLabel} priorLabel={priorLabel} />
         <ViewSwitcher
-          dimension={VIEWPOINT_DIMENSION}
+          dimension={MASSIF_VIEW_DIMENSION}
           value={viewpoint}
-          onSelect={(v) => setViewpoint(v as MassifViewpoint)}
-          labels={VIEWPOINT_LABELS}
+          onSelect={onSelectViewpoint}
+          labels={MASSIF_VIEW_LABELS}
           ariaLabel="Massif viewpoint"
         />
       </div>

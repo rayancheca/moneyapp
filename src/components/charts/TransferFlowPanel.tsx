@@ -13,6 +13,7 @@ import {
   FLOW_SHAPE_DIMENSION,
   FLOW_SHAPE_LABELS,
   FLOW_SURFACE,
+  FLOW_TOWER_VIEW_DIMENSION,
   FLOW_VIEW_SPEC,
 } from "@/components/charts/transfer-flow-view-spec";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
@@ -108,6 +109,10 @@ export function TransferFlowPanel({ data, state, range }: TransferFlowPanelProps
           hoveredEdgeId={hoveredEdgeId}
           onHoverEdge={setHoveredEdgeId}
           hrefForEdge={(arc) => senderHref(arc.fromAccountId)}
+          /* the camera is this surface's view state, resolved by the RSC and
+             written back through the same setView the other pills use */
+          viewpoint={view[FLOW_TOWER_VIEW_DIMENSION.key] ?? "quarter"}
+          onSelectViewpoint={(v) => setView(FLOW_TOWER_VIEW_DIMENSION.key, v)}
         />
       )}
 

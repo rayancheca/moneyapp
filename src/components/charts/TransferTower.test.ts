@@ -2,10 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 
+import { TOWER_VIEWPOINTS } from "@/lib/transfer-tower-layout";
 import {
   FLOW_MEASURE_DIMENSION,
   FLOW_SHAPE_DIMENSION,
   FLOW_SURFACE,
+  FLOW_TOWER_VIEW_DIMENSION,
   FLOW_VIEW_SPEC,
 } from "./transfer-flow-view-spec";
 import { LENS_DIMENSION } from "./chart-lens";
@@ -47,9 +49,17 @@ function classNames(src: string): string[] {
 }
 
 describe("every declared view dimension is actually wired end to end", () => {
-  test("the spec declares the three dimensions, with the lens last", () => {
-    expect(FLOW_VIEW_SPEC.map((d) => d.key)).toEqual(["measure", "shape", "lens"]);
+  test("the spec declares the four dimensions, with the lens last", () => {
+    expect(FLOW_VIEW_SPEC.map((d) => d.key)).toEqual(["measure", "shape", "towerView", "lens"]);
     expect(FLOW_VIEW_SPEC[FLOW_VIEW_SPEC.length - 1]).toBe(LENS_DIMENSION);
+  });
+
+  /* ⛔ Three components once declared a dimension called `viewpoint`. Two
+     dimensions sharing a key on one surface would be two switchers writing one
+     param — the failure this whole file exists to make impossible. */
+  test("no two dimensions on this surface share a key", () => {
+    const keys = FLOW_VIEW_SPEC.map((d) => d.key);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
   test("the PAGE reads every dimension's URL param — or a shared link lies", () => {
@@ -66,12 +76,19 @@ describe("every declared view dimension is actually wired end to end", () => {
     }
   });
 
-  test("the PANEL renders a switcher for every dimension — or it is unreachable", () => {
+  test("SOME file renders a switcher for every dimension — or it is unreachable", () => {
     // Assert the BINDING, not merely the mention. The first version of this read
     // `includes(X) || includes("dimension={LENS_DIMENSION}")` — and the panel
     // always contains that literal, so the right operand was unconditionally
     // true and the whole check was `X || true`. It could never fail.
-    const bound = (panel.match(/dimension=\{(\w+)\}/g) ?? []).map((m) =>
+    /*
+     * ⚠️ The panel is no longer the only place a switcher can live. The tower's
+     * own CAMERA pill is rendered inside `TransferTower.tsx`, beside the
+     * drawing it turns — so the search is over both files, and the count below
+     * is over both too.
+     */
+    const markup = `${panel}\n${tower}`;
+    const bound = (markup.match(/dimension=\{(\w+)\}/g) ?? []).map((m) =>
       m.replace(/dimension=\{|\}/g, ""),
     );
     // The identifiers are not uniformly named (`FLOW_MEASURE_DIMENSION` is
@@ -81,6 +98,7 @@ describe("every declared view dimension is actually wired end to end", () => {
     const CONSTANT: Record<string, string> = {
       measure: "FLOW_MEASURE_DIMENSION",
       shape: "FLOW_SHAPE_DIMENSION",
+      towerView: "FLOW_TOWER_VIEW_DIMENSION",
       lens: "LENS_DIMENSION",
     };
     for (const dim of FLOW_VIEW_SPEC) {
@@ -88,12 +106,13 @@ describe("every declared view dimension is actually wired end to end", () => {
       expect(expected, `dimension "${dim.key}" is missing from this test's CONSTANT map`).toBeDefined();
       expect(
         bound,
-        `no <ViewSwitcher dimension={${expected}}> in TransferFlowPanel.tsx, so the ` +
+        `no <ViewSwitcher dimension={${expected}}> in TransferFlowPanel.tsx or ` +
+          `TransferTower.tsx, so the ` +
           `"${dim.key}" dimension has no control and is reachable only by URL`,
       ).toContain(expected);
     }
     // one <ViewSwitcher> per dimension, no more and no fewer
-    expect(panel.match(/<ViewSwitcher/g) ?? []).toHaveLength(FLOW_VIEW_SPEC.length);
+    expect(markup.match(/<ViewSwitcher/g) ?? []).toHaveLength(FLOW_VIEW_SPEC.length);
     expect(bound).toHaveLength(FLOW_VIEW_SPEC.length);
   });
 
@@ -124,13 +143,17 @@ describe("every declared view dimension is actually wired end to end", () => {
     expect(
       viewStateToParams(FLOW_VIEW_SPEC, { measure: "net", shape: "tower", lens: "chart" }),
     ).toEqual({ measure: "net", shape: "tower" });
+    // …including the camera, which used to be unshareable by construction
+    expect(
+      viewStateToParams(FLOW_VIEW_SPEC, { measure: "gross", shape: "tower", towerView: "plan", lens: "chart" }),
+    ).toEqual({ shape: "tower", towerView: "plan" });
   });
 
   test("an existing persisted preference from before `shape` existed still resolves", () => {
     // app_settings rows written by the two-dimension version are missing the key
     // entirely; that must be a graceful default, never an error.
     const state = resolveViewState(FLOW_VIEW_SPEC, {}, { measure: "net", lens: "table" });
-    expect(state).toEqual({ measure: "net", shape: "spine", lens: "table" });
+    expect(state).toEqual({ measure: "net", shape: "spine", towerView: "quarter", lens: "table" });
   });
 
   test("the surface key is unchanged, so nobody's saved preference is orphaned", () => {
@@ -140,6 +163,16 @@ describe("every declared view dimension is actually wired end to end", () => {
   test("spine is the default shape — the tower is opt-in, never forced", () => {
     expect(FLOW_SHAPE_DIMENSION.options[0]).toBe("spine");
     expect(FLOW_MEASURE_DIMENSION.options[0]).toBe("gross");
+  });
+
+  /* ⚠️ `options[0]` IS the default, and the tower has always opened on the
+     quarter camera — reading the spec off a differently-ordered list would have
+     silently changed the drawing on a cold load. */
+  test("the camera the tower opens on is the one it always opened on", () => {
+    expect(FLOW_TOWER_VIEW_DIMENSION.options[0]).toBe("quarter");
+    for (const option of FLOW_TOWER_VIEW_DIMENSION.options) {
+      expect(Object.keys(TOWER_VIEWPOINTS)).toContain(option);
+    }
   });
 });
 

@@ -1,4 +1,5 @@
 import { LENS_DIMENSION } from "@/components/charts/chart-lens";
+import { TOWER_VIEWPOINT_ORDER } from "@/lib/transfer-tower-layout";
 import { type ViewDimension, type ViewSpec } from "@/lib/view-state";
 
 /**
@@ -38,11 +39,36 @@ export const FLOW_SHAPE_DIMENSION: ViewDimension = {
   options: ["spine", "tower"],
 };
 
+/**
+ * The tower's CAMERA.
+ *
+ * 🔴 It lived in `useState` inside `TransferTower` while declaring a URL key
+ * named `viewpoint` — a word `NetWorthTerrain` and `CategoryMassif` declared
+ * too, so wiring any of them naively would have put three surfaces on one
+ * param. Made real on the owner's instruction, 2026-09-02, with a name only
+ * this surface uses.
+ *
+ * ⚠️ `TOWER_VIEWPOINT_ORDER` already leads with `quarter`, which is the camera
+ * the tower has always opened on — and `options[0]` IS the default, so the two
+ * facts have to agree. `TransferTower.test.ts` asserts they do.
+ */
+export const FLOW_TOWER_VIEW_DIMENSION: ViewDimension = {
+  key: "towerView",
+  options: [...TOWER_VIEWPOINT_ORDER],
+};
+
 export const FLOW_VIEW_SPEC: ViewSpec = [
   FLOW_MEASURE_DIMENSION,
   FLOW_SHAPE_DIMENSION,
+  FLOW_TOWER_VIEW_DIMENSION,
   LENS_DIMENSION, // ALWAYS last
 ];
 
 export const FLOW_MEASURE_LABELS: Record<string, string> = { gross: "Gross", net: "Net" };
 export const FLOW_SHAPE_LABELS: Record<string, string> = { spine: "Spine", tower: "Tower" };
+export const FLOW_TOWER_VIEW_LABELS: Record<string, string> = {
+  quarter: "Quarter",
+  front: "Front",
+  side: "Side",
+  plan: "Plan",
+};

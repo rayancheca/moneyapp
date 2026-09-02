@@ -10,7 +10,7 @@ import { CATEGORY_HUE_NAMES, categoryHueVar } from "@/lib/category-palette";
 import { DAILY_SERIES_RANGES, rangeLabel, type ChartRange } from "@/lib/chart-range";
 import type { SankeyGraph } from "@/lib/sankey-layout";
 import { viewHrefQuery, type ViewState } from "@/lib/view-state";
-import { DASHBOARD_SURFACE, DASHBOARD_VIEW_SPEC } from "./dashboard-view-spec";
+import { DASHBOARD_CHART_DIMENSION, DASHBOARD_SURFACE, DASHBOARD_VIEW_SPEC } from "./dashboard-view-spec";
 import type { NetWorthPoint } from "@/services/derivation";
 import type { DashboardAccountOption, DashboardChartData } from "@/services/dashboard-series";
 import type { NetWorthAttribution } from "@/services/attribution";
@@ -146,7 +146,7 @@ export function DashboardChartSection({
         <div>
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <ViewSwitcher
-              dimension={DASHBOARD_VIEW_SPEC[0]!}
+              dimension={DASHBOARD_CHART_DIMENSION}
               value={mode}
               onSelect={(v) => setView("chart", v)}
               labels={MODE_LABELS}
@@ -210,7 +210,8 @@ export function DashboardChartSection({
                 <NetWorthBridge
                   attribution={bridgeByRange[activeRange]}
                   windowLabel={rangeLabel(activeRange).toLowerCase()}
-                  showTableToggle
+                  lens={state.bridgeLens ?? "chart"}
+                  onSelectLens={(v) => setView("bridgeLens", v)}
                   {...(heightClass ? { heightClass } : {})}
                 />
               ) : (
@@ -254,7 +255,8 @@ export function DashboardChartSection({
                 heightClass={heightClass}
                 ariaLabel={`Money flow · ${rangeLabel(activeRange)}`}
                 emptyLabel="No money flow in this range."
-                showTableToggle
+                lens={state.sankeyLens ?? "flow"}
+                onSelectLens={(v) => setView("sankeyLens", v)}
               />
             </div>
           ) : mode === "terrain" ? (
@@ -271,6 +273,14 @@ export function DashboardChartSection({
               reference={netWorthPoints}
               today={today}
               colorByKey={colorByKey}
+              /* the terrain's lens and camera are this surface's view state,
+                 resolved by the RSC and written back through the same
+                 `setView` the chart pills use — so both are linkable and both
+                 survive a reload */
+              lens={state.terrainLens ?? "relief"}
+              viewpoint={state.terrainView ?? "quarter"}
+              onSelectLens={(v) => setView("terrainLens", v)}
+              onSelectViewpoint={(v) => setView("terrainView", v)}
               {...(heightClass ? { heightClass } : {})}
             />
           ) : mode === "combined" ? (

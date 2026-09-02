@@ -622,12 +622,37 @@ export function pointsAttr(points: readonly MassifPoint[]): string {
  * `list` is FIRST, so it is the default: the ranked list that has always been in
  * this card keeps rendering for anyone who never picks a lens.
  */
-export const WHERE_VIEW_SPEC: ViewSpec = [{ key: "where", options: ["list", "relief", "table"] }];
+/**
+ * ⚠️ TWO dimensions, and the second is the relief's CAMERA.
+ *
+ * 🔴 It used to live in `useState` inside `CategoryMassif` while declaring a
+ * URL key named `viewpoint` that nothing read — a key `NetWorthTerrain` and
+ * `TransferTower` also declared, so three surfaces would have collided on one
+ * param had any of them been wired. Each carries its own name now, and this one
+ * is `massifView`. Made real on the owner's instruction, 2026-09-02: linkable
+ * and remembered, like the "where" dimension beside it.
+ *
+ * ⚠️ `quarter` LEADS because `options[0]` is the default and that is the camera
+ * the relief has always opened on. Reading the spec off the old switcher order
+ * would have changed it.
+ */
+export const WHERE_VIEW_SPEC: ViewSpec = [
+  { key: "where", options: ["list", "relief", "table"] },
+  { key: "massifView", options: ["quarter", "front", "plan"] },
+];
 
 export const WHERE_VIEW_LABELS: Record<string, string> = {
   list: "List",
   relief: "Relief",
   table: "Table",
+};
+
+export const MASSIF_VIEW_DIMENSION = WHERE_VIEW_SPEC[1]!;
+
+export const MASSIF_VIEW_LABELS: Record<string, string> = {
+  quarter: "Quarter",
+  front: "Front",
+  plan: "Plan",
 };
 
 // ── Small pure helpers ───────────────────────────────────────────────

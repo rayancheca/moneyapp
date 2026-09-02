@@ -3,6 +3,7 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
+import { BRIDGE_LENS_DIMENSION } from "@/components/dashboard/dashboard-view-spec";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import {
   ATTRIBUTION_BAND_LABEL,
@@ -61,7 +62,10 @@ const TOTAL_LABEL_ROW = 16;
  */
 const RESTATEMENTS_SHOWN = 6;
 
-const TABLE_DIMENSION = { key: "bridge", options: ["chart", "table"] } as const;
+// 🔴 This declared `key: "bridge"` while holding its value in `useState` — and
+// `bridge` is already a VALUE of the surface's `chart` dimension, so the one
+// name it chose was the one guaranteed to read as something else. The dimension
+// and its labels now live with the surface that owns them, as `bridgeLens`.
 const TABLE_LABELS = { chart: "Bridge", table: "Table" };
 
 const GLYPH: Record<string, string> = { up: "▲", down: "▼", flat: "–" };
@@ -70,7 +74,12 @@ export interface NetWorthBridgeProps {
   attribution: Attribution & { openingCents: number; closingCents: number };
   windowLabel: string;
   heightClass?: string;
-  showTableToggle?: boolean;
+  /**
+   * The bridge⇄table lens, when the SURFACE owns it. Omit it and no toggle
+   * renders — a control the surface cannot remember is what was wrong before.
+   */
+  lens?: string;
+  onSelectLens?: (value: string) => void;
 }
 
 interface Tooltip {
@@ -92,14 +101,15 @@ export function NetWorthBridge({
   attribution,
   windowLabel,
   heightClass = "h-[15rem]",
-  showTableToggle = false,
+  lens,
+  onSelectLens,
 }: NetWorthBridgeProps) {
   const reducedMotion = usePrefersReducedMotion();
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
   const [hovered, setHovered] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
-  const [mode, setMode] = useState<"chart" | "table">("chart");
+  const mode = lens === "table" ? "table" : "chart";
   const titleId = useId();
 
   useLayoutEffect(() => {
@@ -511,15 +521,15 @@ export function NetWorthBridge({
     </div>
   );
 
-  if (!showTableToggle) return body;
+  if (lens === undefined || onSelectLens === undefined) return body;
 
   return (
     <div>
       <div className="mb-3 flex justify-end">
         <ViewSwitcher
-          dimension={TABLE_DIMENSION}
+          dimension={BRIDGE_LENS_DIMENSION}
           value={mode}
-          onSelect={(v) => setMode(v as "chart" | "table")}
+          onSelect={onSelectLens}
           labels={TABLE_LABELS}
           ariaLabel="Bridge view"
         />

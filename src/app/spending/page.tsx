@@ -102,7 +102,12 @@ export default async function SpendingPage({
   // saveViewPreferenceAction merges per key.
   const persistedViews = readSettings(db).viewPreferences[SPENDING_SURFACE];
   const cashView = resolveViewState(CASH_VIEW_SPEC, { cash: firstParam(raw.cash) ?? undefined }, persistedViews);
-  const whereView = resolveViewState(WHERE_VIEW_SPEC, { where: firstParam(raw.where) ?? undefined }, persistedViews);
+  const whereView = resolveViewState(
+    WHERE_VIEW_SPEC,
+    // the relief's camera is real view state now, resolved beside the lens it belongs to
+    { where: firstParam(raw.where) ?? undefined, massifView: firstParam(raw.massifView) ?? undefined },
+    persistedViews,
+  );
   // params to preserve when switching views: the current period, and the OTHER
   // card's lens — so flipping one card never drops the other out of the URL.
   const periodParams: Record<string, string> = period.key

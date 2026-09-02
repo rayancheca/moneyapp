@@ -3,9 +3,12 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 import type { DashboardMode } from "@/lib/multi-series";
 import { resolveViewState } from "@/lib/view-state";
+import { TERRAIN_VIEWPOINTS } from "@/lib/terrain-layout";
 import {
   DASHBOARD_SURFACE,
   DASHBOARD_VIEW_SPEC,
+  TERRAIN_LENS_DIMENSION,
+  TERRAIN_VIEW_DIMENSION,
   dashboardChartView,
   dashboardSeriesMode,
 } from "@/components/dashboard/dashboard-view-spec";
@@ -132,8 +135,26 @@ describe("the escape hatches", () => {
   });
 
   test("four named viewpoints, no free tumble", () => {
-    expect(source).toContain('options: ["front", "quarter", "side", "plan"]');
+    // the options live with the SURFACE now — one declaration, resolved by the
+    // RSC and rendered by the pills, so they cannot drift apart
+    expect(TERRAIN_VIEW_DIMENSION.options).toEqual(["quarter", "front", "side", "plan"]);
     expect(geometry).toContain("TERRAIN_VIEWPOINTS");
+  });
+
+  /*
+   * ⚠️ `options[0]` IS the default. The old switcher listed "front" first while
+   * `useState` opened on "quarter" — reading the spec straight off that order
+   * would have silently changed the terrain's default camera.
+   */
+  test("the camera the terrain opens on is the one it always opened on", () => {
+    expect(TERRAIN_VIEW_DIMENSION.options[0]).toBe("quarter");
+    expect(TERRAIN_LENS_DIMENSION.options[0]).toBe("relief");
+  });
+
+  test("every declared viewpoint is a camera the geometry actually has", () => {
+    for (const option of TERRAIN_VIEW_DIMENSION.options) {
+      expect(Object.keys(TERRAIN_VIEWPOINTS)).toContain(option);
+    }
   });
 });
 
@@ -200,15 +221,46 @@ describe("the dashboard hero's view dimension", () => {
   });
 
   test("it is URL-addressable and persisted, like every other view", () => {
-    expect(resolveViewState(DASHBOARD_VIEW_SPEC, { chart: "terrain" }, undefined)).toEqual({
+    expect(resolveViewState(DASHBOARD_VIEW_SPEC, { chart: "terrain" }, undefined)).toMatchObject({
       chart: "terrain",
     });
-    expect(resolveViewState(DASHBOARD_VIEW_SPEC, {}, { chart: "terrain" })).toEqual({
+    expect(resolveViewState(DASHBOARD_VIEW_SPEC, {}, { chart: "terrain" })).toMatchObject({
       chart: "terrain",
     });
     expect(DASHBOARD_SURFACE).toBe("dashboard");
     expect(dashboardChartView({ chart: "terrain" })).toBe("terrain");
     expect(dashboardChartView({})).toBe("combined");
+  });
+
+  /*
+   * 🔴 THE PROMISE THAT WAS BROKEN. `ViewDimension.key` is documented as "the
+   * URL param key AND the app_settings key", and both of the terrain's
+   * dimensions declared one while holding their value in `useState`:
+   * `/?chart=terrain&terrainLens=table` opened on the relief, measured
+   * 2026-09-02, and the camera was lost on reload. They are real now.
+   */
+  test("the terrain's lens and camera are addressable and persisted too", () => {
+    expect(
+      resolveViewState(DASHBOARD_VIEW_SPEC, { chart: "terrain", terrainLens: "table" }, undefined),
+    ).toMatchObject({ chart: "terrain", terrainLens: "table" });
+    expect(
+      resolveViewState(DASHBOARD_VIEW_SPEC, {}, { terrainView: "plan" }),
+    ).toMatchObject({ terrainView: "plan" });
+    // the URL still beats the remembered preference, the rule the whole model rests on
+    expect(
+      resolveViewState(DASHBOARD_VIEW_SPEC, { terrainView: "side" }, { terrainView: "plan" }),
+    ).toMatchObject({ terrainView: "side" });
+    // and a typo falls back rather than reaching the camera table
+    expect(
+      resolveViewState(DASHBOARD_VIEW_SPEC, { terrainView: "orbit" }, undefined),
+    ).toMatchObject({ terrainView: "quarter" });
+  });
+
+  /* ⛔ Three components declared `viewpoint`. Any two dimensions sharing a key
+     on ONE surface would be two switchers writing one param. */
+  test("no two dimensions on this surface share a key", () => {
+    const keys = DASHBOARD_VIEW_SPEC.map((d) => d.key);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
   test("terrain draws from the SAME per-account series as the accounts view", () => {

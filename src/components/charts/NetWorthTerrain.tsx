@@ -12,6 +12,12 @@ import {
 } from "react";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
+import {
+  TERRAIN_LENS_DIMENSION,
+  TERRAIN_LENS_LABELS,
+  TERRAIN_VIEW_DIMENSION,
+  TERRAIN_VIEW_LABELS,
+} from "@/components/dashboard/dashboard-view-spec";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { formatDayLong, formatMonthYear } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
@@ -70,6 +76,17 @@ export interface NetWorthTerrainProps {
   hrefById?: Readonly<Record<string, string>>;
   /** override the plate height (the focus modal renders it taller) */
   heightClass?: string;
+  /**
+   * The two dimensions are OWNED BY THE SURFACE, not by this component: they
+   * are real view state now (URL > persisted > default), so the values arrive
+   * resolved and every change goes back through the surface's `setView`. Held
+   * in `useState` they were lost on reload and unlinkable, while both
+   * declarations named a URL param nothing read.
+   */
+  lens: string;
+  viewpoint: string;
+  onSelectLens: (value: string) => void;
+  onSelectViewpoint: (value: string) => void;
 }
 
 const DEFAULT_WIDTH = 720;
@@ -86,22 +103,9 @@ function columnBudget(width: number): number {
   return 104;
 }
 
-// ⛔ NO `key`: held in `useState`. Three components declared "viewpoint" —
-// this one, CategoryMassif and TransferTower — so wiring any of them naively
-// would have put three surfaces on one URL param.
-const VIEWPOINT_DIMENSION = {
-  options: ["front", "quarter", "side", "plan"] as const,
-};
-const VIEWPOINT_LABELS: Record<string, string> = {
-  front: "Front",
-  quarter: "Quarter",
-  side: "Side",
-  plan: "Plan",
-};
-// ⛔ NO `key`: this lens lives in `useState`, so naming a URL param would
-// promise a link that does not work. See ViewSwitcher's `dimension` prop.
-const LENS_DIMENSION = { options: ["relief", "table"] as const };
-const LENS_LABELS: Record<string, string> = { relief: "Terrain", table: "Table" };
+// The two dimensions and their labels live with the SURFACE that owns them
+// (`dashboard-view-spec`), so the spec the RSC resolves and the pills this file
+// renders cannot name different options.
 
 /** a crest narrower than a hairline reads as noise, not as a balance */
 const CREST_WIDTH = 1.75;
@@ -115,14 +119,23 @@ export function NetWorthTerrain({
   colorByKey,
   hrefById,
   heightClass = "h-[19rem] sm:h-[24rem]",
+  lens,
+  viewpoint: viewpointValue,
+  onSelectLens,
+  onSelectViewpoint,
 }: NetWorthTerrainProps) {
   const reducedMotion = usePrefersReducedMotion();
   const stageRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const hatchId = useId();
   const [size, setSize] = useState({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
-  const [viewpoint, setViewpoint] = useState<TerrainViewpoint>("quarter");
-  const [lens, setLens] = useState<"relief" | "table">("relief");
+  /*
+   * The resolver only ever hands back a declared option, so this narrowing
+   * cannot invent a camera — and a value that somehow is not one falls to the
+   * default rather than indexing `TERRAIN_VIEWPOINTS` with `undefined`.
+   */
+  const viewpoint: TerrainViewpoint =
+    viewpointValue in TERRAIN_VIEWPOINTS ? (viewpointValue as TerrainViewpoint) : "quarter";
   const [hovered, setHovered] = useState<{ id: string; day: string } | null>(null);
 
   useLayoutEffect(() => {
@@ -205,17 +218,17 @@ export function NetWorthTerrain({
         <Slug layout={layout} ribbon={active} vertex={activeVertex} today={today} />
         <div className="flex flex-wrap items-center gap-2">
           <ViewSwitcher
-            dimension={LENS_DIMENSION}
+            dimension={TERRAIN_LENS_DIMENSION}
             value={lens}
-            onSelect={(v) => setLens(v as "relief" | "table")}
-            labels={LENS_LABELS}
+            onSelect={onSelectLens}
+            labels={TERRAIN_LENS_LABELS}
             ariaLabel="Terrain lens"
           />
           <ViewSwitcher
-            dimension={VIEWPOINT_DIMENSION}
+            dimension={TERRAIN_VIEW_DIMENSION}
             value={viewpoint}
-            onSelect={(v) => setViewpoint(v as TerrainViewpoint)}
-            labels={VIEWPOINT_LABELS}
+            onSelect={onSelectViewpoint}
+            labels={TERRAIN_VIEW_LABELS}
             ariaLabel="Terrain viewpoint"
             disabled={lens !== "relief"}
           />

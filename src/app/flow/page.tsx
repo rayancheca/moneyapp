@@ -50,7 +50,7 @@ export default async function FlowPage({
   // shared link or a hard reload exposes that the `?param=` was ignored.
   const view = resolveViewState(
     FLOW_VIEW_SPEC,
-    { measure: one(raw.measure), shape: one(raw.shape), lens: one(raw.lens) },
+    { measure: one(raw.measure), shape: one(raw.shape), towerView: one(raw.towerView), lens: one(raw.lens) },
     settings.viewPreferences[FLOW_SURFACE],
   );
 

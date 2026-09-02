@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
   MASSIF_OTHER_ID,
+  MASSIF_VIEW_DIMENSION,
+  MASSIF_VIEW_LABELS,
   MASSIF_VIEWPOINTS,
   WHERE_VIEW_LABELS,
   WHERE_VIEW_SPEC,
@@ -398,17 +400,54 @@ describe("pointsAttr", () => {
 
 describe("WHERE_VIEW_SPEC", () => {
   test("defaults to the list this card has always shown", () => {
-    expect(resolveViewState(WHERE_VIEW_SPEC, {}, undefined)).toEqual({ where: "list" });
+    expect(resolveViewState(WHERE_VIEW_SPEC, {}, undefined)).toMatchObject({ where: "list" });
   });
 
   test("the URL selects a lens and an unknown value falls back", () => {
-    expect(resolveViewState(WHERE_VIEW_SPEC, { where: "relief" }, undefined)).toEqual({ where: "relief" });
-    expect(resolveViewState(WHERE_VIEW_SPEC, { where: "massif" }, undefined)).toEqual({ where: "list" });
+    expect(resolveViewState(WHERE_VIEW_SPEC, { where: "relief" }, undefined)).toMatchObject({ where: "relief" });
+    expect(resolveViewState(WHERE_VIEW_SPEC, { where: "massif" }, undefined)).toMatchObject({ where: "list" });
   });
 
   test("every option is labelled", () => {
     for (const option of WHERE_VIEW_SPEC[0]!.options) {
       expect(WHERE_VIEW_LABELS[option]).toBeTruthy();
     }
+    for (const option of MASSIF_VIEW_DIMENSION.options) {
+      expect(MASSIF_VIEW_LABELS[option]).toBeTruthy();
+    }
+  });
+
+  /*
+   * 🔴 The relief's CAMERA declared a URL key named `viewpoint` and held its
+   * value in `useState`, so the param did nothing and the choice was lost on
+   * reload — and `NetWorthTerrain` and `TransferTower` declared the same word,
+   * three surfaces on one param had any of them been wired. It is `massifView`
+   * now, and it is real.
+   */
+  test("the relief's camera is addressable, persisted, and falls back on a typo", () => {
+    expect(resolveViewState(WHERE_VIEW_SPEC, { massifView: "plan" }, undefined)).toMatchObject({
+      massifView: "plan",
+    });
+    expect(resolveViewState(WHERE_VIEW_SPEC, {}, { massifView: "front" })).toMatchObject({
+      massifView: "front",
+    });
+    expect(resolveViewState(WHERE_VIEW_SPEC, { massifView: "orbit" }, undefined)).toMatchObject({
+      massifView: "quarter",
+    });
+  });
+
+  /* ⚠️ `options[0]` IS the default, and the relief has always opened on the
+     quarter camera. Reading the spec off the old switcher order would have been
+     a silent change to what the card draws on a cold load. */
+  test("the camera the relief opens on is the one it always opened on", () => {
+    expect(MASSIF_VIEW_DIMENSION.options[0]).toBe("quarter");
+    for (const option of MASSIF_VIEW_DIMENSION.options) {
+      expect(Object.keys(MASSIF_VIEWPOINTS)).toContain(option);
+    }
+  });
+
+  test("no two dimensions on this surface share a key", () => {
+    const keys = WHERE_VIEW_SPEC.map((d) => d.key);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 });

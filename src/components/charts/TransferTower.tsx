@@ -12,6 +12,10 @@ import {
 } from "react";
 
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
+import {
+  FLOW_TOWER_VIEW_DIMENSION,
+  FLOW_TOWER_VIEW_LABELS,
+} from "@/components/charts/transfer-flow-view-spec";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import {
@@ -79,15 +83,9 @@ const MIN_HIT_WIDTH = 14;
 const TOOLTIP_W = 210;
 const TOOLTIP_H_ESTIMATE = 74;
 
-// ⛔ NO `key`: held in `useState`, and "viewpoint" was declared by three
-// different components at once.
-const VIEWPOINT_DIMENSION = { options: [...TOWER_VIEWPOINT_ORDER] };
-const VIEWPOINT_LABELS: Record<string, string> = {
-  quarter: "Quarter",
-  front: "Front",
-  side: "Side",
-  plan: "Plan",
-};
+// The camera's options and labels live with the SURFACE that owns them
+// (`transfer-flow-view-spec`), so the spec the RSC resolves and the pills this
+// file renders name one set of options.
 
 export interface TransferTowerProps {
   data: TransferFlowData;
@@ -99,6 +97,13 @@ export interface TransferTowerProps {
   hrefForEdge?: (arc: TowerArcShape) => string;
   heightClass?: string;
   emptyLabel?: string;
+  /**
+   * The camera is the /flow surface's view state (URL > persisted > default),
+   * not a local `useState` that a reload forgets while declaring a URL key
+   * nothing read.
+   */
+  viewpoint: string;
+  onSelectViewpoint: (value: string) => void;
 }
 
 interface Tooltip {
@@ -119,6 +124,8 @@ export function TransferTower({
   // touches its neighbour and the months stop being separable.
   heightClass = "h-[26rem] sm:h-[34rem] lg:h-[38rem]",
   emptyLabel = "No transfers between your accounts in this period.",
+  viewpoint: viewpointValue,
+  onSelectViewpoint,
 }: TransferTowerProps) {
   const router = useRouter();
   const reducedMotion = usePrefersReducedMotion();
@@ -128,7 +135,10 @@ export function TransferTower({
   const descId = useId();
 
   const [size, setSize] = useState({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
-  const [viewpoint, setViewpoint] = useState<TowerViewpoint>("quarter");
+  // the resolver only returns a declared option; anything else falls to the
+  // default rather than indexing the camera table with it
+  const viewpoint: TowerViewpoint =
+    viewpointValue in TOWER_VIEWPOINTS ? (viewpointValue as TowerViewpoint) : "quarter";
   const [innerHover, setInnerHover] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
   const tipRef = useRef<HTMLDivElement>(null);
@@ -239,10 +249,10 @@ export function TransferTower({
     <figure className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <ViewSwitcher
-          dimension={VIEWPOINT_DIMENSION}
+          dimension={FLOW_TOWER_VIEW_DIMENSION}
           value={viewpoint}
-          onSelect={(v) => setViewpoint(v as TowerViewpoint)}
-          labels={VIEWPOINT_LABELS}
+          onSelect={onSelectViewpoint}
+          labels={FLOW_TOWER_VIEW_LABELS}
           ariaLabel="Tower viewpoint"
         />
         <p className="text-xs text-ink-muted">

@@ -12,6 +12,10 @@ import {
 } from "react";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
+import {
+  SANKEY_LENS_DIMENSION,
+  SANKEY_LENS_LABELS,
+} from "@/components/dashboard/dashboard-view-spec";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { formatCents } from "@/lib/money";
 import { computeSankeyLayout, type SankeyGraph, type SankeyLayoutNode } from "@/lib/sankey-layout";
@@ -50,8 +54,17 @@ interface SankeyChartProps {
   /** describes the flow for assistive tech + the empty state */
   ariaLabel?: string;
   emptyLabel?: string;
-  /** internal chart⇄table toggle — the dashboard uses it; /spending owns a surface table instead */
-  showTableToggle?: boolean;
+  /**
+   * The flow⇄table lens, when the SURFACE owns it — the dashboard does;
+   * /spending owns a surface-level table instead and passes neither, which is
+   * what hides the toggle there.
+   *
+   * 🔴 This used to be a `showTableToggle` boolean over a local `useState`, and
+   * the dimension beside it declared a URL key named `sankey` that nothing
+   * read. Passing the value and its setter is what makes the key true.
+   */
+  lens?: string;
+  onSelectLens?: (value: string) => void;
 }
 
 interface Tooltip {
@@ -62,9 +75,9 @@ interface Tooltip {
   share: string;
 }
 
-// ⛔ NO `key`: held in `useState`, not in the URL.
-const TABLE_DIMENSION = { options: ["flow", "table"] } as const;
-const TABLE_LABELS = { flow: "Flow", table: "Table" };
+// The dimension and its labels live with the SURFACE that owns them
+// (`dashboard-view-spec`), so the spec the RSC resolves and the pill rendered
+// here cannot name different options.
 
 export function SankeyChart({
   graph,
@@ -72,7 +85,8 @@ export function SankeyChart({
   formatValue = formatCents,
   ariaLabel = "Money-flow diagram",
   emptyLabel = "No money flow in this period.",
-  showTableToggle = false,
+  lens,
+  onSelectLens,
 }: SankeyChartProps) {
   const router = useRouter();
   const reducedMotion = usePrefersReducedMotion();
@@ -80,7 +94,7 @@ export function SankeyChart({
   const [size, setSize] = useState({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
   const [hovered, setHovered] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
-  const [mode, setMode] = useState<"flow" | "table">("flow");
+  const mode = lens === "table" ? "table" : "flow";
   const titleId = useId();
 
   useLayoutEffect(() => {
@@ -261,16 +275,18 @@ export function SankeyChart({
     />
   );
 
-  if (!showTableToggle) return diagram;
+  // no lens handed down means the surface does not own this dimension, and a
+  // control the surface cannot remember is exactly what was wrong before
+  if (lens === undefined || onSelectLens === undefined) return diagram;
 
   return (
     <div>
       <div className="mb-3 flex justify-end">
         <ViewSwitcher
-          dimension={TABLE_DIMENSION}
+          dimension={SANKEY_LENS_DIMENSION}
           value={mode}
-          onSelect={(v) => setMode(v as "flow" | "table")}
-          labels={TABLE_LABELS}
+          onSelect={onSelectLens}
+          labels={SANKEY_LENS_LABELS}
           ariaLabel="Sankey view"
         />
       </div>

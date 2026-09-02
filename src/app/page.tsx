@@ -119,7 +119,15 @@ export default async function DashboardPage({
   const settings = readSettings(db);
   const chartView = resolveViewState(
     DASHBOARD_VIEW_SPEC,
-    { chart: firstParam(raw.chart) ?? undefined },
+    {
+      chart: firstParam(raw.chart) ?? undefined,
+      // the terrain's lens and camera are real view state now, resolved through
+      // the same three layers as the chart mode above
+      terrainLens: firstParam(raw.terrainLens) ?? undefined,
+      terrainView: firstParam(raw.terrainView) ?? undefined,
+      sankeyLens: firstParam(raw.sankeyLens) ?? undefined,
+      bridgeLens: firstParam(raw.bridgeLens) ?? undefined,
+    },
     settings.viewPreferences[DASHBOARD_SURFACE],
   );
   const chartMode = chartView.chart ?? "combined";
