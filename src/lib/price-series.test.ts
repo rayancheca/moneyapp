@@ -98,6 +98,23 @@ describe("carriedFromDay", () => {
     expect(carriedFromDay(exact, "2026-09-02")).toBeNull();
   });
 
+  /*
+   * A carried point with nothing real behind it. `carryForwardTo` cannot produce
+   * this — it always emits the real points first — so it is a defensive branch,
+   * and the honest answer is "nothing", not the day before it. Asserted rather
+   * than assumed, because the coverage gate on src/lib is 100% for exactly this
+   * reason: an unreachable line nobody has stated an answer for is a line
+   * nobody has thought about.
+   */
+  test("a carried point with no real day behind it holds nothing", () => {
+    const orphaned = [
+      { day: "2026-09-01", valueCents: 100, complete: false },
+      { day: "2026-09-02", valueCents: 100, complete: false },
+    ];
+    expect(carriedFromDay(orphaned, "2026-09-02")).toBeNull();
+    expect(carriedFromDay(orphaned, "2026-09-01")).toBeNull();
+  });
+
   /* The output of `carryForwardTo` is the real input to this, so they are
      checked together rather than against a hand-built shape. */
   test("it reads the tail carryForwardTo actually produces", () => {
