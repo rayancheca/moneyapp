@@ -538,8 +538,21 @@ export function scheduledCategoryIds(db: AppDatabase): Set<string> {
  */
 export function categoryTouchCounts(db: AppDatabase): Map<string, number> {
   const counts = new Map<string, number>();
+  /*
+   * The system "Uncategorized" row IS the NULL bucket (owner decision
+   * 2026-09-03, `CategoryIndex.uncategorizedIds`), so a category-less row
+   * touches it. Without this the note above the list could call that row empty
+   * while the row itself counted the bucket — the note-over-list contradiction
+   * this function was written to prevent, one screen down.
+   */
+  const systemIds = db
+    .select({ id: categories.id })
+    .from(categories)
+    .where(eq(categories.kind, "system"))
+    .all()
+    .map((r) => r.id);
   const bump = (id: string | null) => {
-    if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+    for (const target of id === null ? systemIds : [id]) counts.set(target, (counts.get(target) ?? 0) + 1);
   };
   for (const r of db
     .select({ categoryId: transactions.categoryId })

@@ -567,6 +567,10 @@ describe("listCategoryTree and the system row", () => {
     insert.run("t3", acct, sys.id, "h3");
     const node = listCategoryTree(bundle.db).find((n) => n.kind === "system")!;
     expect(node.txnCount).toBe(3);
+    // …and the note's own counter agrees, so "holds no transactions" can never
+    // sit over a row reading "3 txn". Killed by mutation: bumping only non-null
+    // ids leaves the system row untouched here.
+    expect(categoryTouchCounts(bundle.db).get(sys.id)).toBe(3);
   });
 });
 
