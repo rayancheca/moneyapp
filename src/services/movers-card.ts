@@ -333,6 +333,7 @@ export function moversCard(db: AppDatabase, today: string = todayIso()): MoversC
   let month: string | null = null;
   let baselineKeys: string[] = [];
   let liveSpenders: string[] = [];
+  let chosenOffset = 0;
   for (let offset = 1; offset <= MAX_MONTHS_BEHIND; offset += 1) {
     const candidate = monthKey(addCalendarMonths(`${currentMonth}-01`, -offset));
     const keys: string[] = [];
@@ -357,6 +358,7 @@ export function moversCard(db: AppDatabase, today: string = todayIso()): MoversC
       month = candidate;
       baselineKeys = keys;
       liveSpenders = live;
+      chosenOffset = offset;
       break;
     }
   }
@@ -475,10 +477,26 @@ export function moversCard(db: AppDatabase, today: string = todayIso()): MoversC
   const currentMonthLabel = formatMonthYear(`${currentMonth}-01`);
   const laggingShare = lagging.reduce((sum, l) => sum + l.sharePct, 0);
   const earliestThrough = [...lagging].map((l) => l.through).sort().at(0);
+  /*
+   * 🔴 A two-month jump explained by a one-month reason. On 2026-09-03 the
+   * dashboard read "Sep 2026 is still running, and it is not fully imported
+   * either …" over figures for JULY: August cleared the calendar, failed the
+   * import test, and was passed over in silence — the walk above skips any
+   * number of complete months and only the running one was ever named. The
+   * /spending panel's copy of this sentence names the skip; this one does too.
+   */
+  const skipped = Array.from({ length: Math.max(0, chosenOffset - 1) }, (_, i) =>
+    formatMonthYear(`${monthKey(addCalendarMonths(`${currentMonth}-01`, -(i + 1)))}-01`),
+  ).reverse();
+  const skippedNote =
+    skipped.length === 0
+      ? ""
+      : ` ${skipped.join(" and ")} ${skipped.length === 1 ? "is" : "are"} complete, but not every account you spend from has been imported through ${skipped.length === 1 ? "its" : "their"} last day — so these read ${formatMonthYear(`${month}-01`)} rather than ${skipped.at(-1)}.`;
   const currentMonthNote =
-    lagging.length === 0
+    (lagging.length === 0
       ? `${currentMonthLabel} is still running, so it is not counted here — a part month set against whole months reads as a fall that has not happened.`
-      : `${currentMonthLabel} is still running, and it is not fully imported either: ${Math.round(laggingShare)}% of your usual spending posts to ${lagging.length} ${plural(lagging.length, "account", "accounts")} the ledger has only been shown through ${earliestThrough === undefined ? "no day at all" : formatDayShort(earliestThrough)} at the earliest. A shortfall there would be missing statements, not less spending.`;
+      : `${currentMonthLabel} is still running, and it is not fully imported either: ${Math.round(laggingShare)}% of your usual spending posts to ${lagging.length} ${plural(lagging.length, "account", "accounts")} the ledger has only been shown through ${earliestThrough === undefined ? "no day at all" : formatDayShort(earliestThrough)} at the earliest. A shortfall there would be missing statements, not less spending.`) +
+    skippedNote;
 
   /*
    * An account that joined the ledger PART WAY through the baseline drags its

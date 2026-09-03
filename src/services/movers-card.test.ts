@@ -201,6 +201,26 @@ describe("moversCard — which month it compares", () => {
     expect(card.usualMonthlyCents).toBe(10_000);
     // and every category is seen in all six, not five
     expect(card.movers.every((m) => m.monthsSeen === 6)).toBe(true);
+    /*
+     * 🔴 …and the skip is SAID. The dashboard read "Sep 2026 is still running…"
+     * over July's figures with August passed over in silence. Killed by
+     * mutation: dropping the skipped clause leaves the running-month sentence
+     * alone, and this line finds no July in it.
+     */
+    expect(card.currentMonthNote).toContain(
+      "Jul 2026 is complete, but not every account you spend from has been imported through its last day — so these read Jun 2026 rather than Jul 2026.",
+    );
+  });
+
+  test("the compared month right before the running one names no skip", () => {
+    for (const m of ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"]) {
+      addTxn(`${m}-10`, -10_000, "Food");
+    }
+    addTxn("2026-07-10", -25_000, "Food");
+    importedThrough("2026-08-20", MAIN);
+    const card = moversCard(bundle.db, TODAY)!;
+    expect(card.month).toBe("2026-07");
+    expect(card.currentMonthNote).not.toContain("is complete, but");
   });
 
   /**
