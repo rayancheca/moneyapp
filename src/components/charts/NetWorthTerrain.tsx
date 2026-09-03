@@ -692,7 +692,8 @@ function TerrainTable({
         </span>
       ),
     },
-    { key: "side", header: "Side", render: (r) => (r.isLiability ? "Owed" : "Held") },
+    // a card the bank owes on is still on the owed side — it is just in credit
+    { key: "side", header: "Side", render: (r) => (r.isLiability ? (r.lastCents > 0 ? "Owed · in credit" : "Owed") : "Held") },
     {
       key: "from",
       header: "First day",

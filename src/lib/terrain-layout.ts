@@ -416,8 +416,19 @@ export function computeTerrainLayout(
     valueAxisLegible: options.camera.elevationDeg < VALUE_AXIS_MAX_ELEVATION,
     debtMultiple: scale.debtMultiple,
     totalLatestCents: sum(latest),
-    assetsLatestCents: sum(latest.map((v) => Math.max(0, v))),
-    owedLatestCents: -sum(latest.map((v) => Math.min(0, v))),
+    /*
+     * 🔴 By SIDE, not by sign. These were the positive and negative parts of
+     * every ribbon's last value, and on 2026-09-03 — the day Chase Sapphire
+     * closed $82.72 in credit — the terrain read "$114,581.69 held, $925.61
+     * owed" under a header reading "Assets $114,498.97 · Liabilities $842.89".
+     * Every other surface (the header, the Assets and Amount-owed lines, the
+     * runway) nets an account within its own side; the cards card is the one
+     * place the gross is named, and it says why. The terrain agrees with the
+     * page it sits on now, and a liability row in credit says so in its Side
+     * cell rather than being counted as money held.
+     */
+    assetsLatestCents: sum(latest.filter((_, i) => !inputs[i]!.isLiability)),
+    owedLatestCents: -sum(latest.filter((_, i) => inputs[i]!.isLiability)),
     ribbonCount: inputs.length,
     columnCount: cols.length,
     unverifiedSpanCount: sum(world.map((r) => r.unverifiedSpanCount)),

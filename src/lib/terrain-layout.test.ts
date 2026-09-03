@@ -593,6 +593,25 @@ describe("computeTerrainLayout encodings", () => {
     expect(layout.owedLatestCents).toBe(4_000);
     expect(layout.totalLatestCents).toBe(178_000);
   });
+
+  /*
+   * 🔴 The terrain read "$114,581.69 held, $925.61 owed" under a header reading
+   * "Assets $114,498.97 · Liabilities $842.89" — it split by sign, the page by
+   * side. A card in credit belongs to the owed side, netted, like every other
+   * surface. Killed by mutation: splitting by sign again reads the credit as
+   * $1,000 held and $4,000 owed.
+   */
+  test("a liability in credit nets the owed side down instead of counting as money held", () => {
+    const inCredit = ribbon({
+      id: "sapphire",
+      isLiability: true,
+      points: [{ day: "2026-01-03", valueCents: 1_000, verified: true }],
+    });
+    const layout = computeTerrainLayout([...RIBBONS, inCredit], OPTS);
+    expect(layout.assetsLatestCents).toBe(182_000);
+    expect(layout.owedLatestCents).toBe(3_000);
+    expect(layout.totalLatestCents).toBe(179_000);
+  });
 });
 
 // ── The plate ────────────────────────────────────────────────────────
