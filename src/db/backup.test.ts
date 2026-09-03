@@ -7,6 +7,7 @@ import { createDatabase, type AppDatabase, type DbBundle } from "./client";
 import {
   classifySnapshot,
   clearSnapshotStateCache,
+  dailySnapshotDir,
   listSnapshots,
   manualSnapshot,
   maybeSnapshot,
@@ -313,6 +314,30 @@ describe("withPreMutationSnapshot", () => {
     expect(ran).toBe(true);
     expect(fs.existsSync(path.join(process.cwd(), "backups"))).toBe(false);
     memory.sqlite.close();
+  });
+});
+
+describe("dailySnapshotDir", () => {
+  const real = path.join(process.cwd(), "data", "moneyapp.db");
+
+  test("the real database snapshots into the real archive", () => {
+    expect(dailySnapshotDir(real, {})).toBe(path.join(process.cwd(), "data", "backups"));
+  });
+
+  /*
+   * 🔴 The e2e fixture's daily snapshot was found IN the owner's rotation —
+   * `data/e2e.db` lives beside the real file, and a fixed default folder does
+   * not care which database it is snapshotting.
+   */
+  test("another database beside the real one is not snapshotted into its archive", () => {
+    expect(dailySnapshotDir(path.join(process.cwd(), "data", "e2e.db"), {})).toBeNull();
+    expect(dailySnapshotDir("/somewhere/else/moneyapp.db", {})).toBeNull();
+  });
+
+  test("an explicit MONEYAPP_BACKUPS_DIR is honoured for any database, and an empty one is not", () => {
+    expect(dailySnapshotDir("/tmp/fixture.db", { MONEYAPP_BACKUPS_DIR: "/tmp/fixture-backups" })).toBe("/tmp/fixture-backups");
+    expect(dailySnapshotDir(real, { MONEYAPP_BACKUPS_DIR: "/tmp/elsewhere" })).toBe("/tmp/elsewhere");
+    expect(dailySnapshotDir("/tmp/fixture.db", { MONEYAPP_BACKUPS_DIR: "" })).toBeNull();
   });
 });
 

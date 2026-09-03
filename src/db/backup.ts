@@ -165,7 +165,37 @@ export interface PreMutationSnapshotResult {
  * whole point is to recognise the real database whatever the env says.
  */
 function isRealDatabase(sqlite: Database.Database): boolean {
-  return path.resolve(sqlite.name) === path.resolve(process.cwd(), "data", "moneyapp.db");
+  return isRealDatabasePath(sqlite.name);
+}
+
+function isRealDatabasePath(dbPath: string): boolean {
+  return path.resolve(dbPath) === path.resolve(process.cwd(), "data", "moneyapp.db");
+}
+
+/**
+ * Where the BOOT-TIME daily snapshot of `dbPath` goes — or null for "take none".
+ *
+ * 🔴 `data/backups/daily-2026-08-29.db` was the e2e FIXTURE. 1,264 rows, net
+ * worth $143,952.43, three hand categorisations — listed on /settings between
+ * the owner's real dailies with a Restore button beside it. And because the
+ * rotation keeps the newest fourteen by NAME, a fixture stamped a day ahead
+ * (the e2e server runs under TZ=Pacific/Kiritimati) sits at the TOP of the
+ * rotation and pushes a real daily out a day early, for as long as it stays.
+ * Any process that opened another database beside the real one
+ * (`MONEYAPP_DB_PATH=data/e2e.db`) without `MONEYAPP_BACKUPS_DIR` inherited
+ * the real archive, because the default was a fixed folder rather than a
+ * folder that belongs to a database.
+ *
+ * The rule: the real archive belongs to the real database. Anything else is
+ * snapshotted only where an explicit `MONEYAPP_BACKUPS_DIR` says to.
+ */
+export function dailySnapshotDir(
+  dbPath: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string | null {
+  const configured = env.MONEYAPP_BACKUPS_DIR;
+  if (configured !== undefined && configured !== "") return configured;
+  return isRealDatabasePath(dbPath) ? path.join(process.cwd(), "data", "backups") : null;
 }
 
 /**

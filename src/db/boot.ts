@@ -1,5 +1,5 @@
-import { defaultBackupsDir, getDbBundle } from "./client";
-import { maybeSnapshot } from "./backup";
+import { getDbBundle } from "./client";
+import { dailySnapshotDir, maybeSnapshot } from "./backup";
 import { seedDatabase } from "./seed";
 
 /**
@@ -16,8 +16,16 @@ export async function bootDatabase(): Promise<void> {
   // MONEYAPP_SKIP_BACKUP=1 turns it off for the e2e harness so the Settings
   // backup list stays a deterministic empty state across reseeds.
   if (process.env.MONEYAPP_SKIP_BACKUP === "1") return;
+  // the real archive belongs to the real database — see dailySnapshotDir
+  const dir = dailySnapshotDir(bundle.sqlite.name);
+  if (dir === null) {
+    process.stderr.write(
+      `[moneyapp] daily backup skipped: ${bundle.sqlite.name} is not the real database and MONEYAPP_BACKUPS_DIR is unset\n`,
+    );
+    return;
+  }
   try {
-    await maybeSnapshot(bundle.sqlite, defaultBackupsDir());
+    await maybeSnapshot(bundle.sqlite, dir);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`[moneyapp] daily backup failed (app continues): ${message}\n`);
