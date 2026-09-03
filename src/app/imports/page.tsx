@@ -131,7 +131,19 @@ export default async function ImportsPage({
    * regression hiding behind exactly this shape of per-row work.
    */
   const RECENT_PERIODS = 12;
-  const recentPeriods = periods.slice(0, RECENT_PERIODS).map((p) => ({
+  /*
+   * 🔴 The list and its footer counted every row of `statement_periods`; the
+   * three tiles above them count the three VERDICTS. Measured on the owner's
+   * /imports on 2026-09-03: "The 12 most recent periods" + "233 older periods
+   * are not listed" is 245, over tiles reading 201 + 40 + 0 = 241. The four
+   * missing from the tiles are `not_applicable` — a Chase spending report, a
+   * balance-less export — documents that carried nothing to check, and two of
+   * them sat in a list headed "What the statements proved". They are counted
+   * out loud below instead, and the list is what the tiles are.
+   */
+  const evidence = periods.filter((p) => p.reconciliation !== "not_applicable");
+  const notApplicable = periods.length - evidence.length;
+  const recentPeriods = evidence.slice(0, RECENT_PERIODS).map((p) => ({
     ...p,
     provenance: provenanceFor(db, { kind: "statementPeriod", id: p.id }),
   }));
@@ -239,9 +251,16 @@ export default async function ImportsPage({
                 </li>
               ))}
             </ul>
-            {periods.length > recentPeriods.length && (
+            {evidence.length > recentPeriods.length && (
               <p className="mt-3 text-xs text-ink-faint">
-                {periods.length - recentPeriods.length} older periods are not listed.
+                {evidence.length - recentPeriods.length} older periods are not listed.
+              </p>
+            )}
+            {notApplicable > 0 && (
+              <p className="mt-1 text-xs text-ink-faint">
+                {notApplicable} imported {notApplicable === 1 ? "document" : "documents"} carried no balance to
+                check — a spending report, an export without a closing figure — and{" "}
+                {notApplicable === 1 ? "is" : "are"} neither a period above nor in the counts.
               </p>
             )}
           </SurfaceCard>
