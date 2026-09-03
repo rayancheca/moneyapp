@@ -230,8 +230,13 @@ export default async function YearSummaryPage({
                 </div>
               </dl>
               <p className="mt-2 max-w-prose text-xs leading-relaxed text-ink-muted">
-                Counted in none of the totals above. Winnings are not treated as income here, and
-                losses are not treated as spending.
+                {/* 🔴 This said "losses are not treated as spending" on a page whose
+                    "What you spent" figure includes them — Gambling is an expense
+                    category in your own taxonomy, and every spending surface counts it.
+                    What is true is narrower: winnings are not income HERE. */}
+                Counted in none of the money-in totals above: winnings are not treated as income
+                here. Losses are spending — your categories file Gambling as an expense — and they
+                sit inside the figure under What you spent.
               </p>
             </SurfaceCard>
           )}
