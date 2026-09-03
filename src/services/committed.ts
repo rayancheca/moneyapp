@@ -420,12 +420,17 @@ export function runwayCard(db: AppDatabase, today: string = todayIso()): RunwayC
   let liquidCents = 0;
   let investableCents = 0;
   let cardDebtCents = 0;
+  let cardCreditCents = 0;
   for (const a of listAccounts(db)) {
     const cents = a.balance?.balanceCents ?? 0;
     if (a.type === "checking" || a.type === "savings") liquidCents += cents;
     else if (a.type === "investment") investableCents += cents;
-    // a credit balance is stored negative; the runway wants a positive debt
-    else if (a.type === "credit") cardDebtCents -= cents;
+    else if (a.type === "credit") {
+      // a credit balance is stored negative; the runway wants a positive debt —
+      // and a card in credit nets it DOWN, which the line then says (lib/runway)
+      cardDebtCents -= cents;
+      if (cents > 0) cardCreditCents += cents;
+    }
   }
 
   const month = periodBounds(today, "monthly");
@@ -436,6 +441,7 @@ export function runwayCard(db: AppDatabase, today: string = todayIso()): RunwayC
     runway: runway({
       liquidCents,
       cardDebtCents,
+      cardCreditCents,
       investableCents,
       monthlyIncomeCents: income.basis.cents,
       monthlySpendCents: spend.monthlyCents,

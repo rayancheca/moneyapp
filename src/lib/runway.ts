@@ -1,3 +1,5 @@
+import { formatCents } from "./money";
+
 /**
  * How long the money lasts.
  *
@@ -56,6 +58,13 @@ export interface RunwayInput {
    * much of the headline to leave out.
    */
   cardDebtCents: number;
+  /**
+   * Credit balances on cards — the part of `cardDebtCents` that is a NET. A
+   * card the bank owes you on makes "what you owe on cards" smaller than what
+   * you owe the other banks, and the line should say so: $842.89 read as a debt
+   * on 2026-09-03 while two cards owed $925.61 between them. Default 0.
+   */
+  cardCreditCents?: number;
   /** what liquidating the portfolio would add; negative (margin) adds nothing */
   investableCents: number;
   /** the income RATE per month — see `incomeBasis` */
@@ -161,7 +170,14 @@ export function runway(input: RunwayInput): Runway {
 
   const assumptions: RunwayAssumption[] = [
     { id: "liquid", label: "Cash you can spend today", cents: liquidCents },
-    { id: "cards", label: "Less what you owe on cards", cents: cardDebtCents },
+    {
+      id: "cards",
+      label:
+        (input.cardCreditCents ?? 0) > 0
+          ? `Less what you owe on cards, net of ${formatCents(input.cardCreditCents!)} in credit`
+          : "Less what you owe on cards",
+      cents: cardDebtCents,
+    },
     { id: "spend", label: "What you spend a month", cents: monthlySpendCents },
     { id: "income", label: "What you earn a month", cents: monthlyIncomeCents },
     { id: "investments", label: "What selling investments would add", cents: investableCents },

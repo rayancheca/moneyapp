@@ -91,11 +91,22 @@ export function accountInsightInput(
    * MAGNITUDE — largest debt first, largest balance first. Ranking a liability
    * by its signed value would put the biggest debt last and call it smallest.
    */
-  const ranked = [...side].sort(
-    (a, b) => Math.abs(b.balance.balanceCents) - Math.abs(a.balance.balanceCents) || a.name.localeCompare(b.name),
-  );
+  /*
+   * 🔴 …and by what the side MEANS, not by absolute value. A card in credit is
+   * a liability-type account with a positive balance: it owes nothing, and the
+   * bank owes it. `Math.abs` counted Chase Sapphire's $82.72 credit as $82.72
+   * OWED — /accounts/<Discover> read "55.3% of everything you owe" on
+   * 2026-09-03, a share of $1,008.33 when the two cards actually owed $925.61
+   * between them (60.2%, the cards card's own slice). Held is the positive part
+   * of an asset-side balance, owed the negative part of a liability-side one;
+   * an account on the wrong side of its sign is ranked at zero and gets no
+   * share, the same refusal a zero balance gets below.
+   */
+  const sideAmount = (a: (typeof all)[number]): number =>
+    self.isLiability ? Math.max(0, -a.balance.balanceCents) : Math.max(0, a.balance.balanceCents);
+  const ranked = [...side].sort((a, b) => sideAmount(b) - sideAmount(a) || a.name.localeCompare(b.name));
   const rank = ranked.findIndex((a) => a.id === accountId) + 1;
-  const magnitude = Math.abs(self.balance.balanceCents);
+  const magnitude = sideAmount(self);
 
   const facts: Fact[] = [];
   const candidates: InsightCandidate[] = [];
@@ -113,7 +124,7 @@ export function accountInsightInput(
    * Its share of the side it belongs to. Assets over assets, debts over debts —
    * never over net worth, which is a difference and not a whole.
    */
-  const sideTotal = side.reduce((sum, a) => sum + Math.abs(a.balance.balanceCents), 0);
+  const sideTotal = side.reduce((sum, a) => sum + sideAmount(a), 0);
   if (sideTotal > 0 && magnitude > 0 && magnitude <= sideTotal) {
     facts.push(
       shareFact("f3", self.name, magnitude / sideTotal, self.isLiability ? "everything you owe" : "everything you hold"),

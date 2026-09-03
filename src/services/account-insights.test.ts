@@ -131,6 +131,35 @@ describe("where an account sits", () => {
   });
 });
 
+describe("a card in credit", () => {
+  /*
+   * 🔴 /accounts/<Discover> read "55.3% of everything you owe" the day Chase
+   * Sapphire closed $82.72 in credit: the side total took absolute values, so
+   * a credit counted as a debt. Killed by mutation: restoring Math.abs makes
+   * Discover 55.3% again and hands the credit card a rank.
+   */
+  test("counts nothing toward what is owed, and the other cards share the real debt", () => {
+    addAccount("disc", "Discover", "credit");
+    addAccount("vx", "Venture X", "credit");
+    addAccount("sapphire", "Chase Sapphire", "credit");
+    setBalance("disc", -55_762);
+    setBalance("vx", -36_799);
+    setBalance("sapphire", 8_272); // the bank owes HIM
+    for (const id of ["disc", "vx", "sapphire"]) addTxn(id, -1_000);
+
+    const discover = accountInsights(bundle.db, "disc", TODAY)!;
+    expect(discover.insights.map((i) => i.text)).toEqual([
+      "Discover is the largest of your 3 cards and loans, at $557.62.",
+      // 557.62 of the 925.61 actually owed — never of 1,008.33
+      "Discover is 60.2% of everything you owe.",
+      "1 transaction landed in Discover.",
+    ]);
+
+    const sapphire = accountInsights(bundle.db, "sapphire", TODAY)!;
+    expect(sapphire.insights.map((i) => i.text)).toEqual(["1 transaction landed in Chase Sapphire."]);
+  });
+});
+
 describe("what it refuses to say", () => {
   test("⛔ an account that has never been imported is not an account holding zero", () => {
     /*

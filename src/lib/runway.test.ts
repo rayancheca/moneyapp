@@ -51,6 +51,15 @@ describe("runway — the real position", () => {
     expect(r.liquid.isBeyondHorizon).toBe(false);
   });
 
+  test("the cards line says when its figure is a net of a credit balance", () => {
+    const base = { liquidCents: 551_826, cardDebtCents: 84_289, investableCents: 0, monthlyIncomeCents: 453_700, monthlySpendCents: 877_056 };
+    const netted = runway({ ...base, cardCreditCents: 8_272 });
+    expect(netted.assumptions.find((a) => a.id === "cards")!.label).toBe("Less what you owe on cards, net of $82.72 in credit");
+    // and the arithmetic is untouched by the label
+    expect(netted.netCashCents).toBe(551_826 - 84_289);
+    expect(runway(base).assumptions.find((a) => a.id === "cards")!.label).toBe("Less what you owe on cards");
+  });
+
   test("cards shorten the runway rather than being ignored", () => {
     const ignored = runway({ ...REAL, cardDebtCents: 0 });
     expect(ignored.liquid.label).toBe("27 days");
