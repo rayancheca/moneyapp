@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, isNotNull, isNull, lte, notExists } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, isNotNull, isNull, lte, notExists } from "drizzle-orm";
 import { z } from "zod";
 import type { AppDatabase } from "@/db/client";
 import { budgets, BUDGET_PERIODS, type BudgetPeriodKind } from "@/db/schema/budgets";
@@ -559,7 +559,10 @@ function incomeTotalCents(db: AppDatabase, from: string, to: string): number {
 export interface IncomeExpectation {
   /** money already in, inside [start, today] */
   postedCents: number;
-  /** money still expected, strictly after today through end */
+  /**
+   * money still expected, from TODAY through end — less today's occurrence
+   * once a deposit for it has posted (that money is in `postedCents`)
+   */
   expectedCents: number;
   /**
    * What the SCHEDULE says this whole window pays, and the occurrences behind
@@ -586,10 +589,12 @@ const BASIS_HORIZON_MONTHS = 12;
  *
  * Ten budgets totalling more than the owner earns is the single most useful
  * thing the page could tell him, and before this nothing on it mentioned income
- * at all. `postedCents` / `expectedCents` are built exactly like `budgetTail`:
- * posted actuals over [start, today] plus projected occurrences strictly after
- * today, which are disjoint by construction, so a paycheque that has already
- * landed is never also forecast.
+ * at all. `postedCents` is posted actuals over [start, today]; `expectedCents`
+ * is the schedule from today on, minus today's occurrence once its deposit has
+ * posted — disjoint by the one fact that matters, so a paycheque that has
+ * already landed is never also forecast and one that has not is never lost.
+ * (⚠️ NOT built like `budgetTail`, which opens tomorrow: spending has an
+ * arrears leg to own today, and income by doctrine has none — see `from`.)
  *
  * Deliberately series-driven rather than a trailing average. His income is a
  * cash job deposited IRREGULARLY (docs/income-ground-truth.md), so a trailing
@@ -633,7 +638,45 @@ export function incomeExpectation(
     )
     .all();
 
-  const from = addDays(today, 1);
+  /*
+   * ⛔ THE FORWARD LEG OPENS ON `today`, and today's occurrence leaves it only
+   * once its money has posted.
+   *
+   * This opened on `today + 1`. The legs were then disjoint by construction —
+   * and the day they meet was in NEITHER unless the pay had already landed.
+   * Measured on the owner's ledger on 2026-09-03, a Thursday and a payday, with
+   * nothing imported past 2026-08-12: the header read "$0.00 in so far,
+   * $3,141.00 still expected" one line above "4 paydays fall in this month,
+   * scheduled at $4,188.00". Today's $1,047.00 was in neither figure — the hole
+   * `services/arrears` closed for bills, mirrored onto income, and on a weekly
+   * schedule it opens one day in seven.
+   *
+   * Spending on this page can afford a tail that opens tomorrow because
+   * `budgetOverdue` owns today. Income has no arrears leg, by doctrine (a
+   * payday that passed without a deposit is evidence about the imports, not
+   * about the job), so the forward leg has to own today — as it already does on
+   * `/recurring`, the upcoming strip and `committedBook`. What keeps a
+   * paycheque that HAS landed today from being counted twice is the series'
+   * own posted row: an occurrence dated today is dropped from the walk exactly
+   * when a linked deposit dated today exists, the one fact that says the money
+   * is already in `postedCents`.
+   */
+  const from = today;
+  const paidToday = new Set(
+    db
+      .select({ seriesId: transactions.recurringSeriesId })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.postedOn, today),
+          eq(transactions.status, "active"),
+          gt(transactions.amountCents, 0),
+          isNotNull(transactions.recurringSeriesId),
+        ),
+      )
+      .all()
+      .map((r) => r.seriesId as string),
+  );
   const series: IncomeExpectation["series"] = [];
   let expectedCents = 0;
   if (compareDates(from, end) <= 0) {
@@ -641,6 +684,8 @@ export function incomeExpectation(
       // money IN only — a refund-shaped income series must not subtract here
       const cents = projectOccurrences(toProjectable(s), from, end)
         .filter((o) => o.amountCents > 0)
+        // today's pay, already posted: it is in postedCents and not also here
+        .filter((o) => !(o.date === today && paidToday.has(s.id)))
         .reduce((sum, o) => sum + o.amountCents, 0);
       if (cents === 0) continue;
       expectedCents += cents;

@@ -795,8 +795,37 @@ describe("incomeExpectation — the term /budgets never had", () => {
     // tomorrow is payday and tomorrow is inside the period
     expect(got.expectedCents).toBe(104_600);
     expect(got.series).toHaveLength(1);
-    // …and on the last day itself there is nothing left to come
-    expect(incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-30").expectedCents).toBe(0);
+    // …and on the last day itself the payday is TODAY's: still to come until it
+    // posts, so still expected. ⚠️ This line asserted 0 — an assertion that
+    // ENCODED the neither-leg gap the docstring on `from` describes.
+    expect(incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-30").expectedCents).toBe(104_600);
+  });
+
+  /*
+   * ⛔ THE OTHER HALF, AND THE ONE THE OWNER'S LEDGER SHOWED. A payday dated
+   * today whose money has NOT posted was in neither leg: `postedCents` held
+   * nothing and the walk opened tomorrow. Measured 2026-09-03, a Thursday:
+   * "$0.00 in so far, $3,141.00 still expected" one line above "4 paydays fall
+   * in this month, scheduled at $4,188.00" — $1,047.00 in neither figure.
+   *
+   * Killed by mutation: reopening the walk on `today + 1` fails this; dropping
+   * the posted-today exclusion fails the test above it.
+   */
+  test("a payday ON today with nothing posted is still expected — the forward leg owns today", () => {
+    createSeries({
+      name: "Cash job (weekly pay)",
+      nextExpectedOn: "2026-06-01",
+      nextExpectedAmountCents: 104_600,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-08");
+    expect(got.postedCents).toBe(0);
+    // 06-08 (today, unposted), 06-15, 06-22, 06-29 — four. The 06-01 payday is
+    // past and unposted, and income has no arrears leg to hold it, by doctrine.
+    expect(got.expectedCents).toBe(104_600 * 4);
+    expect(got.series.map((s) => s.name)).toEqual(["Cash job (weekly pay)"]);
   });
 
   test("the basis is the annualised rate, not the paydays that happen to fall in the month", () => {
