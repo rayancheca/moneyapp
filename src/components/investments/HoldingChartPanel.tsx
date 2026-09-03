@@ -194,11 +194,20 @@ export function HoldingChartPanel({
    */
   const valueText = useCallback(
     (summary: ScrubSummary): string => {
-      const base = scrubValueText(
-        summary.atLabel ?? formatDayLong(summary.day),
-        heroText(summary),
-        isPercent ? null : summary.deltaPct,
-      );
+      /*
+       * 🔴 "+$4,468.50, down 5.9%" — the dollars are the window's flow-adjusted
+       * gain and the percentage is its TIME-WEIGHTED return, and they can point
+       * opposite ways: MSFT on 2026-09-03 was $4,468.50 up on money mostly put
+       * in at lower prices, over a span in which the price itself fell 5.95%.
+       * Both true; unnamed, they read as one figure contradicting itself. In
+       * the return-$ lens the percentage is named; in the price lens it IS the
+       * price change and needs no name.
+       */
+      const base = isReturns
+        ? `${scrubValueText(summary.atLabel ?? formatDayLong(summary.day), heroText(summary), null)}${
+            !isPercent && summary.deltaPct !== null ? `, ${signedPct(summary.deltaPct)} time-weighted` : ""
+          }`
+        : scrubValueText(summary.atLabel ?? formatDayLong(summary.day), heroText(summary), summary.deltaPct);
       const heldFrom = carriedFromDay(chartPoints, summary.day);
       return heldFrom === null
         ? base
@@ -236,7 +245,7 @@ export function HoldingChartPanel({
           : isPercent
             ? formatCentsSigned(summary.deltaCents)
             : summary.deltaPct !== null
-              ? `(${signedPct(summary.deltaPct)})`
+              ? `(${signedPct(summary.deltaPct)} time-weighted)`
               : "";
       return (
         <header className="mb-1">
