@@ -88,6 +88,18 @@ export interface StatementPull {
   readonly daysSinceLastClose: number | null;
   /** the next close date the rhythm predicts; null when the rhythm is unknown */
   readonly expectedOn: string | null;
+  /**
+   * The first day that close counts as pullable — `expectedOn` plus the
+   * rhythm's own wander. Null exactly when `expectedOn` is. Published so the
+   * sentence can name the day the status flips instead of re-deriving it.
+   */
+  readonly readyOn: string | null;
+  /**
+   * `expectedOn` is today or earlier. While the status is still `waiting`,
+   * that is the one state in which "next closes X" would name a day already
+   * gone — the close may well have happened, inside its wander.
+   */
+  readonly expectedHasPassed: boolean;
   /** expected closes already past (capped at MAX_TRACKED_CLOSES) */
   readonly closesDue: number;
   /** true once closesDue hit the cap — the count is a floor, not a measurement */
@@ -251,6 +263,8 @@ export function statementPull(
       lastCloseOn,
       daysSinceLastClose,
       expectedOn: null,
+      readyOn: null,
+      expectedHasPassed: false,
       closesDue: 0,
       capped: false,
       status: "unknown",
@@ -259,6 +273,8 @@ export function statementPull(
   }
 
   const expectedOn = nextCloseAfter(cadence.rhythm, lastCloseOn)!;
+  // the same sum the loop below tests against `today` — one derivation, two readers
+  const readyOn = addDays(expectedOn, cadence.toleranceDays);
   let cursor = expectedOn;
   let closesDue = 0;
   let firstDue: string | null = null;
@@ -274,6 +290,8 @@ export function statementPull(
     lastCloseOn,
     daysSinceLastClose,
     expectedOn,
+    readyOn,
+    expectedHasPassed: compareDates(expectedOn, today) <= 0,
     closesDue,
     capped: closesDue === MAX_TRACKED_CLOSES,
     status: closesDue === 0 ? "waiting" : closesDue === 1 ? "due" : "behind",
@@ -349,6 +367,22 @@ export function pullSentence(pull: StatementPull): string {
 
   const demand = pullDemand(pull);
   if (demand) return `${since} · ${demand}`;
-  // expectedOn is non-null for every status except `unknown`
-  return pull.status === "unknown" ? since : `${since} · next closes ${formatDayShort(pull.expectedOn!)}`;
+  if (pull.status === "unknown") return since;
+  // expectedOn / readyOn are non-null for every status except `unknown`
+  /*
+   * 🔴 "next closes Sep 2", printed on Sep 3 beside "On schedule". Measured on
+   * the owner's /imports on 2026-09-03: Discover's rhythm says the 2nd, its
+   * newest close (Aug 9, the Capital One reissue) widened the tolerance to
+   * eight days, so the status honestly stays `waiting` until Sep 10 — while the
+   * sentence named a day already gone as the NEXT close. A predicted date that
+   * has passed is a different sentence: say the close is probably behind us,
+   * and name the day the panel will start calling it late.
+   */
+  if (pull.expectedHasPassed) {
+    return (
+      `${since} · closes around ${formatDayShort(pull.expectedOn!)} on this rhythm — ` +
+      `counted as late from ${formatDayShort(pull.readyOn!)}`
+    );
+  }
+  return `${since} · next closes ${formatDayShort(pull.expectedOn!)}`;
 }

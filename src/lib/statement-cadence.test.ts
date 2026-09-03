@@ -252,8 +252,51 @@ describe("the words", () => {
 
   test("a waiting account names the next close, and nothing is called overdue", () => {
     const p = statementPull(MONTH_END, "2026-08-14");
+    expect(p.expectedHasPassed).toBe(false);
+    expect(p.readyOn).toBe("2026-09-01");
     expect(pullSentence(p)).toBe("last one closed Jul 31, 14 days ago · next closes Aug 31");
     expect(pullSentence(p)).not.toContain("overdue");
+  });
+
+  /*
+   * 🔴 THE REAL DISCOVER ROW ON 2026-09-03: eleven closes on the 2nd, then the
+   * Capital One reissue closed Aug 9. The rhythm still says the 2nd and the
+   * newest close widens the tolerance to eight days, so the panel honestly
+   * waits until Sep 10 — but the sentence said "next closes Sep 2" beside "On
+   * schedule", on Sep 3. A predicted date already gone is not the NEXT close.
+   * Killed by mutation: dropping the `expectedHasPassed` branch prints the
+   * stale sentence; deriving `readyOn` from anything but the loop's own sum
+   * names a different day than the one the status flips on.
+   */
+  test("a predicted close that has passed is said as passed, with the day it counts as late", () => {
+    const DISCOVER = [
+      ...Array.from({ length: 11 }, (_, i) => {
+        const month = ((8 + i) % 12) + 1; // 2025-09 … 2026-07
+        const year = 8 + i >= 12 ? 2026 : 2025;
+        return `${year}-${String(month).padStart(2, "0")}-02`;
+      }),
+      "2026-08-09",
+    ];
+    const p = statementPull(DISCOVER, "2026-09-03");
+    expect(p.status).toBe("waiting");
+    expect(p.expectedOn).toBe("2026-09-02");
+    expect(p.expectedHasPassed).toBe(true);
+    expect(p.readyOn).toBe("2026-09-10");
+    expect(pullSentence(p)).toBe(
+      "last one closed Aug 9, 25 days ago · closes around Sep 2 on this rhythm — counted as late from Sep 10",
+    );
+    // and on that very day the status flips, so the two agree about the date
+    expect(statementPull(DISCOVER, "2026-09-10").status).toBe("due");
+    expect(statementPull(DISCOVER, "2026-09-09").status).toBe("waiting");
+  });
+
+  test("on the predicted close day itself the close is behind us, not ahead", () => {
+    // month-end, tolerance 1: on Aug 31 the PDF is not out yet and the status
+    // waits, but "next closes Aug 31" would name today as the future
+    const p = statementPull(MONTH_END, "2026-08-31");
+    expect(p.status).toBe("waiting");
+    expect(p.expectedHasPassed).toBe(true);
+    expect(pullSentence(p)).toContain("closes around Aug 31 on this rhythm — counted as late from Sep 1");
   });
 
   test("the teaser and the panel cannot word the same fact differently", () => {
