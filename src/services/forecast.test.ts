@@ -181,6 +181,16 @@ describe("forecastCurrentMonth", () => {
     expect(netflix.staleness).toMatchObject({ daysSinceLastMatch: 22, isStale: false });
   });
 
+  test("a row filed on the system Uncategorized category is uncategorized spending in the variable leg", () => {
+    // 🔴 owner decision 2026-09-03: the system category IS the NULL bucket, so
+    // its outflows pace like any uncategorized outflow instead of vanishing
+    insertTxn(cardId, "2026-06-10", -30_000, { categoryName: "Uncategorized" });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    const uncat = f.components.find((c) => c.kind === "variable" && c.label === "Uncategorized");
+    expect(uncat).toBeDefined();
+    expect(uncat!.cents).toBeLessThan(0);
+  });
+
   test("a series nothing has ever matched is disclosed as stale, not hidden", () => {
     insertSeries({
       name: "Ghost bill",

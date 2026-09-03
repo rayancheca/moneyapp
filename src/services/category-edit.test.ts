@@ -13,11 +13,11 @@ import { transactionSplits } from "@/db/schema/transaction-splits";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
 import {
+  KIND_ORDER,
   allMoveDestinations,
   archiveCategory,
   categoryTouchCounts,
   createCategory,
-  KIND_ORDER,
   listCategoryTree,
   moveCategory,
   moveDestinations,
@@ -551,3 +551,22 @@ describe("allMoveDestinations", () => {
     }
   });
 });
+
+describe("listCategoryTree and the system row", () => {
+  test("the system Uncategorized row counts the whole NULL bucket, not only rows filed on it", () => {
+    // 🔴 /categories read "Uncategorized · 6 txn" under a dashboard saying 31
+    // had no category — the same word counted two ways
+    const inst = (bundle.sqlite.prepare("SELECT id FROM institutions LIMIT 1").get() as { id: string }).id;
+    const acct = createAccount(bundle.db, { institutionId: inst, name: "Checking", type: "checking" });
+    const sys = byName("Uncategorized")!;
+    const insert = bundle.sqlite.prepare(
+      "INSERT INTO transactions (id, account_id, posted_on, amount_cents, raw_description, normalized_description, category_id, status, needs_review, occurrence_index, dedupe_hash, created_at, updated_at) VALUES (?, ?, '2026-07-01', -100, 'X', 'x', ?, 'active', 0, 0, ?, 'now', 'now')",
+    );
+    insert.run("t1", acct, null, "h1");
+    insert.run("t2", acct, sys.id, "h2");
+    insert.run("t3", acct, sys.id, "h3");
+    const node = listCategoryTree(bundle.db).find((n) => n.kind === "system")!;
+    expect(node.txnCount).toBe(3);
+  });
+});
+

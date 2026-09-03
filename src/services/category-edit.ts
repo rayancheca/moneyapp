@@ -568,12 +568,14 @@ export function categoryTouchCounts(db: AppDatabase): Map<string, number> {
 export function listCategoryTree(db: AppDatabase): CategoryTreeNode[] {
   const rows = db.select().from(categories).all();
   const counts = new Map<string, number>();
+  let categoryless = 0;
   for (const r of db
     .select({ categoryId: transactions.categoryId })
     .from(transactions)
     .where(eq(transactions.status, "active"))
     .all()) {
     if (r.categoryId) counts.set(r.categoryId, (counts.get(r.categoryId) ?? 0) + 1);
+    else categoryless += 1;
   }
 
   const bySort = (a: { sortOrder: number; name: string }, b: { sortOrder: number; name: string }) =>
@@ -584,7 +586,10 @@ export function listCategoryTree(db: AppDatabase): CategoryTreeNode[] {
     name: r.name,
     kind: r.kind,
     isArchived: r.isArchived,
-    txnCount: counts.get(r.id) ?? 0,
+    // the system "Uncategorized" row IS the NULL bucket, so its count is the
+    // bucket's — /categories read "6 txn" under a dashboard saying 31 had no
+    // category, and both were counting the same word two ways
+    txnCount: (counts.get(r.id) ?? 0) + (r.kind === "system" ? categoryless : 0),
     isEditable: !isProtected(r.name, parentName, r.kind),
     children: [],
   });

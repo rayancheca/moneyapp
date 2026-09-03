@@ -124,3 +124,16 @@ describe("uncategorizedCount", () => {
     expect(uncategorizedCount(bundle.db)).toBe(0);
   });
 });
+
+describe("uncategorizedCount and the system category", () => {
+  test("a row filed on the system Uncategorized category counts as uncategorized", () => {
+    // 🔴 the dashboard said 31 had no category while /categories showed the
+    // system row holding 6 — one word, two sets, until this counted both
+    const sys = (bundle.sqlite.prepare("SELECT id FROM categories WHERE kind = 'system'").get() as { id: string }).id;
+    insertTxn(acctA, { hash: "null-one" });
+    insertTxn(acctA, { hash: "system-one", categoryId: sys });
+    insertTxn(acctB, { hash: "system-excluded", categoryId: sys, status: "excluded" });
+    expect(uncategorizedCount(bundle.db)).toBe(2);
+  });
+});
+

@@ -163,8 +163,10 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
   const runState = claudeRunState(db);
 
   const returnQuery = filtersToQuery(filters);
+  // the filter has its own Uncategorized option, which now covers the system
+  // category too — listing that category as well would be the same set twice
   const rootCategories = allCategories
-    .filter((c) => c.parentId === null && !c.isArchived)
+    .filter((c) => c.parentId === null && !c.isArchived && c.kind !== "system")
     .sort(byHierarchy)
     .map((c) => ({ id: c.id, name: c.name }));
   const pickerOptions = buildCategoryPickerOptions(allCategories);

@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { and, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lte, or, type SQL } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import { recurringSeries } from "@/db/schema/recurring";
@@ -45,6 +45,19 @@ export interface CategoryIndex {
   topLevelOf(id: string): CategoryNode;
   /** The category plus all descendants (one level in practice, general here). */
   subtreeIds(id: string): string[];
+  /**
+   * The system-kind categories — the seed's "Uncategorized" row. A transaction
+   * filed on one of these IS uncategorized: it belongs to the NULL bucket.
+   *
+   * 🔴 Owner decision, 2026-09-03. Six rows he had filed on "Uncategorized"
+   * ($92.72 of 2024 debits) were in NO total: a system-kind category is not
+   * expense-kind, so the headline skipped them, and it is not NULL, so the
+   * honesty bucket skipped them too. Three surfaces counted "uncategorized"
+   * three ways (31 on the dashboard, 6 on /categories, 31 in the ledger's
+   * filter). One word, one set: NULL or system-kind, everywhere.
+   */
+  uncategorizedIds: ReadonlySet<string>;
+  isUncategorized(id: string | null): boolean;
 }
 
 export function loadCategoryIndex(db: AppDatabase): CategoryIndex {
@@ -59,6 +72,8 @@ export function loadCategoryIndex(db: AppDatabase): CategoryIndex {
     .from(categories)
     .all();
   const byId = new Map<string, CategoryNode>(rows.map((r) => [r.id, r]));
+  const uncategorizedIds: ReadonlySet<string> = new Set(rows.filter((r) => r.kind === "system").map((r) => r.id));
+  const isUncategorized = (id: string | null): boolean => id === null || uncategorizedIds.has(id);
   const childrenOf = new Map<string, string[]>();
   for (const r of rows) {
     if (!r.parentId) continue;
@@ -88,7 +103,20 @@ export function loadCategoryIndex(db: AppDatabase): CategoryIndex {
     return out;
   };
 
-  return { byId, topLevelOf, subtreeIds };
+  return { byId, topLevelOf, subtreeIds, uncategorizedIds, isUncategorized };
+}
+
+/**
+ * The SQL form of `isUncategorized`, for the queries that do not go through
+ * `activeTxnsInRange`: NULL, or filed on a system-kind category. One predicate,
+ * so the ledger's filter, the dashboard's count and the coverage figure cannot
+ * answer "how many are uncategorized" three ways again.
+ */
+export function uncategorizedWhere(idx: CategoryIndex): SQL {
+  const ids = [...idx.uncategorizedIds];
+  return ids.length === 0
+    ? isNull(transactions.categoryId)
+    : (or(isNull(transactions.categoryId), inArray(transactions.categoryId, ids)) as SQL);
 }
 
 /**
@@ -224,18 +252,24 @@ const activeTxnsInRangeCached = cache(function activeTxnsInRangeCached(
     )
     .all();
 
+  // ⛔ NORMALISED AT THE SOURCE: a row filed on the system "Uncategorized"
+  // category reads as category-less to every aggregate built on these rows —
+  // see CategoryIndex.uncategorizedIds. Split parts are judged the same way.
+  const idx = loadCategoryIndex(db);
+  const bucketOf = (id: string | null): string | null => (idx.isUncategorized(id) ? null : id);
+
   const splits = activeSplitsInRange(db, from, to);
-  if (splits.size === 0) return rows.map((r) => ({ ...r, splitId: null }));
+  if (splits.size === 0) return rows.map((r) => ({ ...r, categoryId: bucketOf(r.categoryId), splitId: null }));
 
   const out: AnalyticsTxn[] = [];
   for (const r of rows) {
     const parts = splits.get(r.id);
     if (!parts || parts.length === 0) {
-      out.push({ ...r, splitId: null });
+      out.push({ ...r, categoryId: bucketOf(r.categoryId), splitId: null });
       continue;
     }
     for (const p of parts) {
-      out.push({ ...r, categoryId: p.categoryId, amountCents: p.amountCents, splitId: p.id });
+      out.push({ ...r, categoryId: bucketOf(p.categoryId), amountCents: p.amountCents, splitId: p.id });
     }
   }
   return out;
@@ -263,7 +297,9 @@ export interface SpendingBucket {
 
 /** Which spending bucket a transaction belongs to, or null if excluded. */
 export function spendingBucket(idx: CategoryIndex, txn: AnalyticsTxn): SpendingBucket | null {
-  if (txn.categoryId === null) {
+  // rows from activeTxnsInRange arrive normalised; a caller handing in its own
+  // rows gets the same answer
+  if (txn.categoryId === null || idx.uncategorizedIds.has(txn.categoryId)) {
     // only negatives — uncategorized credits belong to the review queue
     return txn.amountCents < 0 ? { categoryId: null, categoryName: "Uncategorized" } : null;
   }

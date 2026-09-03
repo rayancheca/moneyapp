@@ -85,6 +85,8 @@ export function merchantSummary(
     .all();
 
   const year = today.slice(0, 4);
+  // the system "Uncategorized" category counts as uncategorized — CategoryIndex.uncategorizedIds
+  const idx = loadCategoryIndex(db);
   const totalCentsThisYear = rows
     .filter((r) => r.postedOn.slice(0, 4) === year)
     .reduce((sum, r) => sum + r.amountCents, 0);
@@ -96,7 +98,7 @@ export function merchantSummary(
     totalCentsThisYear,
     recent: rows.slice(0, RECENT_LIMIT),
     defaultCategoryId: merchant.defaultCategoryId,
-    uncategorizedCount: rows.filter((r) => r.categoryId === null).length,
+    uncategorizedCount: rows.filter((r) => idx.isUncategorized(r.categoryId)).length,
   };
 }
 

@@ -545,7 +545,8 @@ interface SpendRow {
 
 /** Whether one category allocation counts as spending (mirrors spendingBucket). */
 function allocationIsSpending(idx: CategoryIndex, categoryId: string | null, amountCents: number): boolean {
-  if (categoryId === null) return amountCents < 0; // uncategorized outflow
+  // uncategorized outflow — NULL, or filed on the system category (CategoryIndex.uncategorizedIds)
+  if (categoryId === null || idx.uncategorizedIds.has(categoryId)) return amountCents < 0;
   return idx.topLevelOf(categoryId).kind === "expense";
 }
 

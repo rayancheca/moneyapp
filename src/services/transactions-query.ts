@@ -63,10 +63,17 @@ export function filterConditions(
   const conds: SQL[] = [];
   if (filters.account) conds.push(eq(transactions.accountId, filters.account));
   if (filters.merchant) conds.push(eq(transactions.merchantId, filters.merchant));
+  // NULL, or filed on the system "Uncategorized" category — the same set the
+  // analytics index calls uncategorized (CategoryIndex.uncategorizedIds)
+  const systemIds = allCategories.filter((c) => c.kind === "system").map((c) => c.id);
+  const uncategorized = (): SQL =>
+    systemIds.length === 0
+      ? isNull(transactions.categoryId)
+      : (or(isNull(transactions.categoryId), inArray(transactions.categoryId, systemIds)) as SQL);
   if (filters.category === "uncategorized") {
     // The explicit Uncategorized honesty bucket (Spending §5.4 / analytics
     // ledgerHref): land on the category-less rows, never on an empty ledger.
-    conds.push(isNull(transactions.categoryId));
+    conds.push(uncategorized());
   } else if (filters.category === "spending" || filters.category === "income") {
     // Kind-scoped StatCard drill-downs (Spending §5.1). These EXACTLY mirror
     // analytics' spending / income classification so the Spent / Earned cards'
@@ -78,7 +85,7 @@ export function filterConditions(
       conds.push(
         or(
           expenseIds.length > 0 ? inArray(transactions.categoryId, expenseIds) : sql`0 = 1`,
-          and(isNull(transactions.categoryId), lt(transactions.amountCents, 0)),
+          and(uncategorized(), lt(transactions.amountCents, 0)),
         ) as SQL,
       );
     } else {

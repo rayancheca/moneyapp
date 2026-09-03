@@ -1,4 +1,5 @@
-import { and, count, eq, isNull } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
+import { loadCategoryIndex, uncategorizedWhere } from "./analytics";
 import type { AppDatabase } from "@/db/client";
 import { transactions } from "@/db/schema/transactions";
 
@@ -29,7 +30,8 @@ export function uncategorizedCount(db: AppDatabase): number {
     db
       .select({ n: count() })
       .from(transactions)
-      .where(and(eq(transactions.status, "active"), isNull(transactions.categoryId)))
+      // NULL or filed on the system category — one predicate with the ledger's filter
+      .where(and(eq(transactions.status, "active"), uncategorizedWhere(loadCategoryIndex(db))))
       .get()?.n ?? 0
   );
 }

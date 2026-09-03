@@ -275,3 +275,22 @@ describe("TxnFilters parse/serialize round-trip (query.ts extension)", () => {
     expect(parsed.amountMinCents).toBeNull();
   });
 });
+
+describe("the system Uncategorized category is the NULL bucket", () => {
+  test("the Uncategorized filter and the spending filter both reach a row filed on it", () => {
+    const sys = (bundle.sqlite.prepare("SELECT id FROM categories WHERE kind = 'system'").get() as { id: string }).id;
+    const onSystem = insertTxn({ amountCents: -762, categoryId: sys });
+    const onNull = insertTxn({ amountCents: -1200 });
+    const credit = insertTxn({ amountCents: 24, categoryId: sys });
+    insertTxn({ amountCents: -500, categoryId: catId("Food > Groceries") });
+
+    const uncat = matchingTransactionIds(bundle.db, filters({ category: "uncategorized" }), "all");
+    expect(new Set(uncat)).toEqual(new Set([onSystem, onNull, credit]));
+    // spending = expense rows plus uncategorized OUTFLOWS, on either shape of uncategorized
+    const spending = matchingTransactionIds(bundle.db, filters({ category: "spending" }), "all");
+    expect(spending).toContain(onSystem);
+    expect(spending).toContain(onNull);
+    expect(spending).not.toContain(credit);
+  });
+});
+

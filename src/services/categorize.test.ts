@@ -914,3 +914,36 @@ describe("detectTransfers — PASS 2 remembers the owner's answers (2026-08-06)"
     return bundle.db.select().from(categories).where(eq(categories.name, name)).get()!.id;
   }
 });
+
+describe("the system Uncategorized category", () => {
+  test("a row filed on it is not covered", () => {
+    const sys = bundle.db.select().from(categories).where(eq(categories.kind, "system")).get()!.id;
+    const id = insertTxn(cardId, "2026-06-01", -762, "CONRAD HOTEL N Y");
+    bundle.db.update(transactions).set({ categoryId: sys, categorizationSource: "user" }).where(eq(transactions.id, id)).run();
+    const stats = coverageStats(bundle.db);
+    expect(stats.total).toBe(1);
+    expect(stats.categorized).toBe(0);
+  });
+
+  /*
+   * ⛔ Picking "Uncategorized" is a decision to leave the row category-less. It
+   * is written as NULL + user — the shape the pipeline already reads as
+   * "deliberately uncategorized" — never as a row ON the system category, and
+   * no merchant learns "Uncategorized" as its default. Killed by mutation:
+   * writing the chosen id through, and letting the merchant branch run.
+   */
+  test("choosing it writes NULL as a user decision and teaches no merchant", () => {
+    const sys = bundle.db.select().from(categories).where(eq(categories.kind, "system")).get()!.id;
+    const id = insertTxn(cardId, "2026-06-01", -1_549, "NETFLIX.COM NETFLIX.COM CA");
+    categorizeAll(bundle.db);
+    expect(categoryOf(id).name).toBe("Streaming");
+    const result = applyCorrection(bundle.db, { transactionId: id, categoryId: sys, applyToMerchant: true, retroactive: true });
+    expect(categoryOf(id)).toEqual({ name: null, source: "user" });
+    expect(result.merchantUpdated).toBe(false);
+    expect(result.retroactivelyUpdated).toBe(0);
+    // the pipeline leaves a user decision alone
+    categorizeAll(bundle.db);
+    expect(categoryOf(id)).toEqual({ name: null, source: "user" });
+  });
+});
+

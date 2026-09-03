@@ -12,13 +12,16 @@ import { dedupeHash } from "@/lib/hash";
 import { periodBounds } from "@/lib/dates";
 import { createAccount } from "./accounts";
 import {
+  activeTxnsInRange,
   categoryBreakdown,
   categorySpending,
   categoryTrends,
   incomeByMonth,
   incomeTransactions,
+  loadCategoryIndex,
   monthKeysBack,
   monthlySpending,
+  spendingBucket,
   spendingTransactions,
   transactionsHref,
 } from "./analytics";
@@ -145,16 +148,20 @@ describe("monthlySpending", () => {
     ]);
   });
 
-  test("transfer/investment/rewards/system kinds are never spending", () => {
+  test("transfer/investment/rewards kinds are never spending; the system kind is the Uncategorized bucket", () => {
     insertTxn({ postedOn: "2026-07-01", amountCents: -50_000, category: "Transfers > Credit Card Payment" });
     insertTxn({ postedOn: "2026-07-02", amountCents: -20_000, category: "Investments > Buys" });
     insertTxn({ postedOn: "2026-07-03", amountCents: 1_200, category: "Rewards > Cash Back" });
+    // 🔴 this asserted the system-filed row was NOT spending. Owner decision
+    // 2026-09-03: the system "Uncategorized" category IS the NULL bucket, so its
+    // outflow is uncategorized spending — six of his rows were in no total.
     insertTxn({ postedOn: "2026-07-04", amountCents: -700, category: "Uncategorized" }); // system kind
     insertTxn({ postedOn: "2026-07-05", amountCents: -900, category: "Food > Dining" });
 
     const cells = monthlySpending(bundle.db, { months: 1, refDate: REF });
     expect(cells).toEqual([
       { month: "2026-07", categoryId: catId("Food"), categoryName: "Food", spentCents: 900, txnCount: 1 },
+      { month: "2026-07", categoryId: null, categoryName: "Uncategorized", spentCents: 700, txnCount: 1 },
     ]);
   });
 
@@ -328,3 +335,44 @@ describe("exact reconciliation: every aggregate is a visitable transaction list"
     );
   });
 });
+
+/*
+ * 🔴 Owner decision, 2026-09-03: the system "Uncategorized" category IS the
+ * NULL bucket. Six rows he had filed on it ($92.72 of 2024 debits) were in NO
+ * total — not expense-kind, so the headline skipped them; not NULL, so the
+ * honesty bucket skipped them too. Killed by mutation: dropping the
+ * normalisation at the row source, and dropping the belt in spendingBucket.
+ */
+describe("the system Uncategorized category is the NULL bucket", () => {
+  test("a row filed on it reads as category-less, and its outflow lands in the Uncategorized bucket", () => {
+    insertTxn({ postedOn: "2026-07-02", amountCents: -762, category: "Uncategorized" });
+    insertTxn({ postedOn: "2026-07-02", amountCents: 24, category: "Uncategorized" });
+    const rows = activeTxnsInRange(bundle.db, "2026-07-01", "2026-07-31");
+    expect(rows.map((r) => r.categoryId)).toEqual([null, null]);
+    const idx = loadCategoryIndex(bundle.db);
+    expect(idx.isUncategorized(catId("Uncategorized"))).toBe(true);
+    expect(idx.isUncategorized(catId("Food"))).toBe(false);
+    const cells = monthlySpending(bundle.db, { months: 1, refDate: "2026-07-31" });
+    expect(cells).toEqual([
+      expect.objectContaining({ categoryId: null, categoryName: "Uncategorized", spentCents: 762, txnCount: 1 }),
+    ]);
+  });
+
+  test("spendingBucket gives the same answer to a caller handing in its own rows", () => {
+    const idx = loadCategoryIndex(bundle.db);
+    const row = {
+      id: "x",
+      accountId: cardId,
+      postedOn: "2026-07-02",
+      rawDescription: "",
+      merchantId: null,
+      categoryId: catId("Uncategorized"),
+      recurringSeriesId: null,
+      splitId: null,
+    };
+    expect(spendingBucket(idx, { ...row, amountCents: -100 })).toEqual({ categoryId: null, categoryName: "Uncategorized" });
+    // an uncategorized credit belongs to the review queue, not to spending
+    expect(spendingBucket(idx, { ...row, amountCents: 100 })).toBeNull();
+  });
+});
+

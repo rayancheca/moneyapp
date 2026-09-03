@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { loadCategoryIndex } from "./analytics";
 import { and, asc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
@@ -844,10 +845,21 @@ export function applyCorrection(db: AppDatabase, input: CorrectionInput): Correc
     retroactivelyUpdated: 0,
   };
 
+  /*
+   * ⛔ Picking "Uncategorized" is a decision to leave the row category-less —
+   * it is written as NULL with `categorizationSource = "user"`, the shape the
+   * pipeline already reads as "deliberately uncategorized" (`notUserOwned`).
+   * Filing it ON the system category instead is how six rows came to sit in no
+   * total at all (see CategoryIndex.uncategorizedIds); nothing lands there
+   * again from here. And no merchant learns "Uncategorized" as a default.
+   */
+  const chosen = db.select({ kind: categories.kind }).from(categories).where(eq(categories.id, input.categoryId)).get();
+  const clearing = chosen?.kind === "system";
+
   db.transaction((tx) => {
     tx.update(transactions)
       .set({
-        categoryId: input.categoryId,
+        categoryId: clearing ? null : input.categoryId,
         categorizationSource: "user",
         categorizationConfidence: 1,
         needsReview: false,
@@ -859,7 +871,7 @@ export function applyCorrection(db: AppDatabase, input: CorrectionInput): Correc
     // unresolved and PASS 2 sets the flag straight back on the next import
     dismissAmbiguitiesAnchoredOn(tx, input.transactionId);
 
-    if (!input.applyToMerchant || !txn.merchantId) return;
+    if (clearing || !input.applyToMerchant || !txn.merchantId) return;
 
     const siblings = tx
       .select({ amountCents: transactions.amountCents })
@@ -915,7 +927,9 @@ export function coverageStats(db: AppDatabase): CoverageStats {
     .where(eq(transactions.status, "active"))
     .all();
   const total = rows.length;
-  const categorized = rows.filter((r) => r.categoryId !== null).length;
+  // a row filed on the system "Uncategorized" category is not covered
+  const idx = loadCategoryIndex(db);
+  const categorized = rows.filter((r) => !idx.isUncategorized(r.categoryId)).length;
   return {
     total,
     categorized,

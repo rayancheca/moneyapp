@@ -397,8 +397,9 @@ function variableComponents(
   };
 
   for (const t of rows) {
-    if (t.categoryId === null) {
-      // uncategorized negatives are an explicit spending bucket, never hidden
+    if (t.categoryId === null || categoryById.get(t.categoryId)?.kind === "system") {
+      // uncategorized negatives are an explicit spending bucket, never hidden —
+      // and a row filed on the system "Uncategorized" category is uncategorized
       if (t.amountCents < 0) add(UNCATEGORIZED_LABEL, monthKey(t.postedOn), t.amountCents);
       continue;
     }

@@ -387,6 +387,18 @@ describe("topMerchants", () => {
     expect(top.entries[1]!.href).toBe(`/transactions?merchant=${dunkin}&from=2026-07-01&to=2026-07-31`);
   });
 
+  test("a row filed on the system Uncategorized category is spending here too", () => {
+    // 🔴 owner decision 2026-09-03: the system category IS the NULL bucket. These
+    // rows come straight from the table, not through activeTxnsInRange, so the
+    // allocation guard has to know the rule itself. Killed by mutation: a
+    // NULL-only guard drops the row and the merchant vanishes from the list.
+    const m = makeMerchant("Conrad Hotel");
+    insertTxn({ postedOn: "2026-07-02", amountCents: -762, category: "Uncategorized", merchantId: m });
+    insertTxn({ postedOn: "2026-07-03", amountCents: 24, category: "Uncategorized", merchantId: m }); // a credit is not spending
+    const top = topMerchants(bundle.db, JULY);
+    expect(top.entries.find((e) => e.kind === "merchant" && e.id === m)).toMatchObject({ spentCents: 762, txnCount: 1 });
+  });
+
   test("refunds net within a merchant group", () => {
     const m = makeMerchant("Zeta Test Emporium");
     insertTxn({ postedOn: "2026-07-02", amountCents: -10_000, category: "Shopping > General", merchantId: m });
