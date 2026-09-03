@@ -43,6 +43,8 @@ export interface CashEarningsWindow {
   from: string;
   to: string;
   today?: string;
+  /** see `lib/cash-earnings`: `today` is a fully-read day, not the running one */
+  todayIsComplete?: boolean;
 }
 
 /**
@@ -58,7 +60,7 @@ export interface CashEarningsWindow {
  */
 export function cashEarningsReadings(
   db: AppDatabase,
-  { from, to, today = todayIso() }: CashEarningsWindow,
+  { from, to, today = todayIso(), todayIsComplete = false }: CashEarningsWindow,
 ): CashEarningsReading[] {
   const series = db
     .select({
@@ -123,7 +125,7 @@ export function cashEarningsReadings(
     readings.push({
       seriesId: s.id,
       seriesName: s.name,
-      ...cashEarnings({ series: pay, banked, from, to, today }),
+      ...cashEarnings({ series: pay, banked, from, to, today, todayIsComplete }),
     });
   }
 

@@ -125,10 +125,12 @@ describe("cashEarnings — the basis", () => {
   test("staleness is counted in pay periods, never in days", () => {
     // "eleven weeks with no pay" is a fact about the schedule; "77 days" is a
     // fact about the calendar. Only the first tells you a payment was missed.
+    // Asked the day after the 25th's payday: a payday dated today has not
+    // been missed yet (pinned below), and this test is about the unit.
     const r = read({
       banked: [{ postedOn: "2026-06-04", amountCents: 104_600 }],
-      to: "2026-06-25",
-      today: "2026-06-25",
+      to: "2026-06-26",
+      today: "2026-06-26",
     });
     expect(r.periodsSinceBanked).toBe(3);
   });
@@ -313,11 +315,54 @@ describe("cashEarnings — banked, and the gap between", () => {
     // The other half of the same rule: 2026-06-04 IS an occurrence, so silence
     // starts at the NEXT one. Both cases have to be pinned or the fix is a
     // coin-flip between two formulas that agree on exactly one of them.
+    // Asked the day AFTER the 25th's payday: a payday dated today is not yet
+    // passed (see the two tests below), and this test is about the 4th.
     const r = read({
       banked: [{ postedOn: "2026-06-04", amountCents: 104_600 }],
-      to: "2026-06-25",
+      to: "2026-06-26",
+      today: "2026-06-26",
+    });
+    expect(r.periodsSinceBanked).toBe(3);
+  });
+
+  /*
+   * ⛔ A PAYDAY DATED TODAY HAS NOT HAPPENED. Measured on the owner's card on
+   * 2026-09-03, a Thursday: "14 paydays, Jun 4 – Sep 3 … 13 paydays have passed
+   * since Jun 5 with no deposit", beside an upcoming strip listing that day's
+   * pay as still to come. Today's occurrence is neither earned nor passed until
+   * its money lands. Killed by mutation: counting the schedule through today
+   * unconditionally fails the first; ignoring the deposit fails the second.
+   */
+  test("a payday dated today is neither earned nor passed while nothing has landed", () => {
+    // 2026-06-25 is a Thursday — the 4th occurrence — and nothing has posted
+    const r = read({ to: "2026-06-30", today: "2026-06-25" });
+    expect(r.periodsCovered).toBe(3);
+    expect(r.lastPeriodOn).toBe("2026-06-18");
+    expect(r.impliedCents).toBe(3 * 104_600);
+    // silence runs from the start: the 11th and the 18th have passed, the 25th has not
+    expect(r.periodsSinceBanked).toBe(2);
+  });
+
+  test("a deposit dated today makes today's payday earned, banked and not silent", () => {
+    const r = read({
+      banked: [{ postedOn: "2026-06-25", amountCents: 104_600 }],
+      to: "2026-06-30",
       today: "2026-06-25",
     });
+    expect(r.periodsCovered).toBe(4);
+    expect(r.lastPeriodOn).toBe("2026-06-25");
+    expect(r.bankedCents).toBe(104_600);
+    expect(r.unbankedCents).toBe(3 * 104_600);
+    expect(r.periodsSinceBanked).toBe(0);
+    expect(r.basis).toBe("series-live");
+  });
+
+  test("a day the records have been read THROUGH counts its own payday as passed", () => {
+    // the income card's as-of reading: the ledger is verified through the 25th,
+    // so a Thursday payday on the 25th with nothing banked was checked and missed
+    const r = read({ to: "2026-06-30", today: "2026-06-25", todayIsComplete: true });
+    expect(r.periodsCovered).toBe(4);
+    expect(r.lastPeriodOn).toBe("2026-06-25");
     expect(r.periodsSinceBanked).toBe(3);
   });
 

@@ -332,7 +332,9 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
   const silenceAsOf = (day: string, seriesId: string): number => {
     let rows = asOfCache.get(day);
     if (rows === undefined) {
-      rows = cashEarningsReadings(db, { from: windowFrom, to: day, today: day });
+      // `day` is the verified frontier: every deposit on it is in the records,
+      // so a payday dated on it is checked — see `todayIsComplete`
+      rows = cashEarningsReadings(db, { from: windowFrom, to: day, today: day, todayIsComplete: true });
       asOfCache.set(day, rows);
     }
     return rows.find((r) => r.seriesId === seriesId)?.periodsSinceBanked ?? 0;

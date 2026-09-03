@@ -94,8 +94,19 @@ export interface CashEarningsInput {
   /** window, inclusive at both ends */
   from: string;
   to: string;
-  /** the day the reading is taken; nothing after it is ever counted */
+  /**
+   * The day the reading is taken; nothing after it is ever counted — and
+   * nothing dated ON it is earned until a deposit for it lands, because the
+   * day is still running. Unless `todayIsComplete` says otherwise.
+   */
   today: string;
+  /**
+   * `today` is a day the records have been read THROUGH, not the day still
+   * running — the income card's "as of the day the ledger stops looking"
+   * reading. A payday dated on such a day with no deposit has been checked
+   * and missed, so it counts as passed. Default false.
+   */
+  todayIsComplete?: boolean;
 }
 
 export interface CashEarnings {
@@ -198,6 +209,7 @@ export function cashEarnings({
   from,
   to,
   today,
+  todayIsComplete = false,
 }: CashEarningsInput): CashEarnings {
   /*
    * Nothing after today is earned or banked yet, whatever the window says. This
@@ -205,6 +217,34 @@ export function cashEarnings({
    * paid, and counting it would turn a schedule into a promise.
    */
   const end = earlierOf(to, today);
+
+  /*
+   * ⛔ AND TODAY ITSELF IS NOT EARNED UNTIL IT IS PAID. A payday dated today is
+   * still to come — the upcoming strip lists it, `/recurring` schedules it, and
+   * `committedBook` gives the forward leg every occurrence dated today. This
+   * walk counted it as earned AND as passed: on 2026-09-03, a Thursday, the
+   * owner's card read "14 paydays, Jun 4 – Sep 3 … $13,211.00 never reached a
+   * bank" and "13 paydays have passed since Jun 5 with no deposit", three
+   * centimetres from a strip saying "Sep 3 · Cash job · +$1,047.00". Today's
+   * pay had not passed. It had not happened.
+   *
+   * The one thing that moves today's occurrence into the earned column is a
+   * deposit attributed to the series and dated today: then the money is banked,
+   * and the payday it answers to is counted with it, so the gap cannot read as
+   * a backlog clearing on the very day the pay arrived on time. `banked` here is
+   * only ever the rows the owner attributed to this schedule, so the test is
+   * the attribution and not a guess about amounts.
+   *
+   * ⚠️ The other reader of this function asks it "as of the day the records
+   * stop" (`income-card`'s checked silence). THAT day is complete — every
+   * deposit on it is in the records — so a payday dated on it with nothing
+   * banked has been checked and missed, and `todayIsComplete` says so. Found
+   * by its tests the moment this rule landed: a cut-off on a Thursday lost the
+   * Thursday.
+   */
+  const paidToday = banked.some((b) => b.postedOn === today);
+  const earnedThrough = paidToday || todayIsComplete ? today : addDays(today, -1);
+  const scheduleEnd = earlierOf(to, earnedThrough);
 
   const inWindow = banked.filter(
     (b) => compareDates(b.postedOn, from) >= 0 && compareDates(b.postedOn, end) <= 0,
@@ -242,7 +282,7 @@ export function cashEarnings({
    * would start counting paydays from before the job existed, and the clamp
    * comes back with a test that can finally fail without it.
    */
-  const liveTo = series.endedOn === null ? end : earlierOf(end, series.endedOn);
+  const liveTo = series.endedOn === null ? scheduleEnd : earlierOf(scheduleEnd, series.endedOn);
   const covered = occurrencesBetween(series, from, liveTo);
   const periodsCovered = covered.count;
   const impliedCents = periodsCovered * series.amountCents;
@@ -262,7 +302,7 @@ export function cashEarnings({
    * Measured 2026-08-21 — the honest answer is eleven, the subtraction said ten.
    */
   const silenceFrom = lastBankedOn ?? series.startedOn;
-  const periodsSinceBanked = occurrencesBetween(series, addDays(silenceFrom, 1), today).count;
+  const periodsSinceBanked = occurrencesBetween(series, addDays(silenceFrom, 1), earnedThrough).count;
 
   return {
     basis: periodsSinceBanked >= STALE_PERIODS ? "series-stale" : "series-live",
