@@ -177,6 +177,8 @@ export interface AnalyticsTxn {
   rawDescription: string;
   merchantId: string | null;
   categoryId: string | null;
+  /** the recurring series this row is attributed to, when it is one's payment */
+  recurringSeriesId: string | null;
   /** null = the whole transaction; set = one split part of it (its own category/amount). */
   splitId: string | null;
 }
@@ -210,6 +212,7 @@ const activeTxnsInRangeCached = cache(function activeTxnsInRangeCached(
       rawDescription: transactions.rawDescription,
       merchantId: transactions.merchantId,
       categoryId: transactions.categoryId,
+      recurringSeriesId: transactions.recurringSeriesId,
     })
     .from(transactions)
     .where(
@@ -284,6 +287,11 @@ export interface SpendingCell {
 export interface MonthsWindow {
   months: number;
   refDate?: string;
+  /**
+   * Keep only the rows this returns true for — asked of each exploded row after
+   * the window and before the bucket, so a split part is judged on its own.
+   */
+  filter?: (txn: AnalyticsTxn) => boolean;
 }
 
 function windowBounds(opts: MonthsWindow): { from: string; to: string; keys: string[] } {
@@ -299,6 +307,7 @@ export function monthlySpending(db: AppDatabase, opts: MonthsWindow): SpendingCe
   const cells = new Map<string, SpendingCell>();
 
   for (const txn of activeTxnsInRange(db, from, to)) {
+    if (opts.filter && !opts.filter(txn)) continue;
     const bucket = spendingBucket(idx, txn);
     if (!bucket) continue;
     const month = monthKey(txn.postedOn);

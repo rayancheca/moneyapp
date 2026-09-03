@@ -41,6 +41,7 @@ function insertTxn(opts: {
   amountCents: number;
   rawDescription: string;
   categoryId?: string | null;
+  recurringSeriesId?: string | null;
 }): string {
   seq += 1;
   const accountId = opts.accountId ?? checkingId;
@@ -53,6 +54,7 @@ function insertTxn(opts: {
       rawDescription: opts.rawDescription,
       normalizedDescription: normalizeDescription(opts.rawDescription),
       categoryId: opts.categoryId ?? groceriesId,
+      recurringSeriesId: opts.recurringSeriesId ?? null,
       dedupeHash: dedupeHash({
         accountId,
         postedOn: opts.postedOn,
@@ -805,6 +807,38 @@ describe("committedBook, over every day of the month", () => {
 });
 
 describe("carCard", () => {
+  /**
+   * 🔴 "Paid up front, spread over the lease" took EVERY posted Car row. On the
+   * owner's ledger the first insurance charge already sat in it, and the first
+   * lease payment (2026-09-15) would have followed: $695.04 as the monthly
+   * lease AND as an up-front cost amortised over 24 months, one more payment
+   * every month for the life of the lease. A row the series accounts for is
+   * the bill, paid — not money handed over up front. Killed by mutation:
+   * dropping the series filter reads $5,695.04 here.
+   */
+  test("a payment attributed to a car series is the bill, not money paid up front", () => {
+    const carId = createCarCategory();
+    const lease = addSeries({
+      name: "Car lease",
+      kind: "bill",
+      nextExpectedOn: "2026-09-15",
+      amountCents: -69504,
+      userCategoryId: carId,
+    });
+    insertTxn({ postedOn: "2026-08-11", amountCents: -500000, rawDescription: "CAR LEASE DOWN PAYMENT", categoryId: carId });
+    insertTxn({
+      postedOn: "2026-08-15",
+      amountCents: -69504,
+      rawDescription: "MERCEDES-BENZ FIN PAYMENT",
+      categoryId: carId,
+      recurringSeriesId: lease,
+    });
+
+    const c = carCard(bundle.db, TODAY)!;
+    expect(c.cost.upfrontCents).toBe(500000);
+    expect(c.cost.upfrontCents).not.toBe(569504);
+  });
+
   test("is absent without a Car category, and present once there is one", () => {
     expect(carCard(bundle.db, TODAY)).toBeNull();
     createCarCategory();

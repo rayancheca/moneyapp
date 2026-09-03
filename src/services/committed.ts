@@ -521,9 +521,25 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
   }
   const committedMonthlyCents = [...firstByCadence.values()].reduce((s, c) => s + c, 0);
 
-  // money already handed over: every posted row in the Car subtree
+  // money already handed over: every posted row in the Car subtree that no
+  // commitment accounts for
+  /*
+   * ⛔ NOT every posted Car row. A row attributed to a recurring series is a
+   * payment the "Lease and insurance" line above already prices — and this
+   * bucket used to take it too. Measured on the owner's ledger on 2026-09-03:
+   * the first insurance charge ($357.58, Progressive, 2026-08-12) sat inside
+   * "Paid up front, spread over the lease", and on 2026-09-15 the first lease
+   * payment would have joined it — $695.04 counted as the monthly lease AND as
+   * an up-front cost amortised over 24 months, one more payment every month
+   * for the life of the lease. The series link is the fact that separates
+   * "handed over up front" from "the bill, paid".
+   */
   const subtree = new Set(idx.subtreeIds(car.id));
-  const upfrontCents = monthlySpending(db, { months: 24, refDate: today })
+  const upfrontCents = monthlySpending(db, {
+    months: 24,
+    refDate: today,
+    filter: (t) => t.recurringSeriesId === null,
+  })
     .filter((c) => c.categoryId !== null && subtree.has(c.categoryId))
     .reduce((s, c) => s + c.spentCents, 0);
 
