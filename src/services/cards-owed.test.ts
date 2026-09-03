@@ -181,6 +181,49 @@ describe("what is owed", () => {
     expect(card.owedCents).toBe(17_000);
   });
 
+  /*
+   * 🔴 Measured on the owner's dashboard on 2026-09-03, the day Chase Sapphire
+   * closed $82.72 in credit: "$842.89 across 3 cards", Discover "66% of it",
+   * Venture X "44% of it". Slices of one debt summing to 110%, because the
+   * credit had been netted out of the denominator. Killed by mutation: dividing
+   * by the net again gives Alpha 118%.
+   */
+  test("a card in credit shrinks the total but not the slices, and the sentence says so", () => {
+    twoCards();
+    addAccount("acct-gamma", "Gamma", "credit", { last4: "3333", order: 2 });
+    // $30 in credit, checked
+    addBalances("acct-gamma", [{ day: "2026-08-03", cents: 3_000, basis: "anchored" }]);
+    addTxn("acct-gamma", "2026-08-03", -1_000);
+
+    const card = cardsOwedCard(bundle.db, TODAY)!;
+    // the headline is the net, as the runway card counts it
+    expect(card.owedCents).toBe(22_000);
+    expect(card.headline).toBe("$220.00");
+    expect(card.nothingOwed).toBe(false);
+    // the slices are of the $250.00 actually owed — 80% + 20%, never 118%
+    const alpha = card.cards.find((c) => c.name === "Alpha")!;
+    const beta = card.cards.find((c) => c.name === "Beta")!;
+    const gamma = card.cards.find((c) => c.name === "Gamma")!;
+    expect(alpha.shareLabel).toBe("80% of it");
+    expect(beta.shareLabel).toBe("20% of it");
+    expect(gamma.shareLabel).toBeNull();
+    expect(card.explanation).toContain("$30.00 of credit on Gamma is netted off, so each slice is of the $250.00 actually owed.");
+  });
+
+  test("a credit larger than every debt is not 'Nothing owed' — one card still owes", () => {
+    twoCards();
+    addAccount("acct-gamma", "Gamma", "credit", { last4: "3333", order: 2 });
+    addBalances("acct-gamma", [{ day: "2026-08-03", cents: 30_000, basis: "anchored" }]);
+    addTxn("acct-gamma", "2026-08-03", -1_000);
+
+    const card = cardsOwedCard(bundle.db, TODAY)!;
+    expect(card.owedCents).toBe(-5_000);
+    expect(card.nothingOwed).toBe(false);
+    // the net is money the banks owe him; what HE owes is the gross
+    expect(card.headline).toBe("$250.00");
+    expect(card.explanation).toContain("$300.00 of credit on Gamma is netted off");
+  });
+
   /**
    * ⛔ JavaScript has a negative zero, and `-0` formats as "-$0.00". A paid-off
    * Chase Sapphire rendered exactly that on the real dashboard: it reads as a

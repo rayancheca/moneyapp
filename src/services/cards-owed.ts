@@ -464,6 +464,18 @@ export function cardsOwedCard(db: AppDatabase, today: string = todayIso()): Card
   });
 
   const owedCents = bare.reduce((s, c) => s + (c.owedCents ?? 0), 0);
+  /*
+   * ⛔ SHARES ARE OF WHAT IS OWED, NOT OF THE NET. A card in credit is money
+   * the headline nets off — and it was shrinking the denominator. Measured on
+   * the owner's dashboard on 2026-09-03, the day a Chase Sapphire statement
+   * closed $82.72 in credit: "$842.89 across 3 cards" with Discover "66% of it"
+   * and Venture X "44% of it" — two slices of one debt adding to 110%. `share`
+   * already refuses a card in credit a slice of its own; the denominator has to
+   * refuse the credit too, and the sentence has to say the credit is there.
+   */
+  const grossOwedCents = bare.reduce((s, c) => s + Math.max(0, c.owedCents ?? 0), 0);
+  const creditCents = grossOwedCents - owedCents;
+  const inCredit = bare.filter((c) => (c.owedCents ?? 0) < 0).map((c) => c.name);
   const unpricedCards = bare.filter((c) => c.owedCents === null).length;
   const closedOwedCents = all
     .filter((a) => !a.isActive)
@@ -525,7 +537,7 @@ export function cardsOwedCard(db: AppDatabase, today: string = todayIso()): Card
       ...c,
       // ⛔ `x / 0` is Infinity and renders as "Infinity%". A card with nothing
       // owed has no shares to hand out, and the card says something else.
-      ...share(c.owedCents, owedCents),
+      ...share(c.owedCents, grossOwedCents),
       asOfLabel:
         sharedCheckedThrough !== null || c.checkedThrough === null
           ? null
@@ -535,8 +547,15 @@ export function cardsOwedCard(db: AppDatabase, today: string = todayIso()): Card
     }))
     .sort((a, b) => (b.owedCents ?? -Infinity) - (a.owedCents ?? -Infinity) || a.name.localeCompare(b.name));
 
-  const nothingOwed = owedCents <= 0;
+  // a card that owes something is never "Nothing owed", whatever another
+  // card's credit nets the total down to
+  const nothingOwed = grossOwedCents <= 0;
   const n = cards.length;
+
+  const credit =
+    creditCents > 0
+      ? ` ${formatCents(creditCents)} of credit on ${inCredit.join(" and ")} is netted off, so each slice is of the ${formatCents(grossOwedCents)} actually owed.`
+      : "";
 
   const floor =
     unpricedCards > 0
@@ -556,17 +575,21 @@ export function cardsOwedCard(db: AppDatabase, today: string = todayIso()): Card
       closed
     : sharedCheckedThrough !== null
       ? `Across ${n} ${plural(n, "card", "cards")}, all as of ${dated(sharedCheckedThrough, today)}.` +
+        credit +
         floor +
         closed
       : `Across ${n} ${plural(n, "card", "cards")}, each as of its own last statement — so this is not one moment.` +
         (oldestCheckedThrough === null
           ? ""
           : ` The oldest of them closed ${dated(oldestCheckedThrough, today)}.`) +
+        credit +
         floor +
         closed;
 
   return {
-    headline: nothingOwed ? "Nothing owed" : formatCents(owedCents),
+    // net when it is a debt; when credits outweigh the debts the net is not
+    // "what you owe" at all, and the gross is — with `credit` saying the rest
+    headline: nothingOwed ? "Nothing owed" : formatCents(owedCents > 0 ? owedCents : grossOwedCents),
     explanation,
     convention:
       "A card balance is stored the way a statement writes a debt, as a negative. Shown here as what you owe.",
