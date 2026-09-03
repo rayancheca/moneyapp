@@ -3,43 +3,40 @@
 > **Supersedes `HANDOFF-2026-09-02-the-forecast-hole.md`.**
 >
 > Repo: **`/Users/rayankarimcheca/dev/MoneyApp`**, `main`, tree clean, pushed.
-> tsc clean · **4,534 unit** · coverage gate exit 0 ·
+> tsc clean · **4,547 unit** · coverage gate exit 0 ·
 > **E2E_GATE=1: 598 passed at `maxDiffPixels: 0`** · `pnpm ledger-check` exit 0
 > on every commit via `.githooks/pre-commit`.
 >
 > Ledger: **10,178 active rows** (10,111 + the 67 rows of the Chase Sapphire
-> statement you dropped mid-session, §1) · ONE real-DB write this session, and
-> it was that import, trialled first, behind a restore point.
+> statement you dropped mid-session, §1) · TWO real-DB writes this session, both
+> behind restore points: that import, and the insurance attach you approved
+> (§8.1).
 >
-> 8 baselines regenerated — the `/imports` family, light and dark at four widths — the diff cropped and read first (§6): six balance-less documents left "the 12 most recent periods", the footer went 183 → 156, and the 27 documents got their own sentence. 590 passed on the first gated run; the family is green under the gate after regeneration.
+> 16 baselines regenerated across four full gates, every diff cropped and read
+> first: the `/imports` family (§6 — six balance-less documents left "the 12
+> most recent periods", the footer went 183 → 156, the 27 documents got their
+> own sentence) and the `/categories` family (§8.2 — the system row's count went
+> "—" → "198 txn", the fixture's category-less bucket). Nothing else moved: no
+> fixture series is hand-registered or late, no fixture card is in credit, no
+> fixture account is unproven from its first day — every other fix this session
+> is unit-tested only. The fourth gate: **598 passed in 8.1 minutes.**
 
 ---
 
 # ⛔ 0. THE JOB — what is next
 
-**Two decisions are waiting on you, both with the measurement (§8).** Neither
-blocks anything; both are one script or one answer.
+**Both decisions you were asked mid-session are CLOSED** — you said attach it,
+and treat the system category as the NULL bucket, and both are done (§8).
 
-1. **❓ Attach the first insurance payment to the "Car insurance" series.**
-   The Venture X statement carries PROGRESSIVE INS $357.58 on 2026-08-12, filed
-   by hand under Car > Car Insurance, and nothing links it to the series you
-   registered on 2026-08-31 (which starts at payment #2, Sep 11). So the
-   dashboard says "Car insurance — never billed" one card away from "Progressive
-   Insurance appears once in your ledger, for $357.58", and the car card counts
-   that premium as "Paid up front, spread over the lease". Rehearsed on a copy,
-   guarded, output in §8.1: `pnpm tsx scripts/attach-progressive-insurance.ts
-   --apply`. ⚠️ The amount differs from the series ($357.58 vs $361.49) — that
-   is what the statement printed, and you said $361.49 from memory.
-2. **❓ Six rows you filed on the SYSTEM category "Uncategorized"** sit outside
-   every total — $92.72 of 2024 SoFi debits and $0.35 net of 2023 verification
-   deposits — because a system-kind category is neither expense nor the NULL
-   honesty bucket (§8.2). Say which: re-file them, or have the app treat that
-   category as the NULL bucket.
-3. **28 merchants are queued for the paid Claude pass** after the import (§1).
+1. **❓ ONE question left from the attach:** the statement printed **$357.58**
+   for the first insurance payment; the series carries **$361.49**, your figure
+   from memory. If Sep 11 posts at $357.58 the matcher's tolerance decides, and
+   it should not have to. Which is the premium?
+2. **28 merchants are queued for the paid Claude pass** after the import (§1).
    The free pass changed nothing; I did not press the paid one.
-4. **⛔⛔ `BTLEServer` at 100% of a core for 52 days.** `uptime` says 52 days,
+3. **⛔⛔ `BTLEServer` at 100% of a core for 52 days.** `uptime` says 52 days,
    20 hours. Still not rebooted. Reboot.
-5. **Pass 76 onward** — `docs/program-passes-60-94.md`. **HOSTING LAST.**
+4. **Pass 76 onward** — `docs/program-passes-60-94.md`. **HOSTING LAST.**
 
 ---
 
@@ -94,10 +91,18 @@ nothing was lost, but the iCloud copy was a week stale.
 | 8 | /categories/Car: "Car lease · monthly · inactive · **$559.89**"; /recurring All tab: "Car lease … −$559.89 … ~$8,340.48/yr" | $559.89 is the registration SEED the ledger corrected to $695.04 on 08-31; two amounts on one row |
 | 9 | /recurring All tab: "**INACTIVE 7**" over "Cash job · Weekly · Next Sep 3" and five never-billed commitments; /recurring/[id]: an "Inactive" badge beside "Next expected Sep 11" | all seven are forecast one tab over; never billed, running late and lapsed are three facts, not one word |
 | 10 | /imports: Robinhood Cash "**nothing has closed** on this account yet" | the same page lists its July period as reconciled; it has 33 statement anchors — the chain is unproven from its FIRST day, which is a different sentence |
+| 11 | dashboard WHAT CHANGED: "**Sep 2026** is still running, and it is not fully imported either …" over figures for **July** | August cleared the calendar, failed the import test, and was passed over in silence; the note names the skip now |
+| 12 | /accounts/Discover: "Discover is **55.3%** of everything you owe" | a share of $1,008.33 — the Sapphire CREDIT counted as owed; the two cards owe $925.61, so 60.2%, the cards card's own slice |
+| 13 | dashboard terrain: "**$114,581.69 held, $925.61 owed**" under a header reading "Assets **$114,498.97** · Liabilities **$842.89**" | the terrain split by sign, the page by side; both were true and they sat on one screen |
+| 14 | /investments/stock/MSFT: "**▲ +$4,468.50 (−5.95%)** … down 5.9%" | the dollars are the flow-adjusted gain, the percentage the time-weighted return — true together, unnamed, an up arrow on a fall |
+| 15 | /summary/2025: "losses are **not treated as spending**" | under a "What you spent" figure that includes them — Gambling is an expense category in your own taxonomy |
+| 16 | runway: "Less what you owe on cards **−$842.89**" | a net of $82.72 in credit; the line says so now |
 
-Every one is the class the last three sessions named. Ten, and eight were
-found by reading; one by reading a backup's own description; one by reading
-the code behind another.
+Every one is the class the last three sessions named. Sixteen, and fourteen
+were found by reading; one by reading a backup's own description; one by
+reading the code behind another. Rows 12–16 came from the SECOND reading pass,
+after both decisions closed — the detail pages, the chart tables and a holding
+page, which the first pass had not reached.
 
 ---
 
@@ -277,9 +282,54 @@ Another entry for the unreachable-in-the-fixture list.
 
 ---
 
-## 8. ❓ The two decisions, with the measurement
+## 7c. The second pass — five more, and a convention to be aware of
 
-### 8.1 Attach PROGRESSIVE INS $357.58 (2026-08-12) to "Car insurance"
+The Sapphire credit balance from §1 is what surfaced four of them. A card the
+bank owes you on is a liability-type account with a positive balance, and five
+surfaces had five different arithmetic for it:
+
+    header          Liabilities $842.89        net of the credit, by account type
+    Assets/Owed lines                          net, by account type
+    runway          −$842.89                   net, by type — the line now says "net of $82.72 in credit"
+    cards card      $842.89 / slices of $925.61  net headline, gross slices (§4)
+    terrain         $925.61 owed / $114,581.69 held   GROSS, by sign — the one that disagreed with its own page
+    account insight "55.3% of everything you owe"    a share of |−557.62| + |−367.99| + |+82.72| = $1,008.33
+
+The terrain moved to the page's convention (by side; a row in credit reads
+"Owed · in credit"), and the account insight now shares the $925.61 actually
+owed and gives a card in credit no share of a debt.
+
+⚖️ **The convention is by TYPE, netted within a side, and that is a choice.**
+"Liabilities $842.89" is what your liability accounts net to, not what you owe
+the two banks that are owed ($925.61). The cards card says both. A pure by-sign
+reading would put "Liabilities $925.61" on the header — but the daily Assets and
+Amount-owed lines are built per account type with per-line coverage
+(`lib/multi-series`), and splitting them by sign per day changes what "covered"
+means for each line. Not done; if you want the header to read $925.61, that is
+the change, and it is not small. ⚠️ Latent under the type convention: if card
+credits ever exceed card debts, "Liabilities" prints a NEGATIVE figure. Not
+reachable on your ledger today.
+
+The other two: the MSFT page's "▲ +$4,468.50 (−5.95%)" — a dollar gain and a
+time-weighted return, true together and unnamed — names the percentage now; and
+/summary's gambling note said losses were not spending on a page whose spending
+figure includes them ($639.66 of 2025's $41,501.86). It says the narrower true
+thing now.
+
+---
+
+## 8. ✅ The two decisions — asked with the measurement, answered, done
+
+### 8.1 ✅ APPLIED — PROGRESSIVE INS $357.58 (2026-08-12) attached to "Car insurance"
+
+You said attach it. `scripts/attach-progressive-insurance.ts --apply` ran
+behind `data/backups/pre-2026-09-03T150653-manual-backup.db`: 2 rows changed
+(the transaction's `recurring_series_id` + `series_link_source = 'user'`, and
+the series' `last_matched_on = 2026-08-12`), `next_expected_on` untouched at
+Sep 11, ledger-check exit 0 after. Live: the subscriptions card reads *"Car
+insurance · last seen 2026-08-12"*, the car card's up-front figure is
+**$6,100.00**, /recurring says *"3 have never charged"*. The measurement that
+justified it:
 
 You registered the series on 2026-08-31 from payment #2, because #1 "was
 already paid 2026-08-11 on Venture X". It was — and it is in the ledger, filed
@@ -308,10 +358,9 @@ account, status and "not yet linked"; the series by id, name, status,
 
 ⚠️ **The statement says $357.58; the series says $361.49** (your figure, from
 memory, confirmed once when two numbers conflicted). If Sep 11 posts at $357.58
-too, the series' tolerance decides whether it matches — and that is a second
-question for you, not something to guess.
+too, the series' tolerance decides whether it matches — §0 asks you which.
 
-### 8.2 Six rows filed on the SYSTEM category "Uncategorized"
+### 8.2 ✅ DONE — the system category "Uncategorized" is the NULL bucket
 
     2023-11-02  SoFi Savings   −$0.35  Direct Payment CAPITAL ONE ACCTVERIFY
     2023-11-02  SoFi Savings   +$0.11  Deposit CAPITAL ONE ACCTVERIFY
@@ -328,10 +377,21 @@ total anywhere**. The dashboard's "31 transactions have no category yet" counts
 NULL; `/categories` shows "Uncategorized · 6 txn"; the ledger's Uncategorized
 filter shows NULL. Three surfaces, two definitions of one word.
 
-Your call: (a) re-file the six by hand (the three 2024 debits look like real
-spending; the 2023 trio nets to zero), or (b) have the app treat the system
-category as the NULL bucket everywhere — no write, and it closes the trap for
-the next row. I lean (b), with (a) for the three 2024 rows on top. Not done.
+You chose (b), and it is in (`fix(categories)`): `CategoryIndex` carries
+`uncategorizedIds` / `isUncategorized`; `activeTxnsInRange` normalises at the
+source so every aggregate built on it agrees; `uncategorizedWhere` is the SQL
+form for the ledger's filter, the dashboard's count and the coverage figure;
+spending's allocation guard and the forecast's variable leg apply the rule to
+rows they read themselves; and picking "Uncategorized" in the picker now writes
+NULL as a user decision and teaches no merchant, so nothing lands on the system
+row again. No write to the six rows — they read as uncategorized where they
+are. Twelve mutants killed, and the one test that asserted the old rule now
+asserts yours.
+
+    dashboard    "31 transactions have no category yet"  ->  37
+    /categories  "Uncategorized · 6 txn"                  ->  37 txn
+    /transactions coverage                                99.7% -> 99.6%
+    /summary/2024 spending                                $30,266.93 -> $30,359.65   (+$92.72, to the cent)
 
 ---
 
@@ -344,13 +404,12 @@ the next row. I lean (b), with (a) for the three 2024 rows on top. Not done.
    named the change's days for exactly this reason and left `asOf` as the
    newest child, with a docstring saying so. It is still two dates on one row,
    and a judgement about the label rather than a wrong number.
-2. **The dashboard's WHAT CHANGED note** still skips August in silence ("Sep
-   2026 is still running, and it is not fully imported either … shown through
-   Aug 9 at the earliest"). Last session fixed the /spending panel's version of
-   this sentence; the dashboard card has its own, and the "Aug 9" is the
-   answer without the question.
-3. **The category picker offers the system "Uncategorized"** (that is how the
-   six rows in §8.2 got there). Whether it should is the same decision.
+2. ~~The dashboard's WHAT CHANGED note skips August in silence~~ — fixed after
+   you answered (§2 row 11): *"Aug 2026 is complete, but not every account you
+   spend from has been imported through its last day — so these read Jul 2026
+   rather than Aug 2026."*
+3. **The category picker still offers "Uncategorized"** — deliberately: it is
+   now the way to say "leave this one category-less", and writes NULL.
 
 ---
 
@@ -393,6 +452,18 @@ Confirmed live after the fixes, read off the page text:
     /imports     "closes around Sep 2 on this rhythm — counted as late from Sep 10"
     /imports     "230 older periods are not listed." · "4 imported documents carried no balance to check…"
     /settings    the fixture snapshot is gone from the rotation
+    dashboard    "37 transactions have no category yet" · /categories "Uncategorized · 37 txn" · coverage 99.6%
+    /summary/2024 "Spending in 2024 came to $30,359.65"   (was $30,266.93 — +$92.72, the six rows)
+    dashboard    "Car insurance · last seen 2026-08-12" · car card "Paid up front … $6,100.00" · /recurring "3 have never charged"
+    /recurring?tab=all   ACTIVE 5 · RUNNING LATE 2 · NEVER BILLED 5 — "Car lease … -$695.04", "Cash job … +$1,047.00 · posted avg +$1,046.00"
+    /categories/Car      "Car lease · monthly · next Sep 15 · never billed · $695.04"
+    /imports     Robinhood Cash: "nothing closes to the cent from its first day; the first day it does not is Dec 5, 2023 …"
+    dashboard    "Aug 2026 is complete, but not every account you spend from has been imported through its last day — so these read Jul 2026 rather than Aug 2026."
+    /accounts/Discover   "Discover is 60.2% of everything you owe."
+    dashboard    terrain "$114,498.97 held, $842.89 owed" · "Chase Sapphire · Owed · in credit" · header "Liabilities $842.89"
+    dashboard    "Less what you owe on cards, net of $82.72 in credit"
+    /investments/stock/MSFT   "(-5.95% time-weighted)" · "Thu, Sep 3, 2026: +$4,468.50, -5.95% time-weighted"
+    /summary/2025 "Counted in none of the money-in totals above: winnings are not treated as income here. Losses are spending …"
 
 ---
 
@@ -401,13 +472,13 @@ Confirmed live after the fixes, read off the page text:
 > Read `docs/HANDOFF-2026-09-03-the-payday-that-had-not-happened.md` first —
 > it is the brief. §0 of it is the job.
 > Repo `/Users/rayankarimcheca/dev/MoneyApp`, `main` clean and pushed. Baseline:
-> 4,531 unit in ~25s · tsc clean · coverage gate exit 0 · `E2E_GATE=1`:
-> 598 passed at `maxDiffPixels: 0` · `pnpm ledger-check` exit 0 on
-> every commit. Ledger: 10,178 active rows.
+> 4,547 unit in ~25s · tsc clean · coverage gate exit 0 · `E2E_GATE=1`:
+> 598 passed at `maxDiffPixels: 0` in 8.1m · `pnpm ledger-check` exit 0 on
+> every commit. Ledger: 10,178 active rows · 37 uncategorized.
 >
-> Two decisions are waiting on me (§8). Put the answers into the ledger with
-> the rehearsed script, then the job is the same as the last four sessions:
-> find what is wrong. Do not invent features.
+> One question is waiting on me (§0.1: is the insurance premium $357.58 or
+> $361.49?). Otherwise the job is the same as the last five sessions: find
+> what is wrong. Do not invent features.
 >
 > 1. ⭐ OPEN THE APP AND READ IT BEFORE YOU GREP IT. Five of this session's
 >    seven came from reading sentences; a sixth from reading a backup's own
