@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, lte, ne } from "drizzle-orm";
+import type { SeriesEvidence } from "@/lib/series-evidence";
 import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { merchants } from "@/db/schema/merchants";
@@ -725,6 +726,8 @@ export interface SeriesView {
   matchedCount: number;
   /** derived: within cadence+grace of its last charge (§4.1 Active/Inactive) */
   isActive: boolean;
+  /** what the evidence says, in the word every surface uses — `isActive` is its first case */
+  evidence: SeriesEvidence;
   /** effective per-occurrence amount × occurrences/year (magnitude) */
   annualizedCents: number | null;
 }
@@ -794,6 +797,7 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
         lastMatchedOn: s.lastMatchedOn,
         matchedCount: countBySeries.get(s.id) ?? 0,
         isActive: isSeriesActive(s, today),
+        evidence: seriesEvidence(s, today),
         annualizedCents: annualizedCentsOf(eff),
       } satisfies SeriesView;
     })
@@ -1205,4 +1209,29 @@ export function upcomingOccurrences(
     .filter((s) => !(lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today)))
     .flatMap((s) => projectOccurrences(toProjectable(s, seriesStaleness(s, today)), today, to))
     .sort((a, b) => compareDates(a.date, b.date) || a.name.localeCompare(b.name));
+}
+
+/**
+ * What the evidence says about a series, by the SAME gates the forecast uses.
+ *
+ * 🔴 `/recurring`'s All tab filed seven series under "INACTIVE" on 2026-09-03:
+ * five hand-registered commitments the bank has never billed and the owner's
+ * weekly pay — each with a "Next" date on its own row, each projected one tab
+ * over. `isSeriesActive` is "fresh", and a series can fail to be fresh three
+ * different ways: it has never charged (nothing to be stale from — the
+ * subscriptions card says "never billed"), it is late but still forecast, or
+ * it has lapsed and the forecast has let it go. Money in is late, never lapsed
+ * (`lapsedSeriesShouldStopForecasting`), which is why this reuses that gate
+ * rather than restating it.
+ *
+ * Only meaningful for a detected/confirmed series; a dismissed or ended one is
+ * described by its status, and callers badge those separately.
+ */
+export function seriesEvidence(
+  s: SeriesOverrides & { status: SeriesStatus; kind: SeriesKind; lastMatchedOn: string | null },
+  today: string = todayIso(),
+): SeriesEvidence {
+  if (s.lastMatchedOn === null) return "never-billed";
+  if (isSeriesActive(s, today)) return "active";
+  return lapsedSeriesShouldStopForecasting(s.kind) && seriesHasLapsed(s, today) ? "lapsed" : "running-late";
 }

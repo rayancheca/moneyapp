@@ -1,4 +1,5 @@
 import { and, desc, eq, isNull, lte, ne, or, sql } from "drizzle-orm";
+import type { SeriesEvidence } from "@/lib/series-evidence";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -20,6 +21,7 @@ import {
   rollForwardNextExpected,
   toProjectable,
   type SeriesOccurrence,
+  seriesEvidence,
 } from "./recurring";
 
 /**
@@ -89,6 +91,8 @@ export interface SeriesDetail {
   confidence: number | null;
   lastMatchedOn: string | null;
   isActive: boolean;
+  /** the word every surface uses for its evidence — see `lib/series-evidence` */
+  evidence: SeriesEvidence;
   /**
    * The day this series stops, or null when it runs on — `userEndsOn`, the only
    * end day the ledger holds and the one `projectOccurrences` clamps its walk
@@ -278,6 +282,7 @@ export function seriesDetail(
     confidence: s.confidence,
     lastMatchedOn: s.lastMatchedOn,
     isActive: isSeriesActive(s, today),
+    evidence: seriesEvidence(s, today),
     endsOn: s.userEndsOn ?? null,
     annualizedCents: annualizedCentsOf(eff),
     nextExpected,

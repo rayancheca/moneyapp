@@ -2,20 +2,33 @@ import Link from "next/link";
 import { confirmSeriesAction, dismissSeriesAction } from "@/app/recurring/actions";
 import { Money } from "@/components/ui/Money";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { SERIES_EVIDENCE_NOTE } from "@/lib/series-evidence";
 import type { SeriesView } from "@/services/recurring";
 import { CADENCE_LABEL, KIND_LABEL, shortDate } from "./labels";
 
 /**
  * The "All" sub-view (ux-overhaul-plan §4.1): a suggestion queue up top —
- * freshly detected series awaiting a decision — then the Active and Inactive
- * sections of confirmed series, each row showing the stored statistics
- * (cadence, avg ±σ, next expected, annualized cost). Confirm / Not-recurring and
- * Dismiss reuse the existing value-preserving server actions.
+ * freshly detected series awaiting a decision — then the confirmed series by
+ * what their EVIDENCE says (`lib/series-evidence`): active, running late, never
+ * billed, lapsed. Each row shows the effective amount (what the forecast
+ * projects), the posted average beneath it when the two differ, the next
+ * expected date and the annualized cost. Confirm / Not-recurring and Dismiss
+ * reuse the existing value-preserving server actions.
+ *
+ * 🔴 This had two sections, Active and "Inactive", and on 2026-09-03 the second
+ * held the owner's weekly pay and five never-billed commitments — each with a
+ * Next date on its own row, each forecast one tab over. And the column headed
+ * "Avg" printed the stored average, which for a hand-registered series is the
+ * seed from registration: the lease read $559.89 beside "~$8,340.48/yr", two
+ * numbers on one row that cannot both be true of one bill.
  */
 export function AllSeriesView({ series }: { series: SeriesView[] }) {
   const suggestions = series.filter((s) => s.status === "detected");
-  const active = series.filter((s) => s.status === "confirmed" && s.isActive);
-  const inactive = series.filter((s) => s.status === "confirmed" && !s.isActive);
+  const confirmed = series.filter((s) => s.status === "confirmed");
+  const active = confirmed.filter((s) => s.evidence === "active");
+  const late = confirmed.filter((s) => s.evidence === "running-late");
+  const neverBilled = confirmed.filter((s) => s.evidence === "never-billed");
+  const lapsed = confirmed.filter((s) => s.evidence === "lapsed");
 
   if (series.filter((s) => s.status !== "dismissed" && s.status !== "ended").length === 0) {
     return (
@@ -44,8 +57,16 @@ export function AllSeriesView({ series }: { series: SeriesView[] }) {
         </section>
       ) : null}
 
-      <SeriesSection title="Active" series={active} />
-      {inactive.length > 0 ? <SeriesSection title="Inactive" series={inactive} muted /> : null}
+      <SeriesSection title="Active" note={SERIES_EVIDENCE_NOTE.active} series={active} />
+      {late.length > 0 ? (
+        <SeriesSection title="Running late" note={SERIES_EVIDENCE_NOTE["running-late"]} series={late} muted />
+      ) : null}
+      {neverBilled.length > 0 ? (
+        <SeriesSection title="Never billed" note={SERIES_EVIDENCE_NOTE["never-billed"]} series={neverBilled} muted />
+      ) : null}
+      {lapsed.length > 0 ? (
+        <SeriesSection title="Lapsed" note={SERIES_EVIDENCE_NOTE.lapsed} series={lapsed} muted />
+      ) : null}
     </div>
   );
 }
@@ -96,14 +117,27 @@ function SuggestionCard({ series: s }: { series: SeriesView }) {
   );
 }
 
-function SeriesSection({ title, series, muted }: { title: string; series: SeriesView[]; muted?: boolean }) {
+function SeriesSection({
+  title,
+  note,
+  series,
+  muted,
+}: {
+  title: string;
+  note: string;
+  series: SeriesView[];
+  muted?: boolean;
+}) {
+  // an id may not contain a space, and "Running late" does
+  const id = `rec-${title.toLowerCase().replace(/\s+/g, "-")}`;
   return (
-    <section aria-labelledby={`rec-${title}`}>
-      <div className="mb-2 flex items-baseline justify-between">
-        <h2 id={`rec-${title}`} className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
+    <section aria-labelledby={id}>
+      <div className="mb-2 flex items-baseline justify-between gap-3">
+        <h2 id={id} className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
           {title}
+          <span className="ml-2 font-normal normal-case tracking-normal">— {note}</span>
         </h2>
-        <span className="text-[11px] text-ink-faint">{series.length}</span>
+        <span className="shrink-0 text-[11px] text-ink-faint">{series.length}</span>
       </div>
       {series.length === 0 ? (
         <p className="rounded-(--radius-card) border border-dashed border-line px-4 py-3 text-xs text-ink-faint">
@@ -125,7 +159,7 @@ function SeriesSection({ title, series, muted }: { title: string; series: Series
               <tr className="border-b border-line text-left text-[11px] font-medium uppercase tracking-[0.1em] text-ink-faint">
                 <th scope="col" className="px-4 py-2.5">Series</th>
                 <th scope="col" className="px-3 py-2.5">Cadence</th>
-                <th scope="col" className="px-3 py-2.5 text-right">Avg</th>
+                <th scope="col" className="px-3 py-2.5 text-right">Amount</th>
                 <th scope="col" className="px-3 py-2.5">Next</th>
                 <th scope="col" className="px-3 py-2.5 text-right">Annualized</th>
                 <th scope="col" className="px-4 py-2.5 text-right"><span className="sr-only">Actions</span></th>
@@ -156,10 +190,20 @@ function SeriesRow({ series: s }: { series: SeriesView }) {
       </th>
       <td className="px-3 py-3 text-ink-muted">{CADENCE_LABEL[s.cadence]}</td>
       <td className="px-3 py-3 text-right">
-        {s.amountCentsAvg !== null ? (
+        {s.nextExpectedAmountCents !== null ? (
           <>
-            <Money cents={s.amountCentsAvg} flow />
-            {s.amountCentsStddev !== null && s.amountCentsStddev > 0 ? (
+            {/* the effective amount — user override first — which is what the
+                forecast projects and what ANNUALIZED beside it is built from */}
+            <Money cents={s.nextExpectedAmountCents} flow />
+            {/* the measured average only when charges exist to average and it
+                says something the amount does not; a never-billed series has
+                no average, whatever its stored seed says */}
+            {s.matchedCount > 0 && s.amountCentsAvg !== null && s.amountCentsAvg !== s.nextExpectedAmountCents ? (
+              <span className="figures block text-[10px] text-ink-faint">
+                posted avg <Money cents={s.amountCentsAvg} flow />
+                {s.amountCentsStddev !== null && s.amountCentsStddev > 0 ? ` ±${(s.amountCentsStddev / 100).toFixed(2)}` : ""}
+              </span>
+            ) : s.matchedCount > 0 && s.amountCentsStddev !== null && s.amountCentsStddev > 0 ? (
               <span className="figures block text-[10px] text-ink-faint">
                 ±{(s.amountCentsStddev / 100).toFixed(2)}
               </span>

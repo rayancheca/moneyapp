@@ -20,6 +20,7 @@ import {
   fitCadence,
   isDayOfMonthBimodal,
   isSeriesActive,
+  seriesEvidence,
   lapsedSeriesShouldStopForecasting,
   listSeries,
   median,
@@ -505,6 +506,39 @@ describe("seriesStaleness", () => {
       expect(isSeriesActive({ ...s, status: "dismissed" }, "2026-07-08")).toBe(false);
       expect(isSeriesActive({ ...s, status: "ended" }, "2026-07-08")).toBe(false);
     }
+  });
+
+  /*
+   * 🔴 /recurring's All tab filed the owner's weekly pay and five never-billed
+   * commitments under "INACTIVE", each with a Next date on its own row and each
+   * forecast one tab over. The word is chosen by the evidence now, through the
+   * same kind gate the forecast applies. Killed by mutation: dropping the
+   * never-billed branch, and dropping the kind gate (which files a late
+   * paycheque as lapsed).
+   */
+  test("seriesEvidence names never-billed, late and lapsed by the gates the forecast uses", () => {
+    const base = {
+      cadence: "monthly" as const,
+      userCadence: null,
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-08-01",
+      userNextExpectedOn: null,
+      nextExpectedAmountCents: -5000,
+      userAmountCents: null,
+      status: "confirmed" as const,
+    };
+    const today = "2026-07-08";
+    expect(seriesEvidence({ ...base, kind: "bill", lastMatchedOn: null }, today)).toBe("never-billed");
+    expect(seriesEvidence({ ...base, kind: "bill", lastMatchedOn: "2026-07-05" }, today)).toBe("active");
+    // 74 days quiet: past the 1.5-cycle staleness bar, short of the 3-cycle lapse bar
+    expect(seriesEvidence({ ...base, kind: "bill", lastMatchedOn: "2026-04-25" }, today)).toBe("running-late");
+    // 157 days quiet: a bill this quiet is no longer forecast …
+    expect(seriesEvidence({ ...base, kind: "bill", lastMatchedOn: "2026-02-01" }, today)).toBe("lapsed");
+    // … and a paycheque this quiet is late, never lapsed — money in does not stop
+    expect(seriesEvidence({ ...base, kind: "income", lastMatchedOn: "2026-02-01" }, today)).toBe("running-late");
+    // the same gate the forecast reads, not a second copy of it
+    expect(seriesHasLapsed({ ...base, lastMatchedOn: "2026-02-01" }, today)).toBe(true);
+    expect(lapsedSeriesShouldStopForecasting("income")).toBe(false);
   });
 });
 

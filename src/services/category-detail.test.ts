@@ -138,7 +138,8 @@ describe("seriesInCategory", () => {
   test("returns series whose linked txns fall in the subtree, linking to /recurring/[id]", () => {
     const seriesId = bundle.db
       .insert(recurringSeries)
-      .values({ name: "Spotify", kind: "subscription", cadence: "monthly", amountCentsAvg: -1_099, status: "confirmed", nextExpectedOn: "2026-08-01", lastMatchedOn: "2026-07-01" })
+      // the owner set the amount; the stored average is what the detector measured
+      .values({ name: "Spotify", kind: "subscription", cadence: "monthly", amountCentsAvg: -1_099, userAmountCents: -1_299, nextExpectedAmountCents: -1_099, status: "confirmed", nextExpectedOn: "2026-08-01", lastMatchedOn: "2026-07-01" })
       .returning({ id: recurringSeries.id })
       .get().id;
     insertTxn({ postedOn: "2026-06-01", amountCents: -1_099, category: "Subscriptions > Streaming", seriesId });
@@ -154,6 +155,10 @@ describe("seriesInCategory", () => {
     const rows = seriesInCategory(bundle.db, catId("Subscriptions"), TODAY);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ id: seriesId, name: "Spotify", href: `/recurring/${seriesId}` });
+    // 🔴 the EFFECTIVE amount, user override first — /categories/<Car> printed the
+    // lease's registration seed ($559.89) after the ledger had corrected it to $695.04
+    expect(rows[0]!.amountCents).toBe(-1_299);
+    expect(rows[0]!.evidence).toBe("active");
   });
 
   test("empty when no linked series", () => {

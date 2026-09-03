@@ -252,7 +252,8 @@ export async function loadSeriesLinkPanel(
       .map((s) => ({
         id: s.id,
         name: s.name,
-        detail: `${s.cadence}${s.amountCentsAvg !== null ? ` · ~${formatCents(Math.abs(s.amountCentsAvg))}` : ""}`,
+        // the effective amount, never the stored seed of a hand-registered series
+        detail: `${s.cadence}${s.nextExpectedAmountCents !== null ? ` · ~${formatCents(Math.abs(s.nextExpectedAmountCents))}` : ""}`,
       }));
     return { ok: true, data: { linked: null, candidates } };
   } catch (error: unknown) {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { renameSeriesAction, setSeriesStatusAction } from "@/app/recurring/actions";
@@ -140,8 +141,10 @@ export function SeriesDetail({
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <Badge tone={STATUS_TONE[data.status]}>{STATUS_LABEL[data.status]}</Badge>
             <span className="text-xs text-ink-faint">{KIND_LABEL[data.kind]}</span>
-            {(data.status === "detected" || data.status === "confirmed") && !data.isActive ? (
-              <Badge tone="warning">Inactive</Badge>
+            {/* 🔴 "Inactive" sat beside "Next expected Sep 11" on a series the
+                forecast projects. The badge is the word the evidence chooses. */}
+            {(data.status === "detected" || data.status === "confirmed") && data.evidence !== "active" ? (
+              <Badge tone="warning">{SERIES_EVIDENCE_LABEL[data.evidence]}</Badge>
             ) : null}
             {/* 🔴 The one place a reader would go to check when a series stops,
                 and the only surface that did not say. The runway card and the

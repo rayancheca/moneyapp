@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import type { SeriesEvidence } from "@/lib/series-evidence";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import { monthKey, periodBounds } from "@/lib/dates";
@@ -129,6 +130,8 @@ export interface CategorySeriesRow {
   nextExpectedOn: string | null;
   status: string;
   isActive: boolean;
+  /** the word every surface uses for its evidence — see `lib/series-evidence` */
+  evidence: SeriesEvidence;
   href: string;
 }
 
@@ -148,10 +151,18 @@ export function seriesInCategory(db: AppDatabase, categoryId: string, today: str
       id: s.id,
       name: s.name,
       cadence: s.cadence,
-      amountCents: s.amountCentsAvg ?? 0,
+      /*
+       * 🔴 The EFFECTIVE amount, user override first — what the forecast
+       * projects and what every other surface prints. This read the stored
+       * average, and for a hand-registered series that "average" is the seed
+       * from registration: /categories/<Car> listed the lease at $559.89 on
+       * 2026-09-03, the figure the ledger corrected to $695.04 on 2026-08-31.
+       */
+      amountCents: s.nextExpectedAmountCents ?? s.amountCentsAvg ?? 0,
       nextExpectedOn: s.nextExpectedOn,
       status: s.status,
       isActive: s.isActive,
+      evidence: s.evidence,
       href: `/recurring/${s.id}`,
     }));
 }
