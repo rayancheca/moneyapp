@@ -102,7 +102,7 @@ describe("an unverified account states BOTH halves", () => {
     expect(many).toContain("41 days rest on");
   });
 
-  test("an account that has never closed says so, instead of naming a date it did", () => {
+  test("an account unproven from its first day says so, instead of claiming nothing ever closed", () => {
     // Robinhood Cash: its ledger STARTS at its first unverified day, so there
     // is no trusted day before it and `verifiedThrough` is null
     expect(
@@ -114,7 +114,7 @@ describe("an unverified account states BOTH halves", () => {
         unverifiedDays: 41,
       }),
     ).toBe(
-      "nothing has closed on this account yet; the first day it does not is Dec 5, 2023 — 41 days rest on an export with no closing balance",
+      "nothing closes to the cent from its first day; the first day it does not is Dec 5, 2023 — 41 days rest on an export with no closing balance",
     );
   });
 });
@@ -159,7 +159,7 @@ describe("a verified account", () => {
   test("⚠️ a verified account whose every day is carried has no date to give", () => {
     // it rendered "through null" before this branch existed
     expect(detail({ verifiedThrough: null, daysSinceVerified: null })).toBe(
-      "nothing has closed on this account yet",
+      "nothing closes to the cent from its first day",
     );
   });
 

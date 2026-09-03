@@ -80,7 +80,14 @@ export function agoPhrase(days: number | null): string | null {
  * before this branch existed.
  */
 function closesClause(input: CoverageDetailInput): string {
-  if (input.verifiedThrough === null) return "nothing has closed on this account yet";
+  /*
+   * 🔴 "nothing has closed on this account yet" — said of Robinhood Cash, which
+   * has 33 statement anchors and 32 reconciled periods listed on the same page.
+   * `verifiedThrough` is null because the chain is unproven from the account's
+   * FIRST day (52 days from Dec 5, 2023 rest on an export with no closing
+   * balance), not because nothing ever closed. Say the true thing.
+   */
+  if (input.verifiedThrough === null) return "nothing closes to the cent from its first day";
   const ago = agoPhrase(input.daysSinceVerified);
   const dated = dayWithYear(input.verifiedThrough);
   return ago === null ? `closes to the cent through ${dated}` : `closes to the cent through ${dated} (${ago})`;
