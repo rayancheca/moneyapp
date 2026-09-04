@@ -73,10 +73,24 @@ export default async function CategoryPage({
   const range = { from: period.from, to: period.to };
   const isIncome = header.kind === "income";
   const isExpense = header.kind === "expense";
-  // income flows are money-IN (flip categorySpending's money-out sign); expense
-  // and the excluded kinds (transfer/investment/rewards/system — reachable by
-  // drilling a series' category chip) keep the raw net, labelled honestly below.
-  const sign = isIncome ? -1 : 1;
+  /*
+   * Only an EXPENSE category is printed in `categorySpending`'s money-out
+   * frame, because only there does a bigger number mean more money gone.
+   *
+   * 🔴 The excluded kinds (transfer/investment/rewards/system — reachable by
+   * drilling a series' category chip) used to keep the raw money-out net under
+   * a bare label "Net", and money ARRIVING therefore printed as a minus
+   * directly above the same rows printed as a plus. Measured 2026-09-04 on
+   * `/categories/<Pass-through>?period=2026-08`:
+   *
+   *     Net · August 2026     -$5,000.00   2 transactions
+   *     08-12  ZELLE PAYMENT FROM ARNO SEARCH CAPITAL, LLC   +$1,000.00
+   *     08-11  ZELLE PAYMENT FROM ARNO SEARCH CAPITAL, LLC   +$4,000.00
+   *
+   * The transaction list under the headline is the ledger's own frame — money
+   * in positive — and the headline over it must be the sum of what it prints.
+   */
+  const sign = isExpense ? 1 : -1;
   const flowLabel = isIncome ? "Received" : isExpense ? "Spent" : "Net";
 
   const { spentCents, txnCount } = categorySpending(db, { categoryId: id, from: range.from, to: range.to });
@@ -173,7 +187,7 @@ export default async function CategoryPage({
 
         <SurfaceCard>
           <h2 className="mb-4 text-sm font-medium">12-month trend</h2>
-          <MonthlyTrendBars points={trend} />
+          <MonthlyTrendBars points={trend} flowLabel={flowLabel} />
         </SurfaceCard>
 
         {budget && (
