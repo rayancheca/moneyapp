@@ -226,6 +226,37 @@ describe("seriesDetail", () => {
     expect(d.nextExpected.every((o) => o.date >= TODAY)).toBe(true);
   });
 
+  /*
+   * 🔴 `/recurring/<Hoffman LL>` on 2026-09-04 carried the badge "Ended · Bill"
+   * over "Next expected — Sep 8, 2026 -$1,786.46 · Oct 8 · Nov 8", of a series
+   * whose one linked charge is dated 2025-06-02. `/recurring/<YA-FIT Smoothie
+   * Bar>` read "Dismissed · Bill" over three more.
+   *
+   * `listSeries` refuses exactly this and says why in its own comment —
+   * "rolling a dismissed/ended series forward would invent a future charge" —
+   * and the page ABOUT the series was the one place that did it anyway. Same
+   * shape as `seriesRowLabel`: the vocabulary chooses by STATUS first.
+   */
+  test("a series the owner ENDED projects nothing", () => {
+    const id = netflix().id;
+    bundle.db.update(recurringSeries).set({ status: "ended" }).where(eq(recurringSeries.id, id)).run();
+    const d = seriesDetail(bundle.db, id, TODAY);
+    expect(d.nextExpected).toEqual([]);
+    expect(d.overdue).toBeNull();
+  });
+
+  test("a series the owner DISMISSED projects nothing", () => {
+    const id = netflix().id;
+    bundle.db.update(recurringSeries).set({ status: "dismissed" }).where(eq(recurringSeries.id, id)).run();
+    const d = seriesDetail(bundle.db, id, TODAY);
+    expect(d.nextExpected).toEqual([]);
+    expect(d.overdue).toBeNull();
+  });
+
+  test("a CONFIRMED series still projects — the test above is about status, not about silence", () => {
+    expect(seriesDetail(bundle.db, netflix().id, TODAY).nextExpected.length).toBeGreaterThan(0);
+  });
+
   test("a charge due TODAY is due, not overdue — the two legs abut", () => {
     const id = netflix().id;
     bundle.db

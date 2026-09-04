@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
+import { SERIES_EVIDENCE_LABEL, noScheduleReason } from "@/lib/series-evidence";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { renameSeriesAction, setSeriesStatusAction } from "@/app/recurring/actions";
@@ -344,6 +344,17 @@ export function SeriesDetail({
                 <Money cents={data.overdue.amountCents} flow />
               </li>
             </ul>
+          </SurfaceCard>
+        ) : null}
+
+        {/* 🔴 An ENDED or DISMISSED series projected three dated future
+            charges here — see `noScheduleReason`. Dropping the card silently
+            would leave the reader wondering where the schedule went, so the
+            reason goes where it was. */}
+        {noScheduleReason(data.status) ? (
+          <SurfaceCard>
+            <h2 className="mb-1 text-sm font-medium">Nothing expected</h2>
+            <p className="text-xs text-ink-muted">{noScheduleReason(data.status)}</p>
           </SurfaceCard>
         ) : null}
 

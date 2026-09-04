@@ -245,20 +245,40 @@ export function seriesDetail(
     .map((t) => ({ date: t.postedOn, amountCents: t.amountCents }));
 
   const eff = effectiveSeries(s);
+  /*
+   * 🔴 ONLY THE STATUSES THE FORECAST PROJECTS, and the rule was already
+   * written four lines below for `nextExpectedOn`: "rolling a dismissed/ended
+   * series forward would invent a future charge." The occurrence LIST beside it
+   * ignored it, so on 2026-09-04 `/recurring/<Hoffman LL>` carried the badge
+   * "Ended · Bill" over "Next expected — Sep 8, 2026 -$1,786.46 · Oct 8 ·
+   * Nov 8" for a series whose one linked charge is dated 2025-06-02, and
+   * `/recurring/<YA-FIT Smoothie Bar>` read "Dismissed · Bill" over three more.
+   *
+   * ⛔ `dismissed` is the owner saying a pattern is NOT recurring, and it is
+   * also the detector's re-detection sink — a dated future charge under that
+   * badge is the app arguing with him. `ended` really did bill and stopped; its
+   * history stays, its future does not.
+   */
+  const projects = s.status === "detected" || s.status === "confirmed";
+
   // Size the projection window off the series' own step so even a long-interval
   // annual series reaches NEXT_EXPECTED_COUNT occurrences: the first can land up
   // to one whole step out, so (count+1) steps covers count of them with slack.
   // Stepped by the SAME plan the projection walks, or a calendar-monthly series
   // whose months run long could have its last occurrence fall outside a window
   // sized in 30-day units.
-  const nextExpected = projectOccurrences(
-    toProjectable(s),
-    today,
-    stepFrom(today, stepPlan(eff.cadence, eff.intervalDaysAvg), NEXT_EXPECTED_COUNT + 1),
-  ).slice(0, NEXT_EXPECTED_COUNT);
+  const nextExpected = projects
+    ? projectOccurrences(
+        toProjectable(s),
+        today,
+        stepFrom(today, stepPlan(eff.cadence, eff.intervalDaysAvg), NEXT_EXPECTED_COUNT + 1),
+      ).slice(0, NEXT_EXPECTED_COUNT)
+    : [];
 
   const monthStart = periodBounds(today, "monthly").start;
-  const late = overdueForSeries(db, new Set([seriesId]), monthStart, addDays(today, -1)).series[0] ?? null;
+  const late = projects
+    ? (overdueForSeries(db, new Set([seriesId]), monthStart, addDays(today, -1)).series[0] ?? null)
+    : null;
   const overdue = late
     ? { date: late.nextDate, amountCents: -late.amountCents, occurrenceCount: late.occurrenceCount }
     : null;
@@ -288,12 +308,8 @@ export function seriesDetail(
     cadence: eff.cadence,
     // Same rule as listSeries: the detail page must not show a date in the past
     // as "next" while the list shows the rolled-forward one. Only the statuses
-    // the forecast actually projects roll — rolling a dismissed/ended series
-    // forward would invent a future charge.
-    nextExpectedOn:
-      s.status === "detected" || s.status === "confirmed"
-        ? rollForwardNextExpected(eff, today)
-        : eff.nextExpectedOn,
+    // the forecast actually projects roll — see `projects` above.
+    nextExpectedOn: projects ? rollForwardNextExpected(eff, today) : eff.nextExpectedOn,
     storedNextExpectedOn: eff.nextExpectedOn,
     nextExpectedAmountCents: eff.nextExpectedAmountCents,
     userCadence: s.userCadence,

@@ -83,3 +83,27 @@ export const SERIES_EVIDENCE_NOTE: Record<SeriesEvidence, string> = {
   "running-late": "still forecast — the last charge is older than the cadence allows",
   lapsed: "no longer forecast — quiet past the point a bill stops",
 };
+
+/**
+ * Why a series' own page shows no schedule — for the two statuses the forecast
+ * does not project.
+ *
+ * 🔴 `/recurring/<Hoffman LL>` on 2026-09-04 carried the badge "Ended · Bill"
+ * over "Next expected — Sep 8, 2026 -$1,786.46 · Oct 8 · Nov 8", of a series
+ * whose one linked charge is dated 2025-06-02, fifteen months earlier.
+ * `/recurring/<YA-FIT Smoothie Bar>` read "Dismissed · Bill" over three more,
+ * on dates 4 days apart that its own lead sentence called "weekly on
+ * Thursdays" — a Friday, a Tuesday and a Saturday.
+ *
+ * `listSeries` refuses exactly this and says so: "rolling a dismissed/ended
+ * series forward would invent a future charge." The page ABOUT the series was
+ * the one place that did it anyway. Dropping the card silently would leave the
+ * reader wondering; this is the sentence that goes where it was.
+ */
+export function noScheduleReason(status: "detected" | "confirmed" | "dismissed" | "ended"): string | null {
+  if (status === "ended")
+    return "This series has ended, so nothing more is expected from it. Its charges below stay in the ledger.";
+  if (status === "dismissed")
+    return "You said this is not a recurring series, so nothing is expected from it and nothing is forecast. Its charges below stay in the ledger.";
+  return null;
+}

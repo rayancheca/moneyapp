@@ -5,6 +5,7 @@ import {
   SUGGESTION_NOTE,
   seriesRowLabel,
   type SeriesEvidence,
+  noScheduleReason,
 } from "./series-evidence";
 
 const EVERY: readonly SeriesEvidence[] = ["active", "never-billed", "running-late", "lapsed"];
@@ -75,5 +76,22 @@ describe("seriesRowLabel — evidence for a live series, status for one that is 
         expect(seriesRowLabel(status, e)?.toLowerCase() ?? "").not.toContain("inactive");
       }
     }
+  });
+});
+
+describe("noScheduleReason", () => {
+  test("an ended series says its future is over and its past is not", () => {
+    expect(noScheduleReason("ended")).toContain("has ended");
+    expect(noScheduleReason("ended")).toContain("stay in the ledger");
+  });
+
+  /* ⛔ Dismissed is HIS decision, not the app's — the sentence says so. */
+  test("a dismissed series is described as the owner's decision", () => {
+    expect(noScheduleReason("dismissed")).toContain("You said");
+  });
+
+  test("a live series has no reason to give — it still has a schedule", () => {
+    expect(noScheduleReason("confirmed")).toBeNull();
+    expect(noScheduleReason("detected")).toBeNull();
   });
 });
