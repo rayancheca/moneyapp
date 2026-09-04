@@ -70,8 +70,37 @@ export default async function ImportsPage({
       // how many the owner categorized BY HAND (the work that cannot come back)
       // and the money the file put on both sides of the ledger
       userCategorizedCount: sql<number>`coalesce(sum(case when ${transactions.categorizationSource} = 'user' then 1 else 0 end), 0)`,
-      inflowCents: sql<number>`coalesce(sum(case when ${transactions.amountCents} > 0 then ${transactions.amountCents} else 0 end), 0)`,
-      outflowCents: sql<number>`coalesce(sum(case when ${transactions.amountCents} < 0 then -${transactions.amountCents} else 0 end), 0)`,
+      /*
+       * 🔴 …but the MONEY line names the ledger, and a superseded row is not in
+       * it. `rocket-money-export-2026-08-25.csv` holds 39 rows, every one of
+       * them `superseded`, and the confirmation offered "Money leaving the
+       * ledger: $6,447.92 in · $4,051.25 out" — of a file whose rows no total
+       * on this app can see. Eleven files are in that state.
+       *
+       * The row COUNT stays whole: 39 rows really are deleted, and pairing that
+       * with $0.00 is the honest reading of what un-importing one of these does.
+       */
+      inflowCents: sql<number>`coalesce(sum(case when ${transactions.status} = 'active' and ${transactions.amountCents} > 0 then ${transactions.amountCents} else 0 end), 0)`,
+      outflowCents: sql<number>`coalesce(sum(case when ${transactions.status} = 'active' and ${transactions.amountCents} < 0 then -${transactions.amountCents} else 0 end), 0)`,
+      /*
+       * ⛔ …and some of what leaves comes straight back. `unimportFile` calls
+       * `restoreDuplicatesLosingTheirSurvivor` BEFORE its delete, so a row that
+       * is the surviving half of a confirmed duplicate hands its money to the
+       * retired twin instead of taking it out of the ledger. All 12 rows of
+       * `20250302-statements-9805-.pdf` are survivors, and their twins sum to
+       * the same $4,619.92 the confirmation called money leaving.
+       *
+       * Counted, never re-derived: the restore has slot conflicts and status
+       * floors this page must not reimplement, so the confirmation names how
+       * many rows are in that shape and lets the reader weigh it.
+       */
+      duplicateSurvivorCount: sql<number>`coalesce(sum(case when exists (
+        select 1 from duplicate_candidates d
+        where d.resolution = 'confirmed_duplicate'
+          and d.retired_transaction_id is not null
+          and d.retired_transaction_id <> ${transactions.id}
+          and (d.transaction_id_a = ${transactions.id} or d.transaction_id_b = ${transactions.id})
+      ) then 1 else 0 end), 0)`,
     })
     .from(importFiles)
     .leftJoin(transactions, eq(transactions.importFileId, importFiles.id))
@@ -401,6 +430,14 @@ export default async function ImportsPage({
                                 label: "Money leaving the ledger",
                                 value: `${formatCents(f.inflowCents)} in · ${formatCents(f.outflowCents)} out`,
                               },
+                              ...(f.duplicateSurvivorCount > 0
+                                ? [
+                                    {
+                                      label: "…of which comes back",
+                                      value: `${countPhrase(f.duplicateSurvivorCount, "row")} whose retired duplicate is restored`,
+                                    },
+                                  ]
+                                : []),
                               {
                                 label: "Recorded balances removed",
                                 value: countPhrase(anchorsByFile.get(f.id) ?? 0, "balance"),
