@@ -176,11 +176,22 @@ export function ManagedAccounts({
                       ) : (
                         <span className="text-xs text-ink-faint">no balance</span>
                       )}
+                      {/* 🔴 THE PERIOD, NAMED. This printed a bare figure, and
+                          the Table lens one click away gives a DIFFERENT number
+                          for the same account under a column simply headed
+                          "Change": Robinhood Brokerage read "+$1,138.63" here
+                          (Sep 3 vs Sep 2) and "+$1,339.68" there (30 covered
+                          days). The service already built the words —
+                          `dayChangeTerm`, written after this figure was called
+                          "today" for a move weeks old — and the dashboard's own
+                          accounts strip prints them. Only this lens dropped
+                          them. */}
                       {a.dayChangeCents !== null && a.dayChangeCents !== 0 && (
                         <div
                           className={`figures text-[11px] ${a.dayChangeCents > 0 ? "text-positive" : "text-negative"}`}
                         >
-                          {formatCentsSigned(a.dayChangeCents)}
+                          {formatCentsSigned(a.dayChangeCents)}{" "}
+                          <span className="text-ink-faint">{a.dayChangeTerm}</span>
                         </div>
                       )}
                     </div>

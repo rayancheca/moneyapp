@@ -43,6 +43,7 @@ describe("buildAccountsTable", () => {
       owed: [],
       heldShareBaseCents: 0,
       owedShareBaseCents: 0,
+      oldestAsOf: null,
       heldTotalCents: 0,
       owedTotalCents: 0,
       netCents: 0,
@@ -414,5 +415,40 @@ describe("what a share is OF, and when there is no share to state", () => {
       account({ id: "sofi", balanceCents: 0 }),
     ]);
     expect(model.held.find((r) => r.id === "sofi")!.sharePct).toBe(0);
+  });
+});
+
+describe("the day a total is dated to", () => {
+  /*
+   * 🔴 The caption read "Balances as of Thu, Sep 3, 2026" and the footer "Held
+   * less owed, Thu, Sep 3, 2026" over rows printing Aug 5, Aug 14, Aug 17,
+   * Aug 26, Aug 28 and Sep 3 under their own balances. `asOf` is the NEWEST of
+   * them, so a total resting on four weeks of evidence was dated to one day.
+   * The dashboard's cards card refuses the same claim about the same money:
+   * "each as of its own last statement — so this is not one moment."
+   */
+  it("reports the oldest as-of as well, so the span is visible", () => {
+    const model = buildAccountsTable([
+      account({ id: "a", balanceCents: 100, asOf: "2026-08-05", spark: [{ day: "2026-08-05", cents: 100 }] }),
+      account({ id: "b", balanceCents: 200, asOf: "2026-09-03", spark: [{ day: "2026-09-03", cents: 200 }] }),
+    ]);
+    expect(model.asOf).toBe("2026-09-03");
+    expect(model.oldestAsOf).toBe("2026-08-05");
+  });
+
+  it("and says nothing extra when every row really is one moment", () => {
+    const model = buildAccountsTable([
+      account({ id: "a", balanceCents: 100, asOf: "2026-09-03", spark: [{ day: "2026-09-03", cents: 100 }] }),
+      account({ id: "b", balanceCents: 200, asOf: "2026-09-03", spark: [{ day: "2026-09-03", cents: 200 }] }),
+    ]);
+    expect(model.oldestAsOf).toBe(model.asOf);
+  });
+
+  it("a row with no balance does not drag the span backwards", () => {
+    const model = buildAccountsTable([
+      account({ id: "a", balanceCents: 100, asOf: "2026-09-03", spark: [{ day: "2026-09-03", cents: 100 }] }),
+      account({ id: "none", balanceCents: null, asOf: null }),
+    ]);
+    expect(model.oldestAsOf).toBe("2026-09-03");
   });
 });

@@ -99,6 +99,21 @@ export interface AccountsTableModel {
    */
   heldShareBaseCents: number;
   owedShareBaseCents: number;
+  /**
+   * The OLDEST day any row is as of — null when every row shares one date.
+   *
+   * 🔴 The caption read "Balances as of Thu, Sep 3, 2026" and the footer "Held
+   * less owed, Thu, Sep 3, 2026" over rows that print Aug 5, Aug 14, Aug 17,
+   * Aug 26, Aug 28 and Sep 3 under their own balances. `asOf` is the NEWEST of
+   * them, so a total spanning four weeks of evidence was dated to one day. The
+   * dashboard's cards card already refuses the same claim about the same money
+   * — "each as of its own last statement — so this is not one moment."
+   *
+   * ⚠️ The staleness itself is expected and is not the fault; the blanket date
+   * is. Both dates are printed when they differ, and the sentence says which is
+   * which.
+   */
+  oldestAsOf: string | null;
   /** sum of the held balances (nulls contribute nothing) */
   heldTotalCents: number;
   /** sum of the owed balances — NEGATIVE, in the net-worth frame */
@@ -183,6 +198,10 @@ export function buildAccountsTable(accounts: readonly AccountsTableAccount[]): A
     netCents: heldTotalCents + owedTotalCents,
     netDeltaCents:
       withDelta.length === 0 ? null : withDelta.reduce((sum, r) => sum + (r.deltaCents ?? 0), 0),
+    oldestAsOf: all.reduce<string | null>(
+      (oldest, r) => (r.asOf !== null && (oldest === null || r.asOf < oldest) ? r.asOf : oldest),
+      null,
+    ),
     asOf: all.reduce<string | null>(
       (latest, r) => (r.asOf !== null && (latest === null || r.asOf > latest) ? r.asOf : latest),
       null,
@@ -541,10 +560,12 @@ export function AccountsTable({ accounts, cashWalletNote }: AccountsTableProps) 
             Every account, ruled and totalled
             {model.asOf && (
               <span className="block font-normal normal-case tracking-normal">
-                Balances as of {formatDayLong(model.asOf)}. Balance and change are both signed
-                against net worth, so a debt reads negative and a card paid down reads positive —
-                which is what lets both columns be added across the two sides below. Elsewhere a
-                card reads as what you owe.
+                {model.oldestAsOf && model.oldestAsOf !== model.asOf
+                  ? `Each balance is as of its own last covered day, ${formatDayLong(model.oldestAsOf)} to ${formatDayLong(model.asOf)} — so this is not one moment, and every row prints its own. `
+                  : `Balances as of ${formatDayLong(model.asOf)}. `}
+                Balance and change are both signed against net worth, so a debt reads negative and a
+                card paid down reads positive — which is what lets both columns be added across the
+                two sides below. Elsewhere a card reads as what you owe.
               </span>
             )}
           </caption>
@@ -601,7 +622,12 @@ export function AccountsTable({ accounts, cashWalletNote }: AccountsTableProps) 
               <th scope="row" className={`${FOOT} text-left font-normal`}>
                 <span className={`${EYEBROW} block text-ink-muted`}>These accounts</span>
                 <span className="mt-1 block text-[11px] font-normal text-ink-faint">
-                  Held less owed{model.asOf ? `, ${formatDayLong(model.asOf)}` : ""}
+                  Held less owed
+                  {model.asOf
+                    ? model.oldestAsOf && model.oldestAsOf !== model.asOf
+                      ? `, each as of its own last covered day`
+                      : `, ${formatDayLong(model.asOf)}`
+                    : ""}
                 </span>
               </th>
               <td className={`${FOOT} hidden sm:table-cell`} />
