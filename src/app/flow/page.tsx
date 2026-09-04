@@ -88,7 +88,13 @@ export default async function FlowPage({
             <StatCard
               label="Round-tripped"
               value={formatCents(data.totals.churnCents)}
-              delta={`${churnPct}% of gross came back`}
+              /* 🔴 `churnCents` counts BOTH legs — `2 * min(out, back)` in
+                 transfer-flow.ts — so of the $107,852.26 on this card only
+                 $53,926.13 came back; the rest is the money that went out to
+                 make it a round trip. "came back" named half the figure it was
+                 mounted on. The edge tooltips are right: `returnedCents` there
+                 really is one leg. */
+              delta={`${churnPct}% of gross went out and came back`}
             />
             <StatCard
               label="Accounts"

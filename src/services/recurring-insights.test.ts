@@ -143,7 +143,15 @@ describe("what it refuses to rank together", () => {
 
     const out = recurringInsights(bundle.db, "rent", TODAY)!;
     expect(out.insights[0]!.text).toContain("your 2 scheduled commitments");
-    expect(out.windowNote).toBe("Ranked against the 2 still running. The 2 you have ended or dismissed are not counted.");
+    /* 🔴 The denominator is one SIDE of the live series, and the note used to
+       say only "the 2 still running" — read on the real ledger 2026-09-04 as
+       "the 13 still running" beside a tab badge saying "All 14", the fourteenth
+       being the owner's weekly pay, live and ranked on the other side. With
+       "the 27 you have ended or dismissed" beside it the pair implied a
+       population of 40 where the ledger holds 41. */
+    expect(out.windowNote).toBe(
+      "Ranked against the 2 scheduled commitments still running. The 2 you have ended or dismissed are not counted.",
+    );
   });
 });
 

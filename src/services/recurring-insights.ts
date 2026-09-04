@@ -194,9 +194,20 @@ export function recurringInsightInput(
    * drift from the set the ranking actually used.
    */
   const retired = all.filter((s) => s.status === "ended" || s.status === "dismissed").length;
+  /*
+   * 🔴 …and the denominator is one SIDE of the live series, not all of them.
+   * "Ranked against the 13 still running" read on 2026-09-04 beside a tab badge
+   * saying "All 14": the fourteenth is the owner's weekly pay, live and ranked
+   * on the other side. With "the 27 you have ended or dismissed" beside it the
+   * pair implied a population of 40 where the ledger holds 41.
+   *
+   * The side's own noun is the one the ranking sentence above already uses, so
+   * the two cannot describe different sets.
+   */
+  const sideNoun = isIncome ? "scheduled deposits" : "scheduled commitments";
   const note =
     retired > 0
-      ? `Ranked against the ${side.length} still running. The ${retired} you have ended or dismissed are not counted.`
+      ? `Ranked against the ${side.length} ${sideNoun} still running. The ${retired} you have ended or dismissed are not counted.`
       : null;
 
   return { facts, candidates, window: { label: "a year at today's amounts", note } };
