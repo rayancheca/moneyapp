@@ -826,6 +826,169 @@ describe("incomeExpectation — the term /budgets never had", () => {
     // past and unposted, and income has no arrears leg to hold it, by doctrine.
     expect(got.expectedCents).toBe(104_600 * 4);
     expect(got.series.map((s) => s.name)).toEqual(["Cash job (weekly pay)"]);
+    // …and it is REPORTED rather than lost: five paydays are scheduled, four
+    // are still to come, one has passed with nothing banked.
+    expect(got.scheduledOccurrences).toBe(5);
+    expect(got.passedUnpaidOccurrences).toBe(1);
+    expect(got.passedUnpaidCents).toBe(104_600);
+    expect(got.postedCents + got.expectedCents + got.passedUnpaidCents).toBe(got.scheduledCents);
+  });
+
+  /*
+   * ⛔ THE THIRD LEG — the six days in seven the 09-03 fix did not reach.
+   *
+   * That session moved the forward leg onto `today`, which closes the gap on
+   * the one day the payday IS today. The day AFTER a payday it opens again:
+   * `postedCents` stops at today with nothing in it, the walk starts at today
+   * and the payday is behind it. Measured on the owner's ledger 2026-09-04:
+   * "$0.00 in so far, $3,141.00 still expected" one line above "4 paydays fall
+   * in this month, scheduled at $4,188.00" — $1,047.00 called nothing at all.
+   *
+   * ⛔ It stays OUT of `expectedCents` on purpose (income has no arrears leg),
+   * so the only thing that can go wrong is the report going silent — which is
+   * what these assertions pin.
+   *
+   * Mutants killed: walking `<= today` instead of `< today` counts today's own
+   * unposted payday as passed (test below); dropping the banked check reports a
+   * payday that was paid; dropping the tolerance reports one paid a day late.
+   */
+  test("a payday that PASSED with nothing banked is reported, and never counted as expected", () => {
+    createSeries({
+      name: "Cash job (weekly pay)",
+      nextExpectedOn: "2026-06-01",
+      nextExpectedAmountCents: 104_600,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    // the day AFTER a payday, nothing imported
+    const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-09");
+    expect(got.postedCents).toBe(0);
+    // 06-15, 06-22, 06-29 — 06-01 and 06-08 are behind today
+    expect(got.expectedCents).toBe(104_600 * 3);
+    expect(got.passedUnpaidOccurrences).toBe(2);
+    expect(got.passedUnpaidCents).toBe(104_600 * 2);
+    // the three legs are exhaustive over the schedule, which is what lets the
+    // header print all three without a reader having to find the difference
+    expect(got.postedCents + got.expectedCents + got.passedUnpaidCents).toBe(got.scheduledCents);
+  });
+
+  /*
+   * ⛔ THE TODAY-EXCLUSION IS AN EXACT DATE, AND ONLY A DEPOSIT NEAR TODAY CAN
+   * SHOW IT. Found by mutation: widening `paidToday` to the series' tolerance
+   * changed no test in the file.
+   *
+   * The two lookups answer two questions and only one of them is about a range.
+   * "Was this occurrence met?" is judged with the series' `toleranceDays`,
+   * because a bank posts a day or two either side of an anchor — the same
+   * arbiter `overdueForSeries` gives bills. "Is TODAY's pay already inside
+   * `postedCents`?" is not that question: the only fact that answers it is a
+   * deposit dated today. Widen it and an earlier deposit — already counted in
+   * `postedCents` — also deletes today's payday from `expectedCents`, so the
+   * one deposit does the work of two.
+   */
+  test("a deposit near today, but not on it, does not cancel today's payday", () => {
+    const pay = createSeries({
+      name: "Cash job (weekly pay)",
+      nextExpectedOn: "2026-06-08",
+      nextExpectedAmountCents: 104_600,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    // three days before today — inside the tolerance a widened check would use
+    spendLinked("2026-06-05", 60_000, "Income > Salary", pay);
+    const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-08");
+    expect(got.postedCents).toBe(60_000);
+    // 06-08 (today), 06-15, 06-22, 06-29 — today's pay has NOT landed, so it is
+    // still expected however close the last deposit was
+    expect(got.expectedCents).toBe(104_600 * 4);
+  });
+
+  test("today's own unposted payday is EXPECTED, not passed — the walk cuts strictly before today", () => {
+    createSeries({
+      name: "Cash job (weekly pay)",
+      nextExpectedOn: "2026-06-08",
+      nextExpectedAmountCents: 104_600,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-08");
+    expect(got.expectedCents).toBe(104_600 * 4);
+    expect(got.passedUnpaidOccurrences).toBe(0);
+  });
+
+  test("a payday that WAS banked is not reported as passed and unpaid", () => {
+    const pay = createSeries({
+      name: "Cash job (weekly pay)",
+      nextExpectedOn: "2026-06-01",
+      nextExpectedAmountCents: 104_600,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    spendLinked("2026-06-01", 104_600, "Income > Salary", pay);
+    const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-09");
+    expect(got.postedCents).toBe(104_600);
+    // 06-08 passed unbanked; 06-01 was banked
+    expect(got.passedUnpaidOccurrences).toBe(1);
+    expect(got.passedUnpaidCents).toBe(104_600);
+  });
+
+  /*
+   * The SAME arbiter bills get. `overdueForSeries` calls a bill paid when a
+   * linked posting sits within the series' own `toleranceDays`; income asking
+   * the question differently would let one page call a payday met and another
+   * call it missed. Default tolerance is 3.
+   */
+  test("a deposit inside toleranceDays meets the payday; one day past it does not", () => {
+    const pay = createSeries({
+      name: "Cash job (weekly pay)",
+      nextExpectedOn: "2026-06-01",
+      nextExpectedAmountCents: 104_600,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    // three days late for the 06-01 payday — still that payday
+    spendLinked("2026-06-04", 104_600, "Income > Salary", pay);
+    expect(
+      incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-06").passedUnpaidOccurrences,
+    ).toBe(0);
+
+  });
+
+  test("a deposit one day PAST toleranceDays leaves the payday unmet", () => {
+    const late = createSeries({
+      name: "Other pay",
+      nextExpectedOn: "2026-07-01",
+      nextExpectedAmountCents: 50_000,
+      kind: "income",
+      cadence: "monthly",
+    });
+    // four days late — past the default tolerance of 3, so 07-01 stands unmet
+    spendLinked("2026-07-05", 50_000, "Income > Salary", late);
+    const got = incomeExpectation(bundle.db, "2026-07-01", "2026-07-31", "2026-07-08");
+    expect(got.passedUnpaidOccurrences).toBe(1);
+    expect(got.passedUnpaidCents).toBe(50_000);
+    // ⚠️ the money DID arrive, and `postedCents` holds it — "passed with nothing
+    // banked against it" is a statement about the occurrence, not about the month
+    expect(got.postedCents).toBe(50_000);
+  });
+
+  test("nothing has passed on the period's first day, whatever the schedule pays", () => {
+    createSeries({
+      name: "Cash job (weekly pay)",
+      nextExpectedOn: "2026-06-01",
+      nextExpectedAmountCents: 104_600,
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+    });
+    const got = incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-01");
+    expect(got.passedUnpaidOccurrences).toBe(0);
+    expect(got.expectedCents).toBe(104_600 * 5);
   });
 
   test("the basis is the annualised rate, not the paydays that happen to fall in the month", () => {

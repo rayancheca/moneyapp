@@ -195,7 +195,9 @@ export default async function BudgetsPage({
                 — {income.basis.overAllocatedClause}
               </>
             )}
-            {income.expectedCents > 0 && (
+            {(income.expectedCents > 0 ||
+              income.postedCents > 0 ||
+              income.passedUnpaidCents > 0) && (
               <>
                 {" · "}
                 <Money cents={income.postedCents} /> in so far,{" "}
@@ -211,6 +213,32 @@ export default async function BudgetsPage({
               two cannot describe different months. */}
           {income.basis.monthNote && (
             <p className="mt-1 text-xs text-ink-faint">{income.basis.monthNote}</p>
+          )}
+          {/* 🔴 THE THIRD LEG, NAMED.
+              `postedCents` stops at today and `expectedCents` opens on it, so a
+              payday that passed with nothing banked is in neither — and the
+              month note one line above prints what the whole month is scheduled
+              to pay. Read on 2026-09-04, the day after a Thursday payday:
+              "$0.00 in so far, $3,141.00 still expected" over "4 paydays fall in
+              this month, scheduled at $4,188.00", with $1,047.00 called nothing
+              at all. The 09-03 session moved the forward leg onto `today` and
+              closed the one day in seven where the payday IS today; this is the
+              other six.
+
+              ⛔ Named rather than added to "still expected", because income has
+              no arrears leg by doctrine — a payday that passed without a deposit
+              is evidence about the imports, not about the job. The spending side
+              two lines down says the same shape for bills, and it can add its
+              figure because a bill nobody paid is still owed. */}
+          {income.passedUnpaidCents > 0 && (
+            <p className="mt-1 text-xs text-ink-faint">
+              {income.passedUnpaidOccurrences === 1 ? "1 payday" : `${income.passedUnpaidOccurrences} paydays`}{" "}
+              worth <Money cents={income.passedUnpaidCents} /> already passed this month with no
+              deposit against{" "}
+              {income.passedUnpaidOccurrences === 1 ? "it" : "them"} — counted in neither figure
+              above. That is evidence about what has been imported, not about whether the money was
+              earned.
+            </p>
           )}
         </SurfaceCard>
       )}

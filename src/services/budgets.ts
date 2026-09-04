@@ -575,6 +575,21 @@ export interface IncomeExpectation {
    */
   scheduledCents: number;
   scheduledOccurrences: number;
+  /**
+   * Paydays that have ALREADY passed inside this window with nothing banked
+   * against them — the third leg, and the reason the first two do not have to
+   * add up to `scheduledCents`.
+   *
+   * ⛔ Never added to `expectedCents`, and that is doctrine rather than an
+   * oversight: a payday that passed without a deposit is evidence about the
+   * IMPORTS, not about the job (`arrears.ts` says the same thing from the other
+   * side, where the money-out filter is what keeps a missed payday out of every
+   * forecast). It is REPORTED so the header can name it, because the reader is
+   * looking at "$0.00 in so far, $3,141.00 still expected" one line above
+   * "4 paydays … $4,188.00" and the difference has to be called something.
+   */
+  passedUnpaidCents: number;
+  passedUnpaidOccurrences: number;
   /** which figure budgets are graded against, and how this month sits on it */
   basis: IncomeBasis;
   /** the live income series contributing to expectedCents */
@@ -662,20 +677,48 @@ export function incomeExpectation(
    * is already in `postedCents`.
    */
   const from = today;
+  /*
+   * Every deposit attributed to a live income series, near this window — ONE
+   * read, feeding both the today-exclusion below and the passed-unpaid walk
+   * further down. Two queries would be two answers to "has this occurrence been
+   * banked?", which is the shape pass 54 recorded for dates.
+   *
+   * Widened by the largest tolerance so a paycheque that landed a day either
+   * side of its anchor still counts as banked — the same rule `overdueForSeries`
+   * applies to bills, so income and spending cannot disagree about whether an
+   * occurrence was met.
+   */
+  const maxTolerance = live.reduce((m, s) => Math.max(m, s.toleranceDays), 0);
+  const bankedBySeries = new Map<string, string[]>();
+  for (const row of db
+    .select({ seriesId: transactions.recurringSeriesId, postedOn: transactions.postedOn })
+    .from(transactions)
+    .where(
+      and(
+        gte(transactions.postedOn, addDays(start, -maxTolerance)),
+        lte(transactions.postedOn, addDays(today, maxTolerance)),
+        eq(transactions.status, "active"),
+        gt(transactions.amountCents, 0),
+        isNotNull(transactions.recurringSeriesId),
+      ),
+    )
+    .all()) {
+    if (row.seriesId === null) continue;
+    bankedBySeries.set(row.seriesId, [...(bankedBySeries.get(row.seriesId) ?? []), row.postedOn]);
+  }
+  /*
+   * ⛔ Exact date, NOT the tolerance. The banked lookup above is widened because
+   * it asks "was this occurrence met?", which a bank answers a day or two either
+   * side of an anchor. This asks the narrower "is TODAY's pay already inside
+   * `postedCents`?", and the only fact that answers it is a deposit dated today.
+   * Widened, an earlier deposit — already counted in `postedCents` — would also
+   * delete today's payday from `expectedCents`, so one deposit does the work of
+   * two and the month reads short by a payday.
+   */
   const paidToday = new Set(
-    db
-      .select({ seriesId: transactions.recurringSeriesId })
-      .from(transactions)
-      .where(
-        and(
-          eq(transactions.postedOn, today),
-          eq(transactions.status, "active"),
-          gt(transactions.amountCents, 0),
-          isNotNull(transactions.recurringSeriesId),
-        ),
-      )
-      .all()
-      .map((r) => r.seriesId as string),
+    [...bankedBySeries]
+      .filter(([, days]) => days.includes(today))
+      .map(([id]) => id),
   );
   const series: IncomeExpectation["series"] = [];
   let expectedCents = 0;
@@ -702,6 +745,8 @@ export function incomeExpectation(
    */
   let scheduledCents = 0;
   let scheduledOccurrences = 0;
+  let passedUnpaidCents = 0;
+  let passedUnpaidOccurrences = 0;
   /*
    * The annualised rate every live series pays, summed.
    *
@@ -719,6 +764,23 @@ export function incomeExpectation(
     );
     scheduledOccurrences += inPeriod.length;
     scheduledCents += inPeriod.reduce((sum, o) => sum + o.amountCents, 0);
+
+    /*
+     * The third leg, out of the SAME walk. `postedCents` cuts at today and the
+     * forward leg opens on today, so an occurrence STRICTLY BEFORE today with
+     * nothing banked against it is in neither — and on a weekly schedule that
+     * is six days in seven, not the one day the today-boundary covers.
+     * Measured on the owner's ledger 2026-09-04, the day after a Thursday
+     * payday: "$0.00 in so far, $3,141.00 still expected" over "4 paydays …
+     * $4,188.00", with $1,047.00 nowhere.
+     */
+    const banked = bankedBySeries.get(s.id) ?? [];
+    for (const o of inPeriod) {
+      if (compareDates(o.date, today) >= 0) continue;
+      if (banked.some((day) => Math.abs(diffDays(day, o.date)) <= s.toleranceDays)) continue;
+      passedUnpaidOccurrences += 1;
+      passedUnpaidCents += o.amountCents;
+    }
 
     const eff = effectiveSeries(s);
     const perOccurrenceCents = eff.nextExpectedAmountCents;
@@ -758,6 +820,8 @@ export function incomeExpectation(
       scheduledOccurrences,
       measuredCents,
     }),
+    passedUnpaidCents,
+    passedUnpaidOccurrences,
     series,
   };
 }
