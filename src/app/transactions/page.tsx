@@ -27,6 +27,7 @@ import { toLedgerRow } from "@/services/ledger-rows";
 import { splitCountsByTxn } from "@/services/transaction-splits";
 import {
   filtersToQuery,
+  clampPage,
   parseFilters,
   parseNotice,
   type TxnFilters,
@@ -79,7 +80,7 @@ interface TransactionsPageProps {
 
 export default async function TransactionsPage({ searchParams }: TransactionsPageProps) {
   const params = await searchParams;
-  const filters = parseFilters(params);
+  const parsed = parseFilters(params);
   const notice = parseNotice(params);
   // All four redirect actions come back through `returnPath` (transactions/actions.ts:121)
   // with `&error=`; `parseNotice` matches a fixed enum and cannot carry an arbitrary
@@ -94,17 +95,33 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
     .all();
   const allCategories = db.select().from(categories).all();
 
-  const common = filterConditions(filters, allCategories);
+  // the page number cannot change a COUNT, so these run off the parsed filters
+  // and the clamp below reads them
+  const common = filterConditions(parsed, allCategories);
   const counts: Record<TxnView, number> = {
-    all: countMatching(db, filters, "all"),
-    review: countMatching(db, filters, "review"),
+    all: countMatching(db, parsed, "all"),
+    review: countMatching(db, parsed, "review"),
     // Pairs, not rows: the tab counts the questions the owner has to answer,
     // and one question always has two rows behind it.
     duplicates: openDuplicateCount(db),
-    quarantined: countMatching(db, filters, "quarantined"),
-    excluded: countMatching(db, filters, "excluded"),
+    quarantined: countMatching(db, parsed, "quarantined"),
+    excluded: countMatching(db, parsed, "excluded"),
   };
-  const totalRows = counts[filters.view];
+  /*
+   * 🔴 `clampPage` was written for exactly this, tested, and never called.
+   * `?page=9999` survived `parseFilters` (which has no counts) and rendered
+   *
+   *     No matching transactions
+   *     Nothing matches the current filters. Adjust them or reset to see everything.
+   *     Page 9999 of 204 · 10178 transactions
+   *
+   * — an empty state saying the filters match nothing, over a line saying 10,178
+   * rows match them, over a page number the ledger does not have. Its own
+   * docstring names the symptom: "would otherwise render 'Page 99999 of 194'
+   * over an empty page with a working Previous link."
+   */
+  const totalRows = counts[parsed.view];
+  const filters = clampPage(parsed, totalRows, PAGE_SIZE);
   const totalInLedger = db.select({ n: count() }).from(transactions).get()?.n ?? 0;
 
   const ledgerColumns = {
