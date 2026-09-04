@@ -44,6 +44,17 @@ export interface CoverageDetailInput {
   lastManualUpdate: string | null;
   gapDays: number;
   unverifiedDays: number;
+  /**
+   * Whether any statement period has ever closed on this account — the same
+   * fact the row prints beside the badge as "statements → …" or "no statements".
+   *
+   * 🔴 Exists because the `unverified` sentence asserted "…rest on an export
+   * with no closing balance" for EVERY account, and `Cash on Hand` has no
+   * export: no statement periods, no import files, one hand-entered anchor.
+   * Read on 2026-09-04 the row said "no statements" and then explained itself
+   * with a document, on one line.
+   */
+  hasStatements: boolean;
 }
 
 const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
@@ -139,7 +150,17 @@ export function coverageDetail(input: CoverageDetailInput): string {
           : Math.max(0, diffDays(input.verifiedThrough, input.unverifiedSince) - 1);
       const held =
         carried === 0 ? "" : `, then carries that balance forward for ${carried} ${plural(carried, "day", "days")}`;
-      return `${closesClause(input)}${held}; the first day it does not is ${first} — ${n} ${plural(n, "day rests", "days rest")} on an export with no closing balance`;
+      /*
+       * ⛔ WHY the days are unchecked depends on what the account HAS. Robinhood
+       * Cash has 33 statement anchors and its loose days really do rest on an
+       * export that carried no closing figure. Cash on Hand has no document of
+       * any kind — its days rest on the entries the owner typed, and naming a
+       * document there invents one.
+       */
+      const because = input.hasStatements
+        ? "on an export with no closing balance"
+        : "on entries alone, with no document to check them against";
+      return `${closesClause(input)}${held}; the first day it does not is ${first} — ${n} ${plural(n, "day rests", "days rest")} ${because}`;
     }
     case "market_value":
       return "priced from holdings; statements here set a value, they never prove the transactions add up";

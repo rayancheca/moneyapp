@@ -11,6 +11,7 @@ const detail = (over: Partial<CoverageDetailInput> = {}): string =>
     lastManualUpdate: null,
     gapDays: 0,
     unverifiedDays: 0,
+    hasStatements: true,
     ...over,
   });
 
@@ -20,6 +21,12 @@ describe("an unverified account states BOTH halves", () => {
      * ⛔ The shipped sentence was "nothing has checked this account since
      * 2026-08-11", which is untrue of Cash on Hand: it closes to the cent
      * through 2026-08-03 and exactly one day at the end does not.
+     *
+     * 🔴 …and the tail of it was untrue too. This asserted "rests on an export
+     * with no closing balance" of `Cash on Hand`, which has no statement
+     * period, no import file and one hand-entered anchor. The /imports row
+     * printed "no statements" beside the badge and then explained itself with a
+     * document, on one line. `hasStatements` is that same field.
      */
     expect(
       detail({
@@ -28,9 +35,31 @@ describe("an unverified account states BOTH halves", () => {
         unverifiedSince: "2026-08-11",
         daysSinceVerified: 24,
         unverifiedDays: 1,
+        hasStatements: false,
       }),
     ).toBe(
-      "closes to the cent through Aug 3, 2026 (24 days ago), then carries that balance forward for 7 days; the first day it does not is Aug 11, 2026 — 1 day rests on an export with no closing balance",
+      "closes to the cent through Aug 3, 2026 (24 days ago), then carries that balance forward for 7 days; the first day it does not is Aug 11, 2026 — 1 day rests on entries alone, with no document to check them against",
+    );
+  });
+
+  /*
+   * The other account on the owner's ledger with the same grade, and the reason
+   * the export clause exists at all: Robinhood Cash holds 33 statement anchors,
+   * and the 52 days that do not close really do rest on an export that carried
+   * no closing figure.
+   */
+  test("an account that HAS statements still blames the export", () => {
+    expect(
+      detail({
+        grade: "unverified",
+        verifiedThrough: null,
+        unverifiedSince: "2023-12-05",
+        daysSinceVerified: null,
+        unverifiedDays: 52,
+        hasStatements: true,
+      }),
+    ).toBe(
+      "nothing closes to the cent from its first day; the first day it does not is Dec 5, 2023 — 52 days rest on an export with no closing balance",
     );
   });
 

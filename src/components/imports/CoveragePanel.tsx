@@ -82,6 +82,9 @@ export function CoveragePanel({ coverage }: { coverage: AccountCoverage[] }) {
                   lastManualUpdate: c.lastManualUpdate,
                   gapDays: c.days.gap,
                   unverifiedDays: c.days.derived_unverified,
+                  // the SAME field the badge two lines up prints, so the row
+                  // cannot say "no statements" and then blame an export
+                  hasStatements: c.statementsThrough !== null,
                 })}
               </p>
             </li>
