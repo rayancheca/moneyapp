@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { todayIso } from "@/lib/dates";
+import { emptyPeriodCopy, emptyPeriodReason } from "@/lib/empty-period";
 import { formatDayLong } from "@/lib/format-date";
 import { cashEarningsSectionNotes } from "@/lib/section-notes";
 import {
@@ -16,6 +17,7 @@ import { cashEarningsReadings } from "@/services/cash-earnings";
 import { spendingSankey } from "@/services/sankey";
 import { predictBudgetableCategories } from "@/services/category-forecast";
 import { readSettings } from "@/services/settings";
+import { ledgerOpens, ledgerReaches } from "@/services/observation-frontier";
 import { spendingInsights } from "@/services/spending-insights";
 import {
   cashFlowByPeriod,
@@ -284,6 +286,29 @@ export default async function SpendingPage({
     cashFlow.totals.earnedCents !== 0 ||
     honesty.uncategorized.txnCount > 0;
 
+  /*
+   * 🔴 WHY the period is empty, when it is. This page printed "No activity in
+   * this period" over September 2026 on 2026-09-04 — four elapsed days, not one
+   * of them imported for any account — which is a measurement of a window
+   * nobody has read. The dashboard's pace tile already refuses that ("an em
+   * dash, not a $0.00") and links here; `/budgets` refuses to grade the same
+   * days. `lib/empty-period` is that refusal, and it still says "measured zero"
+   * where the window really is covered.
+   */
+  const emptyReason = !hasActivity
+    ? emptyPeriodReason({
+        from: range.from,
+        to: range.to,
+        today,
+        ledgerOpens: ledgerOpens(db),
+        ledgerReaches: ledgerReaches(db),
+      })
+    : null;
+  const emptyCopy =
+    emptyReason === null
+      ? null
+      : emptyPeriodCopy(emptyReason, period.label, ledgerReaches(db), formatDayLong);
+
   return (
     <>
       <PageHeader
@@ -296,10 +321,14 @@ export default async function SpendingPage({
       </div>
 
       {!hasActivity ? (
-        <EmptyState
-          title="No activity in this period"
-          description="Pick another period above, or import and categorize transactions. Uncategorized outflows still show up — as their own explicit bucket."
-        />
+        <>
+          <EmptyState title={emptyCopy!.title} description={emptyCopy!.description} />
+          {/* ⛔ Mounted INSIDE the empty branch too. These notes are the page
+              saying what it cannot see, and the one period where a reader most
+              needs them is the period where it can see nothing — the branch
+              that used to drop them. */}
+          <SectionNotes notes={cashNotes} label="What this page cannot see" />
+        </>
       ) : (
         <div className="space-y-6">
           <SpendingStatCards totals={cashFlow.totals} range={range} />
