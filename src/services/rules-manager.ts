@@ -80,16 +80,40 @@ function conditionsPhrase(cond: RuleConditions, ctx: SentenceContext): string {
   return parts.length > 0 ? parts.join(" and ") : "matches anything";
 }
 
-/** The actions half: "categorize it as Groceries and mark it a transfer". */
-function actionsPhrase(act: RuleActions, ctx: SentenceContext): string {
+/**
+ * The actions half, split by whether the engine actually performs them.
+ *
+ * 🔴 `categorize.ts` applies exactly three of the six actions the schema
+ * allows — `categoryId`, `merchantId` and `exclude` (categorize.ts:195-200) —
+ * and this sentence described all six as if they happened. `/settings` read,
+ * of a rule seeded into every ledger:
+ *
+ *     When a transaction contains "PAYMENT THANK YOU", categorize it as
+ *     Transfers > Credit Card Payment AND MARK IT A TRANSFER.
+ *
+ * No code path reads a rule's `markTransfer`; the transfer flag comes from
+ * detection or from a manual edit. `renameTo` and `markRecurringSeriesId` are
+ * stored, rendered and never applied in the same way.
+ *
+ * ⛔ The stored clause is NOT dropped. It is real data the owner can see in the
+ * editor, and hiding it would make the sentence disagree with the form. It is
+ * named as stored instead of as done.
+ */
+function actionsPhrase(act: RuleActions, ctx: SentenceContext): { applied: string; stored: string | null } {
   const parts: string[] = [];
   if (act.categoryId !== undefined) parts.push(`categorize it as ${ctx.categoryLabel(act.categoryId)}`);
   if (act.merchantId !== undefined) parts.push(`set its merchant to ${ctx.merchantName(act.merchantId)}`);
-  if (act.markTransfer === true) parts.push("mark it a transfer");
   if (act.exclude === true) parts.push("exclude it");
-  if (act.renameTo !== undefined) parts.push(`rename the merchant to "${act.renameTo}"`);
-  if (act.markRecurringSeriesId !== undefined) parts.push("link it to a recurring series");
-  return parts.length > 0 ? parts.join(" and ") : "do nothing";
+
+  const stored: string[] = [];
+  if (act.markTransfer === true) stored.push("mark it a transfer");
+  if (act.renameTo !== undefined) stored.push(`rename the merchant to "${act.renameTo}"`);
+  if (act.markRecurringSeriesId !== undefined) stored.push("link it to a recurring series");
+
+  return {
+    applied: parts.length > 0 ? parts.join(" and ") : "do nothing",
+    stored: stored.length > 0 ? stored.map((p) => `\u201c${p}\u201d`).join(" and ") : null,
+  };
 }
 
 export function renderRuleSentence(
@@ -97,7 +121,9 @@ export function renderRuleSentence(
   act: RuleActions,
   ctx: SentenceContext,
 ): string {
-  return `When a transaction ${conditionsPhrase(cond, ctx)}, ${actionsPhrase(act, ctx)}.`;
+  const { applied, stored } = actionsPhrase(act, ctx);
+  const head = `When a transaction ${conditionsPhrase(cond, ctx)}, ${applied}.`;
+  return stored ? `${head} It also stores ${stored}, which rules do not apply.` : head;
 }
 
 export function sentenceContext(db: AppDatabase): SentenceContext {

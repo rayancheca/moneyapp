@@ -121,13 +121,46 @@ describe("renderRuleSentence", () => {
     expect(renderRuleSentence({}, {}, ctx)).toBe("When a transaction matches anything, do nothing.");
   });
 
-  test("renders an amount range and a rename action", () => {
+  /*
+   * 🔴 THE SENTENCE PROMISED WORK THE ENGINE NEVER DOES. `categorize.ts` applies
+   * exactly three of the six actions the schema allows — `categoryId`,
+   * `merchantId` and `exclude` — and this sentence described all six as if they
+   * happened. `/settings` read, of a rule seeded into every ledger:
+   *
+   *     When a transaction contains "PAYMENT THANK YOU", categorize it as
+   *     Transfers > Credit Card Payment and mark it a transfer.
+   *
+   * No code path reads a rule's `markTransfer`; the transfer flag comes from
+   * detection or a manual edit. `renameTo` and `markRecurringSeriesId` are the
+   * same — stored, rendered, never applied.
+   */
+  test("an action the engine does not apply is named as stored, not as done", () => {
+    const s = renderRuleSentence(
+      { descriptionContains: "PAYMENT THANK YOU" },
+      { categoryId: "c1", markTransfer: true },
+      ctx,
+    );
+    expect(s).toBe(
+      'When a transaction contains "PAYMENT THANK YOU", categorize it as Food > Groceries. ' +
+        "It also stores “mark it a transfer”, which rules do not apply.",
+    );
+  });
+
+  test("a rule whose ONLY action is unapplied does nothing, and says so", () => {
     const s = renderRuleSentence(
       { amountMinCents: 1_000, amountMaxCents: 6_000 },
       { renameTo: "Corner Deli" },
       ctx,
     );
-    expect(s).toBe('When a transaction is between $10 and $60, rename the merchant to "Corner Deli".');
+    expect(s).toBe(
+      "When a transaction is between $10 and $60, do nothing. " +
+        "It also stores “rename the merchant to \"Corner Deli\"”, which rules do not apply.",
+    );
+  });
+
+  test("two unapplied actions are listed together", () => {
+    const s = renderRuleSentence({}, { markTransfer: true, markRecurringSeriesId: "s1" }, ctx);
+    expect(s).toContain("“mark it a transfer” and “link it to a recurring series”");
   });
 
   test("renders a name-key condition with its humanized subject", () => {
