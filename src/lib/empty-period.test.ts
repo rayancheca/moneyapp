@@ -93,6 +93,55 @@ describe("emptyPeriodCopy", () => {
     expect(copy.description).not.toContain("Every day of it has been imported");
   });
 
+  /* Every branch of the copy, because each one is the only sentence a reader
+     gets in that world — and a world with no sentence renders an empty card. */
+  test("each world gets its own heading and body", () => {
+    expect(emptyPeriodCopy({ kind: "no-ledger", uncoveredDays: 0 }, "September 2026", null, fmt))
+      .toMatchObject({ title: "Nothing imported yet" });
+    expect(emptyPeriodCopy({ kind: "future", uncoveredDays: 0 }, "October 2026", "2026-08-31", fmt))
+      .toMatchObject({ title: "October 2026 has not happened yet" });
+    const before = emptyPeriodCopy(
+      { kind: "before-records", uncoveredDays: 31 },
+      "Jan 2019",
+      "2022-12-01",
+      fmt,
+    );
+    expect(before.title).toBe("Jan 2019 is before your records begin");
+    expect(before.description).toContain("31 days");
+    const partly = emptyPeriodCopy(
+      { kind: "partly-covered", uncoveredDays: 11 },
+      "August 2026",
+      "2026-08-20",
+      fmt,
+    );
+    expect(partly.title).toBe("Nothing posted in the part of August 2026 that has been imported");
+    expect(partly.description).toContain("11 days of it have not been imported");
+    expect(partly.description).toContain("2026-08-20");
+    expect(partly.description).toContain("lower bound");
+  });
+
+  /* ⚠️ Every branch that names a date must survive not having one — a window
+     can be uncovered on a ledger whose newest row the caller could not resolve. */
+  test("the sentences hold up with no date to name", () => {
+    for (const kind of ["after-records", "partly-covered"] as const) {
+      const copy = emptyPeriodCopy({ kind, uncoveredDays: 3 }, "September 2026", null, fmt);
+      expect(copy.description).not.toContain("null");
+      expect(copy.description).not.toContain("undefined");
+      expect(copy.description).toContain("3 days");
+    }
+  });
+
+  test("one partly-covered day is singular too", () => {
+    const copy = emptyPeriodCopy(
+      { kind: "partly-covered", uncoveredDays: 1 },
+      "August 2026",
+      "2026-08-30",
+      fmt,
+    );
+    expect(copy.description).toContain("1 day of it has not been imported");
+    expect(copy.description).not.toContain("1 days");
+  });
+
   test("one uncovered day is singular", () => {
     const copy = emptyPeriodCopy(
       { kind: "after-records", uncoveredDays: 1 },
