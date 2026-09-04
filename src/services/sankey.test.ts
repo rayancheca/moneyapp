@@ -111,7 +111,15 @@ describe("spendingSankey — balance & structure", () => {
     expect(saved.valueCents).toBe(600_000 - 103_000); // net = earned − spent
   });
 
-  test("overspend: a 'From savings' source balances the hub, no saved leaf", () => {
+  /*
+   * 🔴 This node was labelled "From savings", which asserts a drawdown the
+   * ledger flatly contradicts: on `/spending?period=2026-08&cash=sankey` it was
+   * 100% of the chart's money in — $11,063.56 — while SoFi Savings held $0.10
+   * and did not move all month. The plug knows only that the window spent more
+   * than its recorded income; it cannot know where the difference came from,
+   * and the note two cards up already says the app cannot tell.
+   */
+  test("overspend: the balancing source names no source it cannot know", () => {
     insertTxn({ postedOn: "2026-07-01", amountCents: 50_000, category: "Income > Salary", accountId: checkingId });
     insertTxn({ postedOn: "2026-07-05", amountCents: -80_000, category: "Food > Dining" });
 
@@ -125,6 +133,10 @@ describe("spendingSankey — balance & structure", () => {
     expect(inSum.get("hub")).toBe(80_000); // in = earned 50k + drawdown 30k = spent 80k
     const drawdown = g.links.find((l) => l.source === "drawdown")!;
     expect(drawdown.valueCents).toBe(30_000);
+
+    const label = g.nodes.find((n) => n.id === "drawdown")!.label;
+    expect(label).toBe("From outside this period");
+    expect(label).not.toContain("savings");
   });
 
   test("refunds appear as a source so the hub still balances (gross-spend convention)", () => {

@@ -9,7 +9,8 @@ import { activeTxnsInRange, loadCategoryIndex, spendingBucket, type DateRange } 
  * The money-flow Sankey feed for a date range (dashboard hero + /spending view).
  * A three-column flow that always balances: income sources → a "Money in" hub →
  * spending categories, with the leftover as a "Net saved" leaf (or, when the
- * range overspent, a "From savings" source that makes the money conserve).
+ * range overspent, a "From outside this period" source that makes the money
+ * conserve — a plug that names no source, because it cannot know one).
  *
  * Built directly from `activeTxnsInRange` on the SAME classifiers as
  * periodTotals/cashFlowByPeriod (split-aware, GROSS spend, income = positive
@@ -120,7 +121,22 @@ export function spendingSankey(db: AppDatabase, range: DateRange): SankeyGraph {
     links.push({ source: "refunds", target: HUB_ID, valueCents: refunds });
   }
   if (net < 0) {
-    nodes.push({ id: "drawdown", label: "From savings", column: COL_SOURCE, color: "var(--cat-amber)", meta: { kind: "drawdown" } });
+    /*
+     * 🔴 THE PLUG MAY NOT NAME A SOURCE. This node was labelled "From savings",
+     * which asserts a drawdown the ledger flatly contradicts: on August 2026 it
+     * was 100% of the chart's money in — $11,063.56 — while SoFi Savings held
+     * $0.10 and did not move all month.
+     *
+     * The app knows better and says so two cards up: "Cash job (weekly pay)
+     * implies $5,235.00 of earnings in this period and none of it reached an
+     * account", and the runway card's own doctrine — "Cash pay can sit
+     * undeposited, be spent without ever touching a bank, or the arrangement can
+     * have quietly ended — nothing here can tell those three apart."
+     *
+     * All this node knows is that the window spent more than its recorded income,
+     * so the balancing amount came from outside it. That is what it says.
+     */
+    nodes.push({ id: "drawdown", label: "From outside this period", column: COL_SOURCE, color: "var(--cat-amber)", meta: { kind: "drawdown" } });
     links.push({ source: "drawdown", target: HUB_ID, valueCents: -net });
   }
 

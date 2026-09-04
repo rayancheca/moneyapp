@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { CalendarGrid } from "@/components/ui/CalendarGrid";
 import { Sheet } from "@/components/ui/Sheet";
 import { formatCents } from "@/lib/money";
-import { formatDayLong, formatDayShort } from "@/lib/format-date";
+import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { loadSpendHeatmap } from "@/app/spending/actions";
 import { dayLedgerHref, type HeatDay, type SpendHeatmap as SpendHeatmapData } from "@/services/spending";
 
@@ -48,6 +48,7 @@ export function SpendHeatmap({ initial, today }: SpendHeatmapProps) {
   const [openDay, setOpenDay] = useState<string | null>(null);
 
   const byDay = new Map(data.days.map((d) => [d.iso, d]));
+  const monthName = formatMonthYear(`${data.monthKey}-01`);
   const scale = Math.max(data.maxOutflowCents, data.maxInflowCents);
   const detail = openDay === null ? null : (byDay.get(openDay) ?? null);
 
@@ -63,6 +64,20 @@ export function SpendHeatmap({ initial, today }: SpendHeatmapProps) {
   function cellLabel(iso: string): string {
     const d = byDay.get(iso);
     const day = formatDayShort(iso);
+    /*
+     * 🔴 A PADDING DAY IS NOT A MEASUREMENT. `CalendarGrid` fills the grid with
+     * real days from the neighbouring months, and this month's payload holds
+     * none of them — the comment on `onDayActivate` below already says so and
+     * guards the SHEET for exactly this reason. The aria-label did not, so on
+     * `/spending?period=2026-08` the five leading cells read
+     *
+     *     "Jul 27: no activity" … "Jul 31: no activity"
+     *
+     * of days holding 18, 13, 21, 11 and 12 transactions, and the trailing
+     * cells said the same of a September nobody has imported and of two days
+     * that have not happened. One sentence for three different worlds.
+     */
+    if (iso.slice(0, 7) !== data.monthKey) return `${day}: not part of ${monthName} — open its ledger`;
     if (!d || (d.spentCents === 0 && d.incomeCents === 0)) return `${day}: no activity`;
     const parts: string[] = [];
     if (d.spentCents > 0) {
