@@ -1,6 +1,6 @@
 import type { AppDatabase } from "@/db/client";
 import { isValidIsoDate } from "@/lib/dates";
-import { formatDayShort } from "@/lib/format-date";
+import { formatDayShort, formatDayShortIn } from "@/lib/format-date";
 import { deltaFact, scalarFact, type Fact } from "@/lib/insight-facts";
 import { surfaceInsights, type InsightInput } from "./insight-surface";
 import type { InsightCandidate, SurfaceInsights } from "./insights";
@@ -61,9 +61,20 @@ interface ComparedWindows {
   from: string;
   to: string;
   label: string;
-  priorFrom: string;
-  priorTo: string;
-  priorLabel: string;
+  /**
+   * The same window a year earlier — or NULL when the ledger does not cover it.
+   *
+   * 🔴 This used to be three required fields, and failing to fill them killed
+   * the whole section. Measured on the owner's ledger 2026-09-04: /summary/2022
+   * and /summary/2023 printed EARNED, ALL MONEY IN and PASSED THROUGH and said
+   * nothing whatever about the $4,678.51 and $49,897.80 that went OUT in them —
+   * 265 and 1,162 rows — because 2021 and 2022 are not wholly inside the ledger.
+   * A page lost its only spending sentence over a gate about a different year,
+   * and with it the note saying every total on the page is money in.
+   *
+   * The comparison still needs the gate; the measurement never did.
+   */
+  prior: { from: string; to: string; label: string } | null;
   /** the year stops before its December — so both sides had to be cut short */
   truncated: boolean;
 }
@@ -118,19 +129,22 @@ function comparedWindows(db: AppDatabase, year: number): ComparedWindows | null 
 
   const priorFrom = `${year - 1}-01-01`;
   const priorTo = sameDayIn(year - 1, to);
-  if (priorTo === null) return null;
-  // gate 3: an earlier window the ledger only partly covers measures the import
-  // history rather than the spending
-  if (priorFrom < ledgerStart) return null;
-
   const truncated = to !== yearEnd;
+  /*
+   * gate 3, and it now bounds the COMPARISON alone: an earlier window the
+   * ledger only partly covers measures the import history rather than the
+   * spending, so no delta is stated — but the year's own total is still a
+   * measurement of this year's own documents and is published.
+   */
+  const priorIsCovered = priorTo !== null && priorFrom >= ledgerStart;
   return {
     from,
     to,
     label: windowLabel(from, to, year, truncated),
-    priorFrom,
-    priorTo,
-    priorLabel: windowLabel(priorFrom, priorTo, year - 1, truncated),
+    prior:
+      priorIsCovered && priorTo !== null
+        ? { from: priorFrom, to: priorTo, label: windowLabel(priorFrom, priorTo, year - 1, truncated) }
+        : null,
     truncated,
   };
 }
@@ -175,20 +189,26 @@ export function yearInsightInput(db: AppDatabase, year: number): InsightInput | 
    * cannot apply it.
    */
   if (currentCents <= 0) return null;
-  const priorCents = periodTotals(db, { from: w.priorFrom, to: w.priorTo }).spentCents;
 
-  const facts: Fact[] = [
-    scalarFact("f1", `Spending in ${w.label}`, currentCents, "money"),
-    deltaFact("f2", "Spending", currentCents - priorCents, "money", w.priorLabel, w.label),
-  ];
-
+  const facts: Fact[] = [scalarFact("f1", `Spending in ${w.label}`, currentCents, "money")];
   const candidates: InsightCandidate[] = [
     {
       claimId: "measured_total",
       a: "f1",
       prove: () => provenanceFor(db, { kind: "allSpend", from: w.from, to: w.to, label: w.label }),
     },
-    {
+  ];
+
+  /*
+   * The comparison, only where there is a year to compare with. Its absence
+   * costs the reader the delta and nothing else — the total above it stands on
+   * this year's own documents.
+   */
+  const prior = w.prior;
+  if (prior !== null) {
+    const priorCents = periodTotals(db, { from: prior.from, to: prior.to }).spentCents;
+    facts.push(deltaFact("f2", "Spending", currentCents - priorCents, "money", prior.label, w.label));
+    candidates.push({
       claimId:
         currentCents > priorCents
           ? "rose_between"
@@ -208,10 +228,10 @@ export function yearInsightInput(db: AppDatabase, year: number): InsightInput | 
           from: w.from,
           to: w.to,
           label: w.label,
-          against: { from: w.priorFrom, to: w.priorTo, label: w.priorLabel },
+          against: { from: prior.from, to: prior.to, label: prior.label },
         }),
-    },
-  ];
+    });
+  }
 
   /**
    * ⛔ The direction is stated whether or not the window needs explaining.
@@ -233,5 +253,30 @@ export function yearInsightInput(db: AppDatabase, year: number): InsightInput | 
     ? `${year} is still being imported, so both years are measured through ${formatDayShort(w.to)} — the last day every account has been shown to the ledger. A part-year set beside a whole one is not a comparison. `
     : "";
 
-  return { facts, candidates, window: { label: w.label, note: `${window}${direction}` } };
+  /*
+   * ⛔ WHY there is no comparison, said rather than left as an absence. Every
+   * other year on the selector carries one; a reader who has seen 2024's would
+   * otherwise take its absence on 2023 for a page that failed to load.
+   */
+  const opens = ledgerFirstDay(db);
+  /*
+   * ⚠️ `formatDayShortIn`, not `formatDayShort`. The bare form drops the year,
+   * and this date is forensic: on /summary/2022 the ledger opens in 2022 and on
+   * /summary/2023 it opens in the year BEFORE the subject, so a bare "Aug 25"
+   * reads as the wrong year on one of them. Same trap `coverage-detail`
+   * recorded when "Dec 5" meant 2023.
+   *
+   * ⛔ And the two cases are different sentences. A predecessor the ledger holds
+   * PART of is a misleading baseline; one it holds NONE of is not a baseline at
+   * all, and calling it "only partly in it" would be false.
+   */
+  const priorEnd = `${year - 1}-12-31`;
+  const noPrior =
+    w.prior === null && opens !== null
+      ? priorEnd < opens
+        ? ` There is no comparison with ${year - 1}: the ledger opens on ${formatDayShortIn(opens, w.from)}, after all of it.`
+        : ` There is no comparison with ${year - 1}: the ledger opens on ${formatDayShortIn(opens, w.from)}, so that year is only partly in it and a change measured against it would describe when importing started.`
+      : "";
+
+  return { facts, candidates, window: { label: w.label, note: `${window}${direction}${noPrior}` } };
 }

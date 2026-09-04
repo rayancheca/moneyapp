@@ -234,17 +234,64 @@ describe("yearInsights — a year against the one before it", () => {
   });
 
   /**
-   * ⛔ Gate three. Without it, the first full year of a ledger is compared
-   * against the months before the ledger existed — on the real data that would
-   * have published "+622.8%" for 2023 against a 2022 the ledger holds four
-   * months of. That is a measurement of when importing started.
+   * ⛔ Gate three, and it bounds the COMPARISON alone. Without it, the first
+   * full year of a ledger is compared against the months before the ledger
+   * existed — on the real data that would have published "+622.8%" for 2023
+   * against a 2022 the ledger holds four months of. That is a measurement of
+   * when importing started.
+   *
+   * 🔴 It used to withhold the whole section, and the year's own total with it.
+   * Measured on the owner's ledger 2026-09-04: /summary/2022 and /summary/2023
+   * printed EARNED, ALL MONEY IN and PASSED THROUGH and said nothing at all
+   * about $4,678.51 and $49,897.80 of money OUT — 265 and 1,162 rows — because
+   * of a gate about a different year. The total stands on this year's own
+   * documents and never needed the predecessor.
    */
-  test("a year whose predecessor is only partly in the ledger is withheld", () => {
+  test("a year whose predecessor is only partly in the ledger keeps its total and loses its comparison", () => {
     const a = addAccount("a");
     spend(a, "2022-08-25", 10_000); // the ledger starts here, mid-2022
     spend(a, "2023-03-01", 90_000);
+    shownThrough(a, "2024-01-31"); // both years whole, so neither label is cut
 
-    expect(yearInsights(bundle.db, 2023)).toBeNull();
+    // the total stands — and nothing else. No "rose"/"fell" against a year the
+    // ledger only holds four months of.
+    expect(texts(2023)).toEqual(["Spending in 2023 came to $900.00."]);
+    // and the absence is explained rather than left as a hole
+    expect(yearInsights(bundle.db, 2023)!.windowNote).toContain("There is no comparison with 2022");
+    expect(texts(2022)).toEqual(["Spending in 2022 came to $100.00."]);
+  });
+
+  /*
+   * ⛔ TWO DIFFERENT SENTENCES. A predecessor the ledger holds PART of is a
+   * misleading baseline; one it holds NONE of is not a baseline at all, and
+   * "only partly in it" would be false of it.
+   *
+   * ⚠️ And the date carries its year whenever it is not the subject year —
+   * `formatDayShort` alone printed "Aug 25" on a page about 2023, the same trap
+   * `coverage-detail` recorded when "Dec 5" read as this December.
+   */
+  test("a predecessor entirely before the ledger is not called 'partly in it'", () => {
+    const a = addAccount("a");
+    spend(a, "2022-08-25", 10_000);
+    spend(a, "2023-03-01", 90_000);
+    shownThrough(a, "2024-01-31");
+
+    const y2022 = yearInsights(bundle.db, 2022)!.windowNote!;
+    expect(y2022).toContain("There is no comparison with 2021");
+    expect(y2022).toContain("after all of it");
+    expect(y2022).not.toContain("only partly in it");
+
+    const y2023 = yearInsights(bundle.db, 2023)!.windowNote!;
+    expect(y2023).toContain("only partly in it");
+    // the opening date is in a different year from the subject, so it says so
+    expect(y2023).toContain("Aug 25, 2022");
+  });
+
+  /* The measured-zero guard still owns years with no spending at all — a total
+     is the only claim left once the comparison is gone, so it must not be $0. */
+  test("a year with no spending is still withheld entirely", () => {
+    const a = addAccount("a");
+    spend(a, "2023-03-01", 90_000);
     expect(yearInsights(bundle.db, 2022)).toBeNull();
   });
 
