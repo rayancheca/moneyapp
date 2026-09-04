@@ -165,7 +165,7 @@ export function coverageDetail(input: CoverageDetailInput): string {
       const carried =
         input.verifiedThrough === null || since === null
           ? 0
-          : Math.max(0, diffDays(input.verifiedThrough, since ?? input.unverifiedSince) - 1);
+          : Math.max(0, diffDays(input.verifiedThrough, since) - 1);
       const held =
         carried === 0 ? "" : `, then carries that balance forward for ${carried} ${plural(carried, "day", "days")}`;
       /*
