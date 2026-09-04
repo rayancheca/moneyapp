@@ -76,6 +76,14 @@ export interface TrustAccountLine {
   /** `derived_unverified + gap` — days whose balance nothing checks */
   uncheckedDays: number;
   /**
+   * How many of those are in the run `detail`'s "since" date opens.
+   *
+   * ⛔ The count beside a date has to be the count that date is about. Robinhood
+   * Cash has 52 unchecked days in two runs 946 checked days apart, so "52 days"
+   * beside any single date is a span nobody can find. See `AccountCoverage`.
+   */
+  uncheckedRunDays: number;
+  /**
    * Rows the ledger holds for an account with no recorded balance. `0` for
    * every account that has a balance, and for a genuinely empty one.
    */
@@ -309,6 +317,7 @@ export function trustCard(db: AppDatabase, today: string = todayIso()): TrustCar
       verdict: input?.verdict ?? "unknown",
       detail: input?.detail ?? null,
       uncheckedDays: c.days.derived_unverified + c.days.gap,
+      uncheckedRunDays: c.uncheckedRunDays,
       strandedRows: stranded,
       isHole: stranded > 0,
       /*

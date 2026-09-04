@@ -105,10 +105,17 @@ function AccountRow({ account }: { account: TrustAccountLine }) {
           The word is the fix, and it is the vocabulary /imports already uses
           for this exact number: "52 days rest on an export with no closing
           balance". */}
+        {/* ⛔ …and the count has to be the one that date is ABOUT. Robinhood
+            Cash's 52 unchecked days fall in two runs 946 checked days apart, so
+            "52 days" beside any one date is a span nobody can find. The run is
+            printed, and the account's total only when the two differ. */}
         {account.uncheckedDays > 0 && (
           <span className="figures text-warning">
-            {account.uncheckedDays.toLocaleString("en-US")} day
-            {account.uncheckedDays === 1 ? "" : "s"} unchecked
+            {(account.uncheckedRunDays || account.uncheckedDays).toLocaleString("en-US")} day
+            {(account.uncheckedRunDays || account.uncheckedDays) === 1 ? "" : "s"} unchecked
+            {account.uncheckedRunDays > 0 && account.uncheckedRunDays !== account.uncheckedDays
+              ? `, of ${account.uncheckedDays.toLocaleString("en-US")} in all`
+              : ""}
           </span>
         )}
         {/* a HOLE, not an absence: rows the ledger holds that no total can

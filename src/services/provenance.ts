@@ -598,8 +598,15 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
         ? `adds up through ${readableDay(c.verifiedThrough)}`
         : c.grade === "broken" && c.brokenSince
           ? `stopped adding up on ${readableDay(c.brokenSince)}`
-          : c.grade === "unverified" && c.unverifiedSince
-            ? `nothing checks it since ${readableDay(c.unverifiedSince)}`
+          : /* 🔴 `uncheckedSince`, not `unverifiedSince`. The latter is the FIRST
+               unchecked day the account ever had, and pairing it with a count of
+               all of them printed "Robinhood Cash — nothing checks it since
+               Dec 5, 2023 · 52 days unchecked" of an account anchored 32 times,
+               the newest closing 35 days before. See `AccountCoverage`. */
+            c.grade === "unverified" && c.uncheckedSince
+            ? `nothing checks it since ${readableDay(c.uncheckedSince)}`
+            : c.grade === "unverified" && c.unverifiedSince
+              ? `checked through ${readableDay(c.verifiedThrough ?? c.unverifiedSince)}, and unchecked days before that`
             : c.grade === "market_value"
               ? "priced from holdings"
               : c.grade === "manual"

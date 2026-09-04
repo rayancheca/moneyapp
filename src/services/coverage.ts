@@ -63,6 +63,29 @@ export interface AccountCoverage {
    * innocent date as the moment the money stopped adding up.
    */
   brokenSince: string | null;
+  /**
+   * First day of the CURRENT run of unchecked days — the one that reaches the
+   * newest day the account has a balance for. Null when the newest day is
+   * checked.
+   *
+   * 🔴 The same trap `brokenSince` was written for, one field over and still
+   * live. `unverifiedSince` is the FIRST unchecked day the account ever had, and
+   * the coverage row pairs it with a count of every unchecked day:
+   *
+   *     Robinhood Cash — nothing checks it since Dec 5, 2023 · 52 days unchecked
+   *
+   * read on 2026-09-04 of an account with 32 statement anchors, the newest
+   * closing 2026-07-31 — 35 days earlier. Its 52 unchecked days fall in two
+   * runs with 946 checked days between them: 2023-12-05→2023-12-30, which is
+   * prehistory before its very first anchor, and 2026-08-03→2026-08-28. The
+   * sentence claimed a 1,004-day blackout, and its own neighbour on the card
+   * ("Cash on Hand — nothing checks it since Aug 11, 2026 · 1 day unchecked")
+   * was coherent, so the two rows were built from dates that meant different
+   * things.
+   */
+  uncheckedSince: string | null;
+  /** length of that run — what "since" is actually about */
+  uncheckedRunDays: number;
   /** newest statement period end, or null if the account has never had one */
   statementsThrough: string | null;
   /** when the owner last typed a balance in by hand (manual accounts) */
@@ -151,6 +174,8 @@ const accountCoverageCached = cache(function accountCoverageCached(
         verifiedThrough: null,
         unverifiedSince: null,
         brokenSince: null,
+        uncheckedSince: null,
+        uncheckedRunDays: 0,
         daysSinceVerified: null,
       };
     }
@@ -162,6 +187,8 @@ const accountCoverageCached = cache(function accountCoverageCached(
         verifiedThrough: null,
         unverifiedSince: null,
         brokenSince: null,
+        uncheckedSince: null,
+        uncheckedRunDays: 0,
         daysSinceVerified: null,
       };
     }
@@ -176,8 +203,16 @@ const accountCoverageCached = cache(function accountCoverageCached(
         .limit(1)
         .get() !== undefined;
 
-    const firstUntrusted = balances.find((b) => b.basis === "derived_unverified" || b.basis === "gap");
+    const isUnchecked = (basis: BalanceBasis): boolean => basis === "derived_unverified" || basis === "gap";
+    const firstUntrusted = balances.find((b) => isUnchecked(b.basis));
     const firstGap = balances.find((b) => b.basis === "gap");
+
+    // walk back from the newest day for as long as it is unchecked: the run
+    // that is still open, which is what a sentence beginning "since" is about
+    let runStart = balances.length;
+    while (runStart > 0 && isUnchecked(balances[runStart - 1]!.basis)) runStart -= 1;
+    const uncheckedRunDays = balances.length - runStart;
+    const uncheckedSince = uncheckedRunDays > 0 ? balances[runStart]!.day : null;
 
     // `verifiedThrough` must not run past the point the chain broke: a later
     // `anchored` day is a fresh starting point, not proof of the span before it
@@ -193,6 +228,8 @@ const accountCoverageCached = cache(function accountCoverageCached(
         verifiedThrough: null,
         unverifiedSince: null,
         brokenSince: null,
+        uncheckedSince: null,
+        uncheckedRunDays: 0,
         daysSinceVerified: null,
       };
     }
@@ -205,6 +242,8 @@ const accountCoverageCached = cache(function accountCoverageCached(
       verifiedThrough,
       unverifiedSince: firstUntrusted?.day ?? null,
       brokenSince: firstGap?.day ?? null,
+      uncheckedSince,
+      uncheckedRunDays,
       daysSinceVerified: verifiedThrough ? diffDays(verifiedThrough, today) : null,
     };
   });

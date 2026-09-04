@@ -391,3 +391,59 @@ describe("accountCoverage", () => {
     expect(only(id).daysSinceVerified).toBe(36);
   });
 });
+
+let runSeq = 0;
+function runCoverage(rows: { day: string; basis: string }[]) {
+  runSeq += 1;
+  const id = addAccount(`a-run-${runSeq}`, `Run ${runSeq}`, "checking");
+  addDays(id, rows);
+  addTxn(id, rows[0]!.day);
+  return only(id);
+}
+
+describe("uncheckedSince — the run a 'since' date is actually about", () => {
+  /*
+   * 🔴 `unverifiedSince` is the FIRST unchecked day the account ever had, and
+   * the coverage row paired it with a count of every unchecked day:
+   *
+   *     Robinhood Cash — nothing checks it since Dec 5, 2023 · 52 days unchecked
+   *
+   * read on 2026-09-04 of an account with 32 statement anchors, the newest
+   * closing 2026-07-31. Its 52 unchecked days fall in two runs with 946 checked
+   * days between them — prehistory before its very first anchor, and a fresh
+   * tail. `AccountCoverage.brokenSince` was added for this exact trap and only
+   * covered the gap case.
+   */
+  test("names the day the CURRENT run of unchecked days opened, not the first ever", () => {
+    const c = runCoverage([
+      { day: "2026-01-01", basis: "derived_unverified" },
+      { day: "2026-01-02", basis: "derived_unverified" },
+      { day: "2026-01-03", basis: "anchored" },
+      { day: "2026-01-04", basis: "derived" },
+      { day: "2026-01-05", basis: "derived_unverified" },
+    ]);
+    expect(c.unverifiedSince).toBe("2026-01-01");
+    expect(c.uncheckedSince).toBe("2026-01-05");
+    expect(c.uncheckedRunDays).toBe(1);
+    // the account's total is unchanged — the footnote sums this, not the run
+    expect(c.days.derived_unverified).toBe(3);
+  });
+
+  test("an account whose newest day is checked has no open run", () => {
+    const c = runCoverage([
+      { day: "2026-01-01", basis: "derived_unverified" },
+      { day: "2026-01-02", basis: "anchored" },
+    ]);
+    expect(c.uncheckedSince).toBeNull();
+    expect(c.uncheckedRunDays).toBe(0);
+  });
+
+  test("an account unchecked from its first day to its last says so", () => {
+    const c = runCoverage([
+      { day: "2026-01-01", basis: "derived_unverified" },
+      { day: "2026-01-02", basis: "derived_unverified" },
+    ]);
+    expect(c.uncheckedSince).toBe("2026-01-01");
+    expect(c.uncheckedRunDays).toBe(2);
+  });
+});
