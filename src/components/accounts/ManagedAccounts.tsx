@@ -70,8 +70,21 @@ export function ManagedAccounts({
           aria-label={group.institutionName}
           className="overflow-hidden rounded-(--radius-card) border border-line bg-surface-raised shadow-[0_1px_2px_oklch(0%_0_0/0.04)]"
         >
-          <header className="flex items-center justify-between gap-4 border-b border-line px-5 py-3">
-            <div className="text-sm font-semibold">{group.institutionName}</div>
+          {/* 🔴 The heading is a NET across the group's sides while every row
+              under it prints a card as what you owe, so on the owner's ledger
+              2026-09-04 "Capital One -$367.99" sat directly above "Venture X
+              $367.99" — one debt, two signs, nothing saying why. Same clause and
+              same reason as `InstitutionCard`; printed only where the flip can
+              actually happen. */}
+          <header className="flex items-baseline justify-between gap-4 border-b border-line px-5 py-3">
+            <div className="text-sm font-semibold">
+              {group.institutionName}
+              {group.accounts.some((a) => a.isLiability) && (
+                <span className="ml-2 text-[11px] font-normal text-ink-faint">
+                  net of what you owe
+                </span>
+              )}
+            </div>
             <Money cents={group.totalCents} className="text-sm font-semibold" />
           </header>
 

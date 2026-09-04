@@ -155,14 +155,49 @@ describe("buildAccountsTable", () => {
     expect(model.owed[0]!.sharePct).toBe(100);
   });
 
-  it("keeps every share inside 0–100 even when an asset account is overdrawn", () => {
+  /*
+   * 🔴 This asserted `[90, 10]` — the absolute-value rule, which gave an
+   * OVERDRAWN account a tenth of "held". It holds nothing; it is a debt sitting
+   * on the asset side, the mirror of the card in credit that took 8.2% "of
+   * owed" on the owner's real ledger. `lib/side-magnitude` refuses both, and
+   * the 0–100 guarantee this test was written for still holds: the denominator
+   * is now the side's own money, which no row can exceed.
+   */
+  it("an overdrawn asset account takes no share of what is held", () => {
     const model = buildAccountsTable([
       account({ id: "savings", balanceCents: 9_000 }),
       account({ id: "overdrawn", balanceCents: -1_000 }),
     ]);
-    // the side TOTAL is 8,000 — sharing against it would print 112.5%
+    // the side's NET is still 8,000 — the total is what the column adds up to
     expect(model.heldTotalCents).toBe(8_000);
-    expect(model.held.map((r) => r.sharePct)).toEqual([90, 10]);
+    expect(model.held.map((r) => r.sharePct)).toEqual([100, 0]);
+  });
+
+  /*
+   * ⛔ THE MEASURED CASE. Chase Sapphire closed 2026-09-02 at $82.72 in credit;
+   * the table read "55.3% of owed" for Discover and "8.2% of owed" for the card
+   * in credit, while /accounts/<Discover> read 60.2% of the same debt on the
+   * same day. Both numbers were on the owner's screen.
+   */
+  it("an account with no balance takes no share and is not mistaken for a credit", () => {
+    const model = buildAccountsTable([
+      account({ id: "funded", balanceCents: 5_000 }),
+      account({ id: "empty", balanceCents: null }),
+    ]);
+    expect(model.held.map((r) => r.sharePct)).toEqual([100, 0]);
+    expect(model.held[1]!.balanceCents).toBeNull();
+  });
+
+  it("a card in credit takes no slice of the debt, and the others share what is owed", () => {
+    const model = buildAccountsTable([
+      account({ id: "discover", isLiability: true, balanceCents: -55_762 }),
+      account({ id: "venture", isLiability: true, balanceCents: -36_799 }),
+      account({ id: "sapphire", isLiability: true, balanceCents: 8_272 }),
+    ]);
+    expect(model.owed.map((r) => r.sharePct)).toEqual([60.2, 39.8, 0]);
+    // and the total stays the NET the footer prints — the slices are of the
+    // gross, the total is of the type, and they are different questions
+    expect(model.owedTotalCents).toBe(-84_289);
   });
 
   it("totals the change column exactly as printed, skipping rows that have none", () => {

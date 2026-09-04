@@ -6,6 +6,7 @@ import { useViewState } from "@/hooks/useViewState";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { ledgerHref } from "@/lib/ledger-href";
 import { formatCents, formatCentsSigned } from "@/lib/money";
+import { sideMagnitudeCents } from "@/lib/side-magnitude";
 import { sparklineGeometry } from "@/lib/sparkline";
 import type { ViewSpec, ViewState } from "@/lib/view-state";
 
@@ -91,13 +92,13 @@ function round1(n: number): number {
   return r === 0 ? 0 : r;
 }
 
-function toRow(account: AccountsTableAccount, sideAbsTotal: number): AccountsTableRow {
+function toRow(account: AccountsTableAccount, sideTotalCents: number): AccountsTableRow {
   const series = account.spark.map((p) => p.cents);
   const first = account.spark[0] ?? null;
   const last = account.spark[account.spark.length - 1] ?? null;
   const deltaCents = series.length >= 2 ? last!.cents - first!.cents : null;
   const startCents = first?.cents ?? null;
-  const size = Math.abs(account.balanceCents ?? 0);
+  const size = sideMagnitudeCents(account.balanceCents, account.isLiability);
   return {
     ...account,
     series,
@@ -112,7 +113,7 @@ function toRow(account: AccountsTableAccount, sideAbsTotal: number): AccountsTab
       deltaCents === null || startCents === null || startCents === 0
         ? null
         : round1((deltaCents / Math.abs(startCents)) * 100),
-    sharePct: sideAbsTotal === 0 ? 0 : round1((size / sideAbsTotal) * 100),
+    sharePct: sideTotalCents === 0 ? 0 : round1((size / sideTotalCents) * 100),
   };
 }
 
@@ -122,17 +123,25 @@ function toRow(account: AccountsTableAccount, sideAbsTotal: number): AccountsTab
  * rows above it. Input order is preserved within each side (the service already
  * sorts by institution → displayOrder → name).
  *
- * `share` is measured against the sum of the side's ABSOLUTE balances, so the
- * column always sums to 100% even if one asset account is overdrawn.
+ * 🔴 `share` is measured against what each account contributes to its own SIDE
+ * (`lib/side-magnitude`), not against absolute balances. Absolute values handed
+ * Chase Sapphire "8.2% of owed" while it sat $82.72 in CREDIT, and divided the
+ * two cards that do owe by $1,008.33 instead of the $925.61 between them — the
+ * defect `account-insights` fixed on 2026-09-03 and this table did not, so on
+ * the same day one page read 60.2% of the same debt and this one read 55.3%.
+ *
+ * ⚠️ The column therefore sums to 100% of the side's own money and NOT of every
+ * row: an account on the wrong side of its sign (a card in credit, an overdrawn
+ * checking account) takes no share, which is the true reading.
  */
 export function buildAccountsTable(accounts: readonly AccountsTableAccount[]): AccountsTableModel {
   const heldIn = accounts.filter((a) => !a.isLiability);
   const owedIn = accounts.filter((a) => a.isLiability);
-  const absTotal = (list: readonly AccountsTableAccount[]): number =>
-    list.reduce((sum, a) => sum + Math.abs(a.balanceCents ?? 0), 0);
+  const sideTotal = (list: readonly AccountsTableAccount[]): number =>
+    list.reduce((sum, a) => sum + sideMagnitudeCents(a.balanceCents, a.isLiability), 0);
 
-  const held = heldIn.map((a) => toRow(a, absTotal(heldIn)));
-  const owed = owedIn.map((a) => toRow(a, absTotal(owedIn)));
+  const held = heldIn.map((a) => toRow(a, sideTotal(heldIn)));
+  const owed = owedIn.map((a) => toRow(a, sideTotal(owedIn)));
   const all = [...held, ...owed];
 
   const heldTotalCents = held.reduce((sum, r) => sum + (r.balanceCents ?? 0), 0);
@@ -396,8 +405,18 @@ function AccountRow({ row, rank }: { row: AccountsTableRow; rank: number }) {
               style={{ width: `${row.sharePct}%` }}
             />
           </span>
+          {/* A row on the WRONG SIDE of its own sign takes no share, and saying
+              "0.0% of owed" of a card the bank owes YOU money on describes it as
+              a rounded-down debt. Name the reason instead — the balance beside it
+              is the proof. */}
           <span className="figures text-[10px] text-ink-faint">
-            {row.sharePct.toFixed(1)}% of {row.isLiability ? "owed" : "held"}
+            {row.balanceCents !== null &&
+            row.balanceCents !== 0 &&
+            sideMagnitudeCents(row.balanceCents, row.isLiability) === 0
+              ? row.isLiability
+                ? "in credit — no share of the debt"
+                : "overdrawn — no share of what is held"
+              : `${row.sharePct.toFixed(1)}% of ${row.isLiability ? "owed" : "held"}`}
           </span>
         </span>
       </td>
@@ -473,8 +492,10 @@ export function AccountsTable({ accounts, cashWalletNote }: AccountsTableProps) 
             Every account, ruled and totalled
             {model.asOf && (
               <span className="block font-normal normal-case tracking-normal">
-                Balances as of {formatDayLong(model.asOf)}. Change is signed against net worth, so a
-                card paid down reads positive.
+                Balances as of {formatDayLong(model.asOf)}. Balance and change are both signed
+                against net worth, so a debt reads negative and a card paid down reads positive —
+                which is what lets both columns be added across the two sides below. Elsewhere a
+                card reads as what you owe.
               </span>
             )}
           </caption>
@@ -560,14 +581,33 @@ export function AccountsTable({ accounts, cashWalletNote }: AccountsTableProps) 
         </ul>
       </details>
 
+      {/* 🔴 This abs'd the owed total, and the Owed heading three rows above
+          printed the same number signed: -$842.89 up there, $842.89 down here,
+          on one screen. `Math.abs` also had the latent fault §7c named — if card
+          credits ever exceeded card debts it would print a DEBT where there is a
+          credit. Negating says what you owe, and the sentence changes when the
+          sign does rather than hiding it. */}
       <p className="mt-3 max-w-[68ch] text-[11px] text-ink-faint">
         Balances are the ledger&apos;s own derived figures — held{" "}
         <b className="figures font-semibold text-ink-muted">{formatCents(model.heldTotalCents)}</b>{" "}
-        and owed{" "}
-        <b className="figures font-semibold text-ink-muted">
-          {formatCents(Math.abs(model.owedTotalCents))}
-        </b>
-        . Change spans each account&apos;s own covered days, and the total change is that column
+        and{" "}
+        {model.owedTotalCents > 0 ? (
+          <>
+            <b className="figures font-semibold text-ink-muted">
+              {formatCents(model.owedTotalCents)}
+            </b>{" "}
+            in credit
+          </>
+        ) : (
+          <>
+            owed{" "}
+            <b className="figures font-semibold text-ink-muted">
+              {formatCents(-model.owedTotalCents)}
+            </b>
+          </>
+        )}
+        , which the Owed row above prints signed against net worth. Change spans each
+        account&apos;s own covered days, and the total change is that column
         added up; the exact dates are in the printed series above. A row&apos;s name opens its
         transactions, its balance opens its history.
         {cashWalletNote ? ` ${cashWalletNote}` : ""} Archived accounts are left out.

@@ -5,6 +5,7 @@ import { todayIso } from "@/lib/dates";
 import { formatDayLong } from "@/lib/format-date";
 import { countFact, rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts";
 import { isPrintableName } from "@/lib/printable-name";
+import { sideMagnitudeCents } from "@/lib/side-magnitude";
 import { listAccounts } from "./accounts";
 import { surfaceInsights, type InsightInput } from "./insight-surface";
 import type { InsightCandidate, SurfaceInsights } from "./insights";
@@ -101,9 +102,13 @@ export function accountInsightInput(
    * of an asset-side balance, owed the negative part of a liability-side one;
    * an account on the wrong side of its sign is ranked at zero and gets no
    * share, the same refusal a zero balance gets below.
+   *
+   * ⛔ The rule lives in `lib/side-magnitude` because it shipped fixed HERE and
+   * broken in the `/accounts` table on the same day — 60.2% on one page, 55.3%
+   * on the other, of one debt.
    */
   const sideAmount = (a: (typeof all)[number]): number =>
-    self.isLiability ? Math.max(0, -a.balance.balanceCents) : Math.max(0, a.balance.balanceCents);
+    sideMagnitudeCents(a.balance.balanceCents, self.isLiability);
   const ranked = [...side].sort((a, b) => sideAmount(b) - sideAmount(a) || a.name.localeCompare(b.name));
   const rank = ranked.findIndex((a) => a.id === accountId) + 1;
   const magnitude = sideAmount(self);

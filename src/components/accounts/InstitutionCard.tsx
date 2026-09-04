@@ -127,6 +127,15 @@ export function InstitutionCard({ group }: { group: InstitutionGroup }) {
           <div className="mt-0.5 text-[11px] text-ink-faint">
             {group.accounts.length} account{group.accounts.length === 1 ? "" : "s"}
             {group.asOf ? ` · as of ${group.asOf}` : ""}
+            {/* 🔴 The heading is a NET across the group's sides and every sub-card
+                under it prints a card as what you owe, so the same money appeared
+                twice with opposite signs and nothing said why: on the owner's
+                ledger 2026-09-04 "Capital One · -$367.99" collapsed, opening to
+                "Venture X · $367.99". `daily_balances` stores a debt negative and
+                the group total is their sum — correct, and unreadable beside a row
+                that flips it. The clause is printed only where the flip can
+                happen, and only for the reader who is about to see it. */}
+            {group.accounts.some((a) => a.isLiability) ? " · net of what you owe" : ""}
           </div>
         </div>
         <div className="flex items-center gap-4">
