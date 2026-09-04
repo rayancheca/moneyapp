@@ -6,6 +6,8 @@ const detail = (over: Partial<CoverageDetailInput> = {}): string =>
     grade: "verified",
     verifiedThrough: "2026-08-12",
     unverifiedSince: null,
+    uncheckedSince: null,
+    uncheckedRunDays: 0,
     brokenSince: null,
     daysSinceVerified: 15,
     lastManualUpdate: null,
@@ -254,5 +256,67 @@ describe("agoPhrase", () => {
   test("counts days", () => {
     expect(agoPhrase(1)).toBe("1 day ago");
     expect(agoPhrase(27)).toBe("27 days ago");
+  });
+});
+
+describe("the date and the count are about the SAME run", () => {
+  /*
+   * 🔴 `/imports` read, on one row:
+   *
+   *     Robinhood Cash · Unverified · statements → 2026-07-31
+   *     nothing closes to the cent from its first day; the first day it does
+   *     not is Dec 5, 2023 — 52 days rest on an export with no closing balance
+   *
+   * of an account with 32 statement anchors and 32 reconciled periods listed
+   * further down the same page. Two faults, one line: `verifiedThrough` was
+   * defeated by 26 days of prehistory before the account's very first anchor
+   * (fixed in `services/coverage`), and the sentence paired the FIRST unchecked
+   * day the account ever had with a count of ALL of them — two runs 946 checked
+   * days apart.
+   */
+  test("an account with prehistory names the run that is still open", () => {
+    expect(
+      detail({
+        grade: "unverified",
+        verifiedThrough: "2026-08-02",
+        daysSinceVerified: 33,
+        unverifiedSince: "2023-12-05",
+        unverifiedDays: 52,
+        uncheckedSince: "2026-08-03",
+        uncheckedRunDays: 26,
+      }),
+    ).toBe(
+      "closes to the cent through Aug 2, 2026 (33 days ago); the first day it does not is Aug 3, 2026 — " +
+        "26 days rest on an export with no closing balance, of 52 unchecked in all",
+    );
+  });
+
+  test("one run needs no reconciling clause", () => {
+    expect(
+      detail({
+        grade: "unverified",
+        verifiedThrough: "2026-08-03",
+        daysSinceVerified: 32,
+        unverifiedSince: "2026-08-11",
+        unverifiedDays: 1,
+        uncheckedSince: "2026-08-11",
+        uncheckedRunDays: 1,
+        hasStatements: false,
+      }),
+    ).toContain("1 day rests on entries alone, with no document to check them against");
+  });
+
+  test("and it never says 'of N unchecked in all' when N is the same number", () => {
+    expect(
+      detail({
+        grade: "unverified",
+        verifiedThrough: "2026-08-03",
+        daysSinceVerified: 32,
+        unverifiedSince: "2026-08-11",
+        unverifiedDays: 1,
+        uncheckedSince: "2026-08-11",
+        uncheckedRunDays: 1,
+      }),
+    ).not.toContain("in all");
   });
 });

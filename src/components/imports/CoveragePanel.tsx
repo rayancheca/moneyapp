@@ -77,6 +77,8 @@ export function CoveragePanel({ coverage }: { coverage: AccountCoverage[] }) {
                   grade: c.grade,
                   verifiedThrough: c.verifiedThrough,
                   unverifiedSince: c.unverifiedSince,
+                  uncheckedSince: c.uncheckedSince,
+                  uncheckedRunDays: c.uncheckedRunDays,
                   brokenSince: c.brokenSince,
                   daysSinceVerified: c.daysSinceVerified,
                   lastManualUpdate: c.lastManualUpdate,

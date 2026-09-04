@@ -37,6 +37,20 @@ export interface CoverageDetailInput {
   verifiedThrough: string | null;
   /** first day that is `derived_unverified` or `gap` */
   unverifiedSince: string | null;
+  /**
+   * First day of the run of unchecked days that is still OPEN, and its length.
+   *
+   * 🔴 The sentence below pairs a date with a count, and `unverifiedSince` is
+   * the first unchecked day the account EVER had. Robinhood Cash's 52 unchecked
+   * days fall in two runs 946 checked days apart — 26 of prehistory before its
+   * very first anchor, 26 at the end — so "the first day it does not is Dec 5,
+   * 2023 — 52 days rest on an export with no closing balance" named a
+   * three-year blackout on an account whose newest statement closed 35 days
+   * earlier. The date and the count have to be about the same run; the
+   * account's total follows it when the two differ.
+   */
+  uncheckedSince: string | null;
+  uncheckedRunDays: number;
   /** first day the walk actually MISSED an anchor */
   brokenSince: string | null;
   /** whole days from `verifiedThrough` to today */
@@ -127,9 +141,13 @@ export function coverageDetail(input: CoverageDetailInput): string {
       return `${closesClause(input)}; the chain first fails ${where} — ${n} ${plural(n, "day", "days")} cannot be trusted`;
     }
     case "unverified": {
-      const n = input.unverifiedDays;
-      const first =
-        input.unverifiedSince === null ? "a day the record does not name" : dayWithYear(input.unverifiedSince);
+      const run = input.uncheckedRunDays > 0;
+      const n = run ? input.uncheckedRunDays : input.unverifiedDays;
+      const since = run ? input.uncheckedSince : input.unverifiedSince;
+      const first = since === null ? "a day the record does not name" : dayWithYear(since);
+      // the prehistory the run leaves out, so this row and the trust card's
+      // "26 days unchecked, of 52 in all" reconcile
+      const inAll = run && n !== input.unverifiedDays ? `, of ${input.unverifiedDays} unchecked in all` : "";
       /*
        * 🔴 SEVEN DAYS ONCE FELL BETWEEN THE TWO CLAUSES. On Cash on Hand this
        * read "closes to the cent through Aug 3, 2026 …; the first day it does
@@ -145,9 +163,9 @@ export function coverageDetail(input: CoverageDetailInput): string {
        * balance, and not a gap". Naming it closes the hole without new data.
        */
       const carried =
-        input.verifiedThrough === null || input.unverifiedSince === null
+        input.verifiedThrough === null || since === null
           ? 0
-          : Math.max(0, diffDays(input.verifiedThrough, input.unverifiedSince) - 1);
+          : Math.max(0, diffDays(input.verifiedThrough, since ?? input.unverifiedSince) - 1);
       const held =
         carried === 0 ? "" : `, then carries that balance forward for ${carried} ${plural(carried, "day", "days")}`;
       /*
@@ -160,7 +178,7 @@ export function coverageDetail(input: CoverageDetailInput): string {
       const because = input.hasStatements
         ? "on an export with no closing balance"
         : "on entries alone, with no document to check them against";
-      return `${closesClause(input)}${held}; the first day it does not is ${first} — ${n} ${plural(n, "day rests", "days rest")} ${because}`;
+      return `${closesClause(input)}${held}; the first day it does not is ${first} — ${n} ${plural(n, "day rests", "days rest")} ${because}${inAll}`;
     }
     case "market_value":
       return "priced from holdings; statements here set a value, they never prove the transactions add up";

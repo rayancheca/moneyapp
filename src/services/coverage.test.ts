@@ -447,3 +447,50 @@ describe("uncheckedSince — the run a 'since' date is actually about", () => {
     expect(c.uncheckedRunDays).toBe(2);
   });
 });
+
+describe("verifiedThrough — a break, and what only looks like one", () => {
+  /*
+   * 🔴 Robinhood Cash opens on 2023-12-05 with 26 days of prehistory before its
+   * very first anchor, so the "first untrusted day" was its opening day, every
+   * trusted day failed the `< firstUntrusted` test, and `verifiedThrough` came
+   * back null — of an account with 32 statement anchors and 32 reconciled
+   * periods, the newest closing 2026-07-31. `/imports` then printed, on one row:
+   *
+   *     Robinhood Cash · Unverified · statements → 2026-07-31
+   *     nothing closes to the cent from its first day; …
+   */
+  test("untrusted days BEFORE the first anchor are prehistory, not a break", () => {
+    const c = runCoverage([
+      { day: "2026-01-01", basis: "derived_unverified" },
+      { day: "2026-01-02", basis: "derived_unverified" },
+      { day: "2026-01-03", basis: "anchored" },
+      { day: "2026-01-04", basis: "derived" },
+      { day: "2026-01-05", basis: "derived_unverified" },
+    ]);
+    expect(c.verifiedThrough).toBe("2026-01-04");
+  });
+
+  /*
+   * ⛔ AND THE GUARD IT MUST NOT COST. A later anchor is a fresh starting point,
+   * not proof of the span before it — so a break in the MIDDLE still stops the
+   * walk where it always did.
+   */
+  test("a break after the chain has started still stops it there", () => {
+    const c = runCoverage([
+      { day: "2026-01-01", basis: "anchored" },
+      { day: "2026-01-02", basis: "derived" },
+      { day: "2026-01-03", basis: "derived_unverified" },
+      { day: "2026-01-04", basis: "anchored" },
+      { day: "2026-01-05", basis: "derived" },
+    ]);
+    expect(c.verifiedThrough).toBe("2026-01-02");
+  });
+
+  test("an account that never closes at all still says so", () => {
+    const c = runCoverage([
+      { day: "2026-01-01", basis: "derived_unverified" },
+      { day: "2026-01-02", basis: "derived_unverified" },
+    ]);
+    expect(c.verifiedThrough).toBeNull();
+  });
+});

@@ -214,11 +214,35 @@ const accountCoverageCached = cache(function accountCoverageCached(
     const uncheckedRunDays = balances.length - runStart;
     const uncheckedSince = uncheckedRunDays > 0 ? balances[runStart]!.day : null;
 
-    // `verifiedThrough` must not run past the point the chain broke: a later
-    // `anchored` day is a fresh starting point, not proof of the span before it
+    /*
+     * `verifiedThrough` must not run past the point the chain BROKE: a later
+     * `anchored` day is a fresh starting point, not proof of the span before it.
+     *
+     * 🔴 …but a run of untrusted days BEFORE the account's first trusted day is
+     * not a break. Nothing broke; the chain simply starts later. Robinhood Cash
+     * opens on 2023-12-05 with 26 days of prehistory before its very first
+     * anchor, so `firstUntrusted` was its opening day, every trusted day failed
+     * `b.day < firstUntrusted.day`, and `verifiedThrough` came back null — of an
+     * account with 32 statement anchors and 32 reconciled periods, the newest
+     * closing 2026-07-31. `/imports` then printed, on ONE row:
+     *
+     *     Robinhood Cash · Unverified · statements → 2026-07-31
+     *     nothing closes to the cent from its first day; …
+     *
+     * The break test is measured from the first TRUSTED day, so a mid-chain gap
+     * still stops the walk exactly where it did.
+     */
+    const firstTrusted = balances.find((b) => TRUSTED.has(b.basis));
+    const firstBreak = firstTrusted
+      ? balances.find(
+          (b) =>
+            b.day > firstTrusted.day &&
+            (b.basis === "derived_unverified" || b.basis === "gap"),
+        )
+      : firstUntrusted;
     const verifiedThrough =
       balances
-        .filter((b) => TRUSTED.has(b.basis) && (!firstUntrusted || b.day < firstUntrusted.day))
+        .filter((b) => TRUSTED.has(b.basis) && (!firstBreak || b.day < firstBreak.day))
         .at(-1)?.day ?? null;
 
     if (!hasTxn) {

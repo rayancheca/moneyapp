@@ -659,8 +659,20 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
     })
     .join("; ");
 
+  /*
+   * 🔴 EVERY ACCOUNT THAT HAS A CHAIN, not only the ones whose chain is still
+   * whole. The card's own sentence says "the whole picture stops being proven at
+   * the FIRST account that stops being checked", and this filtered to
+   * `grade === "verified"` — so the two accounts printed six lines above it
+   * under "nothing checks it" never entered the comparison at all. An account
+   * that closed to the cent through Aug 3 and then stopped is exactly an account
+   * that stops being checked, and it is exactly what the sentence is about.
+   *
+   * ⚠️ `market_value` and `manual` accounts stay out: neither has an arithmetic
+   * chain to stop, which the same card says of them in their own words.
+   */
   const closed = coverage
-    .filter((c) => c.grade === "verified" && c.verifiedThrough)
+    .filter((c) => (c.grade === "verified" || c.grade === "unverified" || c.grade === "broken") && c.verifiedThrough)
     .map((c) => c.verifiedThrough!)
     .sort();
 
