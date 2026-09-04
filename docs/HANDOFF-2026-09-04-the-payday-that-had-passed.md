@@ -3,7 +3,7 @@
 > **Supersedes `HANDOFF-2026-09-03-the-payday-that-had-not-happened.md`.**
 >
 > Repo: **`/Users/rayankarimcheca/dev/MoneyApp`**, `main`, tree clean, pushed.
-> tsc clean · **4,607 unit** in ~31s · coverage gate exit 0 ·
+> tsc clean · **4,608 unit** in ~25s · coverage gate exit 0 ·
 > **E2E_GATE=1: 598 passed at `maxDiffPixels: 0`** · `pnpm ledger-check` exit 0
 > on every commit via `.githooks/pre-commit`.
 >
@@ -17,7 +17,7 @@
 > before regenerating: the `/accounts` + dashboard family (the institution
 > heading's "net of what you owe", and the concentration card's new wording) and
 > the `holding` family ("HELD, AGAINST WHAT YOU PAID" and its two meaning
-> lines). Nothing else moved. Five full gates.
+> lines). Nothing else moved. Six full gates.
 
 ---
 
@@ -67,10 +67,13 @@ detail pages (a merchant, a category, a card in credit, a bill's own page).
 | 14 | /recurring/&lt;rent&gt;: "**Next expected — Oct 1, 2026**" | September's rent came due Sep 1 and never posted; four other surfaces say so |
 | 15 | /recurring: "PROJECTED NET **−$426.60**" over a strip reading "as scheduled **+$620.40**" | $1,047.00 apart, and `committed`'s own docstring says that headline exists to stop exactly this |
 
-Two more were found by the tools rather than the eye and are recorded where
-they belong: an **axe `definition-list` violation** the `Stat` hint had carried
-latently (§4), and a **`-$0.00`** a card at exactly zero would have printed
-(§8) — caught the moment `balanceHeading` was first tested.
+**Four more were found by the tools rather than the eye**, and each is recorded
+where it belongs: an **axe `definition-list` violation** the `Stat` hint had
+carried latently (§4); a **`-$0.00`** a card at exactly zero would have printed,
+caught the moment `balanceHeading` was first tested (§8); **"How amount owed is
+proven"**, caught by the accessible-name assertion in `e2e/provenance.spec.ts`
+and by nothing else (§11); and **"within 3 daysof it"**, caught by reading the
+rendered sentence back off the app rather than the source (§11).
 
 ---
 
@@ -369,6 +372,11 @@ one when they all tie implies Car is distinctive. Not wrong; a wording call.
   one commit, caught only by reading the rendered sentence back off the app.
 - ⚠️ **`-0` formats as "-$0.00".** Caught by the first test written against a
   new function, not by any reading.
+- ⛔ **Replacing an inline ternary with a shared function loses the words it
+  carried.** `heading.label.toLowerCase()` turned "How the amount owed is
+  proven" into "How amount owed is proven", and only the accessible-name
+  assertion in `e2e/provenance.spec.ts` saw it — the sentence is assembled
+  nowhere else. The subject is a field on the same object now.
 - ⛔ **Read a diff by cropping it to its changed ROWS.** A `PIL` script that
   finds the diff's red bands and crops actual/expected to each turns a
   1440×11000 screenshot into three legible strips
@@ -377,7 +385,7 @@ one when they all tie implies Car is distinctive. Not wrong; a wording call.
 - ⚠️ **`pnpm e2e` refuses a stale `.next`.** `E2E_ALLOW_STALE=1 npx playwright
   test` is right only when the bundle really is current; `pnpm build` then
   `npx playwright test <specs>` is the cheap way to iterate on one family.
-- ⚠️ `npx vitest run --maxWorkers=4` — 4,607 in ~31s. Coverage gate:
+- ⚠️ `npx vitest run --maxWorkers=4` — 4,608 in ~25s. Coverage gate:
   `npx vitest run --coverage --maxWorkers=4`.
 - ⛔ The dev server on :3000 is left running, as it was found.
 
@@ -423,7 +431,7 @@ Confirmed live after the fixes, read off the page text:
 > Read `docs/HANDOFF-2026-09-04-the-payday-that-had-passed.md` first — it is the
 > brief. §0 of it is the job.
 > Repo `/Users/rayankarimcheca/dev/MoneyApp`, `main` clean and pushed. Baseline:
-> 4,607 unit in ~31s · tsc clean · coverage gate exit 0 · `E2E_GATE=1`:
+> 4,608 unit in ~25s · tsc clean · coverage gate exit 0 · `E2E_GATE=1`:
 > 598 passed at `maxDiffPixels: 0` · `pnpm ledger-check` exit 0 on every commit.
 > Ledger: 10,178 active rows · 37 uncategorized. Zero DB writes last session.
 >
