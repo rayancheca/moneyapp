@@ -42,6 +42,40 @@ export const SERIES_EVIDENCE_LABEL: Record<SeriesEvidence, string> = {
 export const SUGGESTION_NOTE =
   "detected, not yet confirmed — and already in the forecast above, until you say they are not recurring";
 
+/**
+ * What a LIVE series' row is qualified by — or, for a series that is no longer
+ * live, its status instead.
+ *
+ * 🔴 `seriesEvidence`'s own docstring says it is "only meaningful for a
+ * detected/confirmed series; a dismissed or ended one is described by its
+ * status, and callers badge those separately" — and `/categories/<Food>` did
+ * not. On 2026-09-04 it listed five series under "Recurring series", every one
+ * of them **dismissed**, every one labelled "lapsed":
+ *
+ *     Nabila Inc                       weekly · lapsed   $3.00
+ *     CC Vending                       weekly · lapsed   $2.53
+ *     Fordham Sambazon                 biweekly · lapsed $6.60
+ *     PURA VIDA BAY ROAD MIAMI BEACH   weekly · lapsed   $5.79
+ *     YA-FIT Smoothie Bar              weekly · lapsed   $15.39
+ *
+ * "Lapsed" is an evidence state — a bill that WAS recurring and went quiet past
+ * the point the forecast lets it go. Dismissed is the owner saying it was never
+ * recurring at all, and it is also the detector's re-detection sink, so those
+ * rows exist precisely because he rejected them. A page headed "Recurring
+ * series" printed five of his rejections back to him as bills that had lapsed.
+ *
+ * Returns null for a live series with active evidence — nothing to qualify.
+ */
+export function seriesRowLabel(
+  status: "detected" | "confirmed" | "dismissed" | "ended",
+  evidence: SeriesEvidence,
+): string | null {
+  if (status === "ended") return "ended";
+  if (status === "dismissed") return "not recurring";
+  if (status === "detected") return evidence === "active" ? "suggested" : `suggested · ${SERIES_EVIDENCE_LABEL[evidence].toLowerCase()}`;
+  return evidence === "active" ? null : SERIES_EVIDENCE_LABEL[evidence].toLowerCase();
+}
+
 /** One line on each state, for a section note. */
 export const SERIES_EVIDENCE_NOTE: Record<SeriesEvidence, string> = {
   active: "charged within their cadence, and forecast",

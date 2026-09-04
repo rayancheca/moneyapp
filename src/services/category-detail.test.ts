@@ -165,6 +165,41 @@ describe("seriesInCategory", () => {
     insertTxn({ postedOn: "2026-07-01", amountCents: -1_099, category: "Subscriptions > Streaming" });
     expect(seriesInCategory(bundle.db, catId("Subscriptions"), TODAY)).toEqual([]);
   });
+
+  /*
+   * 🔴 THE MEASURED CASE. /categories/<Food> listed five series under a heading
+   * reading "Recurring series" on 2026-09-04 — Nabila Inc, CC Vending, Fordham
+   * Sambazon, PURA VIDA BAY ROAD MIAMI BEACH, YA-FIT Smoothie Bar — every one
+   * of them DISMISSED, and every one labelled "lapsed". Dismissed is the owner
+   * saying a pattern is not recurring, and it is the detector's re-detection
+   * sink, so those rows exist only because he rejected them.
+   */
+  test("a dismissed series is not a recurring series in this category", () => {
+    const dead = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "YA-FIT Smoothie Bar", kind: "bill", cadence: "weekly", amountCentsAvg: -1_539, status: "dismissed", lastMatchedOn: "2026-07-25" })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    insertTxn({ postedOn: "2026-07-25", amountCents: -1_539, category: "Subscriptions > Streaming", seriesId: dead });
+
+    expect(seriesInCategory(bundle.db, catId("Subscriptions"), TODAY)).toEqual([]);
+  });
+
+  /* An ENDED series really did bill here and stopped — history this category
+     owns — so it stays, described by its status rather than by its evidence,
+     and without a "next" date the app is not projecting. */
+  test("an ended series stays, and says it ended", () => {
+    const over = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "Netflix", kind: "subscription", cadence: "monthly", amountCentsAvg: -1_599, nextExpectedAmountCents: -1_599, status: "ended", nextExpectedOn: "2026-03-01", lastMatchedOn: "2026-02-01" })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    insertTxn({ postedOn: "2026-02-01", amountCents: -1_599, category: "Subscriptions > Streaming", seriesId: over });
+
+    const rows = seriesInCategory(bundle.db, catId("Subscriptions"), TODAY);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.label).toBe("ended");
+  });
 });
 
 describe("categoryBudgetRef", () => {

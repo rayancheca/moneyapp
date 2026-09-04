@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import type { SeriesEvidence } from "@/lib/series-evidence";
+import { seriesRowLabel, type SeriesEvidence } from "@/lib/series-evidence";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import { monthKey, periodBounds } from "@/lib/dates";
@@ -132,6 +132,13 @@ export interface CategorySeriesRow {
   isActive: boolean;
   /** the word every surface uses for its evidence — see `lib/series-evidence` */
   evidence: SeriesEvidence;
+  /**
+   * What to print after the cadence, chosen WITH the row — or null when there is
+   * nothing to qualify. Evidence for a live series, status for one that is not:
+   * `seriesEvidence` is only meaningful for detected/confirmed, and this list
+   * printed "lapsed" over five series the owner had dismissed.
+   */
+  label: string | null;
   href: string;
 }
 
@@ -147,6 +154,14 @@ export function seriesInCategory(db: AppDatabase, categoryId: string, today: str
 
   return listSeries(db, today)
     .filter((s) => ids.has(s.id))
+    /*
+     * ⛔ DISMISSED IS THE OWNER SAYING "NOT RECURRING", and this card is headed
+     * "Recurring series". It is also the detector's re-detection sink, so those
+     * rows exist only because he rejected them — printing them back as bills is
+     * the page contradicting a decision it was told about. `ended` stays: it WAS
+     * recurring here and stopped, which is history this category owns.
+     */
+    .filter((s) => s.status !== "dismissed")
     .map((s) => ({
       id: s.id,
       name: s.name,
@@ -163,6 +178,7 @@ export function seriesInCategory(db: AppDatabase, categoryId: string, today: str
       status: s.status,
       isActive: s.isActive,
       evidence: s.evidence,
+      label: seriesRowLabel(s.status, s.evidence),
       href: `/recurring/${s.id}`,
     }));
 }
