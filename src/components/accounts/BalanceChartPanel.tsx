@@ -13,6 +13,7 @@ import type { ViewState } from "@/lib/view-state";
 import { DAILY_SERIES_RANGES, type ChartRange } from "@/lib/chart-range";
 import { formatDayLong } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
+import { balanceDeltaAccent } from "@/lib/side-magnitude";
 import { scrubValueText } from "@/lib/scrub";
 import type { BalanceBasis } from "@/db/schema/balances";
 import {
@@ -28,8 +29,13 @@ import {
  * days draw dashed — and the scrub SPEAKS the basis of the day it lands on, so
  * the "this level is estimated" honesty survives the move off the old
  * dual-Area BalanceChart. Values arrive already sign-adjusted (owed-frame for
- * liabilities), so a rising line = a rising displayed figure and the delta
- * accent reads correctly for both assets and debts.
+ * liabilities), so a rising line = a rising displayed figure.
+ *
+ * ⛔ That frame is exactly why the accent cannot be read off the delta's sign
+ * alone: in the owed frame a RISING line is a growing debt. `isLiability` is
+ * required rather than optional, and the tone comes from `balanceDeltaAccent`
+ * — the same rule the `ChangeChip` above the chart reads. See that function for
+ * the day all three cards read backwards.
  */
 
 export interface BalancePanelPoint {
@@ -60,12 +66,8 @@ interface BalanceChartPanelProps {
   viewState: ViewState;
   /** this account's own route (the lens switcher navigates within it) */
   basePath: string;
-}
-
-function accentOf(summary: ScrubSummary): Accent {
-  if (summary.deltaCents > 0) return "gain";
-  if (summary.deltaCents < 0) return "loss";
-  return "flat";
+  /** owed-frame points: a rising line is a rising DEBT, so the accent flips */
+  isLiability: boolean;
 }
 
 const ACCENT_TEXT: Record<Accent, string> = {
@@ -83,7 +85,12 @@ export function BalanceChartPanel({
   defaultRange = "3M",
   viewState,
   basePath,
+  isLiability,
 }: BalanceChartPanelProps) {
+  const accentOf = useCallback(
+    (summary: ScrubSummary): Accent => balanceDeltaAccent(summary.deltaCents, isLiability),
+    [isLiability],
+  );
   const { state, setView } = useViewState({
     surface: ACCOUNT_SURFACE,
     spec: ACCOUNT_VIEW_SPEC,
@@ -122,7 +129,15 @@ export function BalanceChartPanel({
   const renderHeader = useCallback(
     (summary: ScrubSummary, scrubbing: boolean, range: ChartRange) => {
       const accent = accentOf(summary);
-      const arrow = accent === "gain" ? "▲" : accent === "loss" ? "▼" : "•";
+      /*
+       * ⛔ The ARROW is the direction of the line and the COLOUR is whether
+       * that direction favours the owner — and in the owed frame those are
+       * opposites. Reading the arrow off the accent instead printed
+       * "▼ +$557.62" of a debt that grew: a down arrow immediately before a
+       * positive figure. The delta's own sign is the only thing that can say
+       * which way the line went.
+       */
+      const arrow = summary.deltaCents > 0 ? "▲" : summary.deltaCents < 0 ? "▼" : "•";
       const context = scrubbing ? formatDayLong(summary.day) : range === "ALL" ? "all time" : range;
       const phrase = BASIS_PHRASE[basisByDay.get(summary.day) ?? "anchored"];
       return (
@@ -145,7 +160,7 @@ export function BalanceChartPanel({
         </header>
       );
     },
-    [basisByDay],
+    [basisByDay, accentOf],
   );
 
   // the chart draws estimated days dashed; the table must say so in words, or

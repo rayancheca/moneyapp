@@ -8,7 +8,7 @@ import { addDays, compareDates, todayIso } from "@/lib/dates";
 import { dayChangeLabel } from "@/lib/day-change-label";
 import { formatDayShort } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
-import { balanceHeading } from "@/lib/side-magnitude";
+import { balanceDeltaAccent, balanceHeading, type BalanceDeltaAccent } from "@/lib/side-magnitude";
 import { accountInsights } from "@/services/account-insights";
 import { getAccount, listAccounts, listInstitutions } from "@/services/accounts";
 import { listAnchors } from "@/services/anchors";
@@ -63,11 +63,18 @@ const TYPE_LABEL: Record<string, string> = {
   investment: "Investment",
 };
 
+const CHANGE_TONE: Record<BalanceDeltaAccent, string> = {
+  gain: "text-positive",
+  loss: "text-negative",
+  flat: "text-ink-muted",
+};
+
 function ChangeChip({ label, cents, liability = false }: { label: string; cents: number | null; liability?: boolean }) {
   if (cents === null) return null;
-  // owed-frame chips: MORE debt is bad (red), paying down is good (green)
-  const good = liability ? cents < 0 : cents > 0;
-  const tone = cents === 0 ? "text-ink-muted" : good ? "text-positive" : "text-negative";
+  // owed-frame chips: MORE debt is bad (red), paying down is good (green). The
+  // chart below reads the same function — held apart, the two disagreed about
+  // all three cards on 2026-09-04.
+  const tone = CHANGE_TONE[balanceDeltaAccent(cents, liability)];
   return (
     <span className="text-xs text-ink-faint">
       {label} <span className={`figures font-medium ${tone}`}>{formatCentsSigned(cents)}</span>
@@ -267,6 +274,7 @@ export default async function AccountDetailPage({
               today={today}
               viewState={balanceView}
               basePath={`/accounts/${id}`}
+              isLiability={liability}
             />
           </section>
         )}

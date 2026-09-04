@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { balanceHeading, sideMagnitudeCents } from "./side-magnitude";
+import { balanceDeltaAccent, balanceHeading, sideMagnitudeCents } from "./side-magnitude";
 
 describe("sideMagnitudeCents", () => {
   test("a card that owes weighs what it owes", () => {
@@ -119,5 +119,41 @@ describe("balanceHeading", () => {
       const { subject } = balanceHeading(cents, liability);
       expect(`How ${subject} is proven`).toMatch(/^How (this balance|the amount owed|the credit) is proven$/);
     }
+  });
+});
+
+describe("balanceDeltaAccent", () => {
+  /*
+   * ⛔ THE WHOLE POINT. `/accounts/<Discover>` on 2026-09-04, under a heading
+   * reading "Amount owed $557.62": the chip said "30 days +$119.27" in red and
+   * the chart forty pixels below said "▲ +$557.62 · 3M" in green, of the same
+   * debt growing.
+   */
+  test("a debt that GREW is a loss, not a gain", () => {
+    expect(balanceDeltaAccent(55_762, true)).toBe("loss");
+  });
+
+  test("a debt PAID DOWN is a gain", () => {
+    // Venture X, 3M to 2026-09-04: -$1,869.30 in the owed frame, and green
+    expect(balanceDeltaAccent(-186_930, true)).toBe("gain");
+  });
+
+  test("an account that grew is a gain, and one that fell is a loss", () => {
+    expect(balanceDeltaAccent(200_991, false)).toBe("gain");
+    expect(balanceDeltaAccent(-223_709, false)).toBe("loss");
+  });
+
+  test("no movement is flat on either side", () => {
+    expect(balanceDeltaAccent(0, false)).toBe("flat");
+    expect(balanceDeltaAccent(0, true)).toBe("flat");
+  });
+
+  /*
+   * ⚠️ The frame is the LIABILITY's, not the sign of the balance it came from.
+   * An overdrawn checking account is still an asset: it falling further is a
+   * loss, exactly as it is when it is in the black.
+   */
+  test("an overdrawn asset account keeps the asset rule", () => {
+    expect(balanceDeltaAccent(-4_200, false)).toBe("loss");
   });
 });

@@ -88,3 +88,34 @@ export function balanceHeading(balanceCents: number, isLiability: boolean): Bala
     ? { label: "In credit", subject: "the credit", cents: -owed, isAgainstYou: false }
     : { label: "Amount owed", subject: "the amount owed", cents: owed, isAgainstYou: owed > 0 };
 }
+
+/**
+ * Which way a MOVEMENT in a balance runs for the owner, once that balance is
+ * printed in its own side's frame.
+ *
+ * 🔴 `/accounts/<Discover>` on 2026-09-04, under a heading reading
+ * "Amount owed · $557.62":
+ *
+ *     30 days  +$119.27        red   — the chip
+ *     ▲ +$557.62 · 3M          GREEN — the chart, forty pixels below it
+ *
+ * The chart is fed the owed frame (`sign * balanceCents`, so a debt draws
+ * positive and a rising line is a rising debt) and was then coloured by
+ * `delta > 0 ? gain : loss`, which is the ASSET rule. All three cards read
+ * backwards on the same day: Discover's debt growing $557.62 from nothing was
+ * green, Venture X's $1,869.30 paydown was red, and Chase Sapphire crossing
+ * into $82.72 of credit was red. `ChangeChip` on the same page had the rule and
+ * the chart under it had a second copy of the wrong one.
+ *
+ * ⛔ Only the LIABILITY frame flips. An asset account is a loss when it falls
+ * whether or not it is overdrawn — an overdraft is a debt the account does not
+ * know it is holding, and `sideMagnitudeCents` refuses it a share for the same
+ * reason.
+ */
+export type BalanceDeltaAccent = "gain" | "loss" | "flat";
+
+export function balanceDeltaAccent(deltaCents: number, isLiability: boolean): BalanceDeltaAccent {
+  if (deltaCents === 0) return "flat";
+  const good = isLiability ? deltaCents < 0 : deltaCents > 0;
+  return good ? "gain" : "loss";
+}
