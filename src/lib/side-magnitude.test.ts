@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { sideMagnitudeCents } from "./side-magnitude";
+import { balanceHeading, sideMagnitudeCents } from "./side-magnitude";
 
 describe("sideMagnitudeCents", () => {
   test("a card that owes weighs what it owes", () => {
@@ -40,5 +40,55 @@ describe("sideMagnitudeCents", () => {
     expect(Math.round((sideMagnitudeCents(-55_762, true) / total) * 1000) / 10).toBe(60.2);
     expect(Math.round((sideMagnitudeCents(-36_799, true) / total) * 1000) / 10).toBe(39.8);
     expect(sideMagnitudeCents(8_272, true) / total).toBe(0);
+  });
+});
+
+describe("balanceHeading", () => {
+  /*
+   * ⛔ THE MEASURED CASE. /accounts/<Chase Sapphire> printed "AMOUNT OWED
+   * -$82.72" in red, of a card the bank owed HIM $82.72 on. The terrain, the
+   * cards card and the accounts table all said "in credit" about the same
+   * balance on the same day.
+   */
+  test("a card in credit says so, and prints the credit", () => {
+    expect(balanceHeading(8_272, true)).toEqual({
+      label: "In credit",
+      cents: 8_272,
+      isAgainstYou: false,
+    });
+  });
+
+  test("a card that owes prints what it owes", () => {
+    expect(balanceHeading(-55_762, true)).toEqual({
+      label: "Amount owed",
+      cents: 55_762,
+      isAgainstYou: true,
+    });
+  });
+
+  /* ⚠️ `-0` formats as "-$0.00": a card owing nothing, printed as owing a
+     negative amount. Found the moment this function was first tested. */
+  test("a card at zero owes nothing, and does not print a negative zero", () => {
+    const zero = balanceHeading(0, true);
+    expect(zero).toEqual({ label: "Amount owed", cents: 0, isAgainstYou: false });
+    expect(Object.is(zero.cents, -0)).toBe(false);
+  });
+
+  /* ⛔ An OVERDRAWN asset account is a debt, not a credit — the mirror of the
+     refusal `sideMagnitudeCents` makes on the held side. */
+  test("an overdrawn account keeps the plain label and reads as money against you", () => {
+    expect(balanceHeading(-4_200, false)).toEqual({
+      label: "Balance",
+      cents: -4_200,
+      isAgainstYou: true,
+    });
+  });
+
+  test("an account holding money is neither", () => {
+    expect(balanceHeading(300_760, false)).toEqual({
+      label: "Balance",
+      cents: 300_760,
+      isAgainstYou: false,
+    });
   });
 });

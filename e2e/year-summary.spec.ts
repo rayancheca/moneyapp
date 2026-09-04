@@ -137,16 +137,28 @@ test.describe("year summary", () => {
   });
 
   /**
-   * ⛔ Gate three, in a browser. The e2e ledger starts 2024-07-01, so 2025's
-   * predecessor is only half covered — a comparison there would measure when
-   * importing started rather than when spending changed, and the page says
-   * nothing instead. Nothing to say is not a weakness and must not render as
-   * one, so there is no empty card and no "no insights" placeholder either.
+   * ⛔ Gate three, in a browser — and it bounds the COMPARISON alone. The e2e
+   * ledger starts 2024-07-01, so 2025's predecessor is only half covered: a
+   * change measured against it would describe when importing started rather
+   * than when spending changed, and no delta is stated.
+   *
+   * 🔴 This asserted the whole strip was withheld, and that is what shipped:
+   * /summary/2022 and /summary/2023 on the owner's real ledger printed EARNED,
+   * ALL MONEY IN and PASSED THROUGH and said nothing at all about $4,528.51 and
+   * $32,732.55 of money OUT, over a gate about a different year. The year's own
+   * total stands on the year's own documents.
    */
-  test("a year whose predecessor is only half imported shows no strip at all", async ({ page }) => {
+  test("a year whose predecessor is only half imported keeps its total and loses its comparison", async ({
+    page,
+  }) => {
     await page.goto("/summary/2025");
     await expect(page.getByRole("heading", { level: 1, name: "2025" })).toBeVisible();
-    await expect(page.locator("section:has(#ledger-insights)")).toHaveCount(0);
+    const strip = page.locator("section:has(#ledger-insights)");
+    await expect(strip.getByText(/^Spending in 2025 came to /)).toBeVisible();
+    // no delta: nothing rose, fell or held steady against a half-covered 2024
+    await expect(strip.getByText(/^Spending (rose|fell|was unchanged)/)).toHaveCount(0);
+    // and the absence is explained rather than left as a hole
+    await expect(strip.getByText(/There is no comparison with 2024/)).toBeVisible();
     await expect(page.getByText(/no insights/i)).toHaveCount(0);
   });
 

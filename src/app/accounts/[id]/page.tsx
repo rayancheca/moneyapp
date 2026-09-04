@@ -8,6 +8,7 @@ import { addDays, compareDates, todayIso } from "@/lib/dates";
 import { dayChangeLabel } from "@/lib/day-change-label";
 import { formatDayShort } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
+import { balanceHeading } from "@/lib/side-magnitude";
 import { accountInsights } from "@/services/account-insights";
 import { getAccount, listAccounts, listInstitutions } from "@/services/accounts";
 import { listAnchors } from "@/services/anchors";
@@ -122,6 +123,8 @@ export default async function AccountDetailPage({
 
   const series = accountSeries(db, id);
   const latest = series.at(-1) ?? null;
+  // the label and the figure out of one call — `lib/side-magnitude`
+  const heading = balanceHeading(latest?.balanceCents ?? 0, liability);
   // asked for the day the figure is FOR, so a balance carried forward answers
   // with the document that actually pins it
   /*
@@ -209,19 +212,27 @@ export default async function AccountDetailPage({
       </div>
       <div className="space-y-6">
         <header>
+          {/* 🔴 THE HEADING FOLLOWS THE SIGN. This read "Amount owed -$82.72",
+              in red, of a card the bank had owed HIM $82.72 on since the 09-02
+              statement — while the terrain said "Owed · in credit", the cards
+              card "$82.72 in credit" and the accounts table "in credit — no
+              share of the debt" about the same balance on the same day. The
+              label and the figure come out of one call so they cannot describe
+              different things, and the tone follows the label rather than the
+              account type. */}
           <div className="text-xs font-medium uppercase tracking-[0.14em] text-ink-faint">
-            {liability ? "Amount owed" : "Balance"}
+            {heading.label}
             {/* the day this figure is FOR, not today — a balance carried forward
                 from Aug 12 is proven by Aug 12's document, and asking about
                 today would answer a different question than the one on screen */}
             {balanceProvenance && (
-              <ProvenancePopover label={liability ? "the amount owed" : "this balance"} provenance={balanceProvenance} />
+              <ProvenancePopover label={heading.label.toLowerCase()} provenance={balanceProvenance} />
             )}
           </div>
           {latest ? (
             <>
               <p className="figures mt-1 text-4xl font-semibold tracking-tight">
-                <Money cents={sign * latest.balanceCents} className={liability ? "text-negative" : ""} />
+                <Money cents={heading.cents} className={heading.isAgainstYou ? "text-negative" : ""} />
               </p>
               <p className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
                 <ChangeChip label={dayTerm} cents={dayChange} liability={liability} />

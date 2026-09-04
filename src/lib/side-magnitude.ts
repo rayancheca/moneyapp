@@ -30,3 +30,44 @@ export function sideMagnitudeCents(balanceCents: number | null, isLiability: boo
   if (balanceCents === null) return 0;
   return isLiability ? Math.max(0, -balanceCents) : Math.max(0, balanceCents);
 }
+
+/**
+ * What an account's headline figure is CALLED, and which figure it is.
+ *
+ * 🔴 `/accounts/<Chase Sapphire>` on 2026-09-04 printed
+ *
+ *     AMOUNT OWED
+ *     -$82.72                     (in red)
+ *
+ * of a card that owes nothing — the bank owes HIM $82.72, and had since the
+ * 09-02 statement. Every other surface already said so: the terrain reads
+ * "Owed · in credit", the cards card "$82.72 in credit", the accounts table
+ * "in credit — no share of the debt". The account's own page had the negative
+ * and not the word, and painted it as a loss.
+ *
+ * ⛔ Only for a LIABILITY. An asset account with a negative balance is
+ * overdrawn, which is a debt and not a credit, and it keeps the plain label —
+ * `sideMagnitudeCents` refuses it a share for the same reason.
+ */
+export interface BalanceHeading {
+  /** the heading over the figure */
+  label: string;
+  /** what to print — always the magnitude the label names */
+  cents: number;
+  /** true when the figure is money against the owner: a debt, or an overdraft */
+  isAgainstYou: boolean;
+}
+
+export function balanceHeading(balanceCents: number, isLiability: boolean): BalanceHeading {
+  if (!isLiability) return { label: "Balance", cents: balanceCents, isAgainstYou: balanceCents < 0 };
+  /*
+   * ⚠️ `|| 0` is the negative-zero guard, and it is not decorative: negating a
+   * $0.00 balance gives `-0`, which formats as "-$0.00" — a card that owes
+   * nothing, printed as owing a negative amount. `round1` in `AccountsTable`
+   * carries the same guard for the same reason.
+   */
+  const owed = -balanceCents || 0;
+  return owed < 0
+    ? { label: "In credit", cents: -owed, isAgainstYou: false }
+    : { label: "Amount owed", cents: owed, isAgainstYou: owed > 0 };
+}
