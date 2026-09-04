@@ -184,7 +184,7 @@ export default async function BudgetsPage({
                   Over-allocated by <Money cents={-leftToAllocateCents} />
                 </span>
                 <InfoTip term="over-allocated" placement="bottom">
-                  {BUDGET_JARGON.leftToAllocate}
+                  {BUDGET_JARGON.overAllocated}
                 </InfoTip>{" "}
                 {/* Named by the SAME branch that chose the figure. Hard-coded
                     here, this clause said "more than this month is expected to

@@ -136,8 +136,21 @@ export const BUDGET_JARGON = {
     "Income that has already arrived in this window, used here because it came to more than your recurring pay adds up to — a plan is never graded against less money than the ledger has actually seen.",
   expectedIncomeCalendar:
     "Money already in for this window plus the pay still due before it ends — or, when statements are behind, what your recurring income adds up to across the whole window, whichever is larger.",
+  /**
+   * ⛔ TWO ENTRIES, because the ternary they sit in has two arms and the
+   * subtraction runs the other way in each.
+   *
+   * 🔴 `/budgets` on 2026-09-04 read "Over-allocated by $377.56" over a tip
+   * saying "That income minus the monthly total below" — $4,537.00 minus
+   * $4,914.56 is MINUS $377.56, the exact negative of the figure the tip was
+   * mounted on. One definition served both arms, and a definition can only be
+   * right about one of them. The docstring above this object already stated the
+   * rule: a headline and its definition come from the SAME branch.
+   */
   leftToAllocate:
     "That income minus the monthly total below. Budgets on any other cycle are left out, so a weekly or an annual one never moves this figure.",
+  overAllocated:
+    "The monthly total below minus that income — what the plans come to over and above it. Budgets on any other cycle are left out, so a weekly or an annual one never moves this figure.",
   totalBudgeted:
     "What the plans in this section come to. A budget nested inside another one here is left out of the sum, so the same money is never counted twice.",
   /**

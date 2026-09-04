@@ -231,17 +231,19 @@ function SeriesRow({
             {/* the effective amount — user override first — which is what the
                 forecast projects and what ANNUALIZED beside it is built from */}
             <Money cents={s.nextExpectedAmountCents} flow />
-            {/* the measured average only when charges exist to average and it
-                says something the amount does not; a never-billed series has
-                no average, whatever its stored seed says */}
-            {s.matchedCount > 0 && s.amountCentsAvg !== null && s.amountCentsAvg !== s.nextExpectedAmountCents ? (
+            {/* 🔴 The measured average, from `postedAvgCents`. This read
+                `amountCentsAvg` — the DETECTOR'S SEED, written at creation and
+                never recomputed as rows are attached — under the words "posted
+                avg", and on 2026-09-04 it was wrong about two of the three
+                series that showed it: rent read "4 matched · posted avg
+                -$2,285.70" of four charges averaging -$1,739.40, and the cash
+                job "2 matched · posted avg +$1,046.00" of two deposits
+                averaging +$723.50. The guard here already knew the seed was
+                unreliable — "a never-billed series has no average, whatever its
+                stored seed says" — and only covered the zero-matched case. */}
+            {s.postedAvgCents !== null && s.postedAvgCents !== s.nextExpectedAmountCents ? (
               <span className="figures block text-[10px] text-ink-faint">
-                posted avg <Money cents={s.amountCentsAvg} flow />
-                {s.amountCentsStddev !== null && s.amountCentsStddev > 0 ? ` ±${(s.amountCentsStddev / 100).toFixed(2)}` : ""}
-              </span>
-            ) : s.matchedCount > 0 && s.amountCentsStddev !== null && s.amountCentsStddev > 0 ? (
-              <span className="figures block text-[10px] text-ink-faint">
-                ±{(s.amountCentsStddev / 100).toFixed(2)}
+                posted avg <Money cents={s.postedAvgCents} flow />
               </span>
             ) : null}
           </>

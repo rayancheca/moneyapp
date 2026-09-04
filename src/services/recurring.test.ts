@@ -1151,6 +1151,52 @@ describe("detection on the synthetic corpus", () => {
     expect(netflix.nextExpectedOn).toBe("2027-08-15");
   });
 
+  /*
+   * 🔴 "posted avg" WAS NOT THE AVERAGE OF THE POSTINGS. It printed
+   * `recurring_series.amount_cents_avg` — the detector's seed, written when the
+   * series was created and never recomputed as rows are attached afterwards.
+   *
+   * Measured on the owner's ledger 2026-09-04, `/recurring?tab=all`:
+   *
+   *   Flamingo South Beach (rent)  "4 matched"  posted avg -$2,285.70
+   *      the four linked charges are -$2,237.11, -$2,285.70, -$1,100.00 and
+   *      -$1,334.80 — a mean of -$1,739.40. The printed figure is one of them.
+   *   Cash job (weekly pay)        "2 matched"  posted avg +$1,046.00
+   *      the two deposits sum to $1,447.00 — a mean of $723.50. The printed
+   *      figure matches neither deposit nor their mean.
+   *
+   * `AllSeriesView` already knew the seed was unreliable and guarded only the
+   * zero-matched case ("a never-billed series has no average, whatever its
+   * stored seed says"). A figure whose whole subject is what these charges
+   * actually averaged has to be measured from them.
+   */
+  test("postedAvgCents is measured from the linked rows, not from the detector's seed", () => {
+    const rent = seriesByName("MONTHLY RENT PAYMENT");
+    bundle.db
+      .update(recurringSeries)
+      .set({ amountCentsAvg: -999_99 })
+      .where(eq(recurringSeries.id, rent.id))
+      .run();
+
+    const listed = listSeries(bundle.db, TODAY).find((s) => s.id === rent.id)!;
+    expect(listed.amountCentsAvg).toBe(-999_99); // the seed is still reported, unchanged
+    expect(listed.postedAvgCents).not.toBe(-999_99);
+    expect(listed.postedAvgCents).toBe(Math.round(-180_000));
+  });
+
+  test("a series with nothing linked has no posted average at all", () => {
+    const rent = seriesByName("MONTHLY RENT PAYMENT");
+    bundle.db
+      .update(transactions)
+      .set({ recurringSeriesId: null })
+      .where(eq(transactions.recurringSeriesId, rent.id))
+      .run();
+
+    const listed = listSeries(bundle.db, TODAY).find((s) => s.id === rent.id)!;
+    expect(listed.matchedCount).toBe(0);
+    expect(listed.postedAvgCents).toBeNull();
+  });
+
   test("a dismissed series keeps its stored date — rolling it would invent a charge", () => {
     const rent = seriesByName("MONTHLY RENT PAYMENT");
     setSeriesStatus(bundle.db, rent.id, "dismissed");

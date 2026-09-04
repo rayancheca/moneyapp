@@ -730,6 +730,22 @@ export interface SeriesView {
   evidence: SeriesEvidence;
   /** effective per-occurrence amount × occurrences/year (magnitude) */
   annualizedCents: number | null;
+  /**
+   * The MEAN of the linked active rows — null when nothing is linked.
+   *
+   * 🔴 `amountCentsAvg` above is the detector's SEED: written when the series
+   * was created and never recomputed as rows are attached afterwards.
+   * `/recurring?tab=all` printed it under the words "posted avg" on
+   * 2026-09-04, where it was wrong about two of the three series that showed
+   * it — Flamingo South Beach (rent) read "4 matched · posted avg -$2,285.70"
+   * of four charges averaging -$1,739.40, and Cash job (weekly pay) read
+   * "2 matched · posted avg +$1,046.00" of two deposits averaging +$723.50, a
+   * figure matching neither deposit nor their mean.
+   *
+   * The seed stays on `amountCentsAvg` — the detector's own record of what it
+   * saw — and anything claiming to be the average of the postings reads this.
+   */
+  postedAvgCents: number | null;
 }
 
 /** Occurrences per year by cadence — annualized-cost basis. */
@@ -760,14 +776,16 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
     .all();
 
   const tagged = db
-    .select({ recurringSeriesId: transactions.recurringSeriesId })
+    .select({ recurringSeriesId: transactions.recurringSeriesId, amountCents: transactions.amountCents })
     .from(transactions)
     .where(eq(transactions.status, "active"))
     .all();
   const countBySeries = new Map<string, number>();
+  const sumBySeries = new Map<string, number>();
   for (const t of tagged) {
     if (!t.recurringSeriesId) continue;
     countBySeries.set(t.recurringSeriesId, (countBySeries.get(t.recurringSeriesId) ?? 0) + 1);
+    sumBySeries.set(t.recurringSeriesId, (sumBySeries.get(t.recurringSeriesId) ?? 0) + t.amountCents);
   }
 
   return rows
@@ -796,6 +814,9 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
         confidence: s.confidence,
         lastMatchedOn: s.lastMatchedOn,
         matchedCount: countBySeries.get(s.id) ?? 0,
+        postedAvgCents: countBySeries.get(s.id)
+          ? Math.round(sumBySeries.get(s.id)! / countBySeries.get(s.id)!)
+          : null,
         isActive: isSeriesActive(s, today),
         evidence: seriesEvidence(s, today),
         annualizedCents: annualizedCentsOf(eff),

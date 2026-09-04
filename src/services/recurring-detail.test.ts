@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
@@ -237,6 +237,45 @@ describe("seriesDetail", () => {
    * and the page ABOUT the series was the one place that did it anyway. Same
    * shape as `seriesRowLabel`: the vocabulary chooses by STATUS first.
    */
+  /*
+   * 🔴 A DISPERSION BAND WITH NOTHING UNDER IT. `Per charge` printed
+   * `recurring_series.amount_cents_stddev` — the detector's seed — as "±5.48"
+   * on `/recurring/<ZELLE PAYMENT TO ENRIQUE RODRIGUEZ>` beside a badge reading
+   * "no basis yet" and a linked count of 0, and as "±18.45" on
+   * `/recurring/<Hoffman LL>` beside "seen once", around a mean that excludes
+   * the one charge the page lists below it.
+   *
+   * A spread over the postings has to be measured from the postings, and it
+   * needs at least two of them to mean anything.
+   */
+  test("the per-charge spread is measured from the linked rows", () => {
+    const d = seriesDetail(bundle.db, netflix().id, TODAY);
+    expect(d.linkedTxns.length).toBeGreaterThan(1);
+    expect(d.postedStddevCents).not.toBeNull();
+  });
+
+  test("one linked charge has no spread, whatever the detector's seed says", () => {
+    const id = netflix().id;
+    const keep = seriesDetail(bundle.db, id, TODAY).linkedTxns[0]!.id;
+    bundle.db
+      .update(transactions)
+      .set({ recurringSeriesId: null })
+      .where(and(eq(transactions.recurringSeriesId, id), ne(transactions.id, keep)))
+      .run();
+    bundle.db.update(recurringSeries).set({ amountCentsStddev: 1_845 }).where(eq(recurringSeries.id, id)).run();
+
+    const d = seriesDetail(bundle.db, id, TODAY);
+    expect(d.linkedTxns).toHaveLength(1);
+    expect(d.postedStddevCents).toBeNull();
+  });
+
+  test("no linked charges, no spread", () => {
+    const id = netflix().id;
+    bundle.db.update(transactions).set({ recurringSeriesId: null }).where(eq(transactions.recurringSeriesId, id)).run();
+    bundle.db.update(recurringSeries).set({ amountCentsStddev: 548 }).where(eq(recurringSeries.id, id)).run();
+    expect(seriesDetail(bundle.db, id, TODAY).postedStddevCents).toBeNull();
+  });
+
   test("a series the owner ENDED projects nothing", () => {
     const id = netflix().id;
     bundle.db.update(recurringSeries).set({ status: "ended" }).where(eq(recurringSeries.id, id)).run();

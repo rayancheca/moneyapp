@@ -283,8 +283,12 @@ export function SeriesDetail({
               {data.nextExpectedAmountCents !== null ? (
                 <>
                   <Money cents={data.nextExpectedAmountCents} flow />
-                  {data.amountCentsStddev !== null && data.amountCentsStddev > 0 ? (
-                    <span className="ml-1 text-[11px] font-normal text-ink-faint">±{(data.amountCentsStddev / 100).toFixed(2)}</span>
+                  {/* 🔴 measured from the linked rows, and only once there are
+                      two of them. This read the detector's stored seed, so it
+                      printed "±5.48" beside a badge saying "no basis yet" and a
+                      linked count of 0. */}
+                  {data.postedStddevCents !== null && data.postedStddevCents > 0 ? (
+                    <span className="ml-1 text-[11px] font-normal text-ink-faint">±{(data.postedStddevCents / 100).toFixed(2)}</span>
                   ) : null}
                 </>
               ) : (

@@ -87,6 +87,19 @@ export interface SeriesDetail {
   detectedNextExpectedOn: string | null;
   amountCentsAvg: number | null;
   amountCentsStddev: number | null;
+  /**
+   * The spread of the LINKED postings — null under two of them, because a
+   * spread needs something to spread over.
+   *
+   * 🔴 `Per charge` printed `recurring_series.amount_cents_stddev`, the
+   * detector's seed from creation. On 2026-09-04 that rendered "±5.48" on
+   * `/recurring/<ZELLE PAYMENT TO ENRIQUE RODRIGUEZ>` beside a badge reading
+   * "no basis yet" and "Linked transactions · 0", and "±18.45" on
+   * `/recurring/<Hoffman LL>` beside "seen once" — around a centre that
+   * excludes the single charge the page lists underneath it. Same seed, same
+   * defect as `postedAvgCents` in `listSeries`.
+   */
+  postedStddevCents: number | null;
   intervalDaysAvg: number | null;
   toleranceDays: number;
   confidence: number | null;
@@ -244,6 +257,19 @@ export function seriesDetail(
     .reverse()
     .map((t) => ({ date: t.postedOn, amountCents: t.amountCents }));
 
+  /*
+   * Sample standard deviation of what actually posted. Two rows is the floor:
+   * with one there is nothing to vary, and the seed that used to be printed
+   * here claimed a spread for series with none at all.
+   */
+  const postedStddevCents = (() => {
+    if (linked.length < 2) return null;
+    const mean = linked.reduce((a, t) => a + t.amountCents, 0) / linked.length;
+    const variance =
+      linked.reduce((a, t) => a + (t.amountCents - mean) ** 2, 0) / (linked.length - 1);
+    return Math.round(Math.sqrt(variance));
+  })();
+
   const eff = effectiveSeries(s);
   /*
    * 🔴 ONLY THE STATUSES THE FORECAST PROJECTS, and the rule was already
@@ -319,6 +345,7 @@ export function seriesDetail(
     detectedNextExpectedOn: s.nextExpectedOn,
     amountCentsAvg: s.amountCentsAvg,
     amountCentsStddev: s.amountCentsStddev,
+    postedStddevCents,
     intervalDaysAvg: s.intervalDaysAvg,
     toleranceDays: s.toleranceDays,
     confidence: s.confidence,

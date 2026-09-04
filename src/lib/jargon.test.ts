@@ -82,6 +82,7 @@ describe("jargon copy", () => {
         "expectedIncomeBanked",
         "expectedIncomeCalendar",
         "leftToAllocate",
+        "overAllocated",
         "totalBudgeted",
         // one per state `budgetVerdict` can return — a missing key is a row that
         // renders a headline with nothing behind it
@@ -91,6 +92,22 @@ describe("jargon copy", () => {
         "paceWithheld",
       ].sort(),
     );
+  });
+
+  /*
+   * 🔴 `/budgets` on 2026-09-04 read "Over-allocated by $377.56" with a tooltip
+   * saying "That income minus the monthly total below" — income $4,537.00 minus
+   * $4,914.56 is MINUS $377.56, the exact negative of the figure the tip is
+   * mounted on. Both branches of one ternary shared one definition, and the
+   * definition can only be right about one of them.
+   *
+   * `BUDGET_JARGON`'s own docstring states the rule this broke: a headline and
+   * its definition come from the SAME branch.
+   */
+  test("the two sides of the allocation ternary each define their own subtraction", () => {
+    expect(BUDGET_JARGON.leftToAllocate).toContain("That income minus the monthly total");
+    expect(BUDGET_JARGON.overAllocated).toContain("The monthly total below minus that income");
+    expect(BUDGET_JARGON.overAllocated).not.toContain("That income minus");
   });
 
   test("no definition repeats a phrase the surrounding UI owns", () => {
