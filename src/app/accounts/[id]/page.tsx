@@ -174,11 +174,30 @@ export default async function AccountDetailPage({
       ? (dayChangeLabel(latest.day, previous.day, today, formatDayShort).interval ?? "Today")
       : "Today";
 
+  /*
+   * 🔴 THE WINDOW, NAMED — because `/accounts?view=table` answers the same
+   * question over a window one day different, and on Chase Checking the two
+   * disagree in SIGN. This chip walks back 30 CALENDAR days from the account's
+   * last covered day (Aug 14 → Jul 15, $997.69, giving +$2,009.91); the table
+   * takes the last 30 COVERED POINTS (Jul 16 → Aug 14, $5,244.69, giving
+   * -$2,237.09) and prints both endpoints under "The balance series, printed".
+   * The balance jumped $4,247.00 on Jul 16, so that one day is the whole
+   * difference.
+   *
+   * Both figures are right for their own window and neither was labelled: the
+   * chip said "30 days" and the table's column says "Change". The chip names
+   * the day it measured from, so a reader can see which is which — and so the
+   * two can be put side by side and decided on rather than guessed at.
+   */
   let monthChange: number | null = null;
+  let monthFrom: string | null = null;
   if (latest) {
     const cutoff = addDays(latest.day, -30);
     const base = [...series].reverse().find((p) => compareDates(p.day, cutoff) <= 0);
-    if (base) monthChange = sign * (latest.balanceCents - base.balanceCents);
+    if (base) {
+      monthChange = sign * (latest.balanceCents - base.balanceCents);
+      monthFrom = base.day;
+    }
   }
 
   const holdings = account.type === "investment" ? listAccountHoldings(db, id) : [];
@@ -262,7 +281,11 @@ export default async function AccountDetailPage({
               </p>
               <p className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
                 <ChangeChip label={dayTerm} cents={dayChange} liability={liability} />
-                <ChangeChip label="30 days" cents={monthChange} liability={liability} />
+                <ChangeChip
+                  label={monthFrom ? `since ${formatDayShort(monthFrom)}` : "30 days"}
+                  cents={monthChange}
+                  liability={liability}
+                />
                 <span className="text-xs text-ink-faint">
                   as of {latest.day} · {BASIS_LABEL[latest.basis] ?? latest.basis}
                 </span>
