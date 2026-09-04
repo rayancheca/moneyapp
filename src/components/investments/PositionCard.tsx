@@ -9,9 +9,14 @@ import type { Provenance } from "@/services/provenance";
 
 /**
  * The position card (ux-overhaul-plan §6.4 [RH]): quantity, market value, avg
- * cost, today's return, total return, and portfolio diversity — aggregated
- * across accounts, with a per-account breakdown when the symbol is held in more
- * than one.
+ * cost, today's return, what is held against what was paid, the money-weighted
+ * rate, and portfolio diversity — aggregated across accounts, with a
+ * per-account breakdown when the symbol is held in more than one.
+ *
+ * ⛔ None of those is "the total return", whatever this docstring used to call
+ * the third one. `lib/return-measures` owns the words; see it for the day the
+ * against-cost figure was labelled a total return on a page whose own header
+ * read "-29.72% time-weighted".
  */
 
 function pctText(pct: number | null): string {
@@ -115,7 +120,26 @@ export function PositionCard({ detail, provenance }: { detail: HoldingDetail; pr
               <span className={`figures text-xs ${toneClass(detail.totalPlCents)}`}>{pctText(detail.totalPlPct)}</span>
             </span>
           ) : (
-            <span className="text-ink-faint" title="Add an average cost to see total return">—</span>
+            /* 🔴 …and the tooltip under the fixed label still said it. "Add an
+               average cost to see TOTAL RETURN" called the against-cost measure
+               by the one name `lib/return-measures` exists to keep off it, one
+               line below the label that had just been corrected — and the test
+               that measure "can never be called a total return again" was about
+               the label. Its two sibling tables say "P/L", the neutral word.
+
+               ⚠️ And on a CLOSED position the advice cannot work: every one of
+               the 24 zero-quantity holdings showed it, and no average cost will
+               make a figure appear for positions you no longer hold. */
+            <span
+              className="text-ink-faint"
+              title={
+                detail.quantityE8 === 0
+                  ? "Nothing held — this measures positions you still hold."
+                  : "Add an average cost to see this."
+              }
+            >
+              —
+            </span>
           )}
         </Stat>
         <Stat label={RETURN_MEASURE.xirr.label} hint={`${RETURN_MEASURE.xirr.meaning} — a rate a year`}>

@@ -224,7 +224,36 @@ export function HoldingChartPanel({
       range: ChartRange,
       customWindow: { start: string; end: string } | null,
     ) => {
-      const accent = accentOf(summary);
+      /*
+       * 🔴 THE ARROW BELONGS TO THE FIGURE IT PRECEDES, and in the Return · $
+       * view that figure is the PERCENTAGE while `accentOf` reads the dollars.
+       * Measured 2026-09-04, the default view of three of twelve holdings:
+       *
+       *     +$6,023.43                              ETH
+       *     ▲ (-29.72% time-weighted) · your return · since Thu, Oct 16, 2025
+       *
+       *     +$4,468.50                              MSFT
+       *     ▲ (-5.95% time-weighted) · …
+       *
+       *     -$215.13                                GLD
+       *     ▼ (+0.29% time-weighted) · …
+       *
+       * — an up arrow, in green, immediately before a negative percentage with
+       * nothing between them, and the mirror of it on GLD. The two measures
+       * really do disagree in direction (money made against a time-weighted
+       * rate), which is the whole reason this page prints both; the arrow has to
+       * say which one it is pointing at.
+       *
+       * ⛔ `accentOf` still colours the CHART, which plots the hero. Only this
+       * line's arrow and tone follow the secondary.
+       */
+      const secondaryCents = isReturns && !isPercent ? summary.deltaPct : summary.deltaCents;
+      const accent: Accent =
+        secondaryCents === null || secondaryCents === 0
+          ? accentOf(summary)
+          : secondaryCents > 0
+            ? "gain"
+            : "loss";
       const arrow = accent === "gain" ? "▲" : accent === "loss" ? "▼" : "•";
       // the return baseline is the first day the position was held AND
       // priced — earlier appreciation is not measured, so never say "all
