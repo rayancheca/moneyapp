@@ -40,6 +40,7 @@ function insertTxn(opts: {
   rawDescription: string;
   merchantId?: string | null;
   categoryId?: string | null;
+  recurringSeriesId?: string | null;
 }): string {
   seq += 1;
   return bundle.db
@@ -52,6 +53,7 @@ function insertTxn(opts: {
       normalizedDescription: normalizeDescription(opts.rawDescription),
       merchantId: opts.merchantId ?? null,
       categoryId: opts.categoryId ?? null,
+      recurringSeriesId: opts.recurringSeriesId ?? null,
       dedupeHash: dedupeHash({
         accountId: cardId,
         postedOn: opts.postedOn,
@@ -195,6 +197,82 @@ describe("seriesDetail", () => {
     expect(d.userCadence).toBe("weekly");
     expect(d.detectedCadence).toBe("monthly"); // detection column untouched
     expect(d.mergeCandidates.every((c) => c.id !== id)).toBe(true);
+  });
+
+  /*
+   * 🔴 THE BACKWARD HALF. `/recurring/<Flamingo South Beach (rent)>` on
+   * 2026-09-04 read "Next expected — Oct 1, 2026" and nothing else, for a rent
+   * charge that came due on 2026-09-01 and never posted. The forecast counted
+   * it, /budgets counted it, the runway named it and the calendar marked it —
+   * only the page about that bill skipped to October.
+   *
+   * ⛔ `overdueForSeries` over the CALENDAR MONTH, closing the day before today,
+   * so this page cannot disagree with the forecast about the same bill. Arrears
+   * are scoped to the calendar month by the owner's decision of 2026-09-02.
+   */
+  test("a charge that came due this month and never posted is stated, not skipped", () => {
+    const id = netflix().id;
+    // TODAY is 2026-07-08 and the series charges on the 15th, so July's is
+    // still ahead. Move it to the 1st: due, past, and unpaid.
+    bundle.db
+      .update(recurringSeries)
+      .set({ userNextExpectedOn: "2026-07-01" })
+      .where(eq(recurringSeries.id, id))
+      .run();
+
+    const d = seriesDetail(bundle.db, id, TODAY);
+    expect(d.overdue).toEqual({ date: "2026-07-01", amountCents: -1549, occurrenceCount: 1 });
+    // and the forward list still opens after today, never restating it
+    expect(d.nextExpected.every((o) => o.date >= TODAY)).toBe(true);
+  });
+
+  test("a charge due TODAY is due, not overdue — the two legs abut", () => {
+    const id = netflix().id;
+    bundle.db
+      .update(recurringSeries)
+      .set({ userNextExpectedOn: TODAY })
+      .where(eq(recurringSeries.id, id))
+      .run();
+
+    const d = seriesDetail(bundle.db, id, TODAY);
+    expect(d.overdue).toBeNull();
+    expect(d.nextExpected[0]!.date).toBe(TODAY);
+  });
+
+  test("a charge that came due and POSTED is not overdue", () => {
+    const id = netflix().id;
+    bundle.db
+      .update(recurringSeries)
+      .set({ userNextExpectedOn: "2026-07-01" })
+      .where(eq(recurringSeries.id, id))
+      .run();
+    insertTxn({
+      postedOn: "2026-07-01",
+      amountCents: -1549,
+      rawDescription: "NETFLIX.COM",
+      merchantId: netflixId,
+      categoryId: subsCatId,
+      recurringSeriesId: id,
+    });
+
+    expect(seriesDetail(bundle.db, id, TODAY).overdue).toBeNull();
+  });
+
+  /* ⛔ Scoped to the CALENDAR MONTH: a charge missed in June is June's business,
+     and widening the leg here would disagree with every other surface. The
+     anchor moves to the 20th, so June's occurrence has no posting (the fixture
+     charges on the 15th) and July's is still ahead of TODAY. */
+  test("a charge missed in a PREVIOUS month is not this month's arrears", () => {
+    const id = netflix().id;
+    bundle.db
+      .update(recurringSeries)
+      .set({ userNextExpectedOn: "2026-06-20" })
+      .where(eq(recurringSeries.id, id))
+      .run();
+
+    const d = seriesDetail(bundle.db, id, TODAY);
+    expect(d.overdue).toBeNull();
+    expect(d.nextExpected[0]!.date).toBe("2026-07-20");
   });
 });
 

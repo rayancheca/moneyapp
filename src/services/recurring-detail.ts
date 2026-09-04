@@ -11,8 +11,9 @@ import {
   type SeriesStatus,
 } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import { isValidIsoDate, todayIso } from "@/lib/dates";
+import { addDays, isValidIsoDate, periodBounds, todayIso } from "@/lib/dates";
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
+import { overdueForSeries } from "./arrears";
 import {
   annualizedCentsOf,
   effectiveSeries,
@@ -109,6 +110,25 @@ export interface SeriesDetail {
   annualizedCents: number | null;
   /** the next few projected occurrences (override-aware) */
   nextExpected: SeriesOccurrence[];
+  /**
+   * What this series ALREADY owed this month and nothing has covered — the
+   * backward half of `nextExpected`.
+   *
+   * 🔴 `/recurring/<Flamingo South Beach (rent)>` on 2026-09-04 read "Next
+   * expected — Oct 1, 2026" and nothing else. Its September charge came due on
+   * the 1st and never posted: the forecast counts it as a component ("came due
+   * 2026-09-01 and has not posted"), /budgets says "2 bills totalling $2,291.21
+   * due by today and no import has covered them yet", the runway says "A
+   * further $2,291.21 came due earlier this month and never posted", and the
+   * calendar marks Sep 1 with a "?". The page that is ABOUT that bill was the
+   * only one that skipped to October.
+   *
+   * ⛔ Same call the forecast makes — `overdueForSeries` over the calendar
+   * month, closing the day before today, so a bill due TODAY is due rather than
+   * late. Arrears are scoped to the calendar month by the owner's decision of
+   * 2026-09-02; a wider leg here would disagree with every other surface.
+   */
+  overdue: { date: string; amountCents: number; occurrenceCount: number } | null;
   /** full linked history, newest first */
   linkedTxns: SeriesLinkedTxn[];
   /** linked charge amounts oldest → newest, for the drift chart */
@@ -237,6 +257,12 @@ export function seriesDetail(
     stepFrom(today, stepPlan(eff.cadence, eff.intervalDaysAvg), NEXT_EXPECTED_COUNT + 1),
   ).slice(0, NEXT_EXPECTED_COUNT);
 
+  const monthStart = periodBounds(today, "monthly").start;
+  const late = overdueForSeries(db, new Set([seriesId]), monthStart, addDays(today, -1)).series[0] ?? null;
+  const overdue = late
+    ? { date: late.nextDate, amountCents: -late.amountCents, occurrenceCount: late.occurrenceCount }
+    : null;
+
   const mergeCandidates: SeriesMergeCandidate[] = db
     .select({ id: recurringSeries.id, name: recurringSeries.name, kind: recurringSeries.kind })
     .from(recurringSeries)
@@ -286,6 +312,7 @@ export function seriesDetail(
     endsOn: s.userEndsOn ?? null,
     annualizedCents: annualizedCentsOf(eff),
     nextExpected,
+    overdue,
     linkedTxns,
     amountHistory,
     mergeCandidates,
