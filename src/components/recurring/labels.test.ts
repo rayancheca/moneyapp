@@ -10,6 +10,7 @@ import {
   stalePartLabel,
   staleSummaryLabel,
   type StaleEntry,
+  overdueNote,
 } from "./labels";
 
 const staleness = (over: Partial<SeriesStaleness> = {}): SeriesStaleness => ({
@@ -261,5 +262,23 @@ describe("stalePartLabel separates late money from never-billed money", () => {
     expect(
       stalePartLabel({ fixedCents: -100000, fixedStaleCents: 0, fixedStaleCount: 0, fixedNeverChargedCents: 0, fixedNeverChargedCount: 0 }),
     ).toBeNull();
+  });
+});
+
+describe("overdueNote", () => {
+  /*
+   * ⛔ THE WHOLE POINT. On 2026-09-04, `/recurring?tab=all` said, of one bill,
+   * on one screen:
+   *
+   *   the math table   "1 × -$2,109.00 (monthly), came due 2026-09-01 and has not posted"
+   *   the Next column  "Oct 1"          under a section headed "Active — charged
+   *                                      within their cadence, and forecast"
+   */
+  test("names the day the charge was due and never came", () => {
+    expect(overdueNote("2026-09-01", 1)).toBe("Sep 1 — not posted");
+  });
+
+  test("a weekly bill in arrears counts the ones behind it", () => {
+    expect(overdueNote("2026-09-01", 3)).toBe("Sep 1 and 2 more — not posted");
   });
 });

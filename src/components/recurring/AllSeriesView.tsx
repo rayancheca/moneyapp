@@ -4,7 +4,15 @@ import { Money } from "@/components/ui/Money";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SERIES_EVIDENCE_LABEL, SERIES_EVIDENCE_NOTE, SUGGESTION_NOTE } from "@/lib/series-evidence";
 import type { SeriesView } from "@/services/recurring";
-import { CADENCE_LABEL, KIND_LABEL, shortDate } from "./labels";
+import { CADENCE_LABEL, KIND_LABEL, overdueNote, shortDate } from "./labels";
+
+/**
+ * What each series already owes this month and nothing has covered — keyed by
+ * series id, from the one `overdueForSeries` call the page makes. See
+ * `overdueNote` for the day the Next column and the math table above it gave
+ * two answers to the same question.
+ */
+export type OverdueBySeries = ReadonlyMap<string, { date: string; occurrenceCount: number }>;
 
 /**
  * The "All" sub-view (ux-overhaul-plan §4.1): a suggestion queue up top —
@@ -22,7 +30,13 @@ import { CADENCE_LABEL, KIND_LABEL, shortDate } from "./labels";
  * seed from registration: the lease read $559.89 beside "~$8,340.48/yr", two
  * numbers on one row that cannot both be true of one bill.
  */
-export function AllSeriesView({ series }: { series: SeriesView[] }) {
+export function AllSeriesView({
+  series,
+  overdueBySeries,
+}: {
+  series: SeriesView[];
+  overdueBySeries: OverdueBySeries;
+}) {
   const suggestions = series.filter((s) => s.status === "detected");
   const confirmed = series.filter((s) => s.status === "confirmed");
   const active = confirmed.filter((s) => s.evidence === "active");
@@ -64,15 +78,15 @@ export function AllSeriesView({ series }: { series: SeriesView[] }) {
         </section>
       ) : null}
 
-      <SeriesSection title="Active" note={SERIES_EVIDENCE_NOTE.active} series={active} />
+      <SeriesSection title="Active" note={SERIES_EVIDENCE_NOTE.active} series={active} overdueBySeries={overdueBySeries} />
       {late.length > 0 ? (
-        <SeriesSection title="Running late" note={SERIES_EVIDENCE_NOTE["running-late"]} series={late} muted />
+        <SeriesSection title="Running late" note={SERIES_EVIDENCE_NOTE["running-late"]} series={late} overdueBySeries={overdueBySeries} muted />
       ) : null}
       {neverBilled.length > 0 ? (
-        <SeriesSection title="Never billed" note={SERIES_EVIDENCE_NOTE["never-billed"]} series={neverBilled} muted />
+        <SeriesSection title="Never billed" note={SERIES_EVIDENCE_NOTE["never-billed"]} series={neverBilled} overdueBySeries={overdueBySeries} muted />
       ) : null}
       {lapsed.length > 0 ? (
-        <SeriesSection title="Lapsed" note={SERIES_EVIDENCE_NOTE.lapsed} series={lapsed} muted />
+        <SeriesSection title="Lapsed" note={SERIES_EVIDENCE_NOTE.lapsed} series={lapsed} overdueBySeries={overdueBySeries} muted />
       ) : null}
     </div>
   );
@@ -135,11 +149,13 @@ function SeriesSection({
   title,
   note,
   series,
+  overdueBySeries,
   muted,
 }: {
   title: string;
   note: string;
   series: SeriesView[];
+  overdueBySeries: OverdueBySeries;
   muted?: boolean;
 }) {
   // an id may not contain a space, and "Running late" does
@@ -181,7 +197,7 @@ function SeriesSection({
             </thead>
             <tbody>
               {series.map((s) => (
-                <SeriesRow key={s.id} series={s} />
+                <SeriesRow key={s.id} series={s} overdue={overdueBySeries.get(s.id) ?? null} />
               ))}
             </tbody>
           </table>
@@ -191,7 +207,13 @@ function SeriesSection({
   );
 }
 
-function SeriesRow({ series: s }: { series: SeriesView }) {
+function SeriesRow({
+  series: s,
+  overdue,
+}: {
+  series: SeriesView;
+  overdue: { date: string; occurrenceCount: number } | null;
+}) {
   return (
     <tr className="border-b border-line last:border-b-0">
       <th scope="row" className="px-4 py-3 text-left font-medium">
@@ -229,6 +251,16 @@ function SeriesRow({ series: s }: { series: SeriesView }) {
       </td>
       <td className="px-3 py-3">
         {s.nextExpectedOn ? <span className="figures">{shortDate(s.nextExpectedOn)}</span> : <span className="text-ink-faint">—</span>}
+        {/* 🔴 The column walks FORWARD from today, so a charge that came due on
+            the 1st and never posted was invisible here — while the math table
+            at the top of this same page named it: "came due 2026-09-01 and has
+            not posted". Same call as the forecast, the runway, /budgets and the
+            bill's own page. */}
+        {overdue && (
+          <span className="figures mt-0.5 block text-[10px] text-warning">
+            {overdueNote(overdue.date, overdue.occurrenceCount)}
+          </span>
+        )}
       </td>
       <td className="px-3 py-3 text-right text-ink-muted">
         {s.annualizedCents !== null ? (

@@ -256,3 +256,28 @@ export function staleComponentEntries(components: readonly ForecastComponent[]):
   }
   return entries;
 }
+
+/**
+ * What the table's Next column says about a charge that came due inside this
+ * calendar month and that no posting covers.
+ *
+ * 🔴 `/recurring?tab=all` on 2026-09-04 said both of these on ONE screen:
+ *
+ *     the math table   "1 × -$2,109.00 (monthly), came due 2026-09-01 and has
+ *                       not posted"
+ *     the Next column  "Oct 1", under a section headed "Active — charged within
+ *                       their cadence, and forecast"
+ *
+ * and the same for "Rent utilities & fees". `nextExpectedOn` walks FORWARD from
+ * today by construction, so the backward half is invisible to it — the exact
+ * defect the bill's own page had until 2026-09-04, one surface over. The date
+ * comes from `overdueForSeries`, the same call the forecast, the runway, the
+ * budgets header and `/recurring/<id>` all make.
+ *
+ * ⚠️ The Next date stays. October's charge is still coming; what was missing is
+ * that September's never arrived.
+ */
+export function overdueNote(date: string, occurrenceCount: number): string {
+  const more = occurrenceCount > 1 ? ` and ${occurrenceCount - 1} more` : "";
+  return `${shortDate(date)}${more} — not posted`;
+}
