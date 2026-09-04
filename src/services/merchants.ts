@@ -413,7 +413,10 @@ export function merchantIntelligence(
     .get();
 
   return {
-    profile: merchantProfile(visits, today),
+    // `rows.length` is what the page's heading counts; `visits` is what this
+    // card measures, and the profile names the difference rather than leaving a
+    // reader to reconcile "140 transactions" with "2 purchases".
+    profile: merchantProfile(visits, today, rows.length),
     cadence: series
       ? {
           seriesId: series.id,

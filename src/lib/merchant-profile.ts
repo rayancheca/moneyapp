@@ -85,11 +85,52 @@ export interface MerchantProfile {
   categoryMix: MerchantCategorySlice[];
   /** newest year first */
   years: MerchantYear[];
+  /**
+   * Active rows at this merchant that are NOT purchases — money in, transfers,
+   * investments, or rows with no category.
+   *
+   * 🔴 The card already knew "Purchases" and "transactions" were different
+   * numbers (Target reads 79 and 77) and never said by how much or why. On
+   * `Zelle` the two read **140 and 2**: 138 of its rows are transfer-kind, and
+   * the card's own explanation for having no monthly rate was *"2 visits. Too
+   * few to describe a monthly habit."* — blaming sparsity at a merchant seen
+   * 140 times, over four months, whose latest row is a fortnight newer than the
+   * "SEEN" range printed beside it.
+   */
+  uncountedRows: number;
+  /** what those rows are, or null when every row is a purchase */
+  countedNote: string | null;
 }
 
-export function merchantProfile(visits: readonly MerchantVisit[], today: string): MerchantProfile {
+/**
+ * ⛔ Not folded into `monthlyBasis`. The exclusion is true whether or not a rate
+ * could be given, and a merchant with a perfectly good rate built from 4 of its
+ * 200 rows needs saying just as much as one without.
+ */
+function countedNoteFor(visitCount: number, uncountedRows: number): string | null {
+  if (uncountedRows === 0) return null;
+  const purchases = `${visitCount} ${visitCount === 1 ? "purchase" : "purchases"}`;
+  const other = `${uncountedRows} other ${uncountedRows === 1 ? "row" : "rows"}`;
+  return uncountedRows === 1
+    ? `Measured from ${purchases}. The 1 other row here is money in, a transfer, or uncategorized — not a purchase, so nothing on this card counts it.`
+    : `Measured from ${purchases}. The ${other} here are money in, transfers, or uncategorized — none of them a purchase, so nothing on this card counts them.`;
+}
+
+export function merchantProfile(
+  visits: readonly MerchantVisit[],
+  today: string,
+  /**
+   * Every ACTIVE row at this merchant, purchases and everything else — the same
+   * number the page's own heading prints. Defaults to the visit count, which is
+   * the "nothing was excluded" case.
+   */
+  rowCount: number = visits.length,
+): MerchantProfile {
+  const uncountedRows = Math.max(0, rowCount - visits.length);
   if (visits.length === 0) {
     return {
+      uncountedRows,
+      countedNote: countedNoteFor(0, uncountedRows),
       visitCount: 0,
       totalCents: 0,
       firstSeen: null,
@@ -137,12 +178,17 @@ export function merchantProfile(visits: readonly MerchantVisit[], today: string)
   let monthlyCents: number | null = null;
   let monthlyBasis: string;
   if (visits.length < MIN_VISITS_FOR_RATE) {
+    /*
+     * ⛔ "purchases", not "visits" — the word the card's Purchases tile already
+     * uses for this same count, and the word its own comment says to use. Said
+     * of `Zelle`, "2 visits" described a merchant with 140 rows in the ledger.
+     */
     monthlyBasis =
       visits.length === 1
-        ? "One visit. A single purchase is not a rate, so none is given."
-        : `${visits.length} visits. Too few to describe a monthly habit.`;
+        ? "One purchase. A single purchase is not a rate, so none is given."
+        : `${visits.length} purchases. Too few to describe a monthly habit.`;
   } else if (spanDays < MIN_SPAN_DAYS_FOR_RATE) {
-    monthlyBasis = `${visits.length} visits inside ${spanDays} ${spanDays === 1 ? "day" : "days"} — too short a stretch to call it monthly.`;
+    monthlyBasis = `${visits.length} purchases inside ${spanDays} ${spanDays === 1 ? "day" : "days"} — too short a stretch to call it monthly.`;
   } else {
     // spread across the span that was actually observed, not a calendar window
     monthlyCents = Math.round(totalCents / (spanDays / DAYS_PER_MONTH));
@@ -167,6 +213,8 @@ export function merchantProfile(visits: readonly MerchantVisit[], today: string)
     .sort((a, b) => b.year.localeCompare(a.year));
 
   return {
+    uncountedRows,
+    countedNote: countedNoteFor(visits.length, uncountedRows),
     visitCount: visits.length,
     totalCents,
     firstSeen,

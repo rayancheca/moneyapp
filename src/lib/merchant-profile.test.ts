@@ -143,6 +143,60 @@ describe("merchantProfile — when it refuses to state a rate", () => {
    * beside a description of a different figure. Fixing only the sentence would
    * break that.
    */
+  /*
+   * ⛔ THE MEASURED CASE. `Zelle` holds 140 active rows: 99 Reimbursements, 26
+   * Internal Transfer, 13 Transfers — all transfer-kind — and exactly 2 Rent
+   * charges. The page's heading counted 140, this card counted 2, and its own
+   * explanation for having no rate read "2 visits. Too few to describe a
+   * monthly habit." of a merchant seen 140 times over nine months.
+   */
+  test("rows this card does not count are named, and the basis says purchases", () => {
+    const p = merchantProfile(
+      [
+        { day: "2026-02-17", amountCents: 149_500, categoryName: "Housing" },
+        { day: "2026-05-29", amountCents: 83_000, categoryName: "Housing" },
+      ],
+      TODAY,
+      140,
+    );
+    expect(p.visitCount).toBe(2);
+    expect(p.uncountedRows).toBe(138);
+    expect(p.countedNote).toContain("Measured from 2 purchases");
+    expect(p.countedNote).toContain("138 other rows");
+    // the word the Purchases tile uses, not the one that implies presence
+    expect(p.monthlyBasis).toBe("2 purchases. Too few to describe a monthly habit.");
+  });
+
+  test("a merchant whose every row is a purchase says nothing extra", () => {
+    const p = merchantProfile(
+      [{ day: "2026-02-17", amountCents: 1_000, categoryName: "Food" }],
+      TODAY,
+      1,
+    );
+    expect(p.uncountedRows).toBe(0);
+    expect(p.countedNote).toBeNull();
+  });
+
+  test("one uncounted row is singular", () => {
+    const p = merchantProfile(
+      [{ day: "2026-02-17", amountCents: 1_000, categoryName: "Food" }],
+      TODAY,
+      2,
+    );
+    expect(p.countedNote).toContain("The 1 other row here is money in");
+    expect(p.countedNote).toContain("not a purchase, so nothing on this card counts it");
+    expect(p.countedNote).not.toContain("1 other rows");
+  });
+
+  /* A merchant with nothing but refunds has no purchases at all, and the note
+     is the only thing that can explain the empty card. */
+  test("a merchant with no purchases at all still says what its rows are", () => {
+    const p = merchantProfile([], TODAY, 5);
+    expect(p.visitCount).toBe(0);
+    expect(p.uncountedRows).toBe(5);
+    expect(p.countedNote).toContain("Measured from 0 purchases");
+  });
+
   test("visits on a single day span one day, not zero", () => {
     const p = merchantProfile(
       [
@@ -154,7 +208,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
     );
     expect(p.spanDays).toBe(1);
     // the whole sentence, so "1 days" cannot pass as "1 day" plus an s
-    expect(p.monthlyBasis).toBe("3 visits inside 1 day — too short a stretch to call it monthly.");
+    expect(p.monthlyBasis).toBe("3 purchases inside 1 day — too short a stretch to call it monthly.");
     expect(p.monthlyCents).toBeNull();
   });
 

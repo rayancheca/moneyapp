@@ -69,6 +69,13 @@ export function MerchantProfileCards({ intelligence }: { intelligence: MerchantI
         {/* the sentence and the figure leave the engine together, so a rate can
             never sit beside an explanation of a different rate */}
         <p className="mt-1 max-w-prose text-xs leading-relaxed text-ink-muted">{p.monthlyBasis}</p>
+        {/* 🔴 The gap between the heading's row count and this card's purchase
+            count was invisible. On `Zelle` it is 138 of 140, and the basis line
+            above it read "2 visits. Too few to describe a monthly habit." of a
+            merchant the ledger holds 140 rows for. */}
+        {p.countedNote && (
+          <p className="mt-1 max-w-prose text-xs leading-relaxed text-ink-faint">{p.countedNote}</p>
+        )}
 
         <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-line pt-3 text-sm sm:grid-cols-4">
           <div>
