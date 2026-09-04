@@ -2,7 +2,7 @@ import Link from "next/link";
 import { confirmSeriesAction, dismissSeriesAction } from "@/app/recurring/actions";
 import { Money } from "@/components/ui/Money";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { SERIES_EVIDENCE_NOTE } from "@/lib/series-evidence";
+import { SERIES_EVIDENCE_LABEL, SERIES_EVIDENCE_NOTE, SUGGESTION_NOTE } from "@/lib/series-evidence";
 import type { SeriesView } from "@/services/recurring";
 import { CADENCE_LABEL, KIND_LABEL, shortDate } from "./labels";
 
@@ -43,9 +43,16 @@ export function AllSeriesView({ series }: { series: SeriesView[] }) {
     <div className="space-y-8">
       {suggestions.length > 0 ? (
         <section aria-labelledby="rec-suggestions">
-          <div className="mb-2 flex items-baseline justify-between">
+          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3">
             <h2 id="rec-suggestions" className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
               Suggestions
+              {/* Every other section on this tab says whether it is forecast;
+                  this one looked least forecast and was the only one silent.
+                  The words live in `lib/series-evidence` beside the rest of the
+                  vocabulary. */}
+              <span className="ml-1 font-normal normal-case tracking-normal text-ink-faint">
+                — {SUGGESTION_NOTE}
+              </span>
             </h2>
             <span className="text-[11px] text-ink-faint">{suggestions.length} to review</span>
           </div>
@@ -87,6 +94,13 @@ function SuggestionCard({ series: s }: { series: SeriesView }) {
                 <Money cents={s.nextExpectedAmountCents} />
               </>
             ) : null}
+            {/* 🔴 A suggestion carries an evidence state like any other live
+                series, and the count over the tab counts it. On 2026-09-04
+                "4 series are running late" stood over a Running late section of
+                two, because Amazon Prime and Rocket Money were late in here
+                with nothing saying so. Printed only when it is not `active`,
+                so the ordinary case stays quiet. */}
+            {s.evidence !== "active" ? ` · ${SERIES_EVIDENCE_LABEL[s.evidence].toLowerCase()}` : ""}
           </p>
         </div>
         {s.confidence !== null ? (

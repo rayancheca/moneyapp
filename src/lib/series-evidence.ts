@@ -24,6 +24,24 @@ export const SERIES_EVIDENCE_LABEL: Record<SeriesEvidence, string> = {
   lapsed: "Lapsed",
 };
 
+/**
+ * The note over the SUGGESTIONS section — the one bucket on the All tab that is
+ * not an evidence state, and the one whose membership in the forecast a reader
+ * cannot guess.
+ *
+ * 🔴 A `detected` series is projected exactly like a confirmed one: every
+ * forecast query on this page selects `status in (detected, confirmed)`. On
+ * 2026-09-04 the page read "In September 2026, 4 series are running late" over a
+ * Running late section holding TWO rows — the other two were Amazon Prime and
+ * Rocket Money, sitting under "Suggestions · 2 to review" with Confirm and Not
+ * recurring buttons, and their $4.99 and $6.00 already inside the $3,567.60
+ * PROJECTED SPENDING at the top of the same screen. Every other section on the
+ * tab says whether it is forecast; the one that looks least forecast said
+ * nothing.
+ */
+export const SUGGESTION_NOTE =
+  "detected, not yet confirmed — and already in the forecast above, until you say they are not recurring";
+
 /** One line on each state, for a section note. */
 export const SERIES_EVIDENCE_NOTE: Record<SeriesEvidence, string> = {
   active: "charged within their cadence, and forecast",

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { SERIES_EVIDENCE_LABEL, SERIES_EVIDENCE_NOTE, type SeriesEvidence } from "./series-evidence";
+import {
+  SERIES_EVIDENCE_LABEL,
+  SERIES_EVIDENCE_NOTE,
+  SUGGESTION_NOTE,
+  type SeriesEvidence,
+} from "./series-evidence";
 
 const EVERY: readonly SeriesEvidence[] = ["active", "never-billed", "running-late", "lapsed"];
 
@@ -17,5 +22,15 @@ describe("the evidence vocabulary", () => {
     expect(SERIES_EVIDENCE_NOTE["running-late"]).toContain("still forecast");
     expect(SERIES_EVIDENCE_NOTE["never-billed"]).toContain("forecast");
     expect(SERIES_EVIDENCE_NOTE.lapsed).toContain("no longer forecast");
+  });
+
+  /*
+   * ⛔ EVERY BUCKET ON THE TAB SAYS WHETHER IT IS FORECAST, suggestions
+   * included. A detected series projects like a confirmed one, and the section
+   * offering to Confirm it is the one a reader would assume is not counted yet.
+   */
+  test("the suggestions note says they are already forecast", () => {
+    expect(SUGGESTION_NOTE).toContain("forecast");
+    expect(SUGGESTION_NOTE).toContain("not yet confirmed");
   });
 });
