@@ -83,18 +83,29 @@ function ChangeChip({ label, cents, liability = false }: { label: string; cents:
 }
 
 /**
- * The days one recorded balance currently pins: its own date up to (but not
- * including) the next one. Counted on the DERIVED series rather than
- * re-deriving the span here — the number in a confirmation has to be the
- * ledger's own, never a second implementation of it.
+ * The days one recorded balance currently VERIFIES: its own date up to (but not
+ * including) the next one, counting only days that are actually checked.
+ * Counted on the DERIVED series rather than re-deriving the span here — the
+ * number in a confirmation has to be the ledger's own, never a second
+ * implementation of it.
+ *
+ * 🔴 It counted every day in the span whatever its basis, so
+ * `/accounts/<Cash on Hand>` offered "Days that stop being verified — 9 days"
+ * over a span whose last day, 2026-08-11, is `derived_unverified`: the same
+ * page's header calls it "derived (unverified)" and its provenance badge reads
+ * "nothing checks it". A day that is not verified cannot stop being verified.
+ * The answer is 8.
  */
+const VERIFIED_BASIS: ReadonlySet<string> = new Set(["anchored", "derived"]);
+
 function daysPinnedBy(
-  series: readonly { day: string }[],
+  series: readonly { day: string; basis: string }[],
   anchoredOn: string,
   nextAnchoredOn: string | undefined,
 ): number {
   return series.filter(
     (p) =>
+      VERIFIED_BASIS.has(p.basis) &&
       compareDates(p.day, anchoredOn) >= 0 &&
       (nextAnchoredOn === undefined || compareDates(p.day, nextAnchoredOn) < 0),
   ).length;
@@ -171,6 +182,14 @@ export default async function AccountDetailPage({
   }
 
   const holdings = account.type === "investment" ? listAccountHoldings(db, id) : [];
+  /*
+   * ⛔ The one condition that decides whether a recorded balance does anything:
+   * `rebuildAccount` short-circuits an investment account with holdings into
+   * `rebuildInvestmentHistory`, which never reads `balance_anchors`. It is the
+   * same fact `provenanceFor` reports as the "market value" verdict, and it is
+   * read from there rather than restated.
+   */
+  const pricedFromHoldings = balanceProvenance?.verdict === "market_value";
   const holdingsValue = holdings.reduce((sum, h) => sum + (h.valueCents ?? 0), 0);
 
   const ledgerRows = recentLedgerRows(db, { accountId: id, limit: RECENT_TXN_LIMIT });
@@ -351,8 +370,26 @@ export default async function AccountDetailPage({
                           triggerClassName="text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:text-negative"
                           title="Remove this recorded balance"
                           confirmLabel="Remove this balance"
+                          /* 🔴 An account PRICED FROM HOLDINGS does not verify
+                             anything with a recorded balance, and removing one
+                             changes nothing at all. `rebuildAccount` short-
+                             circuits for an investment account with holding
+                             events (derivation.ts:280-296) into
+                             `rebuildInvestmentHistory`, which deletes every
+                             daily_balances row and rebuilds it from cumulative
+                             holding_events × stored closes — `balance_anchors`
+                             is not queried in that file — and `deleteAnchor`
+                             calls exactly that rebuild. Both Robinhood accounts
+                             take that branch, and this dialog told them
+                             "Removing it leaves those days to be derived from
+                             transactions alone · Days that stop being verified:
+                             1 day" while the badge at the top of the same page
+                             read "market value — priced from holdings, not
+                             checked by arithmetic". */
                           radius={{
-                            headline: `This balance is what verifies ${account.name} on ${a.anchoredOn}. Removing it leaves those days to be derived from transactions alone.`,
+                            headline: pricedFromHoldings
+                              ? `${account.name} is priced from its holdings, so this recorded balance verifies nothing. Removing it leaves the curve exactly as it is.`
+                              : `This balance is what verifies ${account.name} on ${a.anchoredOn}. Removing it leaves those days to be derived from transactions alone.`,
                             lines: [
                               {
                                 label: liability ? "Owed, as recorded" : "Balance, as recorded",
@@ -361,18 +398,21 @@ export default async function AccountDetailPage({
                               },
                               {
                                 label: "Days that stop being verified",
-                                value: countPhrase(
-                                  daysPinnedBy(series, a.anchoredOn, anchors[i - 1]?.anchoredOn),
-                                  "day",
-                                ),
+                                value: pricedFromHoldings
+                                  ? "none — the curve comes from holdings"
+                                  : countPhrase(
+                                      daysPinnedBy(series, a.anchoredOn, anchors[i - 1]?.anchoredOn),
+                                      "day",
+                                    ),
                               },
                               {
                                 label: "Recorded balances left on this account",
                                 value: countPhrase(anchors.length - 1, "balance"),
                               },
                             ],
-                            reassurance:
-                              "No transaction is touched — the balance curve is derived, so it rebuilds from what is left. Record the balance again to re-verify these days.",
+                            reassurance: pricedFromHoldings
+                              ? "No transaction and no holding is touched — this account's value history is rebuilt from its holdings and their stored closes, which this balance is not part of."
+                              : "No transaction is touched — the balance curve is derived, so it rebuilds from what is left. Record the balance again to re-verify these days.",
                           }}
                         />
                       )}

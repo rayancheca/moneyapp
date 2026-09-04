@@ -296,6 +296,31 @@ describe("yearSummaryView — the pass-through shows both legs", () => {
     expect(v.summary.totalReceivedCents).toBe(0);
     expect(v.summary.excludedCents).toBe(500000);
   });
+
+  test("a year that really did send money back describes both legs", () => {
+    const line = yearSummaryView(bundle.db, YEAR, TODAY).summary.sections
+      .find((s) => s.id === "excluded")!
+      .lines[0]!;
+    expect(line.basis).toContain("both legs largely cancel");
+  });
+
+  /*
+   * 🔴 That description printed UNCONDITIONALLY, including on /summary/2022 and
+   * /summary/2023 — years holding ONE and THREE inbound rows and not a single
+   * outbound one. Pass-through money first went back out of these accounts in
+   * 2025. The gate was already here, one line below, deciding whether to print
+   * the "sent back over N rows" counter; the sentence now reads the same test.
+   */
+  test("a year with no outbound leg does not claim one", () => {
+    insert({ postedOn: "2024-03-01", amountCents: 97_419, rawDescription: "WISE INC", categoryName: "Pass-through" });
+    const line = yearSummaryView(bundle.db, 2024, TODAY).summary.sections
+      .find((s) => s.id === "excluded")!
+      .lines[0]!;
+    expect(line.amountCents).toBe(97_419);
+    expect(line.counterLabel).toBeUndefined();
+    expect(line.basis).toContain("only the arriving leg");
+    expect(line.basis).not.toContain("both legs largely cancel");
+  });
 });
 
 describe("yearSummaryView — gambling is kept out of every total", () => {

@@ -407,16 +407,31 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
     (() => {
       const inbound = lineFor(db, year, { categoryName: "Pass-through" });
       const outbound = lineFor(db, year, { categoryName: "Pass-through", direction: "out" });
+      /*
+       * 🔴 THE DESCRIPTION ASSERTED A LEG THE PAGE COULD NOT FIND. "…and money
+       * held briefly for someone and handed back. Not income; both legs largely
+       * cancel" printed unconditionally, including on /summary/2022 and
+       * /summary/2023 — years with ONE and THREE inbound rows and not a single
+       * outbound one. Pass-through money first went back out in 2025.
+       *
+       * The gate was already here, one line below, choosing whether to print the
+       * "sent back over N rows" counter. The sentence reads from the same test,
+       * so the page cannot describe a return leg it is about to say nothing
+       * about.
+       */
+      const hasReturnLeg = outbound.rowCount > 0;
       return line(
         "passthrough",
         "Pass-through",
         "excluded",
-        "Money that moves through your accounts on its way to someone else — your father's wires, and money held briefly for someone and handed back. Not income; both legs largely cancel.",
+        hasReturnLeg
+          ? "Money that moves through your accounts on its way to someone else — your father's wires, and money held briefly for someone and handed back. Not income; both legs largely cancel."
+          : `Money that moves through your accounts on its way to someone else — your father's wires, and money held briefly for someone. Not income. Nothing went back out of these accounts in ${year}, so this year holds only the arriving leg.`,
         inbound,
         undefined,
-        outbound.rowCount === 0
-          ? undefined
-          : { counterCents: outbound.amountCents, counterLabel: `sent back over ${outbound.rowCount} rows` },
+        hasReturnLeg
+          ? { counterCents: outbound.amountCents, counterLabel: `sent back over ${outbound.rowCount} rows` }
+          : undefined,
       );
     })(),
   ].filter((l): l is YearLineInput => l !== null);
