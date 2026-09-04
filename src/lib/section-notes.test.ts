@@ -122,6 +122,41 @@ describe("budgetSectionNotes", () => {
     expect(coverage.body).not.toContain("Housing");
   });
 
+  /*
+   * ❓ OWNER DECISION, 2026-09-04. `/budgets` read "12 of 12 budgets are grading
+   * days the ledger has not reached — up to 4 days on Car." Every one of the
+   * twelve was at 4 (Sep 1–4 elapsed, none imported), and `reduce` with a
+   * strict `>` simply kept the first alphabetically — so naming Car implied it
+   * was distinctive when nothing distinguished it. Asked as a concrete
+   * either/or, he chose: DROP THE NAME WHEN THEY ALL TIE.
+   */
+  test("names no budget when every one of them is at the same gap", () => {
+    const notes = budgetSectionNotes({
+      rows: [
+        row({ categoryPath: "Car", uncoveredDays: 4 }),
+        row({ categoryPath: "Food", uncoveredDays: 4 }),
+        row({ categoryPath: "Travel", uncoveredDays: 4 }),
+      ],
+    });
+    const body = notes.find((n) => n.id === "budgets-coverage")!.body;
+    expect(body).toContain("3 of 3 budgets");
+    expect(body).toContain("4 days each");
+    expect(body).not.toContain("Car");
+    expect(body).not.toContain("up to");
+  });
+
+  test("a single under-measured budget is not a tie — it is named", () => {
+    const notes = budgetSectionNotes({ rows: [row({ categoryPath: "Car", uncoveredDays: 4 })] });
+    expect(notes.find((n) => n.id === "budgets-coverage")!.body).toContain("4 days on Car");
+  });
+
+  test("one budget genuinely ahead of the rest is still named", () => {
+    const notes = budgetSectionNotes({
+      rows: [row({ categoryPath: "Car", uncoveredDays: 4 }), row({ categoryPath: "Food", uncoveredDays: 11 })],
+    });
+    expect(notes.find((n) => n.id === "budgets-coverage")!.body).toContain("11 days on Food");
+  });
+
   test("reports the worst gap even when it is not the first row", () => {
     // the existing case has the worst gap first, so the reduce only ever kept its
     // accumulator — this exercises the arm that replaces it

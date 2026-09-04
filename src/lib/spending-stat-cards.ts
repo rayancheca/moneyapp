@@ -1,3 +1,4 @@
+import { formatCents } from "@/lib/money";
 import { ledgerHref } from "@/lib/ledger-href";
 import type { DateRange } from "@/services/analytics";
 import type { PeriodTotals } from "@/services/spending";
@@ -83,17 +84,43 @@ export function spendingStatCards(totals: PeriodTotals, range: DateRange): Spend
     ariaLabel: `Net this period. ${netCents < 0 ? "negative " : ""}${dollars(Math.abs(netCents))}. View all transactions.`,
   });
 
+  /*
+   * ❓ OWNER DECISION, 2026-09-04: NAME THE DENOMINATOR, never suppress the
+   * figure.
+   *
+   * `/spending?from=2026-07-01&to=2026-07-31` read
+   *
+   *     EARNED $52.95 · SPENT $10,353.96 · REFUNDS +$113.11 · NET -$10,187.90
+   *     SAVINGS RATE  -19240.6%   overspent
+   *
+   * The rate is `net ÷ earned`, and July's recorded income is $52.95 of
+   * dividends and interest — the cash job's $5,235.00 never reached a bank,
+   * which the note under these cards says in full. The house style elsewhere is
+   * to REFUSE a ratio its denominator cannot carry (`merchantProfile` will not
+   * state a monthly rate under three visits), but refusing this one whenever
+   * there is unbanked pay would refuse it on every recent window — and his
+   * decision of 2026-08-21 is that both readings stand when the spending and
+   * income surfaces disagree about the cash: "suppressing this one would tell a
+   * working man he has no income."
+   *
+   * So the base is printed instead, always and not past a threshold: nothing
+   * here was wrong, only unreadable. "Earned" is the word the sibling card two
+   * along already uses for the same figure.
+   */
   cards.push({
     key: "savings",
     label: "Savings rate",
     text: savingsRatePct === null ? "—" : `${savingsRatePct}%`,
     muted: savingsRatePct === null,
-    delta: savingsRatePct === null ? "no income yet" : netCents >= 0 ? "kept" : "overspent",
+    delta:
+      savingsRatePct === null
+        ? "no income yet"
+        : `${netCents >= 0 ? "kept" : "overspent"} · of ${formatCents(earnedCents)} earned`,
     href: ledgerHref({ from: range.from, to: range.to }),
     ariaLabel:
       savingsRatePct === null
         ? "Savings rate unavailable without income."
-        : `Savings rate ${savingsRatePct} percent.`,
+        : `Savings rate ${savingsRatePct} percent, of ${dollars(earnedCents)} earned.`,
   });
 
   return cards;

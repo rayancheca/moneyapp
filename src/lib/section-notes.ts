@@ -137,12 +137,26 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
   const uncovered = input.rows.filter((r) => r.uncoveredDays > 0 && r.pace !== "over");
   if (uncovered.length > 0) {
     const worst = uncovered.reduce((a, b) => (b.uncoveredDays > a.uncoveredDays ? b : a));
+    /*
+     * ❓ OWNER DECISION, 2026-09-04: DROP THE NAME WHEN THEY ALL TIE.
+     *
+     * `/budgets` read "12 of 12 budgets are grading days the ledger has not
+     * reached — up to 4 days on Car." Every one of the twelve was at 4 (Sep 1–4
+     * elapsed, none imported), and the `reduce` above, with a strict `>`, keeps
+     * whichever came first — alphabetically, Car. Naming one of twelve equals
+     * says it is distinctive when nothing distinguishes it. Asked as a concrete
+     * either/or, he chose to name a budget only when one genuinely leads.
+     *
+     * ⚠️ A single under-measured budget is not a tie: there is one, and it is
+     * named. The test is whether more than one row SHARES the worst gap.
+     */
+    const tied = uncovered.length > 1 && uncovered.every((r) => r.uncoveredDays === worst.uncoveredDays);
+    const days = `${worst.uncoveredDays} ${worst.uncoveredDays === 1 ? "day" : "days"}`;
     notes.push({
       id: "budgets-coverage",
       body:
         `${uncovered.length} of ${input.rows.length} budgets are grading days the ledger has not ` +
-        `reached — up to ${worst.uncoveredDays} ` +
-        `${worst.uncoveredDays === 1 ? "day" : "days"} on ${worst.categoryPath}. Their spend and ` +
+        `reached — ${tied ? `${days} each` : `up to ${days} on ${worst.categoryPath}`}. Their spend and ` +
         `percentages are lower bounds, not measurements, so no verdict is shown for them.`,
     });
   }
