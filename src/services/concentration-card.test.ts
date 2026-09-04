@@ -149,10 +149,21 @@ describe("concentrationCard — what the portfolio is riding on", () => {
      * question the card answers is about everything he owns. The two are 50.0%
      * and 54.7% here, so a headline that quietly used the wrong denominator
      * would still look plausible.
+     *
+     * ⛔ …and it NAMES that denominator. It said "of everything you own", which
+     * is assets — this figure is struck against net worth, assets minus debts.
+     * On the owner's ledger 2026-09-04 those are $114,498.97 and $113,656.08,
+     * so the sentence claimed 32.2% of a number 0.7% larger than the one it had
+     * divided by. The card's own rest-note already carried "debts already netted
+     * off"; the two sentences above it did not.
      */
     expect(c.headline).toBe("50.0%");
-    expect(c.headlineNoun).toBe("of everything you own is ETH");
-    expect(c.summary).toContain("91.3% of everything you own");
+    expect(c.headlineNoun).toBe("of your net worth is ETH");
+    expect(c.summary).toContain("91.3% of your net worth");
+    expect(c.summary).toContain("with your debts netted off");
+    expect(c.headlineNoun).not.toContain("everything you own");
+    expect(c.summary).not.toContain("everything you own");
+    expect(c.restNote).not.toContain("Everything else you own");
   });
 
   /**

@@ -363,11 +363,21 @@ export function concentrationCard(
       : top.netWorthPct !== null
         ? pct(top.netWorthPct)
         : pct(top.portfolioPct);
+  /*
+   * 🔴 "everything you own" is ASSETS; this denominator is net worth, which is
+   * assets minus debts. Read on the owner's ledger 2026-09-04: assets
+   * $114,498.97, net worth $113,656.08, and the headline said "32.2% of
+   * everything you own is ETH" of a figure struck against the smaller one —
+   * 32.0% against what he actually owns. The card's own `restNote` two lines
+   * below already says "debts already netted off"; the two sentences above it
+   * did not, and the field they read is documented as "everything he owns,
+   * debts netted". Name the denominator instead of describing it loosely.
+   */
   const headlineNoun =
     top === null
-      ? "you own rides on one company"
+      ? "of your net worth rides on one company"
       : top.netWorthPct !== null
-        ? `of everything you own is ${top.symbol}`
+        ? `of your net worth is ${top.symbol}`
         : `of your portfolio is ${top.symbol}`;
 
   const summary =
@@ -377,10 +387,10 @@ export function concentrationCard(
       : portfolioSharePct === null
         ? `${top.symbol} is ${formatCents(top.valueCents)} of a ${formatCents(portfolioCents)} ` +
           `portfolio, ${pct(top.portfolioPct)} of it. Your net worth is not positive, so there is ` +
-          `no share of everything you own to measure it against.`
+          `no share of it to measure this against.`
         : `${top.symbol} is ${formatCents(top.valueCents)} of a ${formatCents(portfolioCents)} ` +
           `portfolio — ${pct(top.portfolioPct)} of it — and the portfolio is ` +
-          `${pct(portfolioSharePct)} of everything you own.`;
+          `${pct(portfolioSharePct)} of your net worth — what you own with your debts netted off.`;
 
   const topTwoNote =
     topTwo === null
@@ -391,9 +401,9 @@ export function concentrationCard(
   const restNote =
     restOfNetWorthCents > 0
       ? topOverRest !== null && top !== null
-        ? `Everything else you own comes to ${formatCents(restOfNetWorthCents)}, debts already ` +
+        ? `The rest of your net worth comes to ${formatCents(restOfNetWorthCents)}, debts already ` +
           `netted off — ${top.symbol} on its own is ${topOverRest.toFixed(1)} times that.`
-        : `Everything else you own comes to ${formatCents(restOfNetWorthCents)}, debts already ` +
+        : `The rest of your net worth comes to ${formatCents(restOfNetWorthCents)}, debts already ` +
           `netted off.`
       : restOfNetWorthCents === 0
         ? `These positions are your entire net worth — there is nothing else, and nothing owed.`
