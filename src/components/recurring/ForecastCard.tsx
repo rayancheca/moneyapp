@@ -149,6 +149,27 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
         {split.income.fixedSeriesCount} {split.income.fixedSeriesCount === 1 ? "series" : "series"}.
       </p>
 
+      {/* 🔴 THE ASYMMETRY, NAMED. A bill that came due and never posted IS a
+          component here; a payday that came and went unbanked deliberately is
+          not, because cash pay that never reaches a bank cannot be counted as
+          arriving (`fixedComponents` argues it at length). So this card sums a
+          different set of days from the month strip directly below it, and on
+          2026-09-04 the two read "-$426.60" and "as scheduled +$620.40" —
+          $1,047.00 apart, which is exactly what `committed`'s own docstring says
+          this headline exists to prevent. */}
+      {f.unbankedIncome.totalCents > 0 && (
+        <p className="mt-1 text-xs text-warning">
+          {f.unbankedIncome.occurrenceCount === 1
+            ? "1 payday"
+            : `${f.unbankedIncome.occurrenceCount} paydays`}{" "}
+          worth <Money cents={f.unbankedIncome.totalCents} /> already passed this month with no
+          deposit imported
+          {f.unbankedIncome.names.length > 0 ? ` (${f.unbankedIncome.names.join(", ")})` : ""} — not
+          counted above, and not in EOM cash. Cash pay that never reaches a bank cannot be projected
+          as arriving; the month strip below counts it, because that line is the schedule.
+        </p>
+      )}
+
       <ForecastComposition split={split} />
 
       <PaceRow forecast={f} />

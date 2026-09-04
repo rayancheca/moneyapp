@@ -298,6 +298,63 @@ describe("forecastCurrentMonth", () => {
     expect(f.projectedSpendCents).toBe(-210900);
     // it is a COMMITMENT, not a pace: the schedule-only reading owns it too
     expect(f.committed.spendCents).toBe(-210900);
+    /*
+     * ⛔ AND IT IS ARREARS, NOT AN UNBANKED PAYDAY. Found by mutation: deleting
+     * either the income-kind filter or the money-in filter from
+     * `unbankedIncomeForSeries` changed no test, and every bill that came due
+     * unpaid would then be reported as a payday — with a NEGATIVE total, in a
+     * sentence that reads "1 payday worth -$2,109.00 already passed".
+     */
+    expect(f.unbankedIncome).toEqual({ totalCents: 0, occurrenceCount: 0, names: [] });
+  });
+
+  /* ⛔ The kind filter is not enough on its own, and `fixedComponents` says why
+     in its own words: "an `income` series whose stored amount is NEGATIVE is
+     deleted by the sign test and kept by the kind test". A refund-shaped income
+     series would otherwise SUBTRACT from a figure the card prints as paydays
+     that did not arrive. Same guard `incomeExpectation` carries. */
+  test("a negative-amount income series does not subtract from the unbanked figure", () => {
+    insertSeries({
+      name: "Payroll",
+      kind: "income",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-01",
+      nextExpectedAmountCents: 300000,
+      status: "confirmed",
+    });
+    insertSeries({
+      name: "Clawback",
+      kind: "income",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-02",
+      nextExpectedAmountCents: -50_000,
+      status: "confirmed",
+    });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.unbankedIncome).toEqual({
+      totalCents: 300000,
+      occurrenceCount: 1,
+      names: ["Payroll"],
+    });
+  });
+
+  /* The other half of the same guard: a transfer series can carry a POSITIVE
+     occurrence, so the money-in filter alone would let one through. Money moving
+     between the owner's own accounts is never a payday. */
+  test("an incoming transfer that never posted is not reported as a payday", () => {
+    insertSeries({
+      name: "Card payment in",
+      kind: "transfer",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-01",
+      nextExpectedAmountCents: 50_000,
+      status: "confirmed",
+    });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.unbankedIncome).toEqual({ totalCents: 0, occurrenceCount: 0, names: [] });
   });
 
   test("a bill that came due AND posted is not projected on top of what it cost", () => {
@@ -354,6 +411,51 @@ describe("forecastCurrentMonth", () => {
     const f = forecastCurrentMonth(bundle.db, TODAY);
     expect(f.components.find((c) => c.label === "Payroll")).toBeUndefined();
     expect(f.projectedIncomeCents).toBe(0);
+    /*
+     * 🔴 …and it is REPORTED, which is the half that was missing. The card sums
+     * a different set of days from the month strip directly below it, and on
+     * 2026-09-04 the two read "PROJECTED NET -$426.60" and "as scheduled
+     * +$620.40" — $1,047.00 apart, with nothing on the screen naming it.
+     */
+    expect(f.unbankedIncome).toEqual({
+      totalCents: 300000,
+      occurrenceCount: 1,
+      names: ["Payroll"],
+    });
+  });
+
+  test("a payday that WAS banked is not reported as unbanked", () => {
+    const id = insertSeries({
+      name: "Payroll",
+      kind: "income",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-01",
+      nextExpectedAmountCents: 300000,
+      status: "confirmed",
+    });
+    insertTxn(cardId, "2026-07-01", 300000, { recurringSeriesId: id });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.unbankedIncome.totalCents).toBe(0);
+    expect(f.unbankedIncome.occurrenceCount).toBe(0);
+  });
+
+  /* ⛔ The two legs abut at `today`, mirrored from the bills one: a payday dated
+     TODAY is future until its money posts, so it belongs to the forward walk and
+     never to this report. One day a month the two rules meet. */
+  test("a payday dated today is projected, not reported as passed", () => {
+    insertSeries({
+      name: "Payroll",
+      kind: "income",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: TODAY,
+      nextExpectedAmountCents: 300000,
+      status: "confirmed",
+    });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.projectedIncomeCents).toBe(300000);
+    expect(f.unbankedIncome.totalCents).toBe(0);
   });
 
   /* A transfer moves money between the owner's own accounts; it is never

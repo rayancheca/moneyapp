@@ -21,7 +21,7 @@ import {
   lapsedSeriesShouldStopForecasting,
   seriesHasLapsed,
 } from "./recurring";
-import { overdueForSeries } from "./arrears";
+import { overdueForSeries, unbankedIncomeForSeries } from "./arrears";
 import { activeSplitsInRange } from "./transaction-splits";
 
 /**
@@ -165,6 +165,23 @@ export interface MonthForecast {
    */
   committed: ForecastTotals;
   components: ForecastComponent[];
+  /**
+   * Paydays that already passed this month with nothing banked against them —
+   * REPORTED, never projected.
+   *
+   * 🔴 The reason the card needs it. Spending's arrears ARE a component
+   * (`arrearsComponents`) and income's deliberately are not, for the reason
+   * `fixedComponents` argues at length: cash pay that never reaches a bank
+   * cannot be counted as arriving. So the schedule the strip below the card
+   * draws and the schedule the card sums are two different sets of days.
+   *
+   * Measured 2026-09-04, the day after a Thursday payday: the card read
+   * "PROJECTED NET -$426.60" over a month strip on the same screen reading
+   * "as scheduled +$620.40" — $1,047.00 apart, and the class comment on
+   * `committed` says in so many words that the whole point of that headline was
+   * to stop those two halves disagreeing.
+   */
+  unbankedIncome: { totalCents: number; occurrenceCount: number; names: string[] };
 }
 
 interface MonthWindow {
@@ -683,6 +700,12 @@ export function forecastForMonth(
       eomNetWorthCents: netWorthCents + chainedCommittedNet,
     },
     components: parts.components,
+    /*
+     * A FUTURE month has no past inside it — every one of its paydays is still
+     * to come, so there is nothing that has passed unbanked. Stated rather than
+     * omitted: this field is a measurement, and an empty one is the answer here.
+     */
+    unbankedIncome: { totalCents: 0, occurrenceCount: 0, names: [] },
   };
 }
 
@@ -699,6 +722,20 @@ export function forecastCurrentMonth(db: AppDatabase, today: string = todayIso()
     ...variableIncomeComponents(db, today, remainingDays, daysInMonth),
     ...variableComponents(db, today, remainingDays, daysInMonth),
   ];
+
+  /*
+   * ⛔ Computed, never added. It is not in `components`, so the math table's
+   * claim that its rows sum exactly to the projections above stays true.
+   */
+  const incomeSeriesIds = new Set(
+    db
+      .select({ id: recurringSeries.id })
+      .from(recurringSeries)
+      .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
+      .all()
+      .map((r) => r.id),
+  );
+  const unbanked = unbankedIncomeForSeries(db, incomeSeriesIds, monthStart, today);
 
   // the components ARE the math: totals derive from them, exactly
   const projectedIncomeCents = components.reduce((sum, c) => (c.cents > 0 ? sum + c.cents : sum), 0);
@@ -749,5 +786,10 @@ export function forecastCurrentMonth(db: AppDatabase, today: string = todayIso()
       eomNetWorthCents: latestNetWorth + committedNetCents,
     },
     components,
+    unbankedIncome: {
+      totalCents: unbanked.totalCents,
+      occurrenceCount: unbanked.series.reduce((n, x) => n + x.occurrenceCount, 0),
+      names: unbanked.series.map((x) => x.name),
+    },
   };
 }

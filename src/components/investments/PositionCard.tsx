@@ -43,8 +43,20 @@ function Stat({
         {label}
         {provenance && <ProvenancePopover label={label.toLowerCase()} provenance={provenance} />}
       </dt>
-      <dd className="mt-1 text-sm font-medium">{children}</dd>
-      {hint && <div className="mt-0.5 text-[11px] text-ink-faint">{hint}</div>}
+      {/* 🔴 The hint lived HERE, as a third child beside the dt and the dd, and
+          axe's `definition-list` rule (serious) forbids it: a `dl > div` may hold
+          only properly-ordered dt/dd groups. It never fired because the only
+          caller passing a hint — the day-change tile — passes null whenever the
+          figure really is today's, which is what the e2e fixture has. Two more
+          hints made it reachable and three specs went red at once.
+
+          `PortfolioStats` had already learned this and says so in its own
+          comment ("the anchor note lives inside the dd so each dl > div holds
+          exactly a dt/dd pair"); this is the second card asking the question. */}
+      <dd className="mt-1 text-sm font-medium">
+        {children}
+        {hint && <span className="mt-0.5 block text-[11px] font-normal text-ink-faint">{hint}</span>}
+      </dd>
     </div>
   );
 }
