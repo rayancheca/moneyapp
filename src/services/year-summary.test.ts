@@ -12,7 +12,13 @@ import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
-import { cashJobNaming, SUMMARY_DISCLAIMER, summaryYears, yearSummaryView } from "./year-summary";
+import {
+  cashJobNaming,
+  externalInvestmentFlows,
+  SUMMARY_DISCLAIMER,
+  summaryYears,
+  yearSummaryView,
+} from "./year-summary";
 
 const TODAY = "2026-08-25";
 const YEAR = 2025;
@@ -394,5 +400,60 @@ describe("yearSummaryView — an empty year", () => {
     insert({ postedOn: "2024-12-31", amountCents: 100000, rawDescription: "Direct Deposit FORDHAM UNIVERSI PAYROLL", categoryName: "Salary" });
     insert({ postedOn: "2026-01-01", amountCents: 100000, rawDescription: "Direct Deposit FORDHAM UNIVERSI PAYROLL", categoryName: "Salary" });
     expect(yearSummaryView(bundle.db, YEAR, TODAY).summary.isEmpty).toBe(true);
+  });
+});
+
+describe("externalInvestmentFlows — only money that CROSSES the boundary", () => {
+  /*
+   * 🔴 The exclusion was `type in (checking, savings)`, and a brokerage's own
+   * settlement sleeve is typed `checking`. `lib/account-side` exists for
+   * exactly this and says "detection's descriptor rules + pair categories key
+   * off this classification, NOT the raw account type"; this was the one caller
+   * still using the type.
+   *
+   * Both legs of every contribution were therefore selected. They land on the
+   * same day, the caller nets them to zero, and `money-weighted-return` drops
+   * zeroed days — so `/summary/2026` printed "Investment return 115.42 % a year
+   * · Money-weighted" of a window in which $25,554.42 of new money went in.
+   * The honest figure is 36.15%.
+   */
+  test("the brokerage's own settlement cash is not an external flow", () => {
+    const rh =
+      bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get() ??
+      bundle.db.insert(institutions).values({ name: "Robinhood" }).returning().get();
+    createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Brokerage", type: "investment" });
+    const sleeve = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Cash", type: "checking" });
+
+    // one movement, two legs, same day — exactly the shape that netted to zero
+    insert({
+      postedOn: "2025-05-01",
+      amountCents: -500_00,
+      rawDescription: "ACH TO ROBINHOOD",
+      categoryName: "Investment Contribution",
+      accountId: checkingId,
+    });
+    insert({
+      postedOn: "2025-05-01",
+      amountCents: 500_00,
+      rawDescription: "ACH FROM CHASE",
+      categoryName: "Investment Contribution",
+      accountId: sleeve,
+    });
+
+    const flows = externalInvestmentFlows(bundle.db, "2025-01-01", "2025-12-31");
+    expect(flows).toEqual([{ day: "2025-05-01", amountCents: -500_00 }]);
+  });
+
+  test("an ordinary savings account IS external", () => {
+    insert({
+      postedOn: "2025-06-01",
+      amountCents: -200_00,
+      rawDescription: "ACH TO ROBINHOOD",
+      categoryName: "Investment Contribution",
+      accountId: savingsId,
+    });
+    expect(externalInvestmentFlows(bundle.db, "2025-01-01", "2025-12-31")).toEqual([
+      { day: "2025-06-01", amountCents: -200_00 },
+    ]);
   });
 });

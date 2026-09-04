@@ -11,6 +11,7 @@ import {
 } from "@/lib/money-weighted-return";
 import type { CashFlow } from "@/lib/xirr";
 import { yearSummary, type YearLineInput, type YearSummary } from "@/lib/year-summary";
+import { investmentSideAccountIds } from "./accounts";
 import { portfolioSeries, realizedSalesByDay } from "./portfolio";
 
 /**
@@ -197,6 +198,57 @@ function gamblingFor(db: AppDatabase, year: number): YearGambling {
  * incomplete-opening guard survived this file's tests, since reaching that
  * branch through the database takes a seeded portfolio with prices and holdings.
  */
+/**
+ * The Investment Contribution rows that really CROSS the boundary — one row per
+ * movement, from the account outside the brokerage.
+ *
+ * 🔴 The exclusion here was `type in (checking, savings)`, and a brokerage's own
+ * settlement sleeve is typed `checking`. `lib/account-side` exists for exactly
+ * this and says so — "detection's descriptor rules + pair categories key off
+ * this classification, NOT the raw account type" — and this was the one caller
+ * still using the type.
+ *
+ * So BOTH legs of every contribution were selected. They land on the same day,
+ * the caller's `byDay` nets them to zero, and `lib/money-weighted-return` drops
+ * zeroed days: of 23 flow days in 2026, 16 vanished and the 7 survivors netted
+ * to +$87.22. With almost no flows left the XIRR degenerates to the raw
+ * close/open ratio annualised, and `/summary/2026` printed
+ *
+ *     Investment return   115.42 % a year   Money-weighted
+ *
+ * of a window in which $25,554.42 of NEW MONEY went in ($26,854.42 out of Chase
+ * Checking, $1,300.00 out of SoFi) against a portfolio that moved $65,038.62 →
+ * $108,980.71. The honest figure is 36.15% a year, and the one on screen was
+ * crediting the deposits as gain.
+ */
+export function externalInvestmentFlows(
+  db: AppDatabase,
+  from: string,
+  through: string,
+): { day: string; amountCents: number }[] {
+  const investmentSide = investmentSideAccountIds(db);
+  return db
+    .select({
+      day: transactions.postedOn,
+      amountCents: transactions.amountCents,
+      accountId: transactions.accountId,
+    })
+    .from(transactions)
+    .innerJoin(categories, eq(categories.id, transactions.categoryId))
+    .where(
+      and(
+        eq(transactions.status, "active"),
+        gte(transactions.postedOn, from),
+        lte(transactions.postedOn, through),
+        eq(categories.name, "Investment Contribution"),
+      ),
+    )
+    .orderBy(asc(transactions.postedOn))
+    .all()
+    .filter((r) => !investmentSide.has(r.accountId))
+    .map((r) => ({ day: r.day, amountCents: r.amountCents }));
+}
+
 function moneyWeightedReturnFor(db: AppDatabase, year: number, today: string): XirrStatus {
   const series = portfolioSeries(db);
   const at = (day: string): ReturnBoundary | null => {
@@ -219,30 +271,9 @@ function moneyWeightedReturnFor(db: AppDatabase, year: number, today: string): X
   const { from, to } = yearBounds(year);
   const closeDay = to < today ? to : today;
 
-  /*
-   * External flows only: money crossing INTO or OUT OF the investment side,
-   * taken from the CASH leg (a checking/savings row categorized Investment
-   * Contribution). The investment leg's mirror would double every movement.
-   */
-  const contributions = db
-    .select({ day: transactions.postedOn, amountCents: transactions.amountCents })
-    .from(transactions)
-    .innerJoin(categories, eq(categories.id, transactions.categoryId))
-    .innerJoin(accounts, eq(accounts.id, transactions.accountId))
-    .where(
-      and(
-        eq(transactions.status, "active"),
-        gte(transactions.postedOn, from),
-        lte(transactions.postedOn, closeDay),
-        eq(categories.name, "Investment Contribution"),
-        inArray(accounts.type, ["checking", "savings"]),
-      ),
-    )
-    .orderBy(asc(transactions.postedOn))
-    .all();
-
+  // External flows only — see `externalInvestmentFlows`.
   const byDay = new Map<string, number>();
-  for (const c of contributions) {
+  for (const c of externalInvestmentFlows(db, from, closeDay)) {
     // cash leaving checking (negative) is money INTO the investment: an
     // investor-signed negative flow. Money coming back is positive.
     byDay.set(c.day, (byDay.get(c.day) ?? 0) + c.amountCents);

@@ -89,6 +89,11 @@ export function TrustCard({ data }: { data: TrustCardData }) {
 }
 
 function AccountRow({ account }: { account: TrustAccountLine }) {
+  // the "nothing checks it since <day>" clause, and only it, is about a RUN
+  const runPaired =
+    account.grade === "unverified" &&
+    account.uncheckedRunDays > 0 &&
+    account.uncheckedRunDays !== account.uncheckedDays;
   return (
     <li className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-sm">
       <span className="min-w-0 truncate text-ink">{account.name}</span>
@@ -107,15 +112,17 @@ function AccountRow({ account }: { account: TrustAccountLine }) {
           balance". */}
         {/* ⛔ …and the count has to be the one that date is ABOUT. Robinhood
             Cash's 52 unchecked days fall in two runs 946 checked days apart, so
-            "52 days" beside any one date is a span nobody can find. The run is
-            printed, and the account's total only when the two differ. */}
+            "52 days" beside "nothing checks it SINCE Aug 3" is a span nobody can
+            find. That row prints the run, with the account's total after it.
+
+            ⚠️ Only that row. A `broken` account's clause is "stopped adding up
+            on <the first gap>", which is a different date about a different
+            question, and the total is what belongs beside it. */}
         {account.uncheckedDays > 0 && (
           <span className="figures text-warning">
-            {(account.uncheckedRunDays || account.uncheckedDays).toLocaleString("en-US")} day
-            {(account.uncheckedRunDays || account.uncheckedDays) === 1 ? "" : "s"} unchecked
-            {account.uncheckedRunDays > 0 && account.uncheckedRunDays !== account.uncheckedDays
-              ? `, of ${account.uncheckedDays.toLocaleString("en-US")} in all`
-              : ""}
+            {(runPaired ? account.uncheckedRunDays : account.uncheckedDays).toLocaleString("en-US")} day
+            {(runPaired ? account.uncheckedRunDays : account.uncheckedDays) === 1 ? "" : "s"} unchecked
+            {runPaired ? `, of ${account.uncheckedDays.toLocaleString("en-US")} in all` : ""}
           </span>
         )}
         {/* a HOLE, not an absence: rows the ledger holds that no total can
