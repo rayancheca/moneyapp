@@ -2,6 +2,7 @@ import { Money } from "@/components/ui/Money";
 import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { formatCents } from "@/lib/money";
+import { RETURN_MEASURE } from "@/lib/return-measures";
 import { formatQuantityE8 } from "@/services/holdings";
 import type { HoldingDetail } from "@/services/holding-detail";
 import type { Provenance } from "@/services/provenance";
@@ -87,7 +88,15 @@ export function PositionCard({ detail, provenance }: { detail: HoldingDetail; pr
             "—"
           )}
         </Stat>
-        <Stat label="Total return">
+        {/* 🔴 This said "Total return", of a figure measured against COST — on a
+            page whose own header prints a time-weighted return, and directly
+            above "Money-weighted", as though the two were a pair. On
+            /investments/crypto/ETH, 2026-09-04: a header reading
+            "-29.72% time-weighted" over a tile reading "Total return +28.50%".
+            /investments has called this one "Held, against what you paid" since
+            the performance card shipped; `lib/return-measures` is now the one
+            place both read it from. */}
+        <Stat label={RETURN_MEASURE.unrealized.label} hint={RETURN_MEASURE.unrealized.meaning}>
           {detail.totalPlCents !== null ? (
             <span className="flex items-baseline gap-1.5">
               <Money cents={detail.totalPlCents} flow />
@@ -97,7 +106,7 @@ export function PositionCard({ detail, provenance }: { detail: HoldingDetail; pr
             <span className="text-ink-faint" title="Add an average cost to see total return">—</span>
           )}
         </Stat>
-        <Stat label="Money-weighted">
+        <Stat label={RETURN_MEASURE.xirr.label} hint={`${RETURN_MEASURE.xirr.meaning} — a rate a year`}>
           {detail.xirrPct !== null ? (
             <span className="flex items-baseline gap-1.5" title="XIRR — the annualized growth rate of your dollars in this holding">
               <span className={`figures ${toneClass(detail.xirrPct)}`}>{pctText(detail.xirrPct)}</span>

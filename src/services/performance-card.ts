@@ -3,6 +3,7 @@ import { addCalendarMonths, calendarMonthsToReach, compareDates, diffDays, today
 import { formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { isStaleClose } from "@/lib/holding-price-age";
 import { formatCents } from "@/lib/money";
+import { RETURN_MEASURE } from "@/lib/return-measures";
 import { portfolioOverview } from "./portfolio";
 
 /**
@@ -245,10 +246,10 @@ export function performanceCard(db: AppDatabase, today: string = todayIso()): Pe
   const measures: PerformanceMeasure[] = [
     {
       key: "twr",
-      label: "Time-weighted",
+      label: RETURN_MEASURE.twr.label,
       pctLabel: pctLabelOf(o.twrPct, " in total"),
       cents: gain,
-      meaning: "the holdings' own return, whenever money happened to go in",
+      meaning: RETURN_MEASURE.twr.meaning,
       // the TWR engine values every trade at the same close the value uses, so
       // this figure has no inexact input of its own to disclose
       approximate: false,
@@ -259,13 +260,13 @@ export function performanceCard(db: AppDatabase, today: string = todayIso()): Pe
   if (o.xirrPct !== null) {
     measures.push({
       key: "xirr",
-      label: "Money-weighted",
+      label: RETURN_MEASURE.xirr.label,
       pctLabel: pctLabelOf(o.xirrPct, " a year"),
       // XIRR is a rate and has no dollar companion; a figure borrowed from
       // another measure to fill the column would be the conflation this card
       // exists to prevent
       cents: null,
-      meaning: "your own dollars, weighted by how long each one was in the market",
+      meaning: RETURN_MEASURE.xirr.meaning,
       approximate: !o.xirrExact,
       isHeadline: false,
     });
@@ -274,13 +275,13 @@ export function performanceCard(db: AppDatabase, today: string = todayIso()): Pe
   if (o.costBasisPlCents !== null) {
     measures.push({
       key: "unrealized",
-      label: "Held, against what you paid",
+      label: RETURN_MEASURE.unrealized.label,
       // costBasisPlPct is non-null whenever costBasisPlCents is (the service
       // returns them from one object), and it is 0 rather than Infinity when
       // the cost is zero — its own guard, not re-stated here
       pctLabel: o.costBasisPlPct === null ? null : pctLabelOf(o.costBasisPlPct, " of cost"),
       cents: o.costBasisPlCents,
-      meaning: "positions you still hold, at average cost — measured against price, not against time",
+      meaning: RETURN_MEASURE.unrealized.meaning,
       approximate: false,
       isHeadline: false,
     });
