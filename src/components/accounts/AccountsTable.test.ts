@@ -41,6 +41,8 @@ describe("buildAccountsTable", () => {
     expect(buildAccountsTable([])).toEqual({
       held: [],
       owed: [],
+      heldShareBaseCents: 0,
+      owedShareBaseCents: 0,
       heldTotalCents: 0,
       owedTotalCents: 0,
       netCents: 0,
@@ -76,7 +78,9 @@ describe("buildAccountsTable", () => {
     ]);
     expect(model.heldTotalCents).toBe(5_000);
     expect(model.held[1]!.balanceCents).toBeNull();
-    expect(model.held[1]!.sharePct).toBe(0);
+    // …and it takes no share either: a refused balance cannot yield a measured
+    // 0.0%, which is what the Share cell used to print beside "no balance"
+    expect(model.held[1]!.sharePct).toBeNull();
   });
 
   it("measures the change as last minus first across the covered window", () => {
@@ -184,7 +188,7 @@ describe("buildAccountsTable", () => {
       account({ id: "funded", balanceCents: 5_000 }),
       account({ id: "empty", balanceCents: null }),
     ]);
-    expect(model.held.map((r) => r.sharePct)).toEqual([100, 0]);
+    expect(model.held.map((r) => r.sharePct)).toEqual([100, null]);
     expect(model.held[1]!.balanceCents).toBeNull();
   });
 
@@ -356,5 +360,59 @@ describe("AccountsTable, rendered", () => {
     const empty = renderToStaticMarkup(createElement(AccountsTable, { accounts: [] }));
     expect(empty).toContain("No accounts yet");
     expect(empty).not.toContain("<table");
+  });
+});
+
+describe("what a share is OF, and when there is no share to state", () => {
+  /*
+   * 🔴 The Owed group printed "-$842.89" while every slice under it divided by
+   * $925.61 — the gross debt, with Chase Sapphire's $82.72 of credit netted out
+   * of the total but not out of the base. Measured 2026-09-04: "39.8% of owed"
+   * and "60.2% of owed" over a heading reading -$842.89, and 39.8% of $842.89
+   * is $335.47, not the $367.99 printed two columns along.
+   *
+   * The dashboard's cards card already carries the missing sentence — "$82.72
+   * of credit on Chase Sapphire is netted off, so each slice is of the $925.61
+   * actually owed" — and this table did not. Same shape as the concentration
+   * card: the qualifier existed and only some of the sentences carried it.
+   */
+  it("the owed side reports the base its shares are struck against", () => {
+    const model = buildAccountsTable([
+      account({ id: "discover", isLiability: true, balanceCents: -55_762 }),
+      account({ id: "venture", isLiability: true, balanceCents: -36_799 }),
+      account({ id: "sapphire", isLiability: true, balanceCents: 8_272 }),
+    ]);
+    expect(model.owedTotalCents).toBe(-84_289);
+    expect(model.owedShareBaseCents).toBe(92_561);
+  });
+
+  it("with no card in credit the base IS the total, and there is nothing extra to say", () => {
+    const model = buildAccountsTable([
+      account({ id: "discover", isLiability: true, balanceCents: -55_762 }),
+      account({ id: "venture", isLiability: true, balanceCents: -36_799 }),
+    ]);
+    expect(model.owedShareBaseCents).toBe(-model.owedTotalCents);
+  });
+
+  /*
+   * 🔴 Capital One 360 Checking holds no rows, no anchor and no derived day. Its
+   * Balance cell refuses ("no balance") and its Change cell refuses ("not yet"),
+   * and between them the Share cell stated a measurement: "0.0% of held".
+   */
+  it("an account with NO balance takes no share rather than a measured zero", () => {
+    const model = buildAccountsTable([
+      account({ id: "chase", balanceCents: 300_760 }),
+      account({ id: "capone", balanceCents: null }),
+    ]);
+    expect(model.held.find((r) => r.id === "capone")!.sharePct).toBeNull();
+    expect(model.held.find((r) => r.id === "chase")!.sharePct).toBe(100);
+  });
+
+  it("a balance of exactly zero is a measurement, and keeps its 0.0%", () => {
+    const model = buildAccountsTable([
+      account({ id: "chase", balanceCents: 300_760 }),
+      account({ id: "sofi", balanceCents: 0 }),
+    ]);
+    expect(model.held.find((r) => r.id === "sofi")!.sharePct).toBe(0);
   });
 });

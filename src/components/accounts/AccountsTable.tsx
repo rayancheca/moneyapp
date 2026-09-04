@@ -69,12 +69,36 @@ export interface AccountsTableRow extends AccountsTableAccount {
   /** delta as a percentage of |start|, 1dp; null when start is 0 or unknown */
   deltaPct: number | null;
   /** this account's share of its own side's total size, 1dp — the side sums to 100 */
-  sharePct: number;
+  /**
+   * Share of this account's OWN side — null when there is nothing to take a
+   * share of.
+   *
+   * 🔴 Capital One 360 Checking holds no rows, no anchor and no derived day. Its
+   * Balance cell refuses ("no balance") and its Change cell refuses ("not yet"),
+   * and between them the Share cell stated a measurement: "0.0% of held". Three
+   * cells about one absence, two refusals and one figure.
+   */
+  sharePct: number | null;
 }
 
 export interface AccountsTableModel {
   held: AccountsTableRow[];
   owed: AccountsTableRow[];
+  /**
+   * What the shares on each side are struck AGAINST — the sum of what each
+   * account contributes to its own side, which is not the side's printed total
+   * whenever a row sits on the wrong side of its sign.
+   *
+   * 🔴 The Owed group printed "-$842.89" while every slice under it divided by
+   * $925.61: Chase Sapphire's $82.72 of credit is netted out of the total and
+   * not out of the base. "39.8% of owed" over a heading reading -$842.89 works
+   * out to $335.47, not the $367.99 printed two columns along. The dashboard's
+   * cards card already carries the missing sentence — "$82.72 of credit on
+   * Chase Sapphire is netted off, so each slice is of the $925.61 actually
+   * owed" — and this table did not.
+   */
+  heldShareBaseCents: number;
+  owedShareBaseCents: number;
   /** sum of the held balances (nulls contribute nothing) */
   heldTotalCents: number;
   /** sum of the owed balances — NEGATIVE, in the net-worth frame */
@@ -113,7 +137,8 @@ function toRow(account: AccountsTableAccount, sideTotalCents: number): AccountsT
       deltaCents === null || startCents === null || startCents === 0
         ? null
         : round1((deltaCents / Math.abs(startCents)) * 100),
-    sharePct: sideTotalCents === 0 ? 0 : round1((size / sideTotalCents) * 100),
+    sharePct:
+      account.balanceCents === null ? null : sideTotalCents === 0 ? 0 : round1((size / sideTotalCents) * 100),
   };
 }
 
@@ -151,6 +176,8 @@ export function buildAccountsTable(accounts: readonly AccountsTableAccount[]): A
   return {
     held,
     owed,
+    heldShareBaseCents: sideTotal(heldIn),
+    owedShareBaseCents: sideTotal(owedIn),
     heldTotalCents,
     owedTotalCents,
     netCents: heldTotalCents + owedTotalCents,
@@ -333,15 +360,27 @@ function RowSparkline({ row }: { row: AccountsTableRow }) {
   );
 }
 
+/**
+ * ⛔ `shareBaseCents` is what the slices under this heading are struck against,
+ * and it is NOT the printed total whenever a row sits on the wrong side of its
+ * sign. The Owed group read "-$842.89" while every slice divided by $925.61:
+ * 39.8% of $842.89 is $335.47, not the $367.99 printed two columns along. The
+ * dashboard's cards card already carried the missing clause — "$82.72 of credit
+ * on Chase Sapphire is netted off, so each slice is of the $925.61 actually
+ * owed" — and this table did not.
+ */
 function GroupHeading({
   label,
   note,
   totalCents,
+  shareBaseCents,
 }: {
   label: string;
   note: string;
   totalCents: number;
+  shareBaseCents: number;
 }) {
+  const baseDiffers = shareBaseCents !== Math.abs(totalCents);
   return (
     <tr>
       <th
@@ -352,7 +391,10 @@ function GroupHeading({
         <span className="flex items-baseline justify-between gap-4">
           <span className={`${EYEBROW} text-ink-faint`}>
             {label}
-            <span className="font-normal normal-case tracking-normal"> — {note}</span>
+            <span className="font-normal normal-case tracking-normal">
+              {" "}— {note}
+              {baseDiffers && `, sharing ${formatCents(shareBaseCents)}`}
+            </span>
           </span>
           <span className="figures text-xs font-semibold text-ink-muted">
             {formatCents(totalCents)}
@@ -402,21 +444,28 @@ function AccountRow({ row, rank }: { row: AccountsTableRow; rank: number }) {
           <span className="block h-1.5 overflow-hidden rounded-full bg-surface-sunken shadow-[inset_0_1px_0_var(--line)]">
             <span
               className={`block h-full rounded-full ${BAR_TONE[(rank - 1) % BAR_TONE.length]}`}
-              style={{ width: `${row.sharePct}%` }}
+              style={{ width: `${row.sharePct ?? 0}%` }}
             />
           </span>
           {/* A row on the WRONG SIDE of its own sign takes no share, and saying
               "0.0% of owed" of a card the bank owes YOU money on describes it as
               a rounded-down debt. Name the reason instead — the balance beside it
-              is the proof. */}
+              is the proof.
+
+              🔴 …and a row with NO balance takes no share either. Capital One
+              360 Checking's Balance cell refuses ("no balance") and its Change
+              cell refuses ("not yet"), and between them this stated a
+              measurement: "0.0% of held". */}
           <span className="figures text-[10px] text-ink-faint">
-            {row.balanceCents !== null &&
-            row.balanceCents !== 0 &&
-            sideMagnitudeCents(row.balanceCents, row.isLiability) === 0
-              ? row.isLiability
-                ? "in credit — no share of the debt"
-                : "overdrawn — no share of what is held"
-              : `${row.sharePct.toFixed(1)}% of ${row.isLiability ? "owed" : "held"}`}
+            {row.sharePct === null
+              ? "no balance — no share"
+              : row.balanceCents !== null &&
+                  row.balanceCents !== 0 &&
+                  sideMagnitudeCents(row.balanceCents, row.isLiability) === 0
+                ? row.isLiability
+                  ? "in credit — no share of the debt"
+                  : "overdrawn — no share of what is held"
+                : `${row.sharePct.toFixed(1)}% of ${row.isLiability ? "owed" : "held"}`}
           </span>
         </span>
       </td>
@@ -525,6 +574,7 @@ export function AccountsTable({ accounts, cashWalletNote }: AccountsTableProps) 
                 label="Held"
                 note={`${model.held.length} ${model.held.length === 1 ? "account" : "accounts"}`}
                 totalCents={model.heldTotalCents}
+                shareBaseCents={model.heldShareBaseCents}
               />
               {model.held.map((row, i) => (
                 <AccountRow key={row.id} row={row} rank={i + 1} />
@@ -538,6 +588,7 @@ export function AccountsTable({ accounts, cashWalletNote }: AccountsTableProps) 
                 label="Owed"
                 note={`${model.owed.length} ${model.owed.length === 1 ? "account" : "accounts"}`}
                 totalCents={model.owedTotalCents}
+                shareBaseCents={model.owedShareBaseCents}
               />
               {model.owed.map((row, i) => (
                 <AccountRow key={row.id} row={row} rank={model.held.length + i + 1} />
