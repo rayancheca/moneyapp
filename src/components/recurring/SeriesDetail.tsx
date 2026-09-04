@@ -330,8 +330,8 @@ export function SeriesDetail({
             <h2 className="mb-1 text-sm font-medium text-warning">Already due, and not posted</h2>
             <p className="mb-3 text-xs text-ink-muted">
               Inside this calendar month, with no posting within {data.toleranceDays}{" "}
-              {data.toleranceDays === 1 ? "day" : "days"} of it. The forecast counts it, and so does
-              this month&apos;s budget.
+              {data.toleranceDays === 1 ? "day" : "days"}{" "}
+              of it. The forecast counts it, and so does this month&apos;s budget.
             </p>
             <ul className="divide-y divide-line">
               <li className="flex items-baseline justify-between gap-3 py-2 text-sm">
