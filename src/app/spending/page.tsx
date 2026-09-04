@@ -140,14 +140,36 @@ export default async function SpendingPage({
   const breakdown = categoryBreakdown(db, range);
   const prevBreakdown = categoryBreakdown(db, { from: prevPeriod.from, to: prevPeriod.to });
   const prevById = new Map(prevBreakdown.map((r) => [r.categoryId, r.spentCents]));
-  // "What moved" reads the SAME two breakdowns the categories table already
-  // compares, so the two panels can never disagree about a delta.
-  const deviationRows = breakdown.map((r) => ({
-    key: r.categoryId ?? "__uncat",
-    label: r.name,
-    currentCents: r.spentCents,
-    previousCents: prevById.get(r.categoryId) ?? 0,
-  }));
+  /*
+   * "What moved" reads the SAME two breakdowns the categories table already
+   * compares, so the two panels can never disagree about a delta.
+   *
+   * 🔴 …over the UNION of them. Mapping the current period alone made a
+   * category that stopped spending invisible to a panel whose whole subject is
+   * what changed. Measured on `/spending?period=2026-07`: fifteen top
+   * categories moved against June and the caption read "6 up · 6 down",
+   * because Gambling ($20.00 → $0), Personal Care ($375.89 → $0) and Government
+   * ($2,250.00 → $0) had no July row to map from — and Government's fall was
+   * the single largest move of the fifteen, larger than the "largest move"
+   * the accessible description named. `deviationLayout`'s own docstring records
+   * the last time a count here stood over a collection it was not taken from.
+   */
+  const deviationRows = [
+    ...breakdown.map((r) => ({
+      key: r.categoryId ?? "__uncat",
+      label: r.name,
+      currentCents: r.spentCents,
+      previousCents: prevById.get(r.categoryId) ?? 0,
+    })),
+    ...prevBreakdown
+      .filter((r) => !breakdown.some((b) => (b.categoryId ?? "__uncat") === (r.categoryId ?? "__uncat")))
+      .map((r) => ({
+        key: r.categoryId ?? "__uncat",
+        label: r.name,
+        currentCents: 0,
+        previousCents: r.spentCents,
+      })),
+  ];
   // Share denominator = gross positive spending across categories. The NET total
   // (cashFlow.totals.spentCents) can be dragged below an individual category's
   // gross by refund/reimbursement-heavy categories that net to an inflow, which
