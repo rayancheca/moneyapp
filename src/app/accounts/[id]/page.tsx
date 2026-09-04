@@ -226,7 +226,7 @@ export default async function AccountDetailPage({
                 from Aug 12 is proven by Aug 12's document, and asking about
                 today would answer a different question than the one on screen */}
             {balanceProvenance && (
-              <ProvenancePopover label={heading.label.toLowerCase()} provenance={balanceProvenance} />
+              <ProvenancePopover label={heading.subject} provenance={balanceProvenance} />
             )}
           </div>
           {latest ? (

@@ -77,7 +77,7 @@ test("an account balance names the document that pins it", async ({ page }) => {
   await gotoHydrated(page, "/accounts");
   await page.locator('a[href^="/accounts/"]').first().click();
 
-  const trigger = page.getByRole("button", { name: /How (this balance|the amount owed) is proven/ });
+  const trigger = page.getByRole("button", { name: /How (this balance|the amount owed|the credit) is proven/ });
   await expect(trigger).toBeVisible();
   await expect(trigger).toContainText(VERDICT_WORDS);
 

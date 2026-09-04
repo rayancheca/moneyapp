@@ -52,6 +52,17 @@ export function sideMagnitudeCents(balanceCents: number | null, isLiability: boo
 export interface BalanceHeading {
   /** the heading over the figure */
   label: string;
+  /**
+   * The same subject as a NOUN PHRASE, for a sentence that has to name it —
+   * "How the amount owed is proven".
+   *
+   * ⚠️ Not `label.toLowerCase()`. That is what the provenance popover was given
+   * when this function replaced the inline ternary, and it produced "How amount
+   * owed is proven" — which the accessible-name assertion in
+   * `e2e/provenance.spec.ts` caught, and which is worse English than the
+   * hard-coded string it replaced. The article belongs to the phrase.
+   */
+  subject: string;
   /** what to print — always the magnitude the label names */
   cents: number;
   /** true when the figure is money against the owner: a debt, or an overdraft */
@@ -59,7 +70,13 @@ export interface BalanceHeading {
 }
 
 export function balanceHeading(balanceCents: number, isLiability: boolean): BalanceHeading {
-  if (!isLiability) return { label: "Balance", cents: balanceCents, isAgainstYou: balanceCents < 0 };
+  if (!isLiability)
+    return {
+      label: "Balance",
+      subject: "this balance",
+      cents: balanceCents,
+      isAgainstYou: balanceCents < 0,
+    };
   /*
    * ⚠️ `|| 0` is the negative-zero guard, and it is not decorative: negating a
    * $0.00 balance gives `-0`, which formats as "-$0.00" — a card that owes
@@ -68,6 +85,6 @@ export function balanceHeading(balanceCents: number, isLiability: boolean): Bala
    */
   const owed = -balanceCents || 0;
   return owed < 0
-    ? { label: "In credit", cents: -owed, isAgainstYou: false }
-    : { label: "Amount owed", cents: owed, isAgainstYou: owed > 0 };
+    ? { label: "In credit", subject: "the credit", cents: -owed, isAgainstYou: false }
+    : { label: "Amount owed", subject: "the amount owed", cents: owed, isAgainstYou: owed > 0 };
 }

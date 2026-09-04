@@ -53,6 +53,7 @@ describe("balanceHeading", () => {
   test("a card in credit says so, and prints the credit", () => {
     expect(balanceHeading(8_272, true)).toEqual({
       label: "In credit",
+      subject: "the credit",
       cents: 8_272,
       isAgainstYou: false,
     });
@@ -61,6 +62,7 @@ describe("balanceHeading", () => {
   test("a card that owes prints what it owes", () => {
     expect(balanceHeading(-55_762, true)).toEqual({
       label: "Amount owed",
+      subject: "the amount owed",
       cents: 55_762,
       isAgainstYou: true,
     });
@@ -70,7 +72,12 @@ describe("balanceHeading", () => {
      negative amount. Found the moment this function was first tested. */
   test("a card at zero owes nothing, and does not print a negative zero", () => {
     const zero = balanceHeading(0, true);
-    expect(zero).toEqual({ label: "Amount owed", cents: 0, isAgainstYou: false });
+    expect(zero).toEqual({
+      label: "Amount owed",
+      subject: "the amount owed",
+      cents: 0,
+      isAgainstYou: false,
+    });
     expect(Object.is(zero.cents, -0)).toBe(false);
   });
 
@@ -79,6 +86,7 @@ describe("balanceHeading", () => {
   test("an overdrawn account keeps the plain label and reads as money against you", () => {
     expect(balanceHeading(-4_200, false)).toEqual({
       label: "Balance",
+      subject: "this balance",
       cents: -4_200,
       isAgainstYou: true,
     });
@@ -87,8 +95,29 @@ describe("balanceHeading", () => {
   test("an account holding money is neither", () => {
     expect(balanceHeading(300_760, false)).toEqual({
       label: "Balance",
+      subject: "this balance",
       cents: 300_760,
       isAgainstYou: false,
     });
+  });
+
+  /*
+   * ⛔ THE SUBJECT IS A NOUN PHRASE, NOT THE LABEL LOWERCASED. Given
+   * `label.toLowerCase()`, the provenance popover read "How amount owed is
+   * proven" — caught by the accessible-name assertion in
+   * `e2e/provenance.spec.ts`, which is the only place that sentence is
+   * assembled.
+   */
+  test("every subject reads as a noun phrase inside a sentence", () => {
+    for (const [cents, liability] of [
+      [8_272, true],
+      [-55_762, true],
+      [0, true],
+      [300_760, false],
+      [-4_200, false],
+    ] as const) {
+      const { subject } = balanceHeading(cents, liability);
+      expect(`How ${subject} is proven`).toMatch(/^How (this balance|the amount owed|the credit) is proven$/);
+    }
   });
 });
