@@ -8,6 +8,7 @@ import type { AccountCard, InstitutionGroup } from "@/services/institution-group
 import { Icon } from "@/components/shell/Icon";
 import { IconButton } from "@/components/ui/Button";
 import { Money } from "@/components/ui/Money";
+import { BalanceFigure } from "@/components/accounts/BalanceFigure";
 import { Sparkline, type SparklineTone } from "@/components/ui/Sparkline";
 import { toast } from "@/components/ui/Toast";
 import { formatCentsSigned } from "@/lib/money";
@@ -171,10 +172,7 @@ export function ManagedAccounts({
                     />
                     <div className="text-right">
                       {a.balanceCents !== null ? (
-                        <Money
-                          cents={a.isLiability ? -a.balanceCents : a.balanceCents}
-                          className={`text-sm font-medium ${a.isLiability ? "text-negative" : ""}`}
-                        />
+                        <BalanceFigure balanceCents={a.balanceCents} isLiability={a.isLiability} />
                       ) : (
                         <span className="text-xs text-ink-faint">no balance</span>
                       )}

@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 import Link from "next/link";
 import type { InstitutionGroup, AccountCard as AccountCardData } from "@/services/institution-groups";
 import { formatCentsSigned } from "@/lib/money";
+import { BalanceFigure } from "@/components/accounts/BalanceFigure";
 import { Money } from "@/components/ui/Money";
 import { Sparkline, type SparklineTone } from "@/components/ui/Sparkline";
 
@@ -86,9 +87,10 @@ function SubCard({ account }: { account: AccountCardData }) {
       </div>
       <div className="mt-3 flex items-baseline justify-between gap-3">
         {account.balanceCents !== null ? (
-          <Money
-            cents={account.isLiability ? -account.balanceCents : account.balanceCents}
-            className={`text-base font-medium ${account.isLiability ? "text-negative" : ""}`}
+          <BalanceFigure
+            balanceCents={account.balanceCents}
+            isLiability={account.isLiability}
+            className="text-base font-medium"
           />
         ) : (
           <span className="text-xs text-ink-faint">no balance yet</span>
