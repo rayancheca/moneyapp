@@ -153,3 +153,25 @@ describe("emptyPeriodCopy", () => {
     expect(copy.description).not.toContain("1 days");
   });
 });
+
+describe("the uncategorized-bucket clause", () => {
+  const measured = { kind: "measured", uncoveredDays: 0 } as const;
+  const day = (iso: string) => iso;
+
+  /*
+   * ⚠️ `/spending` prints an explicit Uncategorized bucket above this copy, so
+   * naming it there is what makes a measured zero honest. A category page has
+   * no such bucket — the clause would point at a control the reader cannot see.
+   */
+  test("is offered only to the surface that has the bucket", () => {
+    expect(
+      emptyPeriodCopy(measured, "August 2026", "2026-08-31", day, { uncategorizedBucket: true }).description,
+    ).toContain("their own explicit bucket");
+  });
+
+  test("and is absent by default", () => {
+    const copy = emptyPeriodCopy(measured, "August 2026", "2026-08-31", day);
+    expect(copy.description).not.toContain("bucket");
+    expect(copy.description).toContain("a measured zero rather than an unread window");
+  });
+});

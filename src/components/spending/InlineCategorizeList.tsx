@@ -17,10 +17,13 @@ export function InlineCategorizeList({
   data,
   categories,
   onChanged,
+  emptyText,
 }: {
   data: SpendingCategoryTxns;
   categories: readonly CategoryPickerOption[];
   onChanged: () => void;
+  /** what an empty list MEANS — see the guard below */
+  emptyText?: string;
 }) {
   /*
    * 🔴 "Nothing left to categorize here" ANSWERED A QUESTION NOBODY ASKED.
@@ -37,7 +40,10 @@ export function InlineCategorizeList({
    * what an empty list means for that one.
    */
   if (data.rows.length === 0) {
-    return <p className="px-1 py-3 text-xs text-ink-faint">No transactions in this period.</p>;
+    /* ⚠️ Over a window nobody has imported this is a claim about COVERAGE, not
+       about activity — `lib/empty-period` names which of six worlds it is, and
+       the caller passes the sentence when it knows. */
+    return <p className="px-1 py-3 text-xs text-ink-faint">{emptyText ?? "No transactions in this period."}</p>;
   }
 
   function recategorize(id: string, categoryId: string): void {

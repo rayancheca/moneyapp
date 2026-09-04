@@ -83,6 +83,12 @@ export function emptyPeriodCopy(
   label: string,
   ledgerReaches: string | null,
   formatDay: (iso: string) => string,
+  /**
+   * ⚠️ `/spending` prints an explicit Uncategorized bucket above this copy and
+   * a measured zero there is only honest with that named. A category page has
+   * no such bucket, so the clause would assert a control the reader cannot see.
+   */
+  opts: { uncategorizedBucket?: boolean } = {},
 ): { title: string; description: string } {
   const through = ledgerReaches === null ? null : formatDay(ledgerReaches);
   switch (reason.kind) {
@@ -129,7 +135,10 @@ export function emptyPeriodCopy(
       return {
         title: "No activity in this period",
         description:
-          "This window sits inside what has been imported, so nothing posted in it — a measured zero rather than an unread window. Accounts imported less far than the ledger as a whole could still be holding rows here; /imports says which. Uncategorized outflows would show up above, as their own explicit bucket.",
+          "This window sits inside what has been imported, so nothing posted in it — a measured zero rather than an unread window. Accounts imported less far than the ledger as a whole could still be holding rows here; /imports says which." +
+          (opts.uncategorizedBucket
+            ? " Uncategorized outflows would show up above, as their own explicit bucket."
+            : ""),
       };
   }
 }

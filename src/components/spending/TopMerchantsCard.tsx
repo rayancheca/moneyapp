@@ -15,9 +15,13 @@ import type { TopMerchants } from "@/services/spending";
  * a sibling and not a wrapper because the row is already a link, and a link
  * inside a link is invalid HTML and an axe `nested-interactive` violation.
  */
-export function TopMerchantsCard({ data }: { data: TopMerchants }) {
+export function TopMerchantsCard({ data, emptyText }: { data: TopMerchants; emptyText?: string }) {
   if (data.entries.length === 0) {
-    return <p className="text-sm text-ink-muted">No merchant spending in this period.</p>;
+    /* ⚠️ "No merchant spending in this period" is a claim of ABSENCE, and over
+       a window nobody has imported it is really a claim about coverage — the
+       error `lib/empty-period` exists to stop. The caller that knows which
+       world the window is in passes the sentence. */
+    return <p className="text-sm text-ink-muted">{emptyText ?? "No merchant spending in this period."}</p>;
   }
   return (
     <div>

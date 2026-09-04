@@ -13,10 +13,20 @@ import type { SpendingCategoryTxns } from "@/app/spending/actions";
 export function CategoryTxnPanel({
   data,
   categories,
+  emptyText,
 }: {
   data: SpendingCategoryTxns;
   categories: readonly CategoryPickerOption[];
+  /** what an empty list means for THIS window — `lib/empty-period`'s sentence */
+  emptyText?: string;
 }) {
   const router = useRouter();
-  return <InlineCategorizeList data={data} categories={categories} onChanged={() => router.refresh()} />;
+  return (
+    <InlineCategorizeList
+      data={data}
+      categories={categories}
+      emptyText={emptyText}
+      onChanged={() => router.refresh()}
+    />
+  );
 }

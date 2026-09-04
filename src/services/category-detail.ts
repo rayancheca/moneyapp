@@ -194,6 +194,17 @@ export interface CategoryBudgetRef {
   spentCents: number;
   remainingCents: number;
   period: string;
+  /**
+   * The window actually graded — the budget's own period containing `refDate`.
+   *
+   * 🔴 The card names no window and the page it sits on has a period selector,
+   * so on 2026-09-04 `/categories/<Housing>?period=2026-07` read "Spent · July
+   * 2026 · $2,653.58" over "monthly budget for this category · $0.00 of
+   * $2,291.21" — one screen answering the same question twice. The figure is
+   * right for September; the sentence was the defect. `/budgets`' own detail
+   * card prints "Grading Sep 1 – Sep 30" for the same reason.
+   */
+  bounds: { start: string; end: string };
   alert: "none" | "warn80" | "over";
   href: string;
 }
@@ -209,6 +220,7 @@ export function categoryBudgetRef(db: AppDatabase, categoryId: string, refDate: 
     spentCents: status.spentCents,
     remainingCents: status.remainingCents,
     period: status.budget.period,
+    bounds: { start: status.bounds.start, end: status.bounds.end },
     alert: status.alert,
     href: "/budgets",
   };

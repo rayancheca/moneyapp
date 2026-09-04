@@ -4,8 +4,11 @@ import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { todayIso } from "@/lib/dates";
+import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import { resolvePeriod } from "@/lib/period";
+import { emptyPeriodCopy, emptyPeriodReason } from "@/lib/empty-period";
+import { ledgerOpens, ledgerReaches } from "@/services/observation-frontier";
 import { categorySpending } from "@/services/analytics";
 import {
   categoryBudgetRef,
@@ -111,6 +114,36 @@ export default async function CategoryPage({
    * Like /spending's, its window is the newest fully-imported month rather than
    * the period selector's, and every sentence names it.
    */
+  /*
+   * 🔴 WHICH OF SIX WORLDS AN EMPTY WINDOW IS IN. On 2026-09-04 every category
+   * page read, of a September nobody had imported a single day of:
+   *
+   *     Spent · September 2026   $0.00   0 transactions
+   *     Top merchants   "No merchant spending in this period."
+   *     Transactions    "No transactions in this period."
+   *
+   * — three claims of absence about a window nobody has looked at, which is the
+   * one error `lib/empty-period` exists to stop. It was written for /spending
+   * on 2026-09-04 and shipped with exactly one caller; this is the second, and
+   * the two pages a reader moves between now describe the same month the same
+   * way.
+   */
+  const emptyReason =
+    txnCount === 0
+      ? emptyPeriodReason({
+          from: range.from,
+          to: range.to,
+          today,
+          ledgerOpens: ledgerOpens(db),
+          ledgerReaches: ledgerReaches(db),
+        })
+      : null;
+  const emptyCopy = emptyReason
+    ? emptyPeriodCopy(emptyReason, period.label, ledgerReaches(db), formatDayLong)
+    : null;
+  // the title carries the antecedent — "4 days of IT" has none without it
+  const emptyText = emptyCopy ? `${emptyCopy.title}. ${emptyCopy.description}` : undefined;
+
   const insights = categoryInsights(db, id, today);
   const subcats = categorySubcategorySplit(db, id, range);
   const series = seriesInCategory(db, id, today);
@@ -196,7 +229,13 @@ export default async function CategoryPage({
               <div>
                 <h2 className="text-sm font-medium">Budget</h2>
                 <p className="text-xs text-ink-faint">
-                  {budget.period} budget for this category
+                  {/* 🔴 The window, because this page has a PERIOD SELECTOR and
+                      the budget is always graded at today. Unnamed, the card
+                      answered "how much of Housing went out?" with $0.00 on a
+                      screen whose headline answered it with $2,653.58. Same
+                      words as /budgets' own detail card. */}
+                  {budget.period} budget · grading {formatDayShort(budget.bounds.start)} –{" "}
+                  {formatDayShort(budget.bounds.end)}
                   {/* the "left" figure beside this is measured from AVAILABLE, so a
                       carry has to be named here or the two cannot be reconciled */}
                   {budget.rolloverCents > 0 &&
@@ -251,7 +290,7 @@ export default async function CategoryPage({
           {merchants && (
             <SurfaceCard>
               <h2 className="mb-3 text-sm font-medium">Top merchants</h2>
-              <TopMerchantsCard data={merchants} />
+              <TopMerchantsCard data={merchants} emptyText={emptyText} />
             </SurfaceCard>
           )}
 
@@ -267,7 +306,7 @@ export default async function CategoryPage({
             <span className="text-xs text-ink-faint">{period.label}</span>
           </div>
           {txns.ok ? (
-            <CategoryTxnPanel data={txns.data} categories={pickerOptions} />
+            <CategoryTxnPanel data={txns.data} categories={pickerOptions} emptyText={emptyText} />
           ) : (
             <p className="text-sm text-ink-muted">Could not load transactions.</p>
           )}

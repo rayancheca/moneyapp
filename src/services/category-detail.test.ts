@@ -211,6 +211,25 @@ describe("categoryBudgetRef", () => {
     expect(ref).toMatchObject({ amountCents: 40_000, spentCents: 6_000, remainingCents: 34_000, period: "monthly", alert: "none", href: "/budgets" });
   });
 
+  /*
+   * 🔴 The card names no window, and the page it sits on has a period selector.
+   * On 2026-09-04 `/categories/<Housing>?period=2026-07` read
+   *
+   *     Spent · July 2026            $2,653.58   7 transactions
+   *     Budget · monthly budget for this category   $0.00 of $2,291.21
+   *
+   * — one screen answering "how much of Housing went out?" twice, with
+   * $2,653.58 and $0.00, because the budget is always graded at today. The
+   * figure is right for September; the sentence was the defect. `/budgets`'
+   * own detail card already prints "Grading Sep 1 – Sep 30" for the same
+   * reason.
+   */
+  test("carries the window it graded, because the page it sits on can be showing another", () => {
+    bundle.db.insert(budgets).values({ categoryId: catId("Food"), period: "monthly", amountCents: 40_000, startsOn: "2026-01-01" }).run();
+    const ref = categoryBudgetRef(bundle.db, catId("Food"), TODAY);
+    expect(ref!.bounds).toEqual({ start: "2026-07-01", end: "2026-07-31" });
+  });
+
   test("null when no budget", () => {
     expect(categoryBudgetRef(bundle.db, catId("Food"), TODAY)).toBeNull();
   });

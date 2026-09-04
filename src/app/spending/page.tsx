@@ -307,7 +307,9 @@ export default async function SpendingPage({
   const emptyCopy =
     emptyReason === null
       ? null
-      : emptyPeriodCopy(emptyReason, period.label, ledgerReaches(db), formatDayLong);
+      : emptyPeriodCopy(emptyReason, period.label, ledgerReaches(db), formatDayLong, {
+          uncategorizedBucket: true,
+        });
 
   return (
     <>
