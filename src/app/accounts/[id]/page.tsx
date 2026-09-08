@@ -25,6 +25,7 @@ import { AccountHoldingsTable } from "@/components/accounts/AccountHoldingsTable
 import { InsightList } from "@/components/insights/InsightList";
 import { AccountNameHeading } from "@/components/accounts/AccountNameHeading";
 import { AnchorForm } from "@/components/accounts/AnchorForm";
+import { BalanceFigure } from "@/components/accounts/BalanceFigure";
 import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { BalanceChartPanel } from "@/components/accounts/BalanceChartPanel";
 import { EditAccountButton } from "@/components/accounts/EditAccountButton";
@@ -387,7 +388,20 @@ export default async function AccountDetailPage({
                     <td className="figures py-2">{a.anchoredOn}</td>
                     <td className="py-2 text-xs text-ink-muted">{SOURCE_LABEL[a.source]}</td>
                     <td className="py-2 text-right">
-                      <Money cents={liability ? -a.balanceCents : a.balanceCents} />
+                      {/* 🔴 `liability ? -balanceCents : balanceCents` under a
+                          column headed "Owed": Chase Sapphire's own history read
+                          "2026-09-02 · statement · -$82.72" and "2026-07-02 ·
+                          -$70.89" — two statements on which the bank owed HIM,
+                          printed as negative debts. A column header cannot carry
+                          a per-row verdict, so the ROW does, through the
+                          component both accounts lenses already read: the
+                          magnitude, "in credit" beside it, and the debt-red kept
+                          for the rows that are debts. */}
+                      <BalanceFigure
+                        balanceCents={a.balanceCents}
+                        isLiability={liability}
+                        className="text-sm"
+                      />
                     </td>
                     <td className="py-2 text-right">
                       {(a.source === "manual" || a.source === "live") && (
