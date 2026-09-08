@@ -422,8 +422,15 @@ export default async function AccountDetailPage({
                               : `This balance is what verifies ${account.name} on ${a.anchoredOn}. Removing it leaves those days to be derived from transactions alone.`,
                             lines: [
                               {
-                                label: liability ? "Owed, as recorded" : "Balance, as recorded",
-                                value: formatCents(liability ? -a.balanceCents : a.balanceCents),
+                                /* the same rule, and the same hand-rolled copy:
+                                   an anchor is stored in the net-worth frame, so
+                                   a card in credit is a POSITIVE `balanceCents`
+                                   and negating it printed a negative amount
+                                   owed. Chase Sapphire's 2026-09-02 statement
+                                   anchor is exactly that; only its `statement`
+                                   source keeps this dialog off the screen. */
+                                label: `${balanceHeading(a.balanceCents, liability).label}, as recorded`,
+                                value: formatCents(balanceHeading(a.balanceCents, liability).cents),
                                 irreversible: true,
                               },
                               {
@@ -483,8 +490,16 @@ export default async function AccountDetailPage({
                                 }`,
                         },
                         {
-                          label: liability ? "Owed, leaving the totals" : "Balance leaving the totals",
-                          value: formatCents(sign * latest.balanceCents),
+                          /* 🔴 `liability ? "Owed" : "Balance"` is `balanceHeading`
+                             re-decided by hand, two hundred lines under the call
+                             that gets it right — and it read "Owed, leaving the
+                             totals · -$82.72" for Chase Sapphire on 2026-09-08,
+                             a card that owes nothing. Six surfaces said "in
+                             credit" about that balance on that day, and this one
+                             is a confirmation for an action that moves money out
+                             of every total. */
+                          label: `${balanceHeading(latest.balanceCents, liability).label}, leaving the totals`,
+                          value: formatCents(balanceHeading(latest.balanceCents, liability).cents),
                         },
                       ]
                     : []),
