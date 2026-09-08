@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
 import { isLiability } from "@/db/schema/accounts";
+import type { BalanceBasis } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
 import { dayChangeLabel } from "@/lib/day-change-label";
@@ -10,6 +11,7 @@ import { formatDayShort } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { balanceDeltaAccent, balanceHeading, type BalanceDeltaAccent } from "@/lib/side-magnitude";
 import { accountInsights } from "@/services/account-insights";
+import { basisIsChecked } from "@/services/coverage";
 import { getAccount, listAccounts, listInstitutions } from "@/services/accounts";
 import { listAnchors } from "@/services/anchors";
 import { accountSeries } from "@/services/derivation";
@@ -95,17 +97,22 @@ function ChangeChip({ label, cents, liability = false }: { label: string; cents:
  * page's header calls it "derived (unverified)" and its provenance badge reads
  * "nothing checks it". A day that is not verified cannot stop being verified.
  * The answer is 8.
+ *
+ * 🔴 And the fix for that shipped a local `{anchored, derived}` set, which
+ * dropped the SEVEN `carried` days too and answered **1**. `carried` means
+ * nothing posted since the anchor, so those days rest on the anchor and are
+ * exactly what removing it un-verifies. `basisIsChecked` is the rule now and
+ * `coverage` is the only place it lives — this page reads it rather than
+ * keeping a third opinion about the same five basis values.
  */
-const VERIFIED_BASIS: ReadonlySet<string> = new Set(["anchored", "derived"]);
-
 function daysPinnedBy(
-  series: readonly { day: string; basis: string }[],
+  series: readonly { day: string; basis: BalanceBasis }[],
   anchoredOn: string,
   nextAnchoredOn: string | undefined,
 ): number {
   return series.filter(
     (p) =>
-      VERIFIED_BASIS.has(p.basis) &&
+      basisIsChecked(p.basis) &&
       compareDates(p.day, anchoredOn) >= 0 &&
       (nextAnchoredOn === undefined || compareDates(p.day, nextAnchoredOn) < 0),
   ).length;

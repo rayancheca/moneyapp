@@ -10,7 +10,8 @@ import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
-import { accountCoverage } from "./coverage";
+import { BALANCE_BASES } from "@/db/schema/balances";
+import { accountCoverage, basisIsChecked } from "./coverage";
 
 /**
  * Coverage grading exists because the two questions "is this account's money
@@ -492,5 +493,32 @@ describe("verifiedThrough — a break, and what only looks like one", () => {
       { day: "2026-01-02", basis: "derived_unverified" },
     ]);
     expect(c.verifiedThrough).toBeNull();
+  });
+});
+
+describe("basisIsChecked — the rule three surfaces were answering separately", () => {
+  /**
+   * 🔴 `/accounts/[id]`'s remove-balance confirmation kept a local
+   * `{anchored, derived}` set and so called a `carried` day unchecked. On the
+   * owner's ledger that turned the blast radius of removing Cash on Hand's
+   * 2026-08-03 anchor — 1 anchored day + 7 carried — into "1 day".
+   */
+  test("a carried day is checked: it rests on the anchor it was carried from", () => {
+    expect(basisIsChecked("carried")).toBe(true);
+  });
+
+  test("anchored and derived are checked", () => {
+    expect(basisIsChecked("anchored")).toBe(true);
+    expect(basisIsChecked("derived")).toBe(true);
+  });
+
+  test("only derived_unverified and gap are not", () => {
+    expect(basisIsChecked("derived_unverified")).toBe(false);
+    expect(basisIsChecked("gap")).toBe(false);
+  });
+
+  test("every basis the schema allows has an answer", () => {
+    // a new basis must be classified here deliberately rather than defaulting
+    expect(BALANCE_BASES.filter(basisIsChecked)).toEqual(["anchored", "derived", "carried"]);
   });
 });

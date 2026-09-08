@@ -41,6 +41,33 @@ export type CoverageGrade =
   /** no derived cache yet (new or never imported) */
   | "unknown";
 
+/**
+ * Whether a day's balance is CHECKED — the one place that decides, because two
+ * surfaces already answered it differently.
+ *
+ * ⛔ `carried` is checked. `deriveForward` writes `sawTxn ? "derived_unverified"
+ * : "carried"`, so a carried day means nothing posted since the last recorded
+ * balance and the number is exactly as proven as the anchor it came from;
+ * between two anchors it is written only when the two AGREE.
+ * `provenance.ts::BASIS_VERDICT` grades it `derived` for that reason and its
+ * docstring says reading it as weak is "the first thing this service got
+ * wrong". The dashboard says the same in words: "786 days had no activity to
+ * replay, so the balance before them was carried forward — as proven as that
+ * balance, and not a gap."
+ *
+ * 🔴 `/accounts/[id]` kept its own copy as `{anchored, derived}` and dropped
+ * `carried` with it. The confirmation for removing a recorded balance —
+ * destructive, with no undo — then offered "Days that stop being verified: 1
+ * day" for Cash on Hand's 2026-08-03 anchor, whose span is 1 anchored day, 7
+ * carried and 1 unverified: the answer is 8, and /imports says so on the same
+ * ledger ("closes to the cent through Aug 3, 2026, then carries that balance
+ * forward for 7 days"). Measured 2026-09-08: 24 of the 220 recorded balances on
+ * cash accounts understated their own blast radius, the worst by 61 days.
+ */
+export function basisIsChecked(basis: BalanceBasis): boolean {
+  return basis === "anchored" || basis === "derived" || basis === "carried";
+}
+
 export interface AccountCoverage {
   accountId: string;
   accountName: string;
@@ -203,7 +230,7 @@ const accountCoverageCached = cache(function accountCoverageCached(
         .limit(1)
         .get() !== undefined;
 
-    const isUnchecked = (basis: BalanceBasis): boolean => basis === "derived_unverified" || basis === "gap";
+    const isUnchecked = (basis: BalanceBasis): boolean => !basisIsChecked(basis);
     const firstUntrusted = balances.find((b) => isUnchecked(b.basis));
     const firstGap = balances.find((b) => b.basis === "gap");
 
