@@ -135,6 +135,18 @@ test("a duplicate pair can be retired and taken back", async ({ page }) => {
     withDb((db) => (db.prepare("SELECT status FROM transactions WHERE id = ?").get(B) as { status: string }).status),
   ).toBe("superseded");
 
+  /*
+   * 🔴 With this pair settled there is nothing open, and the tab counts OPEN
+   * pairs — so the view read "Duplicates 0" over a screenful of cards, 71 of
+   * them on the owner's ledger, with nothing saying why. Every sibling tab says
+   * so when its queue is clear ("Review queue is clear", "Empty is exactly what
+   * you want"); the one whose zero needed explaining said nothing. The full
+   * empty state still belongs to a ledger with no pairs at all — this is the
+   * other zero.
+   */
+  await expect(page.locator("main")).toContainText("No duplicate is waiting on a decision");
+  await expect(page.locator("main")).toContainText("Already decided");
+
   await card.getByRole("button", { name: "Undo" }).click();
   await expect(card).toContainText("Retire the copy you do not want counted");
   expect(

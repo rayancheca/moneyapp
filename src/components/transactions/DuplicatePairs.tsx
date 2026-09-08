@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import type { DuplicatePairRow, DuplicatePairSideRow } from "@/services/duplicate-resolution";
 import { resolveDuplicateAction, undoDuplicateAction } from "@/app/transactions/actions";
 import { Button } from "@/components/ui/Button";
+import { countPhrase } from "@/components/ui/blast-radius";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 
@@ -40,6 +41,21 @@ export function DuplicatePairs({ pairs }: DuplicatePairsProps) {
             <PairCard key={pair.candidateId} pair={pair} />
           ))}
         </section>
+      ) : null}
+      {/* 🔴 The tab counts OPEN pairs, and this is the one view that can read
+          "Duplicates 0" over a screenful of cards: 71 of them on the owner's
+          ledger. Every sibling tab says so when its queue is clear — "Review
+          queue is clear", "Empty is exactly what you want" — and the one whose
+          zero needs explaining was the one that said nothing. The full
+          `EmptyState` still belongs to a ledger with no pairs at all; this is
+          the other zero. */}
+      {open.length === 0 && settled.length > 0 ? (
+        <p className="text-sm text-ink-muted">
+          No duplicate is waiting on a decision — that is the zero on the tab. The{" "}
+          {countPhrase(settled.length, "pair")} below{" "}
+          {settled.length === 1 ? "is one you" : "are ones you"} already settled, and each can be
+          taken back.
+        </p>
       ) : null}
       {settled.length > 0 ? (
         <section aria-labelledby="dupes-settled" className="space-y-3">
