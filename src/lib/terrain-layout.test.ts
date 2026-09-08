@@ -411,6 +411,52 @@ describe("an unverified span is never drawn as a surface", () => {
     expect(r.unverifiedSpanCount).toBe(1);
   });
 
+  /**
+   * 🔴 `firstCents`/`deltaCents` read `vertices[0]`, and a vertex exists only
+   * where the account covers one of the evenly sampled columns. An account that
+   * opened between two samples reported the balance on the first sample AFTER
+   * it opened as its opening balance — under a table caption promising "every
+   * account from its first reconstructed day". Measured on the owner's ledger
+   * 2026-09-08: nine of eleven rows were wrong, SoFi Savings by $8,756.08.
+   *
+   * ⚠️ An account whose whole life is shorter than one sampling stride can have
+   * NO sampled day inside it at all. Cash on Hand held $5,000 for nine days;
+   * the stride was twenty.
+   */
+  test("the first day and the change are the ACCOUNT's, not the sampler's", () => {
+    // 41 days opening at $1.00 and closing at $410.00, sampled to 3 columns —
+    // day 0, 20, 40. The second account opens on day 30, between two samples.
+    const long = Array.from({ length: 41 }, (_, i) => ({
+      day: addDays("2026-01-01", i),
+      valueCents: 100 + i * 1000,
+      verified: true,
+    }));
+    const late = Array.from({ length: 11 }, (_, i) => ({
+      day: addDays("2026-01-31", i),
+      valueCents: 500_000 - i * 1000,
+      verified: true,
+    }));
+
+    const layout = computeTerrainLayout(
+      [ribbon({ id: "long", points: long }), ribbon({ id: "late", points: late })],
+      { ...OPTS, maxColumns: 3 },
+    );
+
+    const l = ribbonById(layout, "late");
+    // its first SAMPLED day is 2026-02-10, worth $490.00 — the sampler's answer
+    expect(l.vertices[0]!.day).toBe("2026-02-10");
+    // the LEDGER's answer: it opened on 2026-01-31 at $5,000.00
+    expect(l.firstDay).toBe("2026-01-31");
+    expect(l.firstCents).toBe(500_000);
+    expect(l.lastCents).toBe(490_000);
+    expect(l.deltaCents).toBe(-10_000);
+
+    // an account the sampler happens to catch at both ends is unaffected
+    const a = ribbonById(layout, "long");
+    expect(a.firstDay).toBe("2026-01-01");
+    expect(a.deltaCents).toBe(40_000);
+  });
+
   test("a hole in coverage breaks the ribbon — the two sides are never bridged", () => {
     const layout = computeTerrainLayout(
       [
@@ -850,7 +896,8 @@ describe("terrainTableCaption", () => {
   test("promises a first day for every account only when there is one", () => {
     const all = terrainTableCaption([{ firstDay: "2026-01-01" }, { firstDay: "2026-02-01" }], "1 September 2026");
     expect(all).toBe(
-      "Every account from its first reconstructed day to 1 September 2026 — the same numbers the terrain is drawn from.",
+      "Every account from its first reconstructed day to 1 September 2026. " +
+        "The terrain draws an even sample of days, so a ribbon can start after the day named here.",
     );
   });
 

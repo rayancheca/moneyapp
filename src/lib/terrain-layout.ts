@@ -133,11 +133,35 @@ export interface TerrainRibbon {
   segments: TerrainSegment[];
   /** every drawn column, for hover, the mark and the readout */
   vertices: TerrainVertex[];
+  /**
+   * This account's own reconstructed span and what it did over it — NOT the
+   * drawn one.
+   *
+   * 🔴 These read `vertices[0]` and `vertices.at(-1)`, and a vertex only exists
+   * where the account covers one of the ~72 EVENLY SAMPLED columns. An account
+   * that opened between two samples therefore reported its balance on the first
+   * sample after it opened as its opening balance, and the table lens said so
+   * in words: "Every account from its first reconstructed day". Measured on the
+   * owner's ledger 2026-09-08, NINE of eleven rows were wrong —
+   *
+   *     SoFi Savings   -$8,755.98 since Nov 2023   of an account that opened
+   *                                                at $0.00 in Oct 2023 and
+   *                                                holds $0.10
+   *     Cash on Hand   level since Aug 2026        of the $5,000 that went in
+   *                                                on Aug 3 and out on Aug 11
+   *     Chase Sapphire +$573.37 since Feb 2025     first day was $0.00, not
+   *                                                -$490.65
+   *
+   * — and Cash on Hand's whole nine-day life is shorter than one sampling
+   * stride, so no sample could ever show it. The drawing still samples; these
+   * four figures are the ledger's, which is what the caption, the rail and the
+   * hover readout all claim to be reading.
+   */
   firstDay: string | null;
   lastDay: string | null;
   firstCents: number;
   lastCents: number;
-  /** lastCents − firstCents over the drawn span */
+  /** lastCents − firstCents over the account's own span */
   deltaCents: number;
   /** how many drawn spans the ledger could not verify */
   unverifiedSpanCount: number;
@@ -591,8 +615,9 @@ function toRibbon(r: WorldRibbon, project: (v: Vec3) => TerrainPoint): TerrainRi
     const feet = slice.map((v) => v.foot).reverse();
     return { verified: run.verified, face: [...crest, ...feet], crest };
   });
-  const first = r.vertices[0];
-  const last = r.vertices.at(-1);
+  // ⛔ the ACCOUNT's own points, not the drawn `vertices` — see TerrainRibbon
+  const first = r.input.points[0];
+  const last = r.input.points.at(-1);
   const firstCents = first?.valueCents ?? 0;
   const lastCents = last?.valueCents ?? 0;
   return {
@@ -897,7 +922,13 @@ export function terrainRowFigures(
  */
 export function terrainTableCaption(ribbons: readonly Pick<TerrainRibbon, "firstDay">[], todayLabel: string): string {
   const blank = ribbons.filter((r) => r.firstDay === null).length;
-  const base = `Every account from its first reconstructed day to ${todayLabel} — the same numbers the terrain is drawn from.`;
+  const base =
+    `Every account from its first reconstructed day to ${todayLabel}. ` +
+    // ⚠️ The drawing samples ~72 evenly spaced days out of the ledger's four
+    // years, so a ribbon can begin later than the day this table names — which
+    // is exactly how the figures here came to be read off the sample instead of
+    // the ledger. Saying so is what lets both be true at once.
+    `The terrain draws an even sample of days, so a ribbon can start after the day named here.`;
   if (blank === 0) return base;
   return `${base} ${blank} ${blank === 1 ? "account has" : "accounts have"} no reconstructed day at all, and ${blank === 1 ? "its row is" : "their rows are"} left blank rather than read as zero.`;
 }
