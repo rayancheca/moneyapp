@@ -19,6 +19,7 @@ import { DisclosureChevron, DisclosureRegion, useDisclosure } from "@/components
 import { BudgetAmountEditor, PERIOD_WORD } from "./BudgetAmountEditor";
 import { BudgetDetails } from "./BudgetDetails";
 import { BudgetRolloverToggle } from "./BudgetRolloverToggle";
+import { budgetDeactivateLines } from "./deactivate-radius";
 
 /**
  * Pace → the bar fill and the label tone. Green→amber→red by projected pace.
@@ -367,22 +368,18 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
             confirmLabel="Deactivate this budget"
             radius={{
               headline: `${status.categoryPath} stops being budgeted. Its spending keeps posting to the ledger — only the pace row, its projection and its alerts go.`,
-              lines: [
+              /* the alerts this turns off are the row's, and one of them is the
+                 arrears — see `budgetDeactivateLines` for the month it read
+                 "$0.00 spent" over */
+              lines: budgetDeactivateLines(
                 {
-                  label: "Budget stopped",
-                  value: `${formatCents(budget.amountCents)} / ${PERIOD_WORD[budget.period]}`,
-                  irreversible: true,
+                  budgetPhrase: `${formatCents(budget.amountCents)} / ${PERIOD_WORD[budget.period]}`,
+                  spentCents: status.spentCents,
+                  overdueCents: status.overdueCents,
+                  expectedTailCents: status.expectedTailCents,
                 },
-                { label: "Spent so far this period", value: formatCents(status.spentCents) },
-                ...(status.expectedTailCents > 0
-                  ? [
-                      {
-                        label: "Recurring still expected this period",
-                        value: formatCents(status.expectedTailCents),
-                      },
-                    ]
-                  : []),
-              ],
+                formatCents,
+              ),
               reassurance:
                 "No transaction is changed and nothing is deleted — set the budget again to resume tracking.",
             }}
