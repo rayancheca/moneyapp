@@ -281,3 +281,49 @@ export function overdueNote(date: string, occurrenceCount: number): string {
   const more = occurrenceCount > 1 ? ` and ${occurrenceCount - 1} more` : "";
   return `${shortDate(date)}${more} — not posted`;
 }
+
+/**
+ * Where the postings' SPREAD belongs when the headline is not their centre.
+ *
+ * 🔴 `Per charge` printed the FORECAST amount with the postings' sample sd
+ * beside it — a ± around a number that is not what it measures. The forecast
+ * amount is often entered by hand: measured on the owner's ledger 2026-09-08,
+ * `/recurring/<Flamingo South Beach (rent)>` read "-$2,109.00 ± 610.65" over
+ * four charges averaging -$1,739.40, `<Cash job (weekly pay)>` "+$1,047.00 ±
+ * 457.50" over $400.00 and $1,047.00, and `<Breezeline (internet)>` "-$50.00 ±
+ * 5.59" over three averaging -$46.77. A reader takes "1,047.00 ± 457.50" as a
+ * range the charges fall in, and neither of those two does.
+ *
+ * ⛔ THE HEADLINE STAYS THE FORECAST FIGURE. It is what the forecast projects
+ * and what ANNUALIZED is built from — the same reason the All tab keeps it. The
+ * average is named UNDER it, carrying the ±, exactly as that tab already prints
+ * the pair. Owner's decision, 2026-09-08.
+ *
+ * ⚠️ When the two agree there is only one number, so the ± stays attached to
+ * the headline and no sub-line is drawn — a row repeating a figure it has just
+ * printed is noise, and every fixture series is in this state.
+ */
+export interface PostedSpreadReading {
+  /** the ± figure, already formatted to two places; null when there is none */
+  text: string | null;
+  /** true when the ± hangs off the headline because it IS the postings' mean */
+  attachedToHeadline: boolean;
+  /** the average to name on its own line, or null when there is nothing to add */
+  avgLine: number | null;
+}
+
+export function postedSpreadReading(
+  headlineCents: number | null,
+  postedAvgCents: number | null,
+  postedStddevCents: number | null,
+): PostedSpreadReading {
+  const text =
+    postedStddevCents !== null && postedStddevCents > 0
+      ? (postedStddevCents / 100).toFixed(2)
+      : null;
+  // nothing linked, or a headline that IS the measured centre: one number
+  if (postedAvgCents === null || postedAvgCents === headlineCents) {
+    return { text, attachedToHeadline: text !== null, avgLine: null };
+  }
+  return { text, attachedToHeadline: false, avgLine: postedAvgCents };
+}

@@ -29,7 +29,7 @@ import type { SeriesDetail as SeriesDetailData } from "@/services/recurring-deta
 import { AmountHistoryChart } from "./AmountHistoryChart";
 import { CadenceSentence } from "./CadenceSentence";
 import { AttachPanel, LinkedTransactions, MergeControl } from "./SeriesMembership";
-import { CADENCE_LABEL, KIND_LABEL, longDate, STATUS_LABEL } from "./labels";
+import { CADENCE_LABEL, KIND_LABEL, longDate, postedSpreadReading, STATUS_LABEL } from "./labels";
 
 const KIND_ICON: Record<SeriesKind, IconName> = {
   income: "banknote",
@@ -89,6 +89,12 @@ export function SeriesDetail({
     baseParams: EMPTY_PARAMS,
   });
   const amountsAsTable = isTableLens(state);
+  // the ± hangs off the figure it is the spread of — see `postedSpreadReading`
+  const postedSpread = postedSpreadReading(
+    data.nextExpectedAmountCents,
+    data.postedAvgCents,
+    data.postedStddevCents,
+  );
   // ending a series takes money off the forecast and the calendar — the one
   // status change on this page that changes what the app predicts
   const [endingSeries, setEndingSeries] = useState(false);
@@ -286,9 +292,27 @@ export function SeriesDetail({
                   {/* 🔴 measured from the linked rows, and only once there are
                       two of them. This read the detector's stored seed, so it
                       printed "±5.48" beside a badge saying "no basis yet" and a
-                      linked count of 0. */}
-                  {data.postedStddevCents !== null && data.postedStddevCents > 0 ? (
-                    <span className="ml-1 text-[11px] font-normal text-ink-faint">±{(data.postedStddevCents / 100).toFixed(2)}</span>
+                      linked count of 0.
+
+                      ⛔ …AND THE ± BELONGS TO THE AVERAGE IT MEASURES. The
+                      headline is the FORECAST amount, which is often entered by
+                      hand and need not be the postings' mean: rent read
+                      "-$2,109.00 ± 610.65" over four charges averaging
+                      -$1,739.40, a band centred on a number nothing in it was
+                      drawn from. When the two differ the average is named and
+                      carries the spread — the wording `/recurring?tab=all`
+                      already uses for the same pair. When they agree there is
+                      one number and the ± stays on it. */}
+                  {postedSpread.attachedToHeadline ? (
+                    <span className="ml-1 text-[11px] font-normal text-ink-faint">
+                      ±{postedSpread.text}
+                    </span>
+                  ) : null}
+                  {postedSpread.avgLine !== null ? (
+                    <span className="figures block text-[11px] font-normal text-ink-faint">
+                      posted avg <Money cents={postedSpread.avgLine} flow />
+                      {postedSpread.text !== null ? ` ± ${postedSpread.text}` : ""}
+                    </span>
                   ) : null}
                 </>
               ) : (

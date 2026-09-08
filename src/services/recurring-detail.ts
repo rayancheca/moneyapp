@@ -100,6 +100,22 @@ export interface SeriesDetail {
    * defect as `postedAvgCents` in `listSeries`.
    */
   postedStddevCents: number | null;
+  /**
+   * The MEAN of the linked postings — the centre `postedStddevCents` is the
+   * spread of. Null with nothing linked.
+   *
+   * 🔴 The page printed the FORECAST amount with the POSTINGS' spread beside
+   * it: a ± around a number that is not what it measures. Measured on the
+   * owner's ledger 2026-09-08 — `/recurring/<Flamingo South Beach (rent)>`
+   * read "-$2,109.00 ± 610.65" over four charges averaging -$1,739.40,
+   * `<Cash job (weekly pay)>` "+$1,047.00 ± 457.50" over $400.00 and
+   * $1,047.00, and `<Breezeline (internet)>` "-$50.00 ± 5.59" over three
+   * averaging -$46.77. `/recurring?tab=all` already prints the honest pair on
+   * the same rows ("-$50.00 · posted avg -$46.77") from `listSeries`'
+   * `postedAvgCents`; the page that OWNS the series had the spread and not the
+   * centre. Owner's call, 2026-09-08: name the average, and hang the ± on it.
+   */
+  postedAvgCents: number | null;
   intervalDaysAvg: number | null;
   toleranceDays: number;
   confidence: number | null;
@@ -262,6 +278,12 @@ export function seriesDetail(
    * with one there is nothing to vary, and the seed that used to be printed
    * here claimed a spread for series with none at all.
    */
+  // the centre the spread below is measured around — the same figure
+  // `listSeries` publishes to the All tab, computed from the same linked rows
+  const postedAvgCents =
+    linked.length === 0
+      ? null
+      : Math.round(linked.reduce((a, t) => a + t.amountCents, 0) / linked.length);
   const postedStddevCents = (() => {
     if (linked.length < 2) return null;
     const mean = linked.reduce((a, t) => a + t.amountCents, 0) / linked.length;
@@ -346,6 +368,7 @@ export function seriesDetail(
     amountCentsAvg: s.amountCentsAvg,
     amountCentsStddev: s.amountCentsStddev,
     postedStddevCents,
+    postedAvgCents,
     intervalDaysAvg: s.intervalDaysAvg,
     toleranceDays: s.toleranceDays,
     confidence: s.confidence,

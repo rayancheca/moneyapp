@@ -11,6 +11,7 @@ import {
   staleSummaryLabel,
   type StaleEntry,
   overdueNote,
+  postedSpreadReading,
 } from "./labels";
 
 const staleness = (over: Partial<SeriesStaleness> = {}): SeriesStaleness => ({
@@ -280,5 +281,53 @@ describe("overdueNote", () => {
 
   test("a weekly bill in arrears counts the ones behind it", () => {
     expect(overdueNote("2026-09-01", 3)).toBe("Sep 1 and 2 more — not posted");
+  });
+});
+
+describe("postedSpreadReading", () => {
+  /**
+   * 🔴 The defect, measured 2026-09-08: `Per charge` read "-$2,109.00 ± 610.65"
+   * of a series whose four charges average -$1,739.40, so the band was centred
+   * on a figure nothing in it was drawn from.
+   */
+  test("moves the ± onto the average when the headline is not it", () => {
+    const r = postedSpreadReading(-210_900, -173_940, 61_065);
+    expect(r.attachedToHeadline).toBe(false);
+    expect(r.avgLine).toBe(-173_940);
+    expect(r.text).toBe("610.65");
+  });
+
+  /** ⛔ one number, one place for the band — and no row repeating the headline */
+  test("leaves the ± on the headline when the two agree", () => {
+    const r = postedSpreadReading(-1_775, -1_775, 134);
+    expect(r.attachedToHeadline).toBe(true);
+    expect(r.avgLine).toBeNull();
+    expect(r.text).toBe("1.34");
+  });
+
+  /** a series with nothing linked has no centre and no spread to publish */
+  test("says nothing at all with no linked postings", () => {
+    expect(postedSpreadReading(-69_504, null, null)).toEqual({
+      text: null,
+      attachedToHeadline: false,
+      avgLine: null,
+    });
+  });
+
+  /**
+   * One linked charge: `postedStddevCents` is null under two rows, but the
+   * average is real and still disagrees with the entered figure — Hoffman LL,
+   * "-$1,786.46" over a single charge of -$1,835.27.
+   */
+  test("names an average that differs even with no spread to hang on it", () => {
+    const r = postedSpreadReading(-178_646, -183_527, null);
+    expect(r.text).toBeNull();
+    expect(r.avgLine).toBe(-183_527);
+    expect(r.attachedToHeadline).toBe(false);
+  });
+
+  /** a spread of exactly zero is not a spread — every charge was identical */
+  test("draws no band when every posting was the same amount", () => {
+    expect(postedSpreadReading(-499, -499, 0).text).toBeNull();
   });
 });
