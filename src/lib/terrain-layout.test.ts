@@ -843,10 +843,18 @@ describe("terrainRowFigures", () => {
     signed: (c: number) => `${c < 0 ? "−" : "+"}$${Math.abs(c / 100).toFixed(2)}`,
     monthYear: (d: string) => d.slice(0, 7),
   };
+  const drawn = { fullyVerified: true, unverifiedSpanCount: 0 };
 
   test("prints the figures when the ribbon has a drawn span", () => {
     const cells = terrainRowFigures(
-      { firstDay: "2026-01-01", firstCents: 10_000, lastDay: "2026-09-01", lastCents: 25_000, deltaCents: 15_000 },
+      {
+        firstDay: "2026-01-01",
+        firstCents: 10_000,
+        lastDay: "2026-09-01",
+        lastCents: 25_000,
+        deltaCents: 15_000,
+        ...drawn,
+      },
       FMT,
     );
     expect(cells).toEqual({
@@ -854,6 +862,8 @@ describe("terrainRowFigures", () => {
       today: "$250.00",
       change: "+$150.00",
       changeSign: 1,
+      since: "+$150.00 since 2026-01",
+      verified: "every span",
     });
   });
 
@@ -862,33 +872,96 @@ describe("terrainRowFigures", () => {
    * "$0.00" under "Today" and "$0.00" under "Change", beside a "First day"
    * column that had already refused to answer. Measured on the owner's ledger
    * 2026-09-01 — Capital One 360 Checking, active, zero balances, zero rows.
+   *
+   * 🔴 And again on 2026-09-08, in the two readings the table did not own: the
+   * LEGEND beside the relief printed "level since — · $0.00" for the same
+   * account on the same screen, and the Verified column ended the row of em
+   * dashes with "every span" — the strongest verdict in the ledger, over no
+   * spans at all. Nothing here may name a figure or a verdict for a ribbon
+   * with nothing drawn.
    */
   test("a ribbon with nothing drawn says nothing, in every column", () => {
     const cells = terrainRowFigures(
-      { firstDay: null, firstCents: 0, lastDay: null, lastCents: 0, deltaCents: 0 },
+      { firstDay: null, firstCents: 0, lastDay: null, lastCents: 0, deltaCents: 0, ...drawn },
       FMT,
     );
-    expect(cells).toEqual({ first: "—", today: "—", change: "—", changeSign: null });
+    expect(cells).toEqual({
+      first: "—",
+      today: "—",
+      change: "—",
+      changeSign: null,
+      since: "no reconstructed day yet",
+      verified: "—",
+    });
     expect(Object.values(cells)).not.toContain("$0.00");
+    // the legend's own two failures, named: a dangling date and a verdict
+    expect(cells.since).not.toContain("level since");
+    expect(cells.verified).not.toContain("every span");
   });
 
   test("a fall is signed and coloured as one", () => {
     const cells = terrainRowFigures(
-      { firstDay: "2026-01-01", firstCents: 25_000, lastDay: "2026-09-01", lastCents: 10_000, deltaCents: -15_000 },
+      {
+        firstDay: "2026-01-01",
+        firstCents: 25_000,
+        lastDay: "2026-09-01",
+        lastCents: 10_000,
+        deltaCents: -15_000,
+        ...drawn,
+      },
       FMT,
     );
     expect(cells.change).toBe("−$150.00");
     expect(cells.changeSign).toBe(-1);
+    expect(cells.since).toBe("−$150.00 since 2026-01");
   });
 
   /** ⛔ A real account CAN sit at exactly zero, and that zero is worth printing. */
   test("a real zero balance is still printed", () => {
     const cells = terrainRowFigures(
-      { firstDay: "2026-01-01", firstCents: 0, lastDay: "2026-09-01", lastCents: 0, deltaCents: 0 },
+      {
+        firstDay: "2026-01-01",
+        firstCents: 0,
+        lastDay: "2026-09-01",
+        lastCents: 0,
+        deltaCents: 0,
+        ...drawn,
+      },
       FMT,
     );
     expect(cells.today).toBe("$0.00");
     expect(cells.changeSign).toBe(0);
+    // a drawn ribbon that has not moved IS level, and says so with its date
+    expect(cells.since).toBe("level since 2026-01");
+  });
+
+  test("an unverified span count is counted, and pluralised", () => {
+    const one = terrainRowFigures(
+      {
+        firstDay: "2026-01-01",
+        firstCents: 0,
+        lastDay: "2026-09-01",
+        lastCents: 100,
+        deltaCents: 100,
+        fullyVerified: false,
+        unverifiedSpanCount: 1,
+      },
+      FMT,
+    );
+    expect(one.verified).toBe("1 span not");
+    const many = terrainRowFigures(
+      {
+        firstDay: "2026-01-01",
+        firstCents: 0,
+        lastDay: "2026-09-01",
+        lastCents: 100,
+        deltaCents: 100,
+        fullyVerified: false,
+        unverifiedSpanCount: 6,
+      },
+      FMT,
+    );
+    expect(many.verified).toBe("6 spans not");
   });
 });
 

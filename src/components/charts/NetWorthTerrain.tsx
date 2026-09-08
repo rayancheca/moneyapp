@@ -33,6 +33,7 @@ import {
   type TerrainLayout,
   type TerrainReferencePoint,
   type TerrainRibbon,
+  type TerrainRowFigures,
   type TerrainSeriesLike,
   type TerrainVertex,
   type TerrainViewpoint,
@@ -576,6 +577,15 @@ function Slug({
 }
 
 /**
+ * ⛔ ONE ANSWER FOR THE WHOLE ROW — and for BOTH lenses of it. Columns used to
+ * decide separately whether a ribbon had anything to say; two of them said
+ * "$0.00", and the legend beside the relief kept a third opinion after the
+ * table was fixed. Everything either lens prints about a row comes from here.
+ */
+const rowFigures = (r: TerrainRibbon): TerrainRowFigures =>
+  terrainRowFigures(r, { cents: formatCents, signed: formatCentsSigned, monthYear: formatMonthYear });
+
+/**
  * The rail beside the plate. This is where the exact numbers are, and where the
  * keyboard and a screen reader reach each account page — the drawing itself is
  * one labelled figure, so it can never be the only route.
@@ -631,11 +641,13 @@ function TerrainRail({
                     <span className="truncate text-sm">{r.label}</span>
                     <span className="shrink-0 text-eyebrow text-ink-faint">{r.isLiability ? "owed" : ""}</span>
                   </span>
+                  {/* ⛔ THE SAME ANSWER THE TABLE GIVES. This built its own
+                      sentence and its own figure, so the row the table lens
+                      prints as three em dashes read "level since — · $0.00"
+                      here — a date that is not there and a balance nobody has.
+                      Both come from `terrainRowFigures` now. */}
                   <span className="block text-micro text-ink-faint">
-                    {r.deltaCents === 0
-                      ? "level since"
-                      : `${formatCentsSigned(r.deltaCents)} since`}{" "}
-                    {r.firstDay === null ? "—" : formatMonthYear(r.firstDay)}
+                    {rowFigures(r).since}
                     {r.fullyVerified ? "" : ` · ${r.unverifiedSpanCount} unverified`}
                   </span>
                   {/* decorative: the balance is already set in figures beside it */}
@@ -650,7 +662,7 @@ function TerrainRail({
                     />
                   </span>
                 </span>
-                <span className="figures shrink-0 text-sm font-medium">{formatCents(r.lastCents)}</span>
+                <span className="figures shrink-0 text-sm font-medium">{rowFigures(r).today}</span>
               </Link>
             </li>
           );
@@ -677,10 +689,7 @@ function TerrainTable({
   layout: TerrainLayout;
   today: string;
 }) {
-  // ⛔ ONE ANSWER FOR THE WHOLE ROW. Three columns used to decide separately
-  // whether this ribbon had anything to say, and two of them said "$0.00".
-  const cells = (r: TerrainRibbon) =>
-    terrainRowFigures(r, { cents: formatCents, signed: formatCentsSigned, monthYear: formatMonthYear });
+  const cells = rowFigures;
   const columns: Column<TerrainRibbon>[] = [
     {
       key: "account",
@@ -723,11 +732,7 @@ function TerrainTable({
       key: "verified",
       header: "Verified",
       align: "right",
-      render: (r) => (
-        <span className="figures text-ink-faint">
-          {r.fullyVerified ? "every span" : `${r.unverifiedSpanCount} span${r.unverifiedSpanCount === 1 ? "" : "s"} not`}
-        </span>
-      ),
+      render: (r) => <span className="figures text-ink-faint">{cells(r).verified}</span>,
     },
   ];
   return (

@@ -873,7 +873,8 @@ function round(v: number): number {
 }
 
 /**
- * What the terrain's TABLE lens prints for one ribbon.
+ * What the terrain prints for one ribbon — in the TABLE lens and in the LEGEND
+ * beside the relief, which are two readings of the same row.
  *
  * 🔴 A RIBBON WITH NOTHING DRAWN IS NOT A BALANCE OF ZERO. An account the
  * ledger cannot reconstruct a single day for has no vertices, so `lastCents`
@@ -889,6 +890,21 @@ function round(v: number): number {
  *
  * ⛔ `lastDay`, not `lastCents === 0`, is the test. A real account can sit at
  * exactly zero, and that zero is worth printing.
+ *
+ * 🔴 THE SAME ROW, READ TWICE. The table was given this rule and the LEGEND
+ * under the relief was not, so on 2026-09-08 one lens printed "—" for Capital
+ * One 360 Checking, under a caption saying its row is "left blank rather than
+ * read as zero", while the legend an inch below it read
+ *
+ *     01  Capital One 360 Checking   level since —          $0.00
+ *
+ * — a balance of zero for the account the caption had just refused to give one,
+ * and a sentence with its date missing. Both lenses render on the same screen.
+ *
+ * 🔴 AND THE VERDICT COLUMN DECIDED SEPARATELY. `fullyVerified` is vacuously
+ * true with nothing drawn, so the row that said "—" three times ended
+ * "every span" — the whole ledger's strongest verdict, over no spans at all.
+ * One answer for the whole row means this column too.
  */
 export interface TerrainRowFigures {
   first: string;
@@ -896,20 +912,38 @@ export interface TerrainRowFigures {
   change: string;
   /** sign of the change for colour, or null when there is no change to colour */
   changeSign: -1 | 0 | 1 | null;
+  /** the legend's one-line reading: "-$5,000.00 since Aug 2026" / "level since Aug 2026" */
+  since: string;
+  /** the Verified column: "every span" / "6 spans not" — never a verdict over nothing */
+  verified: string;
 }
 
 export function terrainRowFigures(
-  r: Pick<TerrainRibbon, "firstDay" | "firstCents" | "lastDay" | "lastCents" | "deltaCents">,
+  r: Pick<
+    TerrainRibbon,
+    "firstDay" | "firstCents" | "lastDay" | "lastCents" | "deltaCents" | "fullyVerified" | "unverifiedSpanCount"
+  >,
   fmt: { cents: (c: number) => string; signed: (c: number) => string; monthYear: (day: string) => string },
 ): TerrainRowFigures {
   if (r.firstDay === null || r.lastDay === null) {
-    return { first: "—", today: "—", change: "—", changeSign: null };
+    return {
+      first: "—",
+      today: "—",
+      change: "—",
+      changeSign: null,
+      since: "no reconstructed day yet",
+      verified: "—",
+    };
   }
   return {
     first: `${fmt.monthYear(r.firstDay)} · ${fmt.cents(r.firstCents)}`,
     today: fmt.cents(r.lastCents),
     change: fmt.signed(r.deltaCents),
     changeSign: r.deltaCents === 0 ? 0 : r.deltaCents > 0 ? 1 : -1,
+    since: `${r.deltaCents === 0 ? "level" : fmt.signed(r.deltaCents)} since ${fmt.monthYear(r.firstDay)}`,
+    verified: r.fullyVerified
+      ? "every span"
+      : `${r.unverifiedSpanCount} span${r.unverifiedSpanCount === 1 ? "" : "s"} not`,
   };
 }
 
