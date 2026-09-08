@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Icon } from "@/components/shell/Icon";
 import { Money } from "@/components/ui/Money";
 import { formatDayShort } from "@/lib/format-date";
+import { overdueNote } from "@/components/recurring/labels";
 import type { CategorySeriesRow } from "@/services/category-detail";
 
 /**
@@ -36,6 +37,18 @@ export function CategorySeriesList({ rows }: { rows: CategorySeriesRow[] }) {
                   s.evidence !== "lapsed" &&
                   (s.status === "detected" || s.status === "confirmed") &&
                   ` · next ${formatDayShort(s.nextExpectedOn)}`}
+                {/* 🔴 "next Oct 1", of a bill that came due Sep 1 and never
+                    posted — beside a Budget card on the same page grading
+                    Sep 1 – Sep 30 with the whole amount still "left".
+                    `overdueNote` is the wording /recurring's Next column has
+                    used since the same defect was fixed there, and this was its
+                    second caller. See `CategorySeriesRow.overdue`. */}
+                {s.overdue && (
+                  <span className="text-warning">
+                    {" · "}
+                    {overdueNote(s.overdue.date, s.overdue.occurrenceCount)}
+                  </span>
+                )}
                 {/* ⛔ The word is chosen WITH the row, in `lib/series-evidence`.
                     Chosen here from `evidence` alone, it read "lapsed" over five
                     series the owner had DISMISSED — a page headed "Recurring

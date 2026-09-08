@@ -167,6 +167,44 @@ describe("seriesInCategory", () => {
   });
 
   /*
+   * 🔴 `/categories/<Housing>` on 2026-09-08: "Budget · grading Sep 1 – Sep 30 ·
+   * $0.00 of $2,291.21 · $2,291.21 left" over "Flamingo South Beach (rent)
+   * monthly · next Oct 1 · $2,109.00" and "Rent utilities & fees monthly · next
+   * Oct 1 · $182.21". Both came due Sep 1 and neither posted — $2,291.21, the
+   * budget to the cent — so the page read as a September with nothing due while
+   * the whole month's budget was already spoken for. `nextExpectedOn` walks
+   * forward by construction; the backward half is `overdueForSeries`, and
+   * /recurring's Next column has printed it since 2026-09-04.
+   */
+  test("a bill that came due this month and never posted says so, beside its next date", () => {
+    // TODAY is 2026-07-08. The June charge posted; July's came due on the 1st
+    // and nothing covers it.
+    const rent = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "Rent", kind: "bill", cadence: "monthly", amountCentsAvg: -180_000, nextExpectedAmountCents: -180_000, status: "confirmed", nextExpectedOn: "2026-07-01", anchorDay: 1, lastMatchedOn: "2026-06-01" })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    insertTxn({ postedOn: "2026-06-01", amountCents: -180_000, category: "Housing > Rent", seriesId: rent });
+
+    const rows = seriesInCategory(bundle.db, catId("Housing"), TODAY);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.overdue).toEqual({ date: "2026-07-01", occurrenceCount: 1 });
+    // the next date STAYS — August's charge is still coming
+    expect(rows[0]!.nextExpectedOn).toBe("2026-08-01");
+  });
+
+  test("a bill whose charge arrived is not overdue", () => {
+    const rent = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "Rent", kind: "bill", cadence: "monthly", amountCentsAvg: -180_000, nextExpectedAmountCents: -180_000, status: "confirmed", nextExpectedOn: "2026-07-01", anchorDay: 1, lastMatchedOn: "2026-07-01" })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    insertTxn({ postedOn: "2026-07-01", amountCents: -180_000, category: "Housing > Rent", seriesId: rent });
+
+    expect(seriesInCategory(bundle.db, catId("Housing"), TODAY)[0]!.overdue).toBeNull();
+  });
+
+  /*
    * 🔴 THE MEASURED CASE. /categories/<Food> listed five series under a heading
    * reading "Recurring series" on 2026-09-04 — Nabila Inc, CC Vending, Fordham
    * Sambazon, PURA VIDA BAY ROAD MIAMI BEACH, YA-FIT Smoothie Bar — every one

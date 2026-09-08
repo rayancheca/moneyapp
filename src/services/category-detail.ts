@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { seriesRowLabel, type SeriesEvidence } from "@/lib/series-evidence";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
-import { monthKey, periodBounds } from "@/lib/dates";
+import { addDays, monthKey, periodBounds } from "@/lib/dates";
 import {
   categorySpending,
   ledgerHref,
@@ -12,6 +12,7 @@ import {
   type DateRange,
 } from "./analytics";
 import { budgetStatuses } from "./budgets";
+import { overdueForSeries } from "./arrears";
 import { listSeries } from "./recurring";
 
 /**
@@ -128,6 +129,27 @@ export interface CategorySeriesRow {
   cadence: string;
   amountCents: number;
   nextExpectedOn: string | null;
+  /**
+   * A charge this series owed inside the CALENDAR MONTH that no posting covers
+   * — the backward half of `nextExpectedOn`, which walks forward by
+   * construction and so can never see it.
+   *
+   * 🔴 `/categories/<Housing>` on 2026-09-08 read "Budget · grading Sep 1 –
+   * Sep 30 · $0.00 of $2,291.21 · $2,291.21 left" and, below it, "Flamingo
+   * South Beach (rent) monthly · next Oct 1 · $2,109.00" and "Rent utilities &
+   * fees monthly · next Oct 1 · $182.21" — a September with nothing due and the
+   * whole budget unspent. Both bills came due on Sep 1 and neither posted:
+   * $2,291.21, the budget to the cent. `/budgets` says it in words on the page
+   * this card links to — "That money is committed, so the room left is smaller
+   * than it looks" — and `/recurring`'s Next column has printed it since the
+   * same defect was fixed there on 2026-09-04.
+   *
+   * ⛔ Same call every other surface makes: `overdueForSeries` over the calendar
+   * month, closing the day BEFORE today, so a bill due today is due rather than
+   * late. Arrears are scoped to the calendar month by the owner's decision of
+   * 2026-09-02.
+   */
+  overdue: { date: string; occurrenceCount: number } | null;
   status: string;
   isActive: boolean;
   /** the word every surface uses for its evidence — see `lib/series-evidence` */
@@ -152,6 +174,13 @@ export function seriesInCategory(db: AppDatabase, categoryId: string, today: str
   const ids = recurringSeriesIdsForCategory(db, categoryId);
   if (ids.size === 0) return [];
 
+  // one call for the whole card, keyed by series — see `CategorySeriesRow.overdue`
+  const overdueById = new Map(
+    overdueForSeries(db, ids, periodBounds(today, "monthly").start, addDays(today, -1)).series.map(
+      (o) => [o.id, { date: o.nextDate, occurrenceCount: o.occurrenceCount }] as const,
+    ),
+  );
+
   return listSeries(db, today)
     .filter((s) => ids.has(s.id))
     /*
@@ -175,6 +204,7 @@ export function seriesInCategory(db: AppDatabase, categoryId: string, today: str
        */
       amountCents: s.nextExpectedAmountCents ?? s.amountCentsAvg ?? 0,
       nextExpectedOn: s.nextExpectedOn,
+      overdue: overdueById.get(s.id) ?? null,
       status: s.status,
       isActive: s.isActive,
       evidence: s.evidence,
