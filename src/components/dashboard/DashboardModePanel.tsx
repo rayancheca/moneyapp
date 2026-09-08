@@ -9,6 +9,7 @@ import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { magnitudeTiers } from "@/lib/magnitude-tiers";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import type { BridgedDashboardSeries } from "@/lib/multi-series-bridge";
+import { balanceHeading } from "@/lib/side-magnitude";
 import { scrubValueText } from "@/lib/scrub";
 import { useDashboardWindowProps } from "@/components/dashboard/DashboardWindowContext";
 import {
@@ -155,10 +156,24 @@ export function DashboardModePanel({
     if (series.length < 2) return [];
     const latest = series.map((s) => {
       const covered = s.points.filter((p) => p.valueCents !== null);
+      const cents = covered[covered.length - 1]?.valueCents ?? 0;
+      /*
+       * 🔴 This line is PROSE standing in for a line the reader cannot see, so
+       * it cannot lean on the axis the way the chart does. In the owed frame a
+       * card in credit is a negative, and the dashboard read "Chase Sapphire
+       * (owed) -$82.72" of a card that owes nothing — while the cards card six
+       * inches up, both accounts lenses and the account's own page all said
+       * "$82.72 in credit". `balanceHeading` is the rule for exactly this and
+       * this was the seventh surface to ask; see its docstring.
+       *
+       * ⚠️ Only for a series actually IN the owed frame. A negative asset is an
+       * overdraft, which is a debt and keeps its minus.
+       */
+      const heading = s.owedFrame ? balanceHeading(-cents, true) : null;
       return {
         key: s.key,
-        label: frameLabel(s),
-        cents: covered[covered.length - 1]?.valueCents ?? 0,
+        label: heading?.label === "In credit" ? `${s.label} in credit` : frameLabel(s),
+        cents: heading?.label === "In credit" ? heading.cents : cents,
       };
     });
     const tiers = magnitudeTiers(latest);
