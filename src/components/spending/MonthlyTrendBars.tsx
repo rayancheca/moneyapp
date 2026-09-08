@@ -59,7 +59,13 @@ export function MonthlyTrendBars({
           <li key={p.month} className="flex flex-1 flex-col items-center gap-1">
             <Link
               href={p.href}
-              aria-label={`${formatMonthYear(`${p.month}-01`)}: ${formatCents(p.spentCents)}, ${p.txnCount} transactions`}
+              /* 🔴 "1 transactions" — the bar is a sentence a screen reader
+                 reads out, and the sibling chart on the same page
+                 (`SpendHeatmap`) has pluralised the same noun since it shipped.
+                 `countPhrase` is not the tool here: a bar with nothing in it
+                 reports "0 transactions", a measured zero, not "no
+                 transactions". */
+              aria-label={`${formatMonthYear(`${p.month}-01`)}: ${formatCents(p.spentCents)}, ${p.txnCount} ${p.txnCount === 1 ? "transaction" : "transactions"}`}
               className="group flex w-full flex-col items-center gap-1"
             >
               <span className="flex h-28 w-full items-end justify-center">

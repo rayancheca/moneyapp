@@ -13,6 +13,7 @@ import { MerchantProfileCards } from "@/components/merchants/MerchantProfileCard
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
+import { countPhrase } from "@/components/ui/blast-radius";
 
 export const metadata: Metadata = { title: "Merchant" };
 export const dynamic = "force-dynamic";
@@ -52,7 +53,10 @@ export default async function MerchantPage({ params }: { params: Promise<{ id: s
       <MerchantNameHeading
         merchantId={id}
         name={summary.name}
-        description={`${summary.txnCount} transactions`}
+        /* 🔴 "1 transactions" under every merchant seen once — 60 of them on
+           the owner's ledger. `countPhrase` also turns an empty merchant into
+           "no transactions", which is what the list below it already says. */
+        description={countPhrase(summary.txnCount, "transaction")}
       />
 
       <div className="space-y-6">
