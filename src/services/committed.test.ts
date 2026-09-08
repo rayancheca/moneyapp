@@ -13,7 +13,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
-import { createAccount } from "./accounts";
+import { createAccount, updateAccount } from "./accounts";
 import { baselineWindow, carCard, committedBook, runwayCard, spendBaseline, SPEND_BASELINE_MONTHS } from "./committed";
 import { forecastCurrentMonth } from "./forecast";
 
@@ -604,6 +604,34 @@ describe("runwayCard", () => {
 
   test("names the basis its income term came from", () => {
     expect(runwayCard(bundle.db, TODAY).incomeBasisExplanation).toBeTruthy();
+  });
+
+  /**
+   * 🔴 `/accounts/<x>` promises, by name, that "Archiving takes {name} out of
+   * net worth, the assets and owed totals, and every analytic." Every other
+   * service that reads accounts keeps that promise — `coverage`, `cards-owed`,
+   * `attribution` (whose docstring records the same omission being caught in
+   * review), `account-insights`, `cash-wallets`. This card walked `listAccounts`
+   * unfiltered, so an archived account kept spending its balance in "Cash you
+   * can spend today", in the runway the headline is measured from, and in what
+   * selling investments would add.
+   *
+   * ⚠️ Latent on the real ledger, which has archived nothing — the promise is
+   * false the day he uses the button, not before.
+   */
+  test("an archived account leaves the runway, as the archive button promises", () => {
+    const before = runwayCard(bundle.db, TODAY).runway;
+    // $5,000 cash − $800 owed
+    expect(before.assumptions.find((a) => a.id === "liquid")!.cents).toBe(500000);
+    expect(before.netCashCents).toBe(420000);
+
+    updateAccount(bundle.db, checkingId, { isActive: false });
+
+    const after = runwayCard(bundle.db, TODAY).runway;
+    expect(after.assumptions.find((a) => a.id === "liquid")!.cents).toBe(0);
+    expect(after.netCashCents).toBe(-80000);
+    // the brokerage is untouched — only the archived account leaves
+    expect(after.assumptions.find((a) => a.id === "investments")!.cents).toBe(2000000);
   });
 });
 

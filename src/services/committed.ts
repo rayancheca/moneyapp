@@ -421,7 +421,20 @@ export function runwayCard(db: AppDatabase, today: string = todayIso()): RunwayC
   let investableCents = 0;
   let cardDebtCents = 0;
   let cardCreditCents = 0;
-  for (const a of listAccounts(db)) {
+  /*
+   * 🔴 ARCHIVED ACCOUNTS WERE STILL SPENDING. `/accounts/<x>` promises by name
+   * that "Archiving takes {name} out of net worth, the assets and owed totals,
+   * and every analytic" — and `latestBridgedNetWorthCents`, `coverage`,
+   * `cards-owed`, `account-insights`, `cash-wallets` and both of `forecast`'s
+   * EOM-cash walks all filter for it. `attribution`'s docstring records the
+   * same omission being caught in review once. This card walked `listAccounts`
+   * unfiltered, so an archived balance kept funding "Cash you can spend today",
+   * the runway measured from it, and what selling investments would add.
+   *
+   * ⚠️ Latent on the real ledger, which has archived nothing: the promise goes
+   * false the day the button is used, not before.
+   */
+  for (const a of listAccounts(db).filter((a) => a.isActive)) {
     const cents = a.balance?.balanceCents ?? 0;
     if (a.type === "checking" || a.type === "savings") liquidCents += cents;
     else if (a.type === "investment") investableCents += cents;
