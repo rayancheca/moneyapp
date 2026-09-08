@@ -69,6 +69,25 @@ export interface InstitutionGroup {
   dayChangeVsDay: string | null;
   dayChangeTerm: string;
   asOf: string | null;
+  /**
+   * The OLDEST day any child with a balance is as of — null when they all share
+   * one day, which is the only case where a single date is honest.
+   *
+   * 🔴 `totalCents` is the sum of each child's own last covered day and `asOf`
+   * is the NEWEST of them, so the dashboard's Chase card read "2 accounts · as
+   * of 2026-09-03 · $3,090.32" of $3,007.60 last seen on Aug 14 plus $82.72
+   * last seen on Sep 3 — three weeks of evidence dated to one day. Robinhood
+   * did the same across Aug 28 and Sep 3. `AccountsTable`'s `oldestAsOf`
+   * refuses exactly this claim about exactly these balances, and its docstring
+   * cites the cards card refusing it about the same money: "each as of its own
+   * last statement — so this is not one moment." This card was the third to ask
+   * and the only one still answering with a single date.
+   *
+   * ⚠️ A child with no balance at all contributes no date — Capital One's 360
+   * Checking must not make its group look like two moments when only one
+   * account in it has ever had a balance.
+   */
+  oldestAsOf: string | null;
   spark: SparkPoint[];
   accounts: AccountCard[];
 }
@@ -249,6 +268,7 @@ export function institutionGroups(
       dayChangeVsDay: null,
       dayChangeTerm: "",
       asOf: null,
+      oldestAsOf: null,
       spark: [],
       accounts: [],
     };
@@ -276,6 +296,10 @@ export function institutionGroups(
       (acc, c) => (c.asOf && (!acc || compareDates(c.asOf, acc) > 0) ? c.asOf : acc),
       null,
     );
+    const oldest = group.accounts.reduce<string | null>(
+      (acc, c) => (c.asOf && (!acc || compareDates(c.asOf, acc) < 0) ? c.asOf : acc),
+      null,
+    );
 
     const change = dayChangeOf(combined);
     return {
@@ -286,6 +310,7 @@ export function institutionGroups(
       dayChangeVsDay: change.vsDay,
       dayChangeTerm: dayChangeTerm(change.asOf, change.vsDay, today, formatDayShort),
       asOf,
+      oldestAsOf: oldest !== null && oldest !== asOf ? oldest : null,
       spark: combined.slice(-SPARK_WINDOW_DAYS),
     };
   });

@@ -128,7 +128,16 @@ export function InstitutionCard({ group }: { group: InstitutionGroup }) {
           <div className="text-sm font-semibold">{group.institutionName}</div>
           <div className="mt-0.5 text-[11px] text-ink-faint">
             {group.accounts.length} account{group.accounts.length === 1 ? "" : "s"}
-            {group.asOf ? ` · as of ${group.asOf}` : ""}
+            {/* 🔴 The total is each child's own last covered day added up, so a
+                single "as of" is only true when they share one. The Chase card
+                read "as of 2026-09-03 · $3,090.32" of a balance last seen Aug 14
+                plus one last seen Sep 3. `AccountsTable` refuses the same claim
+                about the same balances; see `InstitutionGroup.oldestAsOf`. */}
+            {group.asOf
+              ? group.oldestAsOf
+                ? ` · each as of its own last covered day, ${group.oldestAsOf} – ${group.asOf}`
+                : ` · as of ${group.asOf}`
+              : ""}
             {/* 🔴 The heading is a NET across the group's sides and every sub-card
                 under it prints a card as what you owe, so the same money appeared
                 twice with opposite signs and nothing said why: on the owner's

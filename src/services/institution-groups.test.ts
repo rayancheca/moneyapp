@@ -280,3 +280,78 @@ describe("institutionGroups", () => {
     expect(institutionGroups(bundle.db)).toEqual([]);
   });
 });
+
+/**
+ * 🔴 A group total is the sum of each child's OWN last covered day, and `asOf`
+ * is the newest of them. On the owner's ledger 2026-09-08 the dashboard's Chase
+ * card read "2 accounts · as of 2026-09-03 · $3,090.32" over $3,007.60 last
+ * covered Aug 14 and $82.72 last covered Sep 3 — three weeks of evidence dated
+ * to one day, which is the claim `AccountsTable.oldestAsOf` exists to refuse.
+ */
+describe("oldestAsOf — a total built from two days does not get one date", () => {
+  let dir: string;
+  let bundle: DbBundle;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-groups-asof-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const institutionId = (name: string): string =>
+    bundle.db.select().from(institutions).where(eq(institutions.name, name)).get()!.id;
+
+  test("names both ends when the children stop on different days", () => {
+    const chase = institutionId("Chase");
+    const checking = createAccount(bundle.db, { institutionId: chase, name: "Chase Checking", type: "checking" });
+    const card = createAccount(bundle.db, { institutionId: chase, name: "Chase Sapphire", type: "credit" });
+    addManualAnchor(bundle.db, { accountId: checking, anchoredOn: YESTERDAY, enteredCents: 3_000_00 });
+    // a card anchor is entered as the positive amount owed
+    addManualAnchor(bundle.db, { accountId: card, anchoredOn: TODAY, enteredCents: 100_00 });
+    /*
+     * ⚠️ `daily_balances` is a cache that stops wherever `today` stood at the
+     * last rebuild, which is the ONLY way two accounts end on different days —
+     * `deriveForward` always walks to the `today` it is given. Rebuilding one
+     * child a day short is what the real ledger looks like between imports.
+     */
+    rebuildAccount(bundle.db, checking, YESTERDAY);
+
+    const group = institutionGroups(bundle.db).find((g) => g.institutionName === "Chase")!;
+    expect(group.asOf).toBe(TODAY);
+    expect(group.oldestAsOf).toBe(YESTERDAY);
+  });
+
+  test("stays null when every child shares one day — a single date is honest there", () => {
+    const sofi = institutionId("SoFi");
+    const a = createAccount(bundle.db, { institutionId: sofi, name: "SoFi Checking", type: "checking" });
+    const b = createAccount(bundle.db, { institutionId: sofi, name: "SoFi Savings", type: "savings" });
+    addManualAnchor(bundle.db, { accountId: a, anchoredOn: TODAY, enteredCents: 1_00 });
+    addManualAnchor(bundle.db, { accountId: b, anchoredOn: TODAY, enteredCents: 10_00 });
+
+    const group = institutionGroups(bundle.db).find((g) => g.institutionName === "SoFi")!;
+    expect(group.asOf).toBe(TODAY);
+    expect(group.oldestAsOf).toBeNull();
+  });
+
+  /**
+   * ⚠️ Capital One on the real ledger: 360 Checking has never had a balance and
+   * Venture X is as of Aug 17. One account has a date, so the group has one
+   * moment — a second, empty account must not manufacture a range.
+   */
+  test("a child with no balance contributes no date", () => {
+    const capOne = institutionId("Capital One");
+    const empty = createAccount(bundle.db, { institutionId: capOne, name: "Capital One 360 Checking", type: "checking" });
+    const card = createAccount(bundle.db, { institutionId: capOne, name: "Venture X", type: "credit" });
+    addManualAnchor(bundle.db, { accountId: card, anchoredOn: TODAY, enteredCents: 50_00 });
+
+    const group = institutionGroups(bundle.db).find((g) => g.institutionName === "Capital One")!;
+    expect(group.accounts.find((c) => c.id === empty)!.asOf).toBeNull();
+    expect(group.asOf).toBe(TODAY);
+    expect(group.oldestAsOf).toBeNull();
+  });
+});
