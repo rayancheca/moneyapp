@@ -1,15 +1,16 @@
+import Database from "better-sqlite3";
 import { expect, test } from "@playwright/test";
 
 /**
- * A count a reader can check by counting — and the only one of this pass's four
- * fixes the fixture can express.
+ * Two sentences a reader can check by counting.
  *
- * ⛔ The assertion is on TEXT, not pixels. All 598 baselines stayed green at
- * `maxDiffPixels: 0` through every fix in this pass, because an `aria-label` on
- * a chart bar is a sentence the app is making and the visual gate cannot read
- * one.
+ * ⛔ Both assertions are on TEXT, not pixels — and both defects they pin were
+ * invisible to the visual gate: all 598 baselines stayed green at
+ * `maxDiffPixels: 0` through every fix in this pass. A chart bar's `aria-label`
+ * is heard and never drawn, and the terrain's Table lens is in no baseline at
+ * all.
  *
- * ⚠️ THE OTHER THREE ARE NOT HERE, because a test that cannot fail is worse
+ * ⚠️ THREE SIBLING FIXES ARE NOT HERE, because a test that cannot fail is worse
  * than none. Each was checked against the seed before it was left out:
  *
  *   - **"1 transactions" under a merchant name** (60 of them on the owner's
@@ -63,4 +64,58 @@ test("a month holding one transaction says so in the singular", async ({ page })
     if (sawSingular) break;
   }
   expect(sawSingular, "no category month in the fixture holds exactly one row").toBe(true);
+});
+
+const DB_PATH = "data/e2e.db";
+
+function readFixture<T>(sql: string): T[] {
+  const db = new Database(DB_PATH, { readonly: true });
+  try {
+    return db.prepare(sql).all() as T[];
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * 🔴 The Terrain's Table lens is captioned "Every account from its first
+ * reconstructed day", and the chart's accessible name sends a reader to it for
+ * "exact figures". Its First-day column read `vertices[0]` — the first of the
+ * ~72 EVENLY SAMPLED columns the terrain draws, which for an account that
+ * opened between two samples is not its first day at all. Nine of the owner's
+ * eleven rows were wrong, SoFi Savings by $8,756.08.
+ *
+ * ⚠️ The visual gate saw none of it: this table is in no baseline, and all 598
+ * screenshots stayed green through the fix. The fixture's accounts open 0, 10,
+ * 26 and 27 days into a 765-day span against a sampling stride of ~7, so at
+ * least one of them opens between samples — which is what makes this assertion
+ * able to fail.
+ */
+test("the terrain table names each account's own first day", async ({ page }) => {
+  const opening = readFixture<{ name: string; day: string; cents: number }>(`
+    select a.name as name, min(d.day) as day,
+           (select x.balance_cents from daily_balances x
+             where x.account_id = a.id order by x.day limit 1) as cents
+    from accounts a join daily_balances d on d.account_id = a.id
+    group by a.id
+  `);
+  expect(opening.length).toBeGreaterThan(1);
+
+  await page.goto("/?chart=terrain&terrainLens=table");
+  const rows = page.locator("table tbody tr");
+  await expect(rows.first()).toBeVisible();
+
+  const money = (cents: number): string =>
+    `${cents < 0 ? "-" : ""}$${Math.abs(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  const text = await rows.allInnerTexts();
+  for (const o of opening) {
+    const row = text.find((t) => t.includes(o.name));
+    expect(row, `no terrain row for ${o.name}`).toBeDefined();
+    // a card is drawn below the rule, so the terrain negates the owed frame
+    const drawn = row!.includes("Owed") ? -Math.abs(o.cents) : o.cents;
+    const month = `${MONTHS[Number(o.day.slice(5, 7)) - 1]} ${o.day.slice(0, 4)}`;
+    expect(row, `${o.name} first day`).toContain(`${month} · ${money(drawn)}`);
+  }
 });
