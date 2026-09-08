@@ -13,6 +13,7 @@ import {
   createInstitution,
   editAccount,
   getAccount,
+  listAccountOptions,
   listAccounts,
   reorderAccounts,
 } from "./accounts";
@@ -212,5 +213,51 @@ describe("a name the app could never print", () => {
       editAccount(bundle.db, id, { name: "Che<cking>", institutionId: instId, last4: null }),
     ).toThrow(/cannot contain/);
     expect(bundle.db.select().from(accounts).where(eq(accounts.id, id)).get()!.name).toBe("Real Checking");
+  });
+});
+
+/**
+ * 🔴 `/transactions`' account picker ran `orderBy(displayOrder, name)` of its
+ * own. `displayOrder` is an ordinal `reorderAccounts` writes across ONE
+ * institution, so used globally it interleaves institutions by an arbitrary
+ * number: on the owner's ledger it listed nine accounts alphabetically and then
+ * appended the two 1s and the 2 — Chase Checking, Robinhood Cash, Robinhood
+ * Crypto — after Wells Fargo.
+ *
+ * ⚠️ The e2e fixture cannot catch this. Its eight seed accounts all carry
+ * `display_order = 0` and each name starts with its own institution's, so the
+ * broken sort and the right one produce the identical list. This test builds
+ * the shape that separates them.
+ */
+describe("listAccountOptions", () => {
+  test("groups an institution's accounts together, whatever their displayOrder", () => {
+    const chase = instId;
+    const robinhood = bundle.db
+      .select()
+      .from(institutions)
+      .where(eq(institutions.name, "Robinhood"))
+      .get()!.id;
+
+    // names chosen so plain alphabetical order interleaves the two institutions
+    const chaseFirst = createAccount(bundle.db, { institutionId: chase, name: "Amber", type: "checking" });
+    const chaseSecond = createAccount(bundle.db, { institutionId: chase, name: "Cobalt", type: "savings" });
+    const rhOnly = createAccount(bundle.db, { institutionId: robinhood, name: "Beryl", type: "checking" });
+    // the second Chase account is dragged to the top of ITS list — a 0 and a 1
+    // that mean nothing to Robinhood's own 0
+    reorderAccounts(bundle.db, [chaseSecond, chaseFirst]);
+
+    const options = listAccountOptions(bundle.db);
+    const ids = options.map((o) => o.id);
+    expect(ids.indexOf(chaseSecond)).toBeLessThan(ids.indexOf(chaseFirst));
+    expect(ids.indexOf(chaseFirst)).toBeLessThan(ids.indexOf(rhOnly));
+    // Chase's two are adjacent — Robinhood's Beryl does not fall between them
+    expect(ids.indexOf(chaseFirst) - ids.indexOf(chaseSecond)).toBe(1);
+  });
+
+  test("carries only what a picker needs — id and name, and every account", () => {
+    const id = createAccount(bundle.db, { institutionId: instId, name: "Solo", type: "checking" });
+    const options = listAccountOptions(bundle.db);
+    expect(options.map((o) => o.id)).toEqual(listAccounts(bundle.db).map((a) => a.id));
+    expect(options.find((o) => o.id === id)).toEqual({ id, name: "Solo" });
   });
 });

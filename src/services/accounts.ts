@@ -76,6 +76,32 @@ export function investmentSideAccountIds(db: AppDatabase): Set<string> {
   );
 }
 
+/**
+ * Every account as `{id, name}`, in THE order — institution, then the
+ * within-institution `displayOrder`, then name.
+ *
+ * 🔴 `/transactions`' account picker ran its own `orderBy(displayOrder, name)`.
+ * `displayOrder` is an ordinal `reorderAccounts` writes across ONE
+ * institution's list (see its docstring below), so ordering the whole ledger by
+ * it alone orders by a number that means nothing between institutions: on the
+ * owner's ledger it listed nine accounts alphabetically and then appended Chase
+ * Checking, Robinhood Cash and Robinhood Crypto — the 1s and the 2 — after
+ * Wells Fargo, splitting both Chase accounts and all three Robinhood ones
+ * apart. The one list where a reader has to FIND a name was the one list in no
+ * order at all.
+ *
+ * ⚠️ Not `listAccounts().map(...)`. That one also runs `latestBalances`, a full
+ * scan of the derived cache, and a dropdown does not need a balance.
+ */
+export function listAccountOptions(db: AppDatabase): { id: string; name: string }[] {
+  return db
+    .select({ id: accounts.id, name: accounts.name })
+    .from(accounts)
+    .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
+    .orderBy(asc(institutions.name), asc(accounts.displayOrder), asc(accounts.name))
+    .all();
+}
+
 export function listAccounts(db: AppDatabase): AccountView[] {
   const rows = db
     .select({

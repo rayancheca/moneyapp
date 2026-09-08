@@ -4,6 +4,7 @@ import { getDb } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { transactions } from "@/db/schema/transactions";
+import { listAccountOptions } from "@/services/accounts";
 import { coverageStats } from "@/services/categorize";
 import { countMatching, filterConditions, viewCondition } from "@/services/transactions-query";
 import { claudeRunState, pendingMerchantQueue } from "@/services/claude-categorize";
@@ -88,11 +89,9 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
   const error = errorParam(params);
 
   const db = getDb();
-  const accountRows = db
-    .select({ id: accounts.id, name: accounts.name })
-    .from(accounts)
-    .orderBy(asc(accounts.displayOrder), asc(accounts.name))
-    .all();
+  // 🔴 this page ran its own `orderBy(displayOrder, name)` — a within-institution
+  // ordinal used as a global one. See `listAccountOptions`.
+  const accountRows = listAccountOptions(db);
   const allCategories = db.select().from(categories).all();
 
   // the page number cannot change a COUNT, so these run off the parsed filters
