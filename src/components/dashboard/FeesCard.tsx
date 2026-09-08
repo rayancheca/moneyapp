@@ -6,6 +6,25 @@ import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import type { FeesCard as FeesCardData } from "@/services/fees-card";
 
 /**
+ * "70 charges" / "1 charge" / "0 charges" — the numeral kept, the noun agreeing
+ * with it.
+ *
+ * 🔴 The two blocks below counted the SAME two nouns and only one of them
+ * pluralised: the recent window carried `n === 1 ? "charge" : "charges"` and
+ * the all-time block a bare "charges", so the day a ledger holds exactly one
+ * bank fee this card reads "1 charge" in one half and "1 charges" in the
+ * other. One rule for both halves now, in the file that has both.
+ *
+ * ⛔ Not `countPhrase`. That one answers a blast radius, where "no
+ * transactions" is the right way to say zero; a ruled column of figures wants
+ * the numeral, and turning "0 credits" into "no credits" here would be a copy
+ * change nobody asked for — it moved eight baselines when tried.
+ */
+function counted(n: number, singular: string): string {
+  return `${n} ${singular}${n === 1 ? "" : "s"}`;
+}
+
+/**
  * What the banks charge you — and what they pay you back.
  *
  * ⛔ Presentation only. The headline, the sentence under it, every row's note,
@@ -99,7 +118,7 @@ export function FeesCard({ data }: { data: FeesCardData }) {
             <dt className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
               <span className="font-medium">Paid to them</span>
               <span className="shrink-0 text-[11px] text-ink-faint">
-                {recent.paidCharges} {recent.paidCharges === 1 ? "charge" : "charges"}
+                {counted(recent.paidCharges, "charge")}
               </span>
               {data.paidProvenance && (
                 <ProvenancePopover label="the fees you paid" provenance={data.paidProvenance} />
@@ -131,7 +150,7 @@ export function FeesCard({ data }: { data: FeesCardData }) {
                 <span className="font-medium">Paid to you</span>
               )}
               <span className="shrink-0 text-[11px] text-ink-faint">
-                {recent.earnedCredits} {recent.earnedCredits === 1 ? "credit" : "credits"}
+                {counted(recent.earnedCredits, "credit")}
               </span>
             </dt>
             <dd className="shrink-0">
@@ -161,14 +180,17 @@ export function FeesCard({ data }: { data: FeesCardData }) {
         <div className="flex items-baseline justify-between gap-3">
           <span className="flex min-w-0 items-baseline gap-1.5">
             <span className="truncate text-ink-muted">Paid to them</span>
-            <span className="shrink-0 text-[11px] text-ink-faint">{allTime.paidCharges} charges</span>
+            {/* ⛔ the same nouns the recent block pluralises sixty lines above:
+                "1 charge" there and "1 charges" here was one card disagreeing
+                with itself */}
+            <span className="shrink-0 text-[11px] text-ink-faint">{counted(allTime.paidCharges, "charge")}</span>
           </span>
           <Money cents={allTime.paidCents} className="shrink-0" />
         </div>
         <div className="flex items-baseline justify-between gap-3">
           <span className="flex min-w-0 items-baseline gap-1.5">
             <span className="truncate text-ink-muted">Paid to you</span>
-            <span className="shrink-0 text-[11px] text-ink-faint">{allTime.earnedCredits} credits</span>
+            <span className="shrink-0 text-[11px] text-ink-faint">{counted(allTime.earnedCredits, "credit")}</span>
           </span>
           <Money cents={allTime.earnedCents} className="shrink-0" />
         </div>

@@ -44,7 +44,16 @@ const HOME_CHILD = "Groceries";
 export interface EatingOutLine {
   /** the child category's own name, e.g. "Dining" */
   name: string;
-  /** what a visit to this one is called, e.g. "visits" */
+  /**
+   * What ONE purchase from this line is called, e.g. "visit" — the SINGULAR.
+   *
+   * 🔴 It held the plural, and the card printed `{count} {unit}` against it, so
+   * a window holding one coffee read "1 coffees" — and "1 visits", "1 orders",
+   * "1 trips" and "1 purchases" beside it. The same defect as the 115
+   * "1 transactions" fixed on 2026-09-08, in the one card that had five copies
+   * of it. `countPhrase` does the pluralising now, from `blast-radius`, where
+   * `/imports`, `/merchants` and `/accounts` already read it.
+   */
   unit: string;
   /** positive = money out, refunds already netted */
   spentCents: number;
@@ -96,12 +105,17 @@ function lineOf(name: string, unit: string, txns: readonly AnalyticsTxn[]): Eati
   };
 }
 
-/** What one purchase from each child is called, in the card's own voice. */
+/**
+ * What one purchase from each child is called, in the card's own voice.
+ *
+ * ⛔ Singular. `countPhrase` appends the "s", and every one of these pluralises
+ * regularly — the card must never hand a reader "1 coffees".
+ */
 const UNITS: Record<string, string> = {
-  Dining: "visits",
-  Delivery: "orders",
-  Coffee: "coffees",
-  Groceries: "trips",
+  Dining: "visit",
+  Delivery: "order",
+  Coffee: "coffee",
+  Groceries: "trip",
 };
 
 export function eatingOutCard(

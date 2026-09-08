@@ -6,6 +6,19 @@ import { formatCents } from "@/lib/money";
 import type { EatingOutCard as EatingOutCardData } from "@/services/eating-out";
 
 /**
+ * "340 visits" / "1 visit" / "0 visits" — the numeral kept, the noun agreeing.
+ *
+ * 🔴 The card printed `{count} {unit}` against a `unit` that was already
+ * plural, five times over, so a window holding one of anything read
+ * "1 visits", "1 orders", "1 coffees", "1 trips" and "1 purchases" — the same
+ * defect as the 115 "1 transactions" fixed on 2026-09-08. `unit` is the
+ * SINGULAR now and this agrees it with its own count.
+ */
+function counted(n: number, singular: string): string {
+  return `${n} ${singular}${n === 1 ? "" : "s"}`;
+}
+
+/**
  * What eating out costs — the biggest real line in the ledger, and the one the
  * `Food` total hides.
  *
@@ -70,7 +83,7 @@ export function EatingOutCard({ data }: { data: EatingOutCardData }) {
             <dt className="flex min-w-0 items-baseline gap-1.5">
               <span className="truncate text-ink-muted">{l.name}</span>
               <span className="shrink-0 text-[11px] text-ink-faint">
-                {l.count} {l.unit}
+                {counted(l.count, l.unit)}
               </span>
             </dt>
             <dd className="shrink-0">
@@ -82,7 +95,7 @@ export function EatingOutCard({ data }: { data: EatingOutCardData }) {
         <div className="flex items-baseline justify-between gap-3 border-t border-line pt-1.5">
           <dt className="flex min-w-0 items-baseline gap-1.5">
             <span className="font-medium">Eating out</span>
-            <span className="shrink-0 text-[11px] text-ink-faint">{totalCount} purchases</span>
+            <span className="shrink-0 text-[11px] text-ink-faint">{counted(totalCount, "purchase")}</span>
           </dt>
           <dd className="shrink-0">
             <Money cents={totalSpentCents} className="font-semibold" />
@@ -99,7 +112,7 @@ export function EatingOutCard({ data }: { data: EatingOutCardData }) {
           <dt className="flex min-w-0 items-baseline gap-1.5">
             <span className="truncate text-ink-faint">{groceries.name}</span>
             <span className="shrink-0 text-[11px] text-ink-faint">
-              {groceries.count} {groceries.unit} · for comparison
+              {counted(groceries.count, groceries.unit)} · for comparison
             </span>
           </dt>
           <dd className="shrink-0 text-ink-faint">
