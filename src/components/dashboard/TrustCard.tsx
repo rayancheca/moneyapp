@@ -74,7 +74,8 @@ export function TrustCard({ data }: { data: TrustCardData }) {
           <p>
             The whole picture is checked through{" "}
             <span className="figures text-ink-muted">{data.checkedThrough}</span>
-            {data.daysSinceChecked !== null && ` — ${data.daysSinceChecked} days ago`}.{" "}
+            {/* ⛔ the phrase, not the number — see `checkedThroughAgo` */}
+            {data.checkedThroughAgo !== null && ` — ${data.checkedThroughAgo}`}.{" "}
             {data.checkedThroughExplanation}
           </p>
         ) : (

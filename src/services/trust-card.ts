@@ -2,6 +2,7 @@ import { count, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { transactions } from "@/db/schema/transactions";
 import type { IconName } from "@/components/shell/Icon";
+import { agoPhrase } from "@/lib/coverage-detail";
 import { diffDays, todayIso } from "@/lib/dates";
 import { VERDICT_PRESENTATION, type ProvenanceTone } from "@/lib/provenance-verdict";
 import { accountCoverage, type CoverageGrade } from "./coverage";
@@ -172,6 +173,20 @@ export interface TrustCard {
   checkedThrough: string | null;
   /** how long ago that was; null when nothing is checked at all */
   daysSinceChecked: number | null;
+  /**
+   * The same elapsed count as a PHRASE — "today" / "1 day ago" / "39 days ago".
+   *
+   * 🔴 The card built this itself, as `` ` — ${daysSinceChecked} days ago` ``,
+   * so the day the owner finally imports every account up to date it reads
+   * "checked through 2026-09-08 — 0 days ago", and the day after "— 1 days
+   * ago". `agoPhrase` is the app's rule for exactly this number and had ONE
+   * caller: `/imports`' coverage row, whose own docstring records "1 days"
+   * shipping there and being fixed. `cards-owed` states the other half —
+   * "a statement that closed today is dated and not aged: '0 days ago' is
+   * noise". Both were true of the row six lines above this sentence, which
+   * pluralises, and not of the sentence itself.
+   */
+  checkedThroughAgo: string | null;
   /** why the date is that one and not the newest statement's */
   checkedThroughExplanation: string;
   days: TrustDays;
@@ -428,6 +443,7 @@ export function trustCard(db: AppDatabase, today: string = todayIso()): TrustCar
     accountsAddUp,
     checkedThrough,
     daysSinceChecked: checkedThrough === null ? null : diffDays(checkedThrough, today),
+    checkedThroughAgo: checkedThrough === null ? null : agoPhrase(diffDays(checkedThrough, today)),
     checkedThroughExplanation:
       "The whole picture stops being proven at the first account that stops being checked, so this is the oldest of those dates and not the newest statement.",
     days,

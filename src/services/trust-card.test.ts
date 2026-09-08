@@ -402,6 +402,7 @@ describe("trustCard — checked through", () => {
     const card = trustCard(bundle.db, TODAY)!;
     expect(card.checkedThrough).toBe("2026-07-31");
     expect(card.daysSinceChecked).toBe(26);
+    expect(card.checkedThroughAgo).toBe("26 days ago");
   });
 
   test("nothing verified means no date at all, never today", () => {
@@ -412,6 +413,33 @@ describe("trustCard — checked through", () => {
     const card = trustCard(bundle.db, TODAY)!;
     expect(card.checkedThrough).toBeNull();
     expect(card.daysSinceChecked).toBeNull();
+    expect(card.checkedThroughAgo).toBeNull();
+  });
+
+  /**
+   * 🔴 The card printed `${daysSinceChecked} days ago`, so the two states an
+   * up-to-date ledger actually reaches read "0 days ago" and "1 days ago" —
+   * the exact pair `agoPhrase` exists to refuse, and the exact pair the
+   * unchecked-days row six lines above this sentence already gets right.
+   */
+  test("a picture checked through yesterday is one day old, not '1 days'", () => {
+    addAccount("a", "SoFi Checking", "checking");
+    addDays("a", [{ day: "2026-08-25", basis: "anchored" }]);
+    addTxn("a", "2026-08-25");
+
+    const card = trustCard(bundle.db, TODAY)!;
+    expect(card.daysSinceChecked).toBe(1);
+    expect(card.checkedThroughAgo).toBe("1 day ago");
+  });
+
+  test("a picture checked through today is not aged at all", () => {
+    addAccount("a", "SoFi Checking", "checking");
+    addDays("a", [{ day: TODAY, basis: "anchored" }]);
+    addTxn("a", TODAY);
+
+    const card = trustCard(bundle.db, TODAY)!;
+    expect(card.daysSinceChecked).toBe(0);
+    expect(card.checkedThroughAgo).toBe("today");
   });
 });
 
