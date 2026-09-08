@@ -27,11 +27,16 @@ if (routes.length === 0) {
   process.exit(1);
 }
 function toText(html) {
-  // drop script/style/svg content
+  // drop script/style content
   let s = html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<svg[\s\S]*?<\/svg>/gi, ' ')
+    // ⛔ An <svg> is dropped for its GEOMETRY, never for its sentence. A chart's
+    // whole reading is its accessible name — "The largest move is Government,
+    // down $2,250.00" is an `aria-label` on the <svg> itself, and stripping the
+    // element wholesale took the sentence with the path data. The opening tag's
+    // `aria-label`/`title` are kept and only the contents are thrown away.
+    .replace(/<svg([^>]*)>[\s\S]*?<\/svg>/gi, (m, attrs) => `<span${attrs}></span>`)
     .replace(/<!--[\s\S]*?-->/g, ' ');
   // aria-label / title attributes are content too
   s = s.replace(/<(\w+)([^>]*?)>/g, (m, tag, attrs) => {
