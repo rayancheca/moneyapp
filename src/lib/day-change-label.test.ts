@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { dayChangeLabel, dayChangeTerm } from "./day-change-label";
+import { dayChangeLabel, dayChangeTerm, asOfSpanTerm } from "./day-change-label";
 import { formatDayShort } from "./format-date";
 
 describe("dayChangeLabel", () => {
@@ -68,5 +68,33 @@ describe("dayChangeTerm — the inline form the dashboard teaser renders", () =>
     // rather than a trailing phrase after a figure
     expect(term("2026-08-06", null, "2026-08-13")).toBe("day change");
     expect(term(null, null, "2026-08-13")).toBe("day change");
+  });
+});
+
+/**
+ * ⛔ No rendered test reaches the span branch. The e2e fixture covers every
+ * account through one day (its §10 "unreachable in the fixture" list says so),
+ * so an institution group there always shares an `asOf` and only the middle
+ * branch below ever paints.
+ */
+describe("asOfSpanTerm", () => {
+  test("names ONE date only when the parts really share one", () => {
+    expect(asOfSpanTerm("2026-08-17", null)).toBe("as of 2026-08-17");
+  });
+
+  /**
+   * 🔴 The Chase card's total is Aug 14's $3,007.60 plus Sep 3's $82.72, and
+   * three weeks of evidence must not be dated to one day.
+   */
+  test("names the span when they do not", () => {
+    expect(asOfSpanTerm("2026-09-03", "2026-08-14")).toBe(
+      "each as of its own last covered day, 2026-08-14 – 2026-09-03",
+    );
+  });
+
+  /** nothing in the group has a balance — the caller must add no separator */
+  test("says nothing at all when no part carries a date", () => {
+    expect(asOfSpanTerm(null, null)).toBe("");
+    expect(asOfSpanTerm(null, "2026-08-14")).toBe("");
   });
 });

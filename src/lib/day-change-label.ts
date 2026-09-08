@@ -60,3 +60,28 @@ export function dayChangeTerm(
   // only reads as a trailing phrase in lower case
   return interval ?? label.toLowerCase();
 }
+
+/**
+ * WHEN a group total is as of — one date, or the span its parts were read
+ * across.
+ *
+ * 🔴 A THIRD SURFACE ANSWERING WITH NO DATE AT ALL. `InstitutionGroup.totalCents`
+ * is the sum of each child's own last covered day, so on the owner's ledger
+ * 2026-09-08 Chase came to $3,090.32 from $3,007.60 last seen Aug 14 and $82.72
+ * last seen Sep 3. The dashboard's card says so ("each as of its own last
+ * covered day, 2026-08-14 – 2026-09-03") and `/accounts`' table lens says so
+ * ("so this is not one moment, and every row prints its own") — and
+ * `/accounts`' CARDS lens, the third reader of the same service, printed
+ * "Chase · net of what you owe · $3,090.32" with no date anywhere on it. It had
+ * already copied the sibling clause beside it; this one it left behind.
+ *
+ * ⚠️ `oldestAsOf` is null when every child with a balance shares one day, which
+ * is the only case where a single date is honest — see its own docstring.
+ * Returns "" when nothing has a balance, so the caller adds no separator.
+ */
+export function asOfSpanTerm(asOf: string | null, oldestAsOf: string | null): string {
+  if (asOf === null) return "";
+  return oldestAsOf
+    ? `each as of its own last covered day, ${oldestAsOf} – ${asOf}`
+    : `as of ${asOf}`;
+}

@@ -11,6 +11,7 @@ import { Money } from "@/components/ui/Money";
 import { BalanceFigure } from "@/components/accounts/BalanceFigure";
 import { Sparkline, type SparklineTone } from "@/components/ui/Sparkline";
 import { toast } from "@/components/ui/Toast";
+import { asOfSpanTerm } from "@/lib/day-change-label";
 import { formatCentsSigned } from "@/lib/money";
 import { EditAccountSheet, type EditableAccount } from "./EditAccountSheet";
 
@@ -24,6 +25,32 @@ const TYPE_LABEL: Record<AccountCard["type"], string> = {
 function toneOf(cents: number | null): SparklineTone {
   if (cents === null || cents === 0) return "neutral";
   return cents > 0 ? "positive" : "negative";
+}
+
+/**
+ * The small print under an institution's name: WHEN the total beside it is as
+ * of, and whether it nets a debt off.
+ *
+ * 🔴 THE DATES WERE MISSING — the same omission as the day-change figure below,
+ * in the same file. `totalCents` is each child's own last covered day added up,
+ * so on the owner's ledger 2026-09-08 Chase came to $3,090.32 from $3,007.60
+ * last seen Aug 14 beside $82.72 last seen Sep 3 — and this lens printed it
+ * with no date on it anywhere, while the Table lens one click away says "so
+ * this is not one moment, and every row prints its own" and the dashboard's
+ * card names the span. Third reader of one service, third answer;
+ * `asOfSpanTerm` is the one the other two already share.
+ */
+function GroupNote({ group }: { group: InstitutionGroup }) {
+  const note = [
+    asOfSpanTerm(group.asOf, group.oldestAsOf),
+    group.accounts.some((a) => a.isLiability) ? "net of what you owe" : "",
+  ]
+    .filter((part) => part !== "")
+    .join(" · ");
+  if (note === "") return null;
+  // its own line, like the dashboard's card: at 320px an inline clause breaks
+  // "as of 2026-07-08" across two lines, mid-date
+  return <div className="mt-0.5 text-[11px] font-normal text-ink-faint">{note}</div>;
 }
 
 /**
@@ -76,17 +103,13 @@ export function ManagedAccounts({
               2026-09-04 "Capital One -$367.99" sat directly above "Venture X
               $367.99" — one debt, two signs, nothing saying why. Same clause and
               same reason as `InstitutionCard`; printed only where the flip can
-              actually happen. */}
+              actually happen — see `GroupNote`, which carries it. */}
           <header className="flex items-baseline justify-between gap-4 border-b border-line px-5 py-3">
-            <div className="text-sm font-semibold">
-              {group.institutionName}
-              {group.accounts.some((a) => a.isLiability) && (
-                <span className="ml-2 text-[11px] font-normal text-ink-faint">
-                  net of what you owe
-                </span>
-              )}
+            <div className="min-w-0">
+              <div className="text-sm font-semibold">{group.institutionName}</div>
+              <GroupNote group={group} />
             </div>
-            <Money cents={group.totalCents} className="text-sm font-semibold" />
+            <Money cents={group.totalCents} className="shrink-0 text-sm font-semibold" />
           </header>
 
           <ul>

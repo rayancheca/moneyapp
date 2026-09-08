@@ -3,6 +3,7 @@
 import { useId, useState } from "react";
 import Link from "next/link";
 import type { InstitutionGroup, AccountCard as AccountCardData } from "@/services/institution-groups";
+import { asOfSpanTerm } from "@/lib/day-change-label";
 import { formatCentsSigned } from "@/lib/money";
 import { BalanceFigure } from "@/components/accounts/BalanceFigure";
 import { Money } from "@/components/ui/Money";
@@ -111,6 +112,7 @@ export function InstitutionCard({ group }: { group: InstitutionGroup }) {
   const [open, setOpen] = useState(false);
   const regionId = useId();
   const tone = toneOf(group.dayChangeCents);
+  const asOfTerm = asOfSpanTerm(group.asOf, group.oldestAsOf);
 
   return (
     <section
@@ -133,11 +135,7 @@ export function InstitutionCard({ group }: { group: InstitutionGroup }) {
                 read "as of 2026-09-03 · $3,090.32" of a balance last seen Aug 14
                 plus one last seen Sep 3. `AccountsTable` refuses the same claim
                 about the same balances; see `InstitutionGroup.oldestAsOf`. */}
-            {group.asOf
-              ? group.oldestAsOf
-                ? ` · each as of its own last covered day, ${group.oldestAsOf} – ${group.asOf}`
-                : ` · as of ${group.asOf}`
-              : ""}
+            {asOfTerm ? ` · ${asOfTerm}` : ""}
             {/* 🔴 The heading is a NET across the group's sides and every sub-card
                 under it prints a card as what you owe, so the same money appeared
                 twice with opposite signs and nothing said why: on the owner's
