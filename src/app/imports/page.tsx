@@ -13,6 +13,7 @@ import { accountCoverage } from "@/services/coverage";
 import { provenanceFor } from "@/services/provenance";
 import { statementPulls } from "@/services/statement-pulls";
 import { countPhrase } from "@/components/ui/blast-radius";
+import { importRowQualifiers, importRowSubject } from "@/lib/import-file-label";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Money } from "@/components/ui/Money";
@@ -107,6 +108,13 @@ export default async function ImportsPage({
     .groupBy(importFiles.id)
     .orderBy(desc(importFiles.importedAt))
     .all();
+
+  /* 🔴 A name is not an identity here — see `importRowQualifiers`. 112 of the
+     owner's 330 rows share one, and two of `20230810-statements-3522-.pdf`'s
+     three rows are identical in every visible column while their un-import
+     confirmations differ by a statement balance. Null for every unique name,
+     so the column that has to stay scannable is untouched for 218 of them. */
+  const qualifierById = importRowQualifiers(files);
 
   // the rest of what un-importing takes with it — counted per file rather than
   // joined into the query above, where they would fan out against the rows
@@ -378,6 +386,11 @@ export default async function ImportsPage({
                         <div className="truncate" title={f.fileName}>
                           {f.fileName}
                         </div>
+                        {qualifierById.get(f.id) ? (
+                          <div className="figures truncate text-[11px] text-ink-faint">
+                            {qualifierById.get(f.id)}
+                          </div>
+                        ) : null}
                         {f.error ? (
                           <div className="truncate text-[11px] text-negative" title={f.error}>
                             {f.error}
@@ -401,7 +414,7 @@ export default async function ImportsPage({
                           fields={{ importFileId: f.id }}
                           formClassName="inline"
                           triggerLabel="un-import"
-                          triggerAriaLabel={`un-import ${f.fileName}`}
+                          triggerAriaLabel={`un-import ${importRowSubject(f.fileName, qualifierById.get(f.id) ?? null)}`}
                           triggerClassName="text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:text-negative"
                           title="Un-import this file"
                           tone="negative"
@@ -414,7 +427,7 @@ export default async function ImportsPage({
                               : undefined
                           }
                           radius={{
-                            headline: `Un-importing ${f.fileName} deletes every row it brought in. There is no undo for this inside the app.`,
+                            headline: `Un-importing ${importRowSubject(f.fileName, qualifierById.get(f.id) ?? null)} deletes every row it brought in. There is no undo for this inside the app.`,
                             lines: [
                               {
                                 label: "Transactions deleted",
