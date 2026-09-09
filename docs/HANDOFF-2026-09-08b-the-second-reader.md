@@ -1,5 +1,50 @@
 # Handoff — six rules with a second reader, and one decision closed
 
+> ## ➕ 2026-09-09 — THREE MORE, and the sweep in §9 found the first of them
+>
+> `main` `5f21ffb`, pushed. **4,711 unit** · tsc clean · coverage gate exit 0 ·
+> **E2E_GATE=1: 600 passed at `maxDiffPixels: 0` in 8.6 minutes, ZERO baseline
+> churn** · `pnpm ledger-check` exit 0 · ledger still 10,178 active rows and 37
+> uncategorized, still no DB writes.
+>
+> ⭐ **The one-caller sweep is the first thing to run, and it paid again.** It
+> surfaced `terrainTableCaption`'s blank-account count, which led straight to
+> the chart's own accessible name promising a twelfth ribbon.
+>
+> 1. **⛔⛔ `/imports` — a destructive button that cannot be aimed.**
+>    `20230810-statements-3522-.pdf` is THREE rows and two of them render
+>    character for character the same, while their confirmations differ by a
+>    statement balance that anchors the Chase Checking chain. One accessible
+>    name (`un-import <file>`), one headline, nothing saying which. **112 of
+>    330 rows share a name; 34 groups are identical in every visible column.**
+>    Names repeat because Chase regenerates the bytes and a re-parse makes a
+>    third row. Rows with a repeated name now carry their import date, in the
+>    cell, the trigger's name and the headline; the other 218 are untouched.
+> 2. **The terrain said "12 account ribbons" of a terrain drawing eleven** — the
+>    whole figure, for a reader who cannot see it. Both neighbours on that
+>    surface already refuse the claim about that account. `drawnRibbonCount` is
+>    the count now, and the table caption reads its blanks from it.
+> 3. **"3 of 12 accounts were open" on a day the total is built from 2** — on
+>    **every one of the 1,440 days that render the clause**, with no gap to
+>    explain the third. `splitMissing` has THREE buckets and both surfaces
+>    subtracted one. The denominator is now the completeness rule's own
+>    (`activeIds − emptyAccounts`), so the numerator equals `coveredAccounts`
+>    wherever there is no interior gap, and the empty account is named rather
+>    than dropped.
+>
+> ⚠️ **The dashboard now opens on Terrain.** `viewPreferences.dashboard.chart`
+> went `accounts` → `terrain` between the 09-08 and 09-09 daily backups. Not
+> this session: every write of that key is a server ACTION, and this session
+> only issued GETs. Your own click — noted because it changes which chart the
+> first fix above is read on.
+>
+> ⚠️ **`scripts/read-surface.mjs` reads only the first flush.** A React-streamed
+> list looks SHORT against its own count: `/investments/crypto/ETH` showed six
+> sell rows under a "7 sells" header, and the seventh was in a later chunk. Check
+> the raw payload before filing a count-vs-list mismatch.
+>
+> Everything below is the 2026-09-08 session and still stands.
+
 > **Supersedes `HANDOFF-2026-09-08-the-confirmations-that-understated.md`.**
 >
 > Repo: **`/Users/rayankarimcheca/dev/MoneyApp`**, `main`, tree clean, pushed.
