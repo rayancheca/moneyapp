@@ -26,6 +26,7 @@ import {
   unionDays,
   type TerrainLayoutOptions,
   type TerrainRibbonInput,
+  drawnRibbonCount,
   terrainRowFigures,
   terrainTableCaption,
 } from "./terrain-layout";
@@ -962,6 +963,34 @@ describe("terrainRowFigures", () => {
       FMT,
     );
     expect(many.verified).toBe("6 spans not");
+  });
+});
+
+describe("drawnRibbonCount", () => {
+  /**
+   * 🔴 The chart's accessible name — the whole figure, for a reader who cannot
+   * see it — said "12 account ribbons" of a terrain drawing eleven, while the
+   * table lens on the same surface refused the same claim about the same
+   * account in its caption.
+   */
+  test("counts the ribbons with geometry, not the accounts fed in", () => {
+    expect(
+      drawnRibbonCount([{ firstDay: "2026-01-01" }, { firstDay: null }, { firstDay: "2024-07-01" }]),
+    ).toBe(2);
+  });
+
+  test("all drawn, and none", () => {
+    expect(drawnRibbonCount([{ firstDay: "2026-01-01" }, { firstDay: "2026-02-01" }])).toBe(2);
+    expect(drawnRibbonCount([{ firstDay: null }, { firstDay: null }])).toBe(0);
+    expect(drawnRibbonCount([])).toBe(0);
+  });
+
+  /** ⛔ the caption reads its blanks from this, so the two can never disagree */
+  test("is the count the table caption's blank total is taken from", () => {
+    const ribbons = [{ firstDay: "2026-01-01" }, { firstDay: null }];
+    const caption = terrainTableCaption(ribbons, "9 September 2026");
+    expect(ribbons.length - drawnRibbonCount(ribbons)).toBe(1);
+    expect(caption).toContain("1 account has no reconstructed day at all");
   });
 });
 

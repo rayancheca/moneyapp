@@ -948,6 +948,28 @@ export function terrainRowFigures(
 }
 
 /**
+ * How many ribbons the terrain actually DRAWS.
+ *
+ * ⛔ NOT `ribbonCount`, which is how many accounts were fed in. A ribbon with
+ * no covered day has no vertices and no runs, so nothing is painted for it —
+ * `buildRibbon` returns an empty array and the renderer has nothing to stroke.
+ *
+ * 🔴 The chart's accessible name — the whole figure, for a reader who cannot
+ * see it — opened "Net worth terrain. 12 account ribbons across 72 drawn days",
+ * of a terrain drawing eleven. The table lens on the same surface refuses that
+ * claim about the same account in its caption ("1 account has no reconstructed
+ * day at all"), and the legend beside the chart says "no reconstructed day yet"
+ * on its row. Measured on the owner's ledger 2026-09-09: Capital One 360
+ * Checking, active, zero balances, zero rows.
+ *
+ * `firstDay === null` is the same test `terrainRowFigures` uses to decide a row
+ * has nothing to say — one question, one answer, wherever it is asked.
+ */
+export function drawnRibbonCount(ribbons: readonly Pick<TerrainRibbon, "firstDay">[]): number {
+  return ribbons.filter((r) => r.firstDay !== null).length;
+}
+
+/**
  * The table's caption. Says how many accounts it could reconstruct nothing for
  * rather than claiming a first day for every one of them — the row for such an
  * account is three em dashes, and a caption that promises "every account from
@@ -955,7 +977,7 @@ export function terrainRowFigures(
  * active accounts was in that state when this was written.
  */
 export function terrainTableCaption(ribbons: readonly Pick<TerrainRibbon, "firstDay">[], todayLabel: string): string {
-  const blank = ribbons.filter((r) => r.firstDay === null).length;
+  const blank = ribbons.length - drawnRibbonCount(ribbons);
   const base =
     `Every account from its first reconstructed day to ${todayLabel}. ` +
     // ⚠️ The drawing samples ~72 evenly spaced days out of the ledger's four

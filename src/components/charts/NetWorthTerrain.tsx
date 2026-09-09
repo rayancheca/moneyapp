@@ -24,6 +24,7 @@ import { formatCents, formatCentsSigned } from "@/lib/money";
 import {
   TERRAIN_VIEWPOINTS,
   computeTerrainLayout,
+  drawnRibbonCount,
   nearestVertex,
   pointsAttr,
   reconcileTerrain,
@@ -770,7 +771,16 @@ function scaleBreakNote(layout: TerrainLayout): string {
 
 /** The figure, described. Names every encoding and points at the exact numbers. */
 function terrainDescription(layout: TerrainLayout, balanced: boolean): string {
-  const n = layout.ribbonCount;
+  /* ⛔ the ribbons DRAWN, not the accounts fed in — see `drawnRibbonCount` for
+     the twelfth one this used to promise a reader who cannot see the figure */
+  const n = drawnRibbonCount(layout.ribbons);
+  const blank = layout.ribbonCount - n;
+  const undrawn =
+    blank === 0
+      ? ""
+      : ` ${blank} ${blank === 1 ? "account has" : "accounts have"} no reconstructed day at all and ${
+          blank === 1 ? "is" : "are"
+        } not drawn.`;
   const span =
     layout.firstDay === null || layout.lastDay === null
       ? ""
@@ -797,7 +807,7 @@ function terrainDescription(layout: TerrainLayout, balanced: boolean): string {
   return (
     `Net worth terrain. ${n} account ribbon${n === 1 ? "" : "s"} across ${layout.columnCount} drawn day${
       layout.columnCount === 1 ? "" : "s"
-    }${span}. Height above the zero plane is the account's balance and depth separates the accounts. ${owed} ${holes} ` +
+    }${span}.${undrawn} Height above the zero plane is the account's balance and depth separates the accounts. ${owed} ${holes} ` +
     `${sum} Exact figures for every account are in the list beside the chart and in the Table lens.`
   );
 }
