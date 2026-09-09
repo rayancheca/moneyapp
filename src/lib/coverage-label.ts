@@ -168,6 +168,54 @@ export function splitMissing(
 }
 
 /**
+ * "3 of 11 accounts were open" — how many of the accounts the ledger can speak
+ * for had opened by this day.
+ *
+ * 🔴 IT COUNTED AN ACCOUNT WITH NO HISTORY AS OPEN. Both surfaces that print
+ * this built it as `totalAccounts - notYetOpen.length`, and `splitMissing`
+ * routes an account holding no rows and no balances to a THIRD bucket —
+ * neither open nor missing, because there is nothing to cover. So the empty one
+ * fell through into the open count. Measured on the owner's ledger 2026-09-09,
+ * on every one of the **1,440 days that render this clause**:
+ *
+ *     2023-10-15   "3 of 12 accounts were open"   covered 2, and no gaps
+ *     2024-03-01   "6 of 12 accounts were open"   covered 5, and no gaps
+ *     2025-06-01   "8 of 12 accounts were open"   covered 7, and no gaps
+ *
+ * One more open than the total is built from, every day, with the gap clause —
+ * the half that exists to explain a shortfall — correctly silent, because there
+ * is no hole. `Capital One 360 Checking` is the account: active, zero rows,
+ * zero balances.
+ *
+ * ⛔ THE DENOMINATOR IS THE COMPLETENESS RULE'S OWN. `netWorthSeries` calls a
+ * day complete when `covered.size === activeIds.length - emptyAccounts.length`,
+ * so subtracting the empties from both sides is not a new opinion — it is the
+ * arithmetic the same module already grades the day by. The numerator then
+ * equals `coveredAccounts` on every day with no interior gap.
+ *
+ * ⚠️ …and the missing account is NAMED rather than quietly dropped, or a reader
+ * who counts twelve on `/accounts` is handed an eleven with no explanation.
+ * `emptyAccounts`' own docstring asks for exactly this: "Named so a surface CAN
+ * mention them."
+ */
+export function openAccountsPhrase(
+  input: { totalAccounts: number; notYetOpenCount: number; emptyCount: number },
+  /** the chart speaks about a scrubbed day in the past; the hero about the day it shows */
+  verb: "open" | "were open" = "open",
+): string | null {
+  if (input.notYetOpenCount <= 0) return null;
+  const knowable = input.totalAccounts - input.emptyCount;
+  const open = knowable - input.notYetOpenCount;
+  // present tense on purpose: an account that holds nothing holds nothing on
+  // every day of the series, whichever day the sentence is about
+  const empty =
+    input.emptyCount === 0
+      ? ""
+      : `, and ${input.emptyCount} ${input.emptyCount === 1 ? "holds" : "hold"} nothing at all`;
+  return `${open} of ${knowable} account${knowable === 1 ? "" : "s"} ${verb}${empty}`;
+}
+
+/**
  * One day's coverage, as the chart carries it. Every field is optional because
  * the portfolio/holding charts carry none of it — and a series with no detail
  * keeps the old, blunt suppression rather than guessing.

@@ -15,7 +15,13 @@ import {
   type ScrubPoint,
   type ScrubSummary,
 } from "@/components/investments/ScrubChart";
-import { coveragePhrase, formatNameList, openingLabel, sharedCoverageChange } from "@/lib/coverage-label";
+import {
+  coveragePhrase,
+  formatNameList,
+  openAccountsPhrase,
+  openingLabel,
+  sharedCoverageChange,
+} from "@/lib/coverage-label";
 
 /**
  * Net worth adoption of the ScrubChart (ux-overhaul-plan §7.1). The Stage-4
@@ -141,11 +147,19 @@ export function NetWorthChartPanel({
       const opening = openingLabel(cov.coveredAccountNames, cov.notYetOpen, Number.MAX_SAFE_INTEGER);
       // an account that had not opened yet is spoken as a fact about the calendar,
       // never as lost data — the missing statement below is the only defect here
+      /* ⛔ `openAccountsPhrase`, not `total - notYetOpen`: an account holding
+         nothing at all is in neither bucket, and counting it as open put this
+         one ahead of its own covered total on 1,440 days. */
+      const openPhrase = openAccountsPhrase(
+        {
+          totalAccounts: cov.totalAccounts,
+          notYetOpenCount: cov.notYetOpen.length,
+          emptyCount: cov.emptyAccounts.length,
+        },
+        "were open",
+      );
       const openClause =
-        cov.notYetOpen.length > 0
-          ? ` — ${cov.totalAccounts - cov.notYetOpen.length} of ${cov.totalAccounts} accounts were open` +
-            (opening ? `; ${coveragePhrase(opening)}` : "")
-          : "";
+        openPhrase === null ? "" : ` — ${openPhrase}` + (opening ? `; ${coveragePhrase(opening)}` : "");
       const gapClause =
         cov.gapAccounts.length > 0
           ? ` — no statement covers ${formatNameList(cov.gapAccounts, Number.MAX_SAFE_INTEGER)} on this day`

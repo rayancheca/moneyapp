@@ -3,7 +3,12 @@ import Link from "next/link";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { todayIso } from "@/lib/dates";
-import { coveragePhrase, formatNameList, openingLabel } from "@/lib/coverage-label";
+import {
+  coveragePhrase,
+  formatNameList,
+  openAccountsPhrase,
+  openingLabel,
+} from "@/lib/coverage-label";
 import { formatCents } from "@/lib/money";
 import { dashboardData } from "@/services/dashboard";
 import { dashboardChartData } from "@/services/dashboard-series";
@@ -221,6 +226,14 @@ export default async function DashboardPage({
   const latestPoint = netWorth.series.at(-1) ?? null;
   const heroNotYetOpen = latestPoint?.notYetOpen ?? [];
   const heroGapAccounts = latestPoint?.gapAccounts ?? [];
+  /* ⛔ `openAccountsPhrase`, not `total - notYetOpen` — the account holding
+     nothing at all is in neither bucket, and counting it as open made this read
+     one ahead of the total it stands over. See the rule for the 1,440 days. */
+  const heroOpenPhrase = openAccountsPhrase({
+    totalAccounts: latestPoint?.totalAccounts ?? 0,
+    notYetOpenCount: heroNotYetOpen.length,
+    emptyCount: latestPoint?.emptyAccounts.length ?? 0,
+  });
   const heroOpening =
     heroNotYetOpen.length > 0 ? openingLabel(netWorth.coveredAccountNames, heroNotYetOpen) : null;
 
@@ -324,9 +337,9 @@ export default async function DashboardPage({
                   : `excludes ${formatCents(-netWorth.inTransitCents)} posted twice in transit`}
               </span>
             )}
-            {heroNotYetOpen.length > 0 && (
+            {heroOpenPhrase !== null && (
               <span className="text-ink-faint">
-                {netWorth.totalAccounts - heroNotYetOpen.length} of {netWorth.totalAccounts} accounts open
+                {heroOpenPhrase}
                 {heroOpening && <>{" "}· {coveragePhrase(heroOpening)}</>}
               </span>
             )}

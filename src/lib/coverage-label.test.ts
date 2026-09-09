@@ -6,6 +6,7 @@ import {
   openingLabel,
   sharedCoverageChange,
   splitMissing,
+  openAccountsPhrase,
 } from "./coverage-label";
 
 describe("formatNameList", () => {
@@ -558,5 +559,54 @@ describe("sharedCoverageChange — the dollar figure matches the percentage", ()
     const change = sharedCoverageChange(gappy, { cents: 90_000, coverage: { complete: true } });
     expect(change.pct).toBeNull();
     expect(change.deltaCents).toBeNull();
+  });
+});
+
+describe("openAccountsPhrase", () => {
+  /**
+   * 🔴 The defect, measured on the owner's ledger 2026-09-09 on every one of
+   * the 1,440 days that render this clause: "3 of 12 accounts were open" of a
+   * day whose total is built from 2, with no interior gap to explain the third.
+   * `Capital One 360 Checking` is active, holds zero rows and zero balances,
+   * and `splitMissing` routes it to neither bucket — so it fell into the open
+   * count.
+   */
+  test("does not count an account with no history at all as open", () => {
+    expect(
+      openAccountsPhrase({ totalAccounts: 12, notYetOpenCount: 9, emptyCount: 1 }, "were open"),
+    ).toBe("2 of 11 accounts were open, and 1 holds nothing at all");
+  });
+
+  /** ⛔ the numerator is `coveredAccounts` on any day with no interior gap */
+  test("agrees with what the day actually covered", () => {
+    // 2024-03-01: 12 active, 6 not yet open, 1 empty — the series covered 5
+    expect(
+      openAccountsPhrase({ totalAccounts: 12, notYetOpenCount: 6, emptyCount: 1 }, "were open"),
+    ).toBe("5 of 11 accounts were open, and 1 holds nothing at all");
+  });
+
+  /** an ordinary ledger has no empty account, and gains no clause */
+  test("says nothing extra when every account holds something", () => {
+    expect(openAccountsPhrase({ totalAccounts: 9, notYetOpenCount: 4, emptyCount: 0 })).toBe(
+      "5 of 9 accounts open",
+    );
+  });
+
+  /** ⛔ the clause exists to explain a shortfall — with none, there is nothing to say */
+  test("is silent when every account had opened", () => {
+    expect(openAccountsPhrase({ totalAccounts: 12, notYetOpenCount: 0, emptyCount: 1 })).toBeNull();
+  });
+
+  test("pluralises the denominator and the empty count", () => {
+    expect(openAccountsPhrase({ totalAccounts: 3, notYetOpenCount: 1, emptyCount: 2 })).toBe(
+      "0 of 1 account open, and 2 hold nothing at all",
+    );
+  });
+
+  /** the two surfaces differ only in tense, and both read from this */
+  test("carries the tense the caller is speaking in", () => {
+    const input = { totalAccounts: 5, notYetOpenCount: 2, emptyCount: 0 };
+    expect(openAccountsPhrase(input)).toBe("3 of 5 accounts open");
+    expect(openAccountsPhrase(input, "were open")).toBe("3 of 5 accounts were open");
   });
 });
