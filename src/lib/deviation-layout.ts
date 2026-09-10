@@ -174,7 +174,8 @@ export function deviationDescription(
   const shown =
     layout.movedCount > layout.bars.length ? ` Showing the ${layout.bars.length} biggest.` : "";
   return (
-    `${layout.movedCount} categories moved against the previous period: ` +
+    // 🔴 "1 categories moved against the previous period: 1 up, 0 down."
+    `${layout.movedCount} categor${layout.movedCount === 1 ? "y" : "ies"} moved against the previous period: ` +
     `${layout.upCount} up, ${layout.downCount} down.${shown} ` +
     `The largest move is ${biggest.label}, ${biggest.isIncrease ? "up" : "down"} ` +
     `${fmt(Math.abs(biggest.deltaCents))}.`

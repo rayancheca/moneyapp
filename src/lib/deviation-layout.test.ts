@@ -145,6 +145,13 @@ describe("deviationDescription", () => {
     expect(desc).toContain("$100.00");
   });
 
+  test("one category that moved is not \"1 categories\"", () => {
+    // 🔴 "1 categories moved against the previous period: 1 up, 0 down."
+    const layout = computeDeviationLayout([row("rent", 200_00, 100_00)], OPTS);
+    expect(deviationDescription(layout, fmt)).toContain("1 category moved");
+    expect(deviationDescription(layout, fmt)).not.toContain("1 categories");
+  });
+
   test("the empty state is a sentence", () => {
     expect(deviationDescription(computeDeviationLayout([], OPTS), fmt)).toBe(
       "Nothing changed against the previous period.",

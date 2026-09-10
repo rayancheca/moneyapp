@@ -543,6 +543,38 @@ describe("provenanceFor — a category total", () => {
     expect(p.sources[0]!.label).toBe("20260801-statements-3522-.pdf");
   });
 
+  test("the fifth document onward is summarised, and one of them is a document", () => {
+    /*
+     * 🔴 "and 1 more documents" — the hand-entered row four lines below it in
+     * the same builder has pluralised its own noun since it shipped.
+     */
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const cat = addCategory("c-food", "Fixture Food");
+    addDays(acct, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-15", basis: "derived" }]);
+    // SOURCES_NAMED is 4, so five files leave exactly one unnamed
+    for (let i = 1; i <= 5; i++) {
+      const f = addFile(`f${i}`, `doc-${i}.pdf`, "chase-checking-statement-pdf");
+      categorize(addTxn(acct, "2026-07-10", { importFileId: f }), cat);
+    }
+
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
+    expect(p.sources.at(-1)!.label).toBe("and 1 more document");
+    expect(p.sources.map((x) => x.label)).not.toContain("and 1 more documents");
+  });
+
+  test("two unnamed documents stay plural", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const cat = addCategory("c-food", "Fixture Food");
+    addDays(acct, [{ day: "2026-07-01", basis: "anchored" }, { day: "2026-07-15", basis: "derived" }]);
+    for (let i = 1; i <= 6; i++) {
+      const f = addFile(`f${i}`, `doc-${i}.pdf`, "chase-checking-statement-pdf");
+      categorize(addTxn(acct, "2026-07-10", { importFileId: f }), cat);
+    }
+
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
+    expect(p.sources.at(-1)!.label).toBe("and 2 more documents");
+  });
+
   /** A parent's total includes its children, the same way the app reports it. */
   test("a parent total includes its children's rows", () => {
     const acct = addAccount("a", "Chase Checking", "checking");

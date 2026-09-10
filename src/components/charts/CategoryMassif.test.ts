@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
+import { massifCaptionKey } from "./CategoryMassif";
 
 /**
  * THE SHRINK GATE for the "Where it went" relief.
@@ -64,5 +65,27 @@ describe("the relief's tracks can shrink", () => {
     const stage = classNames(source).find((c) => c.includes("h-[17rem]"));
     expect(stage).toBeDefined();
     expect(stage).toContain("overflow-hidden");
+  });
+});
+
+describe("the relief's readout counts categories in English", () => {
+  /* 🔴 "Aug 2022 · all 1 categories" — the `<desc>` this card also writes
+     pluralises "block" from the same count. */
+  test("one category is a category", () => {
+    expect(massifCaptionKey(null, 1, "Aug 2022")).toBe("Aug 2022 · all 1 category");
+  });
+
+  test("more than one is categories", () => {
+    expect(massifCaptionKey(null, 12, "Jul 2026")).toBe("Jul 2026 · all 12 categories");
+  });
+
+  test("zero is categories too", () => {
+    expect(massifCaptionKey(null, 0, "Jul 2026")).toBe("Jul 2026 · all 0 categories");
+  });
+
+  test("a hovered block names itself and its share instead", () => {
+    expect(massifCaptionKey({ label: "FOOD", share: 0.4237 }, 12, "Jul 2026")).toBe(
+      "FOOD · 42.4% of Jul 2026",
+    );
   });
 });

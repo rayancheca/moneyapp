@@ -1312,9 +1312,12 @@ function summedRowsProvenance(
     on: f.importedAt.slice(0, 10),
   }));
   if (files.length > SOURCES_NAMED) {
+    // 🔴 "and 1 more documents" — the hand-entered row four lines below has
+    // pluralised its own noun since it shipped
+    const rest = files.length - SOURCES_NAMED;
     sources.push({
       kind: "document",
-      label: `and ${files.length - SOURCES_NAMED} more documents`,
+      label: `and ${rest} more ${rest === 1 ? "document" : "documents"}`,
       detail: "not listed",
     });
   }

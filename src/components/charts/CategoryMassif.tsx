@@ -419,9 +419,7 @@ function Slug({
   const spent = active ? active.spentCents : layout.totalSpentCents;
   const delta = active ? active.deltaCents : layout.totalDeltaCents;
   const entries = active ? active.txnCount : layout.totalTxnCount;
-  const key = active
-    ? `${active.label} · ${(active.share * 100).toFixed(1)}% of ${periodLabel}`
-    : `${periodLabel} · all ${layout.categoryCount} categories`;
+  const key = massifCaptionKey(active, layout.categoryCount, periodLabel);
   return (
     // NOT a live region: this changes on every block the pointer crosses, and
     // AT would announce a new category each time. The figure's own aria-label
@@ -629,7 +627,23 @@ function blockFill(hue: string | null): string {
 }
 
 /** The figure, described. Names every encoding and points at the exact numbers. */
-function massifDescription(
+/**
+ * What the readout names when nothing is hovered, and when something is.
+ *
+ * 🔴 "all 1 categories". The `<desc>` this card writes pluralises "block" from
+ * the same count, so the rule was already in the file and the caption did not
+ * read it.
+ */
+export function massifCaptionKey(
+  active: { label: string; share: number } | null,
+  categoryCount: number,
+  periodLabel: string,
+): string {
+  if (active) return `${active.label} · ${(active.share * 100).toFixed(1)}% of ${periodLabel}`;
+  return `${periodLabel} · all ${categoryCount} categor${categoryCount === 1 ? "y" : "ies"}`;
+}
+
+export function massifDescription(
   layout: ReturnType<typeof computeMassifLayout>,
   periodLabel: string,
   priorLabel: string,
@@ -643,7 +657,8 @@ function massifDescription(
     `Where ${periodLabel} went, as a relief. ${n} category block${n === 1 ? "" : "s"} set on a plane. ` +
     `A block's footprint width is its share of the ${formatCents(layout.totalSpentCents)} spent, its footprint ` +
     `depth grows with the number of entries it holds, and its height is the change against ${priorLabel} — blocks pressed ` +
-    `below the plane cost less than they did then. The ${n} heights sum to ${move}. ` +
+    /* 🔴 the same sentence pluralises "block" four lines up and not this */
+    `below the plane cost less than they did then. The ${n} height${n === 1 ? "" : "s"} sum${n === 1 ? "s" : ""} to ${move}. ` +
     `Exact figures for every category are in the ranked list beside the chart and in the Table lens.`
   );
 }
