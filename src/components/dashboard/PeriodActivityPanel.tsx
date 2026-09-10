@@ -1,10 +1,10 @@
 "use client";
 
+import { dayWindowLabel } from "@/lib/period";
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { loadPeriodActivity } from "@/app/period-activity-action";
-import { formatDayShort } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import type { PeriodActivity } from "@/services/period-activity";
 import { useDashboardWindow } from "@/components/dashboard/DashboardWindowContext";
@@ -79,7 +79,13 @@ export function PeriodActivityPanel({ categories }: { categories: readonly Categ
   // an error instead of stale money.
   const shown = data && data.summary.from === start && data.summary.to === end ? data : null;
   const summary = shown?.summary ?? null;
-  const rangeLabel = `${formatDayShort(start)} – ${formatDayShort(end)}`;
+  /* 🔴 A WINDOW THAT CROSSES A YEAR WAS NAMED BY NEITHER. `formatDayShort`
+     drops the year always, so 2025-11-15 → 2026-02-03 read "Nov 15 – Feb 3"
+     beside a header on the same line printing "opened Jan 13, 2026" and an
+     sr-only readout printing "Tue, Feb 3, 2026" — one screen, two conventions,
+     and the one a reader needs is unidentifiable. `dayWindowLabel` is the app's
+     rule for naming a window by its own ends and drops only what repeats. */
+  const rangeLabel = dayWindowLabel(start, end);
   // key the animated block on the LOADED window, so the fade plays when real data
   // arrives (not on a placeholder) and the previous window stays put until then
   const contentKey = summary ? `${summary.from}_${summary.to}` : "loading";

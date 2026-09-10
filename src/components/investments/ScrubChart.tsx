@@ -1,5 +1,6 @@
 "use client";
 
+import { dayWindowLabel } from "@/lib/period";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Area,
@@ -27,7 +28,6 @@ import {
 } from "@/lib/chart-axis";
 import type { AccountOpening } from "@/lib/coverage-label";
 import { compareDates } from "@/lib/dates";
-import { formatDayShort } from "@/lib/format-date";
 import { clampIndex, ratioToIndex, stepScrubIndex } from "@/lib/scrub";
 import {
   firstCompleteDay,
@@ -595,7 +595,8 @@ export function ScrubChart({
       // Refusing the window is right; refusing it in silence is not — a typed
       // From/To would just snap back with no reason given. Same wording the
       // table lens uses for the same condition (ScrubTable's fell-back caption).
-      setWindowNote(`${formatDayShort(lo)} – ${formatDayShort(hi)} holds too little data to chart.`);
+      // the same window rule as the reset pill this note sits beside
+      setWindowNote(`${dayWindowLabel(lo, hi)} holds too little data to chart.`);
       return;
     }
     setWindowNote(null);
@@ -1109,7 +1110,8 @@ export function ScrubChart({
             onClick={() => selectRange(range)}
             className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-3 py-1 text-xs font-medium text-accent transition-colors duration-(--duration-fast) hover:bg-accent/15 active:scale-95"
           >
-            {formatDayShort(customWindow.start)} – {formatDayShort(customWindow.end)} · Reset
+            {/* the app's own window rule — see PeriodActivityPanel */}
+            {dayWindowLabel(customWindow.start, customWindow.end)} · Reset
           </button>
         )}
         {/* A sub-window of ONE session is a time range, not a date range. Giving

@@ -1,5 +1,6 @@
 "use client";
 
+import { dayWindowLabel } from "@/lib/period";
 import { useCallback, useMemo } from "react";
 import { Icon } from "@/components/shell/Icon";
 import { NumberRoll } from "@/components/ui/NumberRoll";
@@ -197,7 +198,7 @@ export function NetWorthChartPanel({
         const context = scrubbing
           ? formatDayLong(summary.day)
           : customWindow
-            ? `${formatDayShort(customWindow.start)} – ${formatDayShort(customWindow.end)}`
+            ? dayWindowLabel(customWindow.start, customWindow.end)
             : range === "ALL"
               ? "all time"
               : range;

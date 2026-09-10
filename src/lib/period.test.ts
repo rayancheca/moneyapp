@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { compareDates, periodBounds } from "./dates";
 import {
+  dayWindowLabel,
   ALL_TIME_FLOOR,
   currentPeriodLabel,
   currentPeriodParams,
@@ -486,5 +487,36 @@ describe("a day bucket that could collide carries its month", () => {
     expect(b[0]!.label).toBe("Dec 28 '25");
     expect(b.at(-1)!.label).toBe("Jan 3 '26");
     expect(new Set(b.map((x) => x.label)).size).toBe(b.length);
+  });
+});
+
+describe("dayWindowLabel — a window named by its own two ends", () => {
+  /*
+   * The rule six surfaces now read: the merchant share sentence and its strip
+   * caption, /spending's cash-earnings notes, the dashboard's custom-window
+   * header, the scrub chart's reset pill and its too-little-data note, and the
+   * activity panel. It drops only what genuinely repeats.
+   */
+  test("one day is a day", () => {
+    expect(dayWindowLabel("2026-02-07", "2026-02-07")).toBe("Feb 7, 2026");
+  });
+
+  test("two days in one month repeat neither the month nor the year", () => {
+    expect(dayWindowLabel("2026-02-16", "2026-02-17")).toBe("Feb 16 – 17, 2026");
+  });
+
+  test("two months in one year repeat only the year", () => {
+    expect(dayWindowLabel("2026-06-04", "2026-10-14")).toBe("Jun 4 – Oct 14, 2026");
+  });
+
+  test("a window crossing a year names BOTH", () => {
+    // 🔴 `formatDayShort` on both ends dropped the year always, so the
+    // dashboard's custom window read "Nov 15 – Feb 3" beside a header on the
+    // same line printing "opened Jan 13, 2026".
+    expect(dayWindowLabel("2025-11-15", "2026-02-03")).toBe("Nov 15, 2025 – Feb 3, 2026");
+  });
+
+  test("the same day-of-month in two months is still two days", () => {
+    expect(dayWindowLabel("2026-07-25", "2026-08-25")).toBe("Jul 25 – Aug 25, 2026");
   });
 });
