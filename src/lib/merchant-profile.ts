@@ -17,6 +17,7 @@
  */
 
 import { diffDays } from "./dates";
+import { formatCents } from "./money";
 
 /** Visits below this cannot establish a rate, however long the span. */
 export const MIN_VISITS_FOR_RATE = 3;
@@ -46,13 +47,32 @@ export interface MerchantYear {
 export interface MerchantCategorySlice {
   name: string;
   cents: number;
-  /** share of `totalCents`, 0–100 */
+  /** share of `grossCents` — the mix is of PURCHASES, 0–100 */
   pct: number;
 }
 
 export interface MerchantProfile {
   visitCount: number;
+  /**
+   * What the merchant COST over its span — purchases less the returns credited
+   * back at it.
+   *
+   * 🔴 It was the purchases alone, and so was the rank built beside it.
+   * Measured on the owner's ledger 2026-09-10: `Best Buy` charged $3,758.43 and
+   * returned $3,540.71 of it, and read "the largest of your 250 regular
+   * merchants, at $3,758.43" over a merchant that cost $217.72. `Apple Store`
+   * sat 15th of 250 on $1,248.80 charged and $0.00 net — every purchase
+   * returned. Thirteen merchants on this ledger carry a refund; only those two
+   * are large enough to move the top of the list. Owner's decision, 2026-09-10:
+   * the Total and the rank say what it cost; the VISIT statistics stay gross,
+   * because a returned purchase was still a visit that cost money on the day.
+   */
   totalCents: number;
+  /** what the purchases came to, before the returns — the mean's denominator */
+  grossCents: number;
+  /** credits at this merchant in expense-kind categories, over the same span */
+  refundCents: number;
+  refundCount: number;
   firstSeen: string | null;
   lastSeen: string | null;
   /**
@@ -106,18 +126,46 @@ export interface MerchantProfile {
  * ⛔ Not folded into `monthlyBasis`. The exclusion is true whether or not a rate
  * could be given, and a merchant with a perfectly good rate built from 4 of its
  * 200 rows needs saying just as much as one without.
+ *
+ * 🔴 …AND IT HAD TO STOP SAYING NOTHING COUNTS THEM. Once the Total nets the
+ * returns, "none of them a purchase, so nothing on this card counts them" is
+ * false of exactly the rows that moved it. Measured 2026-09-10: on all thirteen
+ * refunding merchants the excluded rows are ONLY returns — not one of them has
+ * a transfer or an uncategorized row alongside — so the vague clause was
+ * covering the one thing worth naming. `Best Buy` reads "24 purchases came to
+ * $3,758.43, less $3,540.71 returned across 8 rows."
  */
-function countedNoteFor(visitCount: number, uncountedRows: number): string | null {
+function countedNoteFor(
+  visitCount: number,
+  uncountedRows: number,
+  grossCents: number,
+  refundCents: number,
+  refundCount: number,
+): string | null {
   if (uncountedRows === 0) return null;
   const purchases = `${visitCount} ${visitCount === 1 ? "purchase" : "purchases"}`;
-  const other = `${uncountedRows} other ${uncountedRows === 1 ? "row" : "rows"}`;
-  return uncountedRows === 1
-    ? `Measured from ${purchases}. The 1 other row here is money in, a transfer, or uncategorized — not a purchase, so nothing on this card counts it.`
-    : `Measured from ${purchases}. The ${other} here are money in, transfers, or uncategorized — none of them a purchase, so nothing on this card counts them.`;
+  const otherRows = uncountedRows - refundCount;
+  const returned =
+    refundCount === 0
+      ? ""
+      : `${purchases} came to ${formatCents(grossCents)}, less ${formatCents(refundCents)} returned across ` +
+        `${refundCount} ${refundCount === 1 ? "row" : "rows"}.`;
+  if (otherRows === 0) return returned;
+  const other = `${otherRows} other ${otherRows === 1 ? "row" : "rows"}`;
+  const rest =
+    otherRows === 1
+      ? `The 1 other row here is money in, a transfer, or uncategorized — not a purchase, so nothing on this card counts it.`
+      : `The ${other} here are money in, transfers, or uncategorized — none of them a purchase, so nothing on this card counts them.`;
+  return returned === "" ? `Measured from ${purchases}. ${rest}` : `${returned} ${rest}`;
 }
 
 export function merchantProfile(
   visits: readonly MerchantVisit[],
+  /**
+   * Credits at this merchant in EXPENSE-kind categories — the returns. Same
+   * shape as a visit, `amountCents` a positive magnitude refunded.
+   */
+  refunds: readonly MerchantVisit[],
   today: string,
   /**
    * Every ACTIVE row at this merchant, purchases and everything else — the same
@@ -127,12 +175,17 @@ export function merchantProfile(
   rowCount: number = visits.length,
 ): MerchantProfile {
   const uncountedRows = Math.max(0, rowCount - visits.length);
+  const refundCents = refunds.reduce((t, r) => t + r.amountCents, 0);
+  const refundCount = refunds.length;
   if (visits.length === 0) {
     return {
       uncountedRows,
-      countedNote: countedNoteFor(0, uncountedRows),
+      countedNote: countedNoteFor(0, uncountedRows, 0, refundCents, refundCount),
       visitCount: 0,
       totalCents: 0,
+      grossCents: 0,
+      refundCents: 0,
+      refundCount: 0,
       firstSeen: null,
       lastSeen: null,
       spanDays: 0,
@@ -154,7 +207,9 @@ export function merchantProfile(
   // rate below divides by this same number — see the branch comment further
   // down: the figure and the sentence describing it are chosen together.
   const spanDays = diffDays(firstSeen, lastSeen) + 1;
-  const totalCents = visits.reduce((t, v) => t + v.amountCents, 0);
+  const grossCents = visits.reduce((t, v) => t + v.amountCents, 0);
+  // what it COST: purchases less the returns credited back at it
+  const totalCents = grossCents - refundCents;
 
   /*
    * Median inline rather than in a helper. The helper carried an
@@ -167,7 +222,8 @@ export function merchantProfile(
   const mid = Math.floor(amounts.length / 2);
   const medianTicketCents =
     amounts.length % 2 === 1 ? amounts[mid]! : Math.round((amounts[mid - 1]! + amounts[mid]!) / 2);
-  const meanTicketCents = Math.round(totalCents / visits.length);
+  // the mean PURCHASE, so it divides the gross — a return is not a visit
+  const meanTicketCents = Math.round(grossCents / visits.length);
   const ticketSkew = medianTicketCents > 0 ? meanTicketCents / medianTicketCents : 0;
 
   /*
@@ -195,10 +251,24 @@ export function merchantProfile(
     monthlyBasis = `Spread across the ${spanDays} days from ${firstSeen} to ${lastSeen}.`;
   }
 
+  /*
+   * ⛔ THE MIX AND THE YEARS ARE PURCHASES, and they reconcile to the gross the
+   * note now names — not to the Total, which is net. Both are visit statistics:
+   * a year bar answers "how much did I buy here that year", and the two figures
+   * a reader can multiply beside them (`visitCount` × `meanTicketCents`) come
+   * to the same gross. Netting them was tried and drew a year bar of
+   * -$1,004.99 on `Best Buy` — 2024's returns outran its purchases — which is
+   * true and which this bar, measured from the largest year and drawn from
+   * `left: 0`, cannot show; an invalid negative width renders as no bar at all,
+   * so the most extreme year would have read as the emptiest.
+   *
+   * ⛔ And the share is gross OVER gross. A gross part over the net whole is
+   * exactly the mix `merchant-insights` was just fixed for.
+   */
   const byCategory = new Map<string, number>();
   for (const v of visits) byCategory.set(v.categoryName, (byCategory.get(v.categoryName) ?? 0) + v.amountCents);
   const categoryMix: MerchantCategorySlice[] = [...byCategory.entries()]
-    .map(([name, cents]) => ({ name, cents, pct: totalCents > 0 ? (cents / totalCents) * 100 : 0 }))
+    .map(([name, cents]) => ({ name, cents, pct: grossCents > 0 ? (cents / grossCents) * 100 : 0 }))
     .sort((a, b) => b.cents - a.cents || a.name.localeCompare(b.name));
 
   const byYear = new Map<string, { cents: number; visits: number }>();
@@ -214,9 +284,12 @@ export function merchantProfile(
 
   return {
     uncountedRows,
-    countedNote: countedNoteFor(visits.length, uncountedRows),
+    countedNote: countedNoteFor(visits.length, uncountedRows, grossCents, refundCents, refundCount),
     visitCount: visits.length,
     totalCents,
+    grossCents,
+    refundCents,
+    refundCount,
     firstSeen,
     lastSeen,
     spanDays,

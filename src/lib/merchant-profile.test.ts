@@ -30,7 +30,7 @@ describe("merchantProfile — the number a merchant page exists to give", () => 
   test("states a monthly rate across the span actually observed", () => {
     // 53 weekly $10 visits, first 2025-01-01 and last 2025-12-31 — 365 days
     // observed, both ends included, = 12.0 months → ~$44.19/month
-    const p = merchantProfile(weekly(53, 1000), TODAY);
+    const p = merchantProfile(weekly(53, 1000), [], TODAY);
     expect(p.visitCount).toBe(53);
     expect(p.totalCents).toBe(53000);
     expect(p.spanDays).toBe(365);
@@ -40,7 +40,7 @@ describe("merchantProfile — the number a merchant page exists to give", () => 
 
   test("the rate is spread over the SPAN, not over a calendar year", () => {
     // the SAME total money, in half the elapsed time, is twice the monthly habit
-    const sparse = merchantProfile(weekly(27, 1000), TODAY); // one visit a week
+    const sparse = merchantProfile(weekly(27, 1000), [], TODAY); // one visit a week
     const dense = merchantProfile(
       Array.from({ length: 27 }, (_, i) => ({
         day: new Date(Date.parse("2025-01-01T00:00:00Z") + i * 3.5 * 86_400_000)
@@ -48,7 +48,7 @@ describe("merchantProfile — the number a merchant page exists to give", () => 
           .slice(0, 10),
         amountCents: 1000,
         categoryName: "Food",
-      })),
+      })), [],
       TODAY,
     ); // two a week, same 27 visits and same $270
     expect(dense.totalCents).toBe(sparse.totalCents);
@@ -57,7 +57,7 @@ describe("merchantProfile — the number a merchant page exists to give", () => 
   });
 
   test("first and last seen bound the span", () => {
-    const p = merchantProfile(weekly(10, 500), TODAY);
+    const p = merchantProfile(weekly(10, 500), [], TODAY);
     expect(p.firstSeen).toBe("2025-01-01");
     expect(p.lastSeen).toBe("2025-03-05");
     // Jan 1 through Mar 5 inclusive: 31 + 28 + 5
@@ -72,7 +72,7 @@ describe("merchantProfile — the number a merchant page exists to give", () => 
  */
 describe("merchantProfile — when it refuses to state a rate", () => {
   test("one visit is not a rate", () => {
-    const p = merchantProfile([{ day: "2025-06-01", amountCents: 375843, categoryName: "Shopping" }], TODAY);
+    const p = merchantProfile([{ day: "2025-06-01", amountCents: 375843, categoryName: "Shopping" }], [], TODAY);
     expect(p.monthlyCents).toBeNull();
     expect(p.monthlyBasis).toMatch(/single purchase is not a rate/i);
     // …but the money is still reported
@@ -80,14 +80,14 @@ describe("merchantProfile — when it refuses to state a rate", () => {
   });
 
   test("two visits are not a rate either", () => {
-    const p = merchantProfile(weekly(2, 1000), TODAY);
+    const p = merchantProfile(weekly(2, 1000), [], TODAY);
     expect(p.monthlyCents).toBeNull();
     expect(p.monthlyBasis).toMatch(/Too few/i);
   });
 
   test("enough visits inside too short a stretch is not a rate", () => {
     // 8 visits over 50 observed days: plenty of visits, not enough of a stretch
-    const p = merchantProfile(weekly(8, 1000), TODAY);
+    const p = merchantProfile(weekly(8, 1000), [], TODAY);
     expect(p.spanDays).toBe(50);
     expect(p.monthlyCents).toBeNull();
     expect(p.monthlyBasis).toMatch(/too short a stretch/i);
@@ -103,7 +103,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
         { day: "2025-02-01", amountCents: 1000, categoryName: "Food" },
         // Jan 1 through Mar 1 inclusive is exactly 60 observed days
         { day: "2025-03-01", amountCents: 1000, categoryName: "Food" },
-      ],
+      ], [],
       TODAY,
     );
     expect(at.spanDays).toBe(60);
@@ -115,7 +115,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
         { day: "2025-01-01", amountCents: 1000, categoryName: "Food" },
         { day: "2025-02-01", amountCents: 1000, categoryName: "Food" },
         { day: "2025-02-28", amountCents: 1000, categoryName: "Food" },
-      ],
+      ], [],
       TODAY,
     );
     expect(under.spanDays).toBe(59);
@@ -155,7 +155,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
       [
         { day: "2026-02-17", amountCents: 149_500, categoryName: "Housing" },
         { day: "2026-05-29", amountCents: 83_000, categoryName: "Housing" },
-      ],
+      ], [],
       TODAY,
       140,
     );
@@ -169,7 +169,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
 
   test("a merchant whose every row is a purchase says nothing extra", () => {
     const p = merchantProfile(
-      [{ day: "2026-02-17", amountCents: 1_000, categoryName: "Food" }],
+      [{ day: "2026-02-17", amountCents: 1_000, categoryName: "Food" }], [],
       TODAY,
       1,
     );
@@ -179,7 +179,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
 
   test("one uncounted row is singular", () => {
     const p = merchantProfile(
-      [{ day: "2026-02-17", amountCents: 1_000, categoryName: "Food" }],
+      [{ day: "2026-02-17", amountCents: 1_000, categoryName: "Food" }], [],
       TODAY,
       2,
     );
@@ -191,7 +191,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
   /* A merchant with nothing but refunds has no purchases at all, and the note
      is the only thing that can explain the empty card. */
   test("a merchant with no purchases at all still says what its rows are", () => {
-    const p = merchantProfile([], TODAY, 5);
+    const p = merchantProfile([], [], TODAY, 5);
     expect(p.visitCount).toBe(0);
     expect(p.uncountedRows).toBe(5);
     expect(p.countedNote).toContain("Measured from 0 purchases");
@@ -203,7 +203,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
         { day: "2026-02-04", amountCents: 1000, categoryName: "Food" },
         { day: "2026-02-04", amountCents: 2000, categoryName: "Food" },
         { day: "2026-02-04", amountCents: 3000, categoryName: "Food" },
-      ],
+      ], [],
       TODAY,
     );
     expect(p.spanDays).toBe(1);
@@ -218,7 +218,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
         { day: "2025-01-01", amountCents: 3000, categoryName: "Food" },
         { day: "2025-03-01", amountCents: 3000, categoryName: "Food" },
         { day: "2025-04-30", amountCents: 3000, categoryName: "Food" },
-      ],
+      ], [],
       TODAY,
     );
     // 2025-01-01 through 2025-04-30 inclusive: 31 + 28 + 31 + 30
@@ -228,7 +228,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
   });
 
   test("a merchant with no visits at all is empty, not an error", () => {
-    const p = merchantProfile([], TODAY);
+    const p = merchantProfile([], [], TODAY);
     expect(p).toMatchObject({ visitCount: 0, totalCents: 0, monthlyCents: null, firstSeen: null });
     expect(p.categoryMix).toEqual([]);
     expect(p.years).toEqual([]);
@@ -251,18 +251,18 @@ describe("merchantProfile — the typical visit", () => {
   ];
 
   test("the median leads and the mean is reported beside it", () => {
-    const p = merchantProfile(skewed, TODAY);
+    const p = merchantProfile(skewed, [], TODAY);
     expect(p.medianTicketCents).toBe(1000);
     expect(p.meanTicketCents).toBe(10900);
     expect(p.ticketSkew).toBeCloseTo(10.9, 1);
   });
 
   test("a skewed merchant is flagged as such", () => {
-    expect(merchantProfile(skewed, TODAY).ticketIsSkewed).toBe(true);
+    expect(merchantProfile(skewed, [], TODAY).ticketIsSkewed).toBe(true);
   });
 
   test("an even merchant is not flagged, so the flag means something", () => {
-    const even = merchantProfile(weekly(20, 1000), TODAY);
+    const even = merchantProfile(weekly(20, 1000), [], TODAY);
     expect(even.medianTicketCents).toBe(1000);
     expect(even.meanTicketCents).toBe(1000);
     expect(even.ticketIsSkewed).toBe(false);
@@ -276,14 +276,14 @@ describe("merchantProfile — the typical visit", () => {
         { day: "2025-02-01", amountCents: 2000, categoryName: "Food" },
         { day: "2025-03-01", amountCents: 3000, categoryName: "Food" },
         { day: "2025-04-01", amountCents: 5000, categoryName: "Food" },
-      ],
+      ], [],
       TODAY,
     );
     expect(p.medianTicketCents).toBe(2500);
   });
 
   test("a merchant of free visits has no skew rather than an infinite one", () => {
-    const p = merchantProfile(weekly(5, 0, "2025-01-01"), TODAY);
+    const p = merchantProfile(weekly(5, 0, "2025-01-01"), [], TODAY);
     expect(p.medianTicketCents).toBe(0);
     expect(p.ticketSkew).toBe(0);
     expect(p.ticketIsSkewed).toBe(false);
@@ -298,7 +298,7 @@ describe("merchantProfile — category mix", () => {
   ];
 
   test("shares sum to a hundred, largest first", () => {
-    const mix = merchantProfile(mixed, TODAY).categoryMix;
+    const mix = merchantProfile(mixed, [], TODAY).categoryMix;
     expect(mix.map((m) => [m.name, m.pct])).toEqual([
       ["Food", 75],
       ["Shopping", 25],
@@ -311,14 +311,14 @@ describe("merchantProfile — category mix", () => {
       [
         { day: "2025-01-01", amountCents: 1000, categoryName: "Zeta" },
         { day: "2025-02-01", amountCents: 1000, categoryName: "Alpha" },
-      ],
+      ], [],
       TODAY,
     ).categoryMix;
     expect(mix.map((m) => m.name)).toEqual(["Alpha", "Zeta"]);
   });
 
   test("a merchant of free visits has a mix without dividing by zero", () => {
-    const mix = merchantProfile(weekly(3, 0), TODAY).categoryMix;
+    const mix = merchantProfile(weekly(3, 0), [], TODAY).categoryMix;
     expect(mix).toEqual([{ name: "Food", cents: 0, pct: 0 }]);
   });
 });
@@ -336,7 +336,7 @@ describe("merchantProfile — year over year", () => {
   ];
 
   test("newest year first, each with its own spend and count", () => {
-    expect(merchantProfile(acrossYears, TODAY).years).toEqual([
+    expect(merchantProfile(acrossYears, [], TODAY).years).toEqual([
       { year: "2026", cents: 2000, visits: 1, partial: true },
       { year: "2025", cents: 3000, visits: 1, partial: false },
       { year: "2024", cents: 1000, visits: 1, partial: false },
@@ -344,7 +344,7 @@ describe("merchantProfile — year over year", () => {
   });
 
   test("the current year is marked partial, and closed years are not", () => {
-    const years = merchantProfile(acrossYears, TODAY).years;
+    const years = merchantProfile(acrossYears, [], TODAY).years;
     expect(years.filter((y) => y.partial).map((y) => y.year)).toEqual(["2026"]);
   });
 
@@ -353,9 +353,105 @@ describe("merchantProfile — year over year", () => {
       [
         { day: "2023-06-01", amountCents: 1000, categoryName: "Food" },
         { day: "2026-06-01", amountCents: 1000, categoryName: "Food" },
-      ],
+      ], [],
       TODAY,
     );
     expect(gap.years.map((y) => y.year)).toEqual(["2026", "2023"]);
+  });
+});
+
+describe("the returns — what a merchant COST against what it charged", () => {
+  const purchases: MerchantVisit[] = [
+    { day: "2026-01-10", amountCents: 100_000, categoryName: "Shopping" },
+    { day: "2026-02-10", amountCents: 20_000, categoryName: "Shopping" },
+    { day: "2026-03-10", amountCents: 5_000, categoryName: "Shopping" },
+  ];
+  const returned: MerchantVisit[] = [
+    { day: "2026-01-20", amountCents: 100_000, categoryName: "Shopping" },
+  ];
+
+  test("the Total is what it cost; the gross is kept beside it", () => {
+    /*
+     * 🔴 The live shape, 2026-09-10. `Best Buy` charged $3,758.43 and returned
+     * $3,540.71 of it, and every figure on the card said $3,758.43 — including
+     * "the largest of your 250 regular merchants". It cost $217.72.
+     */
+    const p = merchantProfile(purchases, returned, TODAY);
+    expect(p.grossCents).toBe(125_000);
+    expect(p.refundCents).toBe(100_000);
+    expect(p.refundCount).toBe(1);
+    expect(p.totalCents).toBe(25_000);
+  });
+
+  test("the rate is the COST spread over the span, so the two agree", () => {
+    const p = merchantProfile(purchases, returned, TODAY);
+    // $250.00 over 2026-01-10 → 2026-03-10, both ends included
+    expect(p.spanDays).toBe(60);
+    expect(p.monthlyCents).toBe(Math.round(25_000 / (60 / (365.2425 / 12))));
+  });
+
+  test("a return is not a visit: the count, the median and the mean stay gross", () => {
+    const p = merchantProfile(purchases, returned, TODAY);
+    expect(p.visitCount).toBe(3);
+    expect(p.medianTicketCents).toBe(20_000);
+    // the mean PURCHASE — 125_000 / 3, not the net over three
+    expect(p.meanTicketCents).toBe(41_667);
+  });
+
+  test("the years are purchases, and they add up to the gross the note names", () => {
+    /*
+     * ⛔ Netted, they drew a bar of -$1,004.99 on `Best Buy` — 2024's returns
+     * outran its purchases. The bar is measured from the largest year and drawn
+     * from `left: 0`, so a negative width renders as no bar at all and the most
+     * extreme year would have read as the emptiest.
+     */
+    const p = merchantProfile(purchases, returned, TODAY);
+    expect(p.years.reduce((t, y) => t + y.cents, 0)).toBe(p.grossCents);
+    expect(p.years.every((y) => y.cents >= 0)).toBe(true);
+  });
+
+  test("the note values the returns, because the Total counts them now", () => {
+    const p = merchantProfile(purchases, returned, TODAY, 4);
+    expect(p.countedNote).toBe(
+      "3 purchases came to $1,250.00, less $1,000.00 returned across 1 row.",
+    );
+  });
+
+  test("a merchant with returns AND other rows names both", () => {
+    // a transfer or an uncategorized row is still not a purchase and still
+    // counts for nothing — the two exclusions are different facts
+    const p = merchantProfile(purchases, returned, TODAY, 6);
+    expect(p.countedNote).toBe(
+      "3 purchases came to $1,250.00, less $1,000.00 returned across 1 row. The 2 other rows " +
+        "here are money in, transfers, or uncategorized — none of them a purchase, so nothing on " +
+        "this card counts them.",
+    );
+  });
+
+  test("no returns leaves the old sentence exactly as it was", () => {
+    const p = merchantProfile(purchases, [], TODAY, 4);
+    expect(p.countedNote).toBe(
+      "Measured from 3 purchases. The 1 other row here is money in, a transfer, or uncategorized " +
+        "— not a purchase, so nothing on this card counts it.",
+    );
+  });
+
+  test("a merchant that returned everything costs nothing, and says so", () => {
+    // `Apple Store` on the live ledger: $1,248.80 charged over three purchases,
+    // all three returned. It sat 15th of 250.
+    const p = merchantProfile(
+      [
+        { day: "2026-03-23", amountCents: 108_766, categoryName: "Shopping" },
+        { day: "2026-03-24", amountCents: 10_779, categoryName: "Shopping" },
+      ],
+      [
+        { day: "2026-03-31", amountCents: 108_766, categoryName: "Shopping" },
+        { day: "2026-03-31", amountCents: 10_779, categoryName: "Shopping" },
+      ],
+      TODAY,
+      4,
+    );
+    expect(p.totalCents).toBe(0);
+    expect(p.grossCents).toBe(119_545);
   });
 });

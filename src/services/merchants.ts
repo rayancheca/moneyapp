@@ -395,6 +395,22 @@ export function merchantIntelligence(
       categoryName: top.name,
     }));
 
+  /*
+   * The RETURNS: the same filter with the sign flipped. Not visits — a day that
+   * cost nothing is not a day that cost something, and the Purchases tile and
+   * the typical visit still count only what was handed over. They net the
+   * Total, the rate, the years and the rank, which say what the merchant COST.
+   */
+  const refunds: MerchantVisit[] = rows
+    .filter((r) => r.amountCents > 0 && r.categoryId !== null)
+    .map((r) => ({ row: r, top: idx.topLevelOf(r.categoryId!) }))
+    .filter(({ top }) => top.kind === "expense")
+    .map(({ row, top }) => ({
+      day: row.day,
+      amountCents: row.amountCents,
+      categoryName: top.name,
+    }));
+
   const series = db
     .select({
       id: recurringSeries.id,
@@ -416,7 +432,7 @@ export function merchantIntelligence(
     // `rows.length` is what the page's heading counts; `visits` is what this
     // card measures, and the profile names the difference rather than leaving a
     // reader to reconcile "140 transactions" with "2 purchases".
-    profile: merchantProfile(visits, today, rows.length),
+    profile: merchantProfile(visits, refunds, today, rows.length),
     cadence: series
       ? {
           seriesId: series.id,

@@ -227,6 +227,49 @@ describe("what a merchant page adds", () => {
     ).toBe(false);
   });
 
+  test("the rank is by what a merchant COST, not by what it charged", () => {
+    /*
+     * 🔴 `Best Buy` charged $3,758.43, returned $3,540.71 of it, and read "the
+     * largest of your 250 regular merchants, at $3,758.43" over a merchant that
+     * cost $217.72 — it ranks 55th. Owner's decision 2026-09-10.
+     *
+     * ⚠️ MEMBERSHIP does not move: both merchants still have their two
+     * purchases and the set is still "your 2 regular merchants".
+     */
+    addMerchant("m-1", "Zzz Eats");
+    addMerchant("m-2", "Zzz Deli");
+    addTxn("2026-01-10", -20_000, "Food", "m-1");
+    addTxn("2026-02-10", -2_000, "Food", "m-1");
+    addTxn("2026-01-20", 21_000, "Food", "m-1"); // returned nearly all of it
+    addTxn("2026-01-11", -5_000, "Food", "m-2");
+    addTxn("2026-02-11", -4_000, "Food", "m-2");
+
+    const mine = merchantInsights(bundle.db, "m-1", TODAY)!;
+    const rank = mine.insights.find((i) => i.text.includes("regular merchants"));
+    expect(rank?.text).toBe("Zzz Eats is the 2nd largest of your 2 regular merchants, at $10.00.");
+
+    const rival = merchantInsights(bundle.db, "m-2", TODAY)!;
+    expect(rival.insights[0]!.text).toBe(
+      "Zzz Deli is the largest of your 2 regular merchants, at $90.00.",
+    );
+  });
+
+  test("a merchant that returned everything is still a regular merchant, ranked last", () => {
+    // `Apple Store`: three purchases, all three returned. Dropping it would
+    // shrink the set every other page names, and "at $0.00" is the fact.
+    addMerchant("m-1", "Zzz Eats");
+    addMerchant("m-2", "Zzz Deli");
+    addTxn("2026-01-10", -20_000, "Food", "m-1");
+    addTxn("2026-02-10", -2_000, "Food", "m-1");
+    addTxn("2026-01-20", 22_000, "Food", "m-1"); // returned all of it
+    addTxn("2026-01-11", -5_000, "Food", "m-2");
+    addTxn("2026-02-11", -4_000, "Food", "m-2");
+
+    const out = merchantInsights(bundle.db, "m-1", TODAY)!;
+    const rank = out.insights.find((i) => i.text.includes("regular merchants"));
+    expect(rank?.text).toBe("Zzz Eats is the 2nd largest of your 2 regular merchants, at $0.00.");
+  });
+
   test("a second-place merchant is ranked, never called the largest", () => {
     addMerchant("m-1", "Zzz Eats");
     addMerchant("m-2", "Zzz Deli");

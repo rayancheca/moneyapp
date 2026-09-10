@@ -229,21 +229,37 @@ function merchantSpendTotals(db: AppDatabase): MerchantTotal[] {
    * another.
    */
   const idx = loadCategoryIndex(db);
-  const byMerchant = new Map<string, { cents: number; visits: number }>();
+  const byMerchant = new Map<string, { cents: number; gross: number; visits: number }>();
   for (const row of db
     .select({ merchantId: transactions.merchantId, categoryId: transactions.categoryId, amountCents: transactions.amountCents })
     .from(transactions)
     .where(eq(transactions.status, "active"))
     .all()) {
-    if (row.merchantId === null || row.categoryId === null || row.amountCents >= 0) continue;
+    if (row.merchantId === null || row.categoryId === null) continue;
     if (idx.topLevelOf(row.categoryId).kind !== "expense") continue;
-    const acc = byMerchant.get(row.merchantId) ?? { cents: 0, visits: 0 };
+    const acc = byMerchant.get(row.merchantId) ?? { cents: 0, gross: 0, visits: 0 };
+    /*
+     * ⛔ THE RANK IS BY WHAT IT COST, and the credits are the other half of
+     * that. Owner's decision 2026-09-10, on the measurement: ranked by charges
+     * alone, `Best Buy` was the LARGEST of 250 on $3,758.43 of which $3,540.71
+     * went back — it cost $217.72 and ranks 55th — and `Apple Store` sat 15th
+     * on $1,248.80 charged and $0.00 net, every purchase returned.
+     *
+     * ⚠️ MEMBERSHIP is unchanged: a regular merchant is one with `MIN_VISITS`
+     * purchases, counted here exactly as `merchantProfile` counts them, so the
+     * set the sentence names ("your 250 regular merchants") does not move under
+     * a merchant's refunds. Only the ORDER and the figure do. `gross` carries
+     * that gate; `cents` is what it cost.
+     */
     acc.cents -= row.amountCents;
-    acc.visits += 1;
+    if (row.amountCents < 0) {
+      acc.gross -= row.amountCents;
+      acc.visits += 1;
+    }
     byMerchant.set(row.merchantId, acc);
   }
   return [...byMerchant.entries()]
-    .filter(([, v]) => v.visits >= MIN_VISITS && v.cents > 0)
+    .filter(([, v]) => v.visits >= MIN_VISITS && v.gross > 0)
     .map(([merchantId, v]) => ({ merchantId, cents: v.cents }))
     .sort((a, b) => b.cents - a.cents || a.merchantId.localeCompare(b.merchantId));
 }
