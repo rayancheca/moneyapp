@@ -449,9 +449,29 @@ function variableComponents(
      * differ. "+ trend $590.24" alone would be a number the reader cannot
      * reproduce from the three months in front of them, which is the opposite
      * of what the visible-math table is for.
+     *
+     * 🔴 …AND THE CAP HAS TO SAY WHAT IT IS WORTH. "capped at one typical
+     * month" over "trend $0.00" is every clause true and the whole
+     * unresolvable: the only monthly figure on the row is the 3-month AVERAGE,
+     * the cap is the MEDIAN, and wherever those differ the reader's arithmetic
+     * does not close. Measured on the owner's ledger 2026-09-10 — the note
+     * renders twice on /recurring and BOTH are the zero-median case:
+     *
+     *     Car            3-mo avg $2,033.33 + trend $0.00
+     *                      (slope $3,050.00, capped at one typical month)
+     *     Uncategorized  3-mo avg $397.40 + trend $0.00
+     *                      (slope $596.11, capped at one typical month)
+     *
+     * `Car`'s three trailing months are [$0.00, $0.00, $6,100.00], so one
+     * typical month really is nothing — but a reader capping $3,050.00 at the
+     * $2,033.33 in front of them gets $2,033.33, and the row says $0.00.
+     *
+     * ⛔ A capped trend IS the cap, so naming it costs no second figure: the
+     * leading number is the one the clause is about, and the sentence now says
+     * so instead of leaving the reader to guess which figure it meant.
      */
     const trendNote = pace.trendWasCapped
-      ? `${formatCents(Math.round(pace.trendCents))} (slope ${formatCents(Math.round(pace.rawTrendCents))}, capped at one typical month)`
+      ? `${formatCents(Math.round(pace.trendCents))} (one typical month, which the ${formatCents(Math.round(pace.rawTrendCents))} slope was capped to)`
       : formatCents(Math.round(pace.trendCents));
     components.push({
       label,

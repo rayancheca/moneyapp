@@ -545,6 +545,33 @@ describe("forecastCurrentMonth", () => {
     expect(f.projectedIncomeCents).toBe(0);
   });
 
+  test("a capped trend names what the cap is worth, so the row's arithmetic closes", () => {
+    // 🔴 The live shape, 2026-09-10: `Car` read "3-mo avg $2,033.33 + trend
+    // $0.00 (slope $3,050.00, capped at one typical month)" over months of
+    // [$0, $0, $6,100.00]. Every clause true; a reader capping the slope at the
+    // only monthly figure on the row gets $2,033.33 and the row says $0.00.
+    insertTxn(cardId, "2026-06-20", -5000, {});
+    const uncat = forecastCurrentMonth(bundle.db, TODAY).components.find(
+      (c) => c.label === "Uncategorized",
+    );
+    // avg $16.67, median $0.00, slope (5000 − 0) / 2 = $25.00, capped to $0.00
+    expect(uncat!.detail).toBe(
+      "3-mo avg $16.67 + trend $0.00 (one typical month, which the $25.00 slope was capped to), × 24/31 days",
+    );
+    expect(uncat!.detail).not.toContain("capped at one typical month");
+  });
+
+  test("an uncapped trend is printed bare — no cap clause where nothing was capped", () => {
+    // rising and inside the cap: [0, 5000, 10000] → median $50.00, slope $50.00
+    insertTxn(cardId, "2026-05-10", -5000, {});
+    insertTxn(cardId, "2026-06-20", -10000, {});
+    const uncat = forecastCurrentMonth(bundle.db, TODAY).components.find(
+      (c) => c.label === "Uncategorized",
+    );
+    expect(uncat!.detail).toBe("3-mo avg $50.00 + trend $50.00, × 24/31 days");
+    expect(uncat!.detail).not.toContain("capped");
+  });
+
   test("subcategory spending rolls up to one top-level component", () => {
     insertTxn(cardId, "2026-06-03", -10000, { categoryName: "Groceries" });
     insertTxn(cardId, "2026-06-04", -20000, { categoryName: "Dining" });
