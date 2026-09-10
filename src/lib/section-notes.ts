@@ -1,5 +1,6 @@
 import { isStaleClose } from "./holding-price-age";
 import { formatCents } from "./money";
+import { dayWindowLabel } from "./period";
 import type { CashEarningsBasis } from "./cash-earnings";
 
 /**
@@ -404,8 +405,53 @@ export interface CashEarningsNoteInput {
     unbankedCents: number;
     periodsSinceBanked: number;
     lastBankedOn: string | null;
+    /**
+     * The first and last payday the implied figure actually counted —
+     * `cashEarnings`' own `firstPeriodOn`/`lastPeriodOn`, which exist to be
+     * named. See `impliedSpanPhrase`.
+     */
+    firstPeriodOn: string | null;
+    lastPeriodOn: string | null;
   }[];
   formatDay: (iso: string) => string;
+}
+
+/**
+ * The span the implied figure was MEASURED over, as a clause — its own covered
+ * paydays, never the period around them.
+ *
+ * 🔴 Both notes below said "in this period" of a figure `cashEarnings` bounds
+ * at `today`, so every period still running was captioned with the whole
+ * container. Measured on the owner's ledger 2026-09-10, one confirmed schedule
+ * (`Cash job (weekly pay)`, $1,047.00 weekly):
+ *
+ *     /spending?period=2026-09       "implies $1,047.00 … in this period"
+ *                                    September's own schedule is $4,188.00 (4×)
+ *     /spending?period=2026-Q3       "$10,470.00 … in this period"
+ *                                    the quarter's own is $13,611.00
+ *     /spending?from=2026-09-01&to=2026-12-31
+ *                                    "$1,047.00 … in this period" over a window
+ *                                    holding seventeen paydays
+ *
+ * `/budgets` says "4 paydays fall in this month, scheduled at $4,188.00" about
+ * the same month, so the two surfaces were four times apart on one figure.
+ *
+ * ⛔ The figure is right — a payday that has not come round yet cannot have
+ * failed to reach an account. The LABEL is the defect, and `cashEarnings`
+ * already publishes what it should say: "The span `periodsCovered` actually
+ * covers … NOT the window: a line that names the window over a count bounded by
+ * the series says something false about both." `income-card`'s
+ * `paydaysLabelFor` was the only reader of that pair, and the dashboard row it
+ * builds — "14 paydays, Jun 4 – Sep 3" — is what this now matches.
+ *
+ * Empty when there is no covered payday to name: an unnamed span beats an
+ * invented one, and both sentences stay grammatical without the clause.
+ */
+function impliedSpanPhrase(firstOn: string | null, lastOn: string | null): string {
+  if (firstOn === null || lastOn === null) return "";
+  // the `on` / `over` choice is `merchant-insights`', for the same reason: one
+  // day is a day, and calling it a range reads as a stretch of time
+  return firstOn === lastOn ? ` on ${dayWindowLabel(firstOn, lastOn)}` : ` over ${dayWindowLabel(firstOn, lastOn)}`;
 }
 
 /**
@@ -445,11 +491,12 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
       // English. A schedule with no evidence at all has no "since" to name.
       /*
        * "Across the whole schedule" is load-bearing, not filler. The sentence
-       * before it states a WINDOW figure (what this period implied) and this one
-       * states a SCHEDULE figure (silence measured from the last deposit, which
-       * may sit outside the window entirely). Without the marker the June note
-       * reads "$4,184.00 in this period … 11 expected paydays", and a reader
-       * reasonably takes eleven paydays to be June's — it has four.
+       * before it states a COVERED-PAYDAY figure (what the paydays it named came
+       * to) and this one states a SCHEDULE figure (silence measured from the last
+       * deposit, which may sit outside the window entirely). Without the marker
+       * the June note reads "$4,184.00 over Jun 4 – Jun 25, 2026 … 11 expected
+       * paydays", and a reader reasonably takes eleven paydays to be that span's
+       * — it holds four.
        */
       const silence =
         r.lastBankedOn === null
@@ -460,7 +507,8 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
       notes.push({
         id: `cash-earnings-unbanked-${r.seriesName}`,
         body:
-          `${r.seriesName} implies ${formatCents(r.impliedCents)} of earnings in this period and ` +
+          `${r.seriesName} implies ${formatCents(r.impliedCents)} of earnings` +
+          `${impliedSpanPhrase(r.firstPeriodOn, r.lastPeriodOn)} and ` +
           `${r.bankedCents === 0 ? "none of it reached an account" : `only ${formatCents(r.bankedCents)} reached an account`}. ` +
           `${silence} — that money was held as cash, spent as cash, or the schedule has ended. ` +
           `The income figures on this page count deposits, so they cannot tell you which.`,
@@ -472,7 +520,8 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
       notes.push({
         id: `cash-earnings-catchup-${r.seriesName}`,
         body:
-          `${r.seriesName} banked ${formatCents(-r.unbankedCents)} more than this period earned. ` +
+          `${r.seriesName} banked ${formatCents(-r.unbankedCents)} more than its paydays` +
+          `${impliedSpanPhrase(r.firstPeriodOn, r.lastPeriodOn)} came to. ` +
           `Cash is deposited in lumps, so the surplus is earlier pay arriving late — read it as a ` +
           `backlog clearing rather than as a period that earned more.`,
       });

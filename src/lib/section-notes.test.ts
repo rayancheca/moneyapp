@@ -532,6 +532,9 @@ describe("cashEarningsSectionNotes", () => {
     unbankedCents: 523_000,
     periodsSinceBanked: 11,
     lastBankedOn: "2026-06-05",
+    // July 2026's own five paydays — the span the $5,230.00 was counted over
+    firstPeriodOn: "2026-07-02",
+    lastPeriodOn: "2026-07-30",
     ...over,
   });
   const notes = (over: Partial<CashEarningsNoteInput["rows"][number]> = {}) =>
@@ -619,6 +622,48 @@ describe("cashEarningsSectionNotes", () => {
     });
     expect(out).toHaveLength(1);
     expect(out[0]!.body).toContain("Cash job (weekly pay)");
+  });
+
+  test("names the paydays it counted, never the period around them", () => {
+    // 🔴 The live defect, 2026-09-10: `cashEarnings` bounds the implied figure at
+    // `today`, so `/spending?period=2026-09` counted September's one elapsed
+    // payday ($1,047.00) and captioned it "in this period" — of a month whose own
+    // schedule is $4,188.00, which /budgets says on the same ledger. Q3 read
+    // $10,470.00 of a quarter implying $13,611.00, and a custom Sep 1 – Dec 31
+    // window read $1,047.00 over seventeen paydays.
+    const [note] = notes({
+      impliedCents: 104_700,
+      unbankedCents: 104_700,
+      firstPeriodOn: "2026-09-03",
+      lastPeriodOn: "2026-09-03",
+    });
+    expect(note!.body).toContain("implies $1,047.00 of earnings on Sep 3, 2026 and");
+    expect(note!.body).not.toContain("in this period");
+  });
+
+  test("a span of several paydays is named by its own two ends", () => {
+    const [note] = notes();
+    expect(note!.body).toContain("implies $5,230.00 of earnings over Jul 2 – 30, 2026 and");
+  });
+
+  test("says nothing about a span when no payday was covered", () => {
+    // An invented window beats nothing only if it is true. With no covered
+    // payday there is no span to name, and the sentence stands without one.
+    const [note] = notes({
+      basis: "series-live",
+      impliedCents: 0,
+      bankedCents: 900_000,
+      unbankedCents: -900_000,
+      firstPeriodOn: null,
+      lastPeriodOn: null,
+    });
+    expect(note!.body).toContain("banked $9,000.00 more than its paydays came to.");
+  });
+
+  test("the catch-up note names its span too", () => {
+    const [note] = notes({ basis: "series-live", bankedCents: 900_000, unbankedCents: -376_000 });
+    expect(note!.body).toContain("more than its paydays over Jul 2 – 30, 2026 came to.");
+    expect(note!.body).not.toContain("more than this period earned");
   });
 
   test("note ids stay unique when two schedules are both silent", () => {
