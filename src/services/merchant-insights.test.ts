@@ -169,6 +169,64 @@ describe("what a merchant page adds", () => {
     );
   });
 
+  test("a refund at the merchant shrinks its share — the part nets, because the whole does", () => {
+    /*
+     * 🔴 The live defect, 2026-09-10. The whole came from `categorySpending`,
+     * which nets refunds; the part came from `dominantCategory`, which counts
+     * outflows only. `Best Buy` charged $3,758.43 and refunded $3,540.71 of it
+     * — it cost $217.72 — and the page read "Best Buy is 21.3% of what you
+     * spent on Shopping", of a Shopping total the app itself nets. It is 1.2%.
+     */
+    addMerchant("m-1", "Zzz Eats");
+    addMerchant("m-2", "Zzz Deli");
+    addTxn("2026-01-10", -6_000, "Food", "m-1");
+    addTxn("2026-02-10", -4_000, "Food", "m-1");
+    addTxn("2026-01-20", 9_000, "Food", "m-1"); // returned nearly all of it
+    addTxn("2026-01-11", -1_000, "Food", "m-2");
+
+    const out = merchantInsights(bundle.db, "m-1", TODAY)!;
+    // part $10.00 of a whole of $20.00 — both net the $90.00 credit
+    const share = out.insights.find((i) => i.text.includes("of what you spent on Food"));
+    expect(share?.text).toBe(
+      "Zzz Eats is 50.0% of what you spent on Food over Jan 10 – Feb 10, 2026.",
+    );
+  });
+
+  test("a gross part could exceed a net whole, and the guard read that as impossible", () => {
+    /*
+     * ⛔ The mix did not only overstate — it SILENCED. `DraftKings` charged
+     * $1,294.30 against a Gambling total the app nets to $831.11, so
+     * `part <= whole` failed and the merchant got no share sentence at all.
+     * Net it is $794.30 of $831.11, and the sentence can be said.
+     */
+    addMerchant("m-1", "Zzz Eats");
+    addTxn("2026-01-10", -12_000, "Food", "m-1");
+    addTxn("2026-02-10", -2_000, "Food", "m-1");
+    addTxn("2026-01-20", 6_000, "Food", "m-1");
+
+    const out = merchantInsights(bundle.db, "m-1", TODAY)!;
+    const share = out.insights.find((i) => i.text.includes("of what you spent on Food"));
+    expect(share?.text).toBe(
+      "Zzz Eats is 100.0% of what you spent on Food over Jan 10 – Feb 10, 2026.",
+    );
+  });
+
+  test("a merchant that net-refunded over its own span gets no share at all", () => {
+    // `shareFact` refuses a value outside 0–1 rather than clamping, so a
+    // negative part is caught here — the same guard the whole already had.
+    addMerchant("m-1", "Zzz Eats");
+    addMerchant("m-2", "Zzz Deli");
+    addTxn("2026-01-10", -6_000, "Food", "m-1");
+    addTxn("2026-02-10", -4_000, "Food", "m-1");
+    addTxn("2026-01-20", 11_000, "Food", "m-1"); // refunded more than it charged
+    addTxn("2026-01-11", -30_000, "Food", "m-2");
+
+    const out = merchantInsights(bundle.db, "m-1", TODAY);
+    expect(
+      (out?.insights ?? []).some((i) => i.text.includes("of what you spent on Food")),
+    ).toBe(false);
+  });
+
   test("a second-place merchant is ranked, never called the largest", () => {
     addMerchant("m-1", "Zzz Eats");
     addMerchant("m-2", "Zzz Deli");

@@ -5,7 +5,7 @@ import { todayIso } from "@/lib/dates";
 import { dayWindowLabel } from "@/lib/period";
 import { isPrintableName } from "@/lib/printable-name";
 import { rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts";
-import { categorySpending, loadCategoryIndex } from "./analytics";
+import { loadCategoryIndex, spendingTransactions } from "./analytics";
 import { surfaceInsights, type InsightInput } from "./insight-surface";
 import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { merchantIntelligence, merchantSummary } from "./merchants";
@@ -129,18 +129,47 @@ export function merchantInsightInput(
    */
   const dominant = dominantCategory(db, merchantId);
   if (dominant) {
-    const categoryTotal = categorySpending(db, {
+    /*
+     * ⛔ THE PART AND THE WHOLE COME OFF ONE ROW LIST. `spendingTransactions`
+     * is the same list `categorySpending` sums and the same list the
+     * drill-down shows, so the merchant's share and the category's total
+     * cannot be measured under two different rules.
+     *
+     * 🔴 They were. The whole came from `categorySpending`, which NETS refunds
+     * — the comment here said so — and the part came from `dominantCategory`,
+     * which counts outflows ONLY. Measured on the owner's ledger 2026-09-10:
+     * `Best Buy` charged $3,758.43 and refunded $3,540.71 of it, so it cost
+     * $217.72 and read "Best Buy is 21.3% of what you spent on Shopping over
+     * Dec 5, 2022 – Jul 24, 2026" — of a Shopping total the app itself nets to
+     * $17,611.10, in which Best Buy is 1.2%. Nine of the 66 pages carrying this
+     * sentence moved, `Steam` 76.0% → 59.0% and `Uniqlo` 6.2% → 3.3%.
+     *
+     * ⛔ And the mix SILENCED a true one. A gross part can exceed a net whole,
+     * which the guard below reads as impossible: `DraftKings` charged $1,294.30
+     * against a Gambling total of $831.11 and got no sentence at all. Net, it
+     * is $794.30 of $831.11 and can finally be said.
+     *
+     * `dominantCategory` still chooses WHICH category — "where this merchant
+     * charges most" is a selector, not a measurement — and only the share is
+     * taken from these rows.
+     */
+    const inCategory = spendingTransactions(db, {
       categoryId: dominant.categoryId,
       from: profile.firstSeen,
       to: profile.lastSeen,
-    }).spentCents;
+    });
+    const categoryTotal = inCategory.reduce((sum, t) => sum - t.amountCents, 0);
+    const merchantCents = inCategory.reduce(
+      (sum, t) => (t.merchantId === merchantId ? sum - t.amountCents : sum),
+      0,
+    );
     /*
-     * A share needs a whole strictly larger than its part. `categorySpending`
-     * nets refunds, so a category that net-refunded over this window comes back
-     * zero or negative — and `shareFact` refuses a value outside 0–1 rather
-     * than clamping, so this is checked here instead of thrown there.
+     * A share needs a whole strictly larger than its part. Both sides net
+     * refunds, so a category — or a merchant — that net-refunded over this
+     * window comes back zero or negative, and `shareFact` refuses a value
+     * outside 0–1 rather than clamping. Checked here instead of thrown there.
      */
-    if (categoryTotal > 0 && dominant.cents > 0 && dominant.cents <= categoryTotal) {
+    if (categoryTotal > 0 && merchantCents > 0 && merchantCents <= categoryTotal) {
       /*
        * The window is IN the frame, not implied by the page. A merchant's span
        * is its own, not the ledger's, so "of what you spent on Transport" with
@@ -159,7 +188,7 @@ export function merchantInsightInput(
        */
       const label = dayWindowLabel(profile.firstSeen, profile.lastSeen);
       const span = profile.firstSeen === profile.lastSeen ? `on ${label}` : `over ${label}`;
-      facts.push(shareFact("f3", summary.name, dominant.cents / categoryTotal, `what you spent on ${dominant.name} ${span}`));
+      facts.push(shareFact("f3", summary.name, merchantCents / categoryTotal, `what you spent on ${dominant.name} ${span}`));
       candidates.push({ claimId: "share_of_whole", a: "f3", prove });
     }
   }
