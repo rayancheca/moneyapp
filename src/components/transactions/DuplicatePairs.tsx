@@ -2,6 +2,8 @@
 
 import { useState, useTransition } from "react";
 import type { DuplicatePairRow, DuplicatePairSideRow } from "@/services/duplicate-resolution";
+import type { DuplicateResolution } from "@/db/schema/duplicate-candidates";
+import { formatCents } from "@/lib/money";
 import { resolveDuplicateAction, undoDuplicateAction } from "@/app/transactions/actions";
 import { Button } from "@/components/ui/Button";
 import { countPhrase } from "@/components/ui/blast-radius";
@@ -75,6 +77,29 @@ export function DuplicatePairs({ pairs }: DuplicatePairsProps) {
   );
 }
 
+/**
+ * What an "Undo" on a settled pair puts back — its accessible name.
+ *
+ * ⛔ It names the MONEY and the ROW, not the verb: 71 of these render on
+ * `/transactions?view=duplicates` and "Undo" alone is the same sentence for all
+ * of them. The retired side is the one that comes back for a confirmed
+ * duplicate; a dismissed pair retired nothing, so the undo re-opens the
+ * question rather than restoring anything.
+ */
+export function undoLabel(pair: {
+  resolution: DuplicateResolution;
+  accountName: string;
+  retiredTransactionId: string | null;
+  sides: readonly { id: string; postedOn: string; amountCents: number; sourceLabel: string }[];
+}): string {
+  if (pair.resolution !== "confirmed_duplicate") {
+    return `Reopen the ${pair.accountName} pair kept as two real charges`;
+  }
+  const back = pair.sides.find((s) => s.id === pair.retiredTransactionId) ?? pair.sides[0];
+  if (!back) return `Restore the retired copy on ${pair.accountName}`;
+  return `Restore the retired ${formatCents(Math.abs(back.amountCents))} copy from ${back.sourceLabel} on ${back.postedOn}`;
+}
+
 function PairCard({ pair }: { pair: DuplicatePairRow }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -133,10 +158,18 @@ function PairCard({ pair }: { pair: DuplicatePairRow }) {
                 ? "One copy retired — it no longer counts toward any total."
                 : "Kept both — these are two real charges."}
             </span>
+            {/* 🔴 "Undo" was the whole accessible name, 71 times on one page.
+                The sibling on the same card was fixed for exactly this — "both
+                rows carry this button, and 'Retire this one' twice tells a
+                screen-reader user nothing about which one" — and /imports
+                states the rule for every trigger on a repeated row. Each of
+                these restores a superseded transaction into every total: real
+                money, a different amount per pair. */}
             <Button
               variant="ghost"
               size="sm"
               disabled={pending}
+              aria-label={undoLabel(pair)}
               onClick={() => run(() => undoDuplicateAction({ candidateId: pair.candidateId }))}
             >
               Undo
