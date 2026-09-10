@@ -383,7 +383,13 @@ export default async function ImportsPage({
                           hovering — a bulk drop of statements is exactly when
                           a silent row is most likely to be scrolled past */}
                       <td className="max-w-[16rem] py-1.5 pr-2 text-[13px]">
-                        <div className="truncate" title={f.fileName}>
+                        {/* ⛔ the hover tooltip is the third place this row says
+                            which file it is, and it must not be the one place
+                            that still cannot tell two of them apart */}
+                        <div
+                          className="truncate"
+                          title={importRowSubject(f.fileName, qualifierById.get(f.id) ?? null)}
+                        >
                           {f.fileName}
                         </div>
                         {qualifierById.get(f.id) ? (
