@@ -101,7 +101,7 @@ export function groupByDay(rows: readonly LedgerRow[], boundary: DayGroupBoundar
 }
 
 /**
- * What the page boundary hides on either side of one page of rows.
+ * What the page boundary CUTS on either side of one page of rows.
  *
  * The offset has to come from `pageSize`, not from `rows.length`: they agree on
  * every page but the LAST, where a short page makes `page * rows.length`
@@ -111,24 +111,53 @@ export function groupByDay(rows: readonly LedgerRow[], boundary: DayGroupBoundar
  * edge one). Counting the rows actually consumed — `(page - 1) * pageSize +
  * rows.length` — is exact in both directions.
  *
- * `hiddenBefore` stays a plain `page > 1`: whether the previous page ended mid-
- * day is genuinely not knowable from this page's rows, so the header hedges.
+ * 🔴 …AND "THERE ARE MORE ROWS" IS NOT "THIS DAY IS CUT". `hiddenBefore` was a
+ * plain `page > 1` and `hiddenAfter` a plain "rows remain", so both edges were
+ * flagged whenever a neighbouring page existed — whatever day it started on.
+ * When a boundary lands exactly on a day change, neither day is cut and both
+ * subtotals are exact, and the header called them "partial" anyway over a
+ * tooltip asserting "This day is cut by the page boundary".
+ *
+ * Measured on the owner's ledger 2026-09-10, unfiltered: **31 of the 203 page
+ * boundaries land on a day change, so 62 day headers carried the tag over a
+ * subtotal that was complete.** Page 3 ends on 2026-07-30 and page 4 opens on
+ * 2026-07-29 — all 21 of that day's rows are on page 4, its header reads
+ * "+$3,948.91 · partial", and the ledger's own total for 2026-07-29 is
+ * $3,948.91 to the cent.
+ *
+ * ⛔ The old docstring said the previous page's last day is "genuinely not
+ * knowable from this page's rows" — true, and the wrong place to look. The
+ * SERVER slices the page and can read the row on either side of the cut for the
+ * price of two indexed lookups; `neighbourDays` is that measurement, and this
+ * compares it with the days actually on the page. Knowable beats hedged, and a
+ * hedge printed as a certainty is worse than either.
  */
 export function pageBoundary({
   page,
   pageSize,
   rowsOnPage,
   totalMatching,
+  firstDayOnPage,
+  lastDayOnPage,
+  previousDay,
+  nextDay,
 }: {
   page: number;
   pageSize: number;
   rowsOnPage: number;
   totalMatching: number;
+  /** the days at this page's two ends — null when the page holds no rows */
+  firstDayOnPage: string | null;
+  lastDayOnPage: string | null;
+  /** the day of the row immediately before/after this page, null when there is none */
+  previousDay: string | null;
+  nextDay: string | null;
 }): DayGroupBoundary {
   const consumedBefore = (page - 1) * pageSize;
   return {
-    hiddenBefore: consumedBefore > 0,
-    hiddenAfter: consumedBefore + rowsOnPage < totalMatching,
+    hiddenBefore: consumedBefore > 0 && firstDayOnPage !== null && previousDay === firstDayOnPage,
+    hiddenAfter:
+      consumedBefore + rowsOnPage < totalMatching && lastDayOnPage !== null && nextDay === lastDayOnPage,
   };
 }
 
@@ -148,6 +177,8 @@ export function TransactionsLedger({
   selectionParams,
   totalMatching,
   pageSize,
+  previousDay,
+  nextDay,
 }: {
   rows: readonly LedgerRow[];
   categories: readonly CategoryPickerOption[];
@@ -157,6 +188,13 @@ export function TransactionsLedger({
   totalMatching: number;
   /** rows per page the server sliced with — the offset behind this page */
   pageSize: number;
+  /**
+   * The day of the row immediately before / after this page in the SAME filtered
+   * order, or null when there is none. Measured by the server, which is the only
+   * side that can see across its own cut — see `pageBoundary`.
+   */
+  previousDay: string | null;
+  nextDay: string | null;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -169,8 +207,21 @@ export function TransactionsLedger({
   // Day subtotals are honest about the page boundary — see pageBoundary.
   const page = parseFilters(selectionParams).page;
   const groups = useMemo(
-    () => groupByDay(rows, pageBoundary({ page, pageSize, rowsOnPage: rows.length, totalMatching })),
-    [rows, page, pageSize, totalMatching],
+    () =>
+      groupByDay(
+        rows,
+        pageBoundary({
+          page,
+          pageSize,
+          rowsOnPage: rows.length,
+          totalMatching,
+          firstDayOnPage: rows[0]?.postedOn ?? null,
+          lastDayOnPage: rows.at(-1)?.postedOn ?? null,
+          previousDay,
+          nextDay,
+        }),
+      ),
+    [rows, page, pageSize, totalMatching, previousDay, nextDay],
   );
   const openIndex = openId === null ? -1 : rows.findIndex((r) => r.id === openId);
   const openRow = openIndex >= 0 ? rows[openIndex]! : null;
@@ -300,13 +351,18 @@ export function TransactionsLedger({
                 <Money cents={group.netCents} flow className="figures text-[11px]" />
                 {group.partial ? (
                   <span
-                    title="This day is cut by the page boundary — the subtotal counts only the rows shown on this page."
+                    /* ⛔ certain, in both texts. The tooltip asserted a cut
+                       while the spoken text hedged ("may continue") — one
+                       element, two levels of confidence, and the assertion was
+                       the false one on 62 day headers. `pageBoundary` measures
+                       it now, so both can say it plainly. */
+                    title="This day continues on the neighboring page — the subtotal counts only the rows shown on this one."
                     className="text-[10px] uppercase tracking-[0.08em] text-ink-faint"
                   >
                     partial
                     <span className="sr-only">
                       {" "}
-                      — subtotal counts only the rows on this page; this day may continue on the
+                      — subtotal counts only the rows on this page; this day continues on the
                       neighboring page
                     </span>
                   </span>

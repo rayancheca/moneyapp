@@ -248,7 +248,7 @@ describe("what a merchant page adds", () => {
     addMerchant("m-1", "Zzz Bar");
     addTxn("2026-02-07", -1_000, "Food", "m-1");
     addTxn("2026-02-07", -1_000, "Food", "m-1");
-    expect(merchantInsightInput(bundle.db, "m-1", TODAY).window.label).toBe("Feb 7, 2026");
+    expect(merchantInsightInput(bundle.db, "m-1", TODAY)!.window.label).toBe("Feb 7, 2026");
   });
 
   test("a merchant with no expense-kind spending says nothing", () => {

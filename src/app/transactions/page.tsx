@@ -166,6 +166,30 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
     .offset((filters.page - 1) * PAGE_SIZE)
     .all();
 
+  /*
+   * ⛔ THE ROW ON EITHER SIDE OF THE CUT. A day group is only "partial" when the
+   * neighbouring page continues THAT DAY, and this is the one side that can see
+   * across its own slice — see `pageBoundary`, which flagged both edges of every
+   * boundary until this existed. Two indexed lookups on the same order and the
+   * same filters; `offset` alone can address them, so neither reads a page.
+   */
+  const neighbourDay = (offset: number): string | null => {
+    if (offset < 0) return null;
+    const row = db
+      .select({ postedOn: transactions.postedOn })
+      .from(transactions)
+      .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+      .where(and(...common, viewCondition(filters.view)))
+      .orderBy(...ledgerOrder)
+      .limit(1)
+      .offset(offset)
+      .all()[0];
+    return row?.postedOn ?? null;
+  };
+  const consumedBefore = (filters.page - 1) * PAGE_SIZE;
+  const previousDay = consumedBefore > 0 ? neighbourDay(consumedBefore - 1) : null;
+  const nextDay = rows.length > 0 ? neighbourDay(consumedBefore + rows.length) : null;
+
   const catById = new Map(allCategories.map((c) => [c.id, c]));
   const ledgerSplitCounts = splitCountsByTxn(db, rows.map((r) => r.id));
   const ledgerRows: LedgerRow[] = rows.map((r) => ({
@@ -276,6 +300,8 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
                   selectionParams={params}
                   totalMatching={totalRows}
                   pageSize={PAGE_SIZE}
+                  previousDay={previousDay}
+                  nextDay={nextDay}
                 />
               )}
               <Pagination filters={filters} totalRows={totalRows} pageSize={PAGE_SIZE} />

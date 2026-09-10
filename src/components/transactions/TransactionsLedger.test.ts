@@ -75,18 +75,24 @@ describe("pageBoundary", () => {
   const total = 157;
   const size = 50;
   const rowsOn = (page: number) => Math.min(size, total - (page - 1) * size);
+  /** the neighbouring rows continue the page's own day at both ends — a CUT day */
+  const cut = (day = "2026-07-29") => ({
+    firstDayOnPage: day,
+    lastDayOnPage: day,
+    previousDay: day,
+    nextDay: day,
+  });
 
   it("hides nothing on either side when one page holds every match", () => {
-    expect(pageBoundary({ page: 1, pageSize: 50, rowsOnPage: 12, totalMatching: 12 })).toEqual({
-      hiddenBefore: false,
-      hiddenAfter: false,
-    });
+    expect(
+      pageBoundary({ page: 1, pageSize: 50, rowsOnPage: 12, totalMatching: 12, ...cut() }),
+    ).toEqual({ hiddenBefore: false, hiddenAfter: false });
   });
 
   it("reports rows after every page but the last", () => {
     for (const page of [1, 2, 3]) {
       expect(
-        pageBoundary({ page, pageSize: size, rowsOnPage: rowsOn(page), totalMatching: total }),
+        pageBoundary({ page, pageSize: size, rowsOnPage: rowsOn(page), totalMatching: total, ...cut() }),
       ).toEqual({ hiddenBefore: page > 1, hiddenAfter: true });
     }
   });
@@ -96,21 +102,86 @@ describe("pageBoundary", () => {
   // day of the ledger, on any total that is not a multiple of the page size.
   it("reports nothing after a short final page", () => {
     expect(
-      pageBoundary({ page: 4, pageSize: size, rowsOnPage: rowsOn(4), totalMatching: total }),
+      pageBoundary({ page: 4, pageSize: size, rowsOnPage: rowsOn(4), totalMatching: total, ...cut() }),
     ).toEqual({ hiddenBefore: true, hiddenAfter: false });
   });
 
   it("reports nothing after an exactly-full final page", () => {
-    expect(pageBoundary({ page: 2, pageSize: 50, rowsOnPage: 50, totalMatching: 100 })).toEqual({
-      hiddenBefore: true,
-      hiddenAfter: false,
-    });
+    expect(
+      pageBoundary({ page: 2, pageSize: 50, rowsOnPage: 50, totalMatching: 100, ...cut() }),
+    ).toEqual({ hiddenBefore: true, hiddenAfter: false });
   });
 
   it("survives an empty page past the end without inventing rows after it", () => {
-    expect(pageBoundary({ page: 9, pageSize: 50, rowsOnPage: 0, totalMatching: 157 })).toEqual({
-      hiddenBefore: true,
-      hiddenAfter: false,
-    });
+    expect(
+      pageBoundary({
+        page: 9,
+        pageSize: 50,
+        rowsOnPage: 0,
+        totalMatching: 157,
+        firstDayOnPage: null,
+        lastDayOnPage: null,
+        previousDay: "2026-07-29",
+        nextDay: null,
+      }),
+    ).toEqual({ hiddenBefore: false, hiddenAfter: false });
+  });
+
+  /**
+   * 🔴 The defect: "there are more rows" is not "this day is cut". Both edges
+   * were flagged whenever a neighbouring page existed, whatever day it started
+   * on. Measured on the owner's ledger 2026-09-10, unfiltered — 31 of the 203
+   * page boundaries land on a day change, so 62 day headers wore the tag over a
+   * subtotal that was complete. Page 3 ends on 2026-07-30, page 4 opens on
+   * 2026-07-29, all 21 of that day's rows are on page 4, and its header read
+   * "+$3,948.91 · partial" against a ledger total of exactly $3,948.91.
+   */
+  it("does not call a day cut when the boundary lands on a day change", () => {
+    expect(
+      pageBoundary({
+        page: 4,
+        pageSize: size,
+        rowsOnPage: size,
+        totalMatching: total,
+        firstDayOnPage: "2026-07-29",
+        lastDayOnPage: "2026-07-27",
+        previousDay: "2026-07-30",
+        nextDay: "2026-07-26",
+      }),
+    ).toEqual({ hiddenBefore: false, hiddenAfter: false });
+  });
+
+  it("calls exactly the cut edge cut when only one end continues", () => {
+    expect(
+      pageBoundary({
+        page: 2,
+        pageSize: size,
+        rowsOnPage: size,
+        totalMatching: total,
+        firstDayOnPage: "2026-07-29",
+        lastDayOnPage: "2026-07-27",
+        previousDay: "2026-07-29", // the page before ended mid-day
+        nextDay: "2026-07-26", // the page after opens on a new one
+      }),
+    ).toEqual({ hiddenBefore: true, hiddenAfter: false });
+    expect(
+      pageBoundary({
+        page: 2,
+        pageSize: size,
+        rowsOnPage: size,
+        totalMatching: total,
+        firstDayOnPage: "2026-07-29",
+        lastDayOnPage: "2026-07-27",
+        previousDay: "2026-07-30",
+        nextDay: "2026-07-27", // …and here the day runs on
+      }),
+    ).toEqual({ hiddenBefore: false, hiddenAfter: true });
+  });
+
+  /** ⛔ a single-day page continuing at both ends is cut at both */
+  it("flags both edges when one day spans the whole page", () => {
+    expect(
+      pageBoundary({ page: 2, pageSize: size, rowsOnPage: size, totalMatching: total, ...cut() }),
+    ).toEqual({ hiddenBefore: true, hiddenAfter: true });
   });
 });
