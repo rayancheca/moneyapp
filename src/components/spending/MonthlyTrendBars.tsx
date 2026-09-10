@@ -65,7 +65,17 @@ export function MonthlyTrendBars({
                  `countPhrase` is not the tool here: a bar with nothing in it
                  reports "0 transactions", a measured zero, not "no
                  transactions". */
-              aria-label={`${formatMonthYear(`${p.month}-01`)}: ${formatCents(p.spentCents)}, ${p.txnCount} ${p.txnCount === 1 ? "transaction" : "transactions"}`}
+              /* ⛔ …AND A MONTH NOBODY HAS IMPORTED HAS NO ZERO TO REPORT.
+                 "Sep 2026: $0.00, 0 transactions" read as a measurement on all
+                 76 category pages, three cards above the same page's "September
+                 2026 has not been imported yet … a window nobody has looked at,
+                 not one in which nothing happened." `reached` is the ledger's
+                 own frontier — see `categoryMonthlyTrend`. */
+              aria-label={
+                p.reached
+                  ? `${formatMonthYear(`${p.month}-01`)}: ${formatCents(p.spentCents)}, ${p.txnCount} ${p.txnCount === 1 ? "transaction" : "transactions"}`
+                  : `${formatMonthYear(`${p.month}-01`)}: not imported yet`
+              }
               className="group flex w-full flex-col items-center gap-1"
             >
               <span className="flex h-28 w-full items-end justify-center">

@@ -10,6 +10,7 @@ function months(values: readonly number[]): CategoryMonthPoint[] {
     spentCents: cents,
     txnCount: cents === 0 ? 0 : 1,
     href: "/transactions",
+    reached: true,
   }));
 }
 
@@ -70,5 +71,34 @@ describe("MonthlyTrendBars", () => {
     expect(renderToStaticMarkup(createElement(MonthlyTrendBars, { points: months([100_00]) }))).toContain(
       'aria-label="Monthly spending, last 12 months"',
     );
+  });
+});
+
+describe("a month nobody has imported has no zero to report", () => {
+  /*
+   * 🔴 "Sep 2026: $0.00, 0 transactions" read out on all 76 category pages,
+   * three cards above the same page's "September 2026 has not been imported
+   * yet … a window nobody has looked at, not one in which nothing happened."
+   * Measured 2026-09-10.
+   */
+  const mixed: CategoryMonthPoint[] = [
+    { month: "2026-08", spentCents: 5_000, txnCount: 2, href: "/transactions", reached: true },
+    { month: "2026-09", spentCents: 0, txnCount: 0, href: "/transactions", reached: false },
+  ];
+
+  test("an unreached month says so instead of naming a measured zero", () => {
+    const html = renderToStaticMarkup(createElement(MonthlyTrendBars, { points: mixed }));
+    expect(html).toContain("Sep 2026: not imported yet");
+    expect(html).not.toContain("Sep 2026: $0.00, 0 transactions");
+  });
+
+  test("a reached month still reports its figures, zero included", () => {
+    const zeroButReached: CategoryMonthPoint[] = [
+      { month: "2026-07", spentCents: 5_000, txnCount: 2, href: "/transactions", reached: true },
+      { month: "2026-08", spentCents: 0, txnCount: 0, href: "/transactions", reached: true },
+    ];
+    const html = renderToStaticMarkup(createElement(MonthlyTrendBars, { points: zeroButReached }));
+    // a month the ledger walked through and found empty IS a measurement
+    expect(html).toContain("Aug 2026: $0.00, 0 transactions");
   });
 });

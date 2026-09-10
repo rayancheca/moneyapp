@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { seriesRowLabel, type SeriesEvidence } from "@/lib/series-evidence";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
-import { addDays, monthKey, periodBounds } from "@/lib/dates";
+import { addDays, compareDates, monthKey, periodBounds } from "@/lib/dates";
 import {
   categorySpending,
   ledgerHref,
@@ -63,20 +63,52 @@ export interface CategoryMonthPoint {
   spentCents: number;
   txnCount: number;
   href: string;
+  /**
+   * The ledger has walked into this month. False means nobody has looked, and
+   * its zero is not a measurement — see `categoryMonthlyTrend`.
+   */
+  reached: boolean;
 }
 
-/** Subtree spend per month over the trailing window; click a month → its txns. */
+/**
+ * Subtree spend per month over the trailing window; click a month → its txns.
+ *
+ * 🔴 A month the import has not reached came back `spentCents: 0, txnCount: 0`
+ * and the bar read it out as a measurement: "Sep 2026: $0.00, 0 transactions",
+ * on all 76 category pages, three cards above the page's own "September 2026
+ * has not been imported yet. Nothing has been imported for 10 days of it …
+ * That is a window nobody has looked at, not one in which nothing happened."
+ * Measured 2026-09-10.
+ *
+ * ⛔ `ledgerReaches` says this in its own docstring — "days after this are days
+ * nobody has looked at, not days on which nothing happened. A surface that
+ * averages, projects or grades across them is publishing a lower bound as a
+ * measurement" — and `/categories/[id]` already imports it for the empty state
+ * two cards below. It just never reached the trend. REQUIRED rather than
+ * defaulted: a caller that forgets would silently get the old assertion back.
+ */
 export function categoryMonthlyTrend(
   db: AppDatabase,
   categoryId: string,
   months: number,
   refDate: string,
+  /** `ledgerReaches(db)` — the newest day the import has walked to, null when empty */
+  reachesThrough: string | null,
 ): CategoryMonthPoint[] {
   return monthKeysBack(refDate, months).map((month) => {
     const from = `${month}-01`;
     const to = periodBounds(from, "monthly").end;
     const { spentCents, txnCount } = categorySpending(db, { categoryId, from, to });
-    return { month, spentCents, txnCount, href: ledgerHref({ category: categoryId, from, to }) };
+    return {
+      month,
+      spentCents,
+      txnCount,
+      href: ledgerHref({ category: categoryId, from, to }),
+      // reached the month at all — its first day, not its last: a month the
+      // ledger stops inside HAS been looked at, and its figure is a real
+      // (if partial) measurement the page's coverage notes already qualify
+      reached: reachesThrough !== null && compareDates(reachesThrough, from) >= 0,
+    };
   });
 }
 

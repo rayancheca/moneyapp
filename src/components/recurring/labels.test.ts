@@ -335,7 +335,7 @@ describe("postedSpreadReading", () => {
 
 describe("seriesVerb — a series that is over is described in the past", () => {
   test("a running series is present tense, by kind", () => {
-    expect(seriesVerb("expense")).toBe("charges");
+    expect(seriesVerb("bill")).toBe("charges");
     expect(seriesVerb("income")).toBe("deposits");
     expect(seriesVerb("transfer")).toBe("moves");
   });
@@ -343,12 +343,12 @@ describe("seriesVerb — a series that is over is described in the past", () => 
   test("a series that is over is past tense, by kind", () => {
     // 🔴 27 ended or dismissed series read "charges monthly around the 8th"
     // above their own "nothing more is expected from it", 2026-09-10.
-    expect(seriesVerb("expense", true)).toBe("charged");
+    expect(seriesVerb("bill", true)).toBe("charged");
     expect(seriesVerb("income", true)).toBe("deposited");
     expect(seriesVerb("transfer", true)).toBe("moved");
   });
 
   test("the default is present, so no caller silently changes tense", () => {
-    expect(seriesVerb("expense", false)).toBe(seriesVerb("expense"));
+    expect(seriesVerb("bill", false)).toBe(seriesVerb("bill"));
   });
 });

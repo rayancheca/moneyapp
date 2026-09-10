@@ -106,7 +106,7 @@ export default async function CategoryPage({
     label: header.name,
   });
 
-  const trend = categoryMonthlyTrend(db, id, TREND_MONTHS, today).map((p) => ({ ...p, spentCents: sign * p.spentCents }));
+  const trend = categoryMonthlyTrend(db, id, TREND_MONTHS, today, ledgerReaches(db)).map((p) => ({ ...p, spentCents: sign * p.spentCents }));
 
   /*
    * PHASE III-B. Where this category sits, through the SAME builder /spending

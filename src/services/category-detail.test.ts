@@ -96,12 +96,34 @@ describe("categoryMonthlyTrend", () => {
     insertTxn({ postedOn: "2026-07-05", amountCents: -5_000, category: "Food > Dining" });
     insertTxn({ postedOn: "2026-07-06", amountCents: -1_500, category: "Food > Coffee" });
 
-    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 2, TODAY);
+    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 2, TODAY, "2026-07-06");
     expect(trend.map((t) => [t.month, t.spentCents])).toEqual([
       ["2026-06", 3_000],
       ["2026-07", 6_500],
     ]);
     expect(trend[1]!.href).toBe(`/transactions?category=${catId("Food")}&from=2026-07-01&to=2026-07-31`);
+  });
+
+  test("a month the ledger has not reached is flagged, and one it stopped inside is not", () => {
+    /*
+     * 🔴 The bar read "Sep 2026: $0.00, 0 transactions" of a month nobody had
+     * imported. `ledgerReaches` says it in its own docstring: days after it are
+     * days nobody looked at, not days on which nothing happened.
+     */
+    insertTxn({ postedOn: "2026-06-05", amountCents: -3_000, category: "Food > Dining" });
+
+    // the ledger stops on 2026-07-06 — July HAS been walked into, August has not
+    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 3, "2026-08-20", "2026-07-06");
+    expect(trend.map((t) => [t.month, t.reached])).toEqual([
+      ["2026-06", true],
+      ["2026-07", true],
+      ["2026-08", false],
+    ]);
+  });
+
+  test("an empty ledger has reached no month at all", () => {
+    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 2, TODAY, null);
+    expect(trend.every((t) => t.reached)).toBe(false);
   });
 });
 
