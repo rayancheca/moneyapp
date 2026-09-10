@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { SERIES_EVIDENCE_LABEL, noScheduleReason } from "@/lib/series-evidence";
+import { seriesEndLines } from "./end-radius";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { renameSeriesAction, setSeriesStatusAction } from "@/app/recurring/actions";
@@ -16,7 +17,6 @@ import { Badge } from "@/components/ui/Badge";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { CategoryChip } from "@/components/ui/CategoryChip";
-import { countPhrase } from "@/components/ui/blast-radius";
 import { Confirm } from "@/components/ui/Confirm";
 import { InlineEditableText } from "@/components/ui/InlineEditableText";
 import { Menu } from "@/components/ui/Menu";
@@ -214,25 +214,19 @@ export function SeriesDetail({
           confirmLabel="End this series"
           radius={{
             headline: `${data.name} stops being expected: it leaves the forecast, the recurring calendar, and every budget's expected tail.`,
-            lines: [
-              ...(data.annualizedCents !== null
-                ? [
-                    {
-                      label: "Leaving the forecast",
-                      value: `~${formatCents(data.annualizedCents)} / yr`,
-                      irreversible: true,
-                    },
-                  ]
-                : []),
+            // the arrears, the span and the kept rows — see `seriesEndLines`
+            lines: seriesEndLines(
               {
-                label: "Upcoming charges off the calendar",
-                value: countPhrase(data.nextExpected.length, "charge"),
+                annualizedCents: data.annualizedCents,
+                overdueCents: Math.abs(data.overdue?.amountCents ?? 0),
+                overdueOn: data.overdue?.date ?? null,
+                overdueCount: data.overdue?.occurrenceCount ?? 0,
+                nextChargeOn: data.nextExpected[0]?.date ?? null,
+                endsOn: data.endsOn,
+                linkedCount: data.linkedTxns.length,
               },
-              {
-                label: "Linked transactions kept",
-                value: countPhrase(data.linkedTxns.length, "transaction"),
-              },
-            ],
+              formatCents,
+            ),
             reassurance:
               "Nothing is deleted — the charges stay in your ledger, and Confirm brings the series back if it starts again.",
           }}
