@@ -380,9 +380,26 @@ export function subBuckets(period: ResolvedPeriod): PeriodBucket[] {
     (period.granularity === "custom" && diffDays(period.from, period.to) + 1 <= CUSTOM_DAY_BUCKET_MAX);
 
   if (byDay) {
+    /*
+     * 🔴 A bare day-of-month repeats the moment the window crosses one. The
+     * month branch below has carried a year since four Augusts collided in one
+     * column; the day branch had no equivalent, so `?from=2026-07-25&to=2026-08-25`
+     * drew two bars both labelled "25" — and the tooltip and the table lens's
+     * "Period" cell read off the same string. A month period never crosses, so
+     * this only ever fires on a week that straddles a month end or a custom
+     * window under 46 days.
+     */
+    const spansMonths = monthKey(period.from) !== monthKey(period.to);
+    const spansYears = period.from.slice(0, 4) !== period.to.slice(0, 4);
     const out: PeriodBucket[] = [];
     for (let iso = period.from; compareDates(iso, period.to) <= 0; iso = addDays(iso, 1)) {
-      out.push({ key: iso, from: iso, to: iso, label: String(Number(iso.slice(8, 10))) });
+      const day = String(Number(iso.slice(8, 10)));
+      const label = spansYears
+        ? `${monthShort(Number(iso.slice(5, 7)))} ${day} '${iso.slice(2, 4)}`
+        : spansMonths
+          ? `${monthShort(Number(iso.slice(5, 7)))} ${day}`
+          : day;
+      out.push({ key: iso, from: iso, to: iso, label });
     }
     return out;
   }

@@ -22,6 +22,7 @@ const heat = (spentCents: number, incomeCents = 0, txnCount = 1): HeatDay => ({
   incomeCents,
   txnCount,
   topCategories: [],
+  topMerchants: [],
 });
 
 /**

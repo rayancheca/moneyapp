@@ -459,3 +459,32 @@ describe("a clamped month bucket is named by the days it holds", () => {
     }
   });
 });
+
+describe("a day bucket that could collide carries its month", () => {
+  test("a month's own days stay bare — they cannot collide", () => {
+    const b = subBuckets(resolvePeriod({ period: "2026-07" }, TODAY));
+    expect(b[0]!.label).toBe("1");
+    expect(b.at(-1)!.label).toBe("31");
+  });
+
+  test("a custom window crossing a month end names the month, so 25 and 25 differ", () => {
+    // 🔴 `?from=2026-07-25&to=2026-08-25` drew two bars both labelled "25", and
+    // the tooltip and the table lens's "Period" cell read the same string.
+    const b = subBuckets(resolvePeriod({ from: "2026-07-25", to: "2026-08-25" }, TODAY));
+    expect(b[0]!.label).toBe("Jul 25");
+    expect(b.at(-1)!.label).toBe("Aug 25");
+    expect(new Set(b.map((x) => x.label)).size).toBe(b.length);
+  });
+
+  test("a week straddling a month end is the same shape", () => {
+    const b = subBuckets(resolvePeriod({ period: "W2026-07-29" }, TODAY));
+    expect(b.map((x) => x.label)).toEqual(["Jul 27", "Jul 28", "Jul 29", "Jul 30", "Jul 31", "Aug 1", "Aug 2"]);
+  });
+
+  test("a window crossing a year end carries the year too", () => {
+    const b = subBuckets(resolvePeriod({ from: "2025-12-28", to: "2026-01-03" }, TODAY));
+    expect(b[0]!.label).toBe("Dec 28 '25");
+    expect(b.at(-1)!.label).toBe("Jan 3 '26");
+    expect(new Set(b.map((x) => x.label)).size).toBe(b.length);
+  });
+});
