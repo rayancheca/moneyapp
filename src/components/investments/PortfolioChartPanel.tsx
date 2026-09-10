@@ -74,6 +74,8 @@ interface PortfolioChartPanelProps {
   /** how many held symbols carried a price into the session — stated rather than
    *  implied, so a partly-priced book cannot read as full coverage */
   pricedSymbols?: number;
+  /** newest stored close (`PortfolioOverview.asOf`) — see `sinceCloseClause` */
+  closeOn?: string | null;
   totalSymbols?: number;
 }
 
@@ -101,6 +103,7 @@ export function PortfolioChartPanel({
   footer,
   session,
   pricedSymbols = 0,
+  closeOn = null,
   totalSymbols = 0,
 }: PortfolioChartPanelProps) {
   const { state, setView } = useViewState({
@@ -394,6 +397,8 @@ export function PortfolioChartPanel({
               session={intraday}
               pricedSymbols={pricedSymbols}
               totalSymbols={totalSymbols}
+              closeOn={closeOn}
+              today={today}
             />
           )}
           {(() => {

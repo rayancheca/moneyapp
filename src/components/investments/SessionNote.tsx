@@ -4,6 +4,7 @@ import { useTransition } from "react";
 import { refreshIntradayAction } from "@/app/investments/actions";
 import { toast } from "@/components/ui/Toast";
 import { SESSION_TZ_LABEL, type SessionChartView } from "@/lib/intraday-axis";
+import { formatDayLong } from "@/lib/format-date";
 
 /**
  * The one line under the 1D chart that says what the day's move is measured
@@ -18,13 +19,35 @@ import { SESSION_TZ_LABEL, type SessionChartView } from "@/lib/intraday-axis";
  * schedules `refreshIntraday`, so without an explicit control the 1D view would
  * be a permanent empty state on a table that never fills.
  */
+/**
+ * Which close the 1D figure is measured against, said in words.
+ *
+ * 🔴 The note asserted "the change since yesterday's close" whatever the newest
+ * close actually was. Measured 2026-09-10: `price_cache`'s newest quote is
+ * 2026-09-03 and `price_intraday` holds zero rows, so there is no yesterday
+ * close and none for the six days before it — while the same page's scrub
+ * readout says "carried forward from the close on Thu, Sep 3, 2026" and its
+ * section note says "still carries its close from Thu, Sep 3, 2026 — 7 days
+ * ago". `dayChangeLabel` states the rule for this figure two files over:
+ * "naming a date the figure was not measured over would be worse than the
+ * vaguer word."
+ */
+export function sinceCloseClause(closeOn: string | null, today: string, formatDay: (iso: string) => string): string {
+  if (closeOn === null) return "there is no stored close to measure against yet";
+  if (closeOn === today) return "this is the change within today's own close";
+  return `this is the change since the close on ${formatDay(closeOn)}`;
+}
+
 interface SessionNoteProps {
   session: SessionChartView | null;
   pricedSymbols: number;
+  /** the newest STORED close the 1D figure is measured against — see `sinceCloseClause` */
+  closeOn: string | null;
+  today: string;
   totalSymbols: number;
 }
 
-export function SessionNote({ session, pricedSymbols, totalSymbols }: SessionNoteProps) {
+export function SessionNote({ session, pricedSymbols, totalSymbols, closeOn, today }: SessionNoteProps) {
   const [pending, startTransition] = useTransition();
 
   function load() {
@@ -61,7 +84,7 @@ export function SessionNote({ session, pricedSymbols, totalSymbols }: SessionNot
     return (
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <p className="text-xs text-ink-faint">
-          No intraday prices for today yet — this is the change since yesterday&rsquo;s close.
+          No intraday prices for today yet — {sinceCloseClause(closeOn, today, formatDayLong)}.
         </p>
         <button
           type="button"

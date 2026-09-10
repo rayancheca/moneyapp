@@ -453,7 +453,15 @@ export function HoldingChartPanel({
             />
           )}
           {show1D && (
-            <SessionNote session={intraday} pricedSymbols={1} totalSymbols={1} />
+            <SessionNote
+              session={intraday}
+              pricedSymbols={1}
+              totalSymbols={1}
+              /* the newest QUOTED close: days past it are carried forward and
+                 marked `complete: false` — see `sinceCloseClause` */
+              closeOn={priceSeries.findLast((p) => p.complete)?.day ?? null}
+              today={today}
+            />
           )}
           {(() => {
             // the strip is measured over the range the header names — see statsFor

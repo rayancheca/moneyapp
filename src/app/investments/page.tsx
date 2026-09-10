@@ -225,6 +225,7 @@ export default async function InvestmentsPage({
             session={session}
             pricedSymbols={intraday.grid.pricedSymbols}
             totalSymbols={intraday.grid.totalSymbols}
+            closeOn={overview.asOf}
           />
         ) : (
           <SurfaceCard>
