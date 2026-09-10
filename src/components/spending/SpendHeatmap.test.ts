@@ -16,13 +16,14 @@ const cell = (iso: string, day: HeatDay | null = null, over: Partial<Parameters<
     ...over,
   });
 
-const heat = (spentCents: number, incomeCents = 0, txnCount = 1): HeatDay => ({
+const heat = (spentCents: number, incomeCents = 0, txnCount = 1, refundedCents = 0): HeatDay => ({
   iso: "2026-08-04",
   spentCents,
   incomeCents,
   txnCount,
   topCategories: [],
   topMerchants: [],
+  refundedCents,
 });
 
 /**
@@ -72,5 +73,29 @@ describe("heatCellLabel — three worlds, three sentences", () => {
     expect(
       cell("2026-08-04", heat(12_50, 0, 2), { monthKey: "2026-08", monthName: "August 2026" }),
     ).toBe("Aug 4: $12.50 spent across 2 transactions");
+  });
+});
+
+describe("a day whose only row is a return", () => {
+  /* 🔴 The service skips a credit in an expense category from both buckets on
+     purpose, so such a day arrived with two zeroes and read "no activity" over
+     a posted row. Two days on the owner's ledger: 2025-05-10 ($18.00 back) and
+     2025-11-22 ($5.58). */
+  test("names the refund instead of calling the day empty", () => {
+    expect(
+      cell("2026-08-04", heat(0, 0, 0, 1_800), { monthKey: "2026-08", monthName: "August 2026" }),
+    ).toBe("Aug 4: $18.00 refunded");
+  });
+
+  test("a day with spending is unaffected by a refund on it", () => {
+    expect(
+      cell("2026-08-04", heat(5_000, 0, 1, 1_800), { monthKey: "2026-08", monthName: "August 2026" }),
+    ).toBe("Aug 4: $50.00 spent across 1 transaction");
+  });
+
+  test("a genuinely empty covered day still says no activity", () => {
+    expect(
+      cell("2026-08-04", heat(0, 0, 0, 0), { monthKey: "2026-08", monthName: "August 2026" }),
+    ).toBe("Aug 4: no activity");
   });
 });

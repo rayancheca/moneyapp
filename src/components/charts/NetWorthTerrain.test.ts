@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import type { DashboardMode } from "@/lib/multi-series";
 import { resolveViewState } from "@/lib/view-state";
 import { TERRAIN_VIEWPOINTS } from "@/lib/terrain-layout";
+import { sideLabel, sideTag } from "./NetWorthTerrain";
 import {
   DASHBOARD_SURFACE,
   DASHBOARD_VIEW_SPEC,
@@ -283,5 +284,42 @@ describe("the dashboard hero's view dimension", () => {
     expect(dashboardSeriesMode("sankey")).toBeNull();
     expect(dashboardSeriesMode(undefined)).toBeNull();
     expect(dashboardSeriesMode("nonsense")).toBeNull();
+  });
+});
+
+/**
+ * 🔴 The rail printed a bare "owed" over a POSITIVE figure while the Table lens
+ * sixty lines below it, over the same rows, printed "Owed · in credit".
+ * Measured 2026-09-10: `Chase Sapphire` reads "owed +$82.72 since Feb 2025".
+ */
+describe("which side of the rule a row sits on", () => {
+  test("an asset is held, and the rail tags it with nothing", () => {
+    expect(sideLabel({ isLiability: false, lastCents: 300_760 })).toBe("Held");
+    expect(sideTag({ isLiability: false, lastCents: 300_760 })).toBe("");
+  });
+
+  test("a card carrying a balance is owed", () => {
+    expect(sideLabel({ isLiability: true, lastCents: -36_799 })).toBe("Owed");
+    expect(sideTag({ isLiability: true, lastCents: -36_799 })).toBe("owed");
+  });
+
+  test("a card IN CREDIT is still owed-side, and says which", () => {
+    expect(sideLabel({ isLiability: true, lastCents: 8_272 })).toBe("Owed · in credit");
+    expect(sideTag({ isLiability: true, lastCents: 8_272 })).toBe("owed · in credit");
+  });
+
+  test("a card at exactly zero is not in credit", () => {
+    expect(sideLabel({ isLiability: true, lastCents: 0 })).toBe("Owed");
+  });
+
+  test("the rail's tag is the table's label, never a second rule", () => {
+    for (const r of [
+      { isLiability: true, lastCents: 8_272 },
+      { isLiability: true, lastCents: -1 },
+      { isLiability: true, lastCents: 0 },
+      { isLiability: false, lastCents: 5 },
+    ]) {
+      expect(sideTag(r)).toBe(r.isLiability ? sideLabel(r).toLowerCase() : "");
+    }
   });
 });

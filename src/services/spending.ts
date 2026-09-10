@@ -422,6 +422,12 @@ export interface HeatDay {
   spentCents: number;
   /** gross money in this day, positive */
   incomeCents: number;
+  /**
+   * Credits landing in an EXPENSE category — returns. Neither spending (the
+   * comment on the loop says why) nor income, and until this existed a day
+   * whose only row was one had nothing at all to report.
+   */
+  refundedCents: number;
   /** how many spending rows make up spentCents (income and refunds are not rows) */
   txnCount: number;
   /** where the money went, biggest first — top-level categories, at most 3 */
@@ -460,6 +466,7 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
   interface Cell {
     spentCents: number;
     incomeCents: number;
+    refundedCents: number;
     /** distinct PARENT transaction ids — a split explodes into one row per part,
      *  so counting rows would over-count one purchase as several and diverge from
      *  the plain /transactions list the day sheet links to */
@@ -473,6 +480,7 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
   const newCell = (): Cell => ({
     spentCents: 0,
     incomeCents: 0,
+    refundedCents: 0,
     txnIds: new Set(),
     categories: new Map(),
     merchants: new Map(),
@@ -506,6 +514,9 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
       cell.merchants.set(key, entry);
     } else if (isIncome(idx, txn)) {
       cell.incomeCents += txn.amountCents;
+    } else if (bucket) {
+      // a credit in an expense category: the return the branch above skips
+      cell.refundedCents += txn.amountCents;
     }
     byDay.set(txn.postedOn, cell);
   }
@@ -515,6 +526,7 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
       iso,
       spentCents: c.spentCents,
       incomeCents: c.incomeCents,
+      refundedCents: c.refundedCents,
       txnCount: c.txnIds.size,
       topCategories: topEntries(c.categories),
       topMerchants: topNamed([...c.merchants.values()]),

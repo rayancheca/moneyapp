@@ -78,6 +78,16 @@ export function heatCellLabel({
    */
   if (compareDates(iso, today) > 0) return `${day}: has not happened yet`;
   if (ledgerReaches === null || compareDates(iso, ledgerReaches) > 0) return `${day}: not imported yet`;
+  /*
+   * 🔴 A DAY WHOSE ONLY ROW IS A RETURN IS NOT AN EMPTY DAY. The service skips
+   * a credit in an expense category from both buckets on purpose — "a refund is
+   * not a day's spending" — so such a day arrived with two zeroes and read "no
+   * activity" over a posted row. Two days on the owner's ledger: 2025-05-10
+   * ($18.00 back) and 2025-11-22 ($5.58).
+   */
+  if (d && d.spentCents === 0 && d.incomeCents === 0 && d.refundedCents > 0) {
+    return `${day}: ${formatCents(d.refundedCents)} refunded`;
+  }
   if (!d || (d.spentCents === 0 && d.incomeCents === 0)) return `${day}: no activity`;
   const parts: string[] = [];
   if (d.spentCents > 0) {
@@ -263,12 +273,15 @@ function DaySheetBody({
 
   if (spent === 0 && income === 0) {
     /* the same three worlds the cell label separates — see `cellLabel` */
+    const refunded = day?.refundedCents ?? 0;
     const nothing =
       compareDates(iso, today) > 0
         ? "This day has not happened yet."
         : ledgerReaches === null || compareDates(iso, ledgerReaches) > 0
           ? "Nothing has been imported for this day yet — nobody has looked at it, which is not the same as nothing happening."
-          : "Nothing posted on this day.";
+          : refunded > 0
+            ? `Nothing was spent or earned on this day — ${formatCents(refunded)} came back as a refund.`
+            : "Nothing posted on this day.";
     return (
       <div className="space-y-4">
         <p className="text-sm text-ink-muted">{nothing}</p>

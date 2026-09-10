@@ -591,6 +591,25 @@ const rowFigures = (r: TerrainRibbon): TerrainRowFigures =>
  * keyboard and a screen reader reach each account page — the drawing itself is
  * one labelled figure, so it can never be the only route.
  */
+/**
+ * Which side of the rule a row sits on — ONE rule, because two surfaces on this
+ * card print it.
+ *
+ * ⛔ A card the bank owes on is still on the owed side; it is just in credit.
+ * The Table lens has said so since it shipped and the rail beside it printed a
+ * bare "owed" over a positive figure — `Chase Sapphire`, +$82.72 since Feb
+ * 2025, measured 2026-09-10.
+ */
+export function sideLabel(r: { isLiability: boolean; lastCents: number }): string {
+  if (!r.isLiability) return "Held";
+  return r.lastCents > 0 ? "Owed · in credit" : "Owed";
+}
+
+/** The rail's lower-case tag, blank for an asset — the same rule as `sideLabel`. */
+export function sideTag(r: { isLiability: boolean; lastCents: number }): string {
+  return r.isLiability ? sideLabel(r).toLowerCase() : "";
+}
+
 function TerrainRail({
   ribbons,
   layout,
@@ -640,7 +659,14 @@ function TerrainRail({
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-1.5">
                     <span className="truncate text-sm">{r.label}</span>
-                    <span className="shrink-0 text-eyebrow text-ink-faint">{r.isLiability ? "owed" : ""}</span>
+                    {/* 🔴 "owed" beside a POSITIVE figure. The table lens sixty
+                        lines below has had the rule since it shipped — "a card
+                        the bank owes on is still on the owed side, it is just
+                        in credit" — and this rail, over the same rows, printed
+                        the bare word. Measured 2026-09-10: `Chase Sapphire`
+                        reads "owed +$82.72 since Feb 2025" and its own row in
+                        the Table lens reads "Owed · in credit". */}
+                    <span className="shrink-0 text-eyebrow text-ink-faint">{sideTag(r)}</span>
                   </span>
                   {/* ⛔ THE SAME ANSWER THE TABLE GIVES. This built its own
                       sentence and its own figure, so the row the table lens
@@ -702,8 +728,7 @@ function TerrainTable({
         </span>
       ),
     },
-    // a card the bank owes on is still on the owed side — it is just in credit
-    { key: "side", header: "Side", render: (r) => (r.isLiability ? (r.lastCents > 0 ? "Owed · in credit" : "Owed") : "Held") },
+    { key: "side", header: "Side", render: (r) => sideLabel(r) },
     {
       key: "from",
       header: "First day",
