@@ -27,6 +27,7 @@
  */
 
 import { compareDates } from "./dates";
+import { splitMissing } from "./coverage-label";
 
 /** One account's daily balance point. `exact` = anchored/derived basis. */
 export interface DailyBalancePoint {
@@ -43,6 +44,15 @@ export interface AccountSeriesInput {
   isLiability: boolean;
   /** oldest-first, gap-free, day-unique */
   points: readonly DailyBalancePoint[];
+  /**
+   * The ledger holds rows for this account at all — `splitMissing`'s third
+   * question, and the one that separates an EMPTY account from a hole.
+   *
+   * ⛔ REQUIRED. Optional would leave exactly the hole it closes: a caller that
+   * forgets gets `undefined`, `hasHistory === false` never matches, and the
+   * account falls back into `gapAccounts` — which is the defect below.
+   */
+  hasHistory: boolean;
 }
 
 /** An aligned per-day value: null before the account's first known day. */
@@ -77,6 +87,8 @@ export interface DashboardSeriesPoint {
   notYetOpen?: { name: string; opensOn: string }[];
   /** members already open on this day that nothing covers — a real hole */
   gapAccounts?: string[];
+  /** members the ledger holds nothing for at all — not a hole, see `splitMissing` */
+  emptyAccounts?: string[];
   /** how many members this rollup sums when every one is covered */
   totalAccounts?: number;
 }
@@ -140,20 +152,12 @@ function rollupLine(
     let allExact = true;
     const coveredAccountNames: string[] = [];
     const coveredCents: number[] = [];
-    const notYetOpen: { name: string; opensOn: string }[] = [];
-    const gapAccounts: string[] = [];
+    const missing: { name: string; opensOn: string | null; hasHistory: boolean }[] = [];
     for (let m = 0; m < aligned.length; m++) {
       const member = members[m]!;
       const v = aligned[m]![i] ?? null;
       if (v === null) {
-        // an account with no history at all has no opening date to name, so it
-        // counts as a hole rather than an "opens later" claim we cannot support
-        const first = opensOn[m];
-        if (first !== null && first !== undefined && compareDates(day, first) < 0) {
-          notYetOpen.push({ name: member.label, opensOn: first });
-        } else {
-          gapAccounts.push(member.label);
-        }
+        missing.push({ name: member.label, opensOn: opensOn[m] ?? null, hasHistory: member.hasHistory });
         continue;
       }
       sum += v.valueCents;
@@ -161,15 +165,54 @@ function rollupLine(
       coveredCents.push(sign * v.valueCents);
       if (!v.exact) allExact = false;
     }
+    /*
+     * 🔴 THREE BUCKETS, and this had two. `splitMissing` is the app's rule for
+     * why an account is missing from a day, and its docstring names the very
+     * account this re-derivation broke on: "`Capital One 360 Checking` holds
+     * zero rows and zero balances, so it has no `opensOn`, so it fell through
+     * to `gapAccounts` on all 1,464 days of the live series." That was fixed in
+     * `derivation`, which passes `hasHistory` and gets an EMPTY bucket back —
+     * and this second implementation of the same question kept the old answer.
+     *
+     * Measured on the owner's dashboard 2026-09-10. The permanent gap made
+     * `sharedCoverageChange` bail before it could compare like with like, so
+     * `?chart=assets` fell back to the raw endpoint difference over two
+     * different account populations and printed, with no percentage and no
+     * scope note:
+     *
+     *     ▲ +$47,478.87 · Assets · 1Y
+     *
+     * The 1Y start (2025-09-10) covers five asset accounts totalling
+     * $67,020.10; today's $114,498.97 covers eight. $39,002.67 of that
+     * "growth" is Robinhood Crypto, Wells Fargo and Cash on Hand OPENING.
+     * Like-for-like the answer is +$8,476.20 — which is what makes the same
+     * switcher close: Net worth reads "+$8,434.38 (+12.7% excl. Robinhood
+     * Crypto, Venture X +2 more)" and Owed "+$41.82", and
+     * 8,476.20 − 41.82 = 8,434.38 to the cent. Against the old figure,
+     * 47,478.87 − 41.82 ≠ 8,434.38: assets − owed did not equal net worth on
+     * one screen.
+     *
+     * ⛔ Net worth escaped because it never took this path — `derivation`
+     * builds it and passes `hasHistory`. Owed escaped because no liability
+     * account is empty. This is one rule with one caller, and the second
+     * caller was the one on screen.
+     */
+    const { notYetOpen, gapAccounts, emptyAccounts } = splitMissing(day, missing);
     const covered = coveredAccountNames.length;
     return {
       day,
       valueCents: covered === 0 ? null : sign * sum,
-      complete: covered === members.length && allExact,
+      /*
+       * ⛔ An EMPTY account does not make a day incomplete — there is nothing
+       * for it to cover. `derivation` says the same thing about the same
+       * account: counting them left ZERO of 1,464 days `complete`.
+       */
+      complete: covered === members.length - emptyAccounts.length && allExact,
       coveredAccountNames,
       coveredCents,
       notYetOpen,
       gapAccounts,
+      emptyAccounts,
       totalAccounts: members.length,
     };
   });

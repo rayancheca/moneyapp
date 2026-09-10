@@ -10,6 +10,7 @@ const checking: AccountSeriesInput = {
   id: "a1",
   label: "Checking",
   isLiability: false,
+  hasHistory: true,
   points: [
     { day: "2026-07-01", balanceCents: 100000, exact: true },
     { day: "2026-07-03", balanceCents: 120000, exact: true },
@@ -19,12 +20,14 @@ const savings: AccountSeriesInput = {
   id: "a2",
   label: "Savings",
   isLiability: false,
+  hasHistory: true,
   points: [{ day: "2026-07-02", balanceCents: 500000, exact: true }],
 };
 const card: AccountSeriesInput = {
   id: "c1",
   label: "Venture X",
   isLiability: true,
+  hasHistory: true,
   points: [
     { day: "2026-07-01", balanceCents: -40000, exact: true },
     { day: "2026-07-02", balanceCents: -60000, exact: false }, // carried/unverified day
@@ -210,10 +213,66 @@ describe("buildDashboardSeries", () => {
   });
 
   test("an account with no points aligns to all-null (absent, never zero)", () => {
-    const empty: AccountSeriesInput = { id: "x", label: "Empty", isLiability: false, points: [] };
-    expect(alignOverDays(empty.points, ["2026-07-01", "2026-07-02"])).toEqual([null, null]);
+    const unplaceable: AccountSeriesInput = {
+      id: "x",
+      label: "Unplaceable",
+      isLiability: false,
+      hasHistory: true, // rows the ledger cannot place — a real hole
+      points: [],
+    };
+    expect(alignOverDays(unplaceable.points, ["2026-07-01", "2026-07-02"])).toEqual([null, null]);
     // and its rollup membership keeps every day incomplete (it never covers)
-    const out = buildDashboardSeries([checking, empty], { mode: "combined" });
+    const out = buildDashboardSeries([checking, unplaceable], { mode: "combined" });
     expect(out[0]!.points.every((p) => !p.complete)).toBe(true);
+    expect(out[0]!.points[0]!.gapAccounts).toEqual(["Unplaceable"]);
+  });
+});
+
+describe("an EMPTY member is not a hole", () => {
+  /*
+   * 🔴 `rollupLine` re-derived `splitMissing`'s question with two buckets and no
+   * empty one, so `Capital One 360 Checking` — zero rows, zero balances — was a
+   * gap on every day of the assets rollup. `sharedCoverageChange` bails on a
+   * gap, so `?chart=assets` fell back to the raw endpoint difference over two
+   * different account populations: "▲ +$47,478.87 · Assets · 1Y" where
+   * like-for-like is +$8,476.20, with no percentage and no scope note. Net
+   * worth on the same switcher read "+$8,434.38", and assets − owed did not
+   * equal it.
+   */
+  const emptyAccount: AccountSeriesInput = {
+    id: "e1",
+    label: "Capital One 360 Checking",
+    isLiability: false,
+    hasHistory: false, // the ledger holds nothing for it at all
+    points: [],
+  };
+
+  test("it lands in emptyAccounts, never in gapAccounts", () => {
+    const out = buildDashboardSeries([checking, emptyAccount], { mode: "combined" });
+    const p = out[0]!.points[0]!;
+    expect(p.emptyAccounts).toEqual(["Capital One 360 Checking"]);
+    expect(p.gapAccounts).toEqual([]);
+  });
+
+  test("it does not make a day incomplete — there is nothing for it to cover", () => {
+    const out = buildDashboardSeries([checking, emptyAccount], { mode: "combined" });
+    // 2026-07-01 and 07-03 are Checking's own exact days
+    expect(out[0]!.points[0]!.complete).toBe(true);
+    expect(out[0]!.points.at(-1)!.complete).toBe(true);
+  });
+
+  test("hasHistory is what separates the two, not the absence of points", () => {
+    const hole = { ...emptyAccount, id: "h1", label: "Unplaceable", hasHistory: true };
+    const withEmpty = buildDashboardSeries([checking, emptyAccount], { mode: "combined" });
+    const withHole = buildDashboardSeries([checking, hole], { mode: "combined" });
+    expect(withEmpty[0]!.points[0]!.complete).toBe(true);
+    expect(withHole[0]!.points[0]!.complete).toBe(false);
+  });
+
+  test("an account that has not opened YET is still notYetOpen, not empty", () => {
+    const out = buildDashboardSeries([checking, savings], { mode: "combined" });
+    // savings opens 07-02, so 07-01 names it as not-yet-open
+    expect(out[0]!.points[0]!.notYetOpen).toEqual([{ name: "Savings", opensOn: "2026-07-02" }]);
+    expect(out[0]!.points[0]!.emptyAccounts).toEqual([]);
   });
 });

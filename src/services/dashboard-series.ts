@@ -1,4 +1,6 @@
+import { inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
+import { transactions } from "@/db/schema/transactions";
 import { buildDashboardSeries, type AccountSeriesInput, type DashboardMode } from "@/lib/multi-series";
 import { bridgeDashboardSeries, type BridgedDashboardSeries } from "@/lib/multi-series-bridge";
 import { accountSeries } from "./derivation";
@@ -39,10 +41,26 @@ const EXACT_BASES = new Set(["anchored", "derived"]);
 
 function seriesInputs(db: AppDatabase): { inputs: AccountSeriesInput[]; options: DashboardAccountOption[] } {
   const active = listAccounts(db).filter((a) => a.isActive);
+  /*
+   * ⛔ The ledger's own answer to "does this account hold anything at all",
+   * built the way `derivation` builds it — the same statuses, so the two
+   * surfaces cannot disagree about whether `Capital One 360 Checking` is a hole
+   * or an empty account. See `splitMissing`, and `rollupLine`'s docstring for
+   * what the dashboard printed while this was missing.
+   */
+  const accountsWithRows = new Set(
+    db
+      .selectDistinct({ accountId: transactions.accountId })
+      .from(transactions)
+      .where(inArray(transactions.status, ["active", "excluded"]))
+      .all()
+      .map((r) => r.accountId),
+  );
   const inputs: AccountSeriesInput[] = active.map((a) => ({
     id: a.id,
     label: a.name,
     isLiability: a.isLiability,
+    hasHistory: accountsWithRows.has(a.id),
     points: accountSeries(db, a.id).map((p) => ({
       day: p.day,
       balanceCents: p.balanceCents,
