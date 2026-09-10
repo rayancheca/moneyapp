@@ -94,7 +94,25 @@ function monthShort(month: number): string {
 }
 
 /** "Jul 3 – Jul 20, 2026" (drops the redundant year/month where it repeats). */
-function customLabel(from: string, to: string): string {
+/**
+ * A window named by its own two ends — "Feb 7, 2026", "Feb 16 – 17, 2026",
+ * "Sep 20, 2022 – Jul 6, 2026".
+ *
+ * 🔴 Exported because a SECOND surface needed it and built its own instead.
+ * `merchant-insights` labelled a merchant's span by MONTH when both ends fell
+ * in one, so a merchant seen on a single day was measured over that day and
+ * captioned with the month around it. Measured on the owner's ledger
+ * 2026-09-10: of the 66 merchant pages carrying a share sentence, **28 collapse
+ * a single day into a month label and 44 overstate the month's share by 2× or
+ * more.** "Empire City Entertainment Bar is 100.0% of what you spent on
+ * Entertainment in Feb 2026" is one purchase on Feb 7; of February it is 1.6%.
+ *
+ * ⛔ The label describes the WINDOW MEASURED, never a container the window
+ * happens to fit inside. That is the whole rule, and it is why this collapses
+ * only what is genuinely redundant — the repeated year, the repeated month —
+ * and never a day.
+ */
+export function dayWindowLabel(from: string, to: string): string {
   const [fy, fm, fd] = from.split("-").map(Number) as [number, number, number];
   const [ty, tm, td] = to.split("-").map(Number) as [number, number, number];
   if (from === to) return `${monthShort(fm)} ${fd}, ${fy}`;
@@ -152,7 +170,7 @@ function dayPeriod(day: string, today: string): ResolvedPeriod {
     key: day,
     from: day,
     to: day,
-    label: customLabel(day, day),
+    label: dayWindowLabel(day, day),
     isCurrent: day === today,
   };
 }
@@ -165,7 +183,7 @@ function weekPeriod(anchor: string, today: string): ResolvedPeriod {
     key: `W${start}`,
     from: start,
     to: end,
-    label: customLabel(start, end),
+    label: dayWindowLabel(start, end),
     isCurrent: within(today, start, end),
   };
 }
@@ -184,7 +202,7 @@ export function resolvePeriod(
   const { period, from, to } = params;
 
   if (from && to && isValidIsoDate(from) && isValidIsoDate(to) && compareDates(from, to) <= 0) {
-    return { granularity: "custom", key: null, from, to, label: customLabel(from, to), isCurrent: within(today, from, to) };
+    return { granularity: "custom", key: null, from, to, label: dayWindowLabel(from, to), isCurrent: within(today, from, to) };
   }
 
   if (period === YTD_KEY) {

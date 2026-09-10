@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { transactions } from "@/db/schema/transactions";
 import { todayIso } from "@/lib/dates";
-import { formatMonthYear } from "@/lib/format-date";
+import { dayWindowLabel } from "@/lib/period";
 import { isPrintableName } from "@/lib/printable-name";
 import { rankFact, scalarFact, shareFact, type Fact } from "@/lib/insight-facts";
 import { categorySpending, loadCategoryIndex } from "./analytics";
@@ -146,10 +146,19 @@ export function merchantInsightInput(
        * is its own, not the ledger's, so "of what you spent on Transport" with
        * no dates would be read as all time on a merchant that ran for a month.
        */
-      const span =
-        formatMonthYear(profile.firstSeen) === formatMonthYear(profile.lastSeen)
-          ? `in ${formatMonthYear(profile.firstSeen)}`
-          : `between ${formatMonthYear(profile.firstSeen)} and ${formatMonthYear(profile.lastSeen)}`;
+      /*
+       * 🔴 …AND THE WINDOW IS THE ONE MEASURED, TO THE DAY. This collapsed a
+       * span to a MONTH whenever both ends fell inside one, so a share taken
+       * over a single day was captioned with the month around it: "Empire City
+       * Entertainment Bar is 100.0% of what you spent on Entertainment in Feb
+       * 2026" is one purchase on Feb 7, and of February it is 1.6%. Measured
+       * 2026-09-10 — of the 66 merchant pages carrying this sentence, 28
+       * collapsed a single day and 44 overstated the month's share by 2× or
+       * more, the worst of them by 64×. `dayWindowLabel` is the app's rule for
+       * naming a window by its own ends and it drops only what repeats.
+       */
+      const label = dayWindowLabel(profile.firstSeen, profile.lastSeen);
+      const span = profile.firstSeen === profile.lastSeen ? `on ${label}` : `over ${label}`;
       facts.push(shareFact("f3", summary.name, dominant.cents / categoryTotal, `what you spent on ${dominant.name} ${span}`));
       candidates.push({ claimId: "share_of_whole", a: "f3", prove });
     }
@@ -159,7 +168,10 @@ export function merchantInsightInput(
     facts,
     candidates,
     window: {
-      label: `${formatMonthYear(profile.firstSeen)} – ${formatMonthYear(profile.lastSeen)}`,
+      /* the strip's own caption, from the same rule — it read
+         "Feb 2026 – Feb 2026" over a merchant seen on one day, three lines
+         under a Seen row already printing 2026-02-07 twice */
+      label: dayWindowLabel(profile.firstSeen, profile.lastSeen),
       note: null,
     },
   };

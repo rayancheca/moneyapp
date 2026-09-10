@@ -10,7 +10,7 @@ import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
-import { merchantInsights } from "./merchant-insights";
+import { merchantInsights, merchantInsightInput } from "./merchant-insights";
 
 /**
  * What a merchant page adds to what it already shows.
@@ -149,7 +149,7 @@ describe("what a merchant page adds", () => {
      */
     expect(out.insights.map((i) => i.text)).toEqual([
       "Zzz Eats is the largest of your 2 regular merchants, at $100.00.",
-      "Zzz Eats is 90.9% of what you spent on Food between Jan 2026 and Feb 2026.",
+      "Zzz Eats is 90.9% of what you spent on Food over Jan 10 – Feb 10, 2026.",
     ]);
   });
 
@@ -165,7 +165,7 @@ describe("what a merchant page adds", () => {
 
     const out = merchantInsights(bundle.db, "m-1", TODAY)!;
     expect(out.insights[1]!.text).toBe(
-      "Zzz Eats is 83.3% of what you spent on Food between Jan 2026 and Feb 2026.",
+      "Zzz Eats is 83.3% of what you spent on Food over Jan 10 – Feb 10, 2026.",
     );
   });
 
@@ -208,7 +208,47 @@ describe("what a merchant page adds", () => {
     addTxn("2026-03-21", -5_000, "Food", "m-2");
     addTxn("2026-03-22", -5_000, "Food", "m-2");
     const out = merchantInsights(bundle.db, "m-1", TODAY)!;
-    expect(out.insights.some((i) => i.text.includes("in Mar 2026."))).toBe(true);
+    /*
+     * 🔴 …and states it TO THE DAY. This asserted "in Mar 2026" of a share
+     * measured over Mar 10–20, which is the collapse the fix removes: the
+     * rival's Mar 21 and Mar 22 rows are outside the window and outside the
+     * denominator, so a reader given the month cannot arrive at this number.
+     */
+    expect(out.insights.some((i) => i.text.includes("over Mar 10 – 20, 2026."))).toBe(true);
+    expect(out.insights.some((i) => i.text.includes("in Mar 2026."))).toBe(false);
+  });
+
+  /**
+   * 🔴 The defect, measured on the owner's ledger 2026-09-10: 28 of the 66
+   * merchant pages carrying this sentence collapsed a SINGLE DAY into the month
+   * around it. "Empire City Entertainment Bar is 100.0% of what you spent on
+   * Entertainment in Feb 2026" was one purchase on Feb 7; of February it is
+   * 1.6%. Forty-four of the 66 overstated the month's share by 2× or more.
+   */
+  test("a merchant seen on one day is a share of THAT DAY, and says so", () => {
+    addMerchant("m-1", "Zzz Bar");
+    addMerchant("m-2", "Zzz Other");
+    addTxn("2026-02-07", -1_000, "Food", "m-1");
+    addTxn("2026-02-07", -1_000, "Food", "m-1");
+    // the rest of the month, which the old label invited the reader to divide by
+    addTxn("2026-02-14", -50_000, "Food", "m-2");
+    addTxn("2026-02-20", -50_000, "Food", "m-2");
+    const out = merchantInsights(bundle.db, "m-1", TODAY)!;
+    const share = out.insights.find((i) => i.text.includes("of what you spent on Food"));
+    expect(share?.text).toContain("100.0% of what you spent on Food on Feb 7, 2026.");
+    expect(share?.text).not.toContain("Feb 2026.");
+  });
+
+  /**
+   * The strip's own caption comes from the same rule, and stopped repeating
+   * itself: it read "Feb 2026 – Feb 2026" over a merchant seen on one day,
+   * three lines under a Seen row already printing 2026-02-07 twice.
+   */
+  test("the window caption names a one-day span once, not twice", () => {
+    addMerchant("m-1", "Zzz Bar");
+    addTxn("2026-02-07", -1_000, "Food", "m-1");
+    addTxn("2026-02-07", -1_000, "Food", "m-1");
+    expect(merchantInsightInput(bundle.db, "m-1", TODAY).window.label).toBe("Feb 7, 2026");
   });
 
   test("a merchant with no expense-kind spending says nothing", () => {
