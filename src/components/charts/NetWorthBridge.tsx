@@ -97,6 +97,44 @@ function fillOf(step: WaterfallStep): string {
   return "var(--ink-faint)";
 }
 
+/**
+ * The chart's one sentence — its SVG `<title>`, and the table lens's caption.
+ *
+ * 🔴 It asked `closes` (`unexplainedCents === 0`) while the residual note three
+ * lines below it asks `unattributedCents === 0` — the strictly different
+ * question, and the one that note's own docstring calls "the whole reason
+ * `attribute` keeps `attributedCents` and `unattributedCents` apart instead of
+ * collapsing them into one boolean". Measured on the owner's dashboard
+ * 2026-09-10: unexplained $5,000.00, attributed $5,000.00, unattributed $0.00,
+ * so the card read
+ *
+ *     +$5,000.00 no transaction explains — and all of it has a name.
+ *     Cash on Hand · balance restated · +$5,000.00
+ *
+ * under a title reading "…+$47,069.06, $5,000.00 of it unexplained." One card,
+ * two answers, and the accessible name — the only reading a screen reader gets
+ * of a chart it cannot see — took the harsher and wrong one.
+ *
+ * Three states, the same three the note draws.
+ */
+export function bridgeSummary(
+  attribution: Pick<Attribution, "deltaCents" | "closes" | "unexplainedCents" | "unattributedCents"> & {
+    openingCents: number;
+    closingCents: number;
+  },
+  windowLabel: string,
+): string {
+  const delta = formatCentsSigned(attribution.deltaCents);
+  const close = attribution.closes
+    ? "every cent of it accounted for"
+    : attribution.unattributedCents === 0
+      ? `${formatCents(Math.abs(attribution.unexplainedCents))} of it named by a restatement rather than a transaction`
+      : `${formatCents(Math.abs(attribution.unattributedCents))} of it with no explanation at all`;
+  return `Net worth ${windowLabel}: ${formatCents(attribution.openingCents)} to ${formatCents(
+    attribution.closingCents,
+  )}, ${delta}, ${close}.`;
+}
+
 export function NetWorthBridge({
   attribution,
   windowLabel,
@@ -162,15 +200,7 @@ export function NetWorthBridge({
     [smallSteps],
   );
 
-  const summary = useMemo(() => {
-    const delta = formatCentsSigned(attribution.deltaCents);
-    const close = attribution.closes
-      ? "every cent of it accounted for"
-      : `${formatCents(Math.abs(attribution.unexplainedCents))} of it unexplained`;
-    return `Net worth ${windowLabel}: ${formatCents(attribution.openingCents)} to ${formatCents(
-      attribution.closingCents,
-    )}, ${delta}, ${close}.`;
-  }, [attribution, windowLabel]);
+  const summary = useMemo(() => bridgeSummary(attribution, windowLabel), [attribution, windowLabel]);
 
   function moveTooltip(e: ReactPointerEvent, step: WaterfallStep) {
     const rect = containerRef.current?.getBoundingClientRect();
