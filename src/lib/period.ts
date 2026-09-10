@@ -397,16 +397,50 @@ export function subBuckets(period: ResolvedPeriod): PeriodBucket[] {
   while (true) {
     const { start, end } = periodBounds(`${cursor}-01`, "monthly");
     const month = Number(cursor.slice(5, 7));
+    const from = clamp(start, period.from, period.to);
+    const to = clamp(end, period.from, period.to);
+    const whole = from === start && to === end;
     out.push({
       key: cursor,
-      from: clamp(start, period.from, period.to),
-      to: clamp(end, period.from, period.to),
-      label: multiYear ? `${monthShort(month)} '${cursor.slice(2, 4)}` : monthShort(month),
+      from,
+      to,
+      label: whole
+        ? multiYear
+          ? `${monthShort(month)} '${cursor.slice(2, 4)}`
+          : monthShort(month)
+        : partialMonthLabel(from, to, multiYear),
     });
     if (cursor === lastMonth) break;
     cursor = addMonths(cursor, 1);
   }
   return out;
+}
+
+/**
+ * A month bucket CLAMPED to part of its month, named by the days it holds.
+ *
+ * 🔴 It was named by the whole month. The bucket's `from`/`to` are clamped to
+ * the period — the docstring above says so and `period.test.ts` pinned it —
+ * and only the LABEL kept the container's name, which is the same error one
+ * level down from a merchant's share captioned with the month around it.
+ * Measured 2026-09-10: `?period=YTD` draws nine bars and the last, reading
+ * "Sep", holds ten days; `?period=ALL` clamps at both ends, its first bar
+ * reading "Aug '22" over six days of it. A custom `from=2026-06-15` window's
+ * first bar read "Jun" over half a June. Every one of them is a bar a reader
+ * compares against eleven whole months beside it.
+ *
+ * ⛔ Compact rather than `dayWindowLabel`'s prose form: this is an axis tick,
+ * and `chart-axis.ts` already writes months short for the same reason. The
+ * year rides along only where the window repeats month names, exactly as the
+ * whole-month label does — a partial bucket must stay as distinguishable as
+ * the bucket it replaces.
+ */
+function partialMonthLabel(from: string, to: string, withYear: boolean): string {
+  const month = monthShort(Number(from.slice(5, 7)));
+  const first = Number(from.slice(8, 10));
+  const last = Number(to.slice(8, 10));
+  const days = first === last ? `${first}` : `${first}–${last}`;
+  return withYear ? `${month} ${days} '${from.slice(2, 4)}` : `${month} ${days}`;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { compareDates } from "./dates";
+import { compareDates, periodBounds } from "./dates";
 import {
   ALL_TIME_FLOOR,
   currentPeriodLabel,
@@ -404,14 +404,58 @@ describe("month bucket labels disambiguate across years", () => {
   test("a multi-year window carries the year, so four Augusts are distinguishable", () => {
     const p = resolvePeriod({ period: "ALL" }, "2026-08-06", "2022-08-15");
     const labels = subBuckets(p).map((b) => b.label);
-    expect(labels[0]).toBe("Aug '22");
-    expect(labels.at(-1)).toBe("Aug '26");
+    // 🔴 both ends are CLAMPED and used to read "Aug '22" and "Aug '26" — the
+    // first holds Aug 15–31 and the last Aug 1–6, and each sat in a row of
+    // whole months a reader compares bar heights across
+    expect(labels[0]).toBe("Aug 15–31 '22");
+    expect(labels.at(-1)).toBe("Aug 1–6 '26");
+    expect(labels[1]).toBe("Sep '22");
     // the whole point: no label appears twice
     expect(new Set(labels).size).toBe(labels.length);
   });
 
-  test("YTD stays within one year, so it stays bare", () => {
+  test("YTD stays within one year, so it stays bare — except the month it stops inside", () => {
     const p = resolvePeriod({ period: "YTD" }, "2026-08-06");
-    expect(subBuckets(p).map((b) => b.label)).toEqual(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"]);
+    expect(subBuckets(p).map((b) => b.label)).toEqual([
+      "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug 1–6",
+    ]);
   });
 })
+
+describe("a clamped month bucket is named by the days it holds", () => {
+  const p = (params: Record<string, string>) => resolvePeriod(params, TODAY, "2022-08-15");
+
+  test("a custom window's two clamped ends name their own days", () => {
+    const b = subBuckets(p({ from: "2026-02-15", to: "2026-05-10" }));
+    expect(b.map((x) => x.label)).toEqual(["Feb 15–28", "Mar", "Apr", "May 1–10"]);
+  });
+
+  test("a clamped bucket holding one day is named by that day, not a range", () => {
+    // ≥46 days, or the window buckets by day and there is no month label at all
+    const b = subBuckets(p({ from: "2026-02-28", to: "2026-06-01" }));
+    expect(b.map((x) => x.label)).toEqual(["Feb 28", "Mar", "Apr", "May", "Jun 1"]);
+  });
+
+  test("a window whose ends fall on month boundaries keeps the bare names", () => {
+    const b = subBuckets(p({ from: "2026-02-01", to: "2026-04-30" }));
+    expect(b.map((x) => x.label)).toEqual(["Feb", "Mar", "Apr"]);
+  });
+
+  test("the label always describes the bucket's own from/to", () => {
+    // the invariant, not three examples: every clamped bucket names its days
+    for (const params of [
+      { from: "2026-02-15", to: "2026-05-10" },
+      { period: "YTD" },
+      { period: "ALL" },
+    ]) {
+      const period = resolvePeriod(params, TODAY, "2022-08-15");
+      for (const b of subBuckets(period)) {
+        if (b.key.length !== 7) continue;
+        const { start, end } = periodBounds(`${b.key}-01`, "monthly");
+        if (b.from === start && b.to === end) continue;
+        expect(b.label).toContain(String(Number(b.from.slice(8, 10))));
+        expect(b.label).toContain(String(Number(b.to.slice(8, 10))));
+      }
+    }
+  });
+});
