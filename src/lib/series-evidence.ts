@@ -84,6 +84,27 @@ export const SERIES_EVIDENCE_NOTE: Record<SeriesEvidence, string> = {
   lapsed: "no longer forecast — quiet past the point a bill stops",
 };
 
+/** The four statuses this vocabulary speaks about. */
+export type SeriesStatusForCopy = "detected" | "confirmed" | "dismissed" | "ended";
+
+/**
+ * The two statuses the forecast does not project — ONE predicate, because two
+ * sentences on one page turn on it.
+ *
+ * 🔴 `noScheduleReason` owned this test privately and `CadenceSentence` did not
+ * ask it. Measured on the owner's ledger 2026-09-10: all **27** ended or
+ * dismissed series opened with a present-tense schedule — "charges monthly
+ * around the 8th, about $1,786.46 from Chase Checking" — three cards above
+ * "Nothing expected · This series has ended, so nothing more is expected from
+ * it." Twenty-five of them still carry a stored `next_expected_on`, which is
+ * where that day-of-month comes from; `Hoffman LL`'s is 2026-02-08 and its last
+ * charge is fifteen months older still.
+ *
+ * ⛔ The 2026-09-04 pass dropped the "Next expected" CARD for these and left
+ * the sentence that names the same schedule in the present tense. A card
+ * removed is not a claim withdrawn.
+ */
+
 /**
  * Why a series' own page shows no schedule — for the two statuses the forecast
  * does not project.
@@ -100,7 +121,12 @@ export const SERIES_EVIDENCE_NOTE: Record<SeriesEvidence, string> = {
  * the one place that did it anyway. Dropping the card silently would leave the
  * reader wondering; this is the sentence that goes where it was.
  */
-export function noScheduleReason(status: "detected" | "confirmed" | "dismissed" | "ended"): string | null {
+export function seriesIsOver(status: SeriesStatusForCopy): boolean {
+  return status === "ended" || status === "dismissed";
+}
+
+export function noScheduleReason(status: SeriesStatusForCopy): string | null {
+  if (!seriesIsOver(status)) return null;
   if (status === "ended")
     return "This series has ended, so nothing more is expected from it. Its charges below stay in the ledger.";
   if (status === "dismissed")

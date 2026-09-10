@@ -87,9 +87,24 @@ export function schedulePhrase(cadence: Cadence, nextExpectedOn: string): { conn
     : { connective: "around the", token: ordinalDayOf(nextExpectedOn) };
 }
 
-/** The verb an editable cadence sentence opens with, by series kind. */
-export function seriesVerb(kind: SeriesKind): string {
-  return kind === "income" ? "deposits" : kind === "transfer" ? "moves" : "charges";
+/**
+ * The verb an editable cadence sentence opens with, by series kind — and by
+ * whether the series is still running.
+ *
+ * 🔴 It was present tense for every status. Measured 2026-09-10: all 27 ended
+ * or dismissed series read "charges monthly around the 8th, about $1,786.46
+ * from Chase Checking" above their own "nothing more is expected from it".
+ * `seriesIsOver` is the one place that decides, so the two sentences cannot
+ * disagree about whether the series is over.
+ *
+ * ⛔ Past tense fixes the whole clause, not just the verb: "charged monthly
+ * around the 8th" is true of a series that did, and stops the day-of-month —
+ * read off a stale `next_expected_on` — reading as a date still to come.
+ */
+export function seriesVerb(kind: SeriesKind, over: boolean = false): string {
+  if (kind === "income") return over ? "deposited" : "deposits";
+  if (kind === "transfer") return over ? "moved" : "moves";
+  return over ? "charged" : "charges";
 }
 
 /* ── staleness disclosure ──────────────────────────────────────────────────

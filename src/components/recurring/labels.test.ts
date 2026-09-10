@@ -12,6 +12,7 @@ import {
   type StaleEntry,
   overdueNote,
   postedSpreadReading,
+  seriesVerb,
 } from "./labels";
 
 const staleness = (over: Partial<SeriesStaleness> = {}): SeriesStaleness => ({
@@ -329,5 +330,25 @@ describe("postedSpreadReading", () => {
   /** a spread of exactly zero is not a spread — every charge was identical */
   test("draws no band when every posting was the same amount", () => {
     expect(postedSpreadReading(-499, -499, 0).text).toBeNull();
+  });
+});
+
+describe("seriesVerb — a series that is over is described in the past", () => {
+  test("a running series is present tense, by kind", () => {
+    expect(seriesVerb("expense")).toBe("charges");
+    expect(seriesVerb("income")).toBe("deposits");
+    expect(seriesVerb("transfer")).toBe("moves");
+  });
+
+  test("a series that is over is past tense, by kind", () => {
+    // 🔴 27 ended or dismissed series read "charges monthly around the 8th"
+    // above their own "nothing more is expected from it", 2026-09-10.
+    expect(seriesVerb("expense", true)).toBe("charged");
+    expect(seriesVerb("income", true)).toBe("deposited");
+    expect(seriesVerb("transfer", true)).toBe("moved");
+  });
+
+  test("the default is present, so no caller silently changes tense", () => {
+    expect(seriesVerb("expense", false)).toBe(seriesVerb("expense"));
   });
 });

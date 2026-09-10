@@ -7,6 +7,7 @@ import { Popover, usePopover } from "@/components/ui/Popover";
 import { toast } from "@/components/ui/Toast";
 import { formatCents, parseAmountToCents } from "@/lib/money";
 import { CADENCE_LABEL, schedulePhrase, seriesVerb } from "./labels";
+import { seriesIsOver, type SeriesStatusForCopy } from "@/lib/series-evidence";
 
 interface CadenceSentenceProps {
   seriesId: string;
@@ -21,6 +22,8 @@ interface CadenceSentenceProps {
   userAmountCents: number | null;
   detectedCadence: Cadence;
   accountName: string | null;
+  /** ended and dismissed put the whole sentence in the past — see `seriesVerb` */
+  status: SeriesStatusForCopy;
   onChanged: () => void;
 }
 
@@ -39,7 +42,8 @@ function tokenClass(overridden: boolean): string {
  * hand a field back to detection.
  */
 export function CadenceSentence(props: CadenceSentenceProps) {
-  const { seriesId, kind, cadence, nextExpectedOn, amountCents, accountName, onChanged } = props;
+  const { seriesId, kind, cadence, nextExpectedOn, amountCents, accountName, status, onChanged } = props;
+  const over = seriesIsOver(status);
 
   async function save(
     patch: Omit<Parameters<typeof setSeriesOverridesAction>[0], "seriesId">,
@@ -67,14 +71,24 @@ export function CadenceSentence(props: CadenceSentenceProps) {
      * ProvenancePopover on the same page. See ProvenancePopover's docstring.
      */
     <div className="text-[15px] leading-relaxed text-ink-muted">
-      {seriesVerb(kind)}{" "}
+      {seriesVerb(kind, over)}{" "}
       <CadenceToken
         cadence={cadence}
         overridden={props.userCadence !== null}
         detected={props.detectedCadence}
         onPick={(c) => save({ userCadence: c }, c === null ? "Cadence reset to detected" : `Cadence set to ${CADENCE_LABEL[c].toLowerCase()}`)}
       />
-      {nextExpectedOn ? (
+      {/* ⛔ THE DAY CLAUSE GOES WITH THE TENSE. `schedulePhrase` reads the
+          weekday or day-of-month off `nextExpectedOn`, which for a live series
+          IS the projection and for a dead one is whatever the detector last
+          stored — `Hoffman LL`'s is 2026-02-08 over a series whose final charge
+          is fifteen months older. `noScheduleReason` already records the shape:
+          `/recurring/<YA-FIT Smoothie Bar>` called itself "weekly on Thursdays"
+          over a Friday, a Tuesday and a Saturday. Past tense would still be
+          asserting a rhythm read off an abandoned date, so the clause goes and
+          the cadence and amount — which detection measured from the charges —
+          stay. */}
+      {nextExpectedOn && !over ? (
         <>
           {` ${schedulePhrase(cadence, nextExpectedOn).connective} `}
           <DateToken

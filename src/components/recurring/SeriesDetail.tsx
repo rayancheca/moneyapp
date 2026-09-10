@@ -267,6 +267,7 @@ export function SeriesDetail({
             userAmountCents={data.userAmountCents}
             detectedCadence={data.detectedCadence}
             accountName={data.accountName}
+            status={data.status}
             onChanged={onChanged}
           />
           <dl className="mt-4 grid grid-cols-2 gap-4 border-t border-line pt-4 sm:grid-cols-4">

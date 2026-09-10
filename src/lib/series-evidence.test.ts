@@ -6,6 +6,7 @@ import {
   seriesRowLabel,
   type SeriesEvidence,
   noScheduleReason,
+  seriesIsOver,
 } from "./series-evidence";
 
 const EVERY: readonly SeriesEvidence[] = ["active", "never-billed", "running-late", "lapsed"];
@@ -93,5 +94,28 @@ describe("noScheduleReason", () => {
   test("a live series has no reason to give — it still has a schedule", () => {
     expect(noScheduleReason("confirmed")).toBeNull();
     expect(noScheduleReason("detected")).toBeNull();
+  });
+});
+
+describe("seriesIsOver — the one predicate two sentences on the page turn on", () => {
+  /*
+   * 🔴 `noScheduleReason` owned this test privately and the cadence sentence at
+   * the top of the same page did not ask it. Measured 2026-09-10: all 27 ended
+   * or dismissed series opened with "charges monthly around the 8th, about
+   * $1,786.46 from Chase Checking" three cards above "nothing more is expected
+   * from it."
+   */
+  test("ended and dismissed are over; detected and confirmed are not", () => {
+    expect(seriesIsOver("ended")).toBe(true);
+    expect(seriesIsOver("dismissed")).toBe(true);
+    expect(seriesIsOver("confirmed")).toBe(false);
+    expect(seriesIsOver("detected")).toBe(false);
+  });
+
+  test("noScheduleReason speaks for exactly the statuses this names", () => {
+    // the linkage, not two lists that happen to agree today
+    for (const s of ["detected", "confirmed", "dismissed", "ended"] as const) {
+      expect(noScheduleReason(s) !== null).toBe(seriesIsOver(s));
+    }
   });
 });
