@@ -57,6 +57,21 @@ interface TransactionSheetProps {
  * stay read-only. Every mutation is a value-returning action → a Toast with a
  * lossless Undo, and a category correction offers "Create rule → applies to N".
  */
+/**
+ * The History card's one line: how many rows, how many of them spent, and the
+ * mean and total of THOSE.
+ *
+ * A group with no outflow has nothing to average — "avg $0.00 · $0.00 total"
+ * is two measured zeroes over money that really moved, which is the one shape
+ * this app refuses.
+ */
+export function historyLine(h: { count: number; outCount: number; avgCents: number; totalCents: number }): string {
+  const rows = `${h.count} ${h.count === 1 ? "transaction" : "transactions"}`;
+  if (h.outCount === 0) return `${rows}, none of them spending`;
+  const scope = h.outCount === h.count ? rows : `${rows}, ${h.outCount} of them spending`;
+  return `${scope} · avg ${formatCents(h.avgCents)} · ${formatCents(h.totalCents)} spent`;
+}
+
 export function TransactionSheet({
   txn,
   categories,
@@ -327,10 +342,14 @@ export function TransactionSheet({
               <h3 className="text-xs font-medium">History</h3>
               <Sparkline values={panel.history.monthly.map((m) => m.cents)} tone="neutral" width={72} height={22} />
             </div>
-            <p className="mt-1 text-xs text-ink-muted">
-              {panel.history.count} transactions · avg {formatCents(panel.history.avgCents)} ·{" "}
-              {formatCents(panel.history.totalCents)} total
-            </p>
+            {/* 🔴 A COUNT, A MEAN AND A TOTAL IN ONE BREATH, and the mean was
+                not total ÷ count. `Zelle` read "140 transactions · avg $76.48 ·
+                $4,053.69 total" — $4,053.69 ÷ 140 is $28.95; ÷ 53, its
+                outflows, is $76.48. And a group with no outflow at all read
+                "83 transactions · avg $0.00 · $0.00 total" over +$16,386.82.
+                The denominator is named now, and where there is nothing to
+                average the sentence says so instead of asserting two zeroes. */}
+            <p className="mt-1 text-xs text-ink-muted">{historyLine(panel.history)}</p>
             {panel.history.byAccount.length > 1 ? (
               <ul className="mt-2 space-y-1">
                 {panel.history.byAccount.map((a) => (

@@ -220,6 +220,23 @@ describe("txnHistory", () => {
     expect(h.count).toBe(3);
     expect(h.totalCents).toBe(2_000); // the refund contributes 0 money-out
     expect(h.avgCents).toBe(1_000); // avg over the two outflow rows only
+    /* 🔴 …AND THE SHEET STATED THAT COUNT, THAT MEAN AND THAT TOTAL IN ONE
+       BREATH with only `count` visible, so the mean was not total ÷ count.
+       `outCount` is the denominator, published so the sentence can name it. */
+    expect(h.outCount).toBe(2);
+  });
+
+  test("a group with no outflow at all reports none, never a measured zero average", () => {
+    // `ACH Deposit` on the live ledger: 83 rows, +$16,386.82, and the sheet
+    // read "83 transactions · avg $0.00 · $0.00 total"
+    const merchant = netflixMerchantId();
+    insertTxn({ merchantId: merchant, amountCents: 5_000, postedOn: "2026-07-01" });
+    const target = insertTxn({ merchantId: merchant, amountCents: 7_000, postedOn: "2026-07-03" });
+
+    const h = txnHistory(bundle.db, target, "2026-07-08")!;
+    expect(h.count).toBe(2);
+    expect(h.outCount).toBe(0);
+    expect(h.avgCents).toBe(0);
   });
 
   test("returns null for an investment-account row (no merchant group)", () => {

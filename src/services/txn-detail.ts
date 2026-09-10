@@ -48,6 +48,19 @@ export interface TxnHistoryAccount {
 export interface TxnHistory {
   /** rows in the merchant / same-name group (including this one) */
   count: number;
+  /**
+   * How many of `count` are money OUT — the denominator behind `avgCents` and
+   * `totalCents`.
+   *
+   * 🔴 The sheet stated a count, a mean and a total in one breath and the mean
+   * was not total ÷ count: `Zelle` read "140 transactions · avg $76.48 ·
+   * $4,053.69 total" where 4,053.69 ÷ 140 is $28.95 and ÷ 53 (its outflows) is
+   * $76.48. Worse on a group with no outflow at all — `ACH Deposit`, 83 rows
+   * and +$16,386.82 net, read "83 transactions · avg $0.00 · $0.00 total".
+   * Measured 2026-09-10: 1,328 active rows on non-investment accounts sit in a
+   * group where the two counts differ, 551 of them in groups with no outflow.
+   */
+  outCount: number;
   /** mean money-out per outflow row, positive cents */
   avgCents: number;
   /** all-time money-out total for the group, positive cents */
@@ -229,6 +242,7 @@ export function txnHistory(
 
   return {
     count: rows.length,
+    outCount,
     avgCents: outCount > 0 ? Math.round(totalCents / outCount) : 0,
     totalCents,
     monthly: months.map((m, i) => ({ monthKey: m, cents: monthlyCents[i]! })),
