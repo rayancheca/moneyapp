@@ -277,8 +277,17 @@ export function TransactionSheet({
                   ? `At ${panel.merchant.name} · ${panel.merchant.txnCount} txns`
                   : `Similar transactions · ${panel.similarCount}`}
               </h3>
+              {/* 🔴 An unlabelled figure beside a count of a DIFFERENT window.
+                  The heading counts every row at the merchant, all time; this
+                  is the calendar year alone, so `Netflix` read "At Netflix · 18
+                  txns" over a bare "$0.00" against an all-time -$319.57.
+                  Measured 2026-09-10: 512 of 851 merchants differ and 389 print
+                  exactly $0.00 beside a real history. */}
               {panel.merchant ? (
-                <Money cents={panel.merchant.totalCentsThisYear} className="figures text-xs text-ink-muted" />
+                <span className="shrink-0 text-xs text-ink-muted">
+                  <Money cents={panel.merchant.totalCentsThisYear} className="figures" /> in{" "}
+                  {panel.merchant.totalYear}
+                </span>
               ) : null}
             </div>
             {panel.siblings.length > 0 ? (

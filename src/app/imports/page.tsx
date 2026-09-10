@@ -466,8 +466,22 @@ export default async function ImportsPage({
                                 value: countPhrase(periodsByFile.get(f.id) ?? 0, "period"),
                               },
                             ],
+                            /* 🔴 "uncategorized" is the opposite of what
+                               happens. `importStatementFiles` runs
+                               `categorizeAll` and `detectTransfers` on every
+                               import that touched an account, so the rules, the
+                               merchant map, the bank categories and transfer
+                               detection all re-apply at once. Measured
+                               2026-09-10 over the rows the 130 row-carrying
+                               files own: 5,987 of 10,289 currently hold a
+                               categorization from exactly those engines — rule
+                               2,437 · merchant map 1,263 · transfer detection
+                               1,108 · bank category 1,092 — and 127 of the 130
+                               files have no uncategorized row at all. Only the
+                               hand-categorized rows lose anything, which the
+                               second clause already said. */
                             reassurance:
-                              "The statement file itself stays on disk. Re-importing brings the rows back — uncategorized, with the hand-categorization gone.",
+                              "The statement file itself stays on disk. Re-importing brings the rows back and re-runs the rules, the merchant map and transfer detection over them — what is lost is the hand-categorization.",
                           }}
                         />
                       </td>

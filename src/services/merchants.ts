@@ -52,7 +52,21 @@ export interface MerchantSummary {
   name: string;
   txnCount: number;
   /** signed net of this calendar year's active rows — UI formats magnitude */
+  /**
+   * Net over the CALENDAR YEAR `today` falls in — not all time, which is what
+   * `txnCount` beside it counts.
+   *
+   * 🔴 The transaction sheet printed the two side by side with nothing naming
+   * either scope: "At Netflix · 18 txns" over a right-aligned "$0.00".
+   * Measured 2026-09-10 — 512 of 851 merchants have a this-year figure
+   * different from their all-time one and 389 print exactly $0.00 beside a
+   * real history, so 3,995 of the 10,178 active rows open a sheet showing a
+   * mismatched pair. `totalYear` is published so the figure can say which year
+   * it is.
+   */
   totalCentsThisYear: number;
+  /** the calendar year `totalCentsThisYear` covers */
+  totalYear: string;
   recent: MerchantTxnRow[];
   /** the merchant→category rule (S6) — future imports categorize to this */
   defaultCategoryId: string | null;
@@ -96,6 +110,7 @@ export function merchantSummary(
     name: merchant.canonicalName,
     txnCount: rows.length,
     totalCentsThisYear,
+    totalYear: year,
     recent: rows.slice(0, RECENT_LIMIT),
     defaultCategoryId: merchant.defaultCategoryId,
     uncategorizedCount: rows.filter((r) => idx.isUncategorized(r.categoryId)).length,

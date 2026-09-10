@@ -34,7 +34,7 @@ export interface SheetPanelRow {
 
 export interface SheetPanel {
   /** present when the txn has a merchant — the headline "At {merchant}" panel */
-  merchant: { id: string; name: string; txnCount: number; totalCentsThisYear: number } | null;
+  merchant: { id: string; name: string; txnCount: number; totalCentsThisYear: number; totalYear: string } | null;
   /** siblings (same merchant, else stripped-key match); [] on investment rows */
   siblings: SheetPanelRow[];
   /**
@@ -91,7 +91,13 @@ export async function loadSheetPanel(
       row?.merchantId != null
         ? (() => {
             const s = merchantSummary(db, row.merchantId!);
-            return { id: s.id, name: s.name, txnCount: s.txnCount, totalCentsThisYear: s.totalCentsThisYear };
+            return {
+              id: s.id,
+              name: s.name,
+              txnCount: s.txnCount,
+              totalCentsThisYear: s.totalCentsThisYear,
+              totalYear: s.totalYear,
+            };
           })()
         : null;
 

@@ -105,6 +105,11 @@ describe("merchantSummary", () => {
     expect(summary.name).toBe("Netflix");
     expect(summary.txnCount).toBe(7); // 6 × 2026 + 1 × 2025, excluded row out
     expect(summary.totalCentsThisYear).toBe(-6_000);
+    /* 🔴 The sheet printed this beside `txnCount` — 7, all time — with nothing
+       naming either scope, so `Netflix` read "At Netflix · 18 txns" over a bare
+       "$0.00" against an all-time -$319.57 on the owner's ledger. The year is
+       published so the figure can say which one it is. */
+    expect(summary.totalYear).toBe("2026");
     expect(summary.recent).toHaveLength(5);
     expect(summary.recent[0]!.postedOn).toBe("2026-06-10"); // newest first
   });
@@ -120,6 +125,16 @@ describe("merchantSummary", () => {
     // Assert: only the 2026 row counts, the 2027 row must not leak in
     expect(summary.txnCount).toBe(2);
     expect(summary.totalCentsThisYear).toBe(-1_000);
+    expect(summary.totalYear).toBe("2026");
+  });
+
+  test("the year names the one `today` falls in, not the newest row's", () => {
+    insertTxn({ merchantId: netflixId, postedOn: "2025-05-10", amountCents: -1_000 });
+    const summary = merchantSummary(bundle.db, netflixId, "2026-07-10");
+    // every row is 2025 — the figure is $0.00 and it says of WHAT
+    expect(summary.totalCentsThisYear).toBe(0);
+    expect(summary.totalYear).toBe("2026");
+    expect(summary.txnCount).toBe(1);
   });
 
   test("throws for an unknown merchant", () => {
