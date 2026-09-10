@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CalendarGrid } from "@/components/ui/CalendarGrid";
 import { Sheet } from "@/components/ui/Sheet";
+import { compareDates } from "@/lib/dates";
 import { formatCents } from "@/lib/money";
 import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { loadSpendHeatmap } from "@/app/spending/actions";
@@ -27,11 +28,79 @@ import { dayLedgerHref, type HeatDay, type SpendHeatmap as SpendHeatmapData } fr
  * month through a server action without leaving the page.
  */
 
+/**
+ * What ONE calendar cell says — the whole decision, in one place, because the
+ * cell's accessible name and the sheet that opens from it must never describe
+ * two different worlds.
+ */
+export function heatCellLabel({
+  iso,
+  monthKey,
+  monthName,
+  day: d,
+  today,
+  ledgerReaches,
+}: {
+  iso: string;
+  /** the month the payload is FOR — a cell outside it was never queried */
+  monthKey: string;
+  monthName: string;
+  day: HeatDay | null;
+  today: string;
+  ledgerReaches: string | null;
+}): string {
+  const day = formatDayShort(iso);
+  /*
+   * 🔴 A PADDING DAY IS NOT A MEASUREMENT. `CalendarGrid` fills the grid with
+   * real days from the neighbouring months, and this month's payload holds
+   * none of them — the comment on `onDayActivate` in the component already says
+   * so and guards the SHEET for exactly this reason. The aria-label did not, so on
+   * `/spending?period=2026-08` the five leading cells read
+   *
+   *     "Jul 27: no activity" … "Jul 31: no activity"
+   *
+   * of days holding 18, 13, 21, 11 and 12 transactions, and the trailing
+   * cells said the same of a September nobody has imported and of two days
+   * that have not happened. One sentence for three different worlds.
+   */
+  if (iso.slice(0, 7) !== monthKey) return `${day}: not part of ${monthName} — open its ledger`;
+  /*
+   * 🔴 …AND THE OTHER TWO WORLDS THE COMMENT ABOVE NAMED. The padding half was
+   * fixed on 2026-09-04 and "no activity" was left standing over both of the
+   * others. Measured 2026-09-10, `/spending` opens its heatmap on September:
+   * all 30 cells read "no activity" — ten of days nobody has imported, twenty
+   * of days that have not happened. The page's own empty state one card above
+   * says "That is a window nobody has looked at, not one in which nothing
+   * happened", and this is the surface that said the opposite thirty times.
+   *
+   * ⛔ Future first. A day after today is both unimported and unhappened, and
+   * "has not happened yet" is the one that answers the reader.
+   */
+  if (compareDates(iso, today) > 0) return `${day}: has not happened yet`;
+  if (ledgerReaches === null || compareDates(iso, ledgerReaches) > 0) return `${day}: not imported yet`;
+  if (!d || (d.spentCents === 0 && d.incomeCents === 0)) return `${day}: no activity`;
+  const parts: string[] = [];
+  if (d.spentCents > 0) {
+    parts.push(`${formatCents(d.spentCents)} spent across ${d.txnCount} ${d.txnCount === 1 ? "transaction" : "transactions"}`);
+    // the biggest destination, so the label is as actionable as the cell
+    if (d.topCategories[0]) parts.push(`mostly ${d.topCategories[0].name}`);
+  }
+  if (d.incomeCents > 0) parts.push(`${formatCents(d.incomeCents)} earned`);
+  return `${day}: ${parts.join(", ")}`;
+}
+
 const MIN_BAR = 0.08;
 
 interface SpendHeatmapProps {
   initial: SpendHeatmapData;
   today: string;
+  /**
+   * `ledgerReaches(db)` — the newest day the import has walked to. A cell after
+   * it has no zero to report; see `cellLabel`. Passed as a prop rather than
+   * carried in the payload because month paging reloads the payload and this
+   * does not move.
+   */
+  ledgerReaches: string | null;
 }
 
 /** Compact enough for a calendar cell: $1.2k, $340, $8. */
@@ -41,7 +110,7 @@ function cellAmount(cents: number): string {
   return `$${Math.round(dollars)}`;
 }
 
-export function SpendHeatmap({ initial, today }: SpendHeatmapProps) {
+export function SpendHeatmap({ initial, today, ledgerReaches }: SpendHeatmapProps) {
   const router = useRouter();
   const [data, setData] = useState(initial);
   const [pending, setPending] = useState(false);
@@ -62,32 +131,16 @@ export function SpendHeatmap({ initial, today }: SpendHeatmapProps) {
   }
 
   function cellLabel(iso: string): string {
-    const d = byDay.get(iso);
-    const day = formatDayShort(iso);
-    /*
-     * 🔴 A PADDING DAY IS NOT A MEASUREMENT. `CalendarGrid` fills the grid with
-     * real days from the neighbouring months, and this month's payload holds
-     * none of them — the comment on `onDayActivate` below already says so and
-     * guards the SHEET for exactly this reason. The aria-label did not, so on
-     * `/spending?period=2026-08` the five leading cells read
-     *
-     *     "Jul 27: no activity" … "Jul 31: no activity"
-     *
-     * of days holding 18, 13, 21, 11 and 12 transactions, and the trailing
-     * cells said the same of a September nobody has imported and of two days
-     * that have not happened. One sentence for three different worlds.
-     */
-    if (iso.slice(0, 7) !== data.monthKey) return `${day}: not part of ${monthName} — open its ledger`;
-    if (!d || (d.spentCents === 0 && d.incomeCents === 0)) return `${day}: no activity`;
-    const parts: string[] = [];
-    if (d.spentCents > 0) {
-      parts.push(`${formatCents(d.spentCents)} spent across ${d.txnCount} ${d.txnCount === 1 ? "transaction" : "transactions"}`);
-      // the biggest destination, so the label is as actionable as the cell
-      if (d.topCategories[0]) parts.push(`mostly ${d.topCategories[0].name}`);
-    }
-    if (d.incomeCents > 0) parts.push(`${formatCents(d.incomeCents)} earned`);
-    return `${day}: ${parts.join(", ")}`;
+    return heatCellLabel({
+      iso,
+      monthKey: data.monthKey,
+      monthName,
+      day: byDay.get(iso) ?? null,
+      today,
+      ledgerReaches,
+    });
   }
+
 
   return (
     <div className={pending ? "opacity-60 transition-opacity" : "transition-opacity"} aria-busy={pending}>
@@ -149,7 +202,9 @@ export function SpendHeatmap({ initial, today }: SpendHeatmapProps) {
         onClose={() => setOpenDay(null)}
         title={openDay ? formatDayLong(openDay) : ""}
       >
-        {openDay && <DaySheetBody iso={openDay} day={detail} />}
+        {openDay && (
+          <DaySheetBody iso={openDay} day={detail} today={today} ledgerReaches={ledgerReaches} />
+        )}
       </Sheet>
     </div>
   );
@@ -192,14 +247,31 @@ function CellAmount({
  * --positive/--negative fall just under WCAG AA (the same rule the P/L day sheet
  * follows).
  */
-function DaySheetBody({ iso, day }: { iso: string; day: HeatDay | null }) {
+function DaySheetBody({
+  iso,
+  day,
+  today,
+  ledgerReaches,
+}: {
+  iso: string;
+  day: HeatDay | null;
+  today: string;
+  ledgerReaches: string | null;
+}) {
   const spent = day?.spentCents ?? 0;
   const income = day?.incomeCents ?? 0;
 
   if (spent === 0 && income === 0) {
+    /* the same three worlds the cell label separates — see `cellLabel` */
+    const nothing =
+      compareDates(iso, today) > 0
+        ? "This day has not happened yet."
+        : ledgerReaches === null || compareDates(iso, ledgerReaches) > 0
+          ? "Nothing has been imported for this day yet — nobody has looked at it, which is not the same as nothing happening."
+          : "Nothing posted on this day.";
     return (
       <div className="space-y-4">
-        <p className="text-sm text-ink-muted">Nothing posted on this day.</p>
+        <p className="text-sm text-ink-muted">{nothing}</p>
         <LedgerLink iso={iso} />
       </div>
     );

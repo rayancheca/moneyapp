@@ -390,7 +390,7 @@ export default async function SpendingPage({
               {/* keyed by the period-derived month so changing the period
                   remounts the heatmap on the new month (its own ‹ › paging
                   keeps the user's choice while the key is stable) */}
-              <SpendHeatmap key={heatMonth} initial={heatmap} today={today} />
+              <SpendHeatmap key={heatMonth} initial={heatmap} today={today} ledgerReaches={ledgerReaches(db)} />
             </SurfaceCard>
             <SurfaceCard className="lg:col-span-2">
               <h2 className="mb-3 text-sm font-medium">Top merchants</h2>
