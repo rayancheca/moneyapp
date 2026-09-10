@@ -655,7 +655,14 @@ export function massifDescription(
       : `${formatCentsSigned(layout.totalDeltaCents)} against ${priorLabel}`;
   return (
     `Where ${periodLabel} went, as a relief. ${n} category block${n === 1 ? "" : "s"} set on a plane. ` +
-    `A block's footprint width is its share of the ${formatCents(layout.totalSpentCents)} spent, its footprint ` +
+    /* 🔴 THE DENOMINATOR THE WIDTHS ACTUALLY DIVIDE. This named
+       `totalSpentCents`, the NET, while a width is a share of
+       `shareBaseCents` — Σ max(0, spent) over the drawn rows. Measured
+       2026-09-10 on `?period=2024-05&where=relief`: the sentence said "its
+       share of the $675.87 spent" while the widths divided $2,220.45, and
+       Food's block is 43.3% of the plane beside its own figure of $960.60
+       (43.3% of $675.87 is $292.65). */
+    `A block's footprint width is its share of the ${formatCents(layout.shareBaseCents)} of spending drawn here, its footprint ` +
     `depth grows with the number of entries it holds, and its height is the change against ${priorLabel} — blocks pressed ` +
     /* 🔴 the same sentence pluralises "block" four lines up and not this */
     `below the plane cost less than they did then. The ${n} height${n === 1 ? "" : "s"} sum${n === 1 ? "s" : ""} to ${move}. ` +
@@ -668,14 +675,19 @@ export function massifDescription(
  * says so LOUDEST when it does not balance. A silent disagreement between a
  * chart and the ledger is the failure this line exists to prevent.
  */
-function reconciliationNote(
+export function reconciliationNote(
   blocksCents: number,
   totals: MassifTotalsInput,
   check: MassifReconciliation,
 ): string {
   const head = `${formatCents(blocksCents)} across these categories`;
+  // the same sign rule as the balanced branch below
+  const stat =
+    check.netOutCents < 0
+      ? `${formatCents(Math.abs(check.netOutCents))} that came back in the stat cards above`
+      : `the ${formatCents(check.netOutCents)} of money out in the stat cards above`;
   if (!check.balanced) {
-    return `${head}. That is ${formatCentsSigned(check.residualCents)} away from the ${formatCents(check.netOutCents)} of money out in the stat cards above — the figure and the ledger are counting different rows, so read the ledger.`;
+    return `${head}. That is ${formatCentsSigned(check.residualCents)} away from ${stat} — the figure and the ledger are counting different rows, so read the ledger.`;
   }
   const uncat =
     totals.uncategorizedCents === 0
@@ -683,5 +695,17 @@ function reconciliationNote(
       : ` and ${formatCents(totals.uncategorizedCents)} uncategorized (Honesty check)`;
   const refunds =
     totals.refundsCents === 0 ? "" : `, less ${formatCents(totals.refundsCents)} refunded`;
-  return `${head}${uncat} — the ${formatCents(check.netOutCents)} of money out this period (${formatCents(totals.grossSpentCents)} spent${refunds}).`;
+  /*
+   * 🔴 "the -$1,904.10 of money out this period". A window whose refunds
+   * outrun its spending took money IN, and the noun has to follow the sign or
+   * it describes the opposite of what happened. Measured 2026-09-10 on
+   * `?from=2024-05-10&to=2024-05-10&where=relief`: T-Mobile −$55.64 and a Best
+   * Buy return of +$1,959.74, so $1,904.10 came back — and 17 day windows on
+   * this ledger render the same shape.
+   */
+  const flow =
+    check.netOutCents < 0
+      ? `${formatCents(Math.abs(check.netOutCents))} came back this period`
+      : `the ${formatCents(check.netOutCents)} of money out this period`;
+  return `${head}${uncat} — ${flow} (${formatCents(totals.grossSpentCents)} spent${refunds}).`;
 }

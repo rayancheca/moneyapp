@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { massifCaptionKey } from "./CategoryMassif";
+import { massifCaptionKey, reconciliationNote } from "./CategoryMassif";
 
 /**
  * THE SHRINK GATE for the "Where it went" relief.
@@ -87,5 +87,45 @@ describe("the relief's readout counts categories in English", () => {
     expect(massifCaptionKey({ label: "FOOD", share: 0.4237 }, 12, "Jul 2026")).toBe(
       "FOOD · 42.4% of Jul 2026",
     );
+  });
+});
+
+describe("the relief's two denominators, and a window that took money IN", () => {
+  const totals = { blocksCents: -190_410, uncategorizedCents: 0, refundsCents: 195_974, grossSpentCents: 5_564 };
+
+  /**
+   * 🔴 `/spending?from=2024-05-10&to=2024-05-10&where=relief`, 2026-09-10:
+   * T-Mobile −$55.64 and a Best Buy return of +$1,959.74, so $1,904.10 came
+   * back — and the card read "the -$1,904.10 of money out this period".
+   * Seventeen day windows on this ledger render the same shape.
+   */
+  test("a net inflow is money that came back, not negative money out", () => {
+    const note = reconciliationNote(
+      -190_410,
+      totals,
+      { balanced: true, netOutCents: -190_410, residualCents: 0 },
+    );
+    expect(note).toContain("$1,904.10 came back this period");
+    expect(note).not.toContain("of money out");
+    expect(note).not.toContain("-$1,904.10 of");
+  });
+
+  test("an ordinary outflow keeps the words it had", () => {
+    const note = reconciliationNote(
+      67_587,
+      { blocksCents: 67_587, uncategorizedCents: 0, refundsCents: 0, grossSpentCents: 67_587 },
+      { balanced: true, netOutCents: 67_587, residualCents: 0 },
+    );
+    expect(note).toContain("the $675.87 of money out this period");
+  });
+
+  test("the unbalanced branch follows the same sign rule", () => {
+    const note = reconciliationNote(
+      -190_410,
+      totals,
+      { balanced: false, netOutCents: -190_410, residualCents: 1_000 },
+    );
+    expect(note).toContain("came back in the stat cards above");
+    expect(note).not.toContain("of money out in the stat cards");
   });
 });

@@ -152,6 +152,18 @@ export interface MassifLayout {
   liftPerUnit: number;
   /** Σ blocks — equal to Σ inputs by construction */
   totalSpentCents: number;
+  /**
+   * The denominator the footprint WIDTHS divide — Σ max(0, spent) over the rows
+   * actually drawn, which is what the categories table uses too.
+   *
+   * 🔴 Published because the chart's `<desc>` named `totalSpentCents` as "the
+   * $X spent" whose share a width is, and the two are different numbers
+   * wherever a refund lands. Measured 2026-09-10:
+   * `/spending?period=2024-05&where=relief` said "its share of the $675.87
+   * spent" while the widths divided $2,220.45 — Food is 43.3% of the plane and
+   * its own figure beside it reads $960.60, where 43.3% of $675.87 is $292.65.
+   */
+  shareBaseCents: number;
   totalPriorCents: number;
   totalDeltaCents: number;
   totalTxnCount: number;
@@ -231,6 +243,8 @@ export function computeMassifLayout(
 
   const totals = {
     totalSpentCents: sumBy(inputs, (r) => r.spentCents),
+    // the WIDTH denominator, from the drawn rows — see `buildWorld`
+    shareBaseCents: sumBy(rows, (r) => Math.max(0, r.spentCents)),
     totalPriorCents: sumBy(inputs, (r) => r.priorCents),
     totalDeltaCents: sumBy(inputs, (r) => r.spentCents - r.priorCents),
     totalTxnCount: sumBy(inputs, (r) => r.txnCount),

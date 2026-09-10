@@ -451,3 +451,41 @@ describe("WHERE_VIEW_SPEC", () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 });
+
+describe("shareBaseCents — the denominator the WIDTHS divide", () => {
+  /*
+   * 🔴 The chart's `<desc>` named `totalSpentCents`, the NET, as "the $X spent"
+   * whose share a footprint is. They are different numbers wherever a refund
+   * lands: `/spending?period=2024-05&where=relief` said "its share of the
+   * $675.87 spent" while the widths divided $2,220.45 — Food is 43.3% of the
+   * plane beside its own figure of $960.60, and 43.3% of $675.87 is $292.65.
+   */
+  test("with no refunds the two agree, which is why this went unnoticed", () => {
+    const layout = computeMassifLayout(ROWS, OPTS);
+    expect(layout.shareBaseCents).toBe(layout.totalSpentCents);
+  });
+
+  test("a net-refunded category is dropped from the denominator, not subtracted", () => {
+    const rows = [
+      cat({ id: "food", spentCents: 96_060, priorCents: 0, txnCount: 3 }),
+      cat({ id: "shopping", spentCents: -152_458, priorCents: 0, txnCount: 1 }),
+    ];
+    const layout = computeMassifLayout(rows, OPTS);
+    expect(layout.totalSpentCents).toBe(-56_398);
+    expect(layout.shareBaseCents).toBe(96_060);
+    // and a width really is a share of THAT
+    expect(byId(layout.blocks, "food").share).toBeCloseTo(1, 10);
+    expect(byId(layout.blocks, "shopping").share).toBe(0);
+  });
+
+  test("every block's share sums to one against shareBaseCents", () => {
+    const rows = [
+      cat({ id: "a", spentCents: 30_000 }),
+      cat({ id: "b", spentCents: 10_000 }),
+      cat({ id: "c", spentCents: -5_000 }),
+    ];
+    const layout = computeMassifLayout(rows, OPTS);
+    expect(layout.shareBaseCents).toBe(40_000);
+    expect(layout.blocks.reduce((s, b) => s + b.share, 0)).toBeCloseTo(1, 10);
+  });
+});
