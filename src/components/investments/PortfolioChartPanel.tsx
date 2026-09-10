@@ -126,7 +126,7 @@ export function PortfolioChartPanel({
   // benchmark overlay, stats, decomposition, and flow-adjusted window summarize
   const {
     returnPoints,
-    stats,
+    statsFor,
     benchmarkCompare,
     benchmarkTotalPct,
     benchmarkSinceDay,
@@ -135,7 +135,7 @@ export function PortfolioChartPanel({
     youSwatchClass,
     decomposition,
     summarize,
-  } = useReturnViewModel(returnDays, isReturns, isPercent, benchmark);
+  } = useReturnViewModel(returnDays, isReturns, isPercent, benchmark, today);
   const chartPoints = isReturns ? returnPoints : points;
   // one overlay per framing: % → buy-and-hold TWR, $ → the flow-replay gains
   const compareLine = benchmarkCompare ?? replayCompare;
@@ -396,7 +396,13 @@ export function PortfolioChartPanel({
               totalSymbols={totalSymbols}
             />
           )}
-          {stats && (stats.bestDay || stats.worstDay) && <ReturnStatsList stats={stats} isPercent={isPercent} />}
+          {(() => {
+            // the strip is measured over the range the header names — see statsFor
+            const stats = statsFor(opts.activeRange);
+            return stats && (stats.bestDay || stats.worstDay) ? (
+              <ReturnStatsList stats={stats} isPercent={isPercent} />
+            ) : null;
+          })()}
           {decomposition && <DecompositionBar decomposition={decomposition} />}
           {footer}
         </div>

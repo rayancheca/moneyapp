@@ -4,12 +4,13 @@ import { useCallback, useMemo } from "react";
 import { replayEnd, type ReplayEnd, type ReplayPoint } from "@/lib/benchmark-replay";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { formatDayLong } from "@/lib/format-date";
+import type { ChartRange } from "@/lib/chart-range";
 import {
   aggregateReturn,
   cumulativeReturns,
   dailyReturns,
   decomposeValue,
-  returnStats,
+  returnStatsInWindow,
   type CumulativeReturnPoint,
   type PortfolioDay,
   type ReturnDayStat,
@@ -45,7 +46,12 @@ export interface ReturnViewModel {
   /** the plottable return series: $ = cumGain cents, % = TWR × 100 */
   returnPoints: ScrubPoint[];
   /** best/worst day + max drawdown (only when the return view is active) */
-  stats: ReturnStats | null;
+  /**
+   * The stats strip for a given range — see the docstring on `statsFor` in
+   * `useReturnViewModel`. A callback because the active range lives inside
+   * `ChartFocus`'s render prop.
+   */
+  statsFor: (range: ChartRange) => ReturnStats | null;
   /** benchmark overlay on the % line's scale, or undefined when hidden */
   benchmarkCompare: { byDay: Record<string, number | null>; label: string } | undefined;
   benchmarkTotalPct: number | null;
@@ -75,6 +81,8 @@ export function useReturnViewModel(
   isReturns: boolean,
   isPercent: boolean,
   benchmark: ReturnBenchmark | null | undefined,
+  /** the day the ranges count back from — see `statsFor` */
+  today: string,
 ): ReturnViewModel {
   const returnLine = useMemo(() => cumulativeReturns(returnDays), [returnDays]);
   const returnPoints = useMemo<ScrubPoint[]>(
@@ -86,7 +94,22 @@ export function useReturnViewModel(
     [returnLine, isPercent],
   );
 
-  const stats = useMemo(() => (isReturns ? returnStats(returnDays) : null), [isReturns, returnDays]);
+  /**
+   * The best/worst/drawdown strip, over the days the header's range draws —
+   * `returnStatsInWindow` carries the measurement and the reason.
+   *
+   * ⛔ A CALLBACK, not a value: the active range lives inside `ChartFocus`'s
+   * render prop and this hook runs above it. Taking the range as an argument is
+   * what lets the strip and the chart read the same one.
+   *
+   * ⚠️ RANGE only. A drag window is `ScrubChart`'s uncontrolled internal state
+   * on these two panels, and the header the strip sits under names the range.
+   */
+  const statsFor = useCallback(
+    (range: ChartRange): ReturnStats | null =>
+      isReturns ? returnStatsInWindow(returnDays, today, range) : null,
+    [isReturns, returnDays, today],
+  );
 
   const benchmarkCompare = useMemo(() => {
     if (!isPercent || !benchmark) return undefined;
@@ -162,7 +185,7 @@ export function useReturnViewModel(
   return {
     returnLine,
     returnPoints,
-    stats,
+    statsFor,
     benchmarkCompare,
     benchmarkTotalPct,
     benchmarkSinceDay,

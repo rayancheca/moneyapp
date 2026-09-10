@@ -8,6 +8,7 @@ import {
   decomposeValue,
   moneyWeightedReturn,
   returnStats,
+  returnStatsInWindow,
   simpleReturnPct,
   totalReturn,
   type PortfolioDay,
@@ -428,5 +429,50 @@ describe("cashFlowsFromDays + moneyWeightedReturn", () => {
     expect(moneyWeightedReturn([d("2026-07-18", 100_000, 100_000)]).pct).toBeNull();
     // magnitude-independence: it's null regardless of the amount
     expect(moneyWeightedReturn([d("2026-07-18", 9_999_999, 9_999_999)]).pct).toBeNull();
+  });
+});
+
+describe("returnStatsInWindow — the strip is measured over the days the header names", () => {
+  /*
+   * 🔴 The return view ran `returnStats` on the UNSLICED series while its
+   * header named a range. Measured 2026-09-10: 35 of 66 (page × non-ALL range)
+   * combinations reported a day or a drawdown from outside their own window —
+   * `/investments?view=returns&range=1M` showed "Worst day -$3,394.03 · Fri,
+   * Jun 5, 2026" and "Max drawdown -23.91%" under a header reading "1M".
+   */
+  const TODAY = "2026-09-10";
+  // a crash well before the 1M window, then a milder one inside it
+  const series = [
+    d("2026-06-01", 100_000),
+    d("2026-06-05", 60_000), // −$400.00, index 0.60 — the all-time worst
+    d("2026-07-01", 100_000),
+    d("2026-08-20", 100_000),
+    d("2026-09-01", 95_000), // −$50.00, the worst INSIDE 1M
+    d("2026-09-10", 97_000),
+  ];
+
+  test("the whole series still answers for ALL", () => {
+    expect(returnStatsInWindow(series, TODAY, "ALL").worstDay?.day).toBe("2026-06-05");
+    expect(returnStatsInWindow(series, TODAY, "ALL").worstDay?.returnCents).toBe(-40_000);
+  });
+
+  test("a 1M window names a day inside it, not the crash before it", () => {
+    const stats = returnStatsInWindow(series, TODAY, "1M");
+    expect(stats.worstDay?.day).toBe("2026-09-01");
+    expect(stats.worstDay?.returnCents).toBe(-5_000);
+  });
+
+  test("max drawdown is measured from the window's own peak", () => {
+    // ALL: peak 1.0 at Jun 1 → 0.60 at Jun 5 = −40%
+    expect(returnStatsInWindow(series, TODAY, "ALL").maxDrawdownPct).toBeCloseTo(-40, 6);
+    // 1M opens 2026-08-11: 100,000 → 95,000 → 97,000, deepest dip −5%
+    expect(returnStatsInWindow(series, TODAY, "1M").maxDrawdownPct).toBeCloseTo(-5, 6);
+  });
+
+  test("a window holding fewer than two days falls back to the whole series, as the chart does", () => {
+    // `windowedPoints` widens rather than drawing nothing, and the chart says
+    // so in its own note — the strip must describe the same rows
+    const stats = returnStatsInWindow(series, TODAY, "1D");
+    expect(stats.worstDay?.day).toBe("2026-06-05");
   });
 });

@@ -25,6 +25,9 @@
  * it read a real −2.1% sell day as −3.0% on live data.)
  */
 
+import { windowPoints } from "./chart-window";
+import type { ChartRange } from "./chart-range";
+
 import { xirr, type CashFlow } from "./xirr";
 
 export interface PortfolioDay {
@@ -221,6 +224,36 @@ export function returnStats(days: readonly PortfolioDay[]): ReturnStats {
     worstDay: { day: worst.day, returnCents: worst.returnCents, pct: pctOf(worst) },
     maxDrawdownPct: maxDrawdown * 100,
   };
+}
+
+/**
+ * The same stats over the days a RANGE actually draws.
+ *
+ * 🔴 The return view measured them over the WHOLE series while its header three
+ * lines above named a range, so the strip reported a best day, a worst day and
+ * a max drawdown from outside the window it sat in. Measured 2026-09-10
+ * against the app's own payload — 35 of the 66 (page × non-ALL range)
+ * combinations were wrong, max drawdown in 27 of them:
+ *
+ *     /investments?view=returns&range=1M   worst Jun 5, 2026 −$3,394.03 and
+ *       mdd −23.91%, under a header reading "(+10.18%) · return · 1M".
+ *       In window: Sep 2, 2026 −$845.53 and −2.02%. Jun 5 is 67 days before
+ *       the window opens.
+ *     ETH 1M   shown −$2,571.39 / −59.93%; in window −$888.40 / −4.71%
+ *     UNH 1M   shown Jan 27, 2026; in window Aug 27, 2026
+ *
+ * ⛔ `windowPoints` is the app's own slice — "the visible rows alone — the
+ * chart's slice, for callers that don't caption", which is exactly this. One
+ * rule now decides what is drawn and what is measured over it. Slicing the NAV
+ * series makes the window's first day its baseline, which is the convention
+ * `aggregateReturn` already uses for the window figure printed beside these.
+ */
+export function returnStatsInWindow(
+  days: readonly PortfolioDay[],
+  today: string,
+  range: ChartRange,
+): ReturnStats {
+  return returnStats(windowPoints(days, today, range));
 }
 
 /**
