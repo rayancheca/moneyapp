@@ -141,7 +141,7 @@ function buildCandidates(
      * bucket admits — a refund inside a category is one of them — and rent is
      * not a purchase in any case. The noun has to be true of all seven rows.
      */
-    countFact("f4", top.name, top.txnCount, "transaction"),
+    countFact("f4", top.name, top.txnCount, "transaction", `in ${monthLabel}`),
   ];
   /*
    * ONE rank claim, chosen here rather than offered to the gate.

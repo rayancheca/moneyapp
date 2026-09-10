@@ -26,7 +26,7 @@ const FACTS = factSet([
   rankFact("f1", "Dining", 3, 22, "spending categories"),
   scalarFact("f2", "Dining", 196324, "money"),
   shareFact("f3", "Eating out", 0.101, "everything you spend"),
-  countFact("f4", "Dining", 502, "purchase"),
+  countFact("f4", "Dining", 502, "purchase", "in Jul 2026"),
   deltaFact("f5", "Travel", 99800, "money", "June", "July"),
   rankFact("f6", "Groceries", 1, 22, "spending categories"),
   scalarFact("f7", "Groceries", 19422, "money"),
@@ -502,7 +502,7 @@ describe("the delta and trend claims that need a direction", () => {
 
 describe("the claims that refuse a measured zero or a set of one", () => {
   const set = factSet([
-    countFact("f1", "Dining", 0, "purchase"),
+    countFact("f1", "Dining", 0, "purchase", "in Jul 2026"),
     rankFact("f2", "Dining", 1, 1, "spending categories"),
     scalarFact("f3", "Dining", 0, "money"),
     shareFact("f4", "Dining", 0.6, "everything you spend"),

@@ -95,7 +95,7 @@ describe("where an account sits", () => {
     expect(out.insights.map((i) => i.text)).toEqual([
       "Small Checking is the 2nd largest of your 2 accounts holding money, at $100.00.",
       "Small Checking is 10.0% of everything you hold.",
-      "1 transaction landed in Small Checking.",
+      "1 transaction landed in Small Checking since it opened.",
     ]);
   });
 
@@ -152,11 +152,13 @@ describe("a card in credit", () => {
       "Discover is the largest of your 3 cards and loans, at $557.62.",
       // 557.62 of the 925.61 actually owed — never of 1,008.33
       "Discover is 60.2% of everything you owe.",
-      "1 transaction landed in Discover.",
+      "1 transaction landed in Discover since it opened.",
     ]);
 
     const sapphire = accountInsights(bundle.db, "sapphire", TODAY)!;
-    expect(sapphire.insights.map((i) => i.text)).toEqual(["1 transaction landed in Chase Sapphire."]);
+    expect(sapphire.insights.map((i) => i.text)).toEqual([
+      "1 transaction landed in Chase Sapphire since it opened.",
+    ]);
   });
 });
 

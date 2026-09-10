@@ -148,7 +148,8 @@ export function accountInsightInput(
     .where(and(eq(transactions.accountId, accountId), eq(transactions.status, "active")))
     .all().length;
   if (rowCount > 0) {
-    facts.push(countFact("f4", self.name, rowCount, "transaction"));
+    // every ACTIVE row on the account, so the window is its whole life
+    facts.push(countFact("f4", self.name, rowCount, "transaction", "since it opened"));
     candidates.push({ claimId: "count_in_subject", a: "f4", prove });
   }
 

@@ -74,7 +74,10 @@ export function factField(fact: Fact, field: FactField): string {
     case "trend":
       return fact.sinceLabel;
     case "count":
-      return fact.noun;
+      /* ⛔ the WINDOW, not the noun. No template bound a count's frame of
+         reference until `count_in_subject` needed one, and the noun was never
+         a frame — it is what `display` already prints. See `countFact`. */
+      return fact.within;
     case "multiple":
       return fact.ofLabel;
     case "scalar":
@@ -152,7 +155,7 @@ export const CLAIMS: readonly ClaimTemplate[] = [
   // ── count ───────────────────────────────────────────────────────────
   {
     id: "count_in_subject",
-    template: "{{a.value}} landed in {{a.name}}.",
+    template: "{{a.value}} landed in {{a.name}} {{a.of}}.",
     binds: { a: "count" },
     holds: (a) => a.kind === "count" && a.value > 0,
     why: "a count fact above zero — a measured zero is not a finding",

@@ -16,7 +16,7 @@ describe("the three fields a template can read", () => {
   const share = shareFact("f2", "Eating out", 0.101, "everything you spend");
   const delta = deltaFact("f3", "Travel", 99800, "money", "June", "July");
   const trend = trendFact("f4", "Dining", "rising", "March", 6);
-  const count = countFact("f5", "Dining", 502, "purchase");
+  const count = countFact("f5", "Dining", 502, "purchase", "in Jul 2026");
   const scalar = scalarFact("f6", "Dining", 196324, "money");
   const multiple = multipleFact("f7", "This Target charge", 21.8, "your usual charge there");
 
@@ -42,7 +42,11 @@ describe("the three fields a template can read", () => {
     expect(factField(fell, "value")).toBe("$998.00");
     expect(fell.display).toBe("-$998.00");
     expect(factField(trend, "of")).toBe("March");
-    expect(factField(count, "of")).toBe("purchase");
+    /* 🔴 the WINDOW, not the noun. No template bound a count's frame of
+       reference until `count_in_subject` needed one, and the noun was never a
+       frame — it is what `display` already prints. The sentence read "94
+       transactions landed in Food." over a count measured on ONE month. */
+    expect(factField(count, "of")).toBe("in Jul 2026");
     expect(factField(multiple, "of")).toBe("your usual charge there");
   });
 

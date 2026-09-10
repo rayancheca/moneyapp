@@ -133,7 +133,7 @@ export function noticesCard(db: AppDatabase, today: string = todayIso()): Notice
     const first = rows[0]!;
     if (rows.length === 1 && first.day >= from && first.cents >= FIRST_CHARGE_FLOOR_CENTS) {
       candidates.push({
-        facts: [countFact("f1", name, 1, "charge"), scalarFact("f2", name, first.cents, "money")],
+        facts: [countFact("f1", name, 1, "charge", "in your ledger"), scalarFact("f2", name, first.cents, "money")],
         candidate: { claimId: "only_charge", a: "f1", b: "f2" },
         day: first.day,
         href: `/transactions?q=${encodeURIComponent(name)}`,

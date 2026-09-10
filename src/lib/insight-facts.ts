@@ -80,6 +80,11 @@ export interface CountFact extends FactBase {
   readonly value: number;
   /** what is being counted, singular — "purchase", "day", "account" */
   readonly noun: string;
+  /**
+   * The window it was counted over, as a prepositional phrase — "in Jul 2026",
+   * "since the account opened". See `countFact` for what read wrong without it.
+   */
+  readonly within: string;
 }
 
 export interface ShareFact extends FactBase {
@@ -226,10 +231,34 @@ export function scalarFact(id: string, subject: string, value: number, unit: Fac
   return { kind: "scalar", id, subject, value, unit, display: render(value, unit, false) };
 }
 
-export function countFact(id: string, subject: string, value: number, noun: string): CountFact {
+/**
+ * @param withinLabel the window the count was taken over, as a prepositional
+ * phrase — "in Jul 2026", "since the account opened".
+ *
+ * 🔴 REQUIRED, because the sentence built from this fact reads as a standing
+ * claim about the ledger without it. `count_in_subject` rendered "94
+ * transactions landed in Food." over a count measured on ONE month: Food holds
+ * 94 rows in Jul 2026 and 2,735 all time, so read alone it is off by 29×.
+ * Measured 2026-09-10 across the 12 category pages that render the panel,
+ * every one showed its own month's count with no window — Housing 7/34,
+ * Transport 28/728, Health 1/138 — and /spending printed one more. Its two
+ * siblings, built from the same facts array in the same call, both carry the
+ * window: `rankFact`'s `amongLabel` ("spending categories in Jul 2026") and
+ * `shareFact`'s `ofLabel` ("everything you spent in Jul 2026"). The module's
+ * own ⛔ comment says why — "a superlative with no window reads as a standing
+ * fact about the ledger" — and this fact was the one it never reached.
+ */
+export function countFact(
+  id: string,
+  subject: string,
+  value: number,
+  noun: string,
+  withinLabel: string,
+): CountFact {
   assertSlotId(id);
   assertLabel("subject", subject);
   assertLabel("noun", noun);
+  assertLabel("withinLabel", withinLabel);
   if (!Number.isInteger(value) || value < 0) throw new Error("A count fact needs a non-negative integer");
   return {
     kind: "count",
@@ -237,6 +266,7 @@ export function countFact(id: string, subject: string, value: number, noun: stri
     subject,
     value,
     noun,
+    within: withinLabel,
     display: `${value.toLocaleString("en-US")} ${value === 1 ? noun : `${noun}s`}`,
   };
 }

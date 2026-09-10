@@ -49,7 +49,7 @@ describe("insightPoolHash", () => {
     const facts = [
       rankFact("f1", "Dining", 1, 22, "spending categories"),
       scalarFact("f2", "Dining", 196_324, "money"),
-      countFact("f3", "Dining", 12, "transaction"),
+      countFact("f3", "Dining", 12, "transaction", "in Jul 2026"),
     ];
     const one = { claimId: "largest_in_set", a: "f1", b: "f2" };
     const two = { claimId: "count_in_subject", a: "f3" };

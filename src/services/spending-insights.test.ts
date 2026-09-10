@@ -122,7 +122,10 @@ describe("what /spending says about a ledger whose answers are known", () => {
       "Food is the largest of your 2 spending categories in Jul 2026, at $300.00.",
       "Food is 60.0% of everything you spent in Jul 2026.",
       "Food rose by $200.00 between its usual month and Jul 2026.",
-      "1 transaction landed in Food.",
+      /* 🔴 the count was the ONE sentence in this array with no window, over a
+         figure measured on the same month as its three siblings — Food holds
+         94 rows in Jul 2026 and 2,735 all time on the owner's ledger */
+      "1 transaction landed in Food in Jul 2026.",
     ]);
   });
 

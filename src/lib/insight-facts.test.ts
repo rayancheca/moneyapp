@@ -39,10 +39,10 @@ describe("a fact renders itself, and the caller cannot disagree with it", () => 
   });
 
   test("a count says what it counted, and pluralises it", () => {
-    expect(countFact("f1", "Dining", 502, "purchase").display).toBe("502 purchases");
-    expect(countFact("f1", "Dining", 1, "purchase").display).toBe("1 purchase");
-    expect(countFact("f1", "Dining", 0, "purchase").display).toBe("0 purchases");
-    expect(countFact("f1", "Rows", 10111, "row").display).toBe("10,111 rows");
+    expect(countFact("f1", "Dining", 502, "purchase", "in Jul 2026").display).toBe("502 purchases");
+    expect(countFact("f1", "Dining", 1, "purchase", "in Jul 2026").display).toBe("1 purchase");
+    expect(countFact("f1", "Dining", 0, "purchase", "in Jul 2026").display).toBe("0 purchases");
+    expect(countFact("f1", "Rows", 10111, "row", "in Jul 2026").display).toBe("10,111 rows");
   });
 
   test("a rank displays the ordinal alone — the set size is its frame, not its value", () => {
@@ -94,7 +94,7 @@ describe("what a fact refuses to be", () => {
     expect(() => scalarFact("f1", "<b>Dining</b>", 1, "money")).toThrow(/cannot contain/);
     expect(() => scalarFact("f1", "{{f2.value}}", 1, "money")).toThrow(/cannot contain/);
     expect(() => scalarFact("f1", "   ", 1, "money")).toThrow(/cannot be empty/);
-    expect(() => countFact("f1", "Dining", 1, "<i>x")).toThrow(/cannot contain/);
+    expect(() => countFact("f1", "Dining", 1, "<i>x", "in Jul 2026")).toThrow(/cannot contain/);
     expect(() => shareFact("f1", "Dining", 0.5, "{x}")).toThrow(/cannot contain/);
     expect(() => rankFact("f1", "Dining", 1, 2, "a\\b")).toThrow(/cannot contain/);
     expect(() => deltaFact("f1", "D", 1, "money", "<a", "July")).toThrow(/cannot contain/);
@@ -151,8 +151,8 @@ describe("what a fact refuses to be", () => {
   });
 
   test("a count is a non-negative whole number", () => {
-    expect(() => countFact("f1", "Dining", -1, "purchase")).toThrow(/non-negative integer/);
-    expect(() => countFact("f1", "Dining", 1.5, "purchase")).toThrow(/non-negative integer/);
+    expect(() => countFact("f1", "Dining", -1, "purchase", "in Jul 2026")).toThrow(/non-negative integer/);
+    expect(() => countFact("f1", "Dining", 1.5, "purchase", "in Jul 2026")).toThrow(/non-negative integer/);
   });
 
   test("a non-finite measurement is refused before it can render as NaN", () => {
