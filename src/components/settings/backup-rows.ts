@@ -1,5 +1,5 @@
 import type { RetentionPolicy, SnapshotListing, SnapshotSummary } from "@/db/backup";
-import { todayIso } from "@/lib/dates";
+import { formatInstantLong } from "@/lib/format-instant";
 import { formatDayLong } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 
@@ -53,11 +53,7 @@ export function formatBytes(bytes: number | null): string {
 
 /** "Tue, Jul 28, 2026 at 10:21" from the file's own write time. */
 export function formatTakenAt(takenAtMs: number | null): string {
-  if (takenAtMs === null) return "time unknown";
-  const at = new Date(takenAtMs);
-  const hh = at.getHours().toString().padStart(2, "0");
-  const mm = at.getMinutes().toString().padStart(2, "0");
-  return `${formatDayLong(todayIso(at))} at ${hh}:${mm}`;
+  return formatInstantLong(takenAtMs);
 }
 
 /** 9688 → "9,688". Counts are grouped the same way money is. */

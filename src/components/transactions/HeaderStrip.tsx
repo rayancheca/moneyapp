@@ -3,6 +3,7 @@ import {
   runCategorizationAction,
   stopClassifyAction,
 } from "@/app/transactions/actions";
+import { formatIsoInstantLong } from "@/lib/format-instant";
 import { formatCents } from "@/lib/money";
 import type { CoverageStats } from "@/services/categorize";
 import {
@@ -163,7 +164,10 @@ export function HeaderStrip({ coverage, pendingMerchants, spend, runState, retur
           {lastRun.stopped && <span className="text-warning"> · stopped early</span>}
           {lastRun.capReached && <span className="text-negative"> · monthly cap reached</span>}
           {lastRun.failed && <span className="text-negative"> · failed</span>}
-          <span className="text-ink-faint"> · {lastRun.at.slice(0, 16).replace("T", " ")}</span>
+          {/* ⛔ `at` is a UTC instant. Slicing it printed 16:06 for a run that
+              happened at 12:06 here, with nothing on the page saying which zone
+              it meant. `lib/format-instant` renders it on the reader's clock. */}
+          <span className="text-ink-faint"> · {formatIsoInstantLong(lastRun.at)}</span>
         </p>
       )}
       {/* the cause gets its own line: a raw provider message wraps, and role="alert"
