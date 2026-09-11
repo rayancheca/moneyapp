@@ -74,16 +74,28 @@ export function CashFlowChart({ data, projection }: CashFlowChartProps) {
   const router = useRouter();
   const { buckets, incomeSeries, spendingSeries, pace } = data;
 
-  // the prior-period ghost aligns 1:1 to the current buckets (already re-indexed
-  // server-side); only draw it when every bucket has a value to plot.
-  const ghost = projection?.prior?.ghost ?? null;
+  /*
+   * ⛔ `prior.aligned`, never `prior.ghost`. The ghost is a nearest-fraction
+   * SHAPE resample: on June(30) → July(31) it slides every bucket from June 19
+   * up, so the value under a point is not what the prior period spent in that
+   * bucket. The line is one thing, but the TOOLTIP prints it as a dollar figure
+   * ("Prior period, this point · $1,984.89" where June 20 was $89.71) — and a
+   * figure in a tooltip is a fact, whatever the label around it hedges.
+   *
+   * `aligned` compares the same day of the month against the same day, which is
+   * the comparison this overlay exists to make. A prior period with no such
+   * bucket leaves the key UNSET so the line breaks there, rather than drawing a
+   * zero it never spent.
+   */
+  const ghost = projection?.prior?.aligned ?? null;
   const hasGhost = ghost !== null && ghost.length === buckets.length;
 
   const rows: Row[] = buckets.map((b, i) => {
     const row: Row = { key: b.key, label: b.label, from: b.from, to: b.to, net: b.netCents };
     for (const s of incomeSeries) row[s.key] = b.income[s.key] ?? 0; // above axis
     for (const s of spendingSeries) row[s.key] = -(b.spending[s.key] ?? 0); // below axis
-    if (hasGhost) row[GHOST_KEY] = -(ghost![i] ?? 0); // last period's spend, below axis
+    // below the axis, and only where the prior period HAS that bucket
+    if (hasGhost && ghost![i] !== null) row[GHOST_KEY] = -ghost![i]!;
     return row;
   });
 
@@ -107,7 +119,7 @@ export function CashFlowChart({ data, projection }: CashFlowChartProps) {
   const hasData = incomeSeries.length > 0 || spendingSeries.length > 0;
   if (!hasData) return null;
 
-  const ghostByKey = new Map(buckets.map((b, i) => [b.key, hasGhost ? (ghost![i] ?? 0) : null]));
+  const ghostByKey = new Map(buckets.map((b, i) => [b.key, hasGhost ? ghost![i] : null]));
   const priorLabel = projection?.prior?.label ?? null;
 
   // The honest projection readout: "on pace for ~$Y · $X so far · $Z last period".

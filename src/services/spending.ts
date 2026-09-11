@@ -11,7 +11,7 @@ import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/descriptio
 // topMerchants groups on — activeTxnsInRange doesn't select that column
 import { normalizeDescription } from "@/lib/normalize";
 import { resolvePeriod, stepPeriodParams, subBuckets, type ResolvedPeriod } from "@/lib/period";
-import { alignByIndex, projectPace, reindexByPosition } from "@/lib/projection";
+import { alignByIndex, projectPace } from "@/lib/projection";
 import { allocationsFor } from "@/lib/transaction-splits";
 import {
   activeTxnsInRange,
@@ -325,18 +325,15 @@ export interface SpendingProjection {
     /** prior period GROSS spend total, integer cents */
     spentCents: number;
     /**
-     * prior gross spend per bucket, re-indexed to the CURRENT bucket count so it
-     * overlays 1:1. ⛔ A SHAPE, NOT A FACT — resampling duplicates and drops
-     * source buckets, so this neither names a day nor sums to `spentCents`.
-     * Draw it; never print a cell of it and never add it up. Use `aligned` for
-     * either of those.
-     */
-    ghost: number[];
-    /**
-     * the same prior buckets aligned BY INDEX — `aligned[i]` is the prior
-     * period's own bucket i (its day 20 under this window's day 20), `null`
-     * where the prior period has no bucket i. The rule for a table cell or a
-     * running total.
+     * The prior period's own buckets aligned BY INDEX — `aligned[i]` is that
+     * period's bucket i (its day 20 under this window's day 20), and `null`
+     * where it has no bucket i.
+     *
+     * 🔴 This was a nearest-fraction RESAMPLE, and all three of its consumers
+     * read it as per-bucket truth: the table printed it in a cell under a
+     * column headed by a month name, the graph summed it, and the chart's
+     * tooltip printed it as a dollar figure. A resample duplicates and drops
+     * source buckets, so it neither names a day nor sums to `spentCents`.
      */
     aligned: (number | null)[];
   } | null;
@@ -389,10 +386,6 @@ export function spendingProjection(
       ? {
           label: prevPeriod.label,
           spentCents: prevFlow.totals.spentCents,
-          ghost: reindexByPosition(
-            prevFlow.buckets.map((b) => b.spendingCents),
-            bucketCount,
-          ),
           aligned: alignByIndex(
             prevFlow.buckets.map((b) => b.spendingCents),
             bucketCount,

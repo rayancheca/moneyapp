@@ -526,40 +526,13 @@ export function buildForwardSeries(input: ForwardSeriesInput): ProjectionPoint[]
 }
 
 /**
- * Resample a prior-period series to `targetLength` so it overlays the current
- * window bucket-for-bucket even when the two periods have different lengths
- * (Feb 28 vs Mar 31, Q2 vs Q3). Nearest-fraction resampling — the ghost tracks
- * the shape of the prior period across the current axis. Empty input → empty.
- *
- * 🔴 **A RESAMPLED VALUE IS A SHAPE, NEVER A FACT ABOUT A BUCKET.** Nearest-
- * fraction resampling duplicates and drops source buckets, so `out[i]` is not
- * "what the prior period spent in bucket i" and `sum(out)` is not the prior
- * period's total. Draw it as a curve; never print it in a cell and never add it
- * up. Two callers did both — see {@link alignByIndex}.
- */
-export function reindexByPosition(
-  values: readonly number[],
-  targetLength: number,
-): number[] {
-  if (targetLength <= 0 || values.length === 0) return [];
-  if (targetLength === 1) return [values[values.length - 1]!];
-  const lastSrc = values.length - 1;
-  const out: number[] = [];
-  for (let i = 0; i < targetLength; i++) {
-    const srcIdx = lastSrc === 0 ? 0 : Math.round((i / (targetLength - 1)) * lastSrc);
-    out.push(values[srcIdx]!);
-  }
-  return out;
-}
-
-/**
  * The prior period's OWN bucket at the same offset — `null` where the prior
  * period has no such bucket. The rule for every surface that reads the ghost as
  * a FACT rather than drawing it as a shape: a table cell, a cumulative total, a
  * sentence naming a date.
  *
- * 🔴 {@link reindexByPosition} was the only rule, and two of its three callers
- * treated its output as per-bucket truth. Measured on the real ledger,
+ * 🔴 A nearest-fraction RESAMPLE was the only rule, and all three of its
+ * consumers read its output as per-bucket truth. Measured on the real ledger,
  * 2026-09-11:
  *
  *   - `/spending?period=YYYY-MM&cash=table` — the column headed
@@ -572,7 +545,9 @@ export function reindexByPosition(
  *     ended at $2,943.05 against a stated $2,541.21.
  *
  * Aligning by index means "the same day of the month" for day buckets and "the
- * same month" for month buckets, which is what both surfaces claim. A prior
+ * same month" for month buckets, which is what every one of them claims. The
+ * resample is gone: it existed only to paper over a length mismatch this
+ * handles honestly, by leaving a gap where the prior period has no bucket. A prior
  * period that is SHORTER leaves trailing `null`s (render "—", hold the running
  * total); one that is LONGER has a tail no bucket of this window can carry — a
  * cumulative caller must add it back at the last point, which is the only place

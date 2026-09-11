@@ -10,7 +10,6 @@ import {
   projectRecurringDriven,
   projectRunRate,
   projectTrailingAverage,
-  reindexByPosition,
   sumOccurrencesInWindow,
   trailingPace,
 } from "./projection";
@@ -509,46 +508,6 @@ describe("buildForwardSeries", () => {
   });
 });
 
-describe("reindexByPosition", () => {
-  test("empty input → empty", () => {
-    expect(reindexByPosition([], 5)).toEqual([]);
-  });
-
-  test("non-positive target length → empty", () => {
-    expect(reindexByPosition([10, 20], 0)).toEqual([]);
-  });
-
-  test("a single-bucket target takes the last prior value", () => {
-    expect(reindexByPosition([10, 20, 30], 1)).toEqual([30]);
-  });
-
-  test("a single prior value fills every bucket (flat ghost)", () => {
-    expect(reindexByPosition([50], 3)).toEqual([50, 50, 50]);
-  });
-
-  test("same-length reindex is the identity", () => {
-    expect(reindexByPosition([10, 20, 30], 3)).toEqual([10, 20, 30]);
-  });
-
-  test("downsamples a longer prior period by nearest position", () => {
-    expect(reindexByPosition([10, 20, 30, 40, 50], 3)).toEqual([10, 30, 50]);
-  });
-
-  test("upsamples a shorter prior period by nearest position", () => {
-    expect(reindexByPosition([10, 20, 30], 5)).toEqual([10, 20, 20, 30, 30]);
-  });
-
-  test("🔴 a resampled series is a SHAPE — it neither preserves buckets nor sums to the source", () => {
-    const june = [10, 20, 30]; // a 3-bucket prior period, $60 total
-    const ontoFour = reindexByPosition(june, 4);
-    // bucket 1 of the current window shows bucket 0's value…
-    expect(ontoFour[1]).toBe(20);
-    expect(june[1]).toBe(20);
-    // …but the total is not the prior period's total, so it must never be summed
-    expect(ontoFour.reduce((a, b) => a + b, 0)).not.toBe(60);
-  });
-});
-
 describe("alignByIndex", () => {
   test("empty input → empty", () => {
     expect(alignByIndex([], 5)).toEqual([]);
@@ -570,20 +529,20 @@ describe("alignByIndex", () => {
     expect(alignByIndex([10, 20, 30, 40, 50], 3)).toEqual([10, 20, 30]);
   });
 
-  test("🔴 July 20 shows JUNE 20, where the resample showed June 19", () => {
-    // 30 prior buckets (June) onto a 31-bucket window (July). Row "20" is index 19.
+  /**
+   * 🔴 The rule this replaced was a nearest-fraction resample. On June(30) onto
+   * July(31) it put June 19's value at index 19 — the cell headed "20" — and
+   * its sum was not June's spend, so a cumulative caller ended on a total June
+   * never had. Both are asserted here against the arithmetic, so the shape of
+   * the defect survives the function that caused it.
+   */
+  test("🔴 July 20 shows JUNE 20, and there is no June 31", () => {
     const june = Array.from({ length: 30 }, (_, i) => (i + 1) * 100);
-    expect(alignByIndex(june, 31)[19]).toBe(june[19]); // June 20 ✔
-    expect(reindexByPosition(june, 31)[19]).toBe(june[18]); // June 19 ✘ — the defect
-    expect(alignByIndex(june, 31)[30]).toBeNull(); // there is no June 31
-  });
-
-  test("🔴 the aligned series sums to the prior period's own total when it fits", () => {
-    const june = Array.from({ length: 30 }, (_, i) => (i + 1) * 100);
-    const total = june.reduce((a, b) => a + b, 0);
     const aligned = alignByIndex(june, 31);
-    expect(aligned.reduce((a: number, b) => a + (b ?? 0), 0)).toBe(total);
-    expect(reindexByPosition(june, 31).reduce((a, b) => a + b, 0)).not.toBe(total);
+    expect(aligned[19]).toBe(june[19]); // June 20 — the resample gave June 19
+    expect(aligned[30]).toBeNull();
+    // …and it sums to the prior period's own total, which a resample did not
+    expect(aligned.reduce((a: number, b) => a + (b ?? 0), 0)).toBe(june.reduce((a, b) => a + b, 0));
   });
 });
 

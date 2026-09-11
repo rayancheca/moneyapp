@@ -559,8 +559,8 @@ describe("spendingProjection", () => {
     expect(proj.prior).not.toBeNull();
     expect(proj.prior!.label).toBe("June 2026");
     expect(proj.prior!.spentCents).toBe(30_000); // reconciles to June's gross spend
-    expect(proj.prior!.ghost).toHaveLength(31); // re-indexed onto July's 31 day-buckets
-    expect(Math.max(...proj.prior!.ghost)).toBe(18_000); // the June 25 peak survives the resample
+    expect(proj.prior!.aligned).toHaveLength(31); // one entry per July day-bucket
+    expect(proj.prior!.aligned[24]).toBe(18_000); // June 25 sits under July 25, not beside it
   });
 
   /**
@@ -572,7 +572,7 @@ describe("spendingProjection", () => {
    * the graph's cumulative dashed line ended at a total June never spent.
    * `aligned` is the per-bucket fact both of those surfaces were claiming.
    */
-  test("prior.aligned names the same day; prior.ghost slides it", () => {
+  test("prior.aligned names the same day the current bucket does", () => {
     insertTxn({ postedOn: "2026-07-05", amountCents: -20_000, category: "Food > Groceries" });
     insertTxn({ postedOn: "2026-06-10", amountCents: -12_000, category: "Food > Dining" });
     // ⛔ June 16 is the one bucket a 30→31 resample DUPLICATES. Without a row on it
@@ -588,16 +588,16 @@ describe("spendingProjection", () => {
     // June 10 and June 25 sit under July 10 and July 25 — index 9 and index 24
     expect(aligned[9]).toBe(12_000);
     expect(aligned[24]).toBe(18_000);
-    // …while the resample slid June 25's peak off that index onto the next one
-    expect(proj.prior!.ghost[24]).toBe(0);
-    expect(proj.prior!.ghost[25]).toBe(18_000);
+    // …and NOT one index later, which is where the resample put June 25's peak
     expect(aligned[25]).toBe(0);
+    // the June 16 row is its own bucket, not duplicated into two
+    expect(aligned[15]).toBe(7_000);
+    expect(aligned[16]).toBe(0);
 
     // there is no June 31: the last cell is "—", never a borrowed value
     expect(aligned[30]).toBeNull();
     // and a running total over it lands exactly on the page's own prior readout
     expect(aligned.reduce((a: number, v) => a + (v ?? 0), 0)).toBe(proj.prior!.spentCents);
-    expect(proj.prior!.ghost.reduce((a, v) => a + v, 0)).not.toBe(proj.prior!.spentCents);
   });
 
   test("a completed (past) period gets no fabricated pace projection", () => {
