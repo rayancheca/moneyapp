@@ -39,7 +39,7 @@ function Evidence({ line }: { line: SubscriptionLine }) {
   if (line.neverBilled) return <span className="block text-[11px] text-ink-faint">never billed</span>;
   return (
     <span className="block text-[11px] text-ink-faint">
-      last seen {line.lastMatchedOn}
+      last seen {line.lastMatchedLabel}
       {line.daysPastTolerance === null ? "" : ` · ${days(line.daysPastTolerance)} past tolerance`}
     </span>
   );
@@ -109,7 +109,7 @@ export function SubscriptionsCard({ data }: { data: SubscriptionsCardData }) {
           <>
             Another <Money cents={lapsedMonthlyCents} className="text-ink" /> a month is registered and no longer
             forecast — {lapsedSharePct.toFixed(1)}% of everything on the books. The largest is{" "}
-            <span className="text-ink">{largestLapsed.name}</span>, last seen {largestLapsed.lastMatchedOn}
+            <span className="text-ink">{largestLapsed.name}</span>, last seen {largestLapsed.lastMatchedLabel}
             {largestLapsed.daysPastTolerance === null
               ? ""
               : `, ${days(largestLapsed.daysPastTolerance)} past its own tolerance`}

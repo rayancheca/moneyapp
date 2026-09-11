@@ -194,6 +194,14 @@ describe("subscriptionsCard — the happy path", () => {
     expect(c.lapsed.map((l) => l.name)).toEqual(["Old rent", "Dead sub"]);
     // the caveat names the biggest by MONEY, which is the one the reader cares about
     expect(c.largestLapsed?.name).toBe("Old rent");
+    /*
+     * 🔴 "last seen 2026-08-10" — a raw ISO in a sentence, nine times on the
+     * dashboard, while the card BESIDE it read "latest Sep 18, 2024 — 723 days
+     * ago" and /recurring's shared rule said "last seen 68d ago" for the same
+     * fact. Three spellings of one thing, two of them a click apart.
+     */
+    expect(c.live[0]!.lastMatchedLabel).toBe("Aug 10");
+    expect(c.largestLapsed?.lastMatchedLabel).toBe("May 1");
     expect(c.lapsedSharePct).toBeCloseTo(((177949 + 799) / (5000 + 177949 + 799)) * 100, 6);
   });
 

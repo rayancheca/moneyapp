@@ -18,6 +18,7 @@
 
 import { diffDays } from "./dates";
 import { sharePercent } from "./insight-facts";
+import { dayWindowLabel } from "./period";
 import { formatCents } from "./money";
 
 /** Visits below this cannot establish a rate, however long the span. */
@@ -263,7 +264,19 @@ export function merchantProfile(
   } else {
     // spread across the span that was actually observed, not a calendar window
     monthlyCents = Math.round(totalCents / (spanDays / DAYS_PER_MONTH));
-    monthlyBasis = `Spread across the ${spanDays} days from ${firstSeen} to ${lastSeen}.`;
+    /*
+     * ⛔ A SENTENCE, SO THE WINDOW IS SPELLED — and spelled the way the card's
+     * own sibling already spells it. `readableDay`'s line is "for a sentence
+     * rather than a table cell", and this is a `max-w-prose` paragraph. It read
+     * "Spread across the 945 days from 2023-10-17 to 2026-05-18." while the
+     * insight a few lines below, over the IDENTICAL window, read
+     * "Oct 17, 2023 – May 18, 2026" — one window, two spellings, one screen.
+     * 109 merchant pages carried it. `dayWindowLabel` is the rule both use now.
+     *
+     * ⚠️ The "Seen" stat TILE keeps its ISO: it is a `.figures` cell in the
+     * card's `<dl>` grid, which is the side of that line ISO belongs on.
+     */
+    monthlyBasis = `Spread across the ${spanDays} days of ${dayWindowLabel(firstSeen, lastSeen)}.`;
   }
 
   /*

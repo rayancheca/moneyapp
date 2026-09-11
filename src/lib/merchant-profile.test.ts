@@ -223,7 +223,14 @@ describe("merchantProfile — when it refuses to state a rate", () => {
     );
     // 2025-01-01 through 2025-04-30 inclusive: 31 + 28 + 31 + 30
     expect(p.spanDays).toBe(120);
-    expect(p.monthlyBasis).toBe("Spread across the 120 days from 2025-01-01 to 2025-04-30.");
+    /*
+     * 🔴 It read "Spread across the 120 days from 2025-01-01 to 2025-04-30." —
+     * raw ISO in a `max-w-prose` paragraph, while the insight a few lines below
+     * spelled the IDENTICAL window "Jan 1 – Apr 30, 2025". One window, two
+     * spellings, one screen, on 109 merchant pages. This assertion pinned it.
+     */
+    expect(p.monthlyBasis).toBe("Spread across the 120 days of Jan 1 – Apr 30, 2025.");
+    expect(p.monthlyBasis).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     expect(p.monthlyCents).toBe(Math.round(9000 / (120 / (365.2425 / 12))));
   });
 

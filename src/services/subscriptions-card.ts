@@ -3,6 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries, type Cadence } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addCalendarMonths, monthKey, todayIso } from "@/lib/dates";
+import { formatDayShortIn } from "@/lib/format-date";
 import { levelledMonthlyCents } from "@/lib/income-basis";
 import { activeTxnsInRange } from "./analytics";
 import { COMMITTED_KINDS, SPEND_BASELINE_MONTHS, baselineWindow } from "./committed";
@@ -88,6 +89,17 @@ export interface SubscriptionLine {
   monthlyCents: number;
   /** newest matched charge; null = the bank has never billed this at all */
   lastMatchedOn: string | null;
+  /**
+   * The same day, spelled for a SENTENCE — "Aug 4", or "Jan 16, 2025" across a
+   * year boundary. Null exactly when `lastMatchedOn` is.
+   *
+   * 🔴 The card printed "last seen 2026-08-04" nine times, while the card
+   * BESIDE it on the same screen read "latest Sep 18, 2024 — 723 days ago" and
+   * /recurring's shared rule said "last seen 68d ago" for the same fact. Three
+   * spellings of one thing, two of them a click apart. `readableDay`'s line is
+   * "for a sentence rather than a table cell", and "last seen …" is a sentence.
+   */
+  lastMatchedLabel: string | null;
   daysSinceLastMatch: number | null;
   /**
    * How far past its OWN tolerance the evidence is, in days. Null when the
@@ -287,6 +299,8 @@ export function subscriptionsCard(
       // figures on this dashboard speak the same units.
       monthlyCents: levelledMonthlyCents(Math.abs(eff.nextExpectedAmountCents), eff.cadence),
       lastMatchedOn: staleness.lastMatchedOn,
+      lastMatchedLabel:
+        staleness.lastMatchedOn === null ? null : formatDayShortIn(staleness.lastMatchedOn, today),
       daysSinceLastMatch: staleness.daysSinceLastMatch,
       daysPastTolerance: null,
       postedCents: totals.cents,
