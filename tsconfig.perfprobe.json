@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "incremental": false },
+  "exclude": ["node_modules", "data", "**/* ?.ts", "**/* ??.ts",
+              ".p.ts", ".p2.ts", "probe-a.ts", "probe-b.ts", "probe-c.ts",
+              "probe-d.ts", "probe-e.ts", "probe-f.ts", "probe-g.ts", "probe-h.ts"]
+}

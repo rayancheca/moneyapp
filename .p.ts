@@ -1,28 +1,28 @@
-import { and, inArray, sql } from "drizzle-orm";
-import { createDatabase } from "@/db/client";
-import { countMatching, matchingTransactionIds } from "@/services/transactions-query";
-import { transactions } from "@/db/schema/transactions";
-import { cashFlowByPeriod } from "@/services/spending";
-import { resolvePeriod } from "@/lib/period";
-import type { TxnFilters } from "@/components/transactions/query";
-
-const f = (o: Partial<TxnFilters>): TxnFilters => ({
-  view: "all", account: null, category: null, merchant: null,
-  from: "2026-01-01", to: "2026-12-31", q: null,
-  amountMinCents: null, amountMaxCents: null, flow: null, page: 1, ...o,
-});
-const b = createDatabase("data/moneyapp.db");
-for (const cat of [null, "cashflow", "spending", "income"]) {
-  const ff = f({ category: cat });
-  const n = countMatching(b.db, ff, "all");
-  const ids = matchingTransactionIds(b.db, ff, "all");
-  let sum = 0;
-  for (let i = 0; i < ids.length; i += 500) {
-    const chunk = ids.slice(i, i + 500);
-    sum += b.db.select({ s: sql<number>`coalesce(sum(${transactions.amountCents}),0)` }).from(transactions).where(inArray(transactions.id, chunk)).get()!.s;
-  }
-  console.log(`category=${cat ?? "(none)"}: ${n} rows, sum $${(sum/100).toFixed(2)}`);
+import { getDb } from "@/db/client";
+import { resolvePeriod, subBuckets } from "@/lib/period";
+import { cashFlowByPeriod, spendingProjection } from "@/services/spending";
+import { cashFlowCumulative } from "@/lib/cash-flow-cumulative";
+const db = getDb();
+const TODAY = "2026-09-11";
+const shapes: {label:string;p:any}[] = [];
+for (let y = 2023; y <= 2026; y++) for (let m = 1; m <= 12; m++) { if (y===2026&&m>9) break; shapes.push({label:`${y}-${String(m).padStart(2,"0")}`,p:{period:`${y}-${String(m).padStart(2,"0")}`}}); }
+for (let y = 2023; y <= 2026; y++) for (let q = 1; q <= 4; q++) shapes.push({label:`${y}-Q${q}`,p:{period:`${y}-Q${q}`}});
+for (let y = 2023; y <= 2026; y++) shapes.push({label:`${y}`,p:{period:`${y}`}});
+shapes.push({label:"YTD",p:{period:"YTD"}},{label:"ALL",p:{period:"ALL"}},{label:"W2026-08-31",p:{period:"W2026-08-31"}},{label:"day 2026-08-18",p:{period:"2026-08-18"}});
+shapes.push({label:"custom 2026-07-25..2026-08-25",p:{from:"2026-07-25",to:"2026-08-25"}});
+let noGhost = 0, withGhost = 0, lenMismatch = 0;
+const bad: string[] = [];
+for (const s of shapes) {
+  const period = resolvePeriod(s.p, TODAY);
+  const cf = cashFlowByPeriod(db, period, TODAY);
+  const proj = spendingProjection(db, period, TODAY, cf.pace, cf.totals.spentCents);
+  const nSub = subBuckets(period).length;
+  const nBuckets = cf.buckets.length;
+  if (nSub !== nBuckets) { lenMismatch++; bad.push(`${s.label}: subBuckets=${nSub} cashFlow.buckets=${nBuckets}`); }
+  if (!proj.prior) continue;
+  const rows = cashFlowCumulative(cf.buckets as any, proj.prior.aligned, proj.prior.spentCents);
+  const anyGhost = rows.some((r) => r.ghostCum !== null);
+  if (anyGhost) withGhost++; else { noGhost++; bad.push(`${s.label}: prior exists but ghostCum all null (aligned.len=${proj.prior.aligned.length}, buckets=${nBuckets})`); }
 }
-const flow = cashFlowByPeriod(b.db, resolvePeriod({ period: "2026" }, "2026-09-11"), "2026-09-11");
-console.log(`\n/spending?period=2026 Net card: $${(flow.totals.netCents/100).toFixed(2)}  earned ${flow.totals.incomeCents/100} spent ${flow.totals.spentCents/100} refunds ${flow.totals.refundsCents/100}`);
-b.sqlite.close();
+console.log("shapes:", shapes.length, "withGhost:", withGhost, "priorButNoGhost:", noGhost, "lenMismatch:", lenMismatch);
+for (const b of bad.slice(0, 20)) console.log("  ", b);

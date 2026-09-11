@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
+import { apportionPercents } from "@/lib/apportion";
 import type { AppDatabase } from "@/db/client";
 import { transactions } from "@/db/schema/transactions";
 import { diffDays, todayIso } from "@/lib/dates";
@@ -380,10 +381,30 @@ function firstActivity(db: AppDatabase, accountIds: readonly string[]): string |
  * label is null in exactly the same breath so a percentage can never appear
  * without the number behind it.
  */
-function share(cents: number | null, totalCents: number): { sharePct: number | null; shareLabel: string | null } {
-  if (totalCents <= 0 || cents === null || cents <= 0) return { sharePct: null, shareLabel: null };
-  const sharePct = (cents / totalCents) * 100;
-  return { sharePct, shareLabel: `${Math.round(sharePct)}% of it` };
+function share(cents: number | null, totalCents: number): number | null {
+  if (totalCents <= 0 || cents === null || cents <= 0) return null;
+  return (cents / totalCents) * 100;
+}
+
+/**
+ * The same shares as WHOLE percents that add to a hundred.
+ *
+ * 🔴 Rounding each slice on its own is how the dashboard's coverage note came
+ * to print "94%" over four rows adding to 95. Two cards owing today round to
+ * 60 + 40 by luck; three cards at a third each would print 33 + 33 + 33 and a
+ * reader adding the card up would get 99. `lib/apportion` carries the
+ * measurement and the method.
+ *
+ * ⛔ Cards with NO share — settled, in credit, unpriced — are held out of the
+ * apportionment entirely and keep their null label, so a card that owes nothing
+ * can never be handed a leftover point.
+ */
+function shareLabels(pcts: readonly (number | null)[]): (string | null)[] {
+  const owing = pcts.map((p, i) => ({ p, i })).filter((e): e is { p: number; i: number } => e.p !== null);
+  const whole = apportionPercents(owing.map((e) => e.p));
+  const out: (string | null)[] = pcts.map(() => null);
+  owing.forEach((e, k) => (out[e.i] = `${whole[k]}% of it`));
+  return out;
 }
 
 function composedProvenance(
@@ -532,12 +553,15 @@ export function cardsOwedCard(db: AppDatabase, today: string = todayIso()): Card
   const daysSinceOldest = oldestCheckedThrough === null ? null : diffDays(oldestCheckedThrough, today);
 
   /* ── rows, largest debt first; an unpriced card has no place in that order ── */
+  const bareShares = bare.map((c) => share(c.owedCents, grossOwedCents));
+  const bareLabels = shareLabels(bareShares);
   const cards: CardOwedLine[] = bare
-    .map((c) => ({
+    .map((c, i) => ({
       ...c,
       // ⛔ `x / 0` is Infinity and renders as "Infinity%". A card with nothing
       // owed has no shares to hand out, and the card says something else.
-      ...share(c.owedCents, grossOwedCents),
+      sharePct: bareShares[i]!,
+      shareLabel: bareLabels[i]!,
       asOfLabel:
         sharedCheckedThrough !== null || c.checkedThrough === null
           ? null

@@ -210,6 +210,29 @@ describe("what is owed", () => {
     expect(card.explanation).toContain("$30.00 of credit on Gamma is netted off, so each slice is of the $250.00 actually owed.");
   });
 
+  /**
+   * 🔴 THE SLICES MUST ADD TO A HUNDRED. Rounding each on its own is how the
+   * dashboard's coverage note came to print "94%" over four rows adding to 95.
+   * Three equal debts round to 33 + 33 + 33 and a reader adding the card up
+   * gets 99; `lib/apportion` hands the leftover point to the largest remainder.
+   *
+   * ⛔ A card with NO share — settled, in credit, unpriced — is held out of the
+   * apportionment entirely, so it can never be handed a leftover point.
+   */
+  test("three equal debts still add to a hundred", () => {
+    for (const [id, name, last4] of [["acct-a", "A", "1111"], ["acct-b", "B", "2222"], ["acct-c", "C", "3333"]] as const) {
+      addAccount(id, name, "credit", { last4 });
+      addBalances(id, [{ day: "2026-08-03", cents: -10_000, basis: "anchored" }]);
+      addTxn(id, "2026-08-03", -10_000);
+    }
+    const card = cardsOwedCard(bundle.db, TODAY)!;
+    const labels = card.cards.map((c) => c.shareLabel).filter((l): l is string => l !== null);
+    expect(labels).toHaveLength(3);
+    const total = labels.reduce((sum, l) => sum + Number.parseInt(l, 10), 0);
+    expect(total).toBe(100);
+    expect(labels.sort()).toEqual(["33% of it", "33% of it", "34% of it"]);
+  });
+
   test("a credit larger than every debt is not 'Nothing owed' — one card still owes", () => {
     twoCards();
     addAccount("acct-gamma", "Gamma", "credit", { last4: "3333", order: 2 });
