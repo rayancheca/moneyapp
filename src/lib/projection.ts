@@ -530,6 +530,12 @@ export function buildForwardSeries(input: ForwardSeriesInput): ProjectionPoint[]
  * window bucket-for-bucket even when the two periods have different lengths
  * (Feb 28 vs Mar 31, Q2 vs Q3). Nearest-fraction resampling — the ghost tracks
  * the shape of the prior period across the current axis. Empty input → empty.
+ *
+ * 🔴 **A RESAMPLED VALUE IS A SHAPE, NEVER A FACT ABOUT A BUCKET.** Nearest-
+ * fraction resampling duplicates and drops source buckets, so `out[i]` is not
+ * "what the prior period spent in bucket i" and `sum(out)` is not the prior
+ * period's total. Draw it as a curve; never print it in a cell and never add it
+ * up. Two callers did both — see {@link alignByIndex}.
  */
 export function reindexByPosition(
   values: readonly number[],
@@ -543,5 +549,41 @@ export function reindexByPosition(
     const srcIdx = lastSrc === 0 ? 0 : Math.round((i / (targetLength - 1)) * lastSrc);
     out.push(values[srcIdx]!);
   }
+  return out;
+}
+
+/**
+ * The prior period's OWN bucket at the same offset — `null` where the prior
+ * period has no such bucket. The rule for every surface that reads the ghost as
+ * a FACT rather than drawing it as a shape: a table cell, a cumulative total, a
+ * sentence naming a date.
+ *
+ * 🔴 {@link reindexByPosition} was the only rule, and two of its three callers
+ * treated its output as per-bucket truth. Measured on the real ledger,
+ * 2026-09-11:
+ *
+ *   - `/spending?period=YYYY-MM&cash=table` — the column headed
+ *     `Spent, <prior month>` printed **610 of 1,539 cells (39.6%), across 41 of
+ *     53 periods**, from a different calendar day than the day number beside it.
+ *     `?period=2026-07` row "20" showed June 19's $1,984.89; June 20 was $89.71.
+ *   - `/spending?period=YYYY-MM&cash=graph` — the dashed cumulative ghost summed
+ *     the resampled series, so its last point disagreed with the page's own
+ *     "$X in <prior month>" readout on **33 of 53 periods**: `?period=2023-03`
+ *     ended at $2,943.05 against a stated $2,541.21.
+ *
+ * Aligning by index means "the same day of the month" for day buckets and "the
+ * same month" for month buckets, which is what both surfaces claim. A prior
+ * period that is SHORTER leaves trailing `null`s (render "—", hold the running
+ * total); one that is LONGER has a tail no bucket of this window can carry — a
+ * cumulative caller must add it back at the last point, which is the only place
+ * "by here" means "all of it". Empty input, or a non-positive length → empty.
+ */
+export function alignByIndex(
+  values: readonly number[],
+  targetLength: number,
+): (number | null)[] {
+  if (targetLength <= 0 || values.length === 0) return [];
+  const out: (number | null)[] = [];
+  for (let i = 0; i < targetLength; i++) out.push(i < values.length ? values[i]! : null);
   return out;
 }

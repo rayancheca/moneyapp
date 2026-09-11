@@ -11,7 +11,7 @@ import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/descriptio
 // topMerchants groups on — activeTxnsInRange doesn't select that column
 import { normalizeDescription } from "@/lib/normalize";
 import { resolvePeriod, stepPeriodParams, subBuckets, type ResolvedPeriod } from "@/lib/period";
-import { projectPace, reindexByPosition } from "@/lib/projection";
+import { alignByIndex, projectPace, reindexByPosition } from "@/lib/projection";
 import { allocationsFor } from "@/lib/transaction-splits";
 import {
   activeTxnsInRange,
@@ -324,8 +324,21 @@ export interface SpendingProjection {
     label: string;
     /** prior period GROSS spend total, integer cents */
     spentCents: number;
-    /** prior gross spend per bucket, re-indexed to the CURRENT bucket count so it overlays 1:1 */
+    /**
+     * prior gross spend per bucket, re-indexed to the CURRENT bucket count so it
+     * overlays 1:1. ⛔ A SHAPE, NOT A FACT — resampling duplicates and drops
+     * source buckets, so this neither names a day nor sums to `spentCents`.
+     * Draw it; never print a cell of it and never add it up. Use `aligned` for
+     * either of those.
+     */
     ghost: number[];
+    /**
+     * the same prior buckets aligned BY INDEX — `aligned[i]` is the prior
+     * period's own bucket i (its day 20 under this window's day 20), `null`
+     * where the prior period has no bucket i. The rule for a table cell or a
+     * running total.
+     */
+    aligned: (number | null)[];
   } | null;
 }
 
@@ -377,6 +390,10 @@ export function spendingProjection(
           label: prevPeriod.label,
           spentCents: prevFlow.totals.spentCents,
           ghost: reindexByPosition(
+            prevFlow.buckets.map((b) => b.spendingCents),
+            bucketCount,
+          ),
+          aligned: alignByIndex(
             prevFlow.buckets.map((b) => b.spendingCents),
             bucketCount,
           ),

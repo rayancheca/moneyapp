@@ -207,6 +207,14 @@ export function CashFlowChart({ data, projection }: CashFlowChartProps) {
                       <span className="text-negative">Spent</span>
                       <span className="figures">{formatCents(b.spendingCents)}</span>
                     </div>
+                    {/* a refund is money in and never nets "Spent" down, so without
+                        this line Earned − Spent does not make the Net below it */}
+                    {b.refundsCents !== 0 && (
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-positive">Refunded</span>
+                        <span className="figures">{formatCents(b.refundsCents)}</span>
+                      </div>
+                    )}
                     <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 font-medium">
                       <span>Net</span>
                       <span className="figures">{formatCentsSigned(b.netCents)}</span>

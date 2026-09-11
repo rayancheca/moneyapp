@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  alignByIndex,
   buildForwardSeries,
   PROJECTION_METHOD_LABEL,
   periodProgress,
@@ -535,6 +536,54 @@ describe("reindexByPosition", () => {
 
   test("upsamples a shorter prior period by nearest position", () => {
     expect(reindexByPosition([10, 20, 30], 5)).toEqual([10, 20, 20, 30, 30]);
+  });
+
+  test("🔴 a resampled series is a SHAPE — it neither preserves buckets nor sums to the source", () => {
+    const june = [10, 20, 30]; // a 3-bucket prior period, $60 total
+    const ontoFour = reindexByPosition(june, 4);
+    // bucket 1 of the current window shows bucket 0's value…
+    expect(ontoFour[1]).toBe(20);
+    expect(june[1]).toBe(20);
+    // …but the total is not the prior period's total, so it must never be summed
+    expect(ontoFour.reduce((a, b) => a + b, 0)).not.toBe(60);
+  });
+});
+
+describe("alignByIndex", () => {
+  test("empty input → empty", () => {
+    expect(alignByIndex([], 5)).toEqual([]);
+  });
+
+  test("non-positive target length → empty", () => {
+    expect(alignByIndex([10, 20], 0)).toEqual([]);
+  });
+
+  test("same-length alignment is the identity", () => {
+    expect(alignByIndex([10, 20, 30], 3)).toEqual([10, 20, 30]);
+  });
+
+  test("a shorter prior period leaves trailing nulls, never a borrowed value", () => {
+    expect(alignByIndex([10, 20, 30], 5)).toEqual([10, 20, 30, null, null]);
+  });
+
+  test("a longer prior period is truncated — the tail belongs to no bucket of this window", () => {
+    expect(alignByIndex([10, 20, 30, 40, 50], 3)).toEqual([10, 20, 30]);
+  });
+
+  test("🔴 July 20 shows JUNE 20, where the resample showed June 19", () => {
+    // 30 prior buckets (June) onto a 31-bucket window (July). Row "20" is index 19.
+    const june = Array.from({ length: 30 }, (_, i) => (i + 1) * 100);
+    expect(alignByIndex(june, 31)[19]).toBe(june[19]); // June 20 ✔
+    expect(reindexByPosition(june, 31)[19]).toBe(june[18]); // June 19 ✘ — the defect
+    expect(alignByIndex(june, 31)[30]).toBeNull(); // there is no June 31
+  });
+
+  test("🔴 the aligned series sums to the prior period's own total when it fits", () => {
+    const june = Array.from({ length: 30 }, (_, i) => (i + 1) * 100);
+    const total = june.reduce((a, b) => a + b, 0);
+    const aligned = alignByIndex(june, 31);
+    expect(aligned.reduce((a: number, b) => a + (b ?? 0), 0)).toBe(total);
+    expect(reindexByPosition(june, 31).reduce((a, b) => a + b, 0)).not.toBe(total);
   });
 });
 

@@ -10,16 +10,21 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { cashFlowCumulative } from "@/lib/cash-flow-cumulative";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import type { CashFlow, SpendingProjection } from "@/services/spending";
 
 /**
  * The cash-flow GRAPH view (user ask): the period's running totals as clean
  * cumulative lines — earned, spent, and net — where the bar chart shows each
- * bucket's composition. The gap between earned and spent IS the net line, and
- * the prior period's cumulative spend rides along as the dashed ghost, so
- * "are we ahead of last period" is readable at a glance. Same integer-cents
- * data as the chart and table views — the three always reconcile.
+ * bucket's composition. The prior period's cumulative spend rides along as the
+ * dashed ghost, so "are we ahead of last period" is readable at a glance.
+ *
+ * ⛔ THE NET LINE IS NOT THE GAP BETWEEN EARNED AND SPENT. A refund is money in
+ * and never nets "Spent" down (spending.ts's sign convention), so net is
+ * `earned + refunds − spent` and the gap understates it by the refunds. The
+ * arithmetic lives in `cashFlowCumulative` now, which is where that — and the
+ * ghost's own total — are pinned; this file only draws what it returns.
  */
 
 function formatTick(cents: number): string {
@@ -29,15 +34,6 @@ function formatTick(cents: number): string {
   return `${sign}$${Math.round(dollars)}`;
 }
 
-interface GraphRow {
-  key: string;
-  label: string;
-  earnedCum: number;
-  spentCum: number;
-  netCum: number;
-  ghostCum: number | null;
-}
-
 interface CashFlowGraphProps {
   data: CashFlow;
   projection?: SpendingProjection | null;
@@ -45,26 +41,17 @@ interface CashFlowGraphProps {
 
 export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
   const { buckets } = data;
-  const ghost = projection?.prior?.ghost ?? null;
-  const hasGhost = ghost !== null && ghost.length === buckets.length;
   const priorLabel = projection?.prior?.label ?? null;
 
-  let earnedCum = 0;
-  let spentCum = 0;
-  let ghostCum = 0;
-  const rows: GraphRow[] = buckets.map((b, i) => {
-    earnedCum += b.incomeCents;
-    spentCum += b.spendingCents;
-    if (hasGhost) ghostCum += ghost![i] ?? 0;
-    return {
-      key: b.key,
-      label: b.label,
-      earnedCum,
-      spentCum,
-      netCum: earnedCum - spentCum,
-      ghostCum: hasGhost ? ghostCum : null,
-    };
-  });
+  // ⛔ `prior.aligned`, never `prior.ghost`: the ghost is a SHAPE resample, and a
+  // running total over it lands on a figure the prior period never spent.
+  const rows = cashFlowCumulative(
+    buckets,
+    projection?.prior?.aligned ?? null,
+    projection?.prior?.spentCents ?? 0,
+  );
+  const hasGhost = rows.some((r) => r.ghostCum !== null);
+  const hasRefunds = buckets.some((b) => b.refundsCents !== 0);
 
   if (buckets.length === 0) return null;
   const labelByKey = new Map(rows.map((r) => [r.key, r.label]));
@@ -109,6 +96,12 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
                       <span className="text-negative">Spent</span>
                       <span className="figures">{formatCents(row.spentCum)}</span>
                     </div>
+                    {hasRefunds && (
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-positive">Refunded</span>
+                        <span className="figures">{formatCents(row.refundsCum)}</span>
+                      </div>
+                    )}
                     <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 font-medium">
                       <span>Net</span>
                       <span className="figures">{formatCentsSigned(row.netCum)}</span>

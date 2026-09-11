@@ -30,7 +30,7 @@ interface CashFlowViewProps {
   periodLabel: string;
 }
 
-/** a bucket augmented with its aligned prior-period ghost value */
+/** a bucket augmented with the prior period's value for the SAME bucket */
 type CashRow = CashFlowBucket & { ghostCents: number | null };
 
 export function CashFlowView({ cashFlow, projection, sankey, viewState, baseParams, periodLabel }: CashFlowViewProps) {
@@ -44,14 +44,22 @@ export function CashFlowView({ cashFlow, projection, sankey, viewState, basePara
   const dim = CASH_VIEW_SPEC[0]!; // "cash"
   const active = state[dim.key] ?? "chart";
 
-  const ghost = projection?.prior?.ghost ?? null;
-  const hasGhost = ghost !== null && ghost.length === cashFlow.buckets.length;
+  // ⛔ `prior.aligned`, never `prior.ghost`. The ghost is a nearest-fraction SHAPE
+  // resample for the chart's overlay; printed in a cell under a column headed
+  // `Spent, <prior month>` beside a day number it names the WRONG DAY — 610 of
+  // 1,539 cells across 41 of 53 periods on the real ledger. `aligned` is the
+  // prior period's own bucket, and null where it has none (rendered "—").
+  const aligned = projection?.prior?.aligned ?? null;
+  const hasGhost = aligned !== null && aligned.length === cashFlow.buckets.length;
   const priorLabel = projection?.prior?.label ?? null;
 
   const rows: CashRow[] = cashFlow.buckets.map((b, i) => ({
     ...b,
-    ghostCents: hasGhost ? (ghost![i] ?? 0) : null,
+    ghostCents: hasGhost ? (aligned![i] ?? null) : null,
   }));
+  // a refund is money in, so Net is earned + refunds − spent. Showing only three
+  // of the four terms states an identity that fails on any period with a credit.
+  const hasRefunds = rows.some((r) => r.refundsCents !== 0);
 
   const columns: Column<CashRow>[] = [
     { key: "label", header: "Period", render: (r) => r.label },
@@ -67,6 +75,16 @@ export function CashFlowView({ cashFlow, projection, sankey, viewState, basePara
       align: "right",
       render: (r) => <span className="text-negative">{formatCents(r.spendingCents)}</span>,
     },
+    ...(hasRefunds
+      ? [
+          {
+            key: "refunded",
+            header: "Refunded",
+            align: "right" as const,
+            render: (r: CashRow) => <span className="text-positive">{formatCents(r.refundsCents)}</span>,
+          },
+        ]
+      : []),
     { key: "net", header: "Net", align: "right", render: (r) => formatCentsSigned(r.netCents) },
     ...(hasGhost
       ? [
@@ -98,8 +116,10 @@ export function CashFlowView({ cashFlow, projection, sankey, viewState, basePara
           columns={columns}
           rows={rows}
           rowKey={(r) => r.key}
-          caption={`Cash flow by period for ${periodLabel} — earned, spent, and net per bucket${
-            hasGhost && priorLabel ? `, with ${priorLabel} for comparison` : ""
+          caption={`Cash flow by period for ${periodLabel} — earned, spent${
+            hasRefunds ? ", refunded" : ""
+          }, and net per bucket${
+            hasGhost && priorLabel ? `, with the same bucket of ${priorLabel} for comparison` : ""
           }.`}
           emptyState="No activity in this period."
         />

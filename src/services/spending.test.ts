@@ -563,6 +563,43 @@ describe("spendingProjection", () => {
     expect(Math.max(...proj.prior!.ghost)).toBe(18_000); // the June 25 peak survives the resample
   });
 
+  /**
+   * 🔴 THE GHOST IS TWO SERIES, AND ONLY ONE OF THEM NAMES A DAY.
+   *
+   * `ghost` is a shape resample: on June(30) → July(31) it slides every bucket
+   * from June 19 up, so the table column headed `Spent, June 2026` printed the
+   * wrong calendar day beside 610 of 1,539 day numbers on the real ledger, and
+   * the graph's cumulative dashed line ended at a total June never spent.
+   * `aligned` is the per-bucket fact both of those surfaces were claiming.
+   */
+  test("prior.aligned names the same day; prior.ghost slides it", () => {
+    insertTxn({ postedOn: "2026-07-05", amountCents: -20_000, category: "Food > Groceries" });
+    insertTxn({ postedOn: "2026-06-10", amountCents: -12_000, category: "Food > Dining" });
+    // ⛔ June 16 is the one bucket a 30→31 resample DUPLICATES. Without a row on it
+    // the fixture cannot express the cumulative half of this defect at all.
+    insertTxn({ postedOn: "2026-06-16", amountCents: -7_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-06-25", amountCents: -18_000, category: "Food > Groceries" });
+
+    const flow = cashFlowByPeriod(bundle.db, JULY, TODAY);
+    const proj = spendingProjection(bundle.db, JULY, TODAY, flow.pace, flow.totals.spentCents);
+    const aligned = proj.prior!.aligned;
+
+    expect(aligned).toHaveLength(31); // one entry per July day-bucket
+    // June 10 and June 25 sit under July 10 and July 25 — index 9 and index 24
+    expect(aligned[9]).toBe(12_000);
+    expect(aligned[24]).toBe(18_000);
+    // …while the resample slid June 25's peak off that index onto the next one
+    expect(proj.prior!.ghost[24]).toBe(0);
+    expect(proj.prior!.ghost[25]).toBe(18_000);
+    expect(aligned[25]).toBe(0);
+
+    // there is no June 31: the last cell is "—", never a borrowed value
+    expect(aligned[30]).toBeNull();
+    // and a running total over it lands exactly on the page's own prior readout
+    expect(aligned.reduce((a: number, v) => a + (v ?? 0), 0)).toBe(proj.prior!.spentCents);
+    expect(proj.prior!.ghost.reduce((a, v) => a + v, 0)).not.toBe(proj.prior!.spentCents);
+  });
+
   test("a completed (past) period gets no fabricated pace projection", () => {
     insertTxn({ postedOn: "2026-06-10", amountCents: -12_000, category: "Food > Dining" });
     const june = resolvePeriod({ period: "2026-06" }, TODAY);
