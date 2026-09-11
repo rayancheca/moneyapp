@@ -427,7 +427,14 @@ Confirmed live on the rebuilt bundle after the fixes:
 > Repo `/Users/rayankarimcheca/dev/MoneyApp`, `main` clean and pushed. Baseline:
 > 4,845 unit · tsc clean · `E2E_GATE=1` at `maxDiffPixels: 0` ·
 > `pnpm ledger-check` exit 0. Ledger: 10,178 active rows · 37 uncategorized.
-> Zero DB writes for five sessions.
+> Zero DB writes for five sessions — no transaction row has been written since
+> 2026-09-03T19:06:53Z.
+>
+> ⛔ **37 is two states.** `category_id IS NULL` returns **31**; the other six
+> sit ON the system category named `Uncategorized`, which `categorize.ts` says
+> is "how six rows came to sit in no total at all". Counting only NULL reports
+> a ledger that moved when it did not — it is the shape of checker error §6
+> is about, and it caught me on the way out.
 >
 > No decision is waiting on me. The job is the same as the last eleven
 > sessions: find what is wrong. Do not invent features.
