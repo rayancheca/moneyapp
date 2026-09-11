@@ -277,7 +277,14 @@ export function CashFlowChart({ data, projection }: CashFlowChartProps) {
                     clickable
                       ? (entry: { payload?: { key?: string } }) => {
                           const key = entry.payload?.key;
-                          if (key) goToSegment(s.key, s.categoryId, key);
+                          // ⛔ "out": these bars are GROSS spending — debits only,
+                          // per cashFlowByPeriod's sign convention — so the drill
+                          // must exclude the credits the segment excludes. The
+                          // Uncategorized branch of `cashFlowSegmentHref` already
+                          // said so ("negatives-only → drill to outflows so it
+                          // reconciles") and the named categories did not: 47 of
+                          // 2,415 drawn segments opened rows the bar never drew.
+                          if (key) goToSegment(s.key, s.categoryId, key, "out");
                         }
                       : undefined
                   }

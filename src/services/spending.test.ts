@@ -242,6 +242,24 @@ describe("cashFlowSegmentHref", () => {
       "/transactions?category=cat-salary&from=2026-07-01&to=2026-07-31&flow=in",
     );
   });
+
+  /**
+   * 🔴 …AND SPENDING SEGMENTS DRILL NEGATIVE-ONLY, for the identical reason.
+   * The bars are GROSS spending — debits only — so a drill with no direction
+   * opens the category's credits too. The Uncategorized branch above has always
+   * said so in its own comment ("negatives-only → drill to outflows so it
+   * reconciles"); the named categories passed no flow at all. Measured on the
+   * real ledger 2026-09-11: **47 of 2,415 drawn segments** opened rows the bar
+   * never drew — `?period=2023-03`'s Shopping bar is $339.88 over a list
+   * carrying $312.46 of credits.
+   */
+  test("spending segments drill negative-only (flow=out) to match the gross bar", () => {
+    expect(cashFlowSegmentHref("cat-shop", "cat-shop", { from: "2026-07-01", to: "2026-07-31" }, "out")).toBe(
+      "/transactions?category=cat-shop&from=2026-07-01&to=2026-07-31&flow=out",
+    );
+    // …the same shape the Uncategorized bucket already had
+    expect(cashFlowSegmentHref("__uncat", null, { from: "2026-07-01", to: "2026-07-31" })).toContain("flow=out");
+  });
 });
 
 describe("dailySpendHeatmap", () => {

@@ -1,26 +1,24 @@
 import { getDb } from "@/db/client";
-import { cashFlowByPeriod } from "@/services/spending";
-import { resolvePeriod } from "@/lib/period";
 import { txnHistory } from "@/services/txn-detail";
-import { accountHistoryLine } from "@/components/transactions/TransactionSheet";
-import { apportionPercents } from "@/lib/apportion";
+import { transactions } from "@/db/schema/transactions";
+import { like, eq, and } from "drizzle-orm";
+
+const line = (a: { accountName: string; count: number; outCount: number }) => {
+  const rows = `${a.count} ${a.count === 1 ? "transaction" : "transactions"}`;
+  if (a.outCount === 0) return `${a.accountName} · ${rows}, none of them spending`;
+  if (a.outCount === a.count) return `${a.accountName} · ${rows}`;
+  return `${a.accountName} · ${rows}, ${a.outCount} of them spending`;
+};
 
 const db = getDb();
 const TODAY = "2026-09-11";
-// 1. net identity across every bucket of every month
-let bad = 0, buckets = 0, withRefund = 0;
-for (let y = 2022; y <= 2026; y++) for (let m = 1; m <= 12; m++) {
-  const k = `${y}-${String(m).padStart(2, "0")}`;
-  const p = resolvePeriod({ period: k }, TODAY);
-  const f = cashFlowByPeriod(db, p, TODAY);
-  for (const b of f.buckets) {
-    buckets++;
-    if (b.refundsCents !== 0) withRefund++;
-    if (b.netCents !== b.incomeCents + b.refundsCents - b.spendingCents) { bad++; if (bad < 4) console.log("  MISMATCH", k, b.key, b); }
-  }
+const rows = db.select({ id: transactions.id })
+  .from(transactions)
+  .where(and(eq(transactions.status, "active"), like(transactions.rawDescription, "%CAPITAL ONE MOBILE%")))
+  .all();
+console.log("CAPITAL ONE MOBILE rows:", rows.length);
+if (rows.length) {
+  const h = txnHistory(db, rows[0]!.id, TODAY)!;
+  console.log("group count", h.count, "outCount", h.outCount, "total", h.totalCents, "sum(byAccount)", h.byAccount.reduce((s, a) => s + a.cents, 0));
+  for (const a of h.byAccount) console.log("   ", line(a), "|", a.outCount === 0 ? "—" : `$${(a.cents / 100).toFixed(2)}`);
 }
-console.log(`net identity: ${bad} bad of ${buckets} buckets; ${withRefund} buckets carry a refund`);
-
-// 2. apportion with a negative part
-try { console.log("apportion([-5, 105]) =", apportionPercents([-5, 105])); } catch (e: any) { console.log("apportion negative THREW:", e.message); }
-try { console.log("apportion([-50, -50, 210]) =", apportionPercents([-50, -50, 210])); } catch (e: any) { console.log("apportion 2 THREW:", e.message); }
