@@ -14,7 +14,7 @@ import {
 
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { formatCents } from "@/lib/money";
-import { computeSpineLayout, spineDescription, type SpineArc } from "@/lib/transfer-flow-layout";
+import { computeSpineLayout, spineDescription, spineNodeLabel, type SpineArc } from "@/lib/transfer-flow-layout";
 import type { TransferFlowData } from "@/services/transfer-flow";
 
 /**
@@ -268,16 +268,11 @@ export function TransferSpine({
         {/* nodes: a dot on the spine plus a label, each a real link */}
         <g>
           {layout.nodes.map((n) => {
-            const share =
-              data.totals.grossCents > 0
-                ? Math.round((Math.abs(n.netCents) / data.totals.grossCents) * 100)
-                : 0;
-            const direction = n.netCents < 0 ? "net source" : n.netCents > 0 ? "net destination" : "net flat";
             return (
               <a
                 key={n.id}
                 href={n.href}
-                aria-label={`${n.label}, ${direction} ${formatCents(n.netCents)}, ${share}% of all transfer volume — view transactions`}
+                aria-label={spineNodeLabel(n, data, formatCents)}
                 onClick={(e) => {
                   if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
                   e.preventDefault();

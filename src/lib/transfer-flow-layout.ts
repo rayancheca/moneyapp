@@ -1,3 +1,4 @@
+import { renderPercent } from "@/lib/insight-facts";
 import type { TransferEdge, TransferFlowData } from "@/services/transfer-flow";
 
 /**
@@ -301,4 +302,55 @@ export function spineDescription(data: TransferFlowData, fmt: (cents: number) =>
     );
   }
   return parts.join("");
+}
+
+/**
+ * One node's complete spoken label. The visible node text is only the account
+ * name and its net, so this is the ONLY sentence a screen-reader user gets —
+ * and, like `spineDescription` above it, it is generated from the data so it
+ * cannot drift from what is drawn.
+ *
+ * 🔴 The percent was `Math.abs(n.netCents) / data.totals.grossCents` — an
+ * account's NET (in − out) over the WHOLE ledger's GROSS volume, two different
+ * quantities, announced as "N% of all transfer volume". Measured 2026-09-11:
+ * Chase Checking sent $172,517.92 of the $415,945.05 that moved between these
+ * accounts and was announced as "33%". The eight labels summed to 91.06% and
+ * CAN NEVER sum to 100 — account nets sum to zero, so no set of |net| shares
+ * has a fixed total at all.
+ *
+ * The numerator is the LEG the sentence names, and gross is the sum of exactly
+ * those legs (Σ out = Σ in = grossCents, which the Table lens's own footer
+ * prints: "Out $415,945.05 = In $415,945.05"), so every share is a share of a
+ * total this page really shows and a reader can check it against that column.
+ *
+ * ⛔ `renderPercent`, never `Math.round`: Wells Fargo sent $1,321.97, which is
+ * 0.3178% of the volume, and `Math.round` printed it "0%" — a measured zero
+ * about money that really moved.
+ *
+ * ⚠️ The eight shares still do not sum to 100, and must not be made to: half
+ * measure the out leg and half the in leg, each a complete partition of gross
+ * on its own. That is why every share now NAMES its leg — "left from here" /
+ * "arrived here". The old sentence said "of all transfer volume" for all eight
+ * and invited exactly the addition it could never satisfy.
+ */
+export function spineNodeLabel(
+  node: SpineNode,
+  data: TransferFlowData,
+  fmt: (cents: number) => string,
+): string {
+  const direction = node.netCents < 0 ? "net source" : node.netCents > 0 ? "net destination" : "net flat";
+  // measure the leg the direction word names: a net destination is interesting
+  // for what ARRIVED, a net source for what LEFT. Either leg is a true part of
+  // grossCents; |net| is a part of neither.
+  const arriving = node.netCents > 0;
+  const legCents = arriving ? node.inCents : node.outCents;
+  const verb = arriving ? "arrived here" : "left from here";
+  const head = `${node.label}, ${direction} ${fmt(node.netCents)} — sent ${fmt(node.outCents)}, received ${fmt(node.inCents)}`;
+  // no volume ⇒ no share, rather than a 0% that states a measurement
+  if (data.totals.grossCents <= 0) return `${head} — view transactions`;
+  return (
+    `${head}; ${renderPercent(legCents / data.totals.grossCents)}` +
+    ` of the ${fmt(data.totals.grossCents)} that moved between these ${data.accounts.length} accounts` +
+    ` ${verb} — view transactions`
+  );
 }

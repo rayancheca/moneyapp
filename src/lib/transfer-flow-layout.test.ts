@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { computeSpineLayout, spineDescription } from "./transfer-flow-layout";
+import { computeSpineLayout, spineDescription, spineNodeLabel } from "./transfer-flow-layout";
 import type { TransferAccount, TransferEdge, TransferFlowData } from "@/services/transfer-flow";
 
 const fmt = (cents: number) =>
@@ -452,5 +452,61 @@ describe("degenerate data", () => {
     const text = spineDescription({ ...d, totals: { ...d.totals, grossCents: 0, churnCents: 0 } }, fmt);
     expect(text).not.toContain("NaN");
     expect(text).toContain("(0%)");
+  });
+});
+
+/*
+ * 🔴 The label divided an account's NET by the whole ledger's GROSS and
+ * announced the result as its share of that gross. Real figures, /flow's Table
+ * lens, 2026-09-11: Chase Checking sent $172,517.92 of the $415,945.05 that
+ * moved between these accounts — 41.5% — and was announced as "33%". The eight
+ * labels summed to 91.06% and can never sum to 100, because account nets sum
+ * to zero.
+ */
+describe("spineNodeLabel", () => {
+  const ledger = () =>
+    data({
+      accounts: [
+        account("chase", -136_433_19, { label: "Chase Checking", inCents: 36_084_73, outCents: 172_517_92 }),
+        account("wf", -1_096_97, { label: "Wells Fargo Everyday Checking", inCents: 225_00, outCents: 1_321_97 }),
+        account("sofi", 34_433_89, { label: "SoFi Checking", inCents: 103_694_88, outCents: 69_260_99 }),
+      ],
+      // the single edge exists only to make totals.grossCents the real figure
+      edges: [edge("chase", "sofi", 415_945_05, 753)],
+    });
+
+  const nodeFor = (d: TransferFlowData, id: string) => {
+    const n = computeSpineLayout(d, "gross", OPTS).nodes.find((x) => x.id === id);
+    if (!n) throw new Error(`no node ${id}`);
+    return n;
+  };
+
+  test("the share is the LEG the sentence names, over the gross it names", () => {
+    const d = ledger();
+    expect(spineNodeLabel(nodeFor(d, "chase"), d, fmt)).toBe(
+      "Chase Checking, net source -$136,433.19 — sent $172,517.92, received $36,084.73;" +
+        " 41.5% of the $415,945.05 that moved between these 3 accounts left from here — view transactions",
+    );
+    // a net destination is measured by what ARRIVED
+    expect(spineNodeLabel(nodeFor(d, "sofi"), d, fmt)).toBe(
+      "SoFi Checking, net destination $34,433.89 — sent $69,260.99, received $103,694.88;" +
+        " 24.9% of the $415,945.05 that moved between these 3 accounts arrived here — view transactions",
+    );
+  });
+
+  test("a share under a tenth of a percent is not rounded to a measured zero", () => {
+    const d = ledger();
+    // $1,321.97 of $415,945.05 is 0.3178% — `Math.round(x * 100)` printed "0%"
+    expect(spineNodeLabel(nodeFor(d, "wf"), d, fmt)).toContain("0.3% of the $415,945.05");
+    expect(spineNodeLabel(nodeFor(d, "wf"), d, fmt)).not.toContain("0% of");
+  });
+
+  test("no volume means no share at all, rather than a 0% that states a measurement", () => {
+    const d = data({
+      accounts: [account("a", 0, { label: "A", inCents: 0, outCents: 0 })],
+      edges: [],
+    });
+    const n = computeSpineLayout(d, "gross", OPTS).nodes[0]!;
+    expect(spineNodeLabel(n, d, fmt)).toBe("A, net flat $0.00 — sent $0.00, received $0.00 — view transactions");
   });
 });
