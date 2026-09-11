@@ -693,12 +693,32 @@ describe("provenanceFor — a category total", () => {
     expect(two.sources.find((s) => s.kind === "hand-entered")!.detail).toBe("no statement carries them");
   });
 
-  /** An empty window is a ZERO, not an unproven figure — a real distinction. */
-  test("an empty window says the total is zero rather than unproven", () => {
+  /*
+   * 🔴 A ZERO IS ONLY MEASURED IF SOMEONE LOOKED, and this branch asserted a
+   * measurement over ANY empty window. Measured on the real ledger 2026-09-11 —
+   * newest active row 2026-08-31, today the 11th — the default September window
+   * on every category page carried "so this total is zero rather than unproven"
+   * over eleven unread days, 92 figures across /categories and /budgets, while
+   * the same page said the honest thing forty lines below. These two tests
+   * pinned the false reading.
+   */
+  test("an empty window nobody has imported is NOT called a measured zero", () => {
     const cat = addCategory("c-food", "Fixture Food");
     const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2019-01-01", to: "2019-12-31" })!;
-    expect(p.headline).toMatch(/zero rather than unproven/);
+    expect(p.headline).toMatch(/a window nobody has looked at rather than a measurement/);
+    expect(p.headline).not.toMatch(/zero rather than unproven/);
     expect(p.sources).toEqual([]);
+  });
+
+  /** …and a window the ledger really does cover keeps the measured wording. */
+  test("an empty window INSIDE the records is a measured zero, and still says so", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const cat = addCategory("c-food", "Fixture Food");
+    // rows either side of the window, so the ledger COVERS April 2019
+    addTxn(acct, "2019-03-01");
+    addTxn(acct, "2019-09-30");
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2019-04-01", to: "2019-04-30" })!;
+    expect(p.headline).toMatch(/zero rather than unproven/);
   });
 
   /** A row past its account's `verifiedThrough` is not covered by it. */
@@ -1179,10 +1199,10 @@ describe("provenanceFor — all spending in a window", () => {
     expect(p.headline).toMatch(/sum of 1 row from 1 document/);
   });
 
-  test("a window with no spending in it is zero rather than unproven", () => {
+  test("a window nobody has imported is not a measured zero", () => {
     addAccount("a", "Chase Checking", "checking");
     const p = provenanceFor(bundle.db, { kind: "allSpend", from: "2019-01-01", to: "2019-12-31" })!;
-    expect(p.headline).toMatch(/zero rather than unproven/);
+    expect(p.headline).toMatch(/a window nobody has looked at rather than a measurement/);
     expect(p.verdict).toBe("unknown");
     expect(p.sources).toEqual([]);
   });
@@ -1207,7 +1227,11 @@ describe("provenanceFor — all spending in a window", () => {
 
   test("the window's own label is used when one is given", () => {
     addAccount("a", "Chase Checking", "checking");
-    const p = provenanceFor(bundle.db, { kind: "allSpend", from: "2019-01-01", to: "2019-12-31", label: "Jul 2026" })!;
+    // the label rides the MEASURED branch — the uncovered one names the window
+    // by its two ends, because "nobody looked at Jul 2026" is about the days
+    addTxn("a", "2019-03-01");
+    addTxn("a", "2019-09-30");
+    const p = provenanceFor(bundle.db, { kind: "allSpend", from: "2019-04-01", to: "2019-04-30", label: "Jul 2026" })!;
     expect(p.headline).toMatch(/No rows in Jul 2026/);
   });
 });

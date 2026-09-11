@@ -13,6 +13,8 @@ import { transactions } from "@/db/schema/transactions";
 import { diffDays, todayIso } from "@/lib/dates";
 import { isStaleClose } from "@/lib/holding-price-age";
 import { formatCents } from "@/lib/money";
+import { emptyPeriodReason } from "@/lib/empty-period";
+import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { activeTxnsInRange, loadCategoryIndex, spendingBucket, uncategorizedWhere } from "./analytics";
 import { accountCoverage, type CoverageGrade } from "./coverage";
 import { MIN_OCCURRENCES } from "./recurring";
@@ -1295,9 +1297,37 @@ function summedRowsProvenance(
   to: string,
 ): Provenance {
   if (rows.length === 0) {
+    /*
+     * 🔴 A ZERO IS ONLY MEASURED IF SOMEONE LOOKED. This branch asserted "so
+     * this total is zero rather than unproven" for ANY empty window — including
+     * one no day of which has been imported. Measured 2026-09-11: the ledger's
+     * newest active row is 2026-08-31 and today is 2026-09-11, so the default
+     * September window on every category page carried the claim over eleven
+     * unread days — **92 figures** across `/categories` and `/budgets` — while
+     * the SAME page said the honest thing forty lines below: "September 2026
+     * has not been imported yet … That is a window nobody has looked at, not
+     * one in which nothing happened." It was equally false before the records
+     * open: `?period=2021-05` claimed a measured zero for a month five years
+     * before the first import.
+     *
+     * ⛔ `emptyPeriodReason` is the rule, and it had exactly two callers —
+     * `/spending` and `/categories/[id]` — while this, the third surface,
+     * asserted its opposite.
+     */
+    const reason = emptyPeriodReason({
+      from,
+      to,
+      today: todayIso(),
+      ledgerOpens: ledgerOpens(db),
+      ledgerReaches: ledgerReaches(db),
+    });
+    const window = `${readableDay(from)} and ${readableDay(to)}`;
     return {
       verdict: "unknown",
-      headline: `No rows in ${subject} between ${readableDay(from)} and ${readableDay(to)}, so this total is zero rather than unproven.`,
+      headline:
+        reason.kind === "measured"
+          ? `No rows in ${subject} between ${window}, so this total is zero rather than unproven.`
+          : `Nothing has been imported for ${reason.uncoveredDays} ${reason.uncoveredDays === 1 ? "day" : "days"} between ${window}, so this zero is a window nobody has looked at rather than a measurement.`,
       sources: [],
       checkedThrough: null,
       inputs: [],
