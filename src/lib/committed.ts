@@ -24,6 +24,7 @@
 import type { Cadence } from "@/db/schema/recurring";
 import { addCalendarMonths, compareDates, daysInMonthOf, monthKey, withDayOfMonth } from "@/lib/dates";
 import { monthWindowLabel } from "@/lib/format-date";
+import { dayWindowLabel } from "@/lib/period";
 import { levelledMonthlyCents } from "@/lib/income-basis";
 import { formatCents } from "@/lib/money";
 
@@ -370,7 +371,7 @@ export function shrinkCaption(book: {
   const times = lead.occurrences === 1 ? "once" : `${lead.occurrences} times`;
 
   return (
-    `${lead.name} stops inside that window — evidenced through ${lead.endsOn}, with no renewal ` +
+    `${lead.name} stops inside that window — evidenced through ${dayWindowLabel(lead.endsOn, lead.endsOn)}, with no renewal ` +
     `in the ledger${rest} — so it is billed ${times} rather than throughout, and counts ` +
     `${formatCents(lead.perMonthCents)} a month here against the ${formatCents(lead.perOccurrenceCents)} ` +
     `it charges. The rate above is ${formatCents(book.shortfallPerMonthCents)} a month lower for it.`

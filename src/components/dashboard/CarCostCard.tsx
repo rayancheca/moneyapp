@@ -3,6 +3,7 @@ import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { RUNWAY_JARGON } from "@/lib/jargon";
+import { dayWindowLabel } from "@/lib/period";
 import { formatCents } from "@/lib/money";
 import type { CarCard as CarCardData } from "@/services/committed";
 
@@ -124,7 +125,7 @@ export function CarCostCard({ data }: { data: CarCardData }) {
 
       {cost.evidencedThrough && (
         <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
-          Insurance is evidenced through {cost.evidencedThrough} — a renewal is not in the ledger, so the
+          Insurance is evidenced through {dayWindowLabel(cost.evidencedThrough, cost.evidencedThrough)} — a renewal is not in the ledger, so the
           monthly figure above stops being what you pay after that date.
         </p>
       )}

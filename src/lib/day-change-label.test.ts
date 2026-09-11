@@ -79,7 +79,7 @@ describe("dayChangeTerm — the inline form the dashboard teaser renders", () =>
  */
 describe("asOfSpanTerm", () => {
   test("names ONE date only when the parts really share one", () => {
-    expect(asOfSpanTerm("2026-08-17", null)).toBe("as of 2026-08-17");
+    expect(asOfSpanTerm("2026-08-17", null)).toBe("as of Aug 17, 2026");
   });
 
   /**
@@ -88,7 +88,22 @@ describe("asOfSpanTerm", () => {
    */
   test("names the span when they do not", () => {
     expect(asOfSpanTerm("2026-09-03", "2026-08-14")).toBe(
-      "each as of its own last covered day, 2026-08-14 – 2026-09-03",
+      "each as of its own last covered day, Aug 14 – Sep 3, 2026",
+    );
+  });
+
+  /*
+   * 🔴 The raw key, in a sentence, beside a formatted one. `/accounts/<id>`
+   * printed "since Aug 12 +$211.71 as of 2026-09-11 · derived" in a single
+   * paragraph, and `AccountsTable` says the identical fact one lens away
+   * through `formatDayLong`. `dayWindowLabel` is the rule both read now, and it
+   * drops only what genuinely repeats — the year, across a span inside one.
+   */
+  test("never a raw month key, and a cross-year span keeps both years", () => {
+    expect(asOfSpanTerm("2026-08-17", null)).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+    expect(asOfSpanTerm("2026-09-03", "2026-08-14")).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+    expect(asOfSpanTerm("2026-02-03", "2025-11-15")).toBe(
+      "each as of its own last covered day, Nov 15, 2025 – Feb 3, 2026",
     );
   });
 

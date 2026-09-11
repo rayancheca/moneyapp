@@ -508,7 +508,9 @@ describe("shrinkCaption", () => {
   test("it names the series, its end, the count and BOTH per-month figures", () => {
     const caption = shrinkCaption(committedOutflows(REAL))!;
     expect(caption).toContain("Car insurance");
-    expect(caption).toContain("2027-01-11");
+    // the day in a SENTENCE, not the key the column stores — `dayWindowLabel`
+    expect(caption).toContain("Jan 11, 2027");
+    expect(caption).not.toContain("2027-01-11");
     expect(caption).toContain("billed 5 times");
     expect(caption).toContain("$301.24"); // its contribution to the rate
     expect(caption).toContain("$361.49"); // what it actually charges

@@ -1,3 +1,5 @@
+import { dayWindowLabel } from "@/lib/period";
+
 /**
  * What to call the portfolio's day-change figure.
  *
@@ -81,7 +83,14 @@ export function dayChangeTerm(
  */
 export function asOfSpanTerm(asOf: string | null, oldestAsOf: string | null): string {
   if (asOf === null) return "";
+  /*
+   * ⛔ `dayWindowLabel`, not the raw keys. `/accounts/<id>` printed this clause
+   * on the SAME LINE as a formatted one — "since Aug 12 +$211.71 as of
+   * 2026-09-11 · derived" — and `AccountsTable` says the identical fact one
+   * lens away through `formatDayLong`. One fact, two spellings, one screen.
+   * Measured 2026-09-11 across all 197 routes.
+   */
   return oldestAsOf
-    ? `each as of its own last covered day, ${oldestAsOf} – ${asOf}`
-    : `as of ${asOf}`;
+    ? `each as of its own last covered day, ${dayWindowLabel(oldestAsOf, asOf)}`
+    : `as of ${dayWindowLabel(asOf, asOf)}`;
 }

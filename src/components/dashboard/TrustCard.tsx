@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Icon } from "@/components/shell/Icon";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { verdictToneClass } from "@/lib/provenance-verdict";
+import { dayWindowLabel } from "@/lib/period";
 import type { TrustAccountLine, TrustCard as TrustCardData } from "@/services/trust-card";
 
 /**
@@ -72,8 +73,14 @@ export function TrustCard({ data }: { data: TrustCardData }) {
         {data.emptyNote && <p>{data.emptyNote}</p>}
         {data.checkedThrough ? (
           <p>
+            {/* ⛔ the day in a SENTENCE, so the same rule as every other date in
+                one — `provenance.ts` already says "checked through Jul 31,
+                2026" through its own formatter, and this card said
+                "2026-07-31" of the same fact. */}
             The whole picture is checked through{" "}
-            <span className="figures text-ink-muted">{data.checkedThrough}</span>
+            <span className="figures text-ink-muted">
+              {dayWindowLabel(data.checkedThrough, data.checkedThrough)}
+            </span>
             {/* ⛔ the phrase, not the number — see `checkedThroughAgo` */}
             {data.checkedThroughAgo !== null && ` — ${data.checkedThroughAgo}`}.{" "}
             {data.checkedThroughExplanation}
