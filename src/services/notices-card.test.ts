@@ -110,6 +110,24 @@ describe("a merchant seen once", () => {
     expect(out.notices[0]!.claimId).toBe("only_charge");
   });
 
+  /*
+   * 🔴 THE LINK SEARCHED FOR A NAME THAT IS IN NO ROW. It was
+   * `/transactions?q=${canonicalName}`, and `q` is a literal LIKE over the
+   * bank's text while a canonical name is the app's tidied version of it —
+   * which this fixture has always modelled, since its rows read "ROW 1" and its
+   * merchant is "Zzz Insurance". Measured on the real ledger 2026-09-11: 268 of
+   * 851 merchants (31.5%) have a canonical name appearing in none of their own
+   * rows, and four of the six notices live that day opened "No matching
+   * transactions" under a sentence asserting the charge exists.
+   */
+  test("links by MERCHANT ID, because the canonical name is in none of the rows", () => {
+    addMerchant("m-1", "Zzz Insurance");
+    addTxn("2026-08-12", -35_758, "Transport", "m-1");
+    const n = noticesCard(bundle.db, TODAY)!.notices[0]!;
+    expect(n.href).toBe("/transactions?merchant=m-1");
+    expect(n.href).not.toContain("q=");
+  });
+
   test("a small first charge is not news — every merchant has a first one", () => {
     addMerchant("m-1", "Zzz Deli");
     addTxn("2026-08-12", -(FIRST_CHARGE_FLOOR_CENTS - 1), "Food", "m-1");

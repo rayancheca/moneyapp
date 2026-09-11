@@ -3,6 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { merchants } from "@/db/schema/merchants";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, todayIso } from "@/lib/dates";
+import { ledgerHref } from "@/lib/ledger-href";
 import { formatDayShort } from "@/lib/format-date";
 import { isPrintableName } from "@/lib/printable-name";
 import { countFact, deltaFact, multipleFact, scalarFact, type Fact } from "@/lib/insight-facts";
@@ -119,6 +120,20 @@ export function noticesCard(db: AppDatabase, today: string = todayIso()): Notice
     byMerchant.set(t.merchantId, list);
   }
 
+  /*
+   * 🔴 EVERY NOTICE LINKED BY NAME, AND THE NAME IS NOT IN THE ROWS. The href
+   * was `/transactions?q=${canonicalName}` — but `q` is a literal LIKE over the
+   * bank's own text, and a canonical name is the app's tidied version of it.
+   * "Mercedes Benz of Coral Springs" against a row reading "Card Purchase 08/12
+   * Mercedes Benz of Cora 183-38354662 FL Card 7782" — truncated at "Cora" —
+   * matches nothing. Measured 2026-09-11: **268 of 851 merchants (31.5%) have a
+   * canonical name that appears in none of their own rows**, and four of the
+   * six notices live that day opened "No matching transactions" under a
+   * sentence asserting the charge exists.
+   *
+   * ⛔ These loops hold the merchant ID. `ledgerHref({ merchant })` is exact by
+   * construction and needs no text to match at all.
+   */
   const candidates: Candidate[] = [];
   const prove = (id: string) => () => provenanceFor(db, { kind: "transaction", id });
 
@@ -136,7 +151,7 @@ export function noticesCard(db: AppDatabase, today: string = todayIso()): Notice
         facts: [countFact("f1", name, 1, "charge", "in your ledger"), scalarFact("f2", name, first.cents, "money")],
         candidate: { claimId: "only_charge", a: "f1", b: "f2" },
         day: first.day,
-        href: `/transactions?q=${encodeURIComponent(name)}`,
+        href: ledgerHref({ merchant: merchantId }),
         prove: prove(first.id),
       });
     }
@@ -155,7 +170,9 @@ export function noticesCard(db: AppDatabase, today: string = todayIso()): Notice
         ],
         candidate: { claimId: "times_the_usual", a: "f1" },
         day: row.day,
-        href: `/transactions?q=${encodeURIComponent(name)}`,
+        // the ONE charge the sentence is about, not every charge this merchant
+        // ever made — the notice names a day, so the link carries it
+        href: ledgerHref({ merchant: merchantId, from: row.day, to: row.day }),
         prove: prove(row.id),
       });
     }
@@ -178,7 +195,11 @@ export function noticesCard(db: AppDatabase, today: string = todayIso()): Notice
       facts: [deltaFact("f1", entry.name, drift, "money", "its usual amount", formatDayShort(entry.day))],
       candidate: { claimId: drift > 0 ? "rose_between" : "fell_between", a: "f1" },
       day: entry.day,
-      href: entry.transactionId ? `/transactions?q=${encodeURIComponent(entry.name)}` : null,
+      // a series has no merchant id here; the DAY is what narrows it, and the
+      // name is the series' own — which `recurringCalendar` took from the rows
+      href: entry.transactionId
+        ? ledgerHref({ q: entry.name, from: entry.day, to: entry.day })
+        : null,
       prove: entry.transactionId ? prove(entry.transactionId) : () => null,
     });
   }
