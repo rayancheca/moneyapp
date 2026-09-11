@@ -44,9 +44,33 @@ describe("trendScaleCents", () => {
 
 describe("MonthlyTrendBars", () => {
   test("claims absence only when every month really is zero", () => {
+    /*
+     * ⛔ …AND ONLY OVER THE MONTHS IT WAS HANDED. This assertion used to pin
+     * "No activity in the last 12 months" over a TWO-point series, because the
+     * sentence hard-coded the 12 — a second, quieter version of the same
+     * over-reach the branch below is about.
+     */
     expect(renderToStaticMarkup(createElement(MonthlyTrendBars, { points: months([0, 0]) }))).toContain(
-      "No activity in the last 12 months",
+      "No activity in the last 2 months",
     );
+  });
+
+  /**
+   * 🔴 A MONTH NOBODY HAS IMPORTED HAS NO ZERO TO REPORT. The bars have refused
+   * to state one since they shipped — a point past the frontier reads "not
+   * imported yet" — and the sentence that replaces all twelve of them asserted
+   * a measurement about the whole year anyway. On 2026-09-11 that sentence sat
+   * two cards above the same page's "September 2026 has not been imported yet
+   * … a window nobody has looked at, not one in which nothing happened", on
+   * /categories/<Hotels>, <Water/Gas> and <Interest Charges>.
+   */
+  test("an unread month is discounted, not asserted over", () => {
+    const points = months([0, 0, 0]);
+    points[2]!.reached = false;
+    const html = renderToStaticMarkup(createElement(MonthlyTrendBars, { points }));
+    expect(html).toContain("No activity in the 2 months the ledger covers");
+    expect(html).toContain("The newest 1 month has not been imported");
+    expect(html).not.toContain("No activity in the last 3 months");
   });
 
   test("draws a bar for money that came IN rather than calling it nothing", () => {

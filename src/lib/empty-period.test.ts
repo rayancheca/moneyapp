@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { emptyPeriodCopy, emptyPeriodReason } from "./empty-period";
+import { emptyPeriodCopy, emptyPeriodReason, emptyTrendCopy } from "./empty-period";
 
 const reason = (over: Partial<Parameters<typeof emptyPeriodReason>[0]> = {}) =>
   emptyPeriodReason({
@@ -173,5 +173,49 @@ describe("the uncategorized-bucket clause", () => {
     const copy = emptyPeriodCopy(measured, "August 2026", "2026-08-31", day);
     expect(copy.description).not.toContain("bucket");
     expect(copy.description).toContain("a measured zero rather than an unread window");
+  });
+});
+
+describe("emptyTrendCopy — an unread month is not an empty one", () => {
+  const months = (reachedCount: number, total = 12) =>
+    Array.from({ length: total }, (_, i) => ({ reached: i < reachedCount }));
+
+  /**
+   * 🔴 "No activity in the last 12 months." is an assertion about 365 days, and
+   * on 2026-09-11 the newest 11 of them had never been imported. The SAME PAGE
+   * said so two cards below: "September 2026 has not been imported yet …
+   * a window nobody has looked at, not one in which nothing happened."
+   */
+  test("discounts the months past the ledger's frontier, and says so", () => {
+    expect(emptyTrendCopy(months(11))).toBe(
+      "No activity in the 11 months the ledger covers. The newest 1 month has not been imported, " +
+        "so it is a window nobody has looked at rather than an empty one.",
+    );
+  });
+
+  test("more than one unread month reads as plural throughout", () => {
+    expect(emptyTrendCopy(months(9))).toBe(
+      "No activity in the 9 months the ledger covers. The newest 3 months have not been imported, " +
+        "so they are a window nobody has looked at rather than an empty one.",
+    );
+  });
+
+  /** ⛔ a window fully inside the records IS a measured zero, and still says so */
+  test("a fully-covered window keeps the plain assertion", () => {
+    expect(emptyTrendCopy(months(12))).toBe("No activity in the last 12 months.");
+  });
+
+  test("nothing imported at all measures nothing at all", () => {
+    expect(emptyTrendCopy(months(0))).toBe(
+      "None of the last 12 months has been imported yet — there is nothing here to measure.",
+    );
+  });
+
+  test("the noun is the page's own word for the figure", () => {
+    expect(emptyTrendCopy(months(12), "money received")).toBe("No money received in the last 12 months.");
+  });
+
+  test("a single-month window is singular", () => {
+    expect(emptyTrendCopy(months(1, 1))).toBe("No activity in the last 1 month.");
   });
 });

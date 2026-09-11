@@ -142,3 +142,44 @@ export function emptyPeriodCopy(
       };
   }
 }
+
+/**
+ * The 12-month trend chart's absence line.
+ *
+ * 🔴 "No activity in the last 12 months." is an assertion about 365 days, and on
+ * 2026-09-11 the newest 11 of them had never been imported. The SAME PAGE said
+ * so two cards below, out of `emptyPeriodCopy`'s `after-records` branch:
+ * *"September 2026 has not been imported yet. Nothing has been imported for 11
+ * days of it; the ledger stops on Mon, Aug 31, 2026. That is a window nobody has
+ * looked at, not one in which nothing happened."*
+ *
+ * `MonthlyTrendBars` already carried this doctrine for the BARS — a point past
+ * the frontier reads "not imported yet" rather than "$0.00, 0 transactions" —
+ * and the sentence that replaces all twelve of them never read it. The
+ * per-point `reached` flag it needs was already on the data.
+ *
+ * ⛔ Only the months the ledger has NOT reached are discounted. A month inside
+ * the records that holds nothing really is a measured zero and still says so —
+ * the same line `emptyPeriodCopy`'s `measured` branch draws.
+ */
+export function emptyTrendCopy(
+  points: readonly { reached: boolean }[],
+  /** what the page calls this figure — "Spent", "Received", "Net" */
+  flowNoun = "activity",
+): string {
+  const unreached = points.filter((p) => !p.reached).length;
+  const covered = points.length - unreached;
+  if (unreached === 0) return `No ${flowNoun} in the last ${monthsWord(points.length)}.`;
+  if (covered === 0) {
+    return `None of the last ${monthsWord(points.length)} has been imported yet — there is nothing here to measure.`;
+  }
+  return (
+    `No ${flowNoun} in the ${monthsWord(covered)} the ledger covers. ` +
+    `The newest ${monthsWord(unreached)} ${unreached === 1 ? "has" : "have"} not been imported, ` +
+    `so ${unreached === 1 ? "it is" : "they are"} a window nobody has looked at rather than an empty one.`
+  );
+}
+
+function monthsWord(n: number): string {
+  return `${n} ${n === 1 ? "month" : "months"}`;
+}

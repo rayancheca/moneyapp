@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { emptyTrendCopy } from "@/lib/empty-period";
 import { formatCents } from "@/lib/money";
 import { formatMonthYear } from "@/lib/format-date";
 import type { CategoryMonthPoint } from "@/services/category-detail";
@@ -49,7 +50,12 @@ export function MonthlyTrendBars({
   // "no activity", not "no spending": these points are a NET, and a category
   // whose year nets to nothing is not the same as one with nothing in it — but
   // a run of genuine zeroes is, and that is the only case left here.
-  if (max === 0) return <p className="text-sm text-ink-muted">No activity in the last 12 months.</p>;
+  //
+  // ⛔ …AND ONLY FOR THE MONTHS THE LEDGER HAS REACHED. The bars below already
+  // refuse to report a zero for a month nobody has imported; the sentence that
+  // REPLACES all twelve of them asserted one for the whole year. `reached` is
+  // the ledger's own frontier — see `categoryMonthlyTrend`.
+  if (max === 0) return <p className="text-sm text-ink-muted">{emptyTrendCopy(points)}</p>;
 
   return (
     <ul className="flex items-end gap-1" aria-label={`Monthly ${TREND_NOUN[flowLabel] ?? flowLabel.toLowerCase()}, last 12 months`}>
