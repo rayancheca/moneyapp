@@ -84,8 +84,26 @@ describe("the relief's readout counts categories in English", () => {
   });
 
   test("a hovered block names itself and its share instead", () => {
-    expect(massifCaptionKey({ label: "FOOD", share: 0.4237 }, 12, "Jul 2026")).toBe(
+    expect(massifCaptionKey({ label: "FOOD", share: 0.4237, spentCents: 42_370 }, 12, "Jul 2026")).toBe(
       "FOOD · 42.4% of Jul 2026",
+    );
+  });
+
+  /**
+   * 🔴 A category that netted a REFUND has a zero footprint — correctly, a
+   * width is `Math.max(0, spent)` — and the readout beside it turned that
+   * width into a measured share. `/spending?period=2024-05` read
+   * "Shopping · 0.0% · -$1,605.11".
+   */
+  test("a block that netted money back took no share, and says so", () => {
+    expect(massifCaptionKey({ label: "SHOPPING", share: 0, spentCents: -160_511 }, 12, "May 2024")).toBe(
+      "SHOPPING · no share of May 2024 — it netted money back",
+    );
+  });
+
+  test("a category that really spent nothing still reads 0.0%", () => {
+    expect(massifCaptionKey({ label: "HOTELS", share: 0, spentCents: 0 }, 12, "May 2024")).toBe(
+      "HOTELS · 0.0% of May 2024",
     );
   });
 });

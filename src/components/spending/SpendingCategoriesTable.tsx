@@ -1,6 +1,6 @@
 "use client";
 
-import { sharePercent } from "@/lib/insight-facts";
+import { spendingShare } from "@/lib/insight-facts";
 import { useState } from "react";
 import Link from "next/link";
 import { CategoryChip } from "@/components/ui/CategoryChip";
@@ -120,8 +120,13 @@ export function SpendingCategoriesTable({
               <div aria-hidden className="hidden h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-surface-sunken sm:block">
                 <div className="h-full rounded-full bg-accent/70" style={{ width: `${Math.min(100, row.sharePct)}%` }} />
               </div>
-              <span className="w-10 shrink-0 text-right text-xs text-ink-faint tabular-nums">
-                {sharePercent(row.sharePct)}
+              {/* ⛔ a category that netted a refund took no share — it did not
+                  take a zero one. `lib/insight-facts` carries the reason. */}
+              <span
+                className="w-10 shrink-0 text-right text-xs text-ink-faint tabular-nums"
+                title={spendingShare(row.spentCents, row.sharePct).title ?? undefined}
+              >
+                {spendingShare(row.spentCents, row.sharePct).label}
               </span>
               {showDelta && (
                 <span className="hidden w-20 shrink-0 text-right text-xs md:block">

@@ -1,6 +1,6 @@
 "use client";
 
-import { renderPercent } from "@/lib/insight-facts";
+import { renderPercent, spendingShare } from "@/lib/insight-facts";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -494,8 +494,11 @@ function MassifRail({
             <span className="min-w-0 flex-1">
               <span className="flex items-baseline gap-1.5">
                 <span className="truncate text-sm">{block.label}</span>
-                <span className="figures shrink-0 text-[11px] text-ink-faint">
-                  {renderPercent(block.share)}
+                <span
+                  className="figures shrink-0 text-[11px] text-ink-faint"
+                  title={spendingShare(block.spentCents, block.share * 100).title ?? undefined}
+                >
+                  {spendingShare(block.spentCents, block.share * 100).label}
                 </span>
               </span>
               <span className="block text-[11px] text-ink-faint">
@@ -597,7 +600,14 @@ function MassifTable({
       key: "share",
       header: "Share",
       align: "right",
-      render: (r) => <span className="figures text-ink-faint">{renderPercent(r.share)}</span>,
+      render: (r) => {
+        const s = spendingShare(r.spentCents, r.share * 100);
+        return (
+          <span className="figures text-ink-faint" title={s.title ?? undefined}>
+            {s.label}
+          </span>
+        );
+      },
     },
     {
       key: "prior",
@@ -651,11 +661,18 @@ function blockFill(hue: string | null): string {
  * read it.
  */
 export function massifCaptionKey(
-  active: { label: string; share: number } | null,
+  active: { label: string; share: number; spentCents: number } | null,
   categoryCount: number,
   periodLabel: string,
 ): string {
-  if (active) return `${active.label} · ${renderPercent(active.share)} of ${periodLabel}`;
+  // ⛔ a refunded block took no share of the period — the readout says so
+  // rather than naming a clamped "0.0%" of it
+  if (active) {
+    const s = spendingShare(active.spentCents, active.share * 100);
+    return s.title === null
+      ? `${active.label} · ${s.label} of ${periodLabel}`
+      : `${active.label} · no share of ${periodLabel} — it netted money back`;
+  }
   return `${periodLabel} · all ${categoryCount} categor${categoryCount === 1 ? "y" : "ies"}`;
 }
 

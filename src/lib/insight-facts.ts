@@ -414,6 +414,44 @@ export function sharePercent(pct: number): string {
   return renderPercent(pct / 100);
 }
 
+/**
+ * A category's share of a period's spending — or the REASON it has none.
+ *
+ * 🔴 The other half of `renderPercent`'s rule. That one stops a real quantity
+ * rounding away to "0.0%"; this one stops a quantity that moved the OTHER way
+ * being CLAMPED to it. Every share of spending divides `Math.max(0, spentCents)`
+ * by the period's positive spend, which is right for a WIDTH — a refunded
+ * category legitimately has no footprint — and manufactures an exact zero for
+ * the sentence beside it. "0.0%" is reserved, by construction and by this
+ * module's own tests, for an exact zero.
+ *
+ * Measured on the real ledger, 2026-09-11, in all three lenses of one card:
+ *
+ *     /spending?period=2024-05          "Shopping · 0.0% · -$1,605.11"
+ *     …&where=table                     "Shopping · 12 · 0.0% · -$1,605.11"
+ *     …&where=relief                    "0.0% … -$1,544.58"
+ *     /spending?period=2025-02           the Gambling row, the same way
+ *
+ * ⛔ The app's own accounts table already refuses this and names the reason —
+ * "in credit — no share of the debt", "overdrawn — no share of what is held"
+ * (`AccountsTable.tsx:487`, out of `side-magnitude`'s doctrine). The spending
+ * card printed the zero.
+ *
+ * The share cell is 40px wide on the list lens, so the refusal is a dash and
+ * the reason is its `title` — an attribute a screen reader reads and
+ * `read-surface` prints. A bare dash asserting nothing still beats a figure
+ * asserting something false.
+ */
+export function spendingShare(
+  spentCents: number,
+  sharePct: number,
+): { label: string; title: string | null } {
+  if (spentCents < 0) {
+    return { label: "—", title: "took no share of spending — this category netted money back" };
+  }
+  return { label: sharePercent(sharePct), title: null };
+}
+
 function ordinal(n: number): string {
   const rem100 = n % 100;
   if (rem100 >= 11 && rem100 <= 13) return `${n}th`;

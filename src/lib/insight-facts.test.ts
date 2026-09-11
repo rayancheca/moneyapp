@@ -10,6 +10,7 @@ import {
   trendFact,
   renderPercent,
   sharePercent,
+  spendingShare,
 } from "./insight-facts";
 
 describe("a fact renders itself, and the caller cannot disagree with it", () => {
@@ -213,5 +214,29 @@ describe("renderPercent — a real quantity is never rounded away", () => {
     expect(sharePercent(0.000087)).toBe(renderPercent(0.0000087));
     expect(sharePercent(60.2)).toBe("60.2%");
     expect(sharePercent(0)).toBe("0.0%");
+  });
+});
+
+describe("spendingShare — a refunded category took no share, not a zero one", () => {
+  /**
+   * 🔴 Every share of spending divides `Math.max(0, spentCents)` by the
+   * period's positive spend. That clamp is right for a WIDTH — a refunded
+   * category has no footprint — and it manufactures an exact zero for the
+   * sentence beside it. On the real ledger 2026-09-11, all three lenses of
+   * one card: "/spending?period=2024-05 — Shopping · 0.0% · -$1,605.11".
+   */
+  test("a category that netted money back is refused a share, with the reason", () => {
+    const s = spendingShare(-160_511, 0);
+    expect(s.label).toBe("—");
+    expect(s.title).toBe("took no share of spending — this category netted money back");
+  });
+
+  test("a category that really spent nothing keeps its measured zero", () => {
+    expect(spendingShare(0, 0)).toEqual({ label: "0.0%", title: null });
+  });
+
+  test("a normal share is the module's own percent rule", () => {
+    expect(spendingShare(42_370, 42.37)).toEqual({ label: "42.4%", title: null });
+    expect(spendingShare(1, 0.04)).toEqual({ label: "<0.1%", title: null });
   });
 });
