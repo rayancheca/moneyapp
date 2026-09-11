@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { NO_MERCHANT } from "@/lib/ledger-href";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { formatCents } from "@/lib/money";
 import { filtersToQuery, type TxnFilters } from "./query";
@@ -115,7 +116,14 @@ export function preservedFilterChips(filters: TxnFilters, merchantName?: string)
   if (filters.merchant) {
     chips.push({
       key: "merchant",
-      label: merchantName ? `Merchant: ${merchantName}` : "One merchant",
+      // ⛔ the no-merchant sentinel is not "one merchant" — a chip that named it
+      // wrongly would let the next filter edit silently drop the scope
+      label:
+        filters.merchant === NO_MERCHANT
+          ? "No merchant"
+          : merchantName
+            ? `Merchant: ${merchantName}`
+            : "One merchant",
       clear: { merchant: null },
     });
   }

@@ -1,4 +1,5 @@
 import { and, count, eq, gt, gte, inArray, isNull, lt, lte, or, sql, type SQL } from "drizzle-orm";
+import { NO_MERCHANT } from "@/lib/ledger-href";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import { transactions } from "@/db/schema/transactions";
@@ -62,7 +63,19 @@ export function filterConditions(
 ): SQL[] {
   const conds: SQL[] = [];
   if (filters.account) conds.push(eq(transactions.accountId, filters.account));
-  if (filters.merchant) conds.push(eq(transactions.merchantId, filters.merchant));
+  /*
+   * ⛔ `merchant=none` is the NO-MERCHANT sentinel, the mirror of
+   * `category=uncategorized`. `topMerchants` builds its "unlinked" groups by
+   * skipping every row that HAS a merchant, and the link it published carried
+   * the category, the window and a literal description anchor but not that
+   * half of the definition — /transactions had no filter that could express
+   * it. Measured 2026-09-11: "LA PISCINE MIAMI BEACH · 26 transactions ·
+   * unlinked · $730.15" opened 29 rows totalling $857.06, because three rows
+   * with the same description ARE linked to a merchant. 33 of 616 rendered
+   * unlinked rows over-matched this way.
+   */
+  if (filters.merchant === NO_MERCHANT) conds.push(isNull(transactions.merchantId));
+  else if (filters.merchant) conds.push(eq(transactions.merchantId, filters.merchant));
   // NULL, or filed on the system "Uncategorized" category — the same set the
   // analytics index calls uncategorized (CategoryIndex.uncategorizedIds)
   const systemIds = allCategories.filter((c) => c.kind === "system").map((c) => c.id);

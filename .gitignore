@@ -38,5 +38,6 @@ test-results/
 # 2026-09-11 swept twelve of them in behind a `git add -A`. One of them broke
 # `tsc --noEmit`. Ignored so it cannot happen again.
 probe-*.ts
+*probe*.ts
 .p.ts
 .skeptic-probe-*.ts

@@ -7,6 +7,7 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
+import { merchants } from "@/db/schema/merchants";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
@@ -56,6 +57,7 @@ function insertTxn(overrides: {
   categoryId?: string | null;
   status?: TransactionStatus;
   needsReview?: boolean;
+  merchantId?: string | null;
 }): string {
   seq += 1;
   const accountId = overrides.accountId ?? checkingId;
@@ -71,6 +73,7 @@ function insertTxn(overrides: {
       rawDescription,
       normalizedDescription: rawDescription.toUpperCase(),
       categoryId: overrides.categoryId ?? null,
+      merchantId: overrides.merchantId ?? null,
       status: overrides.status ?? "active",
       needsReview: overrides.needsReview ?? false,
       dedupeHash: dedupeHash({
@@ -178,6 +181,34 @@ describe("countMatching — filter conditions", () => {
     expect(cashflow).toBe(4); // exactly the union — the transfer and the two strays stay out
     // and the window alone would have opened all seven
     expect(countMatching(bundle.db, filters({}), "all")).toBe(7);
+  });
+
+  /**
+   * 🔴 AN "UNLINKED" ROW IS DEFINED BY HAVING NO MERCHANT, AND ITS LINK COULD
+   * NOT SAY SO. `topMerchants` builds those groups by skipping every row that
+   * HAS a merchant; the drill carried the category, the window and a literal
+   * description anchor, and /transactions had no filter for the other half.
+   * On the real ledger 2026-09-11, "LA PISCINE MIAMI BEACH · 26 transactions ·
+   * unlinked · $730.15" opened 29 rows / $857.06 — three of them LINKED rows
+   * that share the description. 33 of 616 rendered unlinked rows over-matched.
+   */
+  test("the 'none' merchant token = rows with NO merchant, the mirror of uncategorized", () => {
+    const m = bundle.db
+      .insert(merchants)
+      .values({ canonicalName: "La Piscine" })
+      .returning({ id: merchants.id })
+      .get().id;
+    insertTxn({ merchantId: m, amountCents: -1_000, rawDescription: "LA PISCINE MIAMI BEACH" });
+    insertTxn({ merchantId: null, amountCents: -2_000, rawDescription: "LA PISCINE MIAMI BEACH" });
+    insertTxn({ merchantId: null, amountCents: -3_000, rawDescription: "LA PISCINE MIAMI BEACH" });
+    // the text anchor alone opens all three — the linked row included
+    expect(countMatching(bundle.db, filters({ q: "LA PISCINE MIAMI BEACH" }), "all")).toBe(3);
+    // …with the other half of the definition, exactly the two the group counted
+    expect(
+      countMatching(bundle.db, filters({ q: "LA PISCINE MIAMI BEACH", merchant: "none" }), "all"),
+    ).toBe(2);
+    // and it is a sentinel, not an id: a real id still means that merchant
+    expect(countMatching(bundle.db, filters({ merchant: m }), "all")).toBe(1);
   });
 
   test("the 'income' StatCard token = income-kind positive rows only", () => {

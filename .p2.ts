@@ -1,24 +1,47 @@
 import { getDb } from "@/db/client";
-import { txnHistory } from "@/services/txn-detail";
-import { transactions } from "@/db/schema/transactions";
-import { like, eq, and } from "drizzle-orm";
+import { cashFlowByPeriod, spendingProjection } from "@/services/spending";
+import { resolvePeriod } from "@/lib/period";
+import { cashFlowCumulative } from "@/lib/cash-flow-cumulative";
+import { stepPeriodParams } from "@/lib/period";
+import { subBuckets } from "@/lib/period";
 
-const line = (a: { accountName: string; count: number; outCount: number }) => {
-  const rows = `${a.count} ${a.count === 1 ? "transaction" : "transactions"}`;
-  if (a.outCount === 0) return `${a.accountName} · ${rows}, none of them spending`;
-  if (a.outCount === a.count) return `${a.accountName} · ${rows}`;
-  return `${a.accountName} · ${rows}, ${a.outCount} of them spending`;
-};
+// the DELETED pre-diff resample, restored verbatim from 3fe32fc^
+function reindexByPosition(values: readonly number[], targetLength: number): number[] {
+  if (targetLength <= 0 || values.length === 0) return [];
+  if (targetLength === 1) return [values[values.length - 1]!];
+  const lastSrc = values.length - 1;
+  const out: number[] = [];
+  for (let i = 0; i < targetLength; i++) {
+    const srcIdx = lastSrc === 0 ? 0 : Math.round((i / (targetLength - 1)) * lastSrc);
+    out.push(values[srcIdx]!);
+  }
+  return out;
+}
 
 const db = getDb();
-const TODAY = "2026-09-11";
-const rows = db.select({ id: transactions.id })
-  .from(transactions)
-  .where(and(eq(transactions.status, "active"), like(transactions.rawDescription, "%CAPITAL ONE MOBILE%")))
-  .all();
-console.log("CAPITAL ONE MOBILE rows:", rows.length);
-if (rows.length) {
-  const h = txnHistory(db, rows[0]!.id, TODAY)!;
-  console.log("group count", h.count, "outCount", h.outCount, "total", h.totalCents, "sum(byAccount)", h.byAccount.reduce((s, a) => s + a.cents, 0));
-  for (const a of h.byAccount) console.log("   ", line(a), "|", a.outCount === 0 ? "—" : `$${(a.cents / 100).toFixed(2)}`);
+const today = "2026-09-11";
+const probes = ["2023-06", "2022-09", "2023-04", "2026-09", "2024-02"];
+for (const p of probes) {
+  const period = resolvePeriod({ period: p } as never, today);
+  const cf = cashFlowByPeriod(db, period, today);
+  const proj = spendingProjection(db, period, today, cf.pace, cf.totals.spentCents);
+  const prior = proj.prior!;
+  const prevPeriod = resolvePeriod(stepPeriodParams(period, -1), today);
+  const prevFlow = cashFlowByPeriod(db, prevPeriod, today);
+  const priorDaily = prevFlow.buckets.map((b) => b.spendingCents);
+  const bucketCount = subBuckets(period).length;
+  const oldGhost = reindexByPosition(priorDaily, bucketCount);
+  const oldLast = oldGhost.reduce((s, v) => s + v, 0);
+  const rows = cashFlowCumulative(cf.buckets, prior.aligned, prior.spentCents);
+  const newLast = rows[rows.length - 1]!.ghostCum!;
+  const byHere = prior.aligned.reduce<number>((s, v) => s + (v ?? 0), 0);
+  const lastPriorBucket = prevFlow.buckets[prevFlow.buckets.length - 1]!;
+  console.log(
+    `${p} prior=${prior.label} priorBuckets=${priorDaily.length} curBuckets=${bucketCount}\n` +
+      `   OLD last (resample sum) = $${(oldLast / 100).toFixed(2)}\n` +
+      `   NEW last (pinned total) = $${(newLast / 100).toFixed(2)}\n` +
+      `   index-aligned by-here   = $${(byHere / 100).toFixed(2)}\n` +
+      `   prior's own last bucket: ${lastPriorBucket.label} = $${(lastPriorBucket.spendingCents / 100).toFixed(2)}\n` +
+      `   prior TOTAL (page readout) = $${(prior.spentCents / 100).toFixed(2)}`,
+  );
 }

@@ -13,6 +13,7 @@ import { normalizeDescription } from "@/lib/normalize";
 import { resolvePeriod, stepPeriodParams, subBuckets, type ResolvedPeriod } from "@/lib/period";
 import { alignByIndex, projectPace } from "@/lib/projection";
 import { allocationsFor } from "@/lib/transaction-splits";
+import { NO_MERCHANT } from "@/lib/ledger-href";
 import {
   activeTxnsInRange,
   ledgerHref,
@@ -820,6 +821,13 @@ export function topMerchants(
             // worse than the label-only link it replaces
             ledgerHref({
               category: drillCategory,
+              // ⛔ this group IS "rows with no merchant" (the loop above skips
+              // every row that has one), and the link said only "rows whose
+              // text looks like this". On the real ledger 2026-09-11
+              // "LA PISCINE MIAMI BEACH · 26 transactions · unlinked · $730.15"
+              // opened 29 rows / $857.06 — three of them LINKED rows sharing
+              // the description. 33 of 616 rendered unlinked rows over-matched.
+              merchant: NO_MERCHANT,
               q: literalGroupQuery(g.strippedKey!, g.texts) ?? g.query!,
               from: range.from,
               to: range.to,

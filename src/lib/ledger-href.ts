@@ -8,9 +8,26 @@
  * precisely the rows behind the number clicked.
  */
 
+/**
+ * `?merchant=` sentinel for "rows with NO merchant" — the mirror of
+ * `?category=uncategorized`.
+ *
+ * 🔴 `topMerchants` defines an "unlinked" group as rows that have no merchant,
+ * and the link it published could not say so: /transactions had no filter for
+ * it, so the drill carried the category, the window and a literal description
+ * anchor and silently included the LINKED rows that share that description.
+ * Measured on the real ledger, 2026-09-11: "LA PISCINE MIAMI BEACH · 26
+ * transactions · unlinked · $730.15" opened 29 rows totalling $857.06.
+ *
+ * ⛔ Not a merchant id: ids here are UUIDv7 and this is the literal word, the
+ * same shape `category=uncategorized` uses.
+ */
+export const NO_MERCHANT = "none";
+
 export interface LedgerHrefParams {
   /** category id, `null` for the Uncategorized bucket, or omit for any category */
   category?: string | null;
+  /** a merchant id, or `NO_MERCHANT` for the rows that have none */
   merchant?: string;
   /** scope to one account (investment drill-downs: a day's trades, a symbol's events) */
   account?: string;
