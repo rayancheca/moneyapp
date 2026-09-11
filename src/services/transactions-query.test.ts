@@ -154,6 +154,32 @@ describe("countMatching — filter conditions", () => {
     expect(countMatching(bundle.db, filters({ category: "spending" }), "all")).toBe(3);
   });
 
+  /**
+   * 🔴 THE DRILL-DOWN CONTRACT, BROKEN ON THE CARD THAT SUMS THE OTHER THREE.
+   * `Net`'s link carried the window and NOTHING ELSE, so on the real ledger
+   * 2026-09-11 `/spending?period=2026` printed "Net -$31,733.19" over a list of
+   * **2,682 rows summing to +$27,961.36** — the whole year, transfers, card
+   * payments and investment flows included. Earned, Spent and Refunds all
+   * opened exactly the rows behind them. Scoped: 1,601 rows, -$31,733.19, to
+   * the cent.
+   */
+  test("the 'cashflow' token is spending ∪ income — the population Net is a figure over", () => {
+    insertTxn({ categoryId: catId("Food > Dining"), amountCents: -5_000 }); // spending
+    insertTxn({ categoryId: catId("Food > Dining"), amountCents: 2_000 }); // a refund — spending, netting
+    insertTxn({ categoryId: null, amountCents: -3_000 }); // uncategorized outflow → spending
+    insertTxn({ categoryId: catId("Income > Salary"), amountCents: 500_000 }); // earned
+    insertTxn({ categoryId: null, amountCents: 9_000 }); // uncategorized credit → in NEITHER half
+    insertTxn({ categoryId: catId("Income > Salary"), amountCents: -50 }); // negative income → neither
+    insertTxn({ categoryId: catId("Transfers > Internal Transfer"), amountCents: -1_000 }); // neither
+    const spending = countMatching(bundle.db, filters({ category: "spending" }), "all");
+    const income = countMatching(bundle.db, filters({ category: "income" }), "all");
+    const cashflow = countMatching(bundle.db, filters({ category: "cashflow" }), "all");
+    expect([spending, income]).toEqual([3, 1]);
+    expect(cashflow).toBe(4); // exactly the union — the transfer and the two strays stay out
+    // and the window alone would have opened all seven
+    expect(countMatching(bundle.db, filters({}), "all")).toBe(7);
+  });
+
   test("the 'income' StatCard token = income-kind positive rows only", () => {
     insertTxn({ categoryId: catId("Income > Salary"), amountCents: 500_000 });
     insertTxn({ categoryId: catId("Income > Interest"), amountCents: 1_200 });

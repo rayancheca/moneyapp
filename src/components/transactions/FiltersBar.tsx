@@ -25,15 +25,22 @@ export interface CategoryFilterOption {
 }
 
 /**
- * The three non-category values `?category=` accepts (transactions-query
- * §filterConditions): the Uncategorized honesty bucket and the two kind-scoped
- * StatCard drill-downs. They are real, applied filters, so the control has to
- * be able to display and re-submit them.
+ * The four non-category values `?category=` accepts (transactions-query
+ * §filterConditions): the Uncategorized honesty bucket and the three
+ * kind-scoped StatCard drill-downs. They are real, applied filters, so the
+ * control has to be able to display and re-submit them.
+ *
+ * ⛔ `cashflow` is spending ∪ income — the population the Net and Savings-rate
+ * cards are figures over. A sentinel the query layer honours but this list does
+ * not is worse than no sentinel at all: the rows would be filtered while the
+ * control said "All categories", and the first edit of any other filter would
+ * silently drop the scope.
  */
 export const CATEGORY_SENTINEL_OPTIONS: readonly CategoryFilterOption[] = [
   { id: "uncategorized", label: "Uncategorized" },
   { id: "spending", label: "All spending" },
   { id: "income", label: "All income" },
+  { id: "cashflow", label: "All earning and spending" },
 ];
 
 /**

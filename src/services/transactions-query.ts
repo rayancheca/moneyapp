@@ -74,28 +74,38 @@ export function filterConditions(
     // The explicit Uncategorized honesty bucket (Spending §5.4 / analytics
     // ledgerHref): land on the category-less rows, never on an empty ledger.
     conds.push(uncategorized());
-  } else if (filters.category === "spending" || filters.category === "income") {
+  } else if (
+    filters.category === "spending" ||
+    filters.category === "income" ||
+    filters.category === "cashflow"
+  ) {
     // Kind-scoped StatCard drill-downs (Spending §5.1). These EXACTLY mirror
     // analytics' spending / income classification so the Spent / Earned cards'
     // numbers reconcile to the list they open: spending = expense-kind rows of
     // either sign (refunds net) PLUS uncategorized outflows; income = income-kind
     // positive rows.
-    if (filters.category === "spending") {
-      const expenseIds = idsWithTopKind(allCategories, "expense");
-      conds.push(
-        or(
-          expenseIds.length > 0 ? inArray(transactions.categoryId, expenseIds) : sql`0 = 1`,
-          and(uncategorized(), lt(transactions.amountCents, 0)),
-        ) as SQL,
-      );
-    } else {
-      const incomeIds = idsWithTopKind(allCategories, "income");
-      conds.push(
-        incomeIds.length > 0
-          ? (and(inArray(transactions.categoryId, incomeIds), gt(transactions.amountCents, 0)) as SQL)
-          : sql`0 = 1`,
-      );
-    }
+    //
+    // 🔴 `cashflow` is their UNION — the population NET is a figure over, and
+    // the one card of the four whose link had no scope at all. Measured on the
+    // real ledger 2026-09-11: `/spending?period=2026` printed
+    // "Net -$31,733.19" over a link opening 2,682 rows that sum to
+    // +$27,961.36. Its three sibling cards — Earned, Spent, Refunds — all
+    // opened exactly the rows behind them; Net and Savings rate opened the
+    // whole ledger for the window, transfers, card payments and investment
+    // flows included.
+    const expenseIds = idsWithTopKind(allCategories, "expense");
+    const incomeIds = idsWithTopKind(allCategories, "income");
+    const spendingScope = or(
+      expenseIds.length > 0 ? inArray(transactions.categoryId, expenseIds) : sql`0 = 1`,
+      and(uncategorized(), lt(transactions.amountCents, 0)),
+    ) as SQL;
+    const incomeScope =
+      incomeIds.length > 0
+        ? (and(inArray(transactions.categoryId, incomeIds), gt(transactions.amountCents, 0)) as SQL)
+        : (sql`0 = 1` as SQL);
+    if (filters.category === "spending") conds.push(spendingScope);
+    else if (filters.category === "income") conds.push(incomeScope);
+    else conds.push(or(spendingScope, incomeScope) as SQL);
   } else if (filters.category) {
     const subtreeIds = allCategories
       .filter((c) => c.id === filters.category || c.parentId === filters.category)

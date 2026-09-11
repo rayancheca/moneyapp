@@ -3,8 +3,7 @@ import {
   amountRangeLabel,
   categorySelectOptions,
   hasAnyFilter,
-  preservedFilterChips,
-} from "./FiltersBar";
+  preservedFilterChips, CATEGORY_SENTINEL_OPTIONS } from "./FiltersBar";
 import { filtersToQuery, type TxnFilters } from "./query";
 
 function filters(overrides: Partial<TxnFilters> = {}): TxnFilters {
@@ -61,19 +60,30 @@ describe("categorySelectOptions", () => {
     { id: "coffee", label: "Food & Drink > Coffee" },
   ];
 
-  it("offers the three URL sentinels ahead of the tree", () => {
+  /**
+   * ⛔ EVERY SENTINEL THE QUERY LAYER HONOURS MUST BE HERE. `cashflow` —
+   * spending ∪ income, the population the Net and Savings-rate cards are
+   * figures over — was added to `filterConditions` for the drill-down contract;
+   * a sentinel the query applies and this list omits is worse than none, since
+   * the rows would be filtered while the control read "All categories" and the
+   * next edit of any other filter would silently drop the scope.
+   */
+  it("offers every URL sentinel ahead of the tree", () => {
     expect(categorySelectOptions(null, tree).map((o) => o.id)).toEqual([
       "uncategorized",
       "spending",
       "income",
+      "cashflow",
       "food",
       "coffee",
     ]);
   });
 
   it("leaves the list alone when the applied value is already in it", () => {
-    expect(categorySelectOptions("coffee", tree)).toHaveLength(tree.length + 3);
-    expect(categorySelectOptions("spending", tree)).toHaveLength(tree.length + 3);
+    const sentinels = CATEGORY_SENTINEL_OPTIONS.length;
+    expect(categorySelectOptions("coffee", tree)).toHaveLength(tree.length + sentinels);
+    expect(categorySelectOptions("spending", tree)).toHaveLength(tree.length + sentinels);
+    expect(categorySelectOptions("cashflow", tree)).toHaveLength(tree.length + sentinels);
   });
 
   it("appends an unknown applied id so the control never claims 'All categories'", () => {

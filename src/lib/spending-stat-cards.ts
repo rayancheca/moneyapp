@@ -80,8 +80,17 @@ export function spendingStatCards(totals: PeriodTotals, range: DateRange): Spend
     flow: true,
     // with Refunds on screen the arithmetic is visible; name it for clarity
     delta: showRefunds ? "earned + refunds − spent" : undefined,
-    href: ledgerHref({ from: range.from, to: range.to }),
-    ariaLabel: `Net this period. ${netCents < 0 ? "negative " : ""}${dollars(Math.abs(netCents))}. View all transactions.`,
+    /*
+     * 🔴 THE DRILL-DOWN CONTRACT, BROKEN ON THE ONE CARD THAT SUMS THE OTHER
+     * THREE. This was an unscoped window, so `/spending?period=2026` printed
+     * "Net -$31,733.19" over a link opening 2,682 rows summing to +$27,961.36 —
+     * the whole ledger for the year, transfers, card payments and investment
+     * flows included. Its Earned, Spent and Refunds siblings all opened exactly
+     * the rows behind them. `cashflow` is their union, which is the population
+     * this figure is over.
+     */
+    href: ledgerHref({ category: "cashflow", from: range.from, to: range.to }),
+    ariaLabel: `Net this period. ${netCents < 0 ? "negative " : ""}${dollars(Math.abs(netCents))}. View the earning and spending behind it.`,
   });
 
   /*
@@ -116,7 +125,9 @@ export function spendingStatCards(totals: PeriodTotals, range: DateRange): Spend
       savingsRatePct === null
         ? "no income yet"
         : `${netCents >= 0 ? "kept" : "overspent"} · of ${formatCents(earnedCents)} earned`,
-    href: ledgerHref({ from: range.from, to: range.to }),
+    // the same population as Net — this rate is net ÷ earned, and both terms
+    // come from these rows
+    href: ledgerHref({ category: "cashflow", from: range.from, to: range.to }),
     ariaLabel:
       savingsRatePct === null
         ? "Savings rate unavailable without income."
