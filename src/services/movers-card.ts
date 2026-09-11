@@ -1,4 +1,5 @@
 import type { AppDatabase } from "@/db/client";
+import { apportionPercents } from "@/lib/apportion";
 import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { formatDayShort, formatMonthYear, monthWindowLabel } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
@@ -462,7 +463,7 @@ export function moversCard(db: AppDatabase, today: string = todayIso()): MoversC
     return (spent / baselineTotal) * 100;
   };
 
-  const lagging: CoverageLag[] = liveSpenders
+  const laggingBase = liveSpenders
     .filter((accountId) => (frontier.byAccount.get(accountId) ?? "") < today)
     .map((accountId) => ({
       accountId,
@@ -470,12 +471,22 @@ export function moversCard(db: AppDatabase, today: string = todayIso()): MoversC
       through: frontier.byAccount.get(accountId)!,
       throughLabel: formatDayShort(frontier.byAccount.get(accountId)!),
       sharePct: shareOf(accountId),
-      shareLabel: `${Math.round(shareOf(accountId))}% of the usual`,
     }))
     .sort((a, b) => b.sharePct - a.sharePct || a.name.localeCompare(b.name));
+  /*
+   * ⛔ The rows are apportioned, never rounded one by one. Rounding each share
+   * on its own made them add to 95 under a headline that rounded their true sum
+   * to 94 — both honest, neither reconcilable. `lib/apportion` carries the
+   * measurement. This file's own doctrine, forty lines up, is that the reader
+   * must be able to add the card up.
+   */
+  const laggingWhole = apportionPercents(laggingBase.map((l) => l.sharePct));
+  const lagging: CoverageLag[] = laggingBase.map((l, i) => ({
+    ...l,
+    shareLabel: `${laggingWhole[i]}% of the usual`,
+  }));
 
   const currentMonthLabel = formatMonthYear(`${currentMonth}-01`);
-  const laggingShare = lagging.reduce((sum, l) => sum + l.sharePct, 0);
   const earliestThrough = [...lagging].map((l) => l.through).sort().at(0);
   /*
    * 🔴 A two-month jump explained by a one-month reason. On 2026-09-03 the
@@ -495,7 +506,7 @@ export function moversCard(db: AppDatabase, today: string = todayIso()): MoversC
   const currentMonthNote =
     (lagging.length === 0
       ? `${currentMonthLabel} is still running, so it is not counted here — a part month set against whole months reads as a fall that has not happened.`
-      : `${currentMonthLabel} is still running, and it is not fully imported either: ${Math.round(laggingShare)}% of your usual spending posts to ${lagging.length} ${plural(lagging.length, "account", "accounts")} the ledger has only been shown through ${earliestThrough === undefined ? "no day at all" : formatDayShort(earliestThrough)} at the earliest. A shortfall there would be missing statements, not less spending.`) +
+      : `${currentMonthLabel} is still running, and it is not fully imported either: ${laggingWhole.reduce((sum, w) => sum + w, 0)}% of your usual spending posts to ${lagging.length} ${plural(lagging.length, "account", "accounts")} the ledger has only been shown through ${earliestThrough === undefined ? "no day at all" : formatDayShort(earliestThrough)} at the earliest. A shortfall there would be missing statements, not less spending.`) +
     skippedNote;
 
   /*
