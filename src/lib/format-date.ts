@@ -55,3 +55,23 @@ export function formatMonthYear(iso: string): string {
   const { y, m } = parts(iso);
   return `${MONTHS_SHORT[m - 1]} ${y}`;
 }
+
+/**
+ * A window of whole MONTHS in a sentence: "Mar 2026 to Aug 2026", and just
+ * "Mar 2026" when both ends are the same month. Takes month KEYS (`YYYY-MM`),
+ * the form the cards carry.
+ *
+ * 🔴 The dashboard named ONE window two ways, on one screen. The runway,
+ * eating-out and subscriptions cards printed the raw key — "Spending averaged
+ * over 6 complete months, **2026-03 to 2026-08**" — while the fees and
+ * transfers cards beside them, over the identical window, read "**Mar 2026 to
+ * Aug 2026**". Measured 2026-09-11 by rendering all 197 routes and grepping
+ * their prose for machine values: three sentences, all on `/`.
+ *
+ * ⛔ This is the spelling the correct siblings already used, not a new one, and
+ * `fees-card` reads it too so there is a second caller keeping it honest.
+ */
+export function monthWindowLabel(fromMonth: string, toMonth: string): string {
+  const from = formatMonthYear(`${fromMonth}-01`);
+  return fromMonth === toMonth ? from : `${from} to ${formatMonthYear(`${toMonth}-01`)}`;
+}

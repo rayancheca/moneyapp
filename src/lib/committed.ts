@@ -23,6 +23,7 @@
 
 import type { Cadence } from "@/db/schema/recurring";
 import { addCalendarMonths, compareDates, daysInMonthOf, monthKey, withDayOfMonth } from "@/lib/dates";
+import { monthWindowLabel } from "@/lib/format-date";
 import { levelledMonthlyCents } from "@/lib/income-basis";
 import { formatCents } from "@/lib/money";
 
@@ -394,10 +395,7 @@ export function baselineCaption(window: { months: number; fromMonth: string; toM
   if (window.months < 1) {
     return "No complete month has been imported yet, so there is no spending average to stand on.";
   }
-  const span =
-    window.fromMonth === window.toMonth
-      ? window.fromMonth
-      : `${window.fromMonth} to ${window.toMonth}`;
+  const span = monthWindowLabel(window.fromMonth, window.toMonth);
   return `Spending averaged over ${window.months} complete month${
     window.months === 1 ? "" : "s"
   }, ${span}. This month is still running and is not counted.`;

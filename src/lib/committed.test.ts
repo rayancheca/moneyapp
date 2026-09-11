@@ -277,9 +277,14 @@ describe("COMMITTED_ORIGIN_LABEL", () => {
 });
 
 describe("baselineCaption", () => {
-  test("names the months it averaged", () => {
+  /*
+   * 🔴 The raw month key, on the dashboard, beside two cards naming the SAME
+   * window "Mar 2026 to Aug 2026". Found 2026-09-11 by rendering all 197 routes
+   * and grepping their prose for machine values.
+   */
+  test("names the months it averaged, the way the cards beside it do", () => {
     expect(baselineCaption({ months: 6, fromMonth: "2026-03", toMonth: "2026-08" })).toBe(
-      "Spending averaged over 6 complete months, 2026-03 to 2026-08. This month is still running and is not counted.",
+      "Spending averaged over 6 complete months, Mar 2026 to Aug 2026. This month is still running and is not counted.",
     );
   });
 
@@ -287,7 +292,8 @@ describe("baselineCaption", () => {
     const c = baselineCaption({ months: 1, fromMonth: "2022-09", toMonth: "2022-09" });
     expect(c).toContain("1 complete month,");
     expect(c).not.toContain("months");
-    expect(c).not.toContain("2022-09 to 2022-09");
+    expect(c).toContain("Sep 2022.");
+    expect(c).not.toContain("Sep 2022 to Sep 2022");
   });
 
   /**
@@ -300,6 +306,7 @@ describe("baselineCaption", () => {
     const c = baselineCaption({ months: 0, fromMonth: "2022-09", toMonth: "2022-09" });
     expect(c).toBe("No complete month has been imported yet, so there is no spending average to stand on.");
     expect(c).not.toContain("2022-09");
+    expect(c).not.toContain("Sep 2022");
     expect(c).not.toContain("0 complete");
   });
 });

@@ -1,6 +1,6 @@
 import type { AppDatabase } from "@/db/client";
 import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates";
-import { formatMonthYear } from "@/lib/format-date";
+import { formatMonthYear, monthWindowLabel } from "@/lib/format-date";
 import { ledgerHref } from "@/lib/ledger-href";
 import { formatCents } from "@/lib/money";
 import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryIndex } from "./analytics";
@@ -508,8 +508,8 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
   /* ── the headline, and which window it describes ─────────────────────── */
   const basis = recent.rowCount === 0 ? "allTime" : "recent";
   const shown = basis === "recent" ? recent : allTime;
-  const fromLabel = formatMonthYear(`${fromMonth}-01`);
   const toLabel = formatMonthYear(`${toMonth}-01`);
+  const windowLabel = monthWindowLabel(fromMonth, toMonth);
   const spanLabel =
     basis === "recent" ? `over the ${months} months to ${toLabel}` : `since ${formatMonthYear(firstOn)}`;
 
@@ -542,7 +542,7 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
   const summary =
     basis === "allTime"
       ? `${allTimeLead} From ${formatMonthYear(firstOn)} the ledger holds ${formatCents(allTime.paidCents)} of fees against ${formatCents(allTime.earnedCents)} of interest, so ${standingClause(allTime)}.`
-      : `${formatCents(recent.paidCents)} went out in fees over the ${months} complete months ${fromLabel} to ${toLabel}, across every account, against ${formatCents(recent.earnedCents)} of interest back. ${allTimeLead} from ${formatMonthYear(firstOn)} the ledger holds ${formatCents(allTime.earnedCents)} of interest against ${formatCents(allTime.paidCents)} of fees, so ${standingClause(allTime)}.`;
+      : `${formatCents(recent.paidCents)} went out in fees over the ${months} complete months ${windowLabel}, across every account, against ${formatCents(recent.earnedCents)} of interest back. ${allTimeLead} from ${formatMonthYear(firstOn)} the ledger holds ${formatCents(allTime.earnedCents)} of interest against ${formatCents(allTime.paidCents)} of fees, so ${standingClause(allTime)}.`;
 
   return {
     basis,

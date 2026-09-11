@@ -3,6 +3,7 @@ import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { formatCents } from "@/lib/money";
+import { monthWindowLabel } from "@/lib/format-date";
 import type { EatingOutCard as EatingOutCardData } from "@/services/eating-out";
 
 /**
@@ -135,8 +136,11 @@ export function EatingOutCard({ data }: { data: EatingOutCardData }) {
       )}
 
       <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
-        That is {purchasesPerDay.toFixed(1)} purchases a day. Averaged over {months} complete months, {fromMonth} to{" "}
-        {toMonth}. This month is still running and is not counted.
+        {/* ⛔ `monthWindowLabel`, not the raw keys. The fees and transfers cards
+            on this same screen name the identical window "Mar 2026 to Aug
+            2026"; this one said "2026-03 to 2026-08". */}
+        That is {purchasesPerDay.toFixed(1)} purchases a day. Averaged over {months} complete months,{" "}
+        {monthWindowLabel(fromMonth, toMonth)}. This month is still running and is not counted.
       </p>
     </SurfaceCard>
   );

@@ -7,6 +7,7 @@ import type { BalanceBasis } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
 import { dayChangeLabel } from "@/lib/day-change-label";
+import { dayWindowLabel } from "@/lib/period";
 import { formatDayShort } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { balanceDeltaAccent, balanceHeading, type BalanceDeltaAccent } from "@/lib/side-magnitude";
@@ -410,7 +411,7 @@ export default async function AccountDetailPage({
                           fields={{ anchorId: a.id, accountId: id }}
                           formClassName="inline"
                           triggerLabel="remove"
-                          triggerAriaLabel={`remove the balance recorded on ${a.anchoredOn}`}
+                          triggerAriaLabel={`remove the balance recorded on ${dayWindowLabel(a.anchoredOn, a.anchoredOn)}`}
                           triggerClassName="text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:text-negative"
                           title="Remove this recorded balance"
                           confirmLabel="Remove this balance"
@@ -445,7 +446,7 @@ export default async function AccountDetailPage({
                               ? `${account.name} is priced from its holdings, so this recorded balance verifies nothing. Removing it leaves the curve exactly as it is.`
                               : daysPinnedBy(series, a.anchoredOn, anchors[i - 1]?.anchoredOn) === 0
                                 ? `This balance pins no day of ${account.name} that another balance does not already pin. Removing it leaves the curve exactly as it is.`
-                                : `This balance is what verifies ${account.name} on ${a.anchoredOn}. Removing it leaves those days to be derived from transactions alone.`,
+                                : `This balance is what verifies ${account.name} on ${dayWindowLabel(a.anchoredOn, a.anchoredOn)}. Removing it leaves those days to be derived from transactions alone.`,
                             lines: [
                               {
                                 /* the same rule, and the same hand-rolled copy:

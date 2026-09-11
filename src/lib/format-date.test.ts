@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { formatDayLong, formatDayShort, formatDayShortIn, formatMonthYear } from "./format-date";
+import { formatDayLong, formatDayShort, formatDayShortIn, formatMonthYear, monthWindowLabel } from "./format-date";
 
 describe("format-date", () => {
   test("formatDayShort", () => {
@@ -43,5 +43,32 @@ describe("formatDayShortIn", () => {
   test("a day either side of new year is a different year, however close", () => {
     expect(formatDayShortIn("2025-12-31", "2026-01-01")).toBe("Dec 31, 2025");
     expect(formatDayShortIn("2026-01-01", "2025-12-31")).toBe("Jan 1, 2026");
+  });
+});
+
+/*
+ * 🔴 The dashboard named ONE window two ways on one screen. The runway,
+ * eating-out and subscriptions cards printed the raw key — "6 complete months,
+ * 2026-03 to 2026-08" — while the fees and transfers cards beside them, over
+ * the identical window, read "Mar 2026 to Aug 2026". This is the spelling the
+ * correct siblings already used, not a new one.
+ */
+describe("monthWindowLabel", () => {
+  test("names both ends the way the cards that were right already did", () => {
+    expect(monthWindowLabel("2026-03", "2026-08")).toBe("Mar 2026 to Aug 2026");
+  });
+
+  test("one month is not a range", () => {
+    expect(monthWindowLabel("2022-09", "2022-09")).toBe("Sep 2022");
+  });
+
+  test("a window whose ends are in different years says both", () => {
+    expect(monthWindowLabel("2025-11", "2026-02")).toBe("Nov 2025 to Feb 2026");
+  });
+
+  test("never a raw month key", () => {
+    for (const [a, b] of [["2026-03", "2026-08"], ["2022-09", "2022-09"], ["2025-11", "2026-02"]]) {
+      expect(monthWindowLabel(a!, b!)).not.toMatch(/\d{4}-\d{2}/);
+    }
   });
 });

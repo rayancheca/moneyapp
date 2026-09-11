@@ -3,6 +3,7 @@ import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { formatCents } from "@/lib/money";
+import { monthWindowLabel } from "@/lib/format-date";
 import type { SubscriptionLine, SubscriptionsCard as SubscriptionsCardData } from "@/services/subscriptions-card";
 
 /**
@@ -186,9 +187,11 @@ export function SubscriptionsCard({ data }: { data: SubscriptionsCardData }) {
       )}
 
       <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
+        {/* ⛔ `monthWindowLabel` — see EatingOutCard: three cards on this screen
+            printed the raw month key beside two that did not. */}
         Together these took {formatCents(postedCents)} out across {postedCount} charges over {months} complete
-        months, {fromMonth} to {toMonth}, refunds netted off. That is a total, not a rate — a bill that started
-        or ended inside the window did not charge for all of it.
+        months, {monthWindowLabel(fromMonth, toMonth)}, refunds netted off. That is a total, not a rate — a bill
+        that started or ended inside the window did not charge for all of it.
         {unforecastableCount > 0 &&
           ` ${unforecastableCount} more ${unforecastableCount === 1 ? "has" : "have"} no expected amount or no expected date, so nothing could be levelled from ${unforecastableCount === 1 ? "it" : "them"}.`}
         {/* ⛔ A separate sentence: an ended commitment has both an amount and a
