@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
 import {
+  annualizedCaveat,
   shortAgo,
   staleComponentEntries,
   staleLabel,
@@ -380,5 +381,43 @@ describe("futureDateLabel — a Next date that is next year says so", () => {
 
   test("the two annual dates that share a day-of-year are distinguishable", () => {
     expect(futureDateLabel("2027-01-16", TODAY)).not.toBe(futureDateLabel("2026-01-16", TODAY));
+  });
+});
+
+/*
+ * 🔴 The gate was `endsOn !== null` — the EXISTENCE of an end date, not an end
+ * date inside the year being annualized. Exactly two series on the real ledger
+ * carry one, and the caveat was false on one of them.
+ */
+describe("annualizedCaveat — a year is qualified only when the series stops inside it", () => {
+  const TODAY = "2026-09-11";
+
+  test("a lease ending 704 days out bills the whole year, so nothing is said", () => {
+    // Car lease, ends 2028-08-15: 12 × $695.04 = $8,340.48 in the twelve months
+    // from today — the annualized figure to the cent. It read "a full year —
+    // this one is scheduled only to 2028-08-15".
+    expect(annualizedCaveat("2028-08-15", TODAY)).toBeNull();
+  });
+
+  test("a policy ending inside the year names the window and the day it stops", () => {
+    // Car insurance, ends 2027-01-11, against an annualized $4,337.88
+    expect(annualizedCaveat("2027-01-11", TODAY)).toBe(
+      "the twelve months from today — this one stops on Jan 11, 2027, inside them",
+    );
+  });
+
+  test("a series with no end date is never qualified", () => {
+    expect(annualizedCaveat(null, TODAY)).toBeNull();
+  });
+
+  test("the year's far end is EXCLUSIVE — a series ending on it runs the whole year", () => {
+    expect(annualizedCaveat("2027-09-11", TODAY)).toBeNull();
+    expect(annualizedCaveat("2027-09-10", TODAY)).not.toBeNull();
+  });
+
+  test("a series that has ALREADY stopped is still qualified, not silently excused", () => {
+    expect(annualizedCaveat("2026-08-01", TODAY)).toBe(
+      "the twelve months from today — this one stops on Aug 1, 2026, inside them",
+    );
   });
 });

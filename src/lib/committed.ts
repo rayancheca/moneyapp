@@ -201,6 +201,23 @@ interface Accumulator {
   endsOn: string | null;
 }
 
+/**
+ * Does a commitment STOP inside a horizon that closes at `toExclusive`?
+ *
+ * ⛔ `to` is EXCLUSIVE, so a series ending ON it runs the whole horizon.
+ *
+ * ⚠️ TWO SURFACES ASK THIS AND MUST NOT ANSWER DIFFERENTLY. This book gates
+ * `shortfallPerMonthCents` and `shrinkCaption` on it; `/recurring/<id>` gates
+ * the caveat under its ANNUALIZED figure on it (`annualizedCaveat`). That
+ * caveat hand-rolled `endsOn !== null` — the mere EXISTENCE of an end date —
+ * and so told the owner his `Car lease`, which ends 2028-08-15 and bills the
+ * next twelve months in full for $8,340.48, that it was "scheduled only to
+ * 2028-08-15".
+ */
+export function endsInsideHorizon(endsOn: string | null, toExclusive: string): boolean {
+  return endsOn !== null && compareDates(endsOn, toExclusive) < 0;
+}
+
 export function committedOutflows(input: CommittedInput): CommittedOutflows {
   const { months } = input;
   if (!Number.isInteger(months) || months < 1) {
@@ -261,8 +278,7 @@ export function committedOutflows(input: CommittedInput): CommittedOutflows {
        */
       const perOccurrenceCents = a.occurrences === 0 ? 0 : Math.round(a.totalCents / a.occurrences);
       const levelledPerMonthCents = levelledMonthlyCents(perOccurrenceCents, a.cadence);
-      // `to` is EXCLUSIVE, so a series ending ON it runs the whole horizon
-      const endsInHorizon = a.endsOn !== null && compareDates(a.endsOn, input.to) < 0;
+      const endsInHorizon = endsInsideHorizon(a.endsOn, input.to);
       return {
         seriesId: a.seriesId,
         name: a.name,

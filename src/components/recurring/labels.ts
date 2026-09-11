@@ -1,4 +1,5 @@
-import { isoWeekday } from "@/lib/dates";
+import { addCalendarMonths, isoWeekday } from "@/lib/dates";
+import { endsInsideHorizon } from "@/lib/committed";
 import { formatCents } from "@/lib/money";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import type { ForecastComponent } from "@/services/forecast";
@@ -362,4 +363,34 @@ export function postedSpreadReading(
     return { text, attachedToHeadline: text !== null, avgLine: null };
   }
   return { text, attachedToHeadline: false, avgLine: postedAvgCents };
+}
+
+/** A year is twelve months — the span `annualizedCentsOf` multiplies one charge out over. */
+const MONTHS_IN_YEAR = 12;
+
+/**
+ * What qualifies an ANNUALIZED figure — and only when it needs qualifying.
+ *
+ * 🔴 The gate was `endsOn !== null`: the EXISTENCE of an end date, not an end
+ * date inside the year being annualized. Measured on the real ledger
+ * 2026-09-11, exactly two series carry one and the caveat was false on one of
+ * them. `Car lease` ends 2028-08-15, 704 days out — it bills twelve times in
+ * the twelve months from today for $8,340.48, the annualized figure to the
+ * cent — and the page printed "a full year — this one is scheduled only to
+ * 2028-08-15" over it. "Only" asserts a shortfall that does not exist, inches
+ * under an insight ranking the same $8,340.48 as what it costs in a year with
+ * no caveat at all. `Car insurance` (ends 2027-01-11) is the one it is for.
+ *
+ * ⛔ The predicate is `endsInsideHorizon`, the rule the committed book already
+ * states — exclusive far end and all — so the two surfaces cannot disagree
+ * about whether a commitment stops inside a window.
+ *
+ * ⚠️ Null is SILENCE, never "this one runs the whole year": a series that
+ * outlives the window has nothing to disclose, and the header badge already
+ * names its end date neutrally.
+ */
+export function annualizedCaveat(endsOn: string | null, today: string): string | null {
+  if (endsOn === null) return null;
+  if (!endsInsideHorizon(endsOn, addCalendarMonths(today, MONTHS_IN_YEAR))) return null;
+  return `the twelve months from today — this one stops on ${longDate(endsOn)}, inside them`;
 }

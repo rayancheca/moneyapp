@@ -29,7 +29,7 @@ import type { SeriesDetail as SeriesDetailData } from "@/services/recurring-deta
 import { AmountHistoryChart } from "./AmountHistoryChart";
 import { CadenceSentence } from "./CadenceSentence";
 import { AttachPanel, LinkedTransactions, MergeControl } from "./SeriesMembership";
-import { CADENCE_LABEL, KIND_LABEL, longDate, postedSpreadReading, STATUS_LABEL } from "./labels";
+import { annualizedCaveat, CADENCE_LABEL, KIND_LABEL, longDate, postedSpreadReading, STATUS_LABEL } from "./labels";
 
 const KIND_ICON: Record<SeriesKind, IconName> = {
   income: "banknote",
@@ -57,12 +57,15 @@ const EMPTY_PARAMS: Record<string, string> = {};
 
 export function SeriesDetail({
   data,
+  today,
   provenance,
   insights,
   viewState,
   basePath,
 }: {
   data: SeriesDetailData;
+  /** the server's day, so the caveat cannot disagree with the figures beside it */
+  today: string;
   /** what the expected amount is standing on — computed server-side */
   provenance?: Provenance | null;
   /**
@@ -89,6 +92,9 @@ export function SeriesDetail({
     baseParams: EMPTY_PARAMS,
   });
   const amountsAsTable = isTableLens(state);
+  // the year the ANNUALIZED figure is a year OF — qualified only when the
+  // series stops inside it; see `annualizedCaveat`
+  const annualizedNote = annualizedCaveat(data.endsOn, today);
   // the ± hangs off the figure it is the spread of — see `postedSpreadReading`
   const postedSpread = postedSpreadReading(
     data.nextExpectedAmountCents,
@@ -157,7 +163,10 @@ export function SeriesDetail({
                 car card both name this date; this page headlined
                 "~$4,337.88/yr" over three upcoming charges and never mentioned
                 that the series is evidenced only to 2027-01-11. */}
-            {data.endsOn !== null ? <Badge tone="warning">Ends {data.endsOn}</Badge> : null}
+            {/* the same date the caveat below may name, spelled the same way —
+                a raw ISO string here would have the page printing one day two
+                ways, two inches apart */}
+            {data.endsOn !== null ? <Badge tone="warning">Ends {longDate(data.endsOn)}</Badge> : null}
             {data.merchant ? (
               <Link
                 href={`/merchants/${data.merchant.id}`}
@@ -267,13 +276,15 @@ export function SeriesDetail({
           <dl className="mt-4 grid grid-cols-2 gap-4 border-t border-line pt-4 sm:grid-cols-4">
             <Stat label="Annualized">
               {data.annualizedCents !== null ? <>~<Money cents={data.annualizedCents} />/yr</> : "—"}
-              {/* ⛔ the figure this qualifies, not the header: "a year at
-                  today's amounts" is a HYPOTHETICAL year for a series with an
-                  end date inside one, and the reader deserves that beside the
-                  number rather than a screen away */}
-              {data.endsOn !== null && data.annualizedCents !== null ? (
+              {/* ⛔ the figure this qualifies, not the header — and only when it
+                  needs qualifying. "a full year — this one is scheduled only to
+                  2028-08-15" ran on the EXISTENCE of an end date, so it said
+                  "only" over a lease that bills all twelve of the next twelve
+                  months. `annualizedCaveat` is silent for every series that
+                  outlives the year. */}
+              {annualizedNote !== null && data.annualizedCents !== null ? (
                 <span className="mt-0.5 block text-[11px] font-normal text-ink-faint">
-                  a full year — this one is scheduled only to {data.endsOn}
+                  {annualizedNote}
                 </span>
               ) : null}
             </Stat>

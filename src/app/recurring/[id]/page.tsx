@@ -60,6 +60,7 @@ export default async function RecurringSeriesPage({
   return (
     <SeriesDetail
       data={data}
+      today={todayIso()}
       provenance={provenance}
       insights={
         insights && <InsightList data={insights} heading={`What the ledger says about ${data.name}`} />
