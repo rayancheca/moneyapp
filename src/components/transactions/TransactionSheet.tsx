@@ -65,6 +65,25 @@ interface TransactionSheetProps {
  * is two measured zeroes over money that really moved, which is the one shape
  * this app refuses.
  */
+/**
+ * One account's line in the History card: its rows, and the population the
+ * figure beside it is a sum over.
+ *
+ * 🔴 THE SAME DEFECT AS `historyLine`, IN THE LIST DIRECTLY UNDER IT. That fix
+ * named the denominator for the group and stopped at the per-account rows,
+ * which went on printing a GROSS count beside a debits-only sum:
+ * `/transactions?q=CAPITAL+ONE+MOBILE` read **"Venture X · 36" next to
+ * "$395.00"**, where 35 of those 36 rows are $26,921.32 of CREDITS. An account
+ * with no outflow at all read "SoFi Savings · 31" beside "$0.00" — a count of
+ * rows that exist over a total of rows that do not.
+ */
+export function accountHistoryLine(a: { accountName: string; count: number; outCount: number }): string {
+  const rows = `${a.count} ${a.count === 1 ? "transaction" : "transactions"}`;
+  if (a.outCount === 0) return `${a.accountName} · ${rows}, none of them spending`;
+  if (a.outCount === a.count) return `${a.accountName} · ${rows}`;
+  return `${a.accountName} · ${rows}, ${a.outCount} of them spending`;
+}
+
 export function historyLine(h: { count: number; outCount: number; avgCents: number; totalCents: number }): string {
   const rows = `${h.count} ${h.count === 1 ? "transaction" : "transactions"}`;
   if (h.outCount === 0) return `${rows}, none of them spending`;
@@ -367,10 +386,10 @@ export function TransactionSheet({
               <ul className="mt-2 space-y-1">
                 {panel.history.byAccount.map((a) => (
                   <li key={a.accountName} className="flex items-center justify-between gap-2 text-xs text-ink-muted">
-                    <span className="min-w-0 truncate">
-                      {a.accountName} · {a.count}
-                    </span>
-                    <span className="shrink-0">{formatCents(a.cents)}</span>
+                    <span className="min-w-0 truncate">{accountHistoryLine(a)}</span>
+                    {/* the figure is money OUT, which is why the line beside it
+                        has to name how many of the rows that is */}
+                    <span className="shrink-0">{a.outCount === 0 ? "—" : formatCents(a.cents)}</span>
                   </li>
                 ))}
               </ul>

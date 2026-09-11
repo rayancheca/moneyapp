@@ -40,7 +40,20 @@ export interface TxnHistoryMonth {
 
 export interface TxnHistoryAccount {
   accountName: string;
+  /** rows of the group that landed on this account — money IN and OUT alike */
   count: number;
+  /**
+   * How many of `count` are money OUT — the population `cents` is a sum over.
+   *
+   * 🔴 THE SAME DEFECT AS THE HEADLINE ABOVE, IN THE ROWS UNDER IT. The fix on
+   * 2026-09-10 named the denominator for the group's total and stopped at the
+   * per-account list, which went on putting a GROSS count beside a debits-only
+   * sum: `/transactions?q=CAPITAL+ONE+MOBILE` → the History card read
+   * **"Venture X · 36" beside "$395.00"**, where 35 of those 36 rows are
+   * $26,921.32 of CREDITS and exactly one is a $395.00 charge. An account with
+   * no outflow at all read "SoFi Savings · 31" beside "$0.00".
+   */
+  outCount: number;
   /** money-out total on this account, positive cents */
   cents: number;
 }
@@ -222,7 +235,7 @@ export function txnHistory(
   const months = monthKeysBack(today, HISTORY_MONTHS);
   const monthIndex = new Map(months.map((m, i) => [m, i]));
   const monthlyCents = new Array<number>(months.length).fill(0);
-  const byAccount = new Map<string, { count: number; cents: number }>();
+  const byAccount = new Map<string, { count: number; outCount: number; cents: number }>();
 
   let totalCents = 0;
   let outCount = 0;
@@ -234,8 +247,9 @@ export function txnHistory(
     }
     const mi = monthIndex.get(monthKey(r.postedOn));
     if (mi !== undefined) monthlyCents[mi]! += out;
-    const acc = byAccount.get(r.accountName) ?? { count: 0, cents: 0 };
+    const acc = byAccount.get(r.accountName) ?? { count: 0, outCount: 0, cents: 0 };
     acc.count += 1;
+    if (out > 0) acc.outCount += 1;
     acc.cents += out;
     byAccount.set(r.accountName, acc);
   }
@@ -247,7 +261,7 @@ export function txnHistory(
     totalCents,
     monthly: months.map((m, i) => ({ monthKey: m, cents: monthlyCents[i]! })),
     byAccount: [...byAccount.entries()]
-      .map(([accountName, v]) => ({ accountName, count: v.count, cents: v.cents }))
+      .map(([accountName, v]) => ({ accountName, count: v.count, outCount: v.outCount, cents: v.cents }))
       .sort((a, b) => b.count - a.count || b.cents - a.cents || a.accountName.localeCompare(b.accountName)),
   };
 }

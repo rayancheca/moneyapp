@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { historyLine } from "./TransactionSheet";
+import { accountHistoryLine, historyLine } from "./TransactionSheet";
 
 describe("historyLine — the mean's denominator is named", () => {
   /*
@@ -37,5 +37,38 @@ describe("historyLine — the mean's denominator is named", () => {
   test("the mean is always total ÷ the count the sentence names", () => {
     const h = { count: 140, outCount: 53, avgCents: 7_648, totalCents: 405_369 };
     expect(Math.round(h.totalCents / h.outCount)).toBe(h.avgCents);
+  });
+});
+
+/**
+ * 🔴 THE SAME DEFECT AS ABOVE, IN THE LIST DIRECTLY UNDER IT. The 2026-09-10
+ * fix named the denominator for the group's total and stopped at the
+ * per-account rows, which went on printing a GROSS count beside a debits-only
+ * sum. Measured on the real ledger 2026-09-11: 12 of the 85 History cards that
+ * render a per-account list carry at least one such row.
+ */
+describe("accountHistoryLine — the count and the figure are one population", () => {
+  test("names how many of the rows the money-out figure is over", () => {
+    expect(accountHistoryLine({ accountName: "Venture X", count: 36, outCount: 1 })).toBe(
+      "Venture X · 36 transactions, 1 of them spending",
+    );
+  });
+
+  test("an account with no outflow says so rather than implying 31 charges", () => {
+    expect(accountHistoryLine({ accountName: "SoFi Savings", count: 31, outCount: 0 })).toBe(
+      "SoFi Savings · 31 transactions, none of them spending",
+    );
+  });
+
+  test("an all-spending account stays short — there is no second population to name", () => {
+    expect(accountHistoryLine({ accountName: "Chase Sapphire", count: 12, outCount: 12 })).toBe(
+      "Chase Sapphire · 12 transactions",
+    );
+  });
+
+  test("one row is one transaction", () => {
+    expect(accountHistoryLine({ accountName: "Discover", count: 1, outCount: 1 })).toBe(
+      "Discover · 1 transaction",
+    );
   });
 });

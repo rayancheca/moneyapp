@@ -205,9 +205,31 @@ describe("txnHistory", () => {
     expect(h.monthly).toHaveLength(6);
     // by account: Checking has 2 rows / 3_000, Card 1 row / 3_000; count desc
     expect(h.byAccount).toEqual([
-      { accountName: "Checking", count: 2, cents: 3_000 },
-      { accountName: "Card", count: 1, cents: 3_000 },
+      { accountName: "Checking", count: 2, outCount: 2, cents: 3_000 },
+      { accountName: "Card", count: 1, outCount: 1, cents: 3_000 },
     ]);
+  });
+
+  /**
+   * 🔴 THE PER-ACCOUNT ROWS CARRIED THE HEADLINE'S OWN DEFECT. `outCount` was
+   * published for the group and not for the accounts under it, so each row put
+   * a GROSS count beside a debits-only sum. On the real ledger 2026-09-11,
+   * /transactions?q=CAPITAL+ONE+MOBILE → "Venture X · 36" beside "$395.00",
+   * where 35 of those 36 rows are $26,921.32 of credits. 12 of the 85 History
+   * cards that render this list carry at least one such row.
+   */
+  test("each account names how many of its rows the money-out figure is over", () => {
+    const merchant = netflixMerchantId();
+    insertTxn({ merchantId: merchant, accountId: cardId, postedOn: "2026-07-01", amountCents: -39_500 });
+    insertTxn({ merchantId: merchant, accountId: cardId, postedOn: "2026-07-02", amountCents: 1_000_000 });
+    insertTxn({ merchantId: merchant, accountId: cardId, postedOn: "2026-07-03", amountCents: 1_692_132 });
+    const target = insertTxn({ merchantId: merchant, accountId: checkingId, postedOn: "2026-07-05", amountCents: -1_000 });
+
+    const h = txnHistory(bundle.db, target, "2026-07-08")!;
+    const card = h.byAccount.find((a) => a.accountName === "Card")!;
+    expect(card.count).toBe(3); // rows that landed there
+    expect(card.outCount).toBe(1); // …and the one the figure is a sum over
+    expect(card.cents).toBe(39_500);
   });
 
   test("ignores money-in in the money-out total but still counts the row", () => {
