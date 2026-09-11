@@ -83,7 +83,14 @@ describe("moneyWeightedReturn — what it refuses to state", () => {
     });
     expect(r.computed).toBe(false);
     if (r.computed) return;
-    expect(r.reason).toContain("2024-12-31");
+    /*
+     * 🔴 It named the day as "2024-12-31" — a machine value in a refusal
+     * sentence that /summary/2025 prints in full. `formatDayFull` is the
+     * spelling `readableDay` and `formatOpenDay` were each hand-rolling
+     * privately while the sentences that needed it printed the ISO.
+     */
+    expect(r.reason).toContain("Dec 31, 2024");
+    expect(r.reason).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     expect(r.reason).toContain("1 of 2");
     expect(r.reason).toMatch(/meaningless/);
   });

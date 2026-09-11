@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { formatDayLong, formatDayShort, formatDayShortIn, formatMonthYear, monthWindowLabel } from "./format-date";
+import { formatDayLong, formatDayShort, formatDayShortIn, formatMonthYear, monthWindowLabel, formatDayFull } from "./format-date";
 
 describe("format-date", () => {
   test("formatDayShort", () => {
@@ -70,5 +70,31 @@ describe("monthWindowLabel", () => {
     for (const [a, b] of [["2026-03", "2026-08"], ["2022-09", "2022-09"], ["2025-11", "2026-02"]]) {
       expect(monthWindowLabel(a!, b!)).not.toMatch(/\d{4}-\d{2}/);
     }
+  });
+});
+
+describe("formatDayFull — the sentence spelling, and the two copies it replaces", () => {
+  test("names the month, the day and the year, and never a weekday", () => {
+    expect(formatDayFull("2025-12-31")).toBe("Dec 31, 2025");
+    expect(formatDayFull("2026-09-11")).toBe("Sep 11, 2026");
+    expect(formatDayFull("2026-01-01")).toBe("Jan 1, 2026");
+  });
+
+  /**
+   * ⛔ The three spellings are not interchangeable. `formatDayShort` drops the
+   * year, which is right in a cell and wrong in a sentence whose year the
+   * reader cannot assume; `formatDayLong`'s weekday earns its place only where
+   * the day of the WEEK is the point.
+   */
+  test("it is neither of its two siblings", () => {
+    expect(formatDayFull("2025-12-31")).not.toBe(formatDayShort("2025-12-31"));
+    expect(formatDayFull("2025-12-31")).not.toBe(formatDayLong("2025-12-31"));
+    expect(formatDayLong("2025-12-31")).toContain("Wed, ");
+    expect(formatDayFull("2025-12-31")).not.toContain(",  ");
+  });
+
+  test("a malformed day is refused, not half-rendered", () => {
+    expect(() => formatDayFull("2026-13-40")).toThrow();
+    expect(() => formatDayFull("not-a-day")).toThrow();
   });
 });

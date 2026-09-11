@@ -1,4 +1,5 @@
 import { xirr, type CashFlow } from "./xirr";
+import { formatDayFull } from "./format-date";
 
 /**
  * A window's money-weighted return, or an explicit refusal to state one.
@@ -66,13 +67,13 @@ export function moneyWeightedReturn(input: MoneyWeightedInput): MoneyWeightedRet
   if (!open.complete) {
     return {
       computed: false,
-      reason: `the portfolio's value on ${open.day} covers only ${open.coveredAccounts} of ${open.totalAccounts} investment accounts, so a return measured from it would be meaningless`,
+      reason: `the portfolio's value on ${formatDayFull(open.day)} covers only ${open.coveredAccounts} of ${open.totalAccounts} investment accounts, so a return measured from it would be meaningless`,
     };
   }
   if (!close.complete) {
     return {
       computed: false,
-      reason: `the portfolio's value on ${close.day} covers only ${close.coveredAccounts} of ${close.totalAccounts} investment accounts`,
+      reason: `the portfolio's value on ${formatDayFull(close.day)} covers only ${close.coveredAccounts} of ${close.totalAccounts} investment accounts`,
     };
   }
   /*
@@ -84,7 +85,7 @@ export function moneyWeightedReturn(input: MoneyWeightedInput): MoneyWeightedRet
   if (open.valueCents <= 0) {
     return {
       computed: false,
-      reason: `the portfolio was worth nothing on ${open.day}, so there is no opening balance to measure a return against`,
+      reason: `the portfolio was worth nothing on ${formatDayFull(open.day)}, so there is no opening balance to measure a return against`,
     };
   }
 

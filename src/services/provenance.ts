@@ -1,4 +1,5 @@
 import { and, asc, count, desc, eq, inArray, lte, gte, sum } from "drizzle-orm";
+import { formatDayFull } from "@/lib/format-date";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -270,11 +271,7 @@ function isInvestment(type: string): boolean {
 
 /** `2026-08-24` → `Aug 24, 2026`, for a sentence rather than a table cell. */
 function readableDay(day: string): string {
-  const [y, m, d] = day.split("-");
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const month = months[Number(m) - 1];
-  if (!y || !month || !d) return day;
-  return `${month} ${Number(d)}, ${y}`;
+  return formatDayFull(day);
 }
 
 const PERIOD_VERDICT_TEXT: Record<string, string> = {

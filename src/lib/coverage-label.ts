@@ -24,7 +24,7 @@
  */
 
 import { compareDates } from "./dates";
-import { formatDayShort } from "./format-date";
+import { formatDayFull } from "./format-date";
 
 /** "SoFi Savings, Discover" or "SoFi Savings, Discover +2 more" — a compact, capped list. */
 export function formatNameList(names: readonly string[], max = 2): string {
@@ -96,12 +96,12 @@ export function coveragePhrase(label: CoverageLabel): string {
 }
 
 /**
- * "Aug 3, 2026" — formatDayShort plus the year. An opening date is read against
+ * "Aug 3, 2026" — the sentence spelling. An opening date is read against
  * a day that can be years away ("opens Aug 3" on a 2022 point is ambiguous), and
- * formatDayShort has already validated the string by the time the year is sliced.
+ * `formatDayFull` owns the spelling and the validation both.
  */
 function formatOpenDay(day: string): string {
-  return `${formatDayShort(day)}, ${day.slice(0, 4)}`;
+  return formatDayFull(day);
 }
 
 /** "Cash on Hand opens Aug 3, 2026" — soonest first, capped like formatNameList. */

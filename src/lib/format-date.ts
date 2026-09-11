@@ -44,6 +44,30 @@ export function formatDayShortIn(iso: string, reference: string): string {
   return year === parts(reference).y ? formatDayShort(iso) : `${formatDayShort(iso)}, ${year}`;
 }
 
+/**
+ * "Jul 3, 2026" — the day spelled for a SENTENCE, always with its year and
+ * never with a weekday.
+ *
+ * ⛔ Three spellings live in this file and they are not interchangeable.
+ * `formatDayShort` is for a table cell or an axis, where the year is context.
+ * `formatDayLong`'s weekday earns its place where the DAY of the week is the
+ * point (a payday, a statement close). In a sentence about a year boundary it
+ * is noise — "Money-weighted, from $65,038.62 on Wed, Dec 31, 2025" reads as a
+ * diary entry — and a date whose year the reader cannot assume needs it stated.
+ *
+ * 🔴 Two modules hand-rolled this string privately (`readableDay` in
+ * services/provenance.ts, `formatOpenDay` in lib/coverage-label.ts) while the
+ * sentences that most needed it printed the raw ISO instead. On 2026-09-11
+ * `/summary/2026` read "Money-weighted, from $65,038.62 on **2025-12-31** to
+ * $109,204.16 on **2026-09-11**, across 21 cash flows", and /summary/2025's
+ * refusal read "the portfolio's value on **2024-12-31** covers only 1 of 2
+ * investment accounts". Both now read the same way the rest of the app does.
+ */
+export function formatDayFull(iso: string): string {
+  const { y, m, d } = parts(iso);
+  return `${MONTHS_SHORT[m - 1]} ${d}, ${y}`;
+}
+
 /** "Fri, Jul 3, 2026" */
 export function formatDayLong(iso: string): string {
   const { y, m, d } = parts(iso);

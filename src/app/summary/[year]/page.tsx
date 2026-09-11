@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { formatDayFull } from "@/lib/format-date";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
@@ -252,9 +253,11 @@ export default async function YearSummaryPage({
                   <span className="ml-1.5 text-sm font-normal text-ink-muted">a year</span>
                 </p>
                 <p className="mt-1 max-w-prose text-xs leading-relaxed text-ink-muted">
-                  Money-weighted, from {formatCents(mwr.openCents)} on {mwr.fromDay} to{" "}
-                  {formatCents(mwr.closeCents)} on {mwr.throughDay}, across {mwr.flowCount} cash
-                  flows.
+                  {/* ⛔ the window's two ends are a SENTENCE here, not cells —
+                      they read "2025-12-31" and "2026-09-11" until now */}
+                  Money-weighted, from {formatCents(mwr.openCents)} on {formatDayFull(mwr.fromDay)}{" "}
+                  to {formatCents(mwr.closeCents)} on {formatDayFull(mwr.throughDay)}, across{" "}
+                  {mwr.flowCount} cash flows.
                   {mwr.partial
                     ? ` ${year} has not finished — this is an annual rate calculated from a part-year window, not the return so far.`
                     : ""}
