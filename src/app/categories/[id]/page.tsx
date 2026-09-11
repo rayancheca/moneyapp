@@ -13,6 +13,7 @@ import { categorySpending } from "@/services/analytics";
 import {
   categoryBudgetRef,
   categoryDetailHeader,
+  categoryFlowSign,
   categoryMonthlyTrend,
   categorySubcategorySplit,
   seriesInCategory,
@@ -93,7 +94,7 @@ export default async function CategoryPage({
    * The transaction list under the headline is the ledger's own frame — money
    * in positive — and the headline over it must be the sum of what it prints.
    */
-  const sign = isExpense ? 1 : -1;
+  const sign = categoryFlowSign(header.kind);
   const flowLabel = isIncome ? "Received" : isExpense ? "Spent" : "Net";
 
   const { spentCents, txnCount } = categorySpending(db, { categoryId: id, from: range.from, to: range.to });
@@ -278,7 +279,14 @@ export default async function CategoryPage({
                 {/* ⛔ The parent's OWN rows have no link: `/transactions?category=`
                     filters by SUBTREE, so one would list every child's rows too
                     — the drill-down contract broken rather than kept. See
-                    `categorySubcategorySplit`. */}
+                    `categorySubcategorySplit`.
+
+                    ⛔ And the SIGN is printed, not stripped. `Math.abs` here was
+                    what hid the frame disagreement below it: on Transfers the
+                    eight rows printed unsigned summed to $163,704.93 under a
+                    headline of $106,664.95, and two of them were money OUT.
+                    These rows share the header's frame (`categoryFlowSign`), so
+                    they add up to it — and only a signed row can. */}
                 {subcats.map((s) =>
                   s.href === null ? (
                     <li
@@ -286,13 +294,13 @@ export default async function CategoryPage({
                       className="flex items-center justify-between gap-2 py-2 text-sm text-ink-muted"
                     >
                       <span className="truncate">{s.name}</span>
-                      <Money cents={Math.abs(s.flowCents)} className="shrink-0 font-medium" />
+                      <Money cents={s.flowCents} className="shrink-0 font-medium" />
                     </li>
                   ) : (
                     <li key={s.categoryId}>
                       <Link href={`/categories/${s.categoryId}`} className="flex items-center justify-between gap-2 py-2 text-sm hover:underline">
                         <span className="truncate">{s.name}</span>
-                        <Money cents={Math.abs(s.flowCents)} className="shrink-0 font-medium" />
+                        <Money cents={s.flowCents} className="shrink-0 font-medium" />
                       </Link>
                     </li>
                   ),

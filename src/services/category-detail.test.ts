@@ -15,6 +15,7 @@ import { createAccount } from "./accounts";
 import {
   categoryBudgetRef,
   categoryDetailHeader,
+  categoryFlowSign,
   categoryMonthlyTrend,
   categorySubcategorySplit,
   seriesInCategory,
@@ -207,6 +208,53 @@ describe("categorySubcategorySplit", () => {
       ["Salary", 500_000],
       ["On Income itself", 2_500],
     ]);
+  });
+
+  /*
+   * 🔴 The rows flipped back to money-in for `income` ONLY, so the transfer,
+   * investment and rewards pages ranked and SIGNED their children in the frame
+   * opposite to the headline directly above them — and `Math.abs` in the page
+   * hid it. Measured 2026-09-11 on the real ledger,
+   * `/categories/<Investments>?period=2026-07`: header "Net · July 2026
+   * -$3,090.00", its one row "Buys  $3,090.00", and that child's own page
+   * "-$3,090.00" — the same 66 transactions, two signs, one click apart.
+   */
+  test("a non-expense parent's children sit in the HEADER's frame, so they sum to it", () => {
+    insertTxn({ postedOn: "2026-07-02", amountCents: -300_000, category: "Investments > Buys", accountId: checkingId });
+    insertTxn({ postedOn: "2026-07-03", amountCents: 120_000, category: "Investments > Sells", accountId: checkingId });
+    const split = categorySubcategorySplit(bundle.db, catId("Investments"), JULY);
+    expect(split.map((s) => [s.name, s.flowCents])).toEqual([
+      ["Sells", 120_000],
+      ["Buys", -300_000],
+    ]);
+    // the invariant the card exists to keep: its rows add up to the header
+    const header =
+      categoryFlowSign("investment") *
+      categorySpending(bundle.db, { categoryId: catId("Investments"), from: JULY.from, to: JULY.to }).spentCents;
+    expect(split.reduce((total, row) => total + row.flowCents, 0)).toBe(header);
+    expect(header).toBe(-180_000);
+  });
+
+  /*
+   * The live Rewards instance: both children are money IN, and the card ranked
+   * them by the money-OUT frame — so all time it printed "Statement Credits
+   * $190.00" ABOVE "Cash Back $490.68", inverting the ranking its 57 expense
+   * siblings follow.
+   */
+  test("a rewards parent ranks its children by money IN, largest contributor first", () => {
+    insertTxn({ postedOn: "2026-07-04", amountCents: 19_000, category: "Rewards > Statement Credits", accountId: cardId });
+    insertTxn({ postedOn: "2026-07-05", amountCents: 49_068, category: "Rewards > Cash Back", accountId: cardId });
+    expect(categorySubcategorySplit(bundle.db, catId("Rewards"), JULY).map((s) => [s.name, s.flowCents])).toEqual([
+      ["Cash Back", 49_068],
+      ["Statement Credits", 19_000],
+    ]);
+  });
+
+  test("categoryFlowSign: only an expense category is printed money-out", () => {
+    expect(categoryFlowSign("expense")).toBe(1);
+    for (const kind of ["income", "transfer", "investment", "rewards", "system"] as const) {
+      expect(categoryFlowSign(kind)).toBe(-1);
+    }
   });
 });
 

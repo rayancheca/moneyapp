@@ -117,12 +117,38 @@ export function categoryMonthlyTrend(
   });
 }
 
+/**
+ * Which FRAME a category's figures are printed in: `+1` money-out (a bigger
+ * number means more money gone), `-1` money-in (a bigger number means more
+ * money arrived). Only an EXPENSE category is printed money-out — the reason is
+ * spelled out over `sign` in `/categories/[id]`.
+ *
+ * 🔴 There were TWO copies of this and they disagreed. The page said
+ * `isExpense ? 1 : -1`; the subcategory split said `kind === "income"` and left
+ * transfer / investment / rewards in the money-out frame — so on those three
+ * pages the rows were ranked and signed against the headline directly above
+ * them, and `Math.abs` on the way out hid it. Measured 2026-09-11 on the real
+ * ledger, `/categories/<Investments>?period=2026-07`: header
+ * "Net · July 2026  -$3,090.00", its one row "Buys  $3,090.00", and that
+ * child's own page "-$3,090.00" — the same 66 transactions printed with
+ * opposite signs one click apart. All time the card read "Buys $109,251.85"
+ * above "Sells $89,325.72", which as printed sum to $198,577.57 under a
+ * headline of -$19,926.13.
+ *
+ * ⛔ The rows of the Subcategories card must SUM to the header over them, and
+ * that is true in one frame only. Asked by the header and by the split, so the
+ * two cannot drift again.
+ */
+export function categoryFlowSign(kind: CategoryKind): 1 | -1 {
+  return kind === "expense" ? 1 : -1;
+}
+
 // ── Subcategory split ────────────────────────────────────────────────
 
 export interface CategorySubRow {
   categoryId: string;
   name: string;
-  /** direction-appropriate flow: money out for expense, money in for income */
+  /** the flow in the SAME frame as the page header — see `categoryFlowSign` */
   flowCents: number;
   txnCount: number;
   /**
@@ -160,7 +186,7 @@ export function categorySubcategorySplit(
   const children = [...idx.byId.values()].filter((c) => c.parentId === categoryId);
   if (children.length === 0) return [];
 
-  const inflow = node.kind === "income";
+  const sign = categoryFlowSign(node.kind);
   // rows filed on the parent ITSELF — the same row list every other figure on
   // this page is built from, filtered to the exact category
   const ownRows = spendingTransactions(db, { categoryId, from: range.from, to: range.to }).filter(
@@ -174,7 +200,7 @@ export function categorySubcategorySplit(
           {
             categoryId,
             name: `On ${node.name} itself`,
-            flowCents: inflow ? -ownSpent : ownSpent,
+            flowCents: sign * ownSpent,
             txnCount: new Set(ownRows.map((t) => t.id)).size,
             href: null,
           },
@@ -182,8 +208,9 @@ export function categorySubcategorySplit(
   return ownRow.concat(children
     .map((child) => {
       const { spentCents, txnCount } = categorySpending(db, { categoryId: child.id, from: range.from, to: range.to });
-      // categorySpending returns -sum(amount); for income flip the sign back to money-in
-      const flowCents = inflow ? -spentCents : spentCents;
+      // categorySpending returns -sum(amount); `categoryFlowSign` puts the row in
+      // the same frame as the header it has to add up to
+      const flowCents = sign * spentCents;
       return {
         categoryId: child.id,
         name: child.name,
