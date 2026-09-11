@@ -349,6 +349,18 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
    * to invent one.
    */
   const reconciled = period?.reconciliation === "reconciled";
+  /*
+   * 🔴 "carries no balances" was read off `reconciled` alone. An INVESTMENT
+   * statement sets a value and is never reconciled by arithmetic, so its rows
+   * took the "no balances" branch — while this same call's own `sources` entry
+   * says the opposite: "value recorded — an investment statement sets a value,
+   * it never proves the rows add up". Measured 2026-09-10 on a Robinhood
+   * transaction: the period it names holds beginning_balance 150500 and
+   * ending_balance 348049.
+   *
+   * ⛔ The question is what the FILE carries, so ask the period's balances.
+   */
+  const carriesBalance = period?.endingBalanceCents !== null && period?.endingBalanceCents !== undefined;
   const dayVerdict: ProvenanceVerdict =
     day && account ? (isInvestment(account.type) ? "market_value" : BASIS_VERDICT[day.basis]) : "unknown";
   const verdict: ProvenanceVerdict = reconciled ? "sourced" : dayVerdict;
@@ -357,7 +369,9 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
     ? `This row came from ${file?.fileName ?? "a statement"}, and that statement's balances reconcile to the cent.`
     : dayVerdict === "derived"
       ? `This row came from ${file?.fileName ?? "an imported file"}. That file carries no balances of its own, but ${account?.name ?? "the account"}'s chain closes across this day.`
-      : `This row came from ${file?.fileName ?? "an imported file"} — which carries no balances, so nothing checks the total it sits in.`;
+      : carriesBalance
+        ? `This row came from ${file?.fileName ?? "an imported file"}, which records a value for ${account?.name ?? "the account"} rather than proving the rows add up.`
+        : `This row came from ${file?.fileName ?? "an imported file"} — which carries no balances, so nothing checks the total it sits in.`;
 
   return {
     verdict,

@@ -131,7 +131,7 @@ export default async function RecurringPage({
               {tab === "upcoming" ? (
                 <UpcomingList occurrences={upcoming} />
               ) : (
-                <AllSeriesView series={series} overdueBySeries={overdueBySeries} />
+                <AllSeriesView series={series} overdueBySeries={overdueBySeries} today={today} />
               )}
             </div>
           </>

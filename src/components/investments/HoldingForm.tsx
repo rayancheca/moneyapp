@@ -89,9 +89,17 @@ export function HoldingForm({
         >
           Save holding
         </button>
+        {/* 🔴 "the crypto account's" — of a form whose Account select offers
+            TWO, and whose default is the brokerage. `rebuildAccount`
+            short-circuits ANY investment account holding positions into
+            `rebuildInvestmentHistory`, which makes no crypto/brokerage
+            distinction, and /accounts says the same back: "Robinhood Brokerage
+            is priced from its holdings". Measured 2026-09-10 — Robinhood
+            Brokerage carries 1,992 holding events across 33 symbols against
+            Robinhood Crypto's 75 across one. */}
         <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
           Re-entering an existing symbol updates its quantity — the change is recorded as a dated
-          buy/sell event, which drives the crypto account&apos;s value history.
+          buy/sell event, which drives the selected account&apos;s value history.
         </p>
       </div>
     </form>

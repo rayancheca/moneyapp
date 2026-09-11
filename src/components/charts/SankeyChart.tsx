@@ -1,5 +1,6 @@
 "use client";
 
+import { renderPercent } from "@/lib/insight-facts";
 import { useRouter } from "next/navigation";
 import {
   useId,
@@ -118,7 +119,9 @@ export function SankeyChart({
     const hub = layout.nodes.find((n) => n.meta?.kind === "hub");
     return hub?.valueCents ?? Math.max(0, ...layout.nodes.map((n) => n.valueCents));
   }, [layout]);
-  const share = (cents: number) => (totalFlow > 0 ? `${((cents / totalFlow) * 100).toFixed(1)}%` : "—");
+  // ⛔ `renderPercent` — "$10.43 of $81,850.20" is 0.013% and toFixed(1)
+  // printed it "0.0%", a measured zero about money that really moved
+  const share = (cents: number) => (totalFlow > 0 ? renderPercent(cents / totalFlow) : "—");
 
   const flowRows = useMemo(
     () =>

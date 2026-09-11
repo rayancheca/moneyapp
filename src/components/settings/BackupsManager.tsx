@@ -330,11 +330,20 @@ function RestoreDialog({
           </Field>
 
           {/* persistent live region — one mounted only when blocked would never
-              announce the message it was mounted to carry */}
+              announce the message it was mounted to carry.
+
+              🔴 Its sentence made two claims, both false. `matchesRestorePhrase`
+              is `input.trim().toUpperCase() === RESTORE_PHRASE` — its own
+              docstring says "Case and surrounding whitespace are forgiven" — so
+              "restore" and " Restore " both pass, and "exactly" is not what is
+              asked. And the button carries no `disabled` (the deliberate rule
+              is stated twice in this file); `attempt` intercepts the click, so
+              nothing is ever enabled or disabled. */}
           <div id={`${inputId}-status`} aria-live="polite">
             {blocked ? (
               <p className="text-xs text-negative">
-                Nothing was restored — type {RESTORE_PHRASE} exactly to enable the button.
+                Nothing was restored — type {RESTORE_PHRASE} to confirm, then press the button
+                again.
               </p>
             ) : null}
           </div>

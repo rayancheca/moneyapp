@@ -4,7 +4,7 @@ import { Money } from "@/components/ui/Money";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SERIES_EVIDENCE_LABEL, SERIES_EVIDENCE_NOTE, SUGGESTION_NOTE } from "@/lib/series-evidence";
 import type { SeriesView } from "@/services/recurring";
-import { CADENCE_LABEL, KIND_LABEL, overdueNote, shortDate } from "./labels";
+import { CADENCE_LABEL, KIND_LABEL, futureDateLabel, overdueNote } from "./labels";
 
 /**
  * What each series already owes this month and nothing has covered — keyed by
@@ -33,9 +33,12 @@ export type OverdueBySeries = ReadonlyMap<string, { date: string; occurrenceCoun
 export function AllSeriesView({
   series,
   overdueBySeries,
+  today,
 }: {
   series: SeriesView[];
   overdueBySeries: OverdueBySeries;
+  /** so a Next date outside this year names its year — see `futureDateLabel` */
+  today: string;
 }) {
   const suggestions = series.filter((s) => s.status === "detected");
   const confirmed = series.filter((s) => s.status === "confirmed");
@@ -78,15 +81,15 @@ export function AllSeriesView({
         </section>
       ) : null}
 
-      <SeriesSection title="Active" note={SERIES_EVIDENCE_NOTE.active} series={active} overdueBySeries={overdueBySeries} />
+      <SeriesSection title="Active" note={SERIES_EVIDENCE_NOTE.active} series={active} overdueBySeries={overdueBySeries} today={today} />
       {late.length > 0 ? (
-        <SeriesSection title="Running late" note={SERIES_EVIDENCE_NOTE["running-late"]} series={late} overdueBySeries={overdueBySeries} muted />
+        <SeriesSection title="Running late" note={SERIES_EVIDENCE_NOTE["running-late"]} series={late} overdueBySeries={overdueBySeries} today={today} muted />
       ) : null}
       {neverBilled.length > 0 ? (
-        <SeriesSection title="Never billed" note={SERIES_EVIDENCE_NOTE["never-billed"]} series={neverBilled} overdueBySeries={overdueBySeries} muted />
+        <SeriesSection title="Never billed" note={SERIES_EVIDENCE_NOTE["never-billed"]} series={neverBilled} overdueBySeries={overdueBySeries} today={today} muted />
       ) : null}
       {lapsed.length > 0 ? (
-        <SeriesSection title="Lapsed" note={SERIES_EVIDENCE_NOTE.lapsed} series={lapsed} overdueBySeries={overdueBySeries} muted />
+        <SeriesSection title="Lapsed" note={SERIES_EVIDENCE_NOTE.lapsed} series={lapsed} overdueBySeries={overdueBySeries} today={today} muted />
       ) : null}
     </div>
   );
@@ -150,12 +153,14 @@ function SeriesSection({
   note,
   series,
   overdueBySeries,
+  today,
   muted,
 }: {
   title: string;
   note: string;
   series: SeriesView[];
   overdueBySeries: OverdueBySeries;
+  today: string;
   muted?: boolean;
 }) {
   // an id may not contain a space, and "Running late" does
@@ -197,7 +202,7 @@ function SeriesSection({
             </thead>
             <tbody>
               {series.map((s) => (
-                <SeriesRow key={s.id} series={s} overdue={overdueBySeries.get(s.id) ?? null} />
+                <SeriesRow key={s.id} series={s} overdue={overdueBySeries.get(s.id) ?? null} today={today} />
               ))}
             </tbody>
           </table>
@@ -210,9 +215,11 @@ function SeriesSection({
 function SeriesRow({
   series: s,
   overdue,
+  today,
 }: {
   series: SeriesView;
   overdue: { date: string; occurrenceCount: number } | null;
+  today: string;
 }) {
   return (
     <tr className="border-b border-line last:border-b-0">
@@ -252,7 +259,11 @@ function SeriesRow({
         )}
       </td>
       <td className="px-3 py-3">
-        {s.nextExpectedOn ? <span className="figures">{shortDate(s.nextExpectedOn)}</span> : <span className="text-ink-faint">—</span>}
+        {s.nextExpectedOn ? (
+          <span className="figures">{futureDateLabel(s.nextExpectedOn, today)}</span>
+        ) : (
+          <span className="text-ink-faint">—</span>
+        )}
         {/* 🔴 The column walks FORWARD from today, so a charge that came due on
             the 1st and never posted was invisible here — while the math table
             at the top of this same page named it: "came due 2026-09-01 and has

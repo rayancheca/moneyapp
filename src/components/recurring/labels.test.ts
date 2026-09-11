@@ -13,6 +13,7 @@ import {
   overdueNote,
   postedSpreadReading,
   seriesVerb,
+  futureDateLabel,
 } from "./labels";
 
 const staleness = (over: Partial<SeriesStaleness> = {}): SeriesStaleness => ({
@@ -350,5 +351,34 @@ describe("seriesVerb — a series that is over is described in the past", () => 
 
   test("the default is present, so no caller silently changes tense", () => {
     expect(seriesVerb("bill", false)).toBe(seriesVerb("bill"));
+  });
+});
+
+describe("futureDateLabel — a Next date that is next year says so", () => {
+  const TODAY = "2026-09-10";
+
+  /*
+   * 🔴 All three annual series carry a 2027 date whose day-and-month is EXACTLY
+   * the day they last charged in 2026 — Venture X 2027-01-16 / 2026-01-16,
+   * Chase Sapphire 2027-03-01 / 2026-03-01, HBO Max 2027-07-18 / 2026-07-18 —
+   * so a bare "Jan 16" in the Next column read as 237 days AGO, and every
+   * other cell in the same table really was this year.
+   */
+  test("a date inside this year stays bare", () => {
+    expect(futureDateLabel("2026-10-08", TODAY)).toBe("Oct 8");
+    expect(futureDateLabel("2026-01-16", TODAY)).toBe("Jan 16");
+  });
+
+  test("a date in another year carries it", () => {
+    expect(futureDateLabel("2027-01-16", TODAY)).toBe("Jan 16, 2027");
+    expect(futureDateLabel("2027-07-18", TODAY)).toBe("Jul 18, 2027");
+  });
+
+  test("a date in a PAST year carries it too — the ambiguity runs both ways", () => {
+    expect(futureDateLabel("2025-12-31", TODAY)).toBe("Dec 31, 2025");
+  });
+
+  test("the two annual dates that share a day-of-year are distinguishable", () => {
+    expect(futureDateLabel("2027-01-16", TODAY)).not.toBe(futureDateLabel("2026-01-16", TODAY));
   });
 });

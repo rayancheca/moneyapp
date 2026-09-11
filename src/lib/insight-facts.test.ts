@@ -8,6 +8,8 @@ import {
   shareFact,
   multipleFact,
   trendFact,
+  renderPercent,
+  sharePercent,
 } from "./insight-facts";
 
 describe("a fact renders itself, and the caller cannot disagree with it", () => {
@@ -176,5 +178,40 @@ describe("a fact set", () => {
     expect(set.get("f2")?.subject).toBe("Groceries");
     expect(set.size).toBe(2);
     expect(factSet([]).size).toBe(0);
+  });
+});
+
+describe("renderPercent — a real quantity is never rounded away", () => {
+  /*
+   * 🔴 It was private to this module, and six UI renderers went on using
+   * `toFixed(1)`. Measured 2026-09-10: "Health · 1 entry · 0.0% · $4.24" in
+   * /spending's table lens and again in its sankey link name; "0.0% of held"
+   * on SoFi Savings ($0.10) and SoFi Checking ($0.01); WMT at $44.98 printed
+   * "0.0%" twice on /investments; "Money in → Gifts & Donations · $10.43 ·
+   * 0.0%". Every one of those is money that really moved.
+   */
+  test("a share too small for 1dp says so rather than claiming none", () => {
+    expect(renderPercent(4.24 / 10_240.85)).toBe("<0.1%"); // 0.041%
+    expect(renderPercent(0.1 / 114_498.97)).toBe("<0.1%"); // 0.000087%
+    expect(renderPercent(10.43 / 81_850.2)).toBe("<0.1%"); // 0.013%
+  });
+
+  test("a share just short of everything does not claim the whole", () => {
+    expect(renderPercent(0.9996)).toBe(">99.9%");
+  });
+
+  test("an exact zero is an exact zero", () => {
+    expect(renderPercent(0)).toBe("0.0%");
+  });
+
+  test("ordinary shares round to 1dp", () => {
+    expect(renderPercent(0.602)).toBe("60.2%");
+    expect(renderPercent(1)).toBe("100.0%");
+  });
+
+  test("sharePercent takes the 0-100 framing and agrees", () => {
+    expect(sharePercent(0.000087)).toBe(renderPercent(0.0000087));
+    expect(sharePercent(60.2)).toBe("60.2%");
+    expect(sharePercent(0)).toBe("0.0%");
   });
 });

@@ -1,5 +1,6 @@
 "use client";
 
+import { renderPercent } from "@/lib/insight-facts";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -482,7 +483,7 @@ function MassifRail({
               <span className="flex items-baseline gap-1.5">
                 <span className="truncate text-sm">{block.label}</span>
                 <span className="figures shrink-0 text-[11px] text-ink-faint">
-                  {(block.share * 100).toFixed(1)}%
+                  {renderPercent(block.share)}
                 </span>
               </span>
               <span className="block text-[11px] text-ink-faint">
@@ -581,7 +582,7 @@ function MassifTable({
       key: "share",
       header: "Share",
       align: "right",
-      render: (r) => <span className="figures text-ink-faint">{(r.share * 100).toFixed(1)}%</span>,
+      render: (r) => <span className="figures text-ink-faint">{renderPercent(r.share)}</span>,
     },
     {
       key: "prior",
@@ -639,7 +640,7 @@ export function massifCaptionKey(
   categoryCount: number,
   periodLabel: string,
 ): string {
-  if (active) return `${active.label} · ${(active.share * 100).toFixed(1)}% of ${periodLabel}`;
+  if (active) return `${active.label} · ${renderPercent(active.share)} of ${periodLabel}`;
   return `${periodLabel} · all ${categoryCount} categor${categoryCount === 1 ? "y" : "ies"}`;
 }
 

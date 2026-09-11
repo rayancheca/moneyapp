@@ -155,7 +155,9 @@ export function Confirm({
         <div aria-live="polite">
           {blocked ? (
             <p className="text-xs text-negative">
-              Tick the acknowledgement above to enable &ldquo;{confirmLabel}&rdquo;.
+              {/* the same wording drift as BackupsManager's restore gate: the
+                  button is never disabled — `attempt` intercepts the click */}
+              Tick the acknowledgement above, then press &ldquo;{confirmLabel}&rdquo; again.
             </p>
           ) : null}
         </div>

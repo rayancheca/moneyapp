@@ -50,6 +50,27 @@ export function longDate(isoDate: string): string {
   return `${shortDate(isoDate)}, ${isoDate.slice(0, 4)}`;
 }
 
+/**
+ * A future date, named so it cannot be read as a past one — the year rides
+ * along only when it differs from today's, the way every other label in this
+ * app drops what repeats.
+ *
+ * 🔴 An ANNUAL commitment's "Next" is next year, and `shortDate` never prints a
+ * year. Measured 2026-09-10 — all three annual series carry a 2027 date whose
+ * day-and-month is EXACTLY the day they last charged in 2026:
+ *
+ *     Venture X annual fee    next 2027-01-16, last matched 2026-01-16
+ *     Chase Sapphire annual   next 2027-03-01, last matched 2026-03-01
+ *     HBO Max                 next 2027-07-18, last matched 2026-07-18
+ *
+ * so "Next: Jan 16" reads as 237 days AGO. Every other Next cell in the same
+ * table ("Sep 11", "Oct 1", "Oct 8") really is this year, and nothing on the
+ * row disambiguates.
+ */
+export function futureDateLabel(isoDate: string, today: string): string {
+  return isoDate.slice(0, 4) === today.slice(0, 4) ? shortDate(isoDate) : longDate(isoDate);
+}
+
 /** 12 → "12th", 21 → "21st" — English ordinal for the cadence sentence. */
 export function ordinal(n: number): string {
   const mod100 = n % 100;

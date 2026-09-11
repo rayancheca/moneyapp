@@ -1,5 +1,6 @@
 "use client";
 
+import { sharePercent } from "@/lib/insight-facts";
 import Link from "next/link";
 import { useState } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
@@ -146,7 +147,7 @@ export function AllocationDonut({
                 }}
               />
               <span className="font-medium">{s.symbol}</span>
-              <span className="figures ml-auto text-ink-muted">{s.allocationPct.toFixed(1)}%</span>
+              <span className="figures ml-auto text-ink-muted">{sharePercent(s.allocationPct)}</span>
             </Link>
           </li>
         ))}

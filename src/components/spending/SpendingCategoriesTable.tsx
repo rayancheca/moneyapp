@@ -1,5 +1,6 @@
 "use client";
 
+import { sharePercent } from "@/lib/insight-facts";
 import { useState } from "react";
 import Link from "next/link";
 import { CategoryChip } from "@/components/ui/CategoryChip";
@@ -113,7 +114,7 @@ export function SpendingCategoriesTable({
                 <div className="h-full rounded-full bg-accent/70" style={{ width: `${Math.min(100, row.sharePct)}%` }} />
               </div>
               <span className="w-10 shrink-0 text-right text-xs text-ink-faint tabular-nums">
-                {Math.round(row.sharePct)}%
+                {sharePercent(row.sharePct)}
               </span>
               {showDelta && (
                 <span className="hidden w-20 shrink-0 text-right text-xs md:block">

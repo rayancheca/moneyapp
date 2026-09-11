@@ -118,6 +118,15 @@ function addFile(id: string, fileName: string, profile: string): string {
   return id;
 }
 
+/**
+ * ⛔ `balances` is a parameter because the fixture could not express the case
+ * the Rocket Money test was written for. It always wrote `endingBalanceCents:
+ * 1000`, so a period "carrying no balances" carried one — and the headline
+ * branch that turns on it could not be told apart from the one that does.
+ * Measured on the owner's ledger 2026-09-10: all 4 `not_applicable` periods
+ * hold NULL balances, and all 202 `reconciled` and all 40 `value_anchor`
+ * periods hold them.
+ */
 function addPeriod(
   id: string,
   accountId: string,
@@ -125,6 +134,7 @@ function addPeriod(
   start: string,
   end: string,
   reconciliation: string,
+  balances: { beginning: number | null; ending: number | null } = { beginning: 0, ending: 1000 },
 ): string {
   bundle.db
     .insert(statementPeriods)
@@ -134,8 +144,8 @@ function addPeriod(
       accountId,
       periodStart: start,
       periodEnd: end,
-      beginningBalanceCents: 0,
-      endingBalanceCents: 1000,
+      beginningBalanceCents: balances.beginning,
+      endingBalanceCents: balances.ending,
       reconciliation: reconciliation as never,
       createdAt: now(),
       updatedAt: now(),
@@ -335,6 +345,42 @@ describe("provenanceFor — a transaction", () => {
     expect(p.checkedThrough).toBe("2026-08-01");
   });
 
+  test("an investment statement records a value — it does not carry no balances", () => {
+    /*
+     * 🔴 The headline read "which carries no balances, so nothing checks the
+     * total it sits in" off `reconciled` alone. An INVESTMENT statement sets a
+     * value and is never reconciled by arithmetic, so its rows took that
+     * branch — while the same call's own source line says the opposite: "value
+     * recorded — an investment statement sets a value, it never proves the
+     * rows add up". Measured 2026-09-10 on a Robinhood row whose period holds
+     * beginning_balance 150500 and ending_balance 348049.
+     */
+    const id = addAccount("a", "Robinhood Brokerage", "brokerage");
+    const file = addFile("f1", "robinhood-2026-07.pdf", "robinhood-statement-pdf");
+    addPeriod("p1", id, file, "2026-07-01", "2026-07-31", "value_anchor", {
+      beginning: 150_500,
+      ending: 348_049,
+    });
+    const txn = addTxn(id, "2026-07-15", { importFileId: file });
+
+    const p = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;
+    expect(p.headline).toContain("records a value for Robinhood Brokerage");
+    expect(p.headline).not.toContain("carries no balances");
+  });
+
+  test("a file with no balances at all still says so", () => {
+    const id = addAccount("a", "Chase Checking", "checking");
+    const file = addFile("f1", "rocket-money-export.csv", "rocket-money-csv");
+    addPeriod("p1", id, file, "2026-07-01", "2026-07-31", "not_applicable", {
+      beginning: null,
+      ending: null,
+    });
+    const txn = addTxn(id, "2026-07-15", { importFileId: file });
+
+    const p = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;
+    expect(p.headline).toContain("carries no balances");
+  });
+
   test("a hand-entered row says the owner is the only source", () => {
     const id = addAccount("a", "Cash on Hand", "cash");
     const txn = addTxn(id, "2026-07-15");
@@ -354,7 +400,12 @@ describe("provenanceFor — a transaction", () => {
   test("a row from a file that carries no balances does not read as proven", () => {
     const id = addAccount("a", "Wells Fargo Everyday Checking", "checking");
     const file = addFile("f1", "rocket-money-export.csv", "rocket-money-csv");
-    addPeriod("p1", id, file, "2026-07-27", "2026-08-24", "not_applicable");
+    // the real export carries none — all 4 `not_applicable` periods on the
+    // owner's ledger hold NULL balances
+    addPeriod("p1", id, file, "2026-07-27", "2026-08-24", "not_applicable", {
+      beginning: null,
+      ending: null,
+    });
     const txn = addTxn(id, "2026-08-03", { importFileId: file });
 
     const p = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;

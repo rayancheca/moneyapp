@@ -193,7 +193,21 @@ export function recurringInsightInput(
    * check from the sentence. Counted here rather than described, so it cannot
    * drift from the set the ranking actually used.
    */
-  const retired = all.filter((s) => s.status === "ended" || s.status === "dismissed").length;
+  /*
+   * 🔴 …AND THE OTHER HALF OF THE SAME PAIR. The sided fix below was applied to
+   * the 13 and never to the 27 beside it: `retired` counted BOTH sides, so a
+   * commitment's note read "Ranked against the 13 scheduled commitments still
+   * running. The 27 you have ended or dismissed are not counted." — a
+   * 40-series population where the commitment side holds 36. Measured
+   * 2026-09-10: 27 retired in all (11 dismissed + 16 ended) of which 4 are
+   * income-kind, so the count that belongs beside the 13 is 23.
+   *
+   * ⛔ The same predicate the side is built from, so the two cannot disagree
+   * about which series the sentence is about.
+   */
+  const retired = all.filter(
+    (s) => (s.status === "ended" || s.status === "dismissed") && (s.kind === "income") === isIncome,
+  ).length;
   /*
    * 🔴 …and the denominator is one SIDE of the live series, not all of them.
    * "Ranked against the 13 still running" read on 2026-09-04 beside a tab badge

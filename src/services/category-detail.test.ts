@@ -20,6 +20,7 @@ import {
   seriesInCategory,
 } from "./category-detail";
 import { topMerchants } from "./spending";
+import { categorySpending } from "./analytics";
 
 const TODAY = "2026-07-08";
 
@@ -153,6 +154,59 @@ describe("categorySubcategorySplit", () => {
 
   test("a subcategory (leaf) has no split", () => {
     expect(categorySubcategorySplit(bundle.db, catId("Food > Dining"), JULY)).toEqual([]);
+  });
+
+  /*
+   * 🔴 The card listed children only, under a headline counting the whole
+   * subtree, so a category's own rows appeared nowhere and the rows did not sum
+   * to the figure above them. Measured 2026-09-10 on `/categories/<Travel>` for
+   * July: Flights $2,394.89 plus two rows filed directly on Travel ($38.99 and
+   * $15.00) = $2,448.88, the headline — and the $53.99 was in no row.
+   */
+  test("rows filed on the PARENT itself get a row, so the list sums to the headline", () => {
+    insertTxn({ postedOn: "2026-07-05", amountCents: -5_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-06", amountCents: -3_899, category: "Food" });
+    insertTxn({ postedOn: "2026-07-07", amountCents: -1_500, category: "Food" });
+
+    const split = categorySubcategorySplit(bundle.db, catId("Food"), JULY);
+    expect(split.map((s) => [s.name, s.flowCents])).toEqual([
+      ["On Food itself", 5_399],
+      ["Dining", 5_000],
+    ]);
+    expect(split.reduce((t, s) => t + s.flowCents, 0)).toBe(
+      categorySpending(bundle.db, { categoryId: catId("Food"), from: JULY.from, to: JULY.to }).spentCents,
+    );
+  });
+
+  test("the parent's own row counts its rows and carries no drill-down", () => {
+    // `/transactions?category=` filters by SUBTREE, so a link here would list
+    // every child's rows too
+    insertTxn({ postedOn: "2026-07-05", amountCents: -5_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-06", amountCents: -3_899, category: "Food" });
+
+    const own = categorySubcategorySplit(bundle.db, catId("Food"), JULY).find((s) =>
+      s.name.startsWith("On "),
+    )!;
+    expect(own.txnCount).toBe(1);
+    expect(own.href).toBeNull();
+    expect(own.categoryId).toBe(catId("Food"));
+  });
+
+  test("a parent with no rows of its own gets no extra row", () => {
+    insertTxn({ postedOn: "2026-07-05", amountCents: -5_000, category: "Food > Dining" });
+    expect(categorySubcategorySplit(bundle.db, catId("Food"), JULY).map((s) => s.name)).toEqual([
+      "Dining",
+    ]);
+  });
+
+  test("an income parent's own rows are money IN, like its children", () => {
+    insertTxn({ postedOn: "2026-07-01", amountCents: 500_000, category: "Income > Salary", accountId: checkingId });
+    insertTxn({ postedOn: "2026-07-02", amountCents: 2_500, category: "Income", accountId: checkingId });
+    const split = categorySubcategorySplit(bundle.db, catId("Income"), JULY);
+    expect(split.map((s) => [s.name, s.flowCents])).toEqual([
+      ["Salary", 500_000],
+      ["On Income itself", 2_500],
+    ]);
   });
 });
 

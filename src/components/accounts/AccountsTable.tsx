@@ -1,5 +1,6 @@
 "use client";
 
+import { sharePercent } from "@/lib/insight-facts";
 import Link from "next/link";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { useViewState } from "@/hooks/useViewState";
@@ -152,8 +153,14 @@ function toRow(account: AccountsTableAccount, sideTotalCents: number): AccountsT
       deltaCents === null || startCents === null || startCents === 0
         ? null
         : round1((deltaCents / Math.abs(startCents)) * 100),
-    sharePct:
-      account.balanceCents === null ? null : sideTotalCents === 0 ? 0 : round1((size / sideTotalCents) * 100),
+    /*
+     * ⛔ NOT rounded here. `round1` is for the DELTA, where a change of 0.0% is
+     * a real statement. A SHARE rounded to 1dp before it reaches the renderer
+     * throws away exactly what `renderPercent` exists to keep: SoFi Savings'
+     * $0.10 is 0.000087% of $114,498.97 and printed "0.0% of held" — a measured
+     * zero about money that is really there.
+     */
+    sharePct: account.balanceCents === null ? null : sideTotalCents === 0 ? 0 : (size / sideTotalCents) * 100,
   };
 }
 
@@ -484,7 +491,7 @@ function AccountRow({ row, rank }: { row: AccountsTableRow; rank: number }) {
                 ? row.isLiability
                   ? "in credit — no share of the debt"
                   : "overdrawn — no share of what is held"
-                : `${row.sharePct.toFixed(1)}% of ${row.isLiability ? "owed" : "held"}`}
+                : `${sharePercent(row.sharePct)} of ${row.isLiability ? "owed" : "held"}`}
           </span>
         </span>
       </td>

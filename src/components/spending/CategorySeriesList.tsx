@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Icon } from "@/components/shell/Icon";
 import { Money } from "@/components/ui/Money";
-import { formatDayShort } from "@/lib/format-date";
+import { futureDateLabel } from "@/components/recurring/labels";
 import { overdueNote } from "@/components/recurring/labels";
 import type { CategorySeriesRow } from "@/services/category-detail";
 
@@ -10,7 +10,7 @@ import type { CategorySeriesRow } from "@/services/category-detail";
  * bridge that closes the chain back to the Recurring tab (§4). Each row links to
  * its series detail page.
  */
-export function CategorySeriesList({ rows }: { rows: CategorySeriesRow[] }) {
+export function CategorySeriesList({ rows, today }: { rows: CategorySeriesRow[]; today: string }) {
   if (rows.length === 0) {
     return <p className="text-sm text-ink-muted">No recurring series detected in this category yet.</p>;
   }
@@ -36,7 +36,7 @@ export function CategorySeriesList({ rows }: { rows: CategorySeriesRow[] }) {
                 {s.nextExpectedOn &&
                   s.evidence !== "lapsed" &&
                   (s.status === "detected" || s.status === "confirmed") &&
-                  ` · next ${formatDayShort(s.nextExpectedOn)}`}
+                  ` · next ${futureDateLabel(s.nextExpectedOn, today)}`}
                 {/* 🔴 "next Oct 1", of a bill that came due Sep 1 and never
                     posted — beside a Budget card on the same page grading
                     Sep 1 – Sep 30 with the whole amount still "left".

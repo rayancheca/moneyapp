@@ -1,5 +1,6 @@
 "use client";
 
+import { sharePercent } from "@/lib/insight-facts";
 import { useRef, useState, type ReactNode } from "react";
 import { DataTable, type Column, type SortState } from "@/components/ui/DataTable";
 import { RULE_STRONG } from "@/components/ui/letterpress";
@@ -282,7 +283,7 @@ export function PortfolioHoldingsTable({
       align: "right",
       sortable: true,
       render: (r) => (
-        <span className="figures text-ink-muted">{r.allocationPct !== null ? `${r.allocationPct.toFixed(1)}%` : "—"}</span>
+        <span className="figures text-ink-muted">{r.allocationPct !== null ? sharePercent(r.allocationPct) : "—"}</span>
       ),
     },
   ];

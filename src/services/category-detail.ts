@@ -5,6 +5,7 @@ import { categories, type CategoryKind } from "@/db/schema/categories";
 import { addDays, compareDates, monthKey, periodBounds } from "@/lib/dates";
 import {
   categorySpending,
+  spendingTransactions,
   ledgerHref,
   loadCategoryIndex,
   monthKeysBack,
@@ -120,10 +121,30 @@ export interface CategorySubRow {
   /** direction-appropriate flow: money out for expense, money in for income */
   flowCents: number;
   txnCount: number;
-  href: string;
+  /**
+   * The drill-down, or null when there is no filter that lists exactly these
+   * rows — `/transactions?category=` takes the whole SUBTREE, so the parent's
+   * own rows cannot be linked without over-listing. See `ownRow`.
+   */
+  href: string | null;
 }
 
-/** Direct children of a top-level category, by flow (empty for a subcategory). */
+/**
+ * Direct children of a top-level category, by flow (empty for a subcategory) —
+ * PLUS the parent's own rows when it holds any.
+ *
+ * 🔴 The card listed children only, under a headline that counts the whole
+ * subtree, so a category's own rows appeared nowhere and the rows did not sum
+ * to the figure above them. Measured 2026-09-10, `/categories/<Travel>` for
+ * July: Flights $531.79 + $1,843.10 + $20.00 = $2,394.89, plus two rows filed
+ * directly on Travel (EMPOWER* KAMO GADELIA $38.99, SUPER+ * SUPERPLU $15.00)
+ * = $53.99. The headline reads $2,448.88 — the sum — and the $53.99 was in no
+ * row on the page.
+ *
+ * ⛔ The own row carries NO href. `ledgerHref({category})` filters by subtree,
+ * so a link on it would list every child's rows too — which is the drill-down
+ * contract broken rather than kept.
+ */
 export function categorySubcategorySplit(
   db: AppDatabase,
   categoryId: string,
@@ -136,7 +157,25 @@ export function categorySubcategorySplit(
   if (children.length === 0) return [];
 
   const inflow = node.kind === "income";
-  return children
+  // rows filed on the parent ITSELF — the same row list every other figure on
+  // this page is built from, filtered to the exact category
+  const ownRows = spendingTransactions(db, { categoryId, from: range.from, to: range.to }).filter(
+    (t) => t.categoryId === categoryId,
+  );
+  const ownSpent = ownRows.reduce((sum, t) => sum - t.amountCents, 0);
+  const ownRow: CategorySubRow[] =
+    ownRows.length === 0
+      ? []
+      : [
+          {
+            categoryId,
+            name: `On ${node.name} itself`,
+            flowCents: inflow ? -ownSpent : ownSpent,
+            txnCount: new Set(ownRows.map((t) => t.id)).size,
+            href: null,
+          },
+        ];
+  return ownRow.concat(children
     .map((child) => {
       const { spentCents, txnCount } = categorySpending(db, { categoryId: child.id, from: range.from, to: range.to });
       // categorySpending returns -sum(amount); for income flip the sign back to money-in
@@ -149,7 +188,7 @@ export function categorySubcategorySplit(
         href: ledgerHref({ category: child.id, from: range.from, to: range.to }),
       };
     })
-    .filter((r) => r.txnCount > 0)
+      .filter((r) => r.txnCount > 0))
     .sort((a, b) => b.flowCents - a.flowCents || a.name.localeCompare(b.name));
 }
 

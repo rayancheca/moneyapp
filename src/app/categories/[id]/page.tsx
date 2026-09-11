@@ -275,14 +275,28 @@ export default async function CategoryPage({
             <SurfaceCard>
               <h2 className="mb-3 text-sm font-medium">Subcategories</h2>
               <ul className="divide-y divide-line">
-                {subcats.map((s) => (
-                  <li key={s.categoryId}>
-                    <Link href={`/categories/${s.categoryId}`} className="flex items-center justify-between gap-2 py-2 text-sm hover:underline">
+                {/* ⛔ The parent's OWN rows have no link: `/transactions?category=`
+                    filters by SUBTREE, so one would list every child's rows too
+                    — the drill-down contract broken rather than kept. See
+                    `categorySubcategorySplit`. */}
+                {subcats.map((s) =>
+                  s.href === null ? (
+                    <li
+                      key={s.categoryId}
+                      className="flex items-center justify-between gap-2 py-2 text-sm text-ink-muted"
+                    >
                       <span className="truncate">{s.name}</span>
                       <Money cents={Math.abs(s.flowCents)} className="shrink-0 font-medium" />
-                    </Link>
-                  </li>
-                ))}
+                    </li>
+                  ) : (
+                    <li key={s.categoryId}>
+                      <Link href={`/categories/${s.categoryId}`} className="flex items-center justify-between gap-2 py-2 text-sm hover:underline">
+                        <span className="truncate">{s.name}</span>
+                        <Money cents={Math.abs(s.flowCents)} className="shrink-0 font-medium" />
+                      </Link>
+                    </li>
+                  ),
+                )}
               </ul>
             </SurfaceCard>
           )}
@@ -296,7 +310,7 @@ export default async function CategoryPage({
 
           <SurfaceCard className={subcats.length > 0 || merchants ? "" : "lg:col-span-2"}>
             <h2 className="mb-3 text-sm font-medium">Recurring series</h2>
-            <CategorySeriesList rows={series} />
+            <CategorySeriesList rows={series} today={today} />
           </SurfaceCard>
         </div>
 

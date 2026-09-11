@@ -41,6 +41,7 @@ export function TransferRhythm({ data, measure, hoveredEdgeId, onHoverEdge }: Tr
     [data.months, edges],
   );
   const peak = Math.max(1, ...monthTotals);
+  const peakMonth = data.months[monthTotals.indexOf(Math.max(...monthTotals, 0))] ?? null;
 
   if (data.months.length === 0 || edges.length === 0) return null;
 
@@ -53,7 +54,23 @@ export function TransferRhythm({ data, measure, hoveredEdgeId, onHoverEdge }: Tr
         preserveAspectRatio="none"
         className="block h-24 w-full"
         role="img"
-        aria-label={`Transfers by month, ${data.months[0]} to ${data.months[data.months.length - 1]}. Busiest month ${formatCents(peak)}. The same figures are in the table lens.`}
+        /*
+         * 🔴 "The same figures are in the table lens." They are not. The table
+         * lens renders `TransferMatrix` alone — whole-window pair totals with
+         * NO time axis. Measured 2026-09-10 on `/flow?lens=table&measure=gross`:
+         * 52 money strings, 20 filled from→to cells, and zero tokens matching a
+         * month; `grep -c '78,621.60'` on that response is 0. This rail draws
+         * 35 monthly totals that exist in no other text on the app, so the
+         * sentence sent a screen-reader user to a lens that could not answer.
+         *
+         * ⛔ Say what is there instead. The peak is the one figure this rail
+         * can hand over, and naming its MONTH makes it locatable.
+         */
+        aria-label={
+          `Transfers by month, ${data.months[0]} to ${data.months[data.months.length - 1]} — ` +
+          `${data.months.length} months drawn. The busiest is ${peakMonth ?? "unknown"} at ${formatCents(peak)}; ` +
+          `the other months are drawn rather than listed.`
+        }
       >
         {data.months.map((month, i) => {
           const total = monthTotals[i] ?? 0;

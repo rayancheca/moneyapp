@@ -199,7 +199,11 @@ describe("buildAccountsTable", () => {
       account({ id: "venture", isLiability: true, balanceCents: -36_799 }),
       account({ id: "sapphire", isLiability: true, balanceCents: 8_272 }),
     ]);
-    expect(model.owed.map((r) => r.sharePct)).toEqual([60.2, 39.8, 0]);
+    /* ⛔ UNROUNDED. `round1` is for the delta; a share rounded to 1dp before it
+       reaches `sharePercent` throws away exactly what that rule exists to
+       keep — SoFi Savings' $0.10 is 0.000087% of $114,498.97 and printed
+       "0.0% of held". The renderer rounds; the model does not. */
+    expect(model.owed.map((r) => r.sharePct?.toFixed(1))).toEqual(["60.2", "39.8", "0.0"]);
     // and the total stays the NET the footer prints — the slices are of the
     // gross, the total is of the type, and they are different questions
     expect(model.owedTotalCents).toBe(-84_289);
@@ -450,5 +454,16 @@ describe("the day a total is dated to", () => {
       account({ id: "none", balanceCents: null, asOf: null }),
     ]);
     expect(model.oldestAsOf).toBe("2026-09-03");
+  });
+
+  it("a share too small to round to 1dp is kept, not flattened to zero", () => {
+    // 🔴 SoFi Savings: $0.10 of $114,498.97 is 0.000087% and the table read
+    // "0.0% of held" — a measured zero about money that is really there
+    const model = buildAccountsTable([
+      account({ id: "big", balanceCents: 11_449_887 }),
+      account({ id: "tiny", balanceCents: 10 }),
+    ]);
+    expect(model.held[1]!.sharePct).toBeGreaterThan(0);
+    expect(model.held[1]!.sharePct).toBeLessThan(0.05);
   });
 });

@@ -153,6 +153,41 @@ describe("what it refuses to rank together", () => {
       "Ranked against the 2 scheduled commitments still running. The 2 you have ended or dismissed are not counted.",
     );
   });
+
+  test("the retired count is the SAME SIDE as the one it sits beside", () => {
+    /*
+     * 🔴 The sided fix above was applied to the first half of the pair and not
+     * the second: `retired` counted BOTH sides. Measured on the owner's ledger
+     * 2026-09-10 — 27 retired in all (11 dismissed + 16 ended) of which 4 are
+     * income-kind, so a commitment's note read "the 13 … still running. The 27
+     * you have ended or dismissed", a 40-series population where the commitment
+     * side holds 36. The honest count beside the 13 is 23.
+     */
+    addSeries({ id: "rent", name: "Rent", amountCents: -100_000 });
+    addSeries({ name: "Internet", amountCents: -5_000 });
+    addSeries({ name: "Old gym", status: "ended", amountCents: -8_000 });
+    // a retired INCOME series: on the other side, and it used to be counted here
+    addSeries({ name: "Old job", kind: "income", status: "ended", amountCents: 300_000 });
+    addSeries({ name: "Old tutoring", kind: "income", status: "dismissed", amountCents: 20_000 });
+
+    const out = recurringInsights(bundle.db, "rent", TODAY)!;
+    expect(out.windowNote).toBe(
+      "Ranked against the 2 scheduled commitments still running. The 1 you have ended or dismissed are not counted.",
+    );
+  });
+
+  test("an income series counts only the deposits that were retired", () => {
+    addSeries({ id: "pay", name: "Pay", kind: "income", amountCents: 400_000 });
+    addSeries({ name: "Side pay", kind: "income", amountCents: 50_000 });
+    addSeries({ name: "Old job", kind: "income", status: "ended", amountCents: 300_000 });
+    addSeries({ name: "Old gym", status: "ended", amountCents: -8_000 });
+    addSeries({ name: "Cancelled box", status: "dismissed", amountCents: -3_000 });
+
+    const out = recurringInsights(bundle.db, "pay", TODAY)!;
+    expect(out.windowNote).toBe(
+      "Ranked against the 2 scheduled deposits still running. The 1 you have ended or dismissed are not counted.",
+    );
+  });
 });
 
 describe("what gets no strip at all", () => {

@@ -388,16 +388,30 @@ export function trendFact(
  * mirror case is worse: 99.96% prints as "100.0%" and claims the whole of
  * something it does not account for. Both were on screen before this existed.
  *
+ * 🔴 …AND SIX MORE SURFACES WENT ON DOING IT, because this was private to the
+ * insight layer. Measured 2026-09-10: "Health · 1 entry · 0.0% · $4.24" in
+ * /spending's table lens and again in its sankey link name; "0.0% of held" on
+ * SoFi Savings ($0.10) and SoFi Checking ($0.01); WMT at $44.98 printed "0.0%"
+ * twice on /investments; "Money in → Gifts & Donations · $10.43 · 0.0%".
+ * Every one of those is money that really moved.
+ *
  * The `<` and `>` here are the ONLY place a display carries them. Labels forbid
  * both (`FORBIDDEN_IN_LABEL`) because a label could otherwise open a tag; a
  * display is written by this module, never by a caller or a model, and React
  * escapes it as a text node.
+ *
+ * @param magnitude 0–1, not 0–100 — `sharePercent` takes the other framing.
  */
-function renderPercent(magnitude: number): string {
+export function renderPercent(magnitude: number): string {
   const pct = magnitude * 100;
   if (pct > 0 && pct < 0.05) return "<0.1%";
   if (pct < 100 && pct >= 99.95) return ">99.9%";
   return `${pct.toFixed(1)}%`;
+}
+
+/** The same rule for callers holding an already-scaled 0–100 figure. */
+export function sharePercent(pct: number): string {
+  return renderPercent(pct / 100);
 }
 
 function ordinal(n: number): string {
