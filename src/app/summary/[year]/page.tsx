@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { coverageSentence } from "@/lib/year-summary";
 import { formatDayFull } from "@/lib/format-date";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -271,13 +272,15 @@ export default async function YearSummaryPage({
           </SurfaceCard>
 
           <SurfaceCard tone="leaf">
+            {/* ⛔ "these figures", not all of them: `provenance.rowCount` walks
+                the money-in lines only, and the page's largest number is
+                $56,576.24 of spending resting on 1,394 rows this never counts.
+                Both the heading and the sentence name what they measured. */}
             <h2 className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
-              Where these figures come from
+              Where the money-in figures come from
             </h2>
             <p className="mt-2 max-w-prose text-sm leading-relaxed text-ink-muted">
-              {summary.provenance.sourcedRowCount} of {summary.provenance.rowCount} rows behind this
-              page trace to one of {summary.provenance.documents.length} imported{" "}
-              {summary.provenance.documents.length === 1 ? "document" : "documents"}.
+              {coverageSentence(summary.provenance)}
             </p>
             {summary.provenance.unsourcedLines.length > 0 && (
               <p className="mt-1.5 max-w-prose text-sm leading-relaxed text-ink-muted">

@@ -197,3 +197,36 @@ export function yearSummary({ year, lines }: YearSummaryInput): YearSummary {
     isEmpty: enriched.length === 0,
   };
 }
+
+/**
+ * The coverage sentence, WITH ITS SUBJECT NAMED.
+ *
+ * 🔴 `/summary/2026` printed, under a heading reading "Where these figures come
+ * from":
+ *
+ *     92 of 149 rows behind this page trace to one of 11 imported documents.
+ *
+ * `provenance.rowCount` is built by `lineFor`, which walks the MONEY-IN lines
+ * and nothing else. The page's largest figure is $56,576.24 of spending, and it
+ * rests on 1,394 further rows the sentence neither counts nor lists — so "rows
+ * behind this page" names a population an order of magnitude larger than the
+ * one it measures, under a heading claiming to cover "these figures".
+ *
+ * ⛔ The FIGURE is right: 92/149/11 is a correct measurement of the money-in
+ * lines, and widening it halfway — spending but not the XIRR's price basis, the
+ * current window but not the prior one the delta badge also proves — would only
+ * relocate the claim. The sentence is the defect, so the sentence says what it
+ * counted.
+ *
+ * ⚠️ The page already draws this distinction one card up, in the spending
+ * note: "These are money out — counted in none of this page's totals, which
+ * are all money in." This card now agrees with it.
+ */
+export function coverageSentence(p: {
+  sourcedRowCount: number;
+  rowCount: number;
+  documents: readonly string[];
+}): string {
+  const docs = `${p.documents.length} imported ${p.documents.length === 1 ? "document" : "documents"}`;
+  return `${p.sourcedRowCount} of the ${p.rowCount} rows behind the money-in totals above trace to one of ${docs}.`;
+}

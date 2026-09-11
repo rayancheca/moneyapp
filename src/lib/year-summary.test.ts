@@ -3,8 +3,7 @@ import {
   YEAR_SECTION_ORDER,
   YEAR_SECTION_TITLE,
   yearSummary,
-  type YearLineInput,
-} from "./year-summary";
+  type YearLineInput, coverageSentence } from "./year-summary";
 
 /**
  * 2025 as the ledger actually holds it, measured 2026-08-24 before this module
@@ -295,5 +294,35 @@ describe("yearSummary — the partition holds", () => {
     const s = yearSummary({ year: 2025, lines: REAL });
     const all = REAL.reduce((t, l) => t + l.amountCents, 0);
     expect(s.sections.reduce((t, x) => t + x.totalCents, 0)).toBe(all);
+  });
+});
+
+describe("coverageSentence — the subject is the population it counted", () => {
+  /**
+   * 🔴 `/summary/2026` read "92 of 149 rows behind this page trace to one of 11
+   * imported documents" under a heading saying "Where these figures come from".
+   * `rowCount` walks the MONEY-IN lines only; the page's largest figure is
+   * $56,576.24 of spending, resting on 1,394 further rows the sentence neither
+   * counts nor lists.
+   */
+  test("names the money-in totals rather than 'this page'", () => {
+    expect(coverageSentence({ sourcedRowCount: 92, rowCount: 149, documents: ["a.pdf"] })).toBe(
+      "92 of the 149 rows behind the money-in totals above trace to one of 1 imported document.",
+    );
+    expect(
+      coverageSentence({ sourcedRowCount: 92, rowCount: 149, documents: ["a.pdf", "b.csv"] }),
+    ).toContain("2 imported documents");
+  });
+
+  test("it never claims the whole page", () => {
+    const s = coverageSentence({ sourcedRowCount: 1, rowCount: 1, documents: [] });
+    expect(s).not.toContain("behind this page");
+    expect(s).toContain("money-in totals");
+  });
+
+  test("no documents is still a grammatical sentence", () => {
+    expect(coverageSentence({ sourcedRowCount: 0, rowCount: 3, documents: [] })).toBe(
+      "0 of the 3 rows behind the money-in totals above trace to one of 0 imported documents.",
+    );
   });
 });

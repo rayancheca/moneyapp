@@ -423,6 +423,18 @@ describe("concentrationCard — what the portfolio is riding on", () => {
     expect(c.restNote).toContain("entire net worth");
   });
 
+  /**
+   * 🔴 THE CLAUSE AFTER THE COMMA WAS FALSE FOR EVERY INPUT THAT REACHES THIS
+   * BRANCH. It read "…so the portfolio is worth more than everything you own
+   * put together." With A = assets, L = liabilities, P = the portfolio and
+   * R = A − P, `restOfNetWorthCents` is R − L; the branch fires when R < L,
+   * and the sentence concluded P > A, which means R < 0. R is a sum of asset
+   * balances and never is. Here A = $10,134.50 and P = $9,134.50: the portfolio
+   * is emphatically NOT worth more than everything owned.
+   *
+   * ⚠️ Not reachable on the real ledger today — $4,675.37 sits outside the
+   * portfolio against $842.89 of debt — which is why no reading ever caught it.
+   */
   test("a negative rest withholds the multiple and says which way round it is", () => {
     seedBook();
     balance(card, -200_000); // owes more outside the portfolio than he holds
@@ -432,6 +444,10 @@ describe("concentrationCard — what the portfolio is riding on", () => {
     expect(c.topOverRest).toBeNull();
     expect(c.restNote).toContain("$2,000.00");
     expect(c.restNote).not.toContain("-$");
+    expect(c.restNote).toContain("your net worth rests entirely on the portfolio");
+    expect(c.restNote).not.toContain("worth more than everything you own");
+    // …and the claim it used to make is refuted by this very fixture
+    expect(c.portfolioCents).toBeLessThan(1_013_450); // total assets
   });
 
   /* ── signs ─────────────────────────────────────────────────────────────── */

@@ -407,8 +407,22 @@ export function concentrationCard(
           `netted off.`
       : restOfNetWorthCents === 0
         ? `These positions are your entire net worth — there is nothing else, and nothing owed.`
-        : `Outside these positions you owe ${formatCents(Math.abs(restOfNetWorthCents))} more than ` +
-          `you hold, so the portfolio is worth more than everything you own put together.`;
+        : /*
+           * 🔴 THE CLAUSE AFTER THE COMMA WAS FALSE FOR EVERY INPUT THAT
+           * REACHES THIS BRANCH. With A = assets, L = liabilities, P = the
+           * portfolio and R = A − P the non-portfolio assets,
+           * `restOfNetWorthCents` is (A − L) − P = R − L. The branch fires when
+           * R < L. The old sentence concluded P > A, which since A = P + R
+           * means R < 0 — and R is a sum of asset balances, so it never is.
+           * The true reading is the one the figure actually supports: the DEBT
+           * outside these positions is bigger than what is held outside them.
+           *
+           * ⚠️ Not reachable on this ledger today ($4,675.37 outside the
+           * portfolio against $842.89 of debt), which is why no screenshot and
+           * no reading has ever shown it. It is one bad month away.
+           */
+          `Outside these positions you owe ${formatCents(Math.abs(restOfNetWorthCents))} more than ` +
+          `you hold, so your net worth rests entirely on the portfolio — everything else nets to a debt.`;
 
   const fundCents = funds.reduce((s, f) => s + f.valueCents, 0);
   const fundPct = funds.reduce((s, f) => s + f.portfolioPct, 0);
