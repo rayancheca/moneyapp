@@ -14,6 +14,7 @@ import { provenanceFor } from "@/services/provenance";
 import { statementPulls } from "@/services/statement-pulls";
 import { countPhrase } from "@/components/ui/blast-radius";
 import { importRowQualifiers, importRowSubject } from "@/lib/import-file-label";
+import { dayWindowLabel } from "@/lib/period";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Money } from "@/components/ui/Money";
@@ -280,7 +281,12 @@ export default async function ImportsPage({
                   </span>
                   {p.provenance && (
                     <ProvenancePopover
-                      label={`${p.accountName}, ${p.periodStart} to ${p.periodEnd}`}
+                      /* the badge beside it is a data cell and keeps its ISO; this
+                         string is the button's accessible NAME and reads as a
+                         sentence — "How Chase Sapphire, 2026-08-03 to 2026-09-02
+                         is proven". `dayWindowLabel` names a window by its two
+                         ends and drops only the repeated year. */
+                      label={`${p.accountName}, ${dayWindowLabel(p.periodStart, p.periodEnd)}`}
                       provenance={p.provenance}
                       placement="bottom-end"
                     />
