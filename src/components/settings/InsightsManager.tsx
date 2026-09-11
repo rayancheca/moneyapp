@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { formatIsoInstantLong } from "@/lib/format-instant";
 import type { InsightSelectRunResult } from "@/services/insight-selection";
 import { INSIGHT_SURFACES } from "@/services/insights";
 
@@ -156,7 +157,11 @@ export function InsightsManager(props: InsightsManagerProps) {
         )}
         {props.lastRun && (
           <p className="mt-1 text-xs text-ink-faint">
-            Last run {props.lastRun.at.slice(0, 10)}
+            {/* ⛔ `at` is `new Date().toISOString()` — UTC. Slicing it printed the
+                UTC DATE, which is the wrong day either side of midnight, and a
+                machine value in a sentence. The same defect the /transactions
+                header carried; `lib/format-instant` is the rule for both. */}
+            Last run {formatIsoInstantLong(props.lastRun.at)}
             {props.lastRun.failed
               ? ` — failed: ${props.lastRun.error ?? "unknown error"}`
               : props.lastRun.stopped
