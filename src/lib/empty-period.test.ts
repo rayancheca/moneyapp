@@ -87,10 +87,23 @@ describe("emptyPeriodCopy", () => {
       "2026-08-31",
       fmt,
     );
-    expect(copy.title).toBe("No activity in this period");
+    /*
+     * ⛔ AND THE MEASUREMENT IS OF THREE POPULATIONS, NOT THE LEDGER. The
+     * caller's gate counts expense-kind outflows, income-kind positives and
+     * uncategorized outflows, so a window holding only transfers, card payments
+     * or investment flows reaches this branch. Measured 2026-09-11: **79 day
+     * windows printed "nothing posted in it" over 298 posted rows** — and the
+     * heatmap on the very same page had been corrected for the identical claim
+     * hours earlier, leaving one page saying both things about one day.
+     */
+    expect(copy.title).toBe("Nothing spent or earned in this period");
+    expect(copy.description).toContain("nothing was spent or earned in it");
+    expect(copy.description).toContain("Transfers, card payments and investment flows are not counted here");
     expect(copy.description).toContain("measured zero rather than an unread window");
     // ⛔ never the stronger claim: the frontier is whole-ledger, not per account
     expect(copy.description).not.toContain("Every day of it has been imported");
+    // …nor the stronger claim about WHAT is absent
+    expect(copy.description).not.toContain("nothing posted in it");
   });
 
   /* Every branch of the copy, because each one is the only sentence a reader

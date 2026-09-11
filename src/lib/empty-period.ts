@@ -132,10 +132,26 @@ export function emptyPeriodCopy(
        * whole reaches Aug 31. Claiming the stronger thing would be the same
        * over-reach this branch exists to stop.
        */
+      /*
+       * ⛔ …AND "NOTHING" IS THREE POPULATIONS, NOT THE LEDGER. The caller's
+       * `hasActivity` gate counts expense-kind outflows, income-kind positives
+       * and uncategorized outflows; a day holding only a transfer, a card
+       * payment or an investment flow falls through all three. Measured
+       * 2026-09-11: **79 day-windows print this over 298 posted rows**,
+       * $54,457.34 of gross outflow among them — /spending?period=2025-04-11
+       * alone holds 21 rows of savings transfers, Robinhood contributions and
+       * buys.
+       *
+       * 🔴 The heatmap on this very page was corrected for the identical claim
+       * earlier the same day — `/spending?period=2025-04` reads "Apr 11:
+       * nothing spent or earned" — while the page-level state for the same day
+       * still said "nothing posted in it". One fix, two readers, one of them
+       * missed.
+       */
       return {
-        title: "No activity in this period",
+        title: "Nothing spent or earned in this period",
         description:
-          "This window sits inside what has been imported, so nothing posted in it — a measured zero rather than an unread window. Accounts imported less far than the ledger as a whole could still be holding rows here; /imports says which." +
+          "This window sits inside what has been imported, so nothing was spent or earned in it — a measured zero rather than an unread window. Transfers, card payments and investment flows are not counted here and can still have posted; the ledger lists them. Accounts imported less far than the ledger as a whole could also be holding rows here; /imports says which." +
           (opts.uncategorizedBucket
             ? " Uncategorized outflows would show up above, as their own explicit bucket."
             : ""),
