@@ -748,19 +748,43 @@ export interface SeriesView {
   postedAvgCents: number | null;
 }
 
-/** Occurrences per year by cadence — annualized-cost basis. */
-const OCCURRENCES_PER_YEAR: Record<Cadence, number> = {
-  weekly: 52,
-  biweekly: 26,
-  semimonthly: 24,
-  monthly: 12,
-  quarterly: 4,
-  annual: 1,
-};
+/** the span an "annualized" figure covers — twelve months from today */
+const ANNUALIZED_MONTHS = 12;
 
-export function annualizedCentsOf(eff: EffectiveSeries): number | null {
-  if (eff.nextExpectedAmountCents === null) return null;
-  return Math.abs(eff.nextExpectedAmountCents) * OCCURRENCES_PER_YEAR[eff.cadence];
+/**
+ * What this series will actually cost in the twelve months from `today`.
+ *
+ * 🔴 THIS WAS `|amount| × a per-year occurrence count`, WITH NO HORIZON TERM —
+ * so a bounded contract was billed twelve times however few payments it has
+ * left. On the real ledger, 2026-09-11, `Car insurance` (ends 2027-01-11, five
+ * payments to go, a six-payment policy):
+ *
+ *     /recurring?tab=all        Annualized  $4,337.88   (12 × $361.49)
+ *     /recurring/<id>           "…is the 3rd largest of your 13 scheduled
+ *                                commitments, by what they cost in a year, at
+ *                                $4,337.88" · "9.6% of what they cost in a year"
+ *     /  (Runway, The car)      $1,807.45 over the next 12 months  ← right
+ *
+ * $4,337.88 is twelve payments of a contract with five left in the window and
+ * six in total — not an alternate basis, a false statement about a bounded
+ * commitment. And it set a RANK and a SHARE that nothing else on the page
+ * agreed with.
+ *
+ * ⛔ THE RULE WAS ALREADY WRITTEN AND CALLED TWICE — TO DESCRIBE THE PROBLEM,
+ * NEVER TO COMPUTE THE FIGURE. `endsInsideHorizon` gates the committed book's
+ * shortfall line and `annualizedCaveat`'s prose ("this one stops on Jan 11,
+ * 2027, inside them"), so the page carried a caveat about a number that had not
+ * read it. Projecting the occurrences answers both at once.
+ *
+ * ⚠️ Measured against `committedBook`'s own twelve-month total for all 13 live
+ * commitments: identical on the twelve that outlive the window, and only
+ * `Car insurance` moves — $4,337.88 → $1,807.45, the figure the dashboard has
+ * been printing all along.
+ */
+export function annualizedCentsOf(series: ProjectableSeries, today: string): number | null {
+  if (series.nextExpectedAmountCents === null) return null;
+  const occurrences = projectOccurrences(series, today, addCalendarMonths(today, ANNUALIZED_MONTHS));
+  return occurrences.reduce((sum, o) => sum + Math.abs(o.amountCents), 0);
 }
 
 const STATUS_ORDER: Record<SeriesStatus, number> = { confirmed: 0, detected: 1, dismissed: 2, ended: 3 };
@@ -819,7 +843,7 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
           : null,
         isActive: isSeriesActive(s, today),
         evidence: seriesEvidence(s, today),
-        annualizedCents: annualizedCentsOf(eff),
+        annualizedCents: annualizedCentsOf(toProjectable(s), today),
       } satisfies SeriesView;
     })
     .sort(

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
@@ -120,12 +120,37 @@ describe("seriesDetail", () => {
   test("reports the detected statistics and next 3 expected occurrences", () => {
     const d = seriesDetail(bundle.db, netflix().id, TODAY);
     expect(d.cadence).toBe("monthly");
-    expect(d.annualizedCents).toBe(1549 * 12);
+    expect(d.annualizedCents).toBe(1549 * 12); // twelve billings inside the window
     expect(d.isActive).toBe(true);
     expect(d.nextExpected).toHaveLength(3);
     // the 15th, the day every one of the six linked charges landed on
     expect(d.nextExpected[0]!.date).toBe("2026-07-15");
     expect(d.nextExpected.every((o) => o.amountCents === -1549)).toBe(true);
+  });
+
+  /**
+   * 🔴 A BOUNDED CONTRACT BILLED TWELVE TIMES. `annualizedCentsOf` was
+   * `|amount| × occurrences-per-year` with no horizon term, so a series that
+   * stops inside the twelve months was costed as if it did not. On the real
+   * ledger 2026-09-11, `Car insurance` — a SIX-payment policy ending
+   * 2027-01-11 with five payments left — read "$4,337.88 in a year" on
+   * /recurring and set a rank ("3rd largest of your 13 scheduled commitments")
+   * and a share ("9.6%") from it, while the dashboard's Runway card printed
+   * $1,807.45 over the next twelve months. 5 × $361.49 = $1,807.45.
+   *
+   * ⛔ `endsInsideHorizon` — the rule the committed book states — was already
+   * called twice to write PROSE about this ("this one stops on Jan 11, 2027,
+   * inside them") and never once to compute the figure the prose qualified.
+   */
+  test("a series that stops inside the year costs what it will actually bill", () => {
+    const s = netflix();
+    bundle.db.run(sql`UPDATE recurring_series SET user_ends_on = '2026-11-20' WHERE id = ${s.id}`);
+
+    const d = seriesDetail(bundle.db, s.id, TODAY);
+    // TODAY is 2026-07-08 and it bills on the 15th: Jul, Aug, Sep, Oct, Nov
+    expect(d.endsOn).toBe("2026-11-20");
+    expect(d.annualizedCents).toBe(1549 * 5);
+    expect(d.annualizedCents).not.toBe(1549 * 12);
   });
 
   /*
