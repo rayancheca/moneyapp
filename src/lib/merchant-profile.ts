@@ -17,6 +17,7 @@
  */
 
 import { diffDays } from "./dates";
+import { sharePercent } from "./insight-facts";
 import { formatCents } from "./money";
 
 /** Visits below this cannot establish a rate, however long the span. */
@@ -49,6 +50,20 @@ export interface MerchantCategorySlice {
   cents: number;
   /** share of `grossCents` — the mix is of PURCHASES, 0–100 */
   pct: number;
+  /**
+   * The same share as a DISPLAY, at the one decimal the rest of the app uses.
+   *
+   * 🔴 The card formatted `pct.toFixed(0)`, so a two-category split printed
+   * "100%" and "0%" — the 100% denying the row directly under it, the 0%
+   * asserting a measured zero about money that was really spent. On the real
+   * ledger 2026-09-11, /merchants/…63e7 (Metropolitan Museum of Art):
+   *
+   *     Entertainment       $6.44   100 %     ← really 99.5%
+   *     Gifts & Donations   $0.03     0 %     ← really  0.5%
+   *
+   * `lib/insight-facts` owns the rule, and floors a real sliver at "<0.1%".
+   */
+  share: string;
 }
 
 export interface MerchantProfile {
@@ -268,7 +283,10 @@ export function merchantProfile(
   const byCategory = new Map<string, number>();
   for (const v of visits) byCategory.set(v.categoryName, (byCategory.get(v.categoryName) ?? 0) + v.amountCents);
   const categoryMix: MerchantCategorySlice[] = [...byCategory.entries()]
-    .map(([name, cents]) => ({ name, cents, pct: grossCents > 0 ? (cents / grossCents) * 100 : 0 }))
+    .map(([name, cents]) => {
+      const pct = grossCents > 0 ? (cents / grossCents) * 100 : 0;
+      return { name, cents, pct, share: sharePercent(pct) };
+    })
     .sort((a, b) => b.cents - a.cents || a.name.localeCompare(b.name));
 
   const byYear = new Map<string, { cents: number; visits: number }>();

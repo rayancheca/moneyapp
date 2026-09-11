@@ -319,7 +319,44 @@ describe("merchantProfile — category mix", () => {
 
   test("a merchant of free visits has a mix without dividing by zero", () => {
     const mix = merchantProfile(weekly(3, 0), [], TODAY).categoryMix;
-    expect(mix).toEqual([{ name: "Food", cents: 0, pct: 0 }]);
+    expect(mix).toEqual([{ name: "Food", cents: 0, pct: 0, share: "0.0%" }]);
+  });
+
+  /**
+   * 🔴 THE 100% DENIED THE ROW UNDERNEATH IT. The card printed
+   * `pct.toFixed(0)`, so a split of $6.44 / $0.03 read "100 %" and "0 %" —
+   * the first claiming the whole of a merchant whose very next line is real
+   * money, the second asserting a measured zero about money that was spent.
+   * /merchants/…63e7 (Metropolitan Museum of Art), real ledger 2026-09-11.
+   */
+  test("a lopsided split never reads 100% over a nonzero sibling", () => {
+    const mix = merchantProfile(
+      [
+        { day: "2025-09-14", amountCents: 644, categoryName: "Entertainment" },
+        { day: "2026-02-28", amountCents: 3, categoryName: "Gifts & Donations" },
+      ],
+      [],
+      TODAY,
+    ).categoryMix;
+    expect(mix.map((m) => [m.name, m.share])).toEqual([
+      ["Entertainment", "99.5%"],
+      ["Gifts & Donations", "0.5%"],
+    ]);
+    // what the card used to print, and why it was wrong
+    expect(mix.map((m) => `${m.pct.toFixed(0)}%`)).toEqual(["100%", "0%"]);
+  });
+
+  /** a share too small even for one decimal is floored, never rounded away */
+  test("a sliver reads <0.1%, not 0.0%", () => {
+    const mix = merchantProfile(
+      [
+        { day: "2025-01-01", amountCents: 1_000_000, categoryName: "Food" },
+        { day: "2025-02-01", amountCents: 1, categoryName: "Shopping" },
+      ],
+      [],
+      TODAY,
+    ).categoryMix;
+    expect(mix.find((m) => m.name === "Shopping")!.share).toBe("<0.1%");
   });
 });
 

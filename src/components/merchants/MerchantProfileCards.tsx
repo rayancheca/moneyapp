@@ -159,7 +159,7 @@ export function MerchantProfileCards({ intelligence }: { intelligence: MerchantI
                 <dt className="min-w-0 truncate text-ink-muted">{c.name}</dt>
                 <dd className="shrink-0">
                   <Money cents={c.cents} />
-                  <span className="ml-1.5 text-[11px] text-ink-faint">{c.pct.toFixed(0)}%</span>
+                  <span className="ml-1.5 text-[11px] text-ink-faint">{c.share}</span>
                 </dd>
               </div>
             ))}
