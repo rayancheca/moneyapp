@@ -185,7 +185,20 @@ export function TransactionSheet({
               </div>
             ) : null}
           </div>
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-muted">
+          {/*
+            * ⛔ A <div>, NOT a <p>. `Popover` renders its panel as a SIBLING of
+            * the trigger — `ProvenancePopover` says so itself — and that panel
+            * is a <div popover="auto">. A <div> inside a <p> is invalid HTML:
+            * the parser CLOSES the <p> before it, so the tree the browser
+            * builds is not the tree React rendered, and React logs "In HTML,
+            * <div> cannot be a descendant of <p>. This will cause a hydration
+            * error." Found 2026-09-11 in the dev server's own log, not by any
+            * gate — the popover arrives with the lazily loaded panel, so it is
+            * in no server-rendered HTML and no screenshot has ever contained
+            * it. This row is a line of metadata spans, never a paragraph of
+            * prose; the classes are unchanged and not a pixel moves.
+            */}
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-muted">
             <span className="figures">{txn.postedOn}</span>
             <span aria-hidden>·</span>
             <span>{txn.accountName}</span>
@@ -196,7 +209,7 @@ export function TransactionSheet({
             {panel?.provenance ? (
               <ProvenancePopover label="this transaction" provenance={panel.provenance} />
             ) : null}
-          </p>
+          </div>
         </header>
 
         {/* one-tap suggestion — the learning loop's fast path (§3.2) */}
