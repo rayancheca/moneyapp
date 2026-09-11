@@ -314,7 +314,15 @@ export function categoryInsightInput(
       note:
         card.month === monthKey(today)
           ? null
-          : `${card.monthLabel} is the newest month every account has been shown through, and no month after it is fully imported yet — so these read ${card.monthLabel} rather than ${card.currentMonthLabel}.`,
+          /* 🔴 "every account" — the comment eight lines up says the true
+             scope, "every live SPENDING account", and the rendered sentence
+             dropped both words. `moversCard`'s `live` set takes only accounts
+             with ≥3 non-zero baseline months that are present in
+             `observationFrontier`, which excludes every investment account by
+             design and drops accounts never imported. Measured 2026-09-10:
+             `Robinhood Crypto` has been shown through 2026-06-30, before July
+             closes, and `Capital One 360 Checking` through nothing at all. */
+          : `${card.monthLabel} is the newest month every live spending account has been shown through, and no month after it is fully imported yet — so these read ${card.monthLabel} rather than ${card.currentMonthLabel}.`,
     },
   };
 }

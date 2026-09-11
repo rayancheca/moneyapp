@@ -430,10 +430,22 @@ export default async function AccountDetailPage({
                              1 day" while the badge at the top of the same page
                              read "market value — priced from holdings, not
                              checked by arithmetic". */
+                          /* 🔴 …AND A BALANCE THAT PINS NOTHING IS NOT WHAT
+                             VERIFIES ANYTHING. The headline asserted it over a
+                             dialog whose own line, two fields below, correctly
+                             read "Days that stop being verified: no days".
+                             Measured 2026-09-10: `Discover` holds TWO anchors
+                             on 2024-08-18, one manual and one from a statement,
+                             so `daysPinnedBy` filters to an empty span and the
+                             day stays `anchored` after the manual row goes —
+                             the statement anchor holds it. One of the 21
+                             remove-balance dialogs on this ledger. */
                           radius={{
                             headline: pricedFromHoldings
                               ? `${account.name} is priced from its holdings, so this recorded balance verifies nothing. Removing it leaves the curve exactly as it is.`
-                              : `This balance is what verifies ${account.name} on ${a.anchoredOn}. Removing it leaves those days to be derived from transactions alone.`,
+                              : daysPinnedBy(series, a.anchoredOn, anchors[i - 1]?.anchoredOn) === 0
+                                ? `This balance pins no day of ${account.name} that another balance does not already pin. Removing it leaves the curve exactly as it is.`
+                                : `This balance is what verifies ${account.name} on ${a.anchoredOn}. Removing it leaves those days to be derived from transactions alone.`,
                             lines: [
                               {
                                 /* the same rule, and the same hand-rolled copy:

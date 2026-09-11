@@ -8,7 +8,7 @@ import { Money } from "@/components/ui/Money";
 import { formatDayLong } from "@/lib/format-date";
 
 /**
- * Largest purchases (ux-overhaul-plan §5.4): the period's top outflows, each
+ * Largest spending (ux-overhaul-plan §5.4): the period's top outflows, each
  * opening a detail Sheet with a link into the ledger for full context.
  */
 
@@ -28,7 +28,8 @@ export function LargestPurchases({ rows }: { rows: LargestPurchaseRow[] }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const open = rows.find((r) => r.id === openId) ?? null;
 
-  if (rows.length === 0) return <p className="text-sm text-ink-muted">No purchases in this period.</p>;
+  // the same noun as the heading — see /spending/page.tsx
+  if (rows.length === 0) return <p className="text-sm text-ink-muted">Nothing was spent in this period.</p>;
 
   return (
     <>

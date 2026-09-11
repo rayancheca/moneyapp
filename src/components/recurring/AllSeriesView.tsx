@@ -125,10 +125,24 @@ function SuggestionCard({ series: s }: { series: SeriesView }) {
         ) : null}
       </div>
       <div className="mt-2.5 flex gap-1.5">
+        {/* 🔴 EVERY TRIGGER ON A REPEATED ROW NAMES ITS ROW — the rule
+            `/imports` states and the Retire/Undo buttons on `/transactions`
+            already follow. Measured 2026-09-10, `/recurring?tab=all` rendered
+            12 buttons whose whole accessible name was "Dismiss", plus a
+            "Confirm" and a "Not recurring" per suggestion card, none of them
+            saying which series they act on. Dismiss is the one series verb that
+            ERASES calendar history: `recurring-calendar` builds its history
+            population from `status in (detected, confirmed, ended)`, so an
+            ended series keeps every posted charge drawn and a dismissed one
+            loses them all.
+
+            ⚠️ NOT gated, and that is left for the owner: End is behind a full
+            blast-radius Confirm and these post immediately. */}
         <form action={confirmSeriesAction}>
           <input type="hidden" name="seriesId" value={s.id} />
           <button
             type="submit"
+            aria-label={`Confirm ${s.name} as recurring`}
             className="rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-surface-raised transition-opacity duration-(--duration-fast) hover:opacity-90"
           >
             Confirm
@@ -138,6 +152,7 @@ function SuggestionCard({ series: s }: { series: SeriesView }) {
           <input type="hidden" name="seriesId" value={s.id} />
           <button
             type="submit"
+            aria-label={`Mark ${s.name} as not recurring`}
             className="rounded-md border border-line px-2.5 py-1 text-xs font-medium text-ink-muted transition-colors duration-(--duration-fast) hover:border-line-strong hover:text-ink"
           >
             Not recurring
@@ -287,6 +302,7 @@ function SeriesRow({
           <input type="hidden" name="seriesId" value={s.id} />
           <button
             type="submit"
+            aria-label={`Mark ${s.name} as not recurring`}
             className="rounded-md border border-line px-2 py-1 text-xs font-medium text-ink-muted transition-colors duration-(--duration-fast) hover:border-line-strong hover:text-ink"
           >
             Dismiss

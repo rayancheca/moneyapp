@@ -159,12 +159,20 @@ describe("what /spending says about a ledger whose answers are known", () => {
     }
   });
 
-  test("the window is the newest month every account was imported past, and it says so", () => {
+  test("the window is the newest month every LIVE SPENDING account was imported past, and it says so", () => {
     ordinaryLedger();
     const out = spendingInsights(bundle.db, TODAY)!;
     // TODAY is in August; the frontier only reaches 2026-08-20, so July is the
     // newest month that has actually been looked at
-    expect(out.windowNote).toContain("Jul 2026 is the newest month every account has been shown through");
+    /* 🔴 "every account" of a set that is `moversCard`'s `live` — accounts with
+       ≥3 non-zero baseline months present in `observationFrontier`, which
+       excludes every investment account by design. Measured 2026-09-10:
+       `Robinhood Crypto` has been shown through 2026-06-30 and `Capital One
+       360 Checking` through nothing at all. The comment above the sentence had
+       the scope right; the sentence dropped two words. */
+    expect(out.windowNote).toContain(
+      "Jul 2026 is the newest month every live spending account has been shown through",
+    );
     /*
      * ⛔ It must not explain a multi-month jump with a single month's reason.
      * On the real ledger at 2026-09-02 the window was Jul 2026 and the note

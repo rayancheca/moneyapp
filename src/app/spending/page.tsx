@@ -447,7 +447,18 @@ export default async function SpendingPage({
 
           <div className="grid gap-6 *:min-w-0 lg:grid-cols-2">
             <SurfaceCard>
-              <h2 className="mb-3 text-sm font-medium">Largest purchases</h2>
+              {/* 🔴 "purchases" of a population that is every expense-kind
+                  OUTFLOW. `spending-insights` settled this noun once —
+                  "'transaction', not 'purchase'. … rent is not a purchase in
+                  any case" — and this heading never read it. Measured
+                  2026-09-10 across all 49 months the ledger covers: 20 of the
+                  49 top-5 lists hold at least one row that is not a purchase.
+                  Aug 2026 is led by "Flamingo Rent" (-$2,237.11) with
+                  "PROGRESSIVE INS" 4th; Jul 2026 by the same rent charge with
+                  "Zelle Payment To Kevin" 5th; Apr 2026 holds a $3,000.00
+                  Zelle to a person and a NYS tax payment. The figures are
+                  exactly right; the noun was not. */}
+              <h2 className="mb-3 text-sm font-medium">Largest spending</h2>
               <LargestPurchases rows={largest} />
             </SurfaceCard>
             <SurfaceCard>

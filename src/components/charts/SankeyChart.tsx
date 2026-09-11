@@ -80,6 +80,41 @@ interface Tooltip {
 // (`dashboard-view-spec`), so the spec the RSC resolves and the pill rendered
 // here cannot name different options.
 
+/**
+ * The chart's one sentence.
+ *
+ * 🔴 THE PLUG IS NOT A SOURCE, AND WHAT IT CARRIES DID NOT FLOW IN.
+ * `sankey.ts` adds a `drawdown` node — "From outside this period" — only when
+ * the window spent more than its recorded income, and its own comment says
+ * "all this node knows is that the balancing amount came from outside it." The
+ * summary counted it among the sources and folded its cents into "flows in".
+ *
+ * Measured 2026-09-10 over all time: the page's own stat cards read Earned
+ * $117,925.41 and Refunds +$7,031.51, so $124,956.92 actually came in. The
+ * sentence said "$176,762.37 flows in from 9 sources" — which is the GROSS
+ * SPEND, the figure the stat card beside it labels "Spent", because
+ * 117,925.41 + 7,031.51 + 51,805.45 = 176,762.37 and the last of those three
+ * is the plug.
+ */
+export function sankeySummary(
+  nodes: readonly { column: number; valueCents: number; meta?: { kind?: string } }[],
+  totalFlow: number,
+  ariaLabel: string,
+  formatValue: (cents: number) => string,
+): string {
+  const plug = nodes.find((n) => n.meta?.kind === "drawdown") ?? null;
+  const sources = nodes.filter((n) => n.column === 0 && n.meta?.kind !== "drawdown").length;
+  const dests = nodes.filter((n) => n.meta?.kind === "category" || n.meta?.kind === "uncategorized").length;
+  const came = totalFlow - (plug?.valueCents ?? 0);
+  const drawn = plug
+    ? ` A further ${formatValue(plug.valueCents)} is drawn from outside this period — it did not flow in.`
+    : "";
+  return (
+    `${ariaLabel}: ${formatValue(came)} flows in from ${sources} source${sources === 1 ? "" : "s"} ` +
+    `across ${dests} spending categor${dests === 1 ? "y" : "ies"}.${drawn}`
+  );
+}
+
 export function SankeyChart({
   graph,
   heightClass = "h-[22rem]",
@@ -136,11 +171,10 @@ export function SankeyChart({
     [graph.links, labelOf],
   );
 
-  const summary = useMemo(() => {
-    const sources = layout.nodes.filter((n) => n.column === 0).length;
-    const dests = layout.nodes.filter((n) => n.meta?.kind === "category" || n.meta?.kind === "uncategorized").length;
-    return `${ariaLabel}: ${formatValue(totalFlow)} flows in from ${sources} source${sources === 1 ? "" : "s"} across ${dests} spending categor${dests === 1 ? "y" : "ies"}.`;
-  }, [ariaLabel, formatValue, layout.nodes, totalFlow]);
+  const summary = useMemo(
+    () => sankeySummary(layout.nodes, totalFlow, ariaLabel, formatValue),
+    [ariaLabel, formatValue, layout.nodes, totalFlow],
+  );
 
   if (graph.nodes.length === 0) {
     return <p className="py-8 text-center text-sm text-ink-muted">{emptyLabel}</p>;
