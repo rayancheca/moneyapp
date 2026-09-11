@@ -128,6 +128,9 @@ describe("forecastCurrentMonth", () => {
     // Jul 9, 16, 23, 30 — four occurrences left in July
     expect(payroll).toMatchObject({ kind: "fixed", cents: 4 * 80000 });
     expect(payroll!.detail).toContain("4 × $800.00");
+    // the forward leg spells its date too, and carries no machine value
+    expect(payroll!.detail).toContain("next Jul 9");
+    expect(payroll!.detail).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     expect(f.projectedIncomeCents).toBe(320000);
   });
 
@@ -294,7 +297,15 @@ describe("forecastCurrentMonth", () => {
     const f = forecastCurrentMonth(bundle.db, TODAY);
     const rentLine = f.components.find((c) => c.label === "Rent");
     expect(rentLine).toMatchObject({ kind: "fixed", cents: -210900 });
-    expect(rentLine!.detail).toContain("came due");
+    /*
+     * 🔴 …AND IT SAID "came due 2026-07-01" — a raw ISO date mid-sentence,
+     * where the tooltip on the same row reads "since Jul 5, 2026" and the list
+     * below it "Sep 11". 10 of 24 rows on /recurring carried one on
+     * 2026-09-11. `formatDayShortIn` keeps the year off a same-year date and
+     * puts it back across a boundary.
+     */
+    expect(rentLine!.detail).toContain("came due Jul 1 and has not posted");
+    expect(rentLine!.detail).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     expect(f.projectedSpendCents).toBe(-210900);
     // it is a COMMITMENT, not a pace: the schedule-only reading owns it too
     expect(f.committed.spendCents).toBe(-210900);

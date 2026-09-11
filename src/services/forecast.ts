@@ -8,6 +8,7 @@ import { addCalendarMonths, addDays, compareDates, diffDays, monthKey, periodBou
 import { forecastSplit } from "@/lib/forecast-split";
 import { projectOngoingIncome } from "@/lib/income-forecast";
 import { trailingPace } from "@/lib/projection";
+import { formatDayShortIn } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import { allocationsFor } from "@/lib/transaction-splits";
 import { latestBalances } from "./derivation";
@@ -305,7 +306,10 @@ function fixedComponents(
         label: series.name,
         kind: "fixed",
         cents,
-        detail: `${occurrences.length} × ${formatCents(perOccurrence)} (${CADENCE_LABEL[series.cadence] ?? series.cadence}), next ${occurrences[0]!.date}`,
+        /* ⛔ a raw ISO date mid-sentence. The tooltip on this same row says
+           "since Jul 5, 2026" and the list below it "Sep 11"; this cell said
+           "2026-09-11". 10 of 24 rows carried one. */
+        detail: `${occurrences.length} × ${formatCents(perOccurrence)} (${CADENCE_LABEL[series.cadence] ?? series.cadence}), next ${formatDayShortIn(occurrences[0]!.date, today)}`,
         staleness,
       },
     });
@@ -373,7 +377,7 @@ function arrearsComponents(db: AppDatabase, today: string, monthStart: string): 
       label: s.name,
       kind: "fixed" as const,
       cents: -s.amountCents,
-      detail: `${s.occurrenceCount} × ${formatCents(perOccurrenceCents)} (${CADENCE_LABEL[series.cadence] ?? series.cadence}), came due ${s.nextDate} and has not posted`,
+      detail: `${s.occurrenceCount} × ${formatCents(perOccurrenceCents)} (${CADENCE_LABEL[series.cadence] ?? series.cadence}), came due ${formatDayShortIn(s.nextDate, today)} and has not posted`,
       staleness: seriesStaleness(series, today),
     };
   });
