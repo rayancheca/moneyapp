@@ -384,7 +384,45 @@ describe("topMerchants", () => {
     expect(top.entries[0]).toMatchObject({ kind: "unlinked", name: "NEW BEST GOURMET DELI", spentCents: 1_600, txnCount: 2 });
     expect(top.entries[0]!.href).toContain("q=NEW+BEST+GOURMET+DELI");
     expect(top.entries[1]).toMatchObject({ kind: "merchant", id: dunkin, name: "Dunkin'", spentCents: 1_500, txnCount: 3 });
-    expect(top.entries[1]!.href).toBe(`/transactions?merchant=${dunkin}&from=2026-07-01&to=2026-07-31`);
+    expect(top.entries[1]!.href).toBe(
+      `/transactions?category=spending&merchant=${dunkin}&from=2026-07-01&to=2026-07-31`,
+    );
+  });
+
+  /*
+   * 🔴 THE LINK DROPPED THE SCOPE THE FIGURE WAS COMPUTED UNDER. These numbers
+   * come from `spendingRowsInRange` — spending rows only, and on a category
+   * page only that category's subtree — while the href carried the merchant and
+   * the window alone. Measured 2026-09-11 across /spending and every category
+   * page for ten months: 34 of 497 rows disagreed with the list their own link
+   * opens. `/spending?period=2026-05` said "Zelle · 1 transaction · $1,495.00"
+   * and opened 23 rows; the scoped link opens 1.
+   */
+  test("the drill carries the SPENDING scope, so a merchant's transfers stay out of it", () => {
+    const zelle = makeMerchant("Zelle");
+    insertTxn({ postedOn: "2026-07-02", amountCents: -149_500, category: "Housing > Rent", merchantId: zelle });
+    insertTxn({ postedOn: "2026-07-03", amountCents: -50_000, category: "Transfers > Internal Transfer", merchantId: zelle });
+    insertTxn({ postedOn: "2026-07-04", amountCents: 20_000, category: "Transfers > Credit Card Payment", merchantId: zelle });
+
+    const row = topMerchants(bundle.db, JULY).entries.find((e) => e.id === zelle)!;
+    // the figure already excludes the transfers …
+    expect(row).toMatchObject({ spentCents: 149_500, txnCount: 1 });
+    // … and now so does the link
+    expect(row.href).toContain("category=spending");
+    expect(row.href).toBe(`/transactions?category=spending&merchant=${zelle}&from=2026-07-01&to=2026-07-31`);
+  });
+
+  test("on a category page the drill carries THAT category, not the whole spending set", () => {
+    const shop = makeMerchant("Vape N Smoke Shop");
+    insertTxn({ postedOn: "2026-07-02", amountCents: -11_370, category: "Food > Coffee", merchantId: shop });
+    insertTxn({ postedOn: "2026-07-03", amountCents: -22_198, category: "Shopping > General", merchantId: shop });
+
+    const food = catId("Food");
+    const row = topMerchants(bundle.db, JULY, 8, { categoryId: food }).entries.find((e) => e.id === shop)!;
+    expect(row).toMatchObject({ spentCents: 11_370, txnCount: 1 });
+    expect(row.href).toBe(
+      `/transactions?category=${food}&merchant=${shop}&from=2026-07-01&to=2026-07-31`,
+    );
   });
 
   test("a row filed on the system Uncategorized category is spending here too", () => {
@@ -454,7 +492,8 @@ describe("topMerchants unlinked drill-downs", () => {
 
     const entry = topMerchants(bundle.db, JULY).entries[0]!;
     expect(entry.name).toBe("VENMO CASHOUT REF");
-    expect(entry.href).toBe("/transactions?from=2026-07-01&to=2026-07-31&q=VENMO");
+    // the SPENDING scope rides along: these groups come from the same row set
+    expect(entry.href).toBe("/transactions?category=spending&from=2026-07-01&to=2026-07-31&q=VENMO");
     expect(rowsBehind(entry.href)).toBe(1);
   });
 

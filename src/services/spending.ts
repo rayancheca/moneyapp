@@ -772,6 +772,27 @@ export function topMerchants(
     groups.set(key, { ...g, spentCents: g.spentCents + out, txnCount: g.txnCount + 1 });
   }
 
+  /*
+   * 🔴 THE LINK MUST CARRY THE SCOPE THE FIGURE WAS COMPUTED UNDER. These
+   * numbers come from `spendingRowsInRange` — SPENDING rows only, and on a
+   * category page only that category's subtree — while the href carried the
+   * merchant and the window alone. Measured 2026-09-11 across `/spending` and
+   * every category page for ten months: **34 of 497 rows disagreed with the
+   * list their own link opens.**
+   *
+   *     /spending?period=2026-05   "Zelle · 1 transaction · $1,495.00"
+   *                                 → 23 rows (14 Internal Transfer, 8
+   *                                   Reimbursements, 1 Rent)
+   *     /categories/<Weed>?period=2026-07
+   *                                "Vape N Smoke Shop · 5 txns · $113.70"
+   *                                 → 13 rows summing $335.68, the rest Shopping
+   *
+   * The type's own docstring calls this href "the filtered LEDGER for this
+   * group — every row behind the figure", and the Honesty card on the same page
+   * already passes its own filter and reconciles exactly.
+   */
+  const drillCategory = opts.categoryId ?? "spending";
+
   const entries: MerchantEntry[] = [...groups.values()]
     .sort((a, b) => b.spentCents - a.spentCents || a.name.localeCompare(b.name))
     .slice(0, limit)
@@ -784,10 +805,11 @@ export function topMerchants(
       profileHref: g.kind === "merchant" ? `/merchants/${g.id!}` : null,
       href:
         g.kind === "merchant"
-          ? ledgerHref({ merchant: g.id!, from: range.from, to: range.to })
+          ? ledgerHref({ category: drillCategory, merchant: g.id!, from: range.from, to: range.to })
           : // the verified literal, or the display string as a last resort — never
             // worse than the label-only link it replaces
             ledgerHref({
+              category: drillCategory,
               q: literalGroupQuery(g.strippedKey!, g.texts) ?? g.query!,
               from: range.from,
               to: range.to,
