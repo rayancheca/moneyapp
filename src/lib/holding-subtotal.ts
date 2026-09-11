@@ -18,6 +18,7 @@
  * symbol are two independent shares whose sum is the combined share.
  */
 
+import { sharePercent } from "./insight-facts";
 import { formatCents, formatCentsSigned } from "./money";
 
 /** The nullable fields a subtotal reads — HoldingRow satisfies this structurally. */
@@ -73,9 +74,17 @@ export function subtotalCoverage(
   return `${figure.contributors} of ${selected} ${contributed}`;
 }
 
-/** Allocation share, at the precision the Alloc column already prints. */
+/**
+ * Allocation share at the Alloc column's precision — and never rounding a real
+ * sliver away: `sharePercent` floors at "<0.1%".
+ *
+ * 🔴 Ticking WMT alone on /investments put "Share 0.0%" in the subtotal bar
+ * directly under a row whose own Alloc cell already read "<0.1%" — the same
+ * $43.70, two answers, one screen. The column was converted on 2026-09-10; the
+ * subtotal that adds it up was not.
+ */
 export function formatSharePct(pct: number): string {
-  return `${pct.toFixed(1)}%`;
+  return sharePercent(pct);
 }
 
 function withCoverage(text: string, note: string | null): string {

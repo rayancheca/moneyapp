@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { sharePercent } from "./insight-facts";
 import {
   formatSharePct,
   subtotalAnnouncement,
@@ -106,6 +107,23 @@ describe("formatSharePct", () => {
   test("prints one decimal, matching the Alloc column", () => {
     expect(formatSharePct(8.000000000000002)).toBe("8.0%");
     expect(formatSharePct(0)).toBe("0.0%");
+  });
+
+  /**
+   * 🔴 The subtotal bar sat directly under the Alloc column it adds up, and the
+   * two disagreed about the same number. Ticking WMT alone on /investments —
+   * $43.70 of $109,204.16, or 0.040% — put "Share 0.0%" under a row already
+   * reading "<0.1%". A measured zero over a position the same screen prices.
+   */
+  test("a real sliver reads <0.1%, exactly as the column it subtotals does", () => {
+    expect(formatSharePct(0.04001679056915048)).toBe("<0.1%");
+    expect(formatSharePct(0.04001679056915048)).toBe(sharePercent(0.04001679056915048));
+  });
+
+  /** a share that IS zero still prints a zero — the floor is for real slivers only */
+  test("only a nonzero share is floored", () => {
+    expect(formatSharePct(0)).toBe("0.0%");
+    expect(formatSharePct(0.05)).toBe("0.1%");
   });
 });
 

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Money } from "@/components/ui/Money";
 import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
+import { sharePercent } from "@/lib/insight-facts";
 import type { ConcentrationCard as ConcentrationCardData } from "@/services/concentration-card";
 
 /**
@@ -68,7 +69,7 @@ export function ConcentrationCard({ data }: { data: ConcentrationCardData }) {
               {p.spreadNote && <span className="shrink-0 text-[11px] text-ink-faint">{p.spreadNote}</span>}
             </dt>
             <dd className="flex shrink-0 items-baseline gap-2">
-              <span className="figures text-xs text-ink-muted">{p.portfolioPct.toFixed(1)}%</span>
+              <span className="figures text-xs text-ink-muted">{sharePercent(p.portfolioPct)}</span>
               <Money cents={p.valueCents} />
             </dd>
           </div>
@@ -80,7 +81,7 @@ export function ConcentrationCard({ data }: { data: ConcentrationCardData }) {
               {remainder.count} smaller position{remainder.count === 1 ? "" : "s"}
             </dt>
             <dd className="flex shrink-0 items-baseline gap-2 text-ink-faint">
-              <span className="figures text-xs">{remainder.portfolioPct.toFixed(1)}%</span>
+              <span className="figures text-xs">{sharePercent(remainder.portfolioPct)}</span>
               <Money cents={remainder.valueCents} />
             </dd>
           </div>
@@ -104,7 +105,7 @@ export function ConcentrationCard({ data }: { data: ConcentrationCardData }) {
               {!k.isSingleName && <span className="shrink-0 text-[11px] text-ink-faint">spread</span>}
             </dt>
             <dd className="flex shrink-0 items-baseline gap-2">
-              <span className="figures text-xs text-ink-muted">{k.portfolioPct.toFixed(1)}%</span>
+              <span className="figures text-xs text-ink-muted">{sharePercent(k.portfolioPct)}</span>
               <Money cents={k.valueCents} />
             </dd>
           </div>

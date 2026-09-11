@@ -8,6 +8,7 @@ import { compareDates, todayIso } from "@/lib/dates";
 import { dayChangeLabel } from "@/lib/day-change-label";
 import { formatDayShort } from "@/lib/format-date";
 import { holdingReturnDays } from "@/lib/holding-returns";
+import { sharePercent } from "@/lib/insight-facts";
 import { moneyWeightedReturn, type PortfolioDay } from "@/lib/portfolio-returns";
 import { carryForwardTo } from "@/lib/price-series";
 import {
@@ -101,6 +102,17 @@ export interface HoldingDetail {
   totalPlCents: number | null;
   totalPlPct: number | null;
   diversityPct: number | null;
+  /**
+   * The same share as a DISPLAY, floored at "<0.1%" so a real sliver is never
+   * printed as a measured zero. `lib/insight-facts` owns that rule.
+   *
+   * 🔴 The card formatted `diversityPct.toFixed(1)` itself, and on 2026-09-11
+   * `/investments/stock/WMT` read "Portfolio diversity 0.0%" three lines under
+   * the "Market value $43.70" it had just printed — $43.70 of $109,204.16 is
+   * 0.040%. Six sibling surfaces were converted to `sharePercent` the day
+   * before; this was the seventh caller re-deriving it.
+   */
+  diversityDisplay: string | null;
   legs: HoldingAccountLeg[];
   // chart — carried forward to `today`: real closes are `complete`, the flat
   // tail after the last quoted day is `complete: false` (drawn dashed)
@@ -250,6 +262,7 @@ export function holdingDetail(
   const portfolioValue = holdingRows(db).reduce((s, r) => s + (r.valueCents ?? 0), 0);
   const diversityPct =
     valueCents !== null && portfolioValue > 0 ? (valueCents / portfolioValue) * 100 : null;
+  const diversityDisplay = diversityPct === null ? null : sharePercent(diversityPct);
 
   const priceDayChangeCents =
     latest && previous ? Math.round((latest.close - previous.close) * 100) : null;
@@ -376,6 +389,7 @@ export function holdingDetail(
     totalPlCents,
     totalPlPct,
     diversityPct,
+    diversityDisplay,
     legs: holdingLegs
       .filter((l) => l.isActive)
       .map((l) => ({

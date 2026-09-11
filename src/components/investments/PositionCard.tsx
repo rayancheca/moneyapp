@@ -157,7 +157,7 @@ export function PositionCard({ detail, provenance }: { detail: HoldingDetail; pr
           )}
         </Stat>
         <Stat label="Portfolio diversity">
-          <span className="figures">{detail.diversityPct !== null ? `${detail.diversityPct.toFixed(1)}%` : "—"}</span>
+          <span className="figures">{detail.diversityDisplay ?? "—"}</span>
         </Stat>
       </dl>
 

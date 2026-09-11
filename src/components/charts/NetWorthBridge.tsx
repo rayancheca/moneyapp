@@ -11,6 +11,7 @@ import {
   type Attribution,
   type AttributionBandKey,
 } from "@/lib/attribution";
+import { sharePercent } from "@/lib/insight-facts";
 import { magnitudeTiers } from "@/lib/magnitude-tiers";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { computeWaterfallLayout, type WaterfallStep } from "@/lib/waterfall-layout";
@@ -583,6 +584,6 @@ const BAND_COLUMNS: Column<BandRow>[] = [
     key: "share",
     header: "Share of movement",
     align: "right",
-    render: (r) => <span className="text-ink-faint">{r.sharePct.toFixed(1)}%</span>,
+    render: (r) => <span className="text-ink-faint">{sharePercent(r.sharePct)}</span>,
   },
 ];

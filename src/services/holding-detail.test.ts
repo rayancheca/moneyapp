@@ -97,6 +97,48 @@ describe("holdingDetail", () => {
     expect(d.todayReturnPct).toBeCloseTo((1_000 / 11_000) * 100, 8);
     expect(d.legs).toHaveLength(1);
     expect(d.diversityPct).toBeCloseTo(100, 5); // the only holding
+    expect(d.diversityDisplay).toBe("100.0%");
+  });
+
+  /**
+   * 🔴 A HELD, PRICED POSITION RENDERED AS A MEASURED ZERO.
+   *
+   * `PositionCard` formatted `diversityPct.toFixed(1)` itself, so on the real
+   * ledger 2026-09-11 `/investments/stock/WMT` read "Portfolio diversity 0.0%"
+   * three lines under the "Market value $43.70" it had just printed — $43.70 of
+   * $109,204.16 is 0.040%. Six sibling surfaces had been converted to
+   * `sharePercent`, which floors a nonzero share at "<0.1%", the day before.
+   *
+   * ⛔ The standing fixture holds AAPL alone, so diversity is always exactly
+   * 100% and a sub-0.05% share cannot occur in it at all. The whale goes here.
+   */
+  test("a sliver of the portfolio reads <0.1%, never a measured zero", () => {
+    bundle.db
+      .insert(priceCache)
+      .values({
+        symbol: "MSFT",
+        assetType: "stock",
+        quotedOn: "2026-03-04",
+        close: 1_000_000,
+        source: "yahoo",
+        fetchedAt: "2026-03-04T20:00:00.000Z",
+      })
+      .run();
+    upsertHolding(bundle.db, {
+      accountId: brokerage,
+      symbol: "MSFT",
+      assetType: "stock",
+      quantityE8: 100_000_000,
+      avgCostCents: 100_000_000,
+      occurredOn: "2026-03-04",
+    });
+
+    const d = holdingDetail(bundle.db, "stock", "AAPL", "2026-03-04");
+    // $240 of $1,000,240 — real money, and toFixed(1) prints it as "0.0%"
+    expect(d.diversityPct).toBeGreaterThan(0);
+    expect(d.diversityPct!).toBeLessThan(0.05);
+    expect(d.diversityPct!.toFixed(1)).toBe("0.0"); // what the card used to show
+    expect(d.diversityDisplay).toBe("<0.1%");
   });
 
   test("returns the rebuilt trade timeline as marks + events, newest event first", () => {

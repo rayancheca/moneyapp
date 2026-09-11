@@ -7,6 +7,7 @@ import { Money } from "@/components/ui/Money";
 import { diffDays } from "@/lib/dates";
 import { formatDayShort } from "@/lib/format-date";
 import { priceColumnAge } from "@/lib/holding-price-age";
+import { sharePercent } from "@/lib/insight-facts";
 import { formatCents } from "@/lib/money";
 import { formatQuantityE8, type AccountHoldingRow } from "@/services/holdings";
 
@@ -133,7 +134,7 @@ export function AccountHoldingsTable({
       sortable: true,
       render: (r) => (
         <span className="figures text-xs text-ink-muted">
-          {r.allocationPct !== null ? `${r.allocationPct.toFixed(1)}%` : "—"}
+          {r.allocationPct !== null ? sharePercent(r.allocationPct) : "—"}
         </span>
       ),
     },
