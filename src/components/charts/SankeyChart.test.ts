@@ -1,12 +1,13 @@
 import { describe, expect, test } from "vitest";
 import { formatCents } from "@/lib/money";
-import { sankeySummary } from "./SankeyChart";
+import { sankeyFrameNote, sankeyNodeLabel, sankeySummary } from "./SankeyChart";
 
 type Node = { column: number; valueCents: number; meta?: { kind?: string } };
 
 const income = (cents: number): Node => ({ column: 0, valueCents: cents, meta: { kind: "income" } });
 const cat = (cents: number): Node => ({ column: 2, valueCents: cents, meta: { kind: "category" } });
 const plug = (cents: number): Node => ({ column: 0, valueCents: cents, meta: { kind: "drawdown" } });
+const refund = (cents: number): Node => ({ column: 0, valueCents: cents, meta: { kind: "refund" } });
 
 const say = (nodes: Node[], totalFlow: number) =>
   sankeySummary(nodes, totalFlow, "Money flow for All time", formatCents);
@@ -51,6 +52,60 @@ describe("sankeySummary", () => {
   test("one source and one category are singular", () => {
     expect(say([income(10_000), cat(10_000)], 10_000)).toBe(
       "Money flow for All time: $100.00 flows in from 1 source across 1 spending category.",
+    );
+  });
+});
+
+/*
+ * ⚖️ OWNER DECISION 2026-09-11. One page, one month, two figures for Housing:
+ * `/spending?period=2026-07` drew **$2,763.79 · 26.7%** here while the insight
+ * sentence, the Where-it-went list, the relief, the table lens and every
+ * `/categories` page read **$2,653.58 · 25.9%**. SQL over the Housing subtree
+ * for July: gross out $2,763.79, refunds $110.21, net $2,653.58 over 7 rows —
+ * so both are right, and the chart is self-consistent because it draws the
+ * $113.11 that came back (110.21 + 2.90) as its own inflow. The figure was
+ * right and the label was silent about its frame. He chose "Label the frame".
+ */
+describe("sankeyFrameNote", () => {
+  test("names the frame and the refund that explains the difference", () => {
+    expect(sankeyFrameNote([cat(276_379), refund(11_311)], formatCents)).toBe(
+      "Categories here are what was charged. The $113.11 that came back is its own source rather " +
+        "than a subtraction, so these run above the netted figures elsewhere.",
+    );
+  });
+
+  test("no refund means gross IS net — a note explaining nothing is noise", () => {
+    expect(sankeyFrameNote([income(10_000), cat(10_000)], formatCents)).toBeNull();
+    expect(sankeyFrameNote([cat(10_000), refund(0)], formatCents)).toBeNull();
+  });
+
+  test("the summary carries it, because that is the <title> and the table caption", () => {
+    expect(say([income(10_000), refund(11_311), cat(21_311)], 21_311)).toContain(
+      "Categories here are what was charged.",
+    );
+    expect(say([income(10_000), cat(10_000)], 10_000)).not.toContain("what was charged");
+  });
+});
+
+describe("sankeyNodeLabel", () => {
+  const share = () => "26.7%";
+
+  test("a spending destination says which frame its figure is in", () => {
+    expect(sankeyNodeLabel({ label: "Housing", valueCents: 276_379, meta: { kind: "category" } }, formatCents, share)).toBe(
+      "Housing, $2,763.79 charged, 26.7% of the flow — view transactions",
+    );
+    // the honesty bucket is a spending destination too
+    expect(
+      sankeyNodeLabel({ label: "Uncategorized", valueCents: 4_24, meta: { kind: "uncategorized" } }, formatCents, share),
+    ).toContain("$4.24 charged");
+  });
+
+  test("a source is not 'charged', and every node names what its percent is OF", () => {
+    expect(sankeyNodeLabel({ label: "Salary", valueCents: 500_000, meta: { kind: "income" } }, formatCents, share)).toBe(
+      "Salary, $5,000.00, 26.7% of the flow — view transactions",
+    );
+    expect(sankeyNodeLabel({ label: "Refunds", valueCents: 11_311, meta: { kind: "refund" } }, formatCents, share)).toBe(
+      "Refunds, $113.11, 26.7% of the flow — view transactions",
     );
   });
 });

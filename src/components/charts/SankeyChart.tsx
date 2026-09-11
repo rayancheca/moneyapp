@@ -96,6 +96,52 @@ interface Tooltip {
  * 117,925.41 + 7,031.51 + 51,805.45 = 176,762.37 and the last of those three
  * is the plug.
  */
+/**
+ * ⚖️ OWNER DECISION 2026-09-11 — the diagram keeps its GROSS flows and says so.
+ *
+ * 🔴 One page, one month, two figures for Housing. `/spending?period=2026-07`:
+ * this chart's node read **$2,763.79 · 26.7%** while the insight sentence, the
+ * Where-it-went list, the relief, the table lens and every `/categories` page
+ * read **$2,653.58 · 25.9%**. Both are right — SQL over the Housing subtree for
+ * July: gross out $2,763.79, refunds $110.21, net $2,653.58 over 7 rows — and
+ * the chart is internally consistent, because it draws the $113.11 that came
+ * back as its own inflow (110.21 Housing + 2.90 Subscriptions) rather than
+ * subtracting it. A Sankey draws money MOVING; netting here would make the
+ * Refunds node double-count.
+ *
+ * ⛔ So the figure was right and the label was silent about its frame, which is
+ * the defect. Put to the owner with the measurement; he chose "Label the frame".
+ *
+ * Null when nothing came back: with no refunds gross IS net, and a note
+ * explaining a difference that does not exist is noise.
+ */
+export function sankeyFrameNote(
+  nodes: readonly { valueCents: number; meta?: { kind?: string } }[],
+  formatValue: (cents: number) => string,
+): string | null {
+  const refund = nodes.find((n) => n.meta?.kind === "refund");
+  if (refund === undefined || refund.valueCents <= 0) return null;
+  return (
+    `Categories here are what was charged. The ${formatValue(refund.valueCents)} that came back ` +
+    `is its own source rather than a subtraction, so these run above the netted figures elsewhere.`
+  );
+}
+
+/**
+ * A node's complete spoken name. The spend destinations say which frame their
+ * figure is in — see `sankeyFrameNote` — and every node names what its percent
+ * is a percent OF, which the tooltip beside it already called "of flow".
+ */
+export function sankeyNodeLabel(
+  node: { label: string; valueCents: number; meta?: { kind?: string } },
+  formatValue: (cents: number) => string,
+  share: (cents: number) => string,
+): string {
+  const spends = node.meta?.kind === "category" || node.meta?.kind === "uncategorized";
+  const amount = spends ? `${formatValue(node.valueCents)} charged` : formatValue(node.valueCents);
+  return `${node.label}, ${amount}, ${share(node.valueCents)} of the flow — view transactions`;
+}
+
 export function sankeySummary(
   nodes: readonly { column: number; valueCents: number; meta?: { kind?: string } }[],
   totalFlow: number,
@@ -109,9 +155,10 @@ export function sankeySummary(
   const drawn = plug
     ? ` A further ${formatValue(plug.valueCents)} is drawn from outside this period — it did not flow in.`
     : "";
+  const frame = sankeyFrameNote(nodes, formatValue);
   return (
     `${ariaLabel}: ${formatValue(came)} flows in from ${sources} source${sources === 1 ? "" : "s"} ` +
-    `across ${dests} spending categor${dests === 1 ? "y" : "ies"}.${drawn}`
+    `across ${dests} spending categor${dests === 1 ? "y" : "ies"}.${drawn}${frame === null ? "" : ` ${frame}`}`
   );
 }
 
@@ -200,7 +247,10 @@ export function SankeyChart({
 
   const motion = reducedMotion ? "" : "transition-opacity duration-(--duration-fast)";
 
+  const frameNote = sankeyFrameNote(layout.nodes, formatValue);
+
   const diagram = (
+    <div>
     <div ref={containerRef} className={`relative w-full ${heightClass}`}>
       <svg
         width={size.w}
@@ -272,7 +322,7 @@ export function SankeyChart({
             <a
               key={n.id}
               href={n.href}
-              aria-label={`${n.label}, ${formatValue(n.valueCents)}, ${share(n.valueCents)} — view transactions`}
+              aria-label={sankeyNodeLabel(n, formatValue, share)}
               onClick={(e) => drill(n, e)}
               className="cursor-pointer outline-none [&:focus-visible>g>rect]:stroke-accent [&:focus-visible>g>rect]:stroke-2"
             >
@@ -299,6 +349,13 @@ export function SankeyChart({
           <div className="text-ink-faint">{tooltip.share} of flow</div>
         </div>
       ) : null}
+    </div>
+      {/* ⛔ VISIBLE, not only in the <title>. `/spending` mounts this chart with
+          no lens, so the summary renders as an SVG <title> a sighted reader
+          never sees — and it is a sighted reader who is handed $2,763.79 here
+          and $2,653.58 in the five other places the same month's Housing is
+          printed. See `sankeyFrameNote`. */}
+      {frameNote !== null ? <p className="mt-2 text-[11px] text-ink-faint">{frameNote}</p> : null}
     </div>
   );
 
