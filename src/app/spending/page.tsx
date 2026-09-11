@@ -7,6 +7,8 @@ import { formatDayLong } from "@/lib/format-date";
 import { cashEarningsSectionNotes } from "@/lib/section-notes";
 import {
   heatmapInitialMonth,
+  periodParams as periodParamsOf,
+  periodQuery,
   resolvePeriod,
   stepPeriodParams,
 } from "@/lib/period";
@@ -112,9 +114,11 @@ export default async function SpendingPage({
   );
   // params to preserve when switching views: the current period, and the OTHER
   // card's lens — so flipping one card never drops the other out of the URL.
-  const periodParams: Record<string, string> = period.key
-    ? { period: period.key }
-    : { from: period.from, to: period.to };
+  const periodParams: Record<string, string> = periodParamsOf(period);
+  // ⛔ every link OUT of this page carries the window this page measured —
+  // a bare /categories/<id> silently means "the current month", which on this
+  // ledger is a month with nothing in it. `lib/period` owns the rule.
+  const query = periodQuery(period);
   const baseParams: Record<string, string> = {
     ...periodParams,
     ...viewStateToParams(WHERE_VIEW_SPEC, whereView),
@@ -432,6 +436,7 @@ export default async function SpendingPage({
             <WhereItWentPanel
               rows={whereRows}
               totals={massifTotals}
+              periodQuery={query}
               periodLabel={period.label}
               priorLabel={prevPeriod.label}
               viewState={whereView}
@@ -439,6 +444,7 @@ export default async function SpendingPage({
             >
               <SpendingCategoriesTable
                 rows={categoryRows}
+                periodQuery={query}
                 showDelta={period.granularity === "month"}
                 forecastMonthLabel={forecastMonthLabel}
               />

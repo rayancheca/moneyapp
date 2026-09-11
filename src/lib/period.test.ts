@@ -4,6 +4,9 @@ import {
   dayWindowLabel,
   ALL_TIME_FLOOR,
   currentPeriodLabel,
+  periodParams,
+  periodQuery,
+  withPeriod,
   currentPeriodParams,
   heatmapInitialMonth,
   quarterBounds,
@@ -518,5 +521,51 @@ describe("dayWindowLabel — a window named by its own two ends", () => {
 
   test("the same day-of-month in two months is still two days", () => {
     expect(dayWindowLabel("2026-07-25", "2026-08-25")).toBe("Jul 25 – Aug 25, 2026");
+  });
+});
+
+describe("periodParams / periodQuery / withPeriod — a link lands where it was clicked from", () => {
+  /**
+   * 🔴 A BARE HREF IS NOT "NO PERIOD". `resolvePeriod`'s fallback is the current
+   * calendar month, so on the real ledger 2026-09-11 every category link on
+   * `/spending?period=2026-07` opened a September 2026 page reading
+   * "$0.00 · 0 transactions" — a month with nothing imported in it.
+   */
+  test("a keyed period travels as ?period=", () => {
+    const july = resolvePeriod({ period: "2026-07" }, TODAY);
+    expect(periodParams(july)).toEqual({ period: "2026-07" });
+    expect(periodQuery(july)).toBe("period=2026-07");
+    expect(withPeriod("/categories/abc", july)).toBe("/categories/abc?period=2026-07");
+    // …and it round-trips: the destination resolves the window the caller measured
+    expect(resolvePeriod({ period: "2026-07" }, TODAY).from).toBe(july.from);
+    expect(resolvePeriod({ period: "2026-07" }, TODAY).to).toBe(july.to);
+  });
+
+  test("a custom window has no key, so it travels as ?from=&to=", () => {
+    const custom = resolvePeriod({ from: "2026-03-04", to: "2026-05-06" }, TODAY);
+    expect(custom.key).toBeNull();
+    expect(periodParams(custom)).toEqual({ from: "2026-03-04", to: "2026-05-06" });
+    expect(withPeriod("/spending", custom)).toBe("/spending?from=2026-03-04&to=2026-05-06");
+    const back = resolvePeriod({ from: "2026-03-04", to: "2026-05-06" }, TODAY);
+    expect([back.from, back.to]).toEqual([custom.from, custom.to]);
+  });
+
+  test("the anchored ranges travel by their key, not by their resolved ends", () => {
+    // ⛔ YTD and All END AT TODAY. Sending their ends as from/to would freeze
+    // them at the day the link was rendered; the key keeps them anchored.
+    for (const key of ["ytd", "all"]) {
+      const p = resolvePeriod({ period: key }, TODAY);
+      expect(periodParams(p)).toEqual({ period: p.key! });
+      expect(withPeriod("/x", p)).toBe(`/x?period=${p.key}`);
+    }
+  });
+
+  test("a bare link would mean the current month — which is the defect", () => {
+    const bare = resolvePeriod({}, TODAY);
+    expect(bare.key).toBe(TODAY.slice(0, 7)); // this clock's own month, not "none"
+    // so a link clicked on a MARCH page that carried nothing lands on July
+    const march = resolvePeriod({ period: "2026-03" }, TODAY);
+    expect(bare.from).not.toBe(march.from);
+    expect(withPeriod("/categories/abc", march)).toBe("/categories/abc?period=2026-03");
   });
 });

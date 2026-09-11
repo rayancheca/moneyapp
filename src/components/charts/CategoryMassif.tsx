@@ -74,6 +74,13 @@ interface WhereItWentPanelProps {
   viewState: ViewState;
   /** URL params to preserve across a lens switch */
   baseParams: Record<string, string>;
+  /**
+   * ⛔ The window these figures were measured over, as a query string. A bare
+   * `/categories/<id>` means the CURRENT month to `resolvePeriod`, so every
+   * relief block and every table row of a July page opened a September page
+   * reading "$0.00 · 0 transactions".
+   */
+  periodQuery: string;
   /** the ranked list this card has always shown — the default lens */
   children: ReactNode;
 }
@@ -85,6 +92,7 @@ export function WhereItWentPanel({
   priorLabel,
   viewState,
   baseParams,
+  periodQuery,
   children,
 }: WhereItWentPanelProps) {
   const { state, setView } = useViewState({
@@ -114,13 +122,14 @@ export function WhereItWentPanel({
           totals={totals}
           periodLabel={periodLabel}
           priorLabel={priorLabel}
+          periodQuery={periodQuery}
           /* the camera belongs to the SURFACE, beside the lens above it — so it
              is linkable and remembered rather than lost on reload */
           viewpoint={state[MASSIF_VIEW_DIMENSION.key] ?? "quarter"}
           onSelectViewpoint={(v) => setView(MASSIF_VIEW_DIMENSION.key, v)}
         />
       ) : active === "table" ? (
-        <MassifTable rows={rows} periodLabel={periodLabel} priorLabel={priorLabel} />
+        <MassifTable rows={rows} periodLabel={periodLabel} priorLabel={priorLabel} periodQuery={periodQuery} />
       ) : (
         children
       )}
@@ -142,6 +151,8 @@ interface CategoryMassifProps {
    */
   viewpoint: string;
   onSelectViewpoint: (value: string) => void;
+  /** the window these blocks were measured over — every block links with it */
+  periodQuery: string;
 }
 
 const DEFAULT_WIDTH = 720;
@@ -173,6 +184,7 @@ export function CategoryMassif({
   priorLabel,
   viewpoint: viewpointValue,
   onSelectViewpoint,
+  periodQuery,
 }: CategoryMassifProps) {
   const router = useRouter();
   const reducedMotion = usePrefersReducedMotion();
@@ -203,9 +215,9 @@ export function CategoryMassif({
         spentCents: r.spentCents,
         priorCents: r.priorCents,
         txnCount: r.txnCount,
-        href: `/categories/${r.categoryId}`,
+        href: `/categories/${r.categoryId}?${periodQuery}`,
       })),
-    [rows],
+    [rows, periodQuery],
   );
 
   const layout = useMemo(
@@ -553,10 +565,13 @@ function MassifTable({
   rows,
   periodLabel,
   priorLabel,
+  periodQuery,
 }: {
   rows: readonly WhereItWentRow[];
   periodLabel: string;
   priorLabel: string;
+  /** the window these rows were measured over — every row links with it */
+  periodQuery: string;
 }) {
   const shareBase = rows.reduce((s, r) => s + Math.max(0, r.spentCents), 0);
   const tableRows: MassifTableRow[] = rows.map((r) => ({
@@ -614,7 +629,7 @@ function MassifTable({
       columns={columns}
       rows={tableRows}
       rowKey={(r) => r.categoryId}
-      rowHref={(r) => `/categories/${r.categoryId}`}
+      rowHref={(r) => `/categories/${r.categoryId}?${periodQuery}`}
       caption={`${periodLabel} against ${priorLabel}, by category — every figure the relief is cut from.`}
       emptyState="No categorized spending in this period."
     />

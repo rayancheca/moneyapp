@@ -61,12 +61,19 @@ export function SpendingCategoriesTable({
   rows,
   showDelta = true,
   forecastMonthLabel = null,
+  periodQuery,
 }: {
   rows: CategoryTableRow[];
   /** the MoM column is only meaningful month-over-month; hidden for quarter/year */
   showDelta?: boolean;
   /** the target month for forecasts (e.g. "August 2026"); null hides the forecast line */
   forecastMonthLabel?: string | null;
+  /**
+   * ⛔ The window this card measured, as a query string. Without it a category
+   * link lands on the CURRENT month — `resolvePeriod`'s fallback — so every row
+   * of a July page opened a September page reading "$0.00 · 0 transactions".
+   */
+  periodQuery: string;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -103,7 +110,7 @@ export function SpendingCategoriesTable({
               </button>
 
               <Link
-                href={`/categories/${row.categoryId}`}
+                href={`/categories/${row.categoryId}?${periodQuery}`}
                 className="flex min-w-0 flex-1 items-center gap-2.5 hover:underline"
               >
                 <CategoryChip label={row.name} hue={row.hue} icon={row.icon} compact />
@@ -152,7 +159,7 @@ export function SpendingCategoriesTable({
                 {row.children.map((child) => (
                   <li key={child.categoryId}>
                     <Link
-                      href={`/categories/${child.categoryId}`}
+                      href={`/categories/${child.categoryId}?${periodQuery}`}
                       className="flex items-center justify-between gap-2 rounded py-1.5 pr-1 text-sm text-ink-muted hover:text-ink"
                     >
                       <span className="truncate">{child.name}</span>

@@ -467,3 +467,36 @@ function partialMonthLabel(from: string, to: string, withYear: boolean): string 
 export function heatmapInitialMonth(period: ResolvedPeriod, today: string): string {
   return monthKey(clamp(today, period.from, period.to));
 }
+
+/**
+ * The period as URL params — what a link must carry to land on the window it
+ * was clicked from.
+ *
+ * 🔴 **A BARE `/categories/<id>` IS NOT "NO PERIOD".** `resolvePeriod`'s last
+ * line falls back to the current calendar month, so an unparameterised link
+ * lands on September 2026 — a month nobody has imported a day of. Measured on
+ * the real ledger, 2026-09-11:
+ *
+ *     /spending?period=2026-07  "Housing $2,653.58 · tap a category to open
+ *                                its page"
+ *       →  /categories/<Housing>   "Spent · September 2026 · $0.00 · 0 transactions"
+ *       with the period:          "Spent · July 2026 · $2,653.58 · 7 transactions"
+ *
+ * All **12** category links on that card did it, in all three of its lenses
+ * (31 dead links per render), and the Subcategories card one level down did it
+ * on **34 rows across 14 category pages**. The figure each destination printed
+ * was right for the window it was handed; the link handed it the wrong one.
+ */
+export function periodParams(period: ResolvedPeriod): Record<string, string> {
+  return period.key ? { period: period.key } : { from: period.from, to: period.to };
+}
+
+/** The same, as a query string with no leading `?` — for building an href. */
+export function periodQuery(period: ResolvedPeriod): string {
+  return new URLSearchParams(periodParams(period)).toString();
+}
+
+/** `path` carrying this period, so the destination measures the window the caller did. */
+export function withPeriod(path: string, period: ResolvedPeriod): string {
+  return `${path}?${periodQuery(period)}`;
+}

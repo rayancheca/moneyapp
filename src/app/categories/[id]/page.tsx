@@ -6,7 +6,7 @@ import { categories } from "@/db/schema/categories";
 import { todayIso } from "@/lib/dates";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
-import { resolvePeriod } from "@/lib/period";
+import { resolvePeriod, withPeriod } from "@/lib/period";
 import { emptyPeriodCopy, emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "@/services/observation-frontier";
 import { categorySpending } from "@/services/analytics";
@@ -159,11 +159,14 @@ export default async function CategoryPage({
   return (
     <>
       <nav aria-label="Breadcrumb" className="mb-4 flex items-center gap-1.5 text-xs text-ink-muted">
-        <Link href="/spending" className="hover:text-ink hover:underline">Spending</Link>
+        {/* ⛔ the crumbs carry the window too: a bare href means "the current
+            month" to `resolvePeriod`, so stepping up out of a July page landed
+            on an empty September one. */}
+        <Link href={withPeriod("/spending", period)} className="hover:text-ink hover:underline">Spending</Link>
         <Icon name="chevron-right" className="size-3 text-ink-faint" />
         {header.parentId && (
           <>
-            <Link href={`/categories/${header.parentId}`} className="hover:text-ink hover:underline">
+            <Link href={withPeriod(`/categories/${header.parentId}`, period)} className="hover:text-ink hover:underline">
               {header.parentName}
             </Link>
             <Icon name="chevron-right" className="size-3 text-ink-faint" />
@@ -298,7 +301,10 @@ export default async function CategoryPage({
                     </li>
                   ) : (
                     <li key={s.categoryId}>
-                      <Link href={`/categories/${s.categoryId}`} className="flex items-center justify-between gap-2 py-2 text-sm hover:underline">
+                      <Link
+                        href={withPeriod(`/categories/${s.categoryId}`, period)}
+                        className="flex items-center justify-between gap-2 py-2 text-sm hover:underline"
+                      >
                         <span className="truncate">{s.name}</span>
                         <Money cents={s.flowCents} className="shrink-0 font-medium" />
                       </Link>
