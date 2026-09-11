@@ -32,3 +32,11 @@ test-results/
 # os
 .DS_Store
 .trial/
+
+# ⛔ Agent scratch probes. A reading agent writes `probe-*.ts` / `.p.ts` into the
+# repo root because tsx can only resolve `@/` from inside it, and four commits on
+# 2026-09-11 swept twelve of them in behind a `git add -A`. One of them broke
+# `tsc --noEmit`. Ignored so it cannot happen again.
+probe-*.ts
+.p.ts
+.skeptic-probe-*.ts

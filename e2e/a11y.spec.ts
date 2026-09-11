@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { withParam } from "./url-helpers";
 import { analyzeSettled } from "./axe-helpers";
 
 /**
@@ -56,7 +57,7 @@ for (const theme of THEMES) {
     await page.goto("/spending?period=2026");
     const href = await page.locator('a[href^="/categories/"]').first().getAttribute("href");
     if (!href) throw new Error("no category link on /spending?period=2026");
-    await page.goto(`${href}?period=2026`);
+    await page.goto(withParam(href, "period", "2026"));
     await expectHydrated(page);
     const results = await analyzeSettled(page);
     expect(gatingViolations(results)).toEqual([]);

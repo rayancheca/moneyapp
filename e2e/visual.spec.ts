@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { withParam } from "./url-helpers";
 
 /**
  * Phase-gate visual baselines: every Phase 0 screen at 320/768/1024/1440 in
@@ -122,7 +123,7 @@ async function resolveCategoryUrl(page: Page): Promise<string> {
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   const href = await page.locator('a[href^="/categories/"]').first().getAttribute("href");
   if (!href) throw new Error("no category link on /spending?period=2026");
-  return `${href}?period=2026`;
+  return withParam(href, "period", "2026");
 }
 
 /**

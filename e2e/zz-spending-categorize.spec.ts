@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { withParam } from "./url-helpers";
 
 /**
  * Categorizing from the category page (ux-overhaul-plan §5.4): the Spending
@@ -19,7 +20,7 @@ test("open a category page from Spending and reveal its inline category picker",
   expect(href).toBeTruthy();
 
   // land on the category page with a full-year window so its list is populated
-  await page.goto(`${href}?period=2026`);
+  await page.goto(withParam(href!, "period", "2026"));
   await expect(page.getByRole("heading", { name: "Transactions" })).toBeVisible();
 
   const inlinePicker = page.getByRole("button", { name: /^Category:/ }).first();

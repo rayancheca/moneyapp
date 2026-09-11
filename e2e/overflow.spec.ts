@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { withParam } from "./url-helpers";
 
 import { DASHBOARD_VIEW_SPEC } from "../src/components/dashboard/dashboard-view-spec";
 
@@ -185,7 +186,7 @@ const DYNAMIC: readonly { name: string; resolve: (page: Page) => Promise<string>
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
       const href = await page.locator('a[href^="/categories/"]').first().getAttribute("href");
       if (!href) throw new Error("no category link on /spending?period=2026");
-      return `${href}?period=2026`;
+      return withParam(href, "period", "2026");
     },
   },
   {
