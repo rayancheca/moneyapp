@@ -999,9 +999,33 @@ function recurringSeriesProvenance(db: AppDatabase, id: string): Provenance | nu
     return `Its ${n} tagged postings since ${readableDay(days[0]!)} were ${distinct.size} different amounts, from ${formatCents(Math.min(...distinct))} to ${formatCents(Math.max(...distinct))} — so any single figure for it is an average, not a repeat.`;
   };
 
+  /*
+   * 🔴 THE AVERAGE OF WHAT POSTED, NOT THE DETECTOR'S SEED — and silence when
+   * nothing posted at all.
+   *
+   * This read `series.amountCentsAvg`, which `recurring.ts` documents as "the
+   * detector's SEED: written when the series was created and never recomputed
+   * as rows are attached afterwards", adding that "anything claiming to be the
+   * average of the postings reads [postedAvgCents]". Two consequences, both
+   * live on /recurring/<Car lease> on 2026-09-11:
+   *
+   *   "Nothing tagged to it has ever posted, so there is no evidence behind it
+   *    at all. ⚠️ The ledger's own average of what actually posted is
+   *    -$559.89, which is not what you set."
+   *
+   *   — one sentence denying what the next one measures, and a figure NO ROW IN
+   *   THE LEDGER HAS EVER CARRIED: `SELECT count(*) … amount_cents = -55989`
+   *   returns 0. -$559.89 is the superseded amount the owner once said; the
+   *   statement figure is $695.04, which this same headline prints correctly.
+   *
+   * The postings are already in hand here, so the clause is computed from them
+   * and says nothing when there are none.
+   */
+  const postedAvgCents =
+    n > 0 ? Math.round(postings.reduce((sum, p) => sum + p.amountCents, 0) / n) : null;
   const disagreement =
-    userSet && series.amountCentsAvg !== null && series.amountCentsAvg !== series.userAmountCents
-      ? ` ⚠️ The ledger's own average of what actually posted is ${formatCents(series.amountCentsAvg)}, which is not what you set.`
+    userSet && postedAvgCents !== null && postedAvgCents !== series.userAmountCents
+      ? ` ⚠️ The ledger's own average of what actually posted is ${formatCents(postedAvgCents)}, which is not what you set.`
       : "";
 
   const headline = userSet

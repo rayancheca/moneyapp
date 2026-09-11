@@ -1011,15 +1011,62 @@ describe("provenanceFor — a recurring series' amount", () => {
    * The live ledger's "Cash job": the owner set $1,047.00 while the postings
    * average $1,046.00. A popover that stays silent about that is hiding the one
    * thing worth knowing.
+   *
+   * ⛔ THIS FIXTURE USED TO CONTRADICT ITS OWN COMMENT. It posted a single row
+   * of $1,047.00 — the same as the override — and seeded `amountCentsAvg` at
+   * $1,046.00, so the assertion passed only because the clause read the SEED.
+   * The postings now really do average what the comment says they do.
    */
   test("an override that disagrees with what actually posted says so", () => {
     const acct = addAccount("a", "Chase Checking", "checking");
     const s = addSeries("Cash job", { amountAvg: 104600, userAmount: 104700 });
-    tagToSeries(addTxn(acct, "2026-06-04", { cents: 104700 }), s);
+    for (const d of ["2026-06-04", "2026-06-11", "2026-06-18"]) tagToSeries(addTxn(acct, d, { cents: 104600 }), s);
 
     const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: s })!;
     expect(p.verdict).toBe("manual");
     expect(p.headline).toContain("The ledger's own average of what actually posted is $1,046.00");
+  });
+
+  /**
+   * 🔴 ONE SENTENCE DENYING WHAT THE NEXT ONE MEASURES. The clause read
+   * `amountCentsAvg`, which `recurring.ts` documents as "the detector's SEED:
+   * written when the series was created and never recomputed as rows are
+   * attached afterwards" — adding that "anything claiming to be the average of
+   * the postings reads [postedAvgCents]". On the real ledger 2026-09-11,
+   * /recurring/<Car lease> printed both halves in one breath:
+   *
+   *   "Nothing tagged to it has ever posted, so there is no evidence behind it
+   *    at all. ⚠️ The ledger's own average of what actually posted is
+   *    -$559.89, which is not what you set."
+   *
+   * and no row in the 10,178-row ledger has ever posted at -$559.89.
+   */
+  test("a series with NOTHING posted names no average of what posted", () => {
+    const s = addSeries("Car lease", { amountAvg: -55989, userAmount: -69504 });
+
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: s })!;
+    expect(p.headline).toContain("no evidence behind it at all");
+    expect(p.headline).not.toContain("actually posted");
+    expect(p.headline).not.toContain("-$559.89");
+  });
+
+  /** ⛔ and the figure it names is the postings' mean, never the detector's seed */
+  test("the average named is the postings', not the seed the detector wrote", () => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    // the real Flamingo rent: seeded at -$2,285.70, four charges averaging -$1,739.40
+    const s = addSeries("Flamingo South Beach", { amountAvg: -228570, userAmount: -200000 });
+    for (const [d, c] of [
+      ["2026-05-01", -223711],
+      ["2026-06-01", -110000],
+      ["2026-07-01", -223711],
+      ["2026-08-01", -138338],
+    ] as const) {
+      tagToSeries(addTxn(acct, d, { cents: c }), s);
+    }
+
+    const p = provenanceFor(bundle.db, { kind: "recurringSeries", id: s })!;
+    expect(p.headline).toContain("The ledger's own average of what actually posted is -$1,739.40");
+    expect(p.headline).not.toContain("-$2,285.70");
   });
 
   test("an override that matches the observed average does NOT raise a disagreement", () => {
