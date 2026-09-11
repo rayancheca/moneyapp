@@ -17,10 +17,16 @@ export function HoldingEventsList({
   events,
   eventsTotal,
   allTradesHref,
+  ledgerRowCount,
+  symbol,
 }: {
   events: HoldingEventRow[];
   eventsTotal: number;
   allTradesHref: string | null;
+  /** how many rows `allTradesHref` opens — see `HoldingDetail.ledgerRowCount` */
+  ledgerRowCount: number;
+  /** the ticker the link searches for, so the sentence names what it opens */
+  symbol: string;
 }) {
   if (events.length === 0) {
     return (
@@ -77,7 +83,14 @@ export function HoldingEventsList({
           href={allTradesHref}
           className="mt-3 inline-block text-xs font-medium text-accent underline decoration-line underline-offset-4 transition-colors duration-(--duration-fast) hover:decoration-accent"
         >
-          View all {eventsTotal} trades in the ledger →
+          {/* ⛔ the DESTINATION's count, not this card's. The link searches the
+              ledger for the symbol, which finds dividends too: AAPL has 244
+              holding events and 253 matching rows. Naming the trade count over
+              a link that opens something else is the drill-down contract
+              broken, and it was broken twice — the link also carried the
+              POSITION's account, which holds no transactions at all, so all 351
+              of these opened an empty ledger. */}
+          View all {ledgerRowCount} {symbol} rows in the ledger →
         </Link>
       )}
       {hidden > 0 && !allTradesHref && (

@@ -153,6 +153,8 @@ export default async function HoldingPage({
           events={detail.events}
           eventsTotal={detail.eventsTotal}
           allTradesHref={detail.allTradesHref}
+          ledgerRowCount={detail.ledgerRowCount}
+          symbol={symbol}
         />
 
         <p className="text-sm">

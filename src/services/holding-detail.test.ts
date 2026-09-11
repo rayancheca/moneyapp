@@ -17,6 +17,7 @@ process.env.MONEYAPP_FAKE_PRICES = "1";
 let dir: string;
 let bundle: DbBundle;
 let brokerage: string;
+let cash: string;
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-holding-"));
@@ -38,15 +39,41 @@ beforeEach(() => {
   }
   upsertHolding(bundle.db, { accountId: brokerage, symbol: "AAPL", assetType: "stock", quantityE8: 100_000_000, avgCostCents: 10_000, occurredOn: "2026-03-02" });
   upsertHolding(bundle.db, { accountId: brokerage, symbol: "AAPL", assetType: "stock", quantityE8: 200_000_000, avgCostCents: 11_000, occurredOn: "2026-03-04" });
+  /*
+   * ⛔ THE CASH LEG IS A DIFFERENT ACCOUNT, and the fixture must say so or it
+   * cannot express the defect it is here to catch. On the real ledger every
+   * holding sits in Robinhood Brokerage — which holds ZERO transactions of any
+   * status — while every trade row posts to Robinhood Cash. The old fixture put
+   * the row in the brokerage, so `?account=<brokerage>` found it and blessed a
+   * link that opened an empty ledger on all 351 of them.
+   */
+  // the real one is a CHECKING account, not an investment account
+  cash = createAccount(bundle.db, {
+    institutionId: robinhood.id,
+    name: "Robinhood Cash",
+    type: "checking",
+  });
   bundle.db
     .insert(transactions)
     .values({
-      accountId: brokerage,
+      accountId: cash,
       postedOn: "2026-03-04",
       amountCents: -12_000,
       rawDescription: "Apple Inc CUSIP: 037833100 (AAPL)",
       normalizedDescription: "apple inc cusip 037833100 aapl",
       dedupeHash: "aapl-buy-2",
+    })
+    .run();
+  // a dividend: an AAPL row the ledger holds that is NOT a trade
+  bundle.db
+    .insert(transactions)
+    .values({
+      accountId: cash,
+      postedOn: "2026-03-03",
+      amountCents: 411,
+      rawDescription: "Cash Div: 2 shares at 2.055 (AAPL)",
+      normalizedDescription: "cash div 2 shares at 2 055 aapl",
+      dedupeHash: "aapl-div-1",
     })
     .run();
 });
@@ -83,6 +110,38 @@ describe("holdingDetail", () => {
     expect(d.events[0]!.ledgerHref).toContain("from=2026-03-04");
     expect(d.eventsTotal).toBe(2);
     expect(d.allTradesHref).toContain("q=AAPL"); // equity links out to the ledger
+  });
+
+  /*
+   * 🔴 THE LINK FILTERED ON THE ACCOUNT THE SHARES SIT IN, AND EXCLUDED EVERY
+   * ROW. `holdingLegs` are POSITIONS — all in Robinhood Brokerage, which holds
+   * zero transactions — while the trades post to Robinhood Cash. Measured on
+   * the real ledger 2026-09-11: `?account=<brokerage>&q=AAPL` → 0 rows,
+   * `?q=AAPL` → 253. All 351 ledger links across the nine equity holding pages
+   * opened "No matching transactions" under a page saying there were 244
+   * trades. A position's account says where the shares are held, never where
+   * the money moved.
+   */
+  test("the ledger links are scoped by SYMBOL, never by the account the shares sit in", () => {
+    const d = holdingDetail(bundle.db, "stock", "AAPL", "2026-03-04");
+    for (const href of [d.allTradesHref, d.events[0]!.ledgerHref]) {
+      expect(href).not.toContain("account=");
+      expect(href).not.toContain(brokerage);
+    }
+  });
+
+  /*
+   * ⛔ And the sentence over the link names the DESTINATION's population, not
+   * this card's. The link searches the ledger for the symbol, which finds
+   * dividends too — on the real ledger AAPL has 244 holding events and 253
+   * matching rows (241 buys + 2 sells + 10 dividends).
+   */
+  test("ledgerRowCount is what the link opens, which is not the trade count", () => {
+    const d = holdingDetail(bundle.db, "stock", "AAPL", "2026-03-04");
+    expect(d.eventsTotal).toBe(2); // two holding events
+    expect(d.ledgerRowCount).toBe(2); // the buy row AND the dividend row
+    // a row in another account still counts: the link is not account-scoped
+    expect(d.ledgerRowCount).toBeGreaterThan(0);
   });
 
   test("carries the last close forward to today as a dashed (estimated) tail", () => {

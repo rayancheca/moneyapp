@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, like } from "drizzle-orm";
+import { and, asc, count, desc, eq, like, or, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { holdingEvents } from "@/db/schema/holding-events";
@@ -121,8 +121,19 @@ export interface HoldingDetail {
   /** most recent trades (capped); `eventsTotal` is the full count */
   events: HoldingEventRow[];
   eventsTotal: number;
-  /** deep link to every trade for this holding in the ledger (equity only) */
+  /** deep link to every LEDGER ROW carrying this symbol (equity only) */
   allTradesHref: string | null;
+  /**
+   * How many rows that link actually opens — counted with the SAME predicate
+   * `/transactions?q=` uses, so the sentence over the link can name the
+   * destination rather than a different population.
+   *
+   * ⛔ NOT `eventsTotal`. AAPL has 244 holding events and 253 matching ledger
+   * rows: 241 buys + 2 sells + 10 dividends, and one event the ledger has no
+   * row for at all. "View all 244 trades" over a list of 253 rows is the
+   * drill-down contract broken in the other direction.
+   */
+  ledgerRowCount: number;
 }
 
 /** A heavily DCA'd holding has hundreds of trades — show the recent ones. */
@@ -285,8 +296,41 @@ export function holdingDetail(
     closeCents: closeByDay.has(e.occurredOn) ? Math.round(closeByDay.get(e.occurredOn)! * 100) : null,
   }));
 
+  /*
+   * 🔴 THE ACCOUNT SCOPE CAME FROM THE WRONG LEG, AND IT EXCLUDED EVERY ROW.
+   * `holdingLegs` are the POSITIONS, which all sit in Robinhood Brokerage — an
+   * account holding zero transactions of any status. The trades post to
+   * Robinhood Cash. So `?account=<brokerage>&q=AAPL` asked for rows in an
+   * account that has none, and all 351 ledger links across the nine equity
+   * holding pages opened "No matching transactions" under a page that had just
+   * said there were 244 trades. Measured 2026-09-11:
+   *
+   *     ?account=<brokerage>&q=AAPL     0 rows
+   *     ?q=AAPL                       253 rows
+   *     ?account=<cash>&q=AAPL        253 rows
+   *
+   * ⛔ The symbol is the scope. A position's account says where the SHARES are
+   * held, never where the money moved, and there is no mapping from one to the
+   * other in the schema — the cash leg is a different account by design.
+   */
   const accountIds = [...new Set(holdingLegs.map((l) => l.accountId))];
-  const singleAccount = accountIds.length === 1 ? accountIds[0]! : undefined;
+  void accountIds;
+
+  // the destination's own count, through the predicate `/transactions?q=` uses
+  const symbolLike = `%${symbol.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+  const ledgerRowCount = db
+    .select({ n: count() })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.status, "active"),
+        or(
+          sql`${transactions.rawDescription} LIKE ${symbolLike} ESCAPE '\\'`,
+          sql`${transactions.normalizedDescription} LIKE ${symbolLike} ESCAPE '\\'`,
+        ),
+      ),
+    )
+    .get()?.n ?? 0;
   // crypto trades live only in monthly statements (no ledger transactions), so
   // their events do not link out — equity trades deep-link to their CUSIP rows
   const linkEvents = assetType !== "crypto";
@@ -300,7 +344,7 @@ export function holdingDetail(
       quantityE8: e.quantityDeltaE8,
       costCents: e.costCents,
       ledgerHref: linkEvents
-        ? ledgerHref({ account: singleAccount, q: symbol, from: e.occurredOn, to: e.occurredOn })
+        ? ledgerHref({ q: symbol, from: e.occurredOn, to: e.occurredOn })
         : null,
     }));
 
@@ -357,6 +401,7 @@ export function holdingDetail(
     realizedSales: allSales,
     events: eventRows,
     eventsTotal: events.length,
-    allTradesHref: linkEvents ? ledgerHref({ account: singleAccount, q: symbol }) : null,
+    allTradesHref: linkEvents ? ledgerHref({ q: symbol }) : null,
+    ledgerRowCount,
   };
 }
