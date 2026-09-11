@@ -233,8 +233,9 @@ describe("cumulativeReturns", () => {
 
 describe("returnStats", () => {
   test("empty / single-day series has no stats and zero drawdown", () => {
-    expect(returnStats([])).toEqual({ bestDay: null, worstDay: null, maxDrawdownPct: 0 });
-    expect(returnStats([d("2026-01-01", 10_000)])).toEqual({ bestDay: null, worstDay: null, maxDrawdownPct: 0 });
+    const none = { bestDay: null, worstDay: null, bestDayPct: null, worstDayPct: null, maxDrawdownPct: 0 };
+    expect(returnStats([])).toEqual(none);
+    expect(returnStats([d("2026-01-01", 10_000)])).toEqual(none);
   });
 
   test("finds the best and worst market days (flow-adjusted)", () => {
@@ -279,6 +280,46 @@ describe("returnStats", () => {
     const stats = returnStats([d("2026-01-01", 0), d("2026-01-02", 0, 0)]);
     expect(stats.bestDay).toEqual({ day: "2026-01-02", returnCents: 0, pct: null });
     expect(stats.worstDay?.pct).toBeNull();
+    // …and it can win neither percentage race, because it has no percentage
+    expect(stats.bestDayPct).toBeNull();
+    expect(stats.worstDayPct).toBeNull();
+  });
+
+  /**
+   * 🔴 THE BIGGEST DOLLAR DAY IS NOT THE BIGGEST PERCENTAGE DAY once the base
+   * has grown, and the strip printed one ranking's DATE beside the other
+   * framing's FIGURE. On the real ledger, 2026-09-11,
+   * /investments?view=returns&unit=percent read "+5.27% · Wed, Aug 19, 2026"
+   * ($5,151.50 on a $97,817.62 base) when the best percentage day of the series
+   * was +9.99% on Apr 9, 2025 ($356.99 on $3,574.82).
+   */
+  test("ranks the extremes in BOTH units — a small base's violent day wins on percent", () => {
+    const stats = returnStats([
+      d("2026-01-01", 1_000),
+      d("2026-01-02", 1_100), // +$1.00 on a $10 base → +10.0%  ← best percent
+      d("2026-01-03", 990), // −$1.10 → −10.0%                   ← worst percent
+      d("2026-01-04", 100_990, 100_000), // a deposit: 0 return, not a record
+      d("2026-01-05", 105_990), // +$50.00 on a $1,009.90 base → +4.95%
+      d("2026-01-06", 100_990), // −$50.00 → −4.72%
+    ]);
+    // dollars: the big-base days win by a wide margin
+    expect(stats.bestDay?.day).toBe("2026-01-05");
+    expect(stats.bestDay?.returnCents).toBe(5_000);
+    expect(stats.worstDay?.day).toBe("2026-01-06");
+    // percent: the small-base days do
+    expect(stats.bestDayPct?.day).toBe("2026-01-02");
+    expect(stats.bestDayPct?.pct).toBeCloseTo(10, 8);
+    expect(stats.worstDayPct?.day).toBe("2026-01-03");
+    expect(stats.worstDayPct?.pct).toBeCloseTo(-10, 8);
+    // and the two rankings really do disagree — which is the whole defect
+    expect(stats.bestDayPct!.day).not.toBe(stats.bestDay!.day);
+    expect(stats.bestDay!.pct!).toBeLessThan(stats.bestDayPct!.pct!);
+  });
+
+  test("one series, one extreme: the rankings agree when the base never moves", () => {
+    const stats = returnStats([d("2026-01-01", 10_000), d("2026-01-02", 10_500), d("2026-01-03", 10_200)]);
+    expect(stats.bestDayPct?.day).toBe(stats.bestDay?.day);
+    expect(stats.worstDayPct?.day).toBe(stats.worstDay?.day);
   });
 });
 

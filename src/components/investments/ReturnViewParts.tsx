@@ -278,28 +278,38 @@ export function BenchmarkLegend({
   );
 }
 
-/** Best day / worst day / max drawdown — the stats strip under the return line. */
+/**
+ * Best day / worst day / max drawdown — the stats strip under the return line.
+ *
+ * ⛔ THE SUPERLATIVE MUST BE THE EXTREME OF THE UNIT ON SCREEN. In "%" framing
+ * this printed the biggest DOLLAR day's percentage: on 2026-09-11 /investments
+ * read "Best day +5.27% · Wed, Aug 19, 2026" when the best percentage day was
+ * +9.99% on Apr 9, 2025, and ETH's holding page understated its worst day as
+ * −10.50% against a real −14.95%. Wrong on 11 of 32 holding pages. The date
+ * beside the figure was the other ranking's date, so both halves were wrong at
+ * once. `returnStats` ranks both ways now and the unit picks the race.
+ */
 export function ReturnStatsList({ stats, isPercent }: { stats: ReturnStats; isPercent: boolean }) {
   const dayStat = (s: ReturnDayStat): string =>
     isPercent && s.pct !== null ? signedPct(s.pct) : formatCentsSigned(s.returnCents);
+  // a day with no prior NAV has no percentage to be ranked by; fall back to the
+  // dollar extreme rather than printing "—" over a series that does have moves
+  const best = (isPercent ? stats.bestDayPct : null) ?? stats.bestDay;
+  const worst = (isPercent ? stats.worstDayPct : null) ?? stats.worstDay;
   return (
     <dl className="mt-4 grid grid-cols-3 gap-3 border-t border-line pt-3 text-xs">
       <div>
         <dt className="text-ink-faint">Best day</dt>
         <dd className="mt-0.5 figures text-positive">
-          {stats.bestDay ? dayStat(stats.bestDay) : "—"}
-          {stats.bestDay && (
-            <span className="text-ink-faint"> · {formatDayLong(stats.bestDay.day)}</span>
-          )}
+          {best ? dayStat(best) : "—"}
+          {best && <span className="text-ink-faint"> · {formatDayLong(best.day)}</span>}
         </dd>
       </div>
       <div>
         <dt className="text-ink-faint">Worst day</dt>
         <dd className="mt-0.5 figures text-negative">
-          {stats.worstDay ? dayStat(stats.worstDay) : "—"}
-          {stats.worstDay && (
-            <span className="text-ink-faint"> · {formatDayLong(stats.worstDay.day)}</span>
-          )}
+          {worst ? dayStat(worst) : "—"}
+          {worst && <span className="text-ink-faint"> · {formatDayLong(worst.day)}</span>}
         </dd>
       </div>
       <div>

@@ -184,8 +184,35 @@ export interface ReturnDayStat {
 
 /** Headline stats for the return view: the best/worst day and the worst drawdown. */
 export interface ReturnStats {
+  /** the biggest/smallest flow-adjusted move in DOLLARS */
   bestDay: ReturnDayStat | null;
   worstDay: ReturnDayStat | null;
+  /**
+   * The same two extremes ranked by PERCENTAGE of the prior NAV — a different
+   * day whenever the position's size changed over the window.
+   *
+   * 🔴 The strip printed one day's DATE and the other framing's FIGURE. The
+   * extremes were ranked by dollars only, and `ReturnStatsList` then rendered
+   * `pct` whenever the unit selector said "%" — so "Best day" named the biggest
+   * dollar day while showing its percentage, which is not the best percentage
+   * day at all. Measured on the real ledger, 2026-09-11:
+   *
+   *     /investments?view=returns&unit=percent
+   *       printed  +5.27% · Wed, Aug 19, 2026   ($5,151.50 on a $97,817.62 base)
+   *       real     +9.99% · Wed, Apr  9, 2025   ($356.99 on a $3,574.82 base)
+   *       printed  −3.96% · Fri, Jun  5, 2026
+   *       real     −5.67% · Fri, Apr  4, 2025
+   *
+   *     /investments/crypto/ETH?view=returns&unit=percent — his largest position
+   *       printed  −10.50%   real worst −14.95% (2026-02-05)
+   *
+   *   …wrong on 11 of 32 holding pages. A big position's calm day outranks a
+   *   small position's violent one in dollars, and only in dollars.
+   *
+   * Null when no day has a positive prior NAV to be a percentage of.
+   */
+  bestDayPct: ReturnDayStat | null;
+  worstDayPct: ReturnDayStat | null;
   /**
    * The deepest peak-to-trough decline of the cumulative TWR index over the
    * series, as a NEGATIVE percentage (0 when the line only ever rose). This is
@@ -202,26 +229,43 @@ export interface ReturnStats {
  */
 export function returnStats(days: readonly PortfolioDay[]): ReturnStats {
   const rs = dailyReturns(days);
-  if (rs.length === 0) return { bestDay: null, worstDay: null, maxDrawdownPct: 0 };
+  if (rs.length === 0)
+    return { bestDay: null, worstDay: null, bestDayPct: null, worstDayPct: null, maxDrawdownPct: 0 };
   const pctOf = (r: DailyReturn): number | null =>
     r.prevNavCents > 0 ? (r.returnCents / r.prevNavCents) * 100 : null;
   let best = rs[0]!;
   let worst = rs[0]!;
+  // ranked by percentage instead — a different day the moment the base changes.
+  // A day with no prior NAV has no percentage and cannot win either race.
+  let bestPct: DailyReturn | null = null;
+  let worstPct: DailyReturn | null = null;
   let index = 1;
   let peak = 1;
   let maxDrawdown = 0;
   for (const r of rs) {
     if (r.returnCents > best.returnCents) best = r;
     if (r.returnCents < worst.returnCents) worst = r;
+    const pct = pctOf(r);
+    if (pct !== null) {
+      if (bestPct === null || pct > pctOf(bestPct)!) bestPct = r;
+      if (worstPct === null || pct < pctOf(worstPct)!) worstPct = r;
+    }
     index *= r.factor;
     if (index > peak) peak = index;
     // peak starts at 1 and only ever grows, so it is always ≥ 1 (> 0 safe)
     const drawdown = index / peak - 1;
     if (drawdown < maxDrawdown) maxDrawdown = drawdown;
   }
+  const stat = (r: DailyReturn): ReturnDayStat => ({
+    day: r.day,
+    returnCents: r.returnCents,
+    pct: pctOf(r),
+  });
   return {
-    bestDay: { day: best.day, returnCents: best.returnCents, pct: pctOf(best) },
-    worstDay: { day: worst.day, returnCents: worst.returnCents, pct: pctOf(worst) },
+    bestDay: stat(best),
+    worstDay: stat(worst),
+    bestDayPct: bestPct === null ? null : stat(bestPct),
+    worstDayPct: worstPct === null ? null : stat(worstPct),
     maxDrawdownPct: maxDrawdown * 100,
   };
 }
