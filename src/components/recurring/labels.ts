@@ -1,5 +1,6 @@
-import { addCalendarMonths, isoWeekday } from "@/lib/dates";
+import { addCalendarMonths, compareDates, isoWeekday } from "@/lib/dates";
 import { endsInsideHorizon } from "@/lib/committed";
+import { dayWindowLabel } from "@/lib/period";
 import { formatCents } from "@/lib/money";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import type { ForecastComponent } from "@/services/forecast";
@@ -46,9 +47,17 @@ export function shortDate(isoDate: string): string {
   return `${MONTH_NAMES[month - 1]!.slice(0, 3)} ${Number(isoDate.slice(8, 10))}`;
 }
 
-/** "2026-07-16" → "Jul 16, 2026" */
+/**
+ * "2026-07-16" → "Jul 16, 2026" — this surface's name for the app-wide rule.
+ *
+ * ⛔ DELEGATES, rather than spelling it a second time. `dayWindowLabel(d, d)` is
+ * the one-ended case of the window rule six surfaces already read, and this
+ * function produced the byte-identical string from its own arithmetic. One
+ * batch of fixes used both names for one string; there is one implementation
+ * now, and the 14 callers here keep the vocabulary their file owns.
+ */
 export function longDate(isoDate: string): string {
-  return `${shortDate(isoDate)}, ${isoDate.slice(0, 4)}`;
+  return dayWindowLabel(isoDate, isoDate);
 }
 
 /**
@@ -388,9 +397,22 @@ const MONTHS_IN_YEAR = 12;
  * ⚠️ Null is SILENCE, never "this one runs the whole year": a series that
  * outlives the window has nothing to disclose, and the header badge already
  * names its end date neutrally.
+ *
+ * ⛔ A WINDOW HAS TWO ENDS, and the first version of this checked only the far
+ * one. `endsInsideHorizon` compares against `toExclusive` alone — the committed
+ * book calls it with a window whose near end is `input.from`, this caller with
+ * one whose near end is TODAY — so a series that had ALREADY stopped came back
+ * "stops on Aug 1, 2026, inside them" of a window beginning Sep 11. It does not
+ * stop inside those twelve months; it stopped before them, and the annualized
+ * figure over them is not a partial year but a fiction. That case gets the
+ * stronger sentence, not the weaker one. Not reachable today — both end-dated
+ * series are in the future — but `Car insurance` reaches it on 2027-01-12.
  */
 export function annualizedCaveat(endsOn: string | null, today: string): string | null {
   if (endsOn === null) return null;
+  if (compareDates(endsOn, today) < 0) {
+    return `a year this series no longer bills — it stopped on ${longDate(endsOn)}`;
+  }
   if (!endsInsideHorizon(endsOn, addCalendarMonths(today, MONTHS_IN_YEAR))) return null;
   return `the twelve months from today — this one stops on ${longDate(endsOn)}, inside them`;
 }

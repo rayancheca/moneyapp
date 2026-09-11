@@ -13,7 +13,7 @@ import { transactions } from "@/db/schema/transactions";
 import { diffDays, todayIso } from "@/lib/dates";
 import { isStaleClose } from "@/lib/holding-price-age";
 import { formatCents } from "@/lib/money";
-import { activeTxnsInRange, loadCategoryIndex, spendingBucket } from "./analytics";
+import { activeTxnsInRange, loadCategoryIndex, spendingBucket, uncategorizedWhere } from "./analytics";
 import { accountCoverage, type CoverageGrade } from "./coverage";
 import { MIN_OCCURRENCES } from "./recurring";
 
@@ -1052,12 +1052,34 @@ function categorySpendProvenance(
     .map((c) => c.id);
   const ids = [categoryId, ...childIds];
 
+  /*
+   * 🔴 THE PROOF MUST MEASURE THE ROWS THE HEADLINE MEASURED. `/categories/<the
+   * system Uncategorized row>` reads the whole bucket — NULL or filed on that
+   * category, `spendingTransactions` — but this query asked for the id
+   * literally, which after `activeTxnsInRange`'s normalisation is only the six
+   * hand-filed rows. For August 2026 the page read "-$1,192.21 · 31
+   * transactions" over a popover saying "No rows in Uncategorized between Aug
+   * 1, 2026 and Aug 31, 2026, so this total is zero rather than unproven" — a
+   * measured zero asserted directly under a non-zero headline, on a card whose
+   * own comment says "the total's proof is the proof of the rows underneath
+   * it". Introduced 2026-09-11 by the fix that made the headline right, and
+   * caught by a second reader rather than by any gate.
+   *
+   * ⛔ `uncategorizedWhere` is the predicate written for exactly this — "the
+   * queries that do not go through `activeTxnsInRange`" — so the proof and the
+   * figure cannot answer "which rows" two ways.
+   */
+  const idx = loadCategoryIndex(db);
+  const scope = idx.uncategorizedIds.has(categoryId)
+    ? uncategorizedWhere(idx)
+    : inArray(transactions.categoryId, ids);
+
   const rows = db
     .select(SUM_ROW_COLUMNS)
     .from(transactions)
     .where(
       and(
-        inArray(transactions.categoryId, ids),
+        scope,
         eq(transactions.status, "active"),
         gte(transactions.postedOn, from),
         lte(transactions.postedOn, to),

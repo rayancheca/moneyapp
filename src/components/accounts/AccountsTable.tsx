@@ -1,6 +1,7 @@
 "use client";
 
 import { sharePercent } from "@/lib/insight-facts";
+import { asOfSpanTerm } from "@/lib/day-change-label";
 import Link from "next/link";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { useViewState } from "@/hooks/useViewState";
@@ -567,9 +568,18 @@ export function AccountsTable({ accounts, cashWalletNote }: AccountsTableProps) 
             Every account, ruled and totalled
             {model.asOf && (
               <span className="block font-normal normal-case tracking-normal">
+                {/* ⛔ ONE RULE, BOTH LENSES. This clause and the cards lens'
+                    are the same sentence about the same fact — "as of its own
+                    last covered day" — and they were spelled three ways on one
+                    screen: "Fri, Aug 14, 2026 to Fri, Sep 3, 2026" here and
+                    "Aug 14 – Sep 3, 2026" there. `asOfSpanTerm` is the rule,
+                    and the weekday goes: this date is not about a weekday.
+                    ⚠️ The per-row "as of Sep 11" below stays short — it is a
+                    10px annotation in a column this caption already dates. */}
+                {`Balances: ${asOfSpanTerm(model.asOf, model.oldestAsOf === model.asOf ? null : model.oldestAsOf)}`}
                 {model.oldestAsOf && model.oldestAsOf !== model.asOf
-                  ? `Each balance is as of its own last covered day, ${formatDayLong(model.oldestAsOf)} to ${formatDayLong(model.asOf)} — so this is not one moment, and every row prints its own. `
-                  : `Balances as of ${formatDayLong(model.asOf)}. `}
+                  ? " — so this is not one moment, and every row prints its own. "
+                  : ". "}
                 Balance and change are both signed against net worth, so a debt reads negative and a
                 card paid down reads positive — which is what lets both columns be added across the
                 two sides below. Elsewhere a card reads as what you owe.

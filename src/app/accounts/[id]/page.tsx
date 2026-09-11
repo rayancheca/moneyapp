@@ -295,12 +295,12 @@ export default async function AccountDetailPage({
                   cents={monthChange}
                   liability={liability}
                 />
-                {/* ⛔ The same spelling as the chip three nodes to its left. This
-                    line read "since Aug 12 +$211.71 as of 2026-09-11 · derived"
-                    — one sentence, two date formats — and `/accounts`' cards
-                    name the identical fact "as of Sep 11, 2026". The YEAR stays:
-                    a balance last true in a previous year must not read as this
-                    one. */}
+                {/* ⛔ This line read "since Aug 12 +$211.71 as of 2026-09-11 ·
+                    derived" — one sentence, two date formats. `/accounts`' two
+                    lenses now both say "as of Sep 11, 2026" through
+                    `asOfSpanTerm`, which reads `dayWindowLabel`; this is the
+                    third surface on the same rule. The YEAR stays: a balance
+                    last true in a previous year must not read as this one. */}
                 <span className="text-xs text-ink-faint">
                   as of {dayWindowLabel(latest.day, latest.day)} · {BASIS_LABEL[latest.basis] ?? latest.basis}
                 </span>

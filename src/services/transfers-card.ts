@@ -2,7 +2,7 @@ import { and, eq, gte, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { transactions } from "@/db/schema/transactions";
 import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates";
-import { formatMonthYear } from "@/lib/format-date";
+import { formatMonthYear, monthWindowLabel } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import { listAccounts } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryIndex } from "./analytics";
@@ -382,6 +382,11 @@ export function transfersCard(
     .reduce((sum, t) => sum + t.amountCents, 0);
   const arrivalCount = arrivals.filter((t) => linkOf(t) === null).length;
 
+  // `monthWindowLabel` for the SENTENCE, so a one-month window reads "Sep 2022"
+  // rather than "Sep 2022 to Sep 2022" — the divergence the three migrated
+  // cards would otherwise have from this one. The two single-month fields below
+  // stay `formatMonthYear`: one end is not a window.
+  const windowLabel = monthWindowLabel(fromMonth, toMonth);
   const fromLabel = formatMonthYear(from);
   const toLabel = formatMonthYear(`${toMonth}-01`);
 
@@ -389,7 +394,7 @@ export function transfersCard(
     movedCents,
     departureCount: departures.length,
     headline: formatCents(movedCents),
-    headlineNoun: `left one account for another, ${fromLabel} to ${toLabel}`,
+    headlineNoun: `left one account for another, ${windowLabel}`,
     summary:
       "None of this is income and none of it is spending — nothing here left your net worth, it only changed pockets. " +
       "It is counted once, on the way out: a transfer's two legs are one movement. Money that went somewhere and came " +

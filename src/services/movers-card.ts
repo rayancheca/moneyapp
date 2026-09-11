@@ -1,6 +1,6 @@
 import type { AppDatabase } from "@/db/client";
 import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates";
-import { formatDayShort, formatMonthYear } from "@/lib/format-date";
+import { formatDayShort, formatMonthYear, monthWindowLabel } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import { listAccounts } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, monthlySpending, spendingBucket, transactionsHref } from "./analytics";
@@ -543,7 +543,7 @@ export function moversCard(db: AppDatabase, today: string = todayIso()): MoversC
     direction,
     summary:
       `${formatCents(monthTotalCents)} went out in ${monthLabel}, against a usual ${formatCents(usualMonthlyCents)} — ` +
-      `the mean of the ${months} complete months before it, ${formatMonthYear(`${baselineKeys[0]!}-01`)} to ${formatMonthYear(`${baselineKeys[baselineKeys.length - 1]!}-01`)}. Refunds are netted off both.`,
+      `the mean of the ${months} complete months before it, ${monthWindowLabel(baselineKeys[0]!, baselineKeys[baselineKeys.length - 1]!)}. Refunds are netted off both.`,
 
     movers,
     otherCount: rest.length,

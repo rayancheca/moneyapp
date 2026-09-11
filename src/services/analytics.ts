@@ -552,7 +552,11 @@ export interface DateRange {
  *   - a system ID is the CATEGORY, whose page prints a **Net** over the rows
  *     it lists and whose count must reconcile with the 37 on `/categories`.
  *     Both signs: the same 35 plus the two 2023-11-02 Capital One verification
- *     deposits ($0.11, $0.24) = 37 rows, net $92.72 out.
+ *     deposits ($0.11, $0.24) = 37 rows, net $1,284.93 out.
+ *     ⚠️ $92.72 is the net of the SIX system-filed rows alone — the figure the
+ *     2026-09-03 decision was written about. Conflating the two populations is
+ *     the very error this block exists to prevent, and the first draft of this
+ *     comment did it.
  * Only `/categories/[id]` reaches the second spelling; every spending surface
  * passes null. Measured 2026-09-11.
  */

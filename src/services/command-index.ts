@@ -5,6 +5,7 @@ import { categories } from "@/db/schema/categories";
 import { holdings } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
+import { hrefCategoryId } from "./analytics";
 import { ledgerHref } from "@/lib/ledger-href";
 import { isIconName, type IconName } from "@/components/shell/Icon";
 import type { CommandPaletteGroup } from "@/components/ui/CommandPalette";
@@ -69,10 +70,14 @@ export function commandEntityGroups(db: AppDatabase): CommandPaletteGroup[] {
            * as the BUCKET. A link carrying its raw id filters by that id alone,
            * and `activeTxnsInRange` normalises every such row to null — so the
            * palette's "Uncategorized" opened the six rows hand-filed on the
-           * category out of the 37 the bucket holds. Same asymmetry as
-           * `spendingTransactions`; there is one spelling of this link now.
+           * category out of the 37 the bucket holds.
+           *
+           * ⛔ `hrefCategoryId`, not `kind === "system"` spelled out again. The
+           * first draft hand-rolled the test in the same commit that created
+           * the rule to hold it — identical today, and exactly the second copy
+           * the rule exists to prevent.
            */
-          href: ledgerHref({ category: c.kind === "system" ? null : c.id }),
+          href: ledgerHref({ category: hrefCategoryId(db, c.id) }),
           ...(parentName ? { keywords: [parentName] } : {}),
         };
       }),

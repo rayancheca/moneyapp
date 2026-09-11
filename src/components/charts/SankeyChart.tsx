@@ -128,18 +128,37 @@ export function sankeyFrameNote(
 }
 
 /**
- * A node's complete spoken name. The spend destinations say which frame their
- * figure is in — see `sankeyFrameNote` — and every node names what its percent
- * is a percent OF, which the tooltip beside it already called "of flow".
+ * A node's complete spoken name. The spend destinations say which FRAME their
+ * figure is in — see `sankeyFrameNote` — and every node names the denominator
+ * of its percent AND which side of the hub it is a share of.
+ *
+ * ⛔ THE SIDE IS NOT DECORATION. Both columns partition the same throughput:
+ * the hub's in-flow (income + refunds + the drawdown plug) and its out-flow
+ * (categories + uncategorized + net saved) are each the whole of it, so a bare
+ * "26.7% of the flow" on every node invites an addition that comes to 200%.
+ * `spineNodeLabel` was fixed for exactly this on the same day and its remedy is
+ * the one used here: every share names its leg.
+ *
+ * ⚠️ The denominator is the THROUGHPUT, not "what came in" — on `/spending` for
+ * July 2026 only $166.06 flowed in and $10,187.90 was drawn from outside the
+ * period, which `sankeySummary` says in so many words. "Passed through" is the
+ * one description true of both.
  */
 export function sankeyNodeLabel(
-  node: { label: string; valueCents: number; meta?: { kind?: string } },
+  node: { label: string; valueCents: number; column: number; meta?: { kind?: string } },
   formatValue: (cents: number) => string,
   share: (cents: number) => string,
+  totalFlow: number,
 ): string {
   const spends = node.meta?.kind === "category" || node.meta?.kind === "uncategorized";
   const amount = spends ? `${formatValue(node.valueCents)} charged` : formatValue(node.valueCents);
-  return `${node.label}, ${amount}, ${share(node.valueCents)} of the flow — view transactions`;
+  const head = `${node.label}, ${amount}`;
+  if (totalFlow <= 0) return `${head} — view transactions`;
+  const side = spends ? "on the way out" : "on the way in";
+  return (
+    `${head}, ${share(node.valueCents)} of the ${formatValue(totalFlow)} that passed through, ` +
+    `${side} — view transactions`
+  );
 }
 
 export function sankeySummary(
@@ -322,7 +341,7 @@ export function SankeyChart({
             <a
               key={n.id}
               href={n.href}
-              aria-label={sankeyNodeLabel(n, formatValue, share)}
+              aria-label={sankeyNodeLabel(n, formatValue, share, totalFlow)}
               onClick={(e) => drill(n, e)}
               className="cursor-pointer outline-none [&:focus-visible>g>rect]:stroke-accent [&:focus-visible>g>rect]:stroke-2"
             >

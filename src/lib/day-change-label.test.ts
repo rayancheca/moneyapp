@@ -95,9 +95,11 @@ describe("asOfSpanTerm", () => {
   /*
    * 🔴 The raw key, in a sentence, beside a formatted one. `/accounts/<id>`
    * printed "since Aug 12 +$211.71 as of 2026-09-11 · derived" in a single
-   * paragraph, and `AccountsTable` says the identical fact one lens away
-   * through `formatDayLong`. `dayWindowLabel` is the rule both read now, and it
-   * drops only what genuinely repeats — the year, across a span inside one.
+   * paragraph. `AccountsTable`'s caption said the SAME clause a third way —
+   * "Each balance is as of its own last covered day, Fri, Aug 14, 2026 to Fri,
+   * Sep 3, 2026" — so one screen carried three spellings of one fact until the
+   * table lens was moved onto this rule too. `dayWindowLabel` drops only what
+   * genuinely repeats: the year, across a span inside one.
    */
   test("never a raw month key, and a cross-year span keeps both years", () => {
     expect(asOfSpanTerm("2026-08-17", null)).not.toMatch(/\d{4}-\d{2}-\d{2}/);

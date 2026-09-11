@@ -415,9 +415,24 @@ describe("annualizedCaveat — a year is qualified only when the series stops in
     expect(annualizedCaveat("2027-09-10", TODAY)).not.toBeNull();
   });
 
-  test("a series that has ALREADY stopped is still qualified, not silently excused", () => {
+  /*
+   * 🔴 A WINDOW HAS TWO ENDS. The first version checked only the far one, so a
+   * series that had already stopped read "stops on Aug 1, 2026, inside them" of
+   * a window beginning Sep 11 — and this test pinned that as correct. It does
+   * not stop inside those twelve months; it stopped before them, and the
+   * annualized figure over them is a fiction rather than a partial year.
+   */
+  test("a series that has ALREADY stopped gets the STRONGER sentence, not the same one", () => {
     expect(annualizedCaveat("2026-08-01", TODAY)).toBe(
-      "the twelve months from today — this one stops on Aug 1, 2026, inside them",
+      "a year this series no longer bills — it stopped on Aug 1, 2026",
     );
+    expect(annualizedCaveat("2026-08-01", TODAY)).not.toContain("inside them");
+  });
+
+  test("the near end is TODAY, and a series ending today still has a year to say something about", () => {
+    expect(annualizedCaveat(TODAY, TODAY)).toBe(
+      "the twelve months from today — this one stops on Sep 11, 2026, inside them",
+    );
+    expect(annualizedCaveat("2026-09-10", TODAY)).toContain("no longer bills");
   });
 });

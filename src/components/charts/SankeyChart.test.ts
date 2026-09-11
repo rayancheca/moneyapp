@@ -87,25 +87,50 @@ describe("sankeyFrameNote", () => {
   });
 });
 
+/*
+ * 🔴 BOTH COLUMNS PARTITION THE SAME THROUGHPUT. The in-flow (income + refunds
+ * + the drawdown plug) and the out-flow (categories + uncategorized + net
+ * saved) are each the whole of it, so a bare "of the flow" on every node
+ * invites an addition that comes to 200% — the identical defect fixed on the
+ * transfer spine the same day, whose remedy was to make each share name its
+ * leg. Caught by a second reader, not by a gate.
+ */
 describe("sankeyNodeLabel", () => {
   const share = () => "26.7%";
+  const TOTAL = 1_035_396;
 
-  test("a spending destination says which frame its figure is in", () => {
-    expect(sankeyNodeLabel({ label: "Housing", valueCents: 276_379, meta: { kind: "category" } }, formatCents, share)).toBe(
-      "Housing, $2,763.79 charged, 26.7% of the flow — view transactions",
+  test("a spending destination says which frame its figure is in, and which side", () => {
+    expect(
+      sankeyNodeLabel({ label: "Housing", valueCents: 276_379, column: 2, meta: { kind: "category" } }, formatCents, share, TOTAL),
+    ).toBe(
+      "Housing, $2,763.79 charged, 26.7% of the $10,353.96 that passed through, on the way out — view transactions",
     );
     // the honesty bucket is a spending destination too
     expect(
-      sankeyNodeLabel({ label: "Uncategorized", valueCents: 4_24, meta: { kind: "uncategorized" } }, formatCents, share),
-    ).toContain("$4.24 charged");
+      sankeyNodeLabel({ label: "Uncategorized", valueCents: 4_24, column: 2, meta: { kind: "uncategorized" } }, formatCents, share, TOTAL),
+    ).toContain("$4.24 charged, 26.7% of the $10,353.96 that passed through, on the way out");
   });
 
-  test("a source is not 'charged', and every node names what its percent is OF", () => {
-    expect(sankeyNodeLabel({ label: "Salary", valueCents: 500_000, meta: { kind: "income" } }, formatCents, share)).toBe(
-      "Salary, $5,000.00, 26.7% of the flow — view transactions",
+  test("a source is not 'charged', and says the other side", () => {
+    expect(
+      sankeyNodeLabel({ label: "Salary", valueCents: 500_000, column: 0, meta: { kind: "income" } }, formatCents, share, TOTAL),
+    ).toBe(
+      "Salary, $5,000.00, 26.7% of the $10,353.96 that passed through, on the way in — view transactions",
     );
-    expect(sankeyNodeLabel({ label: "Refunds", valueCents: 11_311, meta: { kind: "refund" } }, formatCents, share)).toBe(
-      "Refunds, $113.11, 26.7% of the flow — view transactions",
-    );
+  });
+
+  test("the two sides never share a bare denominator, so nothing invites the 200% addition", () => {
+    const out = sankeyNodeLabel({ label: "Housing", valueCents: 276_379, column: 2, meta: { kind: "category" } }, formatCents, share, TOTAL);
+    const inn = sankeyNodeLabel({ label: "Salary", valueCents: 500_000, column: 0, meta: { kind: "income" } }, formatCents, share, TOTAL);
+    expect(out).toContain("on the way out");
+    expect(inn).toContain("on the way in");
+    expect(out).not.toContain("of the flow —");
+    expect(inn).not.toContain("of the flow —");
+  });
+
+  test("no throughput means no share at all, rather than a 0% that states a measurement", () => {
+    expect(
+      sankeyNodeLabel({ label: "Housing", valueCents: 0, column: 2, meta: { kind: "category" } }, formatCents, share, 0),
+    ).toBe("Housing, $0.00 charged — view transactions");
   });
 });
