@@ -88,7 +88,16 @@ export function heatCellLabel({
   if (d && d.spentCents === 0 && d.incomeCents === 0 && d.refundedCents > 0) {
     return `${day}: ${formatCents(d.refundedCents)} refunded`;
   }
-  if (!d || (d.spentCents === 0 && d.incomeCents === 0)) return `${day}: no activity`;
+  /*
+   * ⛔ "no activity" IS AN ASSERTION ABOUT THE WHOLE LEDGER, and this chart
+   * counts three things: expense-kind outflows, income-kind positives, and
+   * expense-kind credits. A day holding only a transfer, a card payment or an
+   * investment flow falls through all three. Measured 2026-09-11: **79 days
+   * across the ledger, covering 298 real transactions**, were labelled as
+   * having had none. The branch directly above already says "spent or earned";
+   * this one now names the same population.
+   */
+  if (!d || (d.spentCents === 0 && d.incomeCents === 0)) return `${day}: nothing spent or earned`;
   const parts: string[] = [];
   if (d.spentCents > 0) {
     parts.push(`${formatCents(d.spentCents)} spent across ${d.txnCount} ${d.txnCount === 1 ? "transaction" : "transactions"}`);
@@ -281,7 +290,8 @@ function DaySheetBody({
           ? "Nothing has been imported for this day yet — nobody has looked at it, which is not the same as nothing happening."
           : refunded > 0
             ? `Nothing was spent or earned on this day — ${formatCents(refunded)} came back as a refund.`
-            : "Nothing posted on this day.";
+            : // the same population the cell's own label names — not the ledger's
+              "Nothing was spent or earned on this day.";
     return (
       <div className="space-y-4">
         <p className="text-sm text-ink-muted">{nothing}</p>

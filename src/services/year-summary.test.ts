@@ -161,6 +161,39 @@ describe("yearSummaryView — the earned partition", () => {
     expect(v.summary.earnedCents).toBe(171000);
     expect(v.summary.investmentCents).toBe(700);
   });
+
+  /**
+   * 🔴 THE TWO INTEREST LINES SPLIT ON ACCOUNT NAME, so interest credited to a
+   * THIRD account belonged to neither and was counted in no total — on a page
+   * headed "All money in". Measured on the real ledger 2026-09-11: 7 rows of
+   * SoFi CHECKING interest across 2023-2026, absent from every year's headline.
+   *
+   * ⛔ And the line that claimed to cover them — "Other income: Income-kind
+   * rows that fit none of the named sources above" — is the category literally
+   * named "Other Income", so it never could.
+   */
+  test("interest on a third account lands somewhere rather than nowhere", () => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!.id;
+    const other = createAccount(bundle.db, { institutionId: chase, name: "SoFi Checking", type: "checking" });
+    insert({ postedOn: "2025-08-01", amountCents: 4, rawDescription: "Interest Earned", categoryName: "Interest", accountId: other });
+
+    const v = yearSummaryView(bundle.db, YEAR, TODAY);
+    const ids = v.summary.sections.flatMap((sec) => sec.lines.map((l) => l.id));
+    expect(ids).toContain("other-interest");
+    const line = v.summary.sections.flatMap((sec) => sec.lines).find((l) => l.id === "other-interest")!;
+    expect(line.amountCents).toBe(4);
+    // …and it is in the page's total, which is the whole point
+    expect(v.summary.totalReceivedCents).toBe(171000 + 4);
+    // the earnings definition is untouched: this is not wages
+    expect(v.summary.earnedCents).toBe(171000);
+  });
+
+  test("no third-account interest renders no such line", () => {
+    const ids = yearSummaryView(bundle.db, YEAR, TODAY).summary.sections.flatMap((sec) =>
+      sec.lines.map((l) => l.id),
+    );
+    expect(ids).not.toContain("other-interest");
+  });
 });
 
 /**

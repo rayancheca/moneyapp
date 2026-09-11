@@ -33,9 +33,16 @@ const heat = (spentCents: number, incomeCents = 0, txnCount = 1, refundedCents =
  * nobody has looked at, not one in which nothing happened."
  */
 describe("heatCellLabel — three worlds, three sentences", () => {
+  /**
+   * ⛔ …AND THE MEASUREMENT IS OF THREE THINGS, NOT OF EVERYTHING. The chart
+   * counts expense-kind outflows, income-kind positives and expense-kind
+   * credits; a day holding only a transfer, a card payment or an investment
+   * flow falls through all three. "no activity" claimed the whole ledger for
+   * it. Measured 2026-09-11: **79 days, covering 298 real transactions.**
+   */
   test("a day the ledger walked through and found empty is a measurement", () => {
     expect(cell("2026-08-04", null, { monthKey: "2026-08", monthName: "August 2026" })).toBe(
-      "Aug 4: no activity",
+      "Aug 4: nothing spent or earned",
     );
   });
 
@@ -53,7 +60,7 @@ describe("heatCellLabel — three worlds, three sentences", () => {
 
   test("the last reached day is a measurement, the next one is not", () => {
     expect(cell("2026-08-31", null, { monthKey: "2026-08", monthName: "August 2026" })).toBe(
-      "Aug 31: no activity",
+      "Aug 31: nothing spent or earned",
     );
     expect(cell("2026-09-01")).toBe("Sep 1: not imported yet");
   });
@@ -93,9 +100,9 @@ describe("a day whose only row is a return", () => {
     ).toBe("Aug 4: $50.00 spent across 1 transaction");
   });
 
-  test("a genuinely empty covered day still says no activity", () => {
+  test("a covered day with nothing in this chart's three buckets says exactly that", () => {
     expect(
       cell("2026-08-04", heat(0, 0, 0, 0), { monthKey: "2026-08", monthName: "August 2026" }),
-    ).toBe("Aug 4: no activity");
+    ).toBe("Aug 4: nothing spent or earned");
   });
 });

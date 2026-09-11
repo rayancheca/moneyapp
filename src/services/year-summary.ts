@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, notInArray, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -88,6 +88,12 @@ function lineFor(
     categoryName: string;
     /** restrict to one account name */
     accountName?: string;
+    /**
+     * …or to every account EXCEPT these. The mirror of `accountName`, and the
+     * reason it exists: two lines split `Interest` by account name, so interest
+     * credited anywhere else belonged to neither and was counted in no total.
+     */
+    accountNameNotIn?: readonly string[];
     /** SQL LIKE against the raw descriptor, or its negation */
     descriptorLike?: string;
     descriptorNotLike?: string;
@@ -106,6 +112,9 @@ function lineFor(
       : sql`${transactions.amountCents} > 0`,
   ];
   if (opts.accountName) where.push(eq(accounts.name, opts.accountName));
+  if (opts.accountNameNotIn && opts.accountNameNotIn.length > 0) {
+    where.push(notInArray(accounts.name, [...opts.accountNameNotIn]));
+  }
   if (opts.descriptorLike) {
     where.push(sql`upper(${transactions.rawDescription}) LIKE ${opts.descriptorLike}`);
   }
@@ -404,6 +413,22 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
       "Interest paid on uninvested brokerage cash. Separated from SoFi savings interest, which your rule counts as earnings.",
       lineFor(db, year, { categoryName: "Interest", accountName: "Robinhood Cash" }),
     ),
+    /*
+     * ⛔ The two lines above split `Interest` by ACCOUNT NAME, so interest
+     * credited to any third account fell between them — 7 rows across
+     * 2023-2026, absent from a page headed "All money in". `line()` returns
+     * null at zero rows, so this appears only on years that have some.
+     */
+    line(
+      "other-interest",
+      "Interest on other accounts",
+      "notEarned",
+      "Interest credited somewhere other than the SoFi savings account or brokerage cash — money in, but outside your definition of earnings.",
+      lineFor(db, year, {
+        categoryName: "Interest",
+        accountNameNotIn: ["SoFi Savings", "Robinhood Cash"],
+      }),
+    ),
     line(
       "realized",
       "Realized gains",
@@ -432,7 +457,16 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
       "other-income",
       "Other income",
       "notEarned",
-      "Income-kind rows that fit none of the named sources above.",
+      /*
+       * 🔴 IT IS NOT A RESIDUAL. This line is the category literally named
+       * "Other Income", and the sentence promised every income-kind row the
+       * lines above do not claim. Measured 2026-09-11, the difference was real:
+       * 7 interest rows credited to SoFi CHECKING sat in no line at all,
+       * because the two `Interest` lines are pinned to SoFi Savings and
+       * Robinhood Cash by name. They have their own line now, and this
+       * description says what it actually holds.
+       */
+      "Rows you filed to the Other Income category — money in that belongs to none of the named sources.",
       lineFor(db, year, { categoryName: "Other Income" }),
     ),
     (() => {
