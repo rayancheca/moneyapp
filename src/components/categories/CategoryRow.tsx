@@ -82,8 +82,12 @@ export function CategoryRow({
           } ${node.isArchived ? "opacity-55" : ""}`}
         >
           <div className="flex min-w-0 items-baseline gap-2">
+            {/* ⛔ ALL TIME, because the count beside this link is all time.
+                `resolvePeriod` reads a bare href as the CURRENT month, so every
+                row of this page — "Groceries · 261 transactions" — opened a
+                September 2026 page reading "$0.00 · 0 transactions". */}
             <Link
-              href={`/categories/${node.id}`}
+              href={`/categories/${node.id}?period=ALL`}
               className={`truncate hover:text-accent hover:underline ${
                 depth === 0 ? "text-sm font-medium" : "text-sm text-ink-muted"
               }`}
@@ -203,7 +207,7 @@ export function CategoryRow({
             ))}
 
           <Link
-            href={`/categories/${node.id}`}
+            href={`/categories/${node.id}?period=ALL`}
             className="ml-auto text-xs text-accent hover:underline"
           >
             Open {node.name} →

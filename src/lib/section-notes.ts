@@ -310,17 +310,32 @@ export function categoryNoteRows<T extends { id: string; name: string; isArchive
  * thousands empty), so the ROW says which zero it is. A parent whose
  * subcategories hold rows is not empty; it is unused as a filing destination,
  * which is a different fact and worth a different word.
+ *
+ * ⛔ …AND WHICH NONZERO. The count is DIRECT and the row links to a page that
+ * counts the SUBTREE, so on 2026-09-11 `Housing · 7 txn` opened a page reading
+ * "34 transactions" — two true numbers over two populations, three centimetres
+ * and one click apart. The zero case already carried that disambiguation; the
+ * nonzero case did not, and it was invisible only because the link used to open
+ * an empty September page instead.
  */
 export function categoryCountLabel(node: {
   txnCount: number;
   children: readonly { txnCount: number }[];
 }): { text: string; title: string | null } {
-  if (node.txnCount > 0) {
-    return { text: `${node.txnCount.toLocaleString("en-US")} txn`, title: null };
-  }
   // categories nest one level deep, which the page says in its own header — so
   // a child's own count IS its subtree
   const inChildren = node.children.reduce((sum, c) => sum + c.txnCount, 0);
+  if (node.txnCount > 0) {
+    const text = `${node.txnCount.toLocaleString("en-US")} txn`;
+    return {
+      text,
+      title:
+        inChildren === 0
+          ? null
+          : `${node.txnCount.toLocaleString("en-US")} filed directly here; ` +
+            `${inChildren.toLocaleString("en-US")} more ${inChildren === 1 ? "sits" : "sit"} in its subcategories`,
+    };
+  }
   if (inChildren === 0) return { text: "—", title: null };
   return {
     text: "none direct",

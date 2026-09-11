@@ -712,4 +712,28 @@ describe("categoryCountLabel", () => {
   test("a parent with both reports its own count", () => {
     expect(categoryCountLabel({ txnCount: 7, children: [leaf(16)] }).text).toBe("7 txn");
   });
+
+  /**
+   * 🔴 …AND SAYS WHICH COUNT IT IS. The cell is a DIRECT count and the row
+   * links to a page that counts the SUBTREE, so `Housing · 7 txn` opened a page
+   * reading "34 transactions". The zero case already carried this
+   * disambiguation; the nonzero case did not, and it was invisible only because
+   * the link used to land on an empty current month instead.
+   */
+  test("a parent with both names the population, so its link cannot surprise", () => {
+    expect(categoryCountLabel({ txnCount: 7, children: [leaf(16), leaf(11)] }).title).toBe(
+      "7 filed directly here; 27 more sit in its subcategories",
+    );
+  });
+
+  test("one row in one child reads in the singular", () => {
+    expect(categoryCountLabel({ txnCount: 2, children: [leaf(1)] }).title).toBe(
+      "2 filed directly here; 1 more sits in its subcategories",
+    );
+  });
+
+  test("a leaf, or a parent whose children are empty, has nothing to disambiguate", () => {
+    expect(categoryCountLabel(leaf(1882)).title).toBeNull();
+    expect(categoryCountLabel({ txnCount: 5, children: [leaf(0)] }).title).toBeNull();
+  });
 });
