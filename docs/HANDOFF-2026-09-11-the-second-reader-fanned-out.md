@@ -383,8 +383,10 @@ brackets (0 = unanimous).
   shifts and the changed-pixel count balloons to 53,843. **A large diff whose
   bbox starts at the changed sentence and runs to the page bottom is a reflow,
   not a second change.**
-- ⛔ **The dev server was left STOPPED** — the build and the gate both need
-  `.next`. Restart it with `pnpm dev` if you want :3000 back.
+- ✅ **The dev server is RUNNING on :3000** — it was stopped for the build and
+  the gate, which both need `.next` to themselves, and restarted once the gate
+  came back green. Stop it yourself if you need `.next` again; that is standing
+  permission.
 
 ---
 
