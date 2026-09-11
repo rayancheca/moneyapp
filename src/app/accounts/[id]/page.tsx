@@ -6,6 +6,7 @@ import { isLiability } from "@/db/schema/accounts";
 import type { BalanceBasis } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
+import { accountSubtypeLabel, accountTypeLabel } from "@/lib/account-label";
 import { dayChangeLabel } from "@/lib/day-change-label";
 import { dayWindowLabel } from "@/lib/period";
 import { formatDayShort } from "@/lib/format-date";
@@ -58,13 +59,6 @@ const BASIS_LABEL: Record<string, string> = {
   derived: "derived",
   derived_unverified: "derived (unverified)",
   carried: "carried",
-};
-
-const TYPE_LABEL: Record<string, string> = {
-  checking: "Checking",
-  savings: "Savings",
-  credit: "Credit card",
-  investment: "Investment",
 };
 
 const CHANGE_TONE: Record<BalanceDeltaAccent, string> = {
@@ -237,7 +231,16 @@ export default async function AccountDetailPage({
         <AccountNameHeading
           accountId={account.id}
           name={account.name}
-          description={`${TYPE_LABEL[account.type] ?? account.type}${account.subtype ? ` · ${account.subtype}` : ""}${account.last4 ? ` · ····${account.last4}` : ""}${account.isActive ? "" : " · archived"}`}
+          /* ⛔ the subtype is a LABEL too — `lib/account-label` owns both, and
+             the Edit sheet a button away has always said "Brokerage". */
+          description={[
+            accountTypeLabel(account.type),
+            accountSubtypeLabel(account.subtype),
+            account.last4 ? `····${account.last4}` : null,
+            account.isActive ? null : "archived",
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         />
         <div className="mt-1">
           <EditAccountButton

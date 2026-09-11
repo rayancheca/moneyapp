@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
+import { ACCOUNT_TYPE_LABEL } from "@/lib/account-label";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { reorderAccountsAction } from "@/app/accounts/actions";
@@ -14,13 +15,6 @@ import { toast } from "@/components/ui/Toast";
 import { asOfSpanTerm } from "@/lib/day-change-label";
 import { formatCentsSigned } from "@/lib/money";
 import { EditAccountSheet, type EditableAccount } from "./EditAccountSheet";
-
-const TYPE_LABEL: Record<AccountCard["type"], string> = {
-  checking: "Checking",
-  savings: "Savings",
-  credit: "Credit card",
-  investment: "Investment",
-};
 
 function toneOf(cents: number | null): SparklineTone {
   if (cents === null || cents === 0) return "neutral";
@@ -114,7 +108,7 @@ export function ManagedAccounts({
 
           <ul>
             {group.accounts.map((a, i) => {
-              const meta = [TYPE_LABEL[a.type], a.last4 ? `····${a.last4}` : null, a.holdingsSummary]
+              const meta = [ACCOUNT_TYPE_LABEL[a.type], a.last4 ? `····${a.last4}` : null, a.holdingsSummary]
                 .filter(Boolean)
                 .join(" · ");
               return (

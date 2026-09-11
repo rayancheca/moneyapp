@@ -1,6 +1,7 @@
 "use client";
 
 import { addHoldingAction } from "@/app/investments/actions";
+import { accountSubtypeLabel } from "@/lib/account-label";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { MAX_FINANCIAL_DATE, MIN_FINANCIAL_DATE } from "@/lib/date-window";
 
@@ -28,7 +29,7 @@ export function HoldingForm({
           {accounts.map((a) => (
             <option key={a.id} value={a.id}>
               {a.name}
-              {a.subtype ? ` (${a.subtype})` : ""}
+              {accountSubtypeLabel(a.subtype) ? ` (${accountSubtypeLabel(a.subtype)})` : ""}
             </option>
           ))}
         </Select>

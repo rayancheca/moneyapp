@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ACCOUNT_TYPE_LABEL } from "@/lib/account-label";
 import Link from "next/link";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
@@ -40,13 +41,6 @@ export const dynamic = "force-dynamic";
 const ACCOUNTS_LIST_SURFACE = "accounts";
 const ACCOUNTS_LIST_SPEC: ViewSpec = [{ key: "view", options: ["cards", "table"] }];
 const ACCOUNTS_LIST_LABELS: Record<string, string> = { cards: "Cards", table: "Table" };
-
-const TYPE_LABEL: Record<string, string> = {
-  checking: "Checking",
-  savings: "Savings",
-  credit: "Credit card",
-  investment: "Investment",
-};
 
 export default async function AccountsPage({
   searchParams,
@@ -91,7 +85,7 @@ export default async function AccountsPage({
       id: a.id,
       name: a.name,
       institution: group.institutionName,
-      meta: [TYPE_LABEL[a.type] ?? a.type, a.last4 ? `····${a.last4}` : null, a.holdingsSummary]
+      meta: [ACCOUNT_TYPE_LABEL[a.type] ?? a.type, a.last4 ? `····${a.last4}` : null, a.holdingsSummary]
         .filter(Boolean)
         .join(" · "),
       isLiability: a.isLiability,

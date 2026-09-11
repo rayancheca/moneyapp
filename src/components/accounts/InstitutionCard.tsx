@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
+import { ACCOUNT_TYPE_LABEL } from "@/lib/account-label";
 import Link from "next/link";
 import type { InstitutionGroup, AccountCard as AccountCardData } from "@/services/institution-groups";
 import { asOfSpanTerm } from "@/lib/day-change-label";
@@ -8,13 +9,6 @@ import { formatCentsSigned } from "@/lib/money";
 import { BalanceFigure } from "@/components/accounts/BalanceFigure";
 import { Money } from "@/components/ui/Money";
 import { Sparkline, type SparklineTone } from "@/components/ui/Sparkline";
-
-const TYPE_LABEL: Record<AccountCardData["type"], string> = {
-  checking: "Checking",
-  savings: "Savings",
-  credit: "Credit card",
-  investment: "Investment",
-};
 
 function toneOf(dayChangeCents: number | null): SparklineTone {
   if (dayChangeCents === null || dayChangeCents === 0) return "neutral";
@@ -52,7 +46,7 @@ function DayChange({ cents, term }: { cents: number | null; term: string }) {
 
 function SubCard({ account }: { account: AccountCardData }) {
   const meta = [
-    TYPE_LABEL[account.type],
+    ACCOUNT_TYPE_LABEL[account.type],
     account.last4 ? `····${account.last4}` : null,
     account.holdingsSummary,
   ]

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { ACCOUNT_SUBTYPE_LABEL, ACCOUNT_TYPE_LABEL } from "@/lib/account-label";
 import { useRouter } from "next/navigation";
 import { editAccountAction } from "@/app/accounts/actions";
 import { Button } from "@/components/ui/Button";
@@ -24,18 +25,6 @@ export interface FundingCandidate {
   id: string;
   name: string;
 }
-
-const TYPE_LABELS: Record<AccountType, string> = {
-  checking: "Checking",
-  savings: "Savings",
-  credit: "Credit card",
-  investment: "Investment",
-};
-
-const SUBTYPE_LABELS: Record<AccountSubtype, string> = {
-  brokerage: "Brokerage",
-  crypto: "Crypto",
-};
 
 /**
  * Edit-account sheet (ux-overhaul-plan §7.2, extended by S3): rename, re-home
@@ -156,7 +145,7 @@ export function EditAccountSheet({
           >
             {ACCOUNT_TYPES.map((t) => (
               <option key={t} value={t}>
-                {TYPE_LABELS[t]}
+                {ACCOUNT_TYPE_LABEL[t]}
               </option>
             ))}
           </Select>
@@ -188,7 +177,7 @@ export function EditAccountSheet({
               <option value="">—</option>
               {ACCOUNT_SUBTYPES.map((s) => (
                 <option key={s} value={s}>
-                  {SUBTYPE_LABELS[s]}
+                  {ACCOUNT_SUBTYPE_LABEL[s]}
                 </option>
               ))}
             </Select>
