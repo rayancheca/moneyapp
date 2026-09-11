@@ -126,9 +126,19 @@ test("a duplicate pair can be retired and taken back", async ({ page }) => {
   await expect(card).toContainText("One copy retired");
   await expect(card).toContainText("Retired");
 
-  // the retired row is `superseded`, and no other tab renders one — so the pair
-  // must stay visible here or the retire is indistinguishable from a delete
-  await expect(card.getByRole("button", { name: "Undo" })).toBeVisible();
+  /*
+   * The retired row is `superseded`, and no other tab renders one — so the pair
+   * must stay visible here or the retire is indistinguishable from a delete.
+   *
+   * ⛔ Located by its FULL accessible name, not "Undo". Seventy-one of these
+   * render on the owner's ledger and "Undo" was the whole name of every one;
+   * each restores a superseded transaction into every total, a different amount
+   * per pair. The name says which — the same rule the Retire button above it
+   * has followed since it shipped.
+   */
+  await expect(
+    card.getByRole("button", { name: /^Restore the retired \$12\.50 copy from / }),
+  ).toBeVisible();
 
   // …and it really is out of the ledger
   expect(
@@ -147,7 +157,7 @@ test("a duplicate pair can be retired and taken back", async ({ page }) => {
   await expect(page.locator("main")).toContainText("No duplicate is waiting on a decision");
   await expect(page.locator("main")).toContainText("Already decided");
 
-  await card.getByRole("button", { name: "Undo" }).click();
+  await card.getByRole("button", { name: /^Restore the retired \$12\.50 copy from / }).click();
   await expect(card).toContainText("Retire the copy you do not want counted");
   expect(
     withDb((db) => (db.prepare("SELECT status FROM transactions WHERE id = ?").get(B) as { status: string }).status),
@@ -163,7 +173,9 @@ test("keeping both is a first-class answer, and it is remembered", async ({ page
   await expect(card).toContainText("Kept both");
   expect(withDb((db) => (db.prepare("SELECT resolution FROM duplicate_candidates WHERE id = ?").get(CANDIDATE) as { resolution: string }).resolution)).toBe("dismissed");
 
-  // put it back so the next run starts from the same place
-  await card.getByRole("button", { name: "Undo" }).click();
+  // put it back so the next run starts from the same place. A pair kept as two
+  // real charges retired nothing, so its undo REOPENS rather than restoring —
+  // and the name says so.
+  await card.getByRole("button", { name: /^Reopen the .* pair kept as two real charges$/ }).click();
   await expect(card).toContainText("Retire the copy you do not want counted");
 });
