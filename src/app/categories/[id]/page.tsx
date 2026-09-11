@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema/categories";
-import { todayIso } from "@/lib/dates";
+import { compareDates, todayIso } from "@/lib/dates";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import { resolvePeriod, withPeriod } from "@/lib/period";
@@ -35,7 +35,7 @@ import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
 import { CategorySeriesList } from "@/components/spending/CategorySeriesList";
 import { CategoryTxnPanel } from "@/components/spending/CategoryTxnPanel";
-import { MonthlyTrendBars } from "@/components/spending/MonthlyTrendBars";
+import { MonthlyTrendBars, trendWindowLabel } from "@/components/spending/MonthlyTrendBars";
 import { PeriodSelector } from "@/components/spending/PeriodSelector";
 import { SpendDelta } from "@/components/spending/SpendDelta";
 import { TopMerchantsCard } from "@/components/spending/TopMerchantsCard";
@@ -107,7 +107,18 @@ export default async function CategoryPage({
     label: header.name,
   });
 
-  const trend = categoryMonthlyTrend(db, id, TREND_MONTHS, today, ledgerReaches(db)).map((p) => ({ ...p, spentCents: sign * p.spentCents }));
+  /*
+   * ⛔ THE TREND IS ANCHORED TO THE PERIOD THIS PAGE IS SHOWING, not to today.
+   * Every other card here respects the selector — "Spent · November 2023", the
+   * Nov 2023 merchants, the Nov 2023 transactions — and this one silently did
+   * not: on `?period=2023-11` it headed a November-2023 page with bars from
+   * Oct 2025 to Sep 2026. Same on all 80 category pages and every past period.
+   *
+   * Clamped at `today`, so selecting a whole year that has not finished does
+   * not draw months nobody could have imported.
+   */
+  const trendAnchor = compareDates(period.to, today) < 0 ? period.to : today;
+  const trend = categoryMonthlyTrend(db, id, TREND_MONTHS, trendAnchor, ledgerReaches(db)).map((p) => ({ ...p, spentCents: sign * p.spentCents }));
 
   /*
    * PHASE III-B. Where this category sits, through the SAME builder /spending
@@ -223,7 +234,11 @@ export default async function CategoryPage({
         {insights && <InsightList data={insights} heading={`What the ledger says about ${header.name}`} />}
 
         <SurfaceCard>
-          <h2 className="mb-4 text-sm font-medium">12-month trend</h2>
+          {/* the heading names the twelve months the bars are actually drawn
+              over — it read a bare "12-month trend" over any window at all */}
+          <h2 className="mb-4 text-sm font-medium">
+            12-month trend · <span className="text-ink-muted">{trendWindowLabel(trend)}</span>
+          </h2>
           <MonthlyTrendBars points={trend} flowLabel={flowLabel} />
         </SurfaceCard>
 

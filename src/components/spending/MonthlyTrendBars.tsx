@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { emptyTrendCopy } from "@/lib/empty-period";
 import { formatCents } from "@/lib/money";
-import { formatMonthYear } from "@/lib/format-date";
+import { formatMonthYear, monthWindowLabel } from "@/lib/format-date";
 import type { CategoryMonthPoint } from "@/services/category-detail";
 
 /**
@@ -39,6 +39,17 @@ const TREND_NOUN: Record<string, string> = {
   Net: "net movement",
 };
 
+/**
+ * The span a run of month points actually covers — "Dec 2022 to Nov 2023".
+ * Read off the points themselves so a heading and its bars cannot disagree.
+ */
+export function trendWindowLabel(points: readonly CategoryMonthPoint[]): string {
+  const first = points[0]?.month;
+  const last = points[points.length - 1]?.month;
+  if (first === undefined || last === undefined) return "no months";
+  return monthWindowLabel(first, last);
+}
+
 export function MonthlyTrendBars({
   points,
   flowLabel = "Spent",
@@ -58,7 +69,14 @@ export function MonthlyTrendBars({
   if (max === 0) return <p className="text-sm text-ink-muted">{emptyTrendCopy(points)}</p>;
 
   return (
-    <ul className="flex items-end gap-1" aria-label={`Monthly ${TREND_NOUN[flowLabel] ?? flowLabel.toLowerCase()}, last 12 months`}>
+    <ul
+      className="flex items-end gap-1"
+      /* ⛔ the accessible name reads the window off the POINTS, so it can never
+         name a span the bars are not drawn over. It said "last 12 months" for
+         any run of any length, anchored anywhere — on ?period=2023-11 that was
+         a November-2023 page announcing bars from Oct 2025 to Sep 2026. */
+      aria-label={`Monthly ${TREND_NOUN[flowLabel] ?? flowLabel.toLowerCase()}, ${trendWindowLabel(points)}`}
+    >
       {points.map((p) => {
         const heightPct = Math.max(2, (Math.abs(p.spentCents) / max) * 100);
         return (

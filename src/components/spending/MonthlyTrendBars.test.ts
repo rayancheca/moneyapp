@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import type { CategoryMonthPoint } from "@/services/category-detail";
-import { MonthlyTrendBars, trendScaleCents } from "./MonthlyTrendBars";
+import { MonthlyTrendBars, trendScaleCents, trendWindowLabel } from "./MonthlyTrendBars";
 
 function months(values: readonly number[]): CategoryMonthPoint[] {
   return values.map((cents, i) => ({
@@ -88,12 +88,19 @@ describe("MonthlyTrendBars", () => {
     const html = renderToStaticMarkup(
       createElement(MonthlyTrendBars, { points: months([100_00]), flowLabel: "Received" }),
     );
-    expect(html).toContain('aria-label="Monthly money received, last 12 months"');
+    /*
+     * ⛔ …AND IT SAID "last 12 months" OF A ONE-MONTH SERIES. The span was
+     * hard-coded beside a noun that was not, so the half of the name that
+     * described the DATA was fixed while the half describing the WINDOW went on
+     * asserting a window it had never been given. It reads its own points now.
+     */
+    expect(html).toContain('aria-label="Monthly money received, Jan 2026"');
+    expect(html).not.toContain("last 12 months");
   });
 
   test("and defaults to spending, which is what most categories are", () => {
     expect(renderToStaticMarkup(createElement(MonthlyTrendBars, { points: months([100_00]) }))).toContain(
-      'aria-label="Monthly spending, last 12 months"',
+      'aria-label="Monthly spending, Jan 2026"',
     );
   });
 });
@@ -124,5 +131,37 @@ describe("a month nobody has imported has no zero to report", () => {
     const html = renderToStaticMarkup(createElement(MonthlyTrendBars, { points: zeroButReached }));
     // a month the ledger walked through and found empty IS a measurement
     expect(html).toContain("Aug 2026: $0.00, 0 transactions");
+  });
+});
+
+/**
+ * 🔴 THE CARD IGNORED THE PAGE'S OWN PERIOD SELECTOR, and its accessible name
+ * said "last 12 months" over whatever window it happened to hold. On
+ * `/categories/<Groceries>?period=2023-11` — a page whose every other card read
+ * "November 2023" — the bars ran Oct 2025 to Sep 2026 under a heading that said
+ * nothing about which twelve months they were. Same on all 80 category pages
+ * and every past period.
+ */
+describe("trendWindowLabel — the bars name the months they are drawn over", () => {
+  const at = (month: string) => ({ month, spentCents: 0, txnCount: 0, href: "/x", reached: true });
+
+  test("names both ends of the run", () => {
+    expect(trendWindowLabel([at("2022-12"), at("2023-06"), at("2023-11")])).toBe("Dec 2022 to Nov 2023");
+  });
+
+  test("a single month is named once, not as a range of itself", () => {
+    expect(trendWindowLabel([at("2023-11")])).toBe("Nov 2023");
+  });
+
+  test("no points name no months rather than an empty range", () => {
+    expect(trendWindowLabel([])).toBe("no months");
+  });
+
+  test("the accessible name carries the window, never a hardcoded 'last 12 months'", () => {
+    const html = renderToStaticMarkup(
+      createElement(MonthlyTrendBars, { points: [at("2022-12"), { ...at("2023-11"), spentCents: -100 }] }),
+    );
+    expect(html).toContain("Monthly spending, Dec 2022 to Nov 2023");
+    expect(html).not.toContain("last 12 months");
   });
 });
