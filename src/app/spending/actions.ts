@@ -6,7 +6,7 @@ import { getDb } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { transactions } from "@/db/schema/transactions";
-import { spendingTransactions, transactionsHref, type AnalyticsTxn } from "@/services/analytics";
+import { hrefCategoryId, ledgerHref, spendingTransactions, transactionsHref, type AnalyticsTxn } from "@/services/analytics";
 import { dailySpendHeatmap, type SpendHeatmap } from "@/services/spending";
 import { isValidIsoDate } from "@/lib/dates";
 import { actionErrorMessage, type ActionResult } from "@/app/transactions/action-types";
@@ -82,7 +82,19 @@ export async function loadSpendingCategoryTxns(input: {
     const page = ordered.slice(0, LIMIT);
 
     const rows = hydrateRows(db, page);
-    return { ok: true, data: { rows, total, href: transactionsHref(filter) } };
+    /*
+     * The system "Uncategorized" category resolves to the bucket, and its page
+     * lists BOTH signs (see `spendingTransactions`) — so its link must carry
+     * the bucket's param without `flow=out`, which `transactionsHref` adds for
+     * the negatives-only /spending bucket. Passing the raw id instead would
+     * filter by that id alone and open the six hand-filed rows under a count
+     * of 37.
+     */
+    const isBucket = parsed.categoryId !== null && hrefCategoryId(db, parsed.categoryId) === null;
+    const href = isBucket
+      ? ledgerHref({ category: null, from: parsed.from, to: parsed.to })
+      : transactionsHref(filter);
+    return { ok: true, data: { rows, total, href } };
   } catch (error: unknown) {
     // a ZodError's own message is a JSON dump of the issue array — unwrap it to
     // the single "Invalid from date" the schema declared

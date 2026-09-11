@@ -16,6 +16,8 @@ import {
   categoryBreakdown,
   categorySpending,
   categoryTrends,
+  hrefCategoryId,
+  ledgerHref,
   incomeByMonth,
   incomeTransactions,
   loadCategoryIndex,
@@ -356,6 +358,57 @@ describe("the system Uncategorized category is the NULL bucket", () => {
     expect(cells).toEqual([
       expect.objectContaining({ categoryId: null, categoryName: "Uncategorized", spentCents: 762, txnCount: 1 }),
     ]);
+  });
+
+  /*
+   * 🔴 2026-09-11: THE NORMALISATION RAN ONE WAY. `activeTxnsInRange` rewrote a
+   * system-filed row to null, so a query ASKING for that id matched nothing at
+   * all — `/categories` listed "Uncategorized · Locked · 37 txn" and linked to
+   * a page that read "$0.00 · 0 transactions" for every period the selector can
+   * reach, and over November 2023 — a month holding three of those rows —
+   * printed the empty state that asserts a measured zero in so many words.
+   *
+   * ⚠️ The two spellings are deliberately different populations: `null` is the
+   * /spending honesty bucket (a spending figure, negatives only), the system id
+   * is the CATEGORY, whose page prints a Net over every row it lists.
+   */
+  test("asking for the system id returns the whole bucket, both signs; null stays the spending bucket", () => {
+    insertTxn({ postedOn: "2026-07-02", amountCents: -762, category: "Uncategorized" });
+    insertTxn({ postedOn: "2026-07-03", amountCents: 24, category: "Uncategorized" });
+    insertTxn({ postedOn: "2026-07-04", amountCents: -500, category: null });
+    insertTxn({ postedOn: "2026-07-05", amountCents: -300, category: "Food" });
+    const systemId = catId("Uncategorized");
+    const range = { from: "2026-07-01", to: "2026-07-31" };
+
+    // the CATEGORY — the count the /categories row prints, and the net its page
+    // prints over the rows it lists: -(-762 + 24 - 500)
+    expect(categorySpending(bundle.db, { categoryId: systemId, ...range })).toEqual({
+      spentCents: 1_238,
+      txnCount: 3,
+    });
+    // the /spending BUCKET — a spending figure, so the credit stays out
+    expect(categorySpending(bundle.db, { categoryId: null, ...range })).toEqual({
+      spentCents: 1_262,
+      txnCount: 2,
+    });
+    // and no Food row leaked into either
+    expect(
+      spendingTransactions(bundle.db, { categoryId: systemId, ...range }).map((t) => t.amountCents).sort((a, b) => a - b),
+    ).toEqual([-762, -500, 24].sort((a, b) => a - b));
+  });
+
+  /*
+   * The drill-down contract: a link carrying the raw system id filters by that
+   * id alone, and every such row has been normalised away — so it opened the
+   * hand-filed rows under a count of the whole bucket. One spelling now.
+   */
+  test("hrefCategoryId spells the system category as the bucket, and leaves every other id alone", () => {
+    expect(hrefCategoryId(bundle.db, catId("Uncategorized"))).toBeNull();
+    expect(hrefCategoryId(bundle.db, null)).toBeNull();
+    expect(hrefCategoryId(bundle.db, catId("Food"))).toBe(catId("Food"));
+    expect(ledgerHref({ category: hrefCategoryId(bundle.db, catId("Uncategorized")) })).toBe(
+      "/transactions?category=uncategorized",
+    );
   });
 
   test("spendingBucket gives the same answer to a caller handing in its own rows", () => {

@@ -529,16 +529,56 @@ export interface DateRange {
 }
 
 /**
- * The exact transactions behind a spending cell. A top-level categoryId
- * includes its whole subtree; null lists uncategorized negatives.
+ * ⛔ THE NORMALISATION RUNS ONE WAY, AND THIS IS THE OTHER END OF IT.
+ * `activeTxnsInRange` rewrites a row filed on the system "Uncategorized"
+ * category to `categoryId: null`, so no row can ever carry that id into an
+ * aggregate — and a query that ASKS for that id therefore matched nothing at
+ * all. `/categories` lists "Uncategorized · Locked · 37 txn" and links to
+ * `/categories/019f4c7d-…`, which read `$0.00 · 0 transactions` for every
+ * period the selector can reach, and for November 2023 — a month holding three
+ * of those rows — printed the empty state that asserts a measured zero in so
+ * many words: "This window sits inside what has been imported, so nothing
+ * posted in it — a measured zero rather than an unread window."
+ *
+ * The system row IS the NULL bucket (owner decision 2026-09-03, and
+ * `categoryTouchCounts` already counts it that way), so asking for it asks for
+ * the bucket.
+ *
+ * ⚠️ The two spellings are NOT the same population, deliberately:
+ *   - `null` is the /spending honesty BUCKET — a spending figure, so
+ *     negatives only ("uncategorized credits belong to the review queue"),
+ *     and `transactionsHref` adds `flow=out` so the link lists exactly it.
+ *     31 NULL outflows + 4 system-filed outflows = 35 rows.
+ *   - a system ID is the CATEGORY, whose page prints a **Net** over the rows
+ *     it lists and whose count must reconcile with the 37 on `/categories`.
+ *     Both signs: the same 35 plus the two 2023-11-02 Capital One verification
+ *     deposits ($0.11, $0.24) = 37 rows, net $92.72 out.
+ * Only `/categories/[id]` reaches the second spelling; every spending surface
+ * passes null. Measured 2026-09-11.
  */
 export function spendingTransactions(db: AppDatabase, filter: TxnFilter): AnalyticsTxn[] {
   const rows = activeTxnsInRange(db, filter.from, filter.to);
   if (filter.categoryId === null) {
     return rows.filter((r) => r.categoryId === null && r.amountCents < 0);
   }
-  const subtree = new Set(loadCategoryIndex(db).subtreeIds(filter.categoryId));
+  const idx = loadCategoryIndex(db);
+  if (idx.uncategorizedIds.has(filter.categoryId)) {
+    return rows.filter((r) => r.categoryId === null);
+  }
+  const subtree = new Set(idx.subtreeIds(filter.categoryId));
   return rows.filter((r) => r.categoryId !== null && subtree.has(r.categoryId));
+}
+
+/**
+ * The `/transactions` spelling of a category filter. The system "Uncategorized"
+ * row resolves to the bucket's own param, because a link carrying its raw id
+ * filters by that id alone and would list the six hand-filed rows instead of
+ * the 37 the number above it counts — the drill-down contract, broken by the
+ * same asymmetry `spendingTransactions` documents.
+ */
+export function hrefCategoryId(db: AppDatabase, categoryId: string | null): string | null {
+  if (categoryId === null) return null;
+  return loadCategoryIndex(db).uncategorizedIds.has(categoryId) ? null : categoryId;
 }
 
 /** The exact transactions behind an income cell (positive txns in the subtree). */

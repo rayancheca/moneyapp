@@ -6,6 +6,7 @@ import { addDays, compareDates, monthKey, periodBounds } from "@/lib/dates";
 import {
   categorySpending,
   spendingTransactions,
+  hrefCategoryId,
   ledgerHref,
   loadCategoryIndex,
   monthKeysBack,
@@ -96,6 +97,9 @@ export function categoryMonthlyTrend(
   /** `ledgerReaches(db)` — the newest day the import has walked to, null when empty */
   reachesThrough: string | null,
 ): CategoryMonthPoint[] {
+  // the system "Uncategorized" row is the bucket, and a link carrying its raw
+  // id would filter by that id alone — see `hrefCategoryId`
+  const linkCategory = hrefCategoryId(db, categoryId);
   return monthKeysBack(refDate, months).map((month) => {
     const from = `${month}-01`;
     const to = periodBounds(from, "monthly").end;
@@ -104,7 +108,7 @@ export function categoryMonthlyTrend(
       month,
       spentCents,
       txnCount,
-      href: ledgerHref({ category: categoryId, from, to }),
+      href: ledgerHref({ category: linkCategory, from, to }),
       // reached the month at all — its first day, not its last: a month the
       // ledger stops inside HAS been looked at, and its figure is a real
       // (if partial) measurement the page's coverage notes already qualify

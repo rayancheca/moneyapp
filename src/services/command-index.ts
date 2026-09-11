@@ -5,6 +5,7 @@ import { categories } from "@/db/schema/categories";
 import { holdings } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
+import { ledgerHref } from "@/lib/ledger-href";
 import { isIconName, type IconName } from "@/components/shell/Icon";
 import type { CommandPaletteGroup } from "@/components/ui/CommandPalette";
 
@@ -48,7 +49,7 @@ export function commandEntityGroups(db: AppDatabase): CommandPaletteGroup[] {
     db.select({ id: categories.id, name: categories.name }).from(categories).all().map((c) => [c.id, c.name]),
   );
   const catRows = db
-    .select({ id: categories.id, name: categories.name, parentId: categories.parentId, icon: categories.icon })
+    .select({ id: categories.id, name: categories.name, parentId: categories.parentId, icon: categories.icon, kind: categories.kind })
     .from(categories)
     .where(eq(categories.isArchived, false))
     .orderBy(asc(categories.sortOrder), asc(categories.name))
@@ -63,7 +64,15 @@ export function commandEntityGroups(db: AppDatabase): CommandPaletteGroup[] {
           label: parentName ? `${parentName} > ${c.name}` : c.name,
           hint: "Category",
           icon: isIconName(c.icon) ? c.icon : ("tag" as IconName),
-          href: `/transactions?category=${c.id}`,
+          /*
+           * ⛔ Through `ledgerHref`, and the system "Uncategorized" row goes in
+           * as the BUCKET. A link carrying its raw id filters by that id alone,
+           * and `activeTxnsInRange` normalises every such row to null — so the
+           * palette's "Uncategorized" opened the six rows hand-filed on the
+           * category out of the 37 the bucket holds. Same asymmetry as
+           * `spendingTransactions`; there is one spelling of this link now.
+           */
+          href: ledgerHref({ category: c.kind === "system" ? null : c.id }),
           ...(parentName ? { keywords: [parentName] } : {}),
         };
       }),
