@@ -38,6 +38,25 @@ export const YEAR_SECTION_TITLE: Record<YearSectionId, string> = {
 const YEAR_MIN = 1900;
 const YEAR_MAX = 2200;
 
+/** A year this engine describes — the one bound its throw and the route share. */
+export function isSummaryYear(year: number): boolean {
+  return Number.isInteger(year) && year >= YEAR_MIN && year <= YEAR_MAX;
+}
+
+/**
+ * A `/summary/[year]` segment as a year, or null.
+ *
+ * 🔴 The route copied a different rule — any four digits — so 0000–1899 and
+ * 2201–9999 reached the throw below and rendered "This page didn't render."
+ * under the title "1899 summary" (measured 2026-09-14). Parsing through the
+ * engine's own bound means the two cannot drift.
+ */
+export function parseSummaryYear(raw: string): number | null {
+  if (!/^\d{4}$/.test(raw)) return null;
+  const year = Number(raw);
+  return isSummaryYear(year) ? year : null;
+}
+
 export interface YearLineInput {
   /** stable identity, unique within the year */
   id: string;
@@ -120,7 +139,7 @@ export interface YearSummaryInput {
 }
 
 export function yearSummary({ year, lines }: YearSummaryInput): YearSummary {
-  if (!Number.isInteger(year) || year < YEAR_MIN || year > YEAR_MAX) {
+  if (!isSummaryYear(year)) {
     throw new RangeError(`yearSummary: year must be an integer in [${YEAR_MIN}, ${YEAR_MAX}], got ${year}`);
   }
 

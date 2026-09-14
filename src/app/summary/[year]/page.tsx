@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { coverageSentence } from "@/lib/year-summary";
+import { coverageSentence, parseSummaryYear } from "@/lib/year-summary";
 import { formatDayFull } from "@/lib/format-date";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -22,8 +22,9 @@ export async function generateMetadata({
 }: {
   params: Promise<{ year: string }>;
 }): Promise<Metadata> {
-  const { year } = await params;
-  return { title: `${year} summary` };
+  const year = parseSummaryYear((await params).year);
+  // a rejected segment keeps the root title, as every not-found page does
+  return year === null ? {} : { title: `${year} summary` };
 }
 
 /**
@@ -43,10 +44,10 @@ export default async function YearSummaryPage({
   params: Promise<{ year: string }>;
 }) {
   const { year: raw } = await params;
-  const year = Number(raw);
-  // a route segment is user input: reject anything that is not a plain year
-  // before it reaches an engine that would throw inside a render
-  if (!/^\d{4}$/.test(raw) || !Number.isInteger(year)) notFound();
+  const year = parseSummaryYear(raw);
+  // a route segment is user input: reject anything that is not a year the
+  // engine describes, [1900, 2200], before it reaches a throw inside a render
+  if (year === null) notFound();
 
   const db = getDb();
   const view = yearSummaryView(db, year, todayIso());

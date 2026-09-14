@@ -66,7 +66,8 @@ test.describe("year summary", () => {
 
   /**
    * The route segment is user input and reaches an engine that throws on a bad
-   * year, so the page rejects anything that is not four digits before calling it.
+   * year, so the page rejects anything that is not a year the engine describes
+   * ([1900, 2200]) before calling it.
    *
    * ⚠️ Asserted on the RENDER, not the status code. `notFound()` from a
    * force-dynamic page returns HTTP 200 with the not-found body throughout this
@@ -79,9 +80,30 @@ test.describe("year summary", () => {
     await page.goto("/summary/banana");
     await expect(page.getByText(/Nothing lives at this address/)).toBeVisible();
     await expect(page.getByText(/not tax advice/i)).toHaveCount(0);
+    // a page that is not there must not carry a title claiming it is
+    await expect(page).toHaveTitle("MoneyApp");
   });
 
-  test("a four-digit year the ledger has never seen still renders its own empty state", async ({
+  /**
+   * 🔴 The route admitted any four digits while the engine describes [1900,
+   * 2200]: /summary/1899 rendered "This page didn't render." under the title
+   * "1899 summary". Both ends, from outside and from inside.
+   */
+  test("a year outside the summary's range is not a page, at both ends", async ({ page }) => {
+    for (const year of ["1899", "2201"]) {
+      await page.goto(`/summary/${year}`);
+      await expect(page.getByText(/Nothing lives at this address/)).toBeVisible();
+      await expect(page.getByText("This page didn't render.")).toHaveCount(0);
+      await expect(page.getByText(/not tax advice/i)).toHaveCount(0);
+      await expect(page).toHaveTitle("MoneyApp");
+    }
+    for (const year of ["1900", "2200"]) {
+      await page.goto(`/summary/${year}`);
+      await expect(page.getByText(new RegExp(`Nothing imported for ${year}`))).toBeVisible();
+    }
+  });
+
+  test("a year inside the summary's range the ledger has never seen still renders its own empty state", async ({
     page,
   }) => {
     await page.goto("/summary/1999");

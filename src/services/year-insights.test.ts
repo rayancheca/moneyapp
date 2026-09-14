@@ -303,8 +303,9 @@ describe("yearInsights — a year against the one before it", () => {
   });
 
   /**
-   * ⛔ The route accepts any four-digit year (`/^\d{4}$/` then `notFound()`), so
-   * every one of them reaches this module — and the labels are built by string
+   * ⛔ The route admits only the summary engine's [1900, 2200] now
+   * (`parseSummaryYear`), but this module must still not throw on any integer
+   * year a caller hands it — and the labels are built by string
    * concatenation, where `year - 1` at the bottom of the range produces `"0-…"`
    * and `"-1-…"` rather than a padded year. `sameDayIn` refusing an invalid date
    * is what keeps those out of a rendered label, and this pins it: a throw here
@@ -316,7 +317,7 @@ describe("yearInsights — a year against the one before it", () => {
     spend(a, "2026-03-01", 15_000);
     shownThrough(a, "2026-07-31");
 
-    for (const y of [0, 1, 99, 100, 1899, 1900, 2021, 2027, 9999]) {
+    for (const y of [0, 1, 99, 100, 1899, 1900, 2021, 2027, 2200, 2201, 9999]) {
       expect(() => yearInsights(bundle.db, y)).not.toThrow();
       expect(yearInsights(bundle.db, y)).toBeNull();
     }

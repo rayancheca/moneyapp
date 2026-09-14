@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  parseSummaryYear,
   YEAR_SECTION_ORDER,
   YEAR_SECTION_TITLE,
   yearSummary,
@@ -282,6 +283,39 @@ describe("yearSummary — what it refuses", () => {
  * families on every tab, and a summary that quietly added a financial-aid
  * refund to his wages would misstate what he earned by 43%.
  */
+/**
+ * 🔴 The route admitted any four digits while the engine throws outside
+ * [1900, 2200]: /summary/1899 rendered "This page didn't render." These pin the
+ * route's guard to the engine's own bound, at both ends and everywhere between.
+ */
+describe("parseSummaryYear — the route's guard is the engine's bound", () => {
+  test("both ends, inside and out", () => {
+    expect(["1899", "1900", "2200", "2201"].map(parseSummaryYear)).toEqual([null, 1900, 2200, null]);
+    expect(["0000", "0099", "9999"].map(parseSummaryYear)).toEqual([null, null, null]);
+  });
+
+  test("anything that is not a plain four-digit year is refused", () => {
+    for (const raw of ["abcd", "banana", "20266", "", "199", " 1999", "+199", "1e3", "2026.0"]) {
+      expect(parseSummaryYear(raw)).toBeNull();
+    }
+  });
+
+  test("every four-digit segment the guard admits renders, and every one it refuses would have thrown", () => {
+    const disagree: string[] = [];
+    for (let y = 0; y <= 9999; y += 1) {
+      const seg = String(y).padStart(4, "0");
+      let throws = false;
+      try {
+        yearSummary({ year: Number(seg), lines: [] });
+      } catch {
+        throws = true;
+      }
+      if ((parseSummaryYear(seg) !== null) === throws) disagree.push(seg);
+    }
+    expect(disagree).toEqual([]);
+  });
+});
+
 describe("yearSummary — the partition holds", () => {
   test("every line lands in exactly one section", () => {
     const s = yearSummary({ year: 2025, lines: REAL });
