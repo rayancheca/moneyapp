@@ -20,7 +20,13 @@ export interface DeviationInput {
   key: string;
   label: string;
   currentCents: number;
+  /** NET last period — a window whose refunds outweighed its purchases is negative */
   previousCents: number;
+  /**
+   * how many ROWS the category had last period. Required: a net of zero or less
+   * is not "nothing happened", and only the count can say which it was.
+   */
+  previousCount: number;
   href?: string;
 }
 
@@ -30,8 +36,20 @@ export interface DeviationBar {
   currentCents: number;
   previousCents: number;
   deltaCents: number;
-  /** null when the category did not exist last period — a share is meaningless */
+  /**
+   * The move as a share of the previous period's SIZE — `delta / |previous|`,
+   * the Table lens's rule — and null only when the previous net was exactly zero.
+   *
+   * 🔴 It was `previous > 0 ? … : null`, and null printed "new". `previousCents`
+   * is NET, so a prior window that netted to a refund read as a category that
+   * did not exist: `/spending?from=2024-06-01&to=2024-06-30` said Shopping
+   * "new" over 11 prior rows netting −$1,623.84, while the Table lens on the
+   * same page printed +135.6%. ⛔ The base is ABSOLUTE: a negative base would
+   * flip the sign and print "-136%" beside a bar growing right.
+   */
   deltaRatio: number | null;
+  /** the category had no rows at all last period — the only thing "new" may mean */
+  isNew: boolean;
   href?: string;
   /** true when MORE was spent than last period (bar grows right) */
   isIncrease: boolean;
@@ -92,6 +110,19 @@ function r2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/**
+ * The change printed beside a bar: "new" only for a category with no rows last
+ * period, "—" when the previous net was exactly zero over real rows (a charge
+ * and its return — no share exists, and "new" would be false), otherwise the
+ * signed percent. Because the ratio's base is absolute, its sign is the bar's
+ * side.
+ */
+export function deviationChangeLabel(bar: Pick<DeviationBar, "isNew" | "deltaRatio">): string {
+  if (bar.isNew) return "new";
+  if (bar.deltaRatio === null) return "—";
+  return `${bar.deltaRatio > 0 ? "+" : ""}${Math.round(bar.deltaRatio * 100)}%`;
+}
+
 export function computeDeviationLayout(
   rows: readonly DeviationInput[],
   options: DeviationOptions,
@@ -136,7 +167,8 @@ export function computeDeviationLayout(
       currentCents: r.currentCents,
       previousCents: r.previousCents,
       deltaCents: r.deltaCents,
-      deltaRatio: r.previousCents > 0 ? r2(r.deltaCents / r.previousCents) : null,
+      deltaRatio: r.previousCents !== 0 ? r2(r.deltaCents / Math.abs(r.previousCents)) : null,
+      isNew: r.previousCount === 0,
       href: r.href,
       isIncrease,
       y: i * (rowHeight + rowGap),

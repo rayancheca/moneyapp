@@ -1,4 +1,9 @@
-import { computeDeviationLayout, deviationDescription, type DeviationInput } from "@/lib/deviation-layout";
+import {
+  computeDeviationLayout,
+  deviationChangeLabel,
+  deviationDescription,
+  type DeviationInput,
+} from "@/lib/deviation-layout";
 import { formatCents } from "@/lib/money";
 
 /**
@@ -83,10 +88,7 @@ export function CategoryDeviation({
         />
 
         {layout.bars.map((b) => {
-          const pct =
-            b.deltaRatio === null
-              ? "new"
-              : `${b.deltaRatio > 0 ? "+" : ""}${Math.round(b.deltaRatio * 100)}%`;
+          const pct = deviationChangeLabel(b);
           return (
             <g key={b.key}>
               <text

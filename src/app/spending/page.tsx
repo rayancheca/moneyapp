@@ -144,6 +144,9 @@ export default async function SpendingPage({
   const breakdown = categoryBreakdown(db, range);
   const prevBreakdown = categoryBreakdown(db, { from: prevPeriod.from, to: prevPeriod.to });
   const prevById = new Map(prevBreakdown.map((r) => [r.categoryId, r.spentCents]));
+  // ⛔ how many ROWS each category had last period, keyed exactly like prevById —
+  // a net of zero or less is not "nothing happened" (see `DeviationBar.isNew`)
+  const prevCountById = new Map(prevBreakdown.map((r) => [r.categoryId, r.txnCount]));
   /*
    * "What moved" reads the SAME two breakdowns the categories table already
    * compares, so the two panels can never disagree about a delta.
@@ -164,6 +167,7 @@ export default async function SpendingPage({
       label: r.name,
       currentCents: r.spentCents,
       previousCents: prevById.get(r.categoryId) ?? 0,
+      previousCount: prevCountById.get(r.categoryId) ?? 0,
     })),
     ...prevBreakdown
       .filter((r) => !breakdown.some((b) => (b.categoryId ?? "__uncat") === (r.categoryId ?? "__uncat")))
@@ -172,6 +176,7 @@ export default async function SpendingPage({
         label: r.name,
         currentCents: 0,
         previousCents: r.spentCents,
+        previousCount: r.txnCount,
       })),
   ];
   // Share denominator = gross positive spending across categories. The NET total

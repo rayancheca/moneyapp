@@ -1,12 +1,27 @@
 import { describe, expect, test } from "vitest";
 
-import { computeDeviationLayout, deviationDescription, type DeviationInput } from "./deviation-layout";
+import {
+  computeDeviationLayout,
+  deviationChangeLabel,
+  deviationDescription,
+  type DeviationInput,
+} from "./deviation-layout";
 
 const fmt = (c: number) => `$${(c / 100).toFixed(2)}`;
 const OPTS = { width: 600 };
 
-function row(key: string, currentCents: number, previousCents: number): DeviationInput {
-  return { key, label: key.toUpperCase(), currentCents, previousCents };
+/**
+ * ⛔ `previousCount` is how many ROWS the category had last period — a NET
+ * figure of zero or less is not "nothing happened". The default keeps every
+ * older fixture meaning what it meant: a non-zero prior had at least one row.
+ */
+function row(
+  key: string,
+  currentCents: number,
+  previousCents: number,
+  previousCount = previousCents !== 0 ? 1 : 0,
+): DeviationInput {
+  return { key, label: key.toUpperCase(), currentCents, previousCents, previousCount };
 }
 
 describe("ranking", () => {
@@ -111,6 +126,50 @@ describe("ratios", () => {
   test("an ordinary move reports its share of the previous period", () => {
     const layout = computeDeviationLayout([row("c", 150_00, 100_00)], OPTS);
     expect(layout.bars[0]!.deltaRatio).toBeCloseTo(0.5, 2);
+    expect(deviationChangeLabel(layout.bars[0]!)).toBe("+50%");
+  });
+
+  test("a category with no rows last period is new", () => {
+    const bar = computeDeviationLayout([row("new", 50_00, 0, 0)], OPTS).bars[0]!;
+    expect(bar.isNew).toBe(true);
+    expect(deviationChangeLabel(bar)).toBe("new");
+  });
+
+  /*
+   * 🔴 "new" OVER A CATEGORY WITH A HISTORY. The ratio was `previous > 0 ? … :
+   * null` and a null printed "new" — but `previousCents` is NET, so a prior
+   * window whose returns outweighed its purchases read as a category that did
+   * not exist. Measured on `/spending?from=2024-06-01&to=2024-06-30`: Shopping
+   * "new" over 11 prior rows netting −$1,623.84, while the page's own Table lens
+   * printed +135.6% for the same row. 47 false labels across the owner's windows.
+   */
+  test("a prior window that netted to a refund is not new, and reads the Table lens's percent", () => {
+    const bar = computeDeviationLayout([row("shopping", 578_56, -1_623_84, 11)], OPTS).bars[0]!;
+    expect(bar.isNew).toBe(false);
+    expect(bar.deltaRatio).toBeCloseTo(1.36, 2);
+    expect(deviationChangeLabel(bar)).toBe("+136%");
+  });
+
+  test("nothing spent after a refund week is a rise, and its sign agrees with its side", () => {
+    const bar = computeDeviationLayout([row("shopping", 0, -1_959_74, 1)], OPTS).bars[0]!;
+    expect(bar.isIncrease).toBe(true);
+    expect(bar.deltaRatio).toBe(1);
+    expect(deviationChangeLabel(bar)).toBe("+100%");
+  });
+
+  test("rows that net to exactly zero are not new, and have no ratio", () => {
+    // Nov 2022 Travel: a −$133.83 Hotwire charge and its +$133.83 return
+    const bar = computeDeviationLayout([row("travel", 60_00, 0, 2)], OPTS).bars[0]!;
+    expect(bar.isNew).toBe(false);
+    expect(bar.deltaRatio).toBeNull();
+    expect(deviationChangeLabel(bar)).toBe("—");
+  });
+
+  test("⛔ a larger refund against a refund base is a fall of more than 100%, not a rise", () => {
+    const bar = computeDeviationLayout([row("x", -300, -100, 1)], OPTS).bars[0]!;
+    expect(bar.isIncrease).toBe(false);
+    expect(bar.deltaRatio).toBe(-2);
+    expect(deviationChangeLabel(bar)).toBe("-200%");
   });
 });
 
@@ -195,13 +254,13 @@ describe("the counts are of what moved, not of what was drawn", () => {
   const manyMoves = () => {
     const rows = [];
     for (let i = 0; i < 12; i++) {
-      rows.push({ key: `up${i}`, label: `Up ${i}`, currentCents: 100_00 * (12 - i), previousCents: 0 });
+      rows.push({ key: `up${i}`, label: `Up ${i}`, currentCents: 100_00 * (12 - i), previousCents: 0, previousCount: 0 });
     }
     for (let i = 0; i < 5; i++) {
-      rows.push({ key: `dn${i}`, label: `Down ${i}`, currentCents: 0, previousCents: 1_00 });
+      rows.push({ key: `dn${i}`, label: `Down ${i}`, currentCents: 0, previousCents: 1_00, previousCount: 1 });
     }
     // …and one that did not move at all
-    rows.push({ key: "flat", label: "Flat", currentCents: 50_00, previousCents: 50_00 });
+    rows.push({ key: "flat", label: "Flat", currentCents: 50_00, previousCents: 50_00, previousCount: 1 });
     return rows;
   };
 
@@ -225,8 +284,8 @@ describe("the counts are of what moved, not of what was drawn", () => {
   test("nothing is cut when everything fits, and the cut is not mentioned", () => {
     const layout = computeDeviationLayout(
       [
-        { key: "a", label: "A", currentCents: 500, previousCents: 0 },
-        { key: "b", label: "B", currentCents: 0, previousCents: 300 },
+        { key: "a", label: "A", currentCents: 500, previousCents: 0, previousCount: 0 },
+        { key: "b", label: "B", currentCents: 0, previousCents: 300, previousCount: 1 },
       ],
       { width: 640 },
     );
