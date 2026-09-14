@@ -3,6 +3,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import { strippedDescriptionKey } from "../lib/description-key";
 import * as schema from "./schema";
 
 export type AppDatabase = BetterSQLite3Database<typeof schema>;
@@ -31,6 +32,19 @@ export function defaultMigrationsFolder(): string {
 }
 
 /** Opens (creating if needed) a database with WAL + FK enforcement and runs migrations. */
+/**
+ * SQL functions the app's queries call. The ledger's `?key=` filter matches a
+ * merchantless group by its stripped descriptor, which only
+ * `lib/description-key` can compute — so every connection carries it, and the
+ * count, the rows and a bulk edit by filter read one definition (see
+ * `filterConditions`). Re-registering replaces, so calling this twice is safe.
+ */
+function registerSqlFunctions(sqlite: Database.Database): void {
+  sqlite.function("description_key", { deterministic: true }, (value: unknown) =>
+    typeof value === "string" ? strippedDescriptionKey(value) : "",
+  );
+}
+
 export function createDatabase(
   dbPath: string = defaultDbPath(),
   migrationsFolder: string = defaultMigrationsFolder(),
@@ -43,6 +57,7 @@ export function createDatabase(
     sqlite.pragma("journal_mode = WAL");
     sqlite.pragma("foreign_keys = ON");
     sqlite.pragma("busy_timeout = 5000");
+    registerSqlFunctions(sqlite);
     const db = drizzle(sqlite, { schema });
     migrate(db, { migrationsFolder });
     return { sqlite, db };
@@ -118,6 +133,9 @@ export function getDbBundle(): DbBundle {
 // opened before the migration existed.
 if (process.env.NODE_ENV !== "production" && g.__moneyappDb) {
   applyPendingMigrations(g.__moneyappDb);
+  // the same gap for a function: a connection opened before `description_key`
+  // existed would throw "no such function" on every `?key=` link until restart
+  registerSqlFunctions(g.__moneyappDb.sqlite);
 }
 
 export function getDb(): AppDatabase {

@@ -668,51 +668,6 @@ export interface TopMerchants {
   unlinkedCount: number;
 }
 
-/**
- * A `q=` value that actually LANDS on the group's rows.
- *
- * The ledger's `q` is a literal LIKE against rawDescription OR
- * normalizedDescription, but an unlinked group's display name is a DERIVED
- * string: the stripped key, i.e. the descriptor with its volatile tokens
- * (dates, amounts, CUSIPs, reference runs) blanked out, or a humanized ticker
- * label. "AMAZON MKTPLACE 07/02 PMTS" strips to "AMAZON MKTPLACE PMTS", which
- * occurs in no row — so linking to the display name opened an EMPTY ledger.
- *
- * So we pick the LONGEST run of adjacent key tokens that literally occurs in
- * every row of the group (leftmost on a tie — the most specific anchor first).
- * Stripping only blanks characters out, never reorders, so each single key
- * token is a contiguous substring of every row it came from: a retail key
- * always yields something. A ticker key ("ticker:KO:DIV") is synthetic identity
- * rather than row text, so its anchor is the parenthesized symbol it came from.
- *
- * A shorter anchor can over-match (return the group's rows plus neighbours),
- * which is the honest trade: the number stays visitable. The first-class fix is
- * a `descriptionKey` ledger filter recomputed server-side the way
- * review-inbox.ts's `similar` cluster does — that needs the transactions query
- * layer, so this narrows the text link instead of inventing a filter.
- */
-function literalGroupQuery(strippedKey: string, texts: ReadonlySet<string>): string | null {
-  const inEveryRow = (needle: string): boolean => {
-    for (const text of texts) if (!text.includes(needle)) return false;
-    return true;
-  };
-
-  const ticker = /^ticker:([A-Z0-9.]+):/.exec(strippedKey);
-  if (ticker) {
-    const symbol = `(${ticker[1]!})`;
-    return inEveryRow(symbol) ? symbol : null;
-  }
-
-  const tokens = strippedKey.split(" ").filter((t) => t !== "");
-  for (let len = tokens.length; len >= 1; len -= 1) {
-    for (let start = 0; start + len <= tokens.length; start += 1) {
-      const run = tokens.slice(start, start + len).join(" ");
-      if (inEveryRow(run)) return run;
-    }
-  }
-  return null;
-}
-
 export function topMerchants(
   db: AppDatabase,
   range: DateRange,
@@ -732,16 +687,8 @@ export function topMerchants(
     name: string;
     spentCents: number;
     txnCount: number;
-    /** a representative descriptor for the unlinked-group search link */
-    query: string | null;
-    /** the group's identity key — the seed for its verified search literal */
+    /** an unlinked group's identity — its ledger link filters by exactly this (`key=`) */
     strippedKey: string | null;
-    /** every member row's searchable text, "normalized\nraw" and uppercased so
-     *  it mirrors the ledger's case-insensitive LIKE over BOTH columns. A
-     *  candidate literal is a single-spaced token run, so it can never span the
-     *  newline — a hit here is a hit there. Deduped: identical descriptors are
-     *  the norm within a group. */
-    texts: Set<string>;
   }
   const groups = new Map<string, Group>();
   let linkedCount = 0;
@@ -757,9 +704,7 @@ export function topMerchants(
         name: merchantName.get(r.merchantId) ?? "Unknown merchant",
         spentCents: 0,
         txnCount: 0,
-        query: null,
         strippedKey: null,
-        texts: new Set<string>(),
       };
       groups.set(key, { ...g, spentCents: g.spentCents + out, txnCount: g.txnCount + 1 });
       continue;
@@ -774,12 +719,8 @@ export function topMerchants(
       name: label,
       spentCents: 0,
       txnCount: 0,
-      query: label,
       strippedKey,
-      texts: new Set<string>(),
     };
-    // accumulate the rows the link must land on (the Set survives the spread)
-    g.texts.add(`${r.normalizedDescription.toUpperCase()}\n${r.rawDescription.toUpperCase()}`);
     groups.set(key, { ...g, spentCents: g.spentCents + out, txnCount: g.txnCount + 1 });
   }
 
@@ -817,9 +758,7 @@ export function topMerchants(
       href:
         g.kind === "merchant"
           ? ledgerHref({ category: drillCategory, merchant: g.id!, from: range.from, to: range.to })
-          : // the verified literal, or the display string as a last resort — never
-            // worse than the label-only link it replaces
-            ledgerHref({
+          : ledgerHref({
               category: drillCategory,
               // ⛔ this group IS "rows with no merchant" (the loop above skips
               // every row that has one), and the link said only "rows whose
@@ -828,7 +767,14 @@ export function topMerchants(
               // opened 29 rows / $857.06 — three of them LINKED rows sharing
               // the description. 33 of 616 rendered unlinked rows over-matched.
               merchant: NO_MERCHANT,
-              q: literalGroupQuery(g.strippedKey!, g.texts) ?? g.query!,
+              // ⛔ …and rows whose descriptor strips to THIS key. The link carried
+              // the longest literal run found in every member row, and a LIKE over
+              // that run matched every row CONTAINING it: on the real ledger
+              // 2026-09-14, /categories/<Fees>?period=2023 "FOREIGN EXCH RT ADJ FEE
+              // IBERIA MADRID CARD 7782 · 1 transaction" opened 16 rows, and 43 of
+              // 1,074 rendered unlinked rows over-matched. (Linking the derived NAME
+              // instead had opened an empty ledger — no row contains a stripped key.)
+              key: g.strippedKey!,
               from: range.from,
               to: range.to,
             }),

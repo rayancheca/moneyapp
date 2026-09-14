@@ -76,6 +76,19 @@ export function filterConditions(
    */
   if (filters.merchant === NO_MERCHANT) conds.push(isNull(transactions.merchantId));
   else if (filters.merchant) conds.push(eq(transactions.merchantId, filters.merchant));
+  /*
+   * ⛔ `key` is a merchantless group's IDENTITY, not a search. `topMerchants`
+   * groups unlinked rows by their stripped descriptor, and the literal `q`
+   * anchor its link carried could not say so: any row CONTAINING the anchor
+   * matched. Measured on the real ledger 2026-09-14, 43 of 1,074 rendered
+   * unlinked rows opened more rows than they counted — /categories/<Fees>
+   * ?period=2023 "FOREIGN EXCH RT ADJ FEE IBERIA MADRID CARD 7782 · 1
+   * transaction" opened 16. `description_key` is registered on every
+   * connection by `createDatabase`.
+   */
+  if (filters.key) {
+    conds.push(sql`description_key(${transactions.normalizedDescription}) = ${filters.key}`);
+  }
   // NULL, or filed on the system "Uncategorized" category — the same set the
   // analytics index calls uncategorized (CategoryIndex.uncategorizedIds)
   const systemIds = allCategories.filter((c) => c.kind === "system").map((c) => c.id);

@@ -400,7 +400,7 @@ describe("topMerchants", () => {
     expect(top.linkedCount).toBe(3);
     expect(top.unlinkedCount).toBe(2);
     expect(top.entries[0]).toMatchObject({ kind: "unlinked", name: "NEW BEST GOURMET DELI", spentCents: 1_600, txnCount: 2 });
-    expect(top.entries[0]!.href).toContain("q=NEW+BEST+GOURMET+DELI");
+    expect(top.entries[0]!.href).toContain("key=NEW+BEST+GOURMET+DELI");
     expect(top.entries[1]).toMatchObject({ kind: "merchant", id: dunkin, name: "Dunkin'", spentCents: 1_500, txnCount: 3 });
     expect(top.entries[1]!.href).toBe(
       `/transactions?category=spending&merchant=${dunkin}&from=2026-07-01&to=2026-07-31`,
@@ -465,10 +465,11 @@ describe("topMerchants", () => {
 
 /**
  * The drill-down contract: a displayed number is a visitable list. An unlinked
- * group's NAME is a derived string (the stripped key), while the ledger's `q` is
- * a literal LIKE against the raw/normalized descriptor — so linking to the name
- * used to search for text that exists in no row and open an empty ledger.
- * These follow the generated href through the REAL ledger filter layer.
+ * group is defined by its stripped KEY, and two literal links failed it in
+ * turn: the derived name occurs in no row (an empty ledger), and the longest
+ * literal run that does occur also matches every neighbour containing it (an
+ * over-full one). The link now carries the key itself. These follow the
+ * generated href through the REAL ledger filter layer.
  */
 describe("topMerchants unlinked drill-downs", () => {
   /** rows the ledger actually shows for a generated href */
@@ -488,12 +489,10 @@ describe("topMerchants unlinked drill-downs", () => {
     expect(entry).toMatchObject({ kind: "unlinked", name: "AMAZON MKTPLACE PMTS", txnCount: 2 });
     // the name itself would have searched for text no row contains
     expect(rowsBehind(`/transactions?q=${encodeURIComponent(entry.name)}&from=2026-07-01&to=2026-07-31`)).toBe(0);
-    // ...so the link carries the longest run that really occurs, and lands on BOTH rows
-    expect(entry.href).toContain("q=AMAZON+MKTPLACE");
     expect(rowsBehind(entry.href)).toBe(2);
   });
 
-  test("a brokerage ticker group links by its symbol, not by the humanized label", () => {
+  test("a brokerage ticker group links by its identity, not by the humanized label", () => {
     insertTxn({ postedOn: "2026-07-02", amountCents: -25_000, category: null, normalized: "RECURRING INVESTMENT CUSIP: 81762P102 07/02 (KO)" });
     insertTxn({ postedOn: "2026-07-16", amountCents: -25_000, category: null, normalized: "RECURRING INVESTMENT CUSIP: 81762P102 07/16 (KO)" });
 
@@ -503,29 +502,45 @@ describe("topMerchants unlinked drill-downs", () => {
     expect(rowsBehind(entry.href)).toBe(2);
   });
 
-  test("noise between every identity token falls back to a single token, never to nothing", () => {
-    // VENMO / CASHOUT / REF are each separated by stripped noise, so no adjacent
-    // pair survives — the link still has to land
+  test("a group whose name extends a neighbour's opens only its own rows, and so does the neighbour", () => {
+    // 🔴 the real ledger's Fees 2023: the longest run in every MADRID row is
+    // "FOREIGN EXCH RT ADJ FEE" (the date splits the rest off), and that run
+    // is also inside the IBERIA row — so "2 transactions" opened 3
+    insertTxn({ postedOn: "2026-07-03", amountCents: -120, category: "Shopping > General", normalized: "FOREIGN EXCH RT ADJ FEE 07/02 MADRID CARD 7782" });
+    insertTxn({ postedOn: "2026-07-09", amountCents: -80, category: "Shopping > General", normalized: "FOREIGN EXCH RT ADJ FEE 07/08 MADRID CARD 7782" });
+    insertTxn({ postedOn: "2026-07-11", amountCents: -95, category: "Shopping > General", normalized: "FOREIGN EXCH RT ADJ FEE IBERIA 07/10 MADRID CARD 7782" });
+
+    const entries = topMerchants(bundle.db, JULY).entries;
+    expect(entries.map((e) => [e.name, e.txnCount])).toEqual([
+      ["FOREIGN EXCH RT ADJ FEE MADRID CARD 7782", 2],
+      ["FOREIGN EXCH RT ADJ FEE IBERIA MADRID CARD 7782", 1],
+    ]);
+    for (const e of entries) expect(rowsBehind(e.href)).toBe(e.txnCount);
+  });
+
+  test("noise between every identity token still lands, carrying the whole identity", () => {
+    // VENMO / CASHOUT / REF are each separated by stripped noise, so no literal
+    // run longer than one token occurs in the row
     insertTxn({ postedOn: "2026-07-05", amountCents: -3_000, category: null, normalized: "VENMO 07/05 CASHOUT 12.34 REF" });
+    // a neighbour that CONTAINS "VENMO" — a one-token literal took it in too
+    insertTxn({ postedOn: "2026-07-06", amountCents: -1_000, category: null, normalized: "VENMO PAYMENT" });
 
     const entry = topMerchants(bundle.db, JULY).entries[0]!;
     expect(entry.name).toBe("VENMO CASHOUT REF");
     // the SPENDING scope rides along: these groups come from the same row set
-    // ⛔ …and `merchant=none`: an unlinked group IS "rows with no merchant", and
-    // this assertion pinned the link that could not say so — it went red on
-    // 52e0a98, which was committed without the suite's tally ever being read.
-    expect(entry.href).toBe("/transactions?category=spending&merchant=none&from=2026-07-01&to=2026-07-31&q=VENMO");
+    // ⛔ …and `merchant=none`: an unlinked group IS "rows with no merchant" (this
+    // assertion went red on 52e0a98, committed without the suite's tally read)
+    expect(entry.href).toBe("/transactions?category=spending&merchant=none&key=VENMO+CASHOUT+REF&from=2026-07-01&to=2026-07-31");
     expect(rowsBehind(entry.href)).toBe(1);
   });
 
-  test("a clean descriptor still links by its whole name (no needless narrowing)", () => {
+  test("a clean descriptor lands on its rows and not on a neighbour sharing its first token", () => {
     insertTxn({ postedOn: "2026-07-03", amountCents: -800, category: "Food > Groceries", normalized: "NEW BEST GOURMET DELI" });
     insertTxn({ postedOn: "2026-07-04", amountCents: -900, category: "Food > Groceries", normalized: "NEW BEST GOURMET DELI" });
-    // a neighbour that shares only the first token — the narrowed link must not swallow it
     insertTxn({ postedOn: "2026-07-06", amountCents: -100, category: "Food > Groceries", normalized: "NEW JERSEY TOLLS" });
 
     const entry = topMerchants(bundle.db, JULY).entries[0]!;
-    expect(entry.href).toContain("q=NEW+BEST+GOURMET+DELI");
+    expect(entry.name).toBe("NEW BEST GOURMET DELI");
     expect(rowsBehind(entry.href)).toBe(2);
   });
 });

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { humanizeDescriptionKey } from "@/lib/description-key";
 import { NO_MERCHANT } from "@/lib/ledger-href";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { formatCents } from "@/lib/money";
@@ -68,6 +69,7 @@ export function hasAnyFilter(filters: TxnFilters): boolean {
     filters.account ||
       filters.category ||
       filters.merchant ||
+      filters.key ||
       filters.from ||
       filters.to ||
       filters.q ||
@@ -108,8 +110,8 @@ const FLOW_LABEL = { in: "Money in", out: "Money out" } as const;
 /**
  * Chips for the applied filters this bar has no visible control for. Account /
  * Category / From / To / Search each show their own value in a field; merchant,
- * flow and the amount range would otherwise be invisible while still narrowing
- * the ledger (and the bulk action bar's blast radius).
+ * a description group, flow and the amount range would otherwise be invisible
+ * while still narrowing the ledger (and the bulk action bar's blast radius).
  */
 export function preservedFilterChips(filters: TxnFilters, merchantName?: string): FilterChip[] {
   const chips: FilterChip[] = [];
@@ -125,6 +127,15 @@ export function preservedFilterChips(filters: TxnFilters, merchantName?: string)
             ? `Merchant: ${merchantName}`
             : "One merchant",
       clear: { merchant: null },
+    });
+  }
+  if (filters.key) {
+    // a group's identity, not a search — the Search field cannot show it, and
+    // a next filter edit must not quietly widen it back to a text match
+    chips.push({
+      key: "key",
+      label: `Same description: ${humanizeDescriptionKey(filters.key)}`,
+      clear: { key: null },
     });
   }
   if (filters.flow) {
@@ -183,6 +194,7 @@ export function FiltersBar({
     <form method="get" action="/transactions" className="flex flex-wrap items-end gap-3">
       {filters.view !== "all" ? <input type="hidden" name="view" value={filters.view} /> : null}
       {filters.merchant ? <input type="hidden" name="merchant" value={filters.merchant} /> : null}
+      {filters.key ? <input type="hidden" name="key" value={filters.key} /> : null}
       {filters.flow ? <input type="hidden" name="flow" value={filters.flow} /> : null}
       {filters.amountMinCents !== null ? (
         <input type="hidden" name="amountMin" value={filters.amountMinCents} />
@@ -269,6 +281,7 @@ export function FiltersBar({
               account: null,
               category: null,
               merchant: null,
+              key: null,
               from: null,
               to: null,
               q: null,

@@ -29,6 +29,8 @@ export interface LedgerHrefParams {
   category?: string | null;
   /** a merchant id, or `NO_MERCHANT` for the rows that have none */
   merchant?: string;
+  /** a stripped description key — a merchantless group's identity (`TxnFilters.key`) */
+  key?: string;
   /** scope to one account (investment drill-downs: a day's trades, a symbol's events) */
   account?: string;
   from?: string;
@@ -45,6 +47,7 @@ export function ledgerHref(params: LedgerHrefParams): string {
   if (params.category === null) sp.set("category", "uncategorized");
   else if (params.category !== undefined) sp.set("category", params.category);
   if (params.merchant) sp.set("merchant", params.merchant);
+  if (params.key) sp.set("key", params.key);
   if (params.account) sp.set("account", params.account);
   if (params.from) sp.set("from", params.from);
   if (params.to) sp.set("to", params.to);

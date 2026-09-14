@@ -25,6 +25,12 @@ export interface TxnFilters {
   account: string | null;
   category: string | null;
   merchant: string | null;
+  /**
+   * a stripped description key (`lib/description-key`): only rows whose
+   * descriptor strips to exactly this — a merchantless group's identity, which
+   * no literal `q` can express
+   */
+  key: string | null;
   from: string | null;
   to: string | null;
   q: string | null;
@@ -68,6 +74,7 @@ export function parseFilters(params: SearchParams): TxnFilters {
     account: first(params.account),
     category: first(params.category),
     merchant: first(params.merchant),
+    key: first(params.key),
     from: from && isValidIsoDate(from) ? from : null,
     to: to && isValidIsoDate(to) ? to : null,
     q: q === "" ? null : q,
@@ -112,7 +119,7 @@ export function filtersToQuery(filters: TxnFilters, overrides: Partial<TxnFilter
   const merged = { ...filters, ...overrides };
   const parts: string[] = [];
   if (merged.view !== "all") parts.push(`view=${merged.view}`);
-  for (const key of ["account", "category", "merchant", "from", "to", "q"] as const) {
+  for (const key of ["account", "category", "merchant", "key", "from", "to", "q"] as const) {
     const value = merged[key];
     if (value) parts.push(`${key}=${encodeURIComponent(value)}`);
   }

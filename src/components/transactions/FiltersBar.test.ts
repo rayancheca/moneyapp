@@ -12,6 +12,7 @@ function filters(overrides: Partial<TxnFilters> = {}): TxnFilters {
     account: null,
     category: null,
     merchant: null,
+    key: null,
     from: null,
     to: null,
     q: null,
@@ -34,6 +35,7 @@ describe("hasAnyFilter", () => {
     // regression: these four were ignored, so no Reset appeared to reveal that
     // a merchant/flow/amount drill-down was even applied
     expect(hasAnyFilter(filters({ merchant: "m1" }))).toBe(true);
+    expect(hasAnyFilter(filters({ key: "VENMO CASHOUT REF" }))).toBe(true);
     expect(hasAnyFilter(filters({ flow: "out" }))).toBe(true);
     expect(hasAnyFilter(filters({ amountMinCents: 1_500 }))).toBe(true);
     expect(hasAnyFilter(filters({ amountMaxCents: 6_000 }))).toBe(true);
@@ -125,6 +127,17 @@ describe("preservedFilterChips", () => {
       "Merchant: Netflix",
     );
     expect(preservedFilterChips(filters({ merchant: "m1" }))[0]!.label).toBe("One merchant");
+  });
+
+  it("names a description group by its label, and paging keeps it", () => {
+    // a group identity is not a search — without a chip and a carried param the
+    // next filter edit or page link would quietly widen it to the whole ledger
+    const applied = filters({ key: "ticker:KO:RECURRING", page: 2 });
+    expect(preservedFilterChips(applied).map((c) => [c.key, c.label])).toEqual([
+      ["key", "Same description: KO recurring buys"],
+    ]);
+    expect(filtersToQuery(applied)).toBe("?key=ticker%3AKO%3ARECURRING&page=2");
+    expect(filtersToQuery(applied, { key: null, page: 1 })).toBe("");
   });
 
   it("labels direction and the amount range", () => {
