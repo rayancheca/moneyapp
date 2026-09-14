@@ -14,7 +14,9 @@ export function HonestyBucketsCard({ data }: { data: HonestyBuckets }) {
     return (
       <p className="flex items-center gap-2 text-sm text-ink-muted">
         <Icon name="circle-check" className="size-4 text-positive" />
-        Everything this period is categorized and accounted for.
+        {/* ⛔ what was checked, not "everything": the bucket counts uncategorized
+            OUTFLOWS, so an uncategorized deposit would sit under "everything" */}
+        No uncategorized spending and no excluded rows this period.
       </p>
     );
   }
