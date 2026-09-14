@@ -152,12 +152,19 @@ describe("comparePeriods — the closing edge", () => {
     });
   });
 
-  test("a window that starts after the cut is refused, and the refusal names the cut", () => {
+  /**
+   * 🔴 The cut is the EARLIEST of the live spenders' frontiers. On 2026-09-14
+   * this refusal read "every account you spend from has only been imported
+   * through Aug 12, 2026" while three of the four were imported into September
+   * (Venture X Sep 13, Discover Sep 8, Chase Sapphire Sep 2). It names the day
+   * in the clipped note's own words instead.
+   */
+  test("a window that starts after the cut is refused, and the refusal names the cut as the last day ALL of them reach", () => {
     expect(cut("2026-09")).toEqual({
       kind: "refused",
       reason: "not-imported",
       sentence:
-        "There is no comparison for September 2026 yet: every account you spend from has only been imported through Aug 12, 2026, before any of it. A gap there would be missing statements, not less spending.",
+        "There is no comparison for September 2026 yet: Aug 12, 2026, the last day every account you spend from has been imported through, comes before any of it. A gap there would be missing statements, not less spending.",
     });
     for (const key of ["W2026-09-07", "2026-09-12"]) {
       expect(cut(key)).toMatchObject({ kind: "refused", reason: "not-imported" });

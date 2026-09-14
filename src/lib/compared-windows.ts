@@ -166,10 +166,19 @@ export function comparePeriods(input: ComparePeriodsInput): PeriodComparison {
 
   const end = earliestOf(period.to, today, importedThrough);
   if (compareDates(end, period.from) < 0) {
+    /*
+     * 🔴 `importedThrough` is the EARLIEST frontier among the accounts you spend
+     * from, not a day they all share. On 2026-09-14 this read "every account you
+     * spend from has only been imported through Aug 12, 2026" for September
+     * 2026 — Chase Checking's day — while Venture X was imported through Sep 13,
+     * Discover Sep 8 and Chase Sapphire Sep 2. The dashboard says "at the
+     * earliest"; the clipped note below says "the last day every account …".
+     * This sentence now says the latter too.
+     */
     return {
       kind: "refused",
       reason: "not-imported",
-      sentence: `There is no comparison for ${period.label} yet: every account you spend from has only been imported through ${formatDayFull(importedThrough)}, before any of it. A gap there would be missing statements, not less spending.`,
+      sentence: `There is no comparison for ${period.label} yet: ${formatDayFull(importedThrough)}, the last day every account you spend from has been imported through, comes before any of it. A gap there would be missing statements, not less spending.`,
     };
   }
 
