@@ -253,6 +253,13 @@ describe("subscriptionsCard — the happy path", () => {
     expect(c.lapsed[0]!.daysPastTolerance).toBe(69);
   });
 
+  test("a fractional tolerance is counted past the whole day the sentence prints", () => {
+    // 27.7 × 1.5 + 3 = 44.55 days: the staleness sentence says "the 44-day
+    // tolerance", so 117 days is 73 past it — rounding the gap said 72
+    addSeries({ name: "Drifted sub", amountCents: -799, lastMatchedOn: LAPSED, intervalDaysAvg: 27.7 });
+    expect(card()!.lapsed[0]!.daysPastTolerance).toBe(73);
+  });
+
   test("the live set is exactly what upcomingOccurrences forecasts", () => {
     // the card's whole claim is a claim about the forecast, so the two must not
     // be able to disagree about which series are being projected

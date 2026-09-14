@@ -214,3 +214,17 @@ export function stepsToReach(anchor: string, plan: StepPlan, boundary: string): 
   const n = Math.ceil(calendarMonthsBetween(anchor, boundary) / plan.stepMonths);
   return compareDates(stepFrom(anchor, plan, n), boundary) >= 0 ? n : n + 1;
 }
+
+/**
+ * A tolerance as a whole number of days a sentence can print — the FLOOR.
+ *
+ * 🔴 Staleness is `days > toleranceDays`, compared unrounded, and a detected
+ * interval is rarely whole (27.33, 12.5). Rounding the tolerance for display
+ * could print "13 days, past the 13-day tolerance" at 12.5, and rounding the gap
+ * could print "0 days past its own tolerance" for a series that had lapsed. A
+ * whole day count above a tolerance is always above its floor, so every surface
+ * that prints one reads it from here.
+ */
+export function wholeToleranceDays(toleranceDays: number): number {
+  return Math.floor(toleranceDays);
+}

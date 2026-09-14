@@ -5,6 +5,7 @@ import { transactions } from "@/db/schema/transactions";
 import { addCalendarMonths, monthKey, todayIso } from "@/lib/dates";
 import { formatDayShortIn } from "@/lib/format-date";
 import { levelledMonthlyCents } from "@/lib/income-basis";
+import { wholeToleranceDays } from "@/lib/recurring-step";
 import { activeTxnsInRange } from "./analytics";
 import { COMMITTED_KINDS, SPEND_BASELINE_MONTHS, baselineWindow } from "./committed";
 import {
@@ -322,7 +323,7 @@ export function subscriptionsCard(
         daysPastTolerance:
           staleness.daysSinceLastMatch === null
             ? null
-            : Math.round(staleness.daysSinceLastMatch - staleness.toleranceDays),
+            : staleness.daysSinceLastMatch - wholeToleranceDays(staleness.toleranceDays),
       });
     } else {
       live.push(line);

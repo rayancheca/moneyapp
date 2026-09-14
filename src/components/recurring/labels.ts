@@ -1,6 +1,7 @@
 import { addCalendarMonths, compareDates, isoWeekday } from "@/lib/dates";
 import { endsInsideHorizon } from "@/lib/committed";
 import { dayWindowLabel } from "@/lib/period";
+import { wholeToleranceDays } from "@/lib/recurring-step";
 import { formatCents } from "@/lib/money";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import type { ForecastComponent } from "@/services/forecast";
@@ -162,7 +163,7 @@ export function stalenessSentence(s: SeriesStaleness): string {
   if (s.lastMatchedOn === null || s.daysSinceLastMatch === null) {
     return `${expects}, but no charge has ever matched it — still projected, on the schedule alone`;
   }
-  return `${expects}, but nothing has matched since ${longDate(s.lastMatchedOn)} — ${s.daysSinceLastMatch} days, past the ${Math.round(s.toleranceDays)}-day tolerance. Still projected: a late import looks exactly like a cancelled series, so this says which numbers rest on old evidence rather than dropping them.`;
+  return `${expects}, but nothing has matched since ${longDate(s.lastMatchedOn)} — ${s.daysSinceLastMatch} days, past the ${wholeToleranceDays(s.toleranceDays)}-day tolerance. Still projected: a late import looks exactly like a cancelled series, so this says which numbers rest on old evidence rather than dropping them.`;
 }
 
 /**

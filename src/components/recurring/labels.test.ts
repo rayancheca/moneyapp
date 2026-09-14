@@ -53,8 +53,14 @@ describe("stalenessSentence", () => {
     expect(sentence).toContain("every 7 days");
     expect(sentence).toContain("Jun 16, 2026");
     expect(sentence).toContain("22 days");
-    expect(sentence).toContain("13-day tolerance"); // 12.5 rounds for display
+    expect(sentence).toContain("12-day tolerance"); // 12.5 prints as its floor — see wholeToleranceDays
     expect(sentence).toContain("Still projected");
+  });
+
+  test("the day that passed a fractional tolerance is never printed AS the tolerance", () => {
+    // stale at 13 days against 12.5 — rounding printed "13 days, past the 13-day tolerance"
+    const sentence = stalenessSentence(staleness({ daysSinceLastMatch: 13, toleranceDays: 12.5 }));
+    expect(sentence).toContain("13 days, past the 12-day tolerance");
   });
 
   test("a fractional detected interval renders as a whole number of days", () => {
