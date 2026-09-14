@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, lte, ne } from "drizzle-orm";
-import type { SeriesEvidence } from "@/lib/series-evidence";
+import { seriesIsOver, type SeriesEvidence } from "@/lib/series-evidence";
 import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { merchants } from "@/db/schema/merchants";
@@ -781,7 +781,18 @@ const ANNUALIZED_MONTHS = 12;
  * `Car insurance` moves — $4,337.88 → $1,807.45, the figure the dashboard has
  * been printing all along.
  */
-export function annualizedCentsOf(series: ProjectableSeries, today: string): number | null {
+export function annualizedCentsOf(series: ProjectableSeries, status: SeriesStatus, today: string): number | null {
+  /*
+   * ⛔ AN ENDED OR DISMISSED SERIES HAS NO YEAR AHEAD OF IT. The forecast does
+   * not project these statuses, but a stored next date survives the status
+   * change, and rolled forward from a stale anchor it annualized anyway:
+   * `/recurring/<Hoffman LL>` printed "Annualized ~$21,437.52/yr" directly above
+   * "Nothing expected — nothing more is expected from it". Measured 2026-09-14:
+   * 25 of 27 ended/dismissed series pages. `status` is a required parameter so a
+   * third caller cannot forget it — the no-next-date guard below closed only
+   * the half of this that c9458a6 could see.
+   */
+  if (seriesIsOver(status)) return null;
   /*
    * ⛔ NO NEXT DATE IS NO FIGURE. `projectOccurrences` returns nothing without
    * one, which summed to a measured "~$0.00/yr" — printed on /recurring/<Knack
@@ -859,7 +870,7 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
           : null,
         isActive: isSeriesActive(s, today),
         evidence: seriesEvidence(s, today),
-        annualizedCents: annualizedCentsOf(toProjectable(s), today),
+        annualizedCents: annualizedCentsOf(toProjectable(s), s.status, today),
       } satisfies SeriesView;
     })
     .sort(

@@ -376,7 +376,7 @@ export function seriesDetail(
     isActive: isSeriesActive(s, today),
     evidence: seriesEvidence(s, today),
     endsOn: s.userEndsOn ?? null,
-    annualizedCents: annualizedCentsOf(toProjectable(s), today),
+    annualizedCents: annualizedCentsOf(toProjectable(s), s.status, today),
     nextExpected,
     overdue,
     linkedTxns,

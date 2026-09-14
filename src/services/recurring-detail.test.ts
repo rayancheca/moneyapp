@@ -339,6 +339,35 @@ describe("seriesDetail", () => {
     expect(seriesDetail(bundle.db, netflix().id, TODAY).nextExpected.length).toBeGreaterThan(0);
   });
 
+  /*
+   * 🔴 …and it carries no year ahead of it either. c9458a6 closed only the
+   * series with NO next date; one that still stores a date — rolled forward
+   * from a stale anchor like Hoffman's 2026-02-08 — printed "Annualized
+   * ~$21,437.52/yr" directly above "Nothing expected — nothing more is expected
+   * from it". Measured 2026-09-14: 25 of the 27 ended/dismissed series pages.
+   */
+  for (const status of ["ended", "dismissed"] as const) {
+    test(`an ${status.toUpperCase()} series that still stores a next date carries no annualized figure`, () => {
+      const id = netflix().id;
+      bundle.db
+        .update(recurringSeries)
+        .set({ status, nextExpectedOn: "2026-02-15" })
+        .where(eq(recurringSeries.id, id))
+        .run();
+      const d = seriesDetail(bundle.db, id, TODAY);
+      expect(d.nextExpected).toEqual([]); // the precondition the page already honoured
+      expect(d.annualizedCents).toBeNull();
+      expect(listSeries(bundle.db, TODAY).find((s) => s.id === id)?.annualizedCents).toBeNull();
+    });
+  }
+
+  test("a live series with the same stale stored date still annualizes — the rule is status, not the date", () => {
+    const id = netflix().id;
+    bundle.db.update(recurringSeries).set({ nextExpectedOn: "2026-02-15" }).where(eq(recurringSeries.id, id)).run();
+    expect(seriesDetail(bundle.db, id, TODAY).annualizedCents).toBe(1549 * 12);
+    expect(listSeries(bundle.db, TODAY).find((s) => s.id === id)?.annualizedCents).toBe(1549 * 12);
+  });
+
   test("a charge due TODAY is due, not overdue — the two legs abut", () => {
     const id = netflix().id;
     bundle.db
