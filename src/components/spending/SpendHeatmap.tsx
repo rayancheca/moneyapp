@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CalendarGrid } from "@/components/ui/CalendarGrid";
 import { Sheet } from "@/components/ui/Sheet";
-import { compareDates } from "@/lib/dates";
+import { UNREACHED_PHRASE, unreachedKind, type UnreachedKind } from "@/lib/empty-period";
 import { formatCents } from "@/lib/money";
 import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { loadSpendHeatmap } from "@/app/spending/actions";
@@ -28,6 +28,64 @@ import { dayLedgerHref, type HeatDay, type SpendHeatmap as SpendHeatmapData } fr
  * month through a server action without leaving the page.
  */
 
+/** one day of the heatmap, and both ends of the ledger it is read against */
+interface HeatDayFrontier {
+  iso: string;
+  day: HeatDay | null;
+  today: string;
+  /**
+   * `ledgerOpens(db)` — the oldest day the ledger holds a row for. REQUIRED, not
+   * defaulted: a missing opening day is exactly how every day before the
+   * records begin came to read "nothing spent or earned".
+   */
+  ledgerOpens: string | null;
+  /** `ledgerReaches(db)` — the newest such day */
+  ledgerReaches: string | null;
+}
+
+/**
+ * Which world an unmeasured day sits in, or null when the day is a measurement.
+ *
+ * ⛔ A day holding a row this chart counts is a measurement, whatever the
+ * frontier says. A posted row dated after today is drawn in its cell and listed
+ * in its sheet, and the label called that day "has not happened yet" — the same
+ * "data wins" rule the cash-flow buckets on this page follow.
+ */
+function heatDayUnreached({ iso, day, today, ledgerOpens, ledgerReaches }: HeatDayFrontier): UnreachedKind | null {
+  const holdsRows = day !== null && (day.spentCents > 0 || day.incomeCents > 0 || day.refundedCents > 0);
+  return holdsRows ? null : unreachedKind({ from: iso, to: iso, today, ledgerOpens, ledgerReaches });
+}
+
+/**
+ * The sheet's sentence for a day with nothing spent or earned, or null when the
+ * day has money and the sheet shows it instead.
+ *
+ * ⛔ Decided here, beside `heatCellLabel`, and from the same classification. The
+ * sheet carried its own inline copy of the checks, and with it the same
+ * one-ended frontier: a day before the records begin would have opened a sheet
+ * saying "Nothing was spent or earned on this day."
+ */
+export function heatDaySheetSentence(input: HeatDayFrontier): string | null {
+  const { day } = input;
+  if (day !== null && (day.spentCents > 0 || day.incomeCents > 0)) return null;
+  switch (heatDayUnreached(input)) {
+    case "future":
+      return "This day has not happened yet.";
+    case "before-records":
+      return "This day is before your records begin — nothing has been imported for it, which is not the same as nothing happening.";
+    case "after-records":
+    case "no-ledger":
+      return "Nothing has been imported for this day yet — nobody has looked at it, which is not the same as nothing happening.";
+    case null:
+      break;
+  }
+  const refunded = day?.refundedCents ?? 0;
+  return refunded > 0
+    ? `Nothing was spent or earned on this day — ${formatCents(refunded)} came back as a refund.`
+    : // the same population the cell's own label names — not the ledger's
+      "Nothing was spent or earned on this day.";
+}
+
 /**
  * What ONE calendar cell says — the whole decision, in one place, because the
  * cell's accessible name and the sheet that opens from it must never describe
@@ -39,15 +97,12 @@ export function heatCellLabel({
   monthName,
   day: d,
   today,
+  ledgerOpens,
   ledgerReaches,
-}: {
-  iso: string;
+}: HeatDayFrontier & {
   /** the month the payload is FOR — a cell outside it was never queried */
   monthKey: string;
   monthName: string;
-  day: HeatDay | null;
-  today: string;
-  ledgerReaches: string | null;
 }): string {
   const day = formatDayShort(iso);
   /*
@@ -75,9 +130,17 @@ export function heatCellLabel({
    *
    * ⛔ Future first. A day after today is both unimported and unhappened, and
    * "has not happened yet" is the one that answers the reader.
+   *
+   * 🔴 …AND THE FRONTIER HAD ONE END. Measured on the owner's ledger 2026-09-14,
+   * first active row 2022-08-25: `/spending?period=2022-08` read "Aug 1: nothing
+   * spent or earned" … "Aug 24: nothing spent or earned" — twenty-four days
+   * before the records begin, called measured zeros — and the ‹ button pages
+   * back with no limit (owner decision E3a), so every month before it said the
+   * same. This component was handed `ledgerReaches` and never `ledgerOpens`.
+   * `unreachedKind` asks both ends, future first, and the sheet asks it too.
    */
-  if (compareDates(iso, today) > 0) return `${day}: has not happened yet`;
-  if (ledgerReaches === null || compareDates(iso, ledgerReaches) > 0) return `${day}: not imported yet`;
+  const unreached = heatDayUnreached({ iso, day: d, today, ledgerOpens, ledgerReaches });
+  if (unreached !== null) return `${day}: ${UNREACHED_PHRASE[unreached]}`;
   /*
    * 🔴 A DAY WHOSE ONLY ROW IS A RETURN IS NOT AN EMPTY DAY. The service skips
    * a credit in an expense category from both buckets on purpose — "a refund is
@@ -114,10 +177,15 @@ interface SpendHeatmapProps {
   initial: SpendHeatmapData;
   today: string;
   /**
+   * `ledgerOpens(db)` — the oldest day the import holds a row for. A cell before
+   * it has no zero to report either; required, for the reason on `HeatDayFrontier`.
+   */
+  ledgerOpens: string | null;
+  /**
    * `ledgerReaches(db)` — the newest day the import has walked to. A cell after
-   * it has no zero to report; see `cellLabel`. Passed as a prop rather than
-   * carried in the payload because month paging reloads the payload and this
-   * does not move.
+   * it has no zero to report; see `cellLabel`. Both ends are passed as props
+   * rather than carried in the payload because month paging reloads the payload
+   * and neither moves.
    */
   ledgerReaches: string | null;
 }
@@ -129,7 +197,7 @@ function cellAmount(cents: number): string {
   return `$${Math.round(dollars)}`;
 }
 
-export function SpendHeatmap({ initial, today, ledgerReaches }: SpendHeatmapProps) {
+export function SpendHeatmap({ initial, today, ledgerOpens, ledgerReaches }: SpendHeatmapProps) {
   const router = useRouter();
   const [data, setData] = useState(initial);
   const [pending, setPending] = useState(false);
@@ -156,6 +224,7 @@ export function SpendHeatmap({ initial, today, ledgerReaches }: SpendHeatmapProp
       monthName,
       day: byDay.get(iso) ?? null,
       today,
+      ledgerOpens,
       ledgerReaches,
     });
   }
@@ -222,7 +291,13 @@ export function SpendHeatmap({ initial, today, ledgerReaches }: SpendHeatmapProp
         title={openDay ? formatDayLong(openDay) : ""}
       >
         {openDay && (
-          <DaySheetBody iso={openDay} day={detail} today={today} ledgerReaches={ledgerReaches} />
+          <DaySheetBody
+            iso={openDay}
+            day={detail}
+            today={today}
+            ledgerOpens={ledgerOpens}
+            ledgerReaches={ledgerReaches}
+          />
         )}
       </Sheet>
     </div>
@@ -266,32 +341,14 @@ function CellAmount({
  * --positive/--negative fall just under WCAG AA (the same rule the P/L day sheet
  * follows).
  */
-function DaySheetBody({
-  iso,
-  day,
-  today,
-  ledgerReaches,
-}: {
-  iso: string;
-  day: HeatDay | null;
-  today: string;
-  ledgerReaches: string | null;
-}) {
+function DaySheetBody(props: HeatDayFrontier) {
+  const { iso, day } = props;
   const spent = day?.spentCents ?? 0;
   const income = day?.incomeCents ?? 0;
 
-  if (spent === 0 && income === 0) {
-    /* the same three worlds the cell label separates — see `cellLabel` */
-    const refunded = day?.refundedCents ?? 0;
-    const nothing =
-      compareDates(iso, today) > 0
-        ? "This day has not happened yet."
-        : ledgerReaches === null || compareDates(iso, ledgerReaches) > 0
-          ? "Nothing has been imported for this day yet — nobody has looked at it, which is not the same as nothing happening."
-          : refunded > 0
-            ? `Nothing was spent or earned on this day — ${formatCents(refunded)} came back as a refund.`
-            : // the same population the cell's own label names — not the ledger's
-              "Nothing was spent or earned on this day.";
+  /* the same worlds the cell label separates, from the same classification */
+  const nothing = heatDaySheetSentence(props);
+  if (nothing !== null) {
     return (
       <div className="space-y-4">
         <p className="text-sm text-ink-muted">{nothing}</p>

@@ -1,9 +1,15 @@
 import { describe, expect, test } from "vitest";
 import type { HeatDay } from "@/services/spending";
-import { heatCellLabel } from "./SpendHeatmap";
+import { heatCellLabel, heatDaySheetSentence } from "./SpendHeatmap";
 
 const TODAY = "2026-09-10";
 const REACHES = "2026-08-31";
+/*
+ * ⛔ INSIDE August, so the fixture can express a day before the records begin.
+ * Without an opening day the label could only ever be asked about one end of the
+ * ledger — which is all it ever checked.
+ */
+const OPENS = "2026-08-03";
 
 const cell = (iso: string, day: HeatDay | null = null, over: Partial<Parameters<typeof heatCellLabel>[0]> = {}) =>
   heatCellLabel({
@@ -12,6 +18,7 @@ const cell = (iso: string, day: HeatDay | null = null, over: Partial<Parameters<
     monthName: "September 2026",
     day,
     today: TODAY,
+    ledgerOpens: OPENS,
     ledgerReaches: REACHES,
     ...over,
   });
@@ -104,5 +111,90 @@ describe("a day whose only row is a return", () => {
     expect(
       cell("2026-08-04", heat(0, 0, 0, 0), { monthKey: "2026-08", monthName: "August 2026" }),
     ).toBe("Aug 4: nothing spent or earned");
+  });
+});
+
+/**
+ * 🔴 THE OPENING END. Measured on the owner's ledger 2026-09-14, whose first
+ * active row is 2022-08-25: `/spending?period=2022-08` read
+ *
+ *     "Aug 1: nothing spent or earned" … "Aug 24: nothing spent or earned"
+ *
+ * — twenty-four days before the records begin, labelled as measured zeros, while
+ * the same component on `?period=2026-09` already said "Sep 13: not imported
+ * yet". The heatmap was handed `ledgerReaches` and never `ledgerOpens`, so only
+ * the closing end could be asked. The ‹ button pages back with no limit (owner
+ * decision 2026-09-14, E3a), so every month before August 2022 read the same.
+ */
+describe("heatCellLabel — the days before the records begin", () => {
+  const august = { monthKey: "2026-08", monthName: "August 2026" };
+
+  test("a day before the ledger opens says so, not that nothing was spent", () => {
+    expect(cell("2026-08-02", null, august)).toBe("Aug 2: before your records begin");
+  });
+
+  test("the opening day itself is a measurement", () => {
+    expect(cell("2026-08-03", null, august)).toBe("Aug 3: nothing spent or earned");
+  });
+
+  test("a day after today has not happened, even on a ledger that holds nothing", () => {
+    expect(cell("2026-09-11", null, { ledgerOpens: null, ledgerReaches: null })).toBe("Sep 11: has not happened yet");
+  });
+
+  test("a padding day is still never described, even one before the records", () => {
+    expect(cell("2026-08-02")).toBe("Aug 2: not part of September 2026 — open its ledger");
+  });
+
+  /*
+   * ⛔ THE FRONTIER NEVER OVERRIDES A MEASUREMENT — at the far end either. A
+   * posted row dated after today is drawn in its cell ("−$50") and opens a sheet
+   * listing it, and the label called the same day "has not happened yet". The
+   * cash-flow buckets on this page follow the same rule: a bucket holding a row
+   * is a figure.
+   */
+  test("a posted row on a day after today is reported, not called unhappened", () => {
+    const reaches = { ledgerReaches: "2026-09-12" };
+    expect(cell("2026-09-12", heat(5_000, 0, 1), reaches)).toBe("Sep 12: $50.00 spent across 1 transaction");
+    expect(
+      heatDaySheetSentence({ iso: "2026-09-12", day: heat(5_000, 0, 1), today: TODAY, ledgerOpens: OPENS, ...reaches }),
+    ).toBeNull();
+  });
+});
+
+/**
+ * ⛔ The cell and the sheet that opens from it must never describe two worlds —
+ * the rule `heatCellLabel`'s own docstring states. The sheet carried its own copy
+ * of the checks, with the same one-ended frontier.
+ */
+describe("heatDaySheetSentence — the sheet lands in the cell's world", () => {
+  const sheet = (iso: string, day: HeatDay | null = null) =>
+    heatDaySheetSentence({ iso, day, today: TODAY, ledgerOpens: OPENS, ledgerReaches: REACHES });
+
+  test("a day before the records begin says so in the sheet too", () => {
+    expect(sheet("2026-08-02")).toBe(
+      "This day is before your records begin — nothing has been imported for it, which is not the same as nothing happening.",
+    );
+  });
+
+  test.each([
+    ["2026-08-02", "before your records begin", "before your records begin"],
+    ["2026-08-04", "nothing spent or earned", "Nothing was spent or earned on this day."],
+    ["2026-09-04", "not imported yet", "Nothing has been imported for this day yet"],
+    ["2026-09-11", "has not happened yet", "This day has not happened yet."],
+  ])("%s: the cell reads %j and the sheet agrees", (iso, cellWorld, sheetWorld) => {
+    const monthKey = iso.slice(0, 7);
+    const own = { monthKey, monthName: monthKey === "2026-08" ? "August 2026" : "September 2026" };
+    expect(cell(iso, null, own)).toContain(cellWorld);
+    expect(sheet(iso)).toContain(sheetWorld);
+  });
+
+  test("a day with money has no absence sentence — the sheet shows the day", () => {
+    expect(sheet("2026-08-04", heat(12_50, 0, 2))).toBeNull();
+  });
+
+  test("a day whose only row is a return names it in the sheet", () => {
+    expect(sheet("2026-08-04", heat(0, 0, 0, 1_800))).toBe(
+      "Nothing was spent or earned on this day — $18.00 came back as a refund.",
+    );
   });
 });

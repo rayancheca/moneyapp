@@ -83,6 +83,51 @@ export function emptyPeriodReason(input: EmptyPeriodInput): EmptyPeriodReason {
     : { kind: "before-records", uncoveredDays };
 }
 
+/** the kinds of window whose zero is not a measurement */
+export type UnreachedKind = Exclude<EmptyPeriodKind, "measured" | "partly-covered">;
+
+/**
+ * Whether a window's figures can be read at all — null when they are a
+ * measurement, or which world it sits in when they are not: it has not
+ * happened, it is before the records begin, or nothing has been imported for it.
+ * A window the ledger opens or stops INSIDE has been looked at, and is a figure.
+ *
+ * 🔴 TWO SURFACES ZERO-FILLED A CALENDAR WINDOW AND ASKED AT MOST ONE END.
+ * Measured on the owner's ledger 2026-09-14 (first active row 2022-08-25, newest
+ * 2026-09-12):
+ *
+ *   - the heatmap on `/spending?period=2022-08` read "Aug 1: nothing spent or
+ *     earned" … "Aug 24: nothing spent or earned", while on `?period=2026-09`
+ *     the same component said "Sep 13: not imported yet";
+ *   - the cash-flow table printed $0.00 under Earned, Spent and Net for those 24
+ *     days, for Sep 13–30, 2026, and for Oct–Dec on `?period=2026`, and asked
+ *     neither end.
+ *
+ * `emptyPeriodReason` already sorted a window into these worlds, with one caller.
+ *
+ * ⛔ The future is asked FIRST. `emptyPeriodReason` answers "no-ledger" before
+ * it looks at the calendar, so forwarding its kind would call a day that has not
+ * happened "not imported yet" on an empty ledger — the precedence the heatmap's
+ * label already pinned.
+ */
+export function unreachedKind(input: EmptyPeriodInput): UnreachedKind | null {
+  if (compareDates(input.from, input.today) > 0) return "future";
+  const { kind } = emptyPeriodReason(input);
+  return kind === "measured" || kind === "partly-covered" ? null : kind;
+}
+
+/**
+ * What a single cell or point says in place of a figure it cannot give — the
+ * words the heatmap's cells have used since 2026-09-10, now one map for every
+ * surface that labels an unreached window.
+ */
+export const UNREACHED_PHRASE: Readonly<Record<UnreachedKind, string>> = {
+  future: "has not happened yet",
+  "before-records": "before your records begin",
+  "after-records": "not imported yet",
+  "no-ledger": "not imported yet",
+};
+
 /**
  * How many ELAPSED days of a window lie past the newest imported row — the days
  * a pace figure has not seen, and the reason it is a lower bound.

@@ -329,21 +329,24 @@ export default async function SpendingPage({
    * days. `lib/empty-period` is that refusal, and it still says "measured zero"
    * where the window really is covered.
    */
+  // both ends of the ledger, read once: the empty state and the heatmap ask them
+  const opens = ledgerOpens(db);
+  const reaches = ledgerReaches(db);
   const emptyReason = !hasActivity
     ? emptyPeriodReason({
         from: range.from,
         to: range.to,
         today,
-        ledgerOpens: ledgerOpens(db),
-        ledgerReaches: ledgerReaches(db),
+        ledgerOpens: opens,
+        ledgerReaches: reaches,
       })
     : null;
   const emptyCopy =
     emptyReason === null
       ? null
-      : emptyPeriodCopy(emptyReason, period.label, ledgerReaches(db), formatDayLong, {
+      : emptyPeriodCopy(emptyReason, period.label, reaches, formatDayLong, {
           uncategorizedBucket: true,
-          ledgerOpens: ledgerOpens(db),
+          ledgerOpens: opens,
         });
 
   return (
@@ -404,7 +407,13 @@ export default async function SpendingPage({
               {/* keyed by the period-derived month so changing the period
                   remounts the heatmap on the new month (its own ‹ › paging
                   keeps the user's choice while the key is stable) */}
-              <SpendHeatmap key={heatMonth} initial={heatmap} today={today} ledgerReaches={ledgerReaches(db)} />
+              <SpendHeatmap
+                key={heatMonth}
+                initial={heatmap}
+                today={today}
+                ledgerOpens={opens}
+                ledgerReaches={reaches}
+              />
             </SurfaceCard>
             <SurfaceCard className="lg:col-span-2">
               <h2 className="mb-3 text-sm font-medium">Top merchants</h2>

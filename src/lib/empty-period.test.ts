@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { daysNotImportedYet, emptyPeriodCopy, emptyPeriodReason, emptyTrendCopy } from "./empty-period";
+import { daysNotImportedYet, emptyPeriodCopy, emptyPeriodReason, emptyTrendCopy, unreachedKind } from "./empty-period";
 
 const reason = (over: Partial<Parameters<typeof emptyPeriodReason>[0]> = {}) =>
   emptyPeriodReason({
@@ -334,5 +334,50 @@ describe("emptyTrendCopy — an unread month is not an empty one, and the window
   test("a single month is named once, and no points name no window", () => {
     expect(emptyTrendCopy(months(0, 0, 1))).toBe("No activity in Jan 2025.");
     expect(emptyTrendCopy([])).toBe("None of this window has been imported — there is nothing here to measure.");
+  });
+});
+
+/**
+ * 🔴 A CELL THAT ZERO-FILLS A CALENDAR WINDOW ASKED ONLY ONE END OF THE LEDGER.
+ * Measured on the owner's ledger 2026-09-14 (first active row 2022-08-25):
+ * `/spending?period=2022-08` read "Aug 1: nothing spent or earned" … "Aug 24:
+ * nothing spent or earned" — while `?period=2026-09` on the same component
+ * already said "Sep 13: not imported yet" and "Sep 15: has not happened yet".
+ * This is the one question every such cell asks now.
+ */
+describe("unreachedKind — whether a window's figures can be read as a measurement", () => {
+  const frontier = { today: "2026-09-14", ledgerOpens: "2022-08-25", ledgerReaches: "2026-09-12" };
+  const day = (iso: string, over: Partial<Parameters<typeof unreachedKind>[0]> = {}) =>
+    unreachedKind({ from: iso, to: iso, ...frontier, ...over });
+
+  test("a day before the ledger opens is before the records, and the opening day is a measurement", () => {
+    expect(day("2022-08-24")).toBe("before-records");
+    expect(day("2022-08-25")).toBeNull();
+  });
+
+  test("a day past the newest row is unimported, and the newest row's day is a measurement", () => {
+    expect(day("2026-09-12")).toBeNull();
+    expect(day("2026-09-13")).toBe("after-records");
+  });
+
+  test("today is not the future — it is merely unimported; tomorrow has not happened", () => {
+    expect(day("2026-09-14")).toBe("after-records");
+    expect(day("2026-09-15")).toBe("future");
+  });
+
+  /* ⛔ `emptyPeriodReason` answers "no-ledger" before it asks "future", so a
+     caller that forwarded its kind would call an unhappened day unimported */
+  test("the future is asked first, even of an empty ledger", () => {
+    expect(day("2026-09-15", { ledgerOpens: null, ledgerReaches: null })).toBe("future");
+    expect(day("2026-09-14", { ledgerOpens: null, ledgerReaches: null })).toBe("no-ledger");
+  });
+
+  test("a window the ledger opens or stops inside has been looked at, and is a figure", () => {
+    // Aug 2022 holds Aug 25–31; Sep 2026 holds Sep 1–12 of its 14 elapsed days
+    expect(unreachedKind({ from: "2022-08-01", to: "2022-08-31", ...frontier })).toBeNull();
+    expect(unreachedKind({ from: "2026-09-01", to: "2026-09-30", ...frontier })).toBeNull();
+    // …and a month that has not begun is the future, whatever the ledger holds
+    expect(unreachedKind({ from: "2026-10-01", to: "2026-10-31", ...frontier })).toBe("future");
+    expect(unreachedKind({ from: "2022-07-01", to: "2022-07-31", ...frontier })).toBe("before-records");
   });
 });
