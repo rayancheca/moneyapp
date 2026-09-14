@@ -281,6 +281,19 @@ function readableDay(day: string): string {
   return formatDayFull(day);
 }
 
+/**
+ * `2365` → `2,365`, for a count inside a sentence or a badge.
+ *
+ * 🔴 `/accounts/<Robinhood Cash>` read "2,365 transactions landed in Robinhood
+ * Cash since it opened" beside a badge reading "2364 of 2365 checked" on
+ * 2026-09-14 — one count spelled two ways on one line. The insight grammar
+ * (`lib/insight-facts` count display) has always grouped with this call; every
+ * count this service prints goes through it so the two cannot disagree.
+ */
+function grouped(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
 const PERIOD_VERDICT_TEXT: Record<string, string> = {
   reconciled: "reconciled to the cent",
   value_anchor: "value recorded — an investment statement sets a value, it never proves the rows add up",
@@ -671,7 +684,7 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
 
   const headline =
     period.reconciliation === "reconciled"
-      ? `The opening balance plus every row in this period equals the closing balance, to the cent. ${rows.length} rows were checked.`
+      ? `The opening balance plus every row in this period equals the closing balance, to the cent. ${grouped(rows.length)} ${rows.length === 1 ? "row was" : "rows were"} checked.`
       : period.reconciliation === "value_anchor"
         ? `This is an investment statement: it records what ${account?.name ?? "the account"} was worth, and any difference is absorbed as market movement. There is no arithmetic here that could fail.`
         : `This file declares which days it covers but carries no balances, so nothing in it can be checked against a total.`;
@@ -765,7 +778,7 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
                   ? `you last counted it on ${readableDay(c.lastManualUpdate)}`
                   : "you are the statement"
                 : (rowSums.get(c.accountId)?.n ?? 0) > 0
-                  ? `${rowSums.get(c.accountId)!.n} rows but no recorded balance — not in this total`
+                  ? `${grouped(rowSums.get(c.accountId)!.n)} rows but no recorded balance — not in this total`
                   : "empty — no rows, no balance",
   }));
 
@@ -806,7 +819,7 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
   const holeText = holes
     .map((h) => {
       const r = rowSums.get(h.accountId)!;
-      return `${h.accountName} holds ${r.n} rows worth ${formatCents(r.cents)} that this total cannot see, because it has no recorded balance`;
+      return `${h.accountName} holds ${grouped(r.n)} ${r.n === 1 ? "row" : "rows"} worth ${formatCents(r.cents)} that this total cannot see, because it has no recorded balance`;
     })
     .join("; ");
 
@@ -1441,7 +1454,7 @@ function allSpendProvenance(
     to > against.to ? to : against.to,
   );
 
-  const count = (n: number): string => `${n} ${n === 1 ? "row" : "rows"}`;
+  const count = (n: number): string => `${grouped(n)} ${n === 1 ? "row" : "rows"}`;
   return {
     verdict: combined.verdict,
     badgeWord: combined.badgeWord,
@@ -1597,17 +1610,17 @@ function summedRowsProvenance(
   if (handEntered > 0) {
     sources.push({
       kind: "hand-entered",
-      label: `${handEntered} ${handEntered === 1 ? "row" : "rows"} you entered by hand`,
+      label: `${grouped(handEntered)} ${handEntered === 1 ? "row" : "rows"} you entered by hand`,
       detail: handEntered === 1 ? "no statement carries it" : "no statement carries them",
     });
   }
 
   const parts = [
-    `${rows.length} ${rows.length === 1 ? "row" : "rows"} from ${files.length} ${files.length === 1 ? "document" : "documents"}`,
+    `${grouped(rows.length)} ${rows.length === 1 ? "row" : "rows"} from ${grouped(files.length)} ${files.length === 1 ? "document" : "documents"}`,
   ];
-  if (marked > 0) parts.push(`${marked} ${marked === 1 ? "is" : "are"} priced from holdings rather than checked by arithmetic`);
-  if (byHand > 0) parts.push(`${byHand} you entered yourself`);
-  if (weak > 0) parts.push(`${weak} ${weak === 1 ? "has" : "have"} nothing checking ${weak === 1 ? "it" : "them"}`);
+  if (marked > 0) parts.push(`${grouped(marked)} ${marked === 1 ? "is" : "are"} priced from holdings rather than checked by arithmetic`);
+  if (byHand > 0) parts.push(`${grouped(byHand)} you entered yourself`);
+  if (weak > 0) parts.push(`${grouped(weak)} ${weak === 1 ? "has" : "have"} nothing checking ${weak === 1 ? "it" : "them"}`);
 
   // the last day EVERY contributing row is still covered — the first account to
   // stop being checked bounds the whole total, exactly as it does for net worth
@@ -1620,7 +1633,7 @@ function summedRowsProvenance(
     verdict,
     // the badge only overrides when rows are genuinely UNCHECKED — a category
     // that is entirely market value should read "market value", not a fraction
-    badgeWord: weak === 0 ? undefined : `${rows.length - weak} of ${rows.length} checked`,
+    badgeWord: weak === 0 ? undefined : `${grouped(rows.length - weak)} of ${grouped(rows.length)} checked`,
     headline: `This total is the sum of ${parts.join(", ")}. A total is only as proven as its weakest row.`,
     sources,
     checkedThrough: closed[0] ?? null,

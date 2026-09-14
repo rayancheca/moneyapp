@@ -864,6 +864,33 @@ describe("provenanceFor — a category total", () => {
     expect(p.badgeWord).toBe("1 of 2 checked");
   });
 
+  /*
+   * 🔴 THE BADGE PRINTED RAW INTEGERS. `/accounts/<Robinhood Cash>` read "2,365
+   * transactions landed in Robinhood Cash since it opened" beside a badge reading
+   * "2364 of 2365 checked" on 2026-09-14 — one count spelled two ways on one
+   * line. Every summed-rows badge and headline over a thousand rows did the same
+   * ("the sum of 2365 rows"); the insight grammar has grouped its counts with
+   * `toLocaleString("en-US")` all along.
+   */
+  test("counts over a thousand are grouped the way the sentence beside the badge groups them", () => {
+    const acct = addAccount("a", "Robinhood Cash", "checking");
+    const cat = addCategory("c-food", "Fixture Food");
+    const file = addFile("f1", "s.pdf", "chase-checking-statement-pdf");
+    addDays(acct, [
+      { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-07-10", basis: "derived" },
+      { day: "2026-07-20", basis: "derived_unverified" },
+    ]);
+    bundle.sqlite.transaction(() => {
+      for (let i = 0; i < 1_000; i += 1) categorize(addTxn(acct, "2026-07-10", { importFileId: file }), cat);
+    })();
+    categorize(addTxn(acct, "2026-07-20", { importFileId: file }), cat);
+
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
+    expect(p.badgeWord).toBe("1,000 of 1,001 checked");
+    expect(p.headline).toContain("the sum of 1,001 rows from 1 document");
+  });
+
   test("a category that does not exist is null", () => {
     expect(provenanceFor(bundle.db, { kind: "categorySpend", categoryId: "nope", from: "2026-01-01", to: "2026-12-31" })).toBeNull();
   });
