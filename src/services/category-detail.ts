@@ -96,6 +96,22 @@ export function categoryMonthlyTrend(
   refDate: string,
   /** `ledgerReaches(db)` — the newest day the import has walked to, null when empty */
   reachesThrough: string | null,
+  /**
+   * `ledgerOpens(db)` — the OLDEST day the ledger holds, null when empty.
+   *
+   * 🔴 REQUIRED, for the same reason `reachesThrough` is. While the trend was
+   * always anchored on today its window could never reach back past the
+   * ledger's first day, so only the closing frontier mattered. The moment it was
+   * anchored on the page's own period (4f13859), `?period=2022-09` drew ten bars
+   * over Oct 2021 – Jul 2022 reading "$0.00, 0 transactions" and
+   * `?period=2021-06` printed "No activity in the last 12 months" directly above
+   * the same page's "June 2021 is before your records begin". Measured
+   * 2026-09-14 across 80 categories × 13 past periods: all 1,040 windows that
+   * reach before 2022-08-25 flagged every pre-opening month as reached. The
+   * defect this function's `reached` was written to kill, recreated at the other
+   * end of the timeline two commits after it was killed.
+   */
+  opensFrom: string | null,
 ): CategoryMonthPoint[] {
   // the system "Uncategorized" row is the bucket, and a link carrying its raw
   // id would filter by that id alone — see `hrefCategoryId`
@@ -112,7 +128,13 @@ export function categoryMonthlyTrend(
       // reached the month at all — its first day, not its last: a month the
       // ledger stops inside HAS been looked at, and its figure is a real
       // (if partial) measurement the page's coverage notes already qualify
-      reached: reachesThrough !== null && compareDates(reachesThrough, from) >= 0,
+      // …and not a month that ENDS before the ledger opens: a month the ledger
+      // opens inside has been looked at from that day on, like the closing one
+      reached:
+        reachesThrough !== null &&
+        opensFrom !== null &&
+        compareDates(reachesThrough, from) >= 0 &&
+        compareDates(opensFrom, to) <= 0,
     };
   });
 }

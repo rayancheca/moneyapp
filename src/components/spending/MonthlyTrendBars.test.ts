@@ -51,7 +51,7 @@ describe("MonthlyTrendBars", () => {
      * over-reach the branch below is about.
      */
     expect(renderToStaticMarkup(createElement(MonthlyTrendBars, { points: months([0, 0]) }))).toContain(
-      "No activity in the last 2 months",
+      "No activity in Jan 2026 to Feb 2026",
     );
   });
 
@@ -68,9 +68,9 @@ describe("MonthlyTrendBars", () => {
     const points = months([0, 0, 0]);
     points[2]!.reached = false;
     const html = renderToStaticMarkup(createElement(MonthlyTrendBars, { points }));
-    expect(html).toContain("No activity in the 2 months the ledger covers");
-    expect(html).toContain("The newest 1 month has not been imported");
-    expect(html).not.toContain("No activity in the last 3 months");
+    expect(html).toContain("No activity in the 2 months of Jan 2026 to Mar 2026 the ledger covers");
+    expect(html).toContain("The other 1 month has not been imported");
+    expect(html).not.toContain("the last");
   });
 
   test("draws a bar for money that came IN rather than calling it nothing", () => {

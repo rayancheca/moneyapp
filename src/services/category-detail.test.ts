@@ -98,7 +98,7 @@ describe("categoryMonthlyTrend", () => {
     insertTxn({ postedOn: "2026-07-05", amountCents: -5_000, category: "Food > Dining" });
     insertTxn({ postedOn: "2026-07-06", amountCents: -1_500, category: "Food > Coffee" });
 
-    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 2, TODAY, "2026-07-06");
+    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 2, TODAY, "2026-07-06", "2026-06-05");
     expect(trend.map((t) => [t.month, t.spentCents])).toEqual([
       ["2026-06", 3_000],
       ["2026-07", 6_500],
@@ -115,7 +115,7 @@ describe("categoryMonthlyTrend", () => {
     insertTxn({ postedOn: "2026-06-05", amountCents: -3_000, category: "Food > Dining" });
 
     // the ledger stops on 2026-07-06 — July HAS been walked into, August has not
-    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 3, "2026-08-20", "2026-07-06");
+    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 3, "2026-08-20", "2026-07-06", "2026-06-05");
     expect(trend.map((t) => [t.month, t.reached])).toEqual([
       ["2026-06", true],
       ["2026-07", true],
@@ -123,8 +123,26 @@ describe("categoryMonthlyTrend", () => {
     ]);
   });
 
+  /**
+   * 🔴 THE OTHER END. Anchored on the page's own period, the window can reach
+   * back past the ledger's first day, and those months are exactly as unread as
+   * the ones after its last. `?period=2022-09` drew ten "$0.00, 0 transactions"
+   * bars over months that predate every import.
+   */
+  test("a month that ends before the ledger opens is flagged, and one it opens inside is not", () => {
+    insertTxn({ postedOn: "2026-06-05", amountCents: -3_000, category: "Food > Dining" });
+
+    // the ledger opens 2026-06-05 — May predates it, June is opened inside
+    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 3, "2026-07-06", "2026-07-06", "2026-06-05");
+    expect(trend.map((t) => [t.month, t.reached])).toEqual([
+      ["2026-05", false],
+      ["2026-06", true],
+      ["2026-07", true],
+    ]);
+  });
+
   test("an empty ledger has reached no month at all", () => {
-    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 2, TODAY, null);
+    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 2, TODAY, null, null);
     expect(trend.every((t) => t.reached)).toBe(false);
   });
 });

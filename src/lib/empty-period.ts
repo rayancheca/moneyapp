@@ -1,4 +1,5 @@
 import { compareDates, diffDays } from "./dates";
+import { monthWindowLabel } from "./format-date";
 
 /**
  * Why a window came back empty — "nothing happened" and "nobody has looked" are
@@ -160,38 +161,43 @@ export function emptyPeriodCopy(
 }
 
 /**
- * The 12-month trend chart's absence line.
+ * The 12-month trend chart's absence line — naming the window the bars were
+ * actually drawn over.
  *
  * 🔴 "No activity in the last 12 months." is an assertion about 365 days, and on
  * 2026-09-11 the newest 11 of them had never been imported. The SAME PAGE said
- * so two cards below, out of `emptyPeriodCopy`'s `after-records` branch:
- * *"September 2026 has not been imported yet. Nothing has been imported for 11
- * days of it; the ledger stops on Mon, Aug 31, 2026. That is a window nobody has
- * looked at, not one in which nothing happened."*
+ * so two cards below, out of `emptyPeriodCopy`'s `after-records` branch.
  *
- * `MonthlyTrendBars` already carried this doctrine for the BARS — a point past
- * the frontier reads "not imported yet" rather than "$0.00, 0 transactions" —
- * and the sentence that replaces all twelve of them never read it. The
- * per-point `reached` flag it needs was already on the data.
+ * 🔴 …AND "THE LAST 12 MONTHS" STOPPED BEING TRUE THE MOMENT THE TREND WAS
+ * ANCHORED ON THE PAGE'S PERIOD (4f13859). That commit rewrote the card heading
+ * and the chart's accessible name to read the window off the points, and left
+ * this third sentence — the one that REPLACES all twelve bars — saying "the last".
+ * `/categories/<Dividends>?period=2023-03` printed "12-month trend · Apr 2022 to
+ * Mar 2023" two lines above "No activity in the last 12 months."; measured
+ * 2026-09-14, 802 of 2,844 (category × month) pages did the same.
  *
- * ⛔ Only the months the ledger has NOT reached are discounted. A month inside
- * the records that holds nothing really is a measured zero and still says so —
- * the same line `emptyPeriodCopy`'s `measured` branch draws.
+ * ⛔ Only the months the ledger has NOT reached — at either end, before it opens
+ * or after it stops — are discounted. A window fully inside the records that
+ * holds nothing really is a measured zero and still says so — the same line
+ * `emptyPeriodCopy`'s `measured` branch draws.
  */
 export function emptyTrendCopy(
-  points: readonly { reached: boolean }[],
+  points: readonly { month: string; reached: boolean }[],
   /** what the page calls this figure — "Spent", "Received", "Net" */
   flowNoun = "activity",
 ): string {
+  const first = points[0]?.month;
+  const last = points[points.length - 1]?.month;
+  const window = first === undefined || last === undefined ? "this window" : monthWindowLabel(first, last);
   const unreached = points.filter((p) => !p.reached).length;
   const covered = points.length - unreached;
-  if (unreached === 0) return `No ${flowNoun} in the last ${monthsWord(points.length)}.`;
-  if (covered === 0) {
-    return `None of the last ${monthsWord(points.length)} has been imported yet — there is nothing here to measure.`;
-  }
+  // covered first: an EMPTY run has nothing unreached AND nothing reached, and it
+  // is the second fact — no month measured — that the sentence must state
+  if (covered === 0) return `None of ${window} has been imported — there is nothing here to measure.`;
+  if (unreached === 0) return `No ${flowNoun} in ${window}.`;
   return (
-    `No ${flowNoun} in the ${monthsWord(covered)} the ledger covers. ` +
-    `The newest ${monthsWord(unreached)} ${unreached === 1 ? "has" : "have"} not been imported, ` +
+    `No ${flowNoun} in the ${monthsWord(covered)} of ${window} the ledger covers. ` +
+    `The other ${monthsWord(unreached)} ${unreached === 1 ? "has" : "have"} not been imported, ` +
     `so ${unreached === 1 ? "it is" : "they are"} a window nobody has looked at rather than an empty one.`
   );
 }
