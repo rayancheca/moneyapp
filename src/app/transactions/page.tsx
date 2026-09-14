@@ -3,6 +3,7 @@ import { and, asc, count, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
+import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { listAccountOptions } from "@/services/accounts";
 import { coverageStats } from "@/services/categorize";
@@ -133,6 +134,9 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
     merchantId: transactions.merchantId,
     transferGroupId: transactions.transferGroupId,
     recurringSeriesId: transactions.recurringSeriesId,
+    // the badge asks what the series IS, not whether there is one — both
+    // queries that select these columns LEFT JOIN recurring_series for it
+    seriesStatus: recurringSeries.status,
     categorizationConfidence: transactions.categorizationConfidence,
     needsReview: transactions.needsReview,
     status: transactions.status,
@@ -155,6 +159,9 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
     .select(ledgerColumns)
     .from(transactions)
     .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+    // many-to-one on a primary key: the row count, order and every offset below
+    // (`neighbourDay`) are unchanged by it
+    .leftJoin(recurringSeries, eq(transactions.recurringSeriesId, recurringSeries.id))
     .where(and(...common, viewCondition(filters.view)))
     // content-column tiebreaks (ledgerOrder): stable across re-imports/reseeds —
     // ids encode insertion time and dedupeHash embeds the per-seed account id,
@@ -228,6 +235,7 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
           .select(ledgerColumns)
           .from(transactions)
           .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+          .leftJoin(recurringSeries, eq(transactions.recurringSeriesId, recurringSeries.id))
           .where(and(eq(transactions.status, "active"), eq(transactions.needsReview, true)))
           .orderBy(...ledgerOrder)
           .limit(CATEGORIZE_CAP)

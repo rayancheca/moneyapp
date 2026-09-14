@@ -5,8 +5,10 @@ import { getDb } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { merchants } from "@/db/schema/merchants";
+import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { todayIso } from "@/lib/dates";
+import { seriesDrawsAsRecurring } from "@/lib/series-evidence";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { monthKeysBack, monthlySpending } from "@/services/analytics";
 import { netWorthSeries } from "@/services/derivation";
@@ -62,12 +64,13 @@ export default function StageZeroAPreview() {
       hue: categories.color,
       icon: categories.icon,
       transferGroupId: transactions.transferGroupId,
-      recurringSeriesId: transactions.recurringSeriesId,
+      seriesStatus: recurringSeries.status,
       needsReview: transactions.needsReview,
     })
     .from(transactions)
     .innerJoin(accounts, eq(transactions.accountId, accounts.id))
     .leftJoin(categories, eq(transactions.categoryId, categories.id))
+    .leftJoin(recurringSeries, eq(transactions.recurringSeriesId, recurringSeries.id))
     .where(and(eq(transactions.status, "active"), eq(accounts.type, "checking")))
     .orderBy(
       desc(transactions.postedOn),
@@ -80,7 +83,8 @@ export default function StageZeroAPreview() {
     .map((r) => ({
       ...r,
       isTransfer: r.transferGroupId !== null,
-      isRecurring: r.recurringSeriesId !== null,
+      // the ledger's rule, not its own copy of "has a link" (see `toLedgerRow`)
+      isRecurring: r.seriesStatus !== null && seriesDrawsAsRecurring(r.seriesStatus),
     }));
 
   // Busiest merchant → the sheet's same-merchant panel, from real history.

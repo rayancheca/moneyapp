@@ -36,7 +36,13 @@ export interface LedgerRow {
   icon: string | null;
   merchantId: string | null;
   isTransfer: boolean;
+  /**
+   * Drawn with the "R" badge: linked to a series `seriesDrawsAsRecurring` —
+   * every status but dismissed. NOT "has a link"; that is `hasSeriesLink`.
+   */
   isRecurring: boolean;
+  /** carries a series link at all, a dismissed one included — what the sheet's link panel acts on */
+  hasSeriesLink: boolean;
   needsReview: boolean;
   status: TransactionStatus;
   notes: string | null;

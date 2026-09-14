@@ -178,11 +178,18 @@ export function TransferLinkPanel({
 
 export function SeriesLinkPanel({
   txnId,
+  hasSeriesLink,
   isRecurring,
   onChanged,
 }: {
   txnId: string;
   /** the row already carries a series link — disclose shows it instead of candidates */
+  hasSeriesLink: boolean;
+  /**
+   * …and that series is drawn as recurring. False for a link to a DISMISSED
+   * series, which the owner said is not recurring: the row is still taken (no
+   * "Make recurring"), but nothing here may call its series recurring.
+   */
   isRecurring: boolean;
   onChanged: () => void;
 }) {
@@ -219,7 +226,8 @@ export function SeriesLinkPanel({
           toast({ title: "Couldn’t attach — the transaction is no longer active", tone: "negative" });
           return;
         }
-        setPanel({ linked: { id: seriesId, name }, candidates: [] });
+        // candidates are detected/confirmed only — a live series
+        setPanel({ linked: { id: seriesId, name, drawsAsRecurring: true }, candidates: [] });
         offerUndoToast(`Attached to ${name}`, r.data.undo, () => {
           setPanel(null);
           setOpen(false);
@@ -244,7 +252,8 @@ export function SeriesLinkPanel({
           return;
         }
         const { mode, seriesId, name, undo } = r.data;
-        setPanel({ linked: { id: seriesId, name }, candidates: [] });
+        // a created series is confirmed; a joined one is the identity's live series
+        setPanel({ linked: { id: seriesId, name, drawsAsRecurring: true }, candidates: [] });
         setOpen(false);
         toast({
           title: mode === "created" ? `Marked "${name}" as recurring` : `Attached to ${name}`,
@@ -296,7 +305,11 @@ export function SeriesLinkPanel({
   if (panel?.linked) {
     return (
       <section className="space-y-1.5">
-        <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-ink-faint">Recurring</span>
+        {/* `seriesRowLabel`'s word for a dismissed series — the owner's own
+            "Not recurring", not a heading that re-asserts what he rejected */}
+        <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-ink-faint">
+          {panel.linked.drawsAsRecurring ? "Recurring" : "Not recurring"}
+        </span>
         <div className="flex items-center justify-between gap-2 text-sm" aria-live="polite">
           <span className="min-w-0 flex-1 truncate">{panel.linked.name}</span>
           <Button variant="ghost" size="sm" pending={busy} onClick={() => detach(panel.linked!.name)}>
@@ -310,7 +323,7 @@ export function SeriesLinkPanel({
   return (
     <section className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-1.5">
-        {!isRecurring ? (
+        {!hasSeriesLink ? (
           <Button variant="ghost" size="sm" icon="repeat" pending={busy} onClick={makeRecurring}>
             Make recurring
           </Button>
@@ -323,7 +336,7 @@ export function SeriesLinkPanel({
           aria-controls={regionId}
           onClick={() => (open ? setOpen(false) : void disclose())}
         >
-          {isRecurring ? "Show recurring series…" : "Attach to recurring series…"}
+          {!hasSeriesLink ? "Attach to recurring series…" : isRecurring ? "Show recurring series…" : "Show linked series…"}
         </Button>
       </div>
       {open ? (

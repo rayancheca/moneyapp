@@ -16,6 +16,7 @@ function row(postedOn: string, amountCents: number, id = `${postedOn}-${amountCe
     merchantId: null,
     isTransfer: false,
     isRecurring: false,
+    hasSeriesLink: false,
     needsReview: false,
     status: "active",
     notes: null,

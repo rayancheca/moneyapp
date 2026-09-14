@@ -211,8 +211,11 @@ export async function loadSplitPanel(
 }
 
 export interface SeriesLinkPanelData {
-  /** the series this row is attached to, when any */
-  linked: { id: string; name: string } | null;
+  /**
+   * the series this row is attached to, when any — and whether it is drawn as
+   * recurring (`seriesDrawsAsRecurring`: false for a dismissed series)
+   */
+  linked: { id: string; name: string; drawsAsRecurring: boolean } | null;
   candidates: SeriesLinkCandidate[];
 }
 
@@ -236,11 +239,20 @@ export async function loadSeriesLinkPanel(
 
     if (row.recurringSeriesId) {
       const series = db
-        .select({ id: recurringSeries.id, name: recurringSeries.name })
+        .select({ id: recurringSeries.id, name: recurringSeries.name, status: recurringSeries.status })
         .from(recurringSeries)
         .where(eq(recurringSeries.id, row.recurringSeriesId))
         .get();
-      return { ok: true, data: { linked: series ?? null, candidates: [] } };
+      const { seriesDrawsAsRecurring } = await import("@/lib/series-evidence");
+      return {
+        ok: true,
+        data: {
+          linked: series
+            ? { id: series.id, name: series.name, drawsAsRecurring: seriesDrawsAsRecurring(series.status) }
+            : null,
+          candidates: [],
+        },
+      };
     }
 
     const { listSeries } = await import("@/services/recurring");

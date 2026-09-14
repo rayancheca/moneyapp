@@ -2,8 +2,10 @@ import { and, asc, desc, eq, gte, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
+import { recurringSeries, type SeriesStatus } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import type { LedgerRow } from "@/components/transactions/TransactionsLedger";
+import { seriesDrawsAsRecurring } from "@/lib/series-evidence";
 import { splitCountsByTxn } from "./transaction-splits";
 
 /**
@@ -31,6 +33,8 @@ interface RawLedgerRow {
   merchantId: string | null;
   transferGroupId: string | null;
   recurringSeriesId: string | null;
+  /** the linked series' status — LEFT JOINed, so null exactly when unlinked */
+  seriesStatus: SeriesStatus | null;
   categorizationConfidence: number | null;
   needsReview: boolean;
   status: LedgerRow["status"];
@@ -56,7 +60,14 @@ export function toLedgerRow(row: RawLedgerRow, catById: ReadonlyMap<string, Cate
     icon: cat?.icon ?? parent?.icon ?? null,
     merchantId: row.merchantId,
     isTransfer: row.transferGroupId !== null,
-    isRecurring: row.recurringSeriesId !== null,
+    /*
+     * 🔴 This read `recurringSeriesId !== null` — "is there a link?" — and drew
+     * the Recurring badge on every row linked to a DISMISSED series: 60 rows on
+     * the real ledger 2026-09-14, 10 of the 13 on `?q=PURA VIDA BAY ROAD`. The
+     * link stays (dismissed is the re-detection sink); the badge asks the rule.
+     */
+    isRecurring: row.seriesStatus !== null && seriesDrawsAsRecurring(row.seriesStatus),
+    hasSeriesLink: row.recurringSeriesId !== null,
     needsReview: row.needsReview,
     status: row.status,
     notes: row.notes,
@@ -79,6 +90,7 @@ const LEDGER_SELECT = {
   merchantId: transactions.merchantId,
   transferGroupId: transactions.transferGroupId,
   recurringSeriesId: transactions.recurringSeriesId,
+  seriesStatus: recurringSeries.status,
   categorizationConfidence: transactions.categorizationConfidence,
   needsReview: transactions.needsReview,
   status: transactions.status,
@@ -122,6 +134,8 @@ export function recentLedgerRows(db: AppDatabase, options: RecentLedgerOptions):
     .select(LEDGER_SELECT)
     .from(transactions)
     .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+    // many-to-one on a primary key: never adds or drops a row, never reorders
+    .leftJoin(recurringSeries, eq(transactions.recurringSeriesId, recurringSeries.id))
     .where(and(...conditions))
     .orderBy(...LEDGER_ORDER)
     .limit(options.limit)

@@ -311,7 +311,15 @@ export function TransactionSheet({
         {(txn.splitCount ?? 0) === 0 ? (
           <TransferLinkPanel txnId={txn.id} isTransfer={txn.isTransfer} onChanged={afterMutation} />
         ) : null}
-        <SeriesLinkPanel txnId={txn.id} isRecurring={txn.isRecurring} onChanged={afterMutation} />
+        {/* the LINK, not the badge: a row in a dismissed series has no R but is
+            still taken — offering "Make recurring" there throws "This
+            transaction already belongs to a recurring series" */}
+        <SeriesLinkPanel
+          txnId={txn.id}
+          hasSeriesLink={txn.hasSeriesLink}
+          isRecurring={txn.isRecurring}
+          onChanged={afterMutation}
+        />
 
         {/* same-name panel — the headline ask (§3.2.5): the merchant (or the
             merchantless stripped-key group) and the one-gesture "Recategorize

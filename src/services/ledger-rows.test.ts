@@ -7,6 +7,7 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
+import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { createAccount } from "./accounts";
 import { recentLedgerRows } from "./ledger-rows";
@@ -26,6 +27,7 @@ function insertTxn(opts: {
   needsReview?: boolean;
   status?: "active" | "excluded";
   confidence?: number | null;
+  recurringSeriesId?: string | null;
 }) {
   bundle.db
     .insert(transactions)
@@ -39,6 +41,7 @@ function insertTxn(opts: {
       categorizationConfidence: opts.confidence ?? null,
       needsReview: opts.needsReview ?? false,
       status: opts.status ?? "active",
+      recurringSeriesId: opts.recurringSeriesId ?? null,
       dedupeHash: `${opts.accountId}-${opts.desc}-${opts.postedOn}-${opts.amountCents}`,
     })
     .run();
@@ -108,5 +111,39 @@ describe("recentLedgerRows", () => {
   test("high confidence is not flagged low", () => {
     insertTxn({ accountId: acctA, postedOn: "2026-07-03", amountCents: -100, desc: "TJ", confidence: 0.95 });
     expect(recentLedgerRows(bundle.db, { limit: 1 })[0]!.lowConfidence).toBe(false);
+  });
+
+  /*
+   * 🔴 THE "R" BADGE READ "IS THERE A LINK?", NOT "WHAT IS THE SERIES?".
+   * Measured on the real ledger 2026-09-14: 60 active rows are linked to the 10
+   * series the owner dismissed ("Not recurring"), and every one wore the
+   * Recurring badge — `/transactions?q=PURA VIDA BAY ROAD` badged 10 of its 13
+   * rows. The link must stay (a dismissed series is the detector's re-detection
+   * sink, and the sheet needs to know the row is taken); only the badge built
+   * from it was wrong.
+   *
+   * ENDED is the other end of the rule: 194 rows of work-study and tutoring
+   * really were recurring, and keep the badge.
+   */
+  test("a row linked to a dismissed series is not badged Recurring, and keeps its link", () => {
+    const statuses = ["confirmed", "detected", "ended", "dismissed"] as const;
+    for (const [i, status] of statuses.entries()) {
+      const seriesId = bundle.db
+        .insert(recurringSeries)
+        .values({ name: `Series ${status}`, kind: "subscription", cadence: "weekly", status })
+        .returning({ id: recurringSeries.id })
+        .get().id;
+      insertTxn({ accountId: acctA, postedOn: `2026-07-0${i + 1}`, amountCents: -540, desc: status.toUpperCase(), recurringSeriesId: seriesId });
+    }
+    insertTxn({ accountId: acctA, postedOn: "2026-07-06", amountCents: -540, desc: "UNLINKED" });
+
+    const byDesc = new Map(recentLedgerRows(bundle.db, { limit: 10 }).map((r) => [r.rawDescription, r]));
+    expect(byDesc.size).toBe(5);
+    const flags = (desc: string) => ({ isRecurring: byDesc.get(desc)!.isRecurring, hasSeriesLink: byDesc.get(desc)!.hasSeriesLink });
+    expect(flags("CONFIRMED")).toEqual({ isRecurring: true, hasSeriesLink: true });
+    expect(flags("DETECTED")).toEqual({ isRecurring: true, hasSeriesLink: true });
+    expect(flags("ENDED")).toEqual({ isRecurring: true, hasSeriesLink: true });
+    expect(flags("DISMISSED")).toEqual({ isRecurring: false, hasSeriesLink: true });
+    expect(flags("UNLINKED")).toEqual({ isRecurring: false, hasSeriesLink: false });
   });
 });
