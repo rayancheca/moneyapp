@@ -405,6 +405,15 @@ export function resolveMergeTarget(
   return current; // cycle — stop where we started looping
 }
 
+/** Writes a detection-owned link onto rows; returns how many rows it wrote. */
+function tagRows(tx: Tx, ids: readonly string[], seriesId: string): number {
+  return tx
+    .update(transactions)
+    .set({ recurringSeriesId: seriesId, seriesLinkSource: "detected" })
+    .where(inArray(transactions.id, [...ids]))
+    .run().changes;
+}
+
 /**
  * Detection job. Groups only the rows detection is allowed to own — rows the
  * user attached/unlinked (series_link_source='user') are sacrosanct and never
@@ -456,13 +465,6 @@ export function detectRecurringSeries(
     else groups.set(key, [t]);
   }
 
-  const tagGroup = (tx: Tx, ids: readonly string[], seriesId: string): number =>
-    tx
-      .update(transactions)
-      .set({ recurringSeriesId: seriesId, seriesLinkSource: "detected" })
-      .where(inArray(transactions.id, [...ids]))
-      .run().changes;
-
   db.transaction((tx) => {
     const touched = new Set<string>();
     for (const [key, txns] of groups) {
@@ -485,7 +487,7 @@ export function detectRecurringSeries(
       if (existing) {
         const target = resolveMergeTarget(existing.id, mergedById);
         if (target !== existing.id) {
-          summary.taggedTransactions += tagGroup(tx, txns.map((t) => t.id), target);
+          summary.taggedTransactions += tagRows(tx, txns.map((t) => t.id), target);
           touched.add(target);
           continue;
         }
@@ -534,150 +536,188 @@ export function detectRecurringSeries(
       }
 
       // group rows are all detection-owned by construction (user rows skipped)
-      summary.taggedTransactions += tagGroup(tx, txns.map((t) => t.id), seriesId);
+      summary.taggedTransactions += tagRows(tx, txns.map((t) => t.id), seriesId);
       touched.add(seriesId);
     }
 
-    /*
-     * ── Absorption ───────────────────────────────────────────────────────
-     * A live series takes an untagged row whose descriptor it has already been
-     * tagged with, at ANY group size and on ANY account.
-     *
-     * The loop above resolves a group to a series by merchant id, or by
-     * (account, name) for a descriptor group. Both keys fail in ways the real
-     * ledger runs into constantly, and the docstring's promise that "an existing
-     * series just absorbs another occurrence of an already-known pattern" was
-     * simply not true underneath them:
-     *
-     *  - **The account is part of the descriptor key.** PURA VIDA's series lives
-     *    on Venture X; six of its charges are on Chase Sapphire. They form their
-     *    own group, match no series, and — being irregular — cannot pass
-     *    `analyzeGroup` to become one either, so they stay untagged forever.
-     *  - **Hand-created series carry no merchant id.** Breezeline and FPL were
-     *    registered by the owner, so a merchant-keyed group of their charges
-     *    finds nothing to attach to.
-     *  - **A single new charge is under MIN_OCCURRENCES**, so the group loop
-     *    skips it before the `existing` branch is ever consulted. The real
-     *    Breezeline charge of 2026-08-10 arrived on the exact expected day for
-     *    the exact expected amount; running detection against a backup of the
-     *    live database tagged zero new rows.
-     *
-     * ⚠️ The match is EXACT normalized-description equality with a row already
-     * tagged to that series, and the descriptor must belong to exactly one live
-     * series. Nothing fuzzy, because pass 33 shipped a dedupe fix that matched
-     * on (day, amount) with no description check and silently deleted real
-     * charges. This pass only ever writes a series id onto a row that had NONE —
-     * it never moves a link, never clears one, and never touches a row the user
-     * owns — so the worst case is one extra row on a series that already carries
-     * that exact descriptor.
-     *
-     * ⚠️ Read INSIDE the transaction rather than from `activeTxns`, which was
-     * captured before the group loop ran and does not know what it just tagged.
-     *
-     * detected|confirmed only. A dismissed series is the owner saying "not
-     * recurring" and an ended one is over; neither should be quietly growing.
-     * Absorption never CREATES a series, so declining to feed them cannot
-     * resurrect a pattern under a new identity.
-     */
-    const liveSeriesIds = new Set(
-      tx
-        .select({ id: recurringSeries.id, status: recurringSeries.status })
-        .from(recurringSeries)
-        .all()
-        .filter((r) => r.status === "detected" || r.status === "confirmed")
-        .map((r) => r.id),
-    );
-
-    const rows = tx
-      .select({
-        id: transactions.id,
-        seriesId: transactions.recurringSeriesId,
-        description: transactions.normalizedDescription,
-        linkSource: transactions.seriesLinkSource,
-        amountCents: transactions.amountCents,
-      })
-      .from(transactions)
-      .where(and(eq(transactions.status, "active"), lte(transactions.postedOn, today)))
-      .all();
-
-    // descriptor → the one live series carrying it; null once two disagree,
-    // because picking between them would be inventing a link.
-    const ownerOf = new Map<string, string | null>();
-    for (const r of rows) {
-      if (!r.seriesId || !liveSeriesIds.has(r.seriesId) || r.description === "") continue;
-      const seen = ownerOf.get(r.description);
-      if (seen === undefined) ownerOf.set(r.description, r.seriesId);
-      else if (seen !== r.seriesId) ownerOf.set(r.description, null);
-    }
-
-    const absorbBySeries = new Map<string, string[]>();
-    for (const r of rows) {
-      if (r.seriesId !== null || r.linkSource === "user" || r.description === "") continue;
-      const seriesId = ownerOf.get(r.description);
-      if (!seriesId) continue;
-      const list = absorbBySeries.get(seriesId);
-      if (list) list.push(r.id);
-      else absorbBySeries.set(seriesId, [r.id]);
-    }
-
-    /*
-     * ⚠️ A DETECTED series must still pass the bar that admitted it.
-     *
-     * Absorption's first version did not check, and it corrupted two series the
-     * day it shipped. "PURA VIDA BAY ROAD MIAMI BEACH" and "YA-FIT Smoothie Bar"
-     * are a café and a smoothie bar the owner visits often; each had four
-     * charges that happened to cost similar amounts, which squeaked under
-     * `AMOUNT_STABILITY_CV_MAX`. Absorbing seven more took their amount CV to
-     * 0.672 and 0.463 — three times the gate — and nothing re-ran it, so the app
-     * went on calling them subscriptions with worse evidence than it started
-     * with. Owner: *"the smoothie bat and pura vida are not recurring i just go
-     * eat there often ... you cant say doordash is recurring . its not a fixed
-     * subsription its just me getting food."*
-     *
-     * The check is CV over the series' FULL tagged set including the candidates,
-     * because that is the set the series would then be claiming to describe.
-     *
-     * CONFIRMED series are exempt, and that is the whole point of the split: the
-     * owner has vouched for them, and several are legitimately variable — his
-     * rent runs a CV of 0.326 and FPL is a utility bill that changes every
-     * month. A statistical gate must never override a human's answer; it only
-     * holds a DETECTOR to its own standard.
-     */
-    const amountsBySeries = new Map<string, number[]>();
-    for (const r of rows) {
-      if (!r.seriesId) continue;
-      const list = amountsBySeries.get(r.seriesId);
-      if (list) list.push(r.amountCents);
-      else amountsBySeries.set(r.seriesId, [r.amountCents]);
-    }
-    const statusById = new Map(
-      tx
-        .select({ id: recurringSeries.id, status: recurringSeries.status })
-        .from(recurringSeries)
-        .all()
-        .map((r) => [r.id, r.status] as const),
-    );
-    const amountById = new Map(rows.map((r) => [r.id, r.amountCents] as const));
-
-    for (const [seriesId, ids] of absorbBySeries) {
-      if (statusById.get(seriesId) === "detected") {
-        const merged = [
-          ...(amountsBySeries.get(seriesId) ?? []),
-          ...ids.map((id) => amountById.get(id) ?? 0),
-        ];
-        if (!amountsAreStable(merged)) continue;
-      }
-      summary.taggedTransactions += tagGroup(tx, ids, seriesId);
-      touched.add(seriesId);
-    }
+    // ── Absorption: see `absorbIntoLiveSeries`, which settles the stats of
+    // every series it grew, so only the group loop's series remain here.
+    const absorbed = absorbIntoLiveSeries(tx, today, ctx);
+    summary.taggedTransactions += absorbed.tagged;
 
     // settle each touched series' stats over its FULL tagged set (post-tag)
     for (const seriesId of touched) {
-      recomputeSeriesStats(tx, seriesId, today, ctx);
+      if (!absorbed.touched.has(seriesId)) recomputeSeriesStats(tx, seriesId, today, ctx);
     }
   });
 
   return summary;
+}
+
+/** What one absorption pass wrote. */
+export interface AbsorptionResult {
+  /** rows that went from no series to one */
+  tagged: number;
+  /** series whose linked set grew — their stats are already settled */
+  touched: ReadonlySet<string>;
+}
+
+/**
+ * ── Absorption ───────────────────────────────────────────────────────────
+ * A live series takes an untagged row whose descriptor it has already been
+ * tagged with, at ANY group size and on ANY account.
+ *
+ * `detectRecurringSeries`' group loop resolves a group to a series by merchant
+ * id, or by (account, name) for a descriptor group. Both keys fail in ways the
+ * real ledger runs into constantly, and its docstring's promise that "an
+ * existing series just absorbs another occurrence of an already-known pattern"
+ * was simply not true underneath them:
+ *
+ *  - **The account is part of the descriptor key.** PURA VIDA's series lives
+ *    on Venture X; six of its charges are on Chase Sapphire. They form their
+ *    own group, match no series, and — being irregular — cannot pass
+ *    `analyzeGroup` to become one either, so they stay untagged forever.
+ *  - **Hand-created series carry no merchant id.** Breezeline and FPL were
+ *    registered by the owner, so a merchant-keyed group of their charges
+ *    finds nothing to attach to.
+ *  - **A single new charge is under MIN_OCCURRENCES**, so the group loop
+ *    skips it before the `existing` branch is ever consulted. The real
+ *    Breezeline charge of 2026-08-10 arrived on the exact expected day for
+ *    the exact expected amount; running detection against a backup of the
+ *    live database tagged zero new rows.
+ *
+ * ⚠️ The match is EXACT normalized-description equality with a row already
+ * tagged to that series, and the descriptor must belong to exactly one live
+ * series. Nothing fuzzy, because pass 33 shipped a dedupe fix that matched
+ * on (day, amount) with no description check and silently deleted real
+ * charges. This pass only ever writes a series id onto a row that had NONE —
+ * it never moves a link, never clears one, and never touches a row the user
+ * owns — so the worst case is one extra row on a series that already carries
+ * that exact descriptor.
+ *
+ * ⚠️ Reads through `tx`, never from a snapshot taken before it: detection calls
+ * this after its group loop has tagged rows, and a stale read would not know
+ * what that loop just did.
+ *
+ * detected|confirmed only. A dismissed series is the owner saying "not
+ * recurring" and an ended one is over; neither should be quietly growing.
+ * Absorption never CREATES a series, so declining to feed them cannot
+ * resurrect a pattern under a new identity.
+ *
+ * ⛔ `candidateIds` narrows which untagged rows may be CLAIMED — never whose
+ * descriptor is whose. The owner map is always read from the whole ledger,
+ * because a series owns its descriptor through rows linked to it long ago.
+ * Omitted, every untagged row is a candidate: that is Detect now. The import
+ * path passes only the rows it inserted, promoted or restored (owner,
+ * 2026-09-14: an upload must not quietly re-link history nobody has looked at).
+ *
+ * Settles `recomputeSeriesStats` for every series it grew, inside `tx`.
+ */
+export function absorbIntoLiveSeries(
+  tx: Tx,
+  today: string,
+  ctx: RecomputeCtx,
+  candidateIds?: ReadonlySet<string>,
+): AbsorptionResult {
+  const liveSeriesIds = new Set(
+    tx
+      .select({ id: recurringSeries.id, status: recurringSeries.status })
+      .from(recurringSeries)
+      .all()
+      .filter((r) => r.status === "detected" || r.status === "confirmed")
+      .map((r) => r.id),
+  );
+
+  const rows = tx
+    .select({
+      id: transactions.id,
+      seriesId: transactions.recurringSeriesId,
+      description: transactions.normalizedDescription,
+      linkSource: transactions.seriesLinkSource,
+      amountCents: transactions.amountCents,
+    })
+    .from(transactions)
+    .where(and(eq(transactions.status, "active"), lte(transactions.postedOn, today)))
+    .all();
+
+  // descriptor → the one live series carrying it; null once two disagree,
+  // because picking between them would be inventing a link.
+  const ownerOf = new Map<string, string | null>();
+  for (const r of rows) {
+    if (!r.seriesId || !liveSeriesIds.has(r.seriesId) || r.description === "") continue;
+    const seen = ownerOf.get(r.description);
+    if (seen === undefined) ownerOf.set(r.description, r.seriesId);
+    else if (seen !== r.seriesId) ownerOf.set(r.description, null);
+  }
+
+  const absorbBySeries = new Map<string, string[]>();
+  for (const r of rows) {
+    if (r.seriesId !== null || r.linkSource === "user" || r.description === "") continue;
+    // the scope narrows which rows may be CLAIMED, never who owns a descriptor
+    if (candidateIds && !candidateIds.has(r.id)) continue;
+    const seriesId = ownerOf.get(r.description);
+    if (!seriesId) continue;
+    const list = absorbBySeries.get(seriesId);
+    if (list) list.push(r.id);
+    else absorbBySeries.set(seriesId, [r.id]);
+  }
+
+  /*
+   * ⚠️ A DETECTED series must still pass the bar that admitted it.
+   *
+   * Absorption's first version did not check, and it corrupted two series the
+   * day it shipped. "PURA VIDA BAY ROAD MIAMI BEACH" and "YA-FIT Smoothie Bar"
+   * are a café and a smoothie bar the owner visits often; each had four
+   * charges that happened to cost similar amounts, which squeaked under
+   * `AMOUNT_STABILITY_CV_MAX`. Absorbing seven more took their amount CV to
+   * 0.672 and 0.463 — three times the gate — and nothing re-ran it, so the app
+   * went on calling them subscriptions with worse evidence than it started
+   * with. Owner: *"the smoothie bat and pura vida are not recurring i just go
+   * eat there often ... you cant say doordash is recurring . its not a fixed
+   * subsription its just me getting food."*
+   *
+   * The check is CV over the series' FULL tagged set including the candidates,
+   * because that is the set the series would then be claiming to describe.
+   *
+   * CONFIRMED series are exempt, and that is the whole point of the split: the
+   * owner has vouched for them, and several are legitimately variable — his
+   * rent runs a CV of 0.326 and FPL is a utility bill that changes every
+   * month. A statistical gate must never override a human's answer; it only
+   * holds a DETECTOR to its own standard.
+   */
+  const amountsBySeries = new Map<string, number[]>();
+  for (const r of rows) {
+    if (!r.seriesId) continue;
+    const list = amountsBySeries.get(r.seriesId);
+    if (list) list.push(r.amountCents);
+    else amountsBySeries.set(r.seriesId, [r.amountCents]);
+  }
+  const statusById = new Map(
+    tx
+      .select({ id: recurringSeries.id, status: recurringSeries.status })
+      .from(recurringSeries)
+      .all()
+      .map((r) => [r.id, r.status] as const),
+  );
+  const amountById = new Map(rows.map((r) => [r.id, r.amountCents] as const));
+
+  let tagged = 0;
+  const touched = new Set<string>();
+  for (const [seriesId, ids] of absorbBySeries) {
+    if (statusById.get(seriesId) === "detected") {
+      const merged = [
+        ...(amountsBySeries.get(seriesId) ?? []),
+        ...ids.map((id) => amountById.get(id) ?? 0),
+      ];
+      if (!amountsAreStable(merged)) continue;
+    }
+    tagged += tagRows(tx, ids, seriesId);
+    touched.add(seriesId);
+  }
+
+  // settle each grown series' stats over its FULL tagged set (post-tag)
+  for (const seriesId of touched) recomputeSeriesStats(tx, seriesId, today, ctx);
+  return { tagged, touched };
 }
 
 export function setSeriesStatus(

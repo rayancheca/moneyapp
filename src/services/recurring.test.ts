@@ -14,9 +14,11 @@ import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
 import { categorizeAll, detectTransfers } from "./categorize";
 import {
+  absorbIntoLiveSeries,
   amountsAreStable,
   analyzeGroup,
   detectRecurringSeries,
+  loadRecomputeCtx,
   fitCadence,
   isDayOfMonthBimodal,
   isSeriesActive,
@@ -781,6 +783,46 @@ describe("a live series absorbs its own charges", () => {
     detectRecurringSeries(bundle.db, TODAY);
     expect(snapshot()).toEqual(after);
     expect(bundle.db.select().from(recurringSeries).all()).toHaveLength(1);
+  });
+
+  /*
+   * The import path calls the same rule with a scope: only the rows an upload
+   * inserted, promoted or restored may be claimed (owner, 2026-09-14). The OWNER
+   * of a descriptor is still read from the whole ledger — Breezeline owns its
+   * text through rows linked months ago, none of them in the upload.
+   */
+  test("a scoped absorption claims only its candidates, and still reads owners from the whole ledger", () => {
+    const { seriesId } = buildDetected();
+    const inScope = insertTxn(cardB, "2026-07-06", -5000, "BREEZELINE 866-290-5400 MA");
+    const outOfScope = insertTxn(cardA, "2026-07-01", -5000, "BREEZELINE 866-290-5400 MA");
+
+    const result = bundle.db.transaction((tx) =>
+      absorbIntoLiveSeries(tx, TODAY, loadRecomputeCtx(bundle.db), new Set([inScope])),
+    );
+
+    expect(seriesFor(inScope)).toBe(seriesId);
+    expect(seriesFor(outOfScope)).toBeNull();
+    expect(result.tagged).toBe(1);
+    expect([...result.touched]).toEqual([seriesId]);
+    // …and it settles what it grew, as detection always did
+    expect(
+      bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, seriesId)).get()!.lastMatchedOn,
+    ).toBe("2026-07-06");
+  });
+
+  test("an empty scope claims nothing, however absorbable the ledger is", () => {
+    buildDetected();
+    const later = insertTxn(cardA, "2026-07-06", -5000, "BREEZELINE 866-290-5400 MA");
+
+    const result = bundle.db.transaction((tx) =>
+      absorbIntoLiveSeries(tx, TODAY, loadRecomputeCtx(bundle.db), new Set()),
+    );
+
+    expect(seriesFor(later)).toBeNull();
+    expect(result.tagged).toBe(0);
+    // the control: unscoped, the same row IS absorbable — so the scope did it
+    detectRecurringSeries(bundle.db, TODAY);
+    expect(seriesFor(later)).not.toBeNull();
   });
 
   test("absorption resettles the series' stats over its FULL tagged set", () => {
