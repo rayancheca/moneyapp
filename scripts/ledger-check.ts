@@ -58,14 +58,20 @@ import { formatCents } from "@/lib/money";
  * way it is worth stopping for — do not add an entry to quiet the check
  * without understanding what the money is.
  *
- * Synthetic totals: Chase Sapphire is hand-entered card activity; Cash on Hand
- * is the -$5,000 car lease down payment. Both trace to a real record. The
- * Robinhood entry is gone because the rows it described no longer exist.
+ * Synthetic totals: Cash on Hand is the -$5,000 car lease down payment, and it
+ * traces to a real record. The Robinhood entry is gone because the rows it
+ * described no longer exist.
+ *
+ * ✅ Chase Sapphire's +$9,680.91 left on 2026-09-14. It was 36 hand-reconstructed
+ * card payments; 34 are printed on 12 of its own statements and now carry the
+ * import file of the statement that prints them, and the unprinted +$115.00 /
+ * −$115.00 pair of 2026-03-02 is superseded — so no Sapphire money in the chain
+ * lacks a document. `scripts/attach-sapphire-payment-rows-2026-09-14.ts` made
+ * that write; an entry reappearing here means a hand row came back.
  */
 const BASELINE: LedgerBaseline = {
   breaks: {},
   syntheticNetCents: {
-    "Chase Sapphire": 968_091,
     "Cash on Hand": -500_000,
   },
   /*
