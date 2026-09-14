@@ -13,6 +13,7 @@ import { Popover, usePopover } from "@/components/ui/Popover";
 import { toast } from "@/components/ui/Toast";
 import { Icon } from "@/components/shell/Icon";
 import { settleAction, useAction } from "@/hooks/useAction";
+import { transactionSubjects } from "@/lib/row-subject";
 import type {
   AttachCandidate,
   SeriesLinkedTxn,
@@ -31,6 +32,8 @@ export function LinkedTransactions({
   onChanged: () => void;
 }) {
   const { run } = useAction();
+  // a series repeats its description by construction — the menu must say which row it detaches
+  const subjects = useMemo(() => transactionSubjects(txns), [txns]);
 
   function detach(id: string): void {
     void run(() => detachFromSeriesAction({ transactionId: id }), {
@@ -83,7 +86,7 @@ export function LinkedTransactions({
           <div className="flex shrink-0 items-center gap-1">
             <Money cents={t.amountCents} flow />
             <Menu
-              label={`Actions for ${t.description}`}
+              label={`Actions for ${subjects.get(t.id) ?? t.description}`}
               items={[
                 { label: "Not part of this series", icon: "close", onSelect: () => detach(t.id), destructive: true },
               ]}

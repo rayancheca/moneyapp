@@ -9,6 +9,7 @@ import { Money } from "@/components/ui/Money";
 import { toast } from "@/components/ui/Toast";
 import { useKeyScope } from "@/components/ui/KeyScopeProvider";
 import { PRIORITIES } from "@/lib/keyscope";
+import { transactionSubjects } from "@/lib/row-subject";
 import { bulkApplyAction, bulkApplyByFilterAction } from "@/app/transactions/actions";
 import type { TxnPatch } from "@/app/transactions/action-types";
 import type { TransactionStatus } from "@/db/schema/transactions";
@@ -204,6 +205,22 @@ export function TransactionsLedger({
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [allMatching, setAllMatching] = useState(false);
 
+  // Which row each checkbox, expander and chip acts on — unique across the page,
+  // not just its day group (see `transactionSubjects`).
+  const subjects = useMemo(
+    () =>
+      transactionSubjects(
+        rows.map((r) => ({
+          id: r.id,
+          description: r.normalizedDescription,
+          amountCents: r.amountCents,
+          postedOn: r.postedOn,
+          accountName: r.accountName,
+        })),
+      ),
+    [rows],
+  );
+
   // Day subtotals are honest about the page boundary — see pageBoundary.
   const page = parseFilters(selectionParams).page;
   const groups = useMemo(
@@ -385,7 +402,7 @@ export function TransactionsLedger({
                       checked={sel}
                       disabled={allMatching}
                       onChange={() => toggleRow(r.id)}
-                      aria-label={`Select ${r.normalizedDescription}`}
+                      aria-label={`Select ${subjects.get(r.id) ?? r.normalizedDescription}`}
                       className="size-3.5 accent-accent"
                     />
                   </label>
@@ -411,6 +428,7 @@ export function TransactionsLedger({
                         currentId={r.categoryId}
                         suggestedIds={r.suggestedCategoryIds}
                         onPick={(cid) => recategorizeRow(r, cid)}
+                        subject={subjects.get(r.id)}
                       />
                     )}
                   </div>
@@ -437,7 +455,7 @@ export function TransactionsLedger({
                       type="button"
                       onClick={() => setExpandedId(expanded ? null : r.id)}
                       aria-expanded={expanded}
-                      aria-label={`${expanded ? "Collapse" : "Expand"} details for ${r.normalizedDescription}`}
+                      aria-label={`${expanded ? "Collapse" : "Expand"} details for ${subjects.get(r.id) ?? r.normalizedDescription}`}
                       className={`self-stretch pr-3 pl-1 text-ink-faint transition-colors duration-(--duration-fast) hover:text-ink ${expanded ? "" : REVEAL}`}
                     >
                       <Icon

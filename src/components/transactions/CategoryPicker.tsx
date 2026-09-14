@@ -29,6 +29,12 @@ interface CategoryPickerProps {
   /** the trigger content — defaults to the current category chip */
   children?: React.ReactNode;
   className?: string;
+  /**
+   * WHICH row the default chip changes, for its accessible name — a list of
+   * chips all named "Category: Dining. Change" names nothing (see
+   * `transactionSubjects`). Ignored when `children` supply a visible label.
+   */
+  subject?: string;
 }
 
 /**
@@ -43,6 +49,7 @@ export function CategoryPicker({
   onPick,
   children,
   className,
+  subject,
 }: CategoryPickerProps) {
   const { anchorRef, open, close, triggerProps } = usePopover<HTMLButtonElement>();
   const [query, setQuery] = useState("");
@@ -110,7 +117,11 @@ export function CategoryPicker({
         // with aria-label would drop the visible label (WCAG 2.5.3 Label in
         // Name). Only the default chip trigger, whose visible label is the
         // category name, gets the descriptive "Category: X. Change" label.
-        aria-label={children ? undefined : `Category: ${current?.name ?? "Uncategorized"}. Change`}
+        aria-label={
+          children
+            ? undefined
+            : `Category: ${current?.name ?? "Uncategorized"}${subject ? `, for ${subject}` : ""}. Change`
+        }
         className={`inline-flex max-w-full items-center rounded-full outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${className ?? ""}`}
       >
         {children ?? <CategoryChip label={current?.name ?? "Uncategorized"} hue={current?.hue ?? null} icon={current?.icon ?? null} />}
