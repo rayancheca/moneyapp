@@ -24,6 +24,7 @@ import { loadCategoryIndex, monthlySpending, recurringSeriesIdsForCategory } fro
 import { incomeExpectation, overdueForSeries } from "./budgets";
 import { ledgerOpens } from "./observation-frontier";
 import { seriesStaleness, upcomingOccurrences } from "./recurring";
+import { rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
 /**
  * The two decision cards of pass 63 — how long the money lasts, and what the
@@ -552,12 +553,18 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
    * an up-front cost amortised over 24 months, one more payment every month
    * for the life of the lease. The series link is the fact that separates
    * "handed over up front" from "the bill, paid".
+   *
+   * ⛔ …read through the series' STATUS, not the link alone. A row tagged to a
+   * series the owner DISMISSED is not a bill he pays — he said so — and no
+   * commitment line prices it, so it is money handed over like any unlinked
+   * Car row (`seriesDrawsAsRecurring`). An ENDED series' payment was a bill.
    */
   const subtree = new Set(idx.subtreeIds(car.id));
+  const notDrawn = seriesIdsNotDrawnAsRecurring(db);
   const upfrontCents = monthlySpending(db, {
     months: 24,
     refDate: today,
-    filter: (t) => t.recurringSeriesId === null,
+    filter: (t) => !rowIsRecurring(t.recurringSeriesId, notDrawn),
   })
     .filter((c) => c.categoryId !== null && subtree.has(c.categoryId))
     .reduce((s, c) => s + c.spentCents, 0);

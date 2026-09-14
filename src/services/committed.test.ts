@@ -79,6 +79,7 @@ function addSeries(opts: {
   userCategoryId?: string | null;
   userEndsOn?: string | null;
   lastMatchedOn?: string | null;
+  status?: "confirmed" | "dismissed" | "ended";
 }): string {
   return bundle.db
     .insert(recurringSeries)
@@ -86,7 +87,7 @@ function addSeries(opts: {
       name: opts.name,
       kind: opts.kind,
       cadence: "monthly",
-      status: "confirmed",
+      status: opts.status ?? "confirmed",
       intervalDaysAvg: 30,
       toleranceDays: 4,
       nextExpectedOn: opts.nextExpectedOn,
@@ -865,6 +866,37 @@ describe("carCard", () => {
     const c = carCard(bundle.db, TODAY)!;
     expect(c.cost.upfrontCents).toBe(500000);
     expect(c.cost.upfrontCents).not.toBe(569504);
+  });
+
+  /*
+   * The same rule read from the other side. A row tagged to a series the owner
+   * DISMISSED is not "the bill, paid" — he said it is not a bill, and no
+   * commitment line prices it — so it is money handed over like any unlinked
+   * Car row. `seriesDrawsAsRecurring` decides, not the link; an ENDED series'
+   * payment was a bill, and stays out.
+   */
+  test("a payment linked to a DISMISSED car series is money handed over, not the bill", () => {
+    const carId = createCarCategory();
+    const washes = addSeries({
+      name: "Car wash club",
+      kind: "bill",
+      nextExpectedOn: "2026-09-02",
+      amountCents: -2500,
+      userCategoryId: carId,
+      status: "dismissed",
+    });
+    const oldInsurer = addSeries({
+      name: "Old insurer",
+      kind: "bill",
+      nextExpectedOn: "2026-09-12",
+      amountCents: -40000,
+      userCategoryId: carId,
+      status: "ended",
+    });
+    insertTxn({ postedOn: "2026-08-02", amountCents: -2500, rawDescription: "SPARKLE CAR WASH", categoryId: carId, recurringSeriesId: washes });
+    insertTxn({ postedOn: "2026-08-12", amountCents: -40000, rawDescription: "OLD INSURER PREMIUM", categoryId: carId, recurringSeriesId: oldInsurer });
+
+    expect(carCard(bundle.db, TODAY)!.cost.upfrontCents).toBe(2500);
   });
 
   test("is absent without a Car category, and present once there is one", () => {

@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, isNull, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -24,6 +24,7 @@ import {
 } from "./recurring";
 import { overdueForSeries, unbankedIncomeForSeries } from "./arrears";
 import { activeSplitsInRange } from "./transaction-splits";
+import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
 /**
  * Current-month forecast (master-plan Phase 6) — every number traceable:
@@ -39,8 +40,9 @@ import { activeSplitsInRange } from "./transaction-splits";
  * unmarked would quietly assert a dead subscription is alive.
  *
  * VARIABLE: per top-level expense bucket, trailing average of the last 3
- * FULL months of active expense spending excluding recurring-tagged rows,
- * plus a trend adjustment capped at one typical (median) month and floored at
+ * FULL months of active expense spending excluding the rows a recurring series
+ * owns (`linkIsNotRecurring` — a DISMISSED series owns none), plus a trend
+ * adjustment capped at one typical (median) month and floored at
  * zero, scaled by remaining days / days in month. The pace itself is
  * `projection.ts::trailingPace` — shared with /spending and /budgets, so one
  * category cannot be projected two ways. Uncategorized negative amounts form an
@@ -59,10 +61,21 @@ interface TrailingAllocation {
 /**
  * Non-recurring active transactions over [from,to], exploded into per-category
  * allocations so the trailing spend/income forecasts count each split part in
- * its own category (recurring-tagged rows are excluded — they forecast via
- * FIXED). Shared by variableComponents and variableIncomeComponents.
+ * its own category. Shared by variableComponents and variableIncomeComponents.
+ *
+ * A row a live series owns is excluded — it forecasts via FIXED — and so is one
+ * an ENDED series owns: that bill stopped, and its history is not a pace.
+ *
+ * 🔴 NOT "every row with a link". A row linked to a DISMISSED series was
+ * excluded too, by `isNull(recurringSeriesId)`, while the fixed leg projects
+ * only live series — so it was counted in NEITHER. The owner dismissed those
+ * series because they are not recurring ("i just go eat there often"); on the
+ * real ledger 2026-09-14 that was 17 rows, $242.72 of June–August spend
+ * (YA-FIT, PURA VIDA, a non-Chase ATM) missing from September's projection.
+ * `linkIsNotRecurring` asks `seriesDrawsAsRecurring`, not the link.
  */
 function nonRecurringAllocations(db: AppDatabase, from: string, to: string): TrailingAllocation[] {
+  const notDrawn = seriesIdsNotDrawnAsRecurring(db);
   const rows = db
     .select({
       id: transactions.id,
@@ -74,7 +87,7 @@ function nonRecurringAllocations(db: AppDatabase, from: string, to: string): Tra
     .where(
       and(
         eq(transactions.status, "active"),
-        isNull(transactions.recurringSeriesId),
+        linkIsNotRecurring(notDrawn),
         gte(transactions.postedOn, from),
         lte(transactions.postedOn, to),
       ),
@@ -325,7 +338,7 @@ function fixedComponents(
  * 🔴 Found by reading the running app on 2026-09-02, and it was a hole rather
  * than a decision: this module contained no notion of arrears at all. The fixed
  * leg of the running month opens on `today`, and the variable leg excludes
- * every recurring-tagged row (`isNull(recurringSeriesId)`, so the pace cannot
+ * every row a recurring series owns (`linkIsNotRecurring`, so the pace cannot
  * double-count a bill). A bill that came due on the 1st and never posted was
  * therefore in NEITHER, and it left the projection entirely — measured on the
  * real ledger, September's projected spending was missing $2,291.21 of rent and

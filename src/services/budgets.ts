@@ -31,6 +31,7 @@ import {
   type BudgetTailSeries,
 } from "./arrears";
 import { effectiveSeries, projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
+import { linkIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
 // the overdue rule now lives in ./arrears (the forecast needs it too, and
 // budgets.ts already imports from ./forecast — see that module's header)
@@ -915,12 +916,25 @@ export function budgetTail(
 }
 
 /**
- * Posted spend in a subtree already tagged to a recurring series, over [from,to]
- * — split-aware. A split recurring row contributes only the parts whose category
- * falls in the subtree (its stale parent category is ignored, mirroring
- * analytics' explode); an unsplit recurring row contributes its whole amount.
+ * Posted spend in a subtree that is RECURRING money, over [from,to] — split-aware.
+ * A split recurring row contributes only the parts whose category falls in the
+ * subtree (its stale parent category is ignored, mirroring analytics' explode);
+ * an unsplit recurring row contributes its whole amount.
+ *
+ * 🔴 Recurring by `seriesDrawsAsRecurring`, not by having a link. This read
+ * `isNotNull(recurringSeriesId)`, so a charge tagged to a series the owner
+ * DISMISSED — "not recurring i just go eat there often" — was graded as a bill
+ * already paid: subtracted from the variable spend `projectSpend` extrapolates,
+ * with no tail to stand in for it (`budgetTail` projects live series only). An
+ * ENDED series' charge stays here: it was a bill.
  */
-function recurringPostedCents(db: AppDatabase, categoryId: string, from: string, to: string): number {
+function recurringPostedCents(
+  db: AppDatabase,
+  categoryId: string,
+  from: string,
+  to: string,
+  notDrawn: ReadonlySet<string>,
+): number {
   const subtree = loadCategoryIndex(db).subtreeIds(categoryId);
   const unsplit = db
     .select({ amountCents: transactions.amountCents })
@@ -928,7 +942,7 @@ function recurringPostedCents(db: AppDatabase, categoryId: string, from: string,
     .where(
       and(
         eq(transactions.status, "active"),
-        isNotNull(transactions.recurringSeriesId),
+        linkIsRecurring(notDrawn),
         inArray(transactions.categoryId, subtree),
         gte(transactions.postedOn, from),
         lte(transactions.postedOn, to),
@@ -949,7 +963,7 @@ function recurringPostedCents(db: AppDatabase, categoryId: string, from: string,
       and(
         eq(transactions.status, "active"),
         isNull(transactions.transferGroupId), // transfer-linked parts never count
-        isNotNull(transactions.recurringSeriesId),
+        linkIsRecurring(notDrawn),
         inArray(transactionSplits.categoryId, subtree),
         gte(transactions.postedOn, from),
         lte(transactions.postedOn, to),
@@ -1018,6 +1032,8 @@ export interface BudgetPaceStatus extends BudgetStatus {
  * the per-row projection + tail.
  */
 export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()): BudgetPaceStatus[] {
+  // one read for every row: the series whose charges are not recurring money
+  const notDrawn = seriesIdsNotDrawnAsRecurring(db);
   return budgetStatuses(db, refDate).map((s) => {
     const { start, end } = s.bounds;
     // budgetStatuses evaluates the period CONTAINING refDate, start-clamped to
@@ -1040,7 +1056,7 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
       from: start,
       to: refDate,
     }).spentCents;
-    const posted = recurringPostedCents(db, s.budget.categoryId, start, refDate);
+    const posted = recurringPostedCents(db, s.budget.categoryId, start, refDate, notDrawn);
     /*
      * A single charge larger than the WHOLE period's budget is an event, not a
      * rate. The owner's $5,000 car deposit landed on day 1 of a 21-day window

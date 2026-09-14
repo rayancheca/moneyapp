@@ -1512,6 +1512,55 @@ describe("budgetPaceStatuses — end-to-end pace, projection, and tail", () => {
     expect(status.pace).toBe("at-risk");
   });
 
+  /*
+   * 🔴 `recurringPostedCents` asked the raw LINK, so a charge tagged to a series
+   * the owner DISMISSED — "not recurring i just go eat there often" — was graded
+   * as a bill already paid: held out of the run-rate, with no tail (a dismissed
+   * series projects none) to stand in for it. The pace under-projected exactly
+   * the spending he said was habit. `seriesDrawsAsRecurring` decides; an ENDED
+   * series still was a bill, and its charge stays one.
+   */
+  test("a charge linked to a DISMISSED series is everyday spending — extrapolated, not a bill already paid", () => {
+    const id = createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 30_000,
+      startsOn: "2026-07-01",
+    });
+    const smoothies = createSeries({
+      name: "YA-FIT Smoothie Bar",
+      nextExpectedOn: "2026-07-10",
+      nextExpectedAmountCents: -4_000,
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+      status: "dismissed",
+    });
+    const mealKit = createSeries({
+      name: "Meal kit",
+      nextExpectedOn: "2026-07-03",
+      nextExpectedAmountCents: -6_000,
+      status: "ended",
+    });
+    // the graded window is [07-01, today 07-08]: both of its ends are in…
+    spendLinked("2026-07-01", -4_000, "Food > Dining", smoothies);
+    spendLinked("2026-07-08", -4_000, "Food > Dining", smoothies);
+    spendLinked("2026-07-03", -6_000, "Food > Dining", mealKit);
+    // …and the day either side of it is not, for either status
+    spendLinked("2026-06-30", -20_000, "Food > Dining", smoothies);
+    spendLinked("2026-07-09", -1_000, "Food > Dining", smoothies);
+    spendLinked("2026-06-30", -7_000, "Food > Dining", mealKit);
+    spendLinked("2026-07-09", -2_000, "Food > Dining", mealKit);
+
+    const status = budgetPaceStatuses(bundle.db, "2026-07-08").find((s) => s.budget.id === id)!;
+    expect(status.spentCents).toBe(17_000); // the whole period: 4k + 4k + 6k + 1k + 2k
+    expect(status.recurringPostedCents).toBe(6_000); // the ended charge alone
+    expect(status.expectedTailCents).toBe(0); // neither status projects a future
+    expect(status.overdueCents).toBe(0);
+    // variable posted = to-date 14k − recurring 6k = 8k → 8k × 23/8 = 23_000 → 14k + 0 + 23k
+    expect(status.projectedCents).toBe(37_000);
+    expect(status.pace).toBe("at-risk"); // under today (17k < 30k), over by the projection
+  });
+
   test("a future-dated recurring posting is counted once (spend-to-date base, not spent+tail)", () => {
     const id = createBudget(bundle.db, {
       categoryId: catId("Housing"),

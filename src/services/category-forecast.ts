@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, isNull, lte, notExists, or } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte, notExists } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { budgets } from "@/db/schema/budgets";
 import { recurringSeries } from "@/db/schema/recurring";
@@ -16,6 +16,7 @@ import { loadCategoryIndex, recurringSeriesIdsForSubtree, type CategoryIndex } f
 import { listBudgetableCategories } from "./budgets";
 import { trailingFullMonths } from "./forecast";
 import { lapsedSeriesShouldStopForecasting, projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
+import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
 /**
  * The PREDICTION service (user ask: "I want actual predictions on everything ·
@@ -64,10 +65,11 @@ interface PredictContext {
   earliestDate: string | null;
   /** active (detected|confirmed) recurring series rows, for per-subtree projection */
   activeSeries: (typeof recurringSeries.$inferSelect)[];
-  /** dismissed series ids — their still-tagged rows are false positives whose
-   *  spend is really variable, so they fall BACK into the discretionary trend
+  /** series whose still-tagged rows are not recurring money
+   *  (`seriesIdsNotDrawnAsRecurring` — the dismissed ones): false positives whose
+   *  spend is really variable, so it falls BACK into the discretionary trend
    *  (they are never projected as a recurring baseline). */
-  dismissedSeriesIds: Set<string>;
+  notDrawnAsRecurring: ReadonlySet<string>;
   /** the day a lapsed series is measured against */
   today: string;
   target: PeriodBounds;
@@ -103,19 +105,14 @@ function nonRecurringSubtreeSpend(
   subtreeIds: readonly string[],
   from: string,
   to: string,
-  /** dismissed-series ids to FOLD BACK into discretionary — their tagged rows are
-   *  false positives whose spend is really variable and is not projected anywhere
-   *  else. Untagged rows always count; rows tagged to a projected (detected/
-   *  confirmed) or ended series stay excluded (no double-count / no stopped bill). */
-  recoverableSeriesIds: readonly string[],
+  /** series whose tagged rows FOLD BACK into discretionary — a dismissed series'
+   *  rows are false positives whose spend is really variable and is not projected
+   *  anywhere else. Untagged rows always count; rows tagged to a projected
+   *  (detected/confirmed) or ended series stay excluded (no double-count / no
+   *  stopped bill). The one rule `/recurring` and `/budgets` read too. */
+  notDrawn: ReadonlySet<string>,
 ): number {
-  const notRecurring =
-    recoverableSeriesIds.length > 0
-      ? or(
-          isNull(transactions.recurringSeriesId),
-          inArray(transactions.recurringSeriesId, [...recoverableSeriesIds]),
-        )
-      : isNull(transactions.recurringSeriesId);
+  const notRecurring = linkIsNotRecurring(notDrawn);
   // split-aware: an unsplit row contributes its whole amount when its own
   // category is in the subtree; a split row contributes only the parts whose
   // category is in the subtree (its stale parent category is ignored).
@@ -178,14 +175,7 @@ function buildContext(db: AppDatabase, today: string): PredictContext {
       .from(recurringSeries)
       .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
       .all(),
-    dismissedSeriesIds: new Set(
-      db
-        .select({ id: recurringSeries.id })
-        .from(recurringSeries)
-        .where(eq(recurringSeries.status, "dismissed"))
-        .all()
-        .map((s) => s.id),
-    ),
+    notDrawnAsRecurring: seriesIdsNotDrawnAsRecurring(db),
     today,
     target,
     targetLabel: monthLabel(monthKey(target.start)),
@@ -240,12 +230,11 @@ function predictWith(
   //    ⛔ EVERY dismissed id, not this subtree's membership: a dismissed series
   //    the owner moved elsewhere is no longer a member here, yet its rows still
   //    sit here — and `nonRecurringSubtreeSpend` already scopes rows by subtree.
-  const recoverableSeriesIds = [...ctx.dismissedSeriesIds];
   const discretionaryHistory = ctx.months.map((m) =>
-    nonRecurringSubtreeSpend(db, subtree, m.start, m.end, recoverableSeriesIds),
+    nonRecurringSubtreeSpend(db, subtree, m.start, m.end, ctx.notDrawnAsRecurring),
   );
   const seasonalPrior = ctx.seasonal
-    ? nonRecurringSubtreeSpend(db, subtree, ctx.seasonal.start, ctx.seasonal.end, recoverableSeriesIds)
+    ? nonRecurringSubtreeSpend(db, subtree, ctx.seasonal.start, ctx.seasonal.end, ctx.notDrawnAsRecurring)
     : null;
   const discretionaryBase = projectTrailingAverage({ trailingTotalsCents: discretionaryHistory });
   const discretionary = seasonallyAdjust(discretionaryBase, seasonalPrior);

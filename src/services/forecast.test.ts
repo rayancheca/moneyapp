@@ -771,6 +771,71 @@ describe("forecastCurrentMonth", () => {
     expect(f.components.find((c) => c.label === "Salary")).toBeUndefined();
     expect(f.projectedIncomeCents).toBe(0);
   });
+
+  /*
+   * 🔴 The owner, of two series he dismissed: "the smoothie bat and pura vida
+   * are not recurring i just go eat there often". `seriesDrawsAsRecurring` says
+   * so for every surface that draws a row, and this leg asked the raw LINK
+   * instead: `isNull(recurringSeriesId)` left a row tagged to a dismissed
+   * series out of the trailing pace, while the fixed leg projects only live
+   * series — so the money was counted nowhere. Measured on the real ledger
+   * 2026-09-14: 17 rows, $242.72 over June–August (YA-FIT $99.78, PURA VIDA
+   * $85.44, Non-Chase ATM $57.50) missing from September's projection.
+   */
+  test("a row linked to a DISMISSED series is everyday spending in the variable leg; an ENDED one stays out", () => {
+    const smoothies = insertSeries({
+      name: "YA-FIT Smoothie Bar",
+      kind: "bill",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+      nextExpectedOn: "2026-07-10",
+      nextExpectedAmountCents: -1500,
+      status: "dismissed",
+    });
+    const mealKit = insertSeries({
+      name: "Meal kit",
+      kind: "subscription",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-12",
+      nextExpectedAmountCents: -9900,
+      status: "ended",
+    });
+    // the trailing window is [2026-04-01, 2026-06-30]: both of its ends are in…
+    insertTxn(cardId, "2026-04-01", -30000, { categoryName: "Groceries", recurringSeriesId: smoothies });
+    insertTxn(cardId, "2026-05-10", -40000, { categoryName: "Groceries", recurringSeriesId: smoothies });
+    insertTxn(cardId, "2026-06-30", -50000, { categoryName: "Groceries", recurringSeriesId: smoothies });
+    // …and the day either side of it is not
+    insertTxn(cardId, "2026-03-31", -700000, { categoryName: "Groceries", recurringSeriesId: smoothies });
+    insertTxn(cardId, "2026-07-01", -800000, { categoryName: "Groceries", recurringSeriesId: smoothies });
+    // an ENDED series was recurring and stopped: its charge is the bill, paid — never pace
+    insertTxn(cardId, "2026-06-12", -99900, { categoryName: "Groceries", recurringSeriesId: mealKit });
+
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    // the same arithmetic as three unlinked rows: [30000, 40000, 50000] → avg
+    // 40000 + trend 10000 → × 24/31 → 38710. Neither series projects a fixed line.
+    expect(f.components.find((c) => c.label === "Food")).toMatchObject({ kind: "variable", cents: -38710 });
+    expect(f.components.filter((c) => c.kind === "fixed")).toHaveLength(0);
+    expect(f.projectedSpendCents).toBe(-38710);
+  });
+
+  test("variable income: a deposit linked to a DISMISSED series is ongoing income like any other", () => {
+    const dismissed = insertSeries({
+      name: "Tutoring",
+      kind: "income",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-15",
+      nextExpectedAmountCents: 200000,
+      status: "dismissed",
+    });
+    insertTxn(checkingId, "2026-05-15", 200000, { categoryName: "Salary", recurringSeriesId: dismissed });
+    insertTxn(checkingId, "2026-06-15", 400000, { categoryName: "Salary", recurringSeriesId: dismissed });
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    // exactly the unlinked case above: [Apr 0, May 200000, Jun 400000] → mean 200000 × 24/31
+    expect(f.components.find((c) => c.label === "Salary")).toMatchObject({ kind: "variable", cents: 154839 });
+    expect(f.projectedIncomeCents).toBe(154839);
+  });
 });
 
 /**
