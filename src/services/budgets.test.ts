@@ -1691,6 +1691,63 @@ describe("budgetPaceStatuses — end-to-end pace, projection, and tail", () => {
   });
 
   /*
+   * THE WIRING, not the export. Every case above holds ONE charge larger than
+   * the plan, so a budget whose one-off is "the old over-plan sum, less what
+   * `recurringPostedCents` already took" (`Math.max(0, overPlan − posted)`,
+   * never calling `budgetOneOffCents`) passed all of them: the netting is only
+   * wrong when the bill and the event are DIFFERENT rows. These two put a bill
+   * and an unlinked event in the same budget, each against a $100.00 plan with
+   * $40.00 of ordinary spend beside them, so only the $40.00 may extrapolate:
+   *   - a SMALL bill beside the event — the netting subtracts the $10.00 bill
+   *     from the event and lets that $10.00 back into the rate (14_375);
+   *   - a bill LARGER than the plan beside the event — the real July 2026
+   *     Subscriptions shape: HBO Max −$260.26 linked, APPLE.COM/BILL −$272.18
+   *     unlinked, both over $15.00. The link-blind filter took both as one-offs
+   *     on top of the posted bill, and the pace extrapolated nothing.
+   */
+  test("a small bill beside an unlinked charge larger than the budget: only the ordinary spend extrapolates", () => {
+    const fees = createBudget(bundle.db, {
+      categoryId: catId("Fees"),
+      period: "monthly",
+      amountCents: 10_000,
+      startsOn: "2026-07-01",
+    });
+    const bankFee = createSeries({
+      name: "Account maintenance fee",
+      nextExpectedOn: "2026-07-02",
+      nextExpectedAmountCents: -1_000,
+    });
+    spendLinked("2026-07-02", -1_000, "Fees > Bank Fees", bankFee); // a bill, under the plan
+    spend("2026-07-03", -15_000, "Fees > Card Annual Fees"); // unlinked, over the plan: an event
+    spend("2026-07-04", -4_000, "Fees > Interest Charges"); // the rate
+
+    const status = budgetPaceStatuses(bundle.db, "2026-07-08").find((s) => s.budget.id === fees)!;
+    expect(status.spentCents).toBe(20_000);
+    expect(status.recurringPostedCents).toBe(1_000);
+    expect(status.expectedTailCents + status.overdueCents).toBe(0);
+    expect(status.projectedCents).toBe(20_000 + 11_500); // 4_000 × 23/8
+  });
+
+  test("a bill larger than the budget beside an unlinked charge larger than the budget: each leaves the run-rate once", () => {
+    const subs = createBudget(bundle.db, {
+      categoryId: catId("Subscriptions"),
+      period: "monthly",
+      amountCents: 10_000,
+      startsOn: "2026-07-01",
+    });
+    const hbo = createSeries({ name: "HBO Max", nextExpectedOn: "2026-07-02", nextExpectedAmountCents: -15_000 });
+    spendLinked("2026-07-02", -15_000, "Subscriptions > Streaming", hbo); // a bill, over the plan
+    spend("2026-07-03", -15_000, "Subscriptions > Software"); // unlinked, over the plan: an event
+    spend("2026-07-04", -4_000, "Subscriptions > Memberships"); // the rate
+
+    const status = budgetPaceStatuses(bundle.db, "2026-07-08").find((s) => s.budget.id === subs)!;
+    expect(status.spentCents).toBe(34_000);
+    expect(status.recurringPostedCents).toBe(15_000);
+    expect(status.expectedTailCents + status.overdueCents).toBe(0);
+    expect(status.projectedCents).toBe(34_000 + 11_500); // 4_000 × 23/8
+  });
+
+  /*
    * Split rows, mirroring `recurringPostedCents`: a part is a bill when its
    * PARENT is linked to a series drawn as recurring and the PART's category is
    * in the subtree. `spendingTransactions` explodes each part carrying its
