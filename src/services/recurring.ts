@@ -984,8 +984,13 @@ export function effectiveSeries(s: SeriesOverrides): EffectiveSeries {
   return {
     cadence: s.userCadence ?? s.cadence,
     // a user cadence override abandons the detected interval — step by the
-    // override's nominal cadence length instead of the old detected gap
-    intervalDaysAvg: s.userCadence ? null : s.intervalDaysAvg,
+    // override's nominal cadence length instead of the old detected gap.
+    // 🔴 …and so does a user DATE, for the reason the anchor below gives: the
+    // date the owner typed IS the schedule. Linking one more Breezeline row
+    // (4 postings, a 20-day first gap) recomputed its interval to 27.33 while
+    // his Sep 8 held, and the walk stepped 27 days — Oct 5, Nov 1, Nov 28 —
+    // putting 13 charges ($650) in the committed year instead of 12 ($600).
+    intervalDaysAvg: s.userCadence || s.userNextExpectedOn ? null : s.intervalDaysAvg,
     nextExpectedOn: s.userNextExpectedOn ?? s.nextExpectedOn,
     nextExpectedAmountCents: s.userAmountCents ?? s.nextExpectedAmountCents,
     // A user-set date IS the day-of-month, so the detected anchor must yield to

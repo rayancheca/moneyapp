@@ -434,6 +434,20 @@ describe("user overrides shadow detection (§4.4)", () => {
     expect(projectOccurrences(toProjectable(pinned), "2027-03-01", "2027-03-31").map((o) => o.date))
       .toEqual(["2027-03-15"]);
   });
+
+  /**
+   * 🔴 …and the detected INTERVAL must not survive it either. Linking one more
+   * Breezeline row (a 20-day first gap among four postings) recomputed its
+   * interval to 27.33 while the owner's Sep 8 held, and the walk stepped 27
+   * days — Oct 5, Nov 1, Nov 28 — 13 charges in the committed year, not 12.
+   */
+  test("a user's own date beats the detected interval too — the walk stays on that day", () => {
+    const drifted = { ...base, intervalDaysAvg: 27.33, nextExpectedOn: "2026-10-11", userNextExpectedOn: "2026-09-08" };
+    expect(effectiveSeries(drifted).intervalDaysAvg).toBeNull();
+    const dates = projectOccurrences(toProjectable(drifted), "2026-09-01", "2027-08-31").map((o) => o.date);
+    expect(dates).toHaveLength(12);
+    expect(dates.every((d) => d.endsWith("-08"))).toBe(true);
+  });
 });
 
 describe("isSeriesActive (Active/Inactive split, §4.1)", () => {
