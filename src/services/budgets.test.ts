@@ -13,12 +13,14 @@ import { levelledMonthlyCents } from "@/lib/income-basis";
 import { recurringSeries } from "@/db/schema/recurring";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import { createAccount } from "./accounts";
+import { setSplits } from "./transaction-splits";
 import { categorySpending, recurringSeriesIdsForCategory } from "./analytics";
 import {
   budgetGuidanceCents,
   budgetPaceStatuses,
   budgetSections,
   budgetStatuses,
+  budgetOneOffCents,
   budgetOverdue,
   budgetTail,
   computeAlert,
@@ -131,17 +133,17 @@ function bindSeries(seriesId: string, categoryPath: string): void {
     .run();
 }
 
-/** A spend row linked to a recurring series (and optionally superseded). */
+/** A spend row linked to a recurring series (and optionally superseded). Returns its id. */
 function spendLinked(
   postedOn: string,
   amountCents: number,
   categoryPath: string,
   seriesId: string,
   status: "active" | "superseded" = "active",
-): void {
+): string {
   seq += 1;
   const rawDescription = `LINKED ${seq}`;
-  bundle.db
+  return bundle.db
     .insert(transactions)
     .values({
       accountId: cardId,
@@ -154,7 +156,8 @@ function spendLinked(
       status,
       dedupeHash: dedupeHash({ accountId: cardId, postedOn, amountCents, rawDescription, occurrenceIndex: 0 }),
     })
-    .run();
+    .returning({ id: transactions.id })
+    .get().id;
 }
 
 function statusFor(budgetId: string, refDate: string) {
@@ -1440,6 +1443,24 @@ describe("budgetTail — expected-but-unposted recurring", () => {
   });
 });
 
+describe("budgetOneOffCents — too big to be a rate, unless a bill already accounts for it", () => {
+  const notDrawn: ReadonlySet<string> = new Set(["dismissed-series"]);
+  const row = (amountCents: number, recurringSeriesId: string | null = null) => ({ amountCents, recurringSeriesId });
+
+  test("both ends of the threshold: the plan itself is a rate, one cent over is an event", () => {
+    expect(budgetOneOffCents([row(-10_000)], 10_000, notDrawn)).toBe(0);
+    expect(budgetOneOffCents([row(-10_001)], 10_000, notDrawn)).toBe(10_001);
+  });
+
+  test("a row a series drawn as recurring owns is never a one-off; a dismissed series' row is", () => {
+    expect(budgetOneOffCents([row(-50_000, "live-series")], 10_000, notDrawn)).toBe(0);
+    expect(budgetOneOffCents([row(-50_000, "dismissed-series")], 10_000, notDrawn)).toBe(50_000);
+    expect(
+      budgetOneOffCents([row(-50_000, "live-series"), row(-20_000), row(-3_000), row(25_000)], 10_000, notDrawn),
+    ).toBe(20_000); // a refund is not a charge, and small spend is the rate
+  });
+});
+
 describe("budgetGuidanceCents — 6-month daily rate, period-agnostic", () => {
   test("expresses trailing spend at the budget period's length; refunds clamp to 0", () => {
     // 18,100 over 181 days (Jan–Jun 2026) = 100/day exactly
@@ -1559,6 +1580,167 @@ describe("budgetPaceStatuses — end-to-end pace, projection, and tail", () => {
     // variable posted = to-date 14k − recurring 6k = 8k → 8k × 23/8 = 23_000 → 14k + 0 + 23k
     expect(status.projectedCents).toBe(37_000);
     expect(status.pace).toBe("at-risk"); // under today (17k < 30k), over by the projection
+  });
+
+  /*
+   * 🔴 A charge larger than the whole budget left the run-rate TWICE when a bill
+   * owned it. `projectSpend` extrapolates `spent − recurringPosted − oneOff`, and
+   * the one-off filter took every row larger than the plan with no link check,
+   * so a live bill's charge was in both, and the second copy hid that much
+   * ordinary spend from the pace. HBO Max's $260.26 against the $15.00
+   * Subscriptions plan (real ledger, 2026-07-18) is the shape.
+   *
+   * The same $150.00 charge, four ways, each against a $100.00 plan with $40.00
+   * of ordinary spend beside it — it must leave the run-rate exactly once:
+   *   - LIVE series  → a bill already paid (`recurringPostedCents`), not a one-off;
+   *   - ENDED series → the same: it was a bill (`seriesDrawsAsRecurring`);
+   *   - UNLINKED     → a one-off;
+   *   - DISMISSED    → a one-off: the owner said it is not recurring, so
+   *                    `recurringPostedCents` does not take it, and this must.
+   */
+  test("a charge larger than the budget leaves the run-rate once — a bill already paid or a one-off, never both", () => {
+    const budgetFor = (categoryPath: string) =>
+      createBudget(bundle.db, {
+        categoryId: catId(categoryPath),
+        period: "monthly",
+        amountCents: 10_000,
+        startsOn: "2026-07-01",
+      });
+    const subs = budgetFor("Subscriptions");
+    const fees = budgetFor("Fees");
+    const shopping = budgetFor("Shopping");
+    const food = budgetFor("Food");
+
+    const live = createSeries({ name: "HBO Max", nextExpectedOn: "2026-07-02", nextExpectedAmountCents: -15_000 });
+    const ended = createSeries({
+      name: "Card annual fee",
+      nextExpectedOn: "2026-07-02",
+      nextExpectedAmountCents: -15_000,
+      status: "ended",
+    });
+    const dismissed = createSeries({
+      name: "YA-FIT Smoothie Bar",
+      nextExpectedOn: "2026-07-02",
+      nextExpectedAmountCents: -15_000,
+      status: "dismissed",
+    });
+    spendLinked("2026-07-02", -15_000, "Subscriptions > Streaming", live);
+    spendLinked("2026-07-02", -15_000, "Fees > Card Annual Fees", ended);
+    spend("2026-07-02", -15_000, "Shopping > General");
+    spendLinked("2026-07-02", -15_000, "Food > Dining", dismissed);
+    spend("2026-07-04", -4_000, "Subscriptions > Software");
+    spend("2026-07-04", -4_000, "Fees > Bank Fees");
+    spend("2026-07-04", -4_000, "Shopping > Clothing");
+    spend("2026-07-04", -4_000, "Food > Coffee");
+
+    const statuses = budgetPaceStatuses(bundle.db, "2026-07-08");
+    const row = (id: string) => statuses.find((s) => s.budget.id === id)!;
+    // variable = the $40.00 alone → 4_000 × 23/8 = 11_500 → 19k + 0 + 11.5k, all four
+    for (const id of [subs, fees, shopping, food]) {
+      expect(row(id).spentCents).toBe(19_000);
+      expect(row(id).expectedTailCents + row(id).overdueCents).toBe(0);
+      expect({ category: row(id).categoryPath, projectedCents: row(id).projectedCents }).toEqual({
+        category: row(id).categoryPath,
+        projectedCents: 30_500,
+      });
+    }
+    expect(row(subs).recurringPostedCents).toBe(15_000);
+    expect(row(fees).recurringPostedCents).toBe(15_000);
+    expect(row(shopping).recurringPostedCents).toBe(0);
+    expect(row(food).recurringPostedCents).toBe(0);
+  });
+
+  test("the one-off threshold is STRICTLY above the plan, for a bill and for a plain charge alike", () => {
+    const budgetFor = (categoryPath: string) =>
+      createBudget(bundle.db, {
+        categoryId: catId(categoryPath),
+        period: "monthly",
+        amountCents: 10_000,
+        startsOn: "2026-07-01",
+      });
+    const atPlan = budgetFor("Food");
+    const centOver = budgetFor("Shopping");
+    const billAtPlan = budgetFor("Subscriptions");
+    const billCentOver = budgetFor("Fees");
+    spend("2026-07-02", -10_000, "Food > Dining"); // exactly the plan: a rate, extrapolated
+    spend("2026-07-02", -10_001, "Shopping > General"); // one cent over: an event, not extrapolated
+    const atPlanSeries = createSeries({
+      name: "Streaming bundle",
+      nextExpectedOn: "2026-07-02",
+      nextExpectedAmountCents: -10_000,
+    });
+    const overPlanSeries = createSeries({
+      name: "Card annual fee",
+      nextExpectedOn: "2026-07-02",
+      nextExpectedAmountCents: -10_001,
+    });
+    spendLinked("2026-07-02", -10_000, "Subscriptions > Streaming", atPlanSeries);
+    spendLinked("2026-07-02", -10_001, "Fees > Card Annual Fees", overPlanSeries);
+    spend("2026-07-04", -4_000, "Subscriptions > Software");
+    spend("2026-07-04", -4_000, "Fees > Bank Fees");
+
+    const statuses = budgetPaceStatuses(bundle.db, "2026-07-08");
+    const row = (id: string) => statuses.find((s) => s.budget.id === id)!;
+    expect(row(atPlan).projectedCents).toBe(10_000 + 28_750); // 10_000 × 23/8
+    expect(row(centOver).projectedCents).toBe(10_001);
+    // a bill either side of the line is a bill: only the $40.00 beside it extrapolates
+    expect(row(billAtPlan).recurringPostedCents).toBe(10_000);
+    expect(row(billAtPlan).projectedCents).toBe(14_000 + 11_500);
+    expect(row(billCentOver).recurringPostedCents).toBe(10_001);
+    expect(row(billCentOver).projectedCents).toBe(14_001 + 11_500);
+  });
+
+  /*
+   * Split rows, mirroring `recurringPostedCents`: a part is a bill when its
+   * PARENT is linked to a series drawn as recurring and the PART's category is
+   * in the subtree. `spendingTransactions` explodes each part carrying its
+   * parent's link, so the same question asked of the part gives the same answer.
+   */
+  test("a split part larger than the budget follows its parent's link — a live bill's part is not also a one-off", () => {
+    const food = createBudget(bundle.db, {
+      categoryId: catId("Food"),
+      period: "monthly",
+      amountCents: 10_000,
+      startsOn: "2026-07-01",
+    });
+    const shopping = createBudget(bundle.db, {
+      categoryId: catId("Shopping"),
+      period: "monthly",
+      amountCents: 10_000,
+      startsOn: "2026-07-01",
+    });
+    const live = createSeries({
+      name: "Meal plan + lounge",
+      nextExpectedOn: "2026-07-02",
+      nextExpectedAmountCents: -30_000,
+    });
+    const liveRow = spendLinked("2026-07-02", -30_000, "Food > Dining", live);
+    setSplits(bundle.db, liveRow, [
+      { categoryId: catId("Food > Dining"), amountCents: -15_000 },
+      { categoryId: catId("Travel > Flights"), amountCents: -15_000 },
+    ]);
+    const dismissed = createSeries({
+      name: "Outlet runs",
+      nextExpectedOn: "2026-07-03",
+      nextExpectedAmountCents: -24_000,
+      status: "dismissed",
+    });
+    const dismissedRow = spendLinked("2026-07-03", -24_000, "Shopping > General", dismissed);
+    setSplits(bundle.db, dismissedRow, [
+      { categoryId: catId("Shopping > General"), amountCents: -12_000 },
+      { categoryId: catId("Travel > Hotels"), amountCents: -12_000 },
+    ]);
+    spend("2026-07-04", -4_000, "Food > Coffee");
+    spend("2026-07-04", -2_000, "Shopping > Clothing");
+
+    const statuses = budgetPaceStatuses(bundle.db, "2026-07-08");
+    const row = (id: string) => statuses.find((s) => s.budget.id === id)!;
+    expect(row(food).spentCents).toBe(19_000);
+    expect(row(food).recurringPostedCents).toBe(15_000); // the Food part, not the $300.00 parent
+    expect(row(food).projectedCents).toBe(19_000 + 11_500); // 4_000 × 23/8
+    expect(row(shopping).spentCents).toBe(14_000);
+    expect(row(shopping).recurringPostedCents).toBe(0);
+    expect(row(shopping).projectedCents).toBe(14_000 + 5_750); // the $120.00 part is a one-off; 2_000 × 23/8
   });
 
   test("a future-dated recurring posting is counted once (spend-to-date base, not spent+tail)", () => {

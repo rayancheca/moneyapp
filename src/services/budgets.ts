@@ -22,6 +22,7 @@ import {
   loadCategoryIndex,
   spendingTransactions,
   recurringSeriesIdsForCategory,
+  type AnalyticsTxn,
 } from "./analytics";
 import { trailingFullMonths } from "./forecast";
 import {
@@ -31,7 +32,7 @@ import {
   type BudgetTailSeries,
 } from "./arrears";
 import { effectiveSeries, projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
-import { linkIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
+import { linkIsRecurring, rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
 // the overdue rule now lives in ./arrears (the forecast needs it too, and
 // budgets.ts already imports from ./forecast — see that module's header)
@@ -526,6 +527,10 @@ export interface PaceProjectionInput {
    * extrapolating it is how a $5,000 car deposit on day 1 of a 21-day window
    * projected $105,000 against a $921.38 budget. It still counts as spent — it
    * is simply not evidence about the remaining days.
+   *
+   * ⛔ DISJOINT from `recurringPostedCents` (`budgetOneOffCents`): both are
+   * subtracted before the extrapolation, so a row in both hides its own size
+   * of everyday spend from the pace.
    */
   oneOffCents?: number;
 }
@@ -548,6 +553,45 @@ export function projectSpend(input: PaceProjectionInput): number {
       ? Math.round((variablePosted * remainingDays) / elapsedDays)
       : 0;
   return spentCents + expectedTailCents + variableRemainder;
+}
+
+/**
+ * The posted spend `projectSpend` must not extrapolate because it is an EVENT —
+ * a single charge larger than the whole period's plan — and is not already held
+ * out as a bill.
+ *
+ * 🔴 THE SECOND HALF WAS MISSING. `projectSpend` subtracts `recurringPostedCents`
+ * AND `oneOffCents` from spend-to-date, and this filter took every row over the
+ * plan with no link check, so a bill larger than its budget was subtracted
+ * twice and the second copy hid that much ordinary spend from the run-rate. On
+ * the real ledger (2026-09-14) the only linked charge ever larger than its plan
+ * while a budget existed is HBO Max, −$260.26 on 2026-07-18 against the $15.00
+ * Subscriptions plan: that day the run-rate extrapolated nothing ($262.79) where
+ * the $2.53 of other subscriptions beside it projects $273.75, and on 07-24 the
+ * published projection read $564.95 where it is $574.69. The card annual fees
+ * are the same shape against Fees' $15.00, measured on a copy with that budget
+ * started early: Sapphire's $95.00 hid the $5.00 wire fee beside it (03-05,
+ * $100.00 → $126.00); Venture X's $395.00 in January had nothing beside it.
+ *
+ * "Held out as a bill" is `rowIsRecurring`, the in-memory form of the
+ * `linkIsRecurring` that `recurringPostedCents` queries with, so the two cannot
+ * disagree about a row: an ENDED series' charge was a bill and stays one, and a
+ * DISMISSED series' charge is not — `recurringPostedCents` does not take it, so
+ * a large one must be a one-off here or it is extrapolated as a habit. A split
+ * part arrives exploded carrying its PARENT's link, which is the question
+ * `recurringPostedCents` asks of a part.
+ *
+ * `planCents` is strict: a charge exactly the size of the plan is still a rate.
+ */
+export function budgetOneOffCents(
+  rows: readonly Pick<AnalyticsTxn, "amountCents" | "recurringSeriesId">[],
+  planCents: number,
+  notDrawn: ReadonlySet<string>,
+): number {
+  return rows
+    .filter((t) => !rowIsRecurring(t.recurringSeriesId, notDrawn))
+    .filter((t) => -t.amountCents > planCents)
+    .reduce((sum, t) => sum - t.amountCents, 0);
 }
 
 /**
@@ -1070,20 +1114,19 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
      * honestly `over` — but it tells you nothing about the other 20 days, so it
      * must not be extrapolated. Threshold is the budget itself rather than an
      * invented multiple: anything that alone exhausts the period cannot be the
-     * daily habit the run-rate is modelling.
+     * daily habit the run-rate is modelling. A bill that size is not one: it
+     * is already in `posted`, and `budgetOneOffCents` leaves it there.
      *
      * Deliberately the PLAN amount and not `availableCents`: this is a question
      * about the shape of a charge, not about how much room is left. Raising the
      * bar by a large carry would let the $5,000 deposit back into the run-rate
      * and reproduce the $105,000 projection exactly.
      */
-    const oneOffCents = spendingTransactions(db, {
-      categoryId: s.budget.categoryId,
-      from: start,
-      to: refDate,
-    })
-      .filter((t) => -t.amountCents > s.budget.amountCents)
-      .reduce((sum, t) => sum - t.amountCents, 0);
+    const oneOffCents = budgetOneOffCents(
+      spendingTransactions(db, { categoryId: s.budget.categoryId, from: start, to: refDate }),
+      s.budget.amountCents,
+      notDrawn,
+    );
     // the tail lives inside the budget's window too: for a budget that starts
     // LATER in this period, anchor a day before startsOn so budgetTail's
     // strictly-after-anchor window opens exactly on startsOn, never earlier.
