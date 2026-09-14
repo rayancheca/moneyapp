@@ -485,9 +485,18 @@ export default async function ImportsPage({
                                1,108 · bank category 1,092 — and 127 of the 130
                                files have no uncategorized row at all. Only the
                                hand-categorized rows lose anything, which the
-                               second clause already said. */
+                               second clause already said.
+
+                               🔴 …and it left out the recurring links, which an
+                               import now writes too (2026-09-14): a charge joins
+                               the live series already carrying its exact
+                               description, and a commitment that has never
+                               posted takes its exact first charge. Before that,
+                               re-importing a statement brought its bills back
+                               UNLINKED, and every surface that decides "paid"
+                               from links called them owed. */
                             reassurance:
-                              "The statement file itself stays on disk. Re-importing brings the rows back and re-runs the rules, the merchant map and transfer detection over them — what is lost is the hand-categorization.",
+                              "The statement file itself stays on disk. Re-importing brings the rows back and re-runs the rules, the merchant map, transfer detection and recurring-series linking over them — what is lost is the hand-categorization.",
                           }}
                         />
                       </td>
