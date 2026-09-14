@@ -37,7 +37,14 @@ test-results/
 # repo root because tsx can only resolve `@/` from inside it, and four commits on
 # 2026-09-11 swept twelve of them in behind a `git add -A`. One of them broke
 # `tsc --noEmit`. Ignored so it cannot happen again.
-probe-*.ts
-*probe*.ts
-.p.ts
-.skeptic-probe-*.ts
+#
+# ⛔ ANCHORED AT THE ROOT. An unanchored `*probe*.ts` also matched the repo's own
+# committed `scripts/probe-*.ts` — 50 of them — so the next legitimate probe
+# would have been silently ignored.
+/probe-*.ts
+/*probe*.ts
+/*probe*.mjs
+/.p*.ts
+/zz*.ts
+/zz*.mts
+/.skeptic-probe-*.ts
