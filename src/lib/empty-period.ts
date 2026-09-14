@@ -150,7 +150,8 @@ export function emptyPeriodCopy(
         title: `Nothing posted in the part of ${label} that has been imported`,
         description:
           `${days(reason.uncoveredDays)} of it ${reason.uncoveredDays === 1 ? "has" : "have"} not been imported` +
-          `${causes.length > 0 ? ` — ${causes.join(" and ")}` : ""}, so this is a lower bound rather than a measurement.`,
+          // ", and": each cause ends on a date with its year ("Aug 25, 2022, and …")
+          `${causes.length > 0 ? ` — ${causes.join(", and ")}` : ""}, so this is a lower bound rather than a measurement.`,
       };
     }
     case "measured":

@@ -352,7 +352,7 @@ export function cashJobNaming(year: number): { label: string; basis: string } {
   if (year >= Number(WORK_STUDY_ENDED.slice(0, 4))) {
     return {
       label: "Cash job",
-      basis: `${rule} Work-study ended ${ended} and these deposits are the job that replaced it.`,
+      basis: `${rule} Work-study ended ${ended}, and these deposits are the job that replaced it.`,
     };
   }
   return {

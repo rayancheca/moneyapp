@@ -253,7 +253,7 @@ describe("yearSummaryView — the cash job's story is only told where it happene
       .flatMap((sec) => sec.lines)
       .find((l) => l.id === "cash-job")!;
     expect(cashJob.basis).toContain("the job that replaced it");
-    expect(cashJob.basis).toContain("Work-study ended May 13, 2026 and");
+    expect(cashJob.basis).toContain("Work-study ended May 13, 2026, and");
     expect(cashJob.label).toBe("Cash job");
   });
 
