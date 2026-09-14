@@ -49,6 +49,8 @@ interface Snapshot {
   txnByStatus: Record<string, number>;
   periodsByReconciliation: Record<string, number>;
   basisCounts: Record<string, number>;
+  /** active rows per recurring series — an import now links what it brings in */
+  seriesLinks: Record<string, number>;
   grades: { name: string; grade: string; verifiedThrough: string | null }[];
 }
 
@@ -64,6 +66,9 @@ function snapshot(db: ReturnType<typeof createDatabase>["db"], sqlite: ReturnTyp
     txnByStatus: group("SELECT status AS k, COUNT(*) AS n FROM transactions GROUP BY status"),
     periodsByReconciliation: group("SELECT reconciliation AS k, COUNT(*) AS n FROM statement_periods GROUP BY reconciliation"),
     basisCounts: group("SELECT basis AS k, COUNT(*) AS n FROM daily_balances GROUP BY basis"),
+    seriesLinks: group(
+      "SELECT s.name AS k, COUNT(*) AS n FROM transactions t JOIN recurring_series s ON s.id = t.recurring_series_id WHERE t.status = 'active' GROUP BY s.id",
+    ),
     grades: accountCoverage(db).map((c) => ({
       name: c.accountName,
       grade: c.grade,
@@ -149,6 +154,9 @@ async function main(): Promise<void> {
   diffTable("TRANSACTIONS BY STATUS", before.txnByStatus, after.txnByStatus);
   diffTable("STATEMENT PERIODS", before.periodsByReconciliation, after.periodsByReconciliation);
   diffTable("DAILY BALANCE BASIS", before.basisCounts, after.basisCounts);
+  // an import links the rows it brings in to recurring series, so a trial has
+  // to show which series would gain rows before the real ledger does
+  diffTable("ACTIVE ROWS LINKED PER RECURRING SERIES", before.seriesLinks, after.seriesLinks);
 
   console.log("\nCOVERAGE GRADES");
   const beforeByName = new Map(before.grades.map((g) => [g.name, g]));

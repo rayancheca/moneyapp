@@ -8,6 +8,7 @@ import { seedDatabase } from "@/db/seed";
 import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
 import { institutions } from "@/db/schema/institutions";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
+import { recurringSeries } from "@/db/schema/recurring";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
@@ -435,6 +436,35 @@ describe("a hard delete must not take the money with it", () => {
     expect(() => restoreDuplicatesLosingTheirSurvivor(bundle.db, [a])).not.toThrow();
     expect(restoreDuplicatesLosingTheirSurvivor(bundle.db, [a])).toEqual([]);
     expect(statusOf(b)).toBe("superseded");
+  });
+
+  /*
+   * The restored copy re-enters the ledger the way an imported row does, so it
+   * is linked the way an imported row is: to the live series already carrying
+   * its exact description. Un-import restores it, and nothing else would.
+   */
+  test("the copy un-import puts back joins the series that already carries its description", () => {
+    const { a, b, candidateId } = flaggedPair();
+    resolveDuplicate(bundle.db, { candidateId, decision: "confirmed_duplicate", retiredTransactionId: b });
+    const seriesId = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "CPI canteen", kind: "bill", cadence: "monthly", status: "confirmed" })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    const sibling = insertTxn({ importFileId: fileB, postedOn: "2026-06-09", description: "CPI CANTEEN VENDING MIAMI 800-628-" });
+    bundle.db
+      .update(transactions)
+      .set({ recurringSeriesId: seriesId, seriesLinkSource: "detected" })
+      .where(eq(transactions.id, sibling))
+      .run();
+
+    unimportFile(bundle.db, fileA);
+
+    expect(bundle.db.select().from(transactions).where(eq(transactions.id, a)).get()).toBeUndefined();
+    expect(statusOf(b)).toBe("active");
+    const restored = bundle.db.select().from(transactions).where(eq(transactions.id, b)).get()!;
+    expect(restored.recurringSeriesId).toBe(seriesId);
+    expect(restored.seriesLinkSource).toBe("detected");
   });
 
   test("un-importing the survivor's file puts the retired copy back, end to end", () => {

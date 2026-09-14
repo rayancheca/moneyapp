@@ -16,6 +16,8 @@ import { fidelityOf, importStatementFiles, migrateStorageLayout, unimportFile, a
 import { PROFILES } from "./profiles";
 import { importFiles as importFilesTable } from "@/db/schema/imports";
 import { dedupeHash } from "@/lib/hash";
+import { normalizeDescription } from "@/lib/normalize";
+import { attachTransactions } from "@/services/recurring-links";
 
 const FIXTURES = path.join(process.cwd(), "tests", "fixtures", "synthetic");
 
@@ -571,6 +573,170 @@ describe("PDF statements + reconciliation", () => {
       expect(p.reconciliation).toBe("value_anchor");
       expect(p.marketChangeCents).not.toBeNull();
     }
+  });
+});
+
+describe("an import links what it brought in to the series that already carry it — and nothing else", () => {
+  /*
+   * 🔴 Nothing on the import path wrote a series link (service.ts settled with
+   * categorizeAll + detectTransfers only), and every surface decides "paid" from
+   * links. On the real ledger, 2026-09-14, the Breezeline charge imported that
+   * afternoon sat unlinked under a series carrying its exact descriptor, and
+   * /recurring said it "came due Sep 8 and has not posted".
+   *
+   * Scope is the owner's decision (2026-09-14): only rows the upload inserted or
+   * promoted. The fixture's Chase1111 card carries NETFLIX.COM NETFLIX.COM CA
+   * on 04/03, 05/03 and 06/03 (Q2 file) and 07/03 (July file), all -$15.49.
+   */
+  const Q2 = "Chase1111_Activity_2026-04-01_2026-06-30.CSV";
+  const JULY = "Chase1111_Activity_2026-07-01_2026-07-05.CSV";
+
+  function rowOn(day: string, rawPrefix: string) {
+    const rows = bundle.db
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.postedOn, day), eq(transactions.status, "active")))
+      .all()
+      .filter((t) => t.rawDescription.startsWith(rawPrefix));
+    expect(rows).toHaveLength(1);
+    return rows[0]!;
+  }
+
+  function registerSeries(name: string, status: "confirmed" | "dismissed" | "ended" = "confirmed"): string {
+    return bundle.db
+      .insert(recurringSeries)
+      .values({ name, kind: "subscription", cadence: "monthly", status, intervalDaysAvg: 30 })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+  }
+
+  function setLink(txnId: string, seriesId: string | null, source: "user" | "detected"): void {
+    bundle.db
+      .update(transactions)
+      .set({ recurringSeriesId: seriesId, seriesLinkSource: source })
+      .where(eq(transactions.id, txnId))
+      .run();
+  }
+
+  /**
+   * A live series owning the July file's Starbucks descriptor through a row
+   * entered by hand — the control that proves an upload in the same test DID
+   * link, so a negative assertion beside it is not passing for free.
+   */
+  function controlSeries(): string {
+    const accountId = rowOn("2026-06-03", "NETFLIX").accountId;
+    const raw = "STARBUCKS STORE 10502 NEW YORK NY";
+    const id = registerSeries("Starbucks (control)");
+    const hand = bundle.db
+      .insert(transactions)
+      .values({
+        accountId,
+        postedOn: "2026-06-02",
+        amountCents: -765,
+        rawDescription: raw,
+        normalizedDescription: normalizeDescription(raw),
+        dedupeHash: dedupeHash({ accountId, postedOn: "2026-06-02", amountCents: -765, rawDescription: raw, occurrenceIndex: 0 }),
+      })
+      .returning({ id: transactions.id })
+      .get().id;
+    setLink(hand, id, "user");
+    return id;
+  }
+
+  test("the July charge joins the series; the user's detach and the older untouched row stay as they were", async () => {
+    await importStatementFiles(bundle.db, [load("chase", Q2)]);
+    const netflix = registerSeries("Netflix");
+    setLink(rowOn("2026-06-03", "NETFLIX").id, netflix, "user");
+    setLink(rowOn("2026-05-03", "NETFLIX").id, null, "user"); // the owner said "not this one"
+
+    await importStatementFiles(bundle.db, [load("chase", JULY)]);
+
+    const july = rowOn("2026-07-03", "NETFLIX");
+    expect(july.recurringSeriesId).toBe(netflix);
+    expect(july.seriesLinkSource).toBe("detected");
+    expect(bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, netflix)).get()!.lastMatchedOn).toBe(
+      "2026-07-03",
+    );
+    // a user detach survives the upload
+    expect(rowOn("2026-05-03", "NETFLIX").recurringSeriesId).toBeNull();
+    // April was already in the ledger: history the upload did not bring in
+    expect(rowOn("2026-04-03", "NETFLIX").recurringSeriesId).toBeNull();
+  });
+
+  test.each([["dismissed"], ["ended"]] as const)("a %s series takes nothing from an upload", async (status) => {
+    await importStatementFiles(bundle.db, [load("chase", Q2)]);
+    const parked = registerSeries("Netflix", status);
+    setLink(rowOn("2026-06-03", "NETFLIX").id, parked, "user");
+    const control = controlSeries();
+
+    await importStatementFiles(bundle.db, [load("chase", JULY)]);
+
+    expect(rowOn("2026-07-03", "NETFLIX").recurringSeriesId).toBeNull();
+    expect(rowOn("2026-07-02", "STARBUCKS").recurringSeriesId).toBe(control);
+  });
+
+  test("a description two live series both carry is linked to neither", async () => {
+    await importStatementFiles(bundle.db, [load("chase", Q2)]);
+    const one = registerSeries("Netflix");
+    const two = registerSeries("Netflix (second)");
+    setLink(rowOn("2026-06-03", "NETFLIX").id, one, "user");
+    setLink(rowOn("2026-05-03", "NETFLIX").id, two, "user");
+    const control = controlSeries();
+
+    await importStatementFiles(bundle.db, [load("chase", JULY)]);
+
+    expect(rowOn("2026-07-03", "NETFLIX").recurringSeriesId).toBeNull();
+    expect(rowOn("2026-07-02", "STARBUCKS").recurringSeriesId).toBe(control);
+  });
+
+  test("accepting a gap links the rows it promotes", async () => {
+    // The corrupted Discover statement (2024-11-15 → 2024-12-14) quarantines its
+    // own rows; the clean statement before it carries the same Spotify charge a
+    // month earlier, active. Measured on this fixture before writing the test.
+    await importStatementFiles(bundle.db, [
+      loadDir("discover", "corrupted")[0]!,
+      load("discover", "statements", "discover-card-2024-10-15_2024-11-14.pdf"),
+    ]);
+    const gap = bundle.db.select().from(statementPeriods).all().find((p) => p.reconciliation === "gap")!;
+    expect(gap.periodStart).toBe("2024-11-15");
+    const spotifyOn = (day: string) =>
+      bundle.db
+        .select()
+        .from(transactions)
+        .all()
+        .filter((t) => t.postedOn === day && t.rawDescription.startsWith("SPOTIFY"));
+    const [november] = spotifyOn("2024-11-07");
+    const [december] = spotifyOn("2024-12-07");
+    expect(november!.status).toBe("active");
+    expect(december!.status).toBe("quarantined");
+    expect(december!.normalizedDescription).toBe(november!.normalizedDescription);
+    const spotify = registerSeries("Spotify");
+    setLink(november!.id, spotify, "user");
+
+    acceptGap(bundle.db, gap.id);
+
+    const promoted = bundle.db.select().from(transactions).where(eq(transactions.id, december!.id)).get()!;
+    expect(promoted.status).toBe("active");
+    expect(promoted.recurringSeriesId).toBe(spotify);
+    expect(bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, spotify)).get()!.lastMatchedOn).toBe(
+      "2024-12-07",
+    );
+  });
+
+  test("un-importing a file resettles every series it takes rows from", async () => {
+    // 🔴 `last_matched_on` is written only by recomputeSeriesStats, and a hard
+    // delete never called it: the series went on naming a charge that was gone.
+    await importStatementFiles(bundle.db, [load("chase", Q2), load("chase", JULY)]);
+    const netflix = registerSeries("Netflix");
+    attachTransactions(bundle.db, netflix, [rowOn("2026-06-03", "NETFLIX").id, rowOn("2026-07-03", "NETFLIX").id]);
+    const lastMatched = () =>
+      bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, netflix)).get()!.lastMatchedOn;
+    expect(lastMatched()).toBe("2026-07-03");
+
+    const julyFile = bundle.db.select().from(importFilesTable).all().find((f) => f.fileName === JULY)!;
+    unimportFile(bundle.db, julyFile.id);
+
+    expect(lastMatched()).toBe("2026-06-03");
   });
 });
 

@@ -23,6 +23,7 @@ import { RECONCILE_STATUSES, periodVerdict } from "@/lib/reconciliation";
 import { categorizeAll, detectTransfers } from "../categorize";
 import { rebuildAccount } from "../derivation";
 import { flagDuplicateCandidates } from "../duplicate-flags";
+import { linkRowsMadeActive, settleSeriesStats } from "../recurring-import-links";
 import { accountsOfTransactions, restoreDuplicatesLosingTheirSurvivor } from "../duplicate-lifecycle";
 import { accountSlug, institutionSlug } from "./account-slug";
 import { sniffFile } from "./sniff";
@@ -690,9 +691,11 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
 
   const outcomes: FileOutcome[] = [];
   const touchedAccounts = new Set<string>();
+  // the files this call wrote rows under — the only rows linking may claim
+  const writtenFileIds = new Set<string>();
 
   for (const file of sniffed) {
-    const outcome = await importOneFile(db, file, touchedAccounts);
+    const outcome = await importOneFile(db, file, touchedAccounts, writtenFileIds);
     outcomes.push(outcome);
   }
 
@@ -700,9 +703,16 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
   if (touchedAccounts.size > 0) {
     categorizeAll(db);
     detectTransfers(db);
+    // read BEFORE the reconcile: the ones it promotes are this call's doing too
+    const quarantinedBefore = quarantinedIdsOn(db, [...touchedAccounts]);
     // reconcile ALL periods of touched accounts again — later files can close
     // or open gaps in earlier files' periods (date-range membership)
     reconcileAccounts(db, [...touchedAccounts]);
+    // AFTER the reconcile, because the reconcile decides which rows are active.
+    // Only what this call inserted or promoted may be claimed (owner,
+    // 2026-09-14); a row the reconcile quarantined is not active and waits for
+    // its gap to be accepted, which links it then.
+    linkRowsMadeActive(db, [...rowIdsOfFiles(db, writtenFileIds), ...quarantinedBefore]);
     for (const accountId of touchedAccounts) rebuildAccount(db, accountId);
     // AFTER the reconcile, never before — but NOT to catch the rows the
     // reconcile promotes. reconcileAccounts only promotes when the gap
@@ -757,6 +767,7 @@ async function importOneFile(
   db: AppDatabase,
   file: ReturnType<typeof sniffFile>,
   touchedAccounts: Set<string>,
+  writtenFileIds: Set<string>,
 ): Promise<FileOutcome> {
   const sha = fileSha256(file.buffer);
   const { profile, unreadable } = await selectProfile(file);
@@ -857,6 +868,9 @@ async function importOneFile(
   }
 
   const fileAccountIds = new Set<string>();
+  // before the loop: a statement that fails mid-file leaves its earlier
+  // statements' rows committed and active, and those are this upload's rows too
+  writtenFileIds.add(fileRow.id);
   try {
     for (const statement of statements) {
       const accountId = resolveAccount(db, statement.accountHint);
@@ -1175,6 +1189,28 @@ function upsertAnchorAtDayBefore(
   `);
 }
 
+/** Ids of every row filed under these import files, whatever their status. */
+function rowIdsOfFiles(db: AppDatabase, fileIds: ReadonlySet<string>): string[] {
+  if (fileIds.size === 0) return [];
+  return db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(inArray(transactions.importFileId, [...fileIds]))
+    .all()
+    .map((r) => r.id);
+}
+
+/** Quarantined rows on these accounts — the rows a reconcile may promote. */
+function quarantinedIdsOn(db: AppDatabase, accountIds: readonly string[]): string[] {
+  if (accountIds.length === 0) return [];
+  return db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(and(inArray(transactions.accountId, [...accountIds]), eq(transactions.status, "quarantined")))
+    .all()
+    .map((r) => r.id);
+}
+
 /** Supersede everything an import file contributed (re-parse lifecycle). */
 function supersedeFileContribution(db: AppDatabase, oldFileId: string): void {
   db.transaction((tx) => {
@@ -1365,12 +1401,14 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
     .all()
     .map((r) => r.accountId);
 
-  const doomed = db
-    .select({ id: transactions.id })
+  const doomedRows = db
+    .select({ id: transactions.id, seriesId: transactions.recurringSeriesId })
     .from(transactions)
     .where(eq(transactions.importFileId, importFileId))
-    .all()
-    .map((r) => r.id);
+    .all();
+  const doomed = doomedRows.map((r) => r.id);
+  // every series about to lose a linked row: its stats describe the rows it had
+  const seriesLosingRows = doomedRows.flatMap((r) => (r.seriesId === null ? [] : [r.seriesId]));
 
   // The file's rows leave the database entirely — re-importing re-parses the
   // original, but every correction made to those rows since is gone.
@@ -1400,7 +1438,14 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
       tx.delete(importFiles).where(eq(importFiles.id, importFileId)).run();
     });
     const scope = [...new Set([...affected, ...accountsOfTransactions(db, restored)])];
+    const quarantinedBefore = quarantinedIdsOn(db, scope);
     reconcileAccounts(db, scope);
+    // A restored twin, or a row whose gap this removal closed, is back in the
+    // ledger — link it the way an import would. Nothing else may be claimed.
+    linkRowsMadeActive(db, [...restored, ...quarantinedBefore]);
+    // …and the series whose rows just went: `last_matched_on` must not keep
+    // naming a posting that no longer exists
+    settleSeriesStats(db, seriesLosingRows);
     for (const accountId of scope) rebuildAccount(db, accountId);
     // removing a file can CLOSE another file's gap, and reconcileAccounts then
     // promotes that period's quarantined rows — the same seam as an import
@@ -1415,26 +1460,27 @@ export function acceptGap(db: AppDatabase, statementPeriodId: string): void {
   // Un-quarantining is a one-way door: the reconciliation verdict that put
   // those rows aside is overwritten, and nothing recomputes it.
   withPreMutationSnapshot(db, "accept-gap", () => {
+    let promoted: string[] = [];
     db.transaction((tx) => {
       tx.update(statementPeriods)
         .set({ reconciliation: "accepted" })
         .where(eq(statementPeriods.id, statementPeriodId))
         .run();
-      tx.update(transactions)
-        .set({ status: "active" })
-        .where(
-          and(
-            eq(transactions.accountId, period.accountId),
-            eq(transactions.importFileId, period.importFileId),
-            eq(transactions.status, "quarantined"),
-            gte(transactions.postedOn, period.periodStart),
-            lte(transactions.postedOn, period.periodEnd),
-          ),
-        )
-        .run();
+      const held = and(
+        eq(transactions.accountId, period.accountId),
+        eq(transactions.importFileId, period.importFileId),
+        eq(transactions.status, "quarantined"),
+        gte(transactions.postedOn, period.periodStart),
+        lte(transactions.postedOn, period.periodEnd),
+      );
+      // the SAME predicate as the promotion, read first — these are the rows
+      // this acceptance makes active, and the only ones linking may claim
+      promoted = tx.select({ id: transactions.id }).from(transactions).where(held).all().map((r) => r.id);
+      tx.update(transactions).set({ status: "active" }).where(held).run();
     });
     categorizeAll(db);
     detectTransfers(db);
+    linkRowsMadeActive(db, promoted);
     rebuildAccount(db, period.accountId);
     // The rows just promoted were invisible to the import-time identity pool
     // for as long as they sat quarantined, so an overlapping export imported
