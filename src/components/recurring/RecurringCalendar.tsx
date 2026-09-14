@@ -17,14 +17,14 @@ import { RECURRING_JARGON } from "@/lib/jargon";
 import { monthFlow } from "@/lib/month-flow";
 import { CALENDAR_DENSITY_CLASS } from "./recurring-view-spec";
 import { formatCents } from "@/lib/money";
-import type { ForecastConfidence, UnsettledReason } from "@/lib/occurrence-verdict";
+import type { ForecastConfidence } from "@/lib/occurrence-verdict";
 import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
 import type {
   CalendarEntry,
   DayStateKind,
   RecurringCalendarMonth,
 } from "@/services/recurring-calendar";
-import { KIND_LABEL, longDate, monthLabel, upcomingEvidenceWord } from "./labels";
+import { KIND_LABEL, longDate, monthLabel, unsettledReasonWord, upcomingEvidenceWord } from "./labels";
 import { MonthFlowStrip } from "./MonthFlowStrip";
 
 interface RecurringCalendarProps {
@@ -148,16 +148,6 @@ const STATE_TONE: Record<DayStateKind, "positive" | "warning" | "info" | "negati
 };
 
 /**
- * Why an occurrence could not be graded — the sentence that belongs beside the
- * "?" so it never reads as a shrug.
- */
-const REASON_WORD: Record<UnsettledReason, string> = {
-  not_imported: "not imported yet",
-  unbanked: "not banked yet",
-  schedule_unproven: "due date not established",
-};
-
-/**
  * The FUTURE half's second channel, which the owner asked for by name.
  *
  * Confidence is deliberately NOT a colour. State already owns the palette, and
@@ -201,7 +191,7 @@ const HATCH: React.CSSProperties = {
 function entrySummary(e: CalendarEntry): string {
   const evidence = upcomingEvidenceWord(e);
   const qualifier = e.unsettledReason
-    ? ` (${REASON_WORD[e.unsettledReason]})`
+    ? ` (${unsettledReasonWord(e.unsettledReason)})`
     : e.confidence
       ? ` (${CONFIDENCE_WORD[e.confidence]}${evidence ? `, ${evidence}` : ""})`
       : "";
@@ -519,7 +509,7 @@ export function RecurringCalendar({ initialMonth, today, density = "tall", onMon
                             call. A cell can therefore never show "not yet known"
                             beside the wrong reason for it. */}
                         {e.state === "unsettled" && e.unsettledReason
-                          ? `${STATE_WORD[e.state]} — ${REASON_WORD[e.unsettledReason]}`
+                          ? `${STATE_WORD[e.state]} — ${unsettledReasonWord(e.unsettledReason)}`
                           : STATE_WORD[e.state]}
                       </Badge>
                       {e.confidence ? (

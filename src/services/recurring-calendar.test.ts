@@ -367,6 +367,68 @@ describe("recurringCalendar", () => {
     expect(lease).toMatchObject({ state: "missed", unsettledReason: null });
   });
 
+  /*
+   * ⛔ THE CANCELLING PAIR, PINNED FROM BOTH SIDES. Car insurance on the real
+   * ledger (2026-09-14): a date typed by hand (2026-09-11), ONE charge linked by
+   * hand (PROGRESSIVE INS -$357.58 on 2026-08-12, on Venture X, imported
+   * through 2026-09-13) and no billing account recorded. The posting count makes
+   * `scheduleIsProven` false, and that is the only thing keeping Sep 11 from a
+   * red ✕: its September payment bills on an account the ledger has not been
+   * shown yet, and the one account the app can attribute it to has.
+   *
+   * So this passes at the time of writing, on purpose. It turns red the day
+   * someone widens `scheduleIsProven` to trust a typed date without the billing
+   * account in the data — the change measured to put a false "missed" on his
+   * insurance.
+   */
+  test("a typed schedule with ONE hand-linked charge is not graded missed — and naming the account it bills on makes it not imported", () => {
+    insertTxn({ postedOn: "2026-06-12", amountCents: -35758, rawDescription: "PROGRESSIVE INS" });
+    insertTxn({ postedOn: "2026-07-18", amountCents: -2200, rawDescription: "GROCERY" });
+    const id = bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Car insurance",
+        accountId: null,
+        kind: "bill",
+        cadence: "monthly",
+        nextExpectedOn: "2026-07-11",
+        nextExpectedAmountCents: -36149,
+        userAmountCents: -36149,
+        lastMatchedOn: "2026-06-12",
+        status: "confirmed",
+      })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    bundle.db
+      .update(transactions)
+      .set({ recurringSeriesId: id })
+      .where(eq(transactions.rawDescription, "PROGRESSIVE INS"))
+      .run();
+
+    const insuranceOn11th = () =>
+      recurringCalendar(bundle.db, "2026-07", "2026-07-20").entriesByDay["2026-07-11"]?.find(
+        (e) => e.name === "Car insurance",
+      );
+    expect(insuranceOn11th()).toMatchObject({ state: "unsettled", unsettledReason: "schedule_unproven" });
+
+    // the account the future payments bill on, imported only to the 4th
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const checkingId = createAccount(bundle.db, { institutionId: chase.id, name: "Everyday Checking", type: "checking" });
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId: checkingId,
+        postedOn: "2026-07-04",
+        amountCents: -1000,
+        rawDescription: "CHECKING ROW",
+        normalizedDescription: normalizeDescription("CHECKING ROW"),
+        dedupeHash: "checking-row-2026-07-04",
+      })
+      .run();
+    bundle.db.update(recurringSeries).set({ accountId: checkingId }).where(eq(recurringSeries.id, id)).run();
+    expect(insuranceOn11th()).toMatchObject({ state: "unsettled", unsettledReason: "not_imported" });
+  });
+
   test("an overdue occurrence on an UNIMPORTED day is unsettled, not missed", () => {
     buildMonthlyNetflix();
     detectRecurringSeries(bundle.db, TODAY);

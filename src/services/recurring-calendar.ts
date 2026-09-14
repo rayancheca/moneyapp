@@ -260,6 +260,12 @@ export function classifyPostedAmount(
  * from: zero postings means a human authored it, one or two means detection
  * extrapolated it from too little, and `MIN_OCCURRENCES` or more means it was
  * measured.
+ *
+ * ⚠️ A date typed by hand with one or two charges linked to it by hand also
+ * lands in the middle band — Car insurance did on 2026-09-03 — so the reason
+ * this produces is worded for what is COUNTED, "too few charges to grade yet"
+ * (`unsettledReasonWord`), not "due date not established". See `ScheduleProven`
+ * for why the gate itself must not be widened to trust that date.
  */
 export function scheduleIsProven(postingCount: number): boolean {
   return postingCount === 0 || postingCount >= MIN_OCCURRENCES;

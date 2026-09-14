@@ -221,8 +221,19 @@ export function seriesAccountIds(db: AppDatabase): Map<string, Set<string>> {
  * not once seen it happen, so it is in no position to report that it failed to.
  * Every series on the real ledger that carries no `account_id` — rent, the cash
  * job, FPL, Breezeline — has postings, and those postings name the accounts. The
- * only members of this population are commitments registered for a future date
- * (the car lease, the car insurance), which are never graded as past anyway.
+ * only members of this population are commitments registered by hand that have
+ * never charged (the car lease, the gym, parking): a past occurrence of one reads
+ * "not imported yet", never "missed".
+ *
+ * ⚠️ A posting names the account a charge was PAID from, which need not be the
+ * account the next one bills on. 🔴 This docstring used to count the car
+ * insurance among the never-charged. Measured 2026-09-14: its one linked charge
+ * is on Venture X, imported through 09-13, while it was registered as "#1 paid on
+ * Venture X, #2-6 Wells Fargo" (scripts/register-car-commitments.ts), Wells Fargo
+ * imported through 08-25, with `account_id` left NULL. So this frontier vouched
+ * for its Sep 11 on an account that does not pay it, and only `ScheduleProven`
+ * (one posting is too few) kept that day off "missed". The owner chose the same
+ * day not to record an account the ledger holds no payment from.
  */
 export function frontierForSeries(
   frontier: ObservationFrontier,

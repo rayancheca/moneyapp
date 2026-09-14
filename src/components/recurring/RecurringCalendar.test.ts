@@ -68,4 +68,15 @@ describe("RecurringCalendar cell names", () => {
     );
     expect(html).toContain('aria-label="Sep 22, 2026 — 1 item: Gym upcoming (scheduled, never billed) -$100.00"');
   });
+
+  /*
+   * 🔴 Owner decision 2026-09-14 (keep the posting-count check, fix its word):
+   * Car insurance's Sep 11 read "due date not established" over a date he typed.
+   */
+  test("a schedule with too few charges says so, not that its due date is unknown", () => {
+    expect(html).toContain(
+      'aria-label="Sep 11, 2026 — 1 item: Car insurance not yet known (too few charges to grade yet) -$361.49"',
+    );
+    expect(html).not.toContain("due date not established");
+  });
 });

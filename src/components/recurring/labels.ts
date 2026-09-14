@@ -3,6 +3,7 @@ import { endsInsideHorizon } from "@/lib/committed";
 import { dayWindowLabel } from "@/lib/period";
 import { wholeToleranceDays } from "@/lib/recurring-step";
 import { formatCents } from "@/lib/money";
+import type { UnsettledReason } from "@/lib/occurrence-verdict";
 import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import type { ForecastComponent } from "@/services/forecast";
@@ -287,6 +288,34 @@ export function staleSummaryLabel(entries: readonly StaleEntry[], window: string
 export function upcomingEvidenceWord(e: { isStale: boolean; neverBilled: boolean }): string | null {
   if (e.neverBilled) return SERIES_EVIDENCE_LABEL["never-billed"].toLowerCase();
   return e.isStale ? "evidence stale" : null;
+}
+
+/**
+ * Why a PAST occurrence could not be graded — the words beside the "?" so it
+ * never reads as a shrug. The calendar's cell names and its Day Sheet both
+ * print them, from the one reason `settledVerdict` returned with the state.
+ *
+ * 🔴 `schedule_unproven` read "due date not established". The check behind it,
+ * `scheduleIsProven`, counts the charges linked to a series (one or two is too
+ * few) and never asks where the date came from — so the word claimed more than
+ * the check measured. Measured on the real ledger 2026-09-14: Car insurance's
+ * Sep 11 read "not yet known (due date not established) -$361.49" over a date
+ * the owner had typed by hand, with one charge linked by hand, while /budgets,
+ * the forecast and the series page all said it "came due Sep 11".
+ *
+ * Both hazards the check exists for are "too few charges": a date extrapolated
+ * from one posting (FPL, wrong by thirteen days) and a series that cannot absorb
+ * its own next charge (Breezeline, two). Neither says the date is unknown. The
+ * owner's decision, 2026-09-14: keep the check, fix the word.
+ */
+const UNSETTLED_REASON_WORD: Record<UnsettledReason, string> = {
+  not_imported: "not imported yet",
+  unbanked: "not banked yet",
+  schedule_unproven: "too few charges to grade yet",
+};
+
+export function unsettledReasonWord(reason: UnsettledReason): string {
+  return UNSETTLED_REASON_WORD[reason];
 }
 
 /**

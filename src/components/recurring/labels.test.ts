@@ -15,8 +15,29 @@ import {
   postedSpreadReading,
   seriesVerb,
   futureDateLabel,
+  unsettledReasonWord,
   upcomingEvidenceWord,
 } from "./labels";
+
+describe("unsettledReasonWord", () => {
+  /*
+   * 🔴 "due date not established" over a date the owner TYPED. Car insurance on
+   * the real ledger (2026-09-14): next expected 2026-09-11, registered by hand,
+   * one charge linked by hand. The check behind the word counts linked charges;
+   * it never asks where the date came from, so the word claimed more than the
+   * check measured — and /budgets, the forecast and the series page all said
+   * "came due Sep 11" of the same bill.
+   */
+  test("a schedule with too few charges says what was counted, not that the date is unknown", () => {
+    expect(unsettledReasonWord("schedule_unproven")).toBe("too few charges to grade yet");
+    expect(unsettledReasonWord("schedule_unproven")).not.toContain("due date");
+  });
+
+  test("the coverage and cash reasons keep their words", () => {
+    expect(unsettledReasonWord("not_imported")).toBe("not imported yet");
+    expect(unsettledReasonWord("unbanked")).toBe("not banked yet");
+  });
+});
 
 describe("upcomingEvidenceWord", () => {
   test("a series that has never charged is 'never billed', in the All tab's word", () => {

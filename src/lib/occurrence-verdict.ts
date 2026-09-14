@@ -141,12 +141,26 @@ export interface SettledVerdict {
  * typed it or detection extrapolated it.
  *
  *  - **No postings at all**: nothing could have been extrapolated, so the date
- *    is a human's statement. The owner's car lease ($559.89 from 2026-09-11) and
- *    car insurance were registered by hand and have never charged; they are
- *    among the most certain dates in the ledger and must stay missable.
+ *    is a human's statement. The owner's car lease (registered by hand for the
+ *    15th, never charged) is among the most certain dates in the ledger and
+ *    must stay missable.
  *  - **One or two postings**: the date IS detection's estimate, drawn from too
  *    few points to be one. This is the population that produced both false
  *    accusations above.
+ *
+ *    ⚠️ …or a date TYPED by hand that has since had a charge linked to it by
+ *    hand — the count cannot see who wrote the date. 🔴 This bullet used to name
+ *    Car insurance under "never charged … must stay missable"; linking its first
+ *    charge (PROGRESSIVE INS -$357.58, 2026-08-12, linked 2026-09-03) moved it
+ *    here, and on 2026-09-14 this band was the only thing keeping its Sep 11
+ *    from a false red ✕. Its one posting is on Venture X, imported through
+ *    09-13, while the payments after the first were registered to bill on Wells
+ *    Fargo, imported through 08-25 — and no billing account is recorded, so the
+ *    coverage check vouched for a day the paying account had not been shown.
+ *    ⛔ Do not widen this gate to trust a typed date (`userNextExpectedOn`, or
+ *    the "scheduled" confidence) while the account it bills on is not in the
+ *    data: measured, that turns Sep 11 into "missed". The reason word is "too
+ *    few charges to grade yet" (`unsettledReasonWord`) — what was counted.
  *  - **`MIN_OCCURRENCES` or more**: a measured cadence. Hold the biller to it —
  *    pass 45's $2,285.70 of overdue rent (three postings) still reads missed.
  *
