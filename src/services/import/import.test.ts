@@ -985,6 +985,120 @@ describe("re-parse lifecycle: a parser-version bump preserves user work", () => 
     expect(fresh.categoryId).toBe(categoryId);
     expect(fresh.notes).toBe("family car");
   });
+
+  /*
+   * 🔴 A detach — the owner's "not this one" — is stored as NO series with
+   * series_link_source 'user', and the carry travelled only with a series id.
+   * On uc/linking (2026-09-14) the fresh row came back NULL/NULL under the new
+   * import file, which is the upload's own linking scope, and absorption
+   * re-linked it to the very series he had unlinked it from, in that upload.
+   * Each test holds a control: the March row's hand link travels, and it is
+   * what makes the April description absorbable at all.
+   */
+  const NETFLIX_CSV: ImportInput = {
+    name: "Chase7799_Activity_2026.CSV",
+    buffer: Buffer.from(
+      cardCsv([
+        "7799,03/05/2026,03/05/2026,NETFLIX.COM LOS GATOS CA,Entertainment,Sale,-15.99,",
+        "7799,04/05/2026,04/05/2026,NETFLIX.COM LOS GATOS CA,Entertainment,Sale,-15.99,",
+      ]),
+    ),
+  };
+
+  function liveNetflixOn(day: string): typeof transactions.$inferSelect {
+    const rows = bundle.db
+      .select()
+      .from(transactions)
+      .where(and(ne(transactions.status, "superseded"), eq(transactions.postedOn, day)))
+      .all()
+      .filter((r) => r.rawDescription.startsWith("NETFLIX"));
+    expect(rows).toHaveLength(1);
+    return rows[0]!;
+  }
+
+  /** March linked to Netflix by hand; April detached by hand. */
+  function linkMarchDetachApril(): string {
+    const seriesId = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "Netflix", kind: "subscription", cadence: "monthly", status: "confirmed", intervalDaysAvg: 30 })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    const set = (day: string, link: string | null) =>
+      bundle.db
+        .update(transactions)
+        .set({ recurringSeriesId: link, seriesLinkSource: "user" })
+        .where(eq(transactions.id, liveNetflixOn(day).id))
+        .run();
+    set("2026-03-05", seriesId);
+    set("2026-04-05", null);
+    return seriesId;
+  }
+
+  test("a detach survives a re-parse — the upload does not re-link what the owner unlinked", async () => {
+    await importStatementFiles(bundle.db, [NETFLIX_CSV]);
+    const seriesId = linkMarchDetachApril();
+    const aprilBefore = liveNetflixOn("2026-04-05");
+
+    const [outcome] = await withBumpedParserVersion("chase-card-csv", () =>
+      importStatementFiles(bundle.db, [NETFLIX_CSV]),
+    );
+
+    expect(outcome!.status).toBe("parsed");
+    expect(outcome!.carriedForward).toBe(2); // the link AND the detach
+    const april = liveNetflixOn("2026-04-05");
+    expect(april.id).not.toBe(aprilBefore.id); // a fresh row, under the new file
+    expect(april).toMatchObject({ recurringSeriesId: null, seriesLinkSource: "user" });
+    expect(liveNetflixOn("2026-03-05")).toMatchObject({ recurringSeriesId: seriesId, seriesLinkSource: "user" });
+  });
+
+  test("a detach survives a takeover — the higher-fidelity successor stays unlinked", async () => {
+    await importStatementFiles(bundle.db, [NETFLIX_CSV]);
+    const seriesId = linkMarchDetachApril();
+    const aprilBefore = liveNetflixOn("2026-04-05");
+    // a QFX (higher fidelity) for the same card, covering April 5 only
+    const qfx = `OFXHEADER:100
+
+<OFX>
+<SIGNONMSGSRSV1><SONRS><STATUS><CODE>0
+<SEVERITY>INFO
+</STATUS>
+<FI><ORG>B1
+</FI>
+<INTU.BID>10898
+</SONRS></SIGNONMSGSRSV1>
+<CREDITCARDMSGSRSV1><CCSTMTTRNRS><CCSTMTRS>
+<CCACCTFROM><ACCTID>00007799
+</CCACCTFROM>
+<BANKTRANLIST>
+<DTSTART>20260405
+<DTEND>20260405
+<STMTTRN>
+<TRNTYPE>DEBIT
+<DTPOSTED>20260405
+<TRNAMT>-15.99
+<FITID>1
+<NAME>NETFLIX.COM
+<MEMO>NETFLIX.COM LOS GATOS CA
+</STMTTRN>
+</BANKTRANLIST>
+<LEDGERBAL><BALAMT>100.00
+<DTASOF>20260405
+</LEDGERBAL>
+</CCSTMTRS></CCSTMTTRNRS></CREDITCARDMSGSRSV1>
+</OFX>
+`;
+
+    const [outcome] = await importStatementFiles(bundle.db, [{ name: "Chase7799_Activity_x.QFX", buffer: Buffer.from(qfx) }]);
+
+    expect(outcome!.supersededTakeover).toBe(1);
+    expect(bundle.db.select().from(transactions).where(eq(transactions.id, aprilBefore.id)).get()!.status).toBe("superseded");
+    const april = liveNetflixOn("2026-04-05");
+    expect(april.id).not.toBe(aprilBefore.id);
+    // the successor carries the same description the March hand link owns
+    expect(april.normalizedDescription).toBe(liveNetflixOn("2026-03-05").normalizedDescription);
+    expect(april).toMatchObject({ recurringSeriesId: null, seriesLinkSource: "user" });
+    expect(liveNetflixOn("2026-03-05")).toMatchObject({ recurringSeriesId: seriesId, seriesLinkSource: "user" });
+  });
 });
 
 describe("the full 2-year backfill (golden acceptance)", () => {

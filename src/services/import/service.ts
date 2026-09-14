@@ -238,6 +238,30 @@ function carryKey(accountId: string, postedOn: string, amountCents: number): str
   return `${accountId}\x1f${postedOn}\x1f${amountCents}`;
 }
 
+/**
+ * A detach — the owner's "not this one" — is a user attribute like any other:
+ * stored as NO series with `series_link_source = 'user'`, and it is the only
+ * thing that keeps detection and linking at import off the row.
+ *
+ * 🔴 The carry used to travel only WITH a series id, so a re-parse brought a
+ * detached row back as NULL/NULL, filed under the new import file — which is
+ * exactly the scope an upload links — and `absorbIntoLiveSeries` re-linked it
+ * in that same upload. Reproduced 2026-09-14 on uc/linking: re-parsing a Chase
+ * card CSV with its April NETFLIX row detached brought April back LINKED to
+ * Netflix, `detected`. Before linking at import the marker was lost just the
+ * same, but nothing re-linked the row until someone pressed Detect now.
+ */
+function isDetach(row: Pick<CarryAttributes, "recurringSeriesId" | "seriesLinkSource">): boolean {
+  return row.recurringSeriesId === null && row.seriesLinkSource === "user";
+}
+
+/** The link ownership a carry passes on: with its link, or as a detach — otherwise none. */
+function carriedLinkSource(
+  carry: Pick<CarryAttributes, "recurringSeriesId" | "seriesLinkSource">,
+): SeriesLinkSource | null {
+  return carry.recurringSeriesId !== null || isDetach(carry) ? carry.seriesLinkSource : null;
+}
+
 /** Something a re-parse would otherwise destroy (splits handled separately). */
 function hasCarryableAttributes(row: CarryRow): boolean {
   return (
@@ -245,6 +269,7 @@ function hasCarryableAttributes(row: CarryRow): boolean {
     row.notes !== null ||
     row.transferGroupId !== null ||
     row.recurringSeriesId !== null ||
+    isDetach(row) ||
     row.status === "excluded"
   );
 }
@@ -330,7 +355,8 @@ function applyCarry(tx: AppDatabase, txnId: string, carry: CarryAttributes): voi
       // drop a row merely for carrying a group id
       transferGroupId: carry.transferGroupId,
       recurringSeriesId: carry.recurringSeriesId,
-      seriesLinkSource: carry.recurringSeriesId ? carry.seriesLinkSource : null,
+      // …and a detach travels as a detach (see `isDetach`)
+      seriesLinkSource: carriedLinkSource(carry),
       // a user-excluded row stays excluded — a re-parse must not resurrect it
       ...(carry.status === "excluded" ? { status: "excluded" as const } : {}),
     })
@@ -363,6 +389,10 @@ function fillFromCarry(tx: AppDatabase, existing: typeof transactions.$inferSele
   if (existing.recurringSeriesId === null && carry.recurringSeriesId !== null) {
     set.recurringSeriesId = carry.recurringSeriesId;
     set.seriesLinkSource = carry.seriesLinkSource;
+  }
+  // a detach fills a survivor nobody has linked or detached (see `isDetach`)
+  if (existing.recurringSeriesId === null && existing.seriesLinkSource === null && isDetach(carry)) {
+    set.seriesLinkSource = "user";
   }
   if (Object.keys(set).length === 0) return;
   tx.update(transactions).set(set).where(eq(transactions.id, existing.id)).run();
@@ -1144,6 +1174,10 @@ function insertTxn(
       notes: carryFrom?.notes ?? null,
       transferGroupId: carryFrom?.transferGroupId ?? null,
       recurringSeriesId: carryFrom?.recurringSeriesId ?? null,
+      // a takeover victim's link keeps its owner, and its detach stays a detach —
+      // without it the successor landed NULL/NULL inside this upload's linking
+      // scope, and absorption re-linked a charge the owner had unlinked
+      seriesLinkSource: carryFrom ? carriedLinkSource(carryFrom) : null,
     })
     .onConflictDoNothing()
     .run();
