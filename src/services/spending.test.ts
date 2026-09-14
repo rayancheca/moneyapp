@@ -226,6 +226,95 @@ describe("cashFlowByPeriod", () => {
   });
 });
 
+/**
+ * 🔴 S11 — A ZERO-FILLED BUCKET THE LEDGER HAS NOT REACHED, AT EITHER END.
+ *
+ * `cashFlowByPeriod` built a zero shell for every bucket and said nothing about
+ * whether anyone had read its days. The table lens printed each one. Measured on
+ * the owner's ledger 2026-09-14 (first active row 2022-08-25, newest 2026-09-12):
+ *
+ *   - `?period=2026-09&cash=table`: rows 13–30 "$0.00 $0.00 $0.00" — two days
+ *     nobody has imported and sixteen that have not happened;
+ *   - `?period=2022-08&cash=table`: rows 1–24 the same, before the records begin;
+ *   - `?period=2026&cash=table`: Oct, Nov and Dec, months that have not begun.
+ *
+ * ⛔ The FIGURES stay zero — `computePace`, the dashboard's pace tile and the
+ * graph's running totals all read them. Coverage is said beside them.
+ *
+ * ⚠️ Every fixture above posts a row on July 1 or later and none before, so
+ * without the rows chosen here the opening end could not be expressed: the
+ * oldest row sits INSIDE the period, the newest BEFORE today, and an empty
+ * covered day lies between them.
+ */
+describe("cashFlowByPeriod — which buckets the ledger has reached", () => {
+  test("a day before the first row, a covered empty day, an unimported day and a future day are four worlds", () => {
+    insertTxn({ postedOn: "2026-07-03", amountCents: -5_000, category: "Food > Dining" }); // the ledger opens
+    insertTxn({ postedOn: "2026-07-05", amountCents: -2_000, category: "Food > Groceries" }); // …and stops
+
+    const cf = cashFlowByPeriod(bundle.db, JULY, TODAY);
+    const unreached = Object.fromEntries(cf.buckets.map((b) => [b.key.slice(8), b.unreached]));
+    expect(unreached["01"]).toBe("before-records");
+    expect(unreached["02"]).toBe("before-records");
+    expect(unreached["03"]).toBeNull(); // the opening day is a measurement
+    expect(unreached["04"]).toBeNull(); // a covered day with nothing in it…
+    expect(cf.buckets[3]!.spendingCents).toBe(0); // …is a real zero
+    expect(unreached["05"]).toBeNull();
+    expect(unreached["06"]).toBe("after-records");
+    expect(unreached["08"]).toBe("after-records"); // today is not the future
+    expect(unreached["09"]).toBe("future");
+    expect(unreached["31"]).toBe("future");
+    expect(cf.buckets.filter((b) => b.unreached === null)).toHaveLength(3);
+  });
+
+  test("the figures behind an unreached bucket stay zero, so the pace does not move", () => {
+    insertTxn({ postedOn: "2026-07-03", amountCents: -5_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-05", amountCents: -2_000, category: "Food > Groceries" });
+
+    const cf = cashFlowByPeriod(bundle.db, JULY, TODAY);
+    const jul1 = cf.buckets[0]!;
+    expect([jul1.incomeCents, jul1.spendingCents, jul1.refundsCents, jul1.netCents]).toEqual([0, 0, 0, 0]);
+    expect(cf.pace!.actualToDateCents).toBe(7_000);
+    expect(cf.totals).toEqual(periodTotals(bundle.db, JULY));
+  });
+
+  /* ⛔ data wins: a posted row after today is drawn, totalled and floored into the
+     projection above, so its bucket is a figure and not "has not happened yet" */
+  test("a bucket holding a posted row is a figure, even after today", () => {
+    insertTxn({ postedOn: "2026-07-03", amountCents: -5_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-20", amountCents: -9_000, category: "Food > Dining" }); // after today
+
+    const cf = cashFlowByPeriod(bundle.db, JULY, TODAY);
+    const byDay = new Map(cf.buckets.map((b) => [b.key, b]));
+    expect(byDay.get("2026-07-20")!.unreached).toBeNull();
+    expect(byDay.get("2026-07-20")!.spendingCents).toBe(9_000);
+    // the newest row is Jul 20 now, so Jul 6–8 have been walked through
+    expect(byDay.get("2026-07-07")!.unreached).toBeNull();
+    expect(byDay.get("2026-07-19")!.unreached).toBe("future");
+    expect(byDay.get("2026-07-21")!.unreached).toBe("future");
+  });
+
+  test("a year's months: before the records, a month the ledger opens inside, and months not begun", () => {
+    insertTxn({ postedOn: "2026-02-03", amountCents: -5_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-05", amountCents: -8_000, category: "Housing > Rent" });
+
+    const cf = cashFlowByPeriod(bundle.db, resolvePeriod({ period: "2026" }, TODAY), TODAY);
+    expect(cf.buckets.map((b) => [b.key, b.unreached])).toEqual([
+      ["2026-01", "before-records"],
+      ["2026-02", null], // opens on the 3rd: looked at from then on, a figure
+      ["2026-03", null], // covered and empty — a measured zero
+      ["2026-04", null],
+      ["2026-05", null],
+      ["2026-06", null],
+      ["2026-07", null], // stops on the 5th, three days before today: still a figure
+      ["2026-08", "future"],
+      ["2026-09", "future"],
+      ["2026-10", "future"],
+      ["2026-11", "future"],
+      ["2026-12", "future"],
+    ]);
+  });
+});
+
 describe("cashFlowSegmentHref", () => {
   test("category, Uncategorized, and Other drill to their exact windows", () => {
     expect(cashFlowSegmentHref("cat-abc", "cat-abc", { from: "2026-07-01", to: "2026-07-31" })).toBe(

@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { daysNotImportedYet, emptyPeriodCopy, emptyPeriodReason, emptyTrendCopy, unreachedKind } from "./empty-period";
+import {
+  daysNotImportedYet,
+  emptyPeriodCopy,
+  emptyPeriodReason,
+  emptyTrendCopy,
+  unreachedDashNote,
+  unreachedKind,
+} from "./empty-period";
 
 const reason = (over: Partial<Parameters<typeof emptyPeriodReason>[0]> = {}) =>
   emptyPeriodReason({
@@ -379,5 +386,32 @@ describe("unreachedKind — whether a window's figures can be read as a measurem
     // …and a month that has not begun is the future, whatever the ledger holds
     expect(unreachedKind({ from: "2026-10-01", to: "2026-10-31", ...frontier })).toBe("future");
     expect(unreachedKind({ from: "2022-07-01", to: "2022-07-31", ...frontier })).toBe("before-records");
+  });
+});
+
+/**
+ * ⛔ A dash with no sentence reads as a rendering gap (owner decision E1a: keep
+ * the row, print "—", say why). The sentence names only the worlds its dashes
+ * are in — `?period=2026-09` has unimported and unhappened days and no day
+ * before the records; `?period=2022-08` has only the last.
+ */
+describe("unreachedDashNote — the line a table prints about its dashes", () => {
+  test("names only the worlds present", () => {
+    expect(unreachedDashNote(["future", "after-records"], "day")).toBe(
+      "A dash is not a zero: it marks a day that has not been imported yet or has not happened yet.",
+    );
+    expect(unreachedDashNote(["before-records"], "day")).toBe(
+      "A dash is not a zero: it marks a day that is before your records begin.",
+    );
+  });
+
+  test("in calendar order whatever order the buckets came in, and an empty ledger reads as unimported", () => {
+    expect(unreachedDashNote(["future", "no-ledger", "before-records", "after-records"], "month")).toBe(
+      "A dash is not a zero: it marks a month that is before your records begin, has not been imported yet, or has not happened yet.",
+    );
+  });
+
+  test("nothing dashed, nothing said", () => {
+    expect(unreachedDashNote([], "day")).toBeNull();
   });
 });

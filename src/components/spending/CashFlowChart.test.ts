@@ -1,8 +1,8 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test, vi } from "vitest";
-import type { CashFlow, SpendingProjection } from "@/services/spending";
-import { CashFlowChart } from "./CashFlowChart";
+import type { CashFlow, CashFlowBucket, SpendingProjection } from "@/services/spending";
+import { CashFlowBucketTooltip, CashFlowChart } from "./CashFlowChart";
 
 // the readout never navigates; the chart's click handlers only need a router to exist
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => undefined }) }));
@@ -60,5 +60,52 @@ describe("CashFlowChart's pace readout", () => {
 
   test("the method stays on hover, without the clause the readout already shows", () => {
     expect(render()).toContain('title="pace from 14 of 30 days elapsed"');
+  });
+});
+
+/**
+ * 🔴 S11, the chart lens. Hovering a bucket nobody has read printed "Earned
+ * $0.00 · Spent $0.00 · Net $0.00" — the same measured zero the table lens
+ * printed. September 2026 on the owner's ledger, 2026-09-14: Sep 12 holds $4.75
+ * spent (the newest active row), Sep 13 has not been imported, Sep 15 has not
+ * happened.
+ */
+describe("CashFlowChart's tooltip — a bucket the ledger has not reached", () => {
+  const bucket = (key: string, label: string, over: Partial<CashFlowBucket> = {}): CashFlowBucket => ({
+    key,
+    label,
+    from: key,
+    to: key,
+    income: {},
+    spending: {},
+    incomeCents: 0,
+    spendingCents: 0,
+    refundsCents: 0,
+    netCents: 0,
+    unreached: null,
+    ...over,
+  });
+  const tooltip = (b: CashFlowBucket, ghostCents: number | null = null): string =>
+    textOf(renderToStaticMarkup(createElement(CashFlowBucketTooltip, { bucket: b, ghostCents })));
+
+  test("a reached bucket states its figures", () => {
+    const text = tooltip(bucket("2026-09-12", "12", { spendingCents: 475, netCents: -475 }));
+    expect(text).toContain("Spent$4.75");
+    expect(text).toContain("Earned$0.00");
+  });
+
+  test("an unreached bucket says which world it is in, and prints no figure", () => {
+    const text = tooltip(bucket("2026-09-13", "13", { unreached: "after-records" }));
+    expect(text).toContain("not imported yet");
+    expect(text).not.toContain("$0.00");
+    expect(text).not.toContain("Earned");
+    expect(tooltip(bucket("2026-09-15", "15", { unreached: "future" }))).toContain("has not happened yet");
+    expect(tooltip(bucket("2022-08-24", "24", { unreached: "before-records" }))).toContain("before your records begin");
+  });
+
+  /* ⛔ the prior period's bucket is a fact about THAT period (owner decision E1a) */
+  test("the prior period's bucket is still given beside an unreached one", () => {
+    const text = tooltip(bucket("2026-09-13", "13", { unreached: "after-records" }), 3_451);
+    expect(text).toContain("Prior period, this point$34.51");
   });
 });

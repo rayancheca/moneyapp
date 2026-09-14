@@ -10,7 +10,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { cashFlowCumulative, ghostRowLabel } from "@/lib/cash-flow-cumulative";
+import { cashFlowCumulative, ghostRowLabel, type CashCumulativePoint } from "@/lib/cash-flow-cumulative";
+import { UNREACHED_PHRASE, type UnreachedKind } from "@/lib/empty-period";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import type { CashFlow, SpendingProjection } from "@/services/spending";
 
@@ -39,6 +40,70 @@ interface CashFlowGraphProps {
   projection?: SpendingProjection | null;
 }
 
+/**
+ * One point's hover card: the running totals THROUGH it, or — when the ledger has
+ * not reached it — the world it sits in instead.
+ *
+ * 🔴 S11, the graph lens. On the owner's ledger 2026-09-14 (newest row Sep 12)
+ * every point of September after the 12th carried the 12th's totals forward, and
+ * the tooltip read "Through 13 … Spent $1,431.05" of a day nobody has imported
+ * and "Through 30" of one that has not happened. A running total "through" a day
+ * is a claim that the day was read.
+ *
+ * ⛔ The prior period's figure stays: it is a fact about that period (owner
+ * decision E1a).
+ */
+export function RunningTotalTooltip({
+  point: row,
+  unreached,
+  hasRefunds,
+  priorLabel,
+}: {
+  point: CashCumulativePoint;
+  unreached: UnreachedKind | null;
+  hasRefunds: boolean;
+  priorLabel: string | null;
+}) {
+  return (
+    <div className="rounded-md border border-line bg-surface-raised px-3 py-2 text-xs shadow-sm">
+      {unreached !== null ? (
+        <>
+          <div className="text-ink-faint">{row.label}</div>
+          <div className="mt-1 text-ink-muted first-letter:uppercase">{UNREACHED_PHRASE[unreached]}</div>
+        </>
+      ) : (
+        <>
+          <div className="text-ink-faint">Through {row.label}</div>
+          <div className="mt-1 flex items-center justify-between gap-4">
+            <span className="text-positive">Earned</span>
+            <span className="figures">{formatCents(row.earnedCum)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-negative">Spent</span>
+            <span className="figures">{formatCents(row.spentCum)}</span>
+          </div>
+          {hasRefunds && (
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-positive">Refunded</span>
+              <span className="figures">{formatCents(row.refundsCum)}</span>
+            </div>
+          )}
+          <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 font-medium">
+            <span>Net</span>
+            <span className="figures">{formatCentsSigned(row.netCum)}</span>
+          </div>
+        </>
+      )}
+      {row.ghostCum !== null && (
+        <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 text-ink-faint">
+          <span>{ghostRowLabel(row, priorLabel)}</span>
+          <span className="figures">{formatCents(row.ghostCum)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
   const { buckets } = data;
   const priorLabel = projection?.prior?.label ?? null;
@@ -55,6 +120,7 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
 
   if (buckets.length === 0) return null;
   const labelByKey = new Map(rows.map((r) => [r.key, r.label]));
+  const unreachedByKey = new Map(buckets.map((b) => [b.key, b.unreached]));
 
   return (
     <figure className="m-0" aria-label="Running totals for the period — cumulative earned, spent, and net">
@@ -86,33 +152,12 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
                 const row = rows.find((r) => r.key === String(label));
                 if (!row) return null;
                 return (
-                  <div className="rounded-md border border-line bg-surface-raised px-3 py-2 text-xs shadow-sm">
-                    <div className="text-ink-faint">Through {row.label}</div>
-                    <div className="mt-1 flex items-center justify-between gap-4">
-                      <span className="text-positive">Earned</span>
-                      <span className="figures">{formatCents(row.earnedCum)}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-4">
-                      <span className="text-negative">Spent</span>
-                      <span className="figures">{formatCents(row.spentCum)}</span>
-                    </div>
-                    {hasRefunds && (
-                      <div className="flex items-center justify-between gap-4">
-                        <span className="text-positive">Refunded</span>
-                        <span className="figures">{formatCents(row.refundsCum)}</span>
-                      </div>
-                    )}
-                    <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 font-medium">
-                      <span>Net</span>
-                      <span className="figures">{formatCentsSigned(row.netCum)}</span>
-                    </div>
-                    {row.ghostCum !== null && (
-                      <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 text-ink-faint">
-                        <span>{ghostRowLabel(row, priorLabel)}</span>
-                        <span className="figures">{formatCents(row.ghostCum)}</span>
-                      </div>
-                    )}
-                  </div>
+                  <RunningTotalTooltip
+                    point={row}
+                    unreached={unreachedByKey.get(row.key) ?? null}
+                    hasRefunds={hasRefunds}
+                    priorLabel={priorLabel}
+                  />
                 );
               }}
             />

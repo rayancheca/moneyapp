@@ -11,7 +11,7 @@ import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/descriptio
 // topMerchants groups on — activeTxnsInRange doesn't select that column
 import { normalizeDescription } from "@/lib/normalize";
 import { comparePeriods, type PeriodComparison } from "@/lib/compared-windows";
-import { daysNotImportedYet } from "@/lib/empty-period";
+import { daysNotImportedYet, unreachedKind, type UnreachedKind } from "@/lib/empty-period";
 import { subBuckets, type ResolvedPeriod } from "@/lib/period";
 import { alignByIndex, projectPace } from "@/lib/projection";
 import { allocationsFor } from "@/lib/transaction-splits";
@@ -126,6 +126,23 @@ export interface CashFlowBucket {
   refundsCents: number;
   /** income + refunds − spending for the bucket */
   netCents: number;
+  /**
+   * Null when the four figures above are a measurement; otherwise which world
+   * the bucket sits in — it has not happened, it is before the records begin, or
+   * nothing has been imported for it (`unreachedKind`). A bucket the ledger opens
+   * or stops inside is a figure, and so is one holding a posted row.
+   *
+   * 🔴 S11. Every bucket was a zero shell with nothing said about coverage, and
+   * the table lens printed each one. Measured 2026-09-14 on the owner's ledger:
+   * `?period=2026-09&cash=table` rows 13–30 and `?period=2022-08&cash=table`
+   * rows 1–24 read "$0.00 $0.00 $0.00", and `?period=2026` did the same of Oct,
+   * Nov and Dec.
+   *
+   * ⛔ ADDITIVE: the figures stay zero. `computePace`, the dashboard's pace tile
+   * and the graph's running totals read them, and a null in any of those would
+   * move a number nobody asked to move.
+   */
+  unreached: UnreachedKind | null;
 }
 
 export interface PaceInfo {
@@ -185,7 +202,8 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
   const bucketIndex = new Map(buckets.map((b, i) => [b.key, i]));
   const rows = activeTxnsInRange(db, period.from, period.to);
 
-  const shells: CashFlowBucket[] = buckets.map((b) => ({
+  // coverage is decided once the rows are classified — see the return below
+  const shells: Omit<CashFlowBucket, "unreached">[] = buckets.map((b) => ({
     key: b.key,
     label: b.label,
     from: b.from,
@@ -285,7 +303,23 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
   };
   const pace = period.isCurrent ? computePace(period, buckets, actualToDateCents, today) : null;
 
-  return { buckets: shells, incomeSeries, spendingSeries, totals, pace };
+  /*
+   * Whether each bucket's zero is a measurement — both ends of the ledger, future
+   * first (`unreachedKind`). ⛔ Data wins: a bucket holding a classified row is a
+   * figure even after today, because that row is already in its bars, in the
+   * totals and in the projection's floor.
+   */
+  const opens = ledgerOpens(db);
+  const reaches = ledgerReaches(db);
+  const holdsRows = new Set(classified.map((c) => c.bucket));
+  const reached: CashFlowBucket[] = shells.map((s, i) => ({
+    ...s,
+    unreached: holdsRows.has(i)
+      ? null
+      : unreachedKind({ from: s.from, to: s.to, today, ledgerOpens: opens, ledgerReaches: reaches }),
+  }));
+
+  return { buckets: reached, incomeSeries, spendingSeries, totals, pace };
 }
 
 function computePace(

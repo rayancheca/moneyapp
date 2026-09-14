@@ -128,6 +128,34 @@ export const UNREACHED_PHRASE: Readonly<Record<UnreachedKind, string>> = {
   "no-ledger": "not imported yet",
 };
 
+/** each world as the verb phrase after "a day that …", in calendar order */
+const DASH_REASONS: readonly (readonly [readonly UnreachedKind[], string])[] = [
+  [["before-records"], "is before your records begin"],
+  [["after-records", "no-ledger"], "has not been imported yet"],
+  [["future"], "has not happened yet"],
+];
+
+/**
+ * The line a table prints about its dashes — naming only the worlds its dashes
+ * are actually in. Null when nothing is dashed.
+ *
+ * ⛔ "—", never "$0.00", is the mark: the prior-period column beside these
+ * cells already uses it for a bucket the prior period does not have, and the
+ * dashboard's pace tile for a month nobody has imported ("an em dash, not a
+ * $0.00"). A dash with no sentence would read as a rendering gap, so the table
+ * says why (owner decision 2026-09-14, E1a).
+ */
+export function unreachedDashNote(kinds: Iterable<UnreachedKind>, bucketNoun: "day" | "month"): string | null {
+  const present = new Set(kinds);
+  const phrases = DASH_REASONS.filter(([ks]) => ks.some((k) => present.has(k))).map(([, phrase]) => phrase);
+  if (phrases.length === 0) return null;
+  const list =
+    phrases.length === 1
+      ? phrases[0]!
+      : `${phrases.slice(0, -1).join(", ")}${phrases.length > 2 ? "," : ""} or ${phrases[phrases.length - 1]}`;
+  return `A dash is not a zero: it marks a ${bucketNoun} that ${list}.`;
+}
+
 /**
  * How many ELAPSED days of a window lie past the newest imported row — the days
  * a pace figure has not seen, and the reason it is a lower bound.

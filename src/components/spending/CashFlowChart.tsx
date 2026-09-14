@@ -14,12 +14,14 @@ import {
   YAxis,
 } from "recharts";
 import { categoryHueVar, isCategoryHueName } from "@/lib/category-palette";
+import { UNREACHED_PHRASE } from "@/lib/empty-period";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { ledgerHref } from "@/lib/ledger-href";
 import { paceReadout } from "@/lib/pace-readout";
 import {
   cashFlowSegmentHref,
   type CashFlow,
+  type CashFlowBucket,
   type CashFlowSeries,
   type SpendingProjection,
 } from "@/services/spending";
@@ -71,6 +73,59 @@ interface CashFlowChartProps {
   projection?: SpendingProjection | null;
   /** what the unimported days are "of" (`paceWindowName`) — "2 days of September 2026 not imported yet" */
   paceWindowName: string | null;
+}
+
+/**
+ * One bucket's hover card: its figures, or — when the ledger has not reached it —
+ * the world it sits in instead.
+ *
+ * 🔴 S11, the chart lens of the table's defect. Hovering Sep 13–30, 2026 on the
+ * owner's ledger (2026-09-14, newest row Sep 12) printed "Earned $0.00 · Spent
+ * $0.00 · Net $0.00" over days nobody has imported or that have not happened.
+ *
+ * ⛔ The prior period's bucket stays beside an unreached one: it is a fact about
+ * that period (owner decision E1a), the same rule the table's prior column keeps.
+ */
+export function CashFlowBucketTooltip({ bucket: b, ghostCents }: { bucket: CashFlowBucket; ghostCents: number | null }) {
+  return (
+    <div className="rounded-md border border-line bg-surface-raised px-3 py-2 text-xs shadow-sm">
+      <div className="text-ink-faint">{b.label}</div>
+      {b.unreached !== null ? (
+        <div className="mt-1 text-ink-muted first-letter:uppercase">{UNREACHED_PHRASE[b.unreached]}</div>
+      ) : (
+        <>
+          <div className="mt-1 flex items-center justify-between gap-4">
+            <span className="text-positive">Earned</span>
+            <span className="figures">{formatCents(b.incomeCents)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-negative">Spent</span>
+            <span className="figures">{formatCents(b.spendingCents)}</span>
+          </div>
+          {/* a refund is money in and never nets "Spent" down, so without
+              this line Earned − Spent does not make the Net below it */}
+          {b.refundsCents !== 0 && (
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-positive">Refunded</span>
+              <span className="figures">{formatCents(b.refundsCents)}</span>
+            </div>
+          )}
+          <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 font-medium">
+            <span>Net</span>
+            <span className="figures">{formatCentsSigned(b.netCents)}</span>
+          </div>
+        </>
+      )}
+      {ghostCents !== null && (
+        <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 text-ink-faint">
+          {/* a single re-indexed bucket of the prior period — NOT its whole-period
+              total (that lives in the readout as "$Z in {label}"). */}
+          <span>Prior period, this point</span>
+          <span className="figures">{formatCents(ghostCents)}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function CashFlowChart({ data, projection, paceWindowName }: CashFlowChartProps) {
@@ -235,39 +290,7 @@ export function CashFlowChart({ data, projection, paceWindowName }: CashFlowChar
                 if (!active || !payload?.length) return null;
                 const b = bucketByKey.get(String(label));
                 if (!b) return null;
-                return (
-                  <div className="rounded-md border border-line bg-surface-raised px-3 py-2 text-xs shadow-sm">
-                    <div className="text-ink-faint">{b.label}</div>
-                    <div className="mt-1 flex items-center justify-between gap-4">
-                      <span className="text-positive">Earned</span>
-                      <span className="figures">{formatCents(b.incomeCents)}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-4">
-                      <span className="text-negative">Spent</span>
-                      <span className="figures">{formatCents(b.spendingCents)}</span>
-                    </div>
-                    {/* a refund is money in and never nets "Spent" down, so without
-                        this line Earned − Spent does not make the Net below it */}
-                    {b.refundsCents !== 0 && (
-                      <div className="flex items-center justify-between gap-4">
-                        <span className="text-positive">Refunded</span>
-                        <span className="figures">{formatCents(b.refundsCents)}</span>
-                      </div>
-                    )}
-                    <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 font-medium">
-                      <span>Net</span>
-                      <span className="figures">{formatCentsSigned(b.netCents)}</span>
-                    </div>
-                    {ghostByKey.get(String(label)) != null && (
-                      <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 text-ink-faint">
-                        {/* a single re-indexed bucket of the prior period — NOT its whole-period
-                            total (that lives in the readout as "$Z in {label}"). */}
-                        <span>Prior period, this point</span>
-                        <span className="figures">{formatCents(ghostByKey.get(String(label))!)}</span>
-                      </div>
-                    )}
-                  </div>
-                );
+                return <CashFlowBucketTooltip bucket={b} ghostCents={ghostByKey.get(String(label)) ?? null} />;
               }}
             />
             {incomeSeries.map((s) => (
