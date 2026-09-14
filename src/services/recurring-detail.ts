@@ -187,8 +187,12 @@ function modalCategory(
   const modalId = [...counts.entries()].sort(
     (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
   )[0]?.[0];
-  if (!modalId) return null;
-  const cat = catById.get(modalId);
+  return modalId ? categoryRef(modalId, catById) : null;
+}
+
+/** A category as the series page names it — hue and icon inherited from its parent. */
+function categoryRef(id: string, catById: ReadonlyMap<string, CatRow>): SeriesCategoryRef | null {
+  const cat = catById.get(id);
   if (!cat) return null;
   const parent = cat.parentId ? catById.get(cat.parentId) : undefined;
   return {
@@ -351,7 +355,13 @@ export function seriesDetail(
     status: s.status,
     merchant,
     mergedInto,
-    category: modalCategory(linked, catById),
+    // ⛔ the owner's category first, then the rows' — the precedence
+    // recurring-calendar's `seriesHues` states. A commitment that has never
+    // charged has no rows, so its chip back to the category page was missing
+    // while that page listed it (Car lease, Gym, Parking, Rent utilities & fees).
+    category:
+      (s.userCategoryId !== null ? categoryRef(s.userCategoryId, catById) : null) ??
+      modalCategory(linked, catById),
     accountName,
     cadence: eff.cadence,
     // Same rule as listSeries: the detail page must not show a date in the past

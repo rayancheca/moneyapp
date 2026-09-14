@@ -117,6 +117,32 @@ describe("seriesDetail", () => {
     expect(d.linkedTxns.every((t) => t.linkSource === "detected")).toBe(true);
   });
 
+  test("a commitment that has never charged names the category the owner put it in", () => {
+    const fitness = bundle.db.select().from(categories).where(eq(categories.name, "Fitness")).get()!;
+    const gym = bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Gym",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        nextExpectedOn: "2026-07-22",
+        nextExpectedAmountCents: -10000,
+        status: "confirmed",
+        toleranceDays: 3,
+        userCategoryId: fitness.id,
+      })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    expect(seriesDetail(bundle.db, gym, TODAY).category).toMatchObject({ id: fitness.id, name: "Fitness" });
+  });
+
+  test("the owner's category outranks the category the rows were filed in", () => {
+    const fitness = bundle.db.select().from(categories).where(eq(categories.name, "Fitness")).get()!;
+    bundle.db.update(recurringSeries).set({ userCategoryId: fitness.id }).where(eq(recurringSeries.id, netflix().id)).run();
+    expect(seriesDetail(bundle.db, netflix().id, TODAY).category).toMatchObject({ name: "Fitness" });
+  });
+
   test("reports the detected statistics and next 3 expected occurrences", () => {
     const d = seriesDetail(bundle.db, netflix().id, TODAY);
     expect(d.cadence).toBe("monthly");

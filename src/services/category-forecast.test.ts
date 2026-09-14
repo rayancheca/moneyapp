@@ -9,9 +9,10 @@ import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries, type Cadence, type SeriesKind, type SeriesStatus } from "@/db/schema/recurring";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
+import { addDays } from "@/lib/dates";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
-import { createBudget } from "./budgets";
+import { budgetTail, createBudget } from "./budgets";
 import {
   nextMonthBounds,
   predictBudgetableCategories,
@@ -86,6 +87,8 @@ describe("predictCategory / predictBudgetableCategories", () => {
     nextExpectedOn: string;
     nextExpectedAmountCents: number;
     status?: SeriesStatus;
+    userCategoryId?: string;
+    lastMatchedOn?: string;
   }): string {
     return bundle.db
       .insert(recurringSeries)
@@ -211,6 +214,102 @@ describe("predictCategory / predictBudgetableCategories", () => {
     // dismissed → not projected as recurring, but recovered into discretionary
     expect(p.forecast.recurringCents).toBe(0);
     expect(p.forecast.discretionaryCents).toBe(30000); // avg of [300,300,300]
+  });
+
+  /*
+   * 🔴 Series membership here was a private copy that found series only through
+   * posted rows and never read `user_category_id`, while /budgets and the
+   * category page read the override. On the real ledger 2026-09-14 /spending's
+   * October forecast left out $1,346.11 of registered commitments (the car
+   * lease, parking, the gym, rent fees) that the budget tail projected.
+   */
+  test("a commitment that has never posted forecasts into the category the owner put it in", () => {
+    insertSeries({
+      name: "Parking",
+      kind: "bill",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-08-20",
+      nextExpectedAmountCents: -36886,
+      status: "confirmed",
+      userCategoryId: categoryId("Parking & Tolls"),
+    });
+
+    const p = predictCategory(bundle.db, categoryId("Transport"), "Transport", TODAY);
+    expect(p.forecast.recurringCents).toBe(36886);
+    expect(p.forecast.basis).toMatch(/expected recurring/);
+    expect(p.forecast.basis).not.toMatch(/no recurring bills/);
+  });
+
+  test("an override MOVES a posted series — it is forecast where the owner put it, not in both", () => {
+    const moved = insertSeries({
+      name: "Supplement box",
+      kind: "subscription",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-08-20",
+      nextExpectedAmountCents: -9000,
+      status: "confirmed",
+      lastMatchedOn: "2026-06-20",
+      userCategoryId: categoryId("Health"),
+    });
+    insertTxn("2026-06-20", -9000, { categoryName: "Groceries", recurringSeriesId: moved });
+
+    expect(predictCategory(bundle.db, categoryId("Food"), "Food", TODAY).forecast.recurringCents).toBe(0);
+    expect(predictCategory(bundle.db, categoryId("Health"), "Health", TODAY).forecast.recurringCents).toBe(9000);
+  });
+
+  test("a dismissed series moved elsewhere still folds back into the trend where its rows sit", () => {
+    // the override takes it out of Food's MEMBERSHIP, but its rows are still Food's
+    const dismissed = insertSeries({
+      name: "Not really recurring",
+      kind: "subscription",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-10",
+      nextExpectedAmountCents: -3000,
+      status: "dismissed",
+      userCategoryId: categoryId("Shopping"),
+    });
+    insertTxn("2026-05-10", -3000, { categoryName: "Dining", recurringSeriesId: dismissed });
+    insertTxn("2026-06-10", -3000, { categoryName: "Dining", recurringSeriesId: dismissed });
+
+    // Apr 0, May 3000, Jun 3000 → average 2000 + trend 1500
+    expect(predictCategory(bundle.db, categoryId("Food"), "Food", TODAY).forecast.discretionaryCents).toBe(3500);
+    expect(predictCategory(bundle.db, categoryId("Shopping"), "Shopping", TODAY).forecast.recurringCents).toBe(0);
+  });
+
+  test("a money-out series that has stopped posting is not forecast", () => {
+    const lapsed = insertSeries({
+      name: "Old pharmacy plan",
+      kind: "subscription",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-08-01",
+      nextExpectedAmountCents: -4999,
+      status: "confirmed",
+      lastMatchedOn: "2025-12-01",
+    });
+    insertTxn("2025-12-01", -4999, { categoryName: "Pharmacy", recurringSeriesId: lapsed });
+
+    expect(predictCategory(bundle.db, categoryId("Health"), "Health", TODAY).forecast.recurringCents).toBe(0);
+  });
+
+  test("every category's forecast bills are exactly the budget tail over the target month", () => {
+    insertSeries({ name: "Parking", kind: "bill", cadence: "monthly", intervalDaysAvg: 30, nextExpectedOn: "2026-08-20", nextExpectedAmountCents: -36886, status: "confirmed", userCategoryId: categoryId("Parking & Tolls") });
+    const moved = insertSeries({ name: "Supplement box", kind: "subscription", cadence: "monthly", intervalDaysAvg: 30, nextExpectedOn: "2026-08-20", nextExpectedAmountCents: -9000, status: "confirmed", lastMatchedOn: "2026-06-20", userCategoryId: categoryId("Health") });
+    insertTxn("2026-06-20", -9000, { categoryName: "Groceries", recurringSeriesId: moved });
+    const lapsed = insertSeries({ name: "Old pharmacy plan", kind: "subscription", cadence: "monthly", intervalDaysAvg: 30, nextExpectedOn: "2026-08-01", nextExpectedAmountCents: -4999, status: "confirmed", lastMatchedOn: "2025-12-01" });
+    insertTxn("2025-12-01", -4999, { categoryName: "Pharmacy", recurringSeriesId: lapsed });
+    const posted = insertSeries({ name: "Grocery box", kind: "subscription", cadence: "monthly", intervalDaysAvg: 30, nextExpectedOn: "2026-08-10", nextExpectedAmountCents: -1500, status: "confirmed", lastMatchedOn: "2026-06-10" });
+    insertTxn("2026-06-10", -1500, { categoryName: "Groceries", recurringSeriesId: posted });
+
+    const predictions = predictBudgetableCategories(bundle.db, TODAY);
+    expect(predictions.length).toBeGreaterThan(0);
+    for (const p of predictions) {
+      const tail = budgetTail(bundle.db, p.categoryId, p.targetEnd, addDays(p.targetStart, -1));
+      expect([p.label, p.forecast.recurringCents]).toEqual([p.label, tail.totalCents]);
+    }
   });
 
   test("a category with no history and no bills predicts nothing (honest zero)", () => {

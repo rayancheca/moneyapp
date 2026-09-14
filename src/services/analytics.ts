@@ -127,14 +127,23 @@ export function uncategorizedWhere(idx: CategoryIndex): SQL {
  * exception, for commitments that have not charged yet; see the block comment
  * inside.
  *
- * This is the ONE bridge used by both the category page's "Recurring series"
- * list and the budget "expected tail", so a series can never appear in a
+ * This is the ONE bridge used by the category page's "Recurring series" list,
+ * the budget "expected tail" and — through `recurringSeriesIdsForSubtree` —
+ * /spending's category forecast and Predict budgets, so a series can never appear in a
  * budget's forecast without also appearing on its category page (drill-down
  * contract) — which is why the override has to be applied here rather than in
  * budgetTail, or the two surfaces would disagree.
  */
 export function recurringSeriesIdsForCategory(db: AppDatabase, categoryId: string): Set<string> {
-  const subtree = loadCategoryIndex(db).subtreeIds(categoryId);
+  return recurringSeriesIdsForSubtree(db, loadCategoryIndex(db).subtreeIds(categoryId));
+}
+
+/**
+ * `recurringSeriesIdsForCategory` for a caller already holding the subtree —
+ * the /spending forecast walks every category over one index, and reloading
+ * it per category is the query-building cost the perf doctrine measured.
+ */
+export function recurringSeriesIdsForSubtree(db: AppDatabase, subtree: readonly string[]): Set<string> {
   // Series-to-category MEMBERSHIP keys on the parent row's (stamped) categoryId,
   // NOT the split parts. A recurring bill split across categories (rent+utilities)
   // must belong to ONE category — its dominant/representative one — or budgetTail
@@ -165,7 +174,7 @@ export function recurringSeriesIdsForCategory(db: AppDatabase, categoryId: strin
       and(
         eq(transactions.status, "active"),
         isNotNull(transactions.recurringSeriesId),
-        inArray(transactions.categoryId, subtree),
+        inArray(transactions.categoryId, [...subtree]),
       ),
     )
     .all();

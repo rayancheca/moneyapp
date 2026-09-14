@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, isNotNull, isNull, lte, notExists, or } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte, notExists, or } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { budgets } from "@/db/schema/budgets";
 import { recurringSeries } from "@/db/schema/recurring";
@@ -12,10 +12,10 @@ import {
   type CategoryForecast,
 } from "@/lib/category-forecast";
 import { projectRecurringDriven, projectTrailingAverage } from "@/lib/projection";
-import { loadCategoryIndex, type CategoryIndex } from "./analytics";
+import { loadCategoryIndex, recurringSeriesIdsForSubtree, type CategoryIndex } from "./analytics";
 import { listBudgetableCategories } from "./budgets";
 import { trailingFullMonths } from "./forecast";
-import { projectOccurrences, toProjectable } from "./recurring";
+import { lapsedSeriesShouldStopForecasting, projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
 
 /**
  * The PREDICTION service (user ask: "I want actual predictions on everything ·
@@ -68,6 +68,8 @@ interface PredictContext {
    *  spend is really variable, so they fall BACK into the discretionary trend
    *  (they are never projected as a recurring baseline). */
   dismissedSeriesIds: Set<string>;
+  /** the day a lapsed series is measured against */
+  today: string;
   target: PeriodBounds;
   targetLabel: string;
   months: { start: string; end: string; key: string }[];
@@ -154,25 +156,6 @@ function nonRecurringSubtreeSpend(
   return Math.max(0, [...unsplit, ...splitParts].reduce((sum, r) => sum - r.amountCents, 0));
 }
 
-/** The recurring series ids whose active linked rows fall in a subtree — keyed on
- *  the parent's (stamped) categoryId, NOT split parts, so a recurring bill split
- *  across categories forecasts into its ONE representative category rather than
- *  projecting the whole amount into each (mirrors recurringSeriesIdsForCategory). */
-function seriesIdsForSubtree(db: AppDatabase, subtreeIds: readonly string[]): Set<string> {
-  const rows = db
-    .selectDistinct({ seriesId: transactions.recurringSeriesId })
-    .from(transactions)
-    .where(
-      and(
-        eq(transactions.status, "active"),
-        isNotNull(transactions.recurringSeriesId),
-        inArray(transactions.categoryId, [...subtreeIds]),
-      ),
-    )
-    .all();
-  return new Set(rows.map((r) => r.seriesId).filter((v): v is string => v !== null));
-}
-
 function buildContext(db: AppDatabase, today: string): PredictContext {
   const target = nextMonthBounds(today);
   const earliestDate = earliestActiveTxnDate(db);
@@ -203,6 +186,7 @@ function buildContext(db: AppDatabase, today: string): PredictContext {
         .all()
         .map((s) => s.id),
     ),
+    today,
     target,
     targetLabel: monthLabel(monthKey(target.start)),
     months: trailingFullMonths(today, PREDICT_TRAILING_MONTHS),
@@ -217,13 +201,27 @@ function predictWith(
   label: string,
 ): CategoryPrediction {
   const subtree = ctx.index.subtreeIds(categoryId);
-  const subtreeSeriesIds = seriesIdsForSubtree(db, subtree);
+  /*
+   * 🔴 THE SAME MEMBERSHIP /budgets AND THE CATEGORY PAGE READ. A private copy
+   * found series only through posted rows and never read `user_category_id`,
+   * so a commitment that has not charged yet forecast nothing: on the real
+   * ledger 2026-09-14, /spending's October Car read "$361.49 expected
+   * recurring" without the $695.04 lease, Transport "(no recurring bills)"
+   * over $368.86 of parking, and Health had no line at all — $1,346.11 the
+   * budget tail for the same categories projected. It also forecast a posted
+   * series in the category its rows sit in after the owner moved it.
+   */
+  const subtreeSeriesIds = recurringSeriesIdsForSubtree(db, subtree);
 
   // 1. RECURRING baseline — this subtree's series projected into the target month.
   //    Money-out occurrences become positive-magnitude spend for the projection.
   const occurrences: { day: string; amountCents: number }[] = [];
   for (const series of ctx.activeSeries) {
     if (series.kind === "transfer") continue; // transfers are never spending
+    // a series that stopped posting projects nothing — the gate budgetTail,
+    // the month forecast and the calendar already apply (a never-posted
+    // commitment has not lapsed: it has not started)
+    if (lapsedSeriesShouldStopForecasting(series.kind) && seriesHasLapsed(series, ctx.today)) continue;
     if (!subtreeSeriesIds.has(series.id)) continue;
     for (const o of projectOccurrences(toProjectable(series), ctx.target.start, ctx.target.end)) {
       if (o.amountCents < 0) occurrences.push({ day: o.date, amountCents: -o.amountCents });
@@ -239,7 +237,10 @@ function predictWith(
   //    tagged to a DISMISSED series (a false positive whose spend continues) are
   //    projected nowhere else, so they fold back into the trend here — otherwise
   //    they would vanish from the forecast entirely.
-  const recoverableSeriesIds = [...subtreeSeriesIds].filter((id) => ctx.dismissedSeriesIds.has(id));
+  //    ⛔ EVERY dismissed id, not this subtree's membership: a dismissed series
+  //    the owner moved elsewhere is no longer a member here, yet its rows still
+  //    sit here — and `nonRecurringSubtreeSpend` already scopes rows by subtree.
+  const recoverableSeriesIds = [...ctx.dismissedSeriesIds];
   const discretionaryHistory = ctx.months.map((m) =>
     nonRecurringSubtreeSpend(db, subtree, m.start, m.end, recoverableSeriesIds),
   );
