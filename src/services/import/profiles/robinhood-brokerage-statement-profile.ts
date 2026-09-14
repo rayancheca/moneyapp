@@ -1,8 +1,8 @@
 import { isValidIsoDate } from "@/lib/dates";
 import { parseAmountToCents } from "@/lib/money";
 import { ParseError, type CanonicalTxn, type ParsedStatement, type ParserProfile } from "../types";
-import { extractLines } from "./pdf-profile";
-import { parseCryptoMoneyMovements } from "./robinhood-crypto-movement";
+import { extractLines, type Line } from "./pdf-profile";
+import { parseCryptoMoneyMovements, type CryptoMovement } from "./robinhood-crypto-movement";
 
 /**
  * Real Robinhood *securities* statement PDFs — the arbiter `Robinhood Cash` has
@@ -49,10 +49,12 @@ import { parseCryptoMoneyMovements } from "./robinhood-crypto-movement";
  *
  * A statement can carry MORE THAN ONE account: from 2026-06 the owner's file
  * also contains `Individual Account #:655929651` ($26.64), which the app does
- * not track. Only the FIRST account section is parsed. Blending a second
- * account's balances into `Robinhood Cash` would corrupt the anchor, and
- * auto-creating an account from a statement is how a duplicate account gets
- * born.
+ * not track — printed after the tracked account through 2026-07, and BEFORE it
+ * in 2026-08. Exactly one section is parsed, chosen by account NUMBER against
+ * the accounts the ledger already tracks (`selectAccountSection`), never by
+ * position. Blending a second account's balances into `Robinhood Cash` would
+ * corrupt the anchor, and auto-creating an account from a statement is how a
+ * duplicate account gets born.
  */
 
 const PROFILE_ID = "robinhood-brokerage-statement-pdf";
@@ -149,25 +151,68 @@ function firstMatch(texts: readonly string[], re: RegExp): RegExpExecArray | nul
   return null;
 }
 
-/**
- * The lines belonging to the first account in the document.
- *
- * Robinhood appends each additional account as a fresh `Individual Account #:`
- * block, so the first block runs until the next account header (or to the end).
- */
-export function firstAccountSection(texts: readonly string[]): { accountNumber: string; lines: string[] } {
-  const starts: number[] = [];
-  texts.forEach((t, i) => {
-    if (ACCOUNT_RE.test(t)) starts.push(i);
-  });
-  if (starts.length === 0) throw new ParseError(PROFILE_ID, "No account number found");
+export interface AccountSection {
+  accountNumber: string;
+  /** first line index — 0 for the first section, whose period header prints above its account line */
+  start: number;
+  /** exclusive */
+  end: number;
+}
 
-  const first = starts[0] as number;
-  const next = starts.find((i) => i > first);
-  const accountNumber = (ACCOUNT_RE.exec(texts[first] as string) as RegExpExecArray)[1] as string;
-  // the period header precedes the account line on page 1, so the section keeps
-  // everything from the top of the document down to the next account block
-  return { accountNumber, lines: texts.slice(0, next ?? texts.length) };
+/**
+ * Every account the document carries, in print order.
+ *
+ * Robinhood prints each account as a fresh `Individual Account #:` block, so a
+ * block runs until the next account's header (or to the end). A header that
+ * repeats the SAME number continues its section rather than opening another.
+ */
+export function accountSections(texts: readonly string[]): AccountSection[] {
+  const headers = texts.flatMap((t, i) => {
+    const m = ACCOUNT_RE.exec(t);
+    return m ? [{ at: i, accountNumber: m[1] as string }] : [];
+  });
+  if (headers.length === 0) throw new ParseError(PROFILE_ID, "No account number found");
+
+  const opens = headers.filter((h, k) => k === 0 || h.accountNumber !== headers[k - 1]?.accountNumber);
+  return opens.map((h, k) => ({
+    accountNumber: h.accountNumber,
+    start: k === 0 ? 0 : h.at,
+    end: opens[k + 1]?.at ?? texts.length,
+  }));
+}
+
+/**
+ * The section of the one account this ledger tracks.
+ *
+ * 🔴 It used to be "the first section". Every statement through 2026-07 prints
+ * the tracked account #487513525 first and, from 2026-06, an untracked
+ * #655929651 ($26.64) after it — until 2026-08 printed #655929651 FIRST. A
+ * trial import then read $26.64 → $26.64 as Robinhood Cash's month: the period
+ * graded a $679.37 gap, 60 days became gap days and both crypto cash legs were
+ * quarantined. Where an account prints says nothing about which account it is.
+ *
+ * ⛔ So the choice is by NUMBER — the one section whose account number ends in
+ * the last four digits of an account the ledger already tracks — and anything
+ * else is REFUSED rather than guessed:
+ *  - no tracked section: the statements this profile emits route to Robinhood
+ *    Cash by NAME, so an untracked account's balances would overwrite its anchor;
+ *  - more than one: nothing says which of two tracked accounts is the cash ledger.
+ * A ledger tracking no Robinhood account yet (a fresh install) accepts a
+ * single-account statement, which is every file before 2026-06.
+ */
+export function selectAccountSection(texts: readonly string[], trackedLast4s: readonly string[]): AccountSection {
+  const sections = accountSections(texts);
+  const tracked = sections.filter((s) => trackedLast4s.some((last4) => s.accountNumber.endsWith(last4)));
+  if (tracked.length === 1) return tracked[0] as AccountSection;
+  if (trackedLast4s.length === 0 && sections.length === 1) return sections[0] as AccountSection;
+
+  const printed = sections.map((s) => `#${s.accountNumber}`).join(", ");
+  const known = trackedLast4s.length === 0 ? "none" : trackedLast4s.map((last4) => `····${last4}`).join(", ");
+  throw new ParseError(
+    PROFILE_ID,
+    `Statement carries ${printed}, and ${tracked.length === 0 ? "none is" : "more than one is"} an account ` +
+      `this ledger tracks (${known}) — refusing to guess which is Robinhood Cash`,
+  );
 }
 
 /**
@@ -375,10 +420,38 @@ export interface RobinhoodBrokerageParse {
 }
 
 /** Pure text-level core, exported for unit tests. */
-export function parseRobinhoodBrokerageLines(texts: readonly string[]): RobinhoodBrokerageParse {
-  const { accountNumber, lines } = firstAccountSection(texts);
+export function parseRobinhoodBrokerageLines(
+  texts: readonly string[],
+  trackedLast4s: readonly string[] = [],
+): RobinhoodBrokerageParse {
+  return parseSection(texts, selectAccountSection(texts, trackedLast4s));
+}
 
-  const period = firstMatch(lines, PERIOD_RE);
+/**
+ * The whole document: the tracked account's balances, and the crypto cash
+ * movements printed inside THAT account's section — a second account's Account
+ * Activity is another account's money, and its header another table's columns.
+ */
+export function parseRobinhoodBrokerageDocument(
+  lines: readonly Line[],
+  trackedLast4s: readonly string[] = [],
+): { parsed: RobinhoodBrokerageParse; movements: CryptoMovement[] } {
+  const texts = lines.map((l) => l.text);
+  const section = selectAccountSection(texts, trackedLast4s);
+  return {
+    parsed: parseSection(texts, section),
+    movements: parseCryptoMoneyMovements(lines.slice(section.start, section.end)),
+  };
+}
+
+function parseSection(texts: readonly string[], section: AccountSection): RobinhoodBrokerageParse {
+  const { accountNumber } = section;
+  const lines = texts.slice(section.start, section.end);
+
+  // every account in a file shares one statement period, and a later account's
+  // page header prints ABOVE its account line — so outside the first section
+  // the period is read from the file
+  const period = firstMatch(lines, PERIOD_RE) ?? firstMatch(texts, PERIOD_RE);
   if (!period) throw new ParseError(PROFILE_ID, "No statement period found");
   const periodStart = toIso(period[1] as string);
   const periodEnd = toIso(period[2] as string);
@@ -500,12 +573,12 @@ export const robinhoodBrokerageStatementPdf: ParserProfile = {
   // Robinhood ships opaque UUID filenames, so content decides routing entirely
   matches: (f) => f.format === "pdf",
   matchesContent: isRobinhoodBrokerageStatementText,
-  parse: async (f): Promise<ParsedStatement[]> => {
+  parse: async (f, context): Promise<ParsedStatement[]> => {
     const lines = await extractLines(f.buffer);
     if (lines.length === 0) throw new ParseError(PROFILE_ID, "No extractable text — scanned PDF?");
-    const parsed = parseRobinhoodBrokerageLines(lines.map((l) => l.text));
     // the full lines, not just their text — direction lives in the token x
-    const txns: CanonicalTxn[] = parseCryptoMoneyMovements(lines).map((m) => ({
+    const { parsed, movements } = parseRobinhoodBrokerageDocument(lines, context?.knownLast4s.Robinhood ?? []);
+    const txns: CanonicalTxn[] = movements.map((m) => ({
       postedOn: m.postedOn,
       amountCents: m.amountCents,
       rawDescription: "Crypto Money Movement",

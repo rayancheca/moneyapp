@@ -28,7 +28,14 @@ import { accountSlug, institutionSlug } from "./account-slug";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
 import { extractLines } from "./profiles/pdf-profile";
-import { ParseError, type AccountHint, type CanonicalTxn, type ParsedStatement, type ParserProfile } from "./types";
+import {
+  ParseError,
+  type AccountHint,
+  type CanonicalTxn,
+  type ParseContext,
+  type ParsedStatement,
+  type ParserProfile,
+} from "./types";
 
 /**
  * The import orchestrator (master-plan Phases 2a/2b): sniff → profile →
@@ -487,6 +494,27 @@ function coveredRanges(db: AppDatabase, accountId: string): CoveredRange[] {
   return [...byFile.values()];
 }
 
+/**
+ * The accounts the ledger already tracks, as the last four digits a profile can
+ * match an account number against — for a file that carries several accounts
+ * and must parse only the tracked one. An account with no last4 cannot be
+ * matched by number and is left out.
+ */
+export function parseContextFor(db: AppDatabase): ParseContext {
+  const rows = db
+    .select({ institution: institutions.name, last4: accounts.last4 })
+    .from(accounts)
+    .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
+    .all();
+  const knownLast4s: Partial<Record<AccountHint["institution"], string[]>> = {};
+  for (const r of rows) {
+    if (r.last4 === null) continue;
+    const institution = r.institution as AccountHint["institution"];
+    knownLast4s[institution] = [...(knownLast4s[institution] ?? []), r.last4];
+  }
+  return { knownLast4s };
+}
+
 /** Resolve (or create/upgrade) the account a parsed statement belongs to. */
 export function resolveAccount(db: AppDatabase, hint: AccountHint): string {
   const institution = db
@@ -818,7 +846,7 @@ async function importOneFile(
 
   let statements: ParsedStatement[];
   try {
-    statements = await profile.parse(file);
+    statements = await profile.parse(file, parseContextFor(db));
   } catch (error: unknown) {
     const message = error instanceof ParseError ? error.message : `Unexpected: ${String(error)}`;
     db.update(importFiles)

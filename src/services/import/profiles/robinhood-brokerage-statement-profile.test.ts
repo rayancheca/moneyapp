@@ -1,8 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { ParseError } from "../types";
+import type { Line } from "./pdf-profile";
 import {
-  firstAccountSection,
+  accountSections,
   isRobinhoodBrokerageStatementText,
+  parseRobinhoodBrokerageDocument,
   parseRobinhoodBrokerageLines,
   parseSweepActivity,
 } from "./robinhood-brokerage-statement-profile";
@@ -177,34 +179,113 @@ describe("parseRobinhoodBrokerageLines", () => {
   });
 });
 
-describe("firstAccountSection", () => {
+describe("choosing the account section", () => {
   /**
-   * From 2026-06 the owner's statement carries a SECOND account. Blending its
-   * balances into `Robinhood Cash` would corrupt the anchor, so only the first
-   * section is ever parsed.
+   * From 2026-06 the owner's statement carries a SECOND account, #655929651
+   * ($26.64, not tracked by the app). June and July print it second. The
+   * 2026-08 statement printed it FIRST, and "parse the first section" read
+   * $26.64 → $26.64 as Robinhood Cash's month — a trial import graded the period
+   * a $679.37 gap, turned 60 days into gap days and quarantined both crypto cash
+   * legs. The section is chosen by the account the ledger TRACKS, never by where
+   * it happens to print.
    */
-  const TWO_ACCOUNTS = [
-    ...ERA_C,
+  const TRACKED = ["3525"];
+  const UNTRACKED = [
     "Individual Account #:655929651",
     "Account Summary",
     "Net Account Balance $26.64 $26.64",
+    "Total Securities $0.00 $0.00",
     "Portfolio Value $26.64 $26.64",
   ];
+  const TRACKED_FIRST = [...ERA_C, ...UNTRACKED];
+  /** the 2026-08 order — every literal copied from the extracted file */
+  const UNTRACKED_FIRST = [
+    "08/01/2026 to 08/31/2026",
+    ...UNTRACKED,
+    "08/01/2026 to 08/31/2026",
+    "Individual Account #:487513525",
+    "Account Summary",
+    "Brokerage Cash Balance * $1,679.93 $0.68",
+    "Deposit Sweep Balance $0.45 $1,000.33",
+    "Total Securities ** $67,859.26 $72,959.32",
+    "Portfolio Value $69,539.64 $73,960.33",
+  ];
 
-  test("stops at the next account block", () => {
-    const { accountNumber, lines } = firstAccountSection(TWO_ACCOUNTS);
-    expect(accountNumber).toBe("487513525");
-    expect(lines).not.toContain("Net Account Balance $26.64 $26.64");
+  test("splits the document at every account header", () => {
+    const sections = accountSections(UNTRACKED_FIRST);
+    expect(sections.map((s) => s.accountNumber)).toEqual(["655929651", "487513525"]);
+    const second = UNTRACKED_FIRST.slice(sections[1]!.start, sections[1]!.end);
+    expect(second).not.toContain("Net Account Balance $26.64 $26.64");
+    expect(second).toContain("Brokerage Cash Balance * $1,679.93 $0.68");
   });
 
-  test("the second account's balances never reach the parse", () => {
-    const p = parseRobinhoodBrokerageLines(TWO_ACCOUNTS);
+  test("the tracked account's balances are read when it prints first", () => {
+    const p = parseRobinhoodBrokerageLines(TRACKED_FIRST, TRACKED);
     expect(p.accountNumber).toBe("487513525");
     expect(p.closingCashCents).toBe(167993 + 45); // not 2664
   });
 
+  test("⛔ and when it prints SECOND — the 2026-08 order", () => {
+    const p = parseRobinhoodBrokerageLines(UNTRACKED_FIRST, TRACKED);
+    expect(p.accountNumber).toBe("487513525");
+    expect(p.periodStart).toBe("2026-08-01");
+    expect(p.periodEnd).toBe("2026-08-31");
+    expect(p.openingCashCents).toBe(167993 + 45); // not 2664
+    expect(p.closingCashCents).toBe(68 + 100033); // not 2664
+    expect(p.openingSecuritiesCents).toBe(6785926); // not 0
+    expect(p.closingSecuritiesCents).toBe(7295932);
+  });
+
+  test("refuses a multi-account statement when no section is an account the ledger tracks", () => {
+    expect(() => parseRobinhoodBrokerageLines(UNTRACKED_FIRST, [])).toThrow(/655929651.*487513525/);
+    expect(() => parseRobinhoodBrokerageLines(UNTRACKED_FIRST, ["9999"])).toThrow(ParseError);
+    expect(() => parseRobinhoodBrokerageLines(TRACKED_FIRST)).toThrow(ParseError);
+  });
+
+  test("refuses when more than one section is tracked, rather than picking one", () => {
+    expect(() => parseRobinhoodBrokerageLines(UNTRACKED_FIRST, ["3525", "9651"])).toThrow(ParseError);
+  });
+
+  test("⛔ refuses a statement that carries ONLY an untracked account — it would overwrite Robinhood Cash's anchor", () => {
+    const untrackedAlone = ["08/01/2026 to 08/31/2026", ...UNTRACKED];
+    expect(() => parseRobinhoodBrokerageLines(untrackedAlone, TRACKED)).toThrow(/655929651/);
+  });
+
+  test("a single-account statement needs no tracked account on a ledger that tracks none", () => {
+    expect(parseRobinhoodBrokerageLines(ERA_C).accountNumber).toBe("487513525");
+    expect(parseRobinhoodBrokerageLines(ERA_C, TRACKED).accountNumber).toBe("487513525");
+  });
+
   test("throws when the document carries no account number", () => {
-    expect(() => firstAccountSection(["Account Summary", "Portfolio Value $1.00 $2.00"])).toThrow(ParseError);
+    expect(() => accountSections(["Account Summary", "Portfolio Value $1.00 $2.00"])).toThrow(ParseError);
+  });
+
+  test("⛔ crypto money movements are read from the tracked section only", () => {
+    const line = (text: string, tokens: [string, number][] = []): Line => ({
+      y: 0,
+      text,
+      tokens: tokens.map(([str, x]) => ({ str, x })),
+    });
+    const header = line("Description Symbol Acct Type Transaction Date Qty Price Debit Credit", [
+      ["Debit", 500],
+      ["Credit", 553],
+    ]);
+    const movement = (day: string, amount: string): Line =>
+      line(`Crypto Money Movement Margin COIN ${day} ${amount}`, [
+        [day, 400],
+        [amount, 553],
+      ]);
+    const doc = [
+      ...UNTRACKED_FIRST.slice(0, 6).map((t) => line(t)),
+      header,
+      movement("08/05/2026", "$9.99"),
+      ...UNTRACKED_FIRST.slice(6).map((t) => line(t)),
+      header,
+      movement("08/24/2026", "$1,499.99"),
+    ];
+    const { parsed, movements } = parseRobinhoodBrokerageDocument(doc, TRACKED);
+    expect(parsed.accountNumber).toBe("487513525");
+    expect(movements).toEqual([{ postedOn: "2026-08-24", amountCents: 149999 }]);
   });
 });
 

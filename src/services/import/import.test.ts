@@ -12,7 +12,7 @@ import { statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { latestBalances, netWorthSeries } from "@/services/derivation";
 import { listSplits, setSplits } from "@/services/transaction-splits";
-import { fidelityOf, importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, resolveAccount, type ImportInput } from "./service";
+import { fidelityOf, importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, parseContextFor, resolveAccount, type ImportInput } from "./service";
 import { PROFILES } from "./profiles";
 import { importFiles as importFilesTable } from "@/db/schema/imports";
 import { dedupeHash } from "@/lib/hash";
@@ -300,6 +300,19 @@ describe("resolveAccount preferName (P0.1 settlement-cash routing)", () => {
     resolveAccount(bundle.db, { ...hint, preferName: undefined }); // brokerage exists
     const cash = resolveAccount(bundle.db, { institution: "Robinhood", type: "checking", name: "Robinhood Cash" });
     expect(resolveAccount(bundle.db, hint)).toBe(cash);
+  });
+});
+
+describe("parseContextFor — the accounts a multi-account file may parse", () => {
+  test("offers the last4 of every tracked account by institution, and leaves out an account with none", () => {
+    resolveAccount(bundle.db, { institution: "Robinhood", type: "investment", subtype: "brokerage", name: "Robinhood Brokerage", last4: "3525" });
+    resolveAccount(bundle.db, { institution: "Robinhood", type: "checking", name: "Robinhood Cash" });
+    resolveAccount(bundle.db, { institution: "Chase", type: "checking", name: "Chase Checking", last4: "3522" });
+
+    const { knownLast4s } = parseContextFor(bundle.db);
+    expect(knownLast4s.Robinhood).toEqual(["3525"]);
+    expect(knownLast4s.Chase).toEqual(["3522"]);
+    expect(knownLast4s.Discover).toBeUndefined();
   });
 });
 

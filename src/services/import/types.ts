@@ -92,7 +92,17 @@ export interface ParserProfile {
    * profile is chosen only if it also returns true.
    */
   matchesContent?(text: string): boolean;
-  parse(file: SniffedFile): Promise<ParsedStatement[]> | ParsedStatement[];
+  parse(file: SniffedFile, context?: ParseContext): Promise<ParsedStatement[]> | ParsedStatement[];
+}
+
+/**
+ * What the ledger already knows, offered to `parse` for a file that can carry
+ * several accounts. A profile that has to choose between them chooses by an
+ * account the ledger TRACKS — never by where an account happens to print.
+ */
+export interface ParseContext {
+  /** the last four digits of every account that has them, keyed by institution name */
+  knownLast4s: Readonly<Partial<Record<AccountHint["institution"], readonly string[]>>>;
 }
 
 export class ParseError extends Error {
