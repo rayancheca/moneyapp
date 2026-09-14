@@ -494,9 +494,28 @@ export default async function ImportsPage({
                                posted takes its exact first charge. Before that,
                                re-importing a statement brought its bills back
                                UNLINKED, and every surface that decides "paid"
-                               from links called them owed. */
+                               from links called them owed.
+
+                               🔴 …but "re-runs recurring-series linking" alone
+                               promised every link back, and a link comes back
+                               only where its series still RECOGNISES the charge:
+                               absorption needs another row of that series with
+                               the same description, and a first posting needs a
+                               commitment with nothing posted whose date is still
+                               ahead. Measured 2026-09-14 by the review on a
+                               copy of the real ledger: un-importing and
+                               re-importing Statement_082026_4208.pdf left Car
+                               insurance and HBO Max at 0 linked rows (1 each
+                               before). Read-only on the ledger the same day:
+                               each has exactly one linked row, both in that
+                               file (2026-08-12 -$357.58, 2026-07-18 -$260.26),
+                               and Venture X annual fee's only one is in
+                               capitalone-venturex-statement-2026-02.pdf. A detach goes with
+                               its row too: the charge the owner said was not
+                               that bill comes back linked, if its series still
+                               carries the description. */
                             reassurance:
-                              "The statement file itself stays on disk. Re-importing brings the rows back and re-runs the rules, the merchant map, transfer detection and recurring-series linking over them — what is lost is the hand-categorization.",
+                              "The statement file itself stays on disk. Re-importing brings the rows back and re-runs the rules, the merchant map, transfer detection and recurring-series linking over them — but a charge links again only where its series still recognises it: by another charge with the same description, or as a registered commitment's first charge on its date and amount. What is lost is the hand-categorization, and the recurring links you attached or removed by hand.",
                           }}
                         />
                       </td>
