@@ -544,8 +544,10 @@ export function buildForwardSeries(input: ForwardSeriesInput): ProjectionPoint[]
  *     "$X in <prior month>" readout on **33 of 53 periods**: `?period=2023-03`
  *     ended at $2,943.05 against a stated $2,541.21.
  *
- * Aligning by index means "the same day of the month" for day buckets and "the
- * same month" for month buckets, which is what every one of them claims. The
+ * Aligning by index means "the same POSITION in the period": the same day of
+ * the month for a calendar month, the same month for a year — and, for a
+ * quarter, the same month-of-quarter (July beside April), not the same calendar
+ * month, which no prior quarter has. That is what every surface claims, and the
  * resample is gone: it existed only to paper over a length mismatch this
  * handles honestly, by leaving a gap where the prior period has no bucket. A prior
  * period that is SHORTER leaves trailing `null`s (render "—", hold the running
