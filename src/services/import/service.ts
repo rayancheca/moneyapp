@@ -33,6 +33,7 @@ import {
   ParseError,
   type AccountHint,
   type CanonicalTxn,
+  type KnownAccount,
   type ParseContext,
   type ParsedStatement,
   type ParserProfile,
@@ -526,24 +527,27 @@ function coveredRanges(db: AppDatabase, accountId: string): CoveredRange[] {
 }
 
 /**
- * The accounts the ledger already tracks, as the last four digits a profile can
- * match an account number against — for a file that carries several accounts
- * and must parse only the tracked one. An account with no last4 cannot be
- * matched by number and is left out.
+ * The accounts the ledger already tracks — the last four digits a profile can
+ * match an account number against, and the type it routes that account by — for
+ * a file that carries several accounts and must parse only the tracked ones. An
+ * account with no last4 cannot be matched by number and is left out.
  */
 export function parseContextFor(db: AppDatabase): ParseContext {
   const rows = db
-    .select({ institution: institutions.name, last4: accounts.last4 })
+    .select({ institution: institutions.name, last4: accounts.last4, type: accounts.type, subtype: accounts.subtype })
     .from(accounts)
     .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
     .all();
-  const knownLast4s: Partial<Record<AccountHint["institution"], string[]>> = {};
+  const knownAccounts: Partial<Record<AccountHint["institution"], KnownAccount[]>> = {};
   for (const r of rows) {
     if (r.last4 === null) continue;
     const institution = r.institution as AccountHint["institution"];
-    knownLast4s[institution] = [...(knownLast4s[institution] ?? []), r.last4];
+    knownAccounts[institution] = [
+      ...(knownAccounts[institution] ?? []),
+      { last4: r.last4, type: r.type, subtype: r.subtype },
+    ];
   }
-  return { knownLast4s };
+  return { knownAccounts };
 }
 
 /** Resolve (or create/upgrade) the account a parsed statement belongs to. */

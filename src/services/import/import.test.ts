@@ -311,10 +311,12 @@ describe("parseContextFor — the accounts a multi-account file may parse", () =
     resolveAccount(bundle.db, { institution: "Robinhood", type: "checking", name: "Robinhood Cash" });
     resolveAccount(bundle.db, { institution: "Chase", type: "checking", name: "Chase Checking", last4: "3522" });
 
-    const { knownLast4s } = parseContextFor(bundle.db);
-    expect(knownLast4s.Robinhood).toEqual(["3525"]);
-    expect(knownLast4s.Chase).toEqual(["3522"]);
-    expect(knownLast4s.Discover).toBeUndefined();
+    const { knownAccounts } = parseContextFor(bundle.db);
+    // the TYPE travels with the number: a two-account Robinhood statement routes
+    // each section by what the ledger tracks that account as
+    expect(knownAccounts.Robinhood).toEqual([{ last4: "3525", type: "investment", subtype: "brokerage" }]);
+    expect(knownAccounts.Chase).toEqual([{ last4: "3522", type: "checking", subtype: null }]);
+    expect(knownAccounts.Discover).toBeUndefined();
   });
 });
 

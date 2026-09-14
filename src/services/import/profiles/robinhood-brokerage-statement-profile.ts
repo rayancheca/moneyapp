@@ -1,8 +1,22 @@
 import { isValidIsoDate } from "@/lib/dates";
 import { parseAmountToCents } from "@/lib/money";
-import { ParseError, type CanonicalTxn, type ParsedStatement, type ParserProfile } from "../types";
+import {
+  ParseError,
+  type AccountHint,
+  type CanonicalTxn,
+  type KnownAccount,
+  type ParsedStatement,
+  type ParserProfile,
+} from "../types";
+import { RH_CODE_CATEGORY } from "./csv-profiles";
 import { extractLines, type Line } from "./pdf-profile";
-import { parseCryptoMoneyMovements, type CryptoMovement } from "./robinhood-crypto-movement";
+import {
+  selectTrackedSections,
+  splitAtAccountHeaders,
+  type AccountSection,
+  type TrackedSection,
+} from "./robinhood-account-sections";
+import { parseAccountActivity, parseCryptoMoneyMovements } from "./robinhood-crypto-movement";
 
 /**
  * Real Robinhood *securities* statement PDFs — the arbiter `Robinhood Cash` has
@@ -48,13 +62,17 @@ import { parseCryptoMoneyMovements, type CryptoMovement } from "./robinhood-cryp
  * the row and quietly shift every downstream balance.
  *
  * A statement can carry MORE THAN ONE account: from 2026-06 the owner's file
- * also contains `Individual Account #:655929651` ($26.64), which the app does
- * not track — printed after the tracked account through 2026-07, and BEFORE it
- * in 2026-08. Exactly one section is parsed, chosen by account NUMBER against
- * the accounts the ledger already tracks (`selectAccountSection`), never by
- * position. Blending a second account's balances into `Robinhood Cash` would
- * corrupt the anchor, and auto-creating an account from a statement is how a
- * duplicate account gets born.
+ * also contains `Individual Account #:655929651` — the $26.64 he moved over on
+ * 2026-06-05 for Claude to trade with — printed after #487513525 through
+ * 2026-07, and BEFORE it in 2026-08. Sections are chosen by account NUMBER
+ * against the accounts the ledger already tracks (`selectAccountSections`),
+ * never by position, and each tracked section goes to its OWN account by what
+ * the ledger tracks it as (`robinhoodBrokerageStatements`): the brokerage to
+ * Robinhood Cash + Robinhood Brokerage, a cash account to itself. An untracked
+ * section is skipped. Blending a second account's balances into `Robinhood Cash`
+ * would corrupt the anchor, and auto-creating an account from a statement is how
+ * a duplicate account gets born — so the account must exist before its section
+ * is read.
  */
 
 const PROFILE_ID = "robinhood-brokerage-statement-pdf";
@@ -151,14 +169,6 @@ function firstMatch(texts: readonly string[], re: RegExp): RegExpExecArray | nul
   return null;
 }
 
-export interface AccountSection {
-  accountNumber: string;
-  /** first line index — 0 for the first section, whose period header prints above its account line */
-  start: number;
-  /** exclusive */
-  end: number;
-}
-
 /**
  * Every account the document carries, in print order.
  *
@@ -167,52 +177,24 @@ export interface AccountSection {
  * repeats the SAME number continues its section rather than opening another.
  */
 export function accountSections(texts: readonly string[]): AccountSection[] {
-  const headers = texts.flatMap((t, i) => {
-    const m = ACCOUNT_RE.exec(t);
-    return m ? [{ at: i, accountNumber: m[1] as string }] : [];
-  });
-  if (headers.length === 0) throw new ParseError(PROFILE_ID, "No account number found");
-
-  const opens = headers.filter((h, k) => k === 0 || h.accountNumber !== headers[k - 1]?.accountNumber);
-  return opens.map((h, k) => ({
-    accountNumber: h.accountNumber,
-    start: k === 0 ? 0 : h.at,
-    end: opens[k + 1]?.at ?? texts.length,
-  }));
+  const sections = splitAtAccountHeaders(texts, ACCOUNT_RE);
+  if (sections.length === 0) throw new ParseError(PROFILE_ID, "No account number found");
+  return sections;
 }
 
 /**
- * The section of the one account this ledger tracks.
+ * The sections of every account this ledger tracks, in print order — see
+ * `selectTrackedSections` for the rule and its refusals.
  *
- * 🔴 It used to be "the first section". Every statement through 2026-07 prints
- * the tracked account #487513525 first and, from 2026-06, an untracked
- * #655929651 ($26.64) after it — until 2026-08 printed #655929651 FIRST. A
- * trial import then read $26.64 → $26.64 as Robinhood Cash's month: the period
- * graded a $679.37 gap, 60 days became gap days and both crypto cash legs were
- * quarantined. Where an account prints says nothing about which account it is.
- *
- * ⛔ So the choice is by NUMBER — the one section whose account number ends in
- * the last four digits of an account the ledger already tracks — and anything
- * else is REFUSED rather than guessed:
- *  - no tracked section: the statements this profile emits route to Robinhood
- *    Cash by NAME, so an untracked account's balances would overwrite its anchor;
- *  - more than one: nothing says which of two tracked accounts is the cash ledger.
- * A ledger tracking no Robinhood account yet (a fresh install) accepts a
- * single-account statement, which is every file before 2026-06.
+ * 🔴 History, because both earlier rules were each right for a while. "The first
+ * section" read the untracked #655929651's $26.64 as Robinhood Cash's month when
+ * 2026-08 printed it first (a $679.37 gap, 60 gap days, both crypto cash legs
+ * quarantined). "The one tracked section" (3902f69) then refused every
+ * statement once the owner tracked #655929651 as its own account. Each tracked
+ * section now goes to its own account — see `robinhoodBrokerageStatements`.
  */
-export function selectAccountSection(texts: readonly string[], trackedLast4s: readonly string[]): AccountSection {
-  const sections = accountSections(texts);
-  const tracked = sections.filter((s) => trackedLast4s.some((last4) => s.accountNumber.endsWith(last4)));
-  if (tracked.length === 1) return tracked[0] as AccountSection;
-  if (trackedLast4s.length === 0 && sections.length === 1) return sections[0] as AccountSection;
-
-  const printed = sections.map((s) => `#${s.accountNumber}`).join(", ");
-  const known = trackedLast4s.length === 0 ? "none" : trackedLast4s.map((last4) => `····${last4}`).join(", ");
-  throw new ParseError(
-    PROFILE_ID,
-    `Statement carries ${printed}, and ${tracked.length === 0 ? "none is" : "more than one is"} an account ` +
-      `this ledger tracks (${known}) — refusing to guess which is Robinhood Cash`,
-  );
+export function selectAccountSections(texts: readonly string[], trackedLast4s: readonly string[]): TrackedSection[] {
+  return selectTrackedSections(PROFILE_ID, accountSections(texts), trackedLast4s);
 }
 
 /**
@@ -419,29 +401,15 @@ export interface RobinhoodBrokerageParse {
   ledgerVerified: boolean;
 }
 
-/** Pure text-level core, exported for unit tests. */
-export function parseRobinhoodBrokerageLines(
-  texts: readonly string[],
-  trackedLast4s: readonly string[] = [],
-): RobinhoodBrokerageParse {
-  return parseSection(texts, selectAccountSection(texts, trackedLast4s));
-}
-
 /**
- * The whole document: the tracked account's balances, and the crypto cash
- * movements printed inside THAT account's section — a second account's Account
- * Activity is another account's money, and its header another table's columns.
+ * Pure text-level core, exported for unit tests: the one account of a statement
+ * read on a ledger that tracks nothing yet. A document carrying more than one
+ * account is refused here — which of them to read is a question for the tracked
+ * accounts, see `robinhoodBrokerageStatements`.
  */
-export function parseRobinhoodBrokerageDocument(
-  lines: readonly Line[],
-  trackedLast4s: readonly string[] = [],
-): { parsed: RobinhoodBrokerageParse; movements: CryptoMovement[] } {
-  const texts = lines.map((l) => l.text);
-  const section = selectAccountSection(texts, trackedLast4s);
-  return {
-    parsed: parseSection(texts, section),
-    movements: parseCryptoMoneyMovements(lines.slice(section.start, section.end)),
-  };
+export function parseRobinhoodBrokerageLines(texts: readonly string[]): RobinhoodBrokerageParse {
+  const [only] = selectAccountSections(texts, []);
+  return parseSection(texts, only as AccountSection);
 }
 
 function parseSection(texts: readonly string[], section: AccountSection): RobinhoodBrokerageParse {
@@ -562,14 +530,321 @@ export function isRobinhoodBrokerageStatementText(text: string): boolean {
   );
 }
 
+/** `Total Funds Paid and Received $0.00 $26.64` — the Account Activity table's Debit and Credit column totals. */
+const TOTAL_FUNDS_RE = new RegExp(String.raw`^Total Funds Paid and Received ${MONEY} ${MONEY}$`);
+
+type SectionRoute = { kind: "brokerage" } | { kind: "cash"; last4: string };
+
+/**
+ * What a tracked section becomes is decided by what the ledger tracks its
+ * account AS — never by where it prints, and never by what it happens to hold.
+ *
+ *  - the brokerage (`investment`/`brokerage`, #487513525 ····3525): the two
+ *    statements this profile has always emitted, Robinhood Cash and Robinhood
+ *    Brokerage. A fresh install's lone section is read this way too.
+ *  - a cash account (`checking`, #655929651 ····9651 — the owner's $26.64 for
+ *    Claude to trade with): ONE statement of its own. See `cashAccountStatement`.
+ *
+ * Anything else is refused: a brokerage statement's section is not a card, a
+ * savings account or a crypto wallet, and routing one there would be a guess.
+ */
+function routeOf(section: TrackedSection, tracked: readonly KnownAccount[]): SectionRoute {
+  if (section.last4 === null) return { kind: "brokerage" };
+  const account = tracked.find((a) => a.last4 === section.last4) as KnownAccount;
+  if (account.type === "investment" && account.subtype === "brokerage") return { kind: "brokerage" };
+  if (account.type === "checking") return { kind: "cash", last4: section.last4 };
+  const trackedAs = account.subtype ? `${account.type}/${account.subtype}` : account.type;
+  throw new ParseError(
+    PROFILE_ID,
+    `#${section.accountNumber} is tracked as a ${trackedAs} account (····${section.last4}) — a brokerage statement's ` +
+      `section is the brokerage itself or a cash account, refusing to guess where it goes`,
+  );
+}
+
+/**
+ * Every statement a Robinhood brokerage PDF carries for the accounts this ledger
+ * tracks, in print order. Pure — `parse` is this plus text extraction.
+ */
+export function robinhoodBrokerageStatements(
+  lines: readonly Line[],
+  tracked: readonly KnownAccount[] = [],
+): ParsedStatement[] {
+  const texts = lines.map((l) => l.text);
+  const routed = selectAccountSections(
+    texts,
+    tracked.map((a) => a.last4),
+  ).map((section) => ({ section, route: routeOf(section, tracked) }));
+
+  // the brokerage's statements route to Robinhood Cash and Robinhood Brokerage BY NAME, so two would overwrite each other
+  const brokerages = routed.filter((r) => r.route.kind === "brokerage");
+  if (brokerages.length > 1) {
+    throw new ParseError(
+      PROFILE_ID,
+      `Statement carries more than one section tracked as the brokerage ` +
+        `(${brokerages.map((b) => `#${b.section.accountNumber}`).join(", ")}) — refusing to guess which is Robinhood Cash`,
+    );
+  }
+
+  return routed.flatMap(({ section, route }) =>
+    route.kind === "brokerage"
+      ? brokerageStatements(lines, texts, section)
+      : [cashAccountStatement(lines, texts, section, route.last4)],
+  );
+}
+
+/** The brokerage's section: its settlement cash (Robinhood Cash) and its securities (Robinhood Brokerage). */
+function brokerageStatements(lines: readonly Line[], texts: readonly string[], section: AccountSection): ParsedStatement[] {
+  const parsed = parseSection(texts, section);
+  // read from THIS section only — a second account's Account Activity is another account's money
+  const txns: CanonicalTxn[] = parseCryptoMoneyMovements(lines.slice(section.start, section.end)).map((m) => ({
+    postedOn: m.postedOn,
+    amountCents: m.amountCents,
+    rawDescription: "Crypto Money Movement",
+    categoryPath: "Transfers",
+    // the activity CSV documents that it excludes crypto activity, and does
+    // (zero COIN codes); without this the CSV's day-coverage suppresses these
+    soleSource: true,
+  }));
+
+  const accountHint = {
+    institution: "Robinhood",
+    type: "checking",
+    name: "Robinhood Cash",
+    // P0.1 (docs/inflight-dips.md): the settlement-cash ledger already exists
+    // under this name and owns the dedupe hashes — route to it rather than
+    // matching on type and risking a second Robinhood cash account
+    preferName: "Robinhood Cash",
+  } as const;
+
+  /*
+   * PASS 73 — a SECOND statement, for the securities the same document
+   * prints. `Robinhood Brokerage` was the last account in the ledger with no
+   * arbiter: its holdings were rebuilt from the activity CSV and nothing has
+   * ever checked them against a document.
+   *
+   * ⛔ It carries NO transactions. The trades are in the CSV, the crypto
+   * movements go to the cash account above, and a period whose movement is
+   * zero is exactly right for an investment anchor — `periodVerdict` grades an
+   * investment period as a `value_anchor` and records the residual as market
+   * change rather than accusing it of being a gap. What this adds is the two
+   * printed endpoints, which is what `pnpm ledger-check` compares the app's
+   * own holdings valuation against.
+   *
+   * ⚠️ `preferName` routes to the account that already exists. Without it a
+   * second Robinhood investment account is one import away, and this profile's
+   * header already records that auto-creating an account from a statement is
+   * how a duplicate gets born.
+   */
+  const securities: ParsedStatement[] =
+    parsed.openingSecuritiesCents === null || parsed.closingSecuritiesCents === null
+      ? []
+      : [
+          {
+            accountHint: {
+              institution: "Robinhood",
+              type: "investment",
+              subtype: "brokerage",
+              name: "Robinhood Brokerage",
+              preferName: "Robinhood Brokerage",
+            },
+            txns: [],
+            period: {
+              start: parsed.periodStart,
+              end: parsed.periodEnd,
+              // an investment portfolio value is a positive asset, not flipped
+              beginCents: parsed.openingSecuritiesCents,
+              endCents: parsed.closingSecuritiesCents,
+            },
+          },
+        ];
+
+  // no opening balance printed: an observation, not a period to reconcile
+  if (parsed.openingCashCents === null) {
+    return [
+      {
+        accountHint,
+        txns,
+        declaredRange: { start: parsed.periodStart, end: parsed.periodEnd },
+        ledger: { cents: parsed.closingCashCents, asOf: parsed.periodEnd },
+      },
+      ...securities,
+    ];
+  }
+
+  return [
+    {
+      accountHint,
+      txns,
+      period: {
+        start: parsed.periodStart,
+        end: parsed.periodEnd,
+        beginCents: parsed.openingCashCents,
+        endCents: parsed.closingCashCents,
+      },
+    },
+    ...securities,
+  ];
+}
+
+/**
+ * A section whose account the ledger tracks as a CASH account — #655929651.
+ *
+ * Why cash, measured on all three statements it has printed (2026-06..08):
+ * `Brokerage Cash Balance $26.64 100.00%`, `Total Securities $0.00`, nothing
+ * held. As a checking account the cash branch replays its one transaction
+ * between printed anchors and a month that does not close is a real `gap`; as an
+ * investment account with no holdings it would step-hold its anchors, ignore the
+ * $26.64 credit entirely, and value to $0 against every printed ending balance.
+ *
+ * It yields ONE statement, and its hint names the account by last4 alone:
+ *  - no `type`, so `resolveAccount` can never ADOPT Robinhood Cash (checking, no
+ *    last4) — adoption needs a type match — and no `preferName`, so it can never
+ *    route there by name. It resolves to the account whose last4 it is.
+ *  - ⛔ never a securities statement: `statement_periods` is unique on (file,
+ *    account), and a $0.00 securities anchor would overwrite the cash anchor
+ *    printed for the same day.
+ *
+ * Its `ITRF` rows are its only transactions — the $26.64 that arrived
+ * 2026-06-05, whose other leg is Robinhood Cash's activity-CSV row. The export
+ * is per account: the all-time file carries only that debit, so this statement
+ * is the only source of the credit. It is NOT flagged `soleSource`: if the owner
+ * ever downloads this account's own CSV, that file must be free to take the row
+ * over rather than count it twice.
+ *
+ * ⛔ Everything else is REFUSED, loudly, because nothing else has a place here:
+ *  - any printed securities, including a first month whose opening is `N/A`;
+ *  - any Account Activity row that is not an `ITRF` (a Buy by the agent);
+ *  - rows that do not sum to the printed Total Funds Paid and Received — the
+ *    bank's own arithmetic, as the sweep table's check 3 is.
+ */
+function cashAccountStatement(
+  lines: readonly Line[],
+  texts: readonly string[],
+  section: AccountSection,
+  last4: string,
+): ParsedStatement {
+  const parsed = parseSection(texts, section);
+  const who = `#${parsed.accountNumber}`;
+  const own = lines.slice(section.start, section.end);
+
+  refuseSecurities(
+    own.map((l) => l.text),
+    who,
+    last4,
+  );
+  const txns = transferRows(own, who);
+  const accountHint: AccountHint = { institution: "Robinhood", last4 };
+
+  // its first statement prints N/A for the opening: an observation, never a $0.00 opening it did not print
+  if (parsed.openingCashCents === null) {
+    return {
+      accountHint,
+      txns,
+      declaredRange: { start: parsed.periodStart, end: parsed.periodEnd },
+      ledger: { cents: parsed.closingCashCents, asOf: parsed.periodEnd },
+    };
+  }
+  return {
+    accountHint,
+    txns,
+    period: {
+      start: parsed.periodStart,
+      end: parsed.periodEnd,
+      beginCents: parsed.openingCashCents,
+      endCents: parsed.closingCashCents,
+    },
+  };
+}
+
+/**
+ * A cash account holds no securities, and must SAY so. `parseSection` reports no
+ * securities at all for an `N/A` opening (both halves or neither), so the
+ * printed line is read here directly — a first month that bought something must
+ * not pass for cash because its opening was blank.
+ */
+function refuseSecurities(texts: readonly string[], who: string, last4: string): void {
+  const printed = firstMatch(texts, TOTAL_SECURITIES_RE);
+  if (!printed) {
+    throw new ParseError(
+      PROFILE_ID,
+      `${who} prints no Total Securities line, so nothing shows it holds only cash — refusing to import it as a cash account (····${last4})`,
+    );
+  }
+  // group 1 is the opening (or N/A), group 3 the closing — see parseSection
+  const held = [printed[1], printed[3]].find((v) => v !== undefined && v !== "N/A" && parseAmountToCents(v) !== 0);
+  if (held !== undefined) {
+    throw new ParseError(
+      PROFILE_ID,
+      `${who} prints ${held} of securities, and the ledger tracks it as a cash account (····${last4}) — refusing to drop them`,
+    );
+  }
+}
+
+/** The cash account's Account Activity: `ITRF` rows only, checked against the printed column totals. */
+function transferRows(own: readonly Line[], who: string): CanonicalTxn[] {
+  const totalsAt = own.findIndex((l) => TOTAL_FUNDS_RE.test(l.text));
+  if (totalsAt === -1) {
+    throw new ParseError(PROFILE_ID, `${who} prints no Total Funds Paid and Received line — refusing to import its Account Activity unchecked`);
+  }
+  // the table runs from its title to its totals; the Executed Trades table after it has its own columns
+  const tableAt = own.findIndex((l) => l.text === "Account Activity");
+  const table = tableAt === -1 || tableAt > totalsAt ? [] : own.slice(tableAt, totalsAt);
+  const rows = parseAccountActivity(table, () => true);
+
+  const stray = rows.find((r) => !r.line.tokens.some((t) => t.str === "ITRF"));
+  if (stray) {
+    throw new ParseError(
+      PROFILE_ID,
+      `${who} prints an Account Activity row a cash account cannot hold — "${stray.line.text}" — ` +
+        `only ITRF transfers are read there, refusing to drop it`,
+    );
+  }
+
+  const debits = rows.reduce((n, r) => (r.amountCents < 0 ? n - r.amountCents : n), 0);
+  const credits = rows.reduce((n, r) => (r.amountCents > 0 ? n + r.amountCents : n), 0);
+  const totals = TOTAL_FUNDS_RE.exec((own[totalsAt] as Line).text) as RegExpExecArray;
+  const printedDebits = parseAmountToCents(totals[1] as string);
+  const printedCredits = parseAmountToCents(totals[2] as string);
+  if (debits !== printedDebits || credits !== printedCredits) {
+    throw new ParseError(
+      PROFILE_ID,
+      `${who}'s Account Activity rows total ${debits}/${credits} against a printed Total Funds Paid and Received of ${printedDebits}/${printedCredits}`,
+    );
+  }
+
+  return rows.map((r) => {
+    const description = r.line.tokens[0]?.str.trim() ?? "";
+    if (description === "") {
+      throw new ParseError(PROFILE_ID, `${who} prints an ITRF row with no description — "${r.line.text}"`);
+    }
+    return {
+      postedOn: r.postedOn,
+      amountCents: r.amountCents,
+      // the description token, which is the activity CSV's own wording for the other leg
+      rawDescription: description,
+      bankCategory: "ITRF",
+      // filed exactly as the activity CSV files an ITRF — the one table of Robinhood trans codes
+      categoryPath: RH_CODE_CATEGORY.ITRF ?? undefined,
+    };
+  });
+}
+
 export const robinhoodBrokerageStatementPdf: ParserProfile = {
   id: PROFILE_ID,
   /*
+   * v4: a section whose account the ledger tracks as a CASH account becomes
+   * that account's own statement (#655929651, `cashAccountStatement`). The
+   * brokerage's statements are unchanged for every file in the archive. The
+   * bump exists for the two statements that already carry the second account:
+   * 2026-06 and 2026-07 were imported at v3, `ux_import_files_sha_parser` skips
+   * an unbumped re-import as a duplicate, and only a re-parse can add the
+   * account they print. Files not re-imported stay at v3, which is correct.
+   *
    * v3: emits a second ParsedStatement carrying the securities anchor (pass 73).
    * A parser fix never reaches an already-imported file, so the bump is what
    * makes the 32-statement archive re-importable — the same reason v2 existed.
    */
-  version: 3,
+  version: 4,
   // Robinhood ships opaque UUID filenames, so content decides routing entirely
   matches: (f) => f.format === "pdf",
   matchesContent: isRobinhoodBrokerageStatementText,
@@ -577,94 +852,6 @@ export const robinhoodBrokerageStatementPdf: ParserProfile = {
     const lines = await extractLines(f.buffer);
     if (lines.length === 0) throw new ParseError(PROFILE_ID, "No extractable text — scanned PDF?");
     // the full lines, not just their text — direction lives in the token x
-    const { parsed, movements } = parseRobinhoodBrokerageDocument(lines, context?.knownLast4s.Robinhood ?? []);
-    const txns: CanonicalTxn[] = movements.map((m) => ({
-      postedOn: m.postedOn,
-      amountCents: m.amountCents,
-      rawDescription: "Crypto Money Movement",
-      categoryPath: "Transfers",
-      // the activity CSV documents that it excludes crypto activity, and does
-      // (zero COIN codes); without this the CSV's day-coverage suppresses these
-      soleSource: true,
-    }));
-
-    const accountHint = {
-      institution: "Robinhood",
-      type: "checking",
-      name: "Robinhood Cash",
-      // P0.1 (docs/inflight-dips.md): the settlement-cash ledger already exists
-      // under this name and owns the dedupe hashes — route to it rather than
-      // matching on type and risking a second Robinhood cash account
-      preferName: "Robinhood Cash",
-    } as const;
-
-    /*
-     * PASS 73 — a SECOND statement, for the securities the same document
-     * prints. `Robinhood Brokerage` was the last account in the ledger with no
-     * arbiter: its holdings were rebuilt from the activity CSV and nothing has
-     * ever checked them against a document.
-     *
-     * ⛔ It carries NO transactions. The trades are in the CSV, the crypto
-     * movements go to the cash account above, and a period whose movement is
-     * zero is exactly right for an investment anchor — `periodVerdict` grades an
-     * investment period as a `value_anchor` and records the residual as market
-     * change rather than accusing it of being a gap. What this adds is the two
-     * printed endpoints, which is what `pnpm ledger-check` compares the app's
-     * own holdings valuation against.
-     *
-     * ⚠️ `preferName` routes to the account that already exists. Without it a
-     * second Robinhood investment account is one import away, and this profile's
-     * header already records that auto-creating an account from a statement is
-     * how a duplicate gets born.
-     */
-    const securities: ParsedStatement[] =
-      parsed.openingSecuritiesCents === null || parsed.closingSecuritiesCents === null
-        ? []
-        : [
-            {
-              accountHint: {
-                institution: "Robinhood",
-                type: "investment",
-                subtype: "brokerage",
-                name: "Robinhood Brokerage",
-                preferName: "Robinhood Brokerage",
-              },
-              txns: [],
-              period: {
-                start: parsed.periodStart,
-                end: parsed.periodEnd,
-                // an investment portfolio value is a positive asset, not flipped
-                beginCents: parsed.openingSecuritiesCents,
-                endCents: parsed.closingSecuritiesCents,
-              },
-            },
-          ];
-
-    // no opening balance printed: an observation, not a period to reconcile
-    if (parsed.openingCashCents === null) {
-      return [
-        {
-          accountHint,
-          txns,
-          declaredRange: { start: parsed.periodStart, end: parsed.periodEnd },
-          ledger: { cents: parsed.closingCashCents, asOf: parsed.periodEnd },
-        },
-        ...securities,
-      ];
-    }
-
-    return [
-      {
-        accountHint,
-        txns,
-        period: {
-          start: parsed.periodStart,
-          end: parsed.periodEnd,
-          beginCents: parsed.openingCashCents,
-          endCents: parsed.closingCashCents,
-        },
-      },
-      ...securities,
-    ];
+    return robinhoodBrokerageStatements(lines, context?.knownAccounts.Robinhood ?? []);
   },
 };

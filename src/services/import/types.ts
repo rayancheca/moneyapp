@@ -95,14 +95,24 @@ export interface ParserProfile {
   parse(file: SniffedFile, context?: ParseContext): Promise<ParsedStatement[]> | ParsedStatement[];
 }
 
+/** An account the ledger tracks, as a statement section can be matched and routed to it. */
+export interface KnownAccount {
+  readonly last4: string;
+  readonly type: AccountType;
+  readonly subtype: AccountSubtype | null;
+}
+
 /**
  * What the ledger already knows, offered to `parse` for a file that can carry
  * several accounts. A profile that has to choose between them chooses by an
- * account the ledger TRACKS — never by where an account happens to print.
+ * account the ledger TRACKS — never by where an account happens to print — and
+ * routes each one by what the ledger tracks it AS: the Robinhood brokerage
+ * statement's second account (#655929651) is a cash account, its first is the
+ * brokerage.
  */
 export interface ParseContext {
-  /** the last four digits of every account that has them, keyed by institution name */
-  knownLast4s: Readonly<Partial<Record<AccountHint["institution"], readonly string[]>>>;
+  /** every account that has a last4, keyed by institution name; an account without one cannot be matched by number */
+  knownAccounts: Readonly<Partial<Record<AccountHint["institution"], readonly KnownAccount[]>>>;
 }
 
 export class ParseError extends Error {

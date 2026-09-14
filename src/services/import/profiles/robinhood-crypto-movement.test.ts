@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Line } from "./pdf-profile";
-import { parseCryptoMoneyMovements } from "./robinhood-crypto-movement";
+import { parseAccountActivity, parseCryptoMoneyMovements } from "./robinhood-crypto-movement";
 
 /** The Account Activity column header, verbatim from the real 2026-07 statement. */
 const HEADER: Line = {
@@ -109,5 +109,52 @@ describe("parseCryptoMoneyMovements", () => {
     expect(
       parseCryptoMoneyMovements([HEADER, movement("07/07/2026", "($9.90)", DEBIT_X)]),
     ).toEqual([{ postedOn: "2026-07-07", amountCents: -990 }]);
+  });
+});
+
+describe("parseAccountActivity — the column reader, for any row type", () => {
+  /**
+   * `Crypto Money Movement` was the first Account Activity row this repo read.
+   * The second is `ITRF`: #655929651's June 2026 statement prints the $26.64 it
+   * received as one, and the column is again the only carrier of direction.
+   * Header and row x-positions are verbatim from that statement.
+   */
+  const SECOND_ACCOUNT_HEADER: Line = {
+    y: 1,
+    text: "Description Symbol Acct Type Transaction Date Qty Price Debit Credit",
+    tokens: [
+      { str: "Description", x: 36 },
+      { str: "Debit", x: 695.33 },
+      { str: "Credit", x: 746.51 },
+    ],
+  };
+  const itrf = (amountX: number): Line => ({
+    y: 2,
+    text: "Transfer from Brokerage to Brokerage Cash ITRF 06/05/2026 $26.64",
+    tokens: [
+      { str: "Transfer from Brokerage to Brokerage", x: 36 },
+      { str: "Cash", x: 347.25 },
+      { str: "ITRF", x: 426.3 },
+      { str: "06/05/2026", x: 516.67 },
+      { str: "$26.64", x: amountX },
+    ],
+  });
+  const isItrf = (l: Line): boolean => l.tokens.some((t) => t.str === "ITRF");
+
+  it("signs an ITRF in the Credit column positive, and hands back the line it read", () => {
+    const [row, ...rest] = parseAccountActivity([SECOND_ACCOUNT_HEADER, itrf(746.51)], isItrf);
+    expect(rest).toEqual([]);
+    expect(row).toMatchObject({ postedOn: "2026-06-05", amountCents: 2_664 });
+    expect(row!.line.tokens[0]!.str).toBe("Transfer from Brokerage to Brokerage");
+  });
+
+  it("signs the same row in the Debit column negative — the brokerage's side of the transfer", () => {
+    expect(parseAccountActivity([SECOND_ACCOUNT_HEADER, itrf(695.33)], isItrf)).toMatchObject([
+      { postedOn: "2026-06-05", amountCents: -2_664 },
+    ]);
+  });
+
+  it("reads only the rows the caller accepts", () => {
+    expect(parseAccountActivity([SECOND_ACCOUNT_HEADER, itrf(746.51)], () => false)).toEqual([]);
   });
 });

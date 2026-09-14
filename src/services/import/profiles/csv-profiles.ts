@@ -360,7 +360,12 @@ export const sofiCsv: ParserProfile = {
 const RH_HEADER =
   '"Activity Date","Process Date","Settle Date","Instrument","Description","Trans Code","Quantity","Price","Amount"';
 
-const RH_CODE_CATEGORY: Record<string, string | null> = {
+/**
+ * Exported for the one other reader of Robinhood trans codes: the brokerage
+ * statement PDF, which emits a tracked cash account's `ITRF` rows and must file
+ * them exactly as this export files the other leg.
+ */
+export const RH_CODE_CATEGORY: Readonly<Record<string, string | null>> = {
   Buy: "Investments > Buys",
   Sell: "Investments > Sells",
   CDIV: "Income > Dividends",

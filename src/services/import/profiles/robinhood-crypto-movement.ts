@@ -72,13 +72,27 @@ function columnStops(lines: readonly Line[]): { debitX: number; creditX: number 
   return null;
 }
 
-export function parseCryptoMoneyMovements(lines: readonly Line[]): CryptoMovement[] {
+/** One Account Activity row, signed by its column, with the line it was read from. */
+export interface ActivityRow extends CryptoMovement {
+  line: Line;
+}
+
+/**
+ * Every row the caller `accept`s from an Account Activity table: a line with a
+ * date token and a money token, signed by which column the amount sits in.
+ *
+ * `Crypto Money Movement` was the first row type this repo had to read, and the
+ * reason the column reader exists. The second is `ITRF` — the $26.64 transfer
+ * #655929651's June 2026 statement prints as a Credit — and it needs exactly the
+ * same rule, so the rule is here once rather than copied.
+ */
+export function parseAccountActivity(lines: readonly Line[], accept: (line: Line) => boolean): ActivityRow[] {
   const stops = columnStops(lines);
   if (!stops) return [];
 
-  const movements: CryptoMovement[] = [];
+  const rows: ActivityRow[] = [];
   for (const line of lines) {
-    if (!CRYPTO_RE.test(line.text)) continue;
+    if (!accept(line)) continue;
 
     const amountTok = line.tokens.filter((t) => MONEY_TOKEN_RE.test(t.str)).at(-1);
     const dateTok = line.tokens.find((t) => US_DATE_RE.test(t.str));
@@ -89,7 +103,7 @@ export function parseCryptoMoneyMovements(lines: readonly Line[]): CryptoMovemen
     if (Math.min(toDebit, toCredit) > COLUMN_TOLERANCE) {
       throw new ParseError(
         PROFILE_ID,
-        `Crypto Money Movement ${dateTok.str} ${amountTok.str} sits in neither column ` +
+        `Account Activity row "${line.text}" sits in neither column ` +
           `(x=${amountTok.x}, Debit=${stops.debitX}, Credit=${stops.creditX}) — refusing to guess its direction`,
       );
     }
@@ -97,10 +111,18 @@ export function parseCryptoMoneyMovements(lines: readonly Line[]): CryptoMovemen
     // the paren form is already negative from parseAmountToCents; the column is
     // the authority on direction, so take the magnitude and let it decide
     const magnitude = Math.abs(parseAmountToCents(amountTok.str));
-    movements.push({
+    rows.push({
       postedOn: toIso(dateTok.str),
       amountCents: toCredit < toDebit ? magnitude : -magnitude,
+      line,
     });
   }
-  return movements;
+  return rows;
+}
+
+export function parseCryptoMoneyMovements(lines: readonly Line[]): CryptoMovement[] {
+  return parseAccountActivity(lines, (line) => CRYPTO_RE.test(line.text)).map(({ postedOn, amountCents }) => ({
+    postedOn,
+    amountCents,
+  }));
 }

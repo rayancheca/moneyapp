@@ -1,13 +1,27 @@
 import { describe, expect, test } from "vitest";
-import { ParseError } from "../types";
+import { ParseError, type KnownAccount } from "../types";
 import type { Line } from "./pdf-profile";
 import {
   accountSections,
   isRobinhoodBrokerageStatementText,
-  parseRobinhoodBrokerageDocument,
   parseRobinhoodBrokerageLines,
   parseSweepActivity,
+  robinhoodBrokerageStatements,
+  selectAccountSections,
 } from "./robinhood-brokerage-statement-profile";
+
+/** A text line with the token x-positions a column reader needs; `[str, x]` pairs. */
+const line = (text: string, tokens: [string, number][] = []): Line => ({
+  y: 0,
+  text,
+  tokens: tokens.map(([str, x]) => ({ str, x })),
+});
+const asLines = (texts: readonly string[]): Line[] => texts.map((t) => line(t));
+
+/** The owner's Robinhood accounts, as `parseContextFor` offers them once #655929651 is tracked. */
+const BROKERAGE: KnownAccount = { last4: "3525", type: "investment", subtype: "brokerage" };
+const CRYPTO: KnownAccount = { last4: "8474", type: "investment", subtype: "crypto" };
+const AGENTIC: KnownAccount = { last4: "9651", type: "checking", subtype: null };
 
 /**
  * Real Robinhood *securities* statements, one fixture per layout era found in
@@ -179,17 +193,20 @@ describe("parseRobinhoodBrokerageLines", () => {
   });
 });
 
-describe("choosing the account section", () => {
+describe("choosing the account sections", () => {
   /**
-   * From 2026-06 the owner's statement carries a SECOND account, #655929651
-   * ($26.64, not tracked by the app). June and July print it second. The
-   * 2026-08 statement printed it FIRST, and "parse the first section" read
-   * $26.64 → $26.64 as Robinhood Cash's month — a trial import graded the period
-   * a $679.37 gap, turned 60 days into gap days and quarantined both crypto cash
-   * legs. The section is chosen by the account the ledger TRACKS, never by where
-   * it happens to print.
+   * From 2026-06 the owner's statement carries a SECOND account, #655929651 —
+   * the $26.64 he moved over on 2026-06-05 for Claude to trade with. June and
+   * July print it second. The 2026-08 statement printed it FIRST, and "parse the
+   * first section" read $26.64 → $26.64 as Robinhood Cash's month — a trial
+   * import graded the period a $679.37 gap, turned 60 days into gap days and
+   * quarantined both crypto cash legs. Sections are chosen by the accounts the
+   * ledger TRACKS, never by where they happen to print — and once the owner
+   * tracks #655929651 as an account of its own, BOTH are chosen.
    */
   const TRACKED = ["3525"];
+  /** the ledger once the second account is tracked — Robinhood Crypto is ····8474 */
+  const BOTH = ["3525", "8474", "9651"];
   const UNTRACKED = [
     "Individual Account #:655929651",
     "Account Summary",
@@ -220,52 +237,64 @@ describe("choosing the account section", () => {
   });
 
   test("the tracked account's balances are read when it prints first", () => {
-    const p = parseRobinhoodBrokerageLines(TRACKED_FIRST, TRACKED);
-    expect(p.accountNumber).toBe("487513525");
-    expect(p.closingCashCents).toBe(167993 + 45); // not 2664
+    const [cash, securities, ...rest] = robinhoodBrokerageStatements(asLines(TRACKED_FIRST), [BROKERAGE]);
+    expect(rest).toEqual([]);
+    expect(cash!.accountHint.preferName).toBe("Robinhood Cash");
+    expect(cash!.period).toMatchObject({ endCents: 167993 + 45 }); // not 2664
+    expect(securities!.accountHint.preferName).toBe("Robinhood Brokerage");
   });
 
   test("⛔ and when it prints SECOND — the 2026-08 order", () => {
-    const p = parseRobinhoodBrokerageLines(UNTRACKED_FIRST, TRACKED);
-    expect(p.accountNumber).toBe("487513525");
-    expect(p.periodStart).toBe("2026-08-01");
-    expect(p.periodEnd).toBe("2026-08-31");
-    expect(p.openingCashCents).toBe(167993 + 45); // not 2664
-    expect(p.closingCashCents).toBe(68 + 100033); // not 2664
-    expect(p.openingSecuritiesCents).toBe(6785926); // not 0
-    expect(p.closingSecuritiesCents).toBe(7295932);
+    const [cash, securities, ...rest] = robinhoodBrokerageStatements(asLines(UNTRACKED_FIRST), [BROKERAGE]);
+    expect(rest).toEqual([]);
+    expect(cash!.period).toEqual({
+      start: "2026-08-01",
+      end: "2026-08-31",
+      beginCents: 167993 + 45, // not 2664
+      endCents: 68 + 100033, // not 2664
+    });
+    expect(securities!.period).toMatchObject({ beginCents: 6785926, endCents: 7295932 }); // not 0
   });
 
   test("refuses a multi-account statement when no section is an account the ledger tracks", () => {
-    expect(() => parseRobinhoodBrokerageLines(UNTRACKED_FIRST, [])).toThrow(/655929651.*487513525/);
-    expect(() => parseRobinhoodBrokerageLines(UNTRACKED_FIRST, ["9999"])).toThrow(ParseError);
+    expect(() => selectAccountSections(UNTRACKED_FIRST, [])).toThrow(/655929651.*487513525/);
+    expect(() => selectAccountSections(UNTRACKED_FIRST, ["9999"])).toThrow(ParseError);
     expect(() => parseRobinhoodBrokerageLines(TRACKED_FIRST)).toThrow(ParseError);
   });
 
-  test("refuses when more than one section is tracked, rather than picking one", () => {
-    expect(() => parseRobinhoodBrokerageLines(UNTRACKED_FIRST, ["3525", "9651"])).toThrow(ParseError);
+  test("⛔ chooses EVERY tracked section, in print order — the June/July order and the 2026-08 order", () => {
+    expect(selectAccountSections(TRACKED_FIRST, BOTH).map((s) => s.accountNumber)).toEqual(["487513525", "655929651"]);
+    expect(selectAccountSections(UNTRACKED_FIRST, BOTH).map((s) => s.accountNumber)).toEqual(["655929651", "487513525"]);
+  });
+
+  test("an untracked section is still skipped beside a tracked one", () => {
+    expect(selectAccountSections(UNTRACKED_FIRST, TRACKED).map((s) => s.accountNumber)).toEqual(["487513525"]);
   });
 
   test("⛔ refuses a statement that carries ONLY an untracked account — it would overwrite Robinhood Cash's anchor", () => {
     const untrackedAlone = ["08/01/2026 to 08/31/2026", ...UNTRACKED];
-    expect(() => parseRobinhoodBrokerageLines(untrackedAlone, TRACKED)).toThrow(/655929651/);
+    expect(() => selectAccountSections(untrackedAlone, TRACKED)).toThrow(/655929651/);
   });
 
   test("a single-account statement needs no tracked account on a ledger that tracks none", () => {
     expect(parseRobinhoodBrokerageLines(ERA_C).accountNumber).toBe("487513525");
-    expect(parseRobinhoodBrokerageLines(ERA_C, TRACKED).accountNumber).toBe("487513525");
+    expect(selectAccountSections(ERA_C, TRACKED).map((s) => s.accountNumber)).toEqual(["487513525"]);
+  });
+
+  test("⛔ refuses when one tracked last4 matches two sections — which of them is the account?", () => {
+    const repeated = [...TRACKED_FIRST, "Individual Account #:487513525", "Account Summary"];
+    expect(() => selectAccountSections(repeated, TRACKED)).toThrow(/····3525.*more than one section/);
+  });
+
+  test("⛔ refuses when one section matches two tracked accounts — two ledger accounts share a last4", () => {
+    expect(() => selectAccountSections(ERA_C, ["3525", "3525"])).toThrow(/#487513525.*more than one account/);
   });
 
   test("throws when the document carries no account number", () => {
     expect(() => accountSections(["Account Summary", "Portfolio Value $1.00 $2.00"])).toThrow(ParseError);
   });
 
-  test("⛔ crypto money movements are read from the tracked section only", () => {
-    const line = (text: string, tokens: [string, number][] = []): Line => ({
-      y: 0,
-      text,
-      tokens: tokens.map(([str, x]) => ({ str, x })),
-    });
+  test("⛔ crypto money movements are read from the brokerage's section only", () => {
     const header = line("Description Symbol Acct Type Transaction Date Qty Price Debit Credit", [
       ["Debit", 500],
       ["Credit", 553],
@@ -276,16 +305,214 @@ describe("choosing the account section", () => {
         [amount, 553],
       ]);
     const doc = [
-      ...UNTRACKED_FIRST.slice(0, 6).map((t) => line(t)),
+      ...asLines(UNTRACKED_FIRST.slice(0, 6)),
       header,
       movement("08/05/2026", "$9.99"),
-      ...UNTRACKED_FIRST.slice(6).map((t) => line(t)),
+      ...asLines(UNTRACKED_FIRST.slice(6)),
       header,
       movement("08/24/2026", "$1,499.99"),
     ];
-    const { parsed, movements } = parseRobinhoodBrokerageDocument(doc, TRACKED);
-    expect(parsed.accountNumber).toBe("487513525");
-    expect(movements).toEqual([{ postedOn: "2026-08-24", amountCents: 149999 }]);
+    const [cash] = robinhoodBrokerageStatements(doc, [BROKERAGE]);
+    expect(cash!.txns).toEqual([
+      { postedOn: "2026-08-24", amountCents: 149999, rawDescription: "Crypto Money Movement", categoryPath: "Transfers", soleSource: true },
+    ]);
+  });
+});
+
+/**
+ * #655929651 tracked as an account of its own — a CASH account, because every
+ * statement it has printed says it holds nothing but cash: Brokerage Cash
+ * Balance $26.64 at 100.00%, Total Securities $0.00. Every literal is copied
+ * from the extracted file named above it, token x-positions included.
+ */
+describe("a section tracked as a cash account", () => {
+  const TRACKED_ALL = [BROKERAGE, CRYPTO, AGENTIC];
+  const headerAt = (debitX: number, creditX: number): Line =>
+    line("Description Symbol Acct Type Transaction Date Qty Price Debit Credit", [
+      ["Debit", debitX],
+      ["Credit", creditX],
+    ]);
+  const totalFunds = (debit: string, credit: string, debitX: number, creditX: number): Line =>
+    line(`Total Funds Paid and Received ${debit} ${credit}`, [
+      ["Total Funds Paid and Received", 36],
+      [debit, debitX],
+      [credit, creditX],
+    ]);
+
+  /** #487513525, 2026-06 (747059b1…, lines 2–18, 116–121, 200). */
+  const JUNE_BROKERAGE = [
+    line("06/01/2026 to 06/30/2026"),
+    line("Individual Account #:487513525"),
+    line("Account Summary"),
+    line("Brokerage Cash Balance * $0.38 $192.22"),
+    line("Deposit Sweep Balance $0.34 $0.07"),
+    line("Total Securities ** $62,556.95 $59,329.88"),
+    line("Portfolio Value $62,557.67 $59,522.17"),
+    line("Account Activity"),
+    headerAt(687.6, 746.63),
+    // the brokerage's side of the same transfer — a DEBIT, and the activity CSV's row, not this file's
+    line("Transfer from Brokerage to Brokerage Margin ITRF 06/05/2026 $26.64", [
+      ["Transfer from Brokerage to Brokerage", 36],
+      ["Margin", 391.8],
+      ["ITRF", 445.69],
+      ["06/05/2026", 507.26],
+      ["$26.64", 687.6],
+    ]),
+    line("Crypto Money Movement Margin COIN 06/05/2026 $2,542.62", [
+      ["Crypto Money Movement", 36],
+      ["Margin", 391.8],
+      ["COIN", 445.69],
+      ["06/05/2026", 507.26],
+      ["$2,542.62", 687.6],
+    ]),
+    totalFunds("$24,664.76", "$24,856.33", 687.6, 746.63),
+  ];
+
+  const ITRF_CREDIT = line("Transfer from Brokerage to Brokerage Cash ITRF 06/05/2026 $26.64", [
+    ["Transfer from Brokerage to Brokerage", 36],
+    ["Cash", 347.25],
+    ["ITRF", 426.3],
+    ["06/05/2026", 516.67],
+    ["$26.64", 746.51],
+  ]);
+
+  /** #655929651, 2026-06 (747059b1…, lines 373–416) — its first statement, so the opening is `N/A`. */
+  const JUNE_SECOND = [
+    line("06/01/2026 to 06/30/2026"),
+    line("Individual Account #:655929651"),
+    line("Account Summary"),
+    line("Net Account Balance N/A $26.64"),
+    line("Total Securities N/A $0.00"),
+    line("Portfolio Value N/A $26.64"),
+    line("Portfolio Summary"),
+    line("Total Securities $0.00 $0.00 0.00%"),
+    line("Brokerage Cash Balance $26.64 100.00%"),
+    line("Account Activity"),
+    headerAt(695.33, 746.51),
+    ITRF_CREDIT,
+    totalFunds("$0.00", "$26.64", 695.33, 746.51),
+    line("Executed Trades Pending Settlement"),
+    line("Total Executed Trades Pending Settlement $0.00 $0.00"),
+  ];
+
+  /** #655929651 with no money movement — 2026-07 (8e3da90f…, lines 534–576) and 2026-08 (48afc52f…, lines 2–44). */
+  const quietMonth = (period: string): Line[] => [
+    line(period),
+    line("Individual Account #:655929651"),
+    line("Account Summary"),
+    line("Net Account Balance $26.64 $26.64"),
+    line("Total Securities $0.00 $0.00"),
+    line("Portfolio Value $26.64 $26.64"),
+    line("Portfolio Summary"),
+    line("Total Securities $0.00 $0.00 0.00%"),
+    line("Brokerage Cash Balance $26.64 100.00%"),
+    line("Account Activity"),
+    headerAt(685.13, 743.4),
+    totalFunds("$0.00", "$0.00", 685.13, 743.4),
+    line("Executed Trades Pending Settlement"),
+    line("Total Executed Trades Pending Settlement $0.00 $0.00"),
+  ];
+  const JULY = [...asLines(ERA_C), ...quietMonth("07/01/2026 to 07/31/2026")];
+  /** 2026-08 prints #655929651 FIRST (48afc52f…, lines 160–176 for #487513525). */
+  const AUGUST = [
+    ...quietMonth("08/01/2026 to 08/31/2026"),
+    ...asLines([
+      "08/01/2026 to 08/31/2026",
+      "Individual Account #:487513525",
+      "Account Summary",
+      "Brokerage Cash Balance * $1,679.93 $0.68",
+      "Deposit Sweep Balance $0.45 $1,000.33",
+      "Total Securities ** $67,859.26 $72,959.32",
+      "Portfolio Value $69,539.64 $73,960.33",
+    ]),
+  ];
+  const JUNE = [...JUNE_BROKERAGE, ...JUNE_SECOND];
+
+  const swap = (lines: Line[], text: string, replacement: Line): Line[] => lines.map((l) => (l.text === text ? replacement : l));
+
+  test("June: an N/A opening is a ledger observation of $26.64 on 06-30, and the ITRF credit is signed + by its column", () => {
+    const statements = robinhoodBrokerageStatements(JUNE, TRACKED_ALL);
+    expect(statements).toHaveLength(3); // cash + securities for #487513525, and ONE cash statement for #655929651
+    expect(statements[2]).toEqual({
+      // by last4 alone — no type and no preferName, so it can never resolve to Robinhood Cash
+      accountHint: { institution: "Robinhood", last4: "9651" },
+      txns: [
+        {
+          postedOn: "2026-06-05",
+          amountCents: 2664,
+          rawDescription: "Transfer from Brokerage to Brokerage", // the activity CSV's own wording for the other leg
+          bankCategory: "ITRF",
+        },
+      ],
+      declaredRange: { start: "2026-06-01", end: "2026-06-30" },
+      ledger: { cents: 2664, asOf: "2026-06-30" }, // never a $0.00 opening the statement did not print
+    });
+  });
+
+  test("the brokerage's statements are exactly what they were before the second account was tracked", () => {
+    const withSecond = robinhoodBrokerageStatements(JUNE, TRACKED_ALL);
+    const without = robinhoodBrokerageStatements(JUNE, [BROKERAGE, CRYPTO]);
+    expect(without).toHaveLength(2);
+    expect(withSecond.slice(0, 2)).toEqual(without);
+    expect(without[0]!.period).toEqual({ start: "2026-06-01", end: "2026-06-30", beginCents: 38 + 34, endCents: 19222 + 7 });
+    // the brokerage's own ITRF debit is NOT emitted — the activity CSV already carries it
+    expect(without[0]!.txns.map((t) => [t.rawDescription, t.amountCents])).toEqual([["Crypto Money Movement", -254262]]);
+  });
+
+  test("July and August: a $26.64 → $26.64 period, in either print order", () => {
+    const quiet = (start: string, end: string) => ({
+      accountHint: { institution: "Robinhood", last4: "9651" },
+      txns: [],
+      period: { start, end, beginCents: 2664, endCents: 2664 },
+    });
+    const july = robinhoodBrokerageStatements(JULY, TRACKED_ALL);
+    expect(july).toHaveLength(3);
+    expect(july[2]).toEqual(quiet("2026-07-01", "2026-07-31"));
+
+    const august = robinhoodBrokerageStatements(AUGUST, TRACKED_ALL);
+    expect(august).toHaveLength(3);
+    expect(august[0]).toEqual(quiet("2026-08-01", "2026-08-31"));
+    expect(august[1]!.period).toEqual({ start: "2026-08-01", end: "2026-08-31", beginCents: 167993 + 45, endCents: 68 + 100033 });
+  });
+
+  test("⛔ refuses an Account Activity row that is not an ITRF — an agent's Buy fails loudly instead of vanishing", () => {
+    const buy = line("SPY Cash Buy 06/10/2026 0.016 $625.00000 $10.00", [
+      ["SPY", 284.14],
+      ["Cash", 347.25],
+      ["Buy", 426.3],
+      ["06/10/2026", 516.67],
+      ["0.016", 608.51],
+      ["$625.00000", 647.06],
+      ["$10.00", 695.33],
+    ]);
+    const withBuy = JUNE.flatMap((l) => (l === ITRF_CREDIT ? [l, buy] : [l]));
+    expect(() => robinhoodBrokerageStatements(withBuy, TRACKED_ALL)).toThrow(/#655929651.*SPY Cash Buy/);
+  });
+
+  test("⛔ refuses rows that do not add up to the printed Total Funds Paid and Received", () => {
+    const dropped = JUNE.filter((l) => l !== ITRF_CREDIT);
+    expect(() => robinhoodBrokerageStatements(dropped, TRACKED_ALL)).toThrow(/Total Funds Paid and Received/);
+  });
+
+  test("⛔ refuses a cash-account section that prints no Total Funds Paid and Received line", () => {
+    const julyWithoutTotals = JULY.filter((l) => !l.text.startsWith("Total Funds Paid and Received"));
+    expect(() => robinhoodBrokerageStatements(julyWithoutTotals, TRACKED_ALL)).toThrow(/#655929651.*Total Funds Paid and Received/);
+  });
+
+  test("⛔ refuses a cash account that prints securities — including a first month whose opening is N/A", () => {
+    const julyHolding = swap(quietMonth("07/01/2026 to 07/31/2026"), "Total Securities $0.00 $0.00", line("Total Securities $0.00 $12.34"));
+    const july = [...asLines(ERA_C), ...julyHolding];
+    expect(() => robinhoodBrokerageStatements(july, TRACKED_ALL)).toThrow(/#655929651.*\$12\.34 of securities/);
+
+    const juneHolding = swap(JUNE, "Total Securities N/A $0.00", line("Total Securities N/A $12.34"));
+    expect(() => robinhoodBrokerageStatements(juneHolding, TRACKED_ALL)).toThrow(/#655929651.*\$12\.34 of securities/);
+  });
+
+  test("⛔ refuses a section tracked as an account type a brokerage statement cannot be", () => {
+    const savings: KnownAccount = { last4: "9651", type: "savings", subtype: null };
+    expect(() => robinhoodBrokerageStatements(JUNE, [BROKERAGE, savings])).toThrow(/#655929651.*savings/);
+    const secondBrokerage: KnownAccount = { last4: "9651", type: "investment", subtype: "brokerage" };
+    expect(() => robinhoodBrokerageStatements(JUNE, [BROKERAGE, secondBrokerage])).toThrow(/more than one.*brokerage/);
   });
 });
 
