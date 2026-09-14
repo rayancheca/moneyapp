@@ -60,26 +60,69 @@ const DB_PATH =
   process.argv.find((a) => a.startsWith("--db="))?.slice("--db=".length) ??
   path.join("data", "moneyapp.db");
 
-const CSV_PATH = "statements/robinhood/3ab6c2a8-5f00-5de8-b339-c3e514d5b7a7.csv";
+/**
+ * Every activity export, oldest first. Robinhood exports a date RANGE, so a
+ * later download continues an earlier one rather than replacing it: the
+ * all-time export stops 2026-07-31 and the next one starts 2026-08-07.
+ *
+ * ⛔ Two exports covering the same day would count that day's shares twice —
+ * nothing inside a row says which file it came from — so overlapping ranges
+ * are refused outright. A hole between two ranges is only REPORTED: whether
+ * anything traded in it is a question for the statement arbiter below, not
+ * something the exports can answer.
+ */
+const CSV_PATHS: readonly string[] = [
+  "statements/robinhood/3ab6c2a8-5f00-5de8-b339-c3e514d5b7a7.csv",
+  "statements/robinhood/robinhood-activity-2026-08-07-to-2026-09-09.csv",
+];
 const BROKERAGE = "Robinhood Brokerage";
 
 /**
- * The July 2026 statement's Portfolio Summary, page 3 — the arbiter. A rebuild
- * that does not reproduce these to the last decimal has found different shares
- * than the ones the broker says are there, and must not be written.
+ * Every statement's Portfolio Summary — the arbiter. A rebuild that does not
+ * reproduce EACH of these to the last decimal has found different shares than
+ * the ones the broker says are there, and must not be written.
+ *
+ * Positions are SETTLED shares, which is what `positionsAsOf` counts: a trade
+ * executed on a statement's last day that settles after it is printed under
+ * "Executed Trades Pending Settlement" and is absent from the summary — the
+ * 2026-08-31 MSFT sale of 1.95851, settling 2026-09-01.
  */
-const STATEMENT_DAY = "2026-07-31";
-const STATEMENT_POSITIONS: Readonly<Record<string, string>> = {
-  AAPL: "16.150657",
-  AMZN: "34.884778",
-  COKE: "33.959422",
-  GOOG: "0.312739",
-  META: "7.283111",
-  MSFT: "45.890386",
-  SPY: "18.027139",
-  UNH: "19.329560",
-  WMT: "0.412664",
-};
+const STATEMENTS: readonly { day: string; positions: Readonly<Record<string, string>> }[] = [
+  {
+    // July 2026, page 3
+    day: "2026-07-31",
+    positions: {
+      AAPL: "16.150657",
+      AMZN: "34.884778",
+      COKE: "33.959422",
+      GOOG: "0.312739",
+      META: "7.283111",
+      MSFT: "45.890386",
+      SPY: "18.027139",
+      UNH: "19.329560",
+      WMT: "0.412664",
+    },
+  },
+  {
+    // August 2026, pages 8–9
+    day: "2026-08-31",
+    positions: {
+      AAPL: "21.150657",
+      AMZN: "34.884778",
+      // ⚠️ 33.002963 held PLUS 1 share on loan through Stock Lending ("Loaned
+      // Securities", page 9). The summary's Total Securities counts both, and
+      // a share on loan is still the owner's.
+      COKE: "34.002963",
+      GOOG: "0.312739",
+      META: "9.038535",
+      MSFT: "40.911519",
+      SPY: "22.088821",
+      UNH: "19.329560",
+      WMT: "0.413621",
+    },
+  },
+];
+const LATEST_STATEMENT_DAY = (STATEMENTS.at(-1) as (typeof STATEMENTS)[number]).day;
 
 function money(cents: number): string {
   return `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -113,12 +156,26 @@ function main(): void {
       .map((r) => [r.symbol, r.assetType]),
   );
 
-  const csv = fs.readFileSync(path.join(process.cwd(), CSV_PATH), "utf8");
-  const parsed = Papa.parse<Record<string, string>>(csv, { header: true, skipEmptyLines: true });
-  const rows = toActivityRows(parsed.data, parseAmountToCents);
+  const exports = CSV_PATHS.map((csvPath) => {
+    const csv = fs.readFileSync(path.join(process.cwd(), csvPath), "utf8");
+    const parsed = Papa.parse<Record<string, string>>(csv, { header: true, skipEmptyLines: true });
+    const fileRows = toActivityRows(parsed.data, parseAmountToCents);
+    if (fileRows.length === 0) throw new Error(`${csvPath} holds no activity rows`);
+    const days = fileRows.map((r) => r.activityDate).sort();
+    return { csvPath, rows: fileRows, first: days[0] as string, last: days.at(-1) as string };
+  });
+  exports.sort((a, b) => (a.first < b.first ? -1 : a.first > b.first ? 1 : 0));
+  for (const [i, e] of exports.entries()) {
+    console.log(`Export      ${e.csvPath}  ${e.first} → ${e.last}  (${e.rows.length} records)`);
+    const prev = exports[i - 1];
+    if (prev && e.first <= prev.last) {
+      throw new Error(`${e.csvPath} starts ${e.first}, inside ${prev.csvPath} (ends ${prev.last}) — shares would count twice`);
+    }
+    if (prev) console.log(`  ⚠ no export covers the days after ${prev.last} and before ${e.first}`);
+  }
+  const rows = exports.flatMap((e) => e.rows);
   const { events, positions } = reconstructHoldings(rows);
 
-  console.log(`Export      ${CSV_PATH}`);
   console.log(`Records     ${rows.length}   share events ${events.length}\n`);
 
   /* ── arbiter 1: the export's own dividend share counts ───────────── */
@@ -131,8 +188,7 @@ function main(): void {
     );
   }
 
-  /* ── arbiter 2: the statement's Portfolio Summary ────────────────── */
-  const asOf = positionsAsOf(events, STATEMENT_DAY);
+  /* ── arbiter 2: every statement's Portfolio Summary ─────────────── */
   const current = db
     .select()
     .from(holdings)
@@ -140,20 +196,21 @@ function main(): void {
     .all();
   const currentQty = new Map(current.map((h) => [h.symbol, BigInt(h.quantityE8)]));
 
-  console.log(`\nPositions on ${STATEMENT_DAY} — app now → rebuilt (statement)`);
   let mismatched = 0;
-  for (const [symbol, expected] of Object.entries(STATEMENT_POSITIONS)) {
-    const want = parseQuantityE8(expected);
-    const got = asOf.get(symbol) ?? 0n;
-    const ok = got === want;
-    if (!ok) mismatched += 1;
-    console.log(
-      `  ${ok ? "✓" : "✗"} ${symbol.padEnd(5)} ${formatQuantityE8(currentQty.get(symbol) ?? 0n).padStart(13)}` +
-        ` → ${formatQuantityE8(got).padStart(13)}  (${expected})`,
-    );
-  }
-  const ghosts = [...asOf].filter(([s, q]) => q !== 0n && !(s in STATEMENT_POSITIONS));
-  if (ghosts.length > 0) {
+  for (const statement of STATEMENTS) {
+    const asOf = positionsAsOf(events, statement.day);
+    console.log(`\nPositions on ${statement.day} — app now → rebuilt (statement)`);
+    for (const [symbol, expected] of Object.entries(statement.positions)) {
+      const want = parseQuantityE8(expected);
+      const got = asOf.get(symbol) ?? 0n;
+      const ok = got === want;
+      if (!ok) mismatched += 1;
+      console.log(
+        `  ${ok ? "✓" : "✗"} ${symbol.padEnd(5)} ${formatQuantityE8(currentQty.get(symbol) ?? 0n).padStart(13)}` +
+          ` → ${formatQuantityE8(got).padStart(13)}  (${expected})`,
+      );
+    }
+    const ghosts = [...asOf].filter(([s, q]) => q !== 0n && !(s in statement.positions));
     mismatched += ghosts.length;
     for (const [s, q] of ghosts) {
       console.log(`  ✗ ${s} holds ${formatQuantityE8(q)} but the statement does not list it`);
@@ -300,7 +357,7 @@ function staleSymbols(db: ReturnType<typeof createDatabase>["db"], accountId: st
         .orderBy(desc(priceCache.quotedOn))
         .limit(1)
         .get();
-      return (latest?.quotedOn ?? "") < STATEMENT_DAY;
+      return (latest?.quotedOn ?? "") < LATEST_STATEMENT_DAY;
     })
     .map((h) => h.symbol);
 }
