@@ -8,9 +8,11 @@ import { seedDatabase } from "@/db/seed";
 import { priceCache } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
+import { parseFilters } from "@/components/transactions/query";
 import { createAccount } from "./accounts";
 import { holdingDetail, UnknownHoldingError } from "./holding-detail";
 import { upsertHolding } from "./holdings";
+import { matchingTransactionIds } from "./transactions-query";
 
 process.env.MONEYAPP_FAKE_PRICES = "1";
 
@@ -148,10 +150,49 @@ describe("holdingDetail", () => {
     expect(d.priceSeries.every((p) => p.complete)).toBe(true); // no carried tail at today = last close
     expect(d.events.map((e) => e.kind)).toEqual(["buy", "buy"]);
     expect(d.events[0]!.day).toBe("2026-03-04"); // newest first
-    expect(d.events[0]!.ledgerHref).toContain("q=AAPL");
+    expect(d.events[0]!.ledgerHref).toContain("q=%28AAPL%29");
     expect(d.events[0]!.ledgerHref).toContain("from=2026-03-04");
     expect(d.eventsTotal).toBe(2);
-    expect(d.allTradesHref).toContain("q=AAPL"); // equity links out to the ledger
+    expect(d.allTradesHref).toContain("q=%28AAPL%29"); // equity links out to the ledger
+  });
+
+  /*
+   * 🔴 THE LINK MATCHED THE TICKER'S LETTERS, NOT THE HOLDING'S ROWS. `q` is a
+   * literal, case-insensitive LIKE over the bank's text, so "PM" found "Zelle
+   * payment to Philipe JPM99…" and "CAPITAL ONE MOBILE PMT". Measured
+   * 2026-09-14: /investments/stock/PM read "View all 592 PM rows in the ledger"
+   * over 189 real ones (AMZN 283 of 242, GOOG 118 of 92, SPY 292 of 285). The
+   * importer stamps every instrument row "(SYM)", the scope `displayName`
+   * already reads. ⛔ This fixture's AAPL rows are all tagged and no bank text
+   * contains "AAPL", so it could not express the defect — PM's real collisions
+   * go here.
+   */
+  test("the ledger links and their count open the holding's TAGGED rows, not every row with the ticker's letters", () => {
+    bundle.db
+      .insert(priceCache)
+      .values({ symbol: "PM", assetType: "stock", quotedOn: "2026-03-04", close: 100, source: "yahoo", fetchedAt: "2026-03-04T20:00:00.000Z" })
+      .run();
+    upsertHolding(bundle.db, { accountId: brokerage, symbol: "PM", assetType: "stock", quantityE8: 100_000_000, avgCostCents: 10_000, occurredOn: "2026-03-04" });
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const checking = createAccount(bundle.db, { institutionId: chase.id, name: "Chase Checking", type: "checking" });
+    for (const r of [
+      { accountId: cash, rawDescription: "Philip Morris CUSIP: 718172109 Recurring (PM)", normalizedDescription: "philip morris cusip 718172109 recurring pm", dedupeHash: "pm-buy" },
+      // the SAME day, so the per-event link can over-match too
+      { accountId: checking, rawDescription: "Zelle payment to Philipe JPM99cmn8d70", normalizedDescription: "zelle payment to philipe jpm99cmn8d70", dedupeHash: "zelle" },
+      { accountId: checking, rawDescription: "CAPITAL ONE MOBILE PMT CA056B58995B534 WEB ID: 92797443", normalizedDescription: "capital one mobile pmt ca056b58995b534 web id 92797443", dedupeHash: "cap1" },
+    ]) {
+      bundle.db.insert(transactions).values({ ...r, postedOn: "2026-03-04", amountCents: -10_000 }).run();
+    }
+    const tagged = bundle.db.select({ id: transactions.id }).from(transactions).where(eq(transactions.dedupeHash, "pm-buy")).get()!.id;
+    const opened = (href: string): string[] => {
+      const filters = parseFilters(Object.fromEntries(new URL(href, "http://localhost").searchParams));
+      return matchingTransactionIds(bundle.db, filters, filters.view);
+    };
+
+    const d = holdingDetail(bundle.db, "stock", "PM", "2026-03-04");
+    expect(d.ledgerRowCount).toBe(1);
+    expect(opened(d.allTradesHref!)).toEqual([tagged]);
+    expect(opened(d.events[0]!.ledgerHref!)).toEqual([tagged]);
   });
 
   /*

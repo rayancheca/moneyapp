@@ -155,12 +155,27 @@ function isAssetType(value: string): value is AssetType {
   return (ASSET_TYPES as readonly string[]).includes(value);
 }
 
+/**
+ * The mark every ledger row of a holding carries: the Robinhood importer
+ * appends the instrument as "(SYM)" to each row that has one (csv-profiles).
+ *
+ * 🔴 The ledger links searched the BARE symbol, and `q` is a literal,
+ * case-insensitive LIKE over the bank's text — so "PM" found "Zelle payment to
+ * Philipe JPM99…", "CAPITAL ONE MOBILE PMT", "AM PM" and "5Pm". Measured
+ * 2026-09-14: /investments/stock/PM read "View all 592 PM rows in the ledger"
+ * over 189 real ones, and AMZN, GOOG and SPY over-counted too. One helper for
+ * the name, the count and both links, so they cannot drift apart again.
+ */
+function ledgerTag(symbol: string): string {
+  return `(${symbol})`;
+}
+
 /** Security display name from the latest trade description ("Apple CUSIP: … (AAPL)"). */
 function displayName(db: AppDatabase, symbol: string): string | null {
   const row = db
     .select({ raw: transactions.rawDescription })
     .from(transactions)
-    .where(and(eq(transactions.status, "active"), like(transactions.rawDescription, `%(${symbol})%`)))
+    .where(and(eq(transactions.status, "active"), like(transactions.rawDescription, `%${ledgerTag(symbol)}%`)))
     .orderBy(desc(transactions.postedOn))
     .limit(1)
     .get();
@@ -329,8 +344,9 @@ export function holdingDetail(
   const accountIds = [...new Set(holdingLegs.map((l) => l.accountId))];
   void accountIds;
 
-  // the destination's own count, through the predicate `/transactions?q=` uses
-  const symbolLike = `%${symbol.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+  // the destination's own count, through the predicate `/transactions?q=` uses,
+  // over the holding's TAGGED rows — see `ledgerTag`
+  const symbolLike = `%${ledgerTag(symbol).replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
   const ledgerRowCount = db
     .select({ n: count() })
     .from(transactions)
@@ -357,7 +373,7 @@ export function holdingDetail(
       quantityE8: e.quantityDeltaE8,
       costCents: e.costCents,
       ledgerHref: linkEvents
-        ? ledgerHref({ q: symbol, from: e.occurredOn, to: e.occurredOn })
+        ? ledgerHref({ q: ledgerTag(symbol), from: e.occurredOn, to: e.occurredOn })
         : null,
     }));
 
@@ -415,7 +431,7 @@ export function holdingDetail(
     realizedSales: allSales,
     events: eventRows,
     eventsTotal: events.length,
-    allTradesHref: linkEvents ? ledgerHref({ q: symbol }) : null,
+    allTradesHref: linkEvents ? ledgerHref({ q: ledgerTag(symbol) }) : null,
     ledgerRowCount,
   };
 }
