@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { and, eq, isNull } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { categories } from "@/db/schema/categories";
@@ -13,6 +13,14 @@ import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
 import { forecastCurrentMonth, forecastForMonth, trailingFullMonths } from "./forecast";
+import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
+
+// PASS-THROUGH: every forecast in this file runs the real read. The wrapper only
+// COUNTS the reads — see "one forecast reads the not-recurring series ONCE".
+vi.mock("./recurring-link", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./recurring-link")>();
+  return { ...actual, seriesIdsNotDrawnAsRecurring: vi.fn(actual.seriesIdsNotDrawnAsRecurring) };
+});
 
 const TODAY = "2026-07-08"; // July 2026: 31 days, 24 remaining (incl. today)
 
@@ -277,8 +285,9 @@ describe("forecastCurrentMonth", () => {
 
   /* ── arrears: what came due earlier this month and never posted ──────────
      Found by reading the running app on 2026-09-02. The fixed leg opened on
-     `today` and the variable leg excludes every recurring-tagged row, so a bill
-     that came due EARLIER THIS MONTH and never posted was in neither: rent
+     `today` and the variable leg excludes every row a recurring series owns
+     (`linkIsNotRecurring`), so a bill that came due EARLIER THIS MONTH and
+     never posted was in neither: rent
      ($2,109.00, due Sep 1) and its utilities ($182.21) were missing from
      September's projected spending and from EOM cash, while /budgets and the
      runway card both published the same $2,291.21 as "due by today and no
@@ -780,7 +789,11 @@ describe("forecastCurrentMonth", () => {
    * series out of the trailing pace, while the fixed leg projects only live
    * series — so the money was counted nowhere. Measured on the real ledger
    * 2026-09-14: 17 rows, $242.72 over June–August (YA-FIT $99.78, PURA VIDA
-   * $85.44, Non-Chase ATM $57.50) missing from September's projection.
+   * $85.44, Non-Chase ATM $57.50) left out of the trailing BASE September's pace
+   * is built from. September's projected spending moved $24.67 once they were
+   * counted (−$6,641.66 → −$6,666.33) — the base is averaged, trended and
+   * prorated — and Weed's line fell (−$8.49 → −$3.06): its June row steepens
+   * the trend. Quote the $24.67 for the projection, never the $242.72.
    */
   test("a row linked to a DISMISSED series is everyday spending in the variable leg; an ENDED one stays out", () => {
     const smoothies = insertSeries({
@@ -1242,4 +1255,25 @@ describe("forecastForMonth", () => {
     expect(aug.committed.eomNetWorthCents).toBe(aug.projectedEomNetWorthCents);
   });
 
+  /*
+   * The set of series whose rows are not recurring money cannot change inside
+   * one forecast, and it was read on every call to `nonRecurringAllocations` —
+   * twice per month (spend and income), and the chain projects every month in
+   * between. Measured read-only on the real ledger 2026-09-14: 2 reads for the
+   * running month, 50 for a page 24 months ahead (245 statements, where the
+   * forecast ran 195 before the read existed).
+   */
+  test("one forecast reads the not-recurring series ONCE, however far ahead it pages", () => {
+    rent();
+    const reads = vi.mocked(seriesIdsNotDrawnAsRecurring);
+
+    reads.mockClear();
+    forecastCurrentMonth(bundle.db, TODAY);
+    expect(reads).toHaveBeenCalledTimes(1);
+
+    reads.mockClear();
+    // 2028-07 is FORECAST_HORIZON_MONTHS (24) past July 2026 — the farthest page
+    expect(forecastForMonth(bundle.db, "2028-07", TODAY)).not.toBeNull();
+    expect(reads).toHaveBeenCalledTimes(1);
+  });
 });

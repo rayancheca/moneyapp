@@ -135,7 +135,12 @@ export interface PaceInput {
   today: string;
   /** actual to-date total over [from, min(today,to)], integer cents (magnitude) */
   actualToDateCents: number;
-  /** portion of actual-to-date that is recurring-tagged (excluded from variable extrapolation) */
+  /**
+   * portion of actual-to-date that is RECURRING money, excluded from variable
+   * extrapolation — rows a series drawn as recurring owns (services/recurring-link
+   * `linkIsRecurring`), not every row with a link: a DISMISSED series' rows are
+   * everyday spending and belong in the pace.
+   */
   recurringPostedCents?: number;
   /** future recurring occurrences already expected in (today, to], integer cents */
   expectedTailCents?: number;

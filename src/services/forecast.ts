@@ -71,11 +71,24 @@ interface TrailingAllocation {
  * only live series — so it was counted in NEITHER. The owner dismissed those
  * series because they are not recurring ("i just go eat there often"); on the
  * real ledger 2026-09-14 that was 17 rows, $242.72 of June–August spend
- * (YA-FIT, PURA VIDA, a non-Chase ATM) missing from September's projection.
+ * (YA-FIT, PURA VIDA, a non-Chase ATM) left out of the trailing BASE that
+ * September's pace is built from. The projection itself moved far less —
+ * projected spending −$6,641.66 → −$6,666.33, i.e. $24.67 — because the base is
+ * a three-month average plus a trend, prorated to the 17 days left; and Weed's
+ * line FELL (−$8.49 → −$3.06), since its $57.50 posted in June, the oldest
+ * trailing month, and steepens the downward trend.
  * `linkIsNotRecurring` asks `seriesDrawsAsRecurring`, not the link.
+ *
+ * `notDrawn` is read once per forecast by the exported entry points: it cannot
+ * change inside one call, and a page 24 months ahead reaches this function 50
+ * times (measured 2026-09-14: 245 statements, where 195 ran before the read).
  */
-function nonRecurringAllocations(db: AppDatabase, from: string, to: string): TrailingAllocation[] {
-  const notDrawn = seriesIdsNotDrawnAsRecurring(db);
+function nonRecurringAllocations(
+  db: AppDatabase,
+  from: string,
+  to: string,
+  notDrawn: ReadonlySet<string>,
+): TrailingAllocation[] {
   const rows = db
     .select({
       id: transactions.id,
@@ -403,6 +416,7 @@ function variableComponents(
   today: string,
   remainingDays: number,
   daysInMonth: number,
+  notDrawn: ReadonlySet<string>,
 ): ForecastComponent[] {
   const windows = trailingFullMonths(today, TRAILING_FULL_MONTHS);
   const rangeStart = windows[0]!.start;
@@ -419,8 +433,10 @@ function variableComponents(
     return cat.parentId ? (categoryById.get(cat.parentId) ?? null) : cat;
   };
 
-  // trailing spend EXCLUDES recurring-tagged rows — those live in FIXED
-  const rows = nonRecurringAllocations(db, rangeStart, rangeEnd);
+  // trailing spend EXCLUDES the rows a series drawn as recurring owns
+  // (`linkIsNotRecurring`): a live series' bills project via FIXED, an ended
+  // series' stopped, and a dismissed series owns none — its rows are pace here
+  const rows = nonRecurringAllocations(db, rangeStart, rangeEnd, notDrawn);
 
   // bucket → monthKey → net-worth-signed sum
   const buckets = new Map<string, Map<string, number>>();
@@ -510,8 +526,10 @@ function variableComponents(
  * income, scaled by remaining days. Mirrors variableComponents (spending) but
  * with income honesty (see lib/income-forecast.ts): a bucket must appear in ≥2
  * trailing months (one-off refunds/aid never extrapolate) and there is NO upward
- * trend nudge. Series-tagged rows are excluded — they project via FIXED. Income
- * is a positive inflow, so only positive-amount income-kind rows contribute.
+ * trend nudge. Rows a series drawn as recurring owns are excluded
+ * (`linkIsNotRecurring`) — a live series' deposits project via FIXED, an ended
+ * one's stopped — while a DISMISSED series' deposits count here like any other.
+ * Income is a positive inflow, so only positive-amount income-kind rows contribute.
  */
 /**
  * Income subcategories that are event-driven windfalls / misc one-offs, NOT
@@ -534,6 +552,7 @@ function variableIncomeComponents(
   today: string,
   remainingDays: number,
   daysInMonth: number,
+  notDrawn: ReadonlySet<string>,
 ): ForecastComponent[] {
   const windows = trailingFullMonths(today, TRAILING_FULL_MONTHS);
   const rangeStart = windows[0]!.start;
@@ -554,8 +573,10 @@ function variableIncomeComponents(
     return cat.name;
   };
 
-  // trailing income EXCLUDES recurring-tagged rows — those live in FIXED
-  const rows = nonRecurringAllocations(db, rangeStart, rangeEnd);
+  // trailing income EXCLUDES the rows a series drawn as recurring owns
+  // (`linkIsNotRecurring`): live deposits project via FIXED, an ended series'
+  // stopped, and a dismissed series owns none — its deposits are pace here
+  const rows = nonRecurringAllocations(db, rangeStart, rangeEnd, notDrawn);
 
   const buckets = new Map<string, Map<string, number>>();
   for (const t of rows) {
@@ -619,6 +640,7 @@ function futureMonthParts(
   db: AppDatabase,
   today: string,
   key: string,
+  notDrawn: ReadonlySet<string>,
 ): {
   components: ForecastComponent[];
   monthStart: string;
@@ -633,8 +655,8 @@ function futureMonthParts(
   const components = [
     ...fixedComponents(db, today, monthStart, monthEnd),
     // the whole month remains, so the trailing pace applies in full
-    ...variableIncomeComponents(db, today, daysInMonth, daysInMonth),
-    ...variableComponents(db, today, daysInMonth, daysInMonth),
+    ...variableIncomeComponents(db, today, daysInMonth, daysInMonth, notDrawn),
+    ...variableComponents(db, today, daysInMonth, daysInMonth, notDrawn),
   ];
   const income = components.reduce((sum, c) => (c.cents > 0 ? sum + c.cents : sum), 0);
   const spend = components.reduce((sum, c) => (c.cents < 0 ? sum + c.cents : sum), 0);
@@ -671,16 +693,19 @@ export function forecastForMonth(
   const ahead = monthsBetweenKeys(current, key);
   if (ahead < 0) return null;
   if (ahead > FORECAST_HORIZON_MONTHS) return null;
-  if (ahead === 0) return forecastCurrentMonth(db, today);
+  // ONE read for the whole chain: the set cannot change inside this call, and
+  // every month below reaches the trailing pace twice (spend and income)
+  const notDrawn = seriesIdsNotDrawnAsRecurring(db);
+  if (ahead === 0) return currentMonthForecast(db, today, notDrawn);
 
-  const parts = futureMonthParts(db, today, key);
+  const parts = futureMonthParts(db, today, key, notDrawn);
 
   /*
    * The running month's own remainder starts the chain — the months between
-   * are whole ones. `forecastCurrentMonth` is called once here rather than per
+   * are whole ones. The running month is forecast once here rather than per
    * step; the loop below only needs each future month's NET.
    */
-  const running = forecastCurrentMonth(db, today);
+  const running = currentMonthForecast(db, today, notDrawn);
   let chainedNet = running.projectedNetCents;
   /*
    * ⛔ The committed reading is chained SEPARATELY, never derived from the full
@@ -690,7 +715,7 @@ export function forecastForMonth(
    */
   let chainedCommittedNet = running.committed.netCents;
   for (let i = 1; i < ahead; i++) {
-    const between = futureMonthParts(db, today, addMonthKey(current, i));
+    const between = futureMonthParts(db, today, addMonthKey(current, i), notDrawn);
     chainedNet += between.net;
     chainedCommittedNet += between.committedNet;
   }
@@ -747,6 +772,11 @@ export function forecastForMonth(
 }
 
 export function forecastCurrentMonth(db: AppDatabase, today: string = todayIso()): MonthForecast {
+  return currentMonthForecast(db, today, seriesIdsNotDrawnAsRecurring(db));
+}
+
+/** The running month, with the not-recurring series already read once (see `forecastForMonth`). */
+function currentMonthForecast(db: AppDatabase, today: string, notDrawn: ReadonlySet<string>): MonthForecast {
   const { start: monthStart, end: monthEnd } = periodBounds(today, "monthly");
   const daysInMonth = diffDays(monthStart, monthEnd) + 1;
   const remainingDays = diffDays(today, monthEnd) + 1;
@@ -756,8 +786,8 @@ export function forecastCurrentMonth(db: AppDatabase, today: string = todayIso()
     // math table reads in the order this array is built
     ...arrearsComponents(db, today, monthStart),
     ...fixedComponents(db, today, today, monthEnd),
-    ...variableIncomeComponents(db, today, remainingDays, daysInMonth),
-    ...variableComponents(db, today, remainingDays, daysInMonth),
+    ...variableIncomeComponents(db, today, remainingDays, daysInMonth, notDrawn),
+    ...variableComponents(db, today, remainingDays, daysInMonth, notDrawn),
   ];
 
   /*

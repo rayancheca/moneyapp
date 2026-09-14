@@ -508,7 +508,12 @@ export function computePace(spentCents: number, projectedCents: number, amountCe
 
 export interface PaceProjectionInput {
   spentCents: number;
-  /** posted spend already tagged to a recurring series (subset of spentCents) */
+  /**
+   * posted spend that is RECURRING money (subset of spentCents) — rows a series
+   * drawn as recurring owns (`linkIsRecurring`): a live series' bill, or an
+   * ENDED one's. Not "every row with a link": a DISMISSED series' rows are
+   * everyday spending and stay in the variable pace.
+   */
   recurringPostedCents: number;
   /** future recurring occurrences still to post this period — the tail */
   expectedTailCents: number;
