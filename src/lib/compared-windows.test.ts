@@ -207,7 +207,43 @@ describe("comparePeriods — the closing edge", () => {
     expect(cut("2026-10")).toMatchObject({ kind: "refused", reason: "future" });
   });
 
-  test("a cut that leaves the prior window before the ledger is still refused at the opening edge", () => {
-    expect(cut("ALL")).toMatchObject({ kind: "refused", reason: "before-records" });
+  /**
+   * 🔴 The refusal at the opening edge was built from the CUT prior window. On
+   * 2026-09-14 `/spending?period=ALL` read "There is no comparison with Aug 4,
+   * 2018 – Jul 22, 2022" — All time's span stepped back from the Aug 12 cut, a
+   * window no ‹ arrow names — and the same page with every account current
+   * named Aug 4, 2018 – Aug 24, 2022. One refusal, two names, depending on
+   * import state.
+   */
+  test("a cut period refused at the opening edge names the prior window uncut, whatever the imports reach", () => {
+    const before = {
+      kind: "refused",
+      reason: "before-records",
+      sentence:
+        "There is no comparison with Aug 4, 2018 – Aug 24, 2022: the ledger opens on Aug 25, 2022, after all of it.",
+    };
+    expect(cut("ALL")).toEqual(before);
+    expect(cut("ALL", TODAY)).toEqual(before);
+  });
+
+  /**
+   * ⛔ Both sides of the same question. A prior window whose cut days lie
+   * wholly before the ledger while the window itself straddles its first day
+   * is refused as the window straddling it, under that window's own name — not
+   * "after all of" a Jul 1 – 12 no pill or arrow ever shows.
+   */
+  test("a prior window the cut would leave wholly before the ledger is refused as the window that straddles it", () => {
+    const august = resolvePeriod({ period: "2026-08" }, TODAY);
+    expect(comparePeriods({ period: august, today: TODAY, importedThrough: CUT, ledgerOpens: "2026-07-20" })).toEqual({
+      kind: "refused",
+      reason: "partly-covered",
+      sentence:
+        "There is no comparison with July 2026: the ledger opens on Jul 20, 2026, so that window is only partly in it and a change measured against it would describe when importing started.",
+    });
+    // and a ledger opening ON the prior window's first day still cuts both sides
+    expect(comparePeriods({ period: august, today: TODAY, importedThrough: CUT, ledgerOpens: "2026-07-01" })).toMatchObject({
+      kind: "clipped",
+      prior: { from: "2026-07-01", to: "2026-07-12", label: "Jul 1 – 12, 2026" },
+    });
   });
 });

@@ -182,15 +182,28 @@ export function comparePeriods(input: ComparePeriodsInput): PeriodComparison {
     };
   }
 
+  /*
+   * ⛔ The opening edge is asked of the prior window UNCUT — the one the ‹ arrow
+   * pages to — before any cut. Whether a prior window is inside the records is
+   * decided by its first day alone, and the cut never moves that day, so the
+   * answer is the same either way; only the NAME differed.
+   *
+   * 🔴 Asked of the cut window, `/spending?period=ALL` read on 2026-09-14
+   * "There is no comparison with Aug 4, 2018 – Jul 22, 2022": All time's
+   * 1,482-day span stepped back from the Aug 12 cut, a window no other surface
+   * names and one that moved every time Chase Checking was imported. With every
+   * account current the same refusal named Aug 4, 2018 – Aug 24, 2022. A refusal
+   * at this edge measured nothing, so it names the window a reader can reach.
+   */
+  const refused = openingEdge(windowOf(priorPeriod), ledgerOpens);
+  if (refused) return refused;
+
   if (end === period.to) {
-    const prior = windowOf(priorPeriod);
-    return openingEdge(prior, ledgerOpens) ?? { kind: "whole", current: windowOf(period), prior, priorPeriod };
+    return { kind: "whole", current: windowOf(period), prior: windowOf(priorPeriod), priorPeriod };
   }
 
   const priorTo = stepDayWithin(period, end, -1);
   const prior = { from: priorPeriod.from, to: priorTo, label: dayWindowLabel(priorPeriod.from, priorTo) };
-  const refused = openingEdge(prior, ledgerOpens);
-  if (refused) return refused;
 
   // the imports stopped the window, not the calendar: say so, because the page's
   // own period label names days this panel deliberately did not read
