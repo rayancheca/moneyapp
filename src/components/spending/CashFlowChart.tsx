@@ -140,11 +140,15 @@ export function CashFlowChart({ data, projection, paceWindowName }: CashFlowChar
     uncoveredDays: projection?.paceUncoveredDays ?? 0,
     windowName: paceWindowName,
   });
-  const basis = projection?.paceBasis
-    ? words.notImported
-      ? `${projection.paceBasis}; ${words.notImported}`
-      : projection.paceBasis
-    : null;
+  /*
+   * 🔴 The basis carried the not-imported clause as well, and the basis is ALSO
+   * the sr-only span after the figure. On 2026-09-14 a screen reader heard "On
+   * pace for at least $3,066.54 — pace from 14 of 30 days elapsed; 2 days of
+   * September 2026 not imported yet spent this period · at least $1,431.05 so
+   * far · 2 days of September 2026 not imported yet". The clause is its own
+   * visible part below; the basis is the method alone.
+   */
+  const basis = projection?.paceBasis ?? null;
   const readoutParts: ReactNode[] = [];
   if (projected !== null) {
     readoutParts.push(
