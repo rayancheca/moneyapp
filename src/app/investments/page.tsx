@@ -150,7 +150,8 @@ export default async function InvestmentsPage({
   // stale date on a row the note had never measured. (Measured inert today:
   // no active holding has a zero quantity in either the real or the seeded
   // database. Aligning them now is what keeps it inert.)
-  const rows = holdingRows(db).filter((r) => r.quantityE8 > 0);
+  // the page's pinned `today`, so the 30d sparkline ends where every other figure does
+  const rows = holdingRows(db, today).filter((r) => r.quantityE8 > 0);
   // How old the closes behind every figure on this page are. Gated on the
   // NEWEST close, so it goes quiet as soon as any one symbol is refreshed —
   // the per-row dates in the holdings table are what survive that gate.

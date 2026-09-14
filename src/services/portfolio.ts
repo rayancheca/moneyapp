@@ -1,12 +1,15 @@
 import { cache } from "react";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings, priceCache, type AssetType } from "@/db/schema/holdings";
 import { transactions } from "@/db/schema/transactions";
 import { benchmarkAssetType } from "@/lib/benchmark-symbol";
+import { rangeStartDay, type ChartRange } from "@/lib/chart-range";
+import { windowedPoints } from "@/lib/chart-window";
 import { addDays, compareDates, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { carryForwardTo } from "@/lib/price-series";
 import {
   aggregateReturn,
   dailyReturns,
@@ -676,14 +679,27 @@ export interface HoldingRow {
   realizedSellCount: number;
   realizedExact: boolean;
   allocationPct: number | null;
-  /** recent per-day market values (qty × close) for a row sparkline */
+  /**
+   * Per-day market values (qty × close) over the trailing 1M window — the points
+   * the holding page's own 1M chart draws: [today − 30, today], a carried tail
+   * through today. Empty when the window holds fewer than two points, never the
+   * months before it.
+   */
   sparkline: number[];
 }
 
-const SPARK_DAYS = 30;
+/**
+ * 🔴 The column is headed "30d" and it drew the last 30 CLOSES. Stocks are
+ * quoted on trading days only, so 30 closes span about six weeks while crypto's
+ * span 30 days: measured 2026-09-14, 9 of 10 holdings on /investments drew 43–44
+ * days under that header, and the line's green/red tone was a verdict about
+ * them. The window is now a calendar range, through the same rule as the chart.
+ */
+const SPARK_RANGE: ChartRange = "1M";
 
 /** Active holdings across the whole portfolio, with day change, P/L, allocation, sparkline. */
-export function holdingRows(db: AppDatabase): HoldingRow[] {
+export function holdingRows(db: AppDatabase, today: string = todayIso()): HoldingRow[] {
+  const sparkFrom = rangeStartDay(SPARK_RANGE, today) as string;
   const realizedByLeg = portfolioRealizedPl(db).byLeg;
   const rows = db
     .select({
@@ -701,15 +717,16 @@ export function holdingRows(db: AppDatabase): HoldingRow[] {
     .all();
 
   const priced = rows.map((r) => {
-    const closes = db
+    const ofSymbol = and(eq(priceCache.symbol, r.symbol), eq(priceCache.assetType, r.assetType));
+    // ⛔ price, value, day change and P/L read the NEWEST two closes, whatever the
+    // sparkline's window — a holding with no close in 30 days still has a price
+    const [latest = null, previous = null] = db
       .select({ quotedOn: priceCache.quotedOn, close: priceCache.close })
       .from(priceCache)
-      .where(and(eq(priceCache.symbol, r.symbol), eq(priceCache.assetType, r.assetType)))
+      .where(ofSymbol)
       .orderBy(desc(priceCache.quotedOn))
-      .limit(SPARK_DAYS)
+      .limit(2)
       .all();
-    const latest = closes[0] ?? null;
-    const previous = closes[1] ?? null;
     const valueCents = latest ? valueCentsOf(r.quantityE8, latest.close) : null;
     const prevValueCents = previous ? valueCentsOf(r.quantityE8, previous.close) : null;
     const dayChangeCents =
@@ -724,10 +741,27 @@ export function holdingRows(db: AppDatabase): HoldingRow[] {
     const plPct =
       plCents !== null && costCents !== null && costCents !== 0 ? (plCents / costCents) * 100 : null;
     const realized = realizedByLeg.get(realizedLegKey(r.accountId, r.assetType, r.symbol));
-    const sparkline = closes
-      .slice()
-      .reverse()
-      .map((c) => valueCentsOf(r.quantityE8, c.close));
+    /*
+     * The window's closes plus the one just before it, so carrying forward and
+     * the <2-point fallback see what they would over the whole series without
+     * loading it (this runs ~6 times per /investments render). ⛔ A fallback is
+     * drawn as NOTHING: it would be the full series under a "30d" header.
+     */
+    const baseline = db
+      .select({ day: priceCache.quotedOn, close: priceCache.close })
+      .from(priceCache)
+      .where(and(ofSymbol, lt(priceCache.quotedOn, sparkFrom)))
+      .orderBy(desc(priceCache.quotedOn))
+      .limit(1)
+      .all();
+    const inWindow = db
+      .select({ day: priceCache.quotedOn, close: priceCache.close })
+      .from(priceCache)
+      .where(and(ofSymbol, gte(priceCache.quotedOn, sparkFrom), lte(priceCache.quotedOn, today)))
+      .orderBy(asc(priceCache.quotedOn))
+      .all();
+    const drawn = windowedPoints(carryForwardTo([...baseline, ...inWindow], today), today, SPARK_RANGE);
+    const sparkline = drawn.fellBack ? [] : drawn.points.map((p) => valueCentsOf(r.quantityE8, p.close));
     return {
       accountId: r.accountId,
       accountName: r.accountName,

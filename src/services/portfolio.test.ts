@@ -272,6 +272,58 @@ describe("holdingRows + topMovers", () => {
     expect(losers).toEqual([]); // ETH flat day3, AAPL up
   });
 
+  /*
+   * 🔴 "30d" DREW THE LAST 30 CLOSES. Stocks are quoted on trading days only, so
+   * 30 closes span about six weeks while crypto's span 30 days — one column,
+   * two windows. Measured 2026-09-14 on /investments: 9 of 10 holdings drew
+   * 43–44 days under the header "30d", and the green/red tone was a verdict
+   * about those 43 days. ⛔ The unit fixture had 3 closes and the e2e fixture
+   * quotes stocks on weekends, so neither could express this: this one quotes
+   * weekdays only, asks on a Monday (so the window opens on a weekend), and
+   * holds a daily series and a long-stale one beside it.
+   */
+  test("the 30d sparkline spans the trailing 30 calendar days, not the last 30 closes", () => {
+    const SPARK_TODAY = "2026-03-16"; // a Monday
+    const weekdays: string[] = [];
+    for (let d = new Date("2026-01-26T00:00:00Z"); d <= new Date("2026-03-13T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 1)) {
+      const dow = d.getUTCDay();
+      if (dow !== 0 && dow !== 6) weekdays.push(d.toISOString().slice(0, 10));
+    }
+    expect(weekdays).toHaveLength(35); // guards the fixture
+    weekdays.forEach((day, i) => cache("AAPL", "stock", day, 100 + i));
+    for (let d = new Date("2026-01-26T00:00:00Z"), i = 0; d <= new Date("2026-03-16T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 1), i++) {
+      cache("ETH", "crypto", d.toISOString().slice(0, 10), 2000 + i);
+    }
+    cache("STALE", "stock", "2025-12-16", 50);
+    cache("STALE", "stock", "2025-12-17", 51);
+    cache("STALE", "stock", "2026-03-16", 60);
+    for (const [accountId, symbol, assetType] of [
+      [brokerage, "AAPL", "stock"],
+      [crypto, "ETH", "crypto"],
+      [brokerage, "STALE", "stock"],
+    ] as const) {
+      upsertHolding(bundle.db, { accountId, symbol, assetType, quantityE8: 100_000_000, avgCostCents: 100, occurredOn: "2026-01-26" });
+    }
+
+    const rows = holdingRows(bundle.db, SPARK_TODAY);
+    const aapl = rows.find((r) => r.symbol === "AAPL")!;
+    // Feb 16 – Mar 13 (20 closes) carried through Sat 14, Sun 15, Mon 16 — the window opens Sat Feb 14
+    expect(aapl.sparkline).toHaveLength(23);
+    expect(aapl.sparkline[0]).toBe(11_500); // the Feb 16 close, not Feb 2's
+    expect(aapl.sparkline.at(-1)).toBe(13_400); // Mar 13, carried
+    expect(aapl.dayChangeCents).toBe(100); // still the last two CLOSES
+
+    const eth = rows.find((r) => r.symbol === "ETH")!;
+    expect(eth.sparkline).toHaveLength(31); // [today − 30, today] — the holding page's 1M rule
+    expect(eth.sparkline[0]).toBe(201_900); // Feb 14
+
+    const stale = rows.find((r) => r.symbol === "STALE")!;
+    // one close inside the window is not a line — and never the months before it
+    expect(stale.sparkline).toEqual([]);
+    expect(stale.dayChangeCents).toBe(900);
+    expect(stale.latestClose).toBe(60);
+  });
+
   test("realized P/L surfaces per leg and on the holding row after a sell", () => {
     seedMixedBook();
     // sell 1 of the 2 AAPL on D3 at the $120 close: avg basis (100+120)/2 = $110
