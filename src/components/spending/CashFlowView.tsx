@@ -28,12 +28,22 @@ interface CashFlowViewProps {
   /** URL params to preserve across a view switch (the period) */
   baseParams: Record<string, string>;
   periodLabel: string;
+  /** what the pace readout's unimported days are "of" (`paceWindowName`) — null for All time */
+  paceWindowName: string | null;
 }
 
 /** a bucket augmented with the prior period's value for the SAME bucket */
 type CashRow = CashFlowBucket & { ghostCents: number | null };
 
-export function CashFlowView({ cashFlow, projection, sankey, viewState, baseParams, periodLabel }: CashFlowViewProps) {
+export function CashFlowView({
+  cashFlow,
+  projection,
+  sankey,
+  viewState,
+  baseParams,
+  periodLabel,
+  paceWindowName,
+}: CashFlowViewProps) {
   const { state, setView } = useViewState({
     surface: SPENDING_SURFACE,
     spec: CASH_VIEW_SPEC,
@@ -132,7 +142,7 @@ export function CashFlowView({ cashFlow, projection, sankey, viewState, basePara
       ) : active === "graph" ? (
         <CashFlowGraph data={cashFlow} projection={projection} />
       ) : (
-        <CashFlowChart data={cashFlow} projection={projection} periodLabel={periodLabel} />
+        <CashFlowChart data={cashFlow} projection={projection} paceWindowName={paceWindowName} />
       )}
     </div>
   );

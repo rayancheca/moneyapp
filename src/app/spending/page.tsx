@@ -6,6 +6,7 @@ import { emptyPeriodCopy, emptyPeriodReason } from "@/lib/empty-period";
 import { formatDayLong } from "@/lib/format-date";
 import { cashEarningsSectionNotes } from "@/lib/section-notes";
 import { deviationRowsFrom } from "@/lib/deviation-layout";
+import { paceWindowName } from "@/lib/pace-readout";
 import {
   heatmapInitialMonth,
   periodParams as periodParamsOf,
@@ -388,6 +389,7 @@ export default async function SpendingPage({
               viewState={cashView}
               baseParams={baseParams}
               periodLabel={period.label}
+              paceWindowName={paceWindowName(period)}
             />
           </SurfaceCard>
 

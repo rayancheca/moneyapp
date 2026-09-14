@@ -69,11 +69,11 @@ interface CashFlowChartProps {
   data: CashFlow;
   /** the estimate companion (North Star #2): pace + prior-period ghost. */
   projection?: SpendingProjection | null;
-  /** the period's own name — "2 days of September 2026 not imported yet" */
-  periodLabel: string;
+  /** what the unimported days are "of" (`paceWindowName`) — "2 days of September 2026 not imported yet" */
+  paceWindowName: string | null;
 }
 
-export function CashFlowChart({ data, projection, periodLabel }: CashFlowChartProps) {
+export function CashFlowChart({ data, projection, paceWindowName }: CashFlowChartProps) {
   const router = useRouter();
   const { buckets, incomeSeries, spendingSeries, pace } = data;
 
@@ -138,7 +138,7 @@ export function CashFlowChart({ data, projection, periodLabel }: CashFlowChartPr
     projectedCents: projected ?? 0,
     actualToDateCents: pace?.actualToDateCents ?? 0,
     uncoveredDays: projection?.paceUncoveredDays ?? 0,
-    periodLabel,
+    windowName: paceWindowName,
   });
   const basis = projection?.paceBasis
     ? words.notImported
