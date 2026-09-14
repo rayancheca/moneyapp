@@ -782,8 +782,24 @@ const ANNUALIZED_MONTHS = 12;
  * been printing all along.
  */
 export function annualizedCentsOf(series: ProjectableSeries, today: string): number | null {
-  if (series.nextExpectedAmountCents === null) return null;
-  const occurrences = projectOccurrences(series, today, addCalendarMonths(today, ANNUALIZED_MONTHS));
+  /*
+   * ⛔ NO NEXT DATE IS NO FIGURE. `projectOccurrences` returns nothing without
+   * one, which summed to a measured "~$0.00/yr" — printed on /recurring/<Knack
+   * Tutoring> three lines under the series' own per-charge amount. The rule this
+   * replaced multiplied the amount out regardless; neither was a fact.
+   */
+  if (series.nextExpectedAmountCents === null || series.nextExpectedOn === null) return null;
+  /*
+   * 🔴 HALF-OPEN. `projectOccurrences` is INCLUSIVE at its far end, so
+   * `[today, today + 12 months]` is 366 days and holds THIRTEEN occurrences of a
+   * monthly series due on today's day-of-month (and 53 of a weekly one). Swept
+   * 2026-09-14 across 60 consecutive days: 22 of them had a live series
+   * annualized above its own year — "Flamingo South Beach $27,417.00 = 13 ×
+   * $2,109.00". The committed book's `monthHorizon` is half-open for exactly
+   * this reason; a year ends the day before its anniversary.
+   */
+  const through = addDays(addCalendarMonths(today, ANNUALIZED_MONTHS), -1);
+  const occurrences = projectOccurrences(series, today, through);
   return occurrences.reduce((sum, o) => sum + Math.abs(o.amountCents), 0);
 }
 

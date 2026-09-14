@@ -142,6 +142,24 @@ describe("seriesDetail", () => {
    * called twice to write PROSE about this ("this one stops on Jan 11, 2027,
    * inside them") and never once to compute the figure the prose qualified.
    */
+  /**
+   * 🔴 THE FAR END IS EXCLUSIVE. `projectOccurrences` includes its far day, so
+   * a window of `[today, today + 12 months]` billed a monthly series thirteen
+   * times whenever today fell on its billing day — the Netflix fixture's own
+   * TODAY (the 8th, billed on the 15th) can never hit that, which is why the
+   * two tests above could not see it.
+   */
+  test("a year from a billing day holds twelve billings, not thirteen", () => {
+    const d = seriesDetail(bundle.db, netflix().id, "2026-07-15");
+    expect(d.annualizedCents).toBe(1549 * 12);
+  });
+
+  /** ⛔ no next date is no figure — never a measured $0.00 */
+  test("a series with no next expected date has no annualized figure", () => {
+    bundle.db.run(sql`UPDATE recurring_series SET next_expected_on = NULL WHERE id = ${netflix().id}`);
+    expect(seriesDetail(bundle.db, netflix().id, TODAY).annualizedCents).toBeNull();
+  });
+
   test("a series that stops inside the year costs what it will actually bill", () => {
     const s = netflix();
     bundle.db.run(sql`UPDATE recurring_series SET user_ends_on = '2026-11-20' WHERE id = ${s.id}`);
