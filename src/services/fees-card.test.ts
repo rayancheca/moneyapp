@@ -532,6 +532,50 @@ describe("feesCard", () => {
     expect(card.unfiledNote).toContain("$1.84");
   });
 
+  /*
+   * 🔴 A REVERSAL ON FEES ITSELF MADE THE NOTE COUNT ONE SET AND TOTAL ANOTHER.
+   * The total nets credits, the count was charges alone. Every earlier unfiled
+   * test used charges only, so none could express a reversal.
+   */
+  test("a fee and its reversal are named apart, and their net is called a net", () => {
+    fee("2026-07-02", 1000);
+    addTxn("2026-03-10", -500, topId("Fees"), "WIRE FEE");
+    addTxn("2025-06-10", 500, topId("Fees"), "WIRE FEE REVERSAL");
+
+    const note = feesCard(bundle.db, TODAY)!.unfiledNote!;
+    expect(note).toContain("1 charge and 1 credit netting to nothing are filed there");
+    expect(note).not.toContain("totalling $0.00");
+  });
+
+  test("a lone reversal outside the window is a credit, never '0 charges'", () => {
+    fee("2026-07-02", 1000);
+    addTxn("2025-06-12", 1234, topId("Fees"), "FEE REVERSAL");
+
+    const note = feesCard(bundle.db, TODAY)!.unfiledNote!;
+    expect(note).toContain("1 credit is filed on Fees itself");
+    expect(note).not.toMatch(/\b0 charges\b/);
+  });
+
+  test("a reversal outside the window never prints a negative charge total", () => {
+    fee("2026-07-02", 1000);
+    addTxn("2026-03-10", -700, topId("Fees"), "RECENT PARENT CHARGE");
+    addTxn("2025-06-12", 1234, topId("Fees"), "OLD REVERSAL");
+
+    const note = feesCard(bundle.db, TODAY)!.unfiledNote!;
+    expect(note).toContain("1 charge and 1 credit netting $5.34 back are filed there");
+    expect(note).not.toMatch(/-\$/);
+  });
+
+  test("a charge and its reversal inside the window are not '2 charges'", () => {
+    fee("2026-07-02", 1000);
+    addTxn("2026-03-10", -500, topId("Fees"), "WIRE FEE");
+    addTxn("2026-04-10", 500, topId("Fees"), "WIRE FEE REVERSAL");
+
+    const note = feesCard(bundle.db, TODAY)!.unfiledNote!;
+    expect(note).toContain("1 charge and 1 credit are filed on Fees itself");
+    expect(note).toContain("The largest charge is $5.00");
+  });
+
   test("a bucket with nothing in it is an absence, not a row reading $0.00", () => {
     fee("2026-07-02", 1000, "ATM Fees");
 

@@ -166,6 +166,8 @@ export interface FeeWindow {
    */
   unclassifiedCents: number;
   unclassifiedRows: number;
+  /** credits (fee reversals) filed on Fees itself — counted apart, never as charges */
+  unclassifiedCredits: number;
   /** how many fee CHARGES — refunds do not count as events */
   paidCharges: number;
   /** money in from banks, positive, clawbacks netted */
@@ -330,6 +332,7 @@ function windowOf(
     paidCents,
     unclassifiedCents: unclassified.reduce((sum, t) => sum - t.amountCents, 0),
     unclassifiedRows: unclassified.filter((t) => t.amountCents < 0).length,
+    unclassifiedCredits: unclassified.filter((t) => t.amountCents > 0).length,
     paidCharges: fees.filter((t) => t.amountCents < 0).length,
     earnedCents,
     earnedCredits: interest.filter((t) => t.amountCents > 0).length,
@@ -450,12 +453,22 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
   );
   const largestOf = (list: typeof rows) =>
     [...list].filter((t) => t.amountCents < 0).sort((a, b) => a.amountCents - b.amountCents)[0];
+  /** "2 charges", "1 charge and 1 credit", "1 credit" — a reversal is never counted as a charge */
+  const rowsPhrase = (charges: number, credits: number): string =>
+    [
+      charges > 0 ? `${charges} ${charges === 1 ? "charge" : "charges"}` : null,
+      credits > 0 ? `${credits} ${credits === 1 ? "credit" : "credits"}` : null,
+    ]
+      .filter((p) => p !== null)
+      .join(" and ");
   const largestUnfiled = largestOf(unfiledRows);
-  const one = unfiledRows.length === 1;
+  const recentCharges = unfiledRows.filter((t) => t.amountCents < 0).length;
+  const recentCredits = unfiledRows.filter((t) => t.amountCents > 0).length;
+  const recentOne = recentCharges + recentCredits === 1;
   const recentUnfiledNote =
     largestUnfiled === undefined
       ? null
-      : `${unfiledRows.length} ${one ? "charge is" : "charges are"} filed on Fees itself rather than as a kind of fee, so the ledger has not said what ${one ? "it is" : "they are"}. The largest is ${formatCents(-largestUnfiled.amountCents)} — “${largestUnfiled.rawDescription}”.`;
+      : `${rowsPhrase(recentCharges, recentCredits)} ${recentOne ? "is" : "are"} filed on Fees itself rather than as a kind of fee, so the ledger has not said what ${recentOne ? "it is" : "they are"}. The largest ${recentCredits > 0 ? "charge " : ""}is ${formatCents(-largestUnfiled.amountCents)} — “${largestUnfiled.rawDescription}”.`;
   /*
    * 🔴 THE ALL-TIME HALF LEFT ROWS OUT AND SAID NOTHING. The sentence above
    * reads the RECENT window only, but the all-time figures exclude parent rows
@@ -468,15 +481,36 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
    */
   const allTimeLabel = formatMonthYear(firstOn);
   const allTimeDiffers =
-    allTime.unclassifiedRows !== recent.unclassifiedRows || allTime.unclassifiedCents !== recent.unclassifiedCents;
+    allTime.unclassifiedRows !== recent.unclassifiedRows ||
+    allTime.unclassifiedCredits !== recent.unclassifiedCredits ||
+    allTime.unclassifiedCents !== recent.unclassifiedCents;
+  /*
+   * ⛔ The count and the total must describe the SAME rows. `unclassifiedCents`
+   * nets credits while the count was charges alone, so a $5.00 fee and its
+   * reversal read "1 charge totalling $0.00", a lone reversal "0 charges are
+   * filed…", and a reversal outside the window "1 charge totalling -$5.34"
+   * (second reader, 2026-09-14). Charges and credits are named apart, and a
+   * net is called a net.
+   */
   const n = allTime.unclassifiedRows;
+  const c = allTime.unclassifiedCredits;
+  const allTimeOne = n + c === 1;
+  const net = allTime.unclassifiedCents;
+  const amountPhrase =
+    c === 0
+      ? `totalling ${formatCents(net)}`
+      : net > 0
+        ? `netting ${formatCents(net)} paid`
+        : net < 0
+          ? `netting ${formatCents(-net)} back`
+          : "netting to nothing";
   const largestEver = largestOf(rows.filter((t) => t.categoryId === cats.feesTopId));
   const allTimeUnfiledNote = !allTimeDiffers
     ? null
     : recentUnfiledNote !== null
-      ? `Since ${allTimeLabel}, ${n} ${n === 1 ? "charge" : "charges"} totalling ${formatCents(allTime.unclassifiedCents)} ${n === 1 ? "is" : "are"} filed there, and none of it is in the all-time figures either.`
-      : `Since ${allTimeLabel}, ${n} ${n === 1 ? "charge is" : "charges are"} filed on Fees itself rather than as a kind of fee, and ${n === 1 ? "it is" : "they are"} not in the all-time figures.` +
-        (largestEver === undefined ? "" : ` The largest is ${formatCents(-largestEver.amountCents)} — “${largestEver.rawDescription}”.`);
+      ? `Since ${allTimeLabel}, ${rowsPhrase(n, c)} ${amountPhrase} ${allTimeOne ? "is" : "are"} filed there, and none of it is in the all-time figures either.`
+      : `Since ${allTimeLabel}, ${rowsPhrase(n, c)} ${allTimeOne ? "is" : "are"} filed on Fees itself rather than as a kind of fee, and ${allTimeOne ? "it is" : "they are"} not in the all-time figures.` +
+        (largestEver === undefined ? "" : ` The largest ${c > 0 ? "charge " : ""}is ${formatCents(-largestEver.amountCents)} — “${largestEver.rawDescription}”.`);
   const unfiledNote = [recentUnfiledNote, allTimeUnfiledNote].filter((s) => s !== null).join(" ") || null;
 
   /*
