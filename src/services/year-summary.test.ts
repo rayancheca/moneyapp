@@ -239,7 +239,7 @@ describe("yearSummaryView — the cash job's story is only told where it happene
       .find((l) => l.id === "cash-job")!;
     expect(cashJob.basis).toContain("Salary rows that are not Fordham payroll.");
     expect(cashJob.basis).not.toContain("the job that replaced it");
-    expect(cashJob.basis).toContain("Work-study ran until 2026-05-13");
+    expect(cashJob.basis).toContain("Work-study ran until May 13, 2026, so in 2022");
     // it says an earlier job existed and refuses to name it, rather than
     // naming one the ledger cannot support
     expect(cashJob.basis).toContain("this ledger does not say");
@@ -253,6 +253,7 @@ describe("yearSummaryView — the cash job's story is only told where it happene
       .flatMap((sec) => sec.lines)
       .find((l) => l.id === "cash-job")!;
     expect(cashJob.basis).toContain("the job that replaced it");
+    expect(cashJob.basis).toContain("Work-study ended May 13, 2026 and");
     expect(cashJob.label).toBe("Cash job");
   });
 
@@ -280,17 +281,24 @@ describe("yearSummaryView — the cash job's story is only told where it happene
     expect(cashJob.label).toBe("Salary, not Fordham payroll");
     // …and the basis no longer has to deny the heading above it
     expect(cashJob.basis).not.toContain("not yet the cash job");
-    expect(cashJob.basis).toContain("2026-05-13");
+    expect(cashJob.basis).toContain("May 13, 2026");
   });
 
   /* ⛔ ONE decision, not two that agree. The label and the sentence are chosen
-     together, so a future edit cannot move one and leave the other. */
+     together, so a future edit cannot move one and leave the other.
+
+     🔴 And the sentence is PROSE: both branches printed the raw constant,
+     "Work-study ended 2026-05-13 and these deposits…", on /summary/2026 and
+     /summary/2022 — a machine date inside a sentence, where `formatDayFull`
+     is the app's rule. */
   test("the label and the basis are chosen from the same fact", () => {
     for (const year of [2021, 2025, 2026, 2027]) {
       const naming = cashJobNaming(year);
       const early = year < 2026;
       expect(naming.label === "Cash job", `label for ${year}`).toBe(!early);
       expect(naming.basis.includes("the job that replaced it"), `basis for ${year}`).toBe(!early);
+      expect(naming.basis, `basis for ${year}`).not.toMatch(/\b\d{4}-\d{2}-\d{2}\b/);
+      expect(naming.basis, `basis for ${year}`).toContain("May 13, 2026");
     }
   });
 });

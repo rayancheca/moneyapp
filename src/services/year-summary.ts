@@ -10,6 +10,7 @@ import {
   type ReturnBoundary,
 } from "@/lib/money-weighted-return";
 import type { CashFlow } from "@/lib/xirr";
+import { formatDayFull } from "@/lib/format-date";
 import { yearSummary, type YearLineInput, type YearSummary } from "@/lib/year-summary";
 import { investmentSideAccountIds } from "./accounts";
 import { portfolioSeries, realizedSalesByDay } from "./portfolio";
@@ -343,15 +344,20 @@ const WORK_STUDY_ENDED = "2026-05-13";
  */
 export function cashJobNaming(year: number): { label: string; basis: string } {
   const rule = "Salary rows that are not Fordham payroll.";
+  // 🔴 PROSE, so the date is spelled: both sentences printed the raw constant
+  // ("Work-study ended 2026-05-13 and…") on /summary/2026 and /summary/2022.
+  // ⛔ Only the sentence is formatted — the year gate below must keep reading
+  // the ISO constant, whose first four characters are the year.
+  const ended = formatDayFull(WORK_STUDY_ENDED);
   if (year >= Number(WORK_STUDY_ENDED.slice(0, 4))) {
     return {
       label: "Cash job",
-      basis: `${rule} Work-study ended ${WORK_STUDY_ENDED} and these deposits are the job that replaced it.`,
+      basis: `${rule} Work-study ended ${ended} and these deposits are the job that replaced it.`,
     };
   }
   return {
     label: "Salary, not Fordham payroll",
-    basis: `${rule} Work-study ran until ${WORK_STUDY_ENDED}, so in ${year} these are an earlier job — which one, this ledger does not say.`,
+    basis: `${rule} Work-study ran until ${ended}, so in ${year} these are an earlier job — which one, this ledger does not say.`,
   };
 }
 
