@@ -86,14 +86,20 @@ export interface MerchantProfile {
   totalCents: number;
   /** what the purchases came to, before the returns — the mean's denominator */
   grossCents: number;
-  /** credits at this merchant in expense-kind categories, over the same span */
+  /** credits at this merchant in expense-kind categories, whatever day they posted */
   refundCents: number;
   refundCount: number;
+  /**
+   * The first and last day of EVERY row the Total is summed from — purchases
+   * and returns — so the window a Total, a rate or a rank is named over holds
+   * exactly the rows behind it.
+   */
   firstSeen: string | null;
   lastSeen: string | null;
   /**
-   * Days the merchant was observed over: first visit through last, BOTH ENDS
-   * INCLUDED. Purchases all on one day span one day.
+   * Days of PURCHASES: first purchase through last, BOTH ENDS INCLUDED — the
+   * gate on whether a rate can be stated. Purchases all on one day span one day.
+   * ⚠️ Not the window: `firstSeen`–`lastSeen` also spans the returns.
    *
    * 🔴 This was the exclusive difference while both sentences it feeds name a
    * count of days from first to last. Measured on the real ledger, all 152
@@ -217,12 +223,24 @@ export function merchantProfile(
   }
 
   const days = visits.map((v) => v.day).sort();
-  const firstSeen = days[0]!;
-  const lastSeen = days[days.length - 1]!;
-  // +1: an inclusive count of days, so one day of purchases is one day. The
-  // rate below divides by this same number — see the branch comment further
-  // down: the figure and the sentence describing it are chosen together.
-  const spanDays = diffDays(firstSeen, lastSeen) + 1;
+  // +1: an inclusive count of days, so one day of purchases is one day. This is
+  // the PURCHASE span, and it gates whether a rate can be stated at all — a late
+  // return must not stretch a burst of purchases into a monthly habit.
+  const spanDays = diffDays(days[0]!, days[days.length - 1]!) + 1;
+  /*
+   * 🔴 THE TOTAL COUNTED ROWS THE WINDOW BESIDE IT DID NOT NAME. These were the
+   * first and last PURCHASE days, while the Total nets every return — so a
+   * return dated before the first purchase or after the last sat inside the
+   * figure and outside its window. Measured 2026-09-14: five merchants (Apple
+   * Store, BetMGM, DraftKings, Madrid Castellan, Temu), and on three of them the
+   * insight caption, the share window and the proof all named the purchase span
+   * over a cost that subtracted returns from outside it. The window is every row
+   * the Total is summed from; the rate and its sentence divide by that window.
+   */
+  const counted = [...days, ...refunds.map((r) => r.day)].sort();
+  const firstSeen = counted[0]!;
+  const lastSeen = counted[counted.length - 1]!;
+  const countedDays = diffDays(firstSeen, lastSeen) + 1;
   const grossCents = visits.reduce((t, v) => t + v.amountCents, 0);
   // what it COST: purchases less the returns credited back at it
   const totalCents = grossCents - refundCents;
@@ -262,8 +280,8 @@ export function merchantProfile(
   } else if (spanDays < MIN_SPAN_DAYS_FOR_RATE) {
     monthlyBasis = `${visits.length} purchases inside ${spanDays} ${spanDays === 1 ? "day" : "days"} — too short a stretch to call it monthly.`;
   } else {
-    // spread across the span that was actually observed, not a calendar window
-    monthlyCents = Math.round(totalCents / (spanDays / DAYS_PER_MONTH));
+    // spread across the days the Total was measured over, not a calendar window
+    monthlyCents = Math.round(totalCents / (countedDays / DAYS_PER_MONTH));
     /*
      * ⛔ A SENTENCE, SO THE WINDOW IS SPELLED — and spelled the way the card's
      * own sibling already spells it. `readableDay`'s line is "for a sentence
@@ -276,7 +294,7 @@ export function merchantProfile(
      * ⚠️ The "Seen" stat TILE keeps its ISO: it is a `.figures` cell in the
      * card's `<dl>` grid, which is the side of that line ISO belongs on.
      */
-    monthlyBasis = `Spread across the ${spanDays} days of ${dayWindowLabel(firstSeen, lastSeen)}.`;
+    monthlyBasis = `Spread across the ${countedDays} days of ${dayWindowLabel(firstSeen, lastSeen)}.`;
   }
 
   /*

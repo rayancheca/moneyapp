@@ -434,6 +434,50 @@ describe("the returns — what a merchant COST against what it charged", () => {
     expect(p.monthlyCents).toBe(Math.round(25_000 / (60 / (365.2425 / 12))));
   });
 
+  /*
+   * 🔴 THE TOTAL COUNTED ROWS THE WINDOW BESIDE IT DID NOT NAME. `firstSeen` and
+   * `lastSeen` came from PURCHASE days, but the Total nets every return — so a
+   * return dated before the first purchase or after the last was inside the
+   * figure and outside the window it was named over. Measured 2026-09-14: five
+   * merchants (Apple Store, BetMGM, DraftKings, Madrid Castellan, Temu), three of
+   * them visibly — a caption, a share window and a proof all naming the purchase
+   * span over a cost that subtracted returns from outside it. ⛔ Every earlier
+   * fixture dated its return INSIDE the span, so none could express this.
+   */
+  test("a return outside the purchases widens the window the Total is named over — both ends", () => {
+    const p = merchantProfile(
+      purchases,
+      [
+        { day: "2025-12-01", amountCents: 1_000, categoryName: "Shopping" },
+        { day: "2026-04-09", amountCents: 4_000, categoryName: "Shopping" },
+      ],
+      TODAY,
+    );
+    expect(p.firstSeen).toBe("2025-12-01");
+    expect(p.lastSeen).toBe("2026-04-09");
+    // the GATE still reads the purchases — three of them over 60 days
+    expect(p.spanDays).toBe(60);
+    expect(p.totalCents).toBe(120_000);
+    // …and the rate and its sentence share ONE number: every day the Total spans
+    expect(p.monthlyCents).toBe(Math.round(120_000 / (130 / (365.2425 / 12))));
+    expect(p.monthlyBasis).toBe("Spread across the 130 days of Dec 1, 2025 – Apr 9, 2026.");
+  });
+
+  test("a late return does not stretch a burst of purchases into a monthly habit", () => {
+    const p = merchantProfile(
+      [
+        { day: "2026-01-10", amountCents: 1_000, categoryName: "Shopping" },
+        { day: "2026-01-15", amountCents: 1_000, categoryName: "Shopping" },
+        { day: "2026-01-20", amountCents: 1_000, categoryName: "Shopping" },
+      ],
+      [{ day: "2026-04-01", amountCents: 500, categoryName: "Shopping" }],
+      TODAY,
+    );
+    expect(p.monthlyCents).toBeNull();
+    expect(p.monthlyBasis).toBe("3 purchases inside 11 days — too short a stretch to call it monthly.");
+    expect(p.lastSeen).toBe("2026-04-01");
+  });
+
   test("a return is not a visit: the count, the median and the mean stay gross", () => {
     const p = merchantProfile(purchases, returned, TODAY);
     expect(p.visitCount).toBe(3);
