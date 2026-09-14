@@ -369,12 +369,18 @@ describe("recurringCalendar", () => {
 
   /*
    * ⛔ THE CANCELLING PAIR, PINNED FROM BOTH SIDES. Car insurance on the real
-   * ledger (2026-09-14): a date typed by hand (2026-09-11), ONE charge linked by
-   * hand (PROGRESSIVE INS -$357.58 on 2026-08-12, on Venture X, imported
-   * through 2026-09-13) and no billing account recorded. The posting count makes
-   * `scheduleIsProven` false, and that is the only thing keeping Sep 11 from a
-   * red ✕: its September payment bills on an account the ledger has not been
-   * shown yet, and the one account the app can attribute it to has.
+   * ledger on 2026-09-14, before another session's write at 19:38:33Z (the
+   * snapshot data/backups/pre-2026-09-14T153833-manual-backup.db): a date typed
+   * by hand (2026-09-11), ONE charge linked by hand (PROGRESSIVE INS -$357.58 on
+   * 2026-08-12, on Venture X, imported through 2026-09-13) and no billing
+   * account recorded. The posting count made `scheduleIsProven` false, and that
+   * was the only thing keeping Sep 11 from a red ✕: its September payment bills
+   * on an account the ledger has not been shown yet, and the one account the
+   * app can attribute it to has.
+   *
+   * That write typed a next date of 2026-12-11, so the live calendar no longer
+   * draws Sep 11. The pair itself is unchanged: re-read after it, the series
+   * still has that one active charge on Venture X and no account recorded.
    *
    * So this passes at the time of writing, on purpose. It turns red the day
    * someone widens `scheduleIsProven` to trust a typed date without the billing

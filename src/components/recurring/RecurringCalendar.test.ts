@@ -27,10 +27,19 @@ const decode = (s: string): string =>
 
 /**
  * The words each day cell's accessible name carries — the same sentence the
- * Day Sheet prints — for the real ledger's September 2026, as the calendar
- * service returns it at today = 2026-09-14 on this branch. Amounts are the
- * ledger's: Car insurance -$361.49 (user amount), Car lease -$695.04, Rocket
- * Money -$6.00, Gym -$100.00.
+ * Day Sheet prints — for the real ledger's September 2026, as this branch's
+ * calendar service returned it at today = 2026-09-14 on the ledger as it stood
+ * BEFORE another session's write at 2026-09-14T19:38:33Z. Re-measured read-only
+ * from data/backups/pre-2026-09-14T153833-manual-backup.db, the snapshot taken
+ * just before that write. Amounts are that ledger's: Car insurance -$361.49
+ * (user amount), Car lease -$695.04, Rocket Money -$6.00, Gym -$100.00.
+ *
+ * ⚠️ That write set Car insurance's typed next date to 2026-12-11 and its user
+ * amount to -$357.58. Since then the live calendar draws nothing on Sep 11, and
+ * no occurrence in 2023-01..2027-08 carries `schedule_unproven` (1 before the
+ * write, 0 after). Sep 15 and Sep 22 still read exactly as pinned here. The
+ * Sep 11 entry is a state the service really returned, not today's reading —
+ * it stays because the reason's WORD is what is under test.
  */
 describe("RecurringCalendar cell names", () => {
   const month: RecurringCalendarMonth = {

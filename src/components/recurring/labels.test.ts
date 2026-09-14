@@ -22,11 +22,12 @@ import {
 describe("unsettledReasonWord", () => {
   /*
    * 🔴 "due date not established" over a date the owner TYPED. Car insurance on
-   * the real ledger (2026-09-14): next expected 2026-09-11, registered by hand,
-   * one charge linked by hand. The check behind the word counts linked charges;
-   * it never asks where the date came from, so the word claimed more than the
-   * check measured — and /budgets, the forecast and the series page all said
-   * "came due Sep 11" of the same bill.
+   * the real ledger on 2026-09-14, before another session's write at 19:38:33Z
+   * (which typed a next date of 2026-12-11): next expected 2026-09-11,
+   * registered by hand, one charge linked by hand. The check behind the word
+   * counts linked charges; it never asks where the date came from, so the word
+   * claimed more than the check measured — and /budgets, the forecast and the
+   * series page all said "came due Sep 11" of the same bill.
    */
   test("a schedule with too few charges says what was counted, not that the date is unknown", () => {
     expect(unsettledReasonWord("schedule_unproven")).toBe("too few charges to grade yet");
