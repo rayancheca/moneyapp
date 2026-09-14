@@ -39,6 +39,7 @@ describe("deviationRowsFrom — the union of both windows", () => {
 
 const fmt = (c: number) => `$${(c / 100).toFixed(2)}`;
 const OPTS = { width: 600 };
+const WINDOWS = { current: "July 2026", previous: "June 2026" };
 
 /**
  * ⛔ `previousCount` is how many ROWS the category had last period — a NET
@@ -227,23 +228,35 @@ describe("deviationDescription", () => {
       [row("rent", 200_00, 100_00), row("food", 10_00, 40_00)],
       OPTS,
     );
-    const desc = deviationDescription(layout, fmt);
+    const desc = deviationDescription(layout, fmt, WINDOWS);
     expect(desc).toContain("2 categories moved");
     expect(desc).toContain("1 up, 1 down");
     expect(desc).toContain("RENT");
     expect(desc).toContain("$100.00");
   });
 
+  /**
+   * 🔴 "moved against the previous period". Once What moved can be cut to the
+   * days both windows share, "the previous period" is not the window measured —
+   * the sentence names both windows, the way the caption above the chart does.
+   */
+  test("names both windows it measured", () => {
+    const layout = computeDeviationLayout([row("rent", 200_00, 100_00)], OPTS);
+    expect(deviationDescription(layout, fmt, { current: "Aug 1 – 12, 2026", previous: "Jul 1 – 12, 2026" })).toContain(
+      "1 category moved in Aug 1 – 12, 2026 against Jul 1 – 12, 2026: 1 up, 0 down.",
+    );
+  });
+
   test("one category that moved is not \"1 categories\"", () => {
     // 🔴 "1 categories moved against the previous period: 1 up, 0 down."
     const layout = computeDeviationLayout([row("rent", 200_00, 100_00)], OPTS);
-    expect(deviationDescription(layout, fmt)).toContain("1 category moved");
-    expect(deviationDescription(layout, fmt)).not.toContain("1 categories");
+    expect(deviationDescription(layout, fmt, WINDOWS)).toContain("1 category moved");
+    expect(deviationDescription(layout, fmt, WINDOWS)).not.toContain("1 categories");
   });
 
   test("the empty state is a sentence", () => {
-    expect(deviationDescription(computeDeviationLayout([], OPTS), fmt)).toBe(
-      "Nothing changed against the previous period.",
+    expect(deviationDescription(computeDeviationLayout([], OPTS), fmt, WINDOWS)).toBe(
+      "Nothing changed between June 2026 and July 2026.",
     );
   });
 
@@ -261,7 +274,7 @@ describe("deviationDescription", () => {
       OPTS,
     );
     expect(layout.bars[0]!.key).toBe("food"); // guards the premise
-    const desc = deviationDescription(layout, fmt);
+    const desc = deviationDescription(layout, fmt, WINDOWS);
     expect(desc).toContain("FOOD, down $300.00");
     expect(desc).not.toContain("FOOD, up");
   });
@@ -305,7 +318,7 @@ describe("the counts are of what moved, not of what was drawn", () => {
   });
 
   test("the description reports the movers and names the cut", () => {
-    const d = deviationDescription(computeDeviationLayout(manyMoves(), { width: 640 }), (c) => `$${c / 100}`);
+    const d = deviationDescription(computeDeviationLayout(manyMoves(), { width: 640 }), (c) => `$${c / 100}`, WINDOWS);
     expect(d).toContain("17 categories moved");
     expect(d).toContain("12 up, 5 down");
     expect(d).toContain("Showing the 8 biggest");
@@ -321,6 +334,6 @@ describe("the counts are of what moved, not of what was drawn", () => {
     );
     expect(layout.movedCount).toBe(2);
     expect(layout.bars).toHaveLength(2);
-    expect(deviationDescription(layout, (c) => `$${c / 100}`)).not.toContain("Showing");
+    expect(deviationDescription(layout, (c) => `$${c / 100}`, WINDOWS)).not.toContain("Showing");
   });
 });

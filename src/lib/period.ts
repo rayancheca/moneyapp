@@ -274,7 +274,7 @@ export function stepPeriodParams(period: ResolvedPeriod, delta: number): PeriodP
        * four years later, which splicing also could not do.
        */
       const y = Number(period.from.slice(0, 4)) + delta;
-      return { from: `${pad(y, 4)}-01-01`, to: addCalendarMonths(period.to, delta * 12) };
+      return { from: `${pad(y, 4)}-01-01`, to: stepDayWithin(period, period.to, delta) };
     }
     case "all":
     case "custom": {
@@ -282,9 +282,36 @@ export function stepPeriodParams(period: ResolvedPeriod, delta: number): PeriodP
       // the span BEFORE the ledger began — a window nobody imported, not an
       // empty one — so paging may land there but a comparison may not read it
       // as a measured zero: `lib/compared-windows` refuses it (Q8, 2026-09-14)
-      const span = diffDays(period.from, period.to) + 1;
-      return { from: addDays(period.from, delta * span), to: addDays(period.to, delta * span) };
+      return { from: stepDayWithin(period, period.from, delta), to: stepDayWithin(period, period.to, delta) };
     }
+  }
+}
+
+/**
+ * The day `delta` steps away from `day` under `period`'s own paging rule: the
+ * same day of the month, quarter or year — clamped by `addCalendarMonths`, so
+ * never "2026-02-30" — or the same offset one span away for a window that pages
+ * by its span (a day, a week, All time, a custom window).
+ *
+ * ⛔ ONE rule for both kinds of end. `stepPeriodParams` steps a whole period's
+ * end with it, and `lib/compared-windows` steps an end it has CUT short with it.
+ * A year and year-to-date cut on the same day therefore land on the same prior
+ * day — two pills cannot name one cut two ways.
+ */
+export function stepDayWithin(period: ResolvedPeriod, day: string, delta: number): string {
+  switch (period.granularity) {
+    case "month":
+      return addCalendarMonths(day, delta);
+    case "quarter":
+      return addCalendarMonths(day, delta * 3);
+    case "year":
+    case "ytd":
+      return addCalendarMonths(day, delta * 12);
+    case "day":
+    case "week":
+    case "all":
+    case "custom":
+      return addDays(day, delta * (diffDays(period.from, period.to) + 1));
   }
 }
 

@@ -251,8 +251,17 @@ export function deviationRowsFrom(
 export function deviationDescription(
   layout: DeviationLayout,
   fmt: (cents: number) => string,
+  /**
+   * The two windows the bars measured — the caption's own labels.
+   *
+   * 🔴 The sentence said "moved against the previous period". Once /spending
+   * cuts both windows to the days they share ("Aug 1 – 12, 2026 against Jul 1 –
+   * 12, 2026"), the previous PERIOD is not what was measured, and a screen reader
+   * heard a window the caption above the chart does not name.
+   */
+  windows: { current: string; previous: string },
 ): string {
-  if (layout.bars.length === 0) return "Nothing changed against the previous period.";
+  if (layout.bars.length === 0) return `Nothing changed between ${windows.previous} and ${windows.current}.`;
   const biggest = layout.bars[0]!;
   // ⛔ the counts are of what MOVED, the "showing" clause is of what was DRAWN.
   // Saying only the second is how this described a year with five falls as
@@ -261,7 +270,7 @@ export function deviationDescription(
     layout.movedCount > layout.bars.length ? ` Showing the ${layout.bars.length} biggest.` : "";
   return (
     // 🔴 "1 categories moved against the previous period: 1 up, 0 down."
-    `${layout.movedCount} categor${layout.movedCount === 1 ? "y" : "ies"} moved against the previous period: ` +
+    `${layout.movedCount} categor${layout.movedCount === 1 ? "y" : "ies"} moved in ${windows.current} against ${windows.previous}: ` +
     `${layout.upCount} up, ${layout.downCount} down.${shown} ` +
     `The largest move is ${biggest.label}, ${biggest.isIncrease ? "up" : "down"} ` +
     `${fmt(Math.abs(biggest.deltaCents))}.`

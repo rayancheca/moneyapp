@@ -6,7 +6,7 @@ import { formatCents } from "@/lib/money";
 import { listAccounts } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, monthlySpending, spendingBucket, transactionsHref } from "./analytics";
 import { SPEND_BASELINE_MONTHS } from "./committed";
-import { ledgerOpens, observationFrontier } from "./observation-frontier";
+import { frontierForSeries, ledgerOpens, observationFrontier, type ObservationFrontier } from "./observation-frontier";
 import { MIN_OCCURRENCES } from "./recurring";
 
 /**
@@ -289,6 +289,11 @@ function grid(db: AppDatabase, from: string, to: string, months: number, today: 
     byMonth.set(cell.month, row);
   }
 
+  return { byMonth, byAccount: accountGrid(db, from, to) };
+}
+
+/** accountId → month key → cents out over [from, to] — the account half of `grid`, and its reason. */
+function accountGrid(db: AppDatabase, from: string, to: string): Map<string, Map<string, number>> {
   const idx = loadCategoryIndex(db);
   const byAccount = new Map<string, Map<string, number>>();
   for (const txn of activeTxnsInRange(db, from, to)) {
@@ -298,8 +303,116 @@ function grid(db: AppDatabase, from: string, to: string, months: number, today: 
     perMonth.set(m, (perMonth.get(m) ?? 0) - txn.amountCents);
     byAccount.set(txn.accountId, perMonth);
   }
+  return byAccount;
+}
 
-  return { byMonth, byAccount };
+/** What the card loads: wide enough for the furthest-back candidate's whole baseline. */
+function loadedSpan(currentMonth: string): { from: string; to: string; months: number } {
+  const oldestMonth = monthKey(addCalendarMonths(`${currentMonth}-01`, -(MAX_MONTHS_BEHIND + SPEND_BASELINE_MONTHS)));
+  return { from: `${oldestMonth}-01`, to: lastDayOf(currentMonth), months: MAX_MONTHS_BEHIND + SPEND_BASELINE_MONTHS + 1 };
+}
+
+/**
+ * The accounts you spend from HABITUALLY across a baseline — the card's "live
+ * spenders": spending in at least `MIN_OCCURRENCES` of its months, and bearing
+ * an import frontier. The module docstring carries why this set and not "every
+ * account with any spend" (one dormant account would veto every month).
+ *
+ * ⛔ Exported because a SECOND surface needs exactly this set: /spending cuts
+ * its comparisons at the day these accounts have all been imported through
+ * (`spendingCoverageThrough`), and the dashboard names that same day. Two copies
+ * of the filter would let the two pages name two different days.
+ */
+export function liveSpendersOver(
+  byAccount: ReadonlyMap<string, ReadonlyMap<string, number>>,
+  baselineKeys: readonly string[],
+  frontier: ObservationFrontier,
+): string[] {
+  return (
+    [...byAccount.entries()]
+      .filter(([, perMonth]) => baselineKeys.filter((k) => (perMonth.get(k) ?? 0) !== 0).length >= MIN_OCCURRENCES)
+      .map(([accountId]) => accountId)
+      /*
+       * An account with no frontier at all is an INVESTMENT account, which
+       * `observationFrontier` excludes on purpose — "imported through" is not a
+       * fact about a balance marked to market. It must not be able to veto a
+       * month it can never satisfy, so it is dropped rather than failing the
+       * test below. Every ledger-bearing account with rows has a frontier by
+       * construction: its own newest transaction.
+       */
+      .filter((accountId) => frontier.byAccount.has(accountId))
+  );
+}
+
+/** One month the card could compare, with its baseline and the accounts that spend habitually across it. */
+interface CandidateMonth {
+  month: string;
+  /** months before the running one */
+  offset: number;
+  baselineKeys: string[];
+  liveSpenders: string[];
+  /** there are live spenders, and every one has been imported through the month's last day */
+  imported: boolean;
+}
+
+/** The months within `MAX_MONTHS_BEHIND`, newest first. */
+function candidateMonths(
+  byAccount: ReadonlyMap<string, ReadonlyMap<string, number>>,
+  frontier: ObservationFrontier,
+  currentMonth: string,
+): CandidateMonth[] {
+  const out: CandidateMonth[] = [];
+  for (let offset = 1; offset <= MAX_MONTHS_BEHIND; offset += 1) {
+    const month = monthKey(addCalendarMonths(`${currentMonth}-01`, -offset));
+    const baselineKeys: string[] = [];
+    for (let i = SPEND_BASELINE_MONTHS; i >= 1; i -= 1) {
+      baselineKeys.push(monthKey(addCalendarMonths(`${month}-01`, -i)));
+    }
+    const live = liveSpendersOver(byAccount, baselineKeys, frontier);
+    const closes = lastDayOf(month);
+    const imported = live.length > 0 && live.every((accountId) => (frontier.byAccount.get(accountId) ?? "") >= closes);
+    out.push({ month, offset, baselineKeys, liveSpenders: live, imported });
+  }
+  return out;
+}
+
+/**
+ * The last day every account you spend from has been imported through — where
+ * /spending cuts a comparison short (owner decision 2026-09-14).
+ *
+ * It is this card's live-spender set, taken at the month the card compares, so
+ * the two pages name ONE day: on the real ledger 2026-09-14 that is Aug 12,
+ * Chase Checking's, which the dashboard prints as "shown through Aug 12 at the
+ * earliest". Measured alternatives, both rejected:
+ *
+ *  - every ledger account (what /summary used): Jul 31, because SoFi's
+ *    statements end there though SoFi last spent in May — August refused outright;
+ *  - the ledger's newest row (Sep 12): Sep 1–12 against Aug 1–12 still read
+ *    Housing −$2,229.85, the rent sitting on an account with no September rows.
+ *
+ * When no candidate month clears, the newest candidate's live spenders govern.
+ * When there are none at all — a ledger too young for anything to be a habit —
+ * every account does, the earliest of them: with no habit to tell a dormant
+ * account from a live one, none may be assumed current.
+ *
+ * ⚠️ Known gap, accepted by the owner: an account that spends rarely but holds a
+ * large charge (Wells Fargo, the Aug rent, one spend month) is not a live
+ * spender, so its lag does not cut. Today Chase Checking's Aug 12 hides it.
+ *
+ * `frontierForSeries` is the earliest frontier among a set of accounts, which is
+ * exactly this question asked of a series' accounts; it is reused, not copied.
+ */
+export function spendingCoverageThrough(db: AppDatabase, today: string = todayIso()): string | null {
+  const currentMonth = monthKey(today);
+  const frontier = observationFrontier(db);
+  const span = loadedSpan(currentMonth);
+  const candidates = candidateMonths(accountGrid(db, span.from, span.to), frontier, currentMonth);
+  const governing = candidates.find((c) => c.imported) ?? candidates[0];
+  const accountIds =
+    governing !== undefined && governing.liveSpenders.length > 0
+      ? governing.liveSpenders
+      : [...frontier.byAccount.keys()];
+  return frontierForSeries(frontier, new Set(accountIds));
 }
 
 /**
@@ -320,9 +433,8 @@ export function moversCard(db: AppDatabase, today: string = todayIso()): MoversC
   const months = SPEND_BASELINE_MONTHS;
 
   // load once, wide enough for the furthest-back candidate's whole baseline
-  const oldestMonth = monthKey(addCalendarMonths(`${currentMonth}-01`, -(MAX_MONTHS_BEHIND + months)));
-  const monthsLoaded = MAX_MONTHS_BEHIND + months + 1;
-  const data = grid(db, `${oldestMonth}-01`, lastDayOf(currentMonth), monthsLoaded, today);
+  const span = loadedSpan(currentMonth);
+  const data = grid(db, span.from, span.to, span.months, today);
 
   const frontier = observationFrontier(db);
   const accountNames = new Map(listAccounts(db).map((a) => [a.id, a.name] as const));
@@ -331,39 +443,9 @@ export function moversCard(db: AppDatabase, today: string = todayIso()): MoversC
    * Pick the month. Newest first, and the first one that clears wins — walking
    * FORWARD would report an older month while a newer one was available.
    */
-  let month: string | null = null;
-  let baselineKeys: string[] = [];
-  let liveSpenders: string[] = [];
-  let chosenOffset = 0;
-  for (let offset = 1; offset <= MAX_MONTHS_BEHIND; offset += 1) {
-    const candidate = monthKey(addCalendarMonths(`${currentMonth}-01`, -offset));
-    const keys: string[] = [];
-    for (let i = months; i >= 1; i -= 1) keys.push(monthKey(addCalendarMonths(`${candidate}-01`, -i)));
-
-    const live = [...data.byAccount.entries()]
-      .filter(([, perMonth]) => keys.filter((k) => (perMonth.get(k) ?? 0) !== 0).length >= MIN_OCCURRENCES)
-      .map(([accountId]) => accountId)
-      /*
-       * An account with no frontier at all is an INVESTMENT account, which
-       * `observationFrontier` excludes on purpose — "imported through" is not a
-       * fact about a balance marked to market. It must not be able to veto a
-       * month it can never satisfy, so it is dropped rather than failing the
-       * test below. Every ledger-bearing account with rows has a frontier by
-       * construction: its own newest transaction.
-       */
-      .filter((accountId) => frontier.byAccount.has(accountId));
-
-    const closes = lastDayOf(candidate);
-    const allImported = live.every((accountId) => (frontier.byAccount.get(accountId) ?? "") >= closes);
-    if (live.length > 0 && allImported) {
-      month = candidate;
-      baselineKeys = keys;
-      liveSpenders = live;
-      chosenOffset = offset;
-      break;
-    }
-  }
-  if (month === null) return null;
+  const chosen = candidateMonths(data.byAccount, frontier, currentMonth).find((c) => c.imported);
+  if (chosen === undefined) return null;
+  const { month, baselineKeys, liveSpenders, offset: chosenOffset } = chosen;
 
   /*
    * The baseline must lie inside the ledger's own history, or its early months

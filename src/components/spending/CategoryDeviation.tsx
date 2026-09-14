@@ -30,6 +30,12 @@ export interface CategoryDeviationProps {
   /** e.g. "July" vs "June" — named, never "previous period" */
   currentLabel: string;
   previousLabel: string;
+  /**
+   * Where both windows stop, when /spending cut them to the same days
+   * (`lib/compared-windows`). The page's own period label names days this panel
+   * deliberately did not read, so the panel says which it did.
+   */
+  note?: string | null;
   limit?: number;
 }
 
@@ -37,19 +43,24 @@ export function CategoryDeviation({
   rows,
   currentLabel,
   previousLabel,
+  note = null,
   limit,
 }: CategoryDeviationProps) {
   const layout = computeDeviationLayout(rows, { width: WIDTH, limit, rowHeight: ROW_HEIGHT });
+  const noteLine = note ? <p className="text-xs text-ink-faint">{note}</p> : null;
 
   if (layout.bars.length === 0) {
     return (
-      <p className="text-sm text-ink-muted">
-        No category changed between {previousLabel} and {currentLabel}.
-      </p>
+      <>
+        <p className="text-sm text-ink-muted">
+          No category changed between {previousLabel} and {currentLabel}.
+        </p>
+        {noteLine}
+      </>
     );
   }
 
-  const description = deviationDescription(layout, formatCents);
+  const description = deviationDescription(layout, formatCents, { current: currentLabel, previous: previousLabel });
 
   return (
     <figure className="space-y-2">
@@ -68,6 +79,7 @@ export function CategoryDeviation({
           )}
         </span>
       </figcaption>
+      {noteLine}
 
       <svg
         viewBox={`0 0 ${WIDTH} ${layout.height}`}

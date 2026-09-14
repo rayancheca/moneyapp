@@ -85,7 +85,7 @@ export default async function SpendingPage({
    * never ask whether the ledger holds it. Measured 2026-09-14: `?period=ALL`
    * read "All time against Aug 4, 2018 – Aug 24, 2022 — 20 up · 0 down" over a
    * window of 0 rows. They all read this one answer now, so no two of them can
-   * disagree about whether a comparison exists.
+   * disagree about whether a comparison exists — or over which days.
    */
   const comparison = periodComparison(db, period, today);
   const projection = spendingProjection(db, period, today, cashFlow.pace, cashFlow.totals.spentCents, comparison);
@@ -153,16 +153,32 @@ export default async function SpendingPage({
   );
 
   // categories table: this-period breakdown vs the previous period for MoM —
-  // and only where there IS a previous period to set it against
+  // and only where the two periods are compared WHOLE
   const breakdown = categoryBreakdown(db, range);
   const prevBreakdown = comparison.kind === "whole" ? categoryBreakdown(db, comparison.prior) : null;
   const prevById = new Map((prevBreakdown ?? []).map((r) => [r.categoryId, r.spentCents]));
   /*
-   * "What moved" reads the SAME two breakdowns the categories table compares,
-   * so the two panels can never disagree about a delta — over the UNION of
-   * them, which `deviationRowsFrom` owns and records the measurement for.
+   * "What moved" reads the two windows the comparison names, over their UNION
+   * (`deviationRowsFrom` owns that rule and its measurement): the whole periods —
+   * the same two breakdowns the categories table compares — or the days both
+   * were CUT to.
+   *
+   * 🔴 S1/S2, measured 2026-09-14: `?period=2026-09&where=relief` read
+   * "September 2026 against August 2026 — 2 up · 7 down" and "Housing …
+   * -$2,229.85 on August 2026" — two unimported days, and nothing past Aug 12
+   * for Chase Checking, against a whole August holding the rent.
+   *
+   * ⛔ When cut, What moved is the ONLY panel that states a change. Where it
+   * went, the List delta and the cash-flow ghost take the null-prior path: a
+   * block's footprint is the whole period's spending and cannot also carry a
+   * change measured over part of it (owner decision 2026-09-14, 3a).
    */
-  const deviationRows = prevBreakdown === null ? [] : deviationRowsFrom(breakdown, prevBreakdown);
+  const deviationRows =
+    comparison.kind === "whole" && prevBreakdown !== null
+      ? deviationRowsFrom(breakdown, prevBreakdown)
+      : comparison.kind === "clipped"
+        ? deviationRowsFrom(categoryBreakdown(db, comparison.current), categoryBreakdown(db, comparison.prior))
+        : [];
   // Share denominator = gross positive spending across categories. The NET total
   // (cashFlow.totals.spentCents) can be dragged below an individual category's
   // gross by refund/reimbursement-heavy categories that net to an inflow, which
@@ -413,6 +429,7 @@ export default async function SpendingPage({
                 rows={deviationRows}
                 currentLabel={comparison.current.label}
                 previousLabel={comparison.prior.label}
+                note={comparison.kind === "clipped" ? comparison.note : null}
               />
             )}
           </SurfaceCard>

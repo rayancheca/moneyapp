@@ -24,6 +24,7 @@ import {
   type CategoryIndex,
   type DateRange,
 } from "./analytics";
+import { spendingCoverageThrough } from "./movers-card";
 import { ledgerOpens } from "./observation-frontier";
 import { activeSplitsInRange } from "./transaction-splits";
 
@@ -415,11 +416,19 @@ export function spendingProjection(
 }
 
 /**
- * Whether this period may be set against the one before it, fed from the
- * ledger — `lib/compared-windows` owns the rule and its sentences.
+ * Whether this period may be set against the one before it, and over which
+ * days, fed from the ledger — `lib/compared-windows` owns the rule and its
+ * sentences. The opening edge is the first active row; the closing edge is the
+ * last day every account you spend from has been imported through, the same day
+ * the dashboard's "What changed" card names (`spendingCoverageThrough`).
  */
 export function periodComparison(db: AppDatabase, period: ResolvedPeriod, today: string): PeriodComparison {
-  return comparePeriods({ period, today, ledgerOpens: ledgerOpens(db) });
+  return comparePeriods({
+    period,
+    today,
+    importedThrough: spendingCoverageThrough(db, today),
+    ledgerOpens: ledgerOpens(db),
+  });
 }
 
 /**
