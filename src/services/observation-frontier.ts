@@ -137,28 +137,59 @@ export function ledgerOpens(db: AppDatabase): string | null {
 }
 
 /**
- * The newest day the ledger holds an ACTIVE transaction for — how far the
- * import has actually walked. Null when the ledger is empty.
+ * The newest day the ledger has been imported THROUGH — the later of the newest
+ * ACTIVE transaction on any account and the newest statement end on a
+ * non-investment account. Null when the ledger holds neither.
  *
  * ⛔ The sibling of `ledgerOpens`, and the same warning applies at the other
  * end: days after this are days nobody has looked at, not days on which
  * nothing happened. A surface that averages, projects or grades across them is
  * publishing a lower bound as a measurement.
  *
- * ⚠️ Whole-ledger and transactions-only, unlike `observationFrontier` above,
- * which is per-account and takes statement periods as a second arbiter. The
- * question here is narrower: has any spending been imported for this day.
+ * 🔴 S32: THIS COUNTED TRANSACTIONS ONLY, and so called the quiet tail of a
+ * statement unobserved — the exact misreading `observationFrontier`'s own
+ * docstring above rules out. Measured 2026-09-14: the newest active row is Sep
+ * 12 and Venture X's statement closes Sep 13. The dashboard's pace tile read "2
+ * days of September 2026 not imported yet", the heatmap called Sep 13 "not
+ * imported yet" while calling Sep 9 — covered by the same statement — "nothing
+ * spent or earned", and `/spending?period=2026-09-13` said "the ledger stops on
+ * Sat, Sep 12, 2026", all beside MoversCard's "Venture X imported through Sep
+ * 13". Every caller (the pace tile, the heatmap, `emptyPeriodReason`'s pages,
+ * `summedRowsProvenance`'s empty branch, the category trend) inherits this.
+ *
+ * ⚠️ Two asymmetries, both deliberate:
+ *
+ *  - **rows on EVERY account, investment included.** A ledger whose only rows
+ *    are brokerage rows has still been imported to them. That is why this is
+ *    NOT `max(observationFrontier.byAccount)`, which drops investment accounts
+ *    and would read null there.
+ *  - **statement ends on non-investment accounts only**, exactly as
+ *    `observationFrontier`. A brokerage statement records a value; it does not
+ *    show a day of spending. Robinhood's closes 2026-07-31 and must not vouch
+ *    for anything.
+ *
+ * ⚠️ Whole-ledger, unlike `observationFrontier`, which is per-account: the
+ * question here is whether ANY account has been imported for this day.
+ * `ledgerOpens` stays transactions-only — a statement's START is not proof the
+ * import walked that far back, and the before-records split depends on it.
  */
 export function ledgerReaches(db: AppDatabase): string | null {
-  return (
+  const newestRow =
     db
       .select({ postedOn: transactions.postedOn })
       .from(transactions)
       .where(eq(transactions.status, "active"))
       .orderBy(desc(transactions.postedOn))
       .limit(1)
-      .get()?.postedOn ?? null
-  );
+      .get()?.postedOn ?? null;
+  const newestStatementEnd =
+    db
+      .select({ day: sql<string | null>`max(${statementPeriods.periodEnd})` })
+      .from(statementPeriods)
+      .innerJoin(accounts, eq(accounts.id, statementPeriods.accountId))
+      .where(ne(accounts.type, "investment"))
+      .get()?.day ?? null;
+  return latest(newestRow, newestStatementEnd);
 }
 
 /**

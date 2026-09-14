@@ -155,7 +155,16 @@ describe("emptyPeriodCopy", () => {
     const copy = emptyPeriodCopy(reason(), "September 2026", "2026-08-31", fmt);
     expect(copy.title).toBe("September 2026 has not been imported yet");
     expect(copy.description).toContain("nobody has looked at");
-    expect(copy.description).toContain("2026-08-31");
+    /*
+     * 🔴 S32(b), the owner's decision 2026-09-14: once a statement's end counts
+     * as imported, the day named here can be a statement close with no row on
+     * it — Venture X closes Sep 13, the newest row is Sep 12 — so "the ledger
+     * stops on" named a day on which nothing was posted. "imported through" is
+     * what `ledgerReaches` measures, and what MoversCard already says of the same
+     * day ("Venture X imported through Sep 13").
+     */
+    expect(copy.description).toContain("the ledger is imported through 2026-08-31");
+    expect(copy.description).not.toContain("stops on");
   });
 
   test("a covered window IS called a measurement", () => {
@@ -231,7 +240,7 @@ describe("emptyPeriodCopy", () => {
       { ledgerOpens: "2022-08-25" },
     );
     expect(before.description).toContain("236 days of it have not been imported");
-    expect(before.description).not.toContain("the ledger stops on");
+    expect(before.description).not.toContain("imported through");
     expect(before.description).toContain("your records begin on 2022-08-25");
     expect(before.description).toContain("lower bound");
 
@@ -243,11 +252,13 @@ describe("emptyPeriodCopy", () => {
       { ledgerOpens: "2022-08-25" },
     );
     expect(both.description).toContain("your records begin on 2022-08-25");
-    expect(both.description).toContain("the ledger stops on 2026-09-12");
+    // S32(b): the frontier's own word, not "stops on" — see the test above
+    expect(both.description).toContain("the ledger is imported through 2026-09-12");
+    expect(both.description).not.toContain("stops on");
 
     // a caller that cannot name the first day says nothing false either
     const unnamed = emptyPeriodCopy({ kind: "partly-covered", uncoveredDays: 236, beforeDays: 236 }, "2022", "2026-09-12", fmt);
-    expect(unnamed.description).not.toContain("the ledger stops on");
+    expect(unnamed.description).not.toContain("imported through");
   });
 
   test("one partly-covered day is singular too", () => {

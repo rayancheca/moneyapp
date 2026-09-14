@@ -11,7 +11,7 @@ import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
-import { frontierForSeries, observationFrontier, seriesAccountIds } from "./observation-frontier";
+import { frontierForSeries, ledgerReaches, observationFrontier, seriesAccountIds } from "./observation-frontier";
 
 let dir: string;
 let bundle: DbBundle;
@@ -144,6 +144,49 @@ describe("observationFrontier", () => {
     expect(observationFrontier(bundle.db).byAccount.get(a)).toBe("2026-07-31");
   });
 
+});
+
+/*
+ * 🔴 S32: the whole-ledger frontier counted TRANSACTIONS only, while its sibling
+ * above takes a statement's end as proof a quiet day was looked at. Measured
+ * 2026-09-14: the newest active row is Sep 12 and Venture X's statement closes
+ * Sep 13, so the dashboard's pace tile read "2 days of September 2026 not
+ * imported yet", the heatmap called Sep 13 "not imported yet" while it called
+ * Sep 9 — covered by the SAME statement — "nothing spent or earned", and the
+ * dashboard's MoversCard said "Venture X imported through Sep 13" in the same
+ * breath.
+ */
+describe("ledgerReaches", () => {
+  test("a statement that closes after the newest row counts as imported through its end", () => {
+    const card = addAccount("Venture", "credit");
+    addTxn(card, "2026-09-12");
+    addStatement(card, "2026-08-15", "2026-09-13");
+    expect(ledgerReaches(bundle.db)).toBe("2026-09-13");
+  });
+
+  test("an investment statement never moves it — a brokerage value is not an import of spending days", () => {
+    const checking = addAccount("Checking", "checking");
+    const brokerage = addAccount("Brokerage", "investment");
+    addTxn(checking, "2026-09-12");
+    addStatement(brokerage, "2026-08-01", "2026-09-30");
+    expect(ledgerReaches(bundle.db)).toBe("2026-09-12");
+  });
+
+  test("a ledger whose only row is on an investment account still reaches that row", () => {
+    // ⛔ why this is NOT max(observationFrontier.byAccount): that map drops
+    // investment accounts, and would read null here
+    const brokerage = addAccount("Brokerage", "investment");
+    addTxn(brokerage, "2026-08-25");
+    expect(ledgerReaches(bundle.db)).toBe("2026-08-25");
+  });
+
+  test("excluded rows do not move it, and an empty ledger reaches nothing", () => {
+    expect(ledgerReaches(bundle.db)).toBeNull();
+    const card = addAccount("Card", "credit");
+    addTxn(card, "2026-07-31");
+    addTxn(card, "2026-08-20", { status: "excluded" });
+    expect(ledgerReaches(bundle.db)).toBe("2026-07-31");
+  });
 });
 
 describe("frontierForSeries", () => {

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { categories } from "@/db/schema/categories";
+import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries, type Cadence, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
@@ -333,6 +334,54 @@ describe("dashboardData: spending pace", () => {
        */
       expect(pace!.freeToSpendCents).toBeNull();
       expect(pace!.actualToDateCents).toBe(0);
+    });
+
+    /*
+     * 🔴 S32: a statement that closes after the newest charge is an import of
+     * its quiet days too. Measured 2026-09-14: newest active row Sep 12, Venture
+     * X's statement closes Sep 13, and the tile read "2 days of September 2026
+     * not imported yet" beside MoversCard's "Venture X imported through Sep 13".
+     *
+     * ⚠️ The fixture above holds NO statement periods, so until this test it
+     * could not express the case at all.
+     */
+    test("a statement that closes after the newest row covers its quiet days", () => {
+      spend("Groceries", "2026-07-02", -80_00);
+      const instId = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!.id;
+      const now = new Date().toISOString();
+      bundle.db
+        .insert(importFiles)
+        .values({
+          id: "stmt-1",
+          fileName: "20260705-statements.pdf",
+          fileSha256: "sha-stmt-1",
+          format: "pdf",
+          institutionId: instId,
+          parserVersion: 1,
+          status: "parsed",
+          storagePath: "/tmp/20260705-statements.pdf",
+          importedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run();
+      bundle.db
+        .insert(statementPeriods)
+        .values({
+          id: "period-1",
+          importFileId: "stmt-1",
+          accountId: checking,
+          periodStart: "2026-06-06",
+          periodEnd: "2026-07-05",
+          reconciliation: "reconciled",
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run();
+
+      const { pace } = dashboardData(bundle.db, TODAY);
+      // Jul 6, 7 and 8 — not Jul 3, 4 and 5, which the statement covers
+      expect(pace!.uncoveredDays).toBe(3);
     });
 
     test("an import that reaches today leaves nothing uncovered", () => {

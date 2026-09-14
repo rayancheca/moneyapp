@@ -214,11 +214,20 @@ export function emptyPeriodCopy(
         title: `${label} has not happened yet`,
         description: "Pick a period that has started, or look at the forecast on /recurring.",
       };
+    /*
+     * 🔴 S32(b) — "IMPORTED THROUGH", NOT "THE LEDGER STOPS ON". Once a
+     * statement's end counts as imported (`ledgerReaches`), the day named here
+     * can be a statement close with no row posted on it: Venture X closes Sep
+     * 13, 2026 and the newest row is Sep 12, so "the ledger stops on Sun, Sep 13"
+     * would name a day on which nothing stopped. "imported through" is what the
+     * frontier measures, and it is MoversCard's word for the same day ("Venture
+     * X imported through Sep 13"). Owner's decision, 2026-09-14.
+     */
     case "after-records":
       return {
         title: `${label} has not been imported yet`,
         description:
-          `Nothing has been imported for ${days(reason.uncoveredDays)} of it${through ? `; the ledger stops on ${through}` : ""}. ` +
+          `Nothing has been imported for ${days(reason.uncoveredDays)} of it${through ? `; the ledger is imported through ${through}` : ""}. ` +
           "That is a window nobody has looked at, not one in which nothing happened — import the statements that cover it.",
       };
     case "before-records":
@@ -240,7 +249,8 @@ export function emptyPeriodCopy(
       const opens = opts.ledgerOpens ? formatDay(opts.ledgerOpens) : null;
       const causes = [
         ...(beforeDays > 0 && opens ? [`your records begin on ${opens}`] : []),
-        ...(reason.uncoveredDays - beforeDays > 0 && through ? [`the ledger stops on ${through}`] : []),
+        // the frontier's own word — see `after-records` above
+        ...(reason.uncoveredDays - beforeDays > 0 && through ? [`the ledger is imported through ${through}`] : []),
       ];
       return {
         title: `Nothing posted in the part of ${label} that has been imported`,
