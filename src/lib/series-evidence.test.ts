@@ -7,6 +7,8 @@ import {
   type SeriesEvidence,
   noScheduleReason,
   seriesIsOver,
+  seriesDrawsAsRecurring,
+  RECURRING_HISTORY_STATUSES,
 } from "./series-evidence";
 
 const EVERY: readonly SeriesEvidence[] = ["active", "never-billed", "running-late", "lapsed"];
@@ -116,6 +118,27 @@ describe("seriesIsOver — the one predicate two sentences on the page turn on",
     // the linkage, not two lists that happen to agree today
     for (const s of ["detected", "confirmed", "dismissed", "ended"] as const) {
       expect(noScheduleReason(s) !== null).toBe(seriesIsOver(s));
+    }
+  });
+});
+
+describe("seriesDrawsAsRecurring — dismissed is never drawn as recurring", () => {
+  /*
+   * 🔴 The calendar, /categories and the evidence vocabulary each restated this
+   * rule, and the ledger's "R" badge did not ask any of them: 60 rows linked to
+   * dismissed series wore "Recurring" on 2026-09-14.
+   */
+  test("dismissed is the only status not drawn as recurring", () => {
+    expect(seriesDrawsAsRecurring("dismissed")).toBe(false);
+    expect(seriesDrawsAsRecurring("ended")).toBe(true);
+    expect(seriesDrawsAsRecurring("confirmed")).toBe(true);
+    expect(seriesDrawsAsRecurring("detected")).toBe(true);
+  });
+
+  test("the history statuses are exactly the ones it draws", () => {
+    expect([...RECURRING_HISTORY_STATUSES].sort()).toEqual(["confirmed", "detected", "ended"]);
+    for (const s of ["detected", "confirmed", "dismissed", "ended"] as const) {
+      expect((RECURRING_HISTORY_STATUSES as readonly string[]).includes(s)).toBe(seriesDrawsAsRecurring(s));
     }
   });
 });

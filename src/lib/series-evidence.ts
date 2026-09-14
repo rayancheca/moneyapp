@@ -125,6 +125,31 @@ export function seriesIsOver(status: SeriesStatusForCopy): boolean {
   return status === "ended" || status === "dismissed";
 }
 
+/**
+ * The statuses whose charges are DRAWN as recurring — every status but
+ * dismissed. ONE predicate, because four surfaces turn on it.
+ *
+ * Dismissed is the owner saying "not recurring" (the button is labelled that),
+ * and it is also the detector's re-detection sink: its rows keep their link
+ * precisely so the same group is not suggested again. The LINK is right; any
+ * label built from it that says "recurring" re-asserts the claim he rejected.
+ * `ended` stays — it WAS recurring and stopped, and its history is real.
+ *
+ * The rule was restated three times before it had a name — the calendar's
+ * history population (`recurringCalendar`), `/categories`' "Recurring series"
+ * card (`seriesInCategory`), and `seriesRowLabel` above ("not recurring") — and
+ * the ledger's "R" badge asked none of them.
+ *
+ * 🔴 Measured on the real ledger 2026-09-14: 60 active rows linked to the 10
+ * dismissed series wore the Recurring badge on /transactions, the dashboard and
+ * the account pages; `?q=PURA VIDA BAY ROAD` badged 10 of its 13 rows.
+ */
+export const RECURRING_HISTORY_STATUSES = ["detected", "confirmed", "ended"] as const;
+
+export function seriesDrawsAsRecurring(status: SeriesStatusForCopy): boolean {
+  return status !== "dismissed";
+}
+
 export function noScheduleReason(status: SeriesStatusForCopy): string | null {
   if (!seriesIsOver(status)) return null;
   if (status === "ended")

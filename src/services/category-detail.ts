@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { seriesRowLabel, type SeriesEvidence } from "@/lib/series-evidence";
+import { seriesDrawsAsRecurring, seriesRowLabel, type SeriesEvidence } from "@/lib/series-evidence";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
 import { addDays, compareDates, monthKey, periodBounds } from "@/lib/dates";
@@ -314,7 +314,7 @@ export function seriesInCategory(db: AppDatabase, categoryId: string, today: str
      * the page contradicting a decision it was told about. `ended` stays: it WAS
      * recurring here and stopped, which is history this category owns.
      */
-    .filter((s) => s.status !== "dismissed")
+    .filter((s) => seriesDrawsAsRecurring(s.status))
     .map((s) => ({
       id: s.id,
       name: s.name,

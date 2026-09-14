@@ -5,6 +5,7 @@ import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { isCategoryHueName, type CategoryHueName } from "@/lib/category-palette";
 import { compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { RECURRING_HISTORY_STATUSES } from "@/lib/series-evidence";
 import {
   forecastConfidence,
   settledVerdict,
@@ -365,7 +366,8 @@ export function recurringCalendar(
   const historyRows = db
     .select()
     .from(recurringSeries)
-    .where(inArray(recurringSeries.status, ["detected", "confirmed", "ended"]))
+    // every status `seriesDrawsAsRecurring` draws — dismissed is not one
+    .where(inArray(recurringSeries.status, [...RECURRING_HISTORY_STATUSES]))
     .all();
   const seriesById = new Map(historyRows.map((s) => [s.id, s]));
   const forecastRows = historyRows.filter((s) => s.status === "detected" || s.status === "confirmed");
