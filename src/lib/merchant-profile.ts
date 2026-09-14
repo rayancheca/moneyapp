@@ -17,9 +17,14 @@
  */
 
 import { diffDays } from "./dates";
+import { emptyPeriodReason, type EmptyPeriodInput } from "./empty-period";
+import { formatDayShort, formatDayShortIn } from "./format-date";
 import { sharePercent } from "./insight-facts";
 import { dayWindowLabel } from "./period";
 import { formatCents } from "./money";
+
+/** both ends of the ledger, as `emptyPeriodReason` takes them */
+export type LedgerEnds = Pick<EmptyPeriodInput, "ledgerOpens" | "ledgerReaches">;
 
 /** Visits below this cannot establish a rate, however long the span. */
 export const MIN_VISITS_FOR_RATE = 3;
@@ -42,8 +47,18 @@ export interface MerchantYear {
   year: string;
   cents: number;
   visits: number;
-  /** the year is still running, so it cannot be compared like for like */
+  /**
+   * The ledger does not hold the whole year, so it cannot be compared like for
+   * like: it is still running, or the ledger opens inside it.
+   */
   partial: boolean;
+  /** the ledger's first day, when it falls after this year's Jan 1 */
+  opensOn: string | null;
+  /**
+   * What the bar says beside its figure — the window it covers — or null for a
+   * year the ledger holds whole: "so far", "from Aug 25", "from Mar 1, so far".
+   */
+  mark: string | null;
 }
 
 export interface MerchantCategorySlice {
@@ -128,6 +143,16 @@ export interface MerchantProfile {
   /** newest year first */
   years: MerchantYear[];
   /**
+   * Why the marked years are marked, one reason each, or null when no year is —
+   * or when there are fewer than two years and so no Year on year card.
+   *
+   * 🔴 The card printed its own sentence: "The current year is still running,
+   * so it is marked and is not a like-for-like comparison with the closed years
+   * above it." The list is newest first, so no closed year is above it, and on
+   * 11 merchants a 2022 the ledger holds Aug 25 on of sat among "closed years".
+   */
+  yearsNote: string | null;
+  /**
    * Active rows at this merchant that are NOT purchases — money in, transfers,
    * investments, or rows with no category.
    *
@@ -190,6 +215,12 @@ export function merchantProfile(
   refunds: readonly MerchantVisit[],
   today: string,
   /**
+   * Both ends of the ledger (`ledgerOpens` / `ledgerReaches`). REQUIRED, not
+   * defaulted: a year bar that was never told where the ledger opens is how 2022
+   * came to read as a closed, like-for-like year.
+   */
+  ledger: LedgerEnds,
+  /**
    * Every ACTIVE row at this merchant, purchases and everything else — the same
    * number the page's own heading prints. Defaults to the visit count, which is
    * the "nothing was excluded" case.
@@ -219,6 +250,7 @@ export function merchantProfile(
       ticketIsSkewed: false,
       categoryMix: [],
       years: [],
+      yearsNote: null,
     };
   }
 
@@ -326,9 +358,22 @@ export function merchantProfile(
     const e = byYear.get(y) ?? { cents: 0, visits: 0 };
     byYear.set(y, { cents: e.cents + v.amountCents, visits: e.visits + 1 });
   }
+  /*
+   * 🔴 A YEAR BAR ASKED ONE END OF ITS WINDOW. `partial` was `year >= thisYear`:
+   * the running year, and nothing else. Measured 2026-09-14 on the owner's
+   * ledger (first active row 2022-08-25), 11 of the 122 merchants with a Year on
+   * year card carry a 2022 bar, and every one of them printed it unmarked —
+   * Amazon's "$203.79" among "the closed years". A year the ledger opens inside
+   * is no more like-for-like than one still running (owner decision E2a: mark it
+   * with the window it covers, "from Aug 25").
+   */
   const thisYear = today.slice(0, 4);
   const years: MerchantYear[] = [...byYear.entries()]
-    .map(([year, e]) => ({ year, ...e, partial: year >= thisYear }))
+    .map(([year, e]) => {
+      const running = year >= thisYear;
+      const opensOn = ledgerOpensInside(year, today, ledger);
+      return { year, ...e, partial: running || opensOn !== null, opensOn, mark: yearMark(running, opensOn) };
+    })
     .sort((a, b) => b.year.localeCompare(a.year));
 
   return {
@@ -350,5 +395,51 @@ export function merchantProfile(
     ticketIsSkewed: ticketSkew > TICKET_SKEW_DISCLOSE,
     categoryMix,
     years,
+    yearsNote: yearsNoteFor(years, thisYear, today),
   };
+}
+
+/**
+ * The ledger's first day when it falls INSIDE this year — after its Jan 1 — so
+ * the year's bar holds only part of it; null when the ledger holds the year from
+ * its start. `emptyPeriodReason`'s own reading of the calendar year: days of it
+ * before the oldest row. A ledger that opens ON Jan 1 holds that year whole.
+ */
+function ledgerOpensInside(year: string, today: string, ledger: LedgerEnds): string | null {
+  const reason = emptyPeriodReason({ from: `${year}-01-01`, to: `${year}-12-31`, today, ...ledger });
+  return reason.kind === "partly-covered" && (reason.beforeDays ?? 0) > 0 ? ledger.ledgerOpens : null;
+}
+
+/**
+ * The window a bar's figure covers, beside the figure. ⛔ "so far" means STILL
+ * RUNNING, and a year the ledger opens in is not running — it names its first
+ * day instead (owner decision E2a). No year: the bar sits on its own year label.
+ */
+function yearMark(running: boolean, opensOn: string | null): string | null {
+  const from = opensOn === null ? null : `from ${formatDayShort(opensOn)}`;
+  if (!running) return from;
+  return from === null ? "so far" : `${from}, so far`;
+}
+
+/** see `MerchantProfile.yearsNote` */
+function yearsNoteFor(years: readonly MerchantYear[], thisYear: string, today: string): string | null {
+  const marked = years.filter((y) => y.partial);
+  if (years.length < 2 || marked.length === 0) return null;
+  const reasons = marked.map((y) => {
+    // ⚠️ `formatDayShortIn`: the year is named in this sentence, and a bare "Aug 25" reads as this year's
+    const opens = y.opensOn === null ? null : formatDayShortIn(y.opensOn, today);
+    if (y.year >= thisYear) {
+      return opens === null ? "The current year is still running." : `The current year is still running, and the ledger opens on ${opens} in it.`;
+    }
+    return `The ledger opens on ${opens}, so ${y.year} is only partly in it.`;
+  });
+  const unmarked = years.length - marked.length;
+  const verdict =
+    unmarked > 0
+      ? `${marked.length === 1 ? "The marked year is" : "The marked years are"} not a like-for-like comparison with the unmarked ${unmarked === 1 ? "one" : "ones"}.`
+      : years.length === 2
+        ? "Neither year is a like-for-like comparison with the other."
+        : "None of these years is a like-for-like comparison with another.";
+  // a year dated after today also counts as running; say so once, not per year
+  return [...new Set(reasons), verdict].join(" ");
 }

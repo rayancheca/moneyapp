@@ -35,9 +35,9 @@ function YearBar({ year, maxCents }: { year: MerchantProfile["years"][number]; m
       </span>
       <span className="shrink-0 text-right">
         <Money cents={year.cents} />
-        {year.partial && (
-          <span className="ml-1 text-[11px] text-ink-faint">so far</span>
-        )}
+        {/* the window the figure covers, decided by the engine: "so far" for the
+            running year, "from Aug 25" for the year the ledger opens in */}
+        {year.mark && <span className="ml-1 text-[11px] text-ink-faint">{year.mark}</span>}
       </span>
     </div>
   );
@@ -139,12 +139,11 @@ export function MerchantProfileCards({ intelligence }: { intelligence: MerchantI
               <YearBar key={y.year} year={y} maxCents={maxYearCents} />
             ))}
           </div>
-          {p.years.some((y) => y.partial) && (
-            <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
-              The current year is still running, so it is marked and is not a like-for-like
-              comparison with the closed years above it.
-            </p>
-          )}
+          {/* 🔴 It said "The current year is still running, so it is marked and
+              is not a like-for-like comparison with the closed years above it" —
+              of a newest-first list, under a 2022 the ledger holds Aug 25 on of.
+              The engine names each marked year's reason now. */}
+          {p.yearsNote && <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">{p.yearsNote}</p>}
         </SurfaceCard>
       )}
 

@@ -8,6 +8,12 @@ import {
 } from "./merchant-profile";
 
 const TODAY = "2026-08-25";
+/*
+ * Both ends of a ledger that holds every fixture's years whole: it opens before
+ * the earliest visit in this file (2023) and reaches today. The tests about a
+ * year the ledger opens inside pass their own ends.
+ */
+const LEDGER = { ledgerOpens: "2020-01-01", ledgerReaches: TODAY };
 
 /**
  * New Best Gourmet Deli — the owner's most-visited merchant, measured on the
@@ -30,7 +36,7 @@ describe("merchantProfile — the number a merchant page exists to give", () => 
   test("states a monthly rate across the span actually observed", () => {
     // 53 weekly $10 visits, first 2025-01-01 and last 2025-12-31 — 365 days
     // observed, both ends included, = 12.0 months → ~$44.19/month
-    const p = merchantProfile(weekly(53, 1000), [], TODAY);
+    const p = merchantProfile(weekly(53, 1000), [], TODAY, LEDGER);
     expect(p.visitCount).toBe(53);
     expect(p.totalCents).toBe(53000);
     expect(p.spanDays).toBe(365);
@@ -40,7 +46,7 @@ describe("merchantProfile — the number a merchant page exists to give", () => 
 
   test("the rate is spread over the SPAN, not over a calendar year", () => {
     // the SAME total money, in half the elapsed time, is twice the monthly habit
-    const sparse = merchantProfile(weekly(27, 1000), [], TODAY); // one visit a week
+    const sparse = merchantProfile(weekly(27, 1000), [], TODAY, LEDGER); // one visit a week
     const dense = merchantProfile(
       Array.from({ length: 27 }, (_, i) => ({
         day: new Date(Date.parse("2025-01-01T00:00:00Z") + i * 3.5 * 86_400_000)
@@ -50,6 +56,7 @@ describe("merchantProfile — the number a merchant page exists to give", () => 
         categoryName: "Food",
       })), [],
       TODAY,
+      LEDGER,
     ); // two a week, same 27 visits and same $270
     expect(dense.totalCents).toBe(sparse.totalCents);
     expect(dense.spanDays).toBeCloseTo(sparse.spanDays / 2, -1);
@@ -57,7 +64,7 @@ describe("merchantProfile — the number a merchant page exists to give", () => 
   });
 
   test("first and last seen bound the span", () => {
-    const p = merchantProfile(weekly(10, 500), [], TODAY);
+    const p = merchantProfile(weekly(10, 500), [], TODAY, LEDGER);
     expect(p.firstSeen).toBe("2025-01-01");
     expect(p.lastSeen).toBe("2025-03-05");
     // Jan 1 through Mar 5 inclusive: 31 + 28 + 5
@@ -72,7 +79,7 @@ describe("merchantProfile — the number a merchant page exists to give", () => 
  */
 describe("merchantProfile — when it refuses to state a rate", () => {
   test("one visit is not a rate", () => {
-    const p = merchantProfile([{ day: "2025-06-01", amountCents: 375843, categoryName: "Shopping" }], [], TODAY);
+    const p = merchantProfile([{ day: "2025-06-01", amountCents: 375843, categoryName: "Shopping" }], [], TODAY, LEDGER);
     expect(p.monthlyCents).toBeNull();
     expect(p.monthlyBasis).toMatch(/single purchase is not a rate/i);
     // …but the money is still reported
@@ -80,14 +87,14 @@ describe("merchantProfile — when it refuses to state a rate", () => {
   });
 
   test("two visits are not a rate either", () => {
-    const p = merchantProfile(weekly(2, 1000), [], TODAY);
+    const p = merchantProfile(weekly(2, 1000), [], TODAY, LEDGER);
     expect(p.monthlyCents).toBeNull();
     expect(p.monthlyBasis).toMatch(/Too few/i);
   });
 
   test("enough visits inside too short a stretch is not a rate", () => {
     // 8 visits over 50 observed days: plenty of visits, not enough of a stretch
-    const p = merchantProfile(weekly(8, 1000), [], TODAY);
+    const p = merchantProfile(weekly(8, 1000), [], TODAY, LEDGER);
     expect(p.spanDays).toBe(50);
     expect(p.monthlyCents).toBeNull();
     expect(p.monthlyBasis).toMatch(/too short a stretch/i);
@@ -105,6 +112,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
         { day: "2025-03-01", amountCents: 1000, categoryName: "Food" },
       ], [],
       TODAY,
+      LEDGER,
     );
     expect(at.spanDays).toBe(60);
     expect(at.monthlyCents).not.toBeNull();
@@ -117,6 +125,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
         { day: "2025-02-28", amountCents: 1000, categoryName: "Food" },
       ], [],
       TODAY,
+      LEDGER,
     );
     expect(under.spanDays).toBe(59);
     expect(under.monthlyCents).toBeNull();
@@ -157,6 +166,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
         { day: "2026-05-29", amountCents: 83_000, categoryName: "Housing" },
       ], [],
       TODAY,
+      LEDGER,
       140,
     );
     expect(p.visitCount).toBe(2);
@@ -171,6 +181,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
     const p = merchantProfile(
       [{ day: "2026-02-17", amountCents: 1_000, categoryName: "Food" }], [],
       TODAY,
+      LEDGER,
       1,
     );
     expect(p.uncountedRows).toBe(0);
@@ -181,6 +192,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
     const p = merchantProfile(
       [{ day: "2026-02-17", amountCents: 1_000, categoryName: "Food" }], [],
       TODAY,
+      LEDGER,
       2,
     );
     expect(p.countedNote).toContain("The 1 other row here is money in");
@@ -191,7 +203,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
   /* A merchant with nothing but refunds has no purchases at all, and the note
      is the only thing that can explain the empty card. */
   test("a merchant with no purchases at all still says what its rows are", () => {
-    const p = merchantProfile([], [], TODAY, 5);
+    const p = merchantProfile([], [], TODAY, LEDGER, 5);
     expect(p.visitCount).toBe(0);
     expect(p.uncountedRows).toBe(5);
     expect(p.countedNote).toContain("Measured from 0 purchases");
@@ -205,6 +217,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
         { day: "2026-02-04", amountCents: 3000, categoryName: "Food" },
       ], [],
       TODAY,
+      LEDGER,
     );
     expect(p.spanDays).toBe(1);
     // the whole sentence, so "1 days" cannot pass as "1 day" plus an s
@@ -220,6 +233,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
         { day: "2025-04-30", amountCents: 3000, categoryName: "Food" },
       ], [],
       TODAY,
+      LEDGER,
     );
     // 2025-01-01 through 2025-04-30 inclusive: 31 + 28 + 31 + 30
     expect(p.spanDays).toBe(120);
@@ -235,7 +249,7 @@ describe("merchantProfile — when it refuses to state a rate", () => {
   });
 
   test("a merchant with no visits at all is empty, not an error", () => {
-    const p = merchantProfile([], [], TODAY);
+    const p = merchantProfile([], [], TODAY, LEDGER);
     expect(p).toMatchObject({ visitCount: 0, totalCents: 0, monthlyCents: null, firstSeen: null });
     expect(p.categoryMix).toEqual([]);
     expect(p.years).toEqual([]);
@@ -258,18 +272,18 @@ describe("merchantProfile — the typical visit", () => {
   ];
 
   test("the median leads and the mean is reported beside it", () => {
-    const p = merchantProfile(skewed, [], TODAY);
+    const p = merchantProfile(skewed, [], TODAY, LEDGER);
     expect(p.medianTicketCents).toBe(1000);
     expect(p.meanTicketCents).toBe(10900);
     expect(p.ticketSkew).toBeCloseTo(10.9, 1);
   });
 
   test("a skewed merchant is flagged as such", () => {
-    expect(merchantProfile(skewed, [], TODAY).ticketIsSkewed).toBe(true);
+    expect(merchantProfile(skewed, [], TODAY, LEDGER).ticketIsSkewed).toBe(true);
   });
 
   test("an even merchant is not flagged, so the flag means something", () => {
-    const even = merchantProfile(weekly(20, 1000), [], TODAY);
+    const even = merchantProfile(weekly(20, 1000), [], TODAY, LEDGER);
     expect(even.medianTicketCents).toBe(1000);
     expect(even.meanTicketCents).toBe(1000);
     expect(even.ticketIsSkewed).toBe(false);
@@ -285,12 +299,13 @@ describe("merchantProfile — the typical visit", () => {
         { day: "2025-04-01", amountCents: 5000, categoryName: "Food" },
       ], [],
       TODAY,
+      LEDGER,
     );
     expect(p.medianTicketCents).toBe(2500);
   });
 
   test("a merchant of free visits has no skew rather than an infinite one", () => {
-    const p = merchantProfile(weekly(5, 0, "2025-01-01"), [], TODAY);
+    const p = merchantProfile(weekly(5, 0, "2025-01-01"), [], TODAY, LEDGER);
     expect(p.medianTicketCents).toBe(0);
     expect(p.ticketSkew).toBe(0);
     expect(p.ticketIsSkewed).toBe(false);
@@ -305,7 +320,7 @@ describe("merchantProfile — category mix", () => {
   ];
 
   test("shares sum to a hundred, largest first", () => {
-    const mix = merchantProfile(mixed, [], TODAY).categoryMix;
+    const mix = merchantProfile(mixed, [], TODAY, LEDGER).categoryMix;
     expect(mix.map((m) => [m.name, m.pct])).toEqual([
       ["Food", 75],
       ["Shopping", 25],
@@ -320,12 +335,13 @@ describe("merchantProfile — category mix", () => {
         { day: "2025-02-01", amountCents: 1000, categoryName: "Alpha" },
       ], [],
       TODAY,
+      LEDGER,
     ).categoryMix;
     expect(mix.map((m) => m.name)).toEqual(["Alpha", "Zeta"]);
   });
 
   test("a merchant of free visits has a mix without dividing by zero", () => {
-    const mix = merchantProfile(weekly(3, 0), [], TODAY).categoryMix;
+    const mix = merchantProfile(weekly(3, 0), [], TODAY, LEDGER).categoryMix;
     expect(mix).toEqual([{ name: "Food", cents: 0, pct: 0, share: "0.0%" }]);
   });
 
@@ -344,6 +360,7 @@ describe("merchantProfile — category mix", () => {
       ],
       [],
       TODAY,
+      LEDGER,
     ).categoryMix;
     expect(mix.map((m) => [m.name, m.share])).toEqual([
       ["Entertainment", "99.5%"],
@@ -362,6 +379,7 @@ describe("merchantProfile — category mix", () => {
       ],
       [],
       TODAY,
+      LEDGER,
     ).categoryMix;
     expect(mix.find((m) => m.name === "Shopping")!.share).toBe("<0.1%");
   });
@@ -380,16 +398,38 @@ describe("merchantProfile — year over year", () => {
   ];
 
   test("newest year first, each with its own spend and count", () => {
-    expect(merchantProfile(acrossYears, [], TODAY).years).toEqual([
-      { year: "2026", cents: 2000, visits: 1, partial: true },
-      { year: "2025", cents: 3000, visits: 1, partial: false },
-      { year: "2024", cents: 1000, visits: 1, partial: false },
+    expect(merchantProfile(acrossYears, [], TODAY, LEDGER).years).toEqual([
+      { year: "2026", cents: 2000, visits: 1, partial: true, opensOn: null, mark: "so far" },
+      { year: "2025", cents: 3000, visits: 1, partial: false, opensOn: null, mark: null },
+      { year: "2024", cents: 1000, visits: 1, partial: false, opensOn: null, mark: null },
     ]);
   });
 
   test("the current year is marked partial, and closed years are not", () => {
-    const years = merchantProfile(acrossYears, [], TODAY).years;
+    const years = merchantProfile(acrossYears, [], TODAY, LEDGER).years;
     expect(years.filter((y) => y.partial).map((y) => y.year)).toEqual(["2026"]);
+  });
+
+  /* 🔴 "…with the closed years above it" — of a list printed NEWEST first, where
+     every closed year sits below the running one */
+  test("the note names why the running year is marked, and places nothing above or below", () => {
+    expect(merchantProfile(acrossYears, [], TODAY, LEDGER).yearsNote).toBe(
+      "The current year is still running. The marked year is not a like-for-like comparison with the unmarked ones.",
+    );
+  });
+
+  test("years the ledger holds whole say nothing", () => {
+    const whole = merchantProfile(
+      [
+        { day: "2023-06-01", amountCents: 1000, categoryName: "Food" },
+        { day: "2024-06-01", amountCents: 1000, categoryName: "Food" },
+      ],
+      [],
+      TODAY,
+      LEDGER,
+    );
+    expect(whole.years.map((y) => y.mark)).toEqual([null, null]);
+    expect(whole.yearsNote).toBeNull();
   });
 
   test("a year with no visits is absent rather than a zero row", () => {
@@ -399,8 +439,83 @@ describe("merchantProfile — year over year", () => {
         { day: "2026-06-01", amountCents: 1000, categoryName: "Food" },
       ], [],
       TODAY,
+      LEDGER,
     );
     expect(gap.years.map((y) => y.year)).toEqual(["2026", "2023"]);
+  });
+});
+
+/**
+ * 🔴 S14 — THE YEAR THE LEDGER OPENS IN WAS PRINTED AS A CLOSED YEAR.
+ *
+ * Measured on the owner's ledger 2026-09-14, whose first active row is
+ * 2022-08-25: Amazon's page (/merchants/019f4c7d-cc8f-779f-8487-8abfba9447cf)
+ * listed "2026 $484.62 so far · 2024 $94.70 · 2023 $250.33 · 2022 $203.79" —
+ * no mark on 2022 — over "The current year is still running, so it is marked
+ * and is not a like-for-like comparison with the closed years above it." 11 of
+ * the 122 merchants with a Year on year card carry a 2022 bar, and every one of
+ * them read 2022 as a whole year the ledger holds Aug 25 – Dec 31 of.
+ *
+ * The amounts are Amazon's own year totals; one visit stands for each year.
+ * ⛔ The fixture needs a visit in the opening year AND in a whole year, or the
+ * opening mark cannot be told apart from the running-year rule.
+ */
+describe("merchantProfile — the year the ledger opens in", () => {
+  const OPENS_AUG_25 = { ledgerOpens: "2022-08-25", ledgerReaches: TODAY };
+  const amazon: MerchantVisit[] = [
+    { day: "2022-09-16", amountCents: 20_379, categoryName: "Shopping" },
+    { day: "2023-06-01", amountCents: 25_033, categoryName: "Shopping" },
+    { day: "2026-06-01", amountCents: 48_462, categoryName: "Shopping" },
+  ];
+
+  test("the opening year is marked with the day it opens on — not 'so far', which means still running", () => {
+    expect(merchantProfile(amazon, [], TODAY, OPENS_AUG_25).years).toEqual([
+      { year: "2026", cents: 48_462, visits: 1, partial: true, opensOn: null, mark: "so far" },
+      { year: "2023", cents: 25_033, visits: 1, partial: false, opensOn: null, mark: null },
+      { year: "2022", cents: 20_379, visits: 1, partial: true, opensOn: "2022-08-25", mark: "from Aug 25" },
+    ]);
+  });
+
+  test("the note gives each marked year its own reason", () => {
+    expect(merchantProfile(amazon, [], TODAY, OPENS_AUG_25).yearsNote).toBe(
+      "The current year is still running. The ledger opens on Aug 25, 2022, so 2022 is only partly in it. " +
+        "The marked years are not a like-for-like comparison with the unmarked one.",
+    );
+  });
+
+  test("a ledger that opens ON Jan 1 holds that year whole", () => {
+    const p = merchantProfile(amazon, [], TODAY, { ledgerOpens: "2022-01-01", ledgerReaches: TODAY });
+    expect(p.years.find((y) => y.year === "2022")).toMatchObject({ partial: false, opensOn: null, mark: null });
+  });
+
+  test("a ledger with no ends marks no opening", () => {
+    const p = merchantProfile(amazon, [], TODAY, { ledgerOpens: null, ledgerReaches: null });
+    expect(p.years.find((y) => y.year === "2022")).toMatchObject({ partial: false, opensOn: null, mark: null });
+  });
+
+  test("when every year is marked, the note compares none of them", () => {
+    const p = merchantProfile([amazon[0]!, amazon[2]!], [], TODAY, OPENS_AUG_25);
+    expect(p.yearsNote).toBe(
+      "The current year is still running. The ledger opens on Aug 25, 2022, so 2022 is only partly in it. " +
+        "Neither year is a like-for-like comparison with the other.",
+    );
+  });
+
+  test("a running year the ledger opens inside names both", () => {
+    const p = merchantProfile(
+      [
+        { day: "2026-03-05", amountCents: 1000, categoryName: "Food" },
+        { day: "2026-06-01", amountCents: 1000, categoryName: "Food" },
+      ],
+      [],
+      TODAY,
+      { ledgerOpens: "2026-03-01", ledgerReaches: TODAY },
+    );
+    expect(p.years).toEqual([
+      { year: "2026", cents: 2000, visits: 2, partial: true, opensOn: "2026-03-01", mark: "from Mar 1, so far" },
+    ]);
+    // one year draws no Year on year card, so there is nothing for a note to qualify
+    expect(p.yearsNote).toBeNull();
   });
 });
 
@@ -420,7 +535,7 @@ describe("the returns — what a merchant COST against what it charged", () => {
      * $3,540.71 of it, and every figure on the card said $3,758.43 — including
      * "the largest of your 250 regular merchants". It cost $217.72.
      */
-    const p = merchantProfile(purchases, returned, TODAY);
+    const p = merchantProfile(purchases, returned, TODAY, LEDGER);
     expect(p.grossCents).toBe(125_000);
     expect(p.refundCents).toBe(100_000);
     expect(p.refundCount).toBe(1);
@@ -428,7 +543,7 @@ describe("the returns — what a merchant COST against what it charged", () => {
   });
 
   test("the rate is the COST spread over the span, so the two agree", () => {
-    const p = merchantProfile(purchases, returned, TODAY);
+    const p = merchantProfile(purchases, returned, TODAY, LEDGER);
     // $250.00 over 2026-01-10 → 2026-03-10, both ends included
     expect(p.spanDays).toBe(60);
     expect(p.monthlyCents).toBe(Math.round(25_000 / (60 / (365.2425 / 12))));
@@ -452,6 +567,7 @@ describe("the returns — what a merchant COST against what it charged", () => {
         { day: "2026-04-09", amountCents: 4_000, categoryName: "Shopping" },
       ],
       TODAY,
+      LEDGER,
     );
     expect(p.firstSeen).toBe("2025-12-01");
     expect(p.lastSeen).toBe("2026-04-09");
@@ -472,6 +588,7 @@ describe("the returns — what a merchant COST against what it charged", () => {
       ],
       [{ day: "2026-04-01", amountCents: 500, categoryName: "Shopping" }],
       TODAY,
+      LEDGER,
     );
     expect(p.monthlyCents).toBeNull();
     expect(p.monthlyBasis).toBe("3 purchases inside 11 days — too short a stretch to call it monthly.");
@@ -479,7 +596,7 @@ describe("the returns — what a merchant COST against what it charged", () => {
   });
 
   test("a return is not a visit: the count, the median and the mean stay gross", () => {
-    const p = merchantProfile(purchases, returned, TODAY);
+    const p = merchantProfile(purchases, returned, TODAY, LEDGER);
     expect(p.visitCount).toBe(3);
     expect(p.medianTicketCents).toBe(20_000);
     // the mean PURCHASE — 125_000 / 3, not the net over three
@@ -493,13 +610,13 @@ describe("the returns — what a merchant COST against what it charged", () => {
      * from `left: 0`, so a negative width renders as no bar at all and the most
      * extreme year would have read as the emptiest.
      */
-    const p = merchantProfile(purchases, returned, TODAY);
+    const p = merchantProfile(purchases, returned, TODAY, LEDGER);
     expect(p.years.reduce((t, y) => t + y.cents, 0)).toBe(p.grossCents);
     expect(p.years.every((y) => y.cents >= 0)).toBe(true);
   });
 
   test("the note values the returns, because the Total counts them now", () => {
-    const p = merchantProfile(purchases, returned, TODAY, 4);
+    const p = merchantProfile(purchases, returned, TODAY, LEDGER, 4);
     expect(p.countedNote).toBe(
       "3 purchases came to $1,250.00, less $1,000.00 returned across 1 row.",
     );
@@ -508,7 +625,7 @@ describe("the returns — what a merchant COST against what it charged", () => {
   test("a merchant with returns AND other rows names both", () => {
     // a transfer or an uncategorized row is still not a purchase and still
     // counts for nothing — the two exclusions are different facts
-    const p = merchantProfile(purchases, returned, TODAY, 6);
+    const p = merchantProfile(purchases, returned, TODAY, LEDGER, 6);
     expect(p.countedNote).toBe(
       "3 purchases came to $1,250.00, less $1,000.00 returned across 1 row. The 2 other rows " +
         "here are money in, transfers, or uncategorized — none of them a purchase, so nothing on " +
@@ -517,7 +634,7 @@ describe("the returns — what a merchant COST against what it charged", () => {
   });
 
   test("no returns leaves the old sentence exactly as it was", () => {
-    const p = merchantProfile(purchases, [], TODAY, 4);
+    const p = merchantProfile(purchases, [], TODAY, LEDGER, 4);
     expect(p.countedNote).toBe(
       "Measured from 3 purchases. The 1 other row here is money in, a transfer, or uncategorized " +
         "— not a purchase, so nothing on this card counts it.",
@@ -537,6 +654,7 @@ describe("the returns — what a merchant COST against what it charged", () => {
         { day: "2026-03-31", amountCents: 10_779, categoryName: "Shopping" },
       ],
       TODAY,
+      LEDGER,
       4,
     );
     expect(p.totalCents).toBe(0);

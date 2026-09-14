@@ -8,6 +8,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { loadCategoryIndex } from "./analytics";
 import type { BulkResult } from "./bulk-edit";
+import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { strippedDescriptionKey } from "@/lib/description-key";
 import { todayIso } from "@/lib/dates";
 import {
@@ -447,7 +448,14 @@ export function merchantIntelligence(
     // `rows.length` is what the page's heading counts; `visits` is what this
     // card measures, and the profile names the difference rather than leaving a
     // reader to reconcile "140 transactions" with "2 purchases".
-    profile: merchantProfile(visits, refunds, today, rows.length),
+    // both ends of the ledger: a year bar the ledger opens inside is not a whole year
+    profile: merchantProfile(
+      visits,
+      refunds,
+      today,
+      { ledgerOpens: ledgerOpens(db), ledgerReaches: ledgerReaches(db) },
+      rows.length,
+    ),
     cadence: series
       ? {
           seriesId: series.id,
