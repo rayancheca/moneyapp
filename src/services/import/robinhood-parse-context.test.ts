@@ -315,3 +315,40 @@ describe("the ledger's tracked accounts reach the Robinhood brokerage parser thr
     ]);
   });
 });
+
+describe("the ledger's tracked accounts reach the Robinhood crypto parser through the import", () => {
+  test("⛔ the ETH account is read even when the second crypto account prints first", async () => {
+    resolveAccount(bundle.db, { institution: "Robinhood", type: "investment", subtype: "crypto", name: "Robinhood Crypto", last4: "8474" });
+    // from robinhood-crypto-2026-07.pdf, with the two accounts' pages swapped
+    const texts = [
+      "Crypto Statement",
+      "07-2026",
+      "ACCOUNT NUMBER 311407134147",
+      "RHS ACCOUNT NUMBER 655929651",
+      "PERIOD START 2026-07-01",
+      "PERIOD END 2026-07-31",
+      "OPENING BALANCE $0",
+      "CLOSING BALANCE $0",
+      "You had no coin holding in your crypto account.",
+      "Crypto Statement",
+      "07-2026",
+      "ACCOUNT NUMBER 311070628474",
+      "RHS ACCOUNT NUMBER 487513525",
+      "PERIOD START 2026-07-01",
+      "PERIOD END 2026-07-31",
+      "OPENING BALANCE $27359.92709892",
+      "CLOSING BALANCE $28365.48180495",
+      "ACCOUNT ACTIVITY",
+      "DATE TRANSACTION TYPE DEBIT CREDIT PRICE VALUE FEE",
+      "2026-07-07 Crypto Sale 2.798146 ETH -- $1786.80688415 $4999.75 --",
+    ];
+
+    const [outcome] = await importStatementFiles(bundle.db, [pdf("robinhood-crypto-2026-07.pdf", texts.map((t) => line(t)))]);
+
+    expect(outcome!.error).toBeUndefined();
+    expect(bundle.db.select().from(importFiles).get()!.parserProfile).toBe("robinhood-crypto-statement-pdf");
+    expect(periods()).toEqual([
+      { account: "Robinhood Crypto", last4: "8474", start: "2026-07-01", end: "2026-07-31", beginCents: 2735993, endCents: 2836548, reconciliation: "value_anchor" },
+    ]);
+  });
+});

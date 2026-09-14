@@ -2,6 +2,7 @@ import { isValidIsoDate } from "@/lib/dates";
 import { parseAmountToCents } from "@/lib/money";
 import { ParseError, type CanonicalTxn, type ParsedStatement, type ParserProfile } from "../types";
 import { extractLines } from "./pdf-profile";
+import { selectTrackedSections, splitAtAccountHeaders, type TrackedSection } from "./robinhood-account-sections";
 
 /**
  * Real Robinhood Crypto statement PDFs (single-column). The account is an
@@ -46,8 +47,46 @@ export interface RobinhoodCryptoParse {
   txns: CanonicalTxn[];
 }
 
+/** `ACCOUNT NUMBER 311070628474` — never the `RHS ACCOUNT NUMBER 487513525` line under it. */
+const ACCOUNT_NUMBER_RE = /^ACCOUNT NUMBER (\d+)$/;
+
+/**
+ * The lines of the ONE crypto account this ledger tracks.
+ *
+ * From 2026-07 the statement carries two crypto accounts: #311070628474 (the
+ * owner's ETH, Robinhood Crypto ····8474) printed first, then #311407134147,
+ * linked to the brokerage account #655929651. Every capture below used to be
+ * "the first match anywhere in the document" and every activity row was read
+ * from the whole of it, which was right only because of that print order — the
+ * defect 3902f69 fixed in the brokerage statement, and it is fixed here by the
+ * same rule (`selectTrackedSections`).
+ *
+ * ⛔ One statement imports into ONE Robinhood Crypto account (its hint carries
+ * no number), so a file with two TRACKED crypto accounts is refused rather than
+ * blended. A statement that prints no account number at all is one account, and
+ * there is nothing to choose between.
+ */
+function trackedAccountLines(texts: readonly string[], trackedLast4s: readonly string[]): readonly string[] {
+  const sections = splitAtAccountHeaders(texts, ACCOUNT_NUMBER_RE);
+  if (sections.length === 0) return texts;
+  const [only, ...more] = selectTrackedSections(PROFILE_ID, sections, trackedLast4s);
+  if (more.length > 0) {
+    throw new ParseError(
+      PROFILE_ID,
+      `Statement carries ${sections.map((s) => `#${s.accountNumber}`).join(", ")}, and more than one is a crypto ` +
+        `account this ledger tracks — one crypto statement imports into one Robinhood Crypto, refusing to guess`,
+    );
+  }
+  const section = only as TrackedSection;
+  return texts.slice(section.start, section.end);
+}
+
 /** Pure text-level core, exported for unit tests. */
-export function parseRobinhoodCryptoLines(texts: readonly string[]): RobinhoodCryptoParse {
+export function parseRobinhoodCryptoLines(
+  allTexts: readonly string[],
+  trackedLast4s: readonly string[] = [],
+): RobinhoodCryptoParse {
+  const texts = trackedAccountLines(allTexts, trackedLast4s);
   const start = findCapture(texts, PERIOD_START_RE);
   const end = findCapture(texts, PERIOD_END_RE);
   if (!start || !end) throw new ParseError(PROFILE_ID, "No PERIOD START/END found");
@@ -108,10 +147,15 @@ export const robinhoodCryptoStatementPdf: ParserProfile = {
   // content decides, so a native download imports unrenamed
   matches: (f) => f.format === "pdf",
   matchesContent: isRobinhoodCryptoStatementText,
-  parse: async (f): Promise<ParsedStatement[]> => {
+  // no version bump: every file this profile has imported prints one account, and parses identically
+  parse: async (f, context): Promise<ParsedStatement[]> => {
     const lines = await extractLines(f.buffer);
     if (lines.length === 0) throw new ParseError(PROFILE_ID, "No extractable text — scanned PDF?");
-    const parsed = parseRobinhoodCryptoLines(lines.map((l) => l.text));
+    const tracked = (context?.knownAccounts.Robinhood ?? []).map((a) => a.last4);
+    const parsed = parseRobinhoodCryptoLines(
+      lines.map((l) => l.text),
+      tracked,
+    );
     return [
       {
         accountHint: {
