@@ -13,6 +13,7 @@ import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
 import { overdueForSeries } from "./arrears";
 import { detectRecurringSeries, projectOccurrences, toProjectable } from "./recurring";
+import { recurringCalendar } from "./recurring-calendar";
 import { planFirstPostings } from "./recurring-first-posting";
 import { linkRowsMadeActive } from "./recurring-import-links";
 
@@ -354,6 +355,32 @@ describe("an amount is an identity only where the ledger has never carried it el
 });
 
 describe("what a first-posting link leaves the rest of the app believing", () => {
+  test("after its first charge links, the next missed lease payment has too few charges to grade — G2 (a)", () => {
+    // ⛔ OWNER DECISION G2 (a), 2026-09-14: KEEP the posting-count check. One
+    // linked posting puts the lease in `scheduleIsProven`'s 1–2 band, and a
+    // series there is not graded "missed" — even over a date he typed. He was
+    // shown (b), "trust a typed date at any posting count", with the consequence
+    // that it turns a typed-date bill red, and chose (a). uc/linking's 08a239b
+    // implemented (b) and asserted "missed" here; that was not carried.
+    //
+    // ⚠️ Open, not blessed: arrears (`overdueForSeries`) has no posting-count
+    // gate, so it still counts the same October payment owed. Pinned so a
+    // change to either side has to be made on purpose.
+    const lease = carLease({ accountId: card });
+    const first = post({ postedOn: "2026-09-15", amountCents: -69504, raw: "TOYOTA LEASE PMT", accountId: card });
+    // the card has been shown through Oct 20, and no October lease payment is in it
+    post({ postedOn: "2026-10-20", amountCents: -2200, raw: "GROCERY", accountId: card });
+
+    linkRowsMadeActive(bundle.db, [first], "2026-10-25");
+    expect(linkOf(first).recurringSeriesId).toBe(lease);
+
+    const october = recurringCalendar(bundle.db, "2026-10", "2026-10-25");
+    const due = october.entriesByDay["2026-10-15"]?.find((e) => e.name === "Car lease" && e.transactionId === null);
+    expect(due).toMatchObject({ state: "unsettled", unsettledReason: "schedule_unproven" });
+    // the open disagreement named above
+    expect(overdueForSeries(bundle.db, new Set([lease]), "2026-10-01", "2026-10-25").totalCents).toBe(69504);
+  });
+
   test("Detect now leaves three import-linked lease payments on Car lease — no duplicate series", () => {
     // 🔴 A hand-registered commitment matches neither of detection's group keys
     // (no merchant id; his name, not the bank's), so three rows linked by import

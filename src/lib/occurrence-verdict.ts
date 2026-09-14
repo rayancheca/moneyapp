@@ -161,6 +161,15 @@ export interface SettledVerdict {
  *    the "scheduled" confidence) while the account it bills on is not in the
  *    data: measured, that turns Sep 11 into "missed". The reason word is "too
  *    few charges to grade yet" (`unsettledReasonWord`) — what was counted.
+ *
+ *    ⚠️ Linking at import reaches this band with no hand at all: a registered
+ *    commitment's first charge, linked by `linkFirstPostings`, moves it from
+ *    zero postings to one, so its next missed payment reads "too few charges
+ *    to grade yet" until `MIN_OCCURRENCES` charges have linked — while
+ *    `overdueForSeries`, which has no posting-count gate, counts it owed.
+ *    ⛔ OWNER DECISION G2 (a), 2026-09-14: keep the count. He was shown (b),
+ *    trusting a typed date at any posting count, and that it turns a
+ *    typed-date bill red, and chose (a).
  *  - **`MIN_OCCURRENCES` or more**: a measured cadence. Hold the biller to it —
  *    pass 45's $2,285.70 of overdue rent (three postings) still reads missed.
  *
