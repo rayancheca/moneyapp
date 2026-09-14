@@ -518,6 +518,52 @@ describe("provenanceFor — a transaction", () => {
   });
 });
 
+/* ── an account's rows ────────────────────────────────────────────────── */
+
+/**
+ * S33 — "N transactions landed in X" is a claim about an account's ROWS, and it
+ * was proven with the account's BALANCE. This kind grades the rows exactly as a
+ * category or merchant total grades its own.
+ */
+describe("provenanceFor — an account's rows", () => {
+  test("grades each row against the account's chain, so one row past it is unchecked", () => {
+    const id = addAccount("a", "Robinhood Cash", "checking");
+    const file = addFile("f1", "robinhood-cash.pdf", "robinhood-statement-pdf");
+    addDays(id, [
+      { day: "2026-08-01", basis: "anchored" },
+      { day: "2026-08-02", basis: "derived" },
+      { day: "2026-08-03", basis: "derived_unverified" },
+    ]);
+    addTxn(id, "2026-08-02", { importFileId: file });
+    addTxn(id, "2026-08-03", { importFileId: file });
+
+    const p = provenanceFor(bundle.db, { kind: "accountRows", accountId: id })!;
+    expect(p.verdict).toBe("unverified");
+    expect(p.badgeWord).toBe("1 of 2 checked");
+    expect(p.headline).toMatch(/sum of 2 rows from 1 document/);
+    expect(p.sources.map((s) => s.label)).toContain("robinhood-cash.pdf");
+    expect(p.checkedThrough).toBe("2026-08-02");
+  });
+
+  test("rows you entered by hand read as yours, one rule with every other total", () => {
+    const id = addAccount("a", "Cash on Hand", "cash");
+    addTxn(id, "2026-08-11");
+    expect(provenanceFor(bundle.db, { kind: "accountRows", accountId: id })!.verdict).toBe("manual");
+  });
+
+  test("an account with no rows has nothing to stand on — never a measured zero", () => {
+    const id = addAccount("a", "Capital One 360 Checking", "checking");
+    const p = provenanceFor(bundle.db, { kind: "accountRows", accountId: id })!;
+    expect(p.verdict).toBe("unknown");
+    expect(p.headline).not.toMatch(/zero rather than unproven/);
+    expect(p.checkedThrough).toBeNull();
+  });
+
+  test("an account that does not exist is null", () => {
+    expect(provenanceFor(bundle.db, { kind: "accountRows", accountId: "nope" })).toBeNull();
+  });
+});
+
 /* ── net worth ────────────────────────────────────────────────────────── */
 
 describe("provenanceFor — net worth", () => {

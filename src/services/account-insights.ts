@@ -159,7 +159,19 @@ export function accountInsightInput(
   if (rowCount > 0) {
     // every ACTIVE row on the account, so the window is its whole life
     facts.push(countFact("f4", self.name, rowCount, "transaction", "since it opened"));
-    candidates.push({ claimId: "count_in_subject", a: "f4", prove });
+    /*
+     * 🔴 S33: A CLAIM ABOUT ROWS WAS PROVEN WITH THE BALANCE'S PROOF. Measured
+     * 2026-09-14: "How 2,365 transactions landed in Robinhood Cash since it
+     * opened is proven — it has nothing checking it", a verdict about one day's
+     * balance, while 2,364 of those rows sit on or before the day its chain last
+     * closed. The rank and share above are claims about the balance, and keep
+     * its proof; the count is graded row by row, as every other total is.
+     */
+    candidates.push({
+      claimId: "count_in_subject",
+      a: "f4",
+      prove: () => provenanceFor(db, { kind: "accountRows", accountId }),
+    });
   }
 
   return {

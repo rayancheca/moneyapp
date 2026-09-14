@@ -302,6 +302,54 @@ describe("the window is dated by the day the balance was observed", () => {
 });
 
 /**
+ * 🔴 S33: THE COUNT WAS PROVEN WITH THE BALANCE'S PROOF.
+ *
+ * "N transactions landed in X since it opened" is a claim about ROWS, and its
+ * badge was the accountBalance proof built for the rank and share. Measured
+ * 2026-09-14: `/accounts/<Robinhood Cash>` read "How 2,365 transactions landed in
+ * Robinhood Cash since it opened is proven — it has nothing checking it", while
+ * its chain is verified through 2026-07-31 and 2,364 of the 2,365 rows sit on or
+ * before that day. Chase Checking and Discover read "adds up" over a popover
+ * about the balance ("had no activity to replay on Aug 14, 2026").
+ *
+ * ⛔ The rows are graded by `summedRowsProvenance` — the one rule category,
+ * merchant and spending totals already use (owner decision S33 option a).
+ */
+describe("the row count stands on the rows", () => {
+  test("one row past the last closed day makes the count 1 of 2 checked — while rank and share keep the balance's proof", () => {
+    addAccount("a-1", "Robinhood Cash", "checking");
+    addAccount("a-2", "Other", "checking");
+    setBalance("a-2", 90_000);
+    const file = addFile("f-1");
+    addDay("a-1", "2026-08-01", "anchored");
+    addDay("a-1", "2026-08-10", "derived");
+    addDay("a-1", "2026-08-18", "derived_unverified");
+    addDay("a-1", "2026-08-20", "derived_unverified");
+    addImportedTxn("a-1", "2026-08-10", file); // on or before verifiedThrough
+    addImportedTxn("a-1", "2026-08-18", file); // after it
+
+    const out = accountInsights(bundle.db, "a-1", TODAY)!;
+    const count = out.insights.find((i) => i.claimId === "count_in_subject")!;
+    expect(count.provenance.verdict).toBe("unverified");
+    expect(count.provenance.badgeWord).toBe("1 of 2 checked");
+    expect(count.provenance.headline).toMatch(/sum of 2 rows from 1 document/);
+
+    const rank = out.insights.find((i) => i.claimId === "ranked_in_set" || i.claimId === "largest_in_set")!;
+    expect(rank.provenance.badgeWord).toBeUndefined();
+    expect(rank.provenance.headline).toMatch(/Replayed past the last recorded balance/);
+  });
+
+  test("an account of hand-entered rows reads as entered by hand", () => {
+    addAccount("a-1", "Cash on Hand", "checking");
+    setBalance("a-1", 0);
+    addTxn("a-1", -5_000_00);
+
+    const count = accountInsights(bundle.db, "a-1", TODAY)!.insights.find((i) => i.claimId === "count_in_subject")!;
+    expect(count.provenance.verdict).toBe("manual");
+  });
+});
+
+/**
  * ⛔ A subject the app cannot NAME.
  *
  * `insight-facts` refuses `< > { } \\` in a label BY THROWING, so a surface that

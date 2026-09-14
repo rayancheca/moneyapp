@@ -184,6 +184,12 @@ export type FigureRef =
    */
   | { kind: "merchantSpend"; merchantId: string; from: string; to: string; label?: string }
   /**
+   * Every ACTIVE row on one account — the figure behind "N transactions landed
+   * in X since it opened". Same grading as `categorySpend` and `merchantSpend`,
+   * over the rows that count was taken of.
+   */
+  | { kind: "accountRows"; accountId: string; label?: string }
+  /**
    * A position's market value, aggregated across accounts by `(symbol,
    * assetType)` exactly as `holdingDetail` reports it. NOT `categorySpend`: a
    * holding's value is a share count times a price, and the two halves are
@@ -1282,6 +1288,54 @@ function merchantSpendProvenance(
 }
 
 /**
+ * What backs a count of an account's rows.
+ *
+ * 🔴 S33: THE COUNT WAS PROVEN WITH THE BALANCE'S PROOF. `account-insights`
+ * handed "N transactions landed in X since it opened" the `accountBalance` proof
+ * it built for the rank and share — a proof about ONE DAY's balance. Measured
+ * 2026-09-14: `/accounts/<Robinhood Cash>` read "How 2,365 transactions landed
+ * in Robinhood Cash since it opened is proven — it has nothing checking it",
+ * while its chain is verified through 2026-07-31 and 2,364 of the 2,365 rows
+ * sit on or before that day; Chase Checking and Discover read "adds up" over a
+ * popover about the balance ("had no activity to replay on Aug 14, 2026").
+ *
+ * ⛔ `summedRowsProvenance` is the rule, not a copy of it — one grading across
+ * category, merchant and account totals (owner decision S33 option a). A total
+ * holding hand-entered rows therefore reads "you entered it" here exactly as it
+ * does on a category page.
+ *
+ * ⚠️ The window handed on is the rows' own first and last day: a count "since
+ * it opened" has no other. `summedRowsProvenance` reads the bounds only for its
+ * empty branch and as `accountCoverage`'s today, which moves no grade (see
+ * `allSpendProvenance`).
+ *
+ * ⛔ No rows is not a measured zero. With nothing to count there is no window for
+ * the empty branch to vouch for, so this says `unknown` itself.
+ */
+function accountRowsProvenance(db: AppDatabase, accountId: string, label: string | undefined): Provenance | null {
+  const account = db.select().from(accounts).where(eq(accounts.id, accountId)).get();
+  if (!account) return null;
+  const subject = label ?? account.name;
+
+  const rows = db
+    .select(SUM_ROW_COLUMNS)
+    .from(transactions)
+    .where(and(eq(transactions.accountId, accountId), eq(transactions.status, "active")))
+    .orderBy(asc(transactions.postedOn))
+    .all();
+  if (rows.length === 0) {
+    return {
+      verdict: "unknown",
+      headline: `No transactions have been imported into ${subject}, so there are no rows for this to stand on.`,
+      sources: [],
+      checkedThrough: null,
+      inputs: [],
+    };
+  }
+  return summedRowsProvenance(db, rows, subject, rows[0]!.postedOn, rows[rows.length - 1]!.postedOn);
+}
+
+/**
  * What backs EVERY dollar the app calls spending in a window.
  *
  * ## ⛔ The predicate is borrowed, never rewritten
@@ -1689,6 +1743,8 @@ export function provenanceFor(db: AppDatabase, ref: FigureRef): Provenance | nul
       return categorySpendProvenance(db, ref.categoryId, ref.from, ref.to, ref.label);
     case "merchantSpend":
       return merchantSpendProvenance(db, ref.merchantId, ref.from, ref.to, ref.label);
+    case "accountRows":
+      return accountRowsProvenance(db, ref.accountId, ref.label);
     case "holding":
       return holdingProvenance(db, ref.symbol, ref.assetType, ref.day);
     case "recurringSeries":
