@@ -553,10 +553,19 @@ describe("periodParams / periodQuery / withPeriod — a link lands where it was 
   test("the anchored ranges travel by their key, not by their resolved ends", () => {
     // ⛔ YTD and All END AT TODAY. Sending their ends as from/to would freeze
     // them at the day the link was rendered; the key keeps them anchored.
-    for (const key of ["ytd", "all"]) {
+    //
+    // 🔴 THIS TEST COULD NOT FAIL AS FIRST WRITTEN. It asked for "ytd" and "all",
+    // which `resolvePeriod` does not recognise, so both iterations fell back to
+    // the current month and the anchored branch never ran — and it compared
+    // against `p.key`, the very value the implementation reads. The keys are
+    // upper-case, the granularity proves the branch ran, and the expectation is
+    // a literal.
+    for (const [key, granularity] of [["YTD", "ytd"], ["ALL", "all"]] as const) {
       const p = resolvePeriod({ period: key }, TODAY);
-      expect(periodParams(p)).toEqual({ period: p.key! });
-      expect(withPeriod("/x", p)).toBe(`/x?period=${p.key}`);
+      expect(p.granularity).toBe(granularity);
+      expect(periodParams(p)).toEqual({ period: key });
+      expect(periodParams(p)).not.toHaveProperty("from");
+      expect(withPeriod("/x", p)).toBe(`/x?period=${key}`);
     }
   });
 
