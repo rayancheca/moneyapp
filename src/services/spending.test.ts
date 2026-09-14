@@ -511,7 +511,10 @@ describe("topMerchants unlinked drill-downs", () => {
     const entry = topMerchants(bundle.db, JULY).entries[0]!;
     expect(entry.name).toBe("VENMO CASHOUT REF");
     // the SPENDING scope rides along: these groups come from the same row set
-    expect(entry.href).toBe("/transactions?category=spending&from=2026-07-01&to=2026-07-31&q=VENMO");
+    // ⛔ …and `merchant=none`: an unlinked group IS "rows with no merchant", and
+    // this assertion pinned the link that could not say so — it went red on
+    // 52e0a98, which was committed without the suite's tally ever being read.
+    expect(entry.href).toBe("/transactions?category=spending&merchant=none&from=2026-07-01&to=2026-07-31&q=VENMO");
     expect(rowsBehind(entry.href)).toBe(1);
   });
 
