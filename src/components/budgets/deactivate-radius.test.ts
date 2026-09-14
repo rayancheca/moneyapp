@@ -28,9 +28,26 @@ describe("budgetDeactivateLines", () => {
     expect(lines.map((l) => l.label)).toEqual([
       "Budget stopped",
       "Spent so far this period",
-      "Already due this period, not imported",
+      "Due by today, not imported",
     ]);
     expect(lines[2]!.value).toBe("$2,291.21");
+  });
+
+  /**
+   * 🔴 "Already due" is a claim about the PAST, and the figure is not only past.
+   * `overdueCents` is `budgetOverdue(start, today)` — INCLUSIVE of today — and a
+   * bill dated today is due, not late, until it posts. Asked 2026-09-15, the
+   * owner's Car budget carries Car insurance (due Sep 11) and the Car lease (due
+   * Sep 15, that very day). The type holds cents only and cannot say which part
+   * is dated today, which is exactly why the label has to be true of both.
+   */
+  test("a bill due TODAY is not called already due", () => {
+    const lines = budgetDeactivateLines(
+      { budgetPhrase: "$1,056.53 / month", spentCents: 0, overdueCents: 36_149 + 69_504, expectedTailCents: 0 },
+      formatCents,
+    );
+    expect(lines[2]).toEqual({ label: "Due by today, not imported", value: "$1,056.53" });
+    expect(lines.every((l) => !/already|came due|by now/i.test(l.label))).toBe(true);
   });
 
   /** ⛔ Disjoint by construction — both are printed, neither absorbs the other. */
@@ -42,7 +59,7 @@ describe("budgetDeactivateLines", () => {
     expect(lines.map((l) => [l.label, l.value])).toEqual([
       ["Budget stopped", "$15.00 / month"],
       ["Spent so far this period", "$0.00"],
-      ["Already due this period, not imported", "$4.99"],
+      ["Due by today, not imported", "$4.99"],
       ["Recurring still expected this period", "$6.00"],
     ]);
   });
@@ -67,6 +84,6 @@ describe("budgetDeactivateLines", () => {
       headline: "Housing stops being budgeted.",
       lines: budgetDeactivateLines(HOUSING, formatCents),
     });
-    expect(spoken).toContain("Already due this period, not imported: $2,291.21.");
+    expect(spoken).toContain("Due by today, not imported: $2,291.21.");
   });
 });
