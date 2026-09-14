@@ -53,7 +53,12 @@ export function budgetDeactivateLines(
     { label: "Budget stopped", value: input.budgetPhrase, irreversible: true },
     { label: "Spent so far this period", value: formatCents(input.spentCents) },
     ...(input.overdueCents > 0
-      ? [{ label: "Due by today, not imported", value: formatCents(input.overdueCents) }]
+      ? [
+          // ⛔ both ends: the figure is `budgetOverdue` from the period start to
+          // today — a bill due last period is not in it (arrears end with the
+          // month, his decision 2026-09-02), and the sibling lines name the period
+          { label: "Due this period by today, not imported", value: formatCents(input.overdueCents) },
+        ]
       : []),
     ...(input.expectedTailCents > 0
       ? [{ label: "Recurring still expected this period", value: formatCents(input.expectedTailCents) }]

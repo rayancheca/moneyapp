@@ -28,7 +28,7 @@ describe("budgetDeactivateLines", () => {
     expect(lines.map((l) => l.label)).toEqual([
       "Budget stopped",
       "Spent so far this period",
-      "Due by today, not imported",
+      "Due this period by today, not imported",
     ]);
     expect(lines[2]!.value).toBe("$2,291.21");
   });
@@ -46,8 +46,10 @@ describe("budgetDeactivateLines", () => {
       { budgetPhrase: "$1,056.53 / month", spentCents: 0, overdueCents: 36_149 + 69_504, expectedTailCents: 0 },
       formatCents,
     );
-    expect(lines[2]).toEqual({ label: "Due by today, not imported", value: "$1,056.53" });
+    expect(lines[2]).toEqual({ label: "Due this period by today, not imported", value: "$1,056.53" });
     expect(lines.every((l) => !/already|came due|by now/i.test(l.label))).toBe(true);
+    // …and it still names the window its figure starts at, like its siblings
+    expect(lines.slice(1).every((l) => /this period/.test(l.label))).toBe(true);
   });
 
   /** ⛔ Disjoint by construction — both are printed, neither absorbs the other. */
@@ -59,7 +61,7 @@ describe("budgetDeactivateLines", () => {
     expect(lines.map((l) => [l.label, l.value])).toEqual([
       ["Budget stopped", "$15.00 / month"],
       ["Spent so far this period", "$0.00"],
-      ["Due by today, not imported", "$4.99"],
+      ["Due this period by today, not imported", "$4.99"],
       ["Recurring still expected this period", "$6.00"],
     ]);
   });
@@ -84,6 +86,6 @@ describe("budgetDeactivateLines", () => {
       headline: "Housing stops being budgeted.",
       lines: budgetDeactivateLines(HOUSING, formatCents),
     });
-    expect(spoken).toContain("Due by today, not imported: $2,291.21.");
+    expect(spoken).toContain("Due this period by today, not imported: $2,291.21.");
   });
 });
