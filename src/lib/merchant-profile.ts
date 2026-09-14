@@ -49,14 +49,20 @@ export interface MerchantYear {
   visits: number;
   /**
    * The ledger does not hold the whole year, so it cannot be compared like for
-   * like: it is still running, or the ledger opens inside it.
+   * like: it is still running, or the ledger opens or stops inside it.
    */
   partial: boolean;
   /** the ledger's first day, when it falls after this year's Jan 1 */
   opensOn: string | null;
   /**
+   * The ledger's newest day, when it falls before this PAST year's Dec 31. Never
+   * set on the running year, which "so far" already qualifies.
+   */
+  closesOn: string | null;
+  /**
    * What the bar says beside its figure — the window it covers — or null for a
-   * year the ledger holds whole: "so far", "from Aug 25", "from Mar 1, so far".
+   * year the ledger holds whole: "so far", "from Aug 25", "from Mar 1, so far",
+   * "through Dec 12".
    */
   mark: string | null;
 }
@@ -371,8 +377,15 @@ export function merchantProfile(
   const years: MerchantYear[] = [...byYear.entries()]
     .map(([year, e]) => {
       const running = year >= thisYear;
-      const opensOn = ledgerOpensInside(year, today, ledger);
-      return { year, ...e, partial: running || opensOn !== null, opensOn, mark: yearMark(running, opensOn) };
+      const { opensOn, closesOn } = ledgerEndsInside(year, running, today, ledger);
+      return {
+        year,
+        ...e,
+        partial: running || opensOn !== null || closesOn !== null,
+        opensOn,
+        closesOn,
+        mark: yearMark(running, opensOn, closesOn),
+      };
     })
     .sort((a, b) => b.year.localeCompare(a.year));
 
@@ -400,25 +413,45 @@ export function merchantProfile(
 }
 
 /**
- * The ledger's first day when it falls INSIDE this year — after its Jan 1 — so
- * the year's bar holds only part of it; null when the ledger holds the year from
- * its start. `emptyPeriodReason`'s own reading of the calendar year: days of it
- * before the oldest row. A ledger that opens ON Jan 1 holds that year whole.
+ * Where the ledger's ends fall INSIDE this calendar year, as `emptyPeriodReason`
+ * reads the year: days before the oldest row give `opensOn`, days past the newest
+ * give `closesOn`. A ledger that opens ON Jan 1, or reaches Dec 31, holds that end
+ * of the year whole.
+ *
+ * ⛔ The closing end is asked of PAST years only (owner decision E4a). The running
+ * year is keyed on today and already says "so far"; asked of it, statement lag
+ * would relabel every merchant's current year "through Sep 12" between imports.
  */
-function ledgerOpensInside(year: string, today: string, ledger: LedgerEnds): string | null {
+function ledgerEndsInside(
+  year: string,
+  running: boolean,
+  today: string,
+  ledger: LedgerEnds,
+): { opensOn: string | null; closesOn: string | null } {
   const reason = emptyPeriodReason({ from: `${year}-01-01`, to: `${year}-12-31`, today, ...ledger });
-  return reason.kind === "partly-covered" && (reason.beforeDays ?? 0) > 0 ? ledger.ledgerOpens : null;
+  if (reason.kind !== "partly-covered") return { opensOn: null, closesOn: null };
+  const beforeDays = reason.beforeDays ?? 0;
+  return {
+    opensOn: beforeDays > 0 ? ledger.ledgerOpens : null,
+    closesOn: !running && reason.uncoveredDays - beforeDays > 0 ? ledger.ledgerReaches : null,
+  };
 }
 
 /**
  * The window a bar's figure covers, beside the figure. ⛔ "so far" means STILL
- * RUNNING, and a year the ledger opens in is not running — it names its first
- * day instead (owner decision E2a). No year: the bar sits on its own year label.
+ * RUNNING, and a year the ledger opens or stops in is not running — it names the
+ * end the ledger has instead (owner decisions E2a, E4a). No year: the bar sits on
+ * its own year label.
  */
-function yearMark(running: boolean, opensOn: string | null): string | null {
-  const from = opensOn === null ? null : `from ${formatDayShort(opensOn)}`;
-  if (!running) return from;
-  return from === null ? "so far" : `${from}, so far`;
+function yearMark(running: boolean, opensOn: string | null, closesOn: string | null): string | null {
+  const window = [
+    opensOn === null ? null : `from ${formatDayShort(opensOn)}`,
+    closesOn === null ? null : `through ${formatDayShort(closesOn)}`,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" ");
+  if (!running) return window === "" ? null : window;
+  return window === "" ? "so far" : `${window}, so far`;
 }
 
 /** see `MerchantProfile.yearsNote` */
@@ -431,7 +464,11 @@ function yearsNoteFor(years: readonly MerchantYear[], thisYear: string, today: s
     if (y.year >= thisYear) {
       return opens === null ? "The current year is still running." : `The current year is still running, and the ledger opens on ${opens} in it.`;
     }
-    return `The ledger opens on ${opens}, so ${y.year} is only partly in it.`;
+    const closes = y.closesOn === null ? null : formatDayShortIn(y.closesOn, today);
+    const ends = [opens === null ? null : `opens on ${opens}`, closes === null ? null : `stops on ${closes}`]
+      .filter((part): part is string => part !== null)
+      .join(" and ");
+    return `The ledger ${ends}, so ${y.year} is only partly in it.`;
   });
   const unmarked = years.length - marked.length;
   const verdict =

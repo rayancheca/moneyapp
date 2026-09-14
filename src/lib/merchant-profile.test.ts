@@ -399,9 +399,9 @@ describe("merchantProfile — year over year", () => {
 
   test("newest year first, each with its own spend and count", () => {
     expect(merchantProfile(acrossYears, [], TODAY, LEDGER).years).toEqual([
-      { year: "2026", cents: 2000, visits: 1, partial: true, opensOn: null, mark: "so far" },
-      { year: "2025", cents: 3000, visits: 1, partial: false, opensOn: null, mark: null },
-      { year: "2024", cents: 1000, visits: 1, partial: false, opensOn: null, mark: null },
+      { year: "2026", cents: 2000, visits: 1, partial: true, opensOn: null, closesOn: null, mark: "so far" },
+      { year: "2025", cents: 3000, visits: 1, partial: false, opensOn: null, closesOn: null, mark: null },
+      { year: "2024", cents: 1000, visits: 1, partial: false, opensOn: null, closesOn: null, mark: null },
     ]);
   });
 
@@ -470,9 +470,9 @@ describe("merchantProfile — the year the ledger opens in", () => {
 
   test("the opening year is marked with the day it opens on — not 'so far', which means still running", () => {
     expect(merchantProfile(amazon, [], TODAY, OPENS_AUG_25).years).toEqual([
-      { year: "2026", cents: 48_462, visits: 1, partial: true, opensOn: null, mark: "so far" },
-      { year: "2023", cents: 25_033, visits: 1, partial: false, opensOn: null, mark: null },
-      { year: "2022", cents: 20_379, visits: 1, partial: true, opensOn: "2022-08-25", mark: "from Aug 25" },
+      { year: "2026", cents: 48_462, visits: 1, partial: true, opensOn: null, closesOn: null, mark: "so far" },
+      { year: "2023", cents: 25_033, visits: 1, partial: false, opensOn: null, closesOn: null, mark: null },
+      { year: "2022", cents: 20_379, visits: 1, partial: true, opensOn: "2022-08-25", closesOn: null, mark: "from Aug 25" },
     ]);
   });
 
@@ -485,12 +485,12 @@ describe("merchantProfile — the year the ledger opens in", () => {
 
   test("a ledger that opens ON Jan 1 holds that year whole", () => {
     const p = merchantProfile(amazon, [], TODAY, { ledgerOpens: "2022-01-01", ledgerReaches: TODAY });
-    expect(p.years.find((y) => y.year === "2022")).toMatchObject({ partial: false, opensOn: null, mark: null });
+    expect(p.years.find((y) => y.year === "2022")).toMatchObject({ partial: false, opensOn: null, closesOn: null, mark: null });
   });
 
   test("a ledger with no ends marks no opening", () => {
     const p = merchantProfile(amazon, [], TODAY, { ledgerOpens: null, ledgerReaches: null });
-    expect(p.years.find((y) => y.year === "2022")).toMatchObject({ partial: false, opensOn: null, mark: null });
+    expect(p.years.find((y) => y.year === "2022")).toMatchObject({ partial: false, opensOn: null, closesOn: null, mark: null });
   });
 
   test("when every year is marked, the note compares none of them", () => {
@@ -512,10 +512,89 @@ describe("merchantProfile — the year the ledger opens in", () => {
       { ledgerOpens: "2026-03-01", ledgerReaches: TODAY },
     );
     expect(p.years).toEqual([
-      { year: "2026", cents: 2000, visits: 2, partial: true, opensOn: "2026-03-01", mark: "from Mar 1, so far" },
+      { year: "2026", cents: 2000, visits: 2, partial: true, opensOn: "2026-03-01", closesOn: null, mark: "from Mar 1, so far" },
     ]);
     // one year draws no Year on year card, so there is nothing for a note to qualify
     expect(p.yearsNote).toBeNull();
+  });
+});
+
+/**
+ * ⚖️ THE OTHER END — owner decision 2026-09-14, E4a. In early January, before
+ * December's statements are imported, the year that just closed reads as a whole
+ * year. A year missing its last weeks is no more like-for-like than one missing
+ * its first, so it is marked by the same two-ended rule.
+ *
+ * ⚠️ Not live on 2026-09-14: the ledger reaches Sep 12, 2026, so every past year
+ * is held through Dec 31 and no merchant's card moves. The scenario below is the
+ * one the decision describes — January 5, December imported only through the
+ * 12th — not a measurement.
+ */
+describe("merchantProfile — a past year the ledger has not reached the end of", () => {
+  const JAN_5 = "2026-01-05";
+  const twoYears: MerchantVisit[] = [
+    { day: "2024-06-01", amountCents: 1000, categoryName: "Food" },
+    { day: "2025-06-01", amountCents: 3000, categoryName: "Food" },
+  ];
+  const STOPS_DEC_12 = { ledgerOpens: "2020-01-01", ledgerReaches: "2025-12-12" };
+
+  test("the year the ledger stops inside is marked through its last day", () => {
+    expect(merchantProfile(twoYears, [], JAN_5, STOPS_DEC_12).years).toEqual([
+      { year: "2025", cents: 3000, visits: 1, partial: true, opensOn: null, closesOn: "2025-12-12", mark: "through Dec 12" },
+      { year: "2024", cents: 1000, visits: 1, partial: false, opensOn: null, closesOn: null, mark: null },
+    ]);
+  });
+
+  test("the note gives it its own reason", () => {
+    expect(merchantProfile(twoYears, [], JAN_5, STOPS_DEC_12).yearsNote).toBe(
+      "The ledger stops on Dec 12, 2025, so 2025 is only partly in it. " +
+        "The marked year is not a like-for-like comparison with the unmarked one.",
+    );
+  });
+
+  test("a ledger that reaches Dec 31 holds the year whole", () => {
+    const p = merchantProfile(twoYears, [], JAN_5, { ...STOPS_DEC_12, ledgerReaches: "2025-12-31" });
+    expect(p.years.map((y) => y.mark)).toEqual([null, null]);
+    expect(p.yearsNote).toBeNull();
+  });
+
+  /*
+   * ⛔ The running year stays keyed on TODAY. On 2026-09-14 the ledger reaches
+   * Sep 12, and 2026 is "so far" — not "through Sep 12", which would put statement
+   * lag in a bar label on every merchant, every day between imports.
+   */
+  test("the running year is still 'so far', however far the ledger reaches into it", () => {
+    const p = merchantProfile(
+      [...twoYears, { day: "2026-06-01", amountCents: 2000, categoryName: "Food" }],
+      [],
+      "2026-09-14",
+      { ledgerOpens: "2020-01-01", ledgerReaches: "2026-09-12" },
+    );
+    expect(p.years[0]).toMatchObject({ year: "2026", closesOn: null, mark: "so far" });
+    expect(p.years.slice(1).map((y) => y.mark)).toEqual([null, null]);
+  });
+
+  test("a past year the ledger both opens and stops inside names both ends", () => {
+    const p = merchantProfile(
+      [
+        { day: "2025-03-05", amountCents: 1000, categoryName: "Food" },
+        { day: "2025-06-01", amountCents: 1000, categoryName: "Food" },
+      ],
+      [],
+      JAN_5,
+      { ledgerOpens: "2025-03-01", ledgerReaches: "2025-12-12" },
+    );
+    expect(p.years).toEqual([
+      {
+        year: "2025",
+        cents: 2000,
+        visits: 2,
+        partial: true,
+        opensOn: "2025-03-01",
+        closesOn: "2025-12-12",
+        mark: "from Mar 1 through Dec 12",
+      },
+    ]);
   });
 });
 
