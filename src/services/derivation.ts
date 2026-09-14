@@ -73,9 +73,15 @@ export interface DayRow {
   basis: BalanceBasis;
 }
 
-/** Highest-precedence anchor per date. */
-export function pickWinners(anchors: readonly Anchor[]): Anchor[] {
-  const byDate = new Map<string, Anchor>();
+/**
+ * Highest-precedence anchor per date.
+ *
+ * Generic so a caller holding whole `balance_anchors` rows gets those rows back
+ * — `provenance` names the winning anchor's document, and must name the one this
+ * replay used rather than whichever row SQLite returned first.
+ */
+export function pickWinners<T extends Anchor>(anchors: readonly T[]): T[] {
+  const byDate = new Map<string, T>();
   for (const a of anchors) {
     const current = byDate.get(a.anchoredOn);
     if (!current || ANCHOR_PRECEDENCE[a.source] < ANCHOR_PRECEDENCE[current.source]) {

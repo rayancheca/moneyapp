@@ -18,6 +18,7 @@ import { emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { activeTxnsInRange, loadCategoryIndex, spendingBucket, uncategorizedWhere } from "./analytics";
 import { accountCoverage, type CoverageGrade } from "./coverage";
+import { pickWinners } from "./derivation";
 import { MIN_OCCURRENCES } from "./recurring";
 
 /**
@@ -320,13 +321,7 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
       on: file.importedAt.slice(0, 10),
     });
   }
-  if (period) {
-    sources.push({
-      kind: "period",
-      label: `${period.periodStart} → ${period.periodEnd}`,
-      detail: PERIOD_VERDICT_TEXT[period.reconciliation] ?? period.reconciliation,
-    });
-  }
+  if (period) sources.push(periodSource(period));
 
   /**
    * ⛔ A row is NOT proven merely because a file carried it, and treating it
@@ -357,26 +352,78 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
    * transaction: the period it names holds beginning_balance 150500 and
    * ending_balance 348049.
    *
-   * ⛔ The question is what the FILE carries, so ask the period's balances.
+   * ⛔ For the "records a value" branch the question is what the PERIOD
+   * carries, so ask the period's balances — a Robinhood statement PDF also owns
+   * an `ofx_ledger` anchor, and must keep reading "records a value".
    */
-  const carriesBalance = period?.endingBalanceCents !== null && period?.endingBalanceCents !== undefined;
+  const periodBalance = period?.endingBalanceCents !== null && period?.endingBalanceCents !== undefined;
+  /*
+   * 🔴 S31: …AND A FILE CAN RECORD A BALANCE WITH NO PERIOD AT ALL. A bank CSV
+   * creates no statement period; its running balance lands in
+   * `balance_anchors` as an `ofx_ledger` row (import/service.ts
+   * `upsertAnchor(…, "ofx_ledger", fileRow.id, …)`). Reading "carries no
+   * balances" off the period alone told 1,078 rows from
+   * `Chase3522_Activity_20260710.CSV` "That file carries no balances of its
+   * own" — of the file whose 2026-07-08 balance of $1,120.90
+   * `/accounts/<Chase Checking>` lists under Recorded balances as "bank
+   * export". Measured 2026-09-14. The other derived-day files (the Spending
+   * Report PDFs, the Discover and Robinhood CSVs) own no anchor, and keep their
+   * sentence.
+   */
+  const fileAnchor = db
+    .select({ anchoredOn: balanceAnchors.anchoredOn })
+    .from(balanceAnchors)
+    .where(and(eq(balanceAnchors.importFileId, txn.importFileId), eq(balanceAnchors.accountId, txn.accountId)))
+    .orderBy(desc(balanceAnchors.anchoredOn))
+    .get();
   const dayVerdict: ProvenanceVerdict =
     day && account ? (isInvestment(account.type) ? "market_value" : BASIS_VERDICT[day.basis]) : "unknown";
-  const verdict: ProvenanceVerdict = reconciled ? "sourced" : dayVerdict;
 
-  const headline = reconciled
-    ? `This row came from ${file?.fileName ?? "a statement"}, and that statement's balances reconcile to the cent.`
-    : dayVerdict === "derived"
-      ? `This row came from ${file?.fileName ?? "an imported file"}. That file carries no balances of its own, but ${account?.name ?? "the account"}'s chain closes across this day.`
-      : carriesBalance
-        ? `This row came from ${file?.fileName ?? "an imported file"}, which records a value for ${account?.name ?? "the account"} rather than proving the rows add up.`
-        : `This row came from ${file?.fileName ?? "an imported file"} — which carries no balances, so nothing checks the total it sits in.`;
+  /*
+   * 🔴 S19: AN ANCHORED DAY HAD NO BRANCH. A row whose own file reconciles
+   * nothing, on a day ANOTHER document anchors, fell through to "which carries
+   * no balances, so nothing checks the total it sits in" — under a green "on a
+   * statement" badge, because the day's basis graded it `sourced`. Measured
+   * 2026-09-14 on 177 rows, none of them on their own file's anchor day; the
+   * FPL row from `Chase3522_Activity_20260710.CSV` (Jul 10, 2026) read exactly
+   * that.
+   *
+   * ⛔ The badge is the owner's decision (2026-09-14, S19 option a): "adds up".
+   * The row did not come from a statement, and `summedRowsProvenance.gradeRow`
+   * already grades this same row `derived` inside every category, merchant and
+   * spending total — the sheet and a total over one row disagreed. The DAY
+   * keeps its own verdict in `inputs`, and only a reconciled period covering
+   * the day earns a "checked through" date.
+   */
+  const dayAnchor = !reconciled && dayVerdict === "sourced" ? anchorOnOrBefore(db, txn.accountId, txn.postedOn) : null;
+  const anchorOfDay = dayAnchor !== null && dayAnchor.anchor.anchoredOn === txn.postedOn ? dayAnchor : null;
+  const checkingPeriod =
+    dayAnchor === null
+      ? undefined
+      : periodsCovering(db, txn.accountId, txn.postedOn)
+          .filter((p) => p.reconciliation === "reconciled")
+          .at(-1);
+  if (anchorOfDay) sources.push(anchorOfDay.source);
+  if (checkingPeriod) sources.push(periodSource(checkingPeriod));
+
+  const verdict: ProvenanceVerdict = reconciled ? "sourced" : dayVerdict === "sourced" ? "derived" : dayVerdict;
+
+  const headline = rowHeadline({
+    fileName: file?.fileName,
+    accountName: account?.name ?? "the account",
+    reconciled,
+    dayVerdict,
+    periodBalance,
+    fileAnchorOn: fileAnchor?.anchoredOn,
+    anchorOfDay,
+    rowFileId: txn.importFileId,
+  });
 
   return {
     verdict,
     headline,
     sources,
-    checkedThrough: reconciled ? period.periodEnd : null,
+    checkedThrough: reconciled ? period.periodEnd : (checkingPeriod?.periodEnd ?? null),
     inputs:
       day && account
         ? [
@@ -387,6 +434,130 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
             },
           ]
         : [],
+  };
+}
+
+/** What a transaction's headline is built from — every fact already measured by the caller. */
+interface RowHeadlineFacts {
+  fileName: string | undefined;
+  accountName: string;
+  reconciled: boolean;
+  dayVerdict: ProvenanceVerdict;
+  /** the row's own period states an ending balance */
+  periodBalance: boolean;
+  /** the newest balance the row's own file recorded for this account */
+  fileAnchorOn: string | undefined;
+  /** the anchor ON the row's day, when the day is anchored */
+  anchorOfDay: DayAnchor | null;
+  rowFileId: string;
+}
+
+/**
+ * One sentence per world a transaction's proof can be in. Each branch names
+ * the document that actually carries the claim — see S19 and S31 above.
+ */
+function rowHeadline(f: RowHeadlineFacts): string {
+  if (f.reconciled) {
+    return `This row came from ${f.fileName ?? "a statement"}, and that statement's balances reconcile to the cent.`;
+  }
+  const from = `This row came from ${f.fileName ?? "an imported file"}`;
+  const ownBalance = f.fileAnchorOn ? `, which recorded ${f.accountName}'s balance on ${readableDay(f.fileAnchorOn)}` : null;
+  if (f.dayVerdict === "derived") {
+    return ownBalance
+      ? `${from}${ownBalance}, and ${f.accountName}'s chain closes across this day.`
+      : `${from}. That file carries no balances of its own, but ${f.accountName}'s chain closes across this day.`;
+  }
+  if (f.dayVerdict === "sourced") {
+    if (f.anchorOfDay?.anchor.importFileId === f.rowFileId) {
+      return `${from}, which recorded ${f.accountName}'s balance on this very day, so the total it sits in is checked.`;
+    }
+    const own = ownBalance ? `${ownBalance} — and` : ", which carries no balances of its own — but";
+    const by = f.anchorOfDay
+      ? `was recorded by ${f.anchorOfDay.anchor.source === "manual" ? "you" : f.anchorOfDay.source.label}`
+      : "is anchored";
+    return `${from}${own} ${f.accountName}'s balance on this day ${by}, so the total it sits in is checked.`;
+  }
+  return f.periodBalance
+    ? `${from}, which records a value for ${f.accountName} rather than proving the rows add up.`
+    : `${from} — which carries no balances, so nothing checks the total it sits in.`;
+}
+
+/** The balance a day rests on, and how a reader should hear its source named. */
+interface DayAnchor {
+  anchor: typeof balanceAnchors.$inferSelect;
+  source: ProvenanceSource;
+}
+
+/**
+ * The anchor a day rests on: the newest recorded balance at or before it — and,
+ * among several recorded that same day, the one the replay itself uses.
+ *
+ * ⛔ ONE lookup for both proofs that name it. `accountBalanceProvenance` lists
+ * it under "Standing on"; `transactionProvenance` names it in the headline of a
+ * row whose day it anchors. Two queries would be two opinions about which
+ * document pins a day.
+ *
+ * ⚠️ Ties go through `pickWinners` (statement → ofx_ledger → manual → live).
+ * Ordered by day alone, SQLite returned whichever row came first — the trap
+ * `removalEffect` documents for Discover's two anchors on 2024-08-18.
+ */
+function anchorOnOrBefore(db: AppDatabase, accountId: string, day: string): DayAnchor | null {
+  const newest = db
+    .select({ anchoredOn: balanceAnchors.anchoredOn })
+    .from(balanceAnchors)
+    .where(and(eq(balanceAnchors.accountId, accountId), lte(balanceAnchors.anchoredOn, day)))
+    .orderBy(desc(balanceAnchors.anchoredOn))
+    .limit(1)
+    .get();
+  if (!newest) return null;
+  const [anchor] = pickWinners(
+    db
+      .select()
+      .from(balanceAnchors)
+      .where(and(eq(balanceAnchors.accountId, accountId), eq(balanceAnchors.anchoredOn, newest.anchoredOn)))
+      .all(),
+  );
+  if (!anchor) return null;
+  const file = anchor.importFileId
+    ? db.select().from(importFiles).where(eq(importFiles.id, anchor.importFileId)).get()
+    : undefined;
+  return {
+    anchor,
+    source: {
+      kind: "anchor",
+      label:
+        anchor.source === "manual"
+          ? "a balance you entered"
+          : anchor.source === "live"
+            ? "a live price reading"
+            : file?.fileName ?? `a ${anchor.source.replace(/_/g, " ")} observation`,
+      detail: `balance recorded on ${readableDay(anchor.anchoredOn)}`,
+      on: anchor.anchoredOn,
+    },
+  };
+}
+
+/** Every statement period of an account that covers a day, oldest-closing first. */
+function periodsCovering(db: AppDatabase, accountId: string, day: string) {
+  return db
+    .select()
+    .from(statementPeriods)
+    .where(
+      and(
+        eq(statementPeriods.accountId, accountId),
+        lte(statementPeriods.periodStart, day),
+        gte(statementPeriods.periodEnd, day),
+      ),
+    )
+    .orderBy(asc(statementPeriods.periodEnd))
+    .all();
+}
+
+function periodSource(p: { periodStart: string; periodEnd: string; reconciliation: string }): ProvenanceSource {
+  return {
+    kind: "period",
+    label: `${p.periodStart} → ${p.periodEnd}`,
+    detail: PERIOD_VERDICT_TEXT[p.reconciliation] ?? p.reconciliation,
   };
 }
 
@@ -421,51 +592,12 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
 
   const verdict: ProvenanceVerdict = isInvestment(account.type) ? "market_value" : BASIS_VERDICT[row.basis];
 
-  // the anchor this day rests on: the newest observation at or before it
-  const anchor = db
-    .select()
-    .from(balanceAnchors)
-    .where(and(eq(balanceAnchors.accountId, accountId), lte(balanceAnchors.anchoredOn, row.day)))
-    .orderBy(desc(balanceAnchors.anchoredOn))
-    .get();
-
-  const sources: ProvenanceSource[] = [];
-  if (anchor) {
-    const file = anchor.importFileId
-      ? db.select().from(importFiles).where(eq(importFiles.id, anchor.importFileId)).get()
-      : undefined;
-    sources.push({
-      kind: "anchor",
-      label:
-        anchor.source === "manual"
-          ? "a balance you entered"
-          : anchor.source === "live"
-            ? "a live price reading"
-            : file?.fileName ?? `a ${anchor.source.replace(/_/g, " ")} observation`,
-      detail: `balance recorded on ${readableDay(anchor.anchoredOn)}`,
-      on: anchor.anchoredOn,
-    });
-  }
+  // the anchor this day rests on — the same lookup a transaction's proof names
+  const anchor = anchorOnOrBefore(db, accountId, row.day);
+  const sources: ProvenanceSource[] = anchor ? [anchor.source] : [];
 
   // periods covering this day, and what each concluded
-  const periods = db
-    .select()
-    .from(statementPeriods)
-    .where(
-      and(
-        eq(statementPeriods.accountId, accountId),
-        lte(statementPeriods.periodStart, row.day),
-        gte(statementPeriods.periodEnd, row.day),
-      ),
-    )
-    .all();
-  for (const p of periods) {
-    sources.push({
-      kind: "period",
-      label: `${p.periodStart} → ${p.periodEnd}`,
-      detail: PERIOD_VERDICT_TEXT[p.reconciliation] ?? p.reconciliation,
-    });
-  }
+  for (const p of periodsCovering(db, accountId, row.day)) sources.push(periodSource(p));
 
   // last day this account's chain was closed
   const lastClosed = db

@@ -434,6 +434,85 @@ describe("provenanceFor — a transaction", () => {
     expect(p.headline).toMatch(/chain closes across this day/i);
   });
 
+  /*
+   * 🔴 S31: "carries no balances" was read off the file's statement PERIOD
+   * alone, and a CSV creates no period — it records its running balance as an
+   * `ofx_ledger` ANCHOR instead. Measured 2026-09-14:
+   * `Chase3522_Activity_20260710.CSV` owns a balance_anchors row (2026-07-08,
+   * $1,120.90) that `/accounts/<Chase Checking>` lists under Recorded balances as
+   * "bank export", while 1,078 of its rows said "That file carries no balances
+   * of its own".
+   *
+   * ⚠️ The test above keeps a CSV with NO anchor, and must keep its sentence.
+   */
+  test("a file that recorded the account's balance is not said to carry none", () => {
+    const id = addAccount("a", "Chase Checking", "checking");
+    const csv = addFile("f1", "Chase3522_Activity_20260710.CSV", "chase-deposit-csv");
+    addAnchor(id, "2026-07-08", "ofx_ledger", csv);
+    addDays(id, [
+      { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-07-15", basis: "derived" },
+    ]);
+    const txn = addTxn(id, "2026-07-15", { importFileId: csv });
+
+    const p = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;
+    expect(p.headline).not.toMatch(/carries no balances/i);
+    expect(p.headline).toContain("recorded Chase Checking's balance on Jul 8, 2026");
+    expect(p.headline).toMatch(/chain closes across this day/i);
+    expect(p.verdict).toBe("derived");
+  });
+
+  /*
+   * 🔴 S19: an ANCHORED day with no reconciled period for the row's own file
+   * fell through to "which carries no balances, so nothing checks the total it
+   * sits in" — under a green "on a statement" badge, because the day's basis
+   * graded it `sourced`. Measured 2026-09-14 on 177 rows, every one of them
+   * anchored by a DIFFERENT document than the one that carried the row: the FPL
+   * row from `Chase3522_Activity_20260710.CSV` read exactly that.
+   *
+   * ⛔ The badge is the owner's decision (2026-09-14, option a): "adds up", the
+   * grade `summedRowsProvenance` already gives this row inside every category,
+   * merchant and spending total — the row did not come from a statement, and
+   * the sheet and a total over the same row disagreed. The DAY still reads
+   * anchored.
+   *
+   * ⚠️ The anchor must come from a different file than the row. Every earlier
+   * test put the anchored-day case on the row's own reconciled statement, which
+   * is why this branch was never reached.
+   */
+  test("a row on a day another statement anchors names that statement and grades as it would inside a total", () => {
+    const id = addAccount("a", "Chase Checking", "checking");
+    const csv = addFile("f1", "Chase3522_Activity_20260710.CSV", "chase-deposit-csv");
+    const pdf = addFile("f2", "20260710-statements-3522-.pdf", "chase-checking-statement-pdf");
+    addPeriod("p2", id, pdf, "2026-06-11", "2026-07-10", "reconciled");
+    addAnchor(id, "2026-07-10", "statement", pdf);
+    addDays(id, [{ day: "2026-07-10", basis: "anchored" }]);
+    const txn = addTxn(id, "2026-07-10", { importFileId: csv });
+
+    const p = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;
+    expect(p.headline).not.toMatch(/nothing checks the total/i);
+    expect(p.headline).toContain("20260710-statements-3522-.pdf");
+    expect(p.sources.some((s) => s.kind === "anchor" && s.label === "20260710-statements-3522-.pdf")).toBe(true);
+    expect(p.checkedThrough).toBe("2026-07-10");
+    expect(p.verdict).toBe("derived");
+    expect(p.inputs[0]!.verdict).toBe("sourced");
+  });
+
+  test("a day only a balance you entered anchors is checked by that balance, never through a statement", () => {
+    const id = addAccount("a", "Chase Checking", "checking");
+    const csv = addFile("f1", "Chase3522_Activity.CSV", "chase-deposit-csv");
+    addAnchor(id, "2026-07-10", "manual");
+    addDays(id, [{ day: "2026-07-10", basis: "anchored" }]);
+    const txn = addTxn(id, "2026-07-10", { importFileId: csv });
+
+    const p = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;
+    expect(p.headline).not.toMatch(/nothing checks the total/i);
+    expect(p.headline).toMatch(/recorded by you/);
+    // no reconciled period stands behind the row, so no "checked through" date
+    expect(p.checkedThrough).toBeNull();
+    expect(p.verdict).toBe("derived");
+  });
+
   test("a row that does not exist is null", () => {
     expect(provenanceFor(bundle.db, { kind: "transaction", id: "nope" })).toBeNull();
   });
