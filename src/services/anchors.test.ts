@@ -1,14 +1,27 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { balanceAnchors, dailyBalances, type AnchorSource, type BalanceBasis } from "@/db/schema/balances";
+import { holdingEvents } from "@/db/schema/holding-events";
 import { institutions } from "@/db/schema/institutions";
+import { transactions } from "@/db/schema/transactions";
 import { MAX_FINANCIAL_DATE, MIN_FINANCIAL_DATE } from "@/lib/date-window";
+import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
-import { addManualAnchor, deleteAnchor, listAnchors, manualAnchorInputSchema } from "./anchors";
+import {
+  addManualAnchor,
+  anchorRemovalEffect,
+  anchorRemovalEffects,
+  deleteAnchor,
+  listAnchors,
+  manualAnchorInputSchema,
+} from "./anchors";
+import { basisIsChecked } from "./coverage";
+import { rebuildAccount } from "./derivation";
 
 /**
  * Schema-level tests only: parse runs before any database work, so a rejected
@@ -130,5 +143,199 @@ describe("pre-mutation snapshots", () => {
 
     expect(() => deleteAnchor(bundle.db, anchorId)).toThrow(/un-importing/);
     expect(snapshots()).toEqual([]);
+  });
+});
+
+/**
+ * THE PREDICTION IS THE EFFECT. The remove-balance dialog quotes
+ * `anchorRemovalEffect` before the owner confirms, and `deleteAnchor` is what
+ * then happens — so these run both against one database and hold the dialog's
+ * numbers to what `daily_balances` actually lost.
+ */
+describe("anchorRemovalEffect — the dialog's prediction equals what deleteAnchor does", () => {
+  const TODAY = "2026-08-02";
+  let dir: string;
+  let bundle: DbBundle;
+  let chaseId: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-anchor-removal-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+    chaseId = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!.id;
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const account = (name: string, type: "checking" | "investment") =>
+    createAccount(bundle.db, { institutionId: chaseId, name, type });
+
+  /** Written straight to the table — importers and live sync do not come through addManualAnchor. */
+  const anchor = (accountId: string, anchoredOn: string, balanceCents: number, source: AnchorSource) =>
+    bundle.db
+      .insert(balanceAnchors)
+      .values({ accountId, anchoredOn, balanceCents, source })
+      .returning({ id: balanceAnchors.id })
+      .get().id;
+
+  const txn = (accountId: string, postedOn: string, amountCents: number) => {
+    const rawDescription = `T-${postedOn}-${amountCents}`;
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId,
+        postedOn,
+        amountCents,
+        rawDescription,
+        normalizedDescription: rawDescription,
+        dedupeHash: dedupeHash({ accountId, postedOn, amountCents, rawDescription, occurrenceIndex: 0 }),
+      })
+      .run();
+  };
+
+  const stored = (accountId: string) =>
+    bundle.db
+      .select({ day: dailyBalances.day, balanceCents: dailyBalances.balanceCents, basis: dailyBalances.basis })
+      .from(dailyBalances)
+      .where(eq(dailyBalances.accountId, accountId))
+      .orderBy(asc(dailyBalances.day))
+      .all();
+
+  type StoredRow = { day: string; balanceCents: number; basis: BalanceBasis };
+
+  /** What the removal really did to the stored curve, counted the way the dialog words it. */
+  function measured(before: readonly StoredRow[], after: readonly StoredRow[]) {
+    const afterByDay = new Map(after.map((r) => [r.day, r]));
+    const beforeDays = new Set(before.map((r) => r.day));
+    const checkedAfter = (day: string) => {
+      const row = afterByDay.get(day);
+      return row !== undefined && basisIsChecked(row.basis);
+    };
+    const lostDays = before.filter((b) => basisIsChecked(b.basis) && !checkedAfter(b.day)).length;
+    const changedDays =
+      before.filter((b) => {
+        const a = afterByDay.get(b.day);
+        return !a || a.balanceCents !== b.balanceCents || basisIsChecked(a.basis) !== basisIsChecked(b.basis);
+      }).length + after.filter((a) => !beforeDays.has(a.day)).length;
+    return { lostDays, changedDays };
+  }
+
+  /** Predict at `today`, then really delete, rebuild at the same `today`, and read both curves. */
+  function predictThenRemove(accountId: string, anchorId: string, today: string) {
+    rebuildAccount(bundle.db, accountId, today);
+    const before = stored(accountId);
+    const prediction = anchorRemovalEffect(bundle.db, anchorId, today);
+    deleteAnchor(bundle.db, anchorId); // rebuilds at the wall-clock today…
+    rebuildAccount(bundle.db, accountId, today); // …so line the dates back up
+    return { prediction, before, after: stored(accountId) };
+  }
+
+  test("a past-dated live reading between two closing statements: nothing lost, and not one row moves", () => {
+    const cash = account("Robinhood Cash", "checking");
+    anchor(cash, "2026-06-30", 19_229, "statement");
+    anchor(cash, "2026-07-31", 168_038, "statement");
+    txn(cash, "2026-07-05", 700_000);
+    txn(cash, "2026-07-20", -551_191);
+    const live = anchor(cash, "2026-07-10", 723_565, "live");
+
+    const { prediction, before, after } = predictThenRemove(cash, live, TODAY);
+
+    expect(prediction).toEqual({
+      pricedFromHoldings: false,
+      lostDays: 0,
+      lostWindow: null,
+      changedDays: 0,
+      curveUnchanged: true,
+    });
+    expect(measured(before, after)).toEqual({ lostDays: 0, changedDays: 0 });
+    expect(after).toEqual(before);
+  });
+
+  test("a manual balance whose removal re-grades the days BEFORE it: the dialog's count is the rebuild's", () => {
+    const acct = account("Checking", "checking");
+    anchor(acct, "2026-07-01", 10_000, "statement");
+    txn(acct, "2026-07-05", -2_000);
+    const manual = anchor(acct, "2026-07-10", 8_000, "manual");
+
+    const { prediction, before, after } = predictThenRemove(acct, manual, "2026-07-12");
+    const effect = measured(before, after);
+
+    expect(effect.lostDays).toBe(8);
+    expect(prediction).toEqual({
+      pricedFromHoldings: false,
+      ...effect,
+      lostWindow: { from: "2026-07-05", to: "2026-07-12" },
+      curveUnchanged: false,
+    });
+  });
+
+  test("the page's one call answers for every removable balance and for no other", () => {
+    const acct = account("Checking", "checking");
+    const statement = anchor(acct, "2026-07-01", 10_000, "statement");
+    const ofx = anchor(acct, "2026-07-03", 10_000, "ofx_ledger");
+    const manual = anchor(acct, "2026-07-10", 10_000, "manual");
+    const live = anchor(acct, "2026-07-11", 10_000, "live");
+
+    const effects = anchorRemovalEffects(bundle.db, acct, "2026-07-12");
+
+    expect([...effects.keys()].sort()).toEqual([manual, live].sort());
+    expect(effects.has(statement)).toBe(false);
+    expect(effects.has(ofx)).toBe(false);
+    for (const id of [manual, live]) {
+      expect(effects.get(id)).toEqual(anchorRemovalEffect(bundle.db, id, "2026-07-12"));
+    }
+  });
+
+  test("an investment account WITH holding events is priced from holdings, whatever its balances say", () => {
+    const brokerage = account("Brokerage", "investment");
+    bundle.db
+      .insert(holdingEvents)
+      .values({
+        accountId: brokerage,
+        symbol: "AAPL",
+        assetType: "stock",
+        occurredOn: "2026-07-01",
+        quantityDeltaE8: 100_000_000,
+      })
+      .run();
+    const manual = anchor(brokerage, "2026-07-10", 500_000, "manual");
+
+    expect(anchorRemovalEffect(bundle.db, manual, TODAY)).toEqual({ pricedFromHoldings: true });
+    expect(anchorRemovalEffects(bundle.db, brokerage, TODAY)).toEqual(
+      new Map([[manual, { pricedFromHoldings: true }]]),
+    );
+  });
+
+  /**
+   * ⛔ Provenance calls EVERY investment account `market_value`, and the page
+   * used to read the dialog's branch from that verdict. The rebuild skips
+   * balances only when holding events exist, so a bare value-anchored holding
+   * is re-derived from its balances and removing one really moves it.
+   */
+  test("an investment account WITHOUT holding events rebuilds from its balances, so it is not", () => {
+    const bare = account("Bare holding", "investment");
+    anchor(bare, "2026-07-01", 100_000, "statement");
+    const manual = anchor(bare, "2026-07-05", 120_000, "manual");
+
+    expect(anchorRemovalEffect(bundle.db, manual, "2026-07-08")).toEqual({
+      pricedFromHoldings: false,
+      lostDays: 0,
+      lostWindow: null,
+      changedDays: 4,
+      curveUnchanged: false,
+    });
+  });
+
+  test("a statement or bank-export balance has no remove button, so no prediction; nor has an unknown id", () => {
+    const acct = account("Checking", "checking");
+    const statement = anchor(acct, "2026-07-01", 10_000, "statement");
+    const ofx = anchor(acct, "2026-07-02", 10_000, "ofx_ledger");
+
+    expect(anchorRemovalEffect(bundle.db, statement, TODAY)).toBeNull();
+    expect(anchorRemovalEffect(bundle.db, ofx, TODAY)).toBeNull();
+    expect(anchorRemovalEffect(bundle.db, "no-such-anchor", TODAY)).toBeNull();
   });
 });

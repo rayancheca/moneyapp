@@ -3,11 +3,17 @@ import { z } from "zod";
 import { withPreMutationSnapshot } from "@/db/backup";
 import type { AppDatabase } from "@/db/client";
 import { isLiability } from "@/db/schema/accounts";
-import { balanceAnchors } from "@/db/schema/balances";
+import { balanceAnchors, type AnchorSource } from "@/db/schema/balances";
 import { financialWindowMessage, isWithinFinancialWindow } from "@/lib/date-window";
-import { isValidIsoDate } from "@/lib/dates";
+import { isValidIsoDate, todayIso } from "@/lib/dates";
 import { getAccount } from "./accounts";
-import { rebuildAccount } from "./derivation";
+import {
+  derivesFromHoldings,
+  loadReplayInputs,
+  rebuildAccount,
+  removalEffect,
+  type RemovalEffect,
+} from "./derivation";
 
 /**
  * Manual balance entry. UI collects credit-card balances as positive
@@ -87,10 +93,81 @@ export function listAnchors(db: AppDatabase, accountId: string) {
     .all();
 }
 
+/**
+ * The balances a person can remove from /accounts/[id]. A statement or bank-export
+ * balance leaves only when its file is un-imported. One rule for `deleteAnchor`
+ * and for the prediction the dialog quotes before it.
+ */
+export function isRemovableAnchorSource(source: AnchorSource): boolean {
+  return source === "manual" || source === "live";
+}
+
+export type AnchorRemovalEffect =
+  | { pricedFromHoldings: true }
+  | ({ pricedFromHoldings: false } & RemovalEffect);
+
+/**
+ * What `deleteAnchor` WOULD do to each removable balance on one account — the
+ * figures the remove-balance dialog quotes before the owner confirms.
+ *
+ * It takes the branch `rebuildAccount` takes: an account priced from its holdings
+ * never reads a recorded balance, so removing one changes nothing; any other is
+ * `removalEffect` over `loadReplayInputs`. Loaded ONCE per account however many
+ * rows the page renders — building drizzle queries is this app's measured cost,
+ * and per-row loads would multiply it by the rows. Keys are exactly the balances
+ * `deleteAnchor` accepts.
+ */
+export function anchorRemovalEffects(
+  db: AppDatabase,
+  accountId: string,
+  today: string = todayIso(),
+): Map<string, AnchorRemovalEffect> {
+  const account = getAccount(db, accountId);
+  if (!account) throw new Error(`Unknown account ${accountId}`);
+
+  if (derivesFromHoldings(db, account)) {
+    return new Map(
+      listAnchors(db, accountId)
+        .filter((a) => isRemovableAnchorSource(a.source))
+        .map((a): [string, AnchorRemovalEffect] => [a.id, { pricedFromHoldings: true }]),
+    );
+  }
+
+  const { anchors, txnSumByDay } = loadReplayInputs(db, accountId);
+  const options = { isInvestment: account.type === "investment", today };
+  return new Map(
+    anchors
+      .filter((a) => isRemovableAnchorSource(a.source))
+      .map((a): [string, AnchorRemovalEffect] => [
+        a.id,
+        { pricedFromHoldings: false, ...removalEffect(anchors, a.id, txnSumByDay, options) },
+      ]),
+  );
+}
+
+/**
+ * The prediction for ONE balance, beside the action it predicts. Null for a
+ * balance with no remove button (statement, bank export) or no such balance.
+ * A page listing many rows should call `anchorRemovalEffects` once instead.
+ */
+export function anchorRemovalEffect(
+  db: AppDatabase,
+  anchorId: string,
+  today: string = todayIso(),
+): AnchorRemovalEffect | null {
+  const anchor = db
+    .select({ accountId: balanceAnchors.accountId, source: balanceAnchors.source })
+    .from(balanceAnchors)
+    .where(eq(balanceAnchors.id, anchorId))
+    .get();
+  if (!anchor || !isRemovableAnchorSource(anchor.source)) return null;
+  return anchorRemovalEffects(db, anchor.accountId, today).get(anchorId) ?? null;
+}
+
 export function deleteAnchor(db: AppDatabase, anchorId: string): void {
   const anchor = db.select().from(balanceAnchors).where(eq(balanceAnchors.id, anchorId)).get();
   if (!anchor) return;
-  if (anchor.source !== "manual" && anchor.source !== "live") {
+  if (!isRemovableAnchorSource(anchor.source)) {
     throw new Error("Statement-derived anchors are removed by un-importing their file");
   }
   // A hand-entered balance is unrecoverable — nothing re-derives it.

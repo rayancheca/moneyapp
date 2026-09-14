@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
-import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
+import { balanceAnchors, dailyBalances, type AnchorSource, type BalanceBasis } from "@/db/schema/balances";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import {
@@ -14,6 +14,7 @@ import {
   MAX_FINANCIAL_DATE,
   MIN_FINANCIAL_DATE,
 } from "@/lib/date-window";
+import { compareDates } from "@/lib/dates";
 import { dedupeHash } from "@/lib/hash";
 import {
   REPLAY_STATUSES,
@@ -25,9 +26,11 @@ import {
   netWorthSeries,
   pickWinners,
   rebuildAccount,
+  removalEffect,
 } from "./derivation";
 import { addManualAnchor } from "./anchors";
 import { createAccount } from "./accounts";
+import { basisIsChecked } from "./coverage";
 
 const TODAY = "2026-07-08";
 
@@ -333,6 +336,264 @@ describe("deriveDailyRows — the date-window cap", () => {
 
   test("with no anchors there is no loop to bound, so a wild txn date is still just no rows", () => {
     expect(deriveDailyRows([], new Map([["9999-12-31", -100]]), opts)).toEqual([]);
+  });
+});
+
+/**
+ * The remove-balance dialog on /accounts/[id] quotes this before a destructive,
+ * snapshot-only-undo action. Every fixture below ALSO asserts the condition its
+ * name promises — a fixture that cannot express a condition cannot test it —
+ * and, where the old page got it wrong, the number the old range rule printed.
+ */
+describe("removalEffect — what removing a recorded balance un-verifies", () => {
+  const anchor = (id: string, anchoredOn: string, balanceCents: number, source: AnchorSource) => ({
+    id,
+    anchoredOn,
+    balanceCents,
+    source,
+  });
+  const cash = (today: string) => ({ isInvestment: false, today });
+  const basisOn = (rows: readonly { day: string; basis: BalanceBasis }[], day: string) =>
+    rows.find((r) => r.day === day)?.basis;
+
+  /**
+   * The rule the page used to apply — checked days of the derived series from
+   * the balance's own date up to the next recorded one — kept here ONLY to prove
+   * each fixture reproduces what the dialog printed.
+   */
+  const oldRangeCount = (
+    rows: readonly { day: string; basis: BalanceBasis }[],
+    from: string,
+    nextExclusive?: string,
+  ) =>
+    rows.filter(
+      (r) =>
+        basisIsChecked(r.basis) &&
+        compareDates(r.day, from) >= 0 &&
+        (nextExclusive === undefined || compareDates(r.day, nextExclusive) < 0),
+    ).length;
+
+  const NOTHING = { lostDays: 0, lostWindow: null, changedDays: 0, curveUnchanged: true };
+
+  test("A1 a past-dated live reading between two statements that close un-verifies nothing (Robinhood Cash)", () => {
+    const today = "2026-08-02";
+    const anchors = [
+      anchor("s-jun", "2026-06-30", 19_229, "statement"),
+      anchor("live", "2026-07-10", 723_565, "live"),
+      anchor("s-jul", "2026-07-31", 168_038, "statement"),
+    ];
+    // 19,229 + 700,000 − 551,191 = 168,038: Jun 30 → Jul 31 closes without the live reading
+    const txns = new Map([
+      ["2026-07-05", 700_000],
+      ["2026-07-20", -551_191],
+    ]);
+
+    const rows = deriveDailyRows(pickWinners(anchors), txns, cash(today));
+    expect(basisOn(rows, "2026-07-15")).toBe("derived");
+    expect(compareDates("2026-07-10", today)).toBeLessThan(0);
+    // the defect: the range rule credited Jul 10 – 30 to a reading that is not an endpoint
+    expect(oldRangeCount(rows, "2026-07-10", "2026-07-31")).toBe(21);
+
+    expect(removalEffect(anchors, "live", txns, cash(today))).toEqual(NOTHING);
+  });
+
+  test("A2 a manual balance one day after an EQUAL statement, nothing posted that day (Chase Sapphire)", () => {
+    const today = "2025-03-05";
+    const anchors = [
+      anchor("s-feb", "2025-02-02", 0, "statement"),
+      anchor("manual", "2025-02-03", 0, "manual"),
+      anchor("s-mar", "2025-03-02", 0, "statement"),
+    ];
+    const txns = new Map([
+      ["2025-02-04", -5_000],
+      ["2025-02-20", 5_000],
+    ]);
+    expect(txns.has("2025-02-03")).toBe(false);
+
+    const rows = deriveDailyRows(pickWinners(anchors), txns, cash(today));
+    expect(oldRangeCount(rows, "2025-02-03", "2025-03-02")).toBe(27);
+    // the only change removal makes is anchored → derived at the same balance, and that is not a loss
+    const without = deriveDailyRows(
+      pickWinners(anchors.filter((a) => a.id !== "manual")),
+      txns,
+      cash(today),
+    );
+    expect(rows.find((r) => r.day === "2025-02-03")).toEqual({ day: "2025-02-03", balanceCents: 0, basis: "anchored" });
+    expect(without.find((r) => r.day === "2025-02-03")).toEqual({ day: "2025-02-03", balanceCents: 0, basis: "derived" });
+
+    expect(removalEffect(anchors, "manual", txns, cash(today))).toEqual(NOTHING);
+  });
+
+  test("A3 the sole manual balance: its day, the carried days, never the unverified one (Cash on Hand)", () => {
+    const today = "2026-08-14";
+    const anchors = [anchor("manual", "2026-08-03", 500_000, "manual")];
+    const txns = new Map([["2026-08-11", -500_000]]);
+
+    const rows = deriveDailyRows(pickWinners(anchors), txns, cash(today));
+    expect(rows.filter((r) => r.basis === "carried")).toHaveLength(7);
+    expect(basisOn(rows, "2026-08-11")).toBe("derived_unverified");
+
+    expect(removalEffect(anchors, "manual", txns, cash(today))).toEqual({
+      lostDays: 8,
+      lostWindow: { from: "2026-08-03", to: "2026-08-10" },
+      // every row goes: nothing is left to derive the account from
+      changedDays: 12,
+      curveUnchanged: false,
+    });
+  });
+
+  test("A4 a same-day manual + statement pair: precedence decides, never row order (Discover)", () => {
+    const today = "2024-09-20";
+    const statement = anchor("s-aug", "2024-08-18", -18_000, "statement");
+    // a DIFFERENT figure, so a manual that won the day would move the curve
+    const manual = anchor("manual", "2024-08-18", -17_500, "manual");
+    const next = anchor("s-sep", "2024-09-17", -20_000, "statement");
+    const txns = new Map([["2024-08-25", -2_000]]);
+
+    const rows = deriveDailyRows(pickWinners([statement, manual, next]), txns, cash(today));
+    // the order-sensitive half of the old rule: with Sep 17 as "next" it read 30 days
+    expect(oldRangeCount(rows, "2024-08-18", "2024-09-17")).toBe(30);
+
+    for (const order of [
+      [statement, manual, next],
+      [manual, statement, next],
+    ]) {
+      expect(pickWinners(order).find((w) => w.anchoredOn === "2024-08-18")?.source).toBe("statement");
+      expect(removalEffect(order, "manual", txns, cash(today))).toEqual(NOTHING);
+    }
+  });
+
+  test("A5 days BEFORE the balance's own date count when removal re-grades the span behind it", () => {
+    const today = "2026-07-12";
+    const anchors = [
+      anchor("s-jul", "2026-07-01", 10_000, "statement"),
+      anchor("manual", "2026-07-10", 8_000, "manual"),
+    ];
+    const txns = new Map([["2026-07-05", -2_000]]);
+
+    const rows = deriveDailyRows(pickWinners(anchors), txns, cash(today));
+    expect(basisOn(rows, "2026-07-05")).toBe("derived");
+    expect(oldRangeCount(rows, "2026-07-10")).toBe(3);
+
+    expect(removalEffect(anchors, "manual", txns, cash(today))).toEqual({
+      // Jul 5 – 9 derived, Jul 10 anchored, Jul 11 – 12 carried: all become a walk forward from Jul 1
+      lostDays: 8,
+      lostWindow: { from: "2026-07-05", to: "2026-07-12" },
+      changedDays: 8,
+      curveUnchanged: false,
+    });
+  });
+
+  test("A6 a wrong manual balance that breaks the chain: nothing lost, but the curve moves", () => {
+    const today = "2026-07-22";
+    const anchors = [
+      anchor("s-jul1", "2026-07-01", 10_000, "statement"),
+      anchor("manual", "2026-07-10", 5_000, "manual"),
+      anchor("s-jul20", "2026-07-20", 8_000, "statement"),
+    ];
+    const txns = new Map([["2026-07-05", -2_000]]);
+
+    const rows = deriveDailyRows(pickWinners(anchors), txns, cash(today));
+    expect(basisOn(rows, "2026-07-05")).toBe("gap");
+    expect(basisOn(rows, "2026-07-15")).toBe("gap");
+
+    expect(removalEffect(anchors, "manual", txns, cash(today))).toEqual({
+      lostDays: 0,
+      lostWindow: null,
+      // Jul 2 – 19: seventeen gap days become derived, and Jul 10 moves from $50.00 to $80.00
+      changedDays: 18,
+      curveUnchanged: false,
+    });
+  });
+
+  test("A7a a live reading dated TODAY after a posted transaction verifies exactly today", () => {
+    const today = "2026-07-06";
+    const anchors = [
+      anchor("s-jul", "2026-07-01", 10_000, "statement"),
+      anchor("live", today, 9_000, "live"),
+    ];
+    const txns = new Map([["2026-07-03", -1_000]]);
+
+    const rows = deriveDailyRows(pickWinners(anchors), txns, cash(today));
+    expect(basisOn(rows, "2026-07-05")).toBe("derived_unverified");
+    expect(basisOn(rows, today)).toBe("anchored");
+
+    expect(removalEffect(anchors, "live", txns, cash(today))).toEqual({
+      lostDays: 1,
+      lostWindow: { from: today, to: today },
+      changedDays: 1,
+      curveUnchanged: false,
+    });
+  });
+
+  test("A7b a live reading dated TODAY with nothing posted: today stays carried, at a different figure", () => {
+    const today = "2026-07-06";
+    const anchors = [
+      anchor("s-jul", "2026-07-01", 10_000, "statement"),
+      anchor("live", today, 9_500, "live"),
+    ];
+    const txns = new Map<string, number>();
+
+    const rows = deriveDailyRows(pickWinners(anchors), txns, cash(today));
+    expect(rows.find((r) => r.day === today)).toEqual({ day: today, balanceCents: 9_500, basis: "anchored" });
+
+    expect(removalEffect(anchors, "live", txns, cash(today))).toEqual({
+      lostDays: 0,
+      lostWindow: null,
+      changedDays: 1,
+      curveUnchanged: false,
+    });
+  });
+
+  test("A8 an investment account on the anchor path: step-holds never un-verify, but the level moves", () => {
+    const options = { isInvestment: true, today: "2026-07-08" };
+    const anchors = [
+      anchor("s-jun", "2026-06-30", 8_900_000, "statement"),
+      anchor("manual", "2026-07-03", 9_000_000, "manual"),
+      anchor("s-jul", "2026-07-06", 9_100_000, "statement"),
+    ];
+    const txns = new Map([["2026-07-01", 50_000]]); // a contribution — never replayed
+
+    const rows = deriveDailyRows(pickWinners(anchors), txns, options);
+    expect(basisOn(rows, "2026-07-04")).toBe("carried");
+    expect(rows.every((r) => basisIsChecked(r.basis))).toBe(true);
+
+    expect(removalEffect(anchors, "manual", txns, options)).toEqual({
+      lostDays: 0,
+      lostWindow: null,
+      // Jul 3 – 5 carry $89,000.00 instead of $90,000.00
+      changedDays: 3,
+      curveUnchanged: false,
+    });
+  });
+
+  test("A9 removing the FIRST balance moves the backward walk; days already unverified are not counted", () => {
+    const today = "2026-07-10";
+    const anchors = [
+      anchor("manual", "2026-07-01", 10_000, "manual"),
+      anchor("s-jul", "2026-07-10", 8_000, "statement"),
+    ];
+    const txns = new Map([
+      ["2026-06-28", 500],
+      ["2026-07-05", -2_000],
+    ]);
+
+    const rows = deriveDailyRows(pickWinners(anchors), txns, cash(today));
+    expect(basisOn(rows, "2026-06-30")).toBe("derived_unverified");
+    expect(basisOn(rows, "2026-07-02")).toBe("derived");
+
+    expect(removalEffect(anchors, "manual", txns, cash(today))).toEqual({
+      lostDays: 9,
+      lostWindow: { from: "2026-07-01", to: "2026-07-09" },
+      changedDays: 9,
+      curveUnchanged: false,
+    });
+  });
+
+  test("an id that is not among the anchors is refused, never reported as harmless", () => {
+    expect(() =>
+      removalEffect([anchor("a", "2026-07-01", 1, "manual")], "missing", new Map(), cash("2026-07-02")),
+    ).toThrow(/missing/);
   });
 });
 

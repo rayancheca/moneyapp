@@ -1,12 +1,13 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
-import { accounts } from "@/db/schema/accounts";
+import { accounts, type AccountType } from "@/db/schema/accounts";
 import { balanceAnchors, dailyBalances, type AnchorSource, type BalanceBasis } from "@/db/schema/balances";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { splitMissing, type AccountOpening } from "@/lib/coverage-label";
 import { assertWithinFinancialWindow } from "@/lib/date-window";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
+import { basisIsChecked } from "./coverage";
 import { rebuildInvestmentHistory } from "./crypto-history";
 import { regradeStatementPeriods } from "./statement-periods";
 
@@ -267,38 +268,55 @@ function deriveForward(
   }
 }
 
-/** Rebuilds the derived cache for one account in a single sync transaction. */
-export function rebuildAccount(db: AppDatabase, accountId: string, today: string = todayIso()): void {
-  const account = db.select().from(accounts).where(eq(accounts.id, accountId)).get();
-  if (!account) throw new Error(`rebuildAccount: unknown account ${accountId}`);
+/** A recorded balance as replay reads it — the row id rides along so one can be left out. */
+export interface ReplayAnchor {
+  id: string;
+  anchoredOn: string;
+  balanceCents: number;
+  source: AnchorSource;
+}
 
-  // Investment accounts with a quantity timeline derive value from
-  // holding_events × daily closes (Stage 4a) — NOT value-anchor step-hold, which
-  // only knows the seed day. Delegating here also stops an import/anchor rebuild
-  // from wiping a computed crypto/equity curve. Accounts with no events (a bare
-  // value-anchored holding) keep the anchor path below.
-  if (account.type === "investment") {
-    const hasEvents = db
-      .select({ id: holdingEvents.id })
-      .from(holdingEvents)
-      .where(eq(holdingEvents.accountId, accountId))
-      .limit(1)
-      .get();
-    if (hasEvents) {
-      rebuildInvestmentHistory(db, accountId, today);
-      /*
-       * ⚠️ The early return needs the re-grade too, and this is the branch where
-       * it matters most: Robinhood Brokerage and Robinhood Crypto BOTH take it,
-       * and they are the two accounts whose periods are `value_anchor` — the
-       * verdict pass 73 built an arbiter around.
-       */
-      regradeStatementPeriods(db, accountId);
-      return;
-    }
-  }
+/** Everything balance replay reads for one account. */
+export interface ReplayInputs {
+  anchors: ReplayAnchor[];
+  /** replayed transactions (REPLAY_STATUSES), summed per posted day */
+  txnSumByDay: Map<string, number>;
+}
 
+/**
+ * Whether this account's curve comes from holding_events × daily closes instead
+ * of from its recorded balances — the branch `rebuildAccount` takes, where
+ * `rebuildInvestmentHistory` never reads `balance_anchors`.
+ *
+ * Exported because a PREDICTION of a rebuild has to take the branch the rebuild
+ * takes. ⛔ `provenanceFor`'s `market_value` verdict is NOT this predicate: it
+ * covers every investment account, while the rebuild skips balances only for one
+ * WITH events. /accounts/[id] read its remove-balance dialog's branch off that
+ * verdict; measured 2026-09-14, all 38 manual/live balances on investment
+ * accounts sit on accounts with events, so the two agreed only by the ledger's
+ * luck.
+ */
+export function derivesFromHoldings(db: AppDatabase, account: { id: string; type: AccountType }): boolean {
+  if (account.type !== "investment") return false;
+  const hasEvents = db
+    .select({ id: holdingEvents.id })
+    .from(holdingEvents)
+    .where(eq(holdingEvents.accountId, account.id))
+    .limit(1)
+    .get();
+  return hasEvents !== undefined;
+}
+
+/**
+ * The inputs `rebuildAccount` derives from, loaded once. Exported so a caller
+ * that predicts a rebuild (`removalEffect` via services/anchors) reads exactly
+ * what the rebuild reads — the same balances, the same replay statuses — rather
+ * than a query of its own that could drift from this one.
+ */
+export function loadReplayInputs(db: AppDatabase, accountId: string): ReplayInputs {
   const anchors = db
     .select({
+      id: balanceAnchors.id,
       anchoredOn: balanceAnchors.anchoredOn,
       balanceCents: balanceAnchors.balanceCents,
       source: balanceAnchors.source,
@@ -323,6 +341,134 @@ export function rebuildAccount(db: AppDatabase, accountId: string, today: string
   for (const t of txns) {
     txnSumByDay.set(t.postedOn, (txnSumByDay.get(t.postedOn) ?? 0) + t.amountCents);
   }
+  return { anchors, txnSumByDay };
+}
+
+export interface RemovalEffect {
+  /** days that are checked now and would be unchecked, or gone, without the balance */
+  lostDays: number;
+  /** the first and last of those days; null when no day is lost */
+  lostWindow: { from: string; to: string } | null;
+  /** days whose presence, balance or checked-ness would differ */
+  changedDays: number;
+  /** true only when no day would differ at all */
+  curveUnchanged: boolean;
+}
+
+/**
+ * What removing ONE recorded balance does to an account's curve: the account
+ * derived with every balance and again without that one, at the same `today`,
+ * compared day by day. The rule is `deriveDailyRows` and the meaning of
+ * "verified" is `basisIsChecked`; this is only the difference between two runs
+ * of them, never a third opinion about which balances matter.
+ *
+ * Both sides are derived rather than read from `daily_balances`: that cache stops
+ * wherever `today` stood at its last rebuild (on 2026-09-14, Robinhood Cash's at
+ * 2026-08-28 and Cash on Hand's at 2026-08-11), while `deleteAnchor` rebuilds at
+ * today.
+ *
+ * ⚠️ anchored ↔ derived ↔ carried at the same balance is NOT a change — all three
+ * are checked and draw alike. Only a day's presence, balance or checked-ness
+ * moving counts.
+ *
+ * 🔴 It began on /accounts/[id] as `daysPinnedBy`, which counted every day in the
+ * span whatever its basis, so `/accounts/<Cash on Hand>` offered "Days that stop
+ * being verified — 9 days" over a span whose last day, 2026-08-11, is
+ * `derived_unverified`: the same page's header calls it "derived (unverified)"
+ * and its provenance badge reads "nothing checks it". A day that is not verified
+ * cannot stop being verified. The answer is 8.
+ *
+ * 🔴 And the fix for that shipped a local `{anchored, derived}` set, which dropped
+ * the SEVEN `carried` days too and answered **1**. `carried` means nothing posted
+ * since the anchor, so those days rest on the anchor and are exactly what
+ * removing it un-verifies. `basisIsChecked` is the rule, and `coverage` is the
+ * only place it lives.
+ *
+ * 🔴 Then a date range was the wrong question altogether. `daysPinnedBy` counted
+ * checked days in the STORED series from the balance's own date up to the next
+ * recorded one, repeating none of the rules above. Measured 2026-09-14: Robinhood
+ * Cash's live reading of 2026-07-10 read "Days that stop being verified: 21 days",
+ * but a live reading is never an endpoint while a statement exists, and Jul 10 – 30
+ * rest on the Jun 30 → Jul 31 statement span, so removing it changes no row at
+ * all. Chase Sapphire's manual $0.00 of 2025-02-03 read "27 days": it sits one day
+ * after an equal $0.00 statement with nothing posted on the 3rd, so the span
+ * closes without it, and the true loss is 0. Discover's "no days" was right only
+ * because SQLite happened to return its same-day statement row first. And a range
+ * that starts at the balance's date can never see the days BEFORE it, which a
+ * last or middle balance re-grades when it goes.
+ *
+ * Throws when `removedId` is not among `anchors`: a balance that is not there
+ * cannot be removed, and "changes nothing" would be a quiet false answer.
+ */
+export function removalEffect(
+  anchors: readonly ReplayAnchor[],
+  removedId: string,
+  txnSumByDay: ReadonlyMap<string, number>,
+  options: { isInvestment: boolean; today: string },
+): RemovalEffect {
+  if (!anchors.some((a) => a.id === removedId)) {
+    throw new Error(`removalEffect: balance ${removedId} is not among this account's recorded balances`);
+  }
+  const before = deriveDailyRows(pickWinners(anchors), txnSumByDay, options);
+  const after = deriveDailyRows(
+    pickWinners(anchors.filter((a) => a.id !== removedId)),
+    txnSumByDay,
+    options,
+  );
+  const afterByDay = new Map(after.map((r) => [r.day, r]));
+  const beforeDays = new Set(before.map((r) => r.day));
+
+  // `before` is sorted by day, so the first and last lost rows bound the window
+  const lost = before.filter((b) => basisIsChecked(b.basis) && !isCheckedRow(afterByDay.get(b.day)));
+  const changedDays =
+    before.filter((b) => rowDiffers(b, afterByDay.get(b.day))).length +
+    after.filter((a) => !beforeDays.has(a.day)).length;
+  const first = lost[0];
+  const last = lost.at(-1);
+
+  return {
+    lostDays: lost.length,
+    lostWindow: first && last ? { from: first.day, to: last.day } : null,
+    changedDays,
+    curveUnchanged: changedDays === 0,
+  };
+}
+
+function isCheckedRow(row: DayRow | undefined): boolean {
+  return row !== undefined && basisIsChecked(row.basis);
+}
+
+function rowDiffers(before: DayRow, after: DayRow | undefined): boolean {
+  return (
+    after === undefined ||
+    after.balanceCents !== before.balanceCents ||
+    basisIsChecked(after.basis) !== basisIsChecked(before.basis)
+  );
+}
+
+/** Rebuilds the derived cache for one account in a single sync transaction. */
+export function rebuildAccount(db: AppDatabase, accountId: string, today: string = todayIso()): void {
+  const account = db.select().from(accounts).where(eq(accounts.id, accountId)).get();
+  if (!account) throw new Error(`rebuildAccount: unknown account ${accountId}`);
+
+  // Investment accounts with a quantity timeline derive value from
+  // holding_events × daily closes (Stage 4a) — NOT value-anchor step-hold, which
+  // only knows the seed day. Delegating here also stops an import/anchor rebuild
+  // from wiping a computed crypto/equity curve. Accounts with no events (a bare
+  // value-anchored holding) keep the anchor path below.
+  if (derivesFromHoldings(db, account)) {
+    rebuildInvestmentHistory(db, accountId, today);
+    /*
+     * ⚠️ The early return needs the re-grade too, and this is the branch where
+     * it matters most: Robinhood Brokerage and Robinhood Crypto BOTH take it,
+     * and they are the two accounts whose periods are `value_anchor` — the
+     * verdict pass 73 built an arbiter around.
+     */
+    regradeStatementPeriods(db, accountId);
+    return;
+  }
+
+  const { anchors, txnSumByDay } = loadReplayInputs(db, accountId);
 
   const rows = deriveDailyRows(pickWinners(anchors), txnSumByDay, {
     isInvestment: account.type === "investment",

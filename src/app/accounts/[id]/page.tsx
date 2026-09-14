@@ -3,7 +3,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
 import { isLiability } from "@/db/schema/accounts";
-import type { BalanceBasis } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
 import { accountSubtypeLabel, accountTypeLabel } from "@/lib/account-label";
@@ -13,9 +12,8 @@ import { formatDayShort } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { balanceDeltaAccent, balanceHeading, type BalanceDeltaAccent } from "@/lib/side-magnitude";
 import { accountInsights } from "@/services/account-insights";
-import { basisIsChecked } from "@/services/coverage";
 import { getAccount, listAccounts, listInstitutions } from "@/services/accounts";
-import { listAnchors } from "@/services/anchors";
+import { anchorRemovalEffects, listAnchors, type AnchorRemovalEffect } from "@/services/anchors";
 import { accountSeries } from "@/services/derivation";
 import { listAccountHoldings } from "@/services/holdings";
 import { CASH_INSTITUTION_NAME } from "@/services/manual-transactions";
@@ -81,37 +79,31 @@ function ChangeChip({ label, cents, liability = false }: { label: string; cents:
 }
 
 /**
- * The days one recorded balance currently VERIFIES: its own date up to (but not
- * including) the next one, counting only days that are actually checked.
- * Counted on the DERIVED series rather than re-deriving the span here — the
- * number in a confirmation has to be the ledger's own, never a second
- * implementation of it.
+ * The remove-balance dialog's headline, read off what removal actually changes
+ * (`anchorRemovalEffects`, which derives the account with and without the
+ * balance) — never a date range worked out on this page. The count's measured
+ * history lives on `removalEffect` in services/derivation.
  *
- * 🔴 It counted every day in the span whatever its basis, so
- * `/accounts/<Cash on Hand>` offered "Days that stop being verified — 9 days"
- * over a span whose last day, 2026-08-11, is `derived_unverified`: the same
- * page's header calls it "derived (unverified)" and its provenance badge reads
- * "nothing checks it". A day that is not verified cannot stop being verified.
- * The answer is 8.
- *
- * 🔴 And the fix for that shipped a local `{anchored, derived}` set, which
- * dropped the SEVEN `carried` days too and answered **1**. `carried` means
- * nothing posted since the anchor, so those days rest on the anchor and are
- * exactly what removing it un-verifies. `basisIsChecked` is the rule now and
- * `coverage` is the only place it lives — this page reads it rather than
- * keeping a third opinion about the same five basis values.
+ * ⛔ Each branch says only what its effect proves:
+ * - "leaves the curve exactly as it is" needs `curveUnchanged`, not merely no day
+ *   lost. A wrong balance that breaks a chain pins nothing, yet removing it turns
+ *   the gap days around it back into derived ones.
+ * - "is what verifies X on …" names the days it loses, which can start BEFORE the
+ *   balance's own date when removal re-grades the span behind it, and run past
+ *   it through the carried days. `dayWindowLabel` names that window; a single
+ *   lost day stays a single date.
  */
-function daysPinnedBy(
-  series: readonly { day: string; basis: BalanceBasis }[],
-  anchoredOn: string,
-  nextAnchoredOn: string | undefined,
-): number {
-  return series.filter(
-    (p) =>
-      basisIsChecked(p.basis) &&
-      compareDates(p.day, anchoredOn) >= 0 &&
-      (nextAnchoredOn === undefined || compareDates(p.day, nextAnchoredOn) < 0),
-  ).length;
+function removeBalanceHeadline(accountName: string, effect: AnchorRemovalEffect): string {
+  if (effect.pricedFromHoldings) {
+    return `${accountName} is priced from its holdings, so this recorded balance verifies nothing. Removing it leaves the curve exactly as it is.`;
+  }
+  if (effect.lostWindow) {
+    return `This balance is what verifies ${accountName} on ${dayWindowLabel(effect.lostWindow.from, effect.lostWindow.to)}. Removing it leaves those days to be derived from transactions alone.`;
+  }
+  if (effect.curveUnchanged) {
+    return `This balance pins no day of ${accountName} that another balance does not already pin. Removing it leaves the curve exactly as it is.`;
+  }
+  return `This balance pins no day of ${accountName} that another balance does not already pin, but removing it re-derives ${countPhrase(effect.changedDays, "day")} from the balances around it.`;
 }
 
 export default async function AccountDetailPage({
@@ -204,21 +196,22 @@ export default async function AccountDetailPage({
   }
 
   const holdings = account.type === "investment" ? listAccountHoldings(db, id) : [];
-  /*
-   * ⛔ The one condition that decides whether a recorded balance does anything:
-   * `rebuildAccount` short-circuits an investment account with holdings into
-   * `rebuildInvestmentHistory`, which never reads `balance_anchors`. It is the
-   * same fact `provenanceFor` reports as the "market value" verdict, and it is
-   * read from there rather than restated.
-   */
-  const pricedFromHoldings = balanceProvenance?.verdict === "market_value";
   const holdingsValue = holdings.reduce((sum, h) => sum + (h.valueCents ?? 0), 0);
 
   const ledgerRows = recentLedgerRows(db, { accountId: id, limit: RECENT_TXN_LIMIT });
   const pickerOptions = buildCategoryPickerOptions(db.select().from(categories).all());
 
-  // newest first, so anchors[i - 1] is the NEXT recorded balance in time
+  // newest first
   const anchors = [...listAnchors(db, id)].reverse();
+  /*
+   * ⛔ What removing each manual or live balance would change, from ONE load of
+   * the account's replay inputs — the rows below only look their answer up.
+   * `rebuildAccount`'s own branch decides "priced from holdings" here, not the
+   * provenance verdict above: `market_value` covers every investment account,
+   * and the rebuild skips balances only for one with holding events.
+   */
+  const removalEffects = anchorRemovalEffects(db, id, today);
+  const anchorRows = anchors.map((a) => ({ a, removal: removalEffects.get(a.id) }));
 
   return (
     <>
@@ -393,7 +386,7 @@ export default async function AccountDetailPage({
                 </tr>
               </thead>
               <tbody>
-                {anchors.map((a, i) => (
+                {anchorRows.map(({ a, removal }) => (
                   <tr key={a.id} className="border-b border-line/60 last:border-0">
                     <td className="figures py-2">{a.anchoredOn}</td>
                     <td className="py-2 text-xs text-ink-muted">{SOURCE_LABEL[a.source]}</td>
@@ -414,7 +407,7 @@ export default async function AccountDetailPage({
                       />
                     </td>
                     <td className="py-2 text-right">
-                      {(a.source === "manual" || a.source === "live") && (
+                      {removal && (
                         <ConfirmActionButton
                           action={deleteAnchorAction}
                           fields={{ anchorId: a.id, accountId: id }}
@@ -446,16 +439,14 @@ export default async function AccountDetailPage({
                              read "Days that stop being verified: no days".
                              Measured 2026-09-10: `Discover` holds TWO anchors
                              on 2024-08-18, one manual and one from a statement,
-                             so `daysPinnedBy` filters to an empty span and the
-                             day stays `anchored` after the manual row goes —
-                             the statement anchor holds it. One of the 21
-                             remove-balance dialogs on this ledger. */
+                             and the day stays `anchored` after the manual row
+                             goes — the statement anchor holds it. (The old
+                             date-range count reached that answer only because
+                             SQLite returned the statement row first; see
+                             `removalEffect`.) One of the 21 remove-balance
+                             dialogs on this ledger. */
                           radius={{
-                            headline: pricedFromHoldings
-                              ? `${account.name} is priced from its holdings, so this recorded balance verifies nothing. Removing it leaves the curve exactly as it is.`
-                              : daysPinnedBy(series, a.anchoredOn, anchors[i - 1]?.anchoredOn) === 0
-                                ? `This balance pins no day of ${account.name} that another balance does not already pin. Removing it leaves the curve exactly as it is.`
-                                : `This balance is what verifies ${account.name} on ${dayWindowLabel(a.anchoredOn, a.anchoredOn)}. Removing it leaves those days to be derived from transactions alone.`,
+                            headline: removeBalanceHeadline(account.name, removal),
                             lines: [
                               {
                                 /* the same rule, and the same hand-rolled copy:
@@ -471,19 +462,16 @@ export default async function AccountDetailPage({
                               },
                               {
                                 label: "Days that stop being verified",
-                                value: pricedFromHoldings
+                                value: removal.pricedFromHoldings
                                   ? "none — the curve comes from holdings"
-                                  : countPhrase(
-                                      daysPinnedBy(series, a.anchoredOn, anchors[i - 1]?.anchoredOn),
-                                      "day",
-                                    ),
+                                  : countPhrase(removal.lostDays, "day"),
                               },
                               {
                                 label: "Recorded balances left on this account",
                                 value: countPhrase(anchors.length - 1, "balance"),
                               },
                             ],
-                            reassurance: pricedFromHoldings
+                            reassurance: removal.pricedFromHoldings
                               ? "No transaction and no holding is touched — this account's value history is rebuilt from its holdings and their stored closes, which this balance is not part of."
                               : "No transaction is touched — the balance curve is derived, so it rebuilds from what is left. Record the balance again to re-verify these days.",
                           }}
