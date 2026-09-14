@@ -46,6 +46,26 @@ export interface CashCumulativePoint {
   netCum: number;
   /** the prior period's cumulative spend at this point; null when there is no ghost */
   ghostCum: number | null;
+  /**
+   * `ghostCum` here is the prior period WHOLE, not its running total at this
+   * position — true only at the pinned last point of a ghosted series.
+   */
+  ghostWhole: boolean;
+}
+
+/**
+ * The words beside a point's ghost figure — decided where the figure is.
+ *
+ * 🔴 The tooltip printed "Spent by here, August 2026" at every point, including
+ * the last, whose figure is August WHOLE (the tail no September bucket can
+ * carry included). "By here" names a running total and that point is not one:
+ * 19 of 49 month periods, every 30-day month under a 31-day one. The figure is
+ * right — only its sentence was wrong.
+ */
+export function ghostRowLabel(point: Pick<CashCumulativePoint, "ghostWhole">, priorLabel: string | null): string {
+  return point.ghostWhole
+    ? `Spent in ${priorLabel ?? "the prior period"}`
+    : `Spent by here, ${priorLabel ?? "prior period"}`;
 }
 
 /**
@@ -81,6 +101,8 @@ export function cashFlowCumulative(
       // the window's last point carries the prior period WHOLE — including the
       // buckets a shorter current window has no room for
       ghostCum: hasGhost ? (i === last ? priorSpentCents : ghostCum) : null,
+      // decided by POSITION, so the wording never flips with whether a tail exists
+      ghostWhole: hasGhost && i === last,
     };
   });
 }

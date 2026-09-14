@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { cashFlowCumulative } from "@/lib/cash-flow-cumulative";
+import { cashFlowCumulative, ghostRowLabel } from "@/lib/cash-flow-cumulative";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import type { CashFlow, SpendingProjection } from "@/services/spending";
 
@@ -108,7 +108,7 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
                     </div>
                     {row.ghostCum !== null && (
                       <div className="mt-1 flex items-center justify-between gap-4 border-t border-line pt-1 text-ink-faint">
-                        <span>Spent by here, {priorLabel ?? "prior period"}</span>
+                        <span>{ghostRowLabel(row, priorLabel)}</span>
                         <span className="figures">{formatCents(row.ghostCum)}</span>
                       </div>
                     )}
