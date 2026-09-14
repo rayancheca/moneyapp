@@ -165,7 +165,10 @@ function run(db: AppDatabase, label: string): void {
    */
   guard("the old name survives as an alias", result.aliasCreated, `"${OLD_NAME}" → contains`);
   guard("no merchant created or deleted", before.merchants === after.merchants, `${after.merchants}`);
-  guard("the other Flamingo is untouched", before.bystanderRows === after.bystanderRows && after.bystanderRows === 2, `${BYSTANDER}: ${after.bystanderRows} rows`);
+  // ⛔ before === after, not a literal count: the shop is a real, growing merchant —
+  // it held 2 rows when this was written and 4 by 2026-09-14, and a pinned 2 failed the
+  // guard on a ledger where nothing about it had changed
+  guard("the other Flamingo is untouched", before.bystanderRows === after.bystanderRows, `${BYSTANDER}: ${after.bystanderRows} rows`);
   guard("its rows stay with it", before.targetRows === after.targetRows, `${after.targetRows}`);
   guard("category unchanged", before.targetCategory === after.targetCategory, `${after.targetCategory}`);
   guard("series link unchanged", before.targetSeries === after.targetSeries, `${after.targetSeries}`);
