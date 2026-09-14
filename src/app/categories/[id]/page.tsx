@@ -21,7 +21,7 @@ import {
 } from "@/services/category-detail";
 import { provenanceFor } from "@/services/provenance";
 import { categoryInsights } from "@/services/spending-insights";
-import { topMerchants } from "@/services/spending";
+import { ledgerFirstDay, topMerchants } from "@/services/spending";
 import { loadSpendingCategoryTxns } from "@/app/spending/actions";
 import { CategoryChip } from "@/components/ui/CategoryChip";
 import { CategoryMoveMenu } from "@/components/categories/CategoryMoveMenu";
@@ -70,9 +70,13 @@ export default async function CategoryPage({
   }
   const moveDestinations = categoryMoveDestinations(db, header.id);
 
+  // ⛔ "All time" starts on the ledger's first day, as it does on /spending —
+  // without it this page started 2020-01-01, 967 days earlier, so the same
+  // words named two windows one click apart
   const period = resolvePeriod(
     { period: firstParam(raw.period), from: firstParam(raw.from), to: firstParam(raw.to) },
     today,
+    ledgerFirstDay(db) ?? undefined,
   );
   const range = { from: period.from, to: period.to };
   const isIncome = header.kind === "income";
