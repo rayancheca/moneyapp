@@ -335,6 +335,7 @@ export default async function SpendingPage({
       ? null
       : emptyPeriodCopy(emptyReason, period.label, ledgerReaches(db), formatDayLong, {
           uncategorizedBucket: true,
+          ledgerOpens: ledgerOpens(db),
         });
 
   return (

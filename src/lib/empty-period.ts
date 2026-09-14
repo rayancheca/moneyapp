@@ -47,6 +47,11 @@ export interface EmptyPeriodReason {
   kind: EmptyPeriodKind;
   /** how many days of the window nothing has been imported for; 0 when covered */
   uncoveredDays: number;
+  /**
+   * partly-covered only: how many of `uncoveredDays` lie BEFORE the oldest row —
+   * the rest lie past the newest. A window can straddle either end, or both.
+   */
+  beforeDays?: number;
 }
 
 export function emptyPeriodReason(input: EmptyPeriodInput): EmptyPeriodReason {
@@ -67,7 +72,12 @@ export function emptyPeriodReason(input: EmptyPeriodInput): EmptyPeriodReason {
   const uncoveredDays = Math.max(0, elapsed - covered);
 
   if (uncoveredDays === 0) return { kind: "measured", uncoveredDays: 0 };
-  if (covered > 0) return { kind: "partly-covered", uncoveredDays };
+  if (covered > 0) {
+    // the window's days earlier than the oldest row; every other uncovered day
+    // lies past the newest one
+    const beforeDays = compareDates(ledgerOpens, from) > 0 ? Math.min(diffDays(from, ledgerOpens), elapsed) : 0;
+    return { kind: "partly-covered", uncoveredDays, beforeDays };
+  }
   return compareDates(from, ledgerReaches) > 0
     ? { kind: "after-records", uncoveredDays }
     : { kind: "before-records", uncoveredDays };
@@ -89,7 +99,11 @@ export function emptyPeriodCopy(
    * a measured zero there is only honest with that named. A category page has
    * no such bucket, so the clause would assert a control the reader cannot see.
    */
-  opts: { uncategorizedBucket?: boolean } = {},
+  opts: {
+    uncategorizedBucket?: boolean;
+    /** the oldest day the ledger holds — named when a window runs before it */
+    ledgerOpens?: string | null;
+  } = {},
 ): { title: string; description: string } {
   const through = ledgerReaches === null ? null : formatDay(ledgerReaches);
   switch (reason.kind) {
@@ -118,13 +132,27 @@ export function emptyPeriodCopy(
           `Nothing has been imported for any of its ${days(reason.uncoveredDays)}. ` +
           "Statements that reach further back would fill it; until then there is nothing here to measure.",
       };
-    case "partly-covered":
+    case "partly-covered": {
+      /*
+       * 🔴 Every partly-covered window used to be read as running past the
+       * NEWEST row, so `?period=2022` on a category with no 2022 rows said
+       * "236 days of it have not been imported — the ledger stops on Sep 12,
+       * 2026" of Jan 1 – Aug 24, 2022, days before the records begin. Each side
+       * that has uncovered days is named by its own cause, and only those.
+       */
+      const beforeDays = reason.beforeDays ?? 0;
+      const opens = opts.ledgerOpens ? formatDay(opts.ledgerOpens) : null;
+      const causes = [
+        ...(beforeDays > 0 && opens ? [`your records begin on ${opens}`] : []),
+        ...(reason.uncoveredDays - beforeDays > 0 && through ? [`the ledger stops on ${through}`] : []),
+      ];
       return {
         title: `Nothing posted in the part of ${label} that has been imported`,
         description:
           `${days(reason.uncoveredDays)} of it ${reason.uncoveredDays === 1 ? "has" : "have"} not been imported` +
-          `${through ? ` — the ledger stops on ${through}` : ""}, so this is a lower bound rather than a measurement.`,
+          `${causes.length > 0 ? ` — ${causes.join(" and ")}` : ""}, so this is a lower bound rather than a measurement.`,
       };
+    }
     case "measured":
       /*
        * ⚠️ "Inside what has been imported", NOT "every account is imported

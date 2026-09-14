@@ -39,6 +39,30 @@ describe("emptyPeriodReason", () => {
     expect(reason({ from: "2026-08-01", to: "2026-08-31", ledgerReaches: "2026-08-20" })).toEqual({
       kind: "partly-covered",
       uncoveredDays: 11,
+      beforeDays: 0,
+    });
+  });
+
+  /*
+   * 🔴 THE OTHER END. Every partly-covered window used to be read as running
+   * past the NEWEST row, so a window that starts before the records begin was
+   * told "— the ledger stops on Sep 12, 2026" of days that lie before 2022-08-25.
+   * The front became one click away when "All time" started on the ledger's
+   * first day: its Year pill is 2022, which the ledger enters in August.
+   */
+  test("a window that straddles the OLDEST row counts its uncovered days as before the records", () => {
+    const frontier = { today: "2026-09-14", ledgerOpens: "2022-08-25", ledgerReaches: "2026-09-12" };
+    // Jan 1 – Aug 24, 2022 is 236 days nobody has imported
+    expect(reason({ from: "2022-01-01", to: "2022-12-31", ...frontier })).toEqual({
+      kind: "partly-covered",
+      uncoveredDays: 236,
+      beforeDays: 236,
+    });
+    // both ends at once: 967 before the records, 2 after them
+    expect(reason({ from: "2020-01-01", to: "2026-09-14", ...frontier })).toEqual({
+      kind: "partly-covered",
+      uncoveredDays: 969,
+      beforeDays: 967,
     });
   });
 
@@ -66,6 +90,16 @@ describe("emptyPeriodReason", () => {
     expect(reason({ ledgerReaches: "2026-09-01" })).toEqual({
       kind: "partly-covered",
       uncoveredDays: 3,
+      beforeDays: 0,
+    });
+  });
+
+  /* …and the oldest row landing on the window's LAST day covers exactly that day */
+  test("the oldest row landing on the window's last day leaves every earlier day before the records", () => {
+    expect(reason({ from: "2022-08-01", to: "2022-08-25", today: "2026-09-14", ledgerOpens: "2022-08-25" })).toEqual({
+      kind: "partly-covered",
+      uncoveredDays: 24,
+      beforeDays: 24,
     });
   });
 });
@@ -142,6 +176,34 @@ describe("emptyPeriodCopy", () => {
       expect(copy.description).not.toContain("undefined");
       expect(copy.description).toContain("3 days");
     }
+  });
+
+  test("⛔ days before the records are never blamed on where the ledger stops", () => {
+    const before = emptyPeriodCopy(
+      { kind: "partly-covered", uncoveredDays: 236, beforeDays: 236 },
+      "2022",
+      "2026-09-12",
+      fmt,
+      { ledgerOpens: "2022-08-25" },
+    );
+    expect(before.description).toContain("236 days of it have not been imported");
+    expect(before.description).not.toContain("the ledger stops on");
+    expect(before.description).toContain("your records begin on 2022-08-25");
+    expect(before.description).toContain("lower bound");
+
+    const both = emptyPeriodCopy(
+      { kind: "partly-covered", uncoveredDays: 969, beforeDays: 967 },
+      "All time",
+      "2026-09-12",
+      fmt,
+      { ledgerOpens: "2022-08-25" },
+    );
+    expect(both.description).toContain("your records begin on 2022-08-25");
+    expect(both.description).toContain("the ledger stops on 2026-09-12");
+
+    // a caller that cannot name the first day says nothing false either
+    const unnamed = emptyPeriodCopy({ kind: "partly-covered", uncoveredDays: 236, beforeDays: 236 }, "2022", "2026-09-12", fmt);
+    expect(unnamed.description).not.toContain("the ledger stops on");
   });
 
   test("one partly-covered day is singular too", () => {

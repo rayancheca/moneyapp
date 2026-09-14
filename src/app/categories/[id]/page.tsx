@@ -155,7 +155,7 @@ export default async function CategoryPage({
         })
       : null;
   const emptyCopy = emptyReason
-    ? emptyPeriodCopy(emptyReason, period.label, ledgerReaches(db), formatDayLong)
+    ? emptyPeriodCopy(emptyReason, period.label, ledgerReaches(db), formatDayLong, { ledgerOpens: ledgerOpens(db) })
     : null;
   // the title carries the antecedent — "4 days of IT" has none without it
   const emptyText = emptyCopy ? `${emptyCopy.title}. ${emptyCopy.description}` : undefined;
