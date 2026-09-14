@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { emptyPeriodCopy, emptyPeriodReason, emptyTrendCopy } from "./empty-period";
+import { daysNotImportedYet, emptyPeriodCopy, emptyPeriodReason, emptyTrendCopy } from "./empty-period";
 
 const reason = (over: Partial<Parameters<typeof emptyPeriodReason>[0]> = {}) =>
   emptyPeriodReason({
@@ -10,6 +10,43 @@ const reason = (over: Partial<Parameters<typeof emptyPeriodReason>[0]> = {}) =>
     ledgerReaches: "2026-08-31",
     ...over,
   });
+
+/**
+ * ⛔ One arithmetic for the days a pace figure has not seen. The dashboard tile
+ * computed it inline and /spending's readout not at all; on 2026-09-14 (newest
+ * row Sep 12) the tile said "2 days of September 2026 not imported yet" and the
+ * readout said nothing. These are the tile's own cases, carried over.
+ */
+describe("daysNotImportedYet", () => {
+  const july = (over: Partial<Parameters<typeof daysNotImportedYet>[0]> = {}) =>
+    daysNotImportedYet({ from: "2026-07-01", to: "2026-07-31", today: "2026-07-08", ledgerOpens: "2026-06-20", ledgerReaches: "2026-07-02", ...over });
+
+  test("the elapsed days past the newest row", () => {
+    expect(july()).toBe(6);
+    expect(july({ ledgerReaches: "2026-09-12", from: "2026-09-01", to: "2026-09-30", today: "2026-09-14" })).toBe(2);
+  });
+
+  test("a month nothing has reached yet: every elapsed day", () => {
+    expect(july({ ledgerReaches: "2026-06-20" })).toBe(8);
+  });
+
+  test("an import that reaches today leaves none", () => {
+    expect(july({ ledgerReaches: "2026-07-08" })).toBe(0);
+  });
+
+  test("days BEFORE the oldest row are not 'not imported yet'", () => {
+    // the ledger opens on the newest row itself, Jul 2: Jul 1 is before it, Jul 3–8 after
+    expect(july({ ledgerOpens: "2026-07-02" })).toBe(6);
+  });
+
+  test("an empty ledger has not imported any elapsed day", () => {
+    expect(july({ ledgerOpens: null, ledgerReaches: null })).toBe(8);
+  });
+
+  test("a window that has not started has no elapsed day to miss", () => {
+    expect(july({ from: "2026-08-01", to: "2026-08-31" })).toBe(0);
+  });
+});
 
 describe("emptyPeriodReason", () => {
   /*

@@ -606,6 +606,40 @@ describe("spendingProjection", () => {
     expect(proj.paceConfidence).toBe(0.52);
   });
 
+  /**
+   * 🔴 S12. The readout printed "On pace for ~$3,066.54 · $1,431.05 so far" over
+   * September 2026 on 2026-09-14, two of its fourteen elapsed days unimported,
+   * while the dashboard tile beside the link here said "at least" of the same
+   * figures. The pace MATH stays (the tile reads the same `cashFlow.pace`); what
+   * the readout needs is how many days the figure has not seen.
+   *
+   * ⚠️ The test above has a row dated 07-20, past today, so the ledger reaches
+   * beyond today and this can never be anything but zero there.
+   */
+  test("the pace counts the elapsed days no import reaches, without changing its math", () => {
+    insertTxn({ postedOn: "2026-07-01", amountCents: -10_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-05", amountCents: -20_000, category: "Food > Groceries" }); // the newest row
+
+    const flow = cashFlowByPeriod(bundle.db, JULY, TODAY);
+    const proj = spendingProjection(bundle.db, JULY, TODAY, flow.pace, flow.totals.spentCents);
+    expect(proj.paceUncoveredDays).toBe(3); // Jul 6, 7 and 8
+    expect(proj.projectedSpendCents).toBe(116_250); // the same pace as above
+    expect(proj.paceBasis).toBe("pace from 8 of 31 days elapsed");
+  });
+
+  test("a row ON today leaves no elapsed day unimported", () => {
+    insertTxn({ postedOn: "2026-07-05", amountCents: -20_000, category: "Food > Groceries" });
+    shownOn(TODAY);
+    const flow = cashFlowByPeriod(bundle.db, JULY, TODAY);
+    expect(spendingProjection(bundle.db, JULY, TODAY, flow.pace, flow.totals.spentCents).paceUncoveredDays).toBe(0);
+  });
+
+  test("a finished period has no pace, so no unimported days to count", () => {
+    insertTxn({ postedOn: "2026-06-10", amountCents: -12_000, category: "Food > Dining" });
+    const flow = cashFlowByPeriod(bundle.db, JUNE, TODAY);
+    expect(spendingProjection(bundle.db, JUNE, TODAY, flow.pace, flow.totals.spentCents).paceUncoveredDays).toBeNull();
+  });
+
   test("a whole period's prior is drawn as a ghost, day under day", () => {
     shownOn("2026-06-01"); // the ledger holds all of June
     insertTxn({ postedOn: "2026-06-10", amountCents: -12_000, category: "Food > Dining" });

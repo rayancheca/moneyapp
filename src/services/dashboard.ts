@@ -1,14 +1,15 @@
 import type { AppDatabase } from "@/db/client";
 import type { AssetType } from "@/db/schema/holdings";
 import type { SeriesKind } from "@/db/schema/recurring";
-import { addDays, compareDates, diffDays, todayIso } from "@/lib/dates";
+import { compareDates, diffDays, todayIso } from "@/lib/dates";
+import { daysNotImportedYet } from "@/lib/empty-period";
 import { dayChangeTerm } from "@/lib/day-change-label";
 import { formatDayShort } from "@/lib/format-date";
 import { resolvePeriod } from "@/lib/period";
 import { listAccounts } from "./accounts";
 import { bridgedNetWorthSeries, type BridgedNetWorthPoint } from "./in-flight";
 import { forecastCurrentMonth } from "./forecast";
-import { ledgerReaches } from "./observation-frontier";
+import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { portfolioOverview, portfolioSeries, topMovers } from "./portfolio";
 import { upcomingOccurrences } from "./recurring";
 import { statementPulls, type AccountStatementPull } from "./statement-pulls";
@@ -246,11 +247,16 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
    * past today leaves none. Two surfaces grading the same days must not grade
    * them two ways.
    */
-  const reaches = ledgerReaches(db);
-  const coveredThrough =
-    reaches !== null && compareDates(reaches, period.from) >= 0 ? reaches : addDays(period.from, -1);
-  const uncoveredDays =
-    compareDates(coveredThrough, today) >= 0 ? 0 : Math.max(0, diffDays(coveredThrough, today));
+  // ⛔ …and that one arithmetic is `daysNotImportedYet` now, which /spending's
+  // cash-flow readout reads too. Until 2026-09-14 this tile held it inline and
+  // was the only one of the two surfaces that said "at least".
+  const uncoveredDays = daysNotImportedYet({
+    from: period.from,
+    to: period.to,
+    today,
+    ledgerOpens: ledgerOpens(db),
+    ledgerReaches: ledgerReaches(db),
+  });
   const elapsedDays = diffDays(period.from, today) + 1;
 
   return {

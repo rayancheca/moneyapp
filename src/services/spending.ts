@@ -11,6 +11,7 @@ import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/descriptio
 // topMerchants groups on — activeTxnsInRange doesn't select that column
 import { normalizeDescription } from "@/lib/normalize";
 import { comparePeriods, type PeriodComparison } from "@/lib/compared-windows";
+import { daysNotImportedYet } from "@/lib/empty-period";
 import { subBuckets, type ResolvedPeriod } from "@/lib/period";
 import { alignByIndex, projectPace } from "@/lib/projection";
 import { allocationsFor } from "@/lib/transaction-splits";
@@ -25,7 +26,7 @@ import {
   type DateRange,
 } from "./analytics";
 import { spendingCoverageThrough } from "./movers-card";
-import { ledgerOpens } from "./observation-frontier";
+import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { activeSplitsInRange } from "./transaction-splits";
 
 /**
@@ -323,6 +324,12 @@ export interface SpendingProjection {
   paceBasis: string | null;
   /** 0..1 pace confidence — low ⇒ render fainter + say so; null unless in progress */
   paceConfidence: number | null;
+  /**
+   * Elapsed days of the period no import reaches (`daysNotImportedYet`, the
+   * dashboard tile's arithmetic). Above zero, the pace and its to-date figure are
+   * LOWER BOUNDS and the readout says "at least". Null unless in progress.
+   */
+  paceUncoveredDays: number | null;
   /** the comparable prior period — the "last {period}" total + per-bucket ghost; null when it had no spend */
   prior: {
     label: string;
@@ -370,6 +377,7 @@ export function spendingProjection(
   let projectedSpendCents: number | null = null;
   let paceBasis: string | null = null;
   let paceConfidence: number | null = null;
+  let paceUncoveredDays: number | null = null;
   // pace only means something for an in-progress period (a past period is done —
   // its "projection" would just be its actual, so we don't fabricate one).
   if (period.isCurrent && currentPace) {
@@ -385,6 +393,13 @@ export function spendingProjection(
     projectedSpendCents = proj.expectedTotalCents;
     paceBasis = proj.basis;
     paceConfidence = proj.confidence;
+    paceUncoveredDays = daysNotImportedYet({
+      from: period.from,
+      to: period.to,
+      today,
+      ledgerOpens: ledgerOpens(db),
+      ledgerReaches: ledgerReaches(db),
+    });
   }
 
   /*
@@ -412,7 +427,7 @@ export function spendingProjection(
     }
   }
 
-  return { projectedSpendCents, paceBasis, paceConfidence, prior };
+  return { projectedSpendCents, paceBasis, paceConfidence, paceUncoveredDays, prior };
 }
 
 /**

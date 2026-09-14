@@ -16,6 +16,7 @@ import {
 import { categoryHueVar, isCategoryHueName } from "@/lib/category-palette";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { ledgerHref } from "@/lib/ledger-href";
+import { paceReadout } from "@/lib/pace-readout";
 import {
   cashFlowSegmentHref,
   type CashFlow,
@@ -68,9 +69,11 @@ interface CashFlowChartProps {
   data: CashFlow;
   /** the estimate companion (North Star #2): pace + prior-period ghost. */
   projection?: SpendingProjection | null;
+  /** the period's own name — "2 days of September 2026 not imported yet" */
+  periodLabel: string;
 }
 
-export function CashFlowChart({ data, projection }: CashFlowChartProps) {
+export function CashFlowChart({ data, projection, periodLabel }: CashFlowChartProps) {
   const router = useRouter();
   const { buckets, incomeSeries, spendingSeries, pace } = data;
 
@@ -126,26 +129,46 @@ export function CashFlowChart({ data, projection }: CashFlowChartProps) {
   // A low-confidence pace (early in the period) reads muted and says so.
   const projected = projection?.projectedSpendCents ?? null;
   const lowConfidence = projection?.paceConfidence != null && projection.paceConfidence < 0.5;
+  /*
+   * 🔴 S12. "On pace for ~$3,066.54 · $1,431.05 so far" over a September two of
+   * whose elapsed days nobody had imported, beside a dashboard tile saying "at
+   * least" of the same figures. `paceReadout` is those words for both states.
+   */
+  const words = paceReadout({
+    projectedCents: projected ?? 0,
+    actualToDateCents: pace?.actualToDateCents ?? 0,
+    uncoveredDays: projection?.paceUncoveredDays ?? 0,
+    periodLabel,
+  });
+  const basis = projection?.paceBasis
+    ? words.notImported
+      ? `${projection.paceBasis}; ${words.notImported}`
+      : projection.paceBasis
+    : null;
   const readoutParts: ReactNode[] = [];
   if (projected !== null) {
     readoutParts.push(
       <>
         On pace for{" "}
-        {/* the ~ + dotted underline mark it an estimate; the method/basis is on
-            demand via hover (title) and always available to screen readers (sr-only). */}
+        {/* the ~ (or "at least") + dotted underline mark it an estimate; the
+            method/basis is on demand via hover (title) and always available to
+            screen readers (sr-only). */}
         <span
           className={`figures font-medium underline decoration-dotted underline-offset-2 cursor-help ${lowConfidence ? "text-ink-muted" : "text-ink"}`}
-          title={projection?.paceBasis ?? undefined}
+          title={basis ?? undefined}
         >
-          ~{formatCents(projected)}
+          {words.projected}
         </span>
-        {projection?.paceBasis ? <span className="sr-only"> — {projection.paceBasis}</span> : null} spent
+        {basis ? <span className="sr-only"> — {basis}</span> : null} spent
         this period{lowConfidence ? " (early estimate)" : ""}
       </>,
     );
   }
   if (pace) {
-    readoutParts.push(<span className="text-ink-faint">{formatCents(pace.actualToDateCents)} so far</span>);
+    readoutParts.push(<span className="text-ink-faint">{words.soFar}</span>);
+  }
+  if (pace && words.notImported) {
+    readoutParts.push(<span className="text-ink-faint">{words.notImported}</span>);
   }
   if (projection?.prior) {
     readoutParts.push(

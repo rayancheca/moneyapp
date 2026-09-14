@@ -83,6 +83,29 @@ export function emptyPeriodReason(input: EmptyPeriodInput): EmptyPeriodReason {
     : { kind: "before-records", uncoveredDays };
 }
 
+/**
+ * How many ELAPSED days of a window lie past the newest imported row — the days
+ * a pace figure has not seen, and the reason it is a lower bound.
+ *
+ * 🔴 Two surfaces grade these days, and only one did. The dashboard's pace tile
+ * computed them inline and printed "2 days of September 2026 not imported yet"
+ * on 2026-09-14 (newest row Sep 12); /spending's cash-flow readout, one click
+ * away, printed "On pace for ~$3,066.54 · $1,431.05 so far" over the same two
+ * days and said nothing. Both read this now.
+ *
+ * ⚠️ Days BEFORE the oldest row are not counted — they are not "not imported
+ * yet", and the tile never counted them. An empty ledger has imported none of
+ * the elapsed days, so all of them count, as they did on the tile.
+ */
+export function daysNotImportedYet(input: EmptyPeriodInput): number {
+  const { from, to, today } = input;
+  if (compareDates(from, today) > 0) return 0;
+  const reason = emptyPeriodReason(input);
+  if (reason.kind === "no-ledger") return diffDays(from, compareDates(to, today) > 0 ? today : to) + 1;
+  if (reason.kind === "before-records") return 0;
+  return reason.uncoveredDays - (reason.beforeDays ?? 0);
+}
+
 const days = (n: number): string => `${n} ${n === 1 ? "day" : "days"}`;
 
 /**

@@ -132,7 +132,7 @@ export function CashFlowView({ cashFlow, projection, sankey, viewState, basePara
       ) : active === "graph" ? (
         <CashFlowGraph data={cashFlow} projection={projection} />
       ) : (
-        <CashFlowChart data={cashFlow} projection={projection} />
+        <CashFlowChart data={cashFlow} projection={projection} periodLabel={periodLabel} />
       )}
     </div>
   );

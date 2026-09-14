@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { SpendingPace } from "@/services/dashboard";
 import { formatCents } from "@/lib/money";
+import { notImportedYet } from "@/lib/pace-readout";
 import { paceGeometry, PACE_VH, PACE_VW } from "@/lib/pace-geometry";
 
 /**
@@ -80,8 +81,8 @@ export function SpendingPaceWidget({ pace }: { pace: SpendingPace }) {
                 </div>
                 {pace.uncoveredDays > 0 && (
                   <div className="mt-0.5 text-[11px] text-ink-faint">
-                    {pace.uncoveredDays} {pace.uncoveredDays === 1 ? "day" : "days"} of {pace.monthLabel} not
-                    imported yet
+                    {/* the phrase /spending's readout prints over the same days */}
+                    {notImportedYet(pace.uncoveredDays, pace.monthLabel)}
                   </div>
                 )}
               </>
