@@ -448,13 +448,36 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
   const unfiledRows = rows.filter(
     (t) => t.postedOn >= recentFrom && t.postedOn <= recentTo && t.categoryId === cats.feesTopId,
   );
-  const largestUnfiled = [...unfiledRows]
-    .filter((t) => t.amountCents < 0)
-    .sort((a, b) => a.amountCents - b.amountCents)[0];
-  const unfiledNote =
+  const largestOf = (list: typeof rows) =>
+    [...list].filter((t) => t.amountCents < 0).sort((a, b) => a.amountCents - b.amountCents)[0];
+  const largestUnfiled = largestOf(unfiledRows);
+  const one = unfiledRows.length === 1;
+  const recentUnfiledNote =
     largestUnfiled === undefined
       ? null
-      : `${unfiledRows.length} ${unfiledRows.length === 1 ? "charge is" : "charges are"} filed on Fees itself rather than as a kind of fee, so the ledger has not said what they are. The largest is ${formatCents(-largestUnfiled.amountCents)} — “${largestUnfiled.rawDescription}”.`;
+      : `${unfiledRows.length} ${one ? "charge is" : "charges are"} filed on Fees itself rather than as a kind of fee, so the ledger has not said what ${one ? "it is" : "they are"}. The largest is ${formatCents(-largestUnfiled.amountCents)} — “${largestUnfiled.rawDescription}”.`;
+  /*
+   * 🔴 THE ALL-TIME HALF LEFT ROWS OUT AND SAID NOTHING. The sentence above
+   * reads the RECENT window only, but the all-time figures exclude parent rows
+   * too — measured 2026-09-14, "Paid to them 70 charges $996.64" all time over a
+   * Fees category holding $996.79: a $0.15 "FOREIGN EXCHANGE RATE ADJUSTMENT FEE"
+   * filed on Fees itself, dated outside the recent window, missing from a figure
+   * with no footnote. The windows' own unclassified fields are the rule — the
+   * same bounds as their totals — so a row outside the recent window, at either
+   * end or on today, is told against the window whose figure it is missing from.
+   */
+  const allTimeLabel = formatMonthYear(firstOn);
+  const allTimeDiffers =
+    allTime.unclassifiedRows !== recent.unclassifiedRows || allTime.unclassifiedCents !== recent.unclassifiedCents;
+  const n = allTime.unclassifiedRows;
+  const largestEver = largestOf(rows.filter((t) => t.categoryId === cats.feesTopId));
+  const allTimeUnfiledNote = !allTimeDiffers
+    ? null
+    : recentUnfiledNote !== null
+      ? `Since ${allTimeLabel}, ${n} ${n === 1 ? "charge" : "charges"} totalling ${formatCents(allTime.unclassifiedCents)} ${n === 1 ? "is" : "are"} filed there, and none of it is in the all-time figures either.`
+      : `Since ${allTimeLabel}, ${n} ${n === 1 ? "charge is" : "charges are"} filed on Fees itself rather than as a kind of fee, and ${n === 1 ? "it is" : "they are"} not in the all-time figures.` +
+        (largestEver === undefined ? "" : ` The largest is ${formatCents(-largestEver.amountCents)} — “${largestEver.rawDescription}”.`);
+  const unfiledNote = [recentUnfiledNote, allTimeUnfiledNote].filter((s) => s !== null).join(" ") || null;
 
   /*
    * ⛔ EMPTY IS NOT MISSING, and this is where the distinction bites: a ledger

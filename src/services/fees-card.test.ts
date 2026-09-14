@@ -478,6 +478,60 @@ describe("feesCard", () => {
     expect(feesCard(bundle.db, TODAY)!.lines.every((l) => !l.isUnfiled)).toBe(true);
   });
 
+  /*
+   * 🔴 THE ALL-TIME HALF LEFT A ROW OUT AND SAID NOTHING. The unfiled note was
+   * built from the RECENT window only, but the all-time figures exclude parent
+   * rows too. Measured 2026-09-14 on the dashboard: "Paid to them 70 charges
+   * $996.64" all time, while the Fees category holds $996.79 — the $0.15
+   * "FOREIGN EXCHANGE RATE ADJUSTMENT FEE" filed on Fees itself, dated outside
+   * the recent window, silently absent from a figure with no footnote. ⛔ Every
+   * earlier unfiled test dated its rows INSIDE the recent window (Feb 1 – Jul 31
+   * here), so none could express this — these sit at both ends and on today.
+   */
+  test.each(["2026-01-31", "2026-08-01", "2026-08-27"])(
+    "an unfiled row outside the recent window (%s) is disclosed against the all-time figures",
+    (day) => {
+      fee("2026-07-02", 1000);
+      addTxn(day, -15, topId("Fees"), "FOREIGN EXCHANGE RATE ADJUSTMENT FEE");
+
+      const card = feesCard(bundle.db, TODAY)!;
+      expect(card.allTime.paidCents).toBe(1000);
+      expect(card.allTime.unclassifiedCents).toBe(15);
+      expect(card.recent.unclassifiedCents).toBe(0);
+      expect(card.unfiledNote).not.toBeNull();
+      expect(card.unfiledNote).toContain("$0.15");
+      expect(card.unfiledNote).toContain(card.allTimeFromLabel);
+      expect(card.unfiledNote).toContain("not in the all-time figures");
+    },
+  );
+
+  test.each(["2026-02-01", "2026-07-31"])(
+    "an unfiled row ON the recent window's edge (%s) is told once, in the recent sentence, in the singular",
+    (day) => {
+      fee("2026-07-02", 1000);
+      addTxn(day, -15, topId("Fees"), "FOREIGN EXCHANGE RATE ADJUSTMENT FEE");
+
+      const note = feesCard(bundle.db, TODAY)!.unfiledNote!;
+      expect(note).toContain("1 charge is filed on Fees itself");
+      expect(note).toContain("what it is");
+      expect(note).not.toContain("what they are");
+      expect(note).not.toContain("all-time");
+    },
+  );
+
+  test("rows inside AND outside the recent window are both accounted for", () => {
+    fee("2026-07-02", 1000);
+    addTxn("2026-04-10", -169, topId("Fees"), "SERVICE FEE");
+    addTxn("2026-01-31", -15, topId("Fees"), "FOREIGN EXCHANGE RATE ADJUSTMENT FEE");
+
+    const card = feesCard(bundle.db, TODAY)!;
+    expect(card.unfiledNote).toContain("1 charge is filed on Fees itself");
+    expect(card.unfiledNote).toContain("$1.69");
+    // …and the all-time half names its own window and its own total
+    expect(card.unfiledNote).toContain(card.allTimeFromLabel);
+    expect(card.unfiledNote).toContain("$1.84");
+  });
+
   test("a bucket with nothing in it is an absence, not a row reading $0.00", () => {
     fee("2026-07-02", 1000, "ATM Fees");
 
