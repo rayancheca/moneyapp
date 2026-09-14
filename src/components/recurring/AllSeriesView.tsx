@@ -300,9 +300,14 @@ function SeriesRow({
       <td className="px-4 py-3 text-right">
         <form action={dismissSeriesAction}>
           <input type="hidden" name="seriesId" value={s.id} />
+          {/* ⛔ The name starts with the word on the button (WCAG 2.5.3). This
+              read "Mark X as not recurring" — the suggestion card's name, whose
+              button really says "Not recurring" — so a voice-control user saying
+              "Dismiss" matched nothing. It must also never contain "confirm":
+              e2e clicks Confirm by substring. */}
           <button
             type="submit"
-            aria-label={`Mark ${s.name} as not recurring`}
+            aria-label={`Dismiss ${s.name} as not recurring`}
             className="rounded-md border border-line px-2 py-1 text-xs font-medium text-ink-muted transition-colors duration-(--duration-fast) hover:border-line-strong hover:text-ink"
           >
             Dismiss
