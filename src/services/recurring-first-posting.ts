@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, isNull, lte } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lte, ne } from "drizzle-orm";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays } from "@/lib/dates";
@@ -51,6 +51,29 @@ import {
  *    commitment registered as starting on the 15th cannot claim a charge a
  *    month earlier — the same arbiter arrears and the calendar use;
  *  - a series with an `account_id` only claims rows on that account;
+ *  - the amount IS an identity: no other row in the ledger — any status but a
+ *    retired re-parse twin, any link, any date, transfers included — carries
+ *    that exact amount (on the series' account, when it names one).
+ *    🔴 Without it, uniqueness was counted only among the rows imported SO FAR,
+ *    and statements for different accounts land on different days — so the
+ *    order they arrived in decided the link. Gym ($100.00, the 22nd, no
+ *    account) took whichever lone $100.00 row landed first, and once a wrong
+ *    row was linked the real charge could never link: the series posted, and
+ *    absorption only knew the wrong description. Back-tested at 766cf74 on a
+ *    copy of the real ledger, 2026-09-14, walking Gym's 22nd over every month
+ *    2023-03 … 2026-08 with no scope: 6 of 42 months claimed a row that is not
+ *    a gym charge — an ATM withdrawal (2023-04-24), a Coinbase buy
+ *    (2025-01-21), a Philip Morris share buy (2025-04-22), two Zelle payments
+ *    (2025-07-22, 2026-06-22) and the Anthropic subscription (2026-08-24).
+ *    $100.00 is on 185 active rows; the other registered amounts — $695.04,
+ *    $368.86, $182.21, $72.74 — are on none, and the same back-test claims
+ *    nothing for them. So Gym links nothing by amount until the owner names the
+ *    account it bills to, and only if that account has no other $100.00 row.
+ *    ⚠️ What this does NOT close: an amount the ledger has never carried can
+ *    still be claimed by a stranger that lands inside the tolerance before the
+ *    real charge does. Requiring every account to be imported through the
+ *    window first would close it, but a row waiting for coverage would never be
+ *    in a later upload's scope, so nothing would ever link;
  *  - no OTHER live series — one that already posts included — expects that
  *    same amount within its tolerance of that day, by the same forward walk.
  *    A bill that already posts, whose next charge arrives under a new
@@ -129,6 +152,7 @@ export function planFirstPostings(
   if (eligible.length === 0) return [];
   const eligibleIds = new Set(eligible.map((s) => s.id));
   const rivals = live.filter((s) => !eligibleIds.has(s.id));
+  const amounts = [...new Set(eligible.map((s) => effectiveSeries(s).nextExpectedAmountCents!))];
 
   const candidates = tx
     .select({
@@ -163,12 +187,29 @@ export function planFirstPostings(
     }
   }
 
+  // every row the ledger holds at an eligible amount — any status but a retired
+  // re-parse twin, any link, any date, transfers included — for the identity
+  // fence below
+  const atAmount = tx
+    .select({ id: transactions.id, accountId: transactions.accountId, amountCents: transactions.amountCents })
+    .from(transactions)
+    .where(and(ne(transactions.status, "superseded"), inArray(transactions.amountCents, amounts)))
+    .all();
+  const amountIdentifies = (s: SeriesRow, row: CandidateRow): boolean =>
+    !atAmount.some(
+      (other) =>
+        other.id !== row.id &&
+        other.amountCents === row.amountCents &&
+        (s.accountId === null || other.accountId === s.accountId),
+    );
+
   const links: FirstPostingLink[] = [];
   for (const s of eligible) {
     const rows = claimedBy.get(s.id) ?? [];
     if (rows.length !== 1) continue; // none, or two candidate rows
     const row = rows[0]!;
     if (claimantCount.get(row.id) !== 1) continue; // two commitments want it
+    if (!amountIdentifies(s, row)) continue; // the ledger carries this amount elsewhere
     if (candidateIds && !candidateIds.has(row.id)) continue; // not this operation's row
     if (rivals.some((r) => expectsCharge(r, row))) continue; // another live series expects it
     links.push({ seriesId: s.id, transactionId: row.id });

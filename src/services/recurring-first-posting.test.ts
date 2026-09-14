@@ -286,7 +286,9 @@ describe("anything short of certain links nothing", () => {
 
   test("another live series that already posts expects the same charge that day", () => {
     const insurance = register({ name: "Car insurance", amountCents: -36149, nextOn: "2026-09-11" });
-    post({ postedOn: "2026-08-12", amountCents: -36149, raw: "INSURANCE PREMIUM AUG", seriesId: insurance });
+    // its August posting is at ANOTHER amount, so the ledger has never carried
+    // $361.49 and the identity fence cannot be what holds this negative
+    post({ postedOn: "2026-08-12", amountCents: -35758, raw: "INSURANCE PREMIUM AUG", seriesId: insurance });
     register({ name: "A second policy", amountCents: -36149, nextOn: "2026-09-12" });
     const row = post({ postedOn: "2026-09-11", amountCents: -36149, raw: "INSURANCE PMT" });
     const control = gymControl();
@@ -311,6 +313,43 @@ describe("anything short of certain links nothing", () => {
     run([control.rowId]);
     expect(linkOf(row).recurringSeriesId).toBeNull();
     expect(linkOf(control.rowId).recurringSeriesId).toBe(control.seriesId);
+  });
+});
+
+describe("an amount is an identity only where the ledger has never carried it elsewhere", () => {
+  /*
+   * 🔴 Uniqueness was counted among the rows imported so far, so the order
+   * statements arrived in decided the link. On a copy of the real ledger the
+   * 22nd back-tested over 42 months claimed a non-gym $100.00 row in 6 — and
+   * $100.00 is on 185 active rows. The descriptors below are the real ledger's.
+   */
+  test("a $100.00 commitment claims nothing while $100.00 sits elsewhere — whichever statement lands first", () => {
+    const gym = register({ name: "Gym", amountCents: -10000, nextOn: "2026-09-22", userDated: true });
+    const lease = carLease();
+    post({ postedOn: "2026-07-06", amountCents: -10000, raw: "OVERDRAFT TO CHECKING - 9067", accountId: card });
+    // upload 1: a brokerage buy, a day before the gym's day, lands first
+    const etf = post({ postedOn: "2026-09-21", amountCents: -10000, raw: "SPDR S&P 500 ETF TRUST CUSIP: 78462F103 RECURRING (SPY)" });
+    const leaseRow = post({ postedOn: "2026-09-15", amountCents: -69504, raw: "TOYOTA LEASE PMT" });
+    run([etf, leaseRow]);
+    // upload 2: the gym's own charge, on the card
+    const charge = post({ postedOn: "2026-09-22", amountCents: -10000, raw: "GYM MEMBERSHIP", accountId: card });
+    run([charge]);
+
+    expect(linkOf(etf).recurringSeriesId).toBeNull();
+    expect(linkOf(charge).recurringSeriesId).toBeNull();
+    expect(seriesRow(gym).lastMatchedOn).toBeNull();
+    // the control, in upload 1: an amount the ledger has never carried links
+    expect(linkOf(leaseRow).recurringSeriesId).toBe(lease);
+  });
+
+  test("a commitment that names its account needs the amount unique on that account only", () => {
+    // a control for the owner's lever, not a new refusal: $100.00 elsewhere in
+    // the ledger does not stop a Gym that says which card it bills
+    const gym = register({ name: "Gym", amountCents: -10000, nextOn: "2026-09-22", accountId: card });
+    post({ postedOn: "2026-07-06", amountCents: -10000, raw: "OVERDRAFT TO CHECKING - 9067" });
+    const charge = post({ postedOn: "2026-09-22", amountCents: -10000, raw: "GYM MEMBERSHIP", accountId: card });
+    run([charge]);
+    expect(linkOf(charge).recurringSeriesId).toBe(gym);
   });
 });
 
