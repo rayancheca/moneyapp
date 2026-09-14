@@ -3,6 +3,7 @@ import { endsInsideHorizon } from "@/lib/committed";
 import { dayWindowLabel } from "@/lib/period";
 import { wholeToleranceDays } from "@/lib/recurring-step";
 import { formatCents } from "@/lib/money";
+import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
@@ -269,6 +270,23 @@ export function staleSummaryLabel(entries: readonly StaleEntry[], window: string
         ? `${never} ${never === 1 ? "series has" : "series have"} never charged — still projected`
         : `${lateClause} and ${neverClause} — all still projected`;
   return `${window}, ${body}`;
+}
+
+/**
+ * The word a FUTURE calendar entry carries about its series' evidence, after
+ * its confidence: "Car lease upcoming (scheduled, never billed)". Null when the
+ * evidence is fresh and there is nothing to say.
+ *
+ * 🔴 It said "evidence stale" for both kinds of series `seriesStaleness` calls
+ * stale, and one of them has no evidence at all. Measured on the real ledger
+ * 2026-09-14, `/recurring?tab=calendar` printed "Car lease upcoming (scheduled,
+ * evidence stale) -$695.04" on the page that also said "3 have never charged"
+ * and filed the lease under "Never billed". The owner chose the All tab's word
+ * (2026-09-14) — `SERIES_EVIDENCE_LABEL`, not a third spelling of it.
+ */
+export function upcomingEvidenceWord(e: { isStale: boolean; neverBilled: boolean }): string | null {
+  if (e.neverBilled) return SERIES_EVIDENCE_LABEL["never-billed"].toLowerCase();
+  return e.isStale ? "evidence stale" : null;
 }
 
 /**

@@ -22,8 +22,8 @@ import {
   MIN_OCCURRENCES,
   populationStddev,
   projectOccurrences,
+  seriesEvidence,
   seriesHasLapsed,
-  seriesStaleness,
   toProjectable,
 } from "./recurring";
 
@@ -92,7 +92,9 @@ export interface CalendarEntry {
    */
   confidence: ForecastConfidence | null;
   /**
-   * Whether the SERIES' evidence has gone quiet past its own tolerance.
+   * Whether the SERIES is running late: it has charged before, and its newest
+   * charge is older than its own tolerance (`seriesEvidence` says
+   * "running-late"). Only on a future entry.
    *
    * A third axis, and deliberately not a third visual channel. `confidence`
    * answers "who said this?" and staleness answers "when was it last seen?" —
@@ -103,8 +105,29 @@ export interface CalendarEntry {
    * swatches, so this one rides in WORDS — the Day Sheet and the cell's
    * aria-label, where a reader has already asked for detail and there is room to
    * answer properly.
+   *
+   * 🔴 A series that has NEVER charged is not stale — there is no evidence for
+   * it to be stale from. This read `seriesStaleness(s).isStale`, which is true
+   * for nothing-matched by design; `staleSummaryLabel` and `stalePartLabel`
+   * (components/recurring/labels) had already split that union, and the
+   * calendar was the one reader that never did. Measured on the real ledger
+   * 2026-09-14: `/recurring?tab=calendar` printed "Car lease upcoming
+   * (scheduled, evidence stale) -$695.04" and "Gym upcoming (scheduled, evidence
+   * stale) -$100.00" on the page that also said "3 have never charged" — and
+   * 39 of the 123 upcoming entries flagged stale across 2023-01..2027-08 were
+   * series that had never charged at all. Those carry `neverBilled` instead.
    */
   isStale: boolean;
+  /**
+   * The series has never charged: a commitment registered by hand that the bank
+   * has not billed yet (`seriesEvidence` says "never-billed"). Only on a future
+   * entry, and never together with `isStale`.
+   *
+   * Printed in the All tab's own word, `SERIES_EVIDENCE_LABEL["never-billed"]`
+   * — "Car lease upcoming (scheduled, never billed)", and a "Never billed" badge
+   * in the Day Sheet. The owner's decision, 2026-09-14.
+   */
+  neverBilled: boolean;
   /**
    * The series' category hue, for the mark drawn beside it.
    *
@@ -422,6 +445,7 @@ export function recurringCalendar(
         unsettledReason: null,
         confidence: null,
         isStale: false,
+        neverBilled: false,
         hue: hues.get(s.id) ?? null,
       });
       const dates = postedDatesBySeries.get(s.id) ?? [];
@@ -457,7 +481,13 @@ export function recurringCalendar(
     const occurrences = projectOccurrences(toProjectable(s), monthStart, monthEnd);
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
     const confidence = forecastConfidence(s);
-    const isStale = seriesStaleness(s, today).isStale;
+    // ONE evidence word, the one the All tab files the series under: a series
+    // that never charged is "never billed", not stale (see `CalendarEntry.isStale`).
+    // A lapsed money-out series was skipped above and money in never lapses, so
+    // "running-late" is exactly "stale, having charged before".
+    const evidence = seriesEvidence(s, today);
+    const isStale = evidence === "running-late";
+    const neverBilled = evidence === "never-billed";
     for (const o of occurrences) {
       const alreadyPosted = postedDates.some((p) => Math.abs(diffDays(p, o.date)) <= s.toleranceDays);
       if (alreadyPosted) continue;
@@ -486,6 +516,7 @@ export function recurringCalendar(
         unsettledReason: verdict?.reason ?? null,
         confidence: isFuture ? confidence : null,
         isStale: isFuture && isStale,
+        neverBilled: isFuture && neverBilled,
         hue: hues.get(s.id) ?? null,
       });
     }

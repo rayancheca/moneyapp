@@ -549,6 +549,60 @@ describe("recurringCalendar", () => {
     expect(posted.confidence).toBeNull();
   });
 
+  /*
+   * 🔴 "EVIDENCE STALE" OVER A BILL THE BANK HAS NEVER CHARGED. Measured on the
+   * real ledger at today = 2026-09-14, `/recurring?tab=calendar` printed
+   * "Car lease upcoming (scheduled, evidence stale) -$695.04" and "Gym upcoming
+   * (scheduled, evidence stale) -$100.00" on the same page as "3 have never
+   * charged". Of 152 upcoming entries across 2023-01..2027-08, 123 wore the
+   * flag: 84 were series running late, 39 were series with no charge at all.
+   * `seriesStaleness` calls a series with nothing matched stale by design;
+   * `seriesEvidence` is the rule that splits the two, and this is the reader
+   * that never got the split.
+   *
+   * One db, both ends: the registered commitment and the quiet cash job are
+   * both `scheduled`, and only one of them is late.
+   */
+  test("a commitment that has never charged is never billed, not stale — and a quiet one is still stale", () => {
+    for (const day of ["2026-01-02", "2026-01-09", "2026-01-16", "2026-01-23"]) {
+      insertTxn({ postedOn: day, amountCents: 104700, rawDescription: "CASH JOB WEEKLY PAY" });
+    }
+    detectRecurringSeries(bundle.db, "2026-01-30");
+    bundle.db
+      .update(recurringSeries)
+      .set({ kind: "income", status: "confirmed", userAmountCents: 104700 })
+      .where(eq(recurringSeries.name, "CASH JOB WEEKLY PAY"))
+      .run();
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Car lease",
+        kind: "bill",
+        cadence: "monthly",
+        nextExpectedOn: "2026-07-15",
+        nextExpectedAmountCents: -69504,
+        userAmountCents: -69504,
+        userNextExpectedOn: "2026-07-15",
+        status: "confirmed",
+      })
+      .run();
+
+    const july = recurringCalendar(bundle.db, "2026-07", TODAY);
+    const ahead = Object.values(july.entriesByDay).flat().filter((e) => e.state === "upcoming");
+
+    const lease = ahead.filter((e) => e.name === "Car lease");
+    expect(lease).toHaveLength(1);
+    expect(lease[0]).toMatchObject({ confidence: "scheduled", isStale: false, neverBilled: true });
+
+    const pay = ahead.filter((e) => e.name === "CASH JOB WEEKLY PAY");
+    expect(pay.length).toBeGreaterThan(0);
+    for (const e of pay) expect(e).toMatchObject({ confidence: "scheduled", isStale: true, neverBilled: false });
+
+    // a charge that happened carries neither
+    const posted = recurringCalendar(bundle.db, "2026-01", TODAY).entriesByDay["2026-01-09"]![0]!;
+    expect(posted).toMatchObject({ isStale: false, neverBilled: false });
+  });
+
   test("a long-inactive series stops projecting upcoming/missed but keeps its postings", () => {
     buildMonthlyNetflix();
     detectRecurringSeries(bundle.db, TODAY);

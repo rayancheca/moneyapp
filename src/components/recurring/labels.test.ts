@@ -15,7 +15,22 @@ import {
   postedSpreadReading,
   seriesVerb,
   futureDateLabel,
+  upcomingEvidenceWord,
 } from "./labels";
+
+describe("upcomingEvidenceWord", () => {
+  test("a series that has never charged is 'never billed', in the All tab's word", () => {
+    expect(upcomingEvidenceWord({ isStale: false, neverBilled: true })).toBe("never billed");
+  });
+
+  test("a series running late keeps 'evidence stale'", () => {
+    expect(upcomingEvidenceWord({ isStale: true, neverBilled: false })).toBe("evidence stale");
+  });
+
+  test("fresh evidence needs no word", () => {
+    expect(upcomingEvidenceWord({ isStale: false, neverBilled: false })).toBeNull();
+  });
+});
 
 const staleness = (over: Partial<SeriesStaleness> = {}): SeriesStaleness => ({
   lastMatchedOn: "2026-06-16",

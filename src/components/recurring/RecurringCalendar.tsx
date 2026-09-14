@@ -18,12 +18,13 @@ import { monthFlow } from "@/lib/month-flow";
 import { CALENDAR_DENSITY_CLASS } from "./recurring-view-spec";
 import { formatCents } from "@/lib/money";
 import type { ForecastConfidence, UnsettledReason } from "@/lib/occurrence-verdict";
+import { SERIES_EVIDENCE_LABEL } from "@/lib/series-evidence";
 import type {
   CalendarEntry,
   DayStateKind,
   RecurringCalendarMonth,
 } from "@/services/recurring-calendar";
-import { KIND_LABEL, longDate, monthLabel } from "./labels";
+import { KIND_LABEL, longDate, monthLabel, upcomingEvidenceWord } from "./labels";
 import { MonthFlowStrip } from "./MonthFlowStrip";
 
 interface RecurringCalendarProps {
@@ -198,10 +199,11 @@ const HATCH: React.CSSProperties = {
 };
 
 function entrySummary(e: CalendarEntry): string {
+  const evidence = upcomingEvidenceWord(e);
   const qualifier = e.unsettledReason
     ? ` (${REASON_WORD[e.unsettledReason]})`
     : e.confidence
-      ? ` (${CONFIDENCE_WORD[e.confidence]}${e.isStale ? ", evidence stale" : ""})`
+      ? ` (${CONFIDENCE_WORD[e.confidence]}${evidence ? `, ${evidence}` : ""})`
       : "";
   return `${e.name} ${STATE_WORD[e.state]}${qualifier} ${formatCents(e.amountCents)}`;
 }
@@ -524,6 +526,9 @@ export function RecurringCalendar({ initialMonth, today, density = "tall", onMon
                         <Badge tone="neutral">{CONFIDENCE_WORD[e.confidence]}</Badge>
                       ) : null}
                       {e.isStale ? <Badge tone="warning">evidence stale</Badge> : null}
+                      {/* not a warning: nothing is late about a bill the bank has
+                          not charged yet — the All tab's "Never billed" */}
+                      {e.neverBilled ? <Badge tone="neutral">{SERIES_EVIDENCE_LABEL["never-billed"]}</Badge> : null}
                       <span className="text-[11px] text-ink-faint">{KIND_LABEL[e.kind]}</span>
                     </span>
                     {e.confidence ? (
