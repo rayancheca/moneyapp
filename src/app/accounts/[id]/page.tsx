@@ -13,7 +13,7 @@ import { formatCents, formatCentsSigned } from "@/lib/money";
 import { balanceDeltaAccent, balanceHeading, type BalanceDeltaAccent } from "@/lib/side-magnitude";
 import { accountInsights } from "@/services/account-insights";
 import { getAccount, listAccounts, listInstitutions } from "@/services/accounts";
-import { anchorRemovalEffects, listAnchors, type AnchorRemovalEffect } from "@/services/anchors";
+import { anchorRemovalEffects, listAnchors } from "@/services/anchors";
 import { accountSeries } from "@/services/derivation";
 import { listAccountHoldings } from "@/services/holdings";
 import { CASH_INSTITUTION_NAME } from "@/services/manual-transactions";
@@ -25,6 +25,7 @@ import { AccountHoldingsTable } from "@/components/accounts/AccountHoldingsTable
 import { InsightList } from "@/components/insights/InsightList";
 import { AccountNameHeading } from "@/components/accounts/AccountNameHeading";
 import { AnchorForm } from "@/components/accounts/AnchorForm";
+import { removeBalanceRadius } from "@/components/accounts/remove-balance-radius";
 import { BalanceFigure } from "@/components/accounts/BalanceFigure";
 import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { BalanceChartPanel } from "@/components/accounts/BalanceChartPanel";
@@ -76,34 +77,6 @@ function ChangeChip({ label, cents, liability = false }: { label: string; cents:
       {label} <span className={`figures font-medium ${tone}`}>{formatCentsSigned(cents)}</span>
     </span>
   );
-}
-
-/**
- * The remove-balance dialog's headline, read off what removal actually changes
- * (`anchorRemovalEffects`, which derives the account with and without the
- * balance) — never a date range worked out on this page. The count's measured
- * history lives on `removalEffect` in services/derivation.
- *
- * ⛔ Each branch says only what its effect proves:
- * - "leaves the curve exactly as it is" needs `curveUnchanged`, not merely no day
- *   lost. A wrong balance that breaks a chain pins nothing, yet removing it turns
- *   the gap days around it back into derived ones.
- * - "is what verifies X on …" names the days it loses, which can start BEFORE the
- *   balance's own date when removal re-grades the span behind it, and run past
- *   it through the carried days. `dayWindowLabel` names that window; a single
- *   lost day stays a single date.
- */
-function removeBalanceHeadline(accountName: string, effect: AnchorRemovalEffect): string {
-  if (effect.pricedFromHoldings) {
-    return `${accountName} is priced from its holdings, so this recorded balance verifies nothing. Removing it leaves the curve exactly as it is.`;
-  }
-  if (effect.lostWindow) {
-    return `This balance is what verifies ${accountName} on ${dayWindowLabel(effect.lostWindow.from, effect.lostWindow.to)}. Removing it leaves those days to be derived from transactions alone.`;
-  }
-  if (effect.curveUnchanged) {
-    return `This balance pins no day of ${accountName} that another balance does not already pin. Removing it leaves the curve exactly as it is.`;
-  }
-  return `This balance pins no day of ${accountName} that another balance does not already pin, but removing it re-derives ${countPhrase(effect.changedDays, "day")} from the balances around it.`;
 }
 
 export default async function AccountDetailPage({
@@ -445,36 +418,25 @@ export default async function AccountDetailPage({
                              SQLite returned the statement row first; see
                              `removalEffect`.) One of the 21 remove-balance
                              dialogs on this ledger. */
-                          radius={{
-                            headline: removeBalanceHeadline(account.name, removal),
-                            lines: [
-                              {
-                                /* the same rule, and the same hand-rolled copy:
-                                   an anchor is stored in the net-worth frame, so
-                                   a card in credit is a POSITIVE `balanceCents`
-                                   and negating it printed a negative amount
-                                   owed. Chase Sapphire's 2026-09-02 statement
-                                   anchor is exactly that; only its `statement`
-                                   source keeps this dialog off the screen. */
-                                label: `${balanceHeading(a.balanceCents, liability).label}, as recorded`,
-                                value: formatCents(balanceHeading(a.balanceCents, liability).cents),
-                                irreversible: true,
-                              },
-                              {
-                                label: "Days that stop being verified",
-                                value: removal.pricedFromHoldings
-                                  ? "none — the curve comes from holdings"
-                                  : countPhrase(removal.lostDays, "day"),
-                              },
-                              {
-                                label: "Recorded balances left on this account",
-                                value: countPhrase(anchors.length - 1, "balance"),
-                              },
-                            ],
-                            reassurance: removal.pricedFromHoldings
-                              ? "No transaction and no holding is touched — this account's value history is rebuilt from its holdings and their stored closes, which this balance is not part of."
-                              : "No transaction is touched — the balance curve is derived, so it rebuilds from what is left. Record the balance again to re-verify these days.",
-                          }}
+                          /* ⛔ Every sentence is `removeBalanceRadius`'s, tested
+                             branch by branch there — this page only hands it
+                             the measured effect. */
+                          radius={removeBalanceRadius({
+                            accountName: account.name,
+                            effect: removal,
+                            /* the same rule, and the same hand-rolled copy: an
+                               anchor is stored in the net-worth frame, so a card
+                               in credit is a POSITIVE `balanceCents` and
+                               negating it printed a negative amount owed. Chase
+                               Sapphire's 2026-09-02 statement anchor is exactly
+                               that; only its `statement` source keeps this
+                               dialog off the screen. */
+                            recorded: {
+                              label: balanceHeading(a.balanceCents, liability).label,
+                              value: formatCents(balanceHeading(a.balanceCents, liability).cents),
+                            },
+                            balancesLeft: anchors.length - 1,
+                          })}
                         />
                       )}
                     </td>

@@ -67,7 +67,7 @@ interface Anchor {
   source: AnchorSource;
 }
 
-interface DayRow {
+export interface DayRow {
   day: string;
   balanceCents: number;
   basis: BalanceBasis;
@@ -344,11 +344,37 @@ export function loadReplayInputs(db: AppDatabase, accountId: string): ReplayInpu
   return { anchors, txnSumByDay };
 }
 
+/** An unbroken run of days, both ends inclusive. */
+export interface DayRun {
+  from: string;
+  to: string;
+}
+
+/** Where the days a removal un-verifies end up. The three add up to `lostDays`. */
+export interface LostDayFates {
+  /** a row stays, replayed from transactions with no balance to check it (`derived_unverified`) */
+  unverified: number;
+  /** a row stays as `gap`: the balances either side no longer agree with the transactions between */
+  gap: number;
+  /** no row at all: the day has no balance */
+  gone: number;
+}
+
 export interface RemovalEffect {
   /** days that are checked now and would be unchecked, or gone, without the balance */
   lostDays: number;
-  /** the first and last of those days; null when no day is lost */
-  lostWindow: { from: string; to: string } | null;
+  /**
+   * Those days as unbroken runs, oldest first; empty when no day is lost.
+   * 🔴 NOT one window: a first-and-last pair named "Jun 7 – 26, 2026" over 19 lost
+   * days when Jun 8 stays verified by a bank export that takes over the curve.
+   */
+  lostRuns: DayRun[];
+  /** what becomes of each lost day — derived from transactions, a gap, or nothing */
+  lostTo: LostDayFates;
+  /** days verified with the balance AND without it, at a different figure */
+  rebasedDays: number;
+  /** rows the account keeps without it; 0 when it is the account's only balance */
+  daysLeft: number;
   /** days whose presence, balance or checked-ness would differ */
   changedDays: number;
   /** true only when no day would differ at all */
@@ -365,7 +391,8 @@ export interface RemovalEffect {
  * Both sides are derived rather than read from `daily_balances`: that cache stops
  * wherever `today` stood at its last rebuild (on 2026-09-14, Robinhood Cash's at
  * 2026-08-28 and Cash on Hand's at 2026-08-11), while `deleteAnchor` rebuilds at
- * today.
+ * today. So this is what the BALANCE does, and only that; what the rebuild does to
+ * a stale cache anyway is `catchUpDays` in services/anchors, never folded in here.
  *
  * ⚠️ anchored ↔ derived ↔ carried at the same balance is NOT a change — all three
  * are checked and draw alike. Only a day's presence, balance or checked-ness
@@ -416,22 +443,60 @@ export function removalEffect(
     options,
   );
   const afterByDay = new Map(after.map((r) => [r.day, r]));
-  const beforeDays = new Set(before.map((r) => r.day));
 
-  // `before` is sorted by day, so the first and last lost rows bound the window
+  // `before` is sorted by day, so the lost days come out oldest first
   const lost = before.filter((b) => basisIsChecked(b.basis) && !isCheckedRow(afterByDay.get(b.day)));
-  const changedDays =
-    before.filter((b) => rowDiffers(b, afterByDay.get(b.day))).length +
-    after.filter((a) => !beforeDays.has(a.day)).length;
-  const first = lost[0];
-  const last = lost.at(-1);
+  const fateOf = (day: string): keyof LostDayFates => {
+    const row = afterByDay.get(day);
+    if (row === undefined) return "gone";
+    // a lost day is unchecked without the balance, and `gap` is the only
+    // unchecked basis besides `derived_unverified`
+    return row.basis === "gap" ? "gap" : "unverified";
+  };
+  const lostTo: LostDayFates = { unverified: 0, gap: 0, gone: 0 };
+  for (const b of lost) lostTo[fateOf(b.day)] += 1;
+
+  const rebasedDays = before.filter((b) => {
+    const a = afterByDay.get(b.day);
+    return basisIsChecked(b.basis) && isCheckedRow(a) && a!.balanceCents !== b.balanceCents;
+  }).length;
+  const changedDays = changedDayCount(before, after);
 
   return {
     lostDays: lost.length,
-    lostWindow: first && last ? { from: first.day, to: last.day } : null,
+    lostRuns: dayRuns(lost.map((b) => b.day)),
+    lostTo,
+    rebasedDays,
+    daysLeft: after.length,
     changedDays,
     curveUnchanged: changedDays === 0,
   };
+}
+
+/**
+ * Days whose presence, balance or checked-ness differ between two curves of ONE
+ * account, either way round. The single rule for "a day changed": `removalEffect`
+ * reads it between the curve with and without a balance, and services/anchors
+ * between the stored cache and a rebuild at today — the part of a confirmed
+ * removal that would happen whichever balance went.
+ */
+export function changedDayCount(from: readonly DayRow[], to: readonly DayRow[]): number {
+  const toByDay = new Map(to.map((r) => [r.day, r]));
+  const fromDays = new Set(from.map((r) => r.day));
+  return (
+    from.filter((r) => rowDiffers(r, toByDay.get(r.day))).length +
+    to.filter((r) => !fromDays.has(r.day)).length
+  );
+}
+
+/** Sorted, distinct days → their unbroken runs, oldest first. */
+function dayRuns(days: readonly string[]): DayRun[] {
+  return days.reduce<DayRun[]>((runs, day) => {
+    const last = runs.at(-1);
+    return last !== undefined && addDays(last.to, 1) === day
+      ? [...runs.slice(0, -1), { from: last.from, to: day }]
+      : [...runs, { from: day, to: day }];
+  }, []);
 }
 
 function isCheckedRow(row: DayRow | undefined): boolean {
@@ -694,16 +759,23 @@ export interface AccountSeriesPoint {
   basis: BalanceBasis;
 }
 
-/** One account's covered daily balances, oldest first (gap days excluded). */
-export function accountSeries(db: AppDatabase, accountId: string): AccountSeriesPoint[] {
+/**
+ * One account's STORED daily rows, gap days included, oldest first — what the
+ * last `rebuildAccount` wrote, which is not necessarily what a rebuild at today
+ * would write (services/anchors' `catchUpDays` counts the difference).
+ */
+export function storedDailyRows(db: AppDatabase, accountId: string): DayRow[] {
   return db
-    .select()
+    .select({ day: dailyBalances.day, balanceCents: dailyBalances.balanceCents, basis: dailyBalances.basis })
     .from(dailyBalances)
     .where(eq(dailyBalances.accountId, accountId))
     .orderBy(asc(dailyBalances.day))
-    .all()
-    .filter((r) => r.basis !== "gap")
-    .map((r) => ({ day: r.day, balanceCents: r.balanceCents, basis: r.basis }));
+    .all();
+}
+
+/** One account's covered daily balances, oldest first (gap days excluded). */
+export function accountSeries(db: AppDatabase, accountId: string): AccountSeriesPoint[] {
+  return storedDailyRows(db, accountId).filter((r) => r.basis !== "gap");
 }
 
 export interface AccountBalance {

@@ -14,7 +14,6 @@ import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
 import {
   addManualAnchor,
-  anchorRemovalEffect,
   anchorRemovalEffects,
   deleteAnchor,
   listAnchors,
@@ -148,11 +147,11 @@ describe("pre-mutation snapshots", () => {
 
 /**
  * THE PREDICTION IS THE EFFECT. The remove-balance dialog quotes
- * `anchorRemovalEffect` before the owner confirms, and `deleteAnchor` is what
+ * `anchorRemovalEffects` before the owner confirms, and `deleteAnchor` is what
  * then happens — so these run both against one database and hold the dialog's
  * numbers to what `daily_balances` actually lost.
  */
-describe("anchorRemovalEffect — the dialog's prediction equals what deleteAnchor does", () => {
+describe("anchorRemovalEffects — the dialog's prediction equals what deleteAnchor does", () => {
   const TODAY = "2026-08-02";
   let dir: string;
   let bundle: DbBundle;
@@ -220,38 +219,95 @@ describe("anchorRemovalEffect — the dialog's prediction equals what deleteAnch
         const a = afterByDay.get(b.day);
         return !a || a.balanceCents !== b.balanceCents || basisIsChecked(a.basis) !== basisIsChecked(b.basis);
       }).length + after.filter((a) => !beforeDays.has(a.day)).length;
-    return { lostDays, changedDays };
+    return { lostDays, changedDays, daysLeft: after.length };
   }
 
-  /** Predict at `today`, then really delete, rebuild at the same `today`, and read both curves. */
-  function predictThenRemove(accountId: string, anchorId: string, today: string) {
-    rebuildAccount(bundle.db, accountId, today);
+  /**
+   * Predict at `today` over whatever the cache holds — last rebuilt on
+   * `rebuiltOn` — then really delete, rebuild at the same `today`, and read both
+   * curves. ⛔ `rebuiltOn` defaults to `today`, and that default is the one
+   * condition under which a prediction that ignores the cache looks right.
+   */
+  function predictThenRemove(accountId: string, anchorId: string, today: string, rebuiltOn = today) {
+    rebuildAccount(bundle.db, accountId, rebuiltOn);
     const before = stored(accountId);
-    const prediction = anchorRemovalEffect(bundle.db, anchorId, today);
+    const prediction = anchorRemovalEffects(bundle.db, accountId, today).get(anchorId);
     deleteAnchor(bundle.db, anchorId); // rebuilds at the wall-clock today…
     rebuildAccount(bundle.db, accountId, today); // …so line the dates back up
     return { prediction, before, after: stored(accountId) };
   }
 
-  test("a past-dated live reading between two closing statements: nothing lost, and not one row moves", () => {
+  /** A $7,235.65 live reading between two statements the transactions close — Robinhood Cash's shape. */
+  function robinhoodCash() {
     const cash = account("Robinhood Cash", "checking");
     anchor(cash, "2026-06-30", 19_229, "statement");
     anchor(cash, "2026-07-31", 168_038, "statement");
     txn(cash, "2026-07-05", 700_000);
     txn(cash, "2026-07-20", -551_191);
-    const live = anchor(cash, "2026-07-10", 723_565, "live");
+    return { cash, live: anchor(cash, "2026-07-10", 723_565, "live") };
+  }
+
+  test("a past-dated live reading between two closing statements: nothing lost, and not one row moves", () => {
+    const { cash, live } = robinhoodCash();
 
     const { prediction, before, after } = predictThenRemove(cash, live, TODAY);
 
     expect(prediction).toEqual({
       pricedFromHoldings: false,
+      catchUpDays: 0,
       lostDays: 0,
-      lostWindow: null,
+      lostRuns: [],
+      lostTo: { unverified: 0, gap: 0, gone: 0 },
+      rebasedDays: 0,
+      daysLeft: before.length,
       changedDays: 0,
       curveUnchanged: true,
     });
-    expect(measured(before, after)).toEqual({ lostDays: 0, changedDays: 0 });
+    expect(measured(before, after)).toEqual({ lostDays: 0, changedDays: 0, daysLeft: before.length });
     expect(after).toEqual(before);
+  });
+
+  /**
+   * 🔴 The dialog promised "Removing it leaves the curve exactly as it is" over
+   * Robinhood Cash on 2026-09-14, whose stored curve ended 2026-08-28: confirming
+   * added 17 days. The balance changes nothing; the rebuild it triggers does.
+   */
+  test("a STALE cache: the balance changes nothing, and confirming changes exactly the catch-up it names", () => {
+    const { cash, live } = robinhoodCash();
+
+    const { prediction, before, after } = predictThenRemove(cash, live, "2026-08-20", TODAY);
+
+    expect(before.at(-1)?.day).toBe(TODAY); // the condition: the cache stops 18 days short
+    expect(prediction).toMatchObject({ pricedFromHoldings: false, lostDays: 0, curveUnchanged: true, catchUpDays: 18 });
+    // Aug 3 – 20, and nothing else, is what the owner sees change
+    expect(measured(before, after)).toEqual({ lostDays: 0, changedDays: 18, daysLeft: after.length });
+    expect(after.slice(0, before.length)).toEqual(before);
+  });
+
+  /**
+   * 🔴 Cash on Hand holds ONE balance, and its dialog read "Removing it leaves
+   * those days to be derived from transactions alone" over a removal that leaves
+   * no row at all. Every cash wallet starts with exactly one.
+   */
+  test("the account's ONLY balance: every stored row goes, and the prediction says none is left", () => {
+    const wallet = account("Cash on Hand", "checking");
+    const opening = anchor(wallet, "2026-08-03", 500_000, "manual");
+    txn(wallet, "2026-08-11", -500_000);
+
+    const { prediction, before, after } = predictThenRemove(wallet, opening, "2026-08-14");
+
+    expect(before).toHaveLength(12);
+    expect(after).toEqual([]);
+    expect(prediction).toEqual({
+      pricedFromHoldings: false,
+      catchUpDays: 0,
+      ...measured(before, after),
+      lostRuns: [{ from: "2026-08-03", to: "2026-08-10" }],
+      // the eight verified days lose their balance outright; nothing is left to derive them from
+      lostTo: { unverified: 0, gap: 0, gone: 8 },
+      rebasedDays: 0,
+      curveUnchanged: false,
+    });
   });
 
   test("a manual balance whose removal re-grades the days BEFORE it: the dialog's count is the rebuild's", () => {
@@ -266,10 +322,15 @@ describe("anchorRemovalEffect — the dialog's prediction equals what deleteAnch
     expect(effect.lostDays).toBe(8);
     expect(prediction).toEqual({
       pricedFromHoldings: false,
+      catchUpDays: 0,
       ...effect,
-      lostWindow: { from: "2026-07-05", to: "2026-07-12" },
+      lostRuns: [{ from: "2026-07-05", to: "2026-07-12" }],
+      // a walk forward from Jul 1 still reaches every one of them, unchecked
+      lostTo: { unverified: 8, gap: 0, gone: 0 },
+      rebasedDays: 0,
       curveUnchanged: false,
     });
+    expect(after.filter((r) => r.basis === "derived_unverified")).toHaveLength(8);
   });
 
   test("the page's one call answers for every removable balance and for no other", () => {
@@ -284,9 +345,7 @@ describe("anchorRemovalEffect — the dialog's prediction equals what deleteAnch
     expect([...effects.keys()].sort()).toEqual([manual, live].sort());
     expect(effects.has(statement)).toBe(false);
     expect(effects.has(ofx)).toBe(false);
-    for (const id of [manual, live]) {
-      expect(effects.get(id)).toEqual(anchorRemovalEffect(bundle.db, id, "2026-07-12"));
-    }
+    expect(effects.has("no-such-anchor")).toBe(false);
   });
 
   test("an investment account WITH holding events is priced from holdings, whatever its balances say", () => {
@@ -303,7 +362,6 @@ describe("anchorRemovalEffect — the dialog's prediction equals what deleteAnch
       .run();
     const manual = anchor(brokerage, "2026-07-10", 500_000, "manual");
 
-    expect(anchorRemovalEffect(bundle.db, manual, TODAY)).toEqual({ pricedFromHoldings: true });
     expect(anchorRemovalEffects(bundle.db, brokerage, TODAY)).toEqual(
       new Map([[manual, { pricedFromHoldings: true }]]),
     );
@@ -319,23 +377,19 @@ describe("anchorRemovalEffect — the dialog's prediction equals what deleteAnch
     const bare = account("Bare holding", "investment");
     anchor(bare, "2026-07-01", 100_000, "statement");
     const manual = anchor(bare, "2026-07-05", 120_000, "manual");
+    rebuildAccount(bundle.db, bare, "2026-07-08");
 
-    expect(anchorRemovalEffect(bundle.db, manual, "2026-07-08")).toEqual({
+    expect(anchorRemovalEffects(bundle.db, bare, "2026-07-08").get(manual)).toEqual({
       pricedFromHoldings: false,
+      catchUpDays: 0,
       lostDays: 0,
-      lostWindow: null,
+      lostRuns: [],
+      lostTo: { unverified: 0, gap: 0, gone: 0 },
+      // Jul 5 – 8 stay carried, at $1,000.00 instead of $1,200.00
+      rebasedDays: 4,
+      daysLeft: 8,
       changedDays: 4,
       curveUnchanged: false,
     });
-  });
-
-  test("a statement or bank-export balance has no remove button, so no prediction; nor has an unknown id", () => {
-    const acct = account("Checking", "checking");
-    const statement = anchor(acct, "2026-07-01", 10_000, "statement");
-    const ofx = anchor(acct, "2026-07-02", 10_000, "ofx_ledger");
-
-    expect(anchorRemovalEffect(bundle.db, statement, TODAY)).toBeNull();
-    expect(anchorRemovalEffect(bundle.db, ofx, TODAY)).toBeNull();
-    expect(anchorRemovalEffect(bundle.db, "no-such-anchor", TODAY)).toBeNull();
   });
 });

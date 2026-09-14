@@ -33,4 +33,18 @@ describe("/accounts/[id] — the remove-balance dialog's blast radius", () => {
   test("priced-from-holdings is the rebuild's predicate, never provenance's verdict", () => {
     expect(source).not.toMatch(/"market_value"/);
   });
+
+  /**
+   * 🔴 The page kept its own headline and reassurance, and no test read either:
+   * "Removing it leaves those days to be derived from transactions alone" and
+   * "it rebuilds from what is left" over Cash on Hand's only balance, whose
+   * removal leaves no row. The sentences live in `removeBalanceRadius` now,
+   * pinned branch by branch in components/accounts/remove-balance-radius.test.ts.
+   */
+  test("every sentence of the dialog comes from removeBalanceRadius, and the page keeps no copy", () => {
+    expect(source.match(/removeBalanceRadius\(/g) ?? []).toHaveLength(1);
+    expect(source).not.toMatch(/function removeBalanceHeadline/);
+    // (the archive dialog's own "puts it back exactly as it is now" is not this dialog's)
+    expect(source).not.toMatch(/rebuilds from what is left|re-verify these days|leaves the curve exactly as it is/);
+  });
 });

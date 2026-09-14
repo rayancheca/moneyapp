@@ -8,10 +8,14 @@ import { financialWindowMessage, isWithinFinancialWindow } from "@/lib/date-wind
 import { isValidIsoDate, todayIso } from "@/lib/dates";
 import { getAccount } from "./accounts";
 import {
+  changedDayCount,
+  deriveDailyRows,
   derivesFromHoldings,
   loadReplayInputs,
+  pickWinners,
   rebuildAccount,
   removalEffect,
+  storedDailyRows,
   type RemovalEffect,
 } from "./derivation";
 
@@ -104,18 +108,37 @@ export function isRemovableAnchorSource(source: AnchorSource): boolean {
 
 export type AnchorRemovalEffect =
   | { pricedFromHoldings: true }
-  | ({ pricedFromHoldings: false } & RemovalEffect);
+  | ({
+      pricedFromHoldings: false;
+      /**
+       * Days the STORED curve differs from a rebuild at `today` with every balance
+       * kept: the part of confirming that happens whichever balance goes, or none.
+       * `RemovalEffect` compares two derivations at today and cannot see it.
+       */
+      catchUpDays: number;
+    } & RemovalEffect);
 
 /**
  * What `deleteAnchor` WOULD do to each removable balance on one account — the
  * figures the remove-balance dialog quotes before the owner confirms.
  *
  * It takes the branch `rebuildAccount` takes: an account priced from its holdings
- * never reads a recorded balance, so removing one changes nothing; any other is
- * `removalEffect` over `loadReplayInputs`. Loaded ONCE per account however many
- * rows the page renders — building drizzle queries is this app's measured cost,
- * and per-row loads would multiply it by the rows. Keys are exactly the balances
- * `deleteAnchor` accepts.
+ * never reads a recorded balance, so removing one changes nothing it contributes;
+ * any other is `removalEffect` over `loadReplayInputs`. Loaded ONCE per account
+ * however many rows the page renders — building drizzle queries is this app's
+ * measured cost, and per-row loads would multiply it by the rows. Keys are
+ * exactly the balances `deleteAnchor` accepts.
+ *
+ * 🔴 `curveUnchanged` was quoted as "Removing it leaves the curve exactly as it
+ * is", but the page draws `daily_balances`, which stops wherever today stood at
+ * the last rebuild, and `deleteAnchor` rebuilds at today. Measured 2026-09-14 on
+ * the owner's ledger: Robinhood Cash's cache ended 2026-08-28 and Chase
+ * Sapphire's 2026-09-03, so confirming either removal added 17 and 11 days to the
+ * drawn curve under a dialog that promised none. `catchUpDays` is that difference,
+ * counted by the same `changedDayCount` the effect itself is counted by.
+ *
+ * (A single-balance `anchorRemovalEffect` shipped beside this with no caller but
+ * its own tests — a prediction nothing quoted. The map is the one entry point.)
  */
 export function anchorRemovalEffects(
   db: AppDatabase,
@@ -135,33 +158,17 @@ export function anchorRemovalEffects(
 
   const { anchors, txnSumByDay } = loadReplayInputs(db, accountId);
   const options = { isInvestment: account.type === "investment", today };
+  // exactly what `rebuildAccount` would write if nothing were removed
+  const rebuiltToday = deriveDailyRows(pickWinners(anchors), txnSumByDay, options);
+  const catchUpDays = changedDayCount(storedDailyRows(db, accountId), rebuiltToday);
   return new Map(
     anchors
       .filter((a) => isRemovableAnchorSource(a.source))
       .map((a): [string, AnchorRemovalEffect] => [
         a.id,
-        { pricedFromHoldings: false, ...removalEffect(anchors, a.id, txnSumByDay, options) },
+        { pricedFromHoldings: false, catchUpDays, ...removalEffect(anchors, a.id, txnSumByDay, options) },
       ]),
   );
-}
-
-/**
- * The prediction for ONE balance, beside the action it predicts. Null for a
- * balance with no remove button (statement, bank export) or no such balance.
- * A page listing many rows should call `anchorRemovalEffects` once instead.
- */
-export function anchorRemovalEffect(
-  db: AppDatabase,
-  anchorId: string,
-  today: string = todayIso(),
-): AnchorRemovalEffect | null {
-  const anchor = db
-    .select({ accountId: balanceAnchors.accountId, source: balanceAnchors.source })
-    .from(balanceAnchors)
-    .where(eq(balanceAnchors.id, anchorId))
-    .get();
-  if (!anchor || !isRemovableAnchorSource(anchor.source)) return null;
-  return anchorRemovalEffects(db, anchor.accountId, today).get(anchorId) ?? null;
 }
 
 export function deleteAnchor(db: AppDatabase, anchorId: string): void {

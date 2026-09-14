@@ -373,7 +373,15 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
         (nextExclusive === undefined || compareDates(r.day, nextExclusive) < 0),
     ).length;
 
-  const NOTHING = { lostDays: 0, lostWindow: null, changedDays: 0, curveUnchanged: true };
+  const NO_LOST_DAYS = { lostDays: 0, lostRuns: [], lostTo: { unverified: 0, gap: 0, gone: 0 } };
+  /** no day differs, so the account keeps every row it has */
+  const nothing = (daysLeft: number) => ({
+    ...NO_LOST_DAYS,
+    rebasedDays: 0,
+    daysLeft,
+    changedDays: 0,
+    curveUnchanged: true,
+  });
 
   test("A1 a past-dated live reading between two statements that close un-verifies nothing (Robinhood Cash)", () => {
     const today = "2026-08-02";
@@ -394,7 +402,7 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
     // the defect: the range rule credited Jul 10 – 30 to a reading that is not an endpoint
     expect(oldRangeCount(rows, "2026-07-10", "2026-07-31")).toBe(21);
 
-    expect(removalEffect(anchors, "live", txns, cash(today))).toEqual(NOTHING);
+    expect(removalEffect(anchors, "live", txns, cash(today))).toEqual(nothing(rows.length));
   });
 
   test("A2 a manual balance one day after an EQUAL statement, nothing posted that day (Chase Sapphire)", () => {
@@ -421,7 +429,7 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
     expect(rows.find((r) => r.day === "2025-02-03")).toEqual({ day: "2025-02-03", balanceCents: 0, basis: "anchored" });
     expect(without.find((r) => r.day === "2025-02-03")).toEqual({ day: "2025-02-03", balanceCents: 0, basis: "derived" });
 
-    expect(removalEffect(anchors, "manual", txns, cash(today))).toEqual(NOTHING);
+    expect(removalEffect(anchors, "manual", txns, cash(today))).toEqual(nothing(rows.length));
   });
 
   test("A3 the sole manual balance: its day, the carried days, never the unverified one (Cash on Hand)", () => {
@@ -435,8 +443,12 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
 
     expect(removalEffect(anchors, "manual", txns, cash(today))).toEqual({
       lostDays: 8,
-      lostWindow: { from: "2026-08-03", to: "2026-08-10" },
-      // every row goes: nothing is left to derive the account from
+      lostRuns: [{ from: "2026-08-03", to: "2026-08-10" }],
+      // every row goes: nothing is left to derive the account from, so the lost
+      // days lose their balance outright — and the unverified Aug 11 – 14 go too
+      lostTo: { unverified: 0, gap: 0, gone: 8 },
+      rebasedDays: 0,
+      daysLeft: 0,
       changedDays: 12,
       curveUnchanged: false,
     });
@@ -459,7 +471,7 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
       [manual, statement, next],
     ]) {
       expect(pickWinners(order).find((w) => w.anchoredOn === "2024-08-18")?.source).toBe("statement");
-      expect(removalEffect(order, "manual", txns, cash(today))).toEqual(NOTHING);
+      expect(removalEffect(order, "manual", txns, cash(today))).toEqual(nothing(rows.length));
     }
   });
 
@@ -478,7 +490,10 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
     expect(removalEffect(anchors, "manual", txns, cash(today))).toEqual({
       // Jul 5 – 9 derived, Jul 10 anchored, Jul 11 – 12 carried: all become a walk forward from Jul 1
       lostDays: 8,
-      lostWindow: { from: "2026-07-05", to: "2026-07-12" },
+      lostRuns: [{ from: "2026-07-05", to: "2026-07-12" }],
+      lostTo: { unverified: 8, gap: 0, gone: 0 },
+      rebasedDays: 0,
+      daysLeft: 12,
       changedDays: 8,
       curveUnchanged: false,
     });
@@ -498,8 +513,10 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
     expect(basisOn(rows, "2026-07-15")).toBe("gap");
 
     expect(removalEffect(anchors, "manual", txns, cash(today))).toEqual({
-      lostDays: 0,
-      lostWindow: null,
+      ...NO_LOST_DAYS,
+      // Jul 10 is verified either way: anchored at $50.00, then derived at $80.00
+      rebasedDays: 1,
+      daysLeft: 22,
       // Jul 2 – 19: seventeen gap days become derived, and Jul 10 moves from $50.00 to $80.00
       changedDays: 18,
       curveUnchanged: false,
@@ -520,7 +537,11 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
 
     expect(removalEffect(anchors, "live", txns, cash(today))).toEqual({
       lostDays: 1,
-      lostWindow: { from: today, to: today },
+      lostRuns: [{ from: today, to: today }],
+      // the forward walk from Jul 1 still reaches today, unchecked
+      lostTo: { unverified: 1, gap: 0, gone: 0 },
+      rebasedDays: 0,
+      daysLeft: 6,
       changedDays: 1,
       curveUnchanged: false,
     });
@@ -538,8 +559,10 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
     expect(rows.find((r) => r.day === today)).toEqual({ day: today, balanceCents: 9_500, basis: "anchored" });
 
     expect(removalEffect(anchors, "live", txns, cash(today))).toEqual({
-      lostDays: 0,
-      lostWindow: null,
+      ...NO_LOST_DAYS,
+      // today is carried either way, at $100.00 instead of $95.00
+      rebasedDays: 1,
+      daysLeft: 6,
       changedDays: 1,
       curveUnchanged: false,
     });
@@ -559,9 +582,10 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
     expect(rows.every((r) => basisIsChecked(r.basis))).toBe(true);
 
     expect(removalEffect(anchors, "manual", txns, options)).toEqual({
-      lostDays: 0,
-      lostWindow: null,
-      // Jul 3 – 5 carry $89,000.00 instead of $90,000.00
+      ...NO_LOST_DAYS,
+      // Jul 3 – 5 carry $89,000.00 instead of $90,000.00 — verified either way
+      rebasedDays: 3,
+      daysLeft: 9,
       changedDays: 3,
       curveUnchanged: false,
     });
@@ -584,7 +608,188 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
 
     expect(removalEffect(anchors, "manual", txns, cash(today))).toEqual({
       lostDays: 9,
-      lostWindow: { from: "2026-07-01", to: "2026-07-09" },
+      lostRuns: [{ from: "2026-07-01", to: "2026-07-09" }],
+      // the backward walk from Jul 10 still reaches every one of them
+      lostTo: { unverified: 9, gap: 0, gone: 0 },
+      rebasedDays: 0,
+      daysLeft: 14,
+      changedDays: 9,
+      curveUnchanged: false,
+    });
+  });
+
+  /**
+   * 🔴 The dialog said "Removing it leaves those days to be derived from
+   * transactions alone" of every lost day. B1–B3 are the three things that can
+   * really become of one, each checked against the rows without the balance.
+   */
+  test("B1 the FIRST balance, before the first transaction: some lost days lose their balance, the rest stay derived", () => {
+    const today = "2026-07-12";
+    const anchors = [
+      anchor("manual", "2026-07-01", 10_000, "manual"),
+      anchor("s-jul", "2026-07-10", 8_000, "statement"),
+    ];
+    const txns = new Map([["2026-07-05", -2_000]]);
+
+    const without = deriveDailyRows(pickWinners([anchors[1]!]), txns, cash(today));
+    expect(basisOn(without, "2026-07-03")).toBeUndefined();
+    expect(basisOn(without, "2026-07-04")).toBe("derived_unverified");
+
+    expect(removalEffect(anchors, "manual", txns, cash(today))).toEqual({
+      lostDays: 9,
+      lostRuns: [{ from: "2026-07-01", to: "2026-07-09" }],
+      // Jul 4 – 9 are walked back from Jul 10; Jul 1 – 3 are before the walk ends
+      lostTo: { unverified: 6, gap: 0, gone: 3 },
+      rebasedDays: 0,
+      daysLeft: 9,
+      changedDays: 9,
+      curveUnchanged: false,
+    });
+  });
+
+  test("B2 a middle balance that closes both spans: without it the lost days are a gap", () => {
+    const today = "2026-07-22";
+    const anchors = [
+      anchor("s1", "2026-07-01", 10_000, "statement"),
+      anchor("manual", "2026-07-10", 9_000, "manual"),
+      anchor("s2", "2026-07-20", 5_000, "statement"),
+    ];
+    const txns = new Map([
+      ["2026-07-05", -1_000],
+      ["2026-07-15", -1_000],
+    ]);
+
+    const rows = deriveDailyRows(pickWinners(anchors), txns, cash(today));
+    expect(basisOn(rows, "2026-07-05")).toBe("derived");
+    expect(basisOn(rows, "2026-07-15")).toBe("gap"); // $90.00 − $10.00 is not $50.00
+
+    expect(removalEffect(anchors, "manual", txns, cash(today))).toEqual({
+      lostDays: 9,
+      lostRuns: [{ from: "2026-07-02", to: "2026-07-10" }],
+      lostTo: { unverified: 0, gap: 9, gone: 0 },
+      rebasedDays: 0,
+      daysLeft: 22,
+      changedDays: 9,
+      curveUnchanged: false,
+    });
+  });
+
+  test("B3 an investment account never replays transactions, so its lost days lose their balance outright", () => {
+    const options = { isInvestment: true, today: "2026-07-08" };
+    const anchors = [
+      anchor("manual", "2026-07-01", 10_000, "manual"),
+      anchor("s-jul", "2026-07-05", 12_000, "statement"),
+    ];
+
+    expect(removalEffect(anchors, "manual", new Map(), options)).toEqual({
+      lostDays: 4,
+      lostRuns: [{ from: "2026-07-01", to: "2026-07-04" }],
+      lostTo: { unverified: 0, gap: 0, gone: 4 },
+      rebasedDays: 0,
+      daysLeft: 4,
+      changedDays: 4,
+      curveUnchanged: false,
+    });
+  });
+
+  /**
+   * 🔴 `lostWindow` was the first and last lost day, named as one range: "Jun 7 –
+   * 26, 2026" beside a count of 19, with Jun 8 still verified inside it.
+   */
+  test("B4 removing the only chain-grade balance hands the curve to bank exports: the lost days are two runs", () => {
+    const today = "2026-07-02";
+    const anchors = [
+      anchor("manual", "2026-06-07", 0, "manual"),
+      anchor("ofx-8", "2026-06-08", 0, "ofx_ledger"),
+      anchor("ofx-27", "2026-06-27", 2_000, "ofx_ledger"),
+    ];
+
+    const without = deriveDailyRows(pickWinners(anchors.slice(1)), new Map(), cash(today));
+    expect(basisOn(without, "2026-06-08")).toBe("anchored");
+
+    expect(removalEffect(anchors, "manual", new Map(), cash(today))).toEqual({
+      lostDays: 19,
+      lostRuns: [
+        { from: "2026-06-07", to: "2026-06-07" },
+        { from: "2026-06-09", to: "2026-06-26" },
+      ],
+      lostTo: { unverified: 0, gap: 18, gone: 1 },
+      // Jun 27 – Jul 2: carried at $0.00, then at the export's $20.00
+      rebasedDays: 6,
+      daysLeft: 25,
+      changedDays: 25,
+      curveUnchanged: false,
+    });
+  });
+
+  test("B5 the same with live readings and a transaction: two runs, two fates", () => {
+    const today = "2026-07-14";
+    const anchors = [
+      anchor("manual", "2026-07-05", 10_000, "manual"),
+      anchor("live-8", "2026-07-08", 12_000, "live"),
+      anchor("live-12", "2026-07-12", 13_000, "live"),
+    ];
+    const txns = new Map([["2026-07-01", 10_000]]);
+
+    expect(removalEffect(anchors, "manual", txns, cash(today))).toEqual({
+      lostDays: 6,
+      lostRuns: [
+        { from: "2026-07-05", to: "2026-07-07" },
+        { from: "2026-07-09", to: "2026-07-11" },
+      ],
+      lostTo: { unverified: 3, gap: 3, gone: 0 },
+      // Jul 8 and Jul 12 – 14 stay verified, at the readings' figures
+      rebasedDays: 4,
+      daysLeft: 15,
+      changedDays: 15,
+      curveUnchanged: false,
+    });
+  });
+
+  /**
+   * 🔴 "This balance pins no day … that another balance does not already pin" of
+   * a balance that alone set four verified days at $120.00.
+   */
+  test("B6 a balance above a quiet statement un-verifies nothing, but re-bases the verified days it set", () => {
+    const today = "2026-07-08";
+    const anchors = [
+      anchor("s-jul", "2026-07-01", 10_000, "statement"),
+      anchor("manual", "2026-07-05", 12_000, "manual"),
+    ];
+
+    const rows = deriveDailyRows(pickWinners(anchors), new Map(), cash(today));
+    expect(rows.find((r) => r.day === "2026-07-06")).toEqual({ day: "2026-07-06", balanceCents: 12_000, basis: "carried" });
+
+    expect(removalEffect(anchors, "manual", new Map(), cash(today))).toEqual({
+      ...NO_LOST_DAYS,
+      rebasedDays: 4,
+      daysLeft: 8,
+      // Jul 2 – 4 gap → carried, Jul 5 – 8 $120.00 → $100.00
+      changedDays: 7,
+      curveUnchanged: false,
+    });
+  });
+
+  /**
+   * ⛔ Days that exist ONLY without the balance count as changed. Dropping that
+   * half of the count left every service test green.
+   */
+  test("B7 bank exports before the only manual balance take the curve back further: the new rows are changes", () => {
+    const today = "2026-06-12";
+    const anchors = [
+      anchor("ofx-1", "2026-06-01", 5_000, "ofx_ledger"),
+      anchor("ofx-3", "2026-06-03", 5_000, "ofx_ledger"),
+      anchor("manual", "2026-06-10", 5_000, "manual"),
+    ];
+
+    const rows = deriveDailyRows(pickWinners(anchors), new Map(), cash(today));
+    expect(rows[0]?.day).toBe("2026-06-10");
+
+    expect(removalEffect(anchors, "manual", new Map(), cash(today))).toEqual({
+      ...NO_LOST_DAYS,
+      rebasedDays: 0,
+      daysLeft: 12,
+      // Jun 1 – 9, and nothing that was already there
       changedDays: 9,
       curveUnchanged: false,
     });
