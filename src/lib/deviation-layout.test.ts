@@ -4,8 +4,38 @@ import {
   computeDeviationLayout,
   deviationChangeLabel,
   deviationDescription,
+  deviationRowsFrom,
   type DeviationInput,
 } from "./deviation-layout";
+
+/**
+ * 🔴 The union rule lived inline in the page, where no test could reach it —
+ * and /spending needs it over TWO window pairs now (the whole periods, or the
+ * days both were cut to), so it has one home that both read.
+ */
+describe("deviationRowsFrom — the union of both windows", () => {
+  const cat = (categoryId: string | null, name: string, spentCents: number, txnCount: number) => ({
+    categoryId,
+    name,
+    spentCents,
+    txnCount,
+  });
+
+  test("a category that stopped spending is still a row — the move IS its fall", () => {
+    // /spending?period=2026-07: Government $2,250.00 in June and nothing in July
+    const rows = deviationRowsFrom([cat("food", "Food", 30_000, 12)], [cat("food", "Food", 20_000, 9), cat("gov", "Government", 225_000, 1)]);
+    expect(rows).toEqual([
+      { key: "food", label: "Food", currentCents: 30_000, previousCents: 20_000, previousCount: 9 },
+      { key: "gov", label: "Government", currentCents: 0, previousCents: 225_000, previousCount: 1 },
+    ]);
+  });
+
+  test("a category new this window had no rows before, and Uncategorized keys as its own bucket", () => {
+    expect(deviationRowsFrom([cat(null, "Uncategorized", 4_000, 2)], [])).toEqual([
+      { key: "__uncat", label: "Uncategorized", currentCents: 4_000, previousCents: 0, previousCount: 0 },
+    ]);
+  });
+});
 
 const fmt = (c: number) => `$${(c / 100).toFixed(2)}`;
 const OPTS = { width: 600 };

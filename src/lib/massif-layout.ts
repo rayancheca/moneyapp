@@ -34,8 +34,15 @@ export interface MassifCategoryInput {
   hue: string | null;
   /** net money out this period (outflows − refunds), from categoryBreakdown */
   spentCents: number;
-  /** the same figure for the previous period — drives the relief height */
-  priorCents: number;
+  /**
+   * The same figure for the previous period — drives the relief height.
+   *
+   * ⛔ NULL when there is no comparable prior window (`lib/compared-windows`):
+   * the block then stands level and carries no delta. Never `spentCents` in its
+   * place — a zero change is a measurement, and "level with" a window nobody
+   * imported would be a fabricated one.
+   */
+  priorCents: number | null;
   /** ledger entries behind spentCents — drives the footprint depth */
   txnCount: number;
   /** click-through target (the category page) */
@@ -115,9 +122,9 @@ export interface MassifBlock {
   hue: string | null;
   href?: string;
   spentCents: number;
-  priorCents: number;
-  /** spentCents − priorCents; positive = spent MORE than last period */
-  deltaCents: number;
+  priorCents: number | null;
+  /** spentCents − priorCents; positive = spent MORE than last period; null with no prior */
+  deltaCents: number | null;
   /** percentage change, or null when there is no prior base to divide by */
   deltaPct: number | null;
   txnCount: number;
@@ -164,8 +171,9 @@ export interface MassifLayout {
    * its own figure beside it reads $960.60, where 43.3% of $675.87 is $292.65.
    */
   shareBaseCents: number;
-  totalPriorCents: number;
-  totalDeltaCents: number;
+  /** null the moment any input has no prior — a sum cannot stand on a missing term */
+  totalPriorCents: number | null;
+  totalDeltaCents: number | null;
   totalTxnCount: number;
   /** how many real categories are behind the blocks */
   categoryCount: number;
@@ -245,8 +253,8 @@ export function computeMassifLayout(
     totalSpentCents: sumBy(inputs, (r) => r.spentCents),
     // the WIDTH denominator, from the drawn rows — see `buildWorld`
     shareBaseCents: sumBy(rows, (r) => Math.max(0, r.spentCents)),
-    totalPriorCents: sumBy(inputs, (r) => r.priorCents),
-    totalDeltaCents: sumBy(inputs, (r) => r.spentCents - r.priorCents),
+    totalPriorCents: sumPriors(inputs),
+    totalDeltaCents: deltaOf(sumBy(inputs, (r) => r.spentCents), sumPriors(inputs)),
     totalTxnCount: sumBy(inputs, (r) => r.txnCount),
     categoryCount: inputs.length,
   };
@@ -303,7 +311,7 @@ function groupTail(
       label: `${tail.length} smaller categories`,
       hue: null,
       spentCents: sumBy(tail, (r) => r.spentCents),
-      priorCents: sumBy(tail, (r) => r.priorCents),
+      priorCents: sumPriors(tail),
       txnCount: sumBy(tail, (r) => r.txnCount),
       memberCount: tail.length,
     },
@@ -333,7 +341,7 @@ function buildWorld(
   // A category that net-refunded gets no footprint width; its figure still shows.
   const shareBase = sumBy(rows, (r) => Math.max(0, r.spentCents));
   const maxEntries = Math.max(0, ...rows.map((r) => r.txnCount));
-  const maxDelta = Math.max(0, ...rows.map((r) => Math.abs(r.spentCents - r.priorCents)));
+  const maxDelta = Math.max(0, ...rows.map((r) => Math.abs(deltaOf(r.spentCents, r.priorCents) ?? 0)));
   const reliefScale = maxDelta > 0 ? geom.maxRelief / maxDelta : 0;
   // depth = floor + the rest shared out by entry count (see minDepthRatio)
   const depthFloor = geom.maxDepth * geom.minDepthRatio;
@@ -349,7 +357,8 @@ function buildWorld(
     const x0 = x;
     const x1 = x + share * geom.span;
     const halfDepth = depthFloor + row.txnCount * depthScale;
-    const relief = (row.spentCents - row.priorCents) * reliefScale;
+    // no comparable prior window: no height at all, rather than a measured zero
+    const relief = (deltaOf(row.spentCents, row.priorCents) ?? 0) * reliefScale;
     maxHalfDepth = Math.max(maxHalfDepth, halfDepth);
     blocks.push(buildBlock(row, share, { x0, x1, halfDepth, relief }));
     x = x1 + geom.gap;
@@ -554,7 +563,7 @@ function fitCamera(world: World, cam: MassifCamera, width: number, height: numbe
 
 function toBlock(b: WorldBlock, project: (v: Vec3) => MassifPoint): MassifBlock {
   const { row } = b;
-  const delta = row.spentCents - row.priorCents;
+  const delta = deltaOf(row.spentCents, row.priorCents);
   const ends = b.footprintEnds.map(project);
   return {
     id: row.id,
@@ -564,7 +573,10 @@ function toBlock(b: WorldBlock, project: (v: Vec3) => MassifPoint): MassifBlock 
     spentCents: row.spentCents,
     priorCents: row.priorCents,
     deltaCents: delta,
-    deltaPct: row.priorCents !== 0 ? round((delta / Math.abs(row.priorCents)) * 100) : null,
+    deltaPct:
+      delta === null || row.priorCents === null || row.priorCents === 0
+        ? null
+        : round((delta / Math.abs(row.priorCents)) * 100),
     txnCount: row.txnCount,
     share: b.share,
     relief: b.relief,
@@ -575,6 +587,21 @@ function toBlock(b: WorldBlock, project: (v: Vec3) => MassifPoint): MassifBlock 
     footprintPx: round(Math.abs(ends[1]!.x - ends[0]!.x)),
     memberCount: row.memberCount,
   };
+}
+
+/** Σ priors, or null when any row has none — see `MassifCategoryInput.priorCents`. */
+function sumPriors(rows: readonly { priorCents: number | null }[]): number | null {
+  let total = 0;
+  for (const r of rows) {
+    if (r.priorCents === null) return null;
+    total += r.priorCents;
+  }
+  return total;
+}
+
+/** spent − prior, or null when there is no prior to take it from. */
+function deltaOf(spentCents: number, priorCents: number | null): number | null {
+  return priorCents === null ? null : spentCents - priorCents;
 }
 
 // ── Reconciliation ───────────────────────────────────────────────────

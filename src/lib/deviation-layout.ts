@@ -193,6 +193,60 @@ export function computeDeviationLayout(
   };
 }
 
+/** A per-category row as `categoryBreakdown` publishes it — the only fields a move needs. */
+export interface DeviationSourceRow {
+  /** null = the explicit Uncategorized bucket */
+  categoryId: string | null;
+  name: string;
+  spentCents: number;
+  txnCount: number;
+}
+
+/**
+ * The rows "What moved" draws: one per category in EITHER window.
+ *
+ * 🔴 …over the UNION of them. Mapping the current window alone made a category
+ * that stopped spending invisible to a panel whose whole subject is what
+ * changed. Measured on `/spending?period=2026-07`: fifteen top categories moved
+ * against June and the caption read "6 up · 6 down", because Gambling ($20.00 →
+ * $0), Personal Care ($375.89 → $0) and Government ($2,250.00 → $0) had no July
+ * row to map from — and Government's fall was the single largest move of the
+ * fifteen, larger than the "largest move" the accessible description named.
+ *
+ * ⛔ `previousCount` is keyed exactly like `previousCents`: a net of zero or less
+ * is not "nothing happened" (see `DeviationBar.isNew`).
+ *
+ * Moved here from the page because /spending now builds it over two different
+ * window pairs — the whole periods, or the days both were cut to — and a rule
+ * written twice is a rule that drifts.
+ */
+export function deviationRowsFrom(
+  current: readonly DeviationSourceRow[],
+  previous: readonly DeviationSourceRow[],
+): DeviationInput[] {
+  const keyOf = (r: DeviationSourceRow): string => r.categoryId ?? "__uncat";
+  const prevByKey = new Map(previous.map((r) => [keyOf(r), r]));
+  const currentKeys = new Set(current.map(keyOf));
+  return [
+    ...current.map((r) => ({
+      key: keyOf(r),
+      label: r.name,
+      currentCents: r.spentCents,
+      previousCents: prevByKey.get(keyOf(r))?.spentCents ?? 0,
+      previousCount: prevByKey.get(keyOf(r))?.txnCount ?? 0,
+    })),
+    ...previous
+      .filter((r) => !currentKeys.has(keyOf(r)))
+      .map((r) => ({
+        key: keyOf(r),
+        label: r.name,
+        currentCents: 0,
+        previousCents: r.spentCents,
+        previousCount: r.txnCount,
+      })),
+  ];
+}
+
 /** The chart's own summary sentence, used as the SVG description. */
 export function deviationDescription(
   layout: DeviationLayout,

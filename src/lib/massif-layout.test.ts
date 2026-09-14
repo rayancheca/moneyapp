@@ -90,13 +90,13 @@ describe("computeMassifLayout — the figure sums to the ledger", () => {
     const layout = computeMassifLayout(ROWS, OPTS);
 
     const spent = layout.blocks.reduce((s, b) => s + b.spentCents, 0);
-    const prior = layout.blocks.reduce((s, b) => s + b.priorCents, 0);
+    const prior = layout.blocks.reduce((s, b) => s + b.priorCents!, 0);
     const entries = layout.blocks.reduce((s, b) => s + b.txnCount, 0);
     expect(spent).toBe(292_152);
     expect(spent).toBe(layout.totalSpentCents);
     expect(prior).toBe(layout.totalPriorCents);
     expect(entries).toBe(layout.totalTxnCount);
-    expect(layout.totalDeltaCents).toBe(layout.totalSpentCents - layout.totalPriorCents);
+    expect(layout.totalDeltaCents).toBe(layout.totalSpentCents - layout.totalPriorCents!);
     expect(layout.categoryCount).toBe(3);
   });
 

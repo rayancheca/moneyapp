@@ -278,9 +278,10 @@ export function stepPeriodParams(period: ResolvedPeriod, delta: number): PeriodP
     }
     case "all":
     case "custom": {
-      // "all" shifts by its own span like a custom window: the window before
-      // the ledger began is genuinely empty, which is what a prior-period
-      // comparison should find
+      // "all" shifts by its own span like a custom window. For All time that is
+      // the span BEFORE the ledger began — a window nobody imported, not an
+      // empty one — so paging may land there but a comparison may not read it
+      // as a measured zero: `lib/compared-windows` refuses it (Q8, 2026-09-14)
       const span = diffDays(period.from, period.to) + 1;
       return { from: addDays(period.from, delta * span), to: addDays(period.to, delta * span) };
     }

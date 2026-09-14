@@ -22,6 +22,8 @@ import {
   dayLedgerHref,
   honestyBuckets,
   largestTransactions,
+  ledgerFirstDay,
+  periodComparison,
   periodTotals,
   spendingProjection,
   topMerchants,
@@ -574,15 +576,26 @@ describe("honestyBuckets", () => {
   });
 });
 
+/**
+ * A row that proves the ledger was shown the card on this day and adds nothing
+ * to spending or income: an uncategorized CREDIT is the review queue's, not a
+ * bucket's. It opens the ledger on a day, or carries its frontier to one.
+ */
+function shownOn(day: string): void {
+  insertTxn({ postedOn: day, amountCents: 1, category: null });
+}
+
+/** a day after July has finished, so July is a whole window and not a running one */
+const AFTER_JULY = "2026-08-15";
+const JULY_DONE = resolvePeriod({ period: "2026-07" }, AFTER_JULY);
+const JUNE = resolvePeriod({ period: "2026-06" }, TODAY);
+
 describe("spendingProjection", () => {
-  test("in-progress period: pace projection with a visible basis + a prior-period ghost", () => {
+  test("in-progress period: pace projection with a visible basis", () => {
     // July spends (today = 2026-07-08 → two before it, one after)
     insertTxn({ postedOn: "2026-07-01", amountCents: -10_000, category: "Food > Dining" });
     insertTxn({ postedOn: "2026-07-05", amountCents: -20_000, category: "Food > Groceries" });
     insertTxn({ postedOn: "2026-07-20", amountCents: -5_000, category: "Food > Dining" }); // after today
-    // June spends → the prior-period ghost
-    insertTxn({ postedOn: "2026-06-10", amountCents: -12_000, category: "Food > Dining" });
-    insertTxn({ postedOn: "2026-06-25", amountCents: -18_000, category: "Food > Groceries" });
 
     const flow = cashFlowByPeriod(bundle.db, JULY, TODAY);
     const proj = spendingProjection(bundle.db, JULY, TODAY, flow.pace, flow.totals.spentCents);
@@ -591,6 +604,17 @@ describe("spendingProjection", () => {
     expect(proj.projectedSpendCents).toBe(116_250);
     expect(proj.paceBasis).toBe("pace from 8 of 31 days elapsed");
     expect(proj.paceConfidence).toBe(0.52);
+  });
+
+  test("a whole period's prior is drawn as a ghost, day under day", () => {
+    shownOn("2026-06-01"); // the ledger holds all of June
+    insertTxn({ postedOn: "2026-06-10", amountCents: -12_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-06-25", amountCents: -18_000, category: "Food > Groceries" });
+    insertTxn({ postedOn: "2026-07-05", amountCents: -20_000, category: "Food > Groceries" });
+    shownOn("2026-07-31"); // …and all of July
+
+    const flow = cashFlowByPeriod(bundle.db, JULY_DONE, AFTER_JULY);
+    const proj = spendingProjection(bundle.db, JULY_DONE, AFTER_JULY, flow.pace, flow.totals.spentCents);
 
     expect(proj.prior).not.toBeNull();
     expect(proj.prior!.label).toBe("June 2026");
@@ -609,6 +633,8 @@ describe("spendingProjection", () => {
    * `aligned` is the per-bucket fact both of those surfaces were claiming.
    */
   test("prior.aligned names the same day the current bucket does", () => {
+    shownOn("2026-06-01"); // the ledger holds all of June
+    shownOn("2026-07-31"); // …and all of July
     insertTxn({ postedOn: "2026-07-05", amountCents: -20_000, category: "Food > Groceries" });
     insertTxn({ postedOn: "2026-06-10", amountCents: -12_000, category: "Food > Dining" });
     // ⛔ June 16 is the one bucket a 30→31 resample DUPLICATES. Without a row on it
@@ -616,8 +642,8 @@ describe("spendingProjection", () => {
     insertTxn({ postedOn: "2026-06-16", amountCents: -7_000, category: "Food > Dining" });
     insertTxn({ postedOn: "2026-06-25", amountCents: -18_000, category: "Food > Groceries" });
 
-    const flow = cashFlowByPeriod(bundle.db, JULY, TODAY);
-    const proj = spendingProjection(bundle.db, JULY, TODAY, flow.pace, flow.totals.spentCents);
+    const flow = cashFlowByPeriod(bundle.db, JULY_DONE, AFTER_JULY);
+    const proj = spendingProjection(bundle.db, JULY_DONE, AFTER_JULY, flow.pace, flow.totals.spentCents);
     const aligned = proj.prior!.aligned;
 
     expect(aligned).toHaveLength(31); // one entry per July day-bucket
@@ -647,9 +673,14 @@ describe("spendingProjection", () => {
   });
 
   test("a prior period with no spend yields no ghost (never a flat-zero line)", () => {
+    // ⚠️ June is IMPORTED and empty. Without the row opening the ledger on June 1
+    // the comparison would be refused at the opening edge instead, and this test
+    // would pass without ever reaching the emptiness guard it is about.
+    shownOn("2026-06-01");
     insertTxn({ postedOn: "2026-07-05", amountCents: -20_000, category: "Food > Groceries" });
-    const flow = cashFlowByPeriod(bundle.db, JULY, TODAY);
-    const proj = spendingProjection(bundle.db, JULY, TODAY, flow.pace, flow.totals.spentCents);
+    shownOn("2026-07-31");
+    const flow = cashFlowByPeriod(bundle.db, JULY_DONE, AFTER_JULY);
+    const proj = spendingProjection(bundle.db, JULY_DONE, AFTER_JULY, flow.pace, flow.totals.spentCents);
     expect(proj.prior).toBeNull();
   });
 
@@ -663,6 +694,54 @@ describe("spendingProjection", () => {
     expect(flow.totals.spentCents).toBe(51_000);
     const proj = spendingProjection(bundle.db, JULY, TODAY, flow.pace, flow.totals.spentCents);
     expect(proj.projectedSpendCents).toBe(51_000); // floored at committed, never below the visible "Spent"
+  });
+});
+
+/**
+ * 🔴 S8 / S13 / Q8 — A PRIOR WINDOW THE LEDGER DOES NOT FULLY HOLD.
+ *
+ * The ghost's only guard was `prevFlow.totals.spentCents > 0`: emptiness, not
+ * coverage. Measured on the owner's ledger 2026-09-14: `?period=2023` drew
+ * "$4,528.51 in 2022" over a 2022 the ledger holds Aug 25 – Dec 31 of, and
+ * `?period=2022-09` "$46.44 in August 2022" over 7 of its 31 days.
+ *
+ * ⚠️ The older no-ghost test could not tell these apart: it had no row on or
+ * before June, so "empty" and "not imported" were the same fixture.
+ */
+describe("a prior window the ledger does not fully hold", () => {
+  test("a prior month the ledger opens partway through draws no ghost", () => {
+    insertTxn({ postedOn: "2026-05-20", amountCents: -18_000, category: "Food > Groceries" }); // the first row
+    insertTxn({ postedOn: "2026-06-05", amountCents: -20_000, category: "Food > Groceries" });
+    shownOn("2026-07-05");
+
+    const flow = cashFlowByPeriod(bundle.db, JUNE, TODAY);
+    expect(spendingProjection(bundle.db, JUNE, TODAY, flow.pace, flow.totals.spentCents).prior).toBeNull();
+  });
+
+  test("a prior month whose first day IS the ledger's first day keeps its ghost", () => {
+    insertTxn({ postedOn: "2026-05-01", amountCents: -18_000, category: "Food > Groceries" });
+    insertTxn({ postedOn: "2026-06-05", amountCents: -20_000, category: "Food > Groceries" });
+    shownOn("2026-07-05");
+
+    const flow = cashFlowByPeriod(bundle.db, JUNE, TODAY);
+    expect(spendingProjection(bundle.db, JUNE, TODAY, flow.pace, flow.totals.spentCents).prior).toMatchObject({
+      label: "May 2026",
+      spentCents: 18_000,
+    });
+  });
+
+  test("periodComparison names the edge that refused, and reads ACTIVE rows for it", () => {
+    insertTxn({ postedOn: "2026-05-20", amountCents: -18_000, category: "Food > Groceries" });
+    insertTxn({ postedOn: "2026-06-05", amountCents: -20_000, category: "Food > Groceries" });
+    shownOn("2026-07-05");
+    // a quarantined row older than every active one: "All time" STARTS from it
+    // (`ledgerFirstDay` counts it) while coverage does not (`ledgerOpens`)
+    insertTxn({ postedOn: "2026-04-01", amountCents: -500, category: "Food > Dining", status: "quarantined" });
+
+    const all = resolvePeriod({ period: "ALL" }, TODAY, ledgerFirstDay(bundle.db)!);
+    expect(all.from).toBe("2026-04-01");
+    expect(periodComparison(bundle.db, all, TODAY)).toMatchObject({ kind: "refused", reason: "before-records" });
+    expect(periodComparison(bundle.db, JUNE, TODAY)).toMatchObject({ kind: "refused", reason: "partly-covered" });
   });
 });
 

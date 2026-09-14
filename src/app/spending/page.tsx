@@ -5,12 +5,12 @@ import { todayIso } from "@/lib/dates";
 import { emptyPeriodCopy, emptyPeriodReason } from "@/lib/empty-period";
 import { formatDayLong } from "@/lib/format-date";
 import { cashEarningsSectionNotes } from "@/lib/section-notes";
+import { deviationRowsFrom } from "@/lib/deviation-layout";
 import {
   heatmapInitialMonth,
   periodParams as periodParamsOf,
   periodQuery,
   resolvePeriod,
-  stepPeriodParams,
 } from "@/lib/period";
 import { WHERE_VIEW_SPEC } from "@/lib/massif-layout";
 import { resolveViewState, viewStateToParams } from "@/lib/view-state";
@@ -27,6 +27,7 @@ import {
   dayLedgerHref,
   honestyBuckets,
   largestTransactions,
+  periodComparison,
   spendingProjection,
   topMerchants,
   ledgerFirstDay,
@@ -76,7 +77,18 @@ export default async function SpendingPage({
   const range = { from: period.from, to: period.to };
 
   const cashFlow = cashFlowByPeriod(db, period, today);
-  const projection = spendingProjection(db, period, today, cashFlow.pace, cashFlow.totals.spentCents);
+  /*
+   * 🔴 WHETHER THERE IS A PRIOR WINDOW TO STATE A CHANGE AGAINST — asked ONCE.
+   * Every lens below that prints a delta (What moved; the relief's heights and
+   * the Table's Prior/Change/%; the List delta; the cash-flow ghost, its column
+   * and its "$Z in <prior>") used to take the paging rule's previous window and
+   * never ask whether the ledger holds it. Measured 2026-09-14: `?period=ALL`
+   * read "All time against Aug 4, 2018 – Aug 24, 2022 — 20 up · 0 down" over a
+   * window of 0 rows. They all read this one answer now, so no two of them can
+   * disagree about whether a comparison exists.
+   */
+  const comparison = periodComparison(db, period, today);
+  const projection = spendingProjection(db, period, today, cashFlow.pace, cashFlow.totals.spentCents, comparison);
   const sankey = spendingSankey(db, range);
   const merchants = topMerchants(db, range);
 
@@ -140,46 +152,17 @@ export default async function SpendingPage({
       .map((c) => [c.id, c]),
   );
 
-  // categories table: this-period breakdown vs the previous period for MoM
-  const prevPeriod = resolvePeriod(stepPeriodParams(period, -1), today);
+  // categories table: this-period breakdown vs the previous period for MoM —
+  // and only where there IS a previous period to set it against
   const breakdown = categoryBreakdown(db, range);
-  const prevBreakdown = categoryBreakdown(db, { from: prevPeriod.from, to: prevPeriod.to });
-  const prevById = new Map(prevBreakdown.map((r) => [r.categoryId, r.spentCents]));
-  // ⛔ how many ROWS each category had last period, keyed exactly like prevById —
-  // a net of zero or less is not "nothing happened" (see `DeviationBar.isNew`)
-  const prevCountById = new Map(prevBreakdown.map((r) => [r.categoryId, r.txnCount]));
+  const prevBreakdown = comparison.kind === "whole" ? categoryBreakdown(db, comparison.prior) : null;
+  const prevById = new Map((prevBreakdown ?? []).map((r) => [r.categoryId, r.spentCents]));
   /*
-   * "What moved" reads the SAME two breakdowns the categories table already
-   * compares, so the two panels can never disagree about a delta.
-   *
-   * 🔴 …over the UNION of them. Mapping the current period alone made a
-   * category that stopped spending invisible to a panel whose whole subject is
-   * what changed. Measured on `/spending?period=2026-07`: fifteen top
-   * categories moved against June and the caption read "6 up · 6 down",
-   * because Gambling ($20.00 → $0), Personal Care ($375.89 → $0) and Government
-   * ($2,250.00 → $0) had no July row to map from — and Government's fall was
-   * the single largest move of the fifteen, larger than the "largest move"
-   * the accessible description named. `deviationLayout`'s own docstring records
-   * the last time a count here stood over a collection it was not taken from.
+   * "What moved" reads the SAME two breakdowns the categories table compares,
+   * so the two panels can never disagree about a delta — over the UNION of
+   * them, which `deviationRowsFrom` owns and records the measurement for.
    */
-  const deviationRows = [
-    ...breakdown.map((r) => ({
-      key: r.categoryId ?? "__uncat",
-      label: r.name,
-      currentCents: r.spentCents,
-      previousCents: prevById.get(r.categoryId) ?? 0,
-      previousCount: prevCountById.get(r.categoryId) ?? 0,
-    })),
-    ...prevBreakdown
-      .filter((r) => !breakdown.some((b) => (b.categoryId ?? "__uncat") === (r.categoryId ?? "__uncat")))
-      .map((r) => ({
-        key: r.categoryId ?? "__uncat",
-        label: r.name,
-        currentCents: 0,
-        previousCents: r.spentCents,
-        previousCount: r.txnCount,
-      })),
-  ];
+  const deviationRows = prevBreakdown === null ? [] : deviationRowsFrom(breakdown, prevBreakdown);
   // Share denominator = gross positive spending across categories. The NET total
   // (cashFlow.totals.spentCents) can be dragged below an individual category's
   // gross by refund/reimbursement-heavy categories that net to an inflow, which
@@ -221,7 +204,7 @@ export default async function SpendingPage({
       icon: catMeta.get(r.categoryId!)?.icon ?? null,
       spentCents: r.spentCents,
       sharePct: shareBase > 0 ? (Math.max(0, r.spentCents) / shareBase) * 100 : 0,
-      momDeltaCents: r.spentCents - (prevById.get(r.categoryId) ?? 0),
+      momDeltaCents: prevBreakdown === null ? 0 : r.spentCents - (prevById.get(r.categoryId) ?? 0),
       forecast: forecastByCategory.get(r.categoryId!) ?? null,
       children: r.children.map((c) => ({ categoryId: c.categoryId, name: c.name, spentCents: c.spentCents })),
     }));
@@ -263,7 +246,9 @@ export default async function SpendingPage({
       name: r.name,
       hue: catMeta.get(r.categoryId!)?.color ?? null,
       spentCents: r.spentCents,
-      priorCents: prevById.get(r.categoryId) ?? 0,
+      // ⛔ null, never 0, when there is no comparable prior window: a zero is a
+      // measurement, and every block would rise by its whole spend
+      priorCents: prevBreakdown === null ? null : (prevById.get(r.categoryId) ?? 0),
       txnCount: r.txnCount,
     }));
   // The identity the relief states under itself, from the SAME two services the
@@ -418,11 +403,18 @@ export default async function SpendingPage({
               fact already stated twice. */}
           <SurfaceCard>
             <h2 className="mb-3 text-sm font-medium">What moved</h2>
-            <CategoryDeviation
-              rows={deviationRows}
-              currentLabel={period.label}
-              previousLabel={prevPeriod.label}
-            />
+            {/* ⛔ the refusal is a sentence, never the panel's own "No category
+                changed between …" — that is a measurement of a window nobody
+                imported */}
+            {comparison.kind === "refused" ? (
+              <p className="text-sm text-ink-muted">{comparison.sentence}</p>
+            ) : (
+              <CategoryDeviation
+                rows={deviationRows}
+                currentLabel={comparison.current.label}
+                previousLabel={comparison.prior.label}
+              />
+            )}
           </SurfaceCard>
 
           <SurfaceCard>
@@ -445,14 +437,14 @@ export default async function SpendingPage({
               totals={massifTotals}
               periodQuery={query}
               periodLabel={period.label}
-              priorLabel={prevPeriod.label}
+              priorLabel={comparison.kind === "whole" ? comparison.prior.label : null}
               viewState={whereView}
               baseParams={whereBaseParams}
             >
               <SpendingCategoriesTable
                 rows={categoryRows}
                 periodQuery={query}
-                showDelta={period.granularity === "month"}
+                showDelta={period.granularity === "month" && prevBreakdown !== null}
                 forecastMonthLabel={forecastMonthLabel}
               />
             </WhereItWentPanel>

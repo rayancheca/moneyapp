@@ -36,7 +36,9 @@ import {
  *   footprint WIDTH  share of the period's spend (the table's own denominator)
  *   footprint DEPTH  grows with the number of ledger entries it holds
  *   HEIGHT           the change against the prior period — a block that SANK
- *                    below the plane cost less than it did last period
+ *                    below the plane cost less than it did last period. With
+ *                    no comparable prior window (`lib/compared-windows`) there
+ *                    is no height, and no sentence here names a change
  *   COLOUR           category identity, never the only carrier of a fact
  *
  * The geometry is pure and unit-tested (`lib/massif-layout.ts`); this file owns
@@ -59,8 +61,8 @@ export interface WhereItWentRow {
   hue: string | null;
   /** net money out this period (outflows − refunds) */
   spentCents: number;
-  /** the same figure for the previous period */
-  priorCents: number;
+  /** the same figure for the previous period — null when there is no comparable one */
+  priorCents: number | null;
   txnCount: number;
 }
 
@@ -69,7 +71,12 @@ interface WhereItWentPanelProps {
   /** the period totals this figure must reconcile against */
   totals: MassifTotalsInput;
   periodLabel: string;
-  priorLabel: string;
+  /**
+   * The prior window's name — or null when `/spending` has no comparison to
+   * state (`lib/compared-windows`): the relief then draws no heights, the rail
+   * and readout name no change, and the table drops Prior/Change/%.
+   */
+  priorLabel: string | null;
   /** the RSC-resolved active lens (URL > persisted > default) */
   viewState: ViewState;
   /** URL params to preserve across a lens switch */
@@ -143,7 +150,7 @@ interface CategoryMassifProps {
   rows: readonly WhereItWentRow[];
   totals: MassifTotalsInput;
   periodLabel: string;
-  priorLabel: string;
+  priorLabel: string | null;
   /**
    * The camera is the SURFACE's view state, resolved by the RSC (URL >
    * persisted > default) and written back through its `setView` — not a local
@@ -330,9 +337,11 @@ export function CategoryMassif({
             <li>
               <b className="font-medium text-ink-muted">Depth</b> entries
             </li>
-            <li>
-              <b className="font-medium text-ink-muted">Height</b> change vs {priorLabel}
-            </li>
+            {priorLabel !== null && (
+              <li>
+                <b className="font-medium text-ink-muted">Height</b> change vs {priorLabel}
+              </li>
+            )}
             <li>
               <b className="font-medium text-ink-muted">Colour</b> category
             </li>
@@ -427,7 +436,7 @@ function Slug({
   layout: ReturnType<typeof computeMassifLayout>;
   active: MassifBlock | null;
   periodLabel: string;
-  priorLabel: string;
+  priorLabel: string | null;
 }) {
   const spent = active ? active.spentCents : layout.totalSpentCents;
   const delta = active ? active.deltaCents : layout.totalDeltaCents;
@@ -446,11 +455,19 @@ function Slug({
       </div>
       <div className="figures text-xl font-medium">{formatCents(spent)}</div>
       <div className="text-xs">
-        <SpendDelta cents={delta} />
-        <span className="text-ink-faint">
-          {" "}
-          against {priorLabel} · {entries} {entries === 1 ? "entry" : "entries"}
-        </span>
+        {priorLabel !== null && delta !== null ? (
+          <>
+            <SpendDelta cents={delta} />
+            <span className="text-ink-faint">
+              {" "}
+              against {priorLabel} · {entries} {entries === 1 ? "entry" : "entries"}
+            </span>
+          </>
+        ) : (
+          <span className="text-ink-faint">
+            {entries} {entries === 1 ? "entry" : "entries"}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -470,7 +487,7 @@ function MassifRail({
   layout: ReturnType<typeof computeMassifLayout>;
   hovered: string | null;
   onHover: (id: string | null) => void;
-  priorLabel: string;
+  priorLabel: string | null;
 }) {
   // bars share ONE scale — the largest block is full width, as the design sets
   // it — so a glance down the rail ranks the month without reading a figure
@@ -502,8 +519,12 @@ function MassifRail({
                 </span>
               </span>
               <span className="block text-[11px] text-ink-faint">
-                {block.deltaCents === 0 ? `level with ${priorLabel}` : `${formatCentsSigned(block.deltaCents)} on ${priorLabel}`}
-                {" · "}
+                {priorLabel !== null && block.deltaCents !== null && (
+                  <>
+                    {block.deltaCents === 0 ? `level with ${priorLabel}` : `${formatCentsSigned(block.deltaCents)} on ${priorLabel}`}
+                    {" · "}
+                  </>
+                )}
                 {block.txnCount} {block.txnCount === 1 ? "entry" : "entries"}
               </span>
               {/* decorative: the share is already set in figures above */}
@@ -560,7 +581,7 @@ function MassifRail({
 
 interface MassifTableRow extends WhereItWentRow {
   share: number;
-  deltaCents: number;
+  deltaCents: number | null;
   deltaPct: number | null;
 }
 
@@ -572,7 +593,7 @@ function MassifTable({
 }: {
   rows: readonly WhereItWentRow[];
   periodLabel: string;
-  priorLabel: string;
+  priorLabel: string | null;
   /** the window these rows were measured over — every row links with it */
   periodQuery: string;
 }) {
@@ -580,8 +601,11 @@ function MassifTable({
   const tableRows: MassifTableRow[] = rows.map((r) => ({
     ...r,
     share: shareBase > 0 ? Math.max(0, r.spentCents) / shareBase : 0,
-    deltaCents: r.spentCents - r.priorCents,
-    deltaPct: r.priorCents !== 0 ? ((r.spentCents - r.priorCents) / Math.abs(r.priorCents)) * 100 : null,
+    deltaCents: r.priorCents === null ? null : r.spentCents - r.priorCents,
+    deltaPct:
+      r.priorCents === null || r.priorCents === 0
+        ? null
+        : ((r.spentCents - r.priorCents) / Math.abs(r.priorCents)) * 100,
   }));
 
   const columns: Column<MassifTableRow>[] = [
@@ -609,29 +633,46 @@ function MassifTable({
         );
       },
     },
-    {
-      key: "prior",
-      header: priorLabel,
-      align: "right",
-      render: (r) => <span className="figures text-ink-faint">{formatCents(r.priorCents)}</span>,
-    },
+    // ⛔ no Prior column over a window nobody compared: a column of $0.00 under a
+    // prior window's name is the same claim as a height, one lens over
+    ...(priorLabel === null
+      ? []
+      : [
+          {
+            key: "prior",
+            header: priorLabel,
+            align: "right" as const,
+            render: (r: MassifTableRow) => (
+              <span className="figures text-ink-faint">{r.priorCents === null ? "—" : formatCents(r.priorCents)}</span>
+            ),
+          },
+        ]),
     {
       key: "spent",
       header: periodLabel,
       align: "right",
       render: (r) => <span className="figures font-medium">{formatCents(r.spentCents)}</span>,
     },
-    { key: "change", header: "Change", align: "right", render: (r) => <SpendDelta cents={r.deltaCents} /> },
-    {
-      key: "pct",
-      header: "%",
-      align: "right",
-      render: (r) => (
-        <span className="figures text-ink-faint">
-          {r.deltaPct === null ? "—" : `${r.deltaPct > 0 ? "+" : ""}${r.deltaPct.toFixed(1)}%`}
-        </span>
-      ),
-    },
+    ...(priorLabel === null
+      ? []
+      : [
+          {
+            key: "change",
+            header: "Change",
+            align: "right" as const,
+            render: (r: MassifTableRow) => (r.deltaCents === null ? "—" : <SpendDelta cents={r.deltaCents} />),
+          },
+          {
+            key: "pct",
+            header: "%",
+            align: "right" as const,
+            render: (r: MassifTableRow) => (
+              <span className="figures text-ink-faint">
+                {r.deltaPct === null ? "—" : `${r.deltaPct > 0 ? "+" : ""}${r.deltaPct.toFixed(1)}%`}
+              </span>
+            ),
+          },
+        ]),
   ];
 
   return (
@@ -640,13 +681,19 @@ function MassifTable({
       rows={tableRows}
       rowKey={(r) => r.categoryId}
       rowHref={(r) => `/categories/${r.categoryId}?${periodQuery}`}
-      caption={`${periodLabel} against ${priorLabel}, by category — every figure the relief is cut from.`}
+      caption={massifTableCaption(periodLabel, priorLabel)}
       emptyState="No categorized spending in this period."
     />
   );
 }
 
 // ── Words ────────────────────────────────────────────────────────────
+
+/** The Table lens's caption: the period against its prior, or the period alone when there is none. */
+export function massifTableCaption(periodLabel: string, priorLabel: string | null): string {
+  const subject = priorLabel === null ? periodLabel : `${periodLabel} against ${priorLabel}`;
+  return `${subject}, by category — every figure the relief is cut from.`;
+}
 
 function blockFill(hue: string | null): string {
   return isCategoryHueName(hue) ? categoryHueVar(hue) : "var(--ink-muted)";
@@ -679,9 +726,23 @@ export function massifCaptionKey(
 export function massifDescription(
   layout: ReturnType<typeof computeMassifLayout>,
   periodLabel: string,
-  priorLabel: string,
+  priorLabel: string | null,
 ): string {
   const n = layout.blocks.length;
+  const exact = `Exact figures for every category are in the ranked list beside the chart and in the Table lens.`;
+  /*
+   * ⛔ With no comparable prior window every block stands level, and the
+   * sentence below would still name "the change against" a window nobody
+   * measured — `?period=2023` described its heights against a 2022 the ledger
+   * holds four months of.
+   */
+  if (priorLabel === null || layout.totalDeltaCents === null) {
+    return (
+      `Where ${periodLabel} went, as a relief. ${n} category block${n === 1 ? "" : "s"} set on a plane. ` +
+      `A block's footprint width is its share of the ${formatCents(layout.shareBaseCents)} of spending drawn here, and its footprint ` +
+      `depth grows with the number of entries it holds. No earlier window is comparable here, so every block stands level. ${exact}`
+    );
+  }
   const move =
     layout.totalDeltaCents === 0
       ? `level with ${priorLabel}`
@@ -699,7 +760,7 @@ export function massifDescription(
     `depth grows with the number of entries it holds, and its height is the change against ${priorLabel} — blocks pressed ` +
     /* 🔴 the same sentence pluralises "block" four lines up and not this */
     `below the plane cost less than they did then. The ${n} height${n === 1 ? "" : "s"} sum${n === 1 ? "s" : ""} to ${move}. ` +
-    `Exact figures for every category are in the ranked list beside the chart and in the Table lens.`
+    exact
   );
 }
 

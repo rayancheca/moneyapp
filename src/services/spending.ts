@@ -10,7 +10,8 @@ import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/descriptio
 // (manual-transactions.ts:148), so recomputing it here reproduces the value
 // topMerchants groups on — activeTxnsInRange doesn't select that column
 import { normalizeDescription } from "@/lib/normalize";
-import { resolvePeriod, stepPeriodParams, subBuckets, type ResolvedPeriod } from "@/lib/period";
+import { comparePeriods, type PeriodComparison } from "@/lib/compared-windows";
+import { subBuckets, type ResolvedPeriod } from "@/lib/period";
 import { alignByIndex, projectPace } from "@/lib/projection";
 import { allocationsFor } from "@/lib/transaction-splits";
 import { NO_MERCHANT } from "@/lib/ledger-href";
@@ -23,6 +24,7 @@ import {
   type CategoryIndex,
   type DateRange,
 } from "./analytics";
+import { ledgerOpens } from "./observation-frontier";
 import { activeSplitsInRange } from "./transaction-splits";
 
 /**
@@ -348,8 +350,8 @@ export interface SpendingProjection {
  * the projection: a period can contain future-dated-but-active charges (posted
  * after today, still ≤ period end) that the bars + StatCards already show, so the
  * pace estimate must never read below what's already committed. The prior period
- * is the same window one step earlier (`stepPeriodParams(period, -1)`), whose
- * gross spend curve becomes the ghost.
+ * is the comparison's prior window, whose gross spend curve becomes the ghost —
+ * and ONLY when the comparison is whole (`lib/compared-windows`).
  */
 export function spendingProjection(
   db: AppDatabase,
@@ -357,6 +359,12 @@ export function spendingProjection(
   today: string,
   currentPace: PaceInfo | null,
   fullPeriodSpentCents: number,
+  /**
+   * The page's one answer to "may this period be set against the one before
+   * it". /spending computes it once and hands it to every lens that states a
+   * change; the default asks the same question for a caller that has not.
+   */
+  comparison: PeriodComparison = periodComparison(db, period, today),
 ): SpendingProjection {
   let projectedSpendCents: number | null = null;
   let paceBasis: string | null = null;
@@ -378,23 +386,40 @@ export function spendingProjection(
     paceConfidence = proj.confidence;
   }
 
-  // the comparable prior period — the ghost + "last {period}" total
-  const prevPeriod = resolvePeriod(stepPeriodParams(period, -1), today);
-  const prevFlow = cashFlowByPeriod(db, prevPeriod, today);
-  const bucketCount = subBuckets(period).length;
-  const prior =
-    prevFlow.totals.spentCents > 0
-      ? {
-          label: prevPeriod.label,
-          spentCents: prevFlow.totals.spentCents,
-          aligned: alignByIndex(
-            prevFlow.buckets.map((b) => b.spendingCents),
-            bucketCount,
-          ),
-        }
-      : null;
+  /*
+   * The comparable prior period — the ghost + "last {period}" total.
+   *
+   * 🔴 Its only guard was `spentCents > 0`: EMPTINESS, not coverage. A prior
+   * window the ledger holds part of drew as a whole one — `?period=2023` read
+   * "$4,528.51 in 2022" over a 2022 the ledger holds Aug 25 – Dec 31 of, and
+   * `?period=2022-09&cash=table` headed a column "Spent, August 2022" over
+   * $0.00 rows for Aug 1–24, days before the ledger opens. The emptiness guard
+   * stays: a covered prior window with nothing in it still draws no flat zero.
+   */
+  let prior: SpendingProjection["prior"] = null;
+  if (comparison.kind === "whole") {
+    const prevFlow = cashFlowByPeriod(db, comparison.priorPeriod, today);
+    if (prevFlow.totals.spentCents > 0) {
+      prior = {
+        label: comparison.prior.label,
+        spentCents: prevFlow.totals.spentCents,
+        aligned: alignByIndex(
+          prevFlow.buckets.map((b) => b.spendingCents),
+          subBuckets(period).length,
+        ),
+      };
+    }
+  }
 
   return { projectedSpendCents, paceBasis, paceConfidence, prior };
+}
+
+/**
+ * Whether this period may be set against the one before it, fed from the
+ * ledger — `lib/compared-windows` owns the rule and its sentences.
+ */
+export function periodComparison(db: AppDatabase, period: ResolvedPeriod, today: string): PeriodComparison {
+  return comparePeriods({ period, today, ledgerOpens: ledgerOpens(db) });
 }
 
 /**

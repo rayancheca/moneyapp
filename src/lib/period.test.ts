@@ -371,9 +371,10 @@ describe("anchored ranges — YTD and All time", () => {
     expect(stepPeriodParams(leap, -4)).toEqual({ from: "2024-01-01", to: "2024-02-29" });
   });
 
-  test("All time steps to the window before the ledger began — genuinely empty", () => {
-    // that emptiness is the point: the prior-period comparison finds nothing
-    // and the surface omits it, rather than comparing all time against itself
+  test("All time steps to the window before the ledger began", () => {
+    // ⛔ a window before the records, not an empty one: paging may land there,
+    // but no comparison may read it as a measured zero — `compared-windows`
+    // refuses it, and its own tests pin that (this one only pins the step)
     const p = resolvePeriod({ period: "ALL" }, TODAY, "2026-08-01");
     const prev = stepPeriodParams(p, -1);
     expect(compareDates(prev.to!, p.from)).toBeLessThan(0);

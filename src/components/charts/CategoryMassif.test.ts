@@ -1,7 +1,49 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { massifCaptionKey, reconciliationNote } from "./CategoryMassif";
+import { computeMassifLayout, MASSIF_VIEWPOINTS } from "@/lib/massif-layout";
+import { massifCaptionKey, massifDescription, massifTableCaption, reconciliationNote } from "./CategoryMassif";
+
+/**
+ * 🔴 S8/S13/Q8. With no comparable prior window the relief still described every
+ * block's height as "the change against" it: `/spending?period=2023&where=table`
+ * captioned "2023 against 2022, by category" over a 2022 the ledger holds four
+ * months of. ⛔ Not by passing `priorCents = spentCents` — that prints a
+ * fabricated "level with".
+ */
+describe("with no comparable prior window, the relief states no change", () => {
+  const layout = computeMassifLayout(
+    [
+      { id: "food", label: "Food", hue: null, spentCents: 16_072, priorCents: null, txnCount: 25 },
+      { id: "housing", label: "Housing", hue: null, spentCents: 726, priorCents: null, txnCount: 1 },
+    ],
+    { width: 720, height: 320, camera: MASSIF_VIEWPOINTS.quarter },
+  );
+
+  test("the description names no prior window and no change", () => {
+    const d = massifDescription(layout, "2023", null);
+    expect(d).toContain("Where 2023 went");
+    expect(d).not.toContain("against");
+    expect(d).not.toContain("change");
+    expect(d).not.toContain("level with");
+    expect(d).not.toContain("null");
+  });
+
+  test("every block stands level and carries no delta", () => {
+    expect(layout.blocks.map((b) => [b.relief, b.deltaCents, b.deltaPct])).toEqual([
+      ["level", null, null],
+      ["level", null, null],
+    ]);
+    expect(layout.totalDeltaCents).toBeNull();
+  });
+
+  test("the table's caption names the period alone", () => {
+    expect(massifTableCaption("2023", null)).toBe("2023, by category — every figure the relief is cut from.");
+    expect(massifTableCaption("2024", "2023")).toBe(
+      "2024 against 2023, by category — every figure the relief is cut from.",
+    );
+  });
+});
 
 /**
  * THE SHRINK GATE for the "Where it went" relief.
