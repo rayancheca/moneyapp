@@ -11,7 +11,15 @@ import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
-import { frontierForSeries, ledgerReaches, observationFrontier, seriesAccountIds } from "./observation-frontier";
+import { balanceAnchors } from "@/db/schema/balances";
+import {
+  cutToObserved,
+  frontierForSeries,
+  ledgerReaches,
+  observationFrontier,
+  observedThrough,
+  seriesAccountIds,
+} from "./observation-frontier";
 
 let dir: string;
 let bundle: DbBundle;
@@ -255,5 +263,74 @@ describe("seriesAccountIds", () => {
     const a = addAccount("A", "checking");
     addTxn(a, "2026-05-01");
     expect(seriesAccountIds(bundle.db).size).toBe(0);
+  });
+});
+
+/*
+ * S24 — the day a BALANCE was observed: the frontier above, plus the newest
+ * balance recorded for the account. See `institution-groups.test.ts` for the
+ * surfaces it dates.
+ */
+describe("observedThrough", () => {
+  function addAnchor(accountId: string, anchoredOn: string): void {
+    const now = new Date().toISOString();
+    bundle.db
+      .insert(balanceAnchors)
+      .values({ accountId, anchoredOn, balanceCents: 1_00, source: "manual", createdAt: now, updatedAt: now })
+      .run();
+  }
+
+  test("takes the latest of the newest row, statement end and recorded balance", () => {
+    const a = addAccount("Card", "credit");
+    addTxn(a, "2026-07-30");
+    addStatement(a, "2026-07-03", "2026-08-02");
+    expect(observedThrough(bundle.db).get(a)).toBe("2026-08-02");
+    addAnchor(a, "2026-08-05");
+    expect(observedThrough(bundle.db).get(a)).toBe("2026-08-05");
+  });
+
+  test("an anchor OLDER than the frontier does not pull it back", () => {
+    const a = addAccount("Wallet", "checking");
+    addAnchor(a, "2026-08-03");
+    addTxn(a, "2026-08-11");
+    expect(observedThrough(bundle.db).get(a)).toBe("2026-08-11");
+  });
+
+  test("an account with only recorded balances, and an investment account, are absent — their series is not cut", () => {
+    const anchorsOnly = addAccount("Safe", "checking");
+    addAnchor(anchorsOnly, "2026-08-05");
+    const brokerage = addAccount("Brokerage", "investment");
+    addTxn(brokerage, "2026-08-01");
+    expect(observedThrough(bundle.db).has(anchorsOnly)).toBe(false);
+    expect(observedThrough(bundle.db).has(brokerage)).toBe(false);
+  });
+});
+
+describe("cutToObserved", () => {
+  const series = [
+    { day: "2026-09-06", cents: 1 },
+    { day: "2026-09-07", cents: 2 },
+    // 09-08 is a gap day, already dropped from the covered series
+    { day: "2026-09-09", cents: 3 },
+    { day: "2026-09-14", cents: 3 },
+  ];
+
+  test("drops the days after the observed one", () => {
+    expect(cutToObserved(series, "2026-09-07").map((p) => p.day)).toEqual(["2026-09-06", "2026-09-07"]);
+  });
+
+  test("keeps every covered day on or before it, when the observed day itself is not covered", () => {
+    expect(cutToObserved(series, "2026-09-08").map((p) => p.day)).toEqual(["2026-09-06", "2026-09-07"]);
+  });
+
+  test("no observed day, or one at or past the newest point, leaves the series whole", () => {
+    expect(cutToObserved(series, undefined)).toEqual(series);
+    expect(cutToObserved(series, "2026-09-14")).toEqual(series);
+    expect(cutToObserved(series, "2026-09-20")).toEqual(series);
+  });
+
+  test("⛔ a cut that would leave nothing keeps the series — a card is never nulled by its own date", () => {
+    expect(cutToObserved(series, "2026-09-01")).toEqual(series);
+    expect(cutToObserved([], "2026-09-01")).toEqual([]);
   });
 });

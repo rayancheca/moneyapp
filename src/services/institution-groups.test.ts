@@ -6,11 +6,14 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
+import { balanceAnchors } from "@/db/schema/balances";
+import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
+import { transactions } from "@/db/schema/transactions";
 import { addDays, todayIso } from "@/lib/dates";
 import { createAccount } from "./accounts";
 import { addManualAnchor } from "./anchors";
-import { rebuildAccount } from "./derivation";
+import { latestBalances, rebuildAccount } from "./derivation";
 import { upsertHolding, parseQuantityToE8 } from "./holdings";
 import { institutionGroups } from "./institution-groups";
 
@@ -278,6 +281,176 @@ describe("institutionGroups", () => {
     addManualAnchor(bundle.db, { accountId: cash, anchoredOn: TODAY, enteredCents: 100_00 });
     bundle.db.update(accounts).set({ isActive: false }).where(eq(accounts.id, cash)).run();
     expect(institutionGroups(bundle.db)).toEqual([]);
+  });
+});
+
+/**
+ * 🔴 S24: A CARD WAS DATED BY THE DAY THE CACHE WAS REBUILT, NOT THE DAY ITS
+ * BALANCE WAS SEEN.
+ *
+ * `daily_balances` walks forward to whatever `today` stood at the last rebuild,
+ * so `series.at(-1)` names the IMPORT day. Measured 2026-09-14 on /?cards=grid:
+ * "Discover · 1 account · as of Sep 14, 2026" beside "Discover adds up through
+ * Sep 8, 2026" — Discover's newest charge is Sep 1 and its statement closes Sep
+ * 8; nothing was seen on Sep 9–14. Every one of the 9 non-investment accounts
+ * with a balance read a cached day later than the last day anything observed
+ * it, and on all 9 the balance on that observed day equals the newest one.
+ *
+ * ⛔ One rule dates it (owner decision S24, 2026-09-14): the latest of the newest
+ * transaction, the newest statement end and the newest recorded balance —
+ * `observedThrough`. Balances do not move.
+ */
+describe("the as-of day is the day the balance was observed", () => {
+  let dir: string;
+  let bundle: DbBundle;
+  let seq = 0;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-groups-observed-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+    seq = 0;
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const institutionId = (name: string): string =>
+    bundle.db.select().from(institutions).where(eq(institutions.name, name)).get()!.id;
+
+  function addTxn(accountId: string, postedOn: string, amountCents: number): void {
+    seq += 1;
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId,
+        postedOn,
+        amountCents,
+        rawDescription: `ROW ${seq}`,
+        normalizedDescription: `ROW ${seq}`,
+        dedupeHash: `observed-${seq}`,
+      })
+      .run();
+  }
+
+  /** A reconciled statement whose closing balance is recorded as a statement anchor on its last day. */
+  function addStatement(accountId: string, start: string, end: string, endingCents: number): void {
+    seq += 1;
+    const now = new Date().toISOString();
+    const fileId = `stmt-${seq}`;
+    bundle.db
+      .insert(importFiles)
+      .values({
+        id: fileId,
+        fileName: `${fileId}.pdf`,
+        fileSha256: `sha-${fileId}`,
+        format: "pdf",
+        institutionId: institutionId("Chase"),
+        parserVersion: 1,
+        status: "parsed",
+        storagePath: `/tmp/${fileId}.pdf`,
+        importedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+    bundle.db
+      .insert(statementPeriods)
+      .values({
+        importFileId: fileId,
+        accountId,
+        periodStart: start,
+        periodEnd: end,
+        endingBalanceCents: endingCents,
+        reconciliation: "reconciled",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+    bundle.db
+      .insert(balanceAnchors)
+      .values({ accountId, anchoredOn: end, balanceCents: endingCents, source: "statement", importFileId: fileId, createdAt: now, updatedAt: now })
+      .run();
+  }
+
+  const card = (id: string) =>
+    institutionGroups(bundle.db, TODAY)
+      .flatMap((g) => g.accounts)
+      .find((c) => c.id === id)!;
+
+  test("a statement that closed days ago dates the card, not the rebuild — and the balance does not move", () => {
+    // Discover's shape: newest charge inside the statement, statement closed six
+    // days before the cache was last rebuilt
+    const discover = createAccount(bundle.db, { institutionId: institutionId("Chase"), name: "Chase Freedom", type: "credit" });
+    const CLOSED = addDays(TODAY, -6);
+    addTxn(discover, addDays(TODAY, -8), -20_00);
+    addStatement(discover, addDays(TODAY, -35), CLOSED, -500_00);
+    rebuildAccount(bundle.db, discover, TODAY);
+    const newest = latestBalances(bundle.db).get(discover)!;
+    expect(newest.asOf).toBe(TODAY); // the condition: a carried tail to the rebuild day
+
+    const c = card(discover);
+    expect(c.asOf).toBe(CLOSED);
+    expect(c.balanceCents).toBe(newest.balanceCents);
+    expect(c.spark.at(-1)!.day).toBe(CLOSED);
+    expect(c.dayChangeAsOf).toBe(CLOSED);
+    expect(c.dayChangeTerm).not.toBe("today");
+  });
+
+  test("a row after the last statement dates the card by that row", () => {
+    // Robinhood Cash's shape: one row after the statement, derived_unverified to
+    // the rebuild day
+    const cash = createAccount(bundle.db, { institutionId: institutionId("Robinhood"), name: "Robinhood Cash", type: "checking" });
+    const ROW = addDays(TODAY, -10);
+    addStatement(cash, addDays(TODAY, -50), addDays(TODAY, -20), 1_000_00);
+    addTxn(cash, ROW, -40_00);
+    rebuildAccount(bundle.db, cash, TODAY);
+
+    const c = card(cash);
+    expect(c.asOf).toBe(ROW);
+    expect(c.balanceCents).toBe(latestBalances(bundle.db).get(cash)!.balanceCents);
+  });
+
+  test("a group's combined series and its span read the observed days of every child", () => {
+    const chase = institutionId("Chase");
+    const checking = createAccount(bundle.db, { institutionId: chase, name: "Chase Checking", type: "checking" });
+    const sapphire = createAccount(bundle.db, { institutionId: chase, name: "Chase Sapphire", type: "credit" });
+    // early enough that the two children's observed series overlap
+    addTxn(checking, addDays(TODAY, -30), -20_00);
+    addStatement(checking, addDays(TODAY, -35), addDays(TODAY, -6), 3_000_00);
+    addStatement(sapphire, addDays(TODAY, -50), addDays(TODAY, -20), -100_00);
+    addTxn(sapphire, addDays(TODAY, -10), -15_00);
+    rebuildAccount(bundle.db, checking, TODAY);
+    rebuildAccount(bundle.db, sapphire, TODAY);
+
+    const group = institutionGroups(bundle.db, TODAY).find((g) => g.institutionName === "Chase")!;
+    expect(group.asOf).toBe(addDays(TODAY, -6));
+    expect(group.oldestAsOf).toBe(addDays(TODAY, -10));
+    // the combined series ends where EVERY child was observed — not at the rebuild
+    expect(group.spark.at(-1)!.day).toBe(addDays(TODAY, -10));
+    expect(group.dayChangeAsOf).toBe(addDays(TODAY, -10));
+  });
+
+  test("a balance you recorded after the newest row keeps its own day", () => {
+    const chase = institutionId("Chase");
+    const checking = createAccount(bundle.db, { institutionId: chase, name: "Chase Checking", type: "checking" });
+    addTxn(checking, addDays(TODAY, -10), -20_00);
+    addManualAnchor(bundle.db, { accountId: checking, anchoredOn: addDays(TODAY, -3), enteredCents: 1_000_00 });
+    rebuildAccount(bundle.db, checking, TODAY);
+
+    expect(card(checking).asOf).toBe(addDays(TODAY, -3));
+  });
+
+  test("⛔ an investment account keeps its priced tail — observation is not a fact about a marked-to-market balance", () => {
+    const rh = institutionId("Robinhood");
+    const brokerage = createAccount(bundle.db, { institutionId: rh, name: "Robinhood Brokerage", type: "investment", subtype: "brokerage" });
+    addTxn(brokerage, addDays(TODAY, -10), -40_00);
+    addManualAnchor(bundle.db, { accountId: brokerage, anchoredOn: YESTERDAY, enteredCents: 60_000_00 });
+    addManualAnchor(bundle.db, { accountId: brokerage, anchoredOn: TODAY, enteredCents: 61_000_00 });
+
+    expect(card(brokerage).asOf).toBe(TODAY);
   });
 });
 

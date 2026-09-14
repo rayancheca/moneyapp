@@ -15,6 +15,7 @@ import { accountInsights } from "@/services/account-insights";
 import { getAccount, listAccounts, listInstitutions } from "@/services/accounts";
 import { anchorRemovalEffects, listAnchors } from "@/services/anchors";
 import { accountSeries } from "@/services/derivation";
+import { cutToObserved, observedThrough } from "@/services/observation-frontier";
 import { listAccountHoldings } from "@/services/holdings";
 import { CASH_INSTITUTION_NAME } from "@/services/manual-transactions";
 import { recentLedgerRows } from "@/services/ledger-rows";
@@ -107,7 +108,16 @@ export default async function AccountDetailPage({
   const sign = liability ? -1 : 1;
   const today = todayIso();
 
-  const series = accountSeries(db, id);
+  /*
+   * 🔴 S24: THE HEADER NAMED THE REBUILD DAY. `daily_balances` walks to whatever
+   * `today` stood at the last rebuild, so Chase Checking read "as of Aug 14,
+   * 2026 · carried" on 2026-09-14 while its newest row and its statement both
+   * end Aug 12 — the same rebuild day the dashboard's card named. The series is
+   * cut at the day the balance was observed BEFORE anything reads it, so the
+   * header, both change chips, the balance proof and the chart name one day. The
+   * balance itself does not move.
+   */
+  const series = cutToObserved(accountSeries(db, id), observedThrough(db).get(id));
   const latest = series.at(-1) ?? null;
   // the label and the figure out of one call — `lib/side-magnitude`
   const heading = balanceHeading(latest?.balanceCents ?? 0, liability);

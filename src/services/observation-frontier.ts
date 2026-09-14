@@ -2,6 +2,7 @@ import { cache } from "react";
 import { and, asc, desc, eq, isNotNull, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
+import { balanceAnchors } from "@/db/schema/balances";
 import { statementPeriods } from "@/db/schema/imports";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
@@ -106,6 +107,77 @@ export const observationFrontier = cache(function observationFrontier(db: AppDat
 
   return { byAccount };
 });
+
+/**
+ * The day an account's BALANCE was last observed: the latest of its newest
+ * active row and newest statement end (`observationFrontier`) and its newest
+ * recorded balance. Keyed only by the accounts `observationFrontier` holds.
+ *
+ * 🔴 S24: EVERY SURFACE THAT DATED A BALANCE NAMED THE DAY THE CACHE WAS
+ * REBUILT. `daily_balances` walks forward to whatever `today` stood at the last
+ * rebuild, so the newest row is the IMPORT day. Measured 2026-09-14:
+ * /?cards=grid read "Discover · 1 account · as of Sep 14, 2026" beside
+ * "Discover adds up through Sep 8, 2026" (newest charge Sep 1, statement
+ * closing Sep 8), and `/accounts/<Chase Checking>` read "as of Aug 14, 2026 ·
+ * carried" of an account whose newest row and statement both end Aug 12. All
+ * 9 non-investment accounts with a balance read a cached day later than this
+ * one; on all 9 the balance on this day equals the newest. `cardsOwed` had
+ * already refused the rebuild day for the same balances.
+ *
+ * ⛔ One rule, owner's decision 2026-09-14 (S24 option a): the institution
+ * cards (dashboard and both /accounts lenses), the /accounts/[id] header and
+ * the account insights window all read it through `cutToObserved`.
+ *
+ * ⚠️ ABSENT — and so never cut — for two kinds of account:
+ *
+ *  - **investment**: marked to market and priced through today; "observed" is
+ *    not a fact about it, exactly as above.
+ *  - **neither a row nor a statement**: only recorded balances, or nothing.
+ *    `institution-groups.test` pins that a lone recorded balance carries
+ *    forward to today. No active account on the real ledger is in this state
+ *    (Capital One 360 Checking holds nothing at all).
+ *
+ * ⚠️ The anchor term decides only when a balance was recorded AFTER the newest
+ * row and statement — a count of cash newer than the last import is itself an
+ * observation. On 2026-09-14 no account's newest anchor is later than its
+ * frontier (Cash on Hand's 08-03 predates its 08-11 row).
+ */
+export const observedThrough = cache(function observedThrough(db: AppDatabase): ReadonlyMap<string, string> {
+  const newestAnchor = new Map(
+    db
+      .select({ accountId: balanceAnchors.accountId, day: sql<string>`max(${balanceAnchors.anchoredOn})` })
+      .from(balanceAnchors)
+      .groupBy(balanceAnchors.accountId)
+      .all()
+      .map((r) => [r.accountId, r.day] as const),
+  );
+  const out = new Map<string, string>();
+  for (const [accountId, through] of observationFrontier(db).byAccount) {
+    out.set(accountId, latest(through, newestAnchor.get(accountId) ?? null) ?? through);
+  }
+  return out;
+});
+
+/**
+ * A covered balance series cut at the day it was observed: every point on or
+ * before `through`, none after.
+ *
+ * ⛔ The ONE cut for every surface that dates a balance, so a card and the page
+ * it links to cannot name two days for one balance. Callers cut the series
+ * FIRST and read the as-of day, the balance, the day change and the spark off
+ * the result.
+ *
+ * ⚠️ `through` undefined — an account `observedThrough` does not hold — leaves
+ * the series whole. So does a cut that would leave nothing: a card is never
+ * nulled by its own date.
+ */
+export function cutToObserved<T extends { day: string }>(series: readonly T[], through: string | undefined): readonly T[] {
+  if (through === undefined) return series;
+  // ordered oldest first, so only the tail past `through` needs comparing
+  let end = series.length;
+  while (end > 0 && compareDates(series[end - 1]!.day, through) > 0) end -= 1;
+  return end === 0 || end === series.length ? series : series.slice(0, end);
+}
 
 /**
  * The day the ledger begins: the earliest ACTIVE transaction, or null when

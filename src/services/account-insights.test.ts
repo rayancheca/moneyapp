@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { dailyBalances } from "@/db/schema/balances";
+import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
@@ -205,6 +206,98 @@ describe("what it refuses to say", () => {
 
   test("an unknown account is not an error, it is silence", () => {
     expect(accountInsights(bundle.db, "no-such-account", TODAY)).toBeNull();
+  });
+});
+
+/* ── an imported account's chain, for the two describes below ── */
+
+const now = (): string => new Date().toISOString();
+
+function addFile(id: string): string {
+  const institutionId = bundle.db.select().from(institutions).all()[0]!.id;
+  bundle.db
+    .insert(importFiles)
+    .values({
+      id,
+      fileName: `${id}.csv`,
+      fileSha256: `sha-${id}`,
+      format: "csv",
+      institutionId,
+      parserVersion: 1,
+      status: "parsed",
+      storagePath: `/tmp/${id}.csv`,
+      importedAt: now(),
+      createdAt: now(),
+      updatedAt: now(),
+    })
+    .run();
+  return id;
+}
+
+function addImportedTxn(accountId: string, day: string, fileId: string): void {
+  seq += 1;
+  bundle.db
+    .insert(transactions)
+    .values({
+      id: `t-${seq}`,
+      accountId,
+      importFileId: fileId,
+      postedOn: day,
+      amountCents: -1_00,
+      rawDescription: `ROW ${seq}`,
+      normalizedDescription: `ROW ${seq}`,
+      status: "active",
+      needsReview: false,
+      occurrenceIndex: 0,
+      dedupeHash: `h-${seq}`,
+      createdAt: now(),
+      updatedAt: now(),
+    })
+    .run();
+}
+
+function addDay(accountId: string, day: string, basis: "anchored" | "derived" | "carried" | "derived_unverified", cents = 10_000): void {
+  bundle.db.insert(dailyBalances).values({ accountId, day, balanceCents: cents, basis }).run();
+}
+
+/**
+ * S24 — the account insights window is the third surface on the observed-day
+ * rule, after the institution cards and the account page header.
+ */
+describe("the window is dated by the day the balance was observed", () => {
+  /*
+   * 🔴 S24, the third surface on the rule: the window read the REBUILD day off
+   * `latestBalances` — "as of Aug 14, 2026" of Chase Checking, whose newest row
+   * and statement both end Aug 12. The balance proof asked about the same day.
+   */
+  test("the window and the balance proof are dated by the day the balance was observed", () => {
+    addAccount("a-1", "Chase Checking", "checking");
+    addAccount("a-2", "Other", "checking");
+    setBalance("a-2", 90_000);
+    const file = addFile("f-1");
+    bundle.db
+      .insert(statementPeriods)
+      .values({
+        importFileId: file,
+        accountId: "a-1",
+        periodStart: "2026-07-13",
+        periodEnd: "2026-08-12",
+        reconciliation: "reconciled",
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+    addDay("a-1", "2026-08-01", "anchored");
+    addDay("a-1", "2026-08-10", "derived");
+    addDay("a-1", "2026-08-12", "derived");
+    addDay("a-1", "2026-08-14", "carried");
+    addImportedTxn("a-1", "2026-08-10", file);
+
+    const out = accountInsights(bundle.db, "a-1", TODAY)!;
+    expect(out.windowLabel).toContain("Aug 12, 2026");
+    expect(out.windowLabel).not.toContain("Aug 14");
+    const rank = out.insights.find((i) => i.claimId === "ranked_in_set" || i.claimId === "largest_in_set")!;
+    expect(rank.provenance.headline).toContain("Aug 12, 2026");
   });
 });
 

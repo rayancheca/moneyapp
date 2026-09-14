@@ -8,6 +8,7 @@ import { compareDates, todayIso } from "@/lib/dates";
 import { dayChangeTerm } from "@/lib/day-change-label";
 import { formatDayShort } from "@/lib/format-date";
 import { formatQuantityE8 } from "./holdings";
+import { cutToObserved, observedThrough } from "./observation-frontier";
 import { unreviewedByAccount } from "./review-count";
 
 /**
@@ -213,6 +214,23 @@ export function institutionGroups(
     seriesByAccount.set(r.accountId, list);
   }
 
+  /*
+   * 🔴 S24: EVERY DATE ON A CARD NAMED THE DAY THE CACHE WAS REBUILT, because
+   * `series.at(-1)` is wherever `deriveForward` stopped. Measured 2026-09-14 on
+   * /?cards=grid: "Discover · 1 account · as of Sep 14, 2026", "$0.00 today",
+   * beside "Discover adds up through Sep 8, 2026"; the Chase group read "each
+   * as of its own last covered day, Aug 14 – Sep 14, 2026" of balances last
+   * seen Aug 12 and Sep 2.
+   *
+   * ⛔ Cut ONCE, here — the as-of day, balance, day change, spark AND the
+   * group's combined series below all read the cut series. `observedThrough`
+   * is the rule; the account page and its insights read it too.
+   */
+  const observed = observedThrough(db);
+  const observedSeries = new Map<string, readonly SparkPoint[]>(
+    accountRows.map((a) => [a.id, cutToObserved(seriesByAccount.get(a.id) ?? [], observed.get(a.id))]),
+  );
+
   const investmentIds = accountRows.filter((a) => a.type === "investment").map((a) => a.id);
   const holdingRows =
     investmentIds.length === 0
@@ -233,7 +251,7 @@ export function institutionGroups(
 
   const groups = new Map<string, InstitutionGroup>();
   for (const a of accountRows) {
-    const series = seriesByAccount.get(a.id) ?? [];
+    const series = observedSeries.get(a.id) ?? [];
     const latest = series.at(-1) ?? null;
     const change = dayChangeOf(series);
     const card: AccountCard = {
@@ -281,7 +299,7 @@ export function institutionGroups(
     const ids = group.accounts.map((c) => c.id);
     const byDay = new Map<string, { total: number; covered: number }>();
     for (const id of ids) {
-      for (const p of seriesByAccount.get(id) ?? []) {
+      for (const p of observedSeries.get(id) ?? []) {
         const entry = byDay.get(p.day) ?? { total: 0, covered: 0 };
         byDay.set(p.day, { total: entry.total + p.cents, covered: entry.covered + 1 });
       }

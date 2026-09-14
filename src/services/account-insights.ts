@@ -7,7 +7,9 @@ import { countFact, rankFact, scalarFact, shareFact, type Fact } from "@/lib/ins
 import { isPrintableName } from "@/lib/printable-name";
 import { sideMagnitudeCents } from "@/lib/side-magnitude";
 import { listAccounts } from "./accounts";
+import { accountSeries } from "./derivation";
 import { surfaceInsights, type InsightInput } from "./insight-surface";
+import { cutToObserved, observedThrough } from "./observation-frontier";
 import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { provenanceFor } from "./provenance";
 
@@ -115,7 +117,14 @@ export function accountInsightInput(
 
   const facts: Fact[] = [];
   const candidates: InsightCandidate[] = [];
-  const prove = () => provenanceFor(db, { kind: "accountBalance", accountId, day: self.balance.asOf ?? undefined });
+  /*
+   * 🔴 S24: the window and the balance proof were dated by `latestBalances`'
+   * newest row — the rebuild day, "as of Fri, Aug 14, 2026" of Chase Checking
+   * on 2026-09-14, whose newest row and statement end Aug 12. The account page
+   * header above this list reads the same cut.
+   */
+  const asOf = cutToObserved(accountSeries(db, accountId), observedThrough(db).get(accountId)).at(-1)?.day ?? self.balance.asOf;
+  const prove = () => provenanceFor(db, { kind: "accountBalance", accountId, day: asOf ?? undefined });
 
   if (rank > 0 && ranked.length >= MIN_ACCOUNTS_TO_RANK && magnitude > 0) {
     facts.push(rankFact("f1", self.name, rank, ranked.length, sideLabel));
@@ -157,7 +166,7 @@ export function accountInsightInput(
     facts,
     candidates,
     window: {
-      label: self.balance.asOf ? `as of ${formatDayLong(self.balance.asOf)}` : self.name,
+      label: asOf ? `as of ${formatDayLong(asOf)}` : self.name,
       note: null,
     },
   };
