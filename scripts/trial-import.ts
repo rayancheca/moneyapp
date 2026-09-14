@@ -66,8 +66,11 @@ function snapshot(db: ReturnType<typeof createDatabase>["db"], sqlite: ReturnTyp
     txnByStatus: group("SELECT status AS k, COUNT(*) AS n FROM transactions GROUP BY status"),
     periodsByReconciliation: group("SELECT reconciliation AS k, COUNT(*) AS n FROM statement_periods GROUP BY reconciliation"),
     basisCounts: group("SELECT basis AS k, COUNT(*) AS n FROM daily_balances GROUP BY basis"),
+    // keyed by name AND id: two series can share a name (the real ledger has two
+    // ended "YOUTUBEPREMIUM" series, 7 and 4 rows), and `group` keeps one row per
+    // key, so a name alone printed one line and one count for both
     seriesLinks: group(
-      "SELECT s.name AS k, COUNT(*) AS n FROM transactions t JOIN recurring_series s ON s.id = t.recurring_series_id WHERE t.status = 'active' GROUP BY s.id",
+      "SELECT s.name || ' · ' || substr(s.id, 1, 8) AS k, COUNT(*) AS n FROM transactions t JOIN recurring_series s ON s.id = t.recurring_series_id WHERE t.status = 'active' GROUP BY s.id",
     ),
     grades: accountCoverage(db).map((c) => ({
       name: c.accountName,
