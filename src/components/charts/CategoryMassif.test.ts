@@ -101,6 +101,12 @@ describe("the relief's readout counts categories in English", () => {
     );
   });
 
+  test("an aggregate block that netted money back is spoken of in the plural", () => {
+    expect(
+      massifCaptionKey({ label: "4 SMALLER CATEGORIES", share: 0, spentCents: -154_458, memberCount: 4 }, 12, "May 2024"),
+    ).toBe("4 SMALLER CATEGORIES · no share of May 2024 — together they netted money back");
+  });
+
   test("a category that really spent nothing still reads 0.0%", () => {
     expect(massifCaptionKey({ label: "HOTELS", share: 0, spentCents: 0 }, 12, "May 2024")).toBe(
       "HOTELS · 0.0% of May 2024",

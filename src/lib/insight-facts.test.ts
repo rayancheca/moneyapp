@@ -231,6 +231,14 @@ describe("spendingShare — a refunded category took no share, not a zero one", 
     expect(s.title).toBe("took no share of spending — this category netted money back");
   });
 
+  /** 🔴 the relief's "4 smaller categories" block was told "this category" */
+  test("an aggregate of several categories refuses in the plural", () => {
+    expect(spendingShare(-154_458, 0, 4).title).toBe(
+      "took no share of spending — together these 4 categories netted money back",
+    );
+    expect(spendingShare(-154_458, 0, 1).title).toContain("this category");
+  });
+
   test("a category that really spent nothing keeps its measured zero", () => {
     expect(spendingShare(0, 0)).toEqual({ label: "0.0%", title: null });
   });

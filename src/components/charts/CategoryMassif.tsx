@@ -1,6 +1,6 @@
 "use client";
 
-import { renderPercent, spendingShare } from "@/lib/insight-facts";
+import { spendingShare } from "@/lib/insight-facts";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -496,9 +496,9 @@ function MassifRail({
                 <span className="truncate text-sm">{block.label}</span>
                 <span
                   className="figures shrink-0 text-[11px] text-ink-faint"
-                  title={spendingShare(block.spentCents, block.share * 100).title ?? undefined}
+                  title={spendingShare(block.spentCents, block.share * 100, block.memberCount).title ?? undefined}
                 >
-                  {spendingShare(block.spentCents, block.share * 100).label}
+                  {spendingShare(block.spentCents, block.share * 100, block.memberCount).label}
                 </span>
               </span>
               <span className="block text-[11px] text-ink-faint">
@@ -661,7 +661,7 @@ function blockFill(hue: string | null): string {
  * read it.
  */
 export function massifCaptionKey(
-  active: { label: string; share: number; spentCents: number } | null,
+  active: { label: string; share: number; spentCents: number; memberCount?: number } | null,
   categoryCount: number,
   periodLabel: string,
 ): string {
@@ -671,7 +671,7 @@ export function massifCaptionKey(
     const s = spendingShare(active.spentCents, active.share * 100);
     return s.title === null
       ? `${active.label} · ${s.label} of ${periodLabel}`
-      : `${active.label} · no share of ${periodLabel} — it netted money back`;
+      : `${active.label} · no share of ${periodLabel} — ${(active.memberCount ?? 1) > 1 ? "together they" : "it"} netted money back`;
   }
   return `${periodLabel} · all ${categoryCount} categor${categoryCount === 1 ? "y" : "ies"}`;
 }

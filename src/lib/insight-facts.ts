@@ -445,9 +445,22 @@ export function sharePercent(pct: number): string {
 export function spendingShare(
   spentCents: number,
   sharePct: number,
+  /**
+   * How many categories the figure sums. The relief folds its tail into one
+   * "N smaller categories" block, and the refusal first said "this category"
+   * of it — the only refusal the relief rendered anywhere on the ledger was on
+   * exactly that aggregate. A bundle netting money back says so in the plural.
+   */
+  memberCount = 1,
 ): { label: string; title: string | null } {
   if (spentCents < 0) {
-    return { label: "—", title: "took no share of spending — this category netted money back" };
+    return {
+      label: "—",
+      title:
+        memberCount > 1
+          ? `took no share of spending — together these ${memberCount} categories netted money back`
+          : "took no share of spending — this category netted money back",
+    };
   }
   return { label: sharePercent(sharePct), title: null };
 }
