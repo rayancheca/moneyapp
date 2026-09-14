@@ -1,6 +1,7 @@
 import type { AppDatabase } from "@/db/client";
 import { todayIso } from "@/lib/dates";
 import { absorbIntoLiveSeries, loadRecomputeCtx, recomputeSeriesStats } from "./recurring";
+import { linkFirstPostings } from "./recurring-first-posting";
 
 /**
  * LINKING AT IMPORT — the rows an upload, a gap acceptance or an un-import makes
@@ -21,12 +22,19 @@ import { absorbIntoLiveSeries, loadRecomputeCtx, recomputeSeriesStats } from "./
  * ⛔ The matching rule is `absorbIntoLiveSeries`, not a copy of it. A second rule
  * here would be a second answer to "is this charge that bill?", and the two
  * would drift.
+ *
+ * Then, over the SAME scope, `linkFirstPostings`: a commitment that has never
+ * posted owns no description for absorption to match, so its first charge is
+ * matched by exact amount and schedule instead, under the uniqueness fences its
+ * own docstring lists.
  */
 
 /** What linking at import wrote. */
 export interface ImportLinkResult {
   /** rows linked because a live series already carries their exact description */
   absorbed: number;
+  /** first charges of never-posted commitments, by exact amount and schedule */
+  firstPostings: number;
 }
 
 /**
@@ -40,11 +48,14 @@ export function linkRowsMadeActive(
   today: string = todayIso(),
 ): ImportLinkResult {
   const scope = new Set(candidateIds);
-  if (scope.size === 0) return { absorbed: 0 };
+  if (scope.size === 0) return { absorbed: 0, firstPostings: 0 };
   const ctx = loadRecomputeCtx(db);
   return db.transaction((tx) => {
     const absorbed = absorbIntoLiveSeries(tx, today, ctx, scope);
-    return { absorbed: absorbed.tagged };
+    // AFTER absorption, in the same transaction: a row a series already owns by
+    // description is never offered to a newcomer as its first posting
+    const first = linkFirstPostings(tx, today, ctx, scope);
+    return { absorbed: absorbed.tagged, firstPostings: first.tagged };
   });
 }
 

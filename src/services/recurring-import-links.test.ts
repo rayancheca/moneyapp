@@ -152,7 +152,7 @@ describe("linking at import — the rows an operation made active, and only thos
     // the fixture expresses the defect: unlinked, the bill reads as owed
     expect(overdueForSeries(bundle.db, new Set([breezeline]), "2026-09-01", TODAY).totalCents).toBe(5000);
 
-    expect(linkRowsMadeActive(bundle.db, [imported], TODAY)).toEqual({ absorbed: 1 });
+    expect(linkRowsMadeActive(bundle.db, [imported], TODAY)).toEqual({ absorbed: 1, firstPostings: 0 });
 
     expect(seriesOf(imported).recurringSeriesId).toBe(breezeline);
     expect(seriesOf(imported).seriesLinkSource).toBe("detected");
@@ -183,7 +183,7 @@ describe("linking at import — the rows an operation made active, and only thos
     const absorbable = post({ postedOn: "2026-09-10", amountCents: -5000, raw: "BREEZELINE 866-290-5400 MA" });
     const before = ledgerState();
 
-    expect(linkRowsMadeActive(bundle.db, [], TODAY)).toEqual({ absorbed: 0 });
+    expect(linkRowsMadeActive(bundle.db, [], TODAY)).toEqual({ absorbed: 0, firstPostings: 0 });
     expect(ledgerState()).toEqual(before);
 
     // the control: the same row in scope IS linked, so the empty set did it
