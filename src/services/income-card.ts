@@ -1,12 +1,15 @@
-import { and, eq, isNotNull } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
-import { transactions } from "@/db/schema/transactions";
 import { STALE_PERIODS, type CashEarningsBasis } from "@/lib/cash-earnings";
-import { addCalendarMonths, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import { incomeExpectation } from "./budgets";
-import { cashEarningsReadings, type CashEarningsReading } from "./cash-earnings";
+import {
+  cashEarningsReadings,
+  earliestVerified,
+  landingAccountsBySeries,
+  type CashEarningsReading,
+} from "./cash-earnings";
 import { SPEND_BASELINE_MONTHS } from "./committed";
 import { accountCoverage } from "./coverage";
 
@@ -261,50 +264,6 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
 
   const unlooked = silentPeriods - checkedSilentPeriods;
   return `${since}, but only ${checkedSilentPeriods} of them fall on days the records cover. The other ${unlooked} sit inside the ${unreadDays ?? 0} days past ${formatDayShort(checkedThrough)} that nothing has imported yet, so the ledger has not looked.`;
-}
-
-/** The accounts each income series' attributed pay has actually landed in. */
-function landingAccountsBySeries(db: AppDatabase): Map<string, Set<string>> {
-  const rows = db
-    .select({ seriesId: transactions.recurringSeriesId, accountId: transactions.accountId })
-    .from(transactions)
-    .where(and(isNotNull(transactions.recurringSeriesId), eq(transactions.status, "active")))
-    .all();
-
-  const out = new Map<string, Set<string>>();
-  for (const r of rows) {
-    if (r.seriesId === null) continue;
-    const set = out.get(r.seriesId) ?? new Set<string>();
-    set.add(r.accountId);
-    out.set(r.seriesId, set);
-  }
-  return out;
-}
-
-/**
- * The EARLIEST `verifiedThrough` across every account a series' pay has landed
- * in — the last day the ledger has checked every place a payday could arrive.
- *
- * A single account with nothing verified collapses the whole thing to null,
- * which is the honest answer rather than the convenient one: if one possible
- * landing place is unchecked, a deposit could be sitting in it unseen and the
- * card must not claim the ledger looked.
- */
-function earliestVerified(
-  accountIds: ReadonlySet<string>,
-  verifiedThroughByAccount: ReadonlyMap<string, string | null>,
-  today: string,
-): string | null {
-  if (accountIds.size === 0) return null;
-  let earliest: string | null = null;
-  for (const id of accountIds) {
-    const through = verifiedThroughByAccount.get(id) ?? null;
-    if (through === null) return null;
-    if (earliest === null || compareDates(through, earliest) < 0) earliest = through;
-  }
-  // a record reaching past today still cannot have been read against today
-  if (earliest !== null && compareDates(earliest, today) > 0) return today;
-  return earliest;
 }
 
 export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeCard | null {

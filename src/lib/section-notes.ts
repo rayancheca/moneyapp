@@ -1,7 +1,7 @@
 import { isStaleClose } from "./holding-price-age";
 import { formatCents } from "./money";
 import { dayWindowLabel } from "./period";
-import type { CashEarningsBasis } from "./cash-earnings";
+import { STALE_PERIODS, type CashEarningsBasis } from "./cash-earnings";
 
 /**
  * A section note is AUTHORED COPY selected by a MEASURED predicate, with every
@@ -427,6 +427,15 @@ export interface CashEarningsNoteInput {
      */
     firstPeriodOn: string | null;
     lastPeriodOn: string | null;
+    /**
+     * How far the account this pay lands in has been READ — the service's
+     * `withChecked` fields. Absent means the caller measured only against the
+     * calendar, and the note says what it always said.
+     */
+    periodsCovered?: number;
+    checkedThrough?: string | null;
+    checkedPeriodsCovered?: number;
+    checkedPeriodsSinceBanked?: number;
   }[];
   formatDay: (iso: string) => string;
 }
@@ -499,7 +508,20 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
     // unmeasured thing is the one shape this module refuses.
     if (r.basis === "no-series") continue;
 
-    if (r.basis === "series-stale" && r.unbankedCents > 0) {
+    /*
+     * 🔴 THE CALENDAR IS NOT THE RECORD. "None of it reached an account" was
+     * said of September's paydays while the account that pay lands in had been
+     * read through Aug 12 — 11 of 14 /spending windows printed at least one
+     * false sentence (measured 2026-09-14). With the frontier in hand the note
+     * speaks only when three missed paydays fall on READ days (the dashboard's
+     * bar), scopes "reached an account" to those days, and names the rest as
+     * unimported rather than unpaid.
+     */
+    const measuredRead = r.checkedThrough !== undefined;
+    const readSilence = r.checkedPeriodsSinceBanked ?? 0;
+    const silentEnough = !measuredRead || r.checkedThrough === null || readSilence >= STALE_PERIODS;
+
+    if (r.basis === "series-stale" && r.unbankedCents > 0 && silentEnough) {
       // The never-paid branch is a different SENTENCE, not a different noun
       // phrase: "paydays have passed since no deposit has ever been attributed"
       // is what slotting it into the same template produced, and it is not
@@ -513,19 +535,40 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        * paydays", and a reader reasonably takes eleven paydays to be that span's
        * — it holds four.
        */
+      const through = r.checkedThrough ? input.formatDay(r.checkedThrough) : null;
+      const reached = r.bankedCents === 0 ? "none of it reached an account" : `only ${formatCents(r.bankedCents)} reached an account`;
+      const covered = r.periodsCovered ?? 0;
+      const readCovered = r.checkedPeriodsCovered ?? 0;
+      const unread = covered - readCovered;
+      const claim = !measuredRead || (through !== null && unread <= 0)
+        ? ` and ${reached}.`
+        : through === null
+          ? ` — and the account it lands in has not been checked, so the ledger cannot say whether any of it arrived.`
+          : readCovered === 0
+            ? `, all of it after ${through}, which nothing has imported yet — so the ledger has not looked for it.`
+            : ` and ${reached} through ${through}; the other ${unread} ${unread === 1 ? "payday falls" : "paydays fall"} after that, which nothing has imported yet.`;
+
+      const readPart =
+        measuredRead && through !== null && readSilence < r.periodsSinceBanked
+          ? `, and ${readSilence} of them fall on days the records cover, through ${through}`
+          : "";
       const silence =
         r.lastBankedOn === null
           ? `Across the whole schedule, ${r.periodsSinceBanked} expected paydays have passed and ` +
-            `no deposit has ever been attributed to it`
+            `no deposit has ever been attributed to it${readPart}`
           : `Across the whole schedule, ${r.periodsSinceBanked} expected paydays have passed ` +
-            `since the last deposit on ${input.formatDay(r.lastBankedOn)}`;
+            `since the last deposit on ${input.formatDay(r.lastBankedOn)}${readPart}`;
+      // a list of explanations is only complete when the ledger looked at every payday it counts
+      const explanations =
+        measuredRead && (through === null || readSilence < r.periodsSinceBanked)
+          ? "that money was held as cash, spent as cash, the schedule has ended, or it has not been imported yet"
+          : "that money was held as cash, spent as cash, or the schedule has ended";
       notes.push({
         id: `cash-earnings-unbanked-${r.seriesName}`,
         body:
           `${r.seriesName} implies ${formatCents(r.impliedCents)} of earnings` +
-          `${impliedSpanPhrase(r.firstPeriodOn, r.lastPeriodOn)} and ` +
-          `${r.bankedCents === 0 ? "none of it reached an account" : `only ${formatCents(r.bankedCents)} reached an account`}. ` +
-          `${silence} — that money was held as cash, spent as cash, or the schedule has ended. ` +
+          `${impliedSpanPhrase(r.firstPeriodOn, r.lastPeriodOn)}${claim} ` +
+          `${silence} — ${explanations}. ` +
           `The income figures on this page count deposits, so they cannot tell you which.`,
       });
       continue;

@@ -603,6 +603,82 @@ describe("cashEarningsSectionNotes", () => {
     expect(notes({ impliedCents: 0, bankedCents: 0, unbankedCents: 0 })).toEqual([]);
   });
 
+  /*
+   * 🔴 "NONE OF IT REACHED AN ACCOUNT" OVER PAYDAYS NOBODY HAS READ. The note was
+   * measured against the calendar, never against how far the account the pay
+   * lands in has been imported. Measured 2026-09-14 on /spending?period=2026-09:
+   * "Cash job (weekly pay) implies $2,094.00 of earnings over Sep 3 – 10, 2026
+   * and none of it reached an account" — while Chase Checking, the only account
+   * that pay has ever landed in, is read through Aug 12, and the dashboard says
+   * of the same series "9 of them fall on days the records already cover,
+   * through Aug 12". 11 of 14 /spending windows printed at least one false
+   * sentence. The reading now carries the checked frontier; these rows pass it.
+   */
+  const checked = { checkedThrough: "2026-08-12", periodsCovered: 5, checkedPeriodsCovered: 5, checkedPeriodsSinceBanked: 9 };
+
+  test("paydays past the day the records reach are not called unbanked", () => {
+    const [note] = notes({
+      ...checked,
+      impliedCents: 209_400,
+      unbankedCents: 209_400,
+      firstPeriodOn: "2026-09-03",
+      lastPeriodOn: "2026-09-10",
+      periodsSinceBanked: 14,
+      periodsCovered: 2,
+      checkedPeriodsCovered: 0,
+    });
+    expect(note!.body).not.toContain("reached an account");
+    expect(note!.body).toContain("2026-08-12");
+    expect(note!.body).toContain("imported");
+    // …and the silence says how much of it the records actually cover
+    expect(note!.body).toContain("9 of them");
+  });
+
+  test("a window straddling the frontier scopes the claim to the days that were read", () => {
+    const [note] = notes({ ...checked, impliedCents: 418_800, unbankedCents: 418_800, periodsCovered: 4, checkedPeriodsCovered: 1 });
+    expect(note!.body).toContain("none of it reached an account through 2026-08-12");
+    expect(note!.body).toContain("the other 3 paydays");
+  });
+
+  test("the 'only' branch is scoped too — never a bare total over unread paydays", () => {
+    const [note] = notes({
+      ...checked,
+      impliedCents: 1_570_500,
+      bankedCents: 144_700,
+      unbankedCents: 1_425_800,
+      periodsCovered: 15,
+      checkedPeriodsCovered: 10,
+    });
+    expect(note!.body).toContain("only $1,447.00 reached an account through 2026-08-12");
+    expect(note!.body).not.toContain("only $1,447.00 reached an account.");
+  });
+
+  test("a window and a silence read in full keep the sentence exactly as it was", () => {
+    const [plain] = notes();
+    const [read] = notes({ ...checked, checkedPeriodsSinceBanked: 11 });
+    expect(read!.body).toBe(plain!.body);
+  });
+
+  test("a window read in full keeps its claim, and the silence says how much of it was read", () => {
+    // July on the live ledger: all five of July's paydays fall on or before Aug 12,
+    // but 5 of the schedule's 14 silent paydays do not — "14 … held as cash, spent
+    // as cash, or ended" presented a list as complete over paydays nobody had read
+    const [note] = notes({ ...checked, periodsSinceBanked: 14 });
+    expect(note!.body).toContain("none of it reached an account.");
+    expect(note!.body).toContain("14 expected paydays have passed");
+    expect(note!.body).toContain("9 of them fall on days the records cover, through 2026-08-12");
+  });
+
+  test("an account with no checked record claims nothing about what reached it", () => {
+    const [note] = notes({ ...checked, checkedThrough: null, checkedPeriodsCovered: 0, checkedPeriodsSinceBanked: 0 });
+    expect(note!.body).not.toContain("reached an account");
+    expect(note!.body).toContain("not been checked");
+  });
+
+  test("fewer than three missed paydays on read days is not a silent schedule yet", () => {
+    expect(notes({ ...checked, checkedPeriodsCovered: 0, checkedPeriodsSinceBanked: 2 })).toEqual([]);
+  });
+
   test("banking MORE than the period earned reads as catching up, not as a windfall", () => {
     // June banked $1,447.00 in two deposits; a month that clears a backlog will
     // bank more than it earned, and without this the page looks like a raise.

@@ -96,7 +96,8 @@ export default async function SpendingPage({
   const insights = spendingInsights(db, today);
 
   const cashNotes = cashEarningsSectionNotes({
-    rows: cashEarningsReadings(db, { from: range.from, to: range.to, today }),
+    // measured against how far the pay's own account has been READ, not only the calendar
+    rows: cashEarningsReadings(db, { from: range.from, to: range.to, today, withChecked: true }),
     formatDay: formatDayLong,
   });
 
