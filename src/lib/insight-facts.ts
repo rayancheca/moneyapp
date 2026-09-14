@@ -403,6 +403,11 @@ export function trendFact(
  * @param magnitude 0–1, not 0–100 — `sharePercent` takes the other framing.
  */
 export function renderPercent(magnitude: number): string {
+  // 🔴 a SIGNED share keeps its floor: the net-worth bridge's "Share of
+  // movement" is signed, and a band under 0.05% the other way printed "-0.0%"
+  // — money that moved, rounded to a negative nothing. Sign, then the same rule
+  // (the shape `${sign}${renderPercent(|v|)}` above already uses).
+  if (magnitude < 0) return `-${renderPercent(-magnitude)}`;
   const pct = magnitude * 100;
   if (pct > 0 && pct < 0.05) return "<0.1%";
   if (pct < 100 && pct >= 99.95) return ">99.9%";

@@ -217,6 +217,22 @@ describe("renderPercent — a real quantity is never rounded away", () => {
   });
 });
 
+describe("renderPercent — a signed share keeps its floor and its sign", () => {
+  /** the net-worth bridge's "Share of movement" is signed (`attribute`'s sharePct) */
+  test("a small share the other way is '-<0.1%', never '-0.0%'", () => {
+    expect(renderPercent(-0.0002)).toBe("-<0.1%");
+    expect(sharePercent(-0.03)).toBe("-<0.1%");
+  });
+
+  test("a larger negative share keeps its sign and its digits", () => {
+    expect(sharePercent(-30)).toBe("-30.0%");
+  });
+
+  test("negative zero is zero", () => {
+    expect(renderPercent(-0)).toBe("0.0%");
+  });
+});
+
 describe("spendingShare — a refunded category took no share, not a zero one", () => {
   /**
    * 🔴 Every share of spending divides `Math.max(0, spentCents)` by the
