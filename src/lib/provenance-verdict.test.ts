@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
   VERDICT_PRESENTATION,
+  embeddedLabel,
+  provenancePanelName,
+  provenanceTriggerName,
   verdictToneClass,
   type PresentedVerdict,
   type ProvenanceTone,
@@ -65,5 +68,47 @@ describe("verdictToneClass", () => {
     const classes = tones.map(verdictToneClass);
     expect(new Set(classes).size).toBe(tones.length);
     for (const c of classes) expect(c).toMatch(/^text-/);
+  });
+});
+
+/**
+ * 🔴 A WHOLE SENTENCE EMBEDDED IN A SENTENCE. An insight's badge is labelled by
+ * the insight itself, and every insight ends in a full stop, so a screen reader
+ * heard "How Housing is the largest of your 12 monthly budgets, by what you
+ * planned to spend, at $2,291.21. is proven — a plan". Measured 2026-09-14: 618
+ * of 780 provenance-trigger names across 297 pages — every one rendered by
+ * InsightList or NoticesCard.
+ */
+describe("the popover's accessible names", () => {
+  const SENTENCE = "Housing is the largest of your 12 monthly budgets, by what you planned to spend, at $2,291.21.";
+
+  test("a sentence loses exactly its own terminal full stop inside both names, and nothing else", () => {
+    expect(provenanceTriggerName(SENTENCE, "manual", "a plan")).toBe(
+      "How Housing is the largest of your 12 monthly budgets, by what you planned to spend, at $2,291.21 is proven — a plan",
+    );
+    expect(provenancePanelName(SENTENCE)).toBe(
+      "What Housing is the largest of your 12 monthly budgets, by what you planned to spend, at $2,291.21 is standing on",
+    );
+  });
+
+  test("a noun phrase comes back unchanged — the other callers are untouched", () => {
+    for (const label of ["net worth", "Housing budget", "Chase Sapphire, Aug 3 – Sep 2, 2026"]) {
+      expect(embeddedLabel(label)).toBe(label);
+    }
+    expect(provenanceTriggerName("net worth", "derived")).toBe("How net worth is proven — it adds up against a source document");
+  });
+
+  test("⛔ ONE stop, never all of them — a sentence ending in an abbreviation keeps the abbreviation's", () => {
+    // three real merchants end in "Inc." — the ledger holds "Amato Pharmacy Inc."
+    expect(embeddedLabel("7 transactions landed in Amato Pharmacy Inc..")).toBe("7 transactions landed in Amato Pharmacy Inc.");
+    // inner decimals, percents and multiples survive
+    expect(embeddedLabel("Dining rose 46.6%, 21.6× its usual, to $1,203.40.")).toBe("Dining rose 46.6%, 21.6× its usual, to $1,203.40");
+  });
+
+  test("no name ever carries a full stop before its own verb", () => {
+    for (const v of ALL) {
+      expect(provenanceTriggerName(SENTENCE, v)).not.toMatch(/\. is proven/);
+    }
+    expect(provenancePanelName(SENTENCE)).not.toMatch(/\. is standing on/);
   });
 });

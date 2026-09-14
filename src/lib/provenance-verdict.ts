@@ -84,3 +84,31 @@ const TONE_CLASS: Record<ProvenanceTone, string> = {
 export function verdictToneClass(tone: ProvenanceTone): string {
   return TONE_CLASS[tone];
 }
+
+/**
+ * A label as it reads INSIDE another sentence: without its own terminal full
+ * stop, and with every other character intact.
+ *
+ * 🔴 Most callers label a badge with a noun phrase ("net worth", "Housing
+ * budget"), but InsightList and NoticesCard label it with the insight itself —
+ * a finished sentence — and the name read "How Housing is the largest of your 12
+ * monthly budgets, by what you planned to spend, at $2,291.21. is proven — a
+ * plan". Measured 2026-09-14: 618 of 780 provenance-trigger names on 297 pages.
+ *
+ * ⛔ Exactly ONE stop, and only a final one: "$2,291.21", "46.6%" and "21.6×"
+ * keep their points, and a sentence ending "…Amato Pharmacy Inc.." keeps the
+ * abbreviation's. `/\.+$/` would eat it.
+ */
+export function embeddedLabel(label: string): string {
+  return label.endsWith(".") ? label.slice(0, -1) : label;
+}
+
+/** The trigger's accessible name — the badge word when a composite figure carries one. */
+export function provenanceTriggerName(label: string, verdict: PresentedVerdict, badgeWord?: string): string {
+  return `How ${embeddedLabel(label)} is proven — ${badgeWord ? badgeWord : `it ${VERDICT_PRESENTATION[verdict].ariaSuffix}`}`;
+}
+
+/** The panel's accessible name — through the same rule, so the button and its dialog name one claim. */
+export function provenancePanelName(label: string): string {
+  return `What ${embeddedLabel(label)} is standing on`;
+}

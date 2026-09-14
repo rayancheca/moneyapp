@@ -3,11 +3,21 @@
 import { useEffect, useRef } from "react";
 import { Icon } from "@/components/shell/Icon";
 import { Popover, usePopover } from "@/components/ui/Popover";
-import { VERDICT_PRESENTATION, verdictToneClass, type PresentedVerdict } from "@/lib/provenance-verdict";
+import {
+  VERDICT_PRESENTATION,
+  provenancePanelName,
+  provenanceTriggerName,
+  verdictToneClass,
+  type PresentedVerdict,
+} from "@/lib/provenance-verdict";
 import type { Provenance } from "@/services/provenance";
 
 interface ProvenancePopoverProps {
-  /** the figure this sits beside, verbatim — becomes part of the accessible name */
+  /**
+   * the figure this sits beside — a noun phrase or a whole sentence; it becomes
+   * part of the accessible name, where a sentence's own full stop is dropped
+   * (`embeddedLabel`)
+   */
   label: string;
   provenance: Provenance;
   /** side to open on; the util flips and clamps if there is no room */
@@ -76,7 +86,7 @@ export function ProvenancePopover({ label, provenance, placement = "bottom-start
         {...triggerProps}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={`How ${label} is proven — ${provenance.badgeWord ? provenance.badgeWord : `it ${present.ariaSuffix}`}`}
+        aria-label={provenanceTriggerName(label, provenance.verdict as PresentedVerdict, provenance.badgeWord)}
         /**
          * ⛔ `-my-0.5 py-0.5` — the negative margin cancels the padding's
          * contribution to the LINE BOX while keeping the hover target's
@@ -95,7 +105,7 @@ export function ProvenancePopover({ label, provenance, placement = "bottom-start
           ref={panelRef}
           tabIndex={-1}
           role="dialog"
-          aria-label={`What ${label} is standing on`}
+          aria-label={provenancePanelName(label)}
           /**
            * ⛔ `normal-case tracking-normal font-normal` is LOAD-BEARING, not
            * tidiness. `Popover` renders its panel as a SIBLING where the
