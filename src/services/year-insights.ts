@@ -1,10 +1,10 @@
 import type { AppDatabase } from "@/db/client";
-import { isValidIsoDate } from "@/lib/dates";
+import { isValidIsoDate, todayIso } from "@/lib/dates";
 import { formatDayShort, formatDayShortIn } from "@/lib/format-date";
 import { deltaFact, scalarFact, type Fact } from "@/lib/insight-facts";
 import { surfaceInsights, type InsightInput } from "./insight-surface";
 import type { InsightCandidate, SurfaceInsights } from "./insights";
-import { observationFrontier } from "./observation-frontier";
+import { spendingCoverageThrough } from "./movers-card";
 import { provenanceFor } from "./provenance";
 import { ledgerFirstDay, periodTotals } from "./spending";
 
@@ -39,6 +39,14 @@ import { ledgerFirstDay, periodTotals } from "./spending";
  *    row would compare a fully-reported 2025 against a 2026 missing whole
  *    accounts for three weeks, which is the statement-lag trap that dropped his
  *    rent out of the committed book for being one day late.
+ *
+ *    🔴 …the frontier of the accounts he SPENDS FROM, since 2026-09-14. The
+ *    earliest frontier over EVERY account let SoFi — statements ending Jul 31,
+ *    last spending in May — hold the whole year back: /summary/2026 read "Jan 1 –
+ *    Jul 31, 2026" while /spending?period=2026 read "Jan 1 – Aug 12, 2026" for
+ *    the same year. Both read `spendingCoverageThrough` now, the dashboard
+ *    card's live-spender rule (owner decision 2026-09-14). A ledger with no
+ *    habitual spender yet still falls back to every account's earliest.
  *
  * 2. **Both windows cover the SAME calendar days.** Jan 1 → the frontier, in
  *    each year.
@@ -99,18 +107,19 @@ function windowLabel(from: string, to: string, year: number, truncated: boolean)
   return truncated ? `${formatDayShort(from)} – ${formatDayShort(to)}, ${year}` : String(year);
 }
 
-function comparedWindows(db: AppDatabase, year: number): ComparedWindows | null {
+function comparedWindows(db: AppDatabase, year: number, today: string): ComparedWindows | null {
   const ledgerStart = ledgerFirstDay(db);
   if (ledgerStart === null) return null;
 
   /*
-   * The EARLIEST frontier across ledger-bearing accounts — the last day every
-   * one of them has been shown. Taking the latest instead would let the
+   * The EARLIEST frontier across the accounts you spend from — the last day
+   * every one of them has been shown. Taking the latest instead would let the
    * best-reported account speak for the ones that have not sent a statement
    * yet, which is exactly how a window comes to be missing whole accounts.
+   * ⛔ `spendingCoverageThrough` is /spending's cut too: one year, one name.
    */
-  const frontier = [...observationFrontier(db).byAccount.values()].sort()[0];
-  if (frontier === undefined) return null;
+  const frontier = spendingCoverageThrough(db, today);
+  if (frontier === null) return null;
 
   const from = `${year}-01-01`;
   const yearEnd = `${year}-12-31`;
@@ -159,25 +168,31 @@ function comparedWindows(db: AppDatabase, year: number): ComparedWindows | null 
  * are. Used by the selection run so it does not pay for a year that renders
  * nothing.
  */
-export function yearsWithInsights(db: AppDatabase): number[] {
+export function yearsWithInsights(db: AppDatabase, today: string = todayIso()): number[] {
   const first = ledgerFirstDay(db);
   if (first === null) return [];
-  const frontier = [...observationFrontier(db).byAccount.values()].sort()[0];
-  if (frontier === undefined) return [];
+  const frontier = spendingCoverageThrough(db, today);
+  if (frontier === null) return [];
   const out: number[] = [];
   for (let year = Number(first.slice(0, 4)); year <= Number(frontier.slice(0, 4)); year += 1) {
-    if (yearInsightInput(db, year) !== null) out.push(year);
+    if (yearInsightInput(db, year, today) !== null) out.push(year);
   }
   return out;
 }
 
-export function yearInsights(db: AppDatabase, year: number): SurfaceInsights | null {
-  return surfaceInsights(db, "year", yearInsightInput(db, year));
+export function yearInsights(db: AppDatabase, year: number, today: string = todayIso()): SurfaceInsights | null {
+  return surfaceInsights(db, "year", yearInsightInput(db, year, today));
 }
 
-/** What the year page measured, before the kill switch and before any proof. */
-export function yearInsightInput(db: AppDatabase, year: number): InsightInput | null {
-  const w = comparedWindows(db, year);
+/**
+ * What the year page measured, before the kill switch and before any proof.
+ *
+ * `today` chooses which accounts count as ones you spend from (the months
+ * before it); the window itself is still cut by where they were imported, never
+ * by the calendar.
+ */
+export function yearInsightInput(db: AppDatabase, year: number, today: string = todayIso()): InsightInput | null {
+  const w = comparedWindows(db, year, today);
   if (w === null) return null;
 
   const currentCents = periodTotals(db, { from: w.from, to: w.to }).spentCents;
@@ -250,7 +265,7 @@ export function yearInsightInput(db: AppDatabase, year: number): InsightInput | 
    * "still being imported" cannot appear on a year that finished long ago.
    */
   const window = w.truncated
-    ? `${year} is still being imported, so both years are measured through ${formatDayShort(w.to)} — the last day every account has been shown to the ledger. A part-year set beside a whole one is not a comparison. `
+    ? `${year} is still being imported, so both years are measured through ${formatDayShort(w.to)} — the last day every account you spend from has been imported through. A part-year set beside a whole one is not a comparison. `
     : "";
 
   /*

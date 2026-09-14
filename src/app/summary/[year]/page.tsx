@@ -50,10 +50,11 @@ export default async function YearSummaryPage({
   if (year === null) notFound();
 
   const db = getDb();
-  const view = yearSummaryView(db, year, todayIso());
+  const today = todayIso();
+  const view = yearSummaryView(db, year, today);
   const { summary, gambling, moneyWeightedReturn: mwr } = view;
   const years = summaryYears(db);
-  const spending = yearInsights(db, year);
+  const spending = yearInsights(db, year, today);
 
   return (
     <div className="summary-sheet mx-auto max-w-3xl px-4 py-8">

@@ -222,6 +222,38 @@ describe("yearInsights — a year against the one before it", () => {
     expect(yearInsights(bundle.db, 2026)!.windowLabel).toBe("Jan 1 – Jun 30, 2026");
   });
 
+  /**
+   * 🔴 ONE YEAR, TWO CUTS. /summary cut its year at the earliest frontier over
+   * EVERY account, while /spending cuts at the last day every account he spends
+   * from has been imported through. Measured on the real ledger 2026-09-14:
+   * /summary/2026 read "Jan 1 – Jul 31, 2026" — SoFi's statements end Jul 31,
+   * and SoFi last spent in May — while /spending?period=2026 read "Jan 1 – Aug
+   * 12, 2026". Owner decision 2026-09-14: both pages name the same cut.
+   *
+   * ⚠️ The older tests above hold no account that spends in three of the six
+   * baseline months, so they keep every-account's earliest — the rule for a
+   * ledger with no habit yet — and cannot tell the two rules apart. This one can.
+   */
+  test("the year is cut where the accounts you spend from stop, not where a dormant one does", () => {
+    const live = addAccount("live");
+    const dormant = addAccount("dormant");
+    spend(live, "2025-01-01", 15_000);
+    for (const m of ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"]) spend(live, `${m}-10`, 10_000);
+    spend(dormant, "2026-02-05", 5_000); // one month of spending is not a habit
+    shownThrough(live, "2026-08-12");
+    shownThrough(dormant, "2026-07-31");
+
+    const r = yearInsights(bundle.db, 2026, "2026-09-14")!;
+    expect(r.windowLabel).toBe("Jan 1 – Aug 12, 2026");
+    expect(r.windowNote).toContain(
+      "both years are measured through Aug 12 — the last day every account you spend from has been imported through.",
+    );
+    expect(r.insights.map((i) => i.text)).toEqual([
+      "Spending in Jan 1 – Aug 12, 2026 came to $650.00.",
+      "Spending rose by $500.00 between Jan 1 – Aug 12, 2025 and Jan 1 – Aug 12, 2026.",
+    ]);
+  });
+
   /** An account with nothing in it at all does not drag the frontier backwards. */
   test("an account that was never imported does not bound the window", () => {
     const a = addAccount("a");

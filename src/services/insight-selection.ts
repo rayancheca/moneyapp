@@ -148,7 +148,7 @@ function poolsToSelect(db: AppDatabase, today?: string): { surface: InsightSurfa
   };
   add("spending", spendingInsightInput(db, today));
   add("budgets", budgetInsightInput(db, today));
-  for (const year of yearsWithInsights(db)) add("year", yearInsightInput(db, year));
+  for (const year of yearsWithInsights(db, today)) add("year", yearInsightInput(db, year, today));
   return out;
 }
 
