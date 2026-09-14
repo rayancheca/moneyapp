@@ -593,7 +593,7 @@ test("the plan and the spending beside it are proven separately", async ({ page 
 
   // the plan's badge says what it is rather than borrowing `manual`'s stock
   // "you entered it" — these were proposed by a script and kept
-  const plan = row.getByRole("button", { name: /^How Housing budget is proven/ });
+  const plan = row.getByRole("button", { name: /^How Housing budget is known/ });
   await expect(plan).toBeVisible();
   await expect(plan).toHaveAccessibleName(/a plan$/);
   await plan.click();
@@ -605,7 +605,7 @@ test("the plan and the spending beside it are proven separately", async ({ page 
   await page.keyboard.press("Escape");
 
   // …and the actual keeps its own, unchanged
-  await expect(row.getByRole("button", { name: /^How Housing spent is proven/ })).toBeVisible();
+  await expect(row.getByRole("button", { name: /^How Housing spent is known/ })).toBeVisible();
 });
 
 /** Where the biggest plan sits — two facts the page holds and never states. */

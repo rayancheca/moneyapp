@@ -31,9 +31,9 @@ describe("InsightList — the proof badge's name", () => {
 
   test("the trigger's name carries the claim without its terminal full stop", () => {
     expect(html).toContain(
-      'aria-label="How Housing is the largest of your 12 monthly budgets, by what you planned to spend, at $2,291.21 is proven — a plan"',
+      'aria-label="How Housing is the largest of your 12 monthly budgets, by what you planned to spend, at $2,291.21 is known — a plan"',
     );
-    expect(html).not.toMatch(/\. is proven/);
+    expect(html).not.toMatch(/\. is known/);
   });
 
   test("the visible sentence still ends in its full stop", () => {

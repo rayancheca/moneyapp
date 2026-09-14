@@ -220,7 +220,7 @@ test.describe("what the ledger says about a commitment", () => {
  */
 test("the period's whole spending can be proven", async ({ page }) => {
   await page.goto("/spending");
-  const trigger = page.getByRole("button", { name: /^How this period's spending is proven/ });
+  const trigger = page.getByRole("button", { name: /^How this period's spending is known/ });
   await expect(trigger).toBeVisible();
   await trigger.click();
 

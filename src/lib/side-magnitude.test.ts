@@ -117,7 +117,7 @@ describe("balanceHeading", () => {
       [-4_200, false],
     ] as const) {
       const { subject } = balanceHeading(cents, liability);
-      expect(`How ${subject} is proven`).toMatch(/^How (this balance|the amount owed|the credit) is proven$/);
+      expect(`How ${subject} is known`).toMatch(/^How (this balance|the amount owed|the credit) is known$/);
     }
   });
 });

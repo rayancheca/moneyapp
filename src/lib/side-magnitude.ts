@@ -54,7 +54,8 @@ export interface BalanceHeading {
   label: string;
   /**
    * The same subject as a NOUN PHRASE, for a sentence that has to name it —
-   * "How the amount owed is proven".
+   * "How the amount owed is known" (`provenanceTriggerName`; it read "is proven"
+   * until 2026-09-14).
    *
    * ⚠️ Not `label.toLowerCase()`. That is what the provenance popover was given
    * when this function replaced the inline ternary, and it produced "How amount

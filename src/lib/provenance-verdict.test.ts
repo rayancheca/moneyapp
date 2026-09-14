@@ -84,7 +84,7 @@ describe("the popover's accessible names", () => {
 
   test("a sentence loses exactly its own terminal full stop inside both names, and nothing else", () => {
     expect(provenanceTriggerName(SENTENCE, "manual", "a plan")).toBe(
-      "How Housing is the largest of your 12 monthly budgets, by what you planned to spend, at $2,291.21 is proven — a plan",
+      "How Housing is the largest of your 12 monthly budgets, by what you planned to spend, at $2,291.21 is known — a plan",
     );
     expect(provenancePanelName(SENTENCE)).toBe(
       "What Housing is the largest of your 12 monthly budgets, by what you planned to spend, at $2,291.21 is standing on",
@@ -95,7 +95,29 @@ describe("the popover's accessible names", () => {
     for (const label of ["net worth", "Housing budget", "Chase Sapphire, Aug 3 – Sep 2, 2026"]) {
       expect(embeddedLabel(label)).toBe(label);
     }
-    expect(provenanceTriggerName("net worth", "derived")).toBe("How net worth is proven — it adds up against a source document");
+    expect(provenanceTriggerName("net worth", "derived")).toBe("How net worth is known — it adds up against a source document");
+  });
+
+  /*
+   * 🔴 "IS PROVEN — IT WAS ENTERED BY HAND". The name said "is proven" of every
+   * verdict, and five of the seven are not proofs. Measured 2026-09-14 on
+   * /summary/2026, once its window took in the $5,000 car down payment entered
+   * by hand on Aug 11: "How Spending in Jan 1 – Aug 12, 2026 came to $66,477.60
+   * is proven — it was entered by hand", beside a badge reading "you entered
+   * it". The name now says how the figure is KNOWN, and the phrase after the
+   * dash says what that is — so no verdict's name can claim a proof.
+   *
+   * ⛔ The BADGE words are untouched (owner decision S33, 2026-09-14).
+   */
+  test("🔴 no verdict's name claims a proof — the name says how the figure is known", () => {
+    const spending = "Spending in Jan 1 – Aug 12, 2026 came to $66,477.60.";
+    expect(provenanceTriggerName(spending, "manual")).toBe(
+      "How Spending in Jan 1 – Aug 12, 2026 came to $66,477.60 is known — it was entered by hand",
+    );
+    for (const v of ALL) {
+      expect(provenanceTriggerName(spending, v)).not.toMatch(/proven/);
+      expect(provenanceTriggerName(spending, v, "3 of 5 checked")).not.toMatch(/proven/);
+    }
   });
 
   test("⛔ ONE stop, never all of them — a sentence ending in an abbreviation keeps the abbreviation's", () => {
@@ -107,7 +129,7 @@ describe("the popover's accessible names", () => {
 
   test("no name ever carries a full stop before its own verb", () => {
     for (const v of ALL) {
-      expect(provenanceTriggerName(SENTENCE, v)).not.toMatch(/\. is proven/);
+      expect(provenanceTriggerName(SENTENCE, v)).not.toMatch(/\. is known/);
     }
     expect(provenancePanelName(SENTENCE)).not.toMatch(/\. is standing on/);
   });

@@ -33,7 +33,7 @@ const VERDICT_WORDS =
 test("the dashboard headline says what it is standing on, and names what it cannot see", async ({ page }) => {
   await gotoHydrated(page, "/");
 
-  const trigger = page.getByRole("button", { name: /How net worth is proven/ });
+  const trigger = page.getByRole("button", { name: /How net worth is known/ });
   await expect(trigger).toBeVisible();
 
   await trigger.click();
@@ -54,7 +54,7 @@ test("the dashboard headline says what it is standing on, and names what it cann
  */
 test("the badge is reachable by keyboard and the panel closes on Escape", async ({ page }) => {
   await gotoHydrated(page, "/");
-  const trigger = page.getByRole("button", { name: /How net worth is proven/ });
+  const trigger = page.getByRole("button", { name: /How net worth is known/ });
 
   await trigger.focus();
   await expect(trigger).toBeFocused();
@@ -77,7 +77,7 @@ test("an account balance names the document that pins it", async ({ page }) => {
   await gotoHydrated(page, "/accounts");
   await page.locator('a[href^="/accounts/"]').first().click();
 
-  const trigger = page.getByRole("button", { name: /How (this balance|the amount owed|the credit) is proven/ });
+  const trigger = page.getByRole("button", { name: /How (this balance|the amount owed|the credit) is known/ });
   await expect(trigger).toBeVisible();
   await expect(trigger).toContainText(VERDICT_WORDS);
 
@@ -99,7 +99,7 @@ test("the imports page says what each statement proved, and admits when one prov
   const card = page.getByRole("heading", { name: "What the statements proved" });
   await expect(card).toBeVisible();
 
-  const badges = page.getByRole("button", { name: /How .+ is proven/ });
+  const badges = page.getByRole("button", { name: /How .+ is known/ });
   const count = await badges.count();
   expect(count).toBeGreaterThan(0);
   // every badge says one of the allowed words — never blank, which reads as fine
@@ -121,7 +121,7 @@ test("no provenance badge is nested inside another interactive element", async (
     await gotoHydrated(page, path);
     const nested = await page.evaluate(() => {
       const triggers = [...document.querySelectorAll('button[aria-haspopup="dialog"]')].filter((b) =>
-        /is proven/.test(b.getAttribute("aria-label") ?? ""),
+        /is known/.test(b.getAttribute("aria-label") ?? ""),
       );
       return triggers
         .filter((b) => b.parentElement?.closest("a,button,[role=button],[role=link]") != null)

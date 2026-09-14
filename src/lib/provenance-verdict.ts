@@ -103,9 +103,26 @@ export function embeddedLabel(label: string): string {
   return label.endsWith(".") ? label.slice(0, -1) : label;
 }
 
-/** The trigger's accessible name — the badge word when a composite figure carries one. */
+/**
+ * The trigger's accessible name — the badge word when a composite figure carries one.
+ *
+ * 🔴 "IS PROVEN — IT WAS ENTERED BY HAND". This read "How X is proven" for
+ * every verdict, and five of the seven are not proofs: `manual`,
+ * `market_value`, `unverified`, `unknown` and `broken` each put a claim of
+ * proof in front of their own denial. Measured 2026-09-14 on /summary/2026,
+ * once its window took in the $5,000 car down payment entered by hand on Aug
+ * 11: "How Spending in Jan 1 – Aug 12, 2026 came to $66,477.60 is proven — it
+ * was entered by hand", beside a badge reading "you entered it". Across
+ * /summary, /spending, /budgets and every /categories/[id] page at its default
+ * period, 80 of 159 names said "is proven" of a verdict that is not a proof:
+ * "— a plan" ×14, "— it was entered by hand" ×2, "— it has no basis yet" ×64.
+ *
+ * ⛔ The name says how the figure is KNOWN, and the phrase after the dash says
+ * what that is — so no verdict's name can claim a proof it does not have. The
+ * badge WORDS are untouched (owner decision S33, 2026-09-14).
+ */
 export function provenanceTriggerName(label: string, verdict: PresentedVerdict, badgeWord?: string): string {
-  return `How ${embeddedLabel(label)} is proven — ${badgeWord ? badgeWord : `it ${VERDICT_PRESENTATION[verdict].ariaSuffix}`}`;
+  return `How ${embeddedLabel(label)} is known — ${badgeWord ? badgeWord : `it ${VERDICT_PRESENTATION[verdict].ariaSuffix}`}`;
 }
 
 /** The panel's accessible name — through the same rule, so the button and its dialog name one claim. */
