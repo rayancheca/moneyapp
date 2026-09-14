@@ -12,7 +12,7 @@ import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
 import { overdueForSeries } from "./arrears";
-import { projectOccurrences, toProjectable } from "./recurring";
+import { detectRecurringSeries, projectOccurrences, toProjectable } from "./recurring";
 import { planFirstPostings } from "./recurring-first-posting";
 import { linkRowsMadeActive } from "./recurring-import-links";
 
@@ -311,5 +311,34 @@ describe("anything short of certain links nothing", () => {
     run([control.rowId]);
     expect(linkOf(row).recurringSeriesId).toBeNull();
     expect(linkOf(control.rowId).recurringSeriesId).toBe(control.seriesId);
+  });
+});
+
+describe("what a first-posting link leaves the rest of the app believing", () => {
+  test("Detect now leaves three import-linked lease payments on Car lease — no duplicate series", () => {
+    // 🔴 A hand-registered commitment matches neither of detection's group keys
+    // (no merchant id; his name, not the bank's), so three rows linked by import
+    // looked like a brand-new pattern: Detect now created a detected series and
+    // re-pointed all three at it, and Car lease read owed again beside them.
+    const lease = carLease();
+    const rows: string[] = [];
+    for (const [postedOn, today] of [
+      ["2026-09-15", "2026-09-25"],
+      ["2026-10-15", "2026-10-25"],
+      ["2026-11-16", "2026-11-26"],
+    ] as const) {
+      const id = post({ postedOn, amountCents: -69504, raw: "TOYOTA FINANCIAL SERVICES LEASE PMT" });
+      linkRowsMadeActive(bundle.db, [id], today);
+      rows.push(id);
+    }
+    expect(rows.map((id) => linkOf(id).recurringSeriesId)).toEqual([lease, lease, lease]);
+    const seriesBefore = bundle.db.select().from(recurringSeries).all().length;
+
+    const summary = detectRecurringSeries(bundle.db, "2026-12-05");
+
+    expect(summary.created).toBe(0);
+    expect(bundle.db.select().from(recurringSeries).all()).toHaveLength(seriesBefore);
+    expect(rows.map((id) => linkOf(id).recurringSeriesId)).toEqual([lease, lease, lease]);
+    expect(overdueForSeries(bundle.db, new Set([lease]), "2026-11-01", "2026-12-05").totalCents).toBe(0);
   });
 });

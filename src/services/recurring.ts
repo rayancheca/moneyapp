@@ -441,6 +441,7 @@ export function detectRecurringSeries(
       categoryId: transactions.categoryId,
       normalizedDescription: transactions.normalizedDescription,
       seriesLinkSource: transactions.seriesLinkSource,
+      seriesId: transactions.recurringSeriesId,
     })
     .from(transactions)
     .where(and(eq(transactions.status, "active"), lte(transactions.postedOn, today)))
@@ -450,6 +451,10 @@ export function detectRecurringSeries(
   const ctx = loadRecomputeCtx(db);
   const existingSeries = db.select().from(recurringSeries).all();
   const mergedById = new Map(existingSeries.map((s) => [s.id, s.mergedIntoId]));
+  const linkedTo = new Map(activeTxns.map((t) => [t.id, t.seriesId]));
+  const liveSeriesIds = new Set(
+    existingSeries.filter((s) => s.status === "detected" || s.status === "confirmed").map((s) => s.id),
+  );
 
   const groups = new Map<string, GroupTxn[]>();
   for (const t of activeTxns) {
@@ -481,23 +486,50 @@ export function detectRecurringSeries(
             (s) => s.merchantId === null && s.accountId === accountId && s.name === name,
           );
 
+      /*
+       * ⛔ Detection never MOVES a link from one live series to another.
+       *
+       * A group is keyed by merchant or by (account, description), and a series
+       * the owner registered by hand matches neither key: it has no merchant id,
+       * and its name is his ("Car lease"), not the bank's descriptor. So once
+       * three of its charges were linked by anything but his own hand — linking
+       * at import, absorption — the group resolved to no series, cleared the
+       * evidence bar as a brand-new pattern, and `tagRows` re-pointed every row
+       * at a freshly created detected series. His commitment went back to zero
+       * linked rows and read owed beside its own payments, while the duplicate
+       * projected the same charge. Reproduced 2026-09-14 on uc/linking: three
+       * "TOYOTA FINANCIAL SERVICES LEASE PMT" rows linked to Car lease on import,
+       * then Detect now → `created: 1, taggedTransactions: 3`, Car lease owed
+       * 69,504 in November.
+       *
+       * A row already linked to a live series other than the one this group
+       * resolves to is therefore not this group's to claim: it neither counts
+       * toward the evidence bar nor gets re-tagged. The same promise absorption
+       * makes — a link is only ever written onto a row that had none. Rows on
+       * an ended, dismissed or merged-away series keep today's behaviour.
+       */
+      const home = existing ? resolveMergeTarget(existing.id, mergedById) : null;
+      const claimable = txns.filter((t) => {
+        const linked = linkedTo.get(t.id) ?? null;
+        return linked === null || linked === home || !liveSeriesIds.has(linked);
+      });
+
       // A merged-away identity forward-maps to its live target at ANY group
       // size — a single fresh charge of a merged merchant still attaches to the
       // target, and the source is never resurrected (§4.3).
-      if (existing) {
-        const target = resolveMergeTarget(existing.id, mergedById);
-        if (target !== existing.id) {
-          summary.taggedTransactions += tagRows(tx, txns.map((t) => t.id), target);
-          touched.add(target);
-          continue;
+      if (existing && home !== existing.id) {
+        if (claimable.length > 0) {
+          summary.taggedTransactions += tagRows(tx, claimable.map((t) => t.id), home!);
+          touched.add(home!);
         }
+        continue;
       }
 
       // A brand-new pattern needs the full evidence bar; an existing series just
       // absorbs another occurrence of an already-known pattern.
-      if (txns.length < MIN_OCCURRENCES) continue;
+      if (claimable.length < MIN_OCCURRENCES) continue;
       summary.scannedGroups += 1;
-      const stats = analyzeGroup(txns);
+      const stats = analyzeGroup(claimable);
       if (!stats) continue;
 
       let seriesId: string;
@@ -506,7 +538,7 @@ export function detectRecurringSeries(
         summary.updated += 1;
       } else {
         const kind = classifyKind(
-          txns,
+          claimable,
           stats.amountCentsAvg,
           rootCategoryName(merchant?.defaultCategoryId ?? null, ctx.categoryById),
           ctx.categoryById,
@@ -535,8 +567,9 @@ export function detectRecurringSeries(
         summary.created += 1;
       }
 
-      // group rows are all detection-owned by construction (user rows skipped)
-      summary.taggedTransactions += tagRows(tx, txns.map((t) => t.id), seriesId);
+      // group rows are all detection-owned by construction (user rows skipped),
+      // and `claimable` leaves out any row another live series already holds
+      summary.taggedTransactions += tagRows(tx, claimable.map((t) => t.id), seriesId);
       touched.add(seriesId);
     }
 
