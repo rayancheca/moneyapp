@@ -1,4 +1,5 @@
 import type { Fact, FactKind } from "./insight-facts";
+import { normalizeForCheck } from "./insight-text";
 
 /**
  * The closed vocabulary an insight may be written in.
@@ -320,7 +321,9 @@ export function assertTemplatesWellFormed(claims: readonly ClaimTemplate[]): voi
       );
     }
     const words = claim.template.replace(new RegExp(SLOT_RE.source, "gu"), " ");
-    if (/\d/u.test(words)) throw new Error(`Claim "${claim.id}" states a figure of its own`);
+    // ⛔ folded first, as the validator folds a candidate: a bare `/\d/u` does
+    // not match `½`, `１０` or `²`, and accepted all three in a template
+    if (/\d/u.test(normalizeForCheck(words))) throw new Error(`Claim "${claim.id}" states a figure of its own`);
     // one claim per sentence: a second full stop would be two assertions
     // sharing one accept/reject verdict
     if (words.split(".").length - 1 !== 1 || !claim.template.endsWith(".")) {

@@ -148,6 +148,19 @@ describe("a malformed vocabulary fails at import, not at render", () => {
     expect(bad({ template: "{{a.name}} came to {{a.value}} across 6 months." })).toThrow(/figure of its own/);
   });
 
+  /**
+   * 🔴 The figure scan skipped the fold the validator applies. `/\d/u` does not
+   * match `½`, `１０` or `²` — the `u` flag widens nothing — so each of these
+   * was ACCEPTED at import (measured 2026-09-15) while "10 times" was refused:
+   * the same two character tricks pass 46's attack strings walked around the
+   * validator with, before `normalizeForCheck` existed.
+   */
+  test("a figure spelled in Unicode the scan does not fold is still a figure", () => {
+    expect(bad({ template: "{{a.name}} came to about ½ of {{a.value}}." })).toThrow(/figure of its own/);
+    expect(bad({ template: "{{a.name}} came to {{a.value}} across １０ months." })).toThrow(/figure of its own/);
+    expect(bad({ template: "{{a.name}} came to {{a.value}} per m²." })).toThrow(/figure of its own/);
+  });
+
   test("two sentences pretending to be one claim", () => {
     expect(bad({ template: "{{a.name}} came to {{a.value}}. That is a lot." })).toThrow(/exactly one sentence/);
     expect(bad({ template: "{{a.name}} came to {{a.value}}" })).toThrow(/exactly one sentence/);

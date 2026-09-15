@@ -8,6 +8,7 @@ import {
   type ClaimTemplate,
   type FactField,
 } from "./insight-grammar";
+import { normalizeForCheck } from "./insight-text";
 
 /**
  * The two gates an insight passes before a reader sees it.
@@ -90,23 +91,8 @@ function predicateFails(claim: ClaimTemplate, a: Fact, b: Fact | undefined): Rej
   return reject("unsupported-claim", `"${claim.id}" needs ${claim.why} — ${a.subject} does not have one`);
 }
 
-/**
- * Fold away the Unicode a checker can be walked around.
- *
- * ⛔ Two of pass 46's 17 attack strings survived on character tricks alone. Its
- * digit scan was `/\d/` with no `u` flag, so `"used about ½ of its plan"`
- * contained no "digit" and passed; fullwidth forms and superscripts have the
- * same effect. NFKC folds `½` to `1⁄2`, `１０` to `10` and `²` to `2`, so a
- * spoofed figure becomes an ordinary one and then has to survive the same
- * equality check as any other.
- *
- * Whitespace is collapsed in the same pass because a template and a candidate
- * that differ only by a double space are the same sentence, and treating them
- * as different would reject honest text.
- */
-export function normalizeForCheck(text: string): string {
-  return text.normalize("NFKC").replace(/\s+/gu, " ").trim();
-}
+/** see `lib/insight-text` — the one fold both this gate and the template check read */
+export { normalizeForCheck };
 
 /**
  * Does this text contain a figure at all? Used only to give a SHARPER REASON
