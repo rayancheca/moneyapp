@@ -7,6 +7,7 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { categories } from "@/db/schema/categories";
 import { dailyBalances } from "@/db/schema/balances";
+import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries, type Cadence, type SeriesKind, type SeriesStatus } from "@/db/schema/recurring";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
@@ -682,9 +683,99 @@ describe("forecastCurrentMonth", () => {
 
     const f = forecastCurrentMonth(bundle.db, TODAY);
     expect(f.projectedNetCents).toBe(320000);
-    // cash = checking + savings only; net worth = all three accounts
+    // cash = the spendable accounts (checking + savings here); net worth = all three accounts
     expect(f.projectedEomCashCents).toBe(600000 + 320000);
     expect(f.projectedEomNetWorthCents).toBe(550000 + 320000);
+  });
+
+  /**
+   * ⚖️ Owner decision 2026-09-15: the forecast's month-end cash leaves out
+   * Robinhood Cash ($0.90) and Robinhood Agentic ($26.64). Both are `checking`
+   * for balance replay, and both of this module's walks summed every checking
+   * and savings account. Measured on his ledger 2026-09-15 before the fix:
+   * September EOM cash $1,093.15 (committed $4,369.81), October −$3,390.52
+   * (committed $6,029.84).
+   *
+   * Checked on BOTH walks — the running month's and a future month's — because
+   * each read the balances on its own.
+   */
+  test("brokerage cash printed on an investment statement is not month-end cash, now or next month", () => {
+    for (const [accountId, cents] of [
+      [checkingId, 500000],
+      [savingsId, 100000],
+      [cardId, -50000],
+    ] as const) {
+      bundle.db.insert(dailyBalances).values({ accountId, day: "2026-07-07", balanceCents: cents, basis: "anchored" }).run();
+    }
+    insertSeries({
+      name: "Payroll",
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+      nextExpectedOn: "2026-07-09",
+      nextExpectedAmountCents: 80000,
+      status: "confirmed",
+    });
+    const beforeJul = forecastCurrentMonth(bundle.db, TODAY);
+    const beforeAug = forecastForMonth(bundle.db, "2026-08", TODAY)!;
+
+    const robinhood = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!.id;
+    const brokerage = createAccount(bundle.db, {
+      institutionId: robinhood,
+      name: "Robinhood Brokerage",
+      type: "investment",
+      subtype: "brokerage",
+    });
+    const settlement = createAccount(bundle.db, { institutionId: robinhood, name: "Robinhood Cash", type: "checking" });
+    const agentic = createAccount(bundle.db, { institutionId: robinhood, name: "Robinhood Agentic", type: "checking" });
+    const now = new Date().toISOString();
+    bundle.db
+      .insert(importFiles)
+      .values({
+        id: "rh-statement",
+        fileName: "rh.pdf",
+        fileSha256: "sha-rh",
+        format: "pdf",
+        institutionId: robinhood,
+        status: "parsed",
+        storagePath: "/tmp/rh.pdf",
+        importedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+    [settlement, brokerage, agentic].forEach((accountId, i) => {
+      bundle.db
+        .insert(statementPeriods)
+        .values({
+          id: `rh-period-${i}`,
+          importFileId: "rh-statement",
+          accountId,
+          periodStart: "2026-06-01",
+          periodEnd: "2026-06-30",
+          reconciliation: "reconciled",
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run();
+    });
+    for (const [accountId, cents] of [
+      [settlement, 90],
+      [agentic, 2664],
+    ] as const) {
+      bundle.db.insert(dailyBalances).values({ accountId, day: "2026-07-07", balanceCents: cents, basis: "anchored" }).run();
+    }
+
+    const jul = forecastCurrentMonth(bundle.db, TODAY);
+    const aug = forecastForMonth(bundle.db, "2026-08", TODAY)!;
+    expect(jul.projectedEomCashCents).toBe(600000 + 320000);
+    expect(jul.projectedEomCashCents).toBe(beforeJul.projectedEomCashCents);
+    expect(jul.committed.eomCashCents).toBe(beforeJul.committed.eomCashCents);
+    expect(aug.projectedEomCashCents).toBe(beforeAug.projectedEomCashCents);
+    expect(aug.committed.eomCashCents).toBe(beforeAug.committed.eomCashCents);
+    // the money is still his — net worth carries it on both walks
+    expect(jul.projectedEomNetWorthCents).toBe(beforeJul.projectedEomNetWorthCents + 90 + 2664);
+    expect(aug.projectedEomNetWorthCents).toBe(beforeAug.projectedEomNetWorthCents + 90 + 2664);
   });
 
   test("uncategorized rows already tagged to a series stay out of the bucket", () => {

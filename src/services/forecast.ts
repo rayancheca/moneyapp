@@ -1,6 +1,5 @@
 import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
-import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
@@ -11,6 +10,7 @@ import { trailingPace } from "@/lib/projection";
 import { formatDayShortIn } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import { allocationsFor } from "@/lib/transaction-splits";
+import { cashPosition } from "./accounts";
 import { latestBalances } from "./derivation";
 import { latestBridgedNetWorthCents } from "./in-flight";
 import {
@@ -722,18 +722,9 @@ export function forecastForMonth(
   chainedNet += parts.net;
   chainedCommittedNet += parts.committedNet;
 
-  const cashTypes = new Set(["checking", "savings"]);
-  const activeAccounts = db
-    .select({ id: accounts.id, type: accounts.type })
-    .from(accounts)
-    .where(eq(accounts.isActive, true))
-    .all();
+  // what he can spend today, by the one rule `runwayCard` reads (`cashPosition`)
   const balances = latestBalances(db);
-  let cashCents = 0;
-  for (const a of activeAccounts) {
-    if (!cashTypes.has(a.type)) continue;
-    cashCents += balances.get(a.id)?.balanceCents ?? 0;
-  }
+  const cashCents = cashPosition(db, balances).spendableCents;
 
   const income = parts.components.reduce((sum, c) => (c.cents > 0 ? sum + c.cents : sum), 0);
   const spend = parts.components.reduce((sum, c) => (c.cents < 0 ? sum + c.cents : sum), 0);
@@ -813,18 +804,9 @@ function currentMonthForecast(db: AppDatabase, today: string, notDrawn: Readonly
   const committedNetCents =
     committedSplit.income.fixedCents + committedSplit.spending.fixedCents;
 
-  const cashTypes = new Set(["checking", "savings"]);
-  const activeAccounts = db
-    .select({ id: accounts.id, type: accounts.type })
-    .from(accounts)
-    .where(eq(accounts.isActive, true))
-    .all();
+  // what he can spend today, by the one rule `runwayCard` reads (`cashPosition`)
   const balances = latestBalances(db);
-  let cashCents = 0;
-  for (const a of activeAccounts) {
-    if (!cashTypes.has(a.type)) continue;
-    cashCents += balances.get(a.id)?.balanceCents ?? 0;
-  }
+  const cashCents = cashPosition(db, balances).spendableCents;
 
   // bridged, so the EOM projection starts from the same number the dashboard
   // headline shows (docs/inflight-dips.md — one source for "latest net worth").
