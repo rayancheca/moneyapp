@@ -30,6 +30,7 @@ import { pickWinners, selectEndpoints } from "@/services/derivation";
 import { RECONCILE_STATUSES, isVerdictStale, periodVerdict } from "@/lib/reconciliation";
 import {
   type ChainBreak,
+  type ChainWindow,
   type LedgerBaseline,
   type StaleVerdict,
   type ValueAnchor,
@@ -167,6 +168,8 @@ const accounts = sqlite
   .all() as { id: string; name: string; type: string }[];
 
 const breaks: Record<string, ChainBreak[]> = {};
+/** every window walked, closing or not — what tells a closed break from a vanished one */
+const chainWindows: Record<string, ChainWindow[]> = {};
 const syntheticNetCents: Record<string, number> = {};
 const staleVerdicts: StaleVerdict[] = [];
 
@@ -206,6 +209,7 @@ for (const account of accounts) {
         movementCents,
       });
     }
+    chainWindows[account.name] = pairs.map(({ from, to }) => ({ from, to }));
     const found = findChainBreaks(pairs);
     if (found.length > 0) breaks[account.name] = found;
   }
@@ -310,7 +314,7 @@ for (const account of accounts.filter((a) => a.type === "investment")) {
     anchors.push({ account: account.name, on: p.e, printedCents: p.c, derivedCents: derivedOn(p.e) });
   }
 }
-const { drifts: valueAnchors, unpriced } = findValueAnchorDrift(anchors);
+const { drifts: valueAnchors, unpriced, valued: valuedAnchorDays } = findValueAnchorDrift(anchors);
 console.log(
   `value anchors: ${anchors.length} checked · ${Object.values(valueAnchors).flat().length} disagree · ${unpriced.length} the app cannot value`,
 );
@@ -319,7 +323,15 @@ for (const [name, list] of Object.entries(valueAnchors)) {
 }
 
 const failures = compareToBaseline(
-  { breaks, syntheticNetCents, staleVerdicts, valueAnchors },
+  {
+    accounts: accounts.map((a) => a.name),
+    chainWindows,
+    breaks,
+    syntheticNetCents,
+    staleVerdicts,
+    valuedAnchorDays,
+    valueAnchors,
+  },
   BASELINE,
 ).concat(
   /*

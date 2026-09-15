@@ -49,10 +49,19 @@ describe("findChainBreaks", () => {
   });
 });
 
+/*
+ * ⛔ The MEASURED sets default to empty — nothing was walked, nothing was
+ * valued, no account was read. A test that wants "this break closed" has to say
+ * the window was walked; one that forgets gets an unmeasured finding, which is
+ * the honest reading of an observation that measured nothing.
+ */
 const observation = (over: Partial<LedgerObservation> = {}): LedgerObservation => ({
+  accounts: [],
+  chainWindows: {},
   breaks: {},
   syntheticNetCents: {},
   staleVerdicts: [],
+  valuedAnchorDays: {},
   valueAnchors: {},
   ...over,
 });
@@ -109,9 +118,13 @@ describe("compareToBaseline", () => {
 
   it("fails when a baselined break DISAPPEARS, so the baseline gets tightened", () => {
     // a fixed break is good news, but leaving it recorded means the check would
-    // no longer notice it coming back
+    // no longer notice it coming back — and it is only a fix because the window
+    // was WALKED and closed
     const failures = compareToBaseline(
-      observation({ syntheticNetCents: { "Robinhood Cash": -3_235_861 } }),
+      observation({
+        chainWindows: { "Robinhood Cash": [{ from: "2026-02-28", to: "2026-03-31" }] },
+        syntheticNetCents: { "Robinhood Cash": -3_235_861 },
+      }),
       baseline,
     );
     expect(failures).toHaveLength(1);
@@ -180,9 +193,11 @@ describe("compareToBaseline", () => {
   });
 
   it("fails when baselined synthetic money DISAPPEARS from an account", () => {
-    // the mirror rows being deleted is as much a change as a plug arriving
+    // the mirror rows being deleted is as much a change as a plug arriving —
+    // on an account the check READ, so its $0.00 is a measurement
     const failures = compareToBaseline(
       observation({
+        accounts: ["Robinhood Cash"],
         breaks: { "Robinhood Cash": [{ from: "2026-02-28", to: "2026-03-31", offByCents: -1 }] },
       }),
       baseline,
@@ -291,6 +306,24 @@ describe("findValueAnchorDrift", () => {
     expect(drifts["Robinhood Crypto"]).toHaveLength(1);
   });
 
+  /*
+   * The DENOMINATOR of `drifts`: every day the rule actually compared, agreeing
+   * or not. Without it a day that stopped being compared and a day that started
+   * agreeing are the same absence.
+   */
+  it("reports every day it compared, agreeing or not — and not the days it could not value", () => {
+    const { valued } = findValueAnchorDrift([
+      anchor({ on: "2026-08-31", derivedCents: 775_539 + 10_625 }),
+      anchor({ on: "2025-04-30" }),
+      anchor({ on: "2026-07-31", derivedCents: null }),
+      anchor({ account: "Robinhood Crypto", on: "2026-08-31", derivedCents: 0, printedCents: 0 }),
+    ]);
+    expect(valued).toEqual({
+      "Robinhood Brokerage": ["2025-04-30", "2026-08-31"],
+      "Robinhood Crypto": ["2026-08-31"],
+    });
+  });
+
   it("the tolerance is a parameter, and one cent is what it defaults to", () => {
     expect(VALUE_ANCHOR_TOLERANCE_CENTS).toBe(1);
     expect(findValueAnchorDrift([anchor({ derivedCents: 775_539 - 50 })], 50).drifts).toEqual({});
@@ -354,8 +387,107 @@ describe("compareToBaseline — value anchors", () => {
    * the next time it returns the check would call it expected.
    */
   it("a disagreement that has been FIXED fails until the baseline says so", () => {
-    const failures = compareToBaseline(observation(), withBaseline());
+    // fixed = the day was still valued, and the two sides now agree
+    const failures = compareToBaseline(
+      observation({ valuedAnchorDays: { "Robinhood Brokerage": ["2025-04-30"] } }),
+      withBaseline(),
+    );
     expect(failures.map((f) => f.kind)).toEqual(["fixed-value-drift"]);
     expect(failures[0]!.detail).toContain("remove it from the baseline");
+  });
+});
+
+/**
+ * A baseline entry is a claim about a WITNESS: this anchor pair, this statement
+ * day, this account. When the witness is gone, nothing was measured — and a
+ * measurement that did not happen cannot agree, close, or read $0.00.
+ *
+ * ⛔ Measured on a copy of the owner's ledger, 2026-09-15: un-importing the
+ * August 2026 Robinhood Brokerage statement took the value anchors from 43 to
+ * 42, and the check said the 2026-08-31 disagreement ($106.25) "now agrees —
+ * remove it from the baseline". Following that advice turns a lost witness into
+ * a passing check, on the hook that runs before every commit.
+ */
+describe("compareToBaseline — a witness that is gone is not a fix", () => {
+  it("a known disagreement on a day no statement is valued for any more is UNMEASURED, not agreeing", () => {
+    const failures = compareToBaseline(
+      observation({
+        valuedAnchorDays: { "Robinhood Brokerage": ["2025-08-31", "2026-07-31"] },
+        valueAnchors: { "Robinhood Brokerage": [{ on: "2025-08-31", offByCents: 816 }] },
+      }),
+      {
+        breaks: {},
+        syntheticNetCents: {},
+        valueAnchors: {
+          "Robinhood Brokerage": [
+            { on: "2025-08-31", offByCents: 816 },
+            { on: "2026-08-31", offByCents: 10_625 },
+          ],
+        },
+      },
+    );
+    expect(failures.map((f) => f.kind)).toEqual(["unmeasured-value-drift"]);
+    expect(failures[0]!.account).toBe("Robinhood Brokerage");
+    expect(failures[0]!.detail).toContain("2026-08-31");
+    expect(failures[0]!.detail).toContain("$106.25");
+    expect(failures[0]!.detail).not.toContain("now agrees");
+    expect(failures[0]!.detail).not.toContain("remove it from the baseline");
+  });
+
+  it("a known break whose window is no longer walked is UNMEASURED, not closed", () => {
+    // the pair that spanned it lost an anchor — or the account was not walked
+    const failures = compareToBaseline(
+      observation({
+        chainWindows: { "Robinhood Cash": [{ from: "2026-01-31", to: "2026-03-31" }] },
+        syntheticNetCents: { "Robinhood Cash": -3_235_861 },
+      }),
+      baseline,
+    );
+    expect(failures.map((f) => f.kind)).toEqual(["unmeasured-break"]);
+    expect(failures[0]!.detail).toContain("2026-02-28 → 2026-03-31");
+    expect(failures[0]!.detail).toContain("-$0.01");
+    expect(failures[0]!.detail).not.toContain("now closes");
+    expect(failures[0]!.detail).not.toContain("remove it from the baseline");
+  });
+
+  it("an account the check did not read has no $0.00 of undocumented money — it is UNMEASURED", () => {
+    // a rename is the reachable case: the old name stops being read
+    const failures = compareToBaseline(
+      observation({ accounts: ["Cash Wallet"], syntheticNetCents: { "Cash Wallet": -500_000 } }),
+      { breaks: {}, syntheticNetCents: { "Cash on Hand": -500_000 }, valueAnchors: {} },
+    );
+    expect(failures.map((f) => [f.kind, f.account])).toEqual([
+      ["synthetic-drift", "Cash Wallet"],
+      ["unmeasured-synthetic", "Cash on Hand"],
+    ]);
+    const gone = failures[1]!.detail;
+    expect(gone).toContain("-$5,000.00");
+    expect(gone).not.toContain("$0.00");
+  });
+
+  it("an observed entry is measured by being observed — the measured set is not consulted for it", () => {
+    // a drift on a day the caller forgot to list is still a drift, never a gap
+    const failures = compareToBaseline(
+      observation({
+        valueAnchors: { "Robinhood Brokerage": [{ on: "2026-08-31", offByCents: 10_625 }] },
+        breaks: { "Robinhood Cash": [{ from: "2026-02-28", to: "2026-03-31", offByCents: -1 }] },
+        syntheticNetCents: { "Robinhood Cash": -3_235_861 },
+      }),
+      { ...baseline, valueAnchors: { "Robinhood Brokerage": [{ on: "2026-08-31", offByCents: 10_625 }] } },
+    );
+    expect(failures).toEqual([]);
+  });
+
+  it("every unmeasured kind still fails the check — none of them is silence", () => {
+    const failures = compareToBaseline(observation(), {
+      breaks: { "SoFi Checking": [{ from: "2026-05-31", to: "2026-06-30", offByCents: 250 }] },
+      syntheticNetCents: { "Cash on Hand": -500_000 },
+      valueAnchors: { "Robinhood Crypto": [{ on: "2026-08-31", offByCents: 2_811 }] },
+    });
+    expect(failures.map((f) => f.kind).sort()).toEqual([
+      "unmeasured-break",
+      "unmeasured-synthetic",
+      "unmeasured-value-drift",
+    ]);
   });
 });

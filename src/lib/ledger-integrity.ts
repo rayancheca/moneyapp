@@ -33,9 +33,13 @@ export interface ChainPair {
   toCents: number;
 }
 
-export interface ChainBreak {
+/** A consecutive chain-grade anchor pair that was walked — its identity, not its money. */
+export interface ChainWindow {
   from: string;
   to: string;
+}
+
+export interface ChainBreak extends ChainWindow {
   /** printed closing balance minus the replayed one; sign says which way */
   offByCents: number;
 }
@@ -76,11 +80,29 @@ export interface ValueAnchorDrift {
   offByCents: number;
 }
 
+/**
+ * What the ledger said, AND what was asked of it.
+ *
+ * ⛔ `breaks`, `valueAnchors` and `syntheticNetCents` list only what DISAGREES,
+ * so on their own an absence means two different things: the witness was
+ * measured and now agrees, or the witness is gone and nothing was measured.
+ * `accounts`, `chainWindows` and `valuedAnchorDays` are the denominators that
+ * tell those apart. Measured on a copy of the owner's ledger (2026-09-15):
+ * un-importing one Robinhood Brokerage statement took the value anchors from 43
+ * to 42 and the check reported the vanished day's disagreement as one that "now
+ * agrees — remove it from the baseline".
+ */
 export interface LedgerObservation {
+  /** every account the check read, by name */
+  accounts: readonly string[];
+  /** every chain window walked per account, closing or not */
+  chainWindows: Record<string, readonly ChainWindow[]>;
   breaks: Record<string, ChainBreak[]>;
   /** net cents of replay-status rows with no import file, per account */
   syntheticNetCents: Record<string, number>;
   staleVerdicts: StaleVerdict[];
+  /** every statement day the app valued per account, agreeing or not (`findValueAnchorDrift`'s `valued`) */
+  valuedAnchorDays: Record<string, readonly string[]>;
   /** printed-vs-derived market value, per account (pass 73) */
   valueAnchors: Record<string, ValueAnchorDrift[]>;
 }
@@ -96,11 +118,14 @@ export type LedgerFailure = {
     | "new-break"
     | "changed-break"
     | "fixed-break"
+    | "unmeasured-break"
     | "synthetic-drift"
+    | "unmeasured-synthetic"
     | "stale-verdict"
     | "new-value-drift"
     | "changed-value-drift"
     | "fixed-value-drift"
+    | "unmeasured-value-drift"
     | "unpriced-anchor";
   account: string;
   detail: string;
@@ -128,20 +153,28 @@ export const VALUE_ANCHOR_TOLERANCE_CENTS = 1;
 export function findValueAnchorDrift(
   anchors: readonly ValueAnchor[],
   toleranceCents: number = VALUE_ANCHOR_TOLERANCE_CENTS,
-): { drifts: Record<string, ValueAnchorDrift[]>; unpriced: ValueAnchor[] } {
+): {
+  drifts: Record<string, ValueAnchorDrift[]>;
+  unpriced: ValueAnchor[];
+  /** every day compared, agreeing or not — the denominator of `drifts` */
+  valued: Record<string, string[]>;
+} {
   const drifts: Record<string, ValueAnchorDrift[]> = {};
   const unpriced: ValueAnchor[] = [];
+  const valued: Record<string, string[]> = {};
   for (const a of anchors) {
     if (a.derivedCents === null) {
       unpriced.push(a);
       continue;
     }
+    (valued[a.account] ??= []).push(a.on);
     const offByCents = a.derivedCents - a.printedCents;
     if (Math.abs(offByCents) <= toleranceCents) continue;
     (drifts[a.account] ??= []).push({ on: a.on, offByCents });
   }
   for (const list of Object.values(drifts)) list.sort((x, y) => x.on.localeCompare(y.on));
-  return { drifts, unpriced };
+  for (const days of Object.values(valued)) days.sort();
+  return { drifts, unpriced, valued };
 }
 
 /**
@@ -160,7 +193,7 @@ export function findChainBreaks(pairs: readonly ChainPair[]): ChainBreak[] {
 }
 
 /** The WINDOW is a break's identity; the amount is what can drift inside it. */
-const windowKey = (b: ChainBreak): string => `${b.from}→${b.to}`;
+const windowKey = (b: ChainWindow): string => `${b.from}→${b.to}`;
 
 /**
  * Observation vs recorded baseline.
@@ -169,6 +202,19 @@ const windowKey = (b: ChainBreak): string => `${b.from}→${b.to}`;
  * but a baseline listing a break that no longer exists is a baseline that has
  * stopped describing the ledger, and the next time that break returns the check
  * would call it expected. Good news still has to be written down.
+ *
+ * ⛔ And a disappearance is only good news when the witness was MEASURED. Every
+ * baseline entry lands in exactly one of four places:
+ *
+ *   seen, same size        → expected, silent
+ *   seen, different size   → `changed-*`
+ *   measured, not seen     → `fixed-*` — "remove it from the baseline"
+ *   NOT measured           → `unmeasured-*` — the anchor pair, the statement
+ *                            day or the account is gone, so nothing was asked
+ *
+ * The last two used to be one branch. Following `fixed-*`'s advice for an
+ * unmeasured entry deletes the record of a disagreement nobody resolved, on the
+ * hook that runs before every commit — a witness lost, reported as a fix.
  */
 export function compareToBaseline(
   observed: LedgerObservation,
@@ -199,8 +245,20 @@ export function compareToBaseline(
         });
       }
     }
+    const walked = new Set((observed.chainWindows[account] ?? []).map(windowKey));
     for (const [key, b] of known) {
       if (seen.has(key)) continue;
+      if (!walked.has(key)) {
+        failures.push({
+          kind: "unmeasured-break",
+          account,
+          detail:
+            `${b.from} → ${b.to} (${formatCents(b.offByCents)}) is recorded as a known break, but no anchor pair ` +
+            `spans that window any more — nothing was measured, so it has not closed. Find which anchor left ` +
+            `before touching the baseline`,
+        });
+        continue;
+      }
       failures.push({
         kind: "fixed-break",
         account,
@@ -215,9 +273,21 @@ export function compareToBaseline(
     ...Object.keys(observed.syntheticNetCents),
     ...Object.keys(baseline.syntheticNetCents),
   ]);
+  const readAccounts = new Set(observed.accounts);
   for (const account of [...synthAccounts].sort()) {
-    const now = observed.syntheticNetCents[account] ?? 0;
     const then = baseline.syntheticNetCents[account] ?? 0;
+    // an account nobody read has no total at all — `?? 0` below would invent one
+    if (observed.syntheticNetCents[account] === undefined && !readAccounts.has(account)) {
+      failures.push({
+        kind: "unmeasured-synthetic",
+        account,
+        detail:
+          `${formatCents(then)} of money with no source document is recorded for this account, but no account ` +
+          `by this name was read — renamed or removed? Money nobody counted has not gone`,
+      });
+      continue;
+    }
+    const now = observed.syntheticNetCents[account] ?? 0;
     if (now === then) continue;
     failures.push({
       kind: "synthetic-drift",
@@ -229,10 +299,11 @@ export function compareToBaseline(
   }
 
   /*
-   * Same three-way comparison as a chain break, and for the same reason: a
+   * Same four-way comparison as a chain break, and for the same reason: a
    * baseline that listed a disagreement which has since been fixed has stopped
    * describing the ledger, and would call that disagreement expected the next
-   * time it returned.
+   * time it returned — while one whose statement day was never valued has not
+   * been fixed at all.
    */
   const anchorAccounts = new Set([
     ...Object.keys(observed.valueAnchors),
@@ -259,8 +330,20 @@ export function compareToBaseline(
         });
       }
     }
+    const valued = new Set(observed.valuedAnchorDays[account] ?? []);
     for (const [on, d] of known) {
       if (seen.has(on)) continue;
+      if (!valued.has(on)) {
+        failures.push({
+          kind: "unmeasured-value-drift",
+          account,
+          detail:
+            `${on} (${formatCents(d.offByCents)}) is recorded as a known disagreement, but no statement on that ` +
+            `day was valued — the witness is gone, not the disagreement. Find what removed it (an un-import, a ` +
+            `deactivated account) before touching the baseline`,
+        });
+        continue;
+      }
       failures.push({
         kind: "fixed-value-drift",
         account,
