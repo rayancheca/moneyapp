@@ -4,7 +4,7 @@ import { Money } from "@/components/ui/Money";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SERIES_EVIDENCE_LABEL, SERIES_EVIDENCE_NOTE, SUGGESTION_NOTE } from "@/lib/series-evidence";
 import type { SeriesView } from "@/services/recurring";
-import { CADENCE_LABEL, KIND_LABEL, futureDateLabel, overdueNote } from "./labels";
+import { CADENCE_LABEL, KIND_LABEL, annualizedEndNote, futureDateLabel, overdueNote } from "./labels";
 
 /**
  * What each series already owes this month and nothing has covered — keyed by
@@ -292,7 +292,16 @@ function SeriesRow({
       </td>
       <td className="px-3 py-3 text-right text-ink-muted">
         {s.annualizedCents !== null ? (
-          <span className="figures">~<Money cents={s.annualizedCents} />/yr</span>
+          <>
+            <span className="figures">~<Money cents={s.annualizedCents} />/yr</span>
+            {/* 🔴 "Monthly · -$357.58 · ~$715.16/yr" with nothing saying why —
+                measured 2026-09-15. The series page qualifies the same figure
+                with `annualizedCaveat`; `annualizedEndNote` is its short form,
+                on the SAME gate, so the two cannot disagree about a year. */}
+            {annualizedEndNote(s.endsOn, today) !== null && (
+              <span className="figures block text-[10px] text-ink-faint">{annualizedEndNote(s.endsOn, today)}</span>
+            )}
+          </>
         ) : (
           <span className="text-ink-faint">—</span>
         )}

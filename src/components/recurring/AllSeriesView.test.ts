@@ -28,6 +28,7 @@ function series(over: Partial<SeriesView> & Pick<SeriesView, "id" | "name" | "st
     evidence: "active",
     annualizedCents: 18588,
     postedAvgCents: -1549,
+    endsOn: null,
     ...over,
   } as SeriesView;
 }
@@ -73,5 +74,45 @@ describe("AllSeriesView — every action button is named by what it says and wha
     const dismissing = buttons.filter((b) => /dismiss|not recurring/i.test(b.visible));
     expect(dismissing.length).toBe(3);
     for (const b of dismissing) expect(b.name.toLowerCase()).not.toContain("confirm");
+  });
+});
+
+/**
+ * 🔴 "Car insurance | Monthly | -$357.58 | Dec 11 | ~$715.16/yr" and "Car
+ * insurance — Nov 11 balance … | Monthly | -$72.74 | Nov 11 | ~$72.74/yr" —
+ * measured on `/recurring?tab=all` against the real ledger 2026-09-15. A
+ * monthly $357.58 bill annualizing to $715.16 with nothing on the row saying
+ * why is this view's own 🔴 shape: two numbers on one row that cannot both be
+ * true of one bill. `/recurring/<id>` qualifies the same figure with
+ * `annualizedCaveat`; the row did not, because `SeriesView` had no end date.
+ */
+describe("AllSeriesView — an annualized figure says when the series stops inside the year", () => {
+  const TODAY = "2026-09-15";
+  const html = decode(
+    renderToStaticMarkup(
+      createElement(AllSeriesView, {
+        series: [
+          series({ id: "i", name: "Car insurance", status: "confirmed", nextExpectedAmountCents: -35758, postedAvgCents: -35758, annualizedCents: 71516, endsOn: "2027-01-11" }),
+          series({ id: "l", name: "Car lease", status: "confirmed", nextExpectedAmountCents: -69504, postedAvgCents: -69504, annualizedCents: 834048, endsOn: "2028-08-15" }),
+          series({ id: "g", name: "Gym", status: "confirmed", nextExpectedAmountCents: -10000, postedAvgCents: -10000, annualizedCents: 120000, endsOn: null }),
+        ],
+        overdueBySeries: new Map(),
+        today: TODAY,
+      }),
+    ),
+  );
+  const rowOf = (name: string): string => {
+    const at = html.indexOf(`>${name}</a>`);
+    return html.slice(at, html.indexOf("</tr>", at));
+  };
+
+  test("a policy that stops inside the year says so under its annualized figure", () => {
+    expect(rowOf("Car insurance")).toContain("$715.16");
+    expect(rowOf("Car insurance")).toContain("ends Jan 11, 2027");
+  });
+
+  test("a lease that outlives the year, and a bill with no end, say nothing", () => {
+    expect(rowOf("Car lease")).not.toContain("ends ");
+    expect(rowOf("Gym")).not.toContain("ends ");
   });
 });

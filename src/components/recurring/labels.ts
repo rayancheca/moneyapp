@@ -499,10 +499,40 @@ const MONTHS_IN_YEAR = 12;
  * series are in the future — but `Car insurance` reaches it on 2027-01-12.
  */
 export function annualizedCaveat(endsOn: string | null, today: string): string | null {
+  const end = annualizedEnd(endsOn, today);
+  if (end === null) return null;
+  return end.stopped
+    ? `a year this series no longer bills — it stopped on ${longDate(end.endsOn)}`
+    : `the twelve months from today — this one stops on ${longDate(end.endsOn)}, inside them`;
+}
+
+/**
+ * The ONE gate both annualized qualifiers read: does the series stop before the
+ * twelve months from today are out — and has it already stopped? Null when the
+ * figure needs no qualifying.
+ */
+function annualizedEnd(endsOn: string | null, today: string): { endsOn: string; stopped: boolean } | null {
   if (endsOn === null) return null;
-  if (compareDates(endsOn, today) < 0) {
-    return `a year this series no longer bills — it stopped on ${longDate(endsOn)}`;
-  }
+  if (compareDates(endsOn, today) < 0) return { endsOn, stopped: true };
   if (!endsInsideHorizon(endsOn, addCalendarMonths(today, MONTHS_IN_YEAR))) return null;
-  return `the twelve months from today — this one stops on ${longDate(endsOn)}, inside them`;
+  return { endsOn, stopped: false };
+}
+
+/**
+ * `annualizedCaveat`'s short form, for a table cell: "ends Jan 11, 2027", or
+ * "ended Aug 1, 2026".
+ *
+ * 🔴 `/recurring?tab=all` printed "Car insurance | Monthly | -$357.58 |
+ * ~$715.16/yr" and "Car insurance — Nov 11 balance … | Monthly | -$72.74 |
+ * ~$72.74/yr" on 2026-09-15 with nothing on either row saying why a monthly
+ * bill annualizes to two or one payments. The series' own page qualified both
+ * figures; the row could not, because it had no end date.
+ *
+ * ⛔ SAME GATE as the long form (`annualizedEnd`), so a lease ending 2028 is
+ * silent here exactly as it is there.
+ */
+export function annualizedEndNote(endsOn: string | null, today: string): string | null {
+  const end = annualizedEnd(endsOn, today);
+  if (end === null) return null;
+  return `${end.stopped ? "ended" : "ends"} ${longDate(end.endsOn)}`;
 }

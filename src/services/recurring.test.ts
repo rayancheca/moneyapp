@@ -1226,6 +1226,18 @@ describe("detection on the synthetic corpus", () => {
     expect(listed.postedAvgCents).toBe(Math.round(-180_000));
   });
 
+  /* The All tab qualifies an annualized figure with the day the series stops —
+     it printed "~$715.16/yr" of a monthly $357.58 policy with no end on the row
+     (real ledger, 2026-09-15), because the list carried no end date. */
+  test("the list carries the day a series stops, and null for one that runs on", () => {
+    const rent = seriesByName("MONTHLY RENT PAYMENT");
+    bundle.db.update(recurringSeries).set({ userEndsOn: "2027-01-01" }).where(eq(recurringSeries.id, rent.id)).run();
+
+    const listed = listSeries(bundle.db, TODAY);
+    expect(listed.find((s) => s.id === rent.id)!.endsOn).toBe("2027-01-01");
+    expect(listed.find((s) => s.name === "Netflix")!.endsOn).toBeNull();
+  });
+
   test("a series with nothing linked has no posted average at all", () => {
     const rent = seriesByName("MONTHLY RENT PAYMENT");
     bundle.db

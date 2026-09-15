@@ -824,6 +824,15 @@ export interface SeriesView {
   /** effective per-occurrence amount × occurrences/year (magnitude) */
   annualizedCents: number | null;
   /**
+   * The day the series stops (`userEndsOn`), or null when it runs on.
+   *
+   * 🔴 Without it the All tab could not qualify its annualized figure: on
+   * 2026-09-15 it printed "Car insurance | Monthly | -$357.58 | ~$715.16/yr"
+   * with nothing saying the policy stops on Jan 11, 2027, while the series'
+   * own page said so through `annualizedCaveat`.
+   */
+  endsOn: string | null;
+  /**
    * The MEAN of the linked active rows — null when nothing is linked.
    *
    * 🔴 `amountCentsAvg` above is the detector's SEED: written when the series
@@ -964,6 +973,7 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
         isActive: isSeriesActive(s, today),
         evidence: seriesEvidence(s, today),
         annualizedCents: annualizedCentsOf(toProjectable(s), s.status, today),
+        endsOn: s.userEndsOn ?? null,
       } satisfies SeriesView;
     })
     .sort(

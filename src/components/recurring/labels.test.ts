@@ -3,6 +3,7 @@ import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
 import {
   annualizedCaveat,
+  annualizedEndNote,
   shortAgo,
   staleComponentEntries,
   staleFooterHint,
@@ -509,6 +510,17 @@ describe("annualizedCaveat — a year is qualified only when the series stops in
 
   test("a series with no end date is never qualified", () => {
     expect(annualizedCaveat(null, TODAY)).toBeNull();
+  });
+
+  /* The All tab's short form reads the same gate — measured 2026-09-15, its
+     "~$715.16/yr" and "~$72.74/yr" had no end date on the row at all. */
+  test("the table's short form says the same thing on the same days", () => {
+    expect(annualizedEndNote("2027-01-11", TODAY)).toBe("ends Jan 11, 2027");
+    expect(annualizedEndNote("2026-11-11", TODAY)).toBe("ends Nov 11, 2026");
+    expect(annualizedEndNote("2026-08-01", TODAY)).toBe("ended Aug 1, 2026");
+    for (const endsOn of [null, "2028-08-15", "2027-09-11", "2027-09-10", "2026-08-01", "2027-01-11"]) {
+      expect(annualizedEndNote(endsOn, TODAY) === null, String(endsOn)).toBe(annualizedCaveat(endsOn, TODAY) === null);
+    }
   });
 
   test("the year's far end is EXCLUSIVE — a series ending on it runs the whole year", () => {
