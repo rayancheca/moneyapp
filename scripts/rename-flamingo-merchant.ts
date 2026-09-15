@@ -39,6 +39,17 @@
  *
  *     npx tsx scripts/rename-flamingo-merchant.ts            # DRY RUN (default)
  *     npx tsx scripts/rename-flamingo-merchant.ts --apply    # writes
+ *     npx tsx scripts/rename-flamingo-merchant.ts --db=<path> [--apply]
+ *
+ * `--db=<path>` names the database explicitly — a `.backup` copy to rehearse
+ * `--apply` itself on. Without it the script reads `MONEYAPP_DB_PATH`, else
+ * `data/moneyapp.db`, exactly as before.
+ *
+ * ⛔ Re-running after the rename is NOTHING TO DO, and says so: it used to throw
+ * `expected "Flamingos Restaurant", found "Flamingo South Beach" — already
+ * renamed?` and exit 1, so a second run read as a failure — and `--apply` took
+ * a restore point before finding out there was no work. It now looks first,
+ * and snapshots only when it will write.
  *
  * The dry run is a real rehearsal, not a description: it takes a SQLite
  * `.backup` of the live database (⚠️ never `cp` — that drops the `-wal` and
@@ -58,6 +69,8 @@ import { formatCents } from "@/lib/money";
 import { renameMerchant } from "@/services/merchants";
 
 const APPLY = process.argv.includes("--apply");
+/** an explicit database, e.g. a `.backup` copy to rehearse on; see "How to run it" */
+const DB_ARG = process.argv.find((a) => a.startsWith("--db="))?.slice("--db=".length);
 
 /** The row's descriptor, so the target is identified by evidence and not by id. */
 const DESCRIPTOR_LIKE = "%FlamingoSout%";
@@ -97,7 +110,8 @@ const kindTotal = (db: AppDatabase, kind: string): number =>
      WHERE t.status='active' AND COALESCE(p.kind,c.kind)='${kind}'`,
   );
 
-function targetId(db: AppDatabase): string {
+/** The merchant to rename, or null when the rename has already been made. */
+function targetId(db: AppDatabase): string | null {
   const rows = db.all(
     sql.raw(`SELECT DISTINCT m.id, m.canonical_name FROM transactions t
              JOIN merchants m ON m.id=t.merchant_id
@@ -106,6 +120,7 @@ function targetId(db: AppDatabase): string {
   if (rows.length !== 1) {
     throw new Error(`expected exactly one merchant behind ${DESCRIPTOR_LIKE}, found ${rows.length}`);
   }
+  if (rows[0]!.canonical_name === NEW_NAME) return null;
   if (rows[0]!.canonical_name !== OLD_NAME) {
     throw new Error(`expected "${OLD_NAME}", found "${rows[0]!.canonical_name}" — already renamed?`);
   }
@@ -137,13 +152,15 @@ function snapshot(db: AppDatabase, id: string): Snapshot {
 }
 
 const failures: string[] = [];
+/** whether `run` executed — "all guards passed" is a claim only a run can make */
+let guardsRan = false;
 const guard = (name: string, ok: boolean, detail: string): void => {
   console.log(`${ok ? "  ✓" : "  ✗"} ${name.padEnd(38)} ${detail}`);
   if (!ok) failures.push(name);
 };
 
-function run(db: AppDatabase, label: string): void {
-  const id = targetId(db);
+function run(db: AppDatabase, id: string, label: string): void {
+  guardsRan = true;
   const before = snapshot(db, id);
 
   console.log(`\n${label}`);
@@ -178,11 +195,18 @@ function run(db: AppDatabase, label: string): void {
   guard("SPENDING unchanged", before.expense === after.expense, formatCents(-after.expense));
 }
 
+const NOTHING_TO_DO = `\n  "${NEW_NAME}" is already the name behind ${DESCRIPTOR_LIKE} — nothing to do.`;
+
 if (APPLY) {
-  const db = getDb();
-  withPreMutationSnapshot(db, "rename-flamingo-merchant", () => {
-    run(db, "APPLYING to data/moneyapp.db");
-  });
+  const db = DB_ARG === undefined ? getDb() : createDatabase(path.resolve(DB_ARG)).db;
+  const id = targetId(db);
+  if (id === null) {
+    console.log(NOTHING_TO_DO);
+  } else {
+    withPreMutationSnapshot(db, "rename-flamingo-merchant", () => {
+      run(db, id, `APPLYING to ${DB_ARG ?? "data/moneyapp.db"}`);
+    });
+  }
 } else {
   /*
    * A rehearsal on a real copy, not a description of one. `.backup` rather than
@@ -191,7 +215,7 @@ if (APPLY) {
    */
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-rehearse-"));
   const copy = path.join(dir, "rehearsal.db");
-  const live = new Database(process.env.MONEYAPP_DB_PATH ?? "data/moneyapp.db", { readonly: true });
+  const live = new Database(DB_ARG ?? process.env.MONEYAPP_DB_PATH ?? "data/moneyapp.db", { readonly: true });
   /*
    * ⚠️ No `wal_checkpoint` first. It is the obvious thing to reach for and it
    * throws `SQLITE_IOERR_WRITE` on a readonly handle — a checkpoint writes. It
@@ -203,11 +227,16 @@ if (APPLY) {
   live.close();
 
   const bundle = createDatabase(copy);
-  run(bundle.db, "DRY RUN on a .backup copy — the live database is untouched");
+  const id = targetId(bundle.db);
+  if (id === null) console.log(NOTHING_TO_DO);
+  else run(bundle.db, id, "DRY RUN on a .backup copy — the live database is untouched");
   bundle.sqlite.close();
   fs.rmSync(dir, { recursive: true, force: true });
-  console.log(`\n  (dry run — re-run with --apply to write, with the dev server stopped)`);
+  if (guardsRan) console.log(`\n  (dry run — re-run with --apply to write, with the dev server stopped)`);
 }
+
+// nothing was renamed and no guard ran, so there is nothing to report as passed
+if (!guardsRan) process.exit(0);
 
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} guard(s) failed: ${failures.join(", ")}`);
