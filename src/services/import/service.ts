@@ -6,7 +6,7 @@ import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { balanceAnchors } from "@/db/schema/balances";
-import { importFiles, statementPeriods, type FileFormat } from "@/db/schema/imports";
+import { importFiles, statementPeriods, type FileFormat, type ImportStatus } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import {
   transactions,
@@ -797,6 +797,13 @@ async function selectProfile(
   };
 }
 
+/**
+ * A file already imported at the parser version reading it now is skipped as a duplicate — unless its row is
+ * one of these. Exported so a write that must know "would the import read this file again?" asks this rule
+ * rather than restating it (scripts/robinhood-agentic-account.ts).
+ */
+export const REIMPORTABLE_STATUSES: readonly ImportStatus[] = ["superseded", "failed"];
+
 async function importOneFile(
   db: AppDatabase,
   file: ReturnType<typeof sniffFile>,
@@ -823,7 +830,7 @@ async function importOneFile(
     .from(importFiles)
     .where(and(eq(importFiles.fileSha256, sha), eq(importFiles.parserVersion, profile?.version ?? 0)))
     .get();
-  if (existing && existing.status !== "superseded" && existing.status !== "failed") {
+  if (existing && !REIMPORTABLE_STATUSES.includes(existing.status)) {
     return { ...outcome, status: "skipped_duplicate" };
   }
 

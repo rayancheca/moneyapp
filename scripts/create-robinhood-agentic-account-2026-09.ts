@@ -19,10 +19,15 @@
  *   pnpm tsx scripts/create-robinhood-agentic-account-2026-09.ts --db=<path>              # dry run, opened read-only
  *   pnpm tsx scripts/create-robinhood-agentic-account-2026-09.ts --db=<path> --confirm    # writes, behind a restore point
  *
+ * ⛔ The ORDER is the write: the account BEFORE the statements. Imported first,
+ * the v4 parser skips #655929651's section and records each file at v4, so a
+ * later import skips them as duplicates and the account stays empty for good.
+ * This script refuses once that has happened (`statementsReadWithout`).
+ *
  * `--db` is required, including for the real ledger (`--db=data/moneyapp.db`):
  * this script never guesses which database to open. Re-running it once the
  * account exists changes nothing. Against the real ledger, stop the dev server
- * first.
+ * first, and keep it stopped until the import is done.
  */
 import fs from "node:fs";
 import path from "node:path";

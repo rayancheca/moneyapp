@@ -1,12 +1,14 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
-import { eq } from "drizzle-orm";
+import { and, eq, gte, notInArray } from "drizzle-orm";
 import { withPreMutationSnapshot } from "@/db/backup";
 import type { AppDatabase, DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
+import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { createAccount } from "@/services/accounts";
-import { parseContextFor } from "@/services/import/service";
+import { robinhoodBrokerageStatementPdf } from "@/services/import/profiles/robinhood-brokerage-statement-profile";
+import { REIMPORTABLE_STATUSES, parseContextFor } from "@/services/import/service";
 import type { KnownAccount } from "@/services/import/types";
 import { dbTargetFrom, strayFlags, type DbTargetOptions } from "./db-target";
 
@@ -41,6 +43,13 @@ export const AGENTIC_ACCOUNT: AgenticAccountSpec = {
 
 export const SNAPSHOT_LABEL = "create-robinhood-agentic-account";
 
+/**
+ * The first period #655929651 printed a statement for: June 2026 (747059b1…, its opening `N/A`). Of the 33
+ * brokerage PDFs in statements/robinhood/, the three that carry it are 2026-06, -07 and -08; none that ends
+ * before this day does.
+ */
+export const FIRST_STATEMENT_FROM = "2026-06-01";
+
 /** Nothing was written, because something about the ledger is not what the write expects. */
 export class Refusal extends Error {}
 
@@ -74,6 +83,49 @@ export type AgenticPlan = { readonly kind: "create" } | { readonly kind: "alread
 
 type AccountRow = typeof accounts.$inferSelect;
 
+/**
+ * Brokerage statements from the account's months that the import has ALREADY read — at the parser version it
+ * reads them with now — without the account in them. `accountId` null: the account does not exist yet.
+ *
+ * 🔴 Measured by a second reader on a fresh copy of the real ledger: the runbook run out of order — the three
+ * statements imported at v4 first, while #655929651 was untracked, so the parser skipped its section — then the
+ * account created: all 13 guards passed. Re-importing was `skipped_duplicate 3` (`ux_import_files_sha_parser`),
+ * so the account never received its June observation, its periods or the +$26.64, and no step could recover it
+ * short of a parser bump. The account row is not the hard part of this write; the ORDER is.
+ *
+ * A file at an OLDER version does not count (the real ledger's June–August files are v3): the v4 import
+ * supersedes it and reads the section. Nor does a row the import would read again — the service's own rule.
+ */
+function statementsReadWithout(db: AppDatabase, accountId: string | null): string[] {
+  const profile = robinhoodBrokerageStatementPdf;
+  const rows = db
+    .select({ fileId: importFiles.id, fileName: importFiles.fileName, accountId: statementPeriods.accountId })
+    .from(importFiles)
+    .innerJoin(statementPeriods, eq(statementPeriods.importFileId, importFiles.id))
+    .where(
+      and(
+        eq(importFiles.parserProfile, profile.id),
+        eq(importFiles.parserVersion, profile.version),
+        notInArray(importFiles.status, [...REIMPORTABLE_STATUSES]),
+        gte(statementPeriods.periodEnd, FIRST_STATEMENT_FROM),
+      ),
+    )
+    .all();
+  const carrying = new Set(rows.filter((r) => r.accountId === accountId).map((r) => r.fileId));
+  return [...new Map(rows.filter((r) => !carrying.has(r.fileId)).map((r) => [r.fileId, r.fileName])).values()].sort();
+}
+
+function refuseStatementsReadWithout(db: AppDatabase, accountId: string | null, spec: AgenticAccountSpec): void {
+  const files = statementsReadWithout(db, accountId);
+  if (files.length === 0) return;
+  const profile = robinhoodBrokerageStatementPdf;
+  throw new Refusal(
+    `${files.join(", ")} ${files.length === 1 ? "was" : "were"} already imported at ${profile.id} v${profile.version} ` +
+      `without ····${spec.last4} — importing again is skipped as a duplicate, so the account would stay empty. ` +
+      `Nothing written. Restore the ledger from the restore point taken before that import, then create the account FIRST`,
+  );
+}
+
 function shapeOf(row: AccountRow): string {
   const type = row.subtype ? `${row.type}/${row.subtype}` : row.type;
   return row.isActive ? type : `${type}, inactive`;
@@ -96,6 +148,8 @@ function isTheAccount(row: AccountRow, spec: AgenticAccountSpec): boolean {
  * owner's — is refused, because each is a different real-world situation and
  * none of them is this write's to resolve.
  *
+ * ⛔ And refused once the statements it needs were imported without it — see `statementsReadWithout`.
+ *
  * ⛔ Not `resolveAccount`: with a type and a last4 it ADOPTS an existing account
  * of that type with no last4, and Robinhood Cash is exactly that — ····9651
  * would be stamped on the brokerage's cash ledger.
@@ -116,7 +170,10 @@ export function planAgenticAccount(db: AppDatabase, spec: AgenticAccountSpec = A
   }
   const [existing] = numbered;
   if (existing) {
-    if (isTheAccount(existing, spec)) return { kind: "already-tracked", accountId: existing.id };
+    if (isTheAccount(existing, spec)) {
+      refuseStatementsReadWithout(db, existing.id, spec);
+      return { kind: "already-tracked", accountId: existing.id };
+    }
     throw new Refusal(
       `${spec.institution} already has ····${spec.last4} as "${existing.name}" (${shapeOf(existing)}) — ` +
         `not the account the owner decided on; nothing written`,
@@ -128,6 +185,7 @@ export function planAgenticAccount(db: AppDatabase, spec: AgenticAccountSpec = A
       `${spec.institution} already has an account named "${spec.name}" (····${sameName.last4 ?? "none"}) — nothing written`,
     );
   }
+  refuseStatementsReadWithout(db, null, spec);
   return { kind: "create" };
 }
 
