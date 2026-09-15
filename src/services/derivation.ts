@@ -8,6 +8,7 @@ import { splitMissing, type AccountOpening } from "@/lib/coverage-label";
 import { assertWithinFinancialWindow } from "@/lib/date-window";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
 import { basisIsChecked } from "./coverage";
+import { cutToObserved, observedThrough } from "./observation-frontier";
 import { rebuildInvestmentHistory } from "./crypto-history";
 import { regradeStatementPeriods } from "./statement-periods";
 
@@ -782,6 +783,27 @@ export function storedDailyRows(db: AppDatabase, accountId: string): DayRow[] {
 /** One account's covered daily balances, oldest first (gap days excluded). */
 export function accountSeries(db: AppDatabase, accountId: string): AccountSeriesPoint[] {
   return storedDailyRows(db, accountId).filter((r) => r.basis !== "gap");
+}
+
+/**
+ * One account's covered series cut at the day its balance was observed — what
+ * every surface that dates ONE account's balance reads its last point from
+ * (owner decision S24 a, 2026-09-14).
+ *
+ * 🔴 A RULE WITH THREE COPIES AND A FOURTH SURFACE THAT HAD NONE. 540c338 wrote
+ * `cutToObserved(accountSeries(db, id), observedThrough(db).get(id))` into the
+ * /accounts/[id] header and the account insights, and `cardsOwed` kept asking
+ * `accountBalance` with no day — the newest cached row, the REBUILD day.
+ * Measured on the real ledger 2026-09-15: /accounts/<Discover> graded its
+ * balance on Sep 8 ("on a statement") while the dashboard's "what you owe"
+ * popover graded the same balance on Sep 14 ("adds up"); likewise Venture X and
+ * Chase Sapphire.
+ *
+ * ⚠️ `institutionGroups` cuts its bulk-loaded series with `cutToObserved`
+ * directly; it reads every account's rows in one query rather than one each.
+ */
+export function observedSeries(db: AppDatabase, accountId: string): readonly AccountSeriesPoint[] {
+  return cutToObserved(accountSeries(db, accountId), observedThrough(db).get(accountId));
 }
 
 export interface AccountBalance {

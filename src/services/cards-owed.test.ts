@@ -332,6 +332,34 @@ describe("how fresh the number is", () => {
     expect(card.provenance.verdict).toBe("broken");
   });
 
+  /*
+   * 🔴 S24's FOURTH SURFACE. 540c338 dated one account's balance by the day it
+   * was observed on the institution cards, the /accounts/[id] header and the
+   * account insights — and left this card asking `accountBalance` with no day,
+   * which reads the newest cached row: the day the cache was last rebuilt.
+   * Measured read-only on the real ledger 2026-09-15: /accounts/<Discover>
+   * graded its balance on Sep 8, 2026 (anchored — "on a statement") while the
+   * dashboard's "what you owe" popover graded the same balance on Sep 14
+   * (carried — "adds up"), and likewise Venture X (Sep 13) and Chase Sapphire
+   * (Sep 2). Both read "adds up" before 540c338.
+   */
+  test("a card's verdict is asked of the day its balance was observed, the day its account page asks", () => {
+    addAccount("acct-gamma", "Gamma", "credit", { last4: "3333" });
+    addBalances("acct-gamma", [
+      { day: "2026-08-01", cents: -7_000, basis: "derived" },
+      { day: "2026-08-05", cents: -7_000, basis: "anchored" },
+      // the rebuild walked on to Aug 7 with nothing to replay
+      { day: "2026-08-07", cents: -7_000, basis: "carried" },
+    ]);
+    addAnchor("acct-gamma", "2026-08-05", -7_000, "statement");
+    addTxn("acct-gamma", "2026-08-01", -1_000);
+
+    const gamma = cardsOwedCard(bundle.db, TODAY)!.cards.find((c) => c.name === "Gamma")!;
+    // Aug 5 is anchored; the rebuild day, Aug 7, is merely carried
+    expect(gamma.verdict).toBe("sourced");
+    expect(gamma.checkedThrough).toBe("2026-08-05");
+  });
+
   test("a clean card carries no caveat", () => {
     twoCards();
     const card = cardsOwedCard(bundle.db, TODAY)!;

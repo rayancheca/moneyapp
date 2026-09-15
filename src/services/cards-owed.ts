@@ -9,6 +9,7 @@ import { formatCents } from "@/lib/money";
 import { listAccounts } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryIndex } from "./analytics";
 import { accountCoverage, type AccountCoverage, type CoverageGrade } from "./coverage";
+import { observedSeries } from "./derivation";
 import {
   provenanceFor,
   weakestVerdict,
@@ -235,7 +236,8 @@ function dated(day: string, today: string): string {
  *
  * Two days are asked about, not one, and the weaker answer wins:
  *
- *  - the day the displayed figure is stated for — `provenanceFor`'s default;
+ *  - the day the displayed figure is stated for — the day its balance was
+ *    observed (`observedSeries`), the same day /accounts/[id] asks about;
  *  - `unverifiedSince`, the first day the chain stopped being checked.
  *
  * ⛔ The second is what stops the badge contradicting the row beside it. A card
@@ -250,7 +252,13 @@ function dated(day: string, today: string): string {
  * finding.
  */
 function cardVerdict(db: AppDatabase, accountId: string, cov: AccountCoverage | undefined): ProvenanceVerdict {
-  const onFigure = provenanceFor(db, { kind: "accountBalance", accountId })?.verdict ?? "unknown";
+  /*
+   * 🔴 S24: this asked with no day, so `accountBalance` graded the newest cached
+   * row — the day the cache was rebuilt, "carried" on Discover's Sep 14 while its
+   * account page graded Sep 8, the statement's day. See `observedSeries`.
+   */
+  const day = observedSeries(db, accountId).at(-1)?.day;
+  const onFigure = provenanceFor(db, { kind: "accountBalance", accountId, day })?.verdict ?? "unknown";
   if (!cov?.unverifiedSince) return onFigure;
   const onBreak =
     provenanceFor(db, { kind: "accountBalance", accountId, day: cov.unverifiedSince })?.verdict ?? "unknown";

@@ -14,8 +14,7 @@ import { balanceDeltaAccent, balanceHeading, type BalanceDeltaAccent } from "@/l
 import { accountInsights } from "@/services/account-insights";
 import { getAccount, listAccounts, listInstitutions } from "@/services/accounts";
 import { anchorRemovalEffects, listAnchors } from "@/services/anchors";
-import { accountSeries } from "@/services/derivation";
-import { cutToObserved, observedThrough } from "@/services/observation-frontier";
+import { observedSeries } from "@/services/derivation";
 import { listAccountHoldings } from "@/services/holdings";
 import { CASH_INSTITUTION_NAME } from "@/services/manual-transactions";
 import { recentLedgerRows } from "@/services/ledger-rows";
@@ -117,7 +116,7 @@ export default async function AccountDetailPage({
    * header, both change chips, the balance proof and the chart name one day. The
    * balance itself does not move.
    */
-  const series = cutToObserved(accountSeries(db, id), observedThrough(db).get(id));
+  const series = observedSeries(db, id);
   const latest = series.at(-1) ?? null;
   // the label and the figure out of one call — `lib/side-magnitude`
   const heading = balanceHeading(latest?.balanceCents ?? 0, liability);

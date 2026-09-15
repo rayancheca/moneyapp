@@ -7,9 +7,8 @@ import { countFact, rankFact, scalarFact, shareFact, type Fact } from "@/lib/ins
 import { isPrintableName } from "@/lib/printable-name";
 import { sideMagnitudeCents } from "@/lib/side-magnitude";
 import { listAccounts } from "./accounts";
-import { accountSeries } from "./derivation";
+import { observedSeries } from "./derivation";
 import { surfaceInsights, type InsightInput } from "./insight-surface";
-import { cutToObserved, observedThrough } from "./observation-frontier";
 import type { InsightCandidate, SurfaceInsights } from "./insights";
 import { provenanceFor } from "./provenance";
 
@@ -123,7 +122,7 @@ export function accountInsightInput(
    * on 2026-09-14, whose newest row and statement end Aug 12. The account page
    * header above this list reads the same cut.
    */
-  const asOf = cutToObserved(accountSeries(db, accountId), observedThrough(db).get(accountId)).at(-1)?.day ?? self.balance.asOf;
+  const asOf = observedSeries(db, accountId).at(-1)?.day ?? self.balance.asOf;
   const prove = () => provenanceFor(db, { kind: "accountBalance", accountId, day: asOf ?? undefined });
 
   if (rank > 0 && ranked.length >= MIN_ACCOUNTS_TO_RANK && magnitude > 0) {
