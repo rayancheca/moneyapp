@@ -296,13 +296,30 @@ describe("observedThrough", () => {
     expect(observedThrough(bundle.db).get(a)).toBe("2026-08-11");
   });
 
-  test("an account with only recorded balances, and an investment account, are absent — their series is not cut", () => {
+  /*
+   * 🔴 THE RULE HAD A CARVE-OUT THE OWNER'S DECISION DOES NOT. S24 (a): a
+   * balance is dated by the latest of its newest row, statement end OR recorded
+   * balance. An account holding only recorded balances was left out, so its
+   * card, header and insights were dated by the rebuild day — "as of Tue, Sep
+   * 15, 2026 · carried" of a balance recorded on Sep 10 (review, 2026-09-15).
+   * Not live on the real ledger that day; Cash on Hand was in exactly this state
+   * from its Aug 3, 2026 opening balance until its Aug 11 row.
+   */
+  test("an account with only recorded balances is observed on its newest one", () => {
     const anchorsOnly = addAccount("Safe", "checking");
+    addAnchor(anchorsOnly, "2026-08-01");
     addAnchor(anchorsOnly, "2026-08-05");
+    expect(observedThrough(bundle.db).get(anchorsOnly)).toBe("2026-08-05");
+  });
+
+  test("an investment account is absent, recorded balance or not — its series is not cut", () => {
     const brokerage = addAccount("Brokerage", "investment");
     addTxn(brokerage, "2026-08-01");
-    expect(observedThrough(bundle.db).has(anchorsOnly)).toBe(false);
+    addAnchor(brokerage, "2026-08-03");
+    const idle = addAccount("Idle", "investment");
+    addAnchor(idle, "2026-08-04");
     expect(observedThrough(bundle.db).has(brokerage)).toBe(false);
+    expect(observedThrough(bundle.db).has(idle)).toBe(false);
   });
 });
 

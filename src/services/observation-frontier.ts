@@ -111,7 +111,7 @@ export const observationFrontier = cache(function observationFrontier(db: AppDat
 /**
  * The day an account's BALANCE was last observed: the latest of its newest
  * active row and newest statement end (`observationFrontier`) and its newest
- * recorded balance. Keyed only by the accounts `observationFrontier` holds.
+ * recorded balance. Keyed by every non-investment account with any of the three.
  *
  * 🔴 S24: EVERY SURFACE THAT DATED A BALANCE NAMED THE DAY THE CACHE WAS
  * REBUILT. `daily_balances` walks forward to whatever `today` stood at the last
@@ -132,10 +132,17 @@ export const observationFrontier = cache(function observationFrontier(db: AppDat
  *
  *  - **investment**: marked to market and priced through today; "observed" is
  *    not a fact about it, exactly as above.
- *  - **neither a row nor a statement**: only recorded balances, or nothing.
- *    `institution-groups.test` pins that a lone recorded balance carries
- *    forward to today. No active account on the real ledger is in this state
- *    (Capital One 360 Checking holds nothing at all).
+ *  - **nothing at all**: no row, no statement, no recorded balance (Capital One
+ *    360 Checking on 2026-09-15). It has no series to cut.
+ *
+ * 🔴 AN ACCOUNT WITH ONLY RECORDED BALANCES WAS LEFT OUT. This read only the
+ * accounts `observationFrontier` holds, so a balance recorded on Sep 10 with no
+ * row beside it stayed dated by the rebuild — "as of Tue, Sep 15, 2026 ·
+ * carried" on the header, "today" on its card (review of 540c338, 2026-09-15).
+ * The owner's rule names the recorded balance with no carve-out, and a count of
+ * cash in a safe is exactly the kind of observation it means. Not live that
+ * day; Cash on Hand was in this state from its Aug 3, 2026 opening balance until
+ * its Aug 11 row.
  *
  * ⚠️ The anchor term decides only when a balance was recorded AFTER the newest
  * row and statement — a count of cash newer than the last import is itself an
@@ -147,6 +154,8 @@ export const observedThrough = cache(function observedThrough(db: AppDatabase): 
     db
       .select({ accountId: balanceAnchors.accountId, day: sql<string>`max(${balanceAnchors.anchoredOn})` })
       .from(balanceAnchors)
+      .innerJoin(accounts, eq(accounts.id, balanceAnchors.accountId))
+      .where(ne(accounts.type, "investment"))
       .groupBy(balanceAnchors.accountId)
       .all()
       .map((r) => [r.accountId, r.day] as const),
@@ -154,6 +163,10 @@ export const observedThrough = cache(function observedThrough(db: AppDatabase): 
   const out = new Map<string, string>();
   for (const [accountId, through] of observationFrontier(db).byAccount) {
     out.set(accountId, latest(through, newestAnchor.get(accountId) ?? null) ?? through);
+  }
+  // observed by a recorded balance alone — no row, no statement
+  for (const [accountId, day] of newestAnchor) {
+    if (!out.has(accountId)) out.set(accountId, day);
   }
   return out;
 });

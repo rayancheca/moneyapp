@@ -193,10 +193,16 @@ describe("institutionGroups", () => {
       addManualAnchor(bundle.db, { accountId: only, anchoredOn: addDays(TODAY, -5), enteredCents: 100_00 });
 
       const [group] = institutionGroups(bundle.db, TODAY);
-      // the balance carries forward to today, so there IS a change to report
-      expect(group!.accounts[0]!.dayChangeCents).toBe(0);
-      expect(group!.accounts[0]!.dayChangeAsOf).toBe(TODAY);
-      expect(group!.accounts[0]!.dayChangeVsDay).toBe(addDays(TODAY, -1));
+      /*
+       * 🔴 S24: this read a change of $0.00 "today" off a balance carried forward
+       * from one recorded five days earlier — a change on a day nothing observed.
+       * The balance is dated by the day it was recorded (owner decision S24 a,
+       * 2026-09-14), so the card holds ONE covered day and names no interval.
+       */
+      expect(group!.accounts[0]!.asOf).toBe(addDays(TODAY, -5));
+      expect(group!.accounts[0]!.dayChangeCents).toBeNull();
+      expect(group!.accounts[0]!.dayChangeAsOf).toBeNull();
+      expect(group!.accounts[0]!.dayChangeVsDay).toBeNull();
     });
   });
 
@@ -441,6 +447,21 @@ describe("the as-of day is the day the balance was observed", () => {
     rebuildAccount(bundle.db, checking, TODAY);
 
     expect(card(checking).asOf).toBe(addDays(TODAY, -3));
+  });
+
+  test("a balance recorded with nothing else to observe dates the card by the day it was recorded", () => {
+    const chase = institutionId("Chase");
+    const savings = createAccount(bundle.db, { institutionId: chase, name: "Chase Savings", type: "savings" });
+    const RECORDED = addDays(TODAY, -5);
+    addManualAnchor(bundle.db, { accountId: savings, anchoredOn: RECORDED, enteredCents: 900_00 });
+    // the condition: the rebuild carried that balance on to today
+    expect(latestBalances(bundle.db).get(savings)!.asOf).toBe(TODAY);
+
+    const c = card(savings);
+    expect(c.asOf).toBe(RECORDED);
+    expect(c.balanceCents).toBe(900_00);
+    expect(c.spark.at(-1)!.day).toBe(RECORDED);
+    expect(c.dayChangeTerm).not.toBe("today");
   });
 
   test("⛔ an investment account keeps its priced tail — observation is not a fact about a marked-to-market balance", () => {
