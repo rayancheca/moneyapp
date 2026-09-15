@@ -114,6 +114,14 @@ Three lessons, in the order they cost time:
 
 ## 5. Still open
 
+> **Resolved 2026-09-15, in the importer rather than the parser.** A forced parser-version re-parse
+> of the Sapphire statements on a copy of the ledger put the four straddlers back on their printed
+> days — 5 periods to `gap`, 47 rows quarantined, identically in either file order. `importOneFile`
+> now stores a row dated outside its (non-investment) statement period on the nearest edge
+> (`postedInsidePeriod`, shared with the Discover parser), keeping the printed day as
+> `transacted_on`, and every match — identity, takeover, carry, ownership — still reads the day the
+> file prints, which is the mitigation below. The chase-card parser and its version are unchanged.
+
 **The parser is not fixed for FUTURE statements.** The clamp was applied to the 4 existing rows as
 data; `chase-card-statement-profile.ts` still records the printed transaction date as `posted_on`, so
 the next statement carrying a straddling charge will gap again (~4 rows per 18 months).
