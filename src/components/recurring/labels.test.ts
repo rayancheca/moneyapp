@@ -285,7 +285,7 @@ describe("staleSummaryLabel", () => {
 
   test("the real ledger's mix names both, and neither count is the other's", () => {
     expect(staleSummaryLabel([late(88), late(58), late(53), never(1), never(2), never(3), never(4)], "In September")).toBe(
-      "In September, 3 series are running late and 4 have never charged — all still projected",
+      "In September, 3 series are running late and 4 have never been billed — all still projected",
     );
   });
 
@@ -298,16 +298,33 @@ describe("staleSummaryLabel", () => {
 
   test("only never-charged does not claim anything is late", () => {
     expect(staleSummaryLabel([never(1), never(2)], "In September")).toBe(
-      "In September, 2 series have never charged — still projected");
+      "In September, 2 series have never been billed — still projected");
     expect(staleSummaryLabel([never(1)], "In September")).toBe(
-      "In September, 1 series has never charged — still projected");
+      "In September, 1 series has never been billed — still projected");
     expect(staleSummaryLabel([never(1)], "In September")).not.toContain("late");
   });
 
   test("one of each still says one of each", () => {
     expect(staleSummaryLabel([late(88), never(1)], "In September")).toBe(
-      "In September, 1 series is running late and 1 has never charged — all still projected",
+      "In September, 1 series is running late and 1 has never been billed — all still projected",
     );
+  });
+
+  /**
+   * 🔴 "In the next 30 days, 4 series are running late and 3 have never charged —
+   * all still projected" — measured on the real ledger 2026-09-15, directly over
+   * rows badged "never billed", on a forecast card whose composition band also
+   * says "never billed". The owner chose "billed" on 2026-09-14; the summary
+   * was the one line on the card still saying "charged".
+   */
+  test("the summary says it in the badges' verb", () => {
+    const neverEntry = never(1);
+    for (const entries of [[neverEntry], [neverEntry, never(2)], [late(88), neverEntry]]) {
+      const summary = staleSummaryLabel(entries, "In the next 30 days");
+      expect(summary).not.toContain("charged");
+      // "never billed" is the badge; the clause needs a verb, so the same participle
+      expect(summary).toContain(`never been ${staleLabel(neverEntry.staleness).replace(/^never /, "")}`);
+    }
   });
 
   /**
@@ -317,16 +334,16 @@ describe("staleSummaryLabel", () => {
    * a screen apart, in identical words. Both were true: `Rent utilities & fees`
    * first falls due on 1 October, inside thirty days and outside September.
    *
-   * ⛔ The window LEADS the sentence. Trailing it — "…3 have never charged in
-   * September" — would say they had never charged IN SEPTEMBER, a different and
-   * weaker claim than the true one.
+   * ⛔ The window LEADS the sentence. Trailing it — "…3 have never been billed in
+   * September" — would say they had never been billed IN SEPTEMBER, a different
+   * and weaker claim than the true one.
    */
   test("the same counts over two windows are two different sentences", () => {
     const september = staleSummaryLabel([late(88), never(1)], "In September");
     const thirtyDays = staleSummaryLabel([late(88), never(1), never(2)], "In the next 30 days");
-    expect(september).toBe("In September, 1 series is running late and 1 has never charged — all still projected");
+    expect(september).toBe("In September, 1 series is running late and 1 has never been billed — all still projected");
     expect(thirtyDays).toBe(
-      "In the next 30 days, 1 series is running late and 2 have never charged — all still projected",
+      "In the next 30 days, 1 series is running late and 2 have never been billed — all still projected",
     );
     // neither can be read as the other, which is the whole point
     expect(september).not.toBe(thirtyDays.replace("In the next 30 days", "In September"));

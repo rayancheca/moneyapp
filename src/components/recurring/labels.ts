@@ -297,20 +297,28 @@ export interface StaleEntry {
  * so the page contradicted itself about a fact a reader would take as one.
  *
  * The window leads the sentence rather than trailing it: "…and 3 have never
- * charged in September" would say they had never charged IN SEPTEMBER, which is
- * a different and weaker claim than the true one — they have never charged at
- * all.
+ * been billed in September" would say they had never been billed IN SEPTEMBER,
+ * which is a different and weaker claim than the true one — they have never
+ * been billed at all.
+ *
+ * 🔴 AND IT SAYS IT IN THE BADGES' VERB. It read "…and 3 have never charged"
+ * directly over rows badged "never billed" — measured on the real ledger
+ * 2026-09-15, on the Upcoming list and under the forecast card, whose own
+ * composition band says "never billed" too. The owner chose "billed" on
+ * 2026-09-14 (`SERIES_EVIDENCE_LABEL["never-billed"]`); one card spelled one
+ * fact two ways. "Never billed" is an adjective and this clause needs a verb,
+ * so it is the same participle with the auxiliary it needs, not a third word.
  */
 export function staleSummaryLabel(entries: readonly StaleEntry[], window: string): string {
   const never = entries.filter((e) => e.staleness.daysSinceLastMatch === null).length;
   const late = entries.length - never;
   const lateClause = `${late} ${late === 1 ? "series is" : "series are"} running late`;
-  const neverClause = `${never} ${never === 1 ? "has" : "have"} never charged`;
+  const neverClause = `${never} ${never === 1 ? "has" : "have"} never been billed`;
   const body =
     never === 0
       ? `${lateClause} — still projected`
       : late === 0
-        ? `${never} ${never === 1 ? "series has" : "series have"} never charged — still projected`
+        ? `${never} ${never === 1 ? "series has" : "series have"} never been billed — still projected`
         : `${lateClause} and ${neverClause} — all still projected`;
   return `${window}, ${body}`;
 }

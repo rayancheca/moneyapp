@@ -71,4 +71,21 @@ describe("StaleFooter", () => {
     expect(html).toContain("why these numbers rest on old evidence or on the schedule alone");
     expect(html).toContain("text-warning");
   });
+
+  /* 🔴 The summary read "…and 3 have never charged" over the rows this footer
+     lists as "never billed" (real ledger, 2026-09-15). One card, one verb. */
+  test("the summary over the list says never billed, not never charged", () => {
+    const html = renderToStaticMarkup(
+      createElement(StaleFooter, {
+        window: "In the next 30 days",
+        entries: [
+          { key: "a", name: "Amazon Prime", staleness: late },
+          { key: "b", name: "Car lease", staleness: never },
+          { key: "c", name: "Gym", staleness: never },
+        ],
+      }),
+    );
+    expect(html).toContain("In the next 30 days, 1 series is running late and 2 have never been billed — all still projected");
+    expect(html).not.toContain("never charged");
+  });
 });

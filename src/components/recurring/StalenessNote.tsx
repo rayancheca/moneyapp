@@ -67,9 +67,10 @@ export function StaleFooter({
           staleFooterIsWarning(entries) ? "text-warning" : "text-ink-muted"
         } transition-colors duration-(--duration-fast) hover:text-ink`}
       >
-        {/* ⛔ The count and the WORD for it: a series that has never charged is
-            not late, and three of the four on the owner's ledger are not even
-            due yet. `staleSummaryLabel` owns the split — see its docstring. */}
+        {/* ⛔ The count and the WORD for it: a series that has never been billed
+            is not late, and three of the four on the owner's ledger are not even
+            due yet — and it says "billed", the badges' verb, not "charged".
+            `staleSummaryLabel` owns the split — see its docstring. */}
         {staleSummaryLabel(entries, window)}
         {/* ⛔ …and the hint does not call "no evidence" old — `staleFooterHint` */}
         <span className="ml-2 font-normal text-ink-faint group-open:hidden">{staleFooterHint(entries)}</span>
