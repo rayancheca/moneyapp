@@ -168,8 +168,13 @@ function isRealDatabase(sqlite: Database.Database): boolean {
   return isRealDatabasePath(sqlite.name);
 }
 
-function isRealDatabasePath(dbPath: string): boolean {
-  return path.resolve(dbPath) === path.resolve(process.cwd(), "data", "moneyapp.db");
+/**
+ * Exported for the write scripts' `--db=<path>` (scripts/db-target.ts), so
+ * "which file is the real database" has ONE definition — a rehearsal that
+ * mistook the real file for a copy would archive and snapshot as if it were one.
+ */
+export function isRealDatabasePath(dbPath: string, cwd: string = process.cwd()): boolean {
+  return path.resolve(cwd, dbPath) === path.resolve(cwd, "data", "moneyapp.db");
 }
 
 /**

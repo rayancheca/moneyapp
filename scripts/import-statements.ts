@@ -5,6 +5,7 @@ import { manualSnapshot } from "@/db/backup";
 import { accountCoverage } from "@/services/coverage";
 import { netWorthSeries } from "@/services/derivation";
 import { importStatementFiles, type ImportInput } from "@/services/import/service";
+import { DbTargetRefusal, dbTargetFrom, originalsDirFor, strayFlags, type DbTarget } from "./db-target";
 
 /**
  * Imports statement folders into the REAL database, behind a restore point.
@@ -26,9 +27,37 @@ const folders = args.filter((a) => !a.startsWith("--"));
 const CONFIRMED = args.includes("--confirm");
 
 if (folders.length === 0) {
-  console.error("usage: pnpm import-statements <folder> [folder...] --confirm");
+  console.error("usage: pnpm import-statements <folder> [folder...] [--db=<path>] --confirm");
   process.exit(1);
 }
+
+/**
+ * `--db=<path>` runs this exact import against a COPY, so a multi-step write
+ * (an account created, then statements imported into it) can be rehearsed end
+ * to end before the real database is touched. Defaults to the real database.
+ * See ./db-target.ts for what is refused.
+ */
+function target(): DbTarget {
+  try {
+    const stray = strayFlags(args, ["--confirm", "--db"]);
+    if (stray.length > 0) throw new DbTargetRefusal(`unknown flag ${stray.join(", ")}`);
+    return dbTargetFrom(args, { flag: "--db", required: false, cwd: process.cwd(), exists: fs.existsSync });
+  } catch (error: unknown) {
+    if (!(error instanceof DbTargetRefusal)) throw error;
+    console.error(`REFUSED: ${error.message}`);
+    process.exit(2);
+  }
+}
+const TARGET = target();
+/*
+ * ⛔ A rehearsal must not write into the REAL statement archive, and the copy's
+ * import_files rows must not point there: a copy archives beside itself. And it
+ * is the database for everything this process opens — a lookup that reaches
+ * for the default connection lands on the copy, never on the real file.
+ */
+const ORIGINALS = originalsDirFor(TARGET, process.env);
+if (ORIGINALS !== undefined) process.env.MONEYAPP_ORIGINALS_DIR = ORIGINALS;
+if (!TARGET.isReal) process.env.MONEYAPP_DB_PATH = TARGET.path;
 
 function collect(dir: string): ImportInput[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -47,13 +76,14 @@ async function main(): Promise<void> {
   const files = folders.flatMap((d) => collect(d));
 
   if (!CONFIRMED) {
-    console.log(`Would import ${files.length} files from ${folders.join(", ")}.`);
+    console.log(`Would import ${files.length} files from ${folders.join(", ")} into ${TARGET.path}.`);
     console.log("Nothing was written. Re-run with --confirm once the trial diff looks right.");
     process.exit(0);
   }
 
-  const bundle = createDatabase(path.join(process.cwd(), "data", "moneyapp.db"));
+  const bundle = createDatabase(TARGET.path);
   const { db, sqlite } = bundle;
+  console.log(`Database: ${TARGET.path}${TARGET.isReal ? " (the real ledger)" : ""} · originals → ${ORIGINALS ?? "data/statements/"}`);
 
   const snap = manualSnapshot(sqlite);
   console.log(`Restore point: ${snap.path ?? "(none)"}\n`);

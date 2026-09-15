@@ -5,6 +5,7 @@ import { createDatabase } from "@/db/client";
 import { accountCoverage } from "@/services/coverage";
 import { netWorthSeries } from "@/services/derivation";
 import { importStatementFiles, type ImportInput } from "@/services/import/service";
+import { DbTargetRefusal, dbTargetFrom, strayFlags } from "./db-target";
 
 /**
  * Imports a folder of statements into a THROWAWAY COPY of the real database and
@@ -27,6 +28,29 @@ if (args.length === 0) {
   console.error("usage: pnpm trial-import <folder> [folder...]");
   process.exit(1);
 }
+
+/**
+ * `--from=<db>` copies THAT database instead of the real one — for a rehearsal
+ * whose earlier step already wrote to a copy (an account the statements need,
+ * created on `<db>`), so the trial sees the ledger the real run will see.
+ *
+ * ⛔ Any other flag is refused: `--db=<copy>` is import-statements' spelling, and
+ * ignoring it here would trial the REAL ledger while the operator believes the
+ * copy was read. See ./db-target.ts.
+ */
+function sourceDb(): string {
+  const argv = process.argv.slice(2);
+  try {
+    const stray = strayFlags(argv, ["--from"]);
+    if (stray.length > 0) throw new DbTargetRefusal(`unknown flag ${stray.join(", ")} — the trial's source is --from=<db>`);
+    return dbTargetFrom(argv, { flag: "--from", required: false, cwd: process.cwd(), exists: fs.existsSync }).path;
+  } catch (error: unknown) {
+    if (!(error instanceof DbTargetRefusal)) throw error;
+    console.error(`REFUSED: ${error.message}`);
+    process.exit(2);
+  }
+}
+const SOURCE_DB = sourceDb();
 
 const SCRATCH = path.join(process.cwd(), ".trial");
 const TRIAL_DB = path.join(SCRATCH, "trial.db");
@@ -109,9 +133,10 @@ async function main(): Promise<void> {
    * leave the real file alone must not be the thing that writes to it — and the
    * claim printed at the end of this run has to stay true.
    */
-  const source = new Database(path.join(process.cwd(), "data", "moneyapp.db"), { readonly: true });
+  const source = new Database(SOURCE_DB, { readonly: true, fileMustExist: true });
   await source.backup(TRIAL_DB);
   source.close();
+  console.log(`Trial copy of ${SOURCE_DB}`);
 
   // every write below lands in .trial/ — the real archive is never touched
   process.env.MONEYAPP_ORIGINALS_DIR = TRIAL_ORIGINALS;
@@ -177,7 +202,7 @@ async function main(): Promise<void> {
   console.log(`  delta  ${delta === 0 ? "$0.00 — unchanged" : money(delta)}`);
 
   sqlite.close();
-  console.log(`\nTrial DB left at ${TRIAL_DB} for inspection. The real database was opened READONLY and never written.`);
+  console.log(`\nTrial DB left at ${TRIAL_DB} for inspection. ${SOURCE_DB} was opened READONLY and never written.`);
 }
 
 await main();
