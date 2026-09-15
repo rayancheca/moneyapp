@@ -2119,6 +2119,46 @@ describe("un-import keeps a row attached to its file, and a re-import files it t
   });
 
   /**
+   * 🔴 A superseded row is history: it holds no money in the ledger and, like
+   * every superseded row, no transfer. `redate-sapphire-0630-payment-2026-09-15.ts`
+   * retires an attached row under a LIVE statement and files its successor there
+   * too, and a version bump leaves superseded attached rows under the retired
+   * file. The confirmation counted them with the rows it keeps — "5 rows filed
+   * under it by hand keep their money, category, transfer and recurring links"
+   * over 4 live ones (review, 2026-09-15, on a copy of the re-dated ledger).
+   * The un-import still detaches such a row (its file is about to be deleted) and
+   * never deletes it; a re-import files only its live successor again.
+   */
+  test("a superseded row attached to the file is neither kept money nor a kept leg, and the un-import detaches it without deleting it", async () => {
+    const { unimportCountsByFile } = await import("./unimport-counts");
+    const s = await scene();
+    const retired = hand(s.accountId, "2024-10-03", -999, "PAYMENT — retired by a re-date");
+    attach(retired, s.fileId);
+    const retiredPartner = hand(row(s.partner)!.accountId, "2024-10-03", 999, "PAYMENT TO VENTURE X");
+    group([retired, retiredPartner], retired);
+    bundle.db.update(transactions).set({ status: "superseded" }).where(eq(transactions.id, retired)).run();
+
+    const counts = unimportCountsByFile(bundle.db).get(s.fileId)!;
+
+    expect({ kept: counts.kept, transferLegsKept: counts.transferLegsKept, transferLegsKeptLinked: counts.transferLegsKeptLinked }).toEqual({
+      kept: 1,
+      transferLegsKept: 1,
+      transferLegsKeptLinked: 1,
+    });
+    const deletedBefore = counts.deleted;
+
+    unimportFile(bundle.db, s.fileId);
+
+    expect(row(retired)).toMatchObject({ importFileId: null, fileLinkSource: "attached", status: "superseded" });
+    expect(row(s.attached)).toMatchObject({ importFileId: null, status: "active" });
+    await importStatementFiles(bundle.db, [statement()]);
+    const again = fileNamed()!;
+    expect(row(s.attached)!.importFileId).toBe(again.id);
+    expect(row(retired)!.importFileId).toBeNull();
+    expect(rowsOf(again.id).filter((t) => t.fileLinkSource === null)).toHaveLength(deletedBefore);
+  });
+
+  /**
    * 🔴 A parser-version re-parse supersedes every row of the file, the attached
    * ones included, and the statement's line comes back as a FRESH row that the
    * carry hands the attached row's note, category and links — but not the

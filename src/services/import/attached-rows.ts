@@ -63,6 +63,10 @@ export function parsedFromFile(importFileId: string): SQL {
  *
  * Call it inside the un-import's transaction and before anything reads "the
  * file's rows": after it, those are exactly what the file parsed.
+ *
+ * A SUPERSEDED attached row is detached too — history, never deleted, and its
+ * file is about to go — but it is no kept money (`UnimportCounts.kept`), and
+ * `reattachDetachedRows` files only its live successor again.
  */
 export function detachAttachedRows(tx: AppDatabase, importFileId: string): string[] {
   const ofFile = and(eq(transactions.importFileId, importFileId), attachedRow());

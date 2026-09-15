@@ -12,7 +12,16 @@ import { attachedRow, parsedRow } from "./attached-rows";
 export interface UnimportCounts {
   /** rows the file parsed — every one is deleted */
   deleted: number;
-  /** rows attached to the file — detached and kept */
+  /**
+   * live rows attached to the file — detached and kept, with their money.
+   * 🔴 A superseded attached row is history: no money in the ledger and no
+   * transfer. The un-import detaches it too (its file is deleted) and never
+   * deletes it, but it is not a row the confirmation may say "keeps its money,
+   * category, transfer and recurring links". A version bump leaves such rows
+   * under the retired file, and `redate-sapphire-0630-payment-2026-09-15.ts`
+   * leaves one under a LIVE statement beside its successor: counting it said
+   * "5 rows" over 20260702-statements-9805-.pdf's 4 (review, 2026-09-15).
+   */
   kept: number;
   /** deleted rows the owner categorized BY HAND: the work that cannot come back */
   userCategorizedDeleted: number;
@@ -56,7 +65,7 @@ export const NO_UNIMPORT_ROWS: UnimportCounts = {
 export function unimportCountsByFile(db: AppDatabase): Map<string, UnimportCounts> {
   // a left join's empty side has a NULL marker too, so a parsed row needs a row
   const deleted = sql`(${transactions.id} IS NOT NULL AND ${parsedRow()})`;
-  const kept = attachedRow();
+  const kept = sql`(${attachedRow()} AND ${transactions.status} <> 'superseded')`;
   const tally = (when: ReturnType<typeof sql>) => sql<number>`coalesce(sum(case when ${when} then 1 else 0 end), 0)`;
   const rows = db
     .select({
