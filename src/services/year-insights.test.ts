@@ -9,7 +9,9 @@ import { institutions } from "@/db/schema/institutions";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
-import { yearInsights } from "./year-insights";
+import { candidateKey } from "./insights";
+import { writeSetting } from "./settings";
+import { yearInsightInput, yearInsights, yearSpendingView } from "./year-insights";
 
 /**
  * The three gates that decide whether a year gets a spending sentence at all,
@@ -426,5 +428,89 @@ describe("yearInsights — a year against the one before it", () => {
     expect(level!.provenance.inputs).toEqual([]);
     expect(change!.provenance.inputs.map((i) => i.label)).toEqual(["2025", "2024"]);
     expect(change!.provenance.headline).toMatch(/compares two windows/);
+  });
+});
+
+/**
+ * 🔴 OFF WAS SUPPOSED TO REMOVE PROSE AND NOTHING ELSE — and on the year page
+ * it removed the only money-out figures.
+ *
+ * /settings promises "Turning them off removes the prose and nothing else —
+ * every figure keeps its badge". Measured on the owner's ledger 2026-09-15,
+ * /summary/2026's spending total ($66,477.60) and its change (+$42,950.02)
+ * existed ONLY inside the two sentences, so switching insights off (globally
+ * or "A year in review") took both figures and both badges off all five year
+ * pages — every other figure there is money in.
+ *
+ * ⛔ The invariant: every figure the year measured is on the page exactly once,
+ * either inside an accepted sentence or as a plain figure with its own proof.
+ */
+describe("yearSpendingView — turning insights off removes the prose and never a figure", () => {
+  const seedTwoYears = (): void => {
+    const a = addAccount("a");
+    spend(a, "2024-01-01", 10_000);
+    spend(a, "2025-03-01", 15_000);
+    shownThrough(a, "2026-01-31");
+  };
+  const carried = (year: number): string[] => {
+    const v = yearSpendingView(bundle.db, year)!;
+    return [...(v.insights?.insights.map((i) => i.id) ?? []), ...v.figures.map((f) => f.key)].sort();
+  };
+  const measured = (year: number): string[] => yearInsightInput(bundle.db, year)!.candidates.map(candidateKey).sort();
+
+  test("on: the sentences carry both figures, so neither is printed twice", () => {
+    seedTwoYears();
+    const v = yearSpendingView(bundle.db, 2025)!;
+    expect(v.insights!.insights.map((i) => i.text)).toEqual([
+      "Spending in 2025 came to $150.00.",
+      "Spending rose by $50.00 between 2024 and 2025.",
+    ]);
+    expect(v.figures).toEqual([]);
+    expect(carried(2025)).toEqual(measured(2025));
+  });
+
+  const switches: [string, () => void][] = [
+    ["the global switch", () => writeSetting(bundle.db, "insightsEnabled", false)],
+    ["A year in review", () => writeSetting(bundle.db, "insightSurfaces", { year: false })],
+  ];
+  for (const [name, turnOff] of switches) {
+    test(`off by ${name}: the total and the change stay, each with its own proof`, () => {
+      seedTwoYears();
+      turnOff();
+      expect(yearInsights(bundle.db, 2025)).toBeNull();
+
+      const v = yearSpendingView(bundle.db, 2025)!;
+      expect(v.insights).toBeNull();
+      expect(v.figures.map((f) => [f.label, f.cents])).toEqual([
+        ["Spent", 15_000],
+        ["Change from 2024", 5_000],
+      ]);
+      // the change stands on both years' documents, exactly as its sentence did
+      expect(v.figures[0]!.provenance!.inputs).toEqual([]);
+      expect(v.figures[1]!.provenance!.inputs.map((i) => i.label)).toEqual(["2025", "2024"]);
+      // the window and the direction note are not prose about the ledger — they
+      // define the figure, and a spending total beside money-in totals needs both
+      expect(v.windowLabel).toBe("2025");
+      expect(v.windowNote).toContain("counted in none of this page's totals");
+      expect(carried(2025)).toEqual(measured(2025));
+    });
+  }
+
+  test("off on a year with no comparison keeps its total and its reason for no change", () => {
+    const a = addAccount("a");
+    spend(a, "2025-03-01", 15_000);
+    shownThrough(a, "2026-01-31");
+    writeSetting(bundle.db, "insightsEnabled", false);
+
+    const v = yearSpendingView(bundle.db, 2025)!;
+    expect(v.figures.map((f) => [f.label, f.cents])).toEqual([["Spent", 15_000]]);
+    expect(v.windowNote).toContain("There is no comparison with 2024");
+  });
+
+  test("a year with nothing measured has no view, on or off", () => {
+    seedTwoYears();
+    expect(yearSpendingView(bundle.db, 2028)).toBeNull();
+    writeSetting(bundle.db, "insightsEnabled", false);
+    expect(yearSpendingView(bundle.db, 2028)).toBeNull();
   });
 });

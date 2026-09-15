@@ -10,8 +10,8 @@ import { Money } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { InsightList } from "@/components/insights/InsightList";
-import { yearInsights } from "@/services/year-insights";
+import { YearSpendingCard } from "@/components/summary/YearSpendingCard";
+import { yearSpendingView } from "@/services/year-insights";
 import { summaryYears, yearSummaryView } from "@/services/year-summary";
 import "./print.css";
 
@@ -54,7 +54,7 @@ export default async function YearSummaryPage({
   const view = yearSummaryView(db, year, today);
   const { summary, gambling, moneyWeightedReturn: mwr } = view;
   const years = summaryYears(db);
-  const spending = yearInsights(db, year, today);
+  const spending = yearSpendingView(db, year, today);
 
   return (
     <div className="summary-sheet mx-auto max-w-3xl px-4 py-8">
@@ -150,11 +150,16 @@ export default async function YearSummaryPage({
               subject, and a spending sentence printed before any of them would
               read as the page's headline.
 
-              It withholds itself for 2022 and 2023 — see `yearInsights`, whose
-              third gate refuses a comparison against a year the ledger only
-              partly covers.
+              A year whose predecessor the ledger only partly covers keeps its
+              total and loses its comparison — see `yearInsightInput`'s third
+              gate.
+
+              ⛔ Not gated by the insights switch. With insights off the same
+              figures print plainly, with their proofs (`yearSpendingView`):
+              they are this page's only money-out figures, and off removes
+              prose, never a number.
           */}
-          {spending && <InsightList data={spending} heading="What you spent" />}
+          {spending && <YearSpendingCard view={spending} />}
 
           {summary.sections
             .filter((s) => s.lines.length > 0)

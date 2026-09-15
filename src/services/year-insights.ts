@@ -3,9 +3,9 @@ import { isValidIsoDate, todayIso } from "@/lib/dates";
 import { formatDayShort, formatDayShortIn } from "@/lib/format-date";
 import { deltaFact, scalarFact, type Fact } from "@/lib/insight-facts";
 import { surfaceInsights, type InsightInput } from "./insight-surface";
-import type { InsightCandidate, SurfaceInsights } from "./insights";
+import { candidateKey, type InsightCandidate, type SurfaceInsights } from "./insights";
 import { spendingCoverageThrough } from "./movers-card";
-import { provenanceFor } from "./provenance";
+import { provenanceFor, type Provenance } from "./provenance";
 import { ledgerFirstDay, periodTotals } from "./spending";
 
 /**
@@ -182,6 +182,83 @@ export function yearsWithInsights(db: AppDatabase, today: string = todayIso()): 
 
 export function yearInsights(db: AppDatabase, year: number, today: string = todayIso()): SurfaceInsights | null {
   return surfaceInsights(db, "year", yearInsightInput(db, year, today));
+}
+
+/** One spending figure the year measured, printed without a sentence around it. */
+export interface YearSpendingFigure {
+  /** the candidate it measures — the same string its sentence carries as `Insight.id` */
+  key: string;
+  kind: "total" | "change";
+  /** "Spent" · "Change from 2024" */
+  label: string;
+  /** a total is a magnitude; a change is signed, this window minus the prior one */
+  cents: number;
+  /** what the proof badge answers for, spoken in its accessible name */
+  subject: string;
+  provenance: Provenance | null;
+}
+
+export interface YearSpendingView {
+  windowLabel: string;
+  /** the direction note, and why there is no comparison — it defines the figure */
+  windowNote: string | null;
+  /** the sentences, only when they carry every figure below the switch */
+  insights: SurfaceInsights | null;
+  /** every measured figure no sentence carries — all of them when the switch is off */
+  figures: YearSpendingFigure[];
+}
+
+/**
+ * What `/summary/[year]` prints about spending, with the kill switch applied
+ * the way `/settings` promises it applies: the prose goes, the figures stay.
+ *
+ * 🔴 The page mounted `yearInsights` alone. The total and the change existed
+ * ONLY inside those two sentences — every other figure on the page is money in
+ * — so turning insights off, globally or "A year in review", took both figures
+ * and both badges off all five year pages. Measured on the owner's ledger
+ * 2026-09-15: /summary/2026 lost "$66,477.60" and "+$42,950.02" while
+ * InsightsManager read "Turning them off removes the prose and nothing else —
+ * every figure keeps its badge".
+ *
+ * ⛔ ONE measurement, two presentations. The figures come off the same
+ * `yearInsightInput` the sentences are written from, with the same proofs, so
+ * the plain figure and the sentence cannot disagree about a cent. Every figure
+ * is printed exactly once: the sentences stand in for the figures only when
+ * they carry ALL of them, and otherwise every figure is printed plainly — a
+ * sentence dropped as unprovable must not take its number with it.
+ */
+export function yearSpendingView(db: AppDatabase, year: number, today: string = todayIso()): YearSpendingView | null {
+  const input = yearInsightInput(db, year, today);
+  if (input === null) return null;
+  const window = { windowLabel: input.window.label, windowNote: input.window.note ?? null };
+
+  const insights = surfaceInsights(db, "year", input);
+  const said = new Set((insights?.insights ?? []).map((i) => i.id));
+  if (insights !== null && input.candidates.every((c) => said.has(candidateKey(c)))) {
+    return { ...window, insights, figures: [] };
+  }
+
+  const figures = input.candidates.flatMap((candidate): YearSpendingFigure[] => {
+    const fact = input.facts.find((f) => f.id === candidate.a);
+    const key = candidateKey(candidate);
+    if (fact?.kind === "scalar") {
+      return [{ key, kind: "total", label: "Spent", cents: fact.value, subject: fact.subject, provenance: candidate.prove() }];
+    }
+    if (fact?.kind === "delta") {
+      return [
+        {
+          key,
+          kind: "change",
+          label: `Change from ${fact.fromLabel}`,
+          cents: fact.value,
+          subject: `${fact.subject} change between ${fact.fromLabel} and ${fact.toLabel}`,
+          provenance: candidate.prove(),
+        },
+      ];
+    }
+    return [];
+  });
+  return { ...window, insights: null, figures };
 }
 
 /**
