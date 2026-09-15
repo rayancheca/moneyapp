@@ -287,3 +287,42 @@ describe("purchases a day divides by the window the sentence names", () => {
     expect(card.purchasesPerDay).toBe(1);
   });
 });
+
+/**
+ * 🔴 A NUMERATOR THAT FOLLOWS THE WINDOW AND A DENOMINATOR THAT DOES NOT — the
+ * defect `carCard` had and fixed ("DIVIDED BY THE WINDOW'S OWN MONTHS, not the
+ * constant"), still here. The spend was read over `baselineWindow`, which the
+ * ledger shortens, and divided by the constant 6. Replayed on the owner's
+ * ledger at today = 2022-12-15 (window Sep–Nov 2022): "$125.19 a month" of
+ * $751.13 — divided by 6, where the three months it names make it $250.38 —
+ * beside a runway caption saying "3 complete months, Sep 2022 to Nov 2022".
+ */
+describe("a window the ledger has shortened", () => {
+  const ledgerOpensOn = (day: string): void => {
+    bundle.db.update(transactions).set({ postedOn: day }).where(eq(transactions.id, "t-ledger-opens")).run();
+  };
+
+  test("divides by the months it names, not the constant six", () => {
+    ledgerOpensOn("2026-05-01"); // today 2026-08-26: May, Jun, Jul
+    addTxn("2026-06-10", -6000, "Dining");
+    addTxn("2026-07-10", -3000, "Groceries");
+
+    const card = eatingOutCard(bundle.db, TODAY)!;
+    expect(card.months).toBe(3);
+    expect(card.monthlyCents).toBe(2000);
+    expect(card.monthlyCents).not.toBe(1000);
+    expect(card.groceriesMonthlyCents).toBe(1000);
+  });
+
+  /* ⛔ ZERO MONTHS IS NOT A WINDOW. With no complete month the window falls back
+     to the CURRENT month, so every figure on the card was this month's running
+     spend under a caption saying this month is not counted — "Averaged over 0
+     complete months, Sep 2022" over 21 September purchases (today 2022-09-10). */
+  test("no complete month is no card", () => {
+    ledgerOpensOn("2026-08-01");
+    addTxn("2026-08-10", -6000, "Dining");
+    addTxn("2026-08-11", -3000, "Groceries");
+
+    expect(eatingOutCard(bundle.db, TODAY)).toBeNull();
+  });
+});

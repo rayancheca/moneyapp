@@ -453,13 +453,41 @@ export function heaviestMonthOutflowCents(occurrences: readonly CommittedOccurre
  * `pace-geometry` lives in `lib`.
  */
 export function baselineCaption(window: { months: number; fromMonth: string; toMonth: string }): string {
-  if (window.months < 1) {
+  const span = baselineSpan(window);
+  if (span === null) {
     return "No complete month has been imported yet, so there is no spending average to stand on.";
   }
-  const span = monthWindowLabel(window.fromMonth, window.toMonth);
-  return `Spending averaged over ${window.months} complete month${
-    window.months === 1 ? "" : "s"
-  }, ${span}. This month is still running and is not counted.`;
+  return `Spending averaged over ${span}. This month is still running and is not counted.`;
+}
+
+/**
+ * "6 complete months", "1 complete month", "4 months" — a month count whose noun
+ * agrees with it.
+ *
+ * 🔴 The eating-out and subscriptions captions printed `{months} complete
+ * months` against `baselineWindow`'s own count, so a one-month window read
+ * "Averaged over 1 complete months, Sep 2022" beside the runway card's "1
+ * complete month". Measured on the owner's ledger replayed at today =
+ * 2022-10-15. Months pluralise regularly; `countPhrase` is not borrowed for it.
+ */
+export function monthCount(months: number, adjective: string | null = null): string {
+  return `${months} ${adjective === null ? "" : `${adjective} `}month${months === 1 ? "" : "s"}`;
+}
+
+/**
+ * The phrase every caption uses to name `baselineWindow`: "6 complete months,
+ * Mar 2026 to Aug 2026" — or null, because ⛔ ZERO MONTHS IS NOT A RANGE (see
+ * `baselineCaption`). A card that gets null has no window to name and must say
+ * so, or not render.
+ *
+ * 🔴 Two captions beside the runway card spelled it themselves, and at today =
+ * 2022-09-10 on the owner's ledger read "Averaged over 0 complete months, Sep
+ * 2022" over twenty-one purchases every one of which was in September 2022 —
+ * the month the same sentence says it did not count.
+ */
+export function baselineSpan(window: { months: number; fromMonth: string; toMonth: string }): string | null {
+  if (window.months < 1) return null;
+  return `${monthCount(window.months, "complete")}, ${monthWindowLabel(window.fromMonth, window.toMonth)}`;
 }
 
 /**

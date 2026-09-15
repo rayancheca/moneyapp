@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import type { Cadence } from "@/db/schema/recurring";
 import {
   baselineCaption,
+  baselineSpan,
+  monthCount,
   endingLead,
   endingOthersClause,
   heaviestMonthOutflowCents,
@@ -620,5 +622,33 @@ describe("heaviestMonthOutflowCents", () => {
   test("money in does not lower a month", () => {
     const occurrences = [...occ("Lease", -69504, ["2026-09-15"], null), ...occ("Refund", 50000, ["2026-09-20"], null)];
     expect(heaviestMonthOutflowCents(occurrences)).toBe(69504);
+  });
+});
+
+describe("monthCount", () => {
+  test("the noun agrees with the count", () => {
+    expect(monthCount(6, "complete")).toBe("6 complete months");
+    expect(monthCount(1, "complete")).toBe("1 complete month");
+    expect(monthCount(4)).toBe("4 months");
+    expect(monthCount(1)).toBe("1 month");
+  });
+});
+
+/**
+ * The window phrase every caption beside the runway card reads. Two of them
+ * spelled it themselves and, replayed on the owner's ledger, printed "Averaged
+ * over 0 complete months, Sep 2022" (today 2022-09-10) and "1 complete months"
+ * (today 2022-10-15).
+ */
+describe("baselineSpan", () => {
+  test("names the count and the months", () => {
+    expect(baselineSpan({ months: 6, fromMonth: "2026-03", toMonth: "2026-08" })).toBe(
+      "6 complete months, Mar 2026 to Aug 2026",
+    );
+    expect(baselineSpan({ months: 1, fromMonth: "2022-09", toMonth: "2022-09" })).toBe("1 complete month, Sep 2022");
+  });
+
+  test("zero months is not a range", () => {
+    expect(baselineSpan({ months: 0, fromMonth: "2022-09", toMonth: "2022-09" })).toBeNull();
   });
 });

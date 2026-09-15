@@ -1,5 +1,6 @@
 import type { AppDatabase } from "@/db/client";
 import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { monthCount } from "@/lib/committed";
 import { formatMonthYear, monthWindowLabel } from "@/lib/format-date";
 import { ledgerHref } from "@/lib/ledger-href";
 import { formatCents } from "@/lib/money";
@@ -363,7 +364,6 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
   const cats = feeCategories(idx);
   if (!cats) return null;
 
-  const months = SPEND_BASELINE_MONTHS;
   const currentMonth = monthKey(today);
   // the window runs to the last day BEFORE the current month begins, so the
   // incomplete current month is never read — the runway card's own convention
@@ -372,7 +372,22 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
    * the ledger covers in full. Building it from the constant alone let a young
    * ledger put two different windows in two captions on one dashboard.
    */
-  const window = baselineWindow(db, today, months);
+  const window = baselineWindow(db, today, SPEND_BASELINE_MONTHS);
+  /*
+   * ⛔ ZERO MONTHS IS NOT A WINDOW: with no complete month `baselineWindow`
+   * falls back to the CURRENT month, and the "recent" half below would be this
+   * month's running rows under sentences about complete months.
+   */
+  if (window.months < 1) return null;
+  /*
+   * 🔴 THE WINDOW'S OWN MONTHS, not the constant. The rows were read over
+   * `window` and the count, the rates and every sentence used
+   * `SPEND_BASELINE_MONTHS`. Replayed on the owner's ledger at today =
+   * 2023-01-15 (window Sep–Dec 2022, `months` field 4): "$0.62 went out in fees
+   * over the 6 complete months Sep 2022 to Dec 2022", headline "over the 6
+   * months to Dec 2022", and $0.10 a month where the four months make it $0.16.
+   */
+  const months = window.months;
   const { fromMonth, toMonth } = window;
   const recentFrom = `${fromMonth}-01`;
   const recentTo = lastDayOf(toMonth);
@@ -559,8 +574,8 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
     allTime.earnedPerDollarCents === null
       ? null
       : recent.earnedPerDollarCents === null
-        ? `Across the whole ledger they have paid you ${formatCents(allTime.earnedPerDollarCents)} for every $1 you paid them; over the ${months} months here you paid them nothing at all.`
-        : `${formatCents(recent.earnedPerDollarCents)} back for every $1 in fees over these ${months} months, against ${formatCents(allTime.earnedPerDollarCents)} across the whole ledger.`;
+        ? `Across the whole ledger they have paid you ${formatCents(allTime.earnedPerDollarCents)} for every $1 you paid them; over the ${monthCount(months)} here you paid them nothing at all.`
+        : `${formatCents(recent.earnedPerDollarCents)} back for every $1 in fees over ${months === 1 ? "that 1 month" : `these ${months} months`}, against ${formatCents(allTime.earnedPerDollarCents)} across the whole ledger.`;
 
   /* ── the headline, and which window it describes ─────────────────────── */
   const basis = recent.rowCount === 0 ? "allTime" : "recent";
@@ -568,7 +583,7 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
   const toLabel = formatMonthYear(`${toMonth}-01`);
   const windowLabel = monthWindowLabel(fromMonth, toMonth);
   const spanLabel =
-    basis === "recent" ? `over the ${months} months to ${toLabel}` : `since ${formatMonthYear(firstOn)}`;
+    basis === "recent" ? `over the ${monthCount(months)} to ${toLabel}` : `since ${formatMonthYear(firstOn)}`;
 
   const headlineNoun =
     shown.direction === "level"
@@ -586,7 +601,7 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
   const reversed = comparable && recent.direction !== allTime.direction;
   const allTimeLead =
     basis === "allTime"
-      ? `Nothing at all has been charged or paid in the last ${months} complete months.`
+      ? `Nothing at all has been charged or paid in the last ${monthCount(months, "complete")}.`
       : !comparable
         ? // ⛔ a window that came out exactly level runs neither the same way nor
           // the other way, and claiming either would be the card asserting a
@@ -599,7 +614,7 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
   const summary =
     basis === "allTime"
       ? `${allTimeLead} From ${formatMonthYear(firstOn)} the ledger holds ${formatCents(allTime.paidCents)} of fees against ${formatCents(allTime.earnedCents)} of interest, so ${standingClause(allTime)}.`
-      : `${formatCents(recent.paidCents)} went out in fees over the ${months} complete months ${windowLabel}, across every account, against ${formatCents(recent.earnedCents)} of interest back. ${allTimeLead} from ${formatMonthYear(firstOn)} the ledger holds ${formatCents(allTime.earnedCents)} of interest against ${formatCents(allTime.paidCents)} of fees, so ${standingClause(allTime)}.`;
+      : `${formatCents(recent.paidCents)} went out in fees over the ${monthCount(months, "complete")} ${windowLabel}, across every account, against ${formatCents(recent.earnedCents)} of interest back. ${allTimeLead} from ${formatMonthYear(firstOn)} the ledger holds ${formatCents(allTime.earnedCents)} of interest against ${formatCents(allTime.paidCents)} of fees, so ${standingClause(allTime)}.`;
 
   return {
     basis,

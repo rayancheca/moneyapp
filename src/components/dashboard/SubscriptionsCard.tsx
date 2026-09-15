@@ -3,7 +3,7 @@ import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { formatCents } from "@/lib/money";
-import { monthWindowLabel } from "@/lib/format-date";
+import { baselineSpan } from "@/lib/committed";
 import type { SubscriptionLine, SubscriptionsCard as SubscriptionsCardData } from "@/services/subscriptions-card";
 
 /**
@@ -63,6 +63,8 @@ export function SubscriptionsCard({ data }: { data: SubscriptionsCardData }) {
     fromMonth,
     toMonth,
   } = data;
+  // null when the ledger holds no complete month — see `baselineSpan`
+  const span = baselineSpan({ months, fromMonth, toMonth });
 
   return (
     <SurfaceCard>
@@ -189,9 +191,12 @@ export function SubscriptionsCard({ data }: { data: SubscriptionsCardData }) {
       <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
         {/* ⛔ `monthWindowLabel` — see EatingOutCard: three cards on this screen
             printed the raw month key beside two that did not. */}
-        Together these took {formatCents(postedCents)} out across {postedCount} charges over {months} complete
-        months, {monthWindowLabel(fromMonth, toMonth)}, refunds netted off. That is a total, not a rate — a bill
-        that started or ended inside the window did not charge for all of it.
+        {/* ⛔ `baselineSpan`, the runway caption's phrase. Spelled here it read
+            "over 0 complete months, Sep 2022" and "1 complete months" on a
+            young ledger (replayed at today 2022-09-10 and 2022-10-15). */}
+        {span === null
+          ? "No complete month has been imported yet, so nothing here has been totalled from the charges themselves."
+          : `Together these took ${formatCents(postedCents)} out across ${postedCount} charges over ${span}, refunds netted off. That is a total, not a rate — a bill that started or ended inside the window did not charge for all of it.`}
         {unforecastableCount > 0 &&
           ` ${unforecastableCount} more ${unforecastableCount === 1 ? "has" : "have"} no expected amount or no expected date, so nothing could be levelled from ${unforecastableCount === 1 ? "it" : "them"}.`}
         {/* ⛔ A separate sentence: an ended commitment has both an amount and a

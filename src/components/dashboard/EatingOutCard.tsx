@@ -3,7 +3,7 @@ import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { formatCents } from "@/lib/money";
-import { monthWindowLabel } from "@/lib/format-date";
+import { baselineSpan } from "@/lib/committed";
 import type { EatingOutCard as EatingOutCardData } from "@/services/eating-out";
 
 /**
@@ -139,8 +139,11 @@ export function EatingOutCard({ data }: { data: EatingOutCardData }) {
         {/* ⛔ `monthWindowLabel`, not the raw keys. The fees and transfers cards
             on this same screen name the identical window "Mar 2026 to Aug
             2026"; this one said "2026-03 to 2026-08". */}
-        That is {purchasesPerDay.toFixed(1)} purchases a day. Averaged over {months} complete months,{" "}
-        {monthWindowLabel(fromMonth, toMonth)}. This month is still running and is not counted.
+        {/* ⛔ `baselineSpan`, the runway caption's phrase — "1 complete months"
+            was this caption's own spelling. The service returns no card for a
+            window of zero months, so the span is never null here. */}
+        That is {purchasesPerDay.toFixed(1)} purchases a day. Averaged over{" "}
+        {baselineSpan({ months, fromMonth, toMonth })}. This month is still running and is not counted.
       </p>
     </SurfaceCard>
   );

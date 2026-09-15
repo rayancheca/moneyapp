@@ -139,6 +139,15 @@ export function eatingOutCard(
    * young ledger put two different windows in two captions on one dashboard.
    */
   const window = baselineWindow(db, today, months);
+  /*
+   * ⛔ ZERO MONTHS IS NOT A WINDOW. `baselineWindow` falls back to the CURRENT
+   * month for its bounds when the ledger holds no complete one, so every figure
+   * below would be this month's running spend under a caption that says this
+   * month is not counted. Replayed on the owner's ledger at today = 2022-09-10:
+   * "Averaged over 0 complete months, Sep 2022" over 21 purchases, all of them
+   * in September 2022. A card of this month is not this card.
+   */
+  if (window.months < 1) return null;
   const { fromMonth, toMonth, from } = window;
   // the month's real last day — `${toMonth}-31` worked as a string upper bound
   // but is not a date, and the day count below has to be able to trust it
@@ -158,8 +167,15 @@ export function eatingOutCard(
 
   const totalSpentCents = eatingOut.reduce((s, l) => s + l.spentCents, 0);
   const totalCount = eatingOut.reduce((s, l) => s + l.count, 0);
-  const monthlyCents = Math.round(totalSpentCents / months);
-  const groceriesMonthlyCents = Math.round(groceries.spentCents / months);
+  /*
+   * ⛔ DIVIDED BY THE WINDOW'S OWN MONTHS, not the constant — `carCard`'s rule,
+   * for the same reason. The rows above were read over `window`, which the
+   * ledger shortens; dividing them by `months` (6) published "$125.19 a month"
+   * of $751.13 read over THREE months, replayed on the owner's ledger at
+   * today = 2022-12-15, where the months the caption names make it $250.38.
+   */
+  const monthlyCents = Math.round(totalSpentCents / window.months);
+  const groceriesMonthlyCents = Math.round(groceries.spentCents / window.months);
 
   /*
    * Days in the window the sentence NAMES — calendar days, not transaction days,

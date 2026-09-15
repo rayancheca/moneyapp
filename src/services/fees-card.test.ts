@@ -728,3 +728,55 @@ describe("feesCard", () => {
     expect(card.today).toBe(TODAY);
   });
 });
+
+/**
+ * 🔴 The fees card read `baselineWindow` for its rows and printed the CONSTANT
+ * for its count. Replayed on the owner's ledger at today = 2023-01-15 (window
+ * Sep–Dec 2022, `card.months` 4): "$0.62 went out in fees over the 6 complete
+ * months Sep 2022 to Dec 2022", headline "over the 6 months to Dec 2022", and
+ * $0.10 a month where the four months named make it $0.16.
+ */
+describe("a window the ledger has shortened", () => {
+  const ledgerOpensOn = (day: string): void => {
+    bundle.db.update(transactions).set({ postedOn: day }).where(eq(transactions.id, "t-ledger-opens")).run();
+  };
+
+  test("names and divides by the months it read", () => {
+    ledgerOpensOn("2026-04-01"); // today 2026-08-27: Apr, May, Jun, Jul
+    fee("2026-05-10", 1200);
+
+    const card = feesCard(bundle.db, TODAY)!;
+    expect(card.months).toBe(4);
+    expect(card.paidMonthlyCents).toBe(300);
+    expect(card.summary).toContain("over the 4 complete months Apr 2026 to Jul 2026");
+    expect(card.summary).not.toContain("6 complete months");
+    expect(card.headlineNoun).toContain("over the 4 months to Jul 2026");
+  });
+
+  test("one month is one month", () => {
+    ledgerOpensOn("2026-07-01");
+    fee("2026-07-10", 1200);
+    interest("2026-07-11", 100);
+
+    const card = feesCard(bundle.db, TODAY)!;
+    expect(card.summary).toContain("over the 1 complete month Jul 2026");
+    expect(card.headlineNoun).toContain("over the 1 month to Jul 2026");
+    expect(card.ratioNote).toContain("over that 1 month");
+  });
+
+  test("nothing in a shortened window says the months it looked at", () => {
+    ledgerOpensOn("2026-06-01");
+    fee("2026-08-10", 1200); // this month — outside the window
+
+    expect(feesCard(bundle.db, TODAY)!.summary).toContain("in the last 2 complete months");
+  });
+
+  /* ⛔ ZERO MONTHS IS NOT A WINDOW: the "recent" half would be this month's
+     running rows under a sentence about complete months. */
+  test("no complete month is no card", () => {
+    ledgerOpensOn("2026-08-01");
+    fee("2026-08-10", 1200);
+
+    expect(feesCard(bundle.db, TODAY)).toBeNull();
+  });
+});
