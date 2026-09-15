@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -12,6 +12,22 @@ import { seedDatabase } from "@/db/seed";
 import { candidateKey } from "./insights";
 import { writeSetting } from "./settings";
 import { yearInsightInput, yearInsights, yearSpendingView } from "./year-insights";
+
+/**
+ * One proof a test can refuse: the year-on-year comparison's, and nothing else.
+ * `runInsights` drops a candidate whose `prove()` comes back null, so this is
+ * the way to reach a pool the switch left PARTLY said. Real proofs otherwise.
+ */
+const proofs = vi.hoisted(() => ({ refuseComparison: false }));
+vi.mock("./provenance", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./provenance")>();
+  const provenanceFor: typeof actual.provenanceFor = (db, ref) =>
+    proofs.refuseComparison && ref.kind === "allSpend" && ref.against !== undefined ? null : actual.provenanceFor(db, ref);
+  return { ...actual, provenanceFor };
+});
+beforeEach(() => {
+  proofs.refuseComparison = false;
+});
 
 /**
  * The three gates that decide whether a year gets a spending sentence at all,
@@ -495,6 +511,32 @@ describe("yearSpendingView — turning insights off removes the prose and never 
       expect(carried(2025)).toEqual(measured(2025));
     });
   }
+
+  /**
+   * ⛔ THE PARTIAL POOL. Insights on can still say only SOME of what the year
+   * measured: `runInsights` drops a candidate it cannot prove. The sentences
+   * stand in for the figures only when they carry every one of them — a guard
+   * asking whether they carry SOME would print "Spending in 2025 came to
+   * $150.00." and take the change and its badge off the page. Mutating `every`
+   * to `some` in `yearSpendingView` left every test green (measured 2026-09-15).
+   */
+  test("on, with the change's sentence unprovable: the change is not taken off the page with it", () => {
+    seedTwoYears();
+    proofs.refuseComparison = true;
+    // the switch is on and one sentence survives — the state the guard is for
+    expect(yearInsights(bundle.db, 2025)!.insights.map((i) => i.text)).toEqual(["Spending in 2025 came to $150.00."]);
+
+    const v = yearSpendingView(bundle.db, 2025)!;
+    expect(v.insights).toBeNull();
+    expect(v.figures.map((f) => [f.label, f.cents])).toEqual([
+      ["Spent", 15_000],
+      ["Change from 2024", 5_000],
+    ]);
+    // the total keeps the proof its sentence had; the change has none to show
+    expect(v.figures[0]!.provenance).not.toBeNull();
+    expect(v.figures[1]!.provenance).toBeNull();
+    expect(carried(2025)).toEqual(measured(2025));
+  });
 
   test("off on a year with no comparison keeps its total and its reason for no change", () => {
     const a = addAccount("a");
