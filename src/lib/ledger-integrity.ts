@@ -143,6 +143,46 @@ export type LedgerFailure = {
  */
 export const VALUE_ANCHOR_TOLERANCE_CENTS = 1;
 
+/** One day of the app's own valuation of an account (`portfolioSeries`'s points). */
+export interface ValuedDay {
+  day: string;
+  valueCents: number;
+}
+
+/**
+ * The app's answer for an account on a statement's day — `derivedCents`.
+ *
+ * ⚠️ OUTSIDE the book is zero; INSIDE it and missing is unknown.
+ *
+ * `portfolioSeries` starts on the account's first holding day, so a statement
+ * that predates it is a statement from before anything was held — and the
+ * app's answer for that day is $0.00, not "no idea". Reporting it as unvalued
+ * made seven $0.00 anchors on Robinhood Crypto read as findings when the two
+ * sides agreed exactly. A gap in the MIDDLE of the book is a different thing
+ * and stays unknown.
+ *
+ * ⛔ `null` for the series means the app does not value this account AT ALL,
+ * and that is not an empty book. Both arrive from `portfolioSeries` as zero
+ * points; only the caller knows which it asked. Measured on a copy of the
+ * owner's ledger (2026-09-15): a deactivated Robinhood Brokerage read as an
+ * empty book valued every one of its 25 statements at $0.00 — 21 drifts the
+ * size of the whole printed amount.
+ */
+export function statementDayValuation(
+  series: readonly ValuedDay[] | null,
+): (day: string) => number | null {
+  if (series === null) return () => null;
+  const byDay = new Map(series.map((p) => [p.day, p.valueCents]));
+  const first = series[0]?.day ?? null;
+  const last = series[series.length - 1]?.day ?? null;
+  return (day) => {
+    const hit = byDay.get(day);
+    if (hit !== undefined) return hit;
+    if (first === null || last === null) return 0;
+    return day < first || day > last ? 0 : null;
+  };
+}
+
 /**
  * Every anchor whose two sides disagree by more than a cent.
  *

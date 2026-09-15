@@ -38,8 +38,9 @@ import {
   findChainBreaks,
   findValueAnchorDrift,
   formatLedgerFailures,
+  statementDayValuation,
 } from "@/lib/ledger-integrity";
-import { portfolioSeries } from "@/services/portfolio";
+import { investmentAccounts, portfolioSeries } from "@/services/portfolio";
 import { formatCents } from "@/lib/money";
 
 /**
@@ -283,27 +284,18 @@ console.log(`stale verdicts: ${staleVerdicts.length}`);
  * anchors imported yet simply contributes nothing.
  */
 const anchors: ValueAnchor[] = [];
+/*
+ * ⛔ The app values ACTIVE investment accounts only — `investmentAccounts` is the
+ * rule `portfolioSeries` scopes by — and for any other it returns no points,
+ * which reads exactly like a book that never held anything. Asking it about a
+ * deactivated account and trusting the empty answer valued all 25 Robinhood
+ * Brokerage statements at $0.00 (measured on a copy, 2026-09-15).
+ */
+const valuedByApp = new Set(investmentAccounts(db).map((a) => a.id));
 for (const account of accounts.filter((a) => a.type === "investment")) {
-  const points = portfolioSeries(db, [account.id]);
-  const series = new Map(points.map((p) => [p.day, p.valueCents]));
-  /*
-   * ⚠️ OUTSIDE the book is zero; INSIDE it and missing is unknown.
-   *
-   * `portfolioSeries` starts on the account's first holding day, so a statement
-   * that predates it is a statement from before anything was held — and the
-   * app's answer for that day is $0.00, not "no idea". Reporting it as unvalued
-   * made seven $0.00 anchors on Robinhood Crypto read as findings when the two
-   * sides agreed exactly. A gap in the MIDDLE of the book is a different thing
-   * and stays unknown.
-   */
-  const first = points[0]?.day ?? null;
-  const last = points[points.length - 1]?.day ?? null;
-  const derivedOn = (day: string): number | null => {
-    const hit = series.get(day);
-    if (hit !== undefined) return hit;
-    if (first === null || last === null) return 0;
-    return day < first || day > last ? 0 : null;
-  };
+  const derivedOn = statementDayValuation(
+    valuedByApp.has(account.id) ? portfolioSeries(db, [account.id]) : null,
+  );
   const periods = sqlite
     .prepare(
       `SELECT period_end e, ending_balance_cents c FROM statement_periods

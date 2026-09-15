@@ -8,6 +8,7 @@ import {
   findChainBreaks,
   findValueAnchorDrift,
   formatLedgerFailures,
+  statementDayValuation,
 } from "./ledger-integrity";
 
 const pair = (from: string, to: string, fromCents: number, movementCents: number, toCents: number) => ({
@@ -327,6 +328,48 @@ describe("findValueAnchorDrift", () => {
   it("the tolerance is a parameter, and one cent is what it defaults to", () => {
     expect(VALUE_ANCHOR_TOLERANCE_CENTS).toBe(1);
     expect(findValueAnchorDrift([anchor({ derivedCents: 775_539 - 50 })], 50).drifts).toEqual({});
+  });
+});
+
+/**
+ * What the app says an investment account was worth on a statement's day.
+ *
+ * ⛔ Measured on a copy of the owner's ledger (2026-09-15): deactivating
+ * Robinhood Brokerage made `portfolioSeries` return no points for it — the app
+ * values active accounts only — and the check read "no points" as "nothing was
+ * ever held". All 25 of its statements were valued at $0.00: 21 new drifts each
+ * the size of the whole printed amount (-$72,959.32 on 2026-08-31), the total
+ * loss `findValueAnchorDrift` exists never to report.
+ */
+describe("statementDayValuation", () => {
+  const book = [
+    { day: "2026-07-31", valueCents: 6_766_164 },
+    { day: "2026-08-01", valueCents: 6_771_002 },
+    { day: "2026-08-31", valueCents: 7_306_557 },
+  ];
+
+  it("inside the book, the day's own valuation", () => {
+    expect(statementDayValuation(book)("2026-08-31")).toBe(7_306_557);
+    expect(statementDayValuation(book)("2026-07-31")).toBe(6_766_164);
+  });
+
+  it("before the book begins or after it ends, nothing was held — $0.00, not unknown", () => {
+    expect(statementDayValuation(book)("2026-06-30")).toBe(0);
+    expect(statementDayValuation(book)("2026-09-30")).toBe(0);
+  });
+
+  it("a day missing from the MIDDLE of the book is unknown", () => {
+    expect(statementDayValuation(book)("2026-08-15")).toBeNull();
+  });
+
+  it("a valued account with an empty book held nothing on any day", () => {
+    expect(statementDayValuation([])("2026-08-31")).toBe(0);
+  });
+
+  it("an account the app does not value has no answer on any day — never $0.00", () => {
+    const valuationOn = statementDayValuation(null);
+    expect(valuationOn("2026-08-31")).toBeNull();
+    expect(valuationOn("2024-08-31")).toBeNull();
   });
 });
 
