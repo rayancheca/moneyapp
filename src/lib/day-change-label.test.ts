@@ -159,6 +159,33 @@ describe("closesDayChange — a set of per-holding moves, dated by their OWN clo
     });
   });
 
+  test("closes the rule gives ONE name are one date — Monday's stocks beside a coin closed Sunday", () => {
+    // 🔴 Grouped by the raw pair, this read heading "Day change" and "today" on
+    // every item: `dayChangeLabel` calls any pair whose newest close is today
+    // "Today", whatever close came before it. Measured on the real ledger read
+    // on Mon 2026-09-14: all ten held rows gave "Today" alone, the set gave
+    // "Day change" with "today" ×10.
+    const monday = [pair("2026-09-14", "2026-09-11"), pair("2026-09-14", "2026-09-13")];
+    expect(call(monday, "2026-09-14")).toEqual({
+      heading: { label: "Today", interval: null },
+      terms: [null, null],
+    });
+    // …but "today" and a dated pair are still two names
+    expect(call([pair("2026-09-14", "2026-09-11"), pair("2026-09-12", "2026-09-11")], "2026-09-14")).toEqual({
+      heading: { label: "Day change", interval: null },
+      terms: ["today", "Sep 12 vs Sep 11"],
+    });
+  });
+
+  test("a pair spelled alike in another year is another pair", () => {
+    // `formatDayShort` prints no year, so a set keyed on the SPELLING would let
+    // the heading name "Sep 14 vs Sep 11" over a close a year older
+    expect(call([pair("2026-09-14", "2026-09-11"), pair("2025-09-14", "2025-09-11")], "2026-09-15").heading).toEqual({
+      label: "Day change",
+      interval: null,
+    });
+  });
+
   test("an item without two closes neither breaks the shared date nor is given one", () => {
     // an unpriced holding already prints no figure; counting it as a disagreement
     // would un-date every priced row beside it

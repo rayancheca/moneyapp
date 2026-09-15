@@ -64,6 +64,20 @@ describe("TopMovers names the closes each move was measured between", () => {
     expect(html).toMatch(/COKE[\s\S]*Sep 14 vs Sep 11/);
   });
 
+  test("read on Monday, a coin's Sunday close does not take 'Today' off the strip and put it on every chip", () => {
+    // 🔴 Measured on the real ledger read on Mon 2026-09-14: "Top movers · Day
+    // change … COKE ▲ +5.77% today WMT ▲ +3.36% today MSFT ▲ +2.98% today ETH ▲
+    // +2.26% today". Every move closed today; the rule names them all "Today".
+    const html = render(
+      [mover("COKE", 5.77, "2026-09-14", "2026-09-11"), mover("ETH", 2.26, "2026-09-14", "2026-09-13", "crypto")],
+      [mover("AAPL", -0.27, "2026-09-14", "2026-09-11")],
+      "2026-09-14",
+    );
+    expect(html).not.toContain("Day change");
+    // said once, at the top
+    expect(html.match(/today/gi)).toEqual(["Today"]);
+  });
+
   test("closes quoted today keep the word the e2e fixture renders, with no dates", () => {
     const html = render(
       [mover("AAPL", 1.5, "2026-07-08", "2026-07-07")],

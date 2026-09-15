@@ -95,10 +95,16 @@ export function PortfolioHoldingsTable({
 }: {
   rows: HoldingRow[];
   /**
-   * What to call the day-change column of the subtotal bar — "Today" only when
-   * the closes behind these rows are today's. Resolved by the page from
-   * `dayChangeLabel`, so this bar, the header stat, and the price-age note all
-   * agree about how old the numbers are.
+   * What to call the day-change column of the subtotal bar. Resolved by the
+   * page with `closesDayChange` over these rows' OWN two closes: "Today" when
+   * every priced row's newest close is today's, "Last close" when every priced
+   * row shares one pair of closes, and "Day change" when they differ.
+   *
+   * ⛔ Deliberately NOT the header stat's label. That stat measures the
+   * portfolio series, which is carried past the newest close: on Tue
+   * 2026-09-15 it read "Today $0.00" while every row here had moved between
+   * Fri Sep 11 (ETH: Sun Sep 13) and Mon Sep 14. Handing this bar the header's
+   * label is how a Friday→Monday move came to be called "Today".
    *
    * A bare label, never an interval: the selection can span holdings with
    * different `quotedOn` dates, so no single pair of days describes them all.
