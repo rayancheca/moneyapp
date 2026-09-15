@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { and, eq, gte, inArray, isNull, lte, max, min, ne, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lte, max, min, ne, or, sql } from "drizzle-orm";
 import { withPreMutationSnapshot } from "@/db/backup";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
@@ -24,6 +24,7 @@ import { categorizeAll, detectTransfers } from "../categorize";
 import { rebuildAccount } from "../derivation";
 import { flagDuplicateCandidates } from "../duplicate-flags";
 import { linkRowsMadeActive, settleSeriesStats } from "../recurring-import-links";
+import { detachTransferLegs, type StaleTransferLeg } from "../transfer-links";
 import { accountsOfTransactions, restoreDuplicatesLosingTheirSurvivor } from "../duplicate-lifecycle";
 import { accountSlug, institutionSlug } from "./account-slug";
 import { sniffFile } from "./sniff";
@@ -230,10 +231,19 @@ interface CarryRow extends CarryAttributes {
   id: string;
   dedupeHash: string;
   normalizedDescription: string;
+  transactedOn: string | null;
 }
 
-/** Carryable rows bucketed by (account, day, amount) — the money's identity. */
-type CarryPool = Map<string, CarryRow[]>;
+/**
+ * Carryable rows bucketed by (account, day, amount) — the money's identity —
+ * under the day each was POSTED and, when it has one, the day it was
+ * TRANSACTED. One claim per old row, whichever index found it.
+ */
+interface CarryPool {
+  byPosted: Map<string, CarryRow[]>;
+  byTransacted: Map<string, CarryRow[]>;
+  taken: Set<string>;
+}
 
 function carryKey(accountId: string, postedOn: string, amountCents: number): string {
   return `${accountId}\x1f${postedOn}\x1f${amountCents}`;
@@ -281,7 +291,7 @@ function hasCarryableAttributes(row: CarryRow): boolean {
  * it the rows are `superseded` and every lookup path skips them.
  */
 function captureCarryForward(db: AppDatabase, oldFileIds: readonly string[]): CarryPool {
-  const pool: CarryPool = new Map();
+  const pool: CarryPool = { byPosted: new Map(), byTransacted: new Map(), taken: new Set() };
   if (oldFileIds.length === 0) return pool;
   const rows = db
     .select()
@@ -298,14 +308,22 @@ function captureCarryForward(db: AppDatabase, oldFileIds: readonly string[]): Ca
   const splitCounts = splitCountsByTxn(db, rows.map((r) => r.id));
   for (const row of rows) {
     if (!hasCarryableAttributes(row) && (splitCounts.get(row.id) ?? 0) === 0) continue;
-    const key = carryKey(row.accountId, row.postedOn, row.amountCents);
-    const bucket = pool.get(key);
-    if (bucket) bucket.push(row);
-    else pool.set(key, [row]);
+    bucketCarry(pool.byPosted, carryKey(row.accountId, row.postedOn, row.amountCents), row);
+    if (row.transactedOn !== null) {
+      bucketCarry(pool.byTransacted, carryKey(row.accountId, row.transactedOn, row.amountCents), row);
+    }
   }
   // deterministic order so two runs consume identical buckets identically
-  for (const bucket of pool.values()) bucket.sort((a, b) => a.id.localeCompare(b.id));
+  for (const map of [pool.byPosted, pool.byTransacted]) {
+    for (const bucket of map.values()) bucket.sort((a, b) => a.id.localeCompare(b.id));
+  }
   return pool;
+}
+
+function bucketCarry(map: Map<string, CarryRow[]>, key: string, row: CarryRow): void {
+  const bucket = map.get(key);
+  if (bucket) bucket.push(row);
+  else map.set(key, [row]);
 }
 
 /**
@@ -314,23 +332,35 @@ function captureCarryForward(db: AppDatabase, oldFileIds: readonly string[]): Ca
  * the description differently; the description only RANKS candidates when a day
  * holds several equal amounts. Multiset consumption: each old row's attributes
  * migrate onto at most one successor.
+ *
+ * Posted day first, then transaction day to transaction day — the fallback
+ * `consumeIdentity` already makes, for the same reason: a card statement prints
+ * the TRANSACTION day. 🔴 Keyed on the posted day alone, Chase Sapphire's
+ * +$100.00 payment (posted 2026-07-01, transacted and printed 06/30) lost its
+ * transfer link and its note to a version bump of 20260702-statements-9805-.pdf,
+ * and Chase Checking's −$100.00 was left grouped with a superseded row while
+ * `ledger-check` exited 0 (measured on a copy of the real ledger, 2026-09-15).
+ * Exact days only, never a window: a window would hand one charge's work to a
+ * neighbouring charge of the same amount.
  */
 function takeCarry(pool: CarryPool, accountId: string, t: CanonicalTxn, hash: string): CarryRow | null {
-  const key = carryKey(accountId, t.postedOn, t.amountCents);
-  const bucket = pool.get(key);
-  if (!bucket || bucket.length === 0) return null;
   const incoming = normalizeDescription(t.rawDescription);
-  const ranked = bucket
-    .map((row, index) => ({
-      row,
-      index,
-      // an unchanged dedupe hash is proof of the same parsed row
-      score: row.dedupeHash === hash ? 4 : descriptionScore(row.normalizedDescription, incoming),
-    }))
-    .sort((a, b) => b.score - a.score || a.row.id.localeCompare(b.row.id));
-  const winner = ranked[0]!;
-  bucket.splice(winner.index, 1);
-  return winner.row;
+  const claim = (bucket: readonly CarryRow[] | undefined): CarryRow | null => {
+    const open = (bucket ?? []).filter((row) => !pool.taken.has(row.id));
+    if (open.length === 0) return null;
+    const winner = open
+      .map((row) => ({
+        row,
+        // an unchanged dedupe hash is proof of the same parsed row
+        score: row.dedupeHash === hash ? 4 : descriptionScore(row.normalizedDescription, incoming),
+      }))
+      .sort((a, b) => b.score - a.score || a.row.id.localeCompare(b.row.id))[0]!.row;
+    pool.taken.add(winner.id);
+    return winner;
+  };
+  const posted = claim(pool.byPosted.get(carryKey(accountId, t.postedOn, t.amountCents)));
+  if (posted !== null || t.transactedOn === undefined) return posted;
+  return claim(pool.byTransacted.get(carryKey(accountId, t.transactedOn, t.amountCents)));
 }
 
 /**
@@ -1434,6 +1464,52 @@ export function migrateStorageLayout(db: AppDatabase, opts: { move: boolean }): 
   return results;
 }
 
+/** Group ids per query — well under SQLite's bound-parameter limit. */
+const GROUP_ID_CHUNK = 500;
+
+/**
+ * The transfer legs deleting a file's rows would leave ALONE in their group:
+ * live rows outside the file whose group keeps exactly one of them.
+ *
+ * 🔴 Un-importing deleted the rows and left their partners pointing at a group
+ * with no second leg, and `detectTransfers` pairs only rows whose group IS
+ * NULL — so a re-import never paired them again. Measured on a copy of the real
+ * ledger, 2026-09-15: un-importing and re-importing 20260702 + 20260302 took
+ * the single-leg groups 23 → 34, eight of them Chase Checking card payments
+ * whose Sapphire leg had been deleted. A group that keeps two or more legs
+ * outside the file is still a group, and is left alone.
+ */
+function legsLeftAloneBy(tx: AppDatabase, importFileId: string): StaleTransferLeg[] {
+  const groupIds = [
+    ...new Set(
+      tx
+        .select({ groupId: transactions.transferGroupId })
+        .from(transactions)
+        .where(and(eq(transactions.importFileId, importFileId), isNotNull(transactions.transferGroupId)))
+        .all()
+        .map((r) => r.groupId!),
+    ),
+  ];
+  const alone: StaleTransferLeg[] = [];
+  for (let i = 0; i < groupIds.length; i += GROUP_ID_CHUNK) {
+    const outside = tx
+      .select({ id: transactions.id, transferGroupId: transactions.transferGroupId })
+      .from(transactions)
+      .where(
+        and(
+          inArray(transactions.transferGroupId, groupIds.slice(i, i + GROUP_ID_CHUNK)),
+          ne(transactions.status, "superseded"),
+          or(isNull(transactions.importFileId), ne(transactions.importFileId, importFileId)),
+        ),
+      )
+      .all();
+    const byGroup = new Map<string, StaleTransferLeg[]>();
+    for (const leg of outside) byGroup.set(leg.transferGroupId!, [...(byGroup.get(leg.transferGroupId!) ?? []), leg]);
+    for (const legs of byGroup.values()) if (legs.length === 1) alone.push(legs[0]!);
+  }
+  return alone;
+}
+
 /** Un-import: removes a file's contributions atomically; derived state rebuilt. */
 export function unimportFile(db: AppDatabase, importFileId: string): void {
   const file = db.select().from(importFiles).where(eq(importFiles.id, importFileId)).get();
@@ -1471,6 +1547,9 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
       // on its own, and a later failure would leave rows restored beside
       // survivors that were never deleted — the double count, from the fix.
       restored = restoreDuplicatesLosingTheirSurvivor(tx, doomed);
+      // after the restore (a restored twin is a live leg) and before the delete
+      // (the rows naming the groups are still here to be read)
+      detachTransferLegs(tx, legsLeftAloneBy(tx, importFileId));
       tx.delete(transactions).where(eq(transactions.importFileId, importFileId)).run();
       tx.delete(balanceAnchors).where(eq(balanceAnchors.importFileId, importFileId)).run();
       // anchors owned by OTHER files may reference this file's periods — detach

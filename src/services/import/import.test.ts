@@ -7,6 +7,8 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
+import { institutions } from "@/db/schema/institutions";
+import { createAccount } from "@/services/accounts";
 import { recurringSeries } from "@/db/schema/recurring";
 import { statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
@@ -264,6 +266,62 @@ describe("structured imports", () => {
     unimportFile(bundle.db, file.id);
     expect(activeTxnStats("4321").count).toBe(0);
     expect(bundle.db.select().from(importFilesTable).all()).toHaveLength(0);
+  });
+
+  /**
+   * 🔴 Un-importing deleted a file's rows and left their transfer partners
+   * pointing at a group with no second leg. `detectTransfers` pairs only rows
+   * whose group IS NULL, so a re-import never paired them again. Measured on a
+   * copy of the real ledger, 2026-09-15: un-importing and re-importing
+   * 20260702 + 20260302 took Chase's single-leg groups 23 → 34, eight of them
+   * Chase Checking card payments whose Sapphire leg had been deleted.
+   */
+  test("un-import releases a transfer partner its deleted rows would leave alone in a group", async () => {
+    await importStatementFiles(bundle.db, [load("chase", "Chase4321_Activity_2024-07-01_2024-09-30.QFX")]);
+    const file = bundle.db.select().from(importFilesTable).all()[0]!;
+    const leg = bundle.db
+      .select()
+      .from(transactions)
+      .where(eq(transactions.importFileId, file.id))
+      .all()
+      .find((t) => t.amountCents < 0 && t.transferGroupId === null)!;
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const card = createAccount(bundle.db, { institutionId: chase.id, name: "Hand card", type: "credit" });
+    const savings = createAccount(bundle.db, { institutionId: chase.id, name: "Hand savings", type: "checking" });
+    let seq = 0;
+    const hand = (accountId: string, postedOn: string, amountCents: number, raw: string): string => {
+      seq += 1;
+      return bundle.db
+        .insert(transactions)
+        .values({
+          accountId,
+          postedOn,
+          amountCents,
+          rawDescription: raw,
+          normalizedDescription: normalizeDescription(raw),
+          dedupeHash: dedupeHash({ accountId, postedOn, amountCents, rawDescription: raw, occurrenceIndex: seq }),
+        })
+        .returning({ id: transactions.id })
+        .get().id;
+    };
+    const group = (ids: readonly string[], groupId: string) =>
+      bundle.db.update(transactions).set({ transferGroupId: groupId }).where(inArray(transactions.id, [...ids])).run();
+
+    // the file's outflow keys a group with a hand-entered card payment
+    const partner = hand(card, leg.postedOn, -leg.amountCents, "PAYMENT THANK YOU");
+    group([leg.id, partner], leg.id);
+    // the control: a pair the file holds no leg of
+    const out = hand(savings, "2024-08-01", -5000, "TRANSFER TO CARD");
+    const into = hand(card, "2024-08-01", 5000, "TRANSFER FROM SAVINGS");
+    group([out, into], out);
+
+    unimportFile(bundle.db, file.id);
+
+    const groupOf = (id: string) =>
+      bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!.transferGroupId;
+    expect(groupOf(partner)).toBeNull();
+    expect(groupOf(out)).toBe(out);
+    expect(groupOf(into)).toBe(out);
   });
 
   test("un-import snapshots the file's rows first — an unknown id spends nothing", async () => {
@@ -1100,6 +1158,63 @@ describe("re-parse lifecycle: a parser-version bump preserves user work", () => 
     expect(april.normalizedDescription).toBe(liveNetflixOn("2026-03-05").normalizedDescription);
     expect(april).toMatchObject({ recurringSeriesId: null, seriesLinkSource: "user" });
     expect(liveNetflixOn("2026-03-05")).toMatchObject({ recurringSeriesId: seriesId, seriesLinkSource: "user" });
+  });
+
+  /**
+   * 🔴 The carry was keyed on (account, POSTED day, amount) alone. A card
+   * statement prints the TRANSACTION day, so a row the ledger held under a
+   * later posted day missed its successor. Chase Sapphire's +$100.00 payment
+   * (posted 2026-07-01, transacted and printed 06/30, attached to
+   * 20260702-statements-9805-.pdf on 2026-09-15) came back from a version bump
+   * as a fresh 06/30 row with no transfer link and no note, and Chase Checking's
+   * −$100.00 was left grouped with a superseded row — while `ledger-check` stayed
+   * green. Measured on a copy of the real ledger, 2026-09-15. `consumeIdentity`
+   * already falls back to the transaction day for this reason; the carry did not.
+   */
+  test("a re-parse carries onto the row the file dates by its transaction day, when the old row was posted later", async () => {
+    await importStatementFiles(bundle.db, [FILE]);
+    // the attached hand row's shape: posted a day after the day the file prints
+    const shell = liveRow("SHELL OIL");
+    bundle.db
+      .update(transactions)
+      .set({ postedOn: "2026-03-03", transactedOn: "2026-03-02", notes: "reconstructed leg", transferGroupId: shell.id })
+      .where(eq(transactions.id, shell.id))
+      .run();
+    // the control: a noted row whose posted day the file still prints
+    const starbucks = liveRow("STARBUCKS");
+    bundle.db.update(transactions).set({ notes: "coffee with Carson" }).where(eq(transactions.id, starbucks.id)).run();
+
+    const [outcome] = await withBumpedParserVersion("chase-card-csv", () =>
+      importStatementFiles(bundle.db, [FILE]),
+    );
+
+    expect(outcome!.status).toBe("parsed");
+    expect(outcome!.carriedForward).toBe(2);
+    const fresh = liveRow("SHELL OIL");
+    expect(fresh.id).not.toBe(shell.id);
+    expect(fresh).toMatchObject({ postedOn: "2026-03-02", notes: "reconstructed leg", transferGroupId: shell.id });
+    expect(liveRow("STARBUCKS").notes).toBe("coffee with Carson");
+  });
+
+  test("the transaction-day carry still needs the same amount on the same transaction day", async () => {
+    await importStatementFiles(bundle.db, [FILE]);
+    const shell = liveRow("SHELL OIL");
+    // SHELL now claims STARBUCKS' transaction day at its own −$40.00: neither
+    // STARBUCKS (−$25.00 that day) nor SHELL's successor (a different day) may take it
+    bundle.db
+      .update(transactions)
+      .set({ postedOn: "2026-03-06", transactedOn: "2026-03-03", notes: "wrong day, wrong amount" })
+      .where(eq(transactions.id, shell.id))
+      .run();
+
+    const [outcome] = await withBumpedParserVersion("chase-card-csv", () =>
+      importStatementFiles(bundle.db, [FILE]),
+    );
+
+    // STARBUCKS is transacted 03/03 at −$25.00; the old SHELL row is 03/03 at −$40.00
+    expect(outcome!.carriedForward).toBe(0);
+    expect(liveRow("STARBUCKS").notes).toBeNull();
+    expect(liveRow("SHELL OIL").notes).toBeNull();
   });
 });
 
