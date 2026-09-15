@@ -8,6 +8,7 @@ import { CategoryChip } from "@/components/ui/CategoryChip";
 import { Money } from "@/components/ui/Money";
 import { toast } from "@/components/ui/Toast";
 import { useKeyScope } from "@/components/ui/KeyScopeProvider";
+import { groupByDay, pageBoundary } from "@/lib/day-groups";
 import { PRIORITIES } from "@/lib/keyscope";
 import { transactionSubjects } from "@/lib/row-subject";
 import { bulkApplyAction, bulkApplyByFilterAction } from "@/app/transactions/actions";
@@ -55,118 +56,10 @@ export interface LedgerRow {
   splitCount?: number;
 }
 
-export interface DayGroup {
-  day: string;
-  label: string;
-  netCents: number;
-  rows: LedgerRow[];
-  /** the day is cut by a page boundary — netCents covers THIS page's rows only */
-  partial: boolean;
-}
-
-/** what the page boundary hides on either side of the rows we were handed */
-export interface DayGroupBoundary {
-  hiddenBefore?: boolean;
-  hiddenAfter?: boolean;
-}
-
-const DAY_FORMAT = new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric" });
-
 // §2.5 row-control reveal: hover / focus-within / any-selection / coarse pointer
 const REVEAL =
   "opacity-0 transition-opacity duration-(--duration-fast) group-hover/row:opacity-100 " +
   "group-focus-within/row:opacity-100 pointer-coarse:opacity-100";
-
-/**
- * Group consecutive rows by posted day. Rows arrive one PAGE at a time, so a day
- * split across a page boundary is only partly here — its subtotal would silently
- * omit the rest. The boundary-touching groups are flagged `partial` and the
- * header says so, rather than presenting a wrong day total as a fact.
- */
-export function groupByDay(rows: readonly LedgerRow[], boundary: DayGroupBoundary = {}): DayGroup[] {
-  const groups: DayGroup[] = [];
-  for (const row of rows) {
-    const last = groups.at(-1);
-    if (last && last.day === row.postedOn) {
-      last.rows.push(row);
-      last.netCents += row.amountCents;
-    } else {
-      groups.push({
-        day: row.postedOn,
-        label: DAY_FORMAT.format(new Date(`${row.postedOn}T12:00:00`)),
-        netCents: row.amountCents,
-        rows: [row],
-        partial: false,
-      });
-    }
-  }
-  const first = groups[0];
-  const last = groups.at(-1);
-  if (first && boundary.hiddenBefore) first.partial = true;
-  if (last && boundary.hiddenAfter) last.partial = true;
-  return groups;
-}
-
-/**
- * What the page boundary CUTS on either side of one page of rows.
- *
- * The offset has to come from `pageSize`, not from `rows.length`: they agree on
- * every page but the LAST, where a short page makes `page * rows.length`
- * collapse far below the total and flag the final day as cut when nothing
- * follows it (157 rows, page 4 of 4 holding 7 → 4 * 7 = 28 < 157 → a "partial"
- * tag on the last day of the ledger, which is the common case rather than an
- * edge one). Counting the rows actually consumed — `(page - 1) * pageSize +
- * rows.length` — is exact in both directions.
- *
- * 🔴 …AND "THERE ARE MORE ROWS" IS NOT "THIS DAY IS CUT". `hiddenBefore` was a
- * plain `page > 1` and `hiddenAfter` a plain "rows remain", so both edges were
- * flagged whenever a neighbouring page existed — whatever day it started on.
- * When a boundary lands exactly on a day change, neither day is cut and both
- * subtotals are exact, and the header called them "partial" anyway over a
- * tooltip asserting "This day is cut by the page boundary".
- *
- * Measured on the owner's ledger 2026-09-10, unfiltered: **31 of the 203 page
- * boundaries land on a day change, so 62 day headers carried the tag over a
- * subtotal that was complete.** Page 3 ends on 2026-07-30 and page 4 opens on
- * 2026-07-29 — all 21 of that day's rows are on page 4, its header reads
- * "+$3,948.91 · partial", and the ledger's own total for 2026-07-29 is
- * $3,948.91 to the cent.
- *
- * ⛔ The old docstring said the previous page's last day is "genuinely not
- * knowable from this page's rows" — true, and the wrong place to look. The
- * SERVER slices the page and can read the row on either side of the cut for the
- * price of two indexed lookups; `neighbourDays` is that measurement, and this
- * compares it with the days actually on the page. Knowable beats hedged, and a
- * hedge printed as a certainty is worse than either.
- */
-export function pageBoundary({
-  page,
-  pageSize,
-  rowsOnPage,
-  totalMatching,
-  firstDayOnPage,
-  lastDayOnPage,
-  previousDay,
-  nextDay,
-}: {
-  page: number;
-  pageSize: number;
-  rowsOnPage: number;
-  totalMatching: number;
-  /** the days at this page's two ends — null when the page holds no rows */
-  firstDayOnPage: string | null;
-  lastDayOnPage: string | null;
-  /** the day of the row immediately before/after this page, null when there is none */
-  previousDay: string | null;
-  nextDay: string | null;
-}): DayGroupBoundary {
-  const consumedBefore = (page - 1) * pageSize;
-  return {
-    hiddenBefore: consumedBefore > 0 && firstDayOnPage !== null && previousDay === firstDayOnPage,
-    hiddenAfter:
-      consumedBefore + rowsOnPage < totalMatching && lastDayOnPage !== null && nextDay === lastDayOnPage,
-  };
-}
 
 /**
  * Date-grouped triage ledger (ux-overhaul-plan §3.1/§3.5): a client component so

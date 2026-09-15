@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { groupByDay, pageBoundary, type LedgerRow } from "./TransactionsLedger";
+import { groupByDay, pageBoundary } from "@/lib/day-groups";
+import type { LedgerRow } from "./TransactionsLedger";
 
 function row(postedOn: string, amountCents: number, id = `${postedOn}-${amountCents}`): LedgerRow {
   return {

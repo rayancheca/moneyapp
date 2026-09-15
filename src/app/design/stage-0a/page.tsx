@@ -8,6 +8,7 @@ import { merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { todayIso } from "@/lib/dates";
+import { groupFirstPageByDay } from "@/lib/day-groups";
 import { seriesDrawsAsRecurring } from "@/lib/series-evidence";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { monthKeysBack, monthlySpending } from "@/services/analytics";
@@ -46,6 +47,9 @@ interface LedgerRow {
   needsReview: boolean;
 }
 
+/** how many ledger rows the preview shows */
+const PREVIEW_ROWS = 14;
+
 export default function StageZeroAPreview() {
   // design scaffolding must not ship reachable in production builds
   if (process.env.NODE_ENV === "production" && process.env.MONEYAPP_PREVIEW !== "1") notFound();
@@ -53,7 +57,7 @@ export default function StageZeroAPreview() {
   const db = getDb();
   const today = todayIso();
 
-  const rows: LedgerRow[] = db
+  const fetchedRows: LedgerRow[] = db
     .select({
       id: transactions.id,
       postedOn: transactions.postedOn,
@@ -78,7 +82,8 @@ export default function StageZeroAPreview() {
       desc(transactions.normalizedDescription),
       desc(transactions.id),
     )
-    .limit(14)
+    // one past what is shown: the only way to know whether the cut lands inside a day
+    .limit(PREVIEW_ROWS + 1)
     .all()
     .map((r) => ({
       ...r,
@@ -152,7 +157,9 @@ export default function StageZeroAPreview() {
   const vsLastMonthCents = thisMonthSpendCents - monthSpendCents(monthKeys[0]!);
   const netWorthCents = netWorthSeries(db).at(-1)?.totalCents ?? 0;
 
-  const dayGroups = groupByDay(rows);
+  // ⛔ the ledger's boundary rule, not a copy — a day the row limit cuts is flagged
+  // rather than printed as its total (see `groupFirstPageByDay`)
+  const dayGroups = groupFirstPageByDay(fetchedRows, PREVIEW_ROWS);
 
   return (
     <>
@@ -193,9 +200,23 @@ export default function StageZeroAPreview() {
           <section key={group.day}>
             <div className="flex items-baseline justify-between border-b border-line bg-surface-sunken/60 px-4 py-1.5">
               <h2 className="text-[11px] font-medium uppercase tracking-[0.1em] text-ink-faint">
-                {group.day}
+                {group.label}
               </h2>
-              <Money cents={group.netCents} flow className="figures text-[11px] text-ink-faint" />
+              <span className="flex items-baseline gap-1.5">
+                <Money cents={group.netCents} flow className="figures text-[11px] text-ink-faint" />
+                {group.partial ? (
+                  <span
+                    title={`This day continues past the ${PREVIEW_ROWS} rows shown — the subtotal counts only these.`}
+                    className="text-[10px] uppercase tracking-[0.08em] text-ink-faint"
+                  >
+                    partial
+                    <span className="sr-only">
+                      {" "}
+                      — subtotal counts only the rows shown; this day continues past the preview
+                    </span>
+                  </span>
+                ) : null}
+              </span>
             </div>
             {group.rows.map((r) => (
               <div
@@ -259,34 +280,4 @@ export default function StageZeroAPreview() {
       <StageZeroAOverlays subject={subject} siblings={siblings} />
     </>
   );
-}
-
-interface DayGroup {
-  day: string;
-  netCents: number;
-  rows: LedgerRow[];
-}
-
-const DAY_FORMAT = new Intl.DateTimeFormat("en-US", {
-  weekday: "short",
-  month: "short",
-  day: "numeric",
-});
-
-function groupByDay(rows: LedgerRow[]): DayGroup[] {
-  const groups: DayGroup[] = [];
-  for (const row of rows) {
-    const last = groups.at(-1);
-    if (last && last.rows[0]!.postedOn === row.postedOn) {
-      last.rows.push(row);
-      last.netCents += row.amountCents;
-    } else {
-      groups.push({
-        day: DAY_FORMAT.format(new Date(`${row.postedOn}T12:00:00`)),
-        netCents: row.amountCents,
-        rows: [row],
-      });
-    }
-  }
-  return groups;
 }
