@@ -69,6 +69,16 @@ export interface CoverageDetailInput {
    * with a document, on one line.
    */
   hasStatements: boolean;
+  /**
+   * Whether `derivesFromHoldings` prices this account from holding events. Read
+   * only by `market_value`, which covers EVERY investment account: one with no
+   * events is a recorded balance held flat, and "priced from holdings" is false
+   * of it.
+   *
+   * ⛔ REQUIRED, for the reason `hasHistory` is: an optional flag a caller
+   * forgets reads `undefined`, and the row goes back to asserting holdings.
+   */
+  pricedFromHoldings: boolean;
 }
 
 const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
@@ -181,7 +191,9 @@ export function coverageDetail(input: CoverageDetailInput): string {
       return `${closesClause(input)}${held}; the first day it does not is ${first} — ${n} ${plural(n, "day rests", "days rest")} ${because}${inAll}`;
     }
     case "market_value":
-      return "priced from holdings; statements here set a value, they never prove the transactions add up";
+      return input.pricedFromHoldings
+        ? "priced from holdings; statements here set a value, they never prove the transactions add up"
+        : "held at its recorded balance; no holdings price it, and no transaction arithmetic checks it";
     case "manual":
       return input.lastManualUpdate
         ? `you are the statement — last counted ${dayWithYear(input.lastManualUpdate)}`

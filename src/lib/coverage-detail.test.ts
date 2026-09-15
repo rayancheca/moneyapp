@@ -14,6 +14,7 @@ const detail = (over: Partial<CoverageDetailInput> = {}): string =>
     gapDays: 0,
     unverifiedDays: 0,
     hasStatements: true,
+    pricedFromHoldings: true,
     ...over,
   });
 
@@ -201,7 +202,18 @@ describe("a verified account", () => {
 
 describe("the states that are not about arithmetic", () => {
   test("an investment account is priced, not proved", () => {
-    expect(detail({ grade: "market_value" })).toContain("priced from holdings");
+    expect(detail({ grade: "market_value", pricedFromHoldings: true })).toContain("priced from holdings");
+  });
+
+  /**
+   * 🔴 `market_value` is every investment account; "priced from holdings" is
+   * only the ones `derivesFromHoldings` says so of. One with no holding events
+   * is a recorded balance held flat, and the row said holdings priced it.
+   */
+  test("an investment account with no holdings is held at its recorded balance", () => {
+    const text = detail({ grade: "market_value", pricedFromHoldings: false });
+    expect(text).toBe("held at its recorded balance; no holdings price it, and no transaction arithmetic checks it");
+    expect(text).not.toContain("priced from holdings");
   });
 
   test("a manual account names the day he counted it", () => {

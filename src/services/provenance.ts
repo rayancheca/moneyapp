@@ -18,7 +18,8 @@ import { emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { activeTxnsInRange, loadCategoryIndex, spendingBucket, uncategorizedWhere } from "./analytics";
 import { accountCoverage, type AccountCoverage, type CoverageGrade } from "./coverage";
-import { pickWinners } from "./derivation";
+import { derivesFromHoldings, pickWinners } from "./derivation";
+import { VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
 import { MIN_OCCURRENCES } from "./recurring";
 
 /**
@@ -696,20 +697,54 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
     .orderBy(desc(dailyBalances.day))
     .get();
 
+  /*
+   * ⛔ `market_value` covers every investment account; "priced from holdings" is
+   * true only of one `derivesFromHoldings` says it of — the branch the rebuild
+   * takes, and the one the remove-balance dialog on the same page already reads.
+   */
+  const pricedFromHoldings = derivesFromHoldings(db, account);
+  const heldAtRecordedBalance = isInvestment(account.type) && !pricedFromHoldings;
+
   return {
     verdict,
-    headline: headlineForBalance(account.name, account.type, row.basis, row.day, recordedBy),
+    headline: headlineForBalance(account.name, account.type, row.basis, row.day, recordedBy, {
+      pricedFromHoldings,
+      recordedOn: anchor?.anchor.anchoredOn ?? null,
+    }),
     sources,
     checkedThrough: isInvestment(account.type) ? null : (lastClosed?.day ?? null),
     inputs: [],
+    // the verdict's own accessible name says "priced from holdings"; the badge
+    // keeps its word and drops that claim
+    badgeWord: heldAtRecordedBalance ? VERDICT_PRESENTATION.market_value.word : undefined,
   };
 }
 
-/** `recordedBy` — the source of the balance recorded ON an anchored day, or null */
-function headlineForBalance(name: string, type: string, basis: BalanceBasis, day: string, recordedBy: string | null): string {
+/**
+ * `recordedBy` — the source of the balance recorded ON an anchored day, or null.
+ * `value` — how an investment account's figure is known: priced from holdings, or a
+ * recorded balance held forward (an account with no holding events).
+ */
+function headlineForBalance(
+  name: string,
+  type: string,
+  basis: BalanceBasis,
+  day: string,
+  recordedBy: string | null,
+  value: { pricedFromHoldings: boolean; recordedOn: string | null },
+): string {
   const on = readableDay(day);
   if (isInvestment(type)) {
-    return `${name} is priced from its holdings on ${on}. A brokerage statement sets a value; it never proves the transactions add up.`;
+    if (value.pricedFromHoldings) {
+      return `${name} is priced from its holdings on ${on}. A brokerage statement sets a value; it never proves the transactions add up.`;
+    }
+    const recorded =
+      value.recordedOn === null
+        ? "a recorded balance held forward"
+        : value.recordedOn === day
+          ? "the balance recorded that day"
+          : `the balance recorded on ${readableDay(value.recordedOn)}, held forward`;
+    return `${name}'s value on ${on} is ${recorded}. No holdings price it, and no transaction arithmetic checks it.`;
   }
   switch (basis) {
     case "anchored":

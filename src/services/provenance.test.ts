@@ -248,10 +248,46 @@ describe("provenanceFor — an account balance", () => {
    */
   test("an investment balance is market value, never 'derived'", () => {
     const id = addAccount("a", "Robinhood Brokerage", "investment");
+    addHoldingEvent(id, "AAPL", "stock", "2026-08-01", 100_000_000);
     addDays(id, [{ day: "2026-08-02", basis: "derived" }]);
     const p = provenanceFor(bundle.db, { kind: "accountBalance", accountId: id, day: "2026-08-02" })!;
     expect(p.verdict).toBe("market_value");
-    expect(p.headline).toMatch(/never proves the transactions add up/i);
+    expect(p.headline).toBe(
+      "Robinhood Brokerage is priced from its holdings on Aug 2, 2026. A brokerage statement sets a value; it never proves the transactions add up.",
+    );
+    expect(p.badgeWord).toBeUndefined();
+  });
+
+  /**
+   * 🔴 `derivesFromHoldings` is the rule, not the account type. An investment
+   * account with no holding events takes value-anchor step-hold: its curve is
+   * the balance recorded by hand or statement, held flat, and no holding prices
+   * it. The headline said "priced from its holdings" of exactly that account,
+   * while the remove-balance dialog on the same page — which reads the rule —
+   * said "This balance is what verifies Brokerage on Sep 1 – 9, 2026". The
+   * owner's ledger cannot show it (both investment accounts have events), but
+   * AccountForm creates one: type investment, "Current balance (optional)".
+   */
+  test("an investment account with no holdings is held at its recorded balance, not priced from holdings", () => {
+    const id = addAccount("a", "Brokerage", "investment");
+    addAnchor(id, "2026-09-01", "manual");
+    addDays(id, [
+      { day: "2026-09-01", basis: "anchored" },
+      { day: "2026-09-10", basis: "carried" },
+    ]);
+
+    const held = provenanceFor(bundle.db, { kind: "accountBalance", accountId: id, day: "2026-09-10" })!;
+    expect(held.verdict).toBe("market_value");
+    expect(held.headline).toBe(
+      "Brokerage's value on Sep 10, 2026 is the balance recorded on Sep 1, 2026, held forward. No holdings price it, and no transaction arithmetic checks it.",
+    );
+    // the badge keeps its word, and its accessible name stops asserting holdings
+    expect(held.badgeWord).toBe("market value");
+
+    const onTheDay = provenanceFor(bundle.db, { kind: "accountBalance", accountId: id, day: "2026-09-01" })!;
+    expect(onTheDay.headline).toBe(
+      "Brokerage's value on Sep 1, 2026 is the balance recorded that day. No holdings price it, and no transaction arithmetic checks it.",
+    );
   });
 
   test("an anchor names the document it came from", () => {

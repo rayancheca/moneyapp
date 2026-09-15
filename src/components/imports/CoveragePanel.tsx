@@ -30,7 +30,14 @@ const GRADE_META: Record<CoverageGrade, { label: string; dot: string; text: stri
   verified: { label: "Verified", dot: "bg-positive", text: "text-positive" },
 };
 
-export function CoveragePanel({ coverage }: { coverage: AccountCoverage[] }) {
+export function CoveragePanel({
+  coverage,
+  pricedFromHoldingsIds,
+}: {
+  coverage: AccountCoverage[];
+  /** the accounts `derivesFromHoldings` prices from holding events */
+  pricedFromHoldingsIds: readonly string[];
+}) {
   if (coverage.length === 0) return null;
 
   const rows = [...coverage].sort(
@@ -87,6 +94,7 @@ export function CoveragePanel({ coverage }: { coverage: AccountCoverage[] }) {
                   // the SAME field the badge two lines up prints, so the row
                   // cannot say "no statements" and then blame an export
                   hasStatements: c.statementsThrough !== null,
+                  pricedFromHoldings: pricedFromHoldingsIds.includes(c.accountId),
                 })}
               </p>
             </li>

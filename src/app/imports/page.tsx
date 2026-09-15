@@ -10,6 +10,8 @@ import { CoveragePanel } from "@/components/imports/CoveragePanel";
 import { StatementGapsPanel } from "@/components/imports/StatementGapsPanel";
 import { StatementSchedule } from "@/components/imports/StatementSchedule";
 import { accountCoverage } from "@/services/coverage";
+import type { AccountType } from "@/db/schema/accounts";
+import { derivesFromHoldings } from "@/services/derivation";
 import { provenanceFor } from "@/services/provenance";
 import { statementPulls } from "@/services/statement-pulls";
 import { countPhrase } from "@/components/ui/blast-radius";
@@ -153,6 +155,11 @@ export default async function ImportsPage({
     .all();
 
   const coverage = accountCoverage(db);
+  // ⛔ the grade says `market_value` of every investment account; which of them
+  // holdings actually price is the rebuild's own branch, never the grade
+  const pricedFromHoldingsIds = coverage
+    .filter((c) => derivesFromHoldings(db, { id: c.accountId, type: c.accountType as AccountType }))
+    .map((c) => c.accountId);
   // ⚠️ NOT the `gaps` below: that is statements that arrived and did not
   // reconcile. This is statements that never arrived at all.
   const missingStatements = statementGaps(db);
@@ -236,7 +243,7 @@ export default async function ImportsPage({
 
         <StatementSchedule pulls={pulls} />
 
-        <CoveragePanel coverage={coverage} />
+        <CoveragePanel coverage={coverage} pricedFromHoldingsIds={pricedFromHoldingsIds} />
 
         {/* PASS 68. Coverage answers "does the money close"; this answers "which
             documents do I not have". They disagree on this ledger — Discover is
