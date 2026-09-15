@@ -59,20 +59,32 @@ async function bandPartCents(page: Page, label: string): Promise<number> {
 
 /**
  * What the card's own sentence says each EOM cash leaves out, posted to accounts
- * outside cash (`OutsideCashNote`): one amount when both readings leave out the
- * same, the headline's then the pace row's when they differ, and no sentence
- * when neither leaves out anything. Net-worth signed, as the note prints them.
+ * outside cash (`OutsideCashNote`): the headline's then the pace row's when they
+ * differ; one amount when both readings leave out the same; one amount under
+ * the reading it belongs to ("EOM cash at your recent pace leaves out …") when
+ * the other leaves out nothing; and no sentence when neither leaves out
+ * anything. Net-worth signed, as the note prints them.
+ *
+ * 🔴 A half that is $0.00 says nothing, and the fixture printed one: "$0.00 in
+ * the headline and -$3.87 at your recent pace". So a zero amount fails here.
  *
  * Read after `statCents` has waited for the card: the sentence is in the same
  * server render, so counting it cannot race the tiles.
  */
 async function outsideCashCents(page: Page): Promise<{ headline: number; pace: number }> {
-  const note = page.locator(`${CARD} p`).filter({ hasText: /^EOM cash leaves out/ });
+  const note = page
+    .locator(`${CARD} p`)
+    .filter({ hasText: /^EOM cash (in the headline |at your recent pace )?leaves out/ });
   if ((await note.count()) === 0) return { headline: 0, pace: 0 };
+  const text = (await note.first().innerText()).trim();
   const amounts = (await note.first().locator("span.figures").allInnerTexts()).map(toCents);
-  expect(amounts.length, "the note prints one amount, or one per reading").toBeGreaterThan(0);
-  const headline = amounts[0]!;
-  return { headline, pace: amounts[1] ?? headline };
+  expect(amounts, "the note prints no zero amount").not.toContain(0);
+  if (amounts.length === 2) return { headline: amounts[0]!, pace: amounts[1]! };
+  expect(amounts.length, "the note prints one amount, or one per reading").toBe(1);
+  const only = amounts[0]!;
+  if (text.startsWith("EOM cash in the headline ")) return { headline: only, pace: 0 };
+  if (text.startsWith("EOM cash at your recent pace ")) return { headline: 0, pace: only };
+  return { headline: only, pace: only };
 }
 
 const CARD = "section:has(h2:text-matches('^Forecast'))";

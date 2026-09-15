@@ -39,6 +39,9 @@ export function UnbankedIncomeNote({ unbanked: u }: { unbanked: MonthForecast["u
 /** "A", "A and B", "A, B, and C" — the platform's own list rather than another hand-rolled join. */
 const ACCOUNT_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
 
+/** How `OutsideCashNote` names each reading — the headline tiles, and the row beneath them. */
+const READING = { headline: "in the headline", pace: "at your recent pace" } as const;
+
 /**
  * What both EOM cash figures leave out, and where it posts.
  *
@@ -51,26 +54,33 @@ const ACCOUNT_LIST = new Intl.ListFormat("en", { style: "long", type: "conjuncti
  *
  * One amount when both readings leave out the same — no pace line posts there —
  * and both, each under the reading it belongs to, when they differ.
+ *
+ * 🔴 A half that is $0.00 says nothing. On the owner's ledger (2026-09-15) no
+ * commitment posts to Robinhood Cash, so every month the calendar pages to
+ * printed "$0.00 in the headline and +$19.43 at your recent pace". When only one
+ * reading leaves anything out, the sentence prints that one amount and names
+ * its reading instead; when neither does, there is no sentence.
  */
 export function OutsideCashNote({ outside }: { outside: MonthForecast["outsideCash"] }) {
-  if (outside.netCents === 0 && outside.committedNetCents === 0) return null;
-  const accounts = ACCOUNT_LIST.format(outside.accountNames);
+  const headline = outside.committedNetCents;
+  const pace = outside.netCents;
+  if (headline === 0 && pace === 0) return null;
+  const posts = `projected to post to ${ACCOUNT_LIST.format(outside.accountNames)} by month end`;
   const why = "because that is money selling investments would add, not cash you can spend";
+  if (headline !== 0 && pace !== 0 && headline !== pace) {
+    return (
+      <p className="mt-1 text-xs text-ink-faint">
+        EOM cash leaves out what is {posts}, {why}: <Money cents={headline} flow /> {READING.headline} and{" "}
+        <Money cents={pace} flow /> {READING.pace}. EOM net worth keeps it.
+      </p>
+    );
+  }
+  // one amount: both readings leave out the same, or only one leaves out anything
+  const reading = headline === pace ? "" : ` ${headline === 0 ? READING.pace : READING.headline}`;
   return (
     <p className="mt-1 text-xs text-ink-faint">
-      {outside.netCents === outside.committedNetCents ? (
-        <>
-          EOM cash leaves out the <Money cents={outside.netCents} flow /> projected to post to {accounts} by month end,{" "}
-          {why}.
-        </>
-      ) : (
-        <>
-          EOM cash leaves out what is projected to post to {accounts} by month end, {why}:{" "}
-          <Money cents={outside.committedNetCents} flow /> in the headline and <Money cents={outside.netCents} flow /> at
-          your recent pace.
-        </>
-      )}{" "}
-      EOM net worth keeps it.
+      EOM cash{reading} leaves out the <Money cents={headline === 0 ? pace : headline} flow /> {posts}, {why}. EOM net
+      worth keeps it.
     </p>
   );
 }
@@ -103,7 +113,7 @@ function Stat({ label, cents, flow = false }: { label: string; cents: number; fl
  * internally consistent reading of the month, and each says in its own label
  * which assumption produced it. Where a line posts outside cash (a dividend
  * paid into Robinhood Cash), each EOM cash leaves out its own reading's share,
- * and `OutsideCashNote` prints both amounts.
+ * and `OutsideCashNote` prints each share that is not zero.
  */
 function PaceRow({ forecast: f }: { forecast: MonthForecast }) {
   const paceIncome = f.projectedIncomeCents - f.committed.incomeCents;
