@@ -6,6 +6,7 @@ import { emptyPeriodCopy, emptyPeriodReason } from "@/lib/empty-period";
 import { formatDayLong } from "@/lib/format-date";
 import { cashEarningsSectionNotes } from "@/lib/section-notes";
 import { comparedCategories } from "@/lib/compared-categories";
+import { whereItWentRows } from "@/lib/where-it-went-rows";
 import { deviationRowsFrom } from "@/lib/deviation-layout";
 import { paceWindowName } from "@/lib/pace-readout";
 import { spendingShareBase } from "@/lib/insight-facts";
@@ -42,7 +43,7 @@ import { InsightList } from "@/components/insights/InsightList";
 import { SectionNotes } from "@/components/insights/SectionNotes";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
-import { WhereItWentPanel, type WhereItWentRow } from "@/components/charts/CategoryMassif";
+import { WhereItWentPanel } from "@/components/charts/CategoryMassif";
 import { CategoryDeviation } from "@/components/spending/CategoryDeviation";
 import { CashFlowView } from "@/components/spending/CashFlowView";
 import { CASH_VIEW_SPEC, SPENDING_SURFACE } from "@/components/spending/spending-view-spec";
@@ -50,7 +51,7 @@ import { HonestyBucketsCard } from "@/components/spending/HonestyBucketsCard";
 import { LargestPurchases, type LargestPurchaseRow } from "@/components/spending/LargestPurchases";
 import { PeriodSelector } from "@/components/spending/PeriodSelector";
 import { SpendHeatmap } from "@/components/spending/SpendHeatmap";
-import { SpendingCategoriesTable, type CategoryTableRow } from "@/components/spending/SpendingCategoriesTable";
+import { SpendingCategoriesTable } from "@/components/spending/SpendingCategoriesTable";
 import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { provenanceFor } from "@/services/provenance";
 import { SpendingStatCards } from "@/components/spending/SpendingStatCards";
@@ -224,81 +225,42 @@ export default async function SpendingPage({
   // month's actuals would be confusing (an unrelated future number).
   const predictions =
     period.granularity === "month" && period.isCurrent ? predictBudgetableCategories(db, today) : [];
-  const forecastByCategory = new Map(
-    predictions
-      .filter((p) => p.forecast.confidence > 0)
-      .map((p) => [
-        p.categoryId,
-        {
-          cents: p.forecast.expectedTotalCents,
-          confidence: p.forecast.confidence,
-          basis: p.forecast.basis,
-          seasonal: p.seasonalApplied,
-        },
-      ]),
-  );
-  const forecastMonthLabel = predictions[0]?.periodLabel ?? null;
-
-  // a category that stopped is a $0.00 row carrying its fall — the SAME rows the
-  // relief and the Table read below; with no whole prior window `compared` holds
-  // only this period's categories, so there is nothing to filter out
-  const spentRows: CategoryTableRow[] = compared.map((c) => ({
-    categoryId: c.categoryId,
-    name: c.name,
-    hue: catMeta.get(c.categoryId)?.color ?? null,
-    icon: catMeta.get(c.categoryId)?.icon ?? null,
-    spentCents: c.spentCents,
-    sharePct: shareBase > 0 ? (Math.max(0, c.spentCents) / shareBase) * 100 : 0,
-    momDeltaCents: c.priorCents === null ? 0 : c.spentCents - c.priorCents,
-    forecast: forecastByCategory.get(c.categoryId) ?? null,
-    // 🔴 S20: the children alone did not add up to the parent above them — the
-    // rows filed on the parent itself were in no row (`lib/subcategory-rows`).
-    // A category with no row this period has no children in it either.
-    children: c.current === null ? [] : spendingSubcategoryItems(c.current, (id) => `/categories/${id}?${query}`),
-  }));
-
-  // Categories with a confident next-month forecast (an upcoming recurring bill,
-  // typically) but NO spend this period get no breakdown row — surface them as
-  // $0 "upcoming" rows at the end, so the most useful forecast (a charge you
-  // haven't seen yet) is not silently dropped.
-  const shownIds = new Set(spentRows.map((r) => r.categoryId));
-  const upcomingRows: CategoryTableRow[] = predictions
-    .filter((p) => p.forecast.confidence > 0 && !shownIds.has(p.categoryId))
+  const forecasts = predictions
+    .filter((p) => p.forecast.confidence > 0)
     .map((p) => ({
       categoryId: p.categoryId,
-      name: p.label,
-      hue: catMeta.get(p.categoryId)?.color ?? null,
-      icon: catMeta.get(p.categoryId)?.icon ?? null,
-      spentCents: 0,
-      sharePct: 0,
-      momDeltaCents: 0,
+      label: p.label,
       forecast: {
         cents: p.forecast.expectedTotalCents,
         confidence: p.forecast.confidence,
         basis: p.forecast.basis,
         seasonal: p.seasonalApplied,
       },
-      children: [],
     }));
-  const categoryRows: CategoryTableRow[] = [...spentRows, ...upcomingRows];
+  const forecastMonthLabel = predictions[0]?.periodLabel ?? null;
 
-  // The relief/table lenses of the SAME card, cut from the SAME compared
-  // categories the list above is: this period against the previous one, with
-  // the entry count the footprint depth encodes. A category that stopped IS
-  // here — the Table prints it at $0.00 with its fall, and the relief counts the
-  // fall in its total and names it beside a plate it has no footprint on
-  // (`MassifLayout.absent`). Forecast-only "upcoming" rows are not: they were in
-  // neither window, and the list lens still shows them.
-  const whereRows: WhereItWentRow[] = compared.map((c) => ({
-    categoryId: c.categoryId,
-    name: c.name,
-    hue: catMeta.get(c.categoryId)?.color ?? null,
-    spentCents: c.spentCents,
-    // ⛔ null, never 0, when there is no comparable prior window: a zero is a
-    // measurement, and every block would rise by its whole spend
-    priorCents: c.priorCents,
-    txnCount: c.txnCount,
-  }));
+  /*
+   * Both lenses' rows, cut from `compared` in ONE place (`lib/where-it-went-rows`).
+   * The List's categorized rows are the relief's and the Table's, row for row: a
+   * category that stopped is a $0.00 row carrying its fall in the List and the
+   * Table, and the relief counts the fall in its total and names it beside a
+   * plate it has no footprint on (`MassifLayout.absent`). The List alone adds the
+   * forecast-only "upcoming" rows after them — a charge you haven't seen yet, in
+   * neither window.
+   *
+   * 🔴 The page built the List's rows beside the Table's and only its spelling
+   * was tested: filtering the List back to this period's categories off months
+   * passed every test, the very population that left 11 of 14 whole quarters
+   * short of the Table (2026-09-15). ⛔ Hand each lens these rows as they are.
+   */
+  const { list: categoryRows, where: whereRows } = whereItWentRows(compared, {
+    meta: catMeta,
+    shareBaseCents: shareBase,
+    forecasts,
+    // 🔴 S20: the children alone did not add up to the parent above them — the
+    // rows filed on the parent itself were in no row (`lib/subcategory-rows`).
+    childrenOf: (current) => spendingSubcategoryItems(current, (id) => `/categories/${id}?${query}`),
+  });
   // The identity the relief states under itself, from the SAME two services the
   // stat cards use: Σ categories + uncategorized = gross spent − refunds.
   // categoryBreakdown books a refund as a negative in its category's bucket, so

@@ -48,8 +48,25 @@ describe("Where it went is cut from the comparison's one population", () => {
   test("the relief, the Table and the List all read comparedCategories", () => {
     expect(source).toContain('import { comparedCategories } from "@/lib/compared-categories";');
     expect(source).toMatch(/const compared = comparedCategories\(breakdown, prevBreakdown\);/);
-    expect(source).toMatch(/const whereRows: WhereItWentRow\[\] = compared\.map\(/);
-    expect(source).toMatch(/const spentRows: CategoryTableRow\[\] = compared\.map\(/);
+    expect(source).toContain('import { whereItWentRows } from "@/lib/where-it-went-rows";');
+    expect(source).toMatch(/const \{ list: categoryRows, where: whereRows \} = whereItWentRows\(compared, \{/);
+  });
+
+  /*
+   * 🔴 The rows themselves are tested in `lib/where-it-went-rows.test.ts`; this
+   * gate keeps the page from cutting them again on the way in. A one-line filter
+   * of the List's rows back to this period's categories off months passed every
+   * test while the page built the rows itself (2026-09-15) — and it is exactly the
+   * population that left 11 of 14 whole quarters short of the Table.
+   */
+  test("each lens is handed the helper's rows untouched, and the page builds no row of its own", () => {
+    expect(source).toMatch(/<WhereItWentPanel\s+rows=\{whereRows\}\s/);
+    expect(source).toMatch(/<SpendingCategoriesTable\s+rows=\{categoryRows\}\s/);
+    // the destructure and the prop: nothing re-cuts the List in between
+    expect(source.match(/\bcategoryRows\b/g)).toHaveLength(2);
+    expect(source).not.toMatch(/\bwhereRows\s*\.\s*(filter|slice|map|concat)\(/);
+    expect(source).not.toMatch(/\bCategoryTableRow\b/);
+    expect(source).not.toMatch(/\bWhereItWentRow\b/);
   });
 
   /*
