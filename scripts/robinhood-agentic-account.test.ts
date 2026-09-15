@@ -11,6 +11,7 @@ import { institutions } from "@/db/schema/institutions";
 import { recordWithheldSections } from "@/lib/import-file-label";
 import { createAccount } from "@/services/accounts";
 import type { Line } from "@/services/import/profiles/pdf-profile";
+import { robinhoodBrokerageStatementPdf } from "@/services/import/profiles/robinhood-brokerage-statement-profile";
 import { importStatementFiles, parseContextFor, resolveAccount, type ImportInput } from "@/services/import/service";
 import {
   AGENTIC_ACCOUNT,
@@ -206,7 +207,9 @@ describe("⛔ the statements were imported BEFORE the account existed", () => {
 
     expect(() => planAgenticAccount(bundle.db, spec)).toThrow(Refusal);
     expect(() => planAgenticAccount(bundle.db, spec)).toThrow(
-      /48afc52f-8955-351d-bdad-7248305c5a2b\.pdf was already imported at robinhood-brokerage-statement-pdf v4 without ····9651/,
+      new RegExp(
+        String.raw`48afc52f-8955-351d-bdad-7248305c5a2b\.pdf was already imported at robinhood-brokerage-statement-pdf v${robinhoodBrokerageStatementPdf.version} without ····9651`,
+      ),
     );
     expect(() => createAgenticAccount(bundle, spec)).toThrow(/already imported .* without ····9651/);
     expect(fingerprintLedger(bundle.sqlite)).toEqual(before);

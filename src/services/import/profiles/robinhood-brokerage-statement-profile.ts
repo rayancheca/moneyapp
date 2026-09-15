@@ -1,16 +1,17 @@
 import { isValidIsoDate } from "@/lib/dates";
-import { formatCents, parseAmountToCents } from "@/lib/money";
+import { parseAmountToCents } from "@/lib/money";
 import {
   ParseError,
   type AccountHint,
   type CanonicalTxn,
+  type EquityAssetType,
   type KnownAccount,
   type ParsedFile,
   type ParsedStatement,
   type ParserProfile,
+  type StatementPositions,
   type WithheldSection,
 } from "../types";
-import { RH_CODE_CATEGORY } from "./csv-profiles";
 import { extractLines, type Line } from "./pdf-profile";
 import {
   selectTrackedSections,
@@ -18,7 +19,14 @@ import {
   type AccountSection,
   type TrackedSection,
 } from "./robinhood-account-sections";
-import { parseAccountActivity, parseCryptoMoneyMovements } from "./robinhood-crypto-movement";
+import { parseCryptoMoneyMovements } from "./robinhood-crypto-movement";
+import {
+  UnprovableSection,
+  provePositions,
+  readAccountActivity,
+  readHeldPositions,
+  readPendingTrades,
+} from "./robinhood-positions";
 
 /**
  * Real Robinhood *securities* statement PDFs — the arbiter `Robinhood Cash` has
@@ -76,9 +84,10 @@ import { parseAccountActivity, parseCryptoMoneyMovements } from "./robinhood-cry
  * a duplicate account gets born — so the account must exist before its section
  * is read.
  *
- * A tracked cash-account section the cash reader cannot PROVE is withheld — named
+ * A tracked cash-account section the reader cannot PROVE is withheld — named
  * on the file with its window and why — and the rest of the file imports; see
- * `cashSection`.
+ * `cashSection`. One that proves positions yields TWO statements, its cash and
+ * its brokerage book's (./robinhood-positions.ts).
  */
 
 const PROFILE_ID = "robinhood-brokerage-statement-pdf";
@@ -540,16 +549,7 @@ export function isRobinhoodBrokerageStatementText(text: string): boolean {
   );
 }
 
-/** `Total Funds Paid and Received $0.00 $26.64` — the Account Activity table's Debit and Credit column totals. */
-const TOTAL_FUNDS_RE = new RegExp(String.raw`^Total Funds Paid and Received ${MONEY} ${MONEY}$`);
-
-/** `Total Executed Trades Pending Settlement $0.00 $0.00` — the pending-trades table's Debit and Credit totals. */
-const PENDING_TITLE = "Executed Trades Pending Settlement";
-const TOTAL_PENDING_RE = new RegExp(String.raw`^Total ${PENDING_TITLE} ${MONEY} ${MONEY}$`);
-/** a row of that table carries a trade date or an amount; its title, note, header and a page break carry neither */
-const PENDING_ROW_RE = new RegExp(String.raw`\d{2}/\d{2}/\d{4}|${MONEY}`);
-
-type SectionRoute = { kind: "brokerage" } | { kind: "cash"; last4: string };
+type SectionRoute = { kind: "brokerage" } | { kind: "cash"; account: KnownAccount };
 
 /**
  * What a tracked section becomes is decided by what the ledger tracks its
@@ -568,7 +568,7 @@ function routeOf(section: TrackedSection, tracked: readonly KnownAccount[]): Sec
   if (section.last4 === null) return { kind: "brokerage" };
   const account = tracked.find((a) => a.last4 === section.last4) as KnownAccount;
   if (account.type === "investment" && account.subtype === "brokerage") return { kind: "brokerage" };
-  if (account.type === "checking") return { kind: "cash", last4: section.last4 };
+  if (account.type === "checking") return { kind: "cash", account };
   const trackedAs = account.subtype ? `${account.type}/${account.subtype}` : account.type;
   throw new ParseError(
     PROFILE_ID,
@@ -581,8 +581,16 @@ function routeOf(section: TrackedSection, tracked: readonly KnownAccount[]): Sec
  * Every statement a Robinhood brokerage PDF carries for the accounts this ledger
  * tracks, in print order, and the tracked sections it could not prove. Pure —
  * `parse` is this plus text extraction.
+ *
+ * `assetTypes` is what the ledger's holdings already record for each stock and
+ * fund symbol (`ParseContext.equityAssetTypes`); a position in a symbol absent
+ * from it is withheld, never guessed.
  */
-export function robinhoodBrokerageStatements(lines: readonly Line[], tracked: readonly KnownAccount[] = []): ParsedFile {
+export function robinhoodBrokerageStatements(
+  lines: readonly Line[],
+  tracked: readonly KnownAccount[] = [],
+  assetTypes: Readonly<Record<string, EquityAssetType>> = {},
+): ParsedFile {
   const texts = lines.map((l) => l.text);
   const routed = selectAccountSections(
     texts,
@@ -602,7 +610,7 @@ export function robinhoodBrokerageStatements(lines: readonly Line[], tracked: re
   const read = routed.map(({ section, route }): SectionRead =>
     route.kind === "brokerage"
       ? { statements: brokerageStatements(lines, texts, section) }
-      : cashSection(lines, texts, section, route.last4),
+      : cashSection(lines, texts, section, route.account, assetTypes),
   );
   const statements = read.flatMap((r) => r.statements);
   const refusals = read.flatMap((r) => (r.refusal === undefined ? [] : [r.refusal]));
@@ -620,19 +628,6 @@ interface SectionRead {
 }
 
 /**
- * A refusal about ONE cash-account section: the technical message a whole-file refusal throws, and the reason in
- * plain words the notice carries when the rest of the file imports without the section.
- */
-class UnprovableSection extends ParseError {
-  constructor(
-    message: string,
-    public readonly reason: string,
-  ) {
-    super(PROFILE_ID, message);
-  }
-}
-
-/**
  * A cash-account section's statement — or, when the cash reader cannot prove it, the section WITHHELD, with why.
  *
  * 🔴 Every refusal the cash reader raises is about this one section, and the file it sits in is shared with the
@@ -645,17 +640,23 @@ class UnprovableSection extends ParseError {
  * file. And the window is read FIRST: a file that prints no period cannot say which month it would withhold, and
  * refusing it whole is what the brokerage's own section does anyway.
  */
-function cashSection(lines: readonly Line[], texts: readonly string[], section: AccountSection, last4: string): SectionRead {
+function cashSection(
+  lines: readonly Line[],
+  texts: readonly string[],
+  section: AccountSection,
+  account: KnownAccount,
+  assetTypes: Readonly<Record<string, EquityAssetType>>,
+): SectionRead {
   const period = statementPeriodOf(texts, section);
   try {
-    return { statements: [cashAccountStatement(lines, texts, section, last4)] };
+    return { statements: cashAccountStatements(lines, texts, section, account, assetTypes) };
   } catch (error: unknown) {
     if (!(error instanceof ParseError)) throw error;
     return {
       statements: [],
       refusal: {
         error,
-        withheld: { accountHint: cashAccountHint(last4), accountNumber: section.accountNumber, period, reason: reasonOf(error) },
+        withheld: { accountHint: cashAccountHint(account.last4), accountNumber: section.accountNumber, period, reason: reasonOf(error) },
       },
     };
   }
@@ -767,220 +768,143 @@ function brokerageStatements(lines: readonly Line[], texts: readonly string[], s
 }
 
 /**
- * A section whose account the ledger tracks as a CASH account — #655929651.
+ * A section whose account the ledger tracks as a CASH account — #655929651, "Robinhood Agentic".
  *
  * Why cash, measured on all three statements it has printed (2026-06..08):
  * `Brokerage Cash Balance $26.64 100.00%`, `Total Securities $0.00`, nothing
- * held. As a checking account the cash branch replays its one transaction
- * between printed anchors and a month that does not close is a real `gap`; as an
- * investment account with no holdings it would step-hold its anchors, ignore the
- * $26.64 credit entirely, and value to $0 against every printed ending balance.
+ * held. As a checking account the cash branch replays its transactions between
+ * printed anchors and a month that does not close is a real `gap`; as an
+ * investment account it would step-hold its anchors and ignore the cash.
  *
- * It yields ONE statement, and its hint names the account by last4 alone:
+ * ⚖️ And when the agent buys (owner, 2026-09-15): TWO statements. The cash
+ * statement keeps every Account Activity row — the ITRF top-ups, each Buy's cash
+ * out and Sell's cash in, dividends, interest, stock-lending pay — and its
+ * period still has to close to the cent. The BOOK's statement carries the
+ * positions, proven by `provePositions`, and Total Securities as its value
+ * anchor. A month with no position in it yields the cash statement alone,
+ * exactly as before.
+ *
+ * The cash statement's hint names the account by last4 alone:
  *  - no `type`, so `resolveAccount` can never ADOPT Robinhood Cash (checking, no
  *    last4) — adoption needs a type match — and no `preferName`, so it can never
  *    route there by name. It resolves to the account whose last4 it is.
- *  - ⛔ never a securities statement: `statement_periods` is unique on (file,
- *    account), and a $0.00 securities anchor would overwrite the cash anchor
- *    printed for the same day.
+ *  - ⛔ never a securities period on it: `statement_periods` is unique on (file,
+ *    account), and a securities anchor would overwrite the cash anchor printed
+ *    for the same day. The book is a different account (`bookOf`).
  *
- * Its `ITRF` rows are its only transactions — the $26.64 that arrived
- * 2026-06-05, whose other leg is Robinhood Cash's activity-CSV row. The export
- * is per account: the all-time file carries only that debit, so this statement
- * is the only source of the credit. It is NOT flagged `soleSource`: if the owner
- * ever downloads this account's own CSV, that file must be free to take the row
- * over rather than count it twice.
+ * Its rows are NOT flagged `soleSource`: if the owner ever downloads this
+ * account's own CSV, that file must be free to take them over rather than count
+ * them twice.
  *
- * ⛔ Everything else is REFUSED, because nothing else has a place here — and the
- * refusal withholds this SECTION, never the file (`cashSection`):
- *  - any printed securities, including a first month whose opening is `N/A`;
- *  - any Account Activity row that is not an `ITRF` (a Buy by the agent);
- *  - rows that do not sum to the printed Total Funds Paid and Received — the
- *    bank's own arithmetic, as the sweep table's check 3 is;
- *  - any trade pending settlement — see `refusePendingTrades`.
+ * ⛔ Every refusal withholds this SECTION, never the file (`cashSection`); see
+ * ./robinhood-positions.ts for each table's checks.
  */
-function cashAccountStatement(
+function cashAccountStatements(
   lines: readonly Line[],
   texts: readonly string[],
   section: AccountSection,
-  last4: string,
-): ParsedStatement {
+  account: KnownAccount,
+  assetTypes: Readonly<Record<string, EquityAssetType>>,
+): ParsedStatement[] {
   const parsed = parseSection(texts, section);
   const who = `#${parsed.accountNumber}`;
   const own = lines.slice(section.start, section.end);
 
-  refuseSecurities(
+  const securities = printedSecurities(
     own.map((l) => l.text),
     who,
-    last4,
+    account.last4,
   );
-  const txns = transferRows(own, who);
-  // after the Account Activity table is read, so a pending row is named as the pending trade it is
-  refusePendingTrades(own, who, last4);
-  const accountHint = cashAccountHint(last4);
+  const activity = readAccountActivity(own, who);
+  const pending = readPendingTrades(own, who, account.last4);
+  const held = readHeldPositions(own, who, securities.closingCents);
+  const positions = provePositions({
+    who,
+    period: { start: parsed.periodStart, end: parsed.periodEnd },
+    openingSecuritiesCents: securities.openingCents,
+    held,
+    trades: activity.trades,
+    bookEvents: account.book?.events ?? [],
+    assetTypes,
+  });
 
+  const accountHint = cashAccountHint(account.last4);
+  const noted = pending.length === 0 ? {} : { pending };
   // its first statement prints N/A for the opening: an observation, never a $0.00 opening it did not print
-  if (parsed.openingCashCents === null) {
-    return {
-      accountHint,
-      txns,
-      declaredRange: { start: parsed.periodStart, end: parsed.periodEnd },
-      ledger: { cents: parsed.closingCashCents, asOf: parsed.periodEnd },
-    };
-  }
-  return {
-    accountHint,
-    txns,
-    period: {
-      start: parsed.periodStart,
-      end: parsed.periodEnd,
-      beginCents: parsed.openingCashCents,
-      endCents: parsed.closingCashCents,
-    },
-  };
+  const cash: ParsedStatement =
+    parsed.openingCashCents === null
+      ? {
+          accountHint,
+          txns: activity.txns,
+          declaredRange: { start: parsed.periodStart, end: parsed.periodEnd },
+          ledger: { cents: parsed.closingCashCents, asOf: parsed.periodEnd },
+          ...noted,
+        }
+      : {
+          accountHint,
+          txns: activity.txns,
+          period: { start: parsed.periodStart, end: parsed.periodEnd, beginCents: parsed.openingCashCents, endCents: parsed.closingCashCents },
+          ...noted,
+        };
+  if (positions === null) return [cash];
+  return [cash, bookStatement({ start: parsed.periodStart, end: parsed.periodEnd }, securities, positions, account.last4)];
 }
 
 /**
- * A cash account holds no securities, and must SAY so. `parseSection` reports no
- * securities at all for an `N/A` opening (both halves or neither), so the
- * printed line is read here directly — a first month that bought something must
- * not pass for cash because its opening was blank.
+ * The Account Summary's `Total Securities <open> <close>`, read directly: `parseSection` reports none for an `N/A`
+ * opening (both halves or neither), and a first month that bought something must still be checked against its
+ * closing. A section that prints no such line is refused — nothing then says what it holds.
  */
-function refuseSecurities(texts: readonly string[], who: string, last4: string): void {
+function printedSecurities(texts: readonly string[], who: string, last4: string): { openingCents: number | null; closingCents: number } {
   const printed = firstMatch(texts, TOTAL_SECURITIES_RE);
   if (!printed) {
     throw new UnprovableSection(
-      `${who} prints no Total Securities line, so nothing shows it holds only cash — refusing to import it as a cash account (····${last4})`,
+      `${who} prints no Total Securities line, so nothing shows what it holds — refusing to import it (····${last4})`,
       "it prints no Total Securities line, so nothing shows the account holds only cash",
     );
   }
   // group 1 is the opening (or N/A), group 3 the closing — see parseSection
-  const held = [printed[1], printed[3]].find((v) => v !== undefined && v !== "N/A" && parseAmountToCents(v) !== 0);
-  if (held !== undefined) {
-    throw new UnprovableSection(
-      `${who} prints ${held} of securities, and the ledger tracks it as a cash account (····${last4}) — refusing to drop them`,
-      `it shows ${held} of securities, and this account is read as cash only`,
-    );
-  }
+  return {
+    openingCents: printed[1] === "N/A" ? null : parseAmountToCents(printed[1] as string),
+    closingCents: parseAmountToCents(printed[3] as string),
+  };
 }
 
 /**
- * A cash account has no trade waiting to settle, and must SAY so.
- *
- * 🔴 Found by a second reader before any real statement printed one: the Executed Trades Pending Settlement table
- * sits in #655929651's own section, below Account Activity, and Robinhood prints over it "These transactions may
- * not be reflected in the other summaries". A Buy the agent executed on the 29th and Robinhood settles on the 1st
- * is in NO other table that month — Total Securities still reads $0.00, Account Activity has no row — so the month
- * imported as cash (measured on the real lines with such a row added: June a $26.64 observation, August a
- * reconciled 2664 → 2664 period), and the owner's rule is that a section showing securities is refused.
- *
- * Every real month prints the table empty: `Total Executed Trades Pending Settlement $0.00 $0.00`, the title above
- * it, and nothing between them but a note, a column header and (June) a page break. A missing total or title is
- * refused too: then nothing shows that no trade is pending.
+ * The brokerage book's statement: its positions, and the printed Total Securities as its value anchor — what
+ * `pnpm ledger-check` checks the book's own valuation against, as it checks Robinhood Brokerage's.
  */
-function refusePendingTrades(own: readonly Line[], who: string, last4: string): void {
-  const totalAt = own.findIndex((l) => TOTAL_PENDING_RE.test(l.text));
-  if (totalAt === -1) {
-    throw new UnprovableSection(
-      `${who} prints no Total ${PENDING_TITLE} line, so nothing shows no trade is pending — refusing to import it as a cash account (····${last4})`,
-      `it prints no ${PENDING_TITLE} total, so nothing shows that no trade is waiting to settle`,
-    );
+function bookStatement(
+  period: { start: string; end: string },
+  securities: { openingCents: number | null; closingCents: number },
+  positions: StatementPositions,
+  last4: string,
+): ParsedStatement {
+  const accountHint: AccountHint = { institution: "Robinhood", type: "investment", subtype: "brokerage", bookOf: last4 };
+  if (securities.openingCents === null) {
+    return { accountHint, txns: [], declaredRange: period, ledger: { cents: securities.closingCents, asOf: period.end }, positions };
   }
-  const titleAt = own.findIndex((l) => l.text === PENDING_TITLE);
-  if (titleAt === -1 || titleAt > totalAt) {
-    throw new UnprovableSection(
-      `${who} prints no ${PENDING_TITLE} title above its total — refusing to read the table unbounded`,
-      `it prints no ${PENDING_TITLE} title above that table's total, so the table cannot be read`,
-    );
-  }
-  const row = own.slice(titleAt + 1, totalAt).find((l) => PENDING_ROW_RE.test(l.text));
-  if (row) {
-    throw new UnprovableSection(
-      `${who} prints a trade pending settlement — "${row.text}" — and the ledger tracks it as a cash account (····${last4}), refusing to drop it`,
-      `it shows a trade waiting to settle ("${row.text}"), and this account is read as cash only`,
-    );
-  }
-  const totals = TOTAL_PENDING_RE.exec((own[totalAt] as Line).text) as RegExpExecArray;
-  const pending = [totals[1], totals[2]].find((v) => parseAmountToCents(v as string) !== 0);
-  if (pending !== undefined) {
-    throw new UnprovableSection(
-      `${who} prints ${pending} of trades pending settlement, and the ledger tracks it as a cash account (····${last4}) — refusing to drop them`,
-      `it shows ${pending} of trades waiting to settle, and this account is read as cash only`,
-    );
-  }
-}
-
-/** The cash account's Account Activity: `ITRF` rows only, checked against the printed column totals. */
-function transferRows(own: readonly Line[], who: string): CanonicalTxn[] {
-  const totalsAt = own.findIndex((l) => TOTAL_FUNDS_RE.test(l.text));
-  if (totalsAt === -1) {
-    throw new UnprovableSection(
-      `${who} prints no Total Funds Paid and Received line — refusing to import its Account Activity unchecked`,
-      "it prints no Total Funds Paid and Received line, so its activity cannot be checked",
-    );
-  }
-  // the table runs from its title to its totals; the Executed Trades table after it has its own columns
-  const tableAt = own.findIndex((l) => l.text === "Account Activity");
-  const table = tableAt === -1 || tableAt > totalsAt ? [] : own.slice(tableAt, totalsAt);
-  const rows = parseAccountActivity(table, () => true);
-
-  const stray = rows.find((r) => !r.line.tokens.some((t) => t.str === "ITRF"));
-  if (stray) {
-    throw new UnprovableSection(
-      `${who} prints an Account Activity row a cash account cannot hold — "${stray.line.text}" — ` +
-        `only ITRF transfers are read there, refusing to drop it`,
-      `it shows activity that is not a transfer ("${stray.line.text}"), and this account is read as cash only`,
-    );
-  }
-
-  const debits = rows.reduce((n, r) => (r.amountCents < 0 ? n - r.amountCents : n), 0);
-  const credits = rows.reduce((n, r) => (r.amountCents > 0 ? n + r.amountCents : n), 0);
-  const totals = TOTAL_FUNDS_RE.exec((own[totalsAt] as Line).text) as RegExpExecArray;
-  const printedDebits = parseAmountToCents(totals[1] as string);
-  const printedCredits = parseAmountToCents(totals[2] as string);
-  if (debits !== printedDebits || credits !== printedCredits) {
-    throw new UnprovableSection(
-      `${who}'s Account Activity rows total ${debits}/${credits} against a printed Total Funds Paid and Received of ${printedDebits}/${printedCredits}`,
-      `its activity rows add up to ${formatCents(debits)} out and ${formatCents(credits)} in, but it prints ` +
-        `${formatCents(printedDebits)} out and ${formatCents(printedCredits)} in — a row this reader cannot see is there`,
-    );
-  }
-
-  return rows.map((r) => {
-    const description = r.line.tokens[0]?.str.trim() ?? "";
-    if (description === "") {
-      throw new UnprovableSection(
-        `${who} prints an ITRF row with no description — "${r.line.text}"`,
-        `it shows a transfer with no description ("${r.line.text}")`,
-      );
-    }
-    return {
-      postedOn: r.postedOn,
-      amountCents: r.amountCents,
-      // the description token, which is the activity CSV's own wording for the other leg
-      rawDescription: description,
-      bankCategory: "ITRF",
-      // filed exactly as the activity CSV files an ITRF — the one table of Robinhood trans codes
-      categoryPath: RH_CODE_CATEGORY.ITRF ?? undefined,
-    };
-  });
+  return { accountHint, txns: [], period: { ...period, beginCents: securities.openingCents, endCents: securities.closingCents }, positions };
 }
 
 export const robinhoodBrokerageStatementPdf: ParserProfile = {
   id: PROFILE_ID,
   /*
-   * STILL v4 after withheld sections (2026-09-15) — deliberately. A bump re-reads every file imported at a lower
-   * version, and nothing a v4 file was read as has changed: a #655929651 section the cash reader proves imports
-   * exactly as before, and a file with one it cannot prove used to FAIL, which the import already reads again at
-   * the same version and into the same row (`REIMPORTABLE_STATUSES`). Measured on the owner's ledger: 30 brokerage
-   * files parsed at v3 and 3 at v4, none failed — a bump would re-parse all 33 for an identical result, and would
-   * strand a failed v4 row beside its v5 twin for any file that had failed before this.
+   * v5 (2026-09-15): the positions reader — a #655929651 section that proves positions becomes Robinhood Agentic's
+   * cash statement AND its brokerage book's. The bump is what the withheld-section safety net requires: a file
+   * recorded `parsed` with that section withheld is the same bytes at the same version, skipped as a duplicate
+   * (`ux_import_files_sha_parser`), and only a version bump supersedes its contribution and reads it again. Measured
+   * on the owner's 33 brokerage PDFs with his ledger's tracked accounts: every statement v5 emits equals v4's —
+   * Robinhood Cash, Robinhood Brokerage and Robinhood Agentic's three cash months — so a re-parse re-reads each file
+   * into what it already holds.
    *
-   * ⛔ THE RE-READ TRAP, for whoever builds the positions reader: a file with a withheld section is recorded
-   * `parsed`, so the same bytes at the same version are skipped as a duplicate (`ux_import_files_sha_parser`). The
-   * ONLY thing that reads a withheld section later is a version bump: it supersedes the file's whole contribution
-   * and re-reads it, and the carry-forward and dedupe paths keep the rest from counting twice
-   * (robinhood-parse-context.test.ts). The reader that can prove positions MUST bump this.
+   * ⛔ THE RE-READ TRAP stands for whatever comes next: a file with a withheld section is recorded `parsed`, so the
+   * same bytes at the same version are skipped. The ONLY thing that reads a withheld section later is a version bump:
+   * it supersedes the file's whole contribution — its rows, periods, anchors and, from v5, its holding events — and
+   * re-reads it; the carry-forward and dedupe paths keep the rest from counting twice
+   * (robinhood-parse-context.test.ts).
+   *
+   * The safety net before this (v4, withheld sections) did not bump: no v4 file's output changed.
    *
    * v4: a section whose account the ledger tracks as a CASH account becomes
    * that account's own statement (#655929651, `cashAccountStatement`). The
@@ -994,7 +918,7 @@ export const robinhoodBrokerageStatementPdf: ParserProfile = {
    * A parser fix never reaches an already-imported file, so the bump is what
    * makes the 32-statement archive re-importable — the same reason v2 existed.
    */
-  version: 4,
+  version: 5,
   // Robinhood ships opaque UUID filenames, so content decides routing entirely
   matches: (f) => f.format === "pdf",
   matchesContent: isRobinhoodBrokerageStatementText,
@@ -1002,6 +926,6 @@ export const robinhoodBrokerageStatementPdf: ParserProfile = {
     const lines = await extractLines(f.buffer);
     if (lines.length === 0) throw new ParseError(PROFILE_ID, "No extractable text — scanned PDF?");
     // the full lines, not just their text — direction lives in the token x
-    return robinhoodBrokerageStatements(lines, context?.knownAccounts.Robinhood ?? []);
+    return robinhoodBrokerageStatements(lines, context?.knownAccounts.Robinhood ?? [], context?.equityAssetTypes ?? {});
   },
 };
