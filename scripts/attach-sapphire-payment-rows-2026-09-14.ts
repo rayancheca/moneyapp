@@ -65,6 +65,26 @@
  * Chase Checking's −$100.00 (…702124851376) grouped with a superseded row only.
  * That is an open question for the owner, not something this script decides.
  *
+ * ⚠️ AUDIT, 2026-09-15 (copies of the applied ledger) — what this left unsaid:
+ *
+ *  - The lost link and note on the transaction-day row were `takeCarry`
+ *    keying on the posted day alone. Fixed in 8dfe304: the carry falls back to
+ *    the transaction day, so path 3 now keeps both. The replacement is still
+ *    dated the printed 06/30, which moves that one balance day.
+ *  - A version bump across ALL 12 printing statements puts 20250902, 20251002
+ *    and 20251102 into `gap` — on the pre-attach copy too, with the same
+ *    gap_cents — because a boundary row lands in the neighbouring statement's
+ *    period when they re-parse in file-name order. Since this attach, 10 of
+ *    these payments ($1,241.60) are quarantined along with the rest. That
+ *    importer defect is its own task: do not bump `chase-card-statement-pdf`
+ *    until it is fixed.
+ *  - Un-importing any of the 12 statements hard-deletes the attached rows it
+ *    now owns, and a re-import brings back the money as fresh parser rows
+ *    without their notes (20260302's five come back quarantined). Their
+ *    transfer partners are released since 8dfe304, so `detectTransfers` is no
+ *    longer barred from pairing them again. Whether an attached row should
+ *    survive its statement's un-import is the owner's call.
+ *
  * ## What is written, in ONE transaction
  *
  *  - 34 rows: `import_file_id` := the file that owns the statement period
