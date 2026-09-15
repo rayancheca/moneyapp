@@ -219,8 +219,10 @@ export function planFirstPostings(
 
 /**
  * Writes `planFirstPostings`' links — a detection-owned link, NULL → value
- * only — and settles every series it gave a row. Call it AFTER absorption, so a
- * row a series already owns by description is never offered here.
+ * only — and settles every series it gave a row. Call it BEFORE absorption
+ * (`linkRowsMadeActive` says why): a row whose descriptor another series owns
+ * is still offered here, and the rival fence keeps it for that series whenever
+ * the series expects that amount that day.
  */
 export function linkFirstPostings(
   tx: Tx,

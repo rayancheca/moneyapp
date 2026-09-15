@@ -652,14 +652,37 @@ export function absorbIntoLiveSeries(
   ctx: RecomputeCtx,
   candidateIds?: ReadonlySet<string>,
 ): AbsorptionResult {
+  const seriesMeta = tx
+    .select({
+      id: recurringSeries.id,
+      status: recurringSeries.status,
+      userEndsOn: recurringSeries.userEndsOn,
+      toleranceDays: recurringSeries.toleranceDays,
+    })
+    .from(recurringSeries)
+    .all();
   const liveSeriesIds = new Set(
-    tx
-      .select({ id: recurringSeries.id, status: recurringSeries.status })
-      .from(recurringSeries)
-      .all()
-      .filter((r) => r.status === "detected" || r.status === "confirmed")
-      .map((r) => r.id),
+    seriesMeta.filter((r) => r.status === "detected" || r.status === "confirmed").map((r) => r.id),
   );
+
+  /*
+   * 🔴 A series past its last day takes no later charge, and is no rival for
+   * one. Absorption filtered on status alone, and a one-off keeps its status
+   * after the day it ends. Measured on a copy of the real ledger, 2026-09-15:
+   * "Car insurance — Nov 11 balance…" (ends 2026-11-11), holding a Nov 10
+   * "VAPE N SMOKE SHOP MIAMI BEACH" row, absorbed a Dec 3 −$19.77 Vape N Smoke
+   * charge (n 1 → 2). And once that one-off held Progressive's descriptor
+   * beside `Car insurance`, "two owners" made the Dec 11 premium link to
+   * neither. The last day is the owner's end date plus the series' own
+   * tolerance, so a final charge that posts a day late still links.
+   */
+  const lastDayById = new Map(
+    seriesMeta.flatMap((r) => (r.userEndsOn === null ? [] : [[r.id, addDays(r.userEndsOn, r.toleranceDays)] as const])),
+  );
+  const takesChargeOn = (seriesId: string, postedOn: string): boolean => {
+    const last = lastDayById.get(seriesId);
+    return last === undefined || compareDates(postedOn, last) <= 0;
+  };
 
   const rows = tx
     .select({
@@ -668,19 +691,19 @@ export function absorbIntoLiveSeries(
       description: transactions.normalizedDescription,
       linkSource: transactions.seriesLinkSource,
       amountCents: transactions.amountCents,
+      postedOn: transactions.postedOn,
     })
     .from(transactions)
     .where(and(eq(transactions.status, "active"), lte(transactions.postedOn, today)))
     .all();
 
-  // descriptor → the one live series carrying it; null once two disagree,
-  // because picking between them would be inventing a link.
-  const ownerOf = new Map<string, string | null>();
+  // descriptor → every live series carrying it
+  const ownersOf = new Map<string, Set<string>>();
   for (const r of rows) {
     if (!r.seriesId || !liveSeriesIds.has(r.seriesId) || r.description === "") continue;
-    const seen = ownerOf.get(r.description);
-    if (seen === undefined) ownerOf.set(r.description, r.seriesId);
-    else if (seen !== r.seriesId) ownerOf.set(r.description, null);
+    const owners = ownersOf.get(r.description);
+    if (owners) owners.add(r.seriesId);
+    else ownersOf.set(r.description, new Set([r.seriesId]));
   }
 
   const absorbBySeries = new Map<string, string[]>();
@@ -688,8 +711,11 @@ export function absorbIntoLiveSeries(
     if (r.seriesId !== null || r.linkSource === "user" || r.description === "") continue;
     // the scope narrows which rows may be CLAIMED, never who owns a descriptor
     if (candidateIds && !candidateIds.has(r.id)) continue;
-    const seriesId = ownerOf.get(r.description);
-    if (!seriesId) continue;
+    // exactly one owner that can still take a charge that day; two would mean
+    // picking between them, which is inventing a link
+    const owners = [...(ownersOf.get(r.description) ?? [])].filter((id) => takesChargeOn(id, r.postedOn));
+    if (owners.length !== 1) continue;
+    const seriesId = owners[0]!;
     const list = absorbBySeries.get(seriesId);
     if (list) list.push(r.id);
     else absorbBySeries.set(seriesId, [r.id]);
@@ -725,13 +751,7 @@ export function absorbIntoLiveSeries(
     if (list) list.push(r.amountCents);
     else amountsBySeries.set(r.seriesId, [r.amountCents]);
   }
-  const statusById = new Map(
-    tx
-      .select({ id: recurringSeries.id, status: recurringSeries.status })
-      .from(recurringSeries)
-      .all()
-      .map((r) => [r.id, r.status] as const),
-  );
+  const statusById = new Map(seriesMeta.map((r) => [r.id, r.status] as const));
   const amountById = new Map(rows.map((r) => [r.id, r.amountCents] as const));
 
   let tagged = 0;

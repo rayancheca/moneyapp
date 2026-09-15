@@ -23,10 +23,20 @@ import { linkFirstPostings } from "./recurring-first-posting";
  * here would be a second answer to "is this charge that bill?", and the two
  * would drift.
  *
- * Then, over the SAME scope, `linkFirstPostings`: a commitment that has never
+ * FIRST, over the SAME scope, `linkFirstPostings`: a commitment that has never
  * posted owns no description for absorption to match, so its first charge is
  * matched by exact amount and schedule instead, under the uniqueness fences its
- * own docstring lists.
+ * own docstring lists. Absorption then links what is left.
+ *
+ * 🔴 The order used to be the other way round, so a descriptor another series
+ * owned beat the charge a commitment was registered for. The owner's one-off
+ * "Car insurance — Nov 11 balance after the $1,000 early payment" (−$72.74)
+ * never received its charge: a Wells Fargo card purchase at Progressive
+ * normalizes to "PROGRESSIVE INS 800-776-4737", which `Car insurance` owns, so
+ * absorption gave it the $72.74 and the one-off read owed beside its own
+ * posting (measured on a copy of the real ledger, 2026-09-15). A descriptor
+ * owner that DOES expect the amount that day still keeps it: first-posting
+ * refuses any charge another live series expects, and absorption then takes it.
  */
 
 /** What linking at import wrote. */
@@ -51,10 +61,11 @@ export function linkRowsMadeActive(
   if (scope.size === 0) return { absorbed: 0, firstPostings: 0 };
   const ctx = loadRecomputeCtx(db);
   return db.transaction((tx) => {
-    const absorbed = absorbIntoLiveSeries(tx, today, ctx, scope);
-    // AFTER absorption, in the same transaction: a row a series already owns by
-    // description is never offered to a newcomer as its first posting
+    // BEFORE absorption, in the same transaction: a charge a registered
+    // commitment expects to the cent is its first posting, whoever owns the
+    // descriptor — unless another live series expects it too
     const first = linkFirstPostings(tx, today, ctx, scope);
+    const absorbed = absorbIntoLiveSeries(tx, today, ctx, scope);
     return { absorbed: absorbed.tagged, firstPostings: first.tagged };
   });
 }

@@ -191,3 +191,130 @@ describe("linking at import — the rows an operation made active, and only thos
     expect(seriesOf(absorbable).recurringSeriesId).toBe(breezeline);
   });
 });
+
+/*
+ * The owner's car insurance, as `data/owner-decisions-2026-09-14.ts` wrote it:
+ * `Car insurance` at $357.58, next Dec 11, last Jan 11, owning Progressive's
+ * descriptor through the Venture X row of 2026-08-12 he confirmed; and the
+ * one-off "Nov 11 balance after the $1,000 early payment", $72.74 on Nov 11
+ * only, never posted. A Wells Fargo card purchase at Progressive normalizes to
+ * exactly the descriptor `Car insurance` owns (measured, audit 2026-09-15).
+ */
+const PROGRESSIVE_VENTURE_X = "PROGRESSIVE INS 800-776-4737 OH";
+const PROGRESSIVE_WF_CARD = "Purchase authorized on 11/10 Progressive Ins 800-776-4737 OH S466223760601111 Card 7158";
+
+function carInsurance(): string {
+  const id = register({ name: "Car insurance", amountCents: -35758, nextOn: "2026-12-11" });
+  bundle.db
+    .update(recurringSeries)
+    .set({ userNextExpectedOn: "2026-12-11", userEndsOn: "2027-01-11", lastMatchedOn: "2026-08-12" })
+    .where(eq(recurringSeries.id, id))
+    .run();
+  post({ postedOn: "2026-08-12", amountCents: -35758, raw: PROGRESSIVE_VENTURE_X, seriesId: id, linkSource: "user" });
+  return id;
+}
+
+function novemberBalance(): string {
+  const id = register({
+    name: "Car insurance — Nov 11 balance after the $1,000 early payment",
+    amountCents: -7274,
+    nextOn: "2026-11-11",
+  });
+  bundle.db
+    .update(recurringSeries)
+    .set({ userNextExpectedOn: "2026-11-11", userEndsOn: "2026-11-11" })
+    .where(eq(recurringSeries.id, id))
+    .run();
+  return id;
+}
+
+describe("a charge a never-posted commitment expects to the cent is its first posting, whoever owns the descriptor", () => {
+  /*
+   * 🔴 Absorption ran first and matches on description alone, so the $72.74
+   * went to `Car insurance` — n 1 → 2, last_matched_on Aug 12 → Nov 11 — and
+   * the one-off built for exactly this charge still read $72.74 owed beside its
+   * own posting. Measured on a copy of the real ledger with main's import path
+   * (audit, 2026-09-15). First-posting's own fences decide it: exact amount,
+   * the schedule's forward walk, uniqueness both ways, and no live series —
+   * `Car insurance` included — expecting that amount that day.
+   */
+  test("Progressive's Nov 11 $72.74 links to the one-off, not to the series owning Progressive's descriptor", () => {
+    const TODAY_NOV = "2026-11-20";
+    const insurance = carInsurance();
+    const balance = novemberBalance();
+    const row = post({ postedOn: "2026-11-11", amountCents: -7274, raw: PROGRESSIVE_WF_CARD, accountId: checking });
+    // the fixture expresses the conflict: one descriptor, owned elsewhere
+    expect(normalizeDescription(PROGRESSIVE_WF_CARD)).toBe(normalizeDescription(PROGRESSIVE_VENTURE_X));
+    expect(overdueForSeries(bundle.db, new Set([balance]), "2026-11-01", TODAY_NOV).totalCents).toBe(7274);
+
+    expect(linkRowsMadeActive(bundle.db, [row], TODAY_NOV)).toEqual({ absorbed: 0, firstPostings: 1 });
+
+    expect(seriesOf(row).recurringSeriesId).toBe(balance);
+    expect(seriesRow(insurance).lastMatchedOn).toBe("2026-08-12");
+    expect(overdueForSeries(bundle.db, new Set([balance]), "2026-11-01", TODAY_NOV).totalCents).toBe(0);
+  });
+
+  test("the control: a Progressive charge at Car insurance's own amount is still absorbed by it", () => {
+    const TODAY_DEC = "2026-12-20";
+    const insurance = carInsurance();
+    novemberBalance();
+    const row = post({ postedOn: "2026-12-11", amountCents: -35758, raw: PROGRESSIVE_WF_CARD, accountId: checking });
+
+    expect(linkRowsMadeActive(bundle.db, [row], TODAY_DEC)).toEqual({ absorbed: 1, firstPostings: 0 });
+    expect(seriesOf(row).recurringSeriesId).toBe(insurance);
+  });
+});
+
+describe("a series past its last date owns no later charge by description", () => {
+  /*
+   * 🔴 `absorbIntoLiveSeries` filtered on status alone. A one-off that ended
+   * Nov 11, holding a Nov 10 "VAPE N SMOKE SHOP MIAMI BEACH" row a first-posting
+   * guess gave it, took a Dec 3 −$19.77 Vape N Smoke charge weeks after it
+   * ended (n 1 → 2, last_matched_on Nov 10 → Dec 3). Measured on a copy of the
+   * real ledger, audit 2026-09-15; that descriptor is on 28 unlinked rows there.
+   */
+  test("an ended one-off takes no charge dated after its last day and its tolerance", () => {
+    const TODAY_DEC = "2026-12-10";
+    const balance = novemberBalance();
+    post({ postedOn: "2026-11-10", amountCents: -7274, raw: "VAPE N SMOKE SHOP MIAMI BEACH", accountId: checking, seriesId: balance });
+    bundle.db.update(recurringSeries).set({ lastMatchedOn: "2026-11-10" }).where(eq(recurringSeries.id, balance)).run();
+    const later = post({ postedOn: "2026-12-03", amountCents: -1977, raw: "VAPE N SMOKE SHOP MIAMI BEACH", accountId: checking });
+    // the control: a live series in the same run DOES absorb its own charge
+    const breezeline = register({ name: "Breezeline (internet)", amountCents: -5000, nextOn: "2026-12-08" });
+    post({ postedOn: "2026-11-10", amountCents: -5000, raw: "BREEZELINE 866-290-5400 MA", seriesId: breezeline });
+    const control = post({ postedOn: "2026-12-08", amountCents: -5000, raw: "BREEZELINE 866-290-5400 MA" });
+
+    expect(linkRowsMadeActive(bundle.db, [later, control], TODAY_DEC)).toEqual({ absorbed: 1, firstPostings: 0 });
+
+    expect(seriesOf(later).recurringSeriesId).toBeNull();
+    expect(seriesRow(balance).lastMatchedOn).toBe("2026-11-10");
+    expect(seriesOf(control).recurringSeriesId).toBe(breezeline);
+  });
+
+  test("once the one-off holds Progressive's descriptor too, Car insurance still takes its Dec 11 premium", () => {
+    // after the Nov 11 link above, two live series carry the descriptor — and
+    // "two owners" made absorption refuse the next premium, which then read owed
+    const TODAY_DEC = "2026-12-20";
+    const insurance = carInsurance();
+    const balance = novemberBalance();
+    post({ postedOn: "2026-11-11", amountCents: -7274, raw: PROGRESSIVE_WF_CARD, accountId: checking, seriesId: balance });
+    const december = post({ postedOn: "2026-12-11", amountCents: -35758, raw: PROGRESSIVE_WF_CARD, accountId: checking });
+
+    expect(linkRowsMadeActive(bundle.db, [december], TODAY_DEC)).toEqual({ absorbed: 1, firstPostings: 0 });
+
+    expect(seriesOf(december).recurringSeriesId).toBe(insurance);
+    expect(overdueForSeries(bundle.db, new Set([insurance]), "2026-12-01", TODAY_DEC).totalCents).toBe(0);
+  });
+
+  test("while both are live, the same descriptor still has two owners and links nothing", () => {
+    const TODAY_NOV = "2026-11-12";
+    const insurance = carInsurance();
+    const balance = novemberBalance();
+    post({ postedOn: "2026-11-10", amountCents: -7274, raw: PROGRESSIVE_WF_CARD, accountId: checking, seriesId: balance });
+    const inside = post({ postedOn: "2026-11-12", amountCents: -1500, raw: PROGRESSIVE_WF_CARD, accountId: checking });
+
+    expect(linkRowsMadeActive(bundle.db, [inside], TODAY_NOV)).toEqual({ absorbed: 0, firstPostings: 0 });
+    expect(seriesOf(inside).recurringSeriesId).toBeNull();
+    expect(seriesRow(insurance).lastMatchedOn).toBe("2026-08-12");
+  });
+});
