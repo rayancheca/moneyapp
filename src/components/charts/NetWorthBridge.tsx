@@ -388,8 +388,13 @@ export function NetWorthBridge({
     </p>
   );
 
+  /*
+   * Named so a reader — and e2e — can address the band labels as ONE list.
+   * Since S22 the first band reads "Income", which is also the kind label on
+   * the dashboard's Upcoming strip: a page-wide exact match finds both.
+   */
   const legend = (
-    <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+    <ul aria-label="Bridge legend" className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">
       {attribution.bands.map((b) => (
         <li key={b.key} className="flex items-center gap-1.5">
           <span

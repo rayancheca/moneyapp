@@ -40,9 +40,14 @@ test("the bridge decomposes the hero number and states where it started and ende
   await expect(page.getByText("$133,473.39").first()).toBeVisible();
 
   // every band names itself and its signed amount, so a band whose bar is under
-  // one pixel is still readable
+  // one pixel is still readable.
+  // ⛔ Scoped to the legend, not the page: since S22 the first band reads
+  // "Income", and the dashboard's Upcoming strip prints "Income" as the kind of
+  // the fixture's Paycheck (due Jul 10, inside its 14 days of Jul 8). A
+  // page-wide exact match finds both, and strict mode throws.
+  const legend = page.getByRole("list", { name: "Bridge legend" });
   for (const label of ["Income", "Refunds", "Spent", "Moved", "Market", "Unexplained"]) {
-    await expect(page.getByText(label, { exact: true })).toBeVisible();
+    await expect(legend.getByText(label, { exact: true })).toBeVisible();
   }
 
   /*
