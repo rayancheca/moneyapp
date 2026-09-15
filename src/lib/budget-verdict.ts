@@ -42,6 +42,20 @@ export interface BudgetVerdict {
   barIsFull: boolean;
   /** the verdict is withheld — the row states its coverage gap instead */
   withheld: boolean;
+  /**
+   * The row may say where spending is HEADING beside the headline: the
+   * "Projected ≈" figure, and the pace colour on the dashed tail of recurring
+   * still expected. Chosen by the same branch as the headline, because a
+   * figure the row gated on `pace` alone printed "Projected ≈ $56.36" in the
+   * warning colour beside "Cash only", whose definition says no such reading is
+   * offered.
+   *
+   * False for `over` (its reading is measured rather than a forecast, and its
+   * full bar leaves the tail no room) and for "Cash only".
+   * ❓ True for "Awaiting statements", as before this field existed — an owner
+   * question, not decided here.
+   */
+  showsProjection: boolean;
 }
 
 const LABEL: Record<BudgetPaceKind, string> = {
@@ -71,6 +85,7 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
       explanation: BUDGET_JARGON.paceOver,
       barIsFull: true,
       withheld: false,
+      showsProjection: false,
     };
   }
 
@@ -89,6 +104,7 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
       explanation: BUDGET_JARGON.paceCashOnly,
       barIsFull: false,
       withheld: true,
+      showsProjection: false,
     };
   }
 
@@ -106,6 +122,8 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
       explanation: BUDGET_JARGON.paceWithheld,
       barIsFull: false,
       withheld: true,
+      // ❓ kept as it was before this field existed — see `showsProjection`
+      showsProjection: true,
     };
   }
 
@@ -114,5 +132,6 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
     explanation: pace === "at-risk" ? BUDGET_JARGON.paceAtRisk : BUDGET_JARGON.paceUnder,
     barIsFull: false,
     withheld: false,
+    showsProjection: true,
   };
 }

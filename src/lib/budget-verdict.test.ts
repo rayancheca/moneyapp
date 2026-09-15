@@ -111,9 +111,51 @@ describe("budgetVerdict", () => {
       verdict(CASH_ONLY),
     ]) {
       expect(v.barIsFull).toBe(false);
-      expect(v.explanation).toMatch(/fill behind the mark/);
+      expect(v.explanation).toMatch(/the dark mark is how far through the period you are/);
       expect(v.explanation).not.toMatch(/period mark is left off/);
     }
+  });
+
+  test("⚖️ a cash-only definition names the mark but does not teach reading pace off it", () => {
+    /*
+     * The mark is still drawn — the bar is to scale — so the body says what it
+     * is. But "fill behind the mark means spending is slower than time" IS a pace
+     * reading, and the owner's rule is that a cash-only row makes none; the same
+     * body already says no reading of where it is heading is offered.
+     */
+    expect(verdict(CASH_ONLY).explanation).not.toMatch(/fill behind the mark|slower than time/);
+    for (const v of [verdict({ pace: "under" }), verdict({ pace: "at-risk" }), verdict({ uncoveredDays: 3 })]) {
+      expect(v.explanation).toMatch(/fill behind the mark means spending is slower than time/);
+    }
+  });
+
+  test("⚖️ only a reading about where spending is heading may show the projection", () => {
+    /*
+     * 🔴 A cash-only row printed "Projected ≈ $56.36" in the warning colour beside
+     * a definition saying no reading of where it is heading is offered: the row
+     * gated the figure on `pace` alone, so the verdict's headline and the figure
+     * beside it disagreed — the drift this module exists to prevent.
+     */
+    for (const pace of ["under", "at-risk"] as const) {
+      for (const uncoveredDays of [0, 15]) {
+        expect(verdict({ pace, uncoveredDays, ...CASH_ONLY }).showsProjection).toBe(false);
+      }
+    }
+    // an over reading is measured rather than a forecast (paceOver says so) — cash or not
+    expect(verdict({ pace: "over", pct: 1.08 }).showsProjection).toBe(false);
+    expect(verdict({ pace: "over", pct: 1.3, ...CASH_ONLY }).showsProjection).toBe(false);
+    // the two graded readings ARE about where it is heading
+    expect(verdict({ pace: "under" }).showsProjection).toBe(true);
+    expect(verdict({ pace: "at-risk" }).showsProjection).toBe(true);
+    /*
+     * ❓ "Awaiting statements" keeps its projection, as it had before this field
+     * existed — although its body also says no reading is offered. Pinned, not
+     * blessed: whether a withheld row should drop it too is the owner's call, and
+     * it moves the budgets baselines.
+     */
+    expect(verdict({ pace: "at-risk", uncoveredDays: 3 }).showsProjection).toBe(true);
+    // a wallet beside an imported account is not cash only
+    expect(verdict({ pace: "at-risk", spentFromAccounts: 2, spentFromWallets: 1 }).showsProjection).toBe(true);
   });
 
   test("barIsFull tracks pace, not the sign of what is left", () => {

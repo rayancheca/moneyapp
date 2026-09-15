@@ -146,7 +146,7 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
           {/* One per ROW, departing from the "one tip per group" rule /categories
               set — deliberately, and for the two reasons that rule was costed on.
               A budgets page carries a handful of rows rather than 77, and what is
-              being explained DIFFERS per row: the headline is one of four
+              being explained DIFFERS per row: the headline is one of five
               readings, and a clamped bar does not render the today mark, so a
               single section-level definition would describe something the row in
               front of the reader does not have.
@@ -177,7 +177,9 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
           {tailWidth > 0 && (
             <div
               aria-hidden
-              className={`absolute inset-y-0 rounded-r-full border border-l-0 border-dashed ${tone.text} opacity-70`}
+              className={`absolute inset-y-0 rounded-r-full border border-l-0 border-dashed ${
+                verdict.showsProjection ? tone.text : "text-ink-faint"
+              } opacity-70`}
               style={{ left: `${spentPct}%`, width: `${tailWidth}%`, borderColor: "currentColor" }}
             />
           )}
@@ -312,7 +314,9 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
               className={over ? "text-negative" : undefined}
             />
           </span>
-          {status.pace !== "over" && status.projectedCents !== status.spentCents && (
+          {/* the verdict decides, not `pace` alone: a "Cash only" row is under or
+              at-risk and still offers no reading of where it is heading */}
+          {verdict.showsProjection && status.projectedCents !== status.spentCents && (
             <span>
               <span className="text-ink-faint">Projected ≈ </span>
               <Money cents={status.projectedCents} className={status.pace === "at-risk" ? "text-warning" : undefined} />
