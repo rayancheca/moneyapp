@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { count, desc, eq, isNotNull, sql } from "drizzle-orm";
+import { count, desc, eq, isNotNull } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors } from "@/db/schema/balances";
@@ -14,7 +14,8 @@ import type { AccountType } from "@/db/schema/accounts";
 import { derivesFromHoldings } from "@/services/derivation";
 import { provenanceFor } from "@/services/provenance";
 import { statementPulls } from "@/services/statement-pulls";
-import { countPhrase } from "@/components/ui/blast-radius";
+import { unimportAcknowledgement, unimportRadius } from "@/components/imports/unimport-radius";
+import { NO_UNIMPORT_ROWS, unimportCountsByFile, type UnimportCounts } from "@/services/import/unimport-counts";
 import { importRowQualifiers, importRowSubject } from "@/lib/import-file-label";
 import { dayWindowLabel } from "@/lib/period";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
@@ -70,41 +71,6 @@ export default async function ImportsPage({
       error: importFiles.error,
       importedAt: importFiles.importedAt,
       txnCount: count(transactions.id),
-      // the un-import blast radius, measured on the same rows the DELETE takes:
-      // how many the owner categorized BY HAND (the work that cannot come back)
-      // and the money the file put on both sides of the ledger
-      userCategorizedCount: sql<number>`coalesce(sum(case when ${transactions.categorizationSource} = 'user' then 1 else 0 end), 0)`,
-      /*
-       * 🔴 …but the MONEY line names the ledger, and a superseded row is not in
-       * it. `rocket-money-export-2026-08-25.csv` holds 39 rows, every one of
-       * them `superseded`, and the confirmation offered "Money leaving the
-       * ledger: $6,447.92 in · $4,051.25 out" — of a file whose rows no total
-       * on this app can see. Eleven files are in that state.
-       *
-       * The row COUNT stays whole: 39 rows really are deleted, and pairing that
-       * with $0.00 is the honest reading of what un-importing one of these does.
-       */
-      inflowCents: sql<number>`coalesce(sum(case when ${transactions.status} = 'active' and ${transactions.amountCents} > 0 then ${transactions.amountCents} else 0 end), 0)`,
-      outflowCents: sql<number>`coalesce(sum(case when ${transactions.status} = 'active' and ${transactions.amountCents} < 0 then -${transactions.amountCents} else 0 end), 0)`,
-      /*
-       * ⛔ …and some of what leaves comes straight back. `unimportFile` calls
-       * `restoreDuplicatesLosingTheirSurvivor` BEFORE its delete, so a row that
-       * is the surviving half of a confirmed duplicate hands its money to the
-       * retired twin instead of taking it out of the ledger. All 12 rows of
-       * `20250302-statements-9805-.pdf` are survivors, and their twins sum to
-       * the same $4,619.92 the confirmation called money leaving.
-       *
-       * Counted, never re-derived: the restore has slot conflicts and status
-       * floors this page must not reimplement, so the confirmation names how
-       * many rows are in that shape and lets the reader weigh it.
-       */
-      duplicateSurvivorCount: sql<number>`coalesce(sum(case when exists (
-        select 1 from duplicate_candidates d
-        where d.resolution = 'confirmed_duplicate'
-          and d.retired_transaction_id is not null
-          and d.retired_transaction_id <> ${transactions.id}
-          and (d.transaction_id_a = ${transactions.id} or d.transaction_id_b = ${transactions.id})
-      ) then 1 else 0 end), 0)`,
     })
     .from(importFiles)
     .leftJoin(transactions, eq(transactions.importFileId, importFiles.id))
@@ -138,6 +104,10 @@ export default async function ImportsPage({
       .all()
       .map((r) => [r.importFileId, r.n] as const),
   );
+  // what un-importing each file deletes and what it keeps, counted with the
+  // delete's own predicates — one grouped query, not one per row
+  const unimportCounts = unimportCountsByFile(db);
+  const countsOf = (fileId: string): UnimportCounts => unimportCounts.get(fileId) ?? NO_UNIMPORT_ROWS;
 
   const periods = db
     .select({
@@ -438,92 +408,15 @@ export default async function ImportsPage({
                           title="Un-import this file"
                           tone="negative"
                           confirmLabel="Delete these transactions"
-                          // a file with rows costs work to lose; an empty one
-                          // costs nothing, so it does not earn a checkbox
-                          acknowledgement={
-                            f.txnCount > 0
-                              ? "I understand these transactions are deleted"
-                              : undefined
-                          }
-                          radius={{
-                            headline: `Un-importing ${importRowSubject(f.fileName, qualifierById.get(f.id) ?? null)} deletes every row it brought in. There is no undo for this inside the app.`,
-                            lines: [
-                              {
-                                label: "Transactions deleted",
-                                value: countPhrase(f.txnCount, "transaction"),
-                                irreversible: f.txnCount > 0,
-                              },
-                              {
-                                label: "Categorized by you",
-                                value: countPhrase(f.userCategorizedCount, "transaction"),
-                                irreversible: f.userCategorizedCount > 0,
-                              },
-                              {
-                                label: "Money leaving the ledger",
-                                value: `${formatCents(f.inflowCents)} in · ${formatCents(f.outflowCents)} out`,
-                              },
-                              ...(f.duplicateSurvivorCount > 0
-                                ? [
-                                    {
-                                      label: "…of which comes back",
-                                      value: `${countPhrase(f.duplicateSurvivorCount, "row")} whose retired duplicate is restored`,
-                                    },
-                                  ]
-                                : []),
-                              {
-                                label: "Recorded balances removed",
-                                value: countPhrase(anchorsByFile.get(f.id) ?? 0, "balance"),
-                              },
-                              {
-                                label: "Statement periods removed",
-                                value: countPhrase(periodsByFile.get(f.id) ?? 0, "period"),
-                              },
-                            ],
-                            /* 🔴 "uncategorized" is the opposite of what
-                               happens. `importStatementFiles` runs
-                               `categorizeAll` and `detectTransfers` on every
-                               import that touched an account, so the rules, the
-                               merchant map, the bank categories and transfer
-                               detection all re-apply at once. Measured
-                               2026-09-10 over the rows the 130 row-carrying
-                               files own: 5,987 of 10,289 currently hold a
-                               categorization from exactly those engines — rule
-                               2,437 · merchant map 1,263 · transfer detection
-                               1,108 · bank category 1,092 — and 127 of the 130
-                               files have no uncategorized row at all. Only the
-                               hand-categorized rows lose anything, which the
-                               second clause already said.
-
-                               🔴 …and it left out the recurring links, which an
-                               import now writes too (2026-09-14): a charge joins
-                               the live series already carrying its exact
-                               description, and a commitment that has never
-                               posted takes its exact first charge. Before that,
-                               re-importing a statement brought its bills back
-                               UNLINKED, and every surface that decides "paid"
-                               from links called them owed.
-
-                               🔴 …but "re-runs recurring-series linking" alone
-                               promised every link back, and a link comes back
-                               only where its series still RECOGNISES the charge:
-                               absorption needs another row of that series with
-                               the same description, and a first posting needs a
-                               commitment with nothing posted whose date is still
-                               ahead. Measured 2026-09-14 by the review on a
-                               copy of the real ledger: un-importing and
-                               re-importing Statement_082026_4208.pdf left Car
-                               insurance and HBO Max at 0 linked rows (1 each
-                               before). Read-only on the ledger the same day:
-                               each has exactly one linked row, both in that
-                               file (2026-08-12 -$357.58, 2026-07-18 -$260.26),
-                               and Venture X annual fee's only one is in
-                               capitalone-venturex-statement-2026-02.pdf. A detach goes with
-                               its row too: the charge the owner said was not
-                               that bill comes back linked, if its series still
-                               carries the description. */
-                            reassurance:
-                              "The statement file itself stays on disk. Re-importing brings the rows back and re-runs the rules, the merchant map, transfer detection and recurring-series linking over them — but a charge links again only where its series still recognises it: by another charge with the same description, or as a registered commitment's first charge on its date and amount. What is lost is the hand-categorization, and the recurring links you attached or removed by hand.",
-                          }}
+                          acknowledgement={unimportAcknowledgement(countsOf(f.id))}
+                          // what the delete takes and what it keeps, counted with
+                          // the delete's own predicates (`unimportCountsByFile`)
+                          radius={unimportRadius({
+                            subject: importRowSubject(f.fileName, qualifierById.get(f.id) ?? null),
+                            counts: countsOf(f.id),
+                            balances: anchorsByFile.get(f.id) ?? 0,
+                            periods: periodsByFile.get(f.id) ?? 0,
+                          })}
                         />
                       </td>
                     </tr>
