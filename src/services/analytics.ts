@@ -10,20 +10,29 @@ import { activeSplitsInRange } from "./transaction-splits";
 /**
  * Spending & income analytics (master-plan Phase 4).
  *
- * Authoritative semantics (schema.md invariant 7):
+ * Authoritative semantics (schema.md invariant 7, as amended by the owner
+ * decision of 2026-09-03 on `uncategorizedIds` below):
  * - Only `status='active'` transactions count — quarantined/excluded/
  *   superseded never appear.
- * - Categories of kind transfer/investment/rewards/system are excluded
- *   from both spending and income.
- * - Spending = expense-kind categories, netted: purchases (negative) and
- *   merchant refunds (positive) roll up together, displayed as positive
- *   "money out" cents.
- * - Uncategorized (category_id NULL) NEGATIVE amounts form an explicit
- *   "Uncategorized" spending bucket — never hidden. Uncategorized positive
- *   amounts are excluded everywhere (the review queue owns them).
+ * - Categories of kind transfer/investment/rewards are excluded from both
+ *   spending and income.
+ * - Spending = expense-kind categories, netted per category: purchases
+ *   (negative) and merchant refunds (positive) roll up together, displayed as
+ *   positive "money out" cents. (`periodTotals`' Spent is GROSS and reports
+ *   refunds apart — see spending.ts.)
+ * - Uncategorized = category_id NULL OR filed on a system-kind category
+ *   (`isUncategorized`). Its NEGATIVE amounts form the explicit
+ *   "Uncategorized" spending bucket — never hidden, and counted in Spent. Its
+ *   positive amounts are excluded everywhere (the review queue owns them).
  * - Income = POSITIVE transactions in income-kind categories, split by the
- *   assigned (sub)category. Investment-account dividends/interest appear by
+ *   assigned (sub)category; a negative row in one is left out of the figure,
+ *   never subtracted from it. Investment-account dividends/interest appear by
  *   construction — they are income-kind transactions, not market movement.
+ *
+ * 🔴 S21, measured 2026-09-15: this header still said system-kind was excluded
+ * from spending and that only NULL formed the Uncategorized bucket — three
+ * weeks after `spendingBucket` began bucketing system-filed outflows. `jargon.ts`
+ * grounded /categories' kind definitions in it and inherited the stale rule.
  *
  * Exact reconciliation: every aggregate has a sibling transaction-list
  * function taking identical filters, and cent totals are computed from the

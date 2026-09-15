@@ -13,11 +13,25 @@
  *
  * - **No figures.** A number here would be one nobody measured, and it would
  *   collide with the single-match locators that read the real ones.
- * - **Say what the code does, not what the word suggests.** Each definition
- *   below is grounded in `analytics.ts`'s stated contract: categories of kind
- *   transfer/investment/rewards/system are excluded from spending; spending is
- *   expense-kind netted (purchases against refunds); income counts positive
- *   amounts in income-kind categories.
+ * - **Say what the code does, not what the word suggests.** Each kind definition
+ *   below is grounded in the RULE that counts the kind, never in prose about it:
+ *   `spendingBucket` (analytics.ts) counts expense-kind rows plus money out that
+ *   is uncategorized — NULL, or filed on the system category; `isIncome`
+ *   (spending.ts) counts positive rows in income-kind categories and leaves a
+ *   repayment out rather than subtracting it; `transferCategoryResolver`
+ *   (transfer-links.ts) can stamp only the three own-account Transfers
+ *   subcategories, while the owner files money to and from other people under
+ *   Transfers too. `jargon-kinds.test.ts` asks those rules on a real database.
+ *
+ *   🔴 S21 / S35 / S34. This used to say the definitions were grounded in
+ *   `analytics.ts`'s header contract, and that contract went stale on
+ *   2026-09-03 when system-filed outflows joined the Uncategorized spending
+ *   bucket. Measured on the real ledger 2026-09-15, /categories said the system
+ *   kind was "Kept out of spending totals" while its six rows' $93.07 of outflow
+ *   sat in Spent; called expense "The only kind counted as spending"; said an
+ *   income repayment "nets against the original" when the income figure leaves
+ *   it out; and called Transfers "Money moving between accounts you own" over
+ *   Reimbursements, Gifts received, Pass-through and Loans.
  */
 
 /** Terms the surrounding UI owns. A definition may not contain one of these. */
@@ -62,18 +76,23 @@ export const RESERVED_JARGON_PHRASES = [
  * heading on /categories.
  */
 export const CATEGORY_KIND_JARGON: Record<string, string> = {
+  // spendingBucket: expense-kind rows AND uncategorized money out; netted per category, gross in Spent
   expense:
-    "The only kind counted as spending. Purchases and refunds net against each other, so returning something reduces the total instead of adding to it.",
+    "Counted as spending, together with money out that has no category yet. Purchases and refunds net against each other in a category's total, so returning something reduces it instead of adding to it.",
+  // isIncome keeps positive rows only; categorySpending (the category's own page) nets both signs
   income:
-    "Only money arriving counts here. A repayment that claws some of it back nets against the original rather than inflating what you earned.",
+    "Money arriving here is income. Money leaving one of these categories is left out of that figure rather than subtracted from it, though the category's own total still nets both.",
   rewards:
-    "Cash back and statement credits. Kept out of spending totals, so a credit never reads as money earned or as money spent.",
+    "Cash back and statement credits. Kept out of spending totals, so a credit never reads as income or as money spent.",
   investment:
     "Buying and selling positions. Kept out of spending totals — moving money into an investment is not an expense, and the position is valued separately.",
+  // transferCategoryResolver stamps only the three own-account subcategories; the owner's
+  // Reimbursements, Gifts received, Pass-through and Loans sit here too (owner decision 2026-09-14)
   transfer:
-    "Money moving between accounts you own. Kept out of spending totals so one payment is never counted twice, once leaving and once arriving.",
+    "Money moving between your own accounts, and money passing to or from other people that is neither spending nor income. Kept out of spending totals, so a payment between two of your accounts is never counted twice.",
+  // spendingBucket puts a system-filed outflow in the Uncategorized bucket, and periodTotals counts it in Spent
   system:
-    "Where a transaction sits until it has a real category. Kept out of spending totals, and surfaced separately so it is never silently treated as nothing.",
+    "Where a transaction sits until it has a real category. Money out while it sits here still counts as spent, and is shown separately so it is never silently treated as nothing.",
 };
 
 /**
