@@ -18,7 +18,7 @@ import { emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { activeTxnsInRange, loadCategoryIndex, spendingBucket, uncategorizedWhere } from "./analytics";
 import { accountCoverage, type AccountCoverage, type CoverageGrade } from "./coverage";
-import { derivesFromHoldings, pickWinners } from "./derivation";
+import { derivesFromHoldings, heldBalanceAnchor, loadReplayInputs, pickWinners } from "./derivation";
 import { VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
 import { MIN_OCCURRENCES } from "./recurring";
 
@@ -704,12 +704,20 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
    */
   const pricedFromHoldings = derivesFromHoldings(db, account);
   const heldAtRecordedBalance = isInvestment(account.type) && !pricedFromHoldings;
+  /*
+   * 🔴 NOT `anchor` above: that is the newest recorded balance of any source, and
+   * it named a bank export or a live reading the step-hold never carries. The
+   * balance a held day IS comes from the rebuild's own endpoints.
+   */
+  const held = heldAtRecordedBalance
+    ? heldBalanceAnchor(pickWinners(loadReplayInputs(db, account.id).anchors), row)
+    : null;
 
   return {
     verdict,
     headline: headlineForBalance(account.name, account.type, row.basis, row.day, recordedBy, {
       pricedFromHoldings,
-      recordedOn: anchor?.anchor.anchoredOn ?? null,
+      recordedOn: held?.anchoredOn ?? null,
     }),
     sources,
     checkedThrough: isInvestment(account.type) ? null : (lastClosed?.day ?? null),

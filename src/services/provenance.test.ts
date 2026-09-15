@@ -290,6 +290,38 @@ describe("provenanceFor — an account balance", () => {
     );
   });
 
+  /**
+   * 🔴 …and the date it named was the newest recorded balance of ANY source. A
+   * bank export or a live reading is a moment: `deriveDailyRows` never holds one
+   * forward while a statement or a balance he typed exists, and a live reading
+   * stands only on the day the curve was rebuilt. Measured on a scratch database
+   * (manual $700.00 on Sep 1, bank export $900.00 on Sep 5, rebuilt Sep 10): the
+   * Sep 8 row is $700.00 `carried`, and the headline read "is the balance
+   * recorded on Sep 5, 2026, held forward" — a figure the day does not carry.
+   */
+  test("the balance it names is the one the rebuild holds, never a later export or live reading", () => {
+    const id = addAccount("a", "Retyped", "investment");
+    addAnchor(id, "2026-09-01", "manual");
+    addAnchor(id, "2026-09-05", "ofx_ledger");
+    addAnchor(id, "2026-09-07", "live");
+    addAnchor(id, "2026-09-10", "live");
+    addDays(id, [
+      { day: "2026-09-01", basis: "anchored" },
+      { day: "2026-09-08", basis: "carried" },
+      // rebuilt on Sep 10: that day's live reading stands for that day only
+      { day: "2026-09-10", basis: "anchored" },
+    ]);
+    const headline = (day: string) =>
+      provenanceFor(bundle.db, { kind: "accountBalance", accountId: id, day })!.headline;
+
+    expect(headline("2026-09-08")).toBe(
+      "Retyped's value on Sep 8, 2026 is the balance recorded on Sep 1, 2026, held forward. No holdings price it, and no transaction arithmetic checks it.",
+    );
+    expect(headline("2026-09-10")).toBe(
+      "Retyped's value on Sep 10, 2026 is the balance recorded that day. No holdings price it, and no transaction arithmetic checks it.",
+    );
+  });
+
   test("an anchor names the document it came from", () => {
     const id = addAccount("a", "Chase Checking", "checking");
     const file = addFile("f1", "20260801-statements-3522-.pdf", "chase-checking-statement-pdf");

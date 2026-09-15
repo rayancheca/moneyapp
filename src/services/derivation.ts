@@ -112,6 +112,42 @@ export function selectEndpoints(winners: readonly Anchor[]): {
   return { endpoints: chain.length > 0 ? chain : moments, moments };
 }
 
+/** The `live` reading on `day` — the one moment that wins a day's display, and only on the rebuild's today. */
+function liveMomentOn(moments: readonly Anchor[], day: string): Anchor | undefined {
+  return moments.find((m) => m.source === "live" && m.anchoredOn === day);
+}
+
+/**
+ * The recorded balance one STEP-HELD day carries: an investment account that
+ * `derivesFromHoldings` says no of, where `deriveDailyRows` holds each endpoint
+ * flat until the next. Read off the same `selectEndpoints` and the same live
+ * reading the derivation writes by, through the stored row's basis: an
+ * `anchored` day is the balance recorded that day (an endpoint, or the live
+ * reading of the day the curve was rebuilt); any other day holds the last
+ * endpoint on or before it. Null before the first.
+ *
+ * 🔴 Provenance named the newest recorded balance of ANY source, and a bank
+ * export or a live reading is a moment the step-hold never carries while a
+ * statement or a typed balance exists. Measured on a scratch database (manual
+ * $700.00 on Sep 1, bank export $900.00 on Sep 5, rebuilt Sep 10): the Sep 8 row
+ * is $700.00 `carried`, and its headline read "the balance recorded on Sep 5,
+ * 2026, held forward".
+ *
+ * ⚠️ Step-hold only: a cash account's `derived` day is a replay, not a balance
+ * anyone recorded.
+ */
+export function heldBalanceAnchor(
+  winners: readonly Anchor[],
+  row: { day: string; basis: BalanceBasis },
+): Anchor | null {
+  const { endpoints, moments } = selectEndpoints(winners);
+  if (row.basis === "anchored") {
+    const recordedThatDay = endpoints.find((e) => e.anchoredOn === row.day) ?? liveMomentOn(moments, row.day);
+    if (recordedThatDay) return recordedThatDay;
+  }
+  return endpoints.filter((e) => compareDates(e.anchoredOn, row.day) <= 0).at(-1) ?? null;
+}
+
 /**
  * Pure derivation: winners + per-day transaction sums → daily rows.
  * Exported for exhaustive unit testing; rebuildAccount wires it to the DB.
@@ -156,7 +192,7 @@ export function deriveDailyRows(
   }
 
   // a same-day 'live' moment observation wins the display for today only
-  const liveToday = moments.find((m) => m.source === "live" && m.anchoredOn === today);
+  const liveToday = liveMomentOn(moments, today);
   if (liveToday) put(today, liveToday.balanceCents, "anchored");
 
   return [...rows.values()].sort((a, b) => compareDates(a.day, b.day));

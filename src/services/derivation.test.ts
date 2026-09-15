@@ -21,6 +21,7 @@ import {
   accountSeries,
   changesReplayMembership,
   deriveDailyRows,
+  heldBalanceAnchor,
   isReplayStatus,
   latestBalances,
   netWorthSeries,
@@ -272,6 +273,73 @@ describe("deriveDailyRows — investment accounts", () => {
       ["2026-07-04", 9_100_000, "carried"],
       ["2026-07-05", 9_100_000, "carried"],
     ]);
+  });
+});
+
+/**
+ * 🔴 An investment account with no holdings read "…is the balance recorded on
+ * Sep 5, 2026, held forward" of a day holding the Sep 1 balance: the headline
+ * took the newest recorded balance of ANY source, and a bank export or a live
+ * reading is a moment the step-hold never carries while a statement or a typed
+ * balance exists. Every answer here is held to the row `deriveDailyRows` writes
+ * for that day, so it cannot drift from the rule.
+ */
+describe("heldBalanceAnchor — the recorded balance a step-held day holds", () => {
+  const investmentWinners = pickWinners([
+    { anchoredOn: "2026-09-01", balanceCents: 70_000, source: "manual" },
+    { anchoredOn: "2026-09-05", balanceCents: 90_000, source: "ofx_ledger" },
+    { anchoredOn: "2026-09-07", balanceCents: 95_000, source: "live" },
+    { anchoredOn: "2026-09-08", balanceCents: 80_000, source: "statement" },
+    { anchoredOn: "2026-09-10", balanceCents: 60_000, source: "live" },
+  ]);
+
+  const heldOn = (winners: typeof investmentWinners, today: string) =>
+    deriveDailyRows(winners, new Map(), { isInvestment: true, today }).map((r) => {
+      const held = heldBalanceAnchor(winners, r);
+      // the figure it names is the figure the day carries, recorded on or before it
+      expect(held?.balanceCents, r.day).toBe(r.balanceCents);
+      expect(compareDates(held!.anchoredOn, r.day), r.day).toBeLessThanOrEqual(0);
+      return [r.day, r.basis, held!.anchoredOn];
+    });
+
+  test("a bank export and a past live reading are never what a day holds", () => {
+    expect(heldOn(investmentWinners, "2026-09-10")).toEqual([
+      ["2026-09-01", "anchored", "2026-09-01"],
+      ["2026-09-02", "carried", "2026-09-01"],
+      ["2026-09-03", "carried", "2026-09-01"],
+      ["2026-09-04", "carried", "2026-09-01"],
+      ["2026-09-05", "carried", "2026-09-01"],
+      ["2026-09-06", "carried", "2026-09-01"],
+      ["2026-09-07", "carried", "2026-09-01"],
+      ["2026-09-08", "anchored", "2026-09-08"],
+      ["2026-09-09", "carried", "2026-09-08"],
+      // the rebuild's today: its live reading stands for that day
+      ["2026-09-10", "anchored", "2026-09-10"],
+    ]);
+  });
+
+  test("a live reading stands only on the day the curve was rebuilt", () => {
+    expect(heldOn(investmentWinners, "2026-09-12").slice(-3)).toEqual([
+      ["2026-09-10", "carried", "2026-09-08"],
+      ["2026-09-11", "carried", "2026-09-08"],
+      ["2026-09-12", "carried", "2026-09-08"],
+    ]);
+  });
+
+  test("with no statement and no typed balance, the moments ARE the curve", () => {
+    const moments = pickWinners([
+      { anchoredOn: "2026-09-01", balanceCents: 50_000, source: "live" },
+      { anchoredOn: "2026-09-04", balanceCents: 65_000, source: "ofx_ledger" },
+    ]);
+    expect(heldOn(moments, "2026-09-05").slice(-3)).toEqual([
+      ["2026-09-03", "carried", "2026-09-01"],
+      ["2026-09-04", "anchored", "2026-09-04"],
+      ["2026-09-05", "carried", "2026-09-04"],
+    ]);
+  });
+
+  test("a day before the first recorded balance holds none", () => {
+    expect(heldBalanceAnchor(investmentWinners, { day: "2026-08-31", basis: "carried" })).toBeNull();
   });
 });
 
