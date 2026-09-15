@@ -42,7 +42,7 @@ const text = (html: string) => html.replace(/<!-- -->/g, "").replace(/<[^>]+>/g,
 /** the text of every element whose class list holds all of `tokens` */
 function textOfClass(html: string, ...tokens: string[]): string[] {
   const out: string[] = [];
-  for (const m of html.matchAll(/<(p|span) class="([^"]*)">([\s\S]*?)<\/\1>/g)) {
+  for (const m of html.matchAll(/<(p|span) class="([^"]*)"[^>]*>([\s\S]*?)<\/\1>/g)) {
     const classes = m[2]!.split(/\s+/);
     if (tokens.every((t) => classes.includes(t))) out.push(text(m[3]!));
   }
@@ -107,5 +107,40 @@ describe("the List prints a change wherever there is a whole prior window to nam
 
     expect(textOfClass(html, "hidden", "md:block")).toEqual([]);
     expect(html).not.toContain("+$50.00");
+    expect(html).not.toContain("against");
+  });
+});
+
+/**
+ * 🔴 A FIGURE WITH NO WINDOW. From md up the change is a bare signed figure in a
+ * column with no heading, and the card names the prior window only inside its
+ * OTHER lenses (the relief's readout, the Table's header). A week's "+$120.00"
+ * or a custom window's "-$48.10" says nothing of what it was set against. The
+ * phone line below md already names it; the column now says the same, to a
+ * screen reader and on hover — no pixel of it moves.
+ */
+describe("from md up the change column names the window it measured", () => {
+  const html = render(
+    [
+      row({ categoryId: "travel", name: "Travel", spentCents: 120_000, sharePct: 80, momDeltaCents: 40_000 }),
+      row({ categoryId: "gifts", name: "Gifts & Donations", momDeltaCents: -1_040 }),
+    ],
+    "Q1 2026",
+  );
+
+  test("each column reads its figure against the named window", () => {
+    const columns = [...html.matchAll(/<span class="[^"]*\bmd:block\b[^"]*" title="([^"]*)">([\s\S]*?)<\/span><\/span>/g)];
+
+    expect(columns.map((m) => m[1])).toEqual(["against Q1 2026", "against Q1 2026"]);
+    expect(columns.map((m) => text(m[2]! + "</span>"))).toEqual(["+$400.00 against Q1 2026", "-$10.40 against Q1 2026"]);
+  });
+
+  test("the words ride only inside the column, so the phone line is still the one element that names it below md", () => {
+    // ⚠️ scoped to the window's words: CategoryChip already reads each row's NAME as sr-only text
+    expect(textOfClass(html, "sr-only").filter((t) => t.includes("against"))).toEqual([
+      " against Q1 2026",
+      " against Q1 2026",
+    ]);
+    expect(textOfClass(html, "md:hidden")).toEqual(["-$10.40 against Q1 2026"]);
   });
 });

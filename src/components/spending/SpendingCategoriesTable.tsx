@@ -146,9 +146,15 @@ export function SpendingCategoriesTable({
               >
                 {spendingShare(row.spentCents, row.sharePct).label}
               </span>
+              {/* ⛔ the column has no heading, and the card names its prior window
+                  only inside its other lenses: a bare "+$120.00" on a week says
+                  nothing of what it was set against. The words ride INSIDE the
+                  column, so from md up exactly one element reads the change and
+                  the window together — the phone line below does it under md. */}
               {compares && (
-                <span className="hidden w-20 shrink-0 text-right text-xs md:block">
+                <span className="hidden w-20 shrink-0 text-right text-xs md:block" title={`against ${priorLabel}`}>
                   <SpendDelta cents={row.momDeltaCents} />
+                  <span className="sr-only">{` against ${priorLabel}`}</span>
                 </span>
               )}
               <Money cents={row.spentCents} className="w-24 shrink-0 text-right text-sm font-medium" />
