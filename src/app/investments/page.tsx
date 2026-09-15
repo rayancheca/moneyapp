@@ -11,7 +11,7 @@ import {
 } from "@/lib/benchmark-symbol";
 import { CHART_RANGES } from "@/lib/chart-range";
 import { diffDays, monthKey, todayIso } from "@/lib/dates";
-import { dayChangeLabel } from "@/lib/day-change-label";
+import { closesDayChange } from "@/lib/day-change-label";
 import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { benchmarkReturns } from "@/lib/portfolio-returns";
 import { carryForwardTo } from "@/lib/price-series";
@@ -162,10 +162,13 @@ export default async function InvestmentsPage({
     formatDay: formatDayLong,
   });
   const movers = topMovers(db);
-  // ⛔ ONE CALL, TWO CONSUMERS. The movers strip and the holdings header both
-  // date the SAME `dayChangePct`; computing the label twice is how they came to
-  // disagree, the strip saying "today" under a header reading "Last close".
-  const moversDayChange = dayChangeLabel(overview.asOf, overview.dayChangeVsDay, today, formatDayShort);
+  // ⛔ NOT the portfolio header's two days. The movers strip and the holdings
+  // subtotal show PER-HOLDING moves, each measured between its own two newest
+  // closes, and the portfolio series is carried past those: on Tue 2026-09-15
+  // `dayChangeLabel(overview.asOf, overview.dayChangeVsDay)` dated a
+  // Friday→Monday move "Today" on both. They are dated by their own closes now —
+  // the strip over its movers (inside `TopMovers`), the subtotal over its rows.
+  const holdingsDayChange = closesDayChange(rows, today, formatDayShort).heading;
   const allocation = allocationSlices(db);
   const calendarMonth = pnlCalendarMonth(db, monthKey(overview.asOf ?? today), today);
 
@@ -242,7 +245,7 @@ export default async function InvestmentsPage({
             <TopMovers
               winners={movers.winners}
               losers={movers.losers}
-              dayChange={moversDayChange}
+              today={today}
             />
           </SurfaceCard>
         )}
@@ -261,7 +264,7 @@ export default async function InvestmentsPage({
             <h2 className="mb-4 text-sm font-medium">Holdings</h2>
             <PortfolioHoldingsTable
               rows={rows}
-              dayChangeLabel={moversDayChange.label}
+              dayChangeLabel={holdingsDayChange.label}
               today={today}
             />
           </SurfaceCard>

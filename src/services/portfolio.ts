@@ -677,6 +677,13 @@ export interface HoldingRow {
   quantityE8: number;
   latestClose: number | null;
   quotedOn: string | null;
+  /**
+   * The close `dayChangeCents` is measured FROM; null with fewer than two. The
+   * move's two days are this row's own, never the portfolio series' — which is
+   * carried past the newest close — so they travel with the figure
+   * (`closesDayChange` dates a set of rows by them).
+   */
+  previousQuotedOn: string | null;
   valueCents: number | null;
   costCents: number | null;
   avgCostCents: number | null;
@@ -780,6 +787,7 @@ export function holdingRows(db: AppDatabase, today: string = todayIso()): Holdin
       quantityE8: r.quantityE8,
       latestClose: latest?.close ?? null,
       quotedOn: latest?.quotedOn ?? null,
+      previousQuotedOn: previous?.quotedOn ?? null,
       valueCents,
       costCents,
       avgCostCents: r.avgCostCents,
@@ -807,22 +815,42 @@ export interface Mover {
   dayChangeCents: number;
   dayChangePct: number;
   valueCents: number;
+  /**
+   * The two closes the move was measured between. Every leg of a symbol reads
+   * the same price series, so one pair is true of the aggregated mover.
+   */
+  quotedOn: string;
+  previousQuotedOn: string;
 }
 
 /** Top winners and losers by day-change %, for the movers strip. */
 export function topMovers(db: AppDatabase, limit = 4): { winners: Mover[]; losers: Mover[] } {
   // aggregate legs by (assetType, symbol) so a symbol held in two accounts is one
   // mover — matching the aggregated holding page (holding-detail)
-  const byKey = new Map<string, { symbol: string; assetType: AssetType; dayChangeCents: number; valueCents: number }>();
+  const byKey = new Map<
+    string,
+    { symbol: string; assetType: AssetType; quotedOn: string; previousQuotedOn: string; dayChangeCents: number; valueCents: number }
+  >();
   for (const r of holdingRows(db)) {
     if (r.dayChangePct === null || r.dayChangeCents === null || r.valueCents === null) continue;
+    // implied by a day change (it needs both closes); stated so the dates are typed
+    if (r.quotedOn === null || r.previousQuotedOn === null) continue;
     const key = `${r.assetType}|${r.symbol}`;
-    const cur = byKey.get(key) ?? { symbol: r.symbol, assetType: r.assetType, dayChangeCents: 0, valueCents: 0 };
+    const cur = byKey.get(key) ?? {
+      symbol: r.symbol,
+      assetType: r.assetType,
+      quotedOn: r.quotedOn,
+      previousQuotedOn: r.previousQuotedOn,
+      dayChangeCents: 0,
+      valueCents: 0,
+    };
     byKey.set(key, { ...cur, dayChangeCents: cur.dayChangeCents + r.dayChangeCents, valueCents: cur.valueCents + r.valueCents });
   }
   const movable: Mover[] = [...byKey.values()].map((m) => ({
     symbol: m.symbol,
     assetType: m.assetType,
+    quotedOn: m.quotedOn,
+    previousQuotedOn: m.previousQuotedOn,
     dayChangeCents: m.dayChangeCents,
     valueCents: m.valueCents,
     // prevValue = value − dayChange; pct is quantity-consistent across legs

@@ -273,6 +273,20 @@ describe("holdingRows + topMovers", () => {
   });
 
   /*
+   * 🔴 These moves were dated with the PORTFOLIO's two covered days, which the
+   * series carries past the newest close. Measured on the real ledger, Tue
+   * 2026-09-15: /investments read "Top movers · Today" over Fri→Mon moves. The
+   * dates a move was measured between are the rows' own, so they travel with it.
+   */
+  test("each row and each mover carries the two closes its day change was measured between", () => {
+    seedMixedBook();
+    const aapl = holdingRows(bundle.db).find((r) => r.symbol === "AAPL")!;
+    expect([aapl.quotedOn, aapl.previousQuotedOn]).toEqual([D3, D2]);
+    const mover = topMovers(bundle.db).winners.find((w) => w.symbol === "AAPL")!;
+    expect([mover.quotedOn, mover.previousQuotedOn]).toEqual([D3, D2]);
+  });
+
+  /*
    * 🔴 "30d" DREW THE LAST 30 CLOSES. Stocks are quoted on trading days only, so
    * 30 closes span about six weeks while crypto's span 30 days — one column,
    * two windows. Measured 2026-09-14 on /investments: 9 of 10 holdings drew

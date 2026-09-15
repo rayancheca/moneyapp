@@ -63,6 +63,60 @@ export function dayChangeTerm(
   return interval ?? label.toLowerCase();
 }
 
+/** The two closes a per-holding day move is measured between. */
+export interface ClosePair {
+  /** the newest close's day */
+  quotedOn: string | null;
+  /** the close before it — null when there is only one */
+  previousQuotedOn: string | null;
+}
+
+export interface ClosesDayChange {
+  /** the heading over the whole set: the one pair every item shares, else no date */
+  heading: DayChangeLabel;
+  /** aligned with the items: each one's own phrase when the heading names no date, else null */
+  terms: (string | null)[];
+}
+
+/**
+ * What to call a SET of per-holding day moves — the movers strip, the holdings
+ * subtotal, the dashboard's top mover — each measured between its OWN two
+ * newest closes.
+ *
+ * 🔴 Those surfaces were handed `PortfolioOverview.asOf`/`dayChangeVsDay`: the
+ * PORTFOLIO's two covered days, which its series carries past the newest close.
+ * Measured on the real ledger, Tue 2026-09-15: "Top movers · Today" over COKE's
+ * +5.77%, a move between Fri Sep 11's and Mon Sep 14's closes, beside a header
+ * reading "Today $0.00" — while COKE's own page dated the same +5.77% "Last
+ * close · Sep 14 vs Sep 11". Same rule, wrong pair of days.
+ *
+ * The heading names a pair only when every measured item shares it, the split
+ * `priceColumnAge` makes for price dates. When they differ — stocks beside a
+ * coin quoted over the weekend — no single pair is true of the set, so the
+ * heading claims none and each item carries its own. An item without two
+ * closes has no figure to date: it neither defeats the shared pair nor gets one.
+ */
+export function closesDayChange(
+  items: readonly ClosePair[],
+  today: string,
+  formatDay: (iso: string) => string,
+): ClosesDayChange {
+  const measured = (p: ClosePair): p is { quotedOn: string; previousQuotedOn: string } =>
+    p.quotedOn !== null && p.previousQuotedOn !== null;
+  const pairs = new Set(items.filter(measured).map((p) => `${p.quotedOn}|${p.previousQuotedOn}`));
+  if (pairs.size <= 1) {
+    const shared = items.find(measured);
+    return {
+      heading: dayChangeLabel(shared?.quotedOn ?? null, shared?.previousQuotedOn ?? null, today, formatDay),
+      terms: items.map(() => null),
+    };
+  }
+  return {
+    heading: dayChangeLabel(null, null, today, formatDay),
+    terms: items.map((p) => (measured(p) ? dayChangeTerm(p.quotedOn, p.previousQuotedOn, today, formatDay) : null)),
+  };
+}
+
 /**
  * WHEN a group total is as of — one date, or the span its parts were read
  * across.

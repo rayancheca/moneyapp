@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { dayChangeLabel, dayChangeTerm, asOfSpanTerm } from "./day-change-label";
+import { closesDayChange, dayChangeLabel, dayChangeTerm, asOfSpanTerm } from "./day-change-label";
 import { formatDayShort } from "./format-date";
 
 describe("dayChangeLabel", () => {
@@ -113,5 +113,69 @@ describe("asOfSpanTerm", () => {
   test("says nothing at all when no part carries a date", () => {
     expect(asOfSpanTerm(null, null)).toBe("");
     expect(asOfSpanTerm(null, "2026-08-14")).toBe("");
+  });
+});
+
+/**
+ * 🔴 PER-HOLDING MOVES WERE DATED WITH THE PORTFOLIO'S CARRIED DAY.
+ *
+ * Measured on the real ledger, Tue 2026-09-15: every held symbol's newest close
+ * is Mon Sep 14 and the stocks' previous one Fri Sep 11, while the portfolio
+ * series is carried to today with no change. `/investments` fed the movers
+ * strip the PORTFOLIO's two days, so it read "Top movers · Today" over COKE's
+ * Friday→Monday +5.77% — beside a header saying "Today $0.00" — while COKE's own
+ * page dated the same +5.77% "Last close · Sep 14 vs Sep 11".
+ */
+describe("closesDayChange — a set of per-holding moves, dated by their OWN closes", () => {
+  const pair = (quotedOn: string | null, previousQuotedOn: string | null) => ({ quotedOn, previousQuotedOn });
+  const call = (items: { quotedOn: string | null; previousQuotedOn: string | null }[], today: string) =>
+    closesDayChange(items, today, formatDayShort);
+
+  test("closes shared by every item name the heading once — the real ledger's movers on 2026-09-15", () => {
+    const stocks = [pair("2026-09-14", "2026-09-11"), pair("2026-09-14", "2026-09-11")];
+    expect(call(stocks, "2026-09-15")).toEqual({
+      heading: { label: "Last close", interval: "Sep 14 vs Sep 11" },
+      terms: [null, null],
+    });
+  });
+
+  test("closes that differ get a neutral heading, and each item names its own two days", () => {
+    // stocks beside a coin quoted over the weekend: no single pair describes both
+    const mixed = [pair("2026-09-14", "2026-09-11"), pair("2026-09-14", "2026-09-13")];
+    expect(call(mixed, "2026-09-15")).toEqual({
+      heading: { label: "Day change", interval: null },
+      terms: ["Sep 14 vs Sep 11", "Sep 14 vs Sep 13"],
+    });
+    // the NEWEST close differing is a difference too, not only the previous one
+    expect(call([pair("2026-09-14", "2026-09-11"), pair("2026-09-12", "2026-09-11")], "2026-09-15").heading.label).toBe(
+      "Day change",
+    );
+  });
+
+  test("closes quoted today keep the word — the e2e fixture's state", () => {
+    expect(call([pair("2026-07-08", "2026-07-07"), pair("2026-07-08", "2026-07-07")], "2026-07-08")).toEqual({
+      heading: { label: "Today", interval: null },
+      terms: [null, null],
+    });
+  });
+
+  test("an item without two closes neither breaks the shared date nor is given one", () => {
+    // an unpriced holding already prints no figure; counting it as a disagreement
+    // would un-date every priced row beside it
+    expect(call([pair("2026-09-14", "2026-09-11"), pair("2026-09-14", null), pair(null, null)], "2026-09-15")).toEqual({
+      heading: { label: "Last close", interval: "Sep 14 vs Sep 11" },
+      terms: [null, null, null],
+    });
+    expect(
+      call([pair("2026-09-14", "2026-09-11"), pair("2026-09-14", "2026-09-13"), pair(null, null)], "2026-09-15").terms,
+    ).toEqual(["Sep 14 vs Sep 11", "Sep 14 vs Sep 13", null]);
+  });
+
+  test("nothing measured is no interval at all", () => {
+    expect(call([], "2026-09-15")).toEqual({ heading: { label: "Day change", interval: null }, terms: [] });
+    expect(call([pair(null, null)], "2026-09-15")).toEqual({
+      heading: { label: "Day change", interval: null },
+      terms: [null],
+    });
   });
 });

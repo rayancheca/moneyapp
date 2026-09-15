@@ -642,4 +642,32 @@ describe("dashboardData: the investments teaser", () => {
     expect(teaser.topMover?.dayChangePct).toBeLessThan(0);
     expect(teaser.topMover?.href).toBe("/investments/stock/TSLA");
   });
+
+  /*
+   * 🔴 THE TOP MOVER SAT UNDATED UNDER A LINE ENDING "today". Measured on the
+   * real ledger, Tue 2026-09-15: the NAV series is carried to today with no
+   * change, so the teaser read "$0.00 (+0.00%) today" and then "Top mover COKE
+   * +5.77%" — a Friday→Monday move between two closes that were not today's.
+   * This fixture is that shape: closes end two days back, history carried to today.
+   */
+  test("a top mover measured between other days than the headline's names its own closes", () => {
+    for (let i = 1; i >= 0; i--) {
+      cache("AAPL", addDays("2026-07-06", -i), i === 1 ? 10_000 : 10_100);
+    }
+    hold("2026-07-05", "AAPL", 100_000_000, 9_000);
+    rebuildInvestmentHistory(bundle.db, brokerage(), TODAY);
+
+    const teaser = dashboardData(bundle.db, TODAY).investments!;
+    expect(teaser.dayChangeTerm).toBe("today"); // the carried series' own claim
+    expect(teaser.topMover?.symbol).toBe("AAPL");
+    expect(teaser.topMover?.dayChangeTerm).toBe(`${formatDayShort("2026-07-06")} vs ${formatDayShort("2026-07-05")}`);
+  });
+
+  test("a top mover measured over the headline's own days does not repeat the dates", () => {
+    seedFortyDays();
+    const teaser = dashboardData(bundle.db, TODAY).investments!;
+    expect(teaser.dayChangeTerm).toBe(`${formatDayShort("2026-07-06")} vs ${formatDayShort("2026-07-05")}`);
+    expect(teaser.topMover).not.toBeNull();
+    expect(teaser.topMover!.dayChangeTerm).toBeNull();
+  });
 });

@@ -90,6 +90,11 @@ export function InvestmentsTeaser({ data }: { data: InvestmentsTeaserData }) {
           >
             {data.topMover.dayChangePct >= 0 ? "+" : ""}
             {data.topMover.dayChangePct.toFixed(2)}%
+            {/* the closes the move was measured between, when the headline's
+                term above does not already name them — see TeaserMover */}
+            {data.topMover.dayChangeTerm !== null && (
+              <span className="font-normal text-ink-faint"> {data.topMover.dayChangeTerm}</span>
+            )}
           </span>
         </Link>
       )}

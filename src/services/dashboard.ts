@@ -107,6 +107,17 @@ export interface TeaserMover {
   assetType: AssetType;
   dayChangeCents: number;
   dayChangePct: number;
+  /**
+   * The two closes this move was measured between, when they are NOT the days
+   * the headline above it names; null when the headline's term already says them.
+   *
+   * 🔴 On Tue 2026-09-15 the teaser read "$0.00 (+0.00%) today" and then "Top
+   * mover COKE +5.77%" with no date: the headline's days are the portfolio
+   * series', carried to today, and the mover's are COKE's Friday and Monday
+   * closes. A chip under a line ending "today" inherits "today" unless it says
+   * otherwise.
+   */
+  dayChangeTerm: string | null;
   href: string;
 }
 
@@ -308,6 +319,9 @@ function investmentsTeaser(db: AppDatabase, today: string): InvestmentsTeaser | 
   // when the newest close is today's. Between price refreshes it is not, and the
   // teaser used to say the word anyway.
   const term = dayChangeTerm(overview.asOf, overview.dayChangeVsDay, today, formatDayShort);
+  // …and the mover is measured between ITS OWN two closes, which the carried
+  // series can have left behind — the same rule over the right pair of days
+  const moverTerm = top ? dayChangeTerm(top.quotedOn, top.previousQuotedOn, today, formatDayShort) : null;
 
   return {
     valueCents: overview.valueCents,
@@ -322,6 +336,7 @@ function investmentsTeaser(db: AppDatabase, today: string): InvestmentsTeaser | 
           assetType: top.assetType,
           dayChangeCents: top.dayChangeCents,
           dayChangePct: top.dayChangePct,
+          dayChangeTerm: moverTerm === term ? null : moverTerm,
           href: `/investments/${top.assetType}/${top.symbol}`,
         }
       : null,
