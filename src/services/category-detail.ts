@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { seriesDrawsAsRecurring, seriesRowLabel, type SeriesEvidence } from "@/lib/series-evidence";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
-import { addDays, compareDates, monthKey, periodBounds } from "@/lib/dates";
+import { addDays, periodBounds } from "@/lib/dates";
 import { unreachedKind, type UnreachedKind } from "@/lib/empty-period";
 import { withOwnRow } from "@/lib/subcategory-rows";
 import {
