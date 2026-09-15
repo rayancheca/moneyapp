@@ -3,10 +3,10 @@ import type { AppDatabase } from "@/db/client";
 import { insightSelections } from "@/db/schema/insights";
 import type { Fact } from "@/lib/insight-facts";
 import { insightPoolHash } from "@/lib/insight-hash";
+import type { InsightSurfaceId } from "@/lib/insight-surfaces";
 import {
   runInsights,
   type InsightCandidate,
-  type InsightSurfaceId,
   type SurfaceInsights,
 } from "./insights";
 import { readSettings } from "./settings";

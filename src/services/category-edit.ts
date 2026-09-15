@@ -6,6 +6,7 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { transactionSplits } from "@/db/schema/transaction-splits";
 import { normalizeOrder } from "@/lib/reorder";
+import { CREATABLE_CATEGORY_KINDS, KIND_ORDER, type CreatableCategoryKind } from "@/lib/category-kinds";
 import { REPLAY_STATUSES } from "./derivation";
 
 /**
@@ -83,15 +84,6 @@ export interface RenameCategoryResult {
   id: string;
   name: string;
 }
-
-/**
- * Kinds a user may create. `transfer` and `system` are deliberately absent:
- * the transfer detector and credit-match machinery resolve those BY NAME, so a
- * user-made one would either collide with a name detection depends on or sit
- * inert while looking real. Same reasoning that blocks renaming them.
- */
-export const CREATABLE_CATEGORY_KINDS = ["expense", "income", "rewards", "investment"] as const;
-export type CreatableCategoryKind = (typeof CREATABLE_CATEGORY_KINDS)[number];
 
 export interface CreateCategoryInput {
   name: string;
@@ -376,21 +368,6 @@ export function renameCategory(db: AppDatabase, categoryId: string, newName: str
   db.update(categories).set({ name }).where(eq(categories.id, row.id)).run();
   return { id: row.id, name };
 }
-
-/**
- * The order the manager groups roots in: what you spend first, then what comes
- * in, then the plumbing. Exported because `reorderCategories` has to renumber
- * roots in exactly the sequence the screen shows them, and a second copy of this
- * list would silently drift from the one the UI renders.
- */
-export const KIND_ORDER: readonly CategoryKind[] = [
-  "expense",
-  "income",
-  "rewards",
-  "investment",
-  "transfer",
-  "system",
-];
 
 const SORT_STEP = 10;
 

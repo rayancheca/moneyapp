@@ -10,10 +10,10 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { transactionSplits } from "@/db/schema/transaction-splits";
+import { KIND_ORDER } from "@/lib/category-kinds";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
 import {
-  KIND_ORDER,
   allMoveDestinations,
   archiveCategory,
   categoryTouchCounts,

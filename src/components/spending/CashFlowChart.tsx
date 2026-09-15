@@ -16,15 +16,9 @@ import {
 import { categoryHueVar, isCategoryHueName } from "@/lib/category-palette";
 import { UNREACHED_PHRASE } from "@/lib/empty-period";
 import { formatCents, formatCentsSigned } from "@/lib/money";
-import { ledgerHref } from "@/lib/ledger-href";
+import { cashFlowSegmentHref, ledgerHref, OTHER_SERIES_KEY, UNCATEGORIZED_SERIES_KEY } from "@/lib/ledger-href";
 import { paceReadout } from "@/lib/pace-readout";
-import {
-  cashFlowSegmentHref,
-  type CashFlow,
-  type CashFlowBucket,
-  type CashFlowSeries,
-  type SpendingProjection,
-} from "@/services/spending";
+import type { CashFlow, CashFlowBucket, CashFlowSeries, SpendingProjection } from "@/services/spending";
 
 /**
  * The combined cash-flow chart (ux-overhaul-plan §5.2): income stacked ABOVE the
@@ -38,11 +32,10 @@ import {
 const FALLBACK_SPEND = "var(--line-strong)";
 const FALLBACK_UNCAT = "var(--ink-faint)";
 const FALLBACK_INCOME = "var(--chart-2)";
-const OTHER_KEY = "__other";
 
 function colorFor(series: CashFlowSeries, fallback: string): string {
-  if (series.key === "__uncat") return FALLBACK_UNCAT;
-  if (series.key === "__other") return FALLBACK_SPEND;
+  if (series.key === UNCATEGORIZED_SERIES_KEY) return FALLBACK_UNCAT;
+  if (series.key === OTHER_SERIES_KEY) return FALLBACK_SPEND;
   if (isCategoryHueName(series.hue)) return categoryHueVar(series.hue);
   return fallback;
 }
@@ -312,7 +305,7 @@ export function CashFlowChart({ data, projection, paceWindowName }: CashFlowChar
             {spendingSeries.map((s) => {
               // "Other" aggregates categories with no single exact filter, so it
               // is intentionally not clickable (a drill would not reconcile).
-              const clickable = s.key !== OTHER_KEY;
+              const clickable = s.key !== OTHER_SERIES_KEY;
               return (
                 <Bar
                   key={`out-${s.key}`}

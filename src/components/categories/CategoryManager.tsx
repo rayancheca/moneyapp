@@ -17,11 +17,7 @@ import { CATEGORY_KIND_JARGON } from "@/lib/jargon";
 import { CategoryRow } from "./CategoryRow";
 import { toast } from "@/components/ui/Toast";
 import type { CategoryTreeNode, MoveDestination } from "@/services/category-edit";
-import {
-  CREATABLE_CATEGORY_KINDS,
-  KIND_ORDER,
-  type CreatableCategoryKind,
-} from "@/services/category-edit";
+import { CREATABLE_CATEGORY_KINDS, KIND_ORDER, type CreatableCategoryKind } from "@/lib/category-kinds";
 
 const KIND_LABEL: Record<string, string> = {
   expense: "Spending",

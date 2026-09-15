@@ -10,7 +10,8 @@ import { compactDayAmount } from "@/lib/calendar-day-weight";
 import { formatCents } from "@/lib/money";
 import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { loadSpendHeatmap } from "@/app/spending/actions";
-import { dayLedgerHref, type HeatDay, type SpendHeatmap as SpendHeatmapData } from "@/services/spending";
+import { dayLedgerHref } from "@/lib/ledger-href";
+import type { HeatDay, SpendHeatmap as SpendHeatmapData } from "@/services/spending";
 
 /**
  * Day-level spending heatmap (ux-overhaul-plan §5.3, enriched in pass 23).

@@ -30,7 +30,6 @@ import { spendingInsights } from "@/services/spending-insights";
 import {
   cashFlowByPeriod,
   dailySpendHeatmap,
-  dayLedgerHref,
   honestyBuckets,
   largestTransactions,
   periodComparison,
@@ -38,6 +37,7 @@ import {
   topMerchants,
   ledgerFirstDay,
 } from "@/services/spending";
+import { dayLedgerHref } from "@/lib/ledger-href";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { InsightList } from "@/components/insights/InsightList";
 import { SectionNotes } from "@/components/insights/SectionNotes";

@@ -3,10 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getDb } from "@/db/client";
+import { CREATABLE_CATEGORY_KINDS } from "@/lib/category-kinds";
 import {
   archiveCategory,
   createCategory,
-  CREATABLE_CATEGORY_KINDS,
   moveCategory,
   renameCategory,
   reorderCategories,

@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { formatIsoInstantLong } from "@/lib/format-instant";
 import type { InsightSelectRunResult } from "@/services/insight-selection";
-import { INSIGHT_SURFACES } from "@/services/insights";
+import { INSIGHT_SURFACES } from "@/lib/insight-surfaces";
 
 export interface InsightsManagerProps {
   enabled: boolean;

@@ -15,7 +15,7 @@ import { daysNotImportedYet, unreachedKind, type UnreachedKind } from "@/lib/emp
 import { subBuckets, type ResolvedPeriod } from "@/lib/period";
 import { alignByIndex, projectPace } from "@/lib/projection";
 import { allocationsFor } from "@/lib/transaction-splits";
-import { NO_MERCHANT } from "@/lib/ledger-href";
+import { NO_MERCHANT, OTHER_SERIES_KEY, UNCATEGORIZED_SERIES_KEY } from "@/lib/ledger-href";
 import {
   activeTxnsInRange,
   ledgerHref,
@@ -47,8 +47,6 @@ import { activeSplitsInRange } from "./transaction-splits";
  */
 
 const TOP_SPENDING_SERIES = 7;
-const OTHER_KEY = "__other";
-const UNCAT_KEY = "__uncat";
 
 export type { DateRange };
 
@@ -270,8 +268,8 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
   const spendingSeries: CashFlowSeries[] = rankedSpend
     .filter(([k]) => topKeys.has(k))
     .map(([k, v]) => ({ key: k, label: v.name, categoryId: k, hue: colorOf.get(k) ?? null }));
-  if (rankedSpend.length > topKeys.size) spendingSeries.push({ key: OTHER_KEY, label: "Other", categoryId: null, hue: null });
-  if (spendTotals.has("∅")) spendingSeries.push({ key: UNCAT_KEY, label: "Uncategorized", categoryId: null, hue: null });
+  if (rankedSpend.length > topKeys.size) spendingSeries.push({ key: OTHER_SERIES_KEY, label: "Other", categoryId: null, hue: null });
+  if (spendTotals.has("∅")) spendingSeries.push({ key: UNCATEGORIZED_SERIES_KEY, label: "Uncategorized", categoryId: null, hue: null });
 
   const incomeSeries: CashFlowSeries[] = [...incomeTotals.entries()]
     .sort((a, b) => b[1].cents - a[1].cents || a[1].name.localeCompare(b[1].name))
@@ -280,7 +278,7 @@ export function cashFlowByPeriod(db: AppDatabase, period: ResolvedPeriod, today:
   for (const c of classified) {
     const shell = shells[c.bucket]!;
     if (c.kind === "spend") {
-      const seriesKey = c.catKey === "∅" ? UNCAT_KEY : topKeys.has(c.catKey) ? c.catKey : OTHER_KEY;
+      const seriesKey = c.catKey === "∅" ? UNCATEGORIZED_SERIES_KEY : topKeys.has(c.catKey) ? c.catKey : OTHER_SERIES_KEY;
       shell.spending[seriesKey] = (shell.spending[seriesKey] ?? 0) + c.cents;
       shell.spendingCents += c.cents;
       shell.netCents -= c.cents;
@@ -482,27 +480,6 @@ export function periodComparison(db: AppDatabase, period: ResolvedPeriod, today:
   });
 }
 
-/**
- * The exact ledger link behind a clicked chart segment. A real category (income
- * or spending) drills to that category + bucket window; the Uncategorized
- * aggregate drills to the category-less bucket rows; Other (an aggregate of
- * many small categories) drills to the whole bucket window.
- */
-export function cashFlowSegmentHref(
-  seriesKey: string,
-  categoryId: string | null,
-  bucket: DateRange,
-  /** 'in' for income segments (positive-only), so the drill matches the bar */
-  flow?: "in" | "out",
-): string {
-  // Uncategorized spending is negatives-only → drill to outflows so it reconciles
-  if (seriesKey === UNCAT_KEY) return ledgerHref({ category: null, from: bucket.from, to: bucket.to, flow: "out" });
-  // Other is an aggregate of many small categories with no single exact filter —
-  // it is not clickable in the chart, so this path is unused; kept honest anyway.
-  if (seriesKey === OTHER_KEY) return ledgerHref({ from: bucket.from, to: bucket.to });
-  return ledgerHref({ category: categoryId ?? undefined, from: bucket.from, to: bucket.to, flow });
-}
-
 // ── Day-level heatmap ────────────────────────────────────────────────
 
 /** A named slice of a day's spending — a category or a merchant. */
@@ -631,11 +608,6 @@ export function dailySpendHeatmap(db: AppDatabase, month: string): SpendHeatmap 
   const maxOutflowCents = days.reduce((m, d) => Math.max(m, d.spentCents), 0);
   const maxInflowCents = days.reduce((m, d) => Math.max(m, d.incomeCents), 0);
   return { monthKey: month, days, maxOutflowCents, maxInflowCents };
-}
-
-/** `/transactions?from=D&to=D` — the literal "tap any day" destination. */
-export function dayLedgerHref(iso: string): string {
-  return ledgerHref({ from: iso, to: iso });
 }
 
 // ── Spending rows (shared by top-merchants + largest) ────────────────

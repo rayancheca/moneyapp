@@ -19,7 +19,7 @@ import {
   requestInsightSelectStop,
   type InsightSelectRunResult,
 } from "@/services/insight-selection";
-import { INSIGHT_SURFACES } from "@/services/insights";
+import { INSIGHT_SURFACES } from "@/lib/insight-surfaces";
 import { normalizeOrder } from "@/lib/reorder";
 import { matchesRestorePhrase } from "@/components/settings/restore-phrase";
 import {

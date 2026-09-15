@@ -1,3 +1,5 @@
+import type { DateRange } from "@/services/analytics";
+
 /**
  * Pure /transactions deep-link builder (ux-overhaul-plan §5). Lives in lib — not
  * in the DB-coupled analytics service — so `"use client"` components (charts,
@@ -55,4 +57,40 @@ export function ledgerHref(params: LedgerHrefParams): string {
   if (params.flow) sp.set("flow", params.flow);
   const query = sp.toString();
   return query ? `/transactions?${query}` : "/transactions";
+}
+
+/**
+ * The two cash-flow series that are not one category: the keys `cashFlowByPeriod`
+ * gives them, and that the chart and its drill-down read back. They live here,
+ * beside the link, so a `"use client"` chart can know them without importing the
+ * service that builds the series — see `client-bundle-graph.ts` for what that
+ * import once dragged into the browser.
+ */
+export const OTHER_SERIES_KEY = "__other";
+export const UNCATEGORIZED_SERIES_KEY = "__uncat";
+
+/** `/transactions?from=D&to=D` — the literal "tap any day" destination. */
+export function dayLedgerHref(iso: string): string {
+  return ledgerHref({ from: iso, to: iso });
+}
+
+/**
+ * The exact ledger link behind a clicked chart segment. A real category (income
+ * or spending) drills to that category + bucket window; the Uncategorized
+ * aggregate drills to the category-less bucket rows; Other (an aggregate of
+ * many small categories) drills to the whole bucket window.
+ */
+export function cashFlowSegmentHref(
+  seriesKey: string,
+  categoryId: string | null,
+  bucket: DateRange,
+  /** 'in' for income segments (positive-only), so the drill matches the bar */
+  flow?: "in" | "out",
+): string {
+  // Uncategorized spending is negatives-only → drill to outflows so it reconciles
+  if (seriesKey === UNCATEGORIZED_SERIES_KEY) return ledgerHref({ category: null, from: bucket.from, to: bucket.to, flow: "out" });
+  // Other is an aggregate of many small categories with no single exact filter —
+  // it is not clickable in the chart, so this path is unused; kept honest anyway.
+  if (seriesKey === OTHER_SERIES_KEY) return ledgerHref({ from: bucket.from, to: bucket.to });
+  return ledgerHref({ category: categoryId ?? undefined, from: bucket.from, to: bucket.to, flow });
 }

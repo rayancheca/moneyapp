@@ -42,7 +42,7 @@ const {
   updateSettingsResultAction,
 } = await import("./actions");
 const { insightSelections } = await import("@/db/schema/insights");
-const { INSIGHT_SURFACES } = await import("@/services/insights");
+const { INSIGHT_SURFACES } = await import("@/lib/insight-surfaces");
 
 beforeAll(() => {
   seedDatabase(getDbBundle().db);
