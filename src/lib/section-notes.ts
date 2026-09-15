@@ -1,4 +1,4 @@
-import { isStaleClose } from "./holding-price-age";
+import { isStaleClose, newestQuotedOn } from "./holding-price-age";
 import { formatCents } from "./money";
 import { dayWindowLabel } from "./period";
 import { STALE_PERIODS, type CashEarningsBasis } from "./cash-earnings";
@@ -205,13 +205,13 @@ export interface HoldingPriceNoteInput {
  * disagree the note anchors on the OLDEST and says so.
  */
 export function holdingPriceSectionNotes(input: HoldingPriceNoteInput): SectionNote[] {
-  const dates = input.rows.map((r) => r.quotedOn).filter((d): d is string => d !== null);
+  const newest = newestQuotedOn(input.rows);
   // Nothing priced at all is the holdings table's story, not this one, and an
   // empty portfolio must never produce "priced 0 days ago".
-  if (dates.length === 0) return [];
+  if (newest === null) return [];
 
+  const dates = input.rows.map((r) => r.quotedOn).filter((d): d is string => d !== null);
   const oldest = dates.reduce((a, b) => (b < a ? b : a));
-  const newest = dates.reduce((a, b) => (b > a ? b : a));
   // Priced through today: there is no gap, so there is nothing to report.
   //
   // Gated on the NEWEST close, which means ONE freshly-priced symbol silences

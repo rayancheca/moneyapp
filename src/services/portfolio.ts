@@ -532,9 +532,16 @@ export interface PortfolioDayChange {
 export function portfolioDayChange(
   db: AppDatabase,
   legs: readonly (ClosePair & { quantityE8: number })[],
+  /**
+   * Scope the series to these accounts — one account's move, or one
+   * institution's (`accountDayChange`). ⛔ `legs` must then be exactly those
+   * accounts' holdings: the legs decide the day the move ends, and another
+   * account's newer close would end it on a day this scope did not move.
+   */
+  accountIds?: readonly string[],
 ): PortfolioDayChange {
   const { on, closes } = newestCloses(legs.filter((l) => l.quantityE8 > 0));
-  const days = buildPortfolio(db).days;
+  const days = buildPortfolio(db, accountIds).days;
   const at = on === null ? -1 : days.findIndex((d) => d.day === on);
   if (at < 1) return { cents: null, pct: null, exact: true, on: null, vsDay: null, closes: [] };
   const day = days[at]!;

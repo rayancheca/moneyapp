@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { diffDays } from "./dates";
 import { formatDayShort } from "./format-date";
-import { holdingPriceAge, isStaleClose, priceColumnAge } from "./holding-price-age";
+import { holdingPriceAge, isStaleClose, newestQuotedOn, priceColumnAge } from "./holding-price-age";
 import { holdingPriceSectionNotes } from "./section-notes";
 
 const TODAY = "2026-08-14";
@@ -9,6 +9,23 @@ const TODAY = "2026-08-14";
 /** the real helpers, so these tests pin the strings that actually render */
 const age = (quotedOn: string | null, today = TODAY) =>
   holdingPriceAge(quotedOn, today, diffDays, formatDayShort);
+
+describe("newestQuotedOn", () => {
+  test("the newest close any holding was quoted on, whatever order the rows come in", () => {
+    expect(newestQuotedOn([{ quotedOn: "2026-08-06" }, { quotedOn: "2026-08-13" }, { quotedOn: "2026-08-12" }])).toBe(
+      "2026-08-13",
+    );
+  });
+
+  test("an unpriced holding neither is the newest close nor defeats it", () => {
+    expect(newestQuotedOn([{ quotedOn: null }, { quotedOn: "2026-08-06" }, { quotedOn: null }])).toBe("2026-08-06");
+  });
+
+  test("nothing priced is no close at all", () => {
+    expect(newestQuotedOn([])).toBeNull();
+    expect(newestQuotedOn([{ quotedOn: null }])).toBeNull();
+  });
+});
 
 describe("isStaleClose", () => {
   test("a close from before today is stale", () => {

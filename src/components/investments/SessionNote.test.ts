@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { formatDayLong } from "@/lib/format-date";
+import { newestQuotedOn } from "@/lib/holding-price-age";
 import { sinceCloseClause } from "./SessionNote";
 
 const TODAY = "2026-09-10";
@@ -37,6 +38,38 @@ describe("sinceCloseClause", () => {
 
   test("a close dated today is not a change since a previous one", () => {
     expect(sinceCloseClause(TODAY, TODAY, formatDayLong)).toBe(
+      "this is the change within today's own close",
+    );
+  });
+});
+
+/**
+ * 🔴 …and /investments handed it the wrong day. The page passed
+ * `PortfolioOverview.asOf`, the series' newest day, which
+ * `rebuildInvestmentHistory` carries to today whatever the newest close.
+ * Measured on the real ledger, Tue 2026-09-15: every held close is Mon Sep 14,
+ * no intraday prices were stored, and the 1D note read "this is the change
+ * within today's own close" — of a figure measured between two days valued at
+ * Monday's closes.
+ *
+ * The close is the newest one the holdings were quoted on — the population the
+ * page's price-age note reads (`newestQuotedOn`).
+ */
+describe("the close the 1D note names is the newest stored one, not the carried day", () => {
+  const MON = "2026-09-14";
+  const TUE = "2026-09-15";
+
+  test("read the day after Monday's closes, the note names Monday", () => {
+    const rows = [{ quotedOn: MON }, { quotedOn: MON }];
+    expect(sinceCloseClause(newestQuotedOn(rows), TUE, formatDayLong)).toBe(
+      "this is the change since the close on Mon, Sep 14, 2026",
+    );
+  });
+
+  test("once any holding is quoted today, the move within that close is today's", () => {
+    // a coin quoted Tuesday beside stocks still on Monday: the carried day moved by the coin alone
+    const rows = [{ quotedOn: MON }, { quotedOn: TUE }, { quotedOn: null }];
+    expect(sinceCloseClause(newestQuotedOn(rows), TUE, formatDayLong)).toBe(
       "this is the change within today's own close",
     );
   });

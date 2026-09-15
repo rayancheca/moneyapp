@@ -6,11 +6,11 @@ import { isLiability } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
 import { accountSubtypeLabel, accountTypeLabel } from "@/lib/account-label";
-import { dayChangeLabel } from "@/lib/day-change-label";
 import { dayWindowLabel } from "@/lib/period";
 import { formatDayShort } from "@/lib/format-date";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import { balanceDeltaAccent, balanceHeading, type BalanceDeltaAccent } from "@/lib/side-magnitude";
+import { accountDayChange } from "@/services/account-day-change";
 import { accountInsights } from "@/services/account-insights";
 import { getAccount, listAccounts, listInstitutions } from "@/services/accounts";
 import { anchorRemovalEffects, listAnchors } from "@/services/anchors";
@@ -136,8 +136,23 @@ export default async function AccountDetailPage({
     accountId: account.id,
     day: latest?.day,
   });
-  const previous = series.length > 1 ? series[series.length - 2]! : null;
-  const dayChange = latest && previous ? sign * (latest.balanceCents - previous.balanceCents) : null;
+  /*
+   * 🔴 …and for an account priced from holdings both days sit past its newest
+   * close, because `rebuildInvestmentHistory` carries the series to today.
+   * Measured on the real ledger, Tue 2026-09-15: Robinhood Brokerage read
+   * "Today $0.00" — Sep 14 against Sep 15, both at Monday's closes — directly
+   * above the Holdings card's Day column dated "Sep 14 vs Sep 11", whose nine
+   * rows sum to +$1,110.27; Robinhood Crypto "Today $0.00" above ETH's
+   * +$794.72. `accountDayChange` is the rule the account's card reads too.
+   */
+  const change = accountDayChange(
+    db,
+    account,
+    series.map((p) => ({ day: p.day, cents: p.balanceCents })),
+    today,
+    formatDayShort,
+  );
+  const dayChange = change.cents === null ? null : sign * change.cents;
   /*
    * ⛔ The FOURTH surface to ask "what do I call this figure", and the one the
    * dashboard's own row links to. `daily_balances` is a cached derivation that
@@ -147,10 +162,7 @@ export default async function AccountDetailPage({
    * called it "Today −$5,000.00" — the very figure the fix one page up quotes
    * as the defect it was closing.
    */
-  const dayTerm =
-    latest && previous
-      ? (dayChangeLabel(latest.day, previous.day, today, formatDayShort).interval ?? "Today")
-      : "Today";
+  const dayTerm = change.heading.interval ?? change.heading.label;
 
   /*
    * 🔴 THE WINDOW, NAMED — because `/accounts?view=table` answers the same

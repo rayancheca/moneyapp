@@ -65,3 +65,19 @@ describe("/accounts/[id] — the balance chart's exact days", () => {
     expect(source).not.toMatch(/basis === "/);
   });
 });
+
+/**
+ * 🔴 THE HEADER CHIP READ THE SERIES' OWN LAST PAIR, and for an account priced
+ * from holdings that pair is carried past the newest close. Measured on the real
+ * ledger, Tue 2026-09-15: Robinhood Brokerage read "Today $0.00" above a Day
+ * column dated "Sep 14 vs Sep 11" whose rows sum to +$1,110.27. The figure and
+ * its name are `accountDayChange`'s — the rule the account's card reads, pinned in
+ * services/account-day-change.test.ts.
+ */
+describe("/accounts/[id] — the header's day change", () => {
+  test("the chip is accountDayChange's, and the page keeps no pair of days of its own", () => {
+    expect(source.match(/accountDayChange\(/g) ?? []).toHaveLength(1);
+    expect(source).toMatch(/const dayTerm = change\.heading\.interval \?\? change\.heading\.label;/);
+    expect(source).not.toMatch(/dayChangeLabel\(|series\[series\.length - 2\]/);
+  });
+});

@@ -38,6 +38,24 @@ export function isStaleClose(
   return daysBetween(quotedOn, today) > 0;
 }
 
+/**
+ * The newest close any of these holdings was quoted on; null when none is
+ * priced. An unpriced row is neither the newest close nor a reason to doubt it.
+ *
+ * The page note's gate (`holdingPriceSectionNotes`) and the 1D note's "since the
+ * close on …" (`sinceCloseClause`) read it. 🔴 The second was handed
+ * `PortfolioOverview.asOf` instead — the series' newest day, which
+ * `rebuildInvestmentHistory` carries to today whatever the newest close.
+ * Measured on the real ledger, Tue 2026-09-15: every held close is Mon Sep 14,
+ * and /investments' 1D note read "this is the change within today's own close".
+ */
+export function newestQuotedOn(rows: readonly { quotedOn: string | null }[]): string | null {
+  return rows.reduce<string | null>(
+    (newest, r) => (r.quotedOn !== null && (newest === null || r.quotedOn > newest) ? r.quotedOn : newest),
+    null,
+  );
+}
+
 /** The sub-line printed under a price — under one row's, or under the column's. */
 export interface HoldingPriceAge {
   /** visible text, e.g. "as of Aug 6" */

@@ -13,6 +13,7 @@ import { CHART_RANGES } from "@/lib/chart-range";
 import { diffDays, monthKey, todayIso } from "@/lib/dates";
 import { closesDayChange } from "@/lib/day-change-label";
 import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
+import { newestQuotedOn } from "@/lib/holding-price-age";
 import { benchmarkReturns } from "@/lib/portfolio-returns";
 import { carryForwardTo } from "@/lib/price-series";
 import { resolveViewState } from "@/lib/view-state";
@@ -233,7 +234,11 @@ export default async function InvestmentsPage({
             session={session}
             pricedSymbols={intraday.grid.pricedSymbols}
             totalSymbols={intraday.grid.totalSymbols}
-            closeOn={overview.asOf}
+            /* ⛔ the newest STORED close, not `overview.asOf`: the series is
+               carried to today, and on Tue 2026-09-15 this note called a
+               figure between two days at Monday's closes "the change within
+               today's own close" */
+            closeOn={newestQuotedOn(rows)}
           />
         ) : (
           <SurfaceCard>

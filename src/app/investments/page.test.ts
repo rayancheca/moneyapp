@@ -60,3 +60,19 @@ describe("the investments page's tracks can shrink", () => {
     expect(holdings).toContain("*:min-w-0");
   });
 });
+
+/**
+ * 🔴 THE 1D NOTE NAMED THE CARRIED DAY. The page handed `SessionNote` the
+ * series' newest day (`overview.asOf`), which `rebuildInvestmentHistory` carries
+ * to today whatever the newest close. Measured on the real ledger, Tue
+ * 2026-09-15: every held close is Mon Sep 14, and the note read "this is the
+ * change within today's own close". The close is `newestQuotedOn` over the rows
+ * the page prints — pinned in lib/holding-price-age.test.ts and
+ * components/investments/SessionNote.test.ts.
+ */
+describe("the 1D note's close", () => {
+  test("is the newest stored close behind the holdings, never the series' carried last day", () => {
+    expect(source).toMatch(/closeOn=\{newestQuotedOn\(rows\)\}/);
+    expect(source).not.toMatch(/closeOn=\{overview\.asOf\}/);
+  });
+});

@@ -74,7 +74,7 @@ interface PortfolioChartPanelProps {
   /** how many held symbols carried a price into the session — stated rather than
    *  implied, so a partly-priced book cannot read as full coverage */
   pricedSymbols?: number;
-  /** newest stored close (`PortfolioOverview.asOf`) — see `sinceCloseClause` */
+  /** the newest stored close behind the holdings (`newestQuotedOn`) — never the series' carried last day; see `sinceCloseClause` */
   closeOn?: string | null;
   totalSymbols?: number;
 }

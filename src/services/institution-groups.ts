@@ -5,8 +5,9 @@ import { dailyBalances } from "@/db/schema/balances";
 import { holdings } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
 import { compareDates, todayIso } from "@/lib/dates";
-import { dayChangeTerm } from "@/lib/day-change-label";
+import { dayChangePhrase } from "@/lib/day-change-label";
 import { formatDayShort } from "@/lib/format-date";
+import { accountDayChange, groupDayChange } from "./account-day-change";
 import { ACCOUNT_ORDER } from "./account-order";
 import { formatQuantityE8 } from "./holdings";
 import { cutToObserved, observedThrough } from "./observation-frontier";
@@ -42,7 +43,11 @@ export interface AccountCard {
   isLiability: boolean;
   balanceCents: number | null;
   asOf: string | null;
-  /** latest covered day minus the covered day before it; null when unknowable */
+  /**
+   * `accountDayChange`: the latest covered day minus the covered day before it —
+   * or, for an account priced from holdings, the move into its newest close.
+   * Null when unknowable.
+   */
   dayChangeCents: number | null;
   /** the newer of the two days `dayChangeCents` was measured between */
   dayChangeAsOf: string | null;
@@ -127,32 +132,6 @@ function shortNameOf(accountName: string, institutionName: string): string {
   // rather than argued, so the shorter one stands.
   const startsAName = head !== head.toLowerCase() || /[0-9]/.test(head);
   return startsAName ? rest : accountName;
-}
-
-interface DayChange {
-  cents: number | null;
-  asOf: string | null;
-  vsDay: string | null;
-}
-
-/**
- * The move between the last two covered days — AND the two days it was measured
- * between, from one read of the same array.
- *
- * ⛔ The figure and the word for it are returned together on purpose. A caller
- * that took the cents here and read the date off `AccountCard.asOf` (or, worse,
- * `InstitutionGroup.asOf`) would be two places agreeing about a date, which is
- * the defect pass 54 was written to stop — and for a GROUP the two are not even
- * the same day.
- */
-function dayChangeOf(series: readonly SparkPoint[]): DayChange {
-  // Fewer than two covered days is no measured change at all, so there is no
-  // pair of days to name either — null, not the single day, which would invite
-  // a caller to print "as of X" over a figure that does not exist.
-  if (series.length < 2) return { cents: null, asOf: null, vsDay: null };
-  const last = series[series.length - 1]!;
-  const prev = series[series.length - 2]!;
-  return { cents: last.cents - prev.cents, asOf: last.day, vsDay: prev.day };
 }
 
 /** top holdings by |quantity×cost| are noise — summarize by count + tickers */
@@ -255,7 +234,10 @@ export function institutionGroups(
   for (const a of accountRows) {
     const series = observedSeries.get(a.id) ?? [];
     const latest = series.at(-1) ?? null;
-    const change = dayChangeOf(series);
+    // ⛔ the rule /accounts/[id]'s header chip reads: an account priced from
+    // holdings is measured into its newest close, never across the day its
+    // series was carried to
+    const change = accountDayChange(db, a, series, today, formatDayShort);
     const card: AccountCard = {
       id: a.id,
       institutionId: a.institutionId,
@@ -271,7 +253,7 @@ export function institutionGroups(
       dayChangeCents: change.cents,
       dayChangeAsOf: change.asOf,
       dayChangeVsDay: change.vsDay,
-      dayChangeTerm: dayChangeTerm(change.asOf, change.vsDay, today, formatDayShort),
+      dayChangeTerm: dayChangePhrase(change.heading),
       spark: series.slice(-SPARK_WINDOW_DAYS),
       holdingsSummary:
         a.type === "investment"
@@ -321,14 +303,14 @@ export function institutionGroups(
       null,
     );
 
-    const change = dayChangeOf(combined);
+    const change = groupDayChange(db, group.accounts, combined, today, formatDayShort);
     return {
       ...group,
       totalCents,
       dayChangeCents: change.cents,
       dayChangeAsOf: change.asOf,
       dayChangeVsDay: change.vsDay,
-      dayChangeTerm: dayChangeTerm(change.asOf, change.vsDay, today, formatDayShort),
+      dayChangeTerm: dayChangePhrase(change.heading),
       asOf,
       oldestAsOf: oldest !== null && oldest !== asOf ? oldest : null,
       spark: combined.slice(-SPARK_WINDOW_DAYS),

@@ -7,12 +7,14 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors } from "@/db/schema/balances";
+import { priceCache } from "@/db/schema/holdings";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, todayIso } from "@/lib/dates";
 import { createAccount } from "./accounts";
 import { addManualAnchor } from "./anchors";
+import { rebuildInvestmentHistory } from "./crypto-history";
 import { latestBalances, rebuildAccount } from "./derivation";
 import { upsertHolding, parseQuantityToE8 } from "./holdings";
 import { institutionGroups } from "./institution-groups";
@@ -547,5 +549,77 @@ describe("oldestAsOf — a total built from two days does not get one date", () 
     expect(group.accounts.find((c) => c.id === empty)!.asOf).toBeNull();
     expect(group.asOf).toBe(TODAY);
     expect(group.oldestAsOf).toBeNull();
+  });
+});
+
+/**
+ * 🔴 AN INVESTMENT CARD READ ITS DAY CHANGE OFF A SERIES CARRIED PAST ITS CLOSES.
+ *
+ * `rebuildInvestmentHistory` carries an investment account's series to today
+ * whatever the newest close, so the card's last two covered days are valued at
+ * the same closes. Measured on the real ledger, Tue 2026-09-15 (/accounts and
+ * the dashboard, `institutionGroups(db, today)`): "Robinhood Brokerage · $0.00
+ * today" and "Robinhood Crypto · $0.00 today" — over holdings that had moved
+ * +$1,110.27 and +$794.72 into Monday's closes, printed a click away under a
+ * Day column dated "Sep 14 vs Sep 11" and "Sep 14 vs Sep 13".
+ *
+ * ⚠️ Unreachable in e2e: the fixture quotes every symbol through its fake today,
+ * so the move into the newest close IS the series' last pair and says "today".
+ */
+describe("an investment card is measured into the closes its holdings moved into", () => {
+  let dir: string;
+  let bundle: DbBundle;
+  const [THU, FRI, SAT, SUN, MON, TUE] = ["2026-09-10", "2026-09-11", "2026-09-12", "2026-09-13", "2026-09-14", "2026-09-15"];
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-groups-closes-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  function cache(symbol: string, assetType: "stock" | "crypto", day: string, close: number): void {
+    bundle.db
+      .insert(priceCache)
+      .values({ symbol, assetType, quotedOn: day, close, source: assetType === "crypto" ? "coinbase" : "yahoo", fetchedAt: `${day}T20:00:00.000Z` })
+      .run();
+  }
+
+  test("read the day after Monday's closes, each card says Monday's move — not $0.00 today", () => {
+    const rh = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!.id;
+    const brokerage = createAccount(bundle.db, { institutionId: rh, name: "Robinhood Brokerage", type: "investment", subtype: "brokerage" });
+    const crypto = createAccount(bundle.db, { institutionId: rh, name: "Robinhood Crypto", type: "investment", subtype: "crypto" });
+    cache("AAPL", "stock", THU, 100);
+    cache("AAPL", "stock", FRI, 110);
+    cache("AAPL", "stock", MON, 121);
+    for (const [day, close] of [[THU, 2000], [FRI, 2010], [SAT, 2020], [SUN, 2030], [MON, 2100]] as const) {
+      cache("ETH", "crypto", day, close);
+    }
+    upsertHolding(bundle.db, { accountId: brokerage, symbol: "AAPL", assetType: "stock", quantityE8: 200_000_000, avgCostCents: 10_000, occurredOn: THU });
+    upsertHolding(bundle.db, { accountId: crypto, symbol: "ETH", assetType: "crypto", quantityE8: 100_000_000, avgCostCents: 200_000, occurredOn: THU });
+    rebuildInvestmentHistory(bundle.db, brokerage, TUE);
+    rebuildInvestmentHistory(bundle.db, crypto, TUE);
+
+    const [group] = institutionGroups(bundle.db, TUE);
+    const card = (shortName: string) => group!.accounts.find((a) => a.shortName === shortName)!;
+
+    // the shape: the card's own series is carried flat into Tuesday
+    expect(card("Brokerage").spark.slice(-2).map((p) => p.cents)).toEqual([24_200, 24_200]);
+    expect(card("Brokerage").asOf).toBe(TUE);
+
+    expect(card("Brokerage")).toMatchObject({ dayChangeCents: 2_200, dayChangeAsOf: MON, dayChangeVsDay: SUN, dayChangeTerm: "Sep 14 vs Sep 11" });
+    expect(card("Crypto")).toMatchObject({ dayChangeCents: 7_000, dayChangeAsOf: MON, dayChangeVsDay: SUN, dayChangeTerm: "Sep 14 vs Sep 13" });
+
+    /*
+     * …and a group made only of such accounts has the same carried tail. Its
+     * move is both accounts' into Monday; no one pair of closes is true of the
+     * stock and the coin, so it claims none (`closesDayChange`).
+     */
+    expect(group!.spark.slice(-2).map((p) => p.cents)).toEqual([234_200, 234_200]);
+    expect(group).toMatchObject({ dayChangeCents: 9_200, dayChangeAsOf: MON, dayChangeVsDay: SUN, dayChangeTerm: "day change" });
   });
 });
