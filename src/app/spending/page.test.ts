@@ -49,7 +49,22 @@ describe("Where it went is cut from the comparison's one population", () => {
     expect(source).toContain('import { comparedCategories } from "@/lib/compared-categories";');
     expect(source).toMatch(/const compared = comparedCategories\(breakdown, prevBreakdown\);/);
     expect(source).toMatch(/const whereRows: WhereItWentRow\[\] = compared\.map\(/);
-    expect(source).toMatch(/const spentRows: CategoryTableRow\[\] = \(listCompares \? compared : .+\)\.map\(/);
+    expect(source).toMatch(/const spentRows: CategoryTableRow\[\] = compared\.map\(/);
+  });
+
+  /*
+   * 🔴 The List compared only MONTHS (`listCompares`, a month-only `showDelta`),
+   * so on a quarter compared whole it printed no change and listed only what the
+   * quarter spent, while the Table and the relief printed every category that
+   * stopped. Measured on the owner's ledger 2026-09-15: 11 whole quarters listed
+   * fewer rows than the Table; `?period=2026-Q2` 17 against 18, missing Gifts &
+   * Donations at -$10.40. Whether a change exists is the comparison's answer
+   * (`wholePriorLabel`), asked once — never the granularity's.
+   */
+  test("the List compares wherever the Table does, and never by granularity", () => {
+    expect(source).not.toMatch(/\blistCompares\b/);
+    expect(source).not.toMatch(/\bshowDelta\b/);
+    expect(source).not.toMatch(/granularity === "month" &&\s*prevBreakdown/);
   });
 
   /*

@@ -1,7 +1,8 @@
 import { formatCentsSigned } from "@/lib/money";
 
 /**
- * Month-over-month spending delta. Semantic direction is inverted vs cash
+ * A spending change against a prior window (a month, a quarter, a week … —
+ * whichever the caller names beside it). Semantic direction is inverted vs cash
  * flow: MORE spending (positive delta) is the bad direction (negative tone),
  * LESS spending reads positive.
  */

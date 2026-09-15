@@ -33,10 +33,8 @@ function row(over: Partial<CategoryTableRow>): CategoryTableRow {
   };
 }
 
-function render(rows: CategoryTableRow[], showDelta: boolean, priorLabel: string | null): string {
-  return renderToStaticMarkup(
-    createElement(SpendingCategoriesTable, { rows, periodQuery: "period=2026-07", showDelta, priorLabel }),
-  );
+function render(rows: CategoryTableRow[], priorLabel: string | null): string {
+  return renderToStaticMarkup(createElement(SpendingCategoriesTable, { rows, periodQuery: "period=2026-07", priorLabel }));
 }
 
 const text = (html: string) => html.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, "");
@@ -53,7 +51,7 @@ function textOfClass(html: string, ...tokens: string[]): string[] {
 
 describe("the List's change for a category that spent nothing this period", () => {
   test("below md, where the change column is hidden, the fall is a line of its own naming the prior window", () => {
-    const html = render([row({})], true, JUNE);
+    const html = render([row({})], JUNE);
 
     expect(textOfClass(html, "md:hidden")).toEqual(["-$2,250.00 against June 2026"]);
     // from md up the column still carries it, and is the only thing that does there
@@ -61,20 +59,53 @@ describe("the List's change for a category that spent nothing this period", () =
   });
 
   test("a row that spent keeps the one column it had", () => {
-    const html = render([row({ name: "Travel", spentCents: 244_888, sharePct: 23.9, momDeltaCents: 185_864 })], true, JUNE);
+    const html = render([row({ name: "Travel", spentCents: 244_888, sharePct: 23.9, momDeltaCents: 185_864 })], JUNE);
 
     expect(textOfClass(html, "md:hidden")).toEqual([]);
     expect(textOfClass(html, "hidden", "md:block")).toEqual(["+$1,858.64"]);
   });
 
   test("a $0.00 row with no change has nothing to say below md either", () => {
-    expect(textOfClass(render([row({ momDeltaCents: 0 })], true, JUNE), "md:hidden")).toEqual([]);
+    expect(textOfClass(render([row({ momDeltaCents: 0 })], JUNE), "md:hidden")).toEqual([]);
   });
 
   test("a List that compares nothing prints no change at any width", () => {
-    const html = render([row({})], false, null);
+    const html = render([row({})], null);
 
     expect(textOfClass(html, "md:hidden")).toEqual([]);
     expect(html).not.toContain("2,250.00");
+  });
+});
+
+/**
+ * 🔴 THE CHANGE FOLLOWS THE COMPARISON, NOT THE CALENDAR. The page handed the List
+ * a month-only `showDelta` beside the prior window's name, so a quarter compared
+ * WHOLE printed no change and dropped the categories that stopped, while the Table
+ * and the relief — which read only the prior window's name — printed both.
+ * Measured on the owner's ledger 2026-09-15: `?period=2026-Q2` listed 17 rows over
+ * the Table's 18, the missing one Gifts & Donations at -$10.40 against Q1 2026.
+ *
+ * ⛔ One predicate, the Table's: a change exists exactly when there is a prior
+ * window to name. No second prop can say otherwise.
+ */
+describe("the List prints a change wherever there is a whole prior window to name", () => {
+  test("a quarter compared whole: the column from md up, and the stopped category's fall below it", () => {
+    const html = render(
+      [
+        row({ categoryId: "travel", name: "Travel", spentCents: 120_000, sharePct: 80, momDeltaCents: 40_000 }),
+        row({ categoryId: "gifts", name: "Gifts & Donations", momDeltaCents: -1_040 }),
+      ],
+      "Q1 2026",
+    );
+
+    expect(textOfClass(html, "hidden", "md:block")).toEqual(["+$400.00", "-$10.40"]);
+    expect(textOfClass(html, "md:hidden")).toEqual(["-$10.40 against Q1 2026"]);
+  });
+
+  test("with no prior window the List is silent about change, whatever the rows carry", () => {
+    const html = render([row({ spentCents: 5_000, sharePct: 100, momDeltaCents: 5_000 })], null);
+
+    expect(textOfClass(html, "hidden", "md:block")).toEqual([]);
+    expect(html).not.toContain("+$50.00");
   });
 });

@@ -20,7 +20,8 @@ function confidenceMeta(confidence: number): { label: string; tone: string } {
 
 /**
  * The Spending tab's categories table (ux-overhaul-plan §5.4): a CategoryChip,
- * a share-of-period bar, a MoM delta, and expandable parents whose subcategories
+ * a share-of-period bar, the change against the prior window wherever there is a
+ * whole one (`priorLabel`), and expandable parents whose subcategories
  * and whose row both link to the category page — the entity that closes the
  * chain (recurring series, budget, trend). The expanded list also holds what was
  * filed on the parent itself, unlinked, so it adds up to the parent's total.
@@ -63,17 +64,21 @@ export interface CategoryTableRow {
 
 export function SpendingCategoriesTable({
   rows,
-  showDelta = true,
   forecastMonthLabel = null,
   periodQuery,
   priorLabel,
 }: {
   rows: CategoryTableRow[];
-  /** the MoM column is only meaningful month-over-month; hidden for quarter/year */
-  showDelta?: boolean;
   /**
    * The window every row's change was measured against, or null when there is
    * none. ⛔ Required: the line a phone reads a $0.00 row's fall from names it.
+   *
+   * 🔴 It is also the ONLY switch for the change. A month-only `showDelta` sat
+   * beside it, so a quarter compared whole printed no change while the Table and
+   * the relief — which read nothing but this name — printed every row's. Measured
+   * on the owner's ledger 2026-09-15: 11 of 14 whole quarters listed fewer rows
+   * than the Table, and whole weeks (162 of 205) and days (815 of 1,448) too. The
+   * Table drops its Prior/Change/% on exactly this test.
    */
   priorLabel: string | null;
   /** the target month for forecasts (e.g. "August 2026"); null hides the forecast line */
@@ -97,6 +102,9 @@ export function SpendingCategoriesTable({
   }
 
   if (rows.length === 0) return <p className="text-sm text-ink-muted">No spending in this period.</p>;
+
+  // the Table's test, read from the one name the page asks the comparison for
+  const compares = priorLabel !== null;
 
   return (
     <ul className="divide-y divide-line">
@@ -138,7 +146,7 @@ export function SpendingCategoriesTable({
               >
                 {spendingShare(row.spentCents, row.sharePct).label}
               </span>
-              {showDelta && (
+              {compares && (
                 <span className="hidden w-20 shrink-0 text-right text-xs md:block">
                   <SpendDelta cents={row.momDeltaCents} />
                 </span>
@@ -152,7 +160,7 @@ export function SpendingCategoriesTable({
                 too — 82 rows over 39 of 46 whole months, measured 2026-09-15.
                 Below md the change is a line of its own naming its window; from
                 md up the column carries it, so each width reads it once. */}
-            {showDelta && priorLabel !== null && row.spentCents === 0 && row.momDeltaCents !== 0 && (
+            {compares && row.spentCents === 0 && row.momDeltaCents !== 0 && (
               <p className="-mt-1 mb-1.5 ml-7 text-[11px] text-ink-faint md:hidden">
                 <SpendDelta cents={row.momDeltaCents} />
                 {` against ${priorLabel}`}

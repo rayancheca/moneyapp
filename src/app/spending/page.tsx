@@ -171,12 +171,19 @@ export default async function SpendingPage({
    * -$2,057.14.
    */
   const compared = comparedCategories(breakdown, prevBreakdown);
-  // The List prints a change only month over month (`showDelta`). A List that
-  // prints none lists what THIS period spent, where a $0.00 row says nothing.
-  const listCompares = period.granularity === "month" && prevBreakdown !== null;
-  // the ONE name of the window this card's changes were measured against: the
-  // relief and the Table head their figures with it, and the List names it on
-  // the line a phone reads a stopped category's fall from
+  /*
+   * The ONE name of the window this card's changes were measured against — and
+   * the one answer to whether there are any. The relief and the Table head their
+   * figures with it, and the List prints its change column, and a stopped
+   * category's fall on a phone, exactly when it is not null.
+   *
+   * 🔴 The List used to ask the calendar instead (`period.granularity === "month"`),
+   * so a quarter compared whole printed no change and left out every category
+   * that stopped, while the Table beside it listed them. Measured 2026-09-15 on
+   * the owner's ledger: 11 of 14 whole quarters, `?period=2026-Q2` 17 rows against
+   * the Table's 18 (Gifts & Donations, -$10.40 against Q1 2026); whole weeks
+   * (162 of 205) and days (815 of 1,448) the same way.
+   */
   const wholePriorLabel = comparison.kind === "whole" ? comparison.prior.label : null;
   /*
    * "What moved" reads the two windows the comparison names, over their UNION
@@ -232,23 +239,23 @@ export default async function SpendingPage({
   );
   const forecastMonthLabel = predictions[0]?.periodLabel ?? null;
 
-  // a category that stopped is a $0.00 row carrying its fall, where the List prints one
-  const spentRows: CategoryTableRow[] = (listCompares ? compared : compared.filter((c) => c.current !== null)).map(
-    (c) => ({
-      categoryId: c.categoryId,
-      name: c.name,
-      hue: catMeta.get(c.categoryId)?.color ?? null,
-      icon: catMeta.get(c.categoryId)?.icon ?? null,
-      spentCents: c.spentCents,
-      sharePct: shareBase > 0 ? (Math.max(0, c.spentCents) / shareBase) * 100 : 0,
-      momDeltaCents: c.priorCents === null ? 0 : c.spentCents - c.priorCents,
-      forecast: forecastByCategory.get(c.categoryId) ?? null,
-      // 🔴 S20: the children alone did not add up to the parent above them — the
-      // rows filed on the parent itself were in no row (`lib/subcategory-rows`).
-      // A category with no row this period has no children in it either.
-      children: c.current === null ? [] : spendingSubcategoryItems(c.current, (id) => `/categories/${id}?${query}`),
-    }),
-  );
+  // a category that stopped is a $0.00 row carrying its fall — the SAME rows the
+  // relief and the Table read below; with no whole prior window `compared` holds
+  // only this period's categories, so there is nothing to filter out
+  const spentRows: CategoryTableRow[] = compared.map((c) => ({
+    categoryId: c.categoryId,
+    name: c.name,
+    hue: catMeta.get(c.categoryId)?.color ?? null,
+    icon: catMeta.get(c.categoryId)?.icon ?? null,
+    spentCents: c.spentCents,
+    sharePct: shareBase > 0 ? (Math.max(0, c.spentCents) / shareBase) * 100 : 0,
+    momDeltaCents: c.priorCents === null ? 0 : c.spentCents - c.priorCents,
+    forecast: forecastByCategory.get(c.categoryId) ?? null,
+    // 🔴 S20: the children alone did not add up to the parent above them — the
+    // rows filed on the parent itself were in no row (`lib/subcategory-rows`).
+    // A category with no row this period has no children in it either.
+    children: c.current === null ? [] : spendingSubcategoryItems(c.current, (id) => `/categories/${id}?${query}`),
+  }));
 
   // Categories with a confident next-month forecast (an upcoming recurring bill,
   // typically) but NO spend this period get no breakdown row — surface them as
@@ -496,7 +503,6 @@ export default async function SpendingPage({
               <SpendingCategoriesTable
                 rows={categoryRows}
                 periodQuery={query}
-                showDelta={listCompares}
                 priorLabel={wholePriorLabel}
                 forecastMonthLabel={forecastMonthLabel}
               />
