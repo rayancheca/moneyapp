@@ -231,9 +231,18 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
    * A bucket was drawn whenever `b.from <= today`, so the last total read was
    * held level across every elapsed day after it — under words saying "at least"
    * and "3 days of September 2026 not imported yet". Measured on the owner's
-   * ledger 2026-09-15 (newest row 2026-09-12): Sep 13, 14 and 15 drawn at
-   * $1,431.05, all three `after-records`. /spending's graph lens had stopped
-   * drawing its running totals through those days; this tile had not.
+   * ledger 2026-09-15, while `ledgerReaches` still counted transactions only
+   * (newest row 2026-09-12): Sep 13, 14 and 15 drawn at $1,431.05, all three
+   * `after-records`. /spending's graph lens had stopped drawing its running
+   * totals through those days; this tile had not.
+   *
+   * ⚠️ That measurement predates S32, which counts a non-investment statement
+   * end as imported (`ledgerReaches`). Re-measured on the same ledger at today
+   * = 2026-09-15 after it: the newest row is still Sep 12, but Venture X's
+   * statement closes Sep 13, so `ledgerReaches` is Sep 13 and Sep 13 is a
+   * REACHED day — drawn at $1,431.05, correctly. Only Sep 14 and 15 are
+   * `after-records`, left undrawn under "2 days of September 2026 not imported
+   * yet".
    *
    * ⛔ The frontier AND the arithmetic are the graph's own — `cashFlowCumulative`,
    * then `plottedRunningTotals` — so the two cannot stop on different days, and
