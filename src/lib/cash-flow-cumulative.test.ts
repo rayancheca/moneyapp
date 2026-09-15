@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { cashFlowCumulative, ghostRowLabel, type CashCumulativeInput } from "./cash-flow-cumulative";
+import { cashFlowCumulative, ghostRowLabel, plottedRunningTotals, type CashCumulativeInput } from "./cash-flow-cumulative";
+import type { UnreachedKind } from "./empty-period";
 
 /** a bucket in the service's sign convention: net = income + refunds − spending */
 function bucket(
@@ -120,5 +121,58 @@ describe("cashFlowCumulative", () => {
       expect(ghostRowLabel(rows[2]!, null)).toBe("Spent in the prior period");
       expect(ghostRowLabel(rows[0]!, null)).toBe("Spent by here, prior period");
     });
+  });
+});
+
+/**
+ * 🔴 THE LINES CLAIMED WHAT THE TOOLTIP UNDER THEM REFUSES. The graph lens's
+ * tooltip stopped printing "Through 30 … Spent $1,431.05" of a day nobody has
+ * imported, and the Spent line went on running flat through it at $1,431.05
+ * anyway — a running total drawn "through" a day is the same claim. Measured on
+ * the owner's ledger 2026-09-15 (first row 2022-08-25, newest 2026-09-12): 52
+ * points on 4 of 55 month/year periods — `?period=2026-09` Sep 13–30 (18),
+ * `?period=2026` Oct–Dec (3), `?period=2022-08` Aug 1–24 (24), `?period=2022`
+ * Jan–Jul (7).
+ */
+describe("plottedRunningTotals — a line is drawn only through buckets the ledger has read", () => {
+  const withKinds = (kinds: readonly (UnreachedKind | null)[]) => {
+    const buckets = kinds.map((unreached, i) => ({ ...bucket(`d${i + 1}`, 0, 1_000 * (i + 1)), unreached }));
+    return { buckets, points: cashFlowCumulative(buckets, [500, 500, 500, 500], 2_000) };
+  };
+
+  test("an unreached bucket carries no running total to draw", () => {
+    const { buckets, points } = withKinds([null, null, "after-records", "future"]);
+    const plotted = plottedRunningTotals(points, buckets);
+    expect(plotted.map((p) => p.spentCum)).toEqual([1_000, 3_000, null, null]);
+    for (const p of plotted.slice(2)) {
+      expect([p.earnedCum, p.refundsCum, p.spentCum, p.netCum]).toEqual([null, null, null, null]);
+    }
+  });
+
+  test("the days before the records begin are not drawn either — the line starts where the ledger does", () => {
+    const { buckets, points } = withKinds(["before-records", "before-records", null, null]);
+    expect(plottedRunningTotals(points, buckets).map((p) => p.netCum)).toEqual([null, null, -6_000, -10_000]);
+  });
+
+  /* ⛔ the prior period's running total is a fact about THAT period, and stays (owner decision E1a) */
+  test("the prior period's line still runs beside an unreached point", () => {
+    const { buckets, points } = withKinds([null, "after-records", "after-records", "future"]);
+    const plotted = plottedRunningTotals(points, buckets);
+    expect(plotted.map((p) => p.ghostCum)).toEqual([500, 1_000, 1_500, 2_000]);
+    expect(plotted[3]!.ghostWhole).toBe(true);
+  });
+
+  test("a reached point plots exactly what the arithmetic computed, and the arithmetic is not touched", () => {
+    const { buckets, points } = withKinds([null, null, "after-records", "future"]);
+    const before = structuredClone(points);
+    const plotted = plottedRunningTotals(points, buckets);
+    expect(plotted.slice(0, 2)).toEqual(points.slice(0, 2));
+    expect(points).toEqual(before);
+    expect(points[3]!.spentCum).toBe(10_000); // the totals themselves still carry forward
+  });
+
+  test("a bucket is matched by its key, not by where it sits", () => {
+    const { buckets, points } = withKinds([null, "after-records"]);
+    expect(plottedRunningTotals(points, [...buckets].reverse()).map((p) => p.spentCum)).toEqual([1_000, null]);
   });
 });

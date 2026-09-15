@@ -25,6 +25,8 @@
  * LONGER than this window can show its tail at all.
  */
 
+import type { UnreachedKind } from "./empty-period";
+
 /** the minimum a bucket must carry to be drawn as running totals */
 export interface CashCumulativeInput {
   key: string;
@@ -105,4 +107,43 @@ export function cashFlowCumulative(
       ghostWhole: hasGhost && i === last,
     };
   });
+}
+
+/** a point as the graph DRAWS it — its own running totals null where the ledger has not read its bucket */
+export type PlottedRunningTotal = Omit<CashCumulativePoint, "earnedCum" | "refundsCum" | "spentCum" | "netCum"> & {
+  earnedCum: number | null;
+  refundsCum: number | null;
+  spentCum: number | null;
+  netCum: number | null;
+};
+
+/**
+ * The running totals as LINES: a bucket the ledger has not read carries none to
+ * draw, so each line starts at the first bucket read and ends at the last.
+ *
+ * 🔴 THE LINES CLAIMED WHAT THE TOOLTIP UNDER THEM REFUSES. The graph's tooltip
+ * stopped printing "Through 30 … Spent $1,431.05" of a day nobody has imported
+ * (S11), and the Spent line went on running flat through that day at $1,431.05
+ * anyway — a running total drawn "through" a day is the same claim. Measured on
+ * the owner's ledger 2026-09-15 (first row 2022-08-25, newest 2026-09-12): 52
+ * drawn points on 4 of 55 month/year periods — `?period=2026-09` Sep 13–30,
+ * `?period=2026` Oct–Dec, `?period=2022-08` Aug 1–24, `?period=2022` Jan–Jul.
+ *
+ * ⛔ The prior period's line stays: its running total is a fact about THAT
+ * period (owner decision E1a). ⛔ The arithmetic is not touched —
+ * `cashFlowCumulative` still carries the totals forward, so the tooltip, the
+ * pinned ghost and every figure beside the graph read exactly what they read.
+ * Matched by KEY: the kinds come from the service's buckets, the points from the
+ * arithmetic, and position is not a contract between them.
+ */
+export function plottedRunningTotals(
+  points: readonly CashCumulativePoint[],
+  buckets: readonly { key: string; unreached: UnreachedKind | null }[],
+): PlottedRunningTotal[] {
+  const unreachedByKey = new Map(buckets.map((b) => [b.key, b.unreached]));
+  return points.map((p) =>
+    (unreachedByKey.get(p.key) ?? null) === null
+      ? p
+      : { ...p, earnedCum: null, refundsCum: null, spentCum: null, netCum: null },
+  );
 }

@@ -10,7 +10,12 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { cashFlowCumulative, ghostRowLabel, type CashCumulativePoint } from "@/lib/cash-flow-cumulative";
+import {
+  cashFlowCumulative,
+  ghostRowLabel,
+  plottedRunningTotals,
+  type CashCumulativePoint,
+} from "@/lib/cash-flow-cumulative";
 import { UNREACHED_PHRASE, type UnreachedKind } from "@/lib/empty-period";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import type { CashFlow, SpendingProjection } from "@/services/spending";
@@ -119,6 +124,8 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
   const hasRefunds = buckets.some((b) => b.refundsCents !== 0);
 
   if (buckets.length === 0) return null;
+  // ⛔ the LINES stop where the ledger does; `rows` keeps every figure for the tooltip
+  const plotted = plottedRunningTotals(rows, buckets);
   const labelByKey = new Map(rows.map((r) => [r.key, r.label]));
   const unreachedByKey = new Map(buckets.map((b) => [b.key, b.unreached]));
 
@@ -126,7 +133,7 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
     <figure className="m-0" aria-label="Running totals for the period — cumulative earned, spent, and net">
       <div className="h-72 md:h-80">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={rows} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
+          <LineChart data={plotted} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
             <CartesianGrid stroke="var(--line)" strokeDasharray="2 4" vertical={false} />
             <XAxis
               dataKey="key"
@@ -146,6 +153,13 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
             />
             <ReferenceLine y={0} stroke="var(--line-strong)" />
             <Tooltip
+              /* ⛔ KEEP THE NULLS. An unreached point's four lines are null now,
+                 and recharts' default `filterNull` drops those entries — with
+                 no prior-period line the payload empties and the bounding box
+                 hides (`hasPayload`, recharts 3.9.2), taking the "not imported
+                 yet" card with it. The content reads `rows` by label, never the
+                 payload's values. */
+              filterNull={false}
               cursor={{ stroke: "var(--line-strong)" }}
               content={({ active, payload, label }) => {
                 if (!active || !payload?.length) return null;
