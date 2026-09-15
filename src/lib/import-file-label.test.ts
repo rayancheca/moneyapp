@@ -1,5 +1,40 @@
 import { describe, expect, test } from "vitest";
-import { importRowQualifiers, importRowSubject } from "./import-file-label";
+import { importRowQualifiers, importRowSubject, withheldNoticeOf, withheldSectionNotice } from "./import-file-label";
+
+describe("withheldSectionNotice", () => {
+  const AGENTIC_AUGUST = {
+    accountName: "Robinhood Agentic",
+    last4: "9651",
+    periodStart: "2026-08-01",
+    periodEnd: "2026-08-31",
+    reason: "it shows $26.22 of securities, and this account is read as cash only",
+  };
+
+  test("names the account, the statement's window and why — and says the account is not checked for those days", () => {
+    expect(withheldSectionNotice(AGENTIC_AUGUST)).toBe(
+      "Not imported: Robinhood Agentic ····9651's statement for Aug 1 – 31, 2026 — it shows $26.22 of securities, " +
+        "and this account is read as cash only. Nothing from that section is in the ledger, so the account is not checked for those days.",
+    );
+  });
+
+  test("an account the ledger cannot name is still named by its number", () => {
+    expect(withheldSectionNotice({ ...AGENTIC_AUGUST, accountName: null })).toMatch(/^Not imported: the account ····9651's statement for Aug 1 – 31, 2026 — /);
+  });
+});
+
+describe("withheldNoticeOf", () => {
+  const notice = "Not imported: Robinhood Agentic ····9651's statement for Aug 1 – 31, 2026 — …";
+
+  test("a parsed file's error is what it withheld", () => {
+    expect(withheldNoticeOf({ status: "parsed", error: notice })).toBe(notice);
+  });
+
+  test("a clean parse withheld nothing, and a failure is not a withheld section", () => {
+    expect(withheldNoticeOf({ status: "parsed", error: null })).toBeNull();
+    expect(withheldNoticeOf({ status: "failed", error: "[robinhood-brokerage-statement-pdf] No account number found" })).toBeNull();
+    expect(withheldNoticeOf({ status: "superseded", error: notice })).toBeNull();
+  });
+});
 
 const file = (id: string, fileName: string, importedAt: string) => ({ id, fileName, importedAt });
 

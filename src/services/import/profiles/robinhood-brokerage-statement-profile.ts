@@ -1,12 +1,14 @@
 import { isValidIsoDate } from "@/lib/dates";
-import { parseAmountToCents } from "@/lib/money";
+import { formatCents, parseAmountToCents } from "@/lib/money";
 import {
   ParseError,
   type AccountHint,
   type CanonicalTxn,
   type KnownAccount,
+  type ParsedFile,
   type ParsedStatement,
   type ParserProfile,
+  type WithheldSection,
 } from "../types";
 import { RH_CODE_CATEGORY } from "./csv-profiles";
 import { extractLines, type Line } from "./pdf-profile";
@@ -73,6 +75,10 @@ import { parseAccountActivity, parseCryptoMoneyMovements } from "./robinhood-cry
  * would corrupt the anchor, and auto-creating an account from a statement is how
  * a duplicate account gets born — so the account must exist before its section
  * is read.
+ *
+ * A tracked cash-account section the cash reader cannot PROVE is withheld — named
+ * on the file with its window and why — and the rest of the file imports; see
+ * `cashSection`.
  */
 
 const PROFILE_ID = "robinhood-brokerage-statement-pdf";
@@ -412,17 +418,21 @@ export function parseRobinhoodBrokerageLines(texts: readonly string[]): Robinhoo
   return parseSection(texts, only as AccountSection);
 }
 
+/**
+ * The statement window a section covers. Every account in a file shares one period, and a later account's page
+ * header prints ABOVE its account line — so outside the first section the period is read from the file. One rule for
+ * the section that is read and the section that is withheld (`cashSection`).
+ */
+function statementPeriodOf(texts: readonly string[], section: AccountSection): { start: string; end: string } {
+  const period = firstMatch(texts.slice(section.start, section.end), PERIOD_RE) ?? firstMatch(texts, PERIOD_RE);
+  if (!period) throw new ParseError(PROFILE_ID, "No statement period found");
+  return { start: toIso(period[1] as string), end: toIso(period[2] as string) };
+}
+
 function parseSection(texts: readonly string[], section: AccountSection): RobinhoodBrokerageParse {
   const { accountNumber } = section;
   const lines = texts.slice(section.start, section.end);
-
-  // every account in a file shares one statement period, and a later account's
-  // page header prints ABOVE its account line — so outside the first section
-  // the period is read from the file
-  const period = firstMatch(lines, PERIOD_RE) ?? firstMatch(texts, PERIOD_RE);
-  if (!period) throw new ParseError(PROFILE_ID, "No statement period found");
-  const periodStart = toIso(period[1] as string);
-  const periodEnd = toIso(period[2] as string);
+  const { start: periodStart, end: periodEnd } = statementPeriodOf(texts, section);
 
   const net = firstMatch(lines, NET_ACCOUNT_RE) ?? findOrphanedNetAccountBalance(lines);
   const cash = firstMatch(lines, BROKERAGE_CASH_RE);
@@ -569,12 +579,10 @@ function routeOf(section: TrackedSection, tracked: readonly KnownAccount[]): Sec
 
 /**
  * Every statement a Robinhood brokerage PDF carries for the accounts this ledger
- * tracks, in print order. Pure — `parse` is this plus text extraction.
+ * tracks, in print order, and the tracked sections it could not prove. Pure —
+ * `parse` is this plus text extraction.
  */
-export function robinhoodBrokerageStatements(
-  lines: readonly Line[],
-  tracked: readonly KnownAccount[] = [],
-): ParsedStatement[] {
+export function robinhoodBrokerageStatements(lines: readonly Line[], tracked: readonly KnownAccount[] = []): ParsedFile {
   const texts = lines.map((l) => l.text);
   const routed = selectAccountSections(
     texts,
@@ -591,11 +599,77 @@ export function robinhoodBrokerageStatements(
     );
   }
 
-  return routed.flatMap(({ section, route }) =>
+  const read = routed.map(({ section, route }): SectionRead =>
     route.kind === "brokerage"
-      ? brokerageStatements(lines, texts, section)
-      : [cashAccountStatement(lines, texts, section, route.last4)],
+      ? { statements: brokerageStatements(lines, texts, section) }
+      : cashSection(lines, texts, section, route.last4),
   );
+  const statements = read.flatMap((r) => r.statements);
+  const refusals = read.flatMap((r) => (r.refusal === undefined ? [] : [r.refusal]));
+
+  // no other tracked section: there is nothing beside it to import, so the file is refused as it always was
+  const [first] = refusals;
+  if (statements.length === 0 && first !== undefined) throw first.error;
+  return { statements, withheld: refusals.map((r) => r.withheld) };
+}
+
+/** What one tracked section yields: its statements, or — for a section the cash reader cannot prove — why not. */
+interface SectionRead {
+  readonly statements: ParsedStatement[];
+  readonly refusal?: { readonly error: ParseError; readonly withheld: WithheldSection };
+}
+
+/**
+ * A refusal about ONE cash-account section: the technical message a whole-file refusal throws, and the reason in
+ * plain words the notice carries when the rest of the file imports without the section.
+ */
+class UnprovableSection extends ParseError {
+  constructor(
+    message: string,
+    public readonly reason: string,
+  ) {
+    super(PROFILE_ID, message);
+  }
+}
+
+/**
+ * A cash-account section's statement — or, when the cash reader cannot prove it, the section WITHHELD, with why.
+ *
+ * 🔴 Every refusal the cash reader raises is about this one section, and the file it sits in is shared with the
+ * brokerage. Thrown, it failed the whole PDF: on August 2026's real figures with a constructed agent buy, Robinhood
+ * Cash lost the $2,500.10 of Crypto Money Movement credits only that file carries, runway read 11 days instead of
+ * 27, forecast month-end cash went from $1,093.15 to −$1,406.95, and `pnpm ledger-check` went red. Nothing is
+ * written for the withheld section: its account keeps its last printed balance, and the file says it is not checked.
+ *
+ * ⛔ Only a `ParseError` — the reader saying it cannot prove the section. Anything else is a defect and fails the
+ * file. And the window is read FIRST: a file that prints no period cannot say which month it would withhold, and
+ * refusing it whole is what the brokerage's own section does anyway.
+ */
+function cashSection(lines: readonly Line[], texts: readonly string[], section: AccountSection, last4: string): SectionRead {
+  const period = statementPeriodOf(texts, section);
+  try {
+    return { statements: [cashAccountStatement(lines, texts, section, last4)] };
+  } catch (error: unknown) {
+    if (!(error instanceof ParseError)) throw error;
+    return {
+      statements: [],
+      refusal: {
+        error,
+        withheld: { accountHint: cashAccountHint(last4), accountNumber: section.accountNumber, period, reason: reasonOf(error) },
+      },
+    };
+  }
+}
+
+/** The cash reader's plain reason when it gave one; otherwise the parser's own words, without its profile prefix. */
+function reasonOf(error: ParseError): string {
+  if (error instanceof UnprovableSection) return error.reason;
+  return `its section could not be read: ${error.message.replace(`[${PROFILE_ID}] `, "")}`;
+}
+
+/** By last4 alone — see `cashAccountStatement` for why it carries no type and no preferName. */
+function cashAccountHint(last4: string): AccountHint {
+  return { institution: "Robinhood", last4 };
 }
 
 /** The brokerage's section: its settlement cash (Robinhood Cash) and its securities (Robinhood Brokerage). */
@@ -717,7 +791,8 @@ function brokerageStatements(lines: readonly Line[], texts: readonly string[], s
  * ever downloads this account's own CSV, that file must be free to take the row
  * over rather than count it twice.
  *
- * ⛔ Everything else is REFUSED, loudly, because nothing else has a place here:
+ * ⛔ Everything else is REFUSED, because nothing else has a place here — and the
+ * refusal withholds this SECTION, never the file (`cashSection`):
  *  - any printed securities, including a first month whose opening is `N/A`;
  *  - any Account Activity row that is not an `ITRF` (a Buy by the agent);
  *  - rows that do not sum to the printed Total Funds Paid and Received — the
@@ -742,7 +817,7 @@ function cashAccountStatement(
   const txns = transferRows(own, who);
   // after the Account Activity table is read, so a pending row is named as the pending trade it is
   refusePendingTrades(own, who, last4);
-  const accountHint: AccountHint = { institution: "Robinhood", last4 };
+  const accountHint = cashAccountHint(last4);
 
   // its first statement prints N/A for the opening: an observation, never a $0.00 opening it did not print
   if (parsed.openingCashCents === null) {
@@ -774,17 +849,17 @@ function cashAccountStatement(
 function refuseSecurities(texts: readonly string[], who: string, last4: string): void {
   const printed = firstMatch(texts, TOTAL_SECURITIES_RE);
   if (!printed) {
-    throw new ParseError(
-      PROFILE_ID,
+    throw new UnprovableSection(
       `${who} prints no Total Securities line, so nothing shows it holds only cash — refusing to import it as a cash account (····${last4})`,
+      "it prints no Total Securities line, so nothing shows the account holds only cash",
     );
   }
   // group 1 is the opening (or N/A), group 3 the closing — see parseSection
   const held = [printed[1], printed[3]].find((v) => v !== undefined && v !== "N/A" && parseAmountToCents(v) !== 0);
   if (held !== undefined) {
-    throw new ParseError(
-      PROFILE_ID,
+    throw new UnprovableSection(
       `${who} prints ${held} of securities, and the ledger tracks it as a cash account (····${last4}) — refusing to drop them`,
+      `it shows ${held} of securities, and this account is read as cash only`,
     );
   }
 }
@@ -806,28 +881,31 @@ function refuseSecurities(texts: readonly string[], who: string, last4: string):
 function refusePendingTrades(own: readonly Line[], who: string, last4: string): void {
   const totalAt = own.findIndex((l) => TOTAL_PENDING_RE.test(l.text));
   if (totalAt === -1) {
-    throw new ParseError(
-      PROFILE_ID,
+    throw new UnprovableSection(
       `${who} prints no Total ${PENDING_TITLE} line, so nothing shows no trade is pending — refusing to import it as a cash account (····${last4})`,
+      `it prints no ${PENDING_TITLE} total, so nothing shows that no trade is waiting to settle`,
     );
   }
   const titleAt = own.findIndex((l) => l.text === PENDING_TITLE);
   if (titleAt === -1 || titleAt > totalAt) {
-    throw new ParseError(PROFILE_ID, `${who} prints no ${PENDING_TITLE} title above its total — refusing to read the table unbounded`);
+    throw new UnprovableSection(
+      `${who} prints no ${PENDING_TITLE} title above its total — refusing to read the table unbounded`,
+      `it prints no ${PENDING_TITLE} title above that table's total, so the table cannot be read`,
+    );
   }
   const row = own.slice(titleAt + 1, totalAt).find((l) => PENDING_ROW_RE.test(l.text));
   if (row) {
-    throw new ParseError(
-      PROFILE_ID,
+    throw new UnprovableSection(
       `${who} prints a trade pending settlement — "${row.text}" — and the ledger tracks it as a cash account (····${last4}), refusing to drop it`,
+      `it shows a trade waiting to settle ("${row.text}"), and this account is read as cash only`,
     );
   }
   const totals = TOTAL_PENDING_RE.exec((own[totalAt] as Line).text) as RegExpExecArray;
   const pending = [totals[1], totals[2]].find((v) => parseAmountToCents(v as string) !== 0);
   if (pending !== undefined) {
-    throw new ParseError(
-      PROFILE_ID,
+    throw new UnprovableSection(
       `${who} prints ${pending} of trades pending settlement, and the ledger tracks it as a cash account (····${last4}) — refusing to drop them`,
+      `it shows ${pending} of trades waiting to settle, and this account is read as cash only`,
     );
   }
 }
@@ -836,7 +914,10 @@ function refusePendingTrades(own: readonly Line[], who: string, last4: string): 
 function transferRows(own: readonly Line[], who: string): CanonicalTxn[] {
   const totalsAt = own.findIndex((l) => TOTAL_FUNDS_RE.test(l.text));
   if (totalsAt === -1) {
-    throw new ParseError(PROFILE_ID, `${who} prints no Total Funds Paid and Received line — refusing to import its Account Activity unchecked`);
+    throw new UnprovableSection(
+      `${who} prints no Total Funds Paid and Received line — refusing to import its Account Activity unchecked`,
+      "it prints no Total Funds Paid and Received line, so its activity cannot be checked",
+    );
   }
   // the table runs from its title to its totals; the Executed Trades table after it has its own columns
   const tableAt = own.findIndex((l) => l.text === "Account Activity");
@@ -845,10 +926,10 @@ function transferRows(own: readonly Line[], who: string): CanonicalTxn[] {
 
   const stray = rows.find((r) => !r.line.tokens.some((t) => t.str === "ITRF"));
   if (stray) {
-    throw new ParseError(
-      PROFILE_ID,
+    throw new UnprovableSection(
       `${who} prints an Account Activity row a cash account cannot hold — "${stray.line.text}" — ` +
         `only ITRF transfers are read there, refusing to drop it`,
+      `it shows activity that is not a transfer ("${stray.line.text}"), and this account is read as cash only`,
     );
   }
 
@@ -858,16 +939,20 @@ function transferRows(own: readonly Line[], who: string): CanonicalTxn[] {
   const printedDebits = parseAmountToCents(totals[1] as string);
   const printedCredits = parseAmountToCents(totals[2] as string);
   if (debits !== printedDebits || credits !== printedCredits) {
-    throw new ParseError(
-      PROFILE_ID,
+    throw new UnprovableSection(
       `${who}'s Account Activity rows total ${debits}/${credits} against a printed Total Funds Paid and Received of ${printedDebits}/${printedCredits}`,
+      `its activity rows add up to ${formatCents(debits)} out and ${formatCents(credits)} in, but it prints ` +
+        `${formatCents(printedDebits)} out and ${formatCents(printedCredits)} in — a row this reader cannot see is there`,
     );
   }
 
   return rows.map((r) => {
     const description = r.line.tokens[0]?.str.trim() ?? "";
     if (description === "") {
-      throw new ParseError(PROFILE_ID, `${who} prints an ITRF row with no description — "${r.line.text}"`);
+      throw new UnprovableSection(
+        `${who} prints an ITRF row with no description — "${r.line.text}"`,
+        `it shows a transfer with no description ("${r.line.text}")`,
+      );
     }
     return {
       postedOn: r.postedOn,
@@ -884,6 +969,19 @@ function transferRows(own: readonly Line[], who: string): CanonicalTxn[] {
 export const robinhoodBrokerageStatementPdf: ParserProfile = {
   id: PROFILE_ID,
   /*
+   * STILL v4 after withheld sections (2026-09-15) — deliberately. A bump re-reads every file imported at a lower
+   * version, and nothing a v4 file was read as has changed: a #655929651 section the cash reader proves imports
+   * exactly as before, and a file with one it cannot prove used to FAIL, which the import already reads again at
+   * the same version and into the same row (`REIMPORTABLE_STATUSES`). Measured on the owner's ledger: 30 brokerage
+   * files parsed at v3 and 3 at v4, none failed — a bump would re-parse all 33 for an identical result, and would
+   * strand a failed v4 row beside its v5 twin for any file that had failed before this.
+   *
+   * ⛔ THE RE-READ TRAP, for whoever builds the positions reader: a file with a withheld section is recorded
+   * `parsed`, so the same bytes at the same version are skipped as a duplicate (`ux_import_files_sha_parser`). The
+   * ONLY thing that reads a withheld section later is a version bump: it supersedes the file's whole contribution
+   * and re-reads it, and the carry-forward and dedupe paths keep the rest from counting twice
+   * (robinhood-parse-context.test.ts). The reader that can prove positions MUST bump this.
+   *
    * v4: a section whose account the ledger tracks as a CASH account becomes
    * that account's own statement (#655929651, `cashAccountStatement`). The
    * brokerage's statements are unchanged for every file in the archive. The
@@ -900,7 +998,7 @@ export const robinhoodBrokerageStatementPdf: ParserProfile = {
   // Robinhood ships opaque UUID filenames, so content decides routing entirely
   matches: (f) => f.format === "pdf",
   matchesContent: isRobinhoodBrokerageStatementText,
-  parse: async (f, context): Promise<ParsedStatement[]> => {
+  parse: async (f, context): Promise<ParsedFile> => {
     const lines = await extractLines(f.buffer);
     if (lines.length === 0) throw new ParseError(PROFILE_ID, "No extractable text — scanned PDF?");
     // the full lines, not just their text — direction lives in the token x

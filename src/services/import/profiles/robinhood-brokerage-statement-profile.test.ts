@@ -237,7 +237,7 @@ describe("choosing the account sections", () => {
   });
 
   test("the tracked account's balances are read when it prints first", () => {
-    const [cash, securities, ...rest] = robinhoodBrokerageStatements(asLines(TRACKED_FIRST), [BROKERAGE]);
+    const [cash, securities, ...rest] = robinhoodBrokerageStatements(asLines(TRACKED_FIRST), [BROKERAGE]).statements;
     expect(rest).toEqual([]);
     expect(cash!.accountHint.preferName).toBe("Robinhood Cash");
     expect(cash!.period).toMatchObject({ endCents: 167993 + 45 }); // not 2664
@@ -245,7 +245,7 @@ describe("choosing the account sections", () => {
   });
 
   test("⛔ and when it prints SECOND — the 2026-08 order", () => {
-    const [cash, securities, ...rest] = robinhoodBrokerageStatements(asLines(UNTRACKED_FIRST), [BROKERAGE]);
+    const [cash, securities, ...rest] = robinhoodBrokerageStatements(asLines(UNTRACKED_FIRST), [BROKERAGE]).statements;
     expect(rest).toEqual([]);
     expect(cash!.period).toEqual({
       start: "2026-08-01",
@@ -312,7 +312,7 @@ describe("choosing the account sections", () => {
       header,
       movement("08/24/2026", "$1,499.99"),
     ];
-    const [cash] = robinhoodBrokerageStatements(doc, [BROKERAGE]);
+    const [cash] = robinhoodBrokerageStatements(doc, [BROKERAGE]).statements;
     expect(cash!.txns).toEqual([
       { postedOn: "2026-08-24", amountCents: 149999, rawDescription: "Crypto Money Movement", categoryPath: "Transfers", soleSource: true },
     ]);
@@ -413,25 +413,54 @@ describe("a section tracked as a cash account", () => {
     line("Total Executed Trades Pending Settlement $0.00 $0.00"),
   ];
   const JULY = [...asLines(ERA_C), ...quietMonth("07/01/2026 to 07/31/2026")];
-  /** 2026-08 prints #655929651 FIRST (48afc52f…, lines 160–176 for #487513525). */
-  const AUGUST = [
-    ...quietMonth("08/01/2026 to 08/31/2026"),
-    ...asLines([
-      "08/01/2026 to 08/31/2026",
-      "Individual Account #:487513525",
-      "Account Summary",
-      "Brokerage Cash Balance * $1,679.93 $0.68",
-      "Deposit Sweep Balance $0.45 $1,000.33",
-      "Total Securities ** $67,859.26 $72,959.32",
-      "Portfolio Value $69,539.64 $73,960.33",
-    ]),
-  ];
+  /** #487513525, 2026-08 (48afc52f…, lines 160–176). */
+  const AUGUST_BROKERAGE = asLines([
+    "08/01/2026 to 08/31/2026",
+    "Individual Account #:487513525",
+    "Account Summary",
+    "Brokerage Cash Balance * $1,679.93 $0.68",
+    "Deposit Sweep Balance $0.45 $1,000.33",
+    "Total Securities ** $67,859.26 $72,959.32",
+    "Portfolio Value $69,539.64 $73,960.33",
+  ]);
+  /** 2026-08 prints #655929651 FIRST. */
+  const AUGUST = [...quietMonth("08/01/2026 to 08/31/2026"), ...AUGUST_BROKERAGE];
   const JUNE = [...JUNE_BROKERAGE, ...JUNE_SECOND];
+
+  const JUNE_PERIOD = { start: "2026-06-01", end: "2026-06-30" };
+  const JULY_PERIOD = { start: "2026-07-01", end: "2026-07-31" };
+  const AUGUST_PERIOD = { start: "2026-08-01", end: "2026-08-31" };
 
   const swap = (lines: Line[], text: string, replacement: Line): Line[] => lines.map((l) => (l.text === text ? replacement : l));
 
+  /**
+   * 🔴 Every refusal below used to fail the WHOLE PDF, and the file is shared with the brokerage. Measured on
+   * August's real figures with a constructed agent buy (agentic-design.json, option (c)): −$2,500.10 of Robinhood
+   * Cash — the two Crypto Money Movement credits no other source carries — runway 27 → 11 days, forecast month-end
+   * cash $1,093.15 → −$1,406.95, and `pnpm ledger-check` red.
+   *
+   * Now ONLY #655929651's section is withheld, named with its window and why, and the brokerage's statements are
+   * exactly what the same file gives when #655929651 is not tracked at all.
+   */
+  const withheldFrom = (doc: Line[], period: { start: string; end: string }, reason: RegExp): void => {
+    const read = robinhoodBrokerageStatements(doc, TRACKED_ALL);
+    const untracked = robinhoodBrokerageStatements(doc, [BROKERAGE, CRYPTO]);
+    expect(untracked.statements.length).toBeGreaterThan(0);
+    expect(read.statements).toEqual(untracked.statements);
+    expect(read.withheld).toEqual([
+      {
+        // the cash statement's own hint, so the withheld section names the account its statement would have gone to
+        accountHint: { institution: "Robinhood", last4: "9651" },
+        accountNumber: "655929651",
+        period,
+        reason: expect.stringMatching(reason),
+      },
+    ]);
+  };
+
   test("June: an N/A opening is a ledger observation of $26.64 on 06-30, and the ITRF credit is signed + by its column", () => {
-    const statements = robinhoodBrokerageStatements(JUNE, TRACKED_ALL);
+    const { statements, withheld } = robinhoodBrokerageStatements(JUNE, TRACKED_ALL);
+    expect(withheld).toEqual([]); // a section the cash reader proves is never withheld
     expect(statements).toHaveLength(3); // cash + securities for #487513525, and ONE cash statement for #655929651
     expect(statements[2]).toEqual({
       // by last4 alone — no type and no preferName, so it can never resolve to Robinhood Cash
@@ -450,8 +479,8 @@ describe("a section tracked as a cash account", () => {
   });
 
   test("the brokerage's statements are exactly what they were before the second account was tracked", () => {
-    const withSecond = robinhoodBrokerageStatements(JUNE, TRACKED_ALL);
-    const without = robinhoodBrokerageStatements(JUNE, [BROKERAGE, CRYPTO]);
+    const withSecond = robinhoodBrokerageStatements(JUNE, TRACKED_ALL).statements;
+    const without = robinhoodBrokerageStatements(JUNE, [BROKERAGE, CRYPTO]).statements;
     expect(without).toHaveLength(2);
     expect(withSecond.slice(0, 2)).toEqual(without);
     expect(without[0]!.period).toEqual({ start: "2026-06-01", end: "2026-06-30", beginCents: 38 + 34, endCents: 19222 + 7 });
@@ -465,17 +494,19 @@ describe("a section tracked as a cash account", () => {
       txns: [],
       period: { start, end, beginCents: 2664, endCents: 2664 },
     });
-    const july = robinhoodBrokerageStatements(JULY, TRACKED_ALL);
+    const july = robinhoodBrokerageStatements(JULY, TRACKED_ALL).statements;
     expect(july).toHaveLength(3);
     expect(july[2]).toEqual(quiet("2026-07-01", "2026-07-31"));
+    expect(robinhoodBrokerageStatements(JULY, TRACKED_ALL).withheld).toEqual([]);
 
-    const august = robinhoodBrokerageStatements(AUGUST, TRACKED_ALL);
+    const { statements: august, withheld } = robinhoodBrokerageStatements(AUGUST, TRACKED_ALL);
+    expect(withheld).toEqual([]);
     expect(august).toHaveLength(3);
     expect(august[0]).toEqual(quiet("2026-08-01", "2026-08-31"));
     expect(august[1]!.period).toEqual({ start: "2026-08-01", end: "2026-08-31", beginCents: 167993 + 45, endCents: 68 + 100033 });
   });
 
-  test("⛔ refuses an Account Activity row that is not an ITRF — an agent's Buy fails loudly instead of vanishing", () => {
+  test("⛔ an Account Activity row that is not an ITRF — an agent's Buy — withholds the section, and only the section", () => {
     const buy = line("SPY Cash Buy 06/10/2026 0.016 $625.00000 $10.00", [
       ["SPY", 284.14],
       ["Cash", 347.25],
@@ -486,32 +517,98 @@ describe("a section tracked as a cash account", () => {
       ["$10.00", 695.33],
     ]);
     const withBuy = JUNE.flatMap((l) => (l === ITRF_CREDIT ? [l, buy] : [l]));
-    expect(() => robinhoodBrokerageStatements(withBuy, TRACKED_ALL)).toThrow(/#655929651.*SPY Cash Buy/);
+    withheldFrom(withBuy, JUNE_PERIOD, /activity that is not a transfer \("SPY Cash Buy 06\/10\/2026 0\.016 \$625\.00000 \$10\.00"\)/);
   });
 
-  test("⛔ refuses rows that do not add up to the printed Total Funds Paid and Received", () => {
+  test("⛔ a Crypto Money Movement in the agent's own section — a crypto buy through its linked account — withholds it", () => {
+    // set in #655929651's real 2026-08 columns (48afc52f…, line 38); the brokerage's own COIN rows sit under its header the same way
+    const coin = line("Crypto Money Movement Cash COIN 08/12/2026 $10.00", [
+      ["Crypto Money Movement", 36],
+      ["Cash", 341.55],
+      ["COIN", 431.63],
+      ["08/12/2026", 534.56],
+      ["$10.00", 685.13],
+    ]);
+    const august = AUGUST.flatMap((l) => {
+      if (l.text.startsWith("Description Symbol Acct Type")) return [l, coin];
+      return l.text.startsWith("Total Funds Paid and Received") ? [totalFunds("$10.00", "$0.00", 685.13, 743.4)] : [l];
+    });
+    withheldFrom(august, AUGUST_PERIOD, /activity that is not a transfer \("Crypto Money Movement Cash COIN 08\/12\/2026 \$10\.00"\)/);
+  });
+
+  /**
+   * The rehearsal's month (agentic-design.json, option (c)): the agent buys 0.25 WMT for $25.00 on 08/20. These are
+   * #655929651's real 2026-08 lines (48afc52f…, lines 2–44) with only what that buy changes — both balances, one
+   * Securities Held row, one Buy row set in the real columns, the Total Funds line. No statement for this account has
+   * printed a position yet; the lines are constructed, never read from a file.
+   */
+  const AGENT_BUYS: Line[] = [
+    line("08/01/2026 to 08/31/2026"),
+    line("Individual Account #:655929651"),
+    line("Account Summary"),
+    line("Net Account Balance $26.64 $1.64"),
+    line("Total Securities $0.00 $26.22"),
+    line("Portfolio Value $26.64 $27.86"),
+    line("Portfolio Summary"),
+    line("Walmart"),
+    line("WMT Cash 0.25 $104.87000 $26.22 $0.24 94.11%"),
+    line("Total Securities $26.22 $0.24 94.11%"),
+    line("Brokerage Cash Balance $1.64 5.89%"),
+    line("Account Activity"),
+    headerAt(685.13, 743.4),
+    line("Walmart"),
+    line("WMT Cash Buy 08/20/2026 0.25 $100.00000 $25.00", [
+      ["WMT", 269.66],
+      ["Cash", 341.55],
+      ["Buy", 431.63],
+      ["08/20/2026", 534.56],
+      ["0.25", 586.28],
+      ["$100.00000", 630.19],
+      ["$25.00", 685.13],
+    ]),
+    line("CUSIP: 931142103"),
+    totalFunds("$25.00", "$0.00", 685.13, 743.4),
+    line("Executed Trades Pending Settlement"),
+    line("Total Executed Trades Pending Settlement $0.00 $0.00"),
+  ];
+
+  test("⛔ the rehearsal's month — the agent buys $25.00 of WMT — withholds #655929651's August and nothing else", () => {
+    withheldFrom([...AGENT_BUYS, ...AUGUST_BROKERAGE], AUGUST_PERIOD, /shows \$26\.22 of securities, and this account is read as cash only/);
+  });
+
+  test("⛔ rows that do not add up to the printed Total Funds Paid and Received withhold the section — a row the reader cannot see is there", () => {
     const dropped = JUNE.filter((l) => l !== ITRF_CREDIT);
-    expect(() => robinhoodBrokerageStatements(dropped, TRACKED_ALL)).toThrow(/Total Funds Paid and Received/);
+    withheldFrom(dropped, JUNE_PERIOD, /add up to \$0\.00 out and \$0\.00 in, but it prints \$0\.00 out and \$26\.64 in/);
   });
 
-  test("⛔ refuses a cash-account section that prints no Total Funds Paid and Received line", () => {
+  test("⛔ a cash-account section that prints no Total Funds Paid and Received line is withheld", () => {
     const julyWithoutTotals = JULY.filter((l) => !l.text.startsWith("Total Funds Paid and Received"));
-    expect(() => robinhoodBrokerageStatements(julyWithoutTotals, TRACKED_ALL)).toThrow(/#655929651.*Total Funds Paid and Received/);
+    withheldFrom(julyWithoutTotals, JULY_PERIOD, /prints no Total Funds Paid and Received line/);
   });
 
-  test("⛔ refuses a cash account that prints securities — including a first month whose opening is N/A", () => {
+  test("⛔ a cash account that prints securities is withheld — including a first month whose opening is N/A", () => {
     const julyHolding = swap(quietMonth("07/01/2026 to 07/31/2026"), "Total Securities $0.00 $0.00", line("Total Securities $0.00 $12.34"));
-    const july = [...asLines(ERA_C), ...julyHolding];
-    expect(() => robinhoodBrokerageStatements(july, TRACKED_ALL)).toThrow(/#655929651.*\$12\.34 of securities/);
+    withheldFrom([...asLines(ERA_C), ...julyHolding], JULY_PERIOD, /shows \$12\.34 of securities/);
 
     const juneHolding = swap(JUNE, "Total Securities N/A $0.00", line("Total Securities N/A $12.34"));
-    expect(() => robinhoodBrokerageStatements(juneHolding, TRACKED_ALL)).toThrow(/#655929651.*\$12\.34 of securities/);
+    withheldFrom(juneHolding, JUNE_PERIOD, /shows \$12\.34 of securities/);
   });
 
-  test("⛔ refuses a cash-account section that prints no Total Securities line — nothing then shows it holds only cash", () => {
+  test("⛔ a cash-account section that prints no Total Securities line is withheld — nothing then shows it holds only cash", () => {
     // 🔴 measured by a second reader: turning this refusal into a `return` left every test green
     const july = [...asLines(ERA_C), ...quietMonth("07/01/2026 to 07/31/2026").filter((l) => !l.text.startsWith("Total Securities"))];
-    expect(() => robinhoodBrokerageStatements(july, TRACKED_ALL)).toThrow(/#655929651 prints no Total Securities line/);
+    withheldFrom(july, JULY_PERIOD, /prints no Total Securities line/);
+  });
+
+  test("a section the cash reader cannot read at all is withheld too, with the reader's own words", () => {
+    const july = [...asLines(ERA_C), ...quietMonth("07/01/2026 to 07/31/2026").filter((l) => !l.text.startsWith("Net Account Balance"))];
+    withheldFrom(july, JULY_PERIOD, /could not be read: No Net Account Balance or Brokerage Cash Balance line/);
+  });
+
+  test("⛔ a file with no other tracked section is refused whole, as before — there is nothing beside the section to import", () => {
+    const juneHolding = swap(JUNE, "Total Securities N/A $0.00", line("Total Securities N/A $12.34"));
+    // the brokerage's #487513525 is untracked here, so #655929651 is the file's only tracked section
+    expect(() => robinhoodBrokerageStatements(juneHolding, [CRYPTO, AGENTIC])).toThrow(/#655929651 prints \$12\.34 of securities/);
   });
 
   /**
@@ -552,30 +649,22 @@ describe("a section tracked as a cash account", () => {
       return l.text.startsWith("Total Executed Trades Pending Settlement") ? [total] : [l];
     });
 
-  test("⛔ refuses a trade pending settlement, though Total Securities still reads $0.00 — the agent's first Buy", () => {
+  test("⛔ a trade pending settlement withholds the section, though Total Securities still reads $0.00 — the agent's first Buy", () => {
     const pending = juneWithPending([pendingBuy], pendingTotal("$19.50", "$0.00"));
     // named as the pending trade it is — not read as an Account Activity row, whose table ended above it
-    expect(() => robinhoodBrokerageStatements(pending, TRACKED_ALL)).toThrow(/#655929651 prints a trade pending settlement — "SPY Cash Buy/);
+    withheldFrom(pending, JUNE_PERIOD, /a trade waiting to settle \("SPY Cash Buy 06\/29\/2026/);
   });
 
-  test("⛔ refuses a pending row under $0.00 totals, and non-zero totals with no row — either half is enough", () => {
-    expect(() => robinhoodBrokerageStatements(juneWithPending([pendingBuy], pendingTotal("$0.00", "$0.00")), TRACKED_ALL)).toThrow(
-      /#655929651 prints a trade pending settlement — "SPY Cash Buy/,
-    );
-    expect(() => robinhoodBrokerageStatements(juneWithPending([], pendingTotal("$0.00", "$19.50")), TRACKED_ALL)).toThrow(
-      /#655929651 prints \$19\.50 of trades pending settlement/,
-    );
+  test("⛔ a pending row under $0.00 totals, and non-zero totals with no row, each withhold the section — either half is enough", () => {
+    withheldFrom(juneWithPending([pendingBuy], pendingTotal("$0.00", "$0.00")), JUNE_PERIOD, /a trade waiting to settle \("SPY Cash Buy/);
+    withheldFrom(juneWithPending([], pendingTotal("$0.00", "$19.50")), JUNE_PERIOD, /shows \$19\.50 of trades waiting to settle/);
   });
 
-  test("⛔ refuses a cash-account section that prints no pending-trades table — nothing then shows none is pending", () => {
+  test("⛔ a cash-account section that prints no pending-trades table is withheld — nothing then shows none is pending", () => {
     const julyWithoutTotal = JULY.filter((l) => !l.text.startsWith("Total Executed Trades Pending Settlement"));
-    expect(() => robinhoodBrokerageStatements(julyWithoutTotal, TRACKED_ALL)).toThrow(
-      /#655929651 prints no Total Executed Trades Pending Settlement line/,
-    );
+    withheldFrom(julyWithoutTotal, JULY_PERIOD, /prints no Executed Trades Pending Settlement total/);
     const julyWithoutTitle = JULY.filter((l) => l.text !== PENDING_TITLE);
-    expect(() => robinhoodBrokerageStatements(julyWithoutTitle, TRACKED_ALL)).toThrow(
-      /#655929651 prints no Executed Trades Pending Settlement title above its total/,
-    );
+    withheldFrom(julyWithoutTitle, JULY_PERIOD, /prints no Executed Trades Pending Settlement title above/);
   });
 
   test("the real months' empty pending table, with the page break printed inside it, is nothing pending", () => {
@@ -584,7 +673,7 @@ describe("a section tracked as a cash account", () => {
         ? [l, line("Page 21 of 22"), line("These transactions may not be reflected in the other summaries")]
         : [l],
     );
-    expect(robinhoodBrokerageStatements(june, TRACKED_ALL)[2]!.ledger).toEqual({ cents: 2664, asOf: "2026-06-30" });
+    expect(robinhoodBrokerageStatements(june, TRACKED_ALL).statements[2]!.ledger).toEqual({ cents: 2664, asOf: "2026-06-30" });
   });
 
   test("⛔ refuses a section tracked as an account type a brokerage statement cannot be", () => {

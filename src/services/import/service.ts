@@ -22,6 +22,7 @@ import { normalizeDescription } from "@/lib/normalize";
 import { sumCents } from "@/lib/money";
 import { RECONCILE_STATUSES, periodVerdict } from "@/lib/reconciliation";
 import { postedInsidePeriod } from "@/lib/statement-period";
+import { withheldSectionNotice } from "@/lib/import-file-label";
 import { categorizeAll, detectTransfers } from "../categorize";
 import { rebuildAccount } from "../derivation";
 import { flagDuplicateCandidates } from "../duplicate-flags";
@@ -39,7 +40,9 @@ import {
   type CanonicalTxn,
   type KnownAccount,
   type ParseContext,
+  type ParsedFile,
   type ParsedStatement,
+  type WithheldSection,
   type ParserProfile,
 } from "./types";
 
@@ -87,10 +90,28 @@ export interface PeriodOutcome {
   marketChangeCents: number | null;
 }
 
+/** A section of a file that was NOT imported, as the owner reads it — see `WithheldSection`. */
+export interface WithheldOutcome {
+  /** the tracked account the section belongs to; null only when no account at the institution carries its last4 */
+  accountName: string | null;
+  last4: string | null;
+  periodStart: string;
+  periodEnd: string;
+  /** why, in plain words */
+  reason: string;
+  /** the sentence /imports shows under the file — its `import_files.error` */
+  notice: string;
+}
+
 export interface FileOutcome {
   fileName: string;
   status: "parsed" | "failed" | "skipped_duplicate";
   error?: string;
+  /**
+   * Sections of a `parsed` file that were NOT imported because the parser could not prove them. Everything else in
+   * the file imported; the file's `import_files.error` carries these notices so /imports says so.
+   */
+  withheld: WithheldOutcome[];
   inserted: number;
   deduped: number;
   /**
@@ -933,6 +954,7 @@ async function importOneFile(
   const outcome: FileOutcome = {
     fileName: file.name,
     status: "parsed",
+    withheld: [],
     inserted: 0,
     deduped: 0,
     dedupedCrossFormat: 0,
@@ -1015,8 +1037,9 @@ async function importOneFile(
   }
 
   let statements: ParsedStatement[];
+  let withheldSections: readonly WithheldSection[];
   try {
-    statements = await profile.parse(file, parseContextFor(db));
+    ({ statements, withheld: withheldSections } = asParsedFile(await profile.parse(file, parseContextFor(db))));
   } catch (error: unknown) {
     const message = error instanceof ParseError ? error.message : `Unexpected: ${String(error)}`;
     db.update(importFiles)
@@ -1025,6 +1048,9 @@ async function importOneFile(
       .run();
     return { ...outcome, status: "failed", error: message };
   }
+
+  // named BEFORE anything is written, and read-only — a section that was not imported must not change which accounts exist
+  const withheld = withheldSections.map((section) => withheldOutcome(db, section));
 
   const fileAccountIds = new Set<string>();
   // before the loop: a statement that fails mid-file leaves its earlier
@@ -1233,14 +1259,48 @@ async function importOneFile(
   db.update(importFiles)
     .set({
       status: "parsed",
-      error: null,
+      // ⛔ durable and visible: a file that left a section out must not read as if every account in it were read
+      error: withheld.length === 0 ? null : withheld.map((w) => w.notice).join(" "),
       parserProfile: profile.id,
       parserVersion: profile.version,
       storagePath: finalPath,
     })
     .where(eq(importFiles.id, fileRow.id))
     .run();
-  return outcome;
+  return { ...outcome, withheld };
+}
+
+/** A profile that never withholds returns its statements alone; one that can returns what it left out beside them. */
+function asParsedFile(parsed: ParsedStatement[] | ParsedFile): ParsedFile {
+  return Array.isArray(parsed) ? { statements: parsed, withheld: [] } : parsed;
+}
+
+/**
+ * Name the account a withheld section belongs to: by institution and last4, and read-only.
+ *
+ * ⛔ Never `resolveAccount`. It CREATES an account it cannot find and ADOPTS one of the same type with no last4 —
+ * handed Robinhood Agentic's hint with a type, it would stamp ····9651 on Robinhood Cash — and nothing about a
+ * section that was not imported may change which accounts exist.
+ */
+function withheldOutcome(db: AppDatabase, section: WithheldSection): WithheldOutcome {
+  const { institution, last4 } = section.accountHint;
+  const named =
+    last4 === undefined
+      ? []
+      : db
+          .select({ name: accounts.name })
+          .from(accounts)
+          .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
+          .where(and(eq(institutions.name, institution), eq(accounts.last4, last4)))
+          .all();
+  const facts = {
+    accountName: named.length === 1 ? (named[0] as { name: string }).name : null,
+    last4: last4 ?? null,
+    periodStart: section.period.start,
+    periodEnd: section.period.end,
+    reason: section.reason,
+  };
+  return { ...facts, notice: withheldSectionNotice(facts) };
 }
 
 /**
@@ -1396,7 +1456,9 @@ function supersedeFileContribution(db: AppDatabase, oldFileId: string): void {
     `);
     tx.delete(balanceAnchors).where(eq(balanceAnchors.importFileId, oldFileId)).run();
     tx.delete(statementPeriods).where(eq(statementPeriods.importFileId, oldFileId)).run();
-    tx.update(importFiles).set({ status: "superseded" }).where(eq(importFiles.id, oldFileId)).run();
+    // a parsed file's error is only ever the sections it withheld (`importOneFile`); its successor reads them again
+    // and says for itself what is still missing, so the retired row must not keep claiming a section is absent
+    tx.update(importFiles).set({ status: "superseded", error: null }).where(eq(importFiles.id, oldFileId)).run();
   });
 }
 

@@ -35,6 +35,9 @@
  * this rule from having the defect it exists to fix.
  */
 
+import type { ImportStatus } from "@/db/schema/imports";
+import { dayWindowLabel } from "./period";
+
 export interface ImportFileIdentity {
   id: string;
   fileName: string;
@@ -95,4 +98,46 @@ export function importRowQualifiers(files: readonly ImportFileIdentity[]): Map<s
  */
 export function importRowSubject(fileName: string, qualifier: string | null): string {
   return qualifier === null ? fileName : `${fileName} (${qualifier})`;
+}
+
+/** What a withheld section's notice is built from — `WithheldOutcome` (services/import/service.ts) without the notice. */
+export interface WithheldSectionFacts {
+  readonly accountName: string | null;
+  readonly last4: string | null;
+  readonly periodStart: string;
+  readonly periodEnd: string;
+  /** why, in plain words */
+  readonly reason: string;
+}
+
+function accountPhrase(accountName: string | null, last4: string | null): string {
+  const number = last4 === null ? null : `····${last4}`;
+  if (accountName === null) return number === null ? "an account" : `the account ${number}`;
+  return number === null ? accountName : `${accountName} ${number}`;
+}
+
+/**
+ * The sentence a file carries for a section it did NOT import: which account, which statement, why — and what that
+ * means for the account.
+ *
+ * ⛔ It says the account is not checked for those days, in so many words. The file beside it reads parsed, the other
+ * accounts' months are in, and statement lag is normal in this app — a notice that named the section but not the
+ * consequence would leave the account reading as if its month had simply not arrived yet.
+ */
+export function withheldSectionNotice(facts: WithheldSectionFacts): string {
+  return (
+    `Not imported: ${accountPhrase(facts.accountName, facts.last4)}'s statement for ` +
+    `${dayWindowLabel(facts.periodStart, facts.periodEnd)} — ${facts.reason}. ` +
+    "Nothing from that section is in the ledger, so the account is not checked for those days."
+  );
+}
+
+/**
+ * The withheld-section notice an import row carries, or null.
+ *
+ * Only a `parsed` file's: the import writes `error` on a parsed file for nothing else, a failed file's error is why
+ * it failed, and a superseded file's contribution has left the ledger.
+ */
+export function withheldNoticeOf(file: { readonly status: ImportStatus; readonly error: string | null }): string | null {
+  return file.status === "parsed" ? file.error : null;
 }

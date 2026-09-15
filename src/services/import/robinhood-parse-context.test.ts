@@ -1,18 +1,20 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { createDatabase, type DbBundle } from "@/db/client";
+import { createDatabase, type AppDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
 import { institutions } from "@/db/schema/institutions";
-import { balanceAnchors } from "@/db/schema/balances";
+import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { createAccount } from "@/services/accounts";
+import { PROFILES } from "./profiles";
 import type { Line } from "./profiles/pdf-profile";
 import { importStatementFiles, resolveAccount, type ImportInput } from "./service";
+import type { ParsedStatement } from "./types";
 
 /**
  * The ledger's tracked accounts must REACH the Robinhood statement parsers.
@@ -193,9 +195,19 @@ function robinhoodAccounts() {
 }
 
 /** The owner's ledger today: the brokerage carries last4 3525, and the cash ledger has no number. */
-function trackBrokerageAndCash(): void {
-  resolveAccount(bundle.db, { institution: "Robinhood", type: "investment", subtype: "brokerage", name: "Robinhood Brokerage", last4: "3525" });
-  resolveAccount(bundle.db, { institution: "Robinhood", type: "checking", name: "Robinhood Cash" });
+function trackBrokerageAndCash(db: AppDatabase = bundle.db): void {
+  resolveAccount(db, { institution: "Robinhood", type: "investment", subtype: "brokerage", name: "Robinhood Brokerage", last4: "3525" });
+  resolveAccount(db, { institution: "Robinhood", type: "checking", name: "Robinhood Cash" });
+}
+
+/**
+ * …and Robinhood Agentic, created the way the guarded script creates it — NOT through resolveAccount, which would
+ * ADOPT Robinhood Cash (checking, no last4) and stamp ····9651 on the wrong account.
+ */
+function trackAllThree(db: AppDatabase = bundle.db): string {
+  trackBrokerageAndCash(db);
+  const robinhood = db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+  return createAccount(db, { institutionId: robinhood.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
 }
 
 describe("the ledger's tracked accounts reach the Robinhood brokerage parser through the import", () => {
@@ -257,10 +269,15 @@ describe("the ledger's tracked accounts reach the Robinhood brokerage parser thr
       pdf("48afc52f-8955-351d-bdad-7248305c5a2b.pdf", [...AUGUST_SECOND, ...AUGUST_BROKERAGE]), // second account first
     ]);
 
-    expect(outcomes.map((o) => [o.status, o.error])).toEqual([
-      ["parsed", undefined],
-      ["parsed", undefined],
-      ["parsed", undefined],
+    expect(outcomes.map((o) => [o.status, o.error, o.withheld])).toEqual([
+      ["parsed", undefined, []],
+      ["parsed", undefined, []],
+      ["parsed", undefined, []], // a section the cash reader proves is never withheld
+    ]);
+    expect(bundle.db.select({ status: importFiles.status, error: importFiles.error }).from(importFiles).all()).toEqual([
+      { status: "parsed", error: null },
+      { status: "parsed", error: null },
+      { status: "parsed", error: null },
     ]);
 
     const rows = periods();
@@ -312,6 +329,262 @@ describe("the ledger's tracked accounts reach the Robinhood brokerage parser thr
       ["Robinhood Agentic", "checking", "9651"],
       ["Robinhood Brokerage", "investment", "3525"],
       ["Robinhood Cash", "checking", null],
+    ]);
+  });
+});
+
+/** #487513525's Account Activity, 2026-08 (48afc52f…, lines 245–246, 271, 301, 303) — the two credits no other source carries. */
+const AUGUST_BROKERAGE_ACTIVITY = [
+  line("Account Activity", [["Account Activity", 36]]),
+  line("Description Symbol Acct Type Transaction Date Qty Price Debit Credit", [
+    ["Description", 36],
+    ["Symbol", 356.7],
+    ["Acct Type", 400.35],
+    ["Transaction", 455.06],
+    ["Date", 517.58],
+    ["Qty", 580.54],
+    ["Price", 633.34],
+    ["Debit", 697.42],
+    ["Credit", 751.73],
+  ]),
+  line("Crypto Money Movement Margin COIN 08/24/2026 $1,499.99", [
+    ["Crypto Money Movement", 36],
+    ["Margin", 400.35],
+    ["COIN", 455.06],
+    ["08/24/2026", 517.58],
+    ["$1,499.99", 751.73],
+  ]),
+  line("Crypto Money Movement Margin COIN 08/31/2026 $1,000.11", [
+    ["Crypto Money Movement", 36],
+    ["Margin", 400.35],
+    ["COIN", 455.06],
+    ["08/31/2026", 517.58],
+    ["$1,000.11", 751.73],
+  ]),
+  line("Total Funds Paid and Received $5,732.94 $5,053.57", [
+    ["Total Funds Paid and Received", 36],
+    ["$5,732.94", 697.42],
+    ["$5,053.57", 751.73],
+  ]),
+];
+const AUGUST_BROKERAGE_WITH_CREDITS = [...AUGUST_BROKERAGE, ...AUGUST_BROKERAGE_ACTIVITY];
+
+/**
+ * The rehearsal's month (agentic-design.json, option (c)): #655929651's real 2026-08 lines with only what a buy of
+ * 0.25 WMT for $25.00 on 08/20 would change. CONSTRUCTED — no statement for this account has printed a position yet.
+ */
+const AGENT_BUYS = [
+  line("08/01/2026 to 08/31/2026"),
+  line("Individual Account #:655929651"),
+  line("Account Summary"),
+  line("Net Account Balance $26.64 $1.64"),
+  line("Total Securities $0.00 $26.22"),
+  line("Portfolio Value $26.64 $27.86"),
+  line("Portfolio Summary"),
+  line("Walmart"),
+  line("WMT Cash 0.25 $104.87000 $26.22 $0.24 94.11%"),
+  line("Total Securities $26.22 $0.24 94.11%"),
+  line("Brokerage Cash Balance $1.64 5.89%"),
+  line("Account Activity"),
+  line("Description Symbol Acct Type Transaction Date Qty Price Debit Credit", [["Debit", 685.13], ["Credit", 743.4]]),
+  line("Walmart"),
+  line("WMT Cash Buy 08/20/2026 0.25 $100.00000 $25.00", [
+    ["WMT", 269.66],
+    ["Cash", 341.55],
+    ["Buy", 431.63],
+    ["08/20/2026", 534.56],
+    ["0.25", 586.28],
+    ["$100.00000", 630.19],
+    ["$25.00", 685.13],
+  ]),
+  line("CUSIP: 931142103"),
+  line("Total Funds Paid and Received $25.00 $0.00", [["Total Funds Paid and Received", 36], ["$25.00", 685.13], ["$0.00", 743.4]]),
+  line("Executed Trades Pending Settlement"),
+  line("Total Executed Trades Pending Settlement $0.00 $0.00"),
+];
+
+const JUNE_FILE = "747059b1-3904-3242-af2e-de66f2c94f5e.pdf";
+/** a name for the constructed file — its bytes differ from the real August's, as a re-issued statement's would */
+const AGENT_BUYS_FILE = "d41f0c83-5a7e-4b2c-9e61-3f8a2b7c9d10.pdf";
+
+/** Everything the ledger holds for one account, in a stable order — what "untouched" and "identical" are measured on. */
+function stateOf(db: AppDatabase, accountName: string) {
+  const { id } = db.select({ id: accounts.id }).from(accounts).where(eq(accounts.name, accountName)).get()!;
+  return {
+    periods: db
+      .select({
+        start: statementPeriods.periodStart,
+        end: statementPeriods.periodEnd,
+        beginCents: statementPeriods.beginningBalanceCents,
+        endCents: statementPeriods.endingBalanceCents,
+        reconciliation: statementPeriods.reconciliation,
+        gapCents: statementPeriods.gapCents,
+      })
+      .from(statementPeriods)
+      .where(eq(statementPeriods.accountId, id))
+      .orderBy(statementPeriods.periodStart)
+      .all(),
+    anchors: db
+      .select({ on: balanceAnchors.anchoredOn, cents: balanceAnchors.balanceCents, source: balanceAnchors.source })
+      .from(balanceAnchors)
+      .where(eq(balanceAnchors.accountId, id))
+      .orderBy(balanceAnchors.anchoredOn, balanceAnchors.source)
+      .all(),
+    liveRows: db
+      .select({ postedOn: transactions.postedOn, cents: transactions.amountCents, description: transactions.rawDescription, status: transactions.status })
+      .from(transactions)
+      .where(and(eq(transactions.accountId, id), ne(transactions.status, "superseded")))
+      .orderBy(transactions.postedOn, transactions.amountCents)
+      .all(),
+    days: db
+      .select({ day: dailyBalances.day, cents: dailyBalances.balanceCents, basis: dailyBalances.basis })
+      .from(dailyBalances)
+      .where(eq(dailyBalances.accountId, id))
+      .orderBy(dailyBalances.day)
+      .all(),
+  };
+}
+
+describe("an unprovable Robinhood Agentic section is withheld, and the rest of the file imports", () => {
+  test("⛔ the agent buys: Robinhood Cash and Brokerage import exactly as a normal August, Robinhood Agentic is untouched, and the file says what it left out", async () => {
+    // the same ledger given the PROVABLE August, for comparison
+    const normal = createDatabase(path.join(dir, "normal.db"));
+    try {
+      seedDatabase(normal.db);
+      trackAllThree(normal.db);
+      await importStatementFiles(normal.db, [pdf(JUNE_FILE, [...JUNE_BROKERAGE, ...JUNE_SECOND])]);
+      await importStatementFiles(normal.db, [pdf("48afc52f-8955-351d-bdad-7248305c5a2b.pdf", [...AUGUST_SECOND, ...AUGUST_BROKERAGE_WITH_CREDITS])]);
+
+      trackAllThree();
+      await importStatementFiles(bundle.db, [pdf(JUNE_FILE, [...JUNE_BROKERAGE, ...JUNE_SECOND])]);
+      const agenticBefore = stateOf(bundle.db, "Robinhood Agentic");
+      expect(agenticBefore.liveRows).toHaveLength(1); // June's +$26.64, so "untouched" is measured on something
+
+      const [outcome] = await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE_WITH_CREDITS])]);
+
+      // not "failed" — which cost Robinhood Cash $2,500.10 on the real August
+      expect(outcome!.status).toBe("parsed");
+      expect(outcome!.error).toBeUndefined();
+      expect(outcome!.withheld).toEqual([
+        {
+          accountName: "Robinhood Agentic",
+          last4: "9651",
+          periodStart: "2026-08-01",
+          periodEnd: "2026-08-31",
+          reason: "it shows $26.22 of securities, and this account is read as cash only",
+          notice:
+            "Not imported: Robinhood Agentic ····9651's statement for Aug 1 – 31, 2026 — it shows $26.22 of securities, " +
+            "and this account is read as cash only. Nothing from that section is in the ledger, so the account is not checked for those days.",
+        },
+      ]);
+      // durable, on the file's own row — what /imports reads
+      const file = bundle.db.select().from(importFiles).where(eq(importFiles.fileName, AGENT_BUYS_FILE)).get()!;
+      expect(file.status).toBe("parsed");
+      expect(file.error).toBe(outcome!.withheld[0]!.notice);
+
+      // Robinhood Agentic: not a row, a period, an anchor or a day moved — nothing reads as checked for August
+      expect(stateOf(bundle.db, "Robinhood Agentic")).toEqual(agenticBefore);
+      expect(stateOf(bundle.db, "Robinhood Agentic").periods.map((p) => p.end)).toEqual(["2026-06-30"]);
+
+      // Robinhood Cash and Brokerage: exactly what the provable August gave
+      for (const name of ["Robinhood Cash", "Robinhood Brokerage"]) {
+        expect(stateOf(bundle.db, name)).toEqual(stateOf(normal.db, name));
+      }
+      expect(
+        stateOf(bundle.db, "Robinhood Cash")
+          .liveRows.filter((r) => r.description === "Crypto Money Movement")
+          .map((r) => [r.postedOn, r.cents]),
+      ).toEqual([
+        ["2026-08-24", 149999],
+        ["2026-08-31", 100011],
+      ]);
+      expect(stateOf(bundle.db, "Robinhood Brokerage").periods.at(-1)).toMatchObject({ start: "2026-08-01", beginCents: 6785926, endCents: 7295932 });
+    } finally {
+      normal.sqlite.close();
+    }
+  });
+
+  test("the same bytes at the same parser version are skipped as a duplicate — the notice stays, and only a version bump reads them again", async () => {
+    trackAllThree();
+    const file = pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE_WITH_CREDITS]);
+    await importStatementFiles(bundle.db, [file]);
+
+    const [again] = await importStatementFiles(bundle.db, [file]);
+
+    expect(again!.status).toBe("skipped_duplicate");
+    expect(bundle.db.select({ status: importFiles.status, error: importFiles.error }).from(importFiles).all()).toEqual([
+      { status: "parsed", error: expect.stringMatching(/^Not imported: Robinhood Agentic ····9651's statement for Aug 1 – 31, 2026/) },
+    ]);
+  });
+
+  test("⛔ once a parser can read the section, its version bump re-reads the file: Robinhood Agentic gains August, nothing else counts twice, and the owner's work carries", async () => {
+    trackAllThree();
+    const file = pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE_WITH_CREDITS]);
+    await importStatementFiles(bundle.db, [file]);
+
+    // the owner's note on a row only this PDF carries — the re-parse must not lose it
+    const credit = bundle.db
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.postedOn, "2026-08-24"), eq(transactions.amountCents, 149999)))
+      .get()!;
+    bundle.db.update(transactions).set({ notes: "ETH sold for the car" }).where(eq(transactions.id, credit.id)).run();
+    const before = { cash: stateOf(bundle.db, "Robinhood Cash"), brokerage: stateOf(bundle.db, "Robinhood Brokerage") };
+
+    /*
+     * A stand-in for the positions reader that does not exist yet: the SAME bytes, a bumped version, and
+     * #655929651's August now read — its cash, which the constructed buy took $25.00 of. The version is the
+     * only thing that lets the import read this file again (the test above).
+     */
+    const profile = PROFILES.find((p) => p.id === "robinhood-brokerage-statement-pdf")!;
+    const { version, parse } = profile;
+    const agenticAugust: ParsedStatement = {
+      accountHint: { institution: "Robinhood", last4: "9651" },
+      txns: [{ postedOn: "2026-08-20", amountCents: -2500, rawDescription: "Walmart", bankCategory: "Buy" }],
+      period: { start: "2026-08-01", end: "2026-08-31", beginCents: 2664, endCents: 164 },
+    };
+    profile.version = version + 1;
+    profile.parse = async (f, context) => {
+      const read = await parse(f, context);
+      return { statements: [...(Array.isArray(read) ? read : read.statements), agenticAugust], withheld: [] };
+    };
+    let outcome;
+    try {
+      [outcome] = await importStatementFiles(bundle.db, [file]);
+    } finally {
+      profile.version = version;
+      profile.parse = parse;
+    }
+
+    expect(outcome!.status).toBe("parsed");
+    expect(outcome!.withheld).toEqual([]);
+    expect(outcome!.carriedForward).toBeGreaterThanOrEqual(1);
+
+    // the old version's row is superseded and no longer claims a section is missing; the new one has nothing missing
+    expect(
+      bundle.db
+        .select({ version: importFiles.parserVersion, status: importFiles.status, error: importFiles.error })
+        .from(importFiles)
+        .orderBy(importFiles.parserVersion)
+        .all(),
+    ).toEqual([
+      { version, status: "superseded", error: null },
+      { version: version + 1, status: "parsed", error: null },
+    ]);
+
+    // Robinhood Cash and Brokerage: the same periods, anchors, live rows and days — each credit once, not twice
+    expect(stateOf(bundle.db, "Robinhood Cash")).toEqual(before.cash);
+    expect(stateOf(bundle.db, "Robinhood Brokerage")).toEqual(before.brokerage);
+    const notes = bundle.db
+      .select({ notes: transactions.notes })
+      .from(transactions)
+      .where(and(eq(transactions.postedOn, "2026-08-24"), eq(transactions.amountCents, 149999), ne(transactions.status, "superseded")))
+      .all();
+    expect(notes).toEqual([{ notes: "ETH sold for the car" }]);
+
+    // Robinhood Agentic: its August, at last
+    expect(stateOf(bundle.db, "Robinhood Agentic").periods).toEqual([
+      { start: "2026-08-01", end: "2026-08-31", beginCents: 2664, endCents: 164, reconciliation: "reconciled", gapCents: null },
     ]);
   });
 });

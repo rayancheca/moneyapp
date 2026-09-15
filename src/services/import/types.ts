@@ -69,6 +69,32 @@ export interface ParsedStatement {
   ledger?: { cents: number; asOf: string };
 }
 
+/**
+ * A section of a multi-account file its parser could not PROVE, and so did not import — named, dated and
+ * explained, so the rest of the file imports without that section passing for read.
+ *
+ * 🔴 Why it exists: the Robinhood brokerage PDF is ONE file for two accounts. While a refusal about #655929651's
+ * section threw, it failed the whole file — measured on August 2026's figures with a constructed agent buy,
+ * Robinhood Cash lost the $2,500.10 of Crypto Money Movement credits no other source carries, and `pnpm
+ * ledger-check` went red. A refusal about one account's section must not erase another account's provable money.
+ */
+export interface WithheldSection {
+  /** the hint the section's statement would have carried — used to NAME its account, never to create or adopt one */
+  readonly accountHint: AccountHint;
+  /** the account number the section prints */
+  readonly accountNumber: string;
+  /** the statement window the section covers */
+  readonly period: { readonly start: string; readonly end: string };
+  /** why, in plain words — "it shows $26.22 of securities, and this account is read as cash only" */
+  readonly reason: string;
+}
+
+/** A file's parse when part of it was withheld. A profile that never withholds returns its statements alone. */
+export interface ParsedFile {
+  readonly statements: ParsedStatement[];
+  readonly withheld: readonly WithheldSection[];
+}
+
 export interface SniffedFile {
   name: string;
   buffer: Buffer;
@@ -92,7 +118,7 @@ export interface ParserProfile {
    * profile is chosen only if it also returns true.
    */
   matchesContent?(text: string): boolean;
-  parse(file: SniffedFile, context?: ParseContext): Promise<ParsedStatement[]> | ParsedStatement[];
+  parse(file: SniffedFile, context?: ParseContext): Promise<ParsedStatement[] | ParsedFile> | ParsedStatement[] | ParsedFile;
 }
 
 /** An account the ledger tracks, as a statement section can be matched and routed to it. */
