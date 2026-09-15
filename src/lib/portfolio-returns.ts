@@ -310,6 +310,13 @@ export function returnStatsInWindow(
  * took back out. A UI must never label the net figure "contributed".
  */
 export interface ValueDecomposition {
+  /**
+   * The series' first day — the basis every figure below is counted from. It
+   * travels WITH the figures so no surface can print them under a window they
+   * were not measured over: the bar sat unlabelled beneath a "1M" header while
+   * reading the whole series' +$23,561.70 (real ledger, 2026-09-15).
+   */
+  sinceDay: string;
   /** capital put in: the baseline NAV + every later positive flow, in cents */
   grossContributedCents: number;
   /** capital taken back out by sells: −Σ negative flows after the baseline (≥ 0) */
@@ -335,6 +342,7 @@ export function decomposeValue(days: readonly PortfolioDay[]): ValueDecompositio
   const grossContributedCents = days[0]!.navCents + inflowCents;
   const withdrawnCents = outflowCents;
   return {
+    sinceDay: days[0]!.day,
     grossContributedCents,
     withdrawnCents,
     netContributedCents: grossContributedCents - withdrawnCents,

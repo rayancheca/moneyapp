@@ -415,12 +415,25 @@ describe("decomposeValue", () => {
   test("a single-day series decomposes to its opening with no gains", () => {
     const dec = decomposeValue([d("2026-01-01", 100_000, 100_000)])!;
     expect(dec).toEqual({
+      sinceDay: "2026-01-01",
       grossContributedCents: 100_000,
       withdrawnCents: 0,
       netContributedCents: 100_000,
       gainsCents: 0,
       valueCents: 100_000,
     });
+  });
+
+  /*
+   * 🔴 The bar printed its cumulative split under a header naming a RANGE, and
+   * named no basis at all. Measured on the real ledger 2026-09-15 at
+   * /investments?view=returns&range=1M: header "+$11,211.49 · return · 1M", bar
+   * "Market gains +$23,561.70" — the ALL-range figure, since Wed, Jul 10, 2024.
+   * The figure is right; what it never said is WHEN it counts from.
+   */
+  test("names the day its contributions and gains are counted from — the series' first", () => {
+    const days = [d("2024-07-10", 100_000, 100_000), d("2026-09-14", 150_000, 20_000), d("2026-09-15", 160_000, 0)];
+    expect(decomposeValue(days)!.sinceDay).toBe("2024-07-10");
   });
 });
 

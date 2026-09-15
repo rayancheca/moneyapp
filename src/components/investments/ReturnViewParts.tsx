@@ -329,10 +329,21 @@ export function ReturnStatsList({ stats, isPercent }: { stats: ReturnStats; isPe
  * out, shown with both gross figures) — sale proceeds are not negative
  * contributions, and a trimmed winner can be running entirely on gains (net ≤ 0
  * → the bar is all gains; widths are clamped so it can never render broken).
+ *
+ * 🔴 It never said WHEN it counts from, directly under a header naming a range.
+ * Measured on the real ledger 2026-09-15, /investments?view=returns&range=1M:
+ * "+$11,211.49 · return · 1M" over "Market gains +$23,561.70" — the whole
+ * series since Wed, Jul 10, 2024. UNH's page put green "+$2,948.04" gains under
+ * a red 1M "−$351.12". The two legends on this card already say "since {day}".
+ *
+ * ⛔ Named, NOT windowed. `decomposeValue` books a series' first NAV as capital
+ * put in, so fed a 1M slice it would print the $99,695.59 opening value as
+ * "Net contributed" — a false statement in place of an omission.
  */
 export function DecompositionBar({ decomposition }: { decomposition: ValueDecomposition }) {
-  const { grossContributedCents, withdrawnCents, netContributedCents, gainsCents, valueCents } =
+  const { sinceDay, grossContributedCents, withdrawnCents, netContributedCents, gainsCents, valueCents } =
     decomposition;
+  const since = `since ${formatDayLong(sinceDay)}`;
   const up = gainsCents >= 0;
   const hasSells = withdrawnCents > 0;
   const base = Math.max(up ? netContributedCents : valueCents, 0);
@@ -348,7 +359,7 @@ export function DecompositionBar({ decomposition }: { decomposition: ValueDecomp
     <div className="mt-4 border-t border-line pt-3">
       <div className="flex items-baseline justify-between text-xs">
         <span className="text-ink-faint">
-          Value = {hasSells ? "net contributed" : "contributions"} + market {up ? "gains" : "losses"}
+          Value = {hasSells ? "net contributed" : "contributions"} + market {up ? "gains" : "losses"} · {since}
         </span>
         <span className="figures font-medium">{formatCents(valueCents)}</span>
       </div>
@@ -357,7 +368,7 @@ export function DecompositionBar({ decomposition }: { decomposition: ValueDecomp
         role="img"
         aria-label={`Of ${formatCents(valueCents)}, ${contributedText} and ${formatCentsSigned(
           gainsCents,
-        )} is market ${up ? "gains" : "losses"}.`}
+        )} is market ${up ? "gains" : "losses"} ${since}.`}
       >
         <div className="bg-ink-muted" style={{ width: `${basePct}%` }} />
         <div className={up ? "bg-positive" : "bg-negative"} style={{ width: `${100 - basePct}%` }} />
