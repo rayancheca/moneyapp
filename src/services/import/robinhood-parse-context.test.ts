@@ -351,4 +351,59 @@ describe("the ledger's tracked accounts reach the Robinhood crypto parser throug
       { account: "Robinhood Crypto", last4: "8474", start: "2026-07-01", end: "2026-07-31", beginCents: 2735993, endCents: 2836548, reconciliation: "value_anchor" },
     ]);
   });
+
+  test("⛔ the brokerage's last4 is not a crypto account: a one-account crypto statement imports while Robinhood Crypto has no number", async () => {
+    // The crypto profile's hint carries no last4, so a Robinhood Crypto it creates never has one — while the
+    // brokerage statement gives Robinhood Brokerage its ····3525. 🔴 Measured on the 18 real crypto PDFs with
+    // only ····3525 tracked: ef16a75 refused ALL 18 ("none is an account this ledger tracks (····3525)"), each
+    // of which imported before it.
+    trackBrokerageAndCash();
+    resolveAccount(bundle.db, { institution: "Robinhood", type: "investment", subtype: "crypto", name: "Robinhood Crypto" });
+    // robinhood-crypto-statement-2025-11 (0a5e6044…): one account, printed with its number
+    const texts = [
+      "Crypto Statement",
+      "11-2025",
+      "ACCOUNT NUMBER 311070628474",
+      "PERIOD START 2025-11-01",
+      "PERIOD END 2025-11-30",
+      "OPENING BALANCE $1504.99929923",
+      "CLOSING BALANCE $3480.4884827",
+      "ACCOUNT ACTIVITY",
+      "DATE TRANSACTION TYPE DEBIT CREDIT PRICE VALUE FEE",
+      "2025-11-04 Crypto Purchase -- 0.32258 ETH $3098.85441497 $999.63 --",
+    ];
+
+    const [outcome] = await importStatementFiles(bundle.db, [pdf("0a5e6044-65c3-5353-9c71-ed985b2f1b75.pdf", texts.map((t) => line(t)))]);
+
+    expect(outcome!.error).toBeUndefined();
+    expect(outcome!.status).toBe("parsed");
+    expect(periods()).toEqual([
+      { account: "Robinhood Crypto", last4: null, start: "2025-11-01", end: "2025-11-30", beginCents: 150500, endCents: 348049, reconciliation: "value_anchor" },
+    ]);
+  });
+
+  test("a two-account crypto statement is still refused while no crypto account carries a number, whatever else is tracked", async () => {
+    trackBrokerageAndCash();
+    resolveAccount(bundle.db, { institution: "Robinhood", type: "investment", subtype: "crypto", name: "Robinhood Crypto" });
+    const texts = [
+      "Crypto Statement",
+      "ACCOUNT NUMBER 311070628474",
+      "PERIOD START 2026-07-01",
+      "PERIOD END 2026-07-31",
+      "OPENING BALANCE $27359.92709892",
+      "CLOSING BALANCE $28365.48180495",
+      "Crypto Statement",
+      "ACCOUNT NUMBER 311407134147",
+      "PERIOD START 2026-07-01",
+      "PERIOD END 2026-07-31",
+      "OPENING BALANCE $0",
+      "CLOSING BALANCE $0",
+    ];
+
+    const [outcome] = await importStatementFiles(bundle.db, [pdf("robinhood-crypto-2026-07.pdf", texts.map((t) => line(t)))]);
+
+    expect(outcome!.status).toBe("failed");
+    expect(outcome!.error).toMatch(/#311070628474, #311407134147.*refusing to guess/);
+    expect(periods()).toEqual([]);
+  });
 });

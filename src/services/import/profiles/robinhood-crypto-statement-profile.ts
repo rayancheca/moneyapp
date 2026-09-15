@@ -1,6 +1,6 @@
 import { isValidIsoDate } from "@/lib/dates";
 import { parseAmountToCents } from "@/lib/money";
-import { ParseError, type CanonicalTxn, type ParsedStatement, type ParserProfile } from "../types";
+import { ParseError, type CanonicalTxn, type KnownAccount, type ParsedStatement, type ParserProfile } from "../types";
 import { extractLines } from "./pdf-profile";
 import { selectTrackedSections, splitAtAccountHeaders, type TrackedSection } from "./robinhood-account-sections";
 
@@ -81,6 +81,22 @@ function trackedAccountLines(texts: readonly string[], trackedLast4s: readonly s
   return texts.slice(section.start, section.end);
 }
 
+/**
+ * The last4s a crypto statement's sections are chosen by: the accounts the
+ * ledger tracks AS crypto, and no others.
+ *
+ * 🔴 ef16a75 offered every Robinhood last4. This profile's own hint carries no
+ * number, so a Robinhood Crypto it creates never has one — while the brokerage
+ * statement gives Robinhood Brokerage its ····3525. On that ledger every
+ * one-account crypto statement read "none is an account this ledger tracks
+ * (····3525)": measured over the 18 real crypto PDFs, all 18 refused, each of
+ * which had imported before. A brokerage or cash account's number cannot name a
+ * crypto account's section, so it is not offered as one.
+ */
+export function cryptoAccountLast4s(known: readonly KnownAccount[]): string[] {
+  return known.filter((a) => a.type === "investment" && a.subtype === "crypto").map((a) => a.last4);
+}
+
 /** Pure text-level core, exported for unit tests. */
 export function parseRobinhoodCryptoLines(
   allTexts: readonly string[],
@@ -151,10 +167,9 @@ export const robinhoodCryptoStatementPdf: ParserProfile = {
   parse: async (f, context): Promise<ParsedStatement[]> => {
     const lines = await extractLines(f.buffer);
     if (lines.length === 0) throw new ParseError(PROFILE_ID, "No extractable text — scanned PDF?");
-    const tracked = (context?.knownAccounts.Robinhood ?? []).map((a) => a.last4);
     const parsed = parseRobinhoodCryptoLines(
       lines.map((l) => l.text),
-      tracked,
+      cryptoAccountLast4s(context?.knownAccounts.Robinhood ?? []),
     );
     return [
       {

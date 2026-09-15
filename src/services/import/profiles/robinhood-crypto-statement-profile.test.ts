@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { ParseError } from "../types";
-import { parseRobinhoodCryptoLines } from "./robinhood-crypto-statement-profile";
+import { ParseError, type KnownAccount } from "../types";
+import { cryptoAccountLast4s, parseRobinhoodCryptoLines } from "./robinhood-crypto-statement-profile";
 
 /**
  * Real Robinhood Crypto statement PDFs (single-column). Balances are portfolio
@@ -153,5 +153,28 @@ describe("choosing the crypto account section", () => {
   test("a single-account statement still parses on a ledger that tracks nothing, with or without its number", () => {
     expect(parseRobinhoodCryptoLines(ETH_ACCOUNT).closingValueCents).toBe(2_836_548);
     expect(parseRobinhoodCryptoLines(WITH_SALE).txns).toHaveLength(1); // no ACCOUNT NUMBER line at all
+  });
+
+  describe("the accounts its sections are chosen by", () => {
+    const BROKERAGE: KnownAccount = { last4: "3525", type: "investment", subtype: "brokerage" };
+    const CRYPTO: KnownAccount = { last4: "8474", type: "investment", subtype: "crypto" };
+    const AGENTIC: KnownAccount = { last4: "9651", type: "checking", subtype: null };
+
+    test("only the accounts the ledger tracks AS crypto — the owner's ledger offers ····8474 alone", () => {
+      expect(cryptoAccountLast4s([BROKERAGE, CRYPTO, AGENTIC])).toEqual(["8474"]);
+    });
+
+    test("⛔ a ledger whose Robinhood Crypto has no number offers none, so a one-account statement reads as a fresh install", () => {
+      expect(cryptoAccountLast4s([BROKERAGE, AGENTIC])).toEqual([]);
+      expect(parseRobinhoodCryptoLines(ETH_ACCOUNT, cryptoAccountLast4s([BROKERAGE])).closingValueCents).toBe(2_836_548);
+    });
+
+    test("two tracked crypto accounts are both offered — and the two-account statement is refused, not blended", () => {
+      const second: KnownAccount = { last4: "4147", type: "investment", subtype: "crypto" };
+      expect(cryptoAccountLast4s([CRYPTO, second])).toEqual(["8474", "4147"]);
+      expect(() => parseRobinhoodCryptoLines([...ETH_ACCOUNT, ...SECOND_ACCOUNT], cryptoAccountLast4s([CRYPTO, second]))).toThrow(
+        /more than one is a crypto account/,
+      );
+    });
   });
 });
