@@ -95,7 +95,7 @@ export function CashFlowBucketTooltip({ bucket: b, ghostCents }: { bucket: CashF
       ) : (
         <>
           <div className="mt-1 flex items-center justify-between gap-4">
-            <span className="text-positive">Earned</span>
+            <span className="text-positive">Income</span>
             <span className="figures">{formatCents(b.incomeCents)}</span>
           </div>
           <div className="flex items-center justify-between gap-4">
@@ -103,7 +103,7 @@ export function CashFlowBucketTooltip({ bucket: b, ghostCents }: { bucket: CashF
             <span className="figures">{formatCents(b.spendingCents)}</span>
           </div>
           {/* a refund is money in and never nets "Spent" down, so without
-              this line Earned − Spent does not make the Net below it */}
+              this line Income − Spent does not make the Net below it */}
           {b.refundsCents !== 0 && (
             <div className="flex items-center justify-between gap-4">
               <span className="text-positive">Refunded</span>

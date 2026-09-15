@@ -5,11 +5,11 @@ import type { DateRange } from "@/services/analytics";
 import type { PeriodTotals } from "@/services/spending";
 
 /**
- * The tappable summary cards (ux-overhaul-plan §5.1). Earned/Spent/Refunds each
+ * The tappable summary cards (ux-overhaul-plan §5.1). Income/Spent/Refunds each
  * drill to their EXACT kind-scoped ledger (the filter tokens reconcile to these
  * very numbers); Net and Savings-rate drill to the whole period. Every card is a
  * link — nothing is view-only. Refunds appears only in periods with expense-
- * category credits, so Net reads as Earned + Refunds − Spent right on the row.
+ * category credits, so Net reads as Income + Refunds − Spent right on the row.
  * The card set + aria live in the pure `spendingStatCards` helper.
  */
 export function SpendingStatCards({ totals, range }: { totals: PeriodTotals; range: DateRange }) {

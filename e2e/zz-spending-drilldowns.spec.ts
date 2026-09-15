@@ -108,7 +108,7 @@ test("a cell shows what came IN as well as what went out, and the sheet gives th
   // hardcoded assumption is exactly what made the first version of this flake.
   const day = page.getByRole("button", { name: /^Jul 2\b/ });
   const label = (await day.getAttribute("aria-label")) ?? "";
-  expect(label).toMatch(/earned/);
+  expect(label).toMatch(/income/);
 
   // the sign, not colour alone, says which direction each figure is
   await expect(day.getByText(/^\+\$/)).toBeVisible();
@@ -117,10 +117,10 @@ test("a cell shows what came IN as well as what went out, and the sheet gives th
   await day.click();
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
-  await expect(sheet.getByText("Earned", { exact: true })).toBeVisible();
+  await expect(sheet.getByText("Income", { exact: true })).toBeVisible();
   await expect(sheet.getByText("Net", { exact: true })).toBeVisible();
   // the net is stated in words as well as by sign
-  await expect(sheet.getByText(/earned more than you spent|spent more than you earned/)).toBeVisible();
+  await expect(sheet.getByText(/more income than spending|more spending than income/)).toBeVisible();
 });
 
 test("a category opens its page", async ({ page }) => {

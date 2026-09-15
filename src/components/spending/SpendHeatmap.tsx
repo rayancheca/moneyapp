@@ -58,7 +58,7 @@ function heatDayUnreached({ iso, day, today, ledgerOpens, ledgerReaches }: HeatD
 }
 
 /**
- * The sheet's sentence for a day with nothing spent or earned, or null when the
+ * The sheet's sentence for a day with no spending or income, or null when the
  * day has money and the sheet shows it instead.
  *
  * ⛔ Decided here, beside `heatCellLabel`, and from the same classification. The
@@ -82,9 +82,9 @@ export function heatDaySheetSentence(input: HeatDayFrontier): string | null {
   }
   const refunded = day?.refundedCents ?? 0;
   return refunded > 0
-    ? `Nothing was spent or earned on this day — ${formatCents(refunded)} came back as a refund.`
+    ? `No spending or income on this day — ${formatCents(refunded)} came back as a refund.`
     : // the same population the cell's own label names — not the ledger's
-      "Nothing was spent or earned on this day.";
+      "No spending or income on this day.";
 }
 
 /**
@@ -158,17 +158,23 @@ export function heatCellLabel({
    * expense-kind credits. A day holding only a transfer, a card payment or an
    * investment flow falls through all three. Measured 2026-09-11: **79 days
    * across the ledger, covering 298 real transactions**, were labelled as
-   * having had none. The branch directly above already says "spent or earned";
-   * this one now names the same population.
+   * having had none. The branch directly above already names "spending or
+   * income"; this one now names the same population.
+   *
+   * 🔴 S22 — and the money-in half was called "earned". It is every positive
+   * income-kind row: measured on the real ledger 2026-09-15, "Sep 10: $37.65
+   * spent across 3 transactions, mostly Food, $14,171.00 earned" was a
+   * financial-aid refund, which /summary files as money he did not earn. Owner
+   * decision 2026-09-14: this population is "income", here and in the sheet.
    */
-  if (!d || (d.spentCents === 0 && d.incomeCents === 0)) return `${day}: nothing spent or earned`;
+  if (!d || (d.spentCents === 0 && d.incomeCents === 0)) return `${day}: no spending or income`;
   const parts: string[] = [];
   if (d.spentCents > 0) {
     parts.push(`${formatCents(d.spentCents)} spent across ${d.txnCount} ${d.txnCount === 1 ? "transaction" : "transactions"}`);
     // the biggest destination, so the label is as actionable as the cell
     if (d.topCategories[0]) parts.push(`mostly ${d.topCategories[0].name}`);
   }
-  if (d.incomeCents > 0) parts.push(`${formatCents(d.incomeCents)} earned`);
+  if (d.incomeCents > 0) parts.push(`${formatCents(d.incomeCents)} income`);
   return `${day}: ${parts.join(", ")}`;
 }
 
@@ -271,7 +277,7 @@ export function SpendHeatmap({ initial, today, ledgerOpens, ledgerReaches }: Spe
             </span>
             <span className="flex items-center gap-1.5">
               <span aria-hidden className="inline-block h-1 w-5 rounded-full bg-positive" />
-              earned
+              income
             </span>
             <span>bars share one scale — the month&rsquo;s biggest day</span>
             <span>Tap a day for its detail</span>
@@ -366,7 +372,7 @@ function DaySheetBody(props: HeatDayFrontier) {
         </div>
         {income > 0 && (
           <div>
-            <span className="text-xs font-medium uppercase tracking-[0.1em] text-ink">Earned</span>
+            <span className="text-xs font-medium uppercase tracking-[0.1em] text-ink">Income</span>
             <div className="figures mt-1 flex items-center gap-1.5 text-xl font-semibold text-ink">
               <span aria-hidden className="size-2 rounded-full bg-positive" />
               {formatCents(income)}
@@ -383,7 +389,7 @@ function DaySheetBody(props: HeatDayFrontier) {
             {formatCents(Math.abs(income - spent))}
           </div>
           <p className="mt-0.5 text-xs text-ink-faint">
-            {income - spent >= 0 ? "earned more than you spent" : "spent more than you earned"}
+            {income - spent >= 0 ? "more income than spending" : "more spending than income"}
           </p>
         </div>
       )}

@@ -296,11 +296,15 @@ export function emptyPeriodCopy(
        * nothing spent or earned" — while the page-level state for the same day
        * still said "nothing posted in it". One fix, two readers, one of them
        * missed.
+       *
+       * 🔴 S22: both now say "spending or income", because "earned" named every
+       * positive income-kind row — financial aid included — while /summary's
+       * "Earned" does not. The two readers moved together, on purpose.
        */
       return {
-        title: "Nothing spent or earned in this period",
+        title: "No spending or income in this period",
         description:
-          "This window sits inside what has been imported, so nothing was spent or earned in it — a measured zero rather than an unread window. Transfers, card payments and investment flows are not counted here and can still have posted; the ledger lists them. Accounts imported less far than the ledger as a whole could also be holding rows here; /imports says which." +
+          "This window sits inside what has been imported, so it holds no spending and no income — a measured zero rather than an unread window. Transfers, card payments and investment flows are not counted here and can still have posted; the ledger lists them. Accounts imported less far than the ledger as a whole could also be holding rows here; /imports says which." +
           (opts.uncategorizedBucket
             ? " Uncategorized outflows would show up above, as their own explicit bucket."
             : ""),

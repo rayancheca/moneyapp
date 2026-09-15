@@ -41,7 +41,7 @@ test("the bridge decomposes the hero number and states where it started and ende
 
   // every band names itself and its signed amount, so a band whose bar is under
   // one pixel is still readable
-  for (const label of ["Earned", "Refunds", "Spent", "Moved", "Market", "Unexplained"]) {
+  for (const label of ["Income", "Refunds", "Spent", "Moved", "Market", "Unexplained"]) {
     await expect(page.getByText(label, { exact: true })).toBeVisible();
   }
 

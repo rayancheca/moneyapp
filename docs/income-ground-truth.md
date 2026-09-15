@@ -19,12 +19,19 @@ are cents-exact from `data/moneyapp.db` at the 2026-07-16 snapshot unless noted.
 > (gambling winnings, ATM deposits mislabelled `Salary`, peer Zelles). This figure has now been
 > stable across nine passes.
 >
-> **Two definitions, and they differ by 79 cents.** Both are correct; say which one you mean:
+> **Two definitions, and they differed by 79 cents** (as of 2026-08-28). Both were correct; say which one you mean:
 >
 > | | |
 > |---|---|
-> | **$117,924.62** | every income-kind row, **both signs** — what the app publishes |
-> | $117,925.41 | positive rows only |
+> | **$117,924.62** | every income-kind row, **both signs** — what `/categories/<Income>` publishes (`categorySpending` nets) |
+> | $117,925.41 | positive rows only — what `/spending`'s Income card, its heatmap, the cash-flow views and the dashboard bridge publish (`isIncome`) |
+>
+> **⚠️ RE-MEASURED 2026-09-15 — the two now agree.** The owner refiled that one row to
+> `Transfers › Credit Card Payment` on 2026-09-14 (it is the return of a card payment, not a
+> clawback of income). Read-only on `data/moneyapp.db` today: **0** negative income-kind rows,
+> and both definitions read **$117,979.61 over 286 rows**. The rule difference still stands —
+> a future negative income-kind row would be subtracted on `/categories` and left out
+> everywhere else — so keep naming which one you mean.
 >
 > The whole difference is ONE row: `2024-09-18  -$0.79  Refunds & Reimbursements
 > "RETURNED INTERNET PMT"` on the Discover card. It is the ledger's **only** outflow sitting in
@@ -47,9 +54,12 @@ are cents-exact from `data/moneyapp.db` at the 2026-07-16 snapshot unless noted.
 > | **TOTAL** | **278** | **$117,924.62** |
 >
 > ⚠️ `Financial Aid` is the largest line and is **money in that was not earned** — it is excluded
-> from "earned" everywhere in the app (`/summary/[year]` puts it under "Money in that you did not
-> earn"). Whether any of it is a loan rather than a grant is still OPEN, and this document has
-> never answered it.
+> from "Earned" everywhere the app prints that word. As of S22 (owner decision 2026-09-14) the only
+> surface that prints it is `/summary/[year]`, which puts aid under "Money in that you did not
+> earn". `/spending`, its heatmap, the cash-flow chart/table/graph and the dashboard bridge call
+> the all-income-kind figure **Income**, because aid is in it; before S22 they called it "Earned",
+> and that sentence was false on every one of them. Whether any of the aid is a loan rather than a
+> grant is still OPEN, and this document has never answered it.
 
 > **⚠️ PASS-45 UPDATE (2026-08-11) — GAMBLING WINNINGS ARE NO LONGER INCOME.**
 > Seven credits totalling **$1,053.82** sat in `Income > Other Income`. They are not earnings —

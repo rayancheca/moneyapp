@@ -25,13 +25,13 @@ import type { CashFlow, SpendingProjection } from "@/services/spending";
 
 /**
  * The cash-flow GRAPH view (user ask): the period's running totals as clean
- * cumulative lines — earned, spent, and net — where the bar chart shows each
+ * cumulative lines — income, spent, and net — where the bar chart shows each
  * bucket's composition. The prior period's cumulative spend rides along as the
  * dashed ghost, so "are we ahead of last period" is readable at a glance.
  *
- * ⛔ THE NET LINE IS NOT THE GAP BETWEEN EARNED AND SPENT. A refund is money in
+ * ⛔ THE NET LINE IS NOT THE GAP BETWEEN INCOME AND SPENT. A refund is money in
  * and never nets "Spent" down (spending.ts's sign convention), so net is
- * `earned + refunds − spent` and the gap understates it by the refunds. The
+ * `income + refunds − spent` and the gap understates it by the refunds. The
  * arithmetic lives in `cashFlowCumulative` now, which is where that — and the
  * ghost's own total — are pinned; this file only draws what it returns.
  */
@@ -83,7 +83,7 @@ export function RunningTotalTooltip({
         <>
           <div className="text-ink-faint">Through {row.label}</div>
           <div className="mt-1 flex items-center justify-between gap-4">
-            <span className="text-positive">Earned</span>
+            <span className="text-positive">Income</span>
             <span className="figures">{formatCents(row.earnedCum)}</span>
           </div>
           <div className="flex items-center justify-between gap-4">
@@ -152,7 +152,7 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
   const unreachedByKey = new Map(buckets.map((b) => [b.key, b.unreached]));
 
   return (
-    <figure className="m-0" aria-label="Running totals for the period — cumulative earned, spent, and net">
+    <figure className="m-0" aria-label="Running totals for the period — cumulative income, spending, and net">
       <div className="h-72 md:h-80">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={plotted} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
@@ -213,7 +213,7 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
             <Line
               type="monotone"
               dataKey="earnedCum"
-              name="Earned (cumulative)"
+              name="Income (cumulative)"
               stroke="var(--chart-2)"
               strokeWidth={2}
               dot={lonePointDot(plotted.map((p) => p.earnedCum), "var(--chart-2)")}
@@ -243,7 +243,7 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
       <figcaption className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted">
         <span className="flex items-center gap-1.5">
           <span aria-hidden className="inline-block h-0.5 w-3" style={{ backgroundColor: "var(--chart-2)" }} />
-          Earned, running total
+          Income, running total
         </span>
         <span className="flex items-center gap-1.5">
           <span aria-hidden className="inline-block h-0.5 w-3" style={{ backgroundColor: "var(--negative)" }} />

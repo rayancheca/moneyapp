@@ -41,6 +41,8 @@ describe("CashFlowGraph's tooltip — a running total is only as far as the ledg
   test("the newest imported day states its running totals", () => {
     const text = render(point("2026-09-12", "12"), null);
     expect(text).toContain("Through 12");
+    expect(text).toContain("Income");
+    expect(text).not.toContain("Earned");
     expect(text).toContain("$1,431.05");
     expect(text).toContain("$0.08");
     expect(text).toContain("$1,430.97");

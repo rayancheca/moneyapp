@@ -69,7 +69,7 @@ export function CashFlowView({
     ...b,
     ghostCents: hasGhost ? (aligned![i] ?? null) : null,
   }));
-  // a refund is money in, so Net is earned + refunds − spent. Showing only three
+  // a refund is money in, so Net is income + refunds − spent. Showing only three
   // of the four terms states an identity that fails on any period with a credit.
   const hasRefunds = rows.some((r) => r.refundsCents !== 0);
 
@@ -95,7 +95,8 @@ export function CashFlowView({
     { key: "label", header: "Period", render: (r) => r.label },
     {
       key: "earned",
-      header: "Earned",
+      // S22: every positive income-kind row — /summary alone says "Earned", and means less
+      header: "Income",
       align: "right",
       render: (r) => figure(r, <span className="text-positive">{formatCents(r.incomeCents)}</span>),
     },
@@ -147,7 +148,7 @@ export function CashFlowView({
             columns={columns}
             rows={rows}
             rowKey={(r) => r.key}
-            caption={`Cash flow by period for ${periodLabel} — earned, spent${
+            caption={`Cash flow by period for ${periodLabel} — income, spent${
               hasRefunds ? ", refunded" : ""
             }, and net per bucket${
               hasGhost && priorLabel ? `, with the same bucket of ${priorLabel} for comparison` : ""

@@ -106,7 +106,7 @@ export function filterConditions(
     filters.category === "cashflow"
   ) {
     // Kind-scoped StatCard drill-downs (Spending §5.1). These EXACTLY mirror
-    // analytics' spending / income classification so the Spent / Earned cards'
+    // analytics' spending / income classification so the Spent / Income cards'
     // numbers reconcile to the list they open: spending = expense-kind rows of
     // either sign (refunds net) PLUS uncategorized outflows; income = income-kind
     // positive rows.

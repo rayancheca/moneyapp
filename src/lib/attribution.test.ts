@@ -261,3 +261,18 @@ describe("band copy", () => {
     }
   });
 });
+
+/*
+ * 🔴 S22 — the bridge band over the income-kind positive population was labelled
+ * "Earned" (measured on the real ledger 2026-09-15: 1Y "Earned $41,841.20", ALL
+ * "Earned $117,979.61"), the word /summary keeps for wages, tutoring and savings
+ * interest alone. Owner decision 2026-09-14: the band is Income, and so is every
+ * other surface over that population.
+ */
+describe("the income band's words", () => {
+  test("is labelled Income, and neither it nor the refunds band calls the money earned", () => {
+    expect(ATTRIBUTION_BAND_LABEL.earned).toBe("Income");
+    expect(ATTRIBUTION_BAND_MEANING.earned).not.toMatch(/earn/i);
+    expect(ATTRIBUTION_BAND_MEANING.refunds).not.toMatch(/earn/i);
+  });
+});

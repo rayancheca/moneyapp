@@ -49,7 +49,7 @@ describe("heatCellLabel — three worlds, three sentences", () => {
    */
   test("a day the ledger walked through and found empty is a measurement", () => {
     expect(cell("2026-08-04", null, { monthKey: "2026-08", monthName: "August 2026" })).toBe(
-      "Aug 4: nothing spent or earned",
+      "Aug 4: no spending or income",
     );
   });
 
@@ -67,7 +67,7 @@ describe("heatCellLabel — three worlds, three sentences", () => {
 
   test("the last reached day is a measurement, the next one is not", () => {
     expect(cell("2026-08-31", null, { monthKey: "2026-08", monthName: "August 2026" })).toBe(
-      "Aug 31: nothing spent or earned",
+      "Aug 31: no spending or income",
     );
     expect(cell("2026-09-01")).toBe("Sep 1: not imported yet");
   });
@@ -107,10 +107,23 @@ describe("a day whose only row is a return", () => {
     ).toBe("Aug 4: $50.00 spent across 1 transaction");
   });
 
+  /*
+   * 🔴 S22. The figure is every positive income-kind row — measured on the real
+   * ledger 2026-09-15, `/spending?period=2024-09` read "Sep 10: $37.65 spent
+   * across 3 transactions, mostly Food, $14,171.00 earned" over a financial-aid
+   * refund, which /summary files as money he did not earn. Owner decision
+   * 2026-09-14: this population is Income.
+   */
+  test("money in is named income, the word /spending uses for this population", () => {
+    const label = cell("2026-08-04", heat(3_765, 1_417_100, 3), { monthKey: "2026-08", monthName: "August 2026" });
+    expect(label).toBe("Aug 4: $37.65 spent across 3 transactions, $14,171.00 income");
+    expect(label).not.toMatch(/earn/i);
+  });
+
   test("a covered day with nothing in this chart's three buckets says exactly that", () => {
     expect(
       cell("2026-08-04", heat(0, 0, 0, 0), { monthKey: "2026-08", monthName: "August 2026" }),
-    ).toBe("Aug 4: nothing spent or earned");
+    ).toBe("Aug 4: no spending or income");
   });
 });
 
@@ -134,7 +147,7 @@ describe("heatCellLabel — the days before the records begin", () => {
   });
 
   test("the opening day itself is a measurement", () => {
-    expect(cell("2026-08-03", null, august)).toBe("Aug 3: nothing spent or earned");
+    expect(cell("2026-08-03", null, august)).toBe("Aug 3: no spending or income");
   });
 
   test("a day after today has not happened, even on a ledger that holds nothing", () => {
@@ -178,7 +191,7 @@ describe("heatDaySheetSentence — the sheet lands in the cell's world", () => {
 
   test.each([
     ["2026-08-02", "before your records begin", "before your records begin"],
-    ["2026-08-04", "nothing spent or earned", "Nothing was spent or earned on this day."],
+    ["2026-08-04", "no spending or income", "No spending or income on this day."],
     ["2026-09-04", "not imported yet", "Nothing has been imported for this day yet"],
     ["2026-09-11", "has not happened yet", "This day has not happened yet."],
   ])("%s: the cell reads %j and the sheet agrees", (iso, cellWorld, sheetWorld) => {
@@ -194,7 +207,7 @@ describe("heatDaySheetSentence — the sheet lands in the cell's world", () => {
 
   test("a day whose only row is a return names it in the sheet", () => {
     expect(sheet("2026-08-04", heat(0, 0, 0, 1_800))).toBe(
-      "Nothing was spent or earned on this day — $18.00 came back as a refund.",
+      "No spending or income on this day — $18.00 came back as a refund.",
     );
   });
 });

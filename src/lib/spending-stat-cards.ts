@@ -9,7 +9,7 @@ import type { PeriodTotals } from "@/services/spending";
  * leaks into the client bundle) so the card set — especially the conditional
  * Refunds card and every aria string — is unit-testable without rendering.
  *
- * The card row makes Net self-explaining: Earned + Refunds − Spent = Net, all
+ * The card row makes Net self-explaining: Income + Refunds − Spent = Net, all
  * on screen. Refunds only appears when there are refunds (positive amounts in
  * expense categories — statement credits, reimbursements). Its drill-down
  * (`category=spending, flow=in`) resolves to exactly the rows summed into
@@ -44,12 +44,26 @@ export function spendingStatCards(totals: PeriodTotals, range: DateRange): Spend
   const showRefunds = refundsCents > 0;
   const cards: SpendingStatCardSpec[] = [];
 
+  /*
+   * 🔴 S22 — "Earned" NAMED A POPULATION IT DID NOT HOLD. `earnedCents` is every
+   * positive row in an income-kind category (`isIncome`); /summary's "Earned" is
+   * wages, tutoring and savings interest, and files financial aid and
+   * reimbursements under "Money in that you did not earn". Measured on the real
+   * ledger 2026-09-15: `/spending?period=2024` read "Earned $32,717.06" over a
+   * year holding a $14,171.00 financial-aid refund.
+   *
+   * ⛔ Owner decision 2026-09-14: this population is "Income" on every surface
+   * that prints it — this card, the savings and Net deltas, the heatmap, the
+   * cash-flow chart/table/graph and the dashboard bridge — while /summary keeps
+   * its narrow "Earned". Only words moved: the figure, the savings-rate base and
+   * every href are unchanged. The `key` stays "earned" (never printed).
+   */
   cards.push({
     key: "earned",
-    label: "Earned",
+    label: "Income",
     cents: earnedCents,
     href: ledgerHref({ category: "income", from: range.from, to: range.to }),
-    ariaLabel: `Earned this period. ${dollars(earnedCents)}. View income transactions.`,
+    ariaLabel: `Income this period. ${dollars(earnedCents)}. View income transactions.`,
   });
 
   cards.push({
@@ -79,7 +93,7 @@ export function spendingStatCards(totals: PeriodTotals, range: DateRange): Spend
     cents: netCents,
     flow: true,
     // with Refunds on screen the arithmetic is visible; name it for clarity
-    delta: showRefunds ? "earned + refunds − spent" : undefined,
+    delta: showRefunds ? "income + refunds − spent" : undefined,
     /*
      * 🔴 THE DRILL-DOWN CONTRACT, BROKEN ON THE ONE CARD THAT SUMS THE OTHER
      * THREE. This was an unscoped window, so `/spending?period=2026` printed
@@ -90,7 +104,7 @@ export function spendingStatCards(totals: PeriodTotals, range: DateRange): Spend
      * this figure is over.
      */
     href: ledgerHref({ category: "cashflow", from: range.from, to: range.to }),
-    ariaLabel: `Net this period. ${netCents < 0 ? "negative " : ""}${dollars(Math.abs(netCents))}. View the earning and spending behind it.`,
+    ariaLabel: `Net this period. ${netCents < 0 ? "negative " : ""}${dollars(Math.abs(netCents))}. View the income and spending behind it.`,
   });
 
   /*
@@ -113,8 +127,9 @@ export function spendingStatCards(totals: PeriodTotals, range: DateRange): Spend
    * working man he has no income."
    *
    * So the base is printed instead, always and not past a threshold: nothing
-   * here was wrong, only unreadable. "Earned" is the word the sibling card two
-   * along already uses for the same figure.
+   * here was wrong, only unreadable. The base is named with the word the sibling
+   * card uses for the same figure — "Income" since S22, when "Earned" turned out
+   * to hold financial aid and reimbursements that /summary says were not earned.
    */
   cards.push({
     key: "savings",
@@ -124,14 +139,14 @@ export function spendingStatCards(totals: PeriodTotals, range: DateRange): Spend
     delta:
       savingsRatePct === null
         ? "no income yet"
-        : `${netCents >= 0 ? "kept" : "overspent"} · of ${formatCents(earnedCents)} earned`,
-    // the same population as Net — this rate is net ÷ earned, and both terms
+        : `${netCents >= 0 ? "kept" : "overspent"} · of ${formatCents(earnedCents)} income`,
+    // the same population as Net — this rate is net ÷ income, and both terms
     // come from these rows
     href: ledgerHref({ category: "cashflow", from: range.from, to: range.to }),
     ariaLabel:
       savingsRatePct === null
         ? "Savings rate unavailable without income."
-        : `Savings rate ${savingsRatePct} percent, of ${dollars(earnedCents)} earned.`,
+        : `Savings rate ${savingsRatePct} percent, of ${dollars(earnedCents)} of income.`,
   });
 
   return cards;

@@ -183,8 +183,8 @@ describe("emptyPeriodCopy", () => {
      * heatmap on the very same page had been corrected for the identical claim
      * hours earlier, leaving one page saying both things about one day.
      */
-    expect(copy.title).toBe("Nothing spent or earned in this period");
-    expect(copy.description).toContain("nothing was spent or earned in it");
+    expect(copy.title).toBe("No spending or income in this period");
+    expect(copy.description).toContain("it holds no spending and no income");
     expect(copy.description).toContain("Transfers, card payments and investment flows are not counted here");
     expect(copy.description).toContain("measured zero rather than an unread window");
     // ⛔ never the stronger claim: the frontier is whole-ledger, not per account

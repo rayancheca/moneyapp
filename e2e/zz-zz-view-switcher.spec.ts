@@ -74,7 +74,7 @@ test("cash-flow view switches chart↔table, updates the URL, and persists", asy
   await expect(page).toHaveURL(/[?&]cash=graph\b/);
   await expect(page.getByRole("figure", { name: /Running totals for the period/ })).toBeVisible();
   expect(await pillPressed(page, "Graph")).toBe(true);
-  await expect(page.getByText("Earned, running total")).toBeVisible();
+  await expect(page.getByText("Income, running total")).toBeVisible();
   expect(gating(await analyzeSettled(page))).toEqual([]);
 
   // the choice is sticky: a fresh visit with NO cash param keeps the graph

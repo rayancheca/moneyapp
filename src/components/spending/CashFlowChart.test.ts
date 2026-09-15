@@ -91,14 +91,15 @@ describe("CashFlowChart's tooltip — a bucket the ledger has not reached", () =
   test("a reached bucket states its figures", () => {
     const text = tooltip(bucket("2026-09-12", "12", { spendingCents: 475, netCents: -475 }));
     expect(text).toContain("Spent$4.75");
-    expect(text).toContain("Earned$0.00");
+    expect(text).toContain("Income$0.00");
+    expect(text).not.toContain("Earned");
   });
 
   test("an unreached bucket says which world it is in, and prints no figure", () => {
     const text = tooltip(bucket("2026-09-13", "13", { unreached: "after-records" }));
     expect(text).toContain("not imported yet");
     expect(text).not.toContain("$0.00");
-    expect(text).not.toContain("Earned");
+    expect(text).not.toContain("Income");
     expect(tooltip(bucket("2026-09-15", "15", { unreached: "future" }))).toContain("has not happened yet");
     expect(tooltip(bucket("2022-08-24", "24", { unreached: "before-records" }))).toContain("before your records begin");
   });

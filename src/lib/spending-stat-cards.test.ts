@@ -70,7 +70,7 @@ describe("spendingStatCards", () => {
     const noRefunds = spendingStatCards(totals({ refundsCents: 0 }), RANGE).find(
       (c) => c.key === "net",
     )!;
-    expect(withRefunds.delta).toBe("earned + refunds − spent");
+    expect(withRefunds.delta).toBe("income + refunds − spent");
     expect(noRefunds.delta).toBeUndefined();
   });
 
@@ -88,13 +88,13 @@ describe("spendingStatCards", () => {
     )!;
     expect(kept.text).toBe("73%");
     expect(kept.muted).toBeFalsy();
-    expect(kept.delta).toBe("kept · of $17,760.00 earned");
+    expect(kept.delta).toBe("kept · of $17,760.00 income");
 
     const overspent = spendingStatCards(
       totals({ savingsRatePct: -12, netCents: -100, earnedCents: 1_776_000 }),
       RANGE,
     ).find((c) => c.key === "savings")!;
-    expect(overspent.delta).toBe("overspent · of $17,760.00 earned");
+    expect(overspent.delta).toBe("overspent · of $17,760.00 income");
   });
 
   /*
@@ -116,8 +116,34 @@ describe("spendingStatCards", () => {
       RANGE,
     ).find((c) => c.key === "savings")!;
     expect(july.text).toBe("-19240.6%");
-    expect(july.delta).toBe("overspent · of $52.95 earned");
-    expect(july.ariaLabel).toContain("of 52.95 dollars earned");
+    expect(july.delta).toBe("overspent · of $52.95 income");
+    expect(july.ariaLabel).toContain("of 52.95 dollars of income");
+  });
+
+  /*
+   * 🔴 S22 — ONE WORD, TWO POPULATIONS. This card is `periodTotals.earnedCents`:
+   * every positive row in an income-kind category. /summary's "Earned" is wages,
+   * tutoring and savings interest only, and files financial aid and
+   * reimbursements under "Money in that you did not earn". Measured on the real
+   * ledger 2026-09-15: /spending?period=2024 "Earned $32,717.06" and "Savings
+   * rate 14.9% · kept · of $32,717.06 earned" — over a base holding a $14,171.00
+   * financial-aid refund. Owner decision 2026-09-14: this population is called
+   * Income; /summary keeps its narrow Earned. No figure, base or link moves.
+   */
+  it("names the income-kind population Income on every card that reads it, and never Earned", () => {
+    const cards = spendingStatCards(totals({ refundsCents: 1_000, earnedCents: 3_271_706, netCents: 486_966, savingsRatePct: 14.9 }), RANGE);
+    const income = cards.find((c) => c.key === "earned")!;
+    expect(income.label).toBe("Income");
+    expect(income.ariaLabel).toBe("Income this period. 32717.06 dollars. View income transactions.");
+    expect(income.href).toBe("/transactions?category=income&from=2026-01-01&to=2026-01-31");
+    const net = cards.find((c) => c.key === "net")!;
+    expect(net.ariaLabel).toContain("View the income and spending behind it.");
+    const savings = cards.find((c) => c.key === "savings")!;
+    expect(savings.delta).toBe("kept · of $32,717.06 income");
+    expect(savings.ariaLabel).toBe("Savings rate 14.9 percent, of 32717.06 dollars of income.");
+    for (const c of cards) {
+      expect(`${c.label} ${c.delta ?? ""} ${c.ariaLabel}`, c.key).not.toMatch(/earn/i);
+    }
   });
 
   it("shows an em-dash (muted) savings rate with no-income delta when there is no income", () => {

@@ -83,6 +83,16 @@ describe("CashFlowView's table — a bucket the ledger has not reached", () => {
     expect(rowCells(html, "15")).toEqual(["15", "—", "—", "—"]);
   });
 
+  // 🔴 S22: the column over income-kind money in was headed "Earned" — the word
+  // /summary keeps for wages, tutoring and savings interest alone
+  test("heads the money-in column Income, in the table and in its caption", () => {
+    const html = renderTable(september, "September 2026");
+    const head = textOf(/<thead[^>]*>([\s\S]*?)<\/thead>/.exec(html)![1]!);
+    expect(head).toContain("Income");
+    expect(head).not.toContain("Earned");
+    expect(textOf(/<caption[^>]*>(.*?)<\/caption>/.exec(html)![1]!)).toContain("income, spent");
+  });
+
   test("a reached bucket keeps its figures, its measured zero included", () => {
     expect(rowCells(renderTable(september, "September 2026"), "12")).toEqual(["12", "$0.00", "$4.75", "-$4.75"]);
   });

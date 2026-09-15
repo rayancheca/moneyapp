@@ -133,7 +133,9 @@ export const ATTRIBUTION_BAND_ORDER = [
  * printed once per band per lens, so they live with the data that selects them.
  */
 export const ATTRIBUTION_BAND_LABEL: Record<AttributionBandKey, string> = {
-  earned: "Earned",
+  // S22: every positive income-kind row, the population /spending calls Income —
+  // /summary's "Earned" is narrower (owner decision 2026-09-14). The key stays.
+  earned: "Income",
   refunds: "Refunds",
   spent: "Spent",
   moved: "Moved",
@@ -144,8 +146,8 @@ export const ATTRIBUTION_BAND_LABEL: Record<AttributionBandKey, string> = {
 };
 
 export const ATTRIBUTION_BAND_MEANING: Record<AttributionBandKey, string> = {
-  earned: "Money arriving in an income category. Only money in — a credit that claws back earlier pay is not negative earnings.",
-  refunds: "Credits inside spending categories. Money coming back, which is not the same as money earned.",
+  earned: "Money arriving in an income category. Only money in — a credit that claws back earlier pay is not negative income.",
+  refunds: "Credits inside spending categories. Money coming back, which is not the same as income.",
   spent: "Debits in spending categories, before any refund is netted against them.",
   moved: "Transfers and investment rows on accounts that replay. It nets to nothing when both legs are on the ledger, so whatever is left is money crossing the boundary of what is tracked.",
   market: "What holdings gained or lost on price alone, with every buy and sell taken out first.",
