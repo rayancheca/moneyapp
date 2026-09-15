@@ -12,7 +12,6 @@ import { institutions } from "@/db/schema/institutions";
 import { createAccount } from "@/services/accounts";
 import { recurringSeries } from "@/db/schema/recurring";
 import { statementPeriods } from "@/db/schema/imports";
-import { dailyBalances } from "@/db/schema/balances";
 import { transactions } from "@/db/schema/transactions";
 import { latestBalances, netWorthSeries, rebuildAccount } from "@/services/derivation";
 import { listSplits, setSplits } from "@/services/transaction-splits";
