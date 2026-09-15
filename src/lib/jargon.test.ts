@@ -90,6 +90,7 @@ describe("jargon copy", () => {
         "paceAtRisk",
         "paceOver",
         "paceWithheld",
+        "paceCashOnly",
       ].sort(),
     );
   });

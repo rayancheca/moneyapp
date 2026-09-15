@@ -92,6 +92,9 @@ export default async function BudgetsPage({
       overdueBills: s.overdue.reduce((n, o) => n + o.occurrenceCount, 0),
       uncoveredDays: s.uncoveredDays,
       pace: s.pace,
+      // so a row spent only from cash wallets is left out on the row's own rule
+      spentFromAccounts: s.spentFromAccounts,
+      spentFromWallets: s.spentFromWallets,
     })),
   });
 

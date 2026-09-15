@@ -1,3 +1,4 @@
+import { spentOnlyFromCashWallets, type BudgetCoverageInput } from "./budget-coverage";
 import { isStaleClose, newestQuotedOn } from "./holding-price-age";
 import { formatCents } from "./money";
 import { dayWindowLabel } from "./period";
@@ -85,6 +86,9 @@ export interface BudgetNoteInput {
     overdueBills: number;
     uncoveredDays: number;
     pace: "under" | "at-risk" | "over";
+    /** the row's accounts, so a cash-only row is told apart by the rule the row itself uses */
+    spentFromAccounts: BudgetCoverageInput["spentFromAccounts"];
+    spentFromWallets: BudgetCoverageInput["spentFromWallets"];
   }[];
 }
 
@@ -136,7 +140,12 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
 
   // A row is under-measured on the SAME rule the row itself uses: `over` is
   // exempt, because already exceeding the plan is a fact more data cannot undo.
-  const uncovered = input.rows.filter((r) => r.uncoveredDays > 0 && r.pace !== "over");
+  // ⚖️ So is a row spent only from cash wallets (owner, 2026-09-15): no statement
+  // is coming for it, so it is not grading days the ledger has yet to reach — and
+  // the test is the row's own, `spentOnlyFromCashWallets`.
+  const uncovered = input.rows.filter(
+    (r) => r.uncoveredDays > 0 && r.pace !== "over" && !spentOnlyFromCashWallets(r),
+  );
   if (uncovered.length > 0) {
     const worst = uncovered.reduce((a, b) => (b.uncoveredDays > a.uncoveredDays ? b : a));
     /*

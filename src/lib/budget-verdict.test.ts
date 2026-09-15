@@ -3,7 +3,10 @@ import { budgetVerdict, type BudgetVerdictInput } from "./budget-verdict";
 import { BUDGET_JARGON } from "./jargon";
 
 const verdict = (over: Partial<BudgetVerdictInput> = {}) =>
-  budgetVerdict({ pace: "under", pct: 0.2, uncoveredDays: 0, ...over });
+  budgetVerdict({ pace: "under", pct: 0.2, uncoveredDays: 0, spentFromAccounts: 1, spentFromWallets: 0, ...over });
+
+/** spent from a cash wallet in the window, and from no other account */
+const CASH_ONLY = { spentFromAccounts: 0, spentFromWallets: 1 } as const;
 
 describe("budgetVerdict", () => {
   test("states the overshoot as a distance past the line, not as a total", () => {
@@ -39,6 +42,42 @@ describe("budgetVerdict", () => {
     }
   });
 
+  test("⚖️ a category spent only from cash wallets says so and makes no pace claim, whatever the day count", () => {
+    /*
+     * Owner, 2026-09-15: budgets leave cash wallets out of the imported-through
+     * day. A category spent from nothing else has typed rows only, and no import
+     * will ever show what they miss — so "Awaiting statements" would promise a
+     * statement that never arrives, and a graded reading would treat the typed
+     * rows as all of it.
+     */
+    for (const pace of ["under", "at-risk"] as const) {
+      for (const uncoveredDays of [0, 15]) {
+        const v = verdict({ pace, pct: 0.4, uncoveredDays, ...CASH_ONLY });
+        expect(v.headline).toBe("Cash only");
+        expect(v.withheld).toBe(true);
+        expect(v.barIsFull).toBe(false);
+        expect(v.explanation).not.toMatch(/On track|Off pace|Awaiting statements/);
+      }
+    }
+  });
+
+  test("cash already past the line still reads over — recorded spending is a fact no import can undo", () => {
+    const v = verdict({ pace: "over", pct: 1.3, uncoveredDays: 15, ...CASH_ONLY });
+    expect(v.headline).toBe("Over budget by 30%");
+    expect(v.withheld).toBe(false);
+    expect(v.barIsFull).toBe(true);
+  });
+
+  test("a wallet beside an imported account changes nothing about the reading", () => {
+    // Car on the real ledger 2026-09-15: Cash on Hand beside Chase Checking and Venture X
+    expect(verdict({ pace: "under", pct: 0.21, spentFromAccounts: 2, spentFromWallets: 1 }).headline).toBe(
+      "On track · 21% used",
+    );
+    expect(verdict({ uncoveredDays: 15, spentFromAccounts: 2, spentFromWallets: 1 }).headline).toBe(
+      "Awaiting statements",
+    );
+  });
+
   test("states the two covered verdicts with their percentage used", () => {
     expect(verdict({ pace: "under", pct: 0.21 }).headline).toBe("On track · 21% used");
     expect(verdict({ pace: "at-risk", pct: 0.39 }).headline).toBe("Off pace · 39% used");
@@ -51,20 +90,26 @@ describe("budgetVerdict", () => {
     expect(verdict({ pace: "at-risk" }).explanation).toBe(BUDGET_JARGON.paceAtRisk);
     expect(verdict({ pace: "over", pct: 1.5 }).explanation).toBe(BUDGET_JARGON.paceOver);
     expect(verdict({ uncoveredDays: 3 }).explanation).toBe(BUDGET_JARGON.paceWithheld);
+    expect(verdict(CASH_ONLY).explanation).toBe(BUDGET_JARGON.paceCashOnly);
   });
 
   test("only the full bar drops the today mark, and only it says so", () => {
     /*
      * The pairing that already went wrong once: the mark is not drawn when the
      * fill covers the track, so exactly one body may describe a missing mark and
-     * the other three must describe a present one.
+     * the other four must describe a present one.
      */
     const full = verdict({ pace: "over", pct: 1.08 });
     expect(full.barIsFull).toBe(true);
     expect(full.explanation).toMatch(/period mark is left off/);
     expect(full.explanation).not.toMatch(/fill behind the mark/);
 
-    for (const v of [verdict({ pace: "under" }), verdict({ pace: "at-risk" }), verdict({ uncoveredDays: 3 })]) {
+    for (const v of [
+      verdict({ pace: "under" }),
+      verdict({ pace: "at-risk" }),
+      verdict({ uncoveredDays: 3 }),
+      verdict(CASH_ONLY),
+    ]) {
       expect(v.barIsFull).toBe(false);
       expect(v.explanation).toMatch(/fill behind the mark/);
       expect(v.explanation).not.toMatch(/period mark is left off/);

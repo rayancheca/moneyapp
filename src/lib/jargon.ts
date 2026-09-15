@@ -194,6 +194,8 @@ export const BUDGET_JARGON = {
   paceOver:
     "Spending has already passed the line, and no later import can undo that — this reading is measured rather than a forecast. The bar is full and no longer to scale, and the period mark is left off because there is nothing left for it to divide.",
   paceWithheld: `Days in this window have no imported spending yet, so the amount and the percentage can only rise — they are floors rather than measurements. No reading is offered over them, because calling an unimported month healthy is the one error this page must not make. ${BAR_ANATOMY}`,
+  // ⚖️ owner, 2026-09-15: a category spent only from cash wallets waits for no statement and gets no reading
+  paceCashOnly: `Everything in this window was typed into a cash wallet, and a wallet has no statements, so no import will ever show what was not typed in. The amount is what was recorded; no reading of where it is heading is offered over it. ${BAR_ANATOMY}`,
 } as const;
 
 /**

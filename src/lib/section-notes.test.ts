@@ -21,6 +21,8 @@ const row = (over: Partial<Parameters<typeof budgetSectionNotes>[0]["rows"][numb
   overdueBills: 0,
   uncoveredDays: 0,
   pace: "under" as const,
+  spentFromAccounts: 1,
+  spentFromWallets: 0,
   ...over,
 });
 
@@ -120,6 +122,44 @@ describe("budgetSectionNotes", () => {
     // exempt one — 11 on Food, never 30 on Housing
     expect(coverage.body).toContain("11 days on Food");
     expect(coverage.body).not.toContain("Housing");
+  });
+
+  /*
+   * ⚖️ OWNER DECISION, 2026-09-15: budgets leave cash wallets out of the
+   * imported-through day. A budget spent only from wallets has no import date and
+   * no statement will ever bring one — its row says so ("Cash only"). This note
+   * says the ledger has not REACHED some days yet, which for that row is true of
+   * no day, so it must not count it.
+   */
+  test("a budget spent only from cash wallets is not counted as grading days the ledger has not reached", () => {
+    const notes = budgetSectionNotes({
+      rows: [
+        row({ categoryPath: "Car", uncoveredDays: 15, spentFromAccounts: 0, spentFromWallets: 1 }),
+        row({ categoryPath: "Food", uncoveredDays: 11 }),
+      ],
+    });
+    const body = notes.find((n) => n.id === "budgets-coverage")!.body;
+    expect(body).toContain("1 of 2 budgets");
+    expect(body).toContain("11 days on Food");
+    expect(body).not.toContain("Car");
+  });
+
+  test("a page whose only unread budget is spent from cash wallets carries no coverage note", () => {
+    const notes = budgetSectionNotes({
+      rows: [
+        row({ categoryPath: "Car", uncoveredDays: 15, spentFromAccounts: 0, spentFromWallets: 1 }),
+        row({ categoryPath: "Food" }),
+      ],
+    });
+    expect(notes.find((n) => n.id === "budgets-coverage")).toBeUndefined();
+  });
+
+  test("a wallet beside an imported account leaves the budget counted", () => {
+    // Car on the real ledger 2026-09-15: still waiting on Chase Checking
+    const notes = budgetSectionNotes({
+      rows: [row({ categoryPath: "Car", uncoveredDays: 15, spentFromAccounts: 2, spentFromWallets: 1 })],
+    });
+    expect(notes.find((n) => n.id === "budgets-coverage")!.body).toContain("15 days on Car");
   });
 
   /*

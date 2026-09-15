@@ -24,16 +24,26 @@ import { formatDayShortIn } from "./format-date";
  * scoped to the BUDGET PERIOD, never to the gap since the import, and "of this
  * period" is what says so.
  *
+ * ⚖️ CASH WALLETS ARE LEFT OUT — owner decision, 2026-09-15. A wallet is never
+ * imported, so a category spent from one and from a card follows the card, and
+ * a category spent ONLY from wallets has no import date and none is coming. That
+ * row says so in plain words and counts no days as waiting for a statement.
+ * `spentOnlyFromCashWallets` is the one test the row's sentence, its headline
+ * (`budgetVerdict`) and the page note (`budgetSectionNotes`) all read, so they
+ * cannot disagree about which rows are cash only.
+ *
  * Statement lag is normal here (accounts land on different dates each month), so
  * all of this reads as a fact about coverage, never as an error.
  */
 export interface BudgetCoverageInput {
-  /** the day every account the category was spent from has been imported through; null when none has an import date */
+  /** the day every account the category was spent from has been imported through, cash wallets left out; null when none has an import date */
   importedThroughOn: string | null;
   /** where the window of accounts the category was spent from opens */
   spentFromSince: string;
-  /** how many accounts the category was spent from in that window, including any with no import date */
+  /** how many accounts other than cash wallets the category was spent from in that window, including any with no import date */
   spentFromAccounts: number;
+  /** how many cash wallets it was spent from in that window — never part of `importedThroughOn` */
+  spentFromWallets: number;
   /** days of the graded period the ledger has not covered */
   uncoveredDays: number;
   /** the graded window: a day outside its year is printed with its year */
@@ -41,23 +51,48 @@ export interface BudgetCoverageInput {
 }
 
 /**
+ * Spent from a cash wallet in the window, and from no other account.
+ *
+ * ⚠️ Not "no import date": a category spent from nothing at all, or only from an
+ * investment account, has none either, and neither is cash.
+ */
+export function spentOnlyFromCashWallets(
+  input: Pick<BudgetCoverageInput, "spentFromAccounts" | "spentFromWallets">,
+): boolean {
+  return input.spentFromAccounts === 0 && input.spentFromWallets > 0;
+}
+
+/**
  * "spending imported through Sep 2".
  *
- * ⚠️ When no account has an import date, two different worlds, and only one of
+ * ⚠️ When no account has an import date, three different worlds, and only one of
  * them is "nothing imported": an investment account is priced rather than
  * imported (`observationFrontier` holds no day for it), so rows on one are
- * spending the ledger HAS, on an account nothing can say is up to date.
+ * spending the ledger HAS, on an account nothing can say is up to date; and a
+ * cash wallet holds what was typed into it, which no import will ever check.
  */
 export function budgetCoverageFact(input: Omit<BudgetCoverageInput, "uncoveredDays">): string {
   const day = (iso: string): string => formatDayShortIn(iso, input.bounds.start);
   if (input.importedThroughOn !== null) return `spending imported through ${day(input.importedThroughOn)}`;
+  if (spentOnlyFromCashWallets(input)) {
+    return `spent only from ${input.spentFromWallets === 1 ? "a cash wallet" : "cash wallets"} since ${day(input.spentFromSince)}`;
+  }
   return input.spentFromAccounts === 0
     ? `nothing imported for this category since ${day(input.spentFromSince)}`
     : `spent only from accounts with no import date since ${day(input.spentFromSince)}`;
 }
 
-/** "spending imported through Sep 2 · 13 days of this period unaccounted" */
+/**
+ * "spending imported through Sep 2 · 13 days of this period unaccounted".
+ *
+ * ⚖️ A cash-only row counts no days: "15 days of this period unaccounted" would
+ * promise a statement a wallet never issues. It says why instead — "spent only
+ * from a cash wallet since Mar 1 — no statement will ever cover it".
+ */
 export function budgetCoverageSentence(input: BudgetCoverageInput): string {
+  if (spentOnlyFromCashWallets(input)) {
+    return `${budgetCoverageFact(input)} — no statement will ever cover ${input.spentFromWallets === 1 ? "it" : "them"}`;
+  }
   const n = input.uncoveredDays;
   return `${budgetCoverageFact(input)} · ${n} ${n === 1 ? "day" : "days"} of this period unaccounted`;
 }

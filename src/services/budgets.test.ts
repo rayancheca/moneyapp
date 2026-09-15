@@ -8,13 +8,14 @@ import { seedDatabase } from "@/db/seed";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
+import { budgetCoverageSentence } from "@/lib/budget-coverage";
 import { budgetVerdict } from "@/lib/budget-verdict";
+import { budgetSectionNotes } from "@/lib/section-notes";
 import { dedupeHash } from "@/lib/hash";
 import { levelledMonthlyCents } from "@/lib/income-basis";
 import { recurringSeries } from "@/db/schema/recurring";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import { createAccount } from "./accounts";
-import { addManualAnchor } from "./anchors";
 import { createCashWallet } from "./cash-wallets";
 import { addManualTransaction } from "./manual-transactions";
 import { setSplits } from "./transaction-splits";
@@ -1937,7 +1938,7 @@ describe("data coverage (uncoveredDays / importedThroughOn)", () => {
     expect(s.importedThroughOn).toBe("2026-08-03");
     expect(s.spentFromAccounts).toBe(2);
     expect(s.uncoveredDays).toBe(8);
-    expect(budgetVerdict({ pace: s.pace, pct: s.pct, uncoveredDays: s.uncoveredDays }).withheld).toBe(true);
+    expect(budgetVerdict(s).withheld).toBe(true);
   });
 
   test("a quiet category is covered through the day its accounts are imported, not through its own last charge", () => {
@@ -1988,18 +1989,18 @@ describe("data coverage (uncoveredDays / importedThroughOn)", () => {
     expect(s.uncoveredDays).toBe(11);
   });
 
-  test("❓ a cash wallet holds a budget back until its row leaves the window, and a recorded count does not release it", () => {
+  test("⚖️ a cash wallet is left out: its row inside the window neither holds the budget back nor counts as an account", () => {
     /*
-     * PINNED, NOT DECIDED. A wallet has no statements, so its import frontier is
-     * its newest typed row, and nothing imported can move it. Measured
-     * 2026-09-15 on copies of the real ledger, with a $1.00 Car row added on
-     * Chase Checking and on Venture X on each day tested: Cash on Hand's one row
-     * (Aug 11, the $5,000 down payment, 77% of Car since March) keeps Car at
-     * "Awaiting statements · spending imported through Aug 11" on Oct 13 and on
-     * Feb 26, 2027; Mar 1, 2027 is the first day it grades. The owner has not
-     * chosen between keeping that, leaving wallets out of the frontier, or
-     * dating a wallet by `observedThrough` so a recorded count releases it.
-     * Either change flips an assertion here — that is the point of the pin.
+     * OWNER DECISION, 2026-09-15: budgets leave cash wallets out of the
+     * imported-through day. A wallet has no statements, so its frontier was its
+     * newest typed row and no import could move it. Measured 2026-09-15 on the
+     * real ledger (read-only): Car read "spending imported through Aug 11" —
+     * Cash on Hand's one row, the $5,000 down payment — beside Chase Checking
+     * (Aug 12) and Venture X (Sep 13); copies with both cards imported further
+     * held it at Aug 11 until Mar 1, 2027. It follows Chase Checking now.
+     *
+     * Until this decision the test pinned the opposite: Aug 31 held at the
+     * wallet's Feb 14 (31 days, withheld).
      */
     const wallet = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-02-10", openingBalanceCents: 10_000 });
     addManualTransaction(bundle.db, {
@@ -2009,26 +2010,56 @@ describe("data coverage (uncoveredDays / importedThroughOn)", () => {
       description: "CASH",
       categoryId: catId("Food"),
     });
-    // a count recorded after the row, agreeing with it — an observation this frontier does not read
-    addManualAnchor(bundle.db, { accountId: wallet, anchoredOn: "2026-08-20", enteredCents: 5_000 });
     spend("2026-06-10", -2_000, "Food"); // the card, spent from inside both windows below
     spend("2026-09-01", -1_000, "Food"); // …and imported through Sep 1
     createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 100_000, startsOn: "2026-08-01" });
     const food = (today: string) => budgetPaceStatuses(bundle.db, today).find((x) => x.categoryName === "Food")!;
 
-    // ⛔ two ends. Aug 31: the window opens Feb 1 and holds the wallet's Feb 14
-    const held = food("2026-08-31");
-    expect(held.spentFromAccounts).toBe(2);
-    expect(held.importedThroughOn).toBe("2026-02-14");
-    expect(held.uncoveredDays).toBe(31);
-    expect(budgetVerdict({ pace: held.pace, pct: held.pct, uncoveredDays: held.uncoveredDays }).withheld).toBe(true);
+    // Aug 31: the window opens Feb 1 and holds the wallet's Feb 14 — which is left out
+    const inside = food("2026-08-31");
+    expect(inside.spentFromAccounts).toBe(1);
+    expect(inside.spentFromWallets).toBe(1);
+    expect(inside.importedThroughOn).toBe("2026-09-01");
+    expect(inside.uncoveredDays).toBe(0);
+    expect(budgetVerdict(inside).withheld).toBe(false);
 
-    // Sep 1: the window opens Mar 1, the wallet drops out, and the card alone governs
-    const released = food("2026-09-01");
-    expect(released.spentFromAccounts).toBe(1);
-    expect(released.importedThroughOn).toBe("2026-09-01");
-    expect(released.uncoveredDays).toBe(0);
-    expect(budgetVerdict({ pace: released.pace, pct: released.pct, uncoveredDays: 0 }).withheld).toBe(false);
+    // ⛔ two ends. Sep 1: the window opens Mar 1, the wallet's row leaves it, and nothing else moves
+    const outside = food("2026-09-01");
+    expect(outside.spentFromAccounts).toBe(1);
+    expect(outside.spentFromWallets).toBe(0);
+    expect(outside.importedThroughOn).toBe("2026-09-01");
+    expect(outside.uncoveredDays).toBe(0);
+    expect(budgetVerdict(outside).withheld).toBe(false);
+  });
+
+  test("⚖️ a category spent only from cash wallets says so, makes no pace claim, and is not in the coverage note", () => {
+    /*
+     * The other half of the decision. With wallets left out, such a category has
+     * no import date and no statement will ever bring one: "Awaiting statements"
+     * would promise something that never arrives, and a graded "On track" would
+     * treat the typed rows as all of it.
+     */
+    const wallet = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-08-01", openingBalanceCents: 50_000 });
+    addManualTransaction(bundle.db, {
+      accountId: wallet,
+      postedOn: "2026-08-05",
+      amountCents: -2_000,
+      description: "CASH LUNCH",
+      categoryId: catId("Food"),
+    });
+    spend("2026-08-11", -1_000, "Shopping"); // the card is imported through today, on another category
+    const s = foodBudget();
+    expect(s.importedThroughOn).toBeNull();
+    expect(s.spentFromAccounts).toBe(0);
+    expect(s.spentFromWallets).toBe(1);
+    // ⛔ fail-safe: the day count stays the whole elapsed window, so a reader of `uncoveredDays` alone still withholds
+    expect(s.uncoveredDays).toBe(11);
+    const v = budgetVerdict(s);
+    expect(v.headline).toBe("Cash only");
+    expect(v.withheld).toBe(true);
+    expect(budgetCoverageSentence(s)).toBe("spent only from a cash wallet since Feb 1 — no statement will ever cover it");
+    const notes = budgetSectionNotes({ rows: [{ ...s, overdueBills: 0 }] });
+    expect(notes.find((n) => n.id === "budgets-coverage")).toBeUndefined();
   });
 });
 

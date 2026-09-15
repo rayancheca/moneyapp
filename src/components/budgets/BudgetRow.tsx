@@ -82,13 +82,9 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
 
   // The headline, what it means, and whether the bar is still to scale — all
   // from one branch, so the words and the definition beside them cannot drift.
-  // Every state it can return is unit-tested; only two of the four can render in
+  // Every state it can return is unit-tested; only two of the five can render in
   // the e2e fixture.
-  const verdict = budgetVerdict({
-    pace: status.pace,
-    pct: status.pct,
-    uncoveredDays: status.uncoveredDays,
-  });
+  const verdict = budgetVerdict(status);
   const { headline, withheld: undermeasured, barIsFull } = verdict;
 
   const spentPct = clampPct(status.pct * 100);

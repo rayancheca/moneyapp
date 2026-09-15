@@ -43,6 +43,7 @@ export type { BudgetTail, BudgetTailSeries };
 import { incomeBasis, levelledMonthlyCents, type IncomeBasis } from "@/lib/income-basis";
 import { daysNotImportedYet } from "@/lib/empty-period";
 import { frontierForSeries, ledgerOpens, observationFrontier, type ObservationFrontier } from "./observation-frontier";
+import { cashWalletIds } from "./manual-transactions";
 
 /**
  * Budgets (master-plan Phase 5). One active budget per (category, period),
@@ -1042,8 +1043,10 @@ export interface CategoryCoverage {
   importedThroughOn: string | null;
   /** where the window of accounts opens: six full months back, or the period's start if earlier */
   spentFromSince: string;
-  /** accounts the subtree was spent from over [spentFromSince, today], any with no frontier included */
+  /** accounts other than cash wallets the subtree was spent from over [spentFromSince, today], any with no frontier included */
   spentFromAccounts: number;
+  /** cash wallets it was spent from over the same days — never part of `importedThroughOn` (⚖️ below) */
+  spentFromWallets: number;
 }
 
 /**
@@ -1093,20 +1096,24 @@ export interface CategoryCoverage {
  * ⚠️ Known gap, the dashboard's own: a FIRST charge on an account the category
  * was never spent from in the window is not waited for.
  *
- * ❓ A CASH WALLET HOLDS A ROW BACK FOR THE WHOLE WINDOW, and no import can
- * release it. A wallet has no statements, so its frontier is its newest typed
- * row, and a recorded count is not read (`observedThrough` reads anchors;
- * `observationFrontier` does not). Measured 2026-09-15 on copies of the real
- * ledger, with a $1.00 Car row added on Chase Checking and on Venture X on each
- * day tested: Cash on Hand's one row (Aug 11, the $5,000 down payment, 77% of
- * Car since March) reads Car "Awaiting statements · spending imported through
- * Aug 11 · 13 days of this period unaccounted" on Oct 13, and "… Aug 11, 2026 ·
- * 26 days" on Feb 26, 2027, with both cards imported through that day. Mar 1,
- * 2027 is the first day it grades ("On track · 0% used"). No statement can end
- * that wait — `services/statement-pulls` already says a wallet issues none.
- * Not decided: keep it; leave wallets out of the frontier; or date a wallet by
- * `observedThrough`, so a recorded count releases it. `budgets.test.ts` pins
- * today's behaviour, so the choice flips a test.
+ * ⚖️ CASH WALLETS ARE LEFT OUT — owner decision, 2026-09-15. A wallet has no
+ * statements, so its frontier was its newest typed row and no import could move
+ * it. Measured 2026-09-15 on copies of the real ledger, with a $1.00 Car row
+ * added on Chase Checking and on Venture X on each day tested: Cash on Hand's
+ * one row (Aug 11, the $5,000 down payment, 77% of Car since March) held Car at
+ * "Awaiting statements · spending imported through Aug 11" on Oct 13 and on
+ * Feb 26, 2027, with both cards imported through that day.
+ *  - WHICH accounts are wallets is `cashWalletIds`, the rule
+ *    `addManualTransaction` guards its writes with (under the Cash institution,
+ *    no statement period, no import anchor, no imported row) — never a name, and
+ *    never a second copy of that rule.
+ *  - A category spent from a wallet AND an imported account follows the imported
+ *    one: Car on the real ledger, 2026-09-15, Aug 11 -> Aug 12 (Chase Checking).
+ *  - A category spent ONLY from wallets has no day: `importedThroughOn` is null
+ *    and `uncoveredDays` stays the whole elapsed window, so anything reading the
+ *    count alone still withholds. `lib/budget-coverage::spentOnlyFromCashWallets`
+ *    is what the row's headline, its sentence and the page note read to say
+ *    "Cash only" instead of waiting for a statement that never comes.
  *
  * ❓ A SECOND SURFACE ASKS THIS QUESTION OF THE SAME CATEGORY AND MONTH, WITH
  * THE WHOLE LEDGER'S DAY. `/categories/[id]`, the page each row links to, feeds
@@ -1129,17 +1136,21 @@ function categoryCoverage(
   periodStart: string,
   refDate: string,
   frontier: ObservationFrontier,
+  wallets: ReadonlySet<string>,
 ): CategoryCoverage {
   // always GUIDANCE_MONTHS windows, oldest first
   const windowStart = trailingFullMonths(refDate, GUIDANCE_MONTHS)[0]!.start;
   const spentFromSince = compareDates(periodStart, windowStart) < 0 ? periodStart : windowStart;
-  const accounts = new Set(
+  const spentFrom = new Set(
     spendingTransactions(db, { categoryId, from: spentFromSince, to: refDate }).map((t) => t.accountId),
   );
+  // ⚖️ a wallet is counted on its own and never dates the row
+  const imported = new Set([...spentFrom].filter((id) => !wallets.has(id)));
   return {
-    importedThroughOn: frontierForSeries(frontier, accounts),
+    importedThroughOn: frontierForSeries(frontier, imported),
     spentFromSince,
-    spentFromAccounts: accounts.size,
+    spentFromAccounts: imported.size,
+    spentFromWallets: spentFrom.size - imported.size,
   };
 }
 
@@ -1160,7 +1171,9 @@ export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {
   overdue: BudgetTailSeries[];
   /**
    * Days of THIS window the ledger cannot speak for: the elapsed days past
-   * `importedThroughOn`, all of them when it is null (`daysNotImportedYet`).
+   * `importedThroughOn`, all of them when it is null (`daysNotImportedYet`) —
+   * a row spent only from cash wallets keeps them all, and says why instead
+   * (`lib/budget-coverage::spentOnlyFromCashWallets`).
    * >0 means the row's spent/pace/% figures are lower bounds, not measurements,
    * and the UI must not report a verdict — "On track" over an unimported month
    * is the one failure mode a budgeting tool cannot afford.
@@ -1180,6 +1193,8 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
   // …and where the import stands, per account and at the ledger's opening end
   const frontier = observationFrontier(db);
   const opens = ledgerOpens(db);
+  // …and which accounts are cash wallets, which no import ever reaches (⚖️ `categoryCoverage`)
+  const wallets = cashWalletIds(db);
   return budgetStatuses(db, refDate).map((s) => {
     const { start, end } = s.bounds;
     // budgetStatuses evaluates the period CONTAINING refDate, start-clamped to
@@ -1251,7 +1266,7 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
     // uncovered, and one on or past today leaves none. ⛔ The count is
     // `daysNotImportedYet`, the dashboard tile's and /spending's, not a third
     // copy of the clamp — only the frontier it is given is this category's.
-    const coverage = categoryCoverage(db, s.budget.categoryId, start, refDate, frontier);
+    const coverage = categoryCoverage(db, s.budget.categoryId, start, refDate, frontier, wallets);
     const uncoveredDays = daysNotImportedYet({
       from: start,
       to: end,

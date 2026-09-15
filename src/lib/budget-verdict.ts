@@ -1,3 +1,4 @@
+import { spentOnlyFromCashWallets, type BudgetCoverageInput } from "./budget-coverage";
 import { BUDGET_JARGON } from "./jargon";
 
 /**
@@ -13,9 +14,11 @@ import { BUDGET_JARGON } from "./jargon";
  *
  * Extracted from the component for the same reason `dayChangeLabel` was: the
  * e2e fixture's four budgets are one `over` and three `withheld`, and the suite
- * asserts `getByText(/On track/)` and `getByText(/Off pace/)` are BOTH absent.
- * So two of the four states below cannot render in any Playwright run, and a
- * component-level assertion would pass whether or not they were right. This
+ * asserts `getByText(/On track/)` and `getByText(/Off pace/)` are BOTH absent,
+ * and no cash wallet exists while /budgets is visited (the wallet specs run
+ * after `zz-budgets`). So three of the five states below cannot render in any
+ * Playwright run, and a component-level assertion would pass whether or not they
+ * were right. This
  * module is inside the 100%-coverage gate, which forces every branch to be
  * executed by a test that can actually see it.
  */
@@ -47,7 +50,7 @@ const LABEL: Record<BudgetPaceKind, string> = {
   over: "Over budget",
 };
 
-export interface BudgetVerdictInput {
+export interface BudgetVerdictInput extends Pick<BudgetCoverageInput, "spentFromAccounts" | "spentFromWallets"> {
   pace: BudgetPaceKind;
   /** spent ÷ available, UNCLAMPED — 1.08 is eight percent past the line */
   pct: number;
@@ -55,7 +58,8 @@ export interface BudgetVerdictInput {
   uncoveredDays: number;
 }
 
-export function budgetVerdict({ pace, pct, uncoveredDays }: BudgetVerdictInput): BudgetVerdict {
+export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
+  const { pace, pct, uncoveredDays } = input;
   if (pace === "over") {
     // The headline % must say WHAT it measures: 108% of a budget is "over BY
     // 8%", never "over budget · 108%", which reads as 108% over. Under one
@@ -67,6 +71,24 @@ export function budgetVerdict({ pace, pct, uncoveredDays }: BudgetVerdictInput):
       explanation: BUDGET_JARGON.paceOver,
       barIsFull: true,
       withheld: false,
+    };
+  }
+
+  /*
+   * ⚖️ OWNER DECISION, 2026-09-15: a category spent only from cash wallets makes
+   * no pace claim. Wallets are left out of the import frontier, so there is no
+   * day for its figures to be measured through and no statement coming to give
+   * one: "Awaiting statements" would promise something that never arrives, and a
+   * graded reading would treat the typed rows as all of it. Ahead of the
+   * coverage gate because no day count changes that — and behind `over`, for that
+   * branch's own reason: cash already past the line is recorded spending.
+   */
+  if (spentOnlyFromCashWallets(input)) {
+    return {
+      headline: "Cash only",
+      explanation: BUDGET_JARGON.paceCashOnly,
+      barIsFull: false,
+      withheld: true,
     };
   }
 
