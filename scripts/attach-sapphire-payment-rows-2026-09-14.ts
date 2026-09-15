@@ -100,17 +100,28 @@
  *        carries.
  *    The 06/30 posting day is still the owner's call: do not bump
  *    `chase-card-statement-pdf` before he has made it.
- *  - Un-importing any of the 12 statements hard-deletes the attached rows it
- *    now owns, and a re-import brings back the money as fresh parser rows
- *    without their notes (20260302's five come back quarantined). Their
- *    transfer partners are released since 8dfe304, so `detectTransfers` is no
- *    longer barred from pairing them again. Whether an attached row should
- *    survive its statement's un-import is the owner's call.
+ *  - Un-importing any of the 12 statements hard-deleted the attached rows it
+ *    owned, and a re-import brought the money back as fresh parser rows
+ *    without their notes (20260302's five came back quarantined).
+ *    ⚖️ OWNER, 2026-09-15: the rows STAY. Since migration 0016 an attached row
+ *    carries `file_link_source = 'attached'`, which the importer never writes.
+ *    `unimportFile` deletes only what a file parsed and DETACHES an attached
+ *    row — file NULL, marker kept; money, category, transfer group, recurring
+ *    link and notes untouched; a quarantined row made active — and an import
+ *    files a detached row again under the one printed-balance period holding
+ *    its day (`services/import/attached-rows`). This script writes the marker
+ *    with the file. The 34 attached on 2026-09-15, before the marker existed,
+ *    get it from `mark-attached-sapphire-rows-2026-09-15.ts` — ⛔ until that
+ *    runs, un-importing one of the 12 still deletes them.
+ *    ⛔ A version bump supersedes an attached row and inserts the statement's
+ *    line as a fresh row carrying its note and links but NOT the marker, so
+ *    un-importing after a bump deletes that row like any parsed one.
  *
  * ## What is written, in ONE transaction
  *
  *  - 34 rows: `import_file_id` := the file that owns the statement period
- *    printing the line. Nothing else. `statement_period_id` stays NULL, as on
+ *    printing the line, and `file_link_source` := 'attached'. Nothing else.
+ *    `statement_period_id` stays NULL, as on
  *    all 1,861 statement-imported Sapphire rows — provenance finds the period
  *    by (import_file_id, account).
  *  - The pair: `status` := superseded, `transfer_group_id` := NULL, a note
@@ -160,6 +171,7 @@ import { todayIso } from "@/lib/dates";
 import { fileSha256 } from "@/lib/hash";
 import { formatCents } from "@/lib/money";
 import { rebuildAccount } from "@/services/derivation";
+import { ATTACHED } from "@/services/import/attached-rows";
 import { detachTransferLegs, staleTransferLegs } from "@/services/transfer-links";
 import { printedStatementLines, type CardStatement } from "./sapphire-attach-io";
 import { captureGuards, compareGuards, type GuardReport } from "./sapphire-attach-guards";
@@ -349,8 +361,10 @@ function classifyState({ db }: DbBundle, plan: Plan, hand: readonly HandRow[]): 
       const r = byId.get(a.rowId)!;
       return {
         name: a.rowId,
-        pending: r.status === "active" && r.importFileId === null,
-        applied: r.status === "active" && r.importFileId === a.line.fileId,
+        pending: r.status === "active" && r.importFileId === null && r.fileLinkSource === null,
+        // since migration 0016 an attachment is the file AND the marker: a row
+        // filed here without it is deleted by its statement's un-import
+        applied: r.status === "active" && r.importFileId === a.line.fileId && r.fileLinkSource === ATTACHED,
       };
     }),
     ...RETIRED.map((g) => {
@@ -375,7 +389,7 @@ function applyPlan({ db }: DbBundle, plan: Plan): void {
     for (const a of plan.attachments) {
       const result = tx
         .update(transactions)
-        .set({ importFileId: a.line.fileId })
+        .set({ importFileId: a.line.fileId, fileLinkSource: ATTACHED })
         .where(and(eq(transactions.id, a.rowId), isNull(transactions.importFileId), eq(transactions.status, "active")))
         .run();
       if (result.changes !== 1) throw new Error(`attach ${a.rowId}: changed ${result.changes} rows`);
