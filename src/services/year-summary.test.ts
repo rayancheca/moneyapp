@@ -282,6 +282,15 @@ describe("yearSummaryView — the cash job's story is only told where it happene
     // …and the basis no longer has to deny the heading above it
     expect(cashJob.basis).not.toContain("not yet the cash job");
     expect(cashJob.basis).toContain("May 13, 2026");
+    /*
+     * 🔴 …and the CAVEAT is the third claim about the same job, the one both
+     * fixes left behind. /summary/2022 printed, in red under a basis that says
+     * the ledger cannot name the job, "Deposited irregularly, so a calendar
+     * year captures what reached the bank rather than what was worked." — a
+     * deposit pattern read off ONE row, and a claim about work, measured
+     * 2026-09-15 on the owner's ledger.
+     */
+    expect(cashJob.caveat).toBeUndefined();
   });
 
   /* ⛔ ONE decision, not two that agree. The label and the sentence are chosen
@@ -297,6 +306,7 @@ describe("yearSummaryView — the cash job's story is only told where it happene
       const early = year < 2026;
       expect(naming.label === "Cash job", `label for ${year}`).toBe(!early);
       expect(naming.basis.includes("the job that replaced it"), `basis for ${year}`).toBe(!early);
+      expect((naming.caveat ?? "").includes("Deposited irregularly"), `caveat for ${year}`).toBe(!early);
       expect(naming.basis, `basis for ${year}`).not.toMatch(/\b\d{4}-\d{2}-\d{2}\b/);
       expect(naming.basis, `basis for ${year}`).toContain("May 13, 2026");
     }

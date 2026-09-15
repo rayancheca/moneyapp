@@ -341,8 +341,18 @@ const WORK_STUDY_ENDED = "2026-05-13";
  * The early label names the RULE (`Salary, not Fordham payroll`), which is true
  * of every year and claims no job at all — and the early sentence no longer has
  * to deny a heading that no longer says anything to deny.
+ *
+ * ⛔ AND THE CAVEAT IS THE THIRD CLAIM — the one both fixes above left behind.
+ *
+ * 🔴 Passed as a literal on every year, `/summary/2022` printed in red, under a
+ * basis saying the ledger cannot name the job, "Deposited irregularly, so a
+ * calendar year captures what reached the bank rather than what was worked."
+ * (measured 2026-09-15). Irregular deposits are a fact about the 2026 cash
+ * job's ATM lumps; 2022 holds one branch deposit, which shows no pattern and no
+ * work. So the caveat comes out of this decision too, and an early year has
+ * none.
  */
-export function cashJobNaming(year: number): { label: string; basis: string } {
+export function cashJobNaming(year: number): { label: string; basis: string; caveat?: string } {
   const rule = "Salary rows that are not Fordham payroll.";
   // 🔴 PROSE, so the date is spelled: both sentences printed the raw constant
   // ("Work-study ended 2026-05-13 and…") on /summary/2026 and /summary/2022.
@@ -353,6 +363,7 @@ export function cashJobNaming(year: number): { label: string; basis: string } {
     return {
       label: "Cash job",
       basis: `${rule} Work-study ended ${ended}, and these deposits are the job that replaced it.`,
+      caveat: "Deposited irregularly, so a calendar year captures what reached the bank rather than what was worked.",
     };
   }
   return {
@@ -374,6 +385,8 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
     raw.rowCount === 0 ? null : { id, label, section, basis, caveat, ...raw, ...counter };
 
   const realized = realizedFor(db, year);
+  // ONE decision for all three claims the cash-job line makes (see `cashJobNaming`)
+  const cashJob = cashJobNaming(year);
 
   const lines = [
     line(
@@ -385,11 +398,11 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
     ),
     line(
       "cash-job",
-      cashJobNaming(year).label,
+      cashJob.label,
       "earned",
-      cashJobNaming(year).basis,
+      cashJob.basis,
       lineFor(db, year, { categoryName: "Salary", descriptorNotLike: FORDHAM_DESCRIPTOR }),
-      "Deposited irregularly, so a calendar year captures what reached the bank rather than what was worked.",
+      cashJob.caveat,
     ),
     line(
       "knack",
