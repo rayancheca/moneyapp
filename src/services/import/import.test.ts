@@ -2175,4 +2175,80 @@ describe("un-import keeps a row attached to its file, and a re-import files it t
     });
     expect(row(bareHeir!.id)).toMatchObject({ importFileId: null, fileLinkSource: "attached", status: "active" });
   });
+
+  /** A statement-like file that declares a period over `accountId` and owns no row. */
+  function declaredPeriod(accountId: string, name: string, start: string, end: string, printed: boolean): string {
+    const { institutionId } = bundle.db.select().from(accounts).where(eq(accounts.id, accountId)).get()!;
+    const fileId = bundle.db
+      .insert(importFilesTable)
+      .values({
+        fileName: name,
+        fileSha256: `declared-${name}`,
+        format: "pdf",
+        institutionId,
+        status: "parsed",
+        storagePath: path.join(dir, name),
+        importedAt: new Date().toISOString(),
+      })
+      .returning({ id: importFilesTable.id })
+      .get().id;
+    bundle.db
+      .insert(statementPeriods)
+      .values({
+        importFileId: fileId,
+        accountId,
+        periodStart: start,
+        periodEnd: end,
+        beginningBalanceCents: printed ? 0 : null,
+        endingBalanceCents: printed ? 0 : null,
+        reconciliation: "not_applicable",
+      })
+      .run();
+    return fileId;
+  }
+
+  /**
+   * On the real ledger two Chase Sapphire "Spending Report" PDFs declare periods
+   * with no printed balance (2025-01-01..2025-12-31, 2026-01-01..2026-07-10), and
+   * together they hold every day of the 34 attached rows. Counted as holders,
+   * each re-file would find two and leave every one of the 34 detached.
+   */
+  test("an export's period with no printed balance over the kept row's day does not stop its statement filing it again", async () => {
+    const s = await scene();
+    declaredPeriod(s.accountId, "Spending Report PDF.pdf", "2024-01-01", "2024-12-31", false);
+
+    unimportFile(bundle.db, s.fileId);
+    await importStatementFiles(bundle.db, [statement()]);
+
+    expect(row(s.attached)).toMatchObject({ importFileId: fileNamed()!.id, fileLinkSource: "attached" });
+  });
+
+  test("a day two printed periods hold is ambiguous, and the kept row stays detached rather than be guessed into one", async () => {
+    const s = await scene();
+    const rival = declaredPeriod(s.accountId, "overlapping statement.pdf", "2024-09-01", "2024-12-31", true);
+
+    unimportFile(bundle.db, s.fileId);
+    await importStatementFiles(bundle.db, [statement()]);
+
+    const again = fileNamed()!;
+    expect(again.id).not.toBe(s.fileId);
+    expect(row(s.attached)).toMatchObject({ importFileId: null, fileLinkSource: "attached", status: "active" });
+    expect(rowsOf(rival)).toEqual([]);
+  });
+
+  test("a superseded row carrying the marker is not filed again — it is not in the ledger", async () => {
+    const s = await scene();
+    const retired = hand(s.accountId, "2024-10-03", -999, "RETIRED HAND ROW");
+    bundle.db
+      .update(transactions)
+      .set({ fileLinkSource: "attached", status: "superseded" })
+      .where(eq(transactions.id, retired))
+      .run();
+
+    unimportFile(bundle.db, s.fileId);
+    await importStatementFiles(bundle.db, [statement()]);
+
+    expect(row(s.attached)!.importFileId).toBe(fileNamed()!.id);
+    expect(row(retired)).toMatchObject({ importFileId: null, status: "superseded" });
+  });
 });
