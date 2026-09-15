@@ -8,6 +8,7 @@ import { Icon } from "@/components/shell/Icon";
 import { Money } from "@/components/ui/Money";
 import { SpendDelta } from "@/components/spending/SpendDelta";
 import { formatCents } from "@/lib/money";
+import { changeAgainstPrior } from "@/lib/prior-window-change";
 import type { SubcategoryItem } from "@/lib/subcategory-rows";
 
 /** Qualitative confidence label + tone for a 0..1 score (mirrors PredictBudgets). */
@@ -118,6 +119,8 @@ export function SpendingCategoriesTable({
       {rows.map((row) => {
         const isOpen = expanded.has(row.categoryId);
         const hasChildren = row.children.length > 0;
+        // this row's change against the prior window, in words — null when nothing was compared
+        const change = priorLabel === null ? null : changeAgainstPrior(row.momDeltaCents, priorLabel);
         return (
           <li key={row.categoryId}>
             <div className="flex items-center gap-2 py-2.5">
@@ -177,15 +180,16 @@ export function SpendingCategoriesTable({
                 netted to $0.00 had no line, so it read like one that spent
                 nothing and gave no reason for being listed — Travel on
                 `?period=2025-08-25` and `?period=W2025-08-25`, measured
-                2026-09-15. It is level with that window, in the relief's words. */}
-            {compares && row.spentCents === 0 && (row.stopped || row.momDeltaCents !== 0) && (
+                2026-09-15. It is level with that window, in the relief's words —
+                `lib/prior-window-change`, the one home for them. */}
+            {change !== null && row.spentCents === 0 && (row.stopped || !change.level) && (
               <p className="-mt-1 mb-1.5 ml-7 text-[11px] text-ink-faint md:hidden">
-                {row.momDeltaCents === 0 ? (
-                  `level with ${priorLabel}`
+                {change.level ? (
+                  change.words
                 ) : (
                   <>
                     <SpendDelta cents={row.momDeltaCents} />
-                    {` against ${priorLabel}`}
+                    {` ${change.words}`}
                   </>
                 )}
               </p>
