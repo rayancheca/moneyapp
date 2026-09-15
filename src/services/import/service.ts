@@ -557,6 +557,11 @@ function coveredRanges(db: AppDatabase, accountId: string): CoveredRange[] {
   return [...byFile.values()];
 }
 
+/** The other files whose coverage includes `day`. */
+function rangesCovering(ranges: readonly CoveredRange[], day: string): CoveredRange[] {
+  return ranges.filter((r) => day >= r.minDay && day <= r.maxDay);
+}
+
 /**
  * The accounts the ledger already tracks — the last four digits a profile can
  * match an account number against, and the type it routes that account by — for
@@ -858,10 +863,23 @@ interface PlacedTxn {
  * every other statement profile, 0 of 9,475 (Discover's parser already clamps).
  *
  * The stored row posts on `postedInsidePeriod`, keeping the printed day as its
- * transaction day. The printed row is kept too, because nothing may MATCH on a
- * day the file does not print: pass 38 measured that `consumeIdentity`'s posted
- * lens — tried first, blind to descriptions — would hand LA GAVIOTA DELI
- * GROCERY's charge to NEW BEST GOURMET DELI's on the opening day.
+ * transaction day. The printed row is kept too, because a search for ANOTHER
+ * record of the same money (identity, takeover victim, carry) must look on the
+ * day the file prints: pass 38 measured that `consumeIdentity`'s posted lens,
+ * tried first and blind to descriptions, would hand LA GAVIOTA DELI GROCERY's
+ * charge to NEW BEST GOURMET DELI's on the opening day.
+ *
+ * Ownership is the one decision that reads the stored row. It asks which source
+ * covers the day the row POSTED, and read on the printed day it was wrong both
+ * ways: an export that closed on the previous statement's close day owned the
+ * charge it cannot hold and dropped it, so the period gapped; and an export
+ * that opened on the posting day did not own the charge it does hold, so the
+ * statement recorded it a second time.
+ *
+ * ⚠️ Known limit: a straddler whose printed day and amount equal a DIFFERENT
+ * charge the previous statement closed with consumes that row's identity slot
+ * and is never stored, so its own period gaps. It is not in the Sapphire data
+ * (docs/sapphire-reconciliation-finding.md §5).
  *
  * Only periods that must close to the cent: an investment statement's dates are
  * trade and settle days, and its period absorbs what moves as market change.
@@ -1012,14 +1030,14 @@ async function importOneFile(
       const identityPool = existingIdentityPool(db, accountId, fileRow.id);
 
       db.transaction((tx) => {
-        // `t` is the row as printed: every decision below that reads another row
-        // (ownership, takeover, identity, carry) reads the day the file prints.
-        // Only `stored` — what is written — carries the day it posted.
+        // `t` is the row as printed, `stored` the row as written. Ownership asks
+        // who covers the day the row POSTED, so it reads `stored`; takeover,
+        // identity and carry look for another row recording the same money,
+        // which sits on the day the file prints, so they read `t`.
         for (const { row: { printed: t, stored }, occurrenceIndex } of indexed) {
-          const coveredBy = ranges.filter((r) => t.postedOn >= r.minDay && t.postedOn <= r.maxDay);
           // `soleSource` rows opt out: the higher-fidelity source covers the
           // DAY but is documented not to carry this row type (CanonicalTxn)
-          if (!t.soleSource && coveredBy.some((r) => r.priority < myPriority)) {
+          if (!t.soleSource && rangesCovering(ranges, stored.postedOn).some((r) => r.priority < myPriority)) {
             outcome.skippedOwned += 1; // owned by higher fidelity — visible, never silent
             continue;
           }
@@ -1036,9 +1054,11 @@ async function importOneFile(
           // above leaves its attributes for whichever row does materialize)
           const carried = takeCarry(carryPool, accountId, t, hash);
 
-          // takeover: a lower-fidelity source owns this day — replace its
-          // best-matching row (schema.md: date, amount, description similarity)
-          const lowerOwners = coveredBy.filter((r) => r.priority > myPriority);
+          // takeover: a lower-fidelity source covers the day this row PRINTS —
+          // replace its best-matching row (schema.md: date, amount, description
+          // similarity). `pickTakeoverVictim` looks for that row on the printed
+          // day, so the coverage asked about is the printed day's too.
+          const lowerOwners = rangesCovering(ranges, t.postedOn).filter((r) => r.priority > myPriority);
           if (lowerOwners.length > 0) {
             const victim = pickTakeoverVictim(tx, accountId, t, lowerOwners.map((r) => r.importFileId));
             if (victim) {

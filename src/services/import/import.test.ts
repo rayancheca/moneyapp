@@ -1286,8 +1286,9 @@ describe("a statement row printed before its period opens", () => {
   /**
    * The Chase card statement's own reader over plain text lines, so a test can
    * hand the importer a real statement's shape without a PDF. File-name flags
-   * route an `-investment-` statement to a Robinhood investment account, and
-   * strip the transaction day from a `-postedonly-` one.
+   * route an `-investment-` statement to a Robinhood investment account, send a
+   * `-wellsfargo-` one to Wells Fargo checking, and strip the transaction day
+   * from a `-postedonly-` one.
    */
   const lineStatementProfile: ParserProfile = {
     id: "test-card-statement-lines",
@@ -1296,11 +1297,12 @@ describe("a statement row printed before its period opens", () => {
     parse: async (f) => {
       const parsed = parseChaseCardLines(f.text.split("\n"));
       const investment = f.name.includes("-investment-");
+      const wellsFargo = f.name.includes("-wellsfargo-");
       return [
         {
           accountHint: {
-            institution: investment ? "Robinhood" : "Chase",
-            type: investment ? "investment" : "credit",
+            institution: investment ? "Robinhood" : wellsFargo ? "Wells Fargo" : "Chase",
+            type: investment ? "investment" : wellsFargo ? "checking" : "credit",
             ...(parsed.last4 ? { last4: parsed.last4 } : {}),
           },
           txns: f.name.includes("-postedonly-")
@@ -1559,6 +1561,160 @@ describe("a statement row printed before its period opens", () => {
     expect(account.type).toBe("investment");
     expect(liveRow(account.id, "ACME CORP")).toMatchObject({ postedOn: "2025-09-02", transactedOn: "2025-09-02" });
   });
+
+  /** A Chase card QFX for ····5150: a higher-fidelity source than any statement. */
+  function cardQfx(s: { start: string; end: string; owedCents: number; rows: { day: string; cents: number; name: string }[] }): ImportInput {
+    const rows = s.rows.map(
+      (r, i) =>
+        `<STMTTRN>\n<TRNTYPE>${r.cents < 0 ? "DEBIT" : "CREDIT"}\n<DTPOSTED>${r.day.replaceAll("-", "")}\n<TRNAMT>${(r.cents / 100).toFixed(2)}\n<FITID>${i + 1}\n<NAME>${r.name}\n</STMTTRN>`,
+    );
+    const body = [
+      "OFXHEADER:100",
+      "",
+      "<OFX>",
+      "<SIGNONMSGSRSV1><SONRS><STATUS><CODE>0\n<SEVERITY>INFO\n</STATUS>\n<FI><ORG>B1\n</FI>\n<INTU.BID>10898\n</SONRS></SIGNONMSGSRSV1>",
+      "<CREDITCARDMSGSRSV1><CCSTMTTRNRS><CCSTMTRS>",
+      "<CCACCTFROM><ACCTID>00005150\n</CCACCTFROM>",
+      `<BANKTRANLIST>\n<DTSTART>${s.start.replaceAll("-", "")}\n<DTEND>${s.end.replaceAll("-", "")}`,
+      ...rows,
+      "</BANKTRANLIST>",
+      // a card's LEDGERBAL is the positive amount owed
+      `<LEDGERBAL><BALAMT>${(s.owedCents / 100).toFixed(2)}\n<DTASOF>${s.end.replaceAll("-", "")}\n</LEDGERBAL>`,
+      "</CCSTMTRS></CCSTMTTRNRS></CREDITCARDMSGSRSV1>",
+      "</OFX>",
+      "",
+    ].join("\n");
+    return { name: `Chase5150_Activity_${s.start}.QFX`, buffer: Buffer.from(body) };
+  }
+
+  test("an export whose coverage ENDS on the day it prints does not own it — the charge posted after that export closed", async () => {
+    // the export closes on the August statement's close day, so it holds
+    // August's rows and cannot hold a charge that posted in September
+    const exportThroughAugust = cardQfx({
+      start: "2025-08-03",
+      end: "2025-09-02",
+      owedCents: 4_500,
+      rows: [
+        { day: "2025-08-10", cents: -4_000, name: "SHELL OIL 555 MIAMI FL" },
+        { day: "2025-09-02", cents: -500, name: "CITY PARKING MIAMI FL" },
+      ],
+    });
+    const august = statement("2025-09-own", {
+      last4: "5150",
+      period: "08/03/25 - 09/02/25",
+      previous: "$0.00",
+      next: "$45.00",
+      rows: ["08/10 SHELL OIL 555 MIAMI FL 40.00", "09/02 CITY PARKING MIAMI FL 5.00"],
+    });
+    const september = statement("2025-10-own", {
+      last4: "5150",
+      period: "09/03/25 - 10/02/25",
+      previous: "$45.00",
+      next: "-$22.53",
+      rows: ["09/02 BEST BUY CO 00012617 BRONX NY -92.53", "09/15 STARBUCKS STORE 77 MIAMI FL 25.00"],
+    });
+
+    const [, augustOutcome, septemberOutcome] = await importStatementFiles(bundle.db, [exportThroughAugust, august, september]);
+
+    const card = accountIdOf("5150");
+    // August's two rows ARE the export's, and stay owned by it
+    expect([augustOutcome!.inserted, augustOutcome!.skippedOwned]).toEqual([0, 2]);
+    expect([septemberOutcome!.inserted, septemberOutcome!.skippedOwned]).toEqual([2, 0]);
+    expect(liveRow(card, "BEST BUY")).toMatchObject({ postedOn: "2025-09-03", transactedOn: "2025-09-02", status: "active" });
+    expect(liveRow(card, "STARBUCKS")).toMatchObject({ status: "active" });
+    expect(ledgerState(card).periods.map((p) => [p.start, p.reconciliation, p.gapCents])).toEqual([
+      ["2025-08-03", "reconciled", null],
+      ["2025-09-03", "reconciled", null],
+    ]);
+  });
+
+  test("an export whose coverage STARTS on the day it posted owns it — the statement does not record the charge a second time", async () => {
+    // the export opens on September's opening day and already holds the
+    // charge on the day it posted, which the statement does not print. Its
+    // NAME is the bank's short text, so no hash can tie the two records.
+    const exportFromSeptember = cardQfx({
+      start: "2025-09-03",
+      end: "2025-10-02",
+      owedCents: -2_753,
+      rows: [
+        { day: "2025-09-03", cents: 9_253, name: "BEST BUY 00012617" },
+        { day: "2025-09-15", cents: -2_500, name: "STARBUCKS STORE 77" },
+      ],
+    });
+
+    const [, , septemberOutcome] = await importStatementFiles(bundle.db, [AUGUST, exportFromSeptember, SEPTEMBER]);
+
+    const card = accountIdOf("5150");
+    expect([septemberOutcome!.inserted, septemberOutcome!.skippedOwned]).toEqual([0, 2]);
+    // one row for one charge: the export's, on its posting day
+    expect(liveRow(card, "BEST BUY")).toMatchObject({ postedOn: "2025-09-03", amountCents: 9_253, status: "active" });
+    expect(ledgerState(card).periods.map((p) => [p.start, p.reconciliation, p.gapCents])).toEqual([
+      ["2025-08-03", "reconciled", null],
+      ["2025-09-03", "reconciled", null],
+    ]);
+  });
+
+  test("a lower-fidelity export's row on the day it prints is taken over, and its replacement is written on the day it posted", async () => {
+    // Rocket Money is the one source ranked below a statement, and its
+    // allowlist admits only Wells Fargo ····5481 — so the card statement's
+    // rows are routed there; a checking period must close to the cent too
+    bundle.db.insert(institutions).values({ name: "Wells Fargo" }).run();
+    const rocketMoney: ImportInput = {
+      name: "2025-09-20T12_00_00.000Z-transactions.csv",
+      buffer: Buffer.from(
+        [
+          "Date,Original Date,Account Type,Account Name,Account Number,Institution Name,Name,Custom Name,Amount,Description,Category,Note,Ignored From,Tax Deductible,Transaction Tags",
+          // their Amount is positive for money OUT: this is a $92.53 credit
+          '2025-09-02,2025-09-02,Cash,ACCOUNT,5481,Wells Fargo,"Best Buy",,-92.53,"BEST BUY CO 00012617 BRONX NY",Shopping,,,,',
+        ].join("\n"),
+      ),
+    };
+    const august = statement("wellsfargo-2025-09", {
+      last4: "5481",
+      period: "08/03/25 - 09/02/25",
+      previous: "$0.00",
+      next: "$40.00",
+      rows: ["08/10 SHELL OIL 555 MIAMI FL 40.00"],
+    });
+    const september = statement("wellsfargo-2025-10", {
+      last4: "5481",
+      period: "09/03/25 - 10/02/25",
+      previous: "$40.00",
+      next: "-$27.53",
+      rows: ["09/02 BEST BUY CO 00012617 BRONX NY -92.53", "09/15 STARBUCKS STORE 77 MIAMI FL 25.00"],
+    });
+
+    const [rocketOutcome, , septemberOutcome] = await importStatementFiles(bundle.db, [rocketMoney, august, september]);
+
+    expect(rocketOutcome).toMatchObject({ status: "parsed", inserted: 1 });
+    expect([septemberOutcome!.supersededTakeover, septemberOutcome!.inserted]).toEqual([1, 2]);
+    const rocketFileId = bundle.db
+      .select()
+      .from(importFilesTable)
+      .where(eq(importFilesTable.fileName, rocketMoney.name))
+      .get()!.id;
+    const account = accountIdOf("5481");
+    const rows = bundle.db
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.accountId, account), eq(transactions.amountCents, 9_253)))
+      .all()
+      .map((r) => ({
+        status: r.status,
+        postedOn: r.postedOn,
+        transactedOn: r.transactedOn,
+        fromStatement: r.importFileId !== rocketFileId,
+      }))
+      .sort((a, b) => a.status.localeCompare(b.status));
+    expect(rows).toEqual([
+      { status: "active", postedOn: "2025-09-03", transactedOn: "2025-09-02", fromStatement: true },
+      { status: "superseded", postedOn: "2025-09-02", transactedOn: null, fromStatement: false },
+    ]);
+    expect(ledgerState(account).periods.filter((p) => p.reconciliation !== "not_applicable").map((p) => [p.start, p.reconciliation])).toEqual([
+      ["2025-08-03", "reconciled"],
+      ["2025-09-03", "reconciled"],
+    ]);
+  });
 });
 
 describe("the full 2-year backfill (golden acceptance)", () => {
@@ -1649,10 +1805,9 @@ describe("fidelityOf — a format can lie about how much a file can be trusted",
    * silently dropped. The export is already known to be incomplete: its 39 rows
    * sum to $2,396.67 and the owner's bank app disagrees.
    *
-   * ⚠️ The end-to-end takeover cannot be exercised yet: no Wells Fargo parser
-   * profile exists, and `ofxProfile` only ever hints Chase or Capital One, so
-   * there is no way to route a higher-fidelity file to that account in a test.
-   * What IS asserted here is the decision itself, which is the whole mechanism —
+   * The end-to-end takeover is exercised in "a statement row printed before its
+   * period opens", whose test statements can be routed to Wells Fargo ····5481
+   * over a Rocket Money row. What is asserted here is the decision itself —
    * plus the property that no OTHER profile's behaviour moved.
    */
   test("the Rocket Money export ranks below every real statement format", () => {
