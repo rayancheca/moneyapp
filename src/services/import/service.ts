@@ -938,6 +938,43 @@ function placeInsidePeriod(statement: ParsedStatement, periodMustClose: boolean)
   });
 }
 
+/** A printed row, the row as the ledger stores it, and the identity it is stored under. */
+export interface StoredLine {
+  printed: CanonicalTxn;
+  stored: CanonicalTxn;
+  occurrenceIndex: number;
+  /** `dedupe_hash`: the STORED posted day with the PRINTED amount and text */
+  hash: string;
+}
+
+/**
+ * Every row a statement prints, placed, numbered and hashed exactly as `importOneFile` stores it. ONE rule: a
+ * write that must give a ledger row the identity the parser gives its printed line asks this, rather than
+ * restating `placeInsidePeriod`, the occurrence numbering and which fields the hash reads
+ * (scripts/redate-sapphire-0630-payment-2026-09-15.ts).
+ */
+export function storedLines(accountId: string, account: { readonly type: string }, statement: ParsedStatement): StoredLine[] {
+  // the hash and the occurrence index describe the row as STORED, so both
+  // are computed on the day it posts
+  return assignOccurrenceIndexes(placeInsidePeriod(statement, periodsMustClose(account)), ({ stored }) => ({
+    accountId,
+    postedOn: stored.postedOn,
+    amountCents: stored.amountCents,
+    rawDescription: stored.rawDescription,
+  })).map(({ row: { printed, stored }, occurrenceIndex }) => ({
+    printed,
+    stored,
+    occurrenceIndex,
+    hash: dedupeHash({
+      accountId,
+      postedOn: stored.postedOn,
+      amountCents: printed.amountCents,
+      rawDescription: printed.rawDescription,
+      occurrenceIndex,
+    }),
+  }));
+}
+
 /**
  * A file already imported at the parser version reading it now is skipped as a duplicate — unless its row is
  * one of these. Exported so a write that must know "would the import read this file again?" asks this rule
@@ -1067,14 +1104,7 @@ async function importOneFile(
       const myPriority = fidelityOf(file.format, profile.id);
       const account = db.select({ type: accounts.type }).from(accounts).where(eq(accounts.id, accountId)).get()!;
 
-      // the hash and the occurrence index describe the row as STORED, so both
-      // are computed on the day it posts
-      const indexed = assignOccurrenceIndexes(placeInsidePeriod(statement, periodsMustClose(account)), ({ stored }) => ({
-        accountId,
-        postedOn: stored.postedOn,
-        amountCents: stored.amountCents,
-        rawDescription: stored.rawDescription,
-      }));
+      const lines = storedLines(accountId, account, statement);
 
       const identityPool = existingIdentityPool(db, accountId, fileRow.id);
 
@@ -1083,7 +1113,7 @@ async function importOneFile(
         // who covers the day the row POSTED, so it reads `stored`; takeover,
         // identity and carry look for another row recording the same money,
         // which sits on the day the file prints, so they read `t`.
-        for (const { row: { printed: t, stored }, occurrenceIndex } of indexed) {
+        for (const { printed: t, stored, occurrenceIndex, hash } of lines) {
           // `soleSource` rows opt out: the higher-fidelity source covers the
           // DAY but is documented not to carry this row type (CanonicalTxn)
           if (!t.soleSource && rangesCovering(ranges, stored.postedOn).some((r) => r.priority < myPriority)) {
@@ -1091,13 +1121,6 @@ async function importOneFile(
             continue;
           }
 
-          const hash = dedupeHash({
-            accountId,
-            postedOn: stored.postedOn,
-            amountCents: t.amountCents,
-            rawDescription: t.rawDescription,
-            occurrenceIndex,
-          });
           // this file's own prior-version row for the same money, if the user
           // had put anything on it (claimed here so a row skipped as owned
           // above leaves its attributes for whichever row does materialize)
