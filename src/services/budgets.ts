@@ -41,6 +41,8 @@ import { linkIsRecurring, rowIsRecurring, seriesIdsNotDrawnAsRecurring } from ".
 export { overdueForSeries };
 export type { BudgetTail, BudgetTailSeries };
 import { incomeBasis, levelledMonthlyCents, type IncomeBasis } from "@/lib/income-basis";
+import { daysNotImportedYet } from "@/lib/empty-period";
+import { frontierForSeries, ledgerOpens, observationFrontier, type ObservationFrontier } from "./observation-frontier";
 
 /**
  * Budgets (master-plan Phase 5). One active budget per (category, period),
@@ -1035,32 +1037,89 @@ function recurringPostedCents(
   return [...unsplit, ...splitParts].reduce((sum, r) => sum - r.amountCents, 0);
 }
 
-/**
- * The last day this budget's subtree actually has imported spending for — the
- * ledger's real reach, not the period's. Statements land weeks apart, so on any
- * given day most categories are grading a window the data does not cover yet.
- *
- * Deliberately NOT sourced from account coverage/verifiedThrough: that answers
- * "which periods reconcile", which is a different and more optimistic question
- * (SoFi Checking reports a verified 2026-07-31 against a last transaction of
- * 2026-05-31, and cash wallets report nothing at all). This reads the same rows
- * the budget is graded from, so the two can never disagree.
- */
-function subtreeDataThrough(db: AppDatabase, categoryId: string): string | null {
-  const subtree = loadCategoryIndex(db).subtreeIds(categoryId);
-  const rows = db
-    .select({ postedOn: transactions.postedOn })
-    .from(transactions)
-    .where(and(eq(transactions.status, "active"), inArray(transactions.categoryId, subtree)))
-    .all();
-  let latest: string | null = null;
-  for (const r of rows) {
-    if (latest === null || compareDates(r.postedOn, latest) > 0) latest = r.postedOn;
-  }
-  return latest;
+export interface CategoryCoverage {
+  /** the earliest import frontier among the accounts below; null when none of them has one */
+  importedThroughOn: string | null;
+  /** where the window of accounts opens: six full months back, or the period's start if earlier */
+  spentFromSince: string;
+  /** accounts the subtree was spent from over [spentFromSince, today], any with no frontier included */
+  spentFromAccounts: number;
 }
 
-export interface BudgetPaceStatus extends BudgetStatus {
+/**
+ * Through which day this budget's spending has been imported: the EARLIEST
+ * import frontier (`observationFrontier`) among the accounts its subtree was
+ * spent from — `frontierForSeries`, the recurring calendar's question asked of
+ * a category's accounts instead of a series'.
+ *
+ * Earliest, for `frontierForSeries`' own reason: the claim guarded is a negative
+ * one. To say a stretch of the period holds no more Food, every account Food is
+ * spent from has to have been looked at; taking the category's newest row let
+ * one fresh account vouch for a stale one.
+ *
+ * 🔴 WHAT THIS REPLACED. `subtreeDataThrough` read the subtree's newest row.
+ * Measured on the real ledger 2026-09-15, /budgets read Food "spending imported
+ * through Sep 12" (Venture X) and "3 days of this period unaccounted" while
+ * Chase Sapphire, 44% of Food's spend since March, was imported through Sep 2
+ * and Chase Checking through Aug 12; the dashboard the same day said 94% of
+ * spending posts to accounts shown through Aug 12 at the earliest. Twelve
+ * budgets named ten days. And a cash row typed for today in any category
+ * (`addManualTransaction`) set the newest row to today, left 0 days uncovered,
+ * and let the row grade "On track" over two unimported accounts.
+ *
+ * ⛔ EVERY account the subtree was spent from in the window, NOT the dashboard's
+ * live-spender habit (`liveSpendersOver`, at least `MIN_OCCURRENCES` of six
+ * months). Measured 2026-09-15, the habit rule per category read Utilities and
+ * Entertainment "imported through Sep 13" on Venture X alone, while Chase
+ * Checking (42% of Utilities' spend, in two of the six months, through Aug 12)
+ * and Chase Sapphire (42% of Entertainment's, through Sep 2) were left out. A
+ * monthly bill that moved accounts is not a habit on either, and a category is
+ * too small a population for a count of months to tell dormant from live.
+ *
+ * ⛔ NOT the ledger-wide `ledgerReaches` (Sep 13): it understates on every row —
+ * Fees posts 27 times on Chase Checking and would read 2 days where it has 15.
+ * NOT `spendingCoverageThrough` either: that is all spending's population, and
+ * would clamp Travel and Health, which are never spent from Chase Checking, to
+ * its Aug 12.
+ *
+ * ⚠️ The window is what keeps a dormant account from vetoing forever. It is the
+ * inline editor's guide window (`GUIDANCE_MONTHS` full months before today's
+ * month, `budgetGuidanceCents`) — the same subtree history the page already
+ * reads — opened at the period's own start when that is earlier, so an annual
+ * budget keeps every account spent from inside the year it grades. An account
+ * whose last charge in this category falls before it no longer holds the row
+ * back (SoFi Checking's one Mar 9 Cash & ATM row stops counting in October).
+ *
+ * ⚠️ Known gap, the dashboard's own: a FIRST charge on an account the category
+ * was never spent from in the window is not waited for.
+ *
+ * Deliberately NOT account coverage/verifiedThrough, which answers "which
+ * periods reconcile", a stronger and more optimistic question (SoFi Checking
+ * reports a verified 2026-07-31 against a last transaction of 2026-05-31, and
+ * cash wallets report nothing at all). The accounts come from
+ * `spendingTransactions`, the rows the budget is graded from.
+ */
+function categoryCoverage(
+  db: AppDatabase,
+  categoryId: string,
+  periodStart: string,
+  refDate: string,
+  frontier: ObservationFrontier,
+): CategoryCoverage {
+  // always GUIDANCE_MONTHS windows, oldest first
+  const windowStart = trailingFullMonths(refDate, GUIDANCE_MONTHS)[0]!.start;
+  const spentFromSince = compareDates(periodStart, windowStart) < 0 ? periodStart : windowStart;
+  const accounts = new Set(
+    spendingTransactions(db, { categoryId, from: spentFromSince, to: refDate }).map((t) => t.accountId),
+  );
+  return {
+    importedThroughOn: frontierForSeries(frontier, accounts),
+    spentFromSince,
+    spentFromAccounts: accounts.size,
+  };
+}
+
+export interface BudgetPaceStatus extends BudgetStatus, CategoryCoverage {
   totalDays: number;
   /** days from the window start through today (inclusive); 0 before it opens */
   elapsedDays: number;
@@ -1075,14 +1134,12 @@ export interface BudgetPaceStatus extends BudgetStatus {
   /** bills expected on/before today that never posted — money committed but missing */
   overdueCents: number;
   overdue: BudgetTailSeries[];
-  /** last day with imported spending in this subtree, ever; null = none at all */
-  dataThroughOn: string | null;
   /**
-   * Days of THIS window the ledger cannot speak for: from the day after
-   * dataThroughOn (or the window start) through today. >0 means the row's
-   * spent/pace/% figures are lower bounds, not measurements, and the UI must
-   * not report a verdict — "On track" over an unimported month is the one
-   * failure mode a budgeting tool cannot afford.
+   * Days of THIS window the ledger cannot speak for: the elapsed days past
+   * `importedThroughOn`, all of them when it is null (`daysNotImportedYet`).
+   * >0 means the row's spent/pace/% figures are lower bounds, not measurements,
+   * and the UI must not report a verdict — "On track" over an unimported month
+   * is the one failure mode a budgeting tool cannot afford.
    */
   uncoveredDays: number;
 }
@@ -1096,6 +1153,9 @@ export interface BudgetPaceStatus extends BudgetStatus {
 export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()): BudgetPaceStatus[] {
   // one read for every row: the series whose charges are not recurring money
   const notDrawn = seriesIdsNotDrawnAsRecurring(db);
+  // …and where the import stands, per account and at the ledger's opening end
+  const frontier = observationFrontier(db);
+  const opens = ledgerOpens(db);
   return budgetStatuses(db, refDate).map((s) => {
     const { start, end } = s.bounds;
     // budgetStatuses evaluates the period CONTAINING refDate, start-clamped to
@@ -1162,19 +1222,24 @@ export function budgetPaceStatuses(db: AppDatabase, refDate: string = todayIso()
     // future-dated non-recurring charge is a committed fact, not an estimate, so
     // the full-period actual is the projection floor.
     const projectedCents = Math.max(s.spentCents, forecast);
-    // the uncovered stretch is measured against the graded window only: data
-    // ending before the window opens leaves the WHOLE elapsed window uncovered,
-    // and data running past today leaves none.
-    const dataThroughOn = subtreeDataThrough(db, s.budget.categoryId);
-    const coveredThrough =
-      dataThroughOn && compareDates(dataThroughOn, start) >= 0 ? dataThroughOn : addDays(start, -1);
-    const uncoveredDays =
-      compareDates(coveredThrough, refDate) >= 0 ? 0 : Math.max(0, diffDays(coveredThrough, refDate));
+    // the uncovered stretch is measured against the graded window only: a
+    // frontier before the window opens leaves the WHOLE elapsed window
+    // uncovered, and one on or past today leaves none. ⛔ The count is
+    // `daysNotImportedYet`, the dashboard tile's and /spending's, not a third
+    // copy of the clamp — only the frontier it is given is this category's.
+    const coverage = categoryCoverage(db, s.budget.categoryId, start, refDate, frontier);
+    const uncoveredDays = daysNotImportedYet({
+      from: start,
+      to: end,
+      today: refDate,
+      ledgerOpens: opens,
+      ledgerReaches: coverage.importedThroughOn,
+    });
     return {
       ...s,
       overdueCents: overdue.totalCents,
       overdue: overdue.series,
-      dataThroughOn,
+      ...coverage,
       uncoveredDays,
       totalDays,
       elapsedDays,

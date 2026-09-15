@@ -51,6 +51,18 @@ test("every active budget renders a pace bar, and states a verdict only where co
    * `uncoveredDays` is scoped to the budget PERIOD; the words say so now.
    */
   await expect(page.getByText(/days? of this period unaccounted/).first()).toBeVisible();
+  /*
+   * ⛔ …and the day it names is where every account the category is spent from
+   * has been imported, never the category's newest row. Utilities tells the two
+   * apart in this fixture: its newest charge is Jun 12, and Chase Total Checking,
+   * the one account it is spent from, is imported through Jul 5. Until
+   * 2026-09-15 it read "no spending imported since Jun 12 · 8 days of this period
+   * unaccounted" — on the real ledger that rule named Food's Sep 12 while Chase
+   * Sapphire, 44% of Food, stood at Sep 2.
+   */
+  await expect(
+    budgetRow(page, "Utilities").getByText("spending imported through Jul 5 · 3 days of this period unaccounted"),
+  ).toBeVisible();
   await expect(page.getByText(/On track/)).toHaveCount(0);
   await expect(page.getByText(/Off pace/)).toHaveCount(0);
 });
@@ -289,6 +301,10 @@ test("the page states what it noticed across rows, measured and without a verdic
   // bill (Meal Kit, $125.00) and every budget grading an under-covered window
   await expect(notes.getByText(/One bill totalling \$125\.00/)).toBeVisible();
   await expect(notes.getByText(/budgets are grading days the ledger has not reached/)).toBeVisible();
+  // the widest gap is counted from each category's accounts: Food's 4 days
+  // (Discover, imported through Jul 4) — not Utilities' 8, which its newest
+  // row (Jun 12) used to report
+  await expect(notes.getByText(/up to 4 days on Food/)).toBeVisible();
 
   // …and it withholds rather than estimates: no projection or pace verdict is
   // asserted over a window the ledger has not covered

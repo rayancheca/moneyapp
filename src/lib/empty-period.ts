@@ -182,6 +182,12 @@ export function unreachedDashNote(kinds: Iterable<UnreachedKind>, bucketNoun: "d
  * ⚠️ Days BEFORE the oldest row are not counted — they are not "not imported
  * yet", and the tile never counted them. An empty ledger has imported none of
  * the elapsed days, so all of them count, as they did on the tile.
+ *
+ * ⚠️ `/budgets` is the third caller and hands it a different frontier: the day
+ * every account a budget's category is spent from has been imported through
+ * (`services/budgets`), not the whole ledger's. The clamp is shared; the
+ * population is the caller's. Fed the ledger-wide day, Fees would read 2 days
+ * where its account leaves 15 (measured 2026-09-15).
  */
 export function daysNotImportedYet(input: EmptyPeriodInput): number {
   const { from, to, today } = input;

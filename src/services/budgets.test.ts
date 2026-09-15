@@ -8,6 +8,7 @@ import { seedDatabase } from "@/db/seed";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
+import { budgetVerdict } from "@/lib/budget-verdict";
 import { dedupeHash } from "@/lib/hash";
 import { levelledMonthlyCents } from "@/lib/income-basis";
 import { recurringSeries } from "@/db/schema/recurring";
@@ -73,20 +74,20 @@ function catId(pathStr: string): string {
 }
 
 let seq = 0;
-function spend(postedOn: string, amountCents: number, categoryPath: string): void {
+function spend(postedOn: string, amountCents: number, categoryPath: string, accountId: string = cardId): void {
   seq += 1;
   const rawDescription = `SPEND ${seq}`;
   bundle.db
     .insert(transactions)
     .values({
-      accountId: cardId,
+      accountId,
       postedOn,
       amountCents,
       rawDescription,
       normalizedDescription: rawDescription,
       categoryId: catId(categoryPath),
       dedupeHash: dedupeHash({
-        accountId: cardId,
+        accountId,
         postedOn,
         amountCents,
         rawDescription,
@@ -1848,17 +1849,41 @@ describe("budgetPaceStatuses — end-to-end pace, projection, and tail", () => {
 });
 
 
-describe("data coverage (uncoveredDays / dataThroughOn)", () => {
+/**
+ * Coverage is the day every account a category is SPENT FROM has been imported
+ * through (`observationFrontier` → `frontierForSeries`), never the category's
+ * own newest row.
+ *
+ * 🔴 The newest row let one fresh account vouch for a lagging one. Measured on
+ * the real ledger 2026-09-15: /budgets read Food "spending imported through Sep
+ * 12" (its newest row, on Venture X) while Chase Sapphire, 44% of Food over the
+ * six months before, had been imported only through Sep 2 and Chase Checking
+ * through Aug 12. The same day the dashboard said 94% of spending posts to
+ * accounts shown through Aug 12 at the earliest.
+ *
+ * Every test grades an Aug 2026 window at 2026-08-11, so the accounts window
+ * opens 2026-02-01 (the six full months before August) unless the period opens
+ * earlier.
+ */
+describe("data coverage (uncoveredDays / importedThroughOn)", () => {
+  const TODAY = "2026-08-11";
+
+  function account(name: string, type: "checking" | "investment" = "checking"): string {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    return createAccount(bundle.db, { institutionId: chase.id, name, type });
+  }
+
+  function foodBudget(startsOn = "2026-08-01", period: "monthly" | "annual" = "monthly") {
+    createBudget(bundle.db, { categoryId: catId("Food"), period, amountCents: 100_000, startsOn });
+    return budgetPaceStatuses(bundle.db, TODAY).find((x) => x.categoryName === "Food")!;
+  }
+
   test("a period the ledger does not reach reports the uncovered stretch", () => {
     spend("2026-08-03", -5_000, "Food");
-    createBudget(bundle.db, {
-      categoryId: catId("Food"),
-      period: "monthly",
-      amountCents: 100_000,
-      startsOn: "2026-08-01",
-    });
-    const s = budgetPaceStatuses(bundle.db, "2026-08-11").find((x) => x.categoryName === "Food")!;
-    expect(s.dataThroughOn).toBe("2026-08-03");
+    const s = foodBudget();
+    expect(s.importedThroughOn).toBe("2026-08-03");
+    expect(s.spentFromSince).toBe("2026-02-01");
+    expect(s.spentFromAccounts).toBe(1);
     expect(s.uncoveredDays).toBe(8); // 04-Aug .. 11-Aug inclusive
   });
 
@@ -1869,47 +1894,95 @@ describe("data coverage (uncoveredDays / dataThroughOn)", () => {
       amountCents: 50_000,
       startsOn: "2026-08-01",
     });
-    const s = budgetPaceStatuses(bundle.db, "2026-08-11").find((x) => x.categoryName === "Travel")!;
-    expect(s.dataThroughOn).toBeNull();
+    const s = budgetPaceStatuses(bundle.db, TODAY).find((x) => x.categoryName === "Travel")!;
+    expect(s.importedThroughOn).toBeNull();
+    expect(s.spentFromAccounts).toBe(0);
     expect(s.uncoveredDays).toBe(11);
   });
 
   test("data reaching today leaves nothing uncovered", () => {
     spend("2026-08-11", -5_000, "Food");
-    createBudget(bundle.db, {
-      categoryId: catId("Food"),
-      period: "monthly",
-      amountCents: 100_000,
-      startsOn: "2026-08-01",
-    });
-    const s = budgetPaceStatuses(bundle.db, "2026-08-11").find((x) => x.categoryName === "Food")!;
-    expect(s.uncoveredDays).toBe(0);
+    expect(foodBudget().uncoveredDays).toBe(0);
   });
 
   test("data from a PRIOR period covers none of this one, and never over-counts", () => {
     spend("2026-07-20", -5_000, "Food");
-    createBudget(bundle.db, {
-      categoryId: catId("Food"),
-      period: "monthly",
-      amountCents: 100_000,
-      startsOn: "2026-08-01",
-    });
-    const s = budgetPaceStatuses(bundle.db, "2026-08-11").find((x) => x.categoryName === "Food")!;
-    expect(s.dataThroughOn).toBe("2026-07-20");
+    const s = foodBudget();
+    expect(s.importedThroughOn).toBe("2026-07-20");
     expect(s.uncoveredDays).toBe(11); // the elapsed window, not the 22 days since the row
   });
 
   test("a CHILD's spending counts as coverage for its parent's budget", () => {
     spend("2026-08-09", -2_500, "Food > Coffee");
-    createBudget(bundle.db, {
-      categoryId: catId("Food"),
-      period: "monthly",
-      amountCents: 100_000,
-      startsOn: "2026-08-01",
-    });
-    const s = budgetPaceStatuses(bundle.db, "2026-08-11").find((x) => x.categoryName === "Food")!;
-    expect(s.dataThroughOn).toBe("2026-08-09");
+    const s = foodBudget();
+    expect(s.importedThroughOn).toBe("2026-08-09");
     expect(s.uncoveredDays).toBe(2);
+  });
+
+  test("a row dated today on one account cannot vouch for an account it is also spent from that lags", () => {
+    /*
+     * The one reachable path to a green verdict over unimported days: a cash row
+     * typed for today (addManualTransaction accepts any category and date) while
+     * the card that carries most of the category is weeks behind. The newest
+     * row read Aug 11, left 0 days uncovered and graded "On track".
+     */
+    const wallet = account("Wallet");
+    spend("2026-06-14", -9_000, "Food");
+    spend("2026-08-03", -5_000, "Food"); // the card's newest row — its import frontier
+    spend("2026-08-11", -1_200, "Food", wallet);
+    const s = foodBudget();
+    expect(s.importedThroughOn).toBe("2026-08-03");
+    expect(s.spentFromAccounts).toBe(2);
+    expect(s.uncoveredDays).toBe(8);
+    expect(budgetVerdict({ pace: s.pace, pct: s.pct, uncoveredDays: s.uncoveredDays }).withheld).toBe(true);
+  });
+
+  test("a quiet category is covered through the day its accounts are imported, not through its own last charge", () => {
+    // the card has been imported through today on another category's row, so
+    // August's missing Travel is a measured zero rather than an unread window
+    spend("2026-06-05", -40_000, "Travel");
+    spend("2026-08-11", -1_000, "Food");
+    createBudget(bundle.db, { categoryId: catId("Travel"), period: "monthly", amountCents: 50_000, startsOn: "2026-08-01" });
+    const s = budgetPaceStatuses(bundle.db, TODAY).find((x) => x.categoryName === "Travel")!;
+    expect(s.importedThroughOn).toBe("2026-08-11");
+    expect(s.uncoveredDays).toBe(0);
+  });
+
+  test("the accounts window opens six full months back: a day earlier does not hold the budget back, the first day does", () => {
+    // ⛔ a date window has two ends. The wallet lags at Jul 1 either way; only
+    // whether it carried Food inside Feb 1 .. today decides whether it counts.
+    const dormant = account("Dormant");
+    spend("2026-01-31", -2_000, "Food", dormant);
+    spend("2026-07-01", -2_000, "Shopping", dormant);
+    spend("2026-08-11", -1_000, "Food");
+    const outside = foodBudget();
+    expect(outside.spentFromAccounts).toBe(1);
+    expect(outside.uncoveredDays).toBe(0);
+
+    spend("2026-02-01", -2_000, "Food", dormant);
+    const inside = budgetPaceStatuses(bundle.db, TODAY).find((x) => x.categoryName === "Food")!;
+    expect(inside.spentFromAccounts).toBe(2);
+    expect(inside.importedThroughOn).toBe("2026-07-01");
+    expect(inside.uncoveredDays).toBe(11);
+  });
+
+  test("a period that opens before the six-month window keeps every account spent from inside the period", () => {
+    const wallet = account("Wallet");
+    spend("2026-01-15", -2_000, "Food", wallet);
+    spend("2026-08-11", -1_000, "Food");
+    const s = foodBudget("2026-01-01", "annual");
+    expect(s.spentFromSince).toBe("2026-01-01");
+    expect(s.importedThroughOn).toBe("2026-01-15");
+    expect(s.uncoveredDays).toBe(208); // Jan 16 .. Aug 11 inclusive
+  });
+
+  test("spending only on accounts with no import date leaves the window unread, and says there were accounts", () => {
+    // investment accounts are priced, not imported, so they have no frontier
+    spend("2026-08-05", -3_000, "Food", account("Brokerage", "investment"));
+    const s = foodBudget();
+    expect(s.importedThroughOn).toBeNull();
+    expect(s.spentFromAccounts).toBe(1);
+    expect(s.uncoveredDays).toBe(11);
   });
 });
 

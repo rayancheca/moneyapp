@@ -12,6 +12,7 @@ import { NumberRoll } from "@/components/ui/NumberRoll";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { Popover, usePopover } from "@/components/ui/Popover";
 import { formatDayShort } from "@/lib/format-date";
+import { budgetCoverageSentence } from "@/lib/budget-coverage";
 import { budgetVerdict } from "@/lib/budget-verdict";
 import { formatCents } from "@/lib/money";
 import type { BudgetPace, BudgetPaceStatus } from "@/services/budgets";
@@ -43,26 +44,6 @@ function paceSentence(status: BudgetPaceStatus): string {
   if (status.pace === "over") return `over budget by ${formatCents(-status.remainingCents)}`;
   if (status.pace === "at-risk") return `off pace — ${projected}, over budget`;
   return `on track — ${projected}`;
-}
-
-/**
- * "no spending imported since 8 Jul · 11 days of this period unaccounted".
- * Statement lag is normal here — accounts land on different dates each month —
- * so this reads as a fact about coverage, never as an error.
- *
- * 🔴 THE DOCSTRING WAS RIGHT AND THE CODE DROPPED THREE WORDS. It rendered
- * "· 2 days unaccounted" beside "no spending imported since Aug 12", and on
- * 2026-09-02 that pair invited a reader to compute 21 days and find the card
- * wrong about itself. `uncoveredDays` is scoped to the BUDGET PERIOD — Sep 1
- * and Sep 2 — and never to the elapsed gap since the last import. Same shape as
- * the trust card's bare "52 days" next to "since Dec 5, 2023": two true numbers
- * that a reader joins into one false one. The qualifier is what separates them.
- */
-function coverageSentence(status: BudgetPaceStatus): string {
-  const days = `${status.uncoveredDays} day${status.uncoveredDays === 1 ? "" : "s"} of this period unaccounted`;
-  return status.dataThroughOn
-    ? `no spending imported since ${formatDayShort(status.dataThroughOn)} · ${days}`
-    : `nothing imported for this category yet · ${days}`;
 }
 
 interface BudgetRowProps {
@@ -140,7 +121,7 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
     status.availableCents,
   )}${
     status.rolloverCents > 0 ? ` (${formatCents(status.rolloverCents)} rolled over)` : ""
-  } (${pctDisplay}% of budget). ${elapsedSentence}. ${undermeasured ? coverageSentence(status) : paceSentence(status)}.${
+  } (${pctDisplay}% of budget). ${elapsedSentence}. ${undermeasured ? budgetCoverageSentence(status) : paceSentence(status)}.${
     status.expectedTailCents > 0
       ? ` ${formatCents(status.expectedTailCents)} in recurring still expected this period.`
       : ""
@@ -223,7 +204,7 @@ export function BudgetRow({ status, guidanceCents, spentProvenance, planProvenan
       </div>
 
       {undermeasured && (
-        <p className="mt-2 text-xs text-ink-faint">{coverageSentence(status)}</p>
+        <p className="mt-2 text-xs text-ink-faint">{budgetCoverageSentence(status)}</p>
       )}
 
       {/* Due already and still not posted. Distinct from the forward tail on

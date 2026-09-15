@@ -8,6 +8,7 @@ import { InlineEditableText } from "@/components/ui/InlineEditableText";
 import { Money } from "@/components/ui/Money";
 import { toast } from "@/components/ui/Toast";
 import { BUDGET_PERIODS, type BudgetPeriodKind } from "@/db/schema/budgets";
+import { budgetCoverageFact } from "@/lib/budget-coverage";
 import { formatDayShort } from "@/lib/format-date";
 import { formatCents, parseAmountToCents } from "@/lib/money";
 import type { BudgetPaceStatus } from "@/services/budgets";
@@ -109,9 +110,9 @@ export function BudgetDetails({ status, rolloverEnabled }: BudgetDetailsProps) {
       <p className="text-ink-muted">
         Grading {formatDayShort(status.bounds.start)} – {formatDayShort(status.bounds.end)}
         {status.partialPeriod && " — this budget started mid-period, so only its own days count"}
-        {status.dataThroughOn
-          ? ` · spending imported through ${formatDayShort(status.dataThroughOn)}`
-          : " · nothing imported for this category yet"}
+        {/* the withheld row's sentence is built from this same fact, so the
+            two cannot name different days for one window */}
+        {` · ${budgetCoverageFact(status)}`}
       </p>
 
       {rolloverEnabled ? (
