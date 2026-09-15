@@ -32,7 +32,9 @@ export function isInvestmentSide(account: AccountSideInput): boolean {
  * What an account's balance is to "how long the money lasts":
  *
  *  - `spendable` — "Cash you can spend today", and the forecast's month-end cash
- *  - `investable` — "What selling investments would add"
+ *  - `investable` — "What selling investments would add"; what POSTS to one
+ *    (a dividend, a brokerage fee) moves net worth but not month-end cash
+ *    either (services/forecast `accountsOutsideCash`)
  *  - `owed` — card debt, netted off the cash
  *
  * ⚖️ Owner decision 2026-09-15: Robinhood Cash ($0.90, the brokerage's

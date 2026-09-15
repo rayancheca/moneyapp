@@ -57,6 +57,24 @@ async function bandPartCents(page: Page, label: string): Promise<number> {
   return toCents(text);
 }
 
+/**
+ * What the card's own sentence says each EOM cash leaves out, posted to accounts
+ * outside cash (`OutsideCashNote`): one amount when both readings leave out the
+ * same, the headline's then the pace row's when they differ, and no sentence
+ * when neither leaves out anything. Net-worth signed, as the note prints them.
+ *
+ * Read after `statCents` has waited for the card: the sentence is in the same
+ * server render, so counting it cannot race the tiles.
+ */
+async function outsideCashCents(page: Page): Promise<{ headline: number; pace: number }> {
+  const note = page.locator(`${CARD} p`).filter({ hasText: /^EOM cash leaves out/ });
+  if ((await note.count()) === 0) return { headline: 0, pace: 0 };
+  const amounts = (await note.first().locator("span.figures").allInnerTexts()).map(toCents);
+  expect(amounts.length, "the note prints one amount, or one per reading").toBeGreaterThan(0);
+  const headline = amounts[0]!;
+  return { headline, pace: amounts[1] ?? headline };
+}
+
 const CARD = "section:has(h2:text-matches('^Forecast'))";
 const PACE = `${CARD} div:has(> h3:text-matches('recent pace', 'i'))`;
 
@@ -112,15 +130,23 @@ test.describe("the forecast headline is the schedule", () => {
    * been bitten before by one quantity with two definitions. What keeps it safe
    * is that each belongs to a complete reading and each is labelled with the
    * assumption behind it, so this pins that BOTH are present and that they
-   * differ by exactly the difference between the two nets.
+   * differ by exactly the difference between the two nets — less what each
+   * reading's EOM cash leaves out, which the card names in its own sentence.
+   *
+   * ⚖️ Owner decision 2026-09-15 (3): what posts to a brokerage's own accounts
+   * is what selling investments would add, not month-end cash. The seed's
+   * Robinhood Brokerage carries a $5.00 Gold fee every month that no series owns
+   * before "Detect now", so the pace row's EOM cash leaves it out and the
+   * headline's does not.
    */
   test("each reading carries its own end-of-month cash", async ({ page }) => {
     const headlineCash = await statCents(page, CARD, "EOM cash");
     const paceCash = await statCents(page, PACE, "EOM cash");
     const headlineNet = await statCents(page, CARD, "Projected net");
     const paceNet = await statCents(page, PACE, "Net");
+    const outside = await outsideCashCents(page);
 
-    expect(headlineCash - paceCash).toBe(headlineNet - paceNet);
+    expect(headlineCash - paceCash).toBe(headlineNet - outside.headline - (paceNet - outside.pace));
   });
 
   test("the card says out loud that the headline is bills and pay only", async ({ page }) => {

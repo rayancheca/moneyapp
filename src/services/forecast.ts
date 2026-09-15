@@ -10,7 +10,7 @@ import { trailingPace } from "@/lib/projection";
 import { formatDayShortIn } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import { allocationsFor } from "@/lib/transaction-splits";
-import { cashPosition } from "./accounts";
+import { accountLiquidity, cashPosition, listAccountOptions } from "./accounts";
 import { latestBalances } from "./derivation";
 import { latestBridgedNetWorthCents } from "./in-flight";
 import {
@@ -56,6 +56,57 @@ interface TrailingAllocation {
   postedOn: string;
   amountCents: number;
   categoryId: string | null;
+  /** the row's account — a split part posts where its row does */
+  accountId: string;
+}
+
+/** What one forecast reads ONCE, and every month of its chain shares. */
+interface ForecastReads {
+  /** `seriesIdsNotDrawnAsRecurring` */
+  notDrawn: ReadonlySet<string>;
+  /** `accountsOutsideCash` */
+  outside: ReadonlySet<string>;
+}
+
+/**
+ * The accounts that nothing posted to moves month-end cash: every one
+ * `accountLiquidity` calls `investable`.
+ *
+ * ⚖️ Owner decision 2026-09-15 (3): Robinhood Cash and Robinhood Agentic are
+ * what selling investments would add, not month-end cash. `cashPosition` took
+ * their BALANCES out of it — and the flows stayed in. A dividend paid into
+ * Robinhood Cash does not reach the account he spends from, and a withdrawal
+ * fee charged to it does not leave one; every trailing Dividends and Interest
+ * row on his ledger posts there.
+ *
+ * ⛔ NOT "spendable accounts only". A card is `owed`, and groceries on it leave
+ * cash the day the card is paid — the forecast never projected the payment, a
+ * transfer, so the purchase IS the outflow. A row or series with no account
+ * reads as cash, as every one did before.
+ */
+function accountsOutsideCash(db: AppDatabase): ReadonlySet<string> {
+  const outside = new Set<string>();
+  for (const [accountId, liquidity] of accountLiquidity(db)) {
+    if (liquidity === "investable") outside.add(accountId);
+  }
+  return outside;
+}
+
+/**
+ * The lines one builder adds to a month, and what month-end cash counts of them.
+ *
+ * The lines themselves are unchanged by where they post: a dividend is income
+ * and a brokerage fee is spending, the math table sums them into the net, and
+ * EOM net worth counts them. Only EOM cash leaves out what `outside` accounts
+ * carry — `cashCents` is the same lines built over everything else, not a
+ * share of theirs, because a trailing pace is not linear in its rows.
+ */
+interface ForecastLeg {
+  components: ForecastComponent[];
+  /** these lines as the rows and series on accounts NOT in `ForecastReads.outside` project them */
+  cashCents: number;
+  /** the outside accounts whose rows or series made `cashCents` differ from the lines' sum */
+  outsideAccountIds: ReadonlySet<string>;
 }
 
 /**
@@ -95,6 +146,7 @@ function nonRecurringAllocations(
       postedOn: transactions.postedOn,
       amountCents: transactions.amountCents,
       categoryId: transactions.categoryId,
+      accountId: transactions.accountId,
     })
     .from(transactions)
     .where(
@@ -110,7 +162,7 @@ function nonRecurringAllocations(
   const out: TrailingAllocation[] = [];
   for (const r of rows) {
     for (const a of allocationsFor(r.categoryId, r.amountCents, splits.get(r.id) ?? [])) {
-      out.push({ postedOn: r.postedOn, amountCents: a.amountCents, categoryId: a.categoryId });
+      out.push({ postedOn: r.postedOn, amountCents: a.amountCents, categoryId: a.categoryId, accountId: r.accountId });
     }
   }
   return out;
@@ -209,6 +261,32 @@ export interface MonthForecast {
    * to stop those two halves disagreeing.
    */
   unbankedIncome: UnbankedIncomeTotals;
+  /**
+   * What each reading's EOM cash leaves out: the lines that post to accounts
+   * outside cash (`accountsOutsideCash`). The nets and EOM net worth keep them,
+   * so for the running month
+   *
+   *     projectedEomCashCents  === cash today + projectedNetCents − netCents
+   *     committed.eomCashCents === cash today + committed.netCents − committedNetCents
+   *
+   * and a future month's figures chain every month through it, as its EOM cash
+   * does.
+   *
+   * 🔴 Why the card needs it. Measured on the owner's ledger 2026-09-15, every
+   * trailing Dividends and Interest row posts to Robinhood Cash, so the pace
+   * row's EOM cash leaves out what the headline's does not — and the two EOM
+   * cash figures stop differing by exactly the difference of the two nets.
+   */
+  outsideCash: OutsideCash;
+}
+
+export interface OutsideCash {
+  /** net-worth-signed, of the full reading's net (chained through a future month) */
+  netCents: number;
+  /** net-worth-signed, of the committed reading's net (chained the same way) */
+  committedNetCents: number;
+  /** the accounts those lines post to, in THE account order */
+  accountNames: string[];
 }
 
 interface MonthWindow {
@@ -254,7 +332,8 @@ function fixedComponents(
   today: string,
   from: string,
   monthEnd: string,
-): ForecastComponent[] {
+  outside: ReadonlySet<string>,
+): ForecastLeg {
   // status only — staleness is disclosed per component, never used to exclude
   const live = db
     .select()
@@ -263,6 +342,8 @@ function fixedComponents(
     .all();
 
   const components: { component: ForecastComponent; firstDate: string }[] = [];
+  let cashCents = 0;
+  const outsideAccountIds = new Set<string>();
   for (const series of live) {
     if (series.kind === "transfer") continue;
     /*
@@ -326,6 +407,10 @@ function fixedComponents(
     if (occurrences.length === 0) continue;
     const perOccurrence = occurrences[0]!.amountCents;
     const cents = occurrences.length * perOccurrence;
+    // still his bill, and still in the net — but one charged to an account
+    // outside cash does not come out of EOM cash (`accountsOutsideCash`)
+    if (series.accountId !== null && outside.has(series.accountId)) outsideAccountIds.add(series.accountId);
+    else cashCents += cents;
     components.push({
       firstDate: occurrences[0]!.date,
       component: {
@@ -340,9 +425,13 @@ function fixedComponents(
       },
     });
   }
-  return components
-    .sort((a, b) => compareDates(a.firstDate, b.firstDate) || a.component.label.localeCompare(b.component.label))
-    .map((c) => c.component);
+  return {
+    components: components
+      .sort((a, b) => compareDates(a.firstDate, b.firstDate) || a.component.label.localeCompare(b.component.label))
+      .map((c) => c.component),
+    cashCents,
+    outsideAccountIds,
+  };
 }
 
 /**
@@ -378,7 +467,12 @@ function fixedComponents(
  * as still-to-come would inflate EOM cash on a ledger whose owner is paid in
  * cash.
  */
-function arrearsComponents(db: AppDatabase, today: string, monthStart: string): ForecastComponent[] {
+function arrearsComponents(
+  db: AppDatabase,
+  today: string,
+  monthStart: string,
+  outside: ReadonlySet<string>,
+): ForecastLeg {
   // every live series the forecast would project; `overdueForSeries` applies the
   // money-out and lapsed rules itself, and transfers are never spending here
   const live = db
@@ -390,7 +484,7 @@ function arrearsComponents(db: AppDatabase, today: string, monthStart: string): 
   const byId = new Map(live.map((s) => [s.id, s]));
   const late = overdueForSeries(db, new Set(byId.keys()), monthStart, addDays(today, -1));
 
-  return late.series.map((s) => {
+  const components = late.series.map((s) => {
     const series = byId.get(s.id)!;
     /*
      * Exact, not an estimate: `projectOccurrences` gives every occurrence of one
@@ -407,17 +501,69 @@ function arrearsComponents(db: AppDatabase, today: string, monthStart: string): 
       staleness: seriesStaleness(series, today),
     };
   });
+  // the same rule as the forward leg: a late bill on an account outside cash is
+  // still owed, and still not EOM cash
+  let cashCents = 0;
+  const outsideAccountIds = new Set<string>();
+  for (const s of late.series) {
+    const accountId = byId.get(s.id)!.accountId;
+    if (accountId !== null && outside.has(accountId)) outsideAccountIds.add(accountId);
+    else cashCents -= s.amountCents;
+  }
+  return { components, cashCents, outsideAccountIds };
 }
 
 const UNCATEGORIZED_LABEL = "Uncategorized";
+
+/** Trailing rows summed per bucket and month, twice — see `bucketTrailing`. */
+interface BucketedTrailing {
+  /** bucket → monthKey → net-worth-signed sum, over every row */
+  all: Map<string, Map<string, number>>;
+  /** the same, over the rows on accounts NOT in `ForecastReads.outside` */
+  cash: Map<string, Map<string, number>>;
+  /** bucket → the outside accounts whose rows `all` summed and `cash` did not */
+  outsideAccounts: Map<string, Set<string>>;
+}
+
+/**
+ * Both variable legs bucket their trailing rows here, once over every row (the
+ * lines) and once over the rows EOM cash counts. `bucketOf` names a row's
+ * bucket, or null to leave it out of both.
+ */
+function bucketTrailing(
+  rows: readonly TrailingAllocation[],
+  bucketOf: (row: TrailingAllocation) => string | null,
+  outside: ReadonlySet<string>,
+): BucketedTrailing {
+  const all = new Map<string, Map<string, number>>();
+  const cash = new Map<string, Map<string, number>>();
+  const outsideAccounts = new Map<string, Set<string>>();
+  const addTo = (sums: Map<string, Map<string, number>>, label: string, row: TrailingAllocation) => {
+    const perMonth = sums.get(label) ?? new Map<string, number>();
+    const month = monthKey(row.postedOn);
+    perMonth.set(month, (perMonth.get(month) ?? 0) + row.amountCents);
+    sums.set(label, perMonth);
+  };
+  for (const row of rows) {
+    const label = bucketOf(row);
+    if (label === null) continue;
+    addTo(all, label, row);
+    if (outside.has(row.accountId)) {
+      outsideAccounts.set(label, (outsideAccounts.get(label) ?? new Set<string>()).add(row.accountId));
+    } else {
+      addTo(cash, label, row);
+    }
+  }
+  return { all, cash, outsideAccounts };
+}
 
 function variableComponents(
   db: AppDatabase,
   today: string,
   remainingDays: number,
   daysInMonth: number,
-  notDrawn: ReadonlySet<string>,
-): ForecastComponent[] {
+  { notDrawn, outside }: ForecastReads,
+): ForecastLeg {
   const windows = trailingFullMonths(today, TRAILING_FULL_MONTHS);
   const rangeStart = windows[0]!.start;
   const rangeEnd = windows.at(-1)!.end;
@@ -438,30 +584,31 @@ function variableComponents(
   // series' stopped, and a dismissed series owns none — its rows are pace here
   const rows = nonRecurringAllocations(db, rangeStart, rangeEnd, notDrawn);
 
-  // bucket → monthKey → net-worth-signed sum
-  const buckets = new Map<string, Map<string, number>>();
-  const add = (label: string, month: string, cents: number) => {
-    const perMonth = buckets.get(label) ?? new Map<string, number>();
-    perMonth.set(month, (perMonth.get(month) ?? 0) + cents);
-    buckets.set(label, perMonth);
+  const buckets = bucketTrailing(
+    rows,
+    (t) => {
+      if (t.categoryId === null || categoryById.get(t.categoryId)?.kind === "system") {
+        // uncategorized negatives are an explicit spending bucket, never hidden —
+        // and a row filed on the system "Uncategorized" category is uncategorized
+        return t.amountCents < 0 ? UNCATEGORIZED_LABEL : null;
+      }
+      const root = rootOf(t.categoryId);
+      return root && root.kind === "expense" ? root.name : null;
+    },
+    outside,
+  );
+
+  // the pace one bucket's trailing months project over the days remaining
+  const project = (perMonth: ReadonlyMap<string, number> | undefined) => {
+    // spend magnitudes per trailing month (outflow negative → positive spend)
+    const pace = trailingPace(windows.map((w) => -(perMonth?.get(w.key) ?? 0)));
+    return { pace, projected: Math.round((pace.expectedExactCents * remainingDays) / daysInMonth) };
   };
 
-  for (const t of rows) {
-    if (t.categoryId === null || categoryById.get(t.categoryId)?.kind === "system") {
-      // uncategorized negatives are an explicit spending bucket, never hidden —
-      // and a row filed on the system "Uncategorized" category is uncategorized
-      if (t.amountCents < 0) add(UNCATEGORIZED_LABEL, monthKey(t.postedOn), t.amountCents);
-      continue;
-    }
-    const root = rootOf(t.categoryId);
-    if (!root || root.kind !== "expense") continue;
-    add(root.name, monthKey(t.postedOn), t.amountCents);
-  }
-
   const components: ForecastComponent[] = [];
-  for (const [label, perMonth] of buckets) {
-    // spend magnitudes per trailing month (outflow negative → positive spend)
-    const spend = windows.map((w) => -(perMonth.get(w.key) ?? 0));
+  let cashCents = 0;
+  const outsideAccountIds = new Set<string>();
+  for (const [label, perMonth] of buckets.all) {
     /*
      * ⛔ ONE definition of the pace, and it does not live here.
      *
@@ -474,8 +621,14 @@ function variableComponents(
      * decides, and the cap it applies is measured rather than chosen: see its
      * docstring for the 36-month backtest.
      */
-    const pace = trailingPace(spend);
-    const projected = Math.round((pace.expectedExactCents * remainingDays) / daysInMonth);
+    const { pace, projected } = project(perMonth);
+    // what EOM cash counts: the same pace over this bucket's rows off outside
+    // accounts — not a share of the line, since a capped trend is not linear
+    const cashProjected = project(buckets.cash.get(label)).projected;
+    const line = projected > 0 ? -projected : 0;
+    const cashLine = cashProjected > 0 ? -cashProjected : 0;
+    cashCents += cashLine;
+    if (cashLine !== line) for (const id of buckets.outsideAccounts.get(label) ?? []) outsideAccountIds.add(id);
     if (projected <= 0) continue;
     /*
      * The detail names the RAW slope as well as the applied one whenever they
@@ -514,9 +667,13 @@ function variableComponents(
     });
   }
 
-  return components.sort(
-    (a, b) => Math.abs(b.cents) - Math.abs(a.cents) || a.label.localeCompare(b.label),
-  );
+  return {
+    components: components.sort(
+      (a, b) => Math.abs(b.cents) - Math.abs(a.cents) || a.label.localeCompare(b.label),
+    ),
+    cashCents,
+    outsideAccountIds,
+  };
 }
 
 /**
@@ -552,8 +709,8 @@ function variableIncomeComponents(
   today: string,
   remainingDays: number,
   daysInMonth: number,
-  notDrawn: ReadonlySet<string>,
-): ForecastComponent[] {
+  { notDrawn, outside }: ForecastReads,
+): ForecastLeg {
   const windows = trailingFullMonths(today, TRAILING_FULL_MONTHS);
   const rangeStart = windows[0]!.start;
   const rangeEnd = windows.at(-1)!.end;
@@ -578,30 +735,42 @@ function variableIncomeComponents(
   // stopped, and a dismissed series owns none — its deposits are pace here
   const rows = nonRecurringAllocations(db, rangeStart, rangeEnd, notDrawn);
 
-  const buckets = new Map<string, Map<string, number>>();
-  for (const t of rows) {
-    if (t.categoryId === null || t.amountCents <= 0) continue; // income is a positive inflow
-    const label = incomeBucket(t.categoryId);
-    if (label === null) continue;
-    const perMonth = buckets.get(label) ?? new Map<string, number>();
-    const mk = monthKey(t.postedOn);
-    perMonth.set(mk, (perMonth.get(mk) ?? 0) + t.amountCents);
-    buckets.set(label, perMonth);
+  const buckets = bucketTrailing(
+    rows,
+    // income is a positive inflow
+    (t) => (t.categoryId === null || t.amountCents <= 0 ? null : incomeBucket(t.categoryId)),
+    outside,
+  );
+
+  // the ongoing-income lines one set of bucket sums projects over the days remaining
+  const project = (sums: ReadonlyMap<string, ReadonlyMap<string, number>>): ForecastComponent[] =>
+    projectOngoingIncome(
+      [...sums].map(([label, perMonth]) => ({
+        label,
+        monthlyTotalsCents: windows.map((w) => perMonth.get(w.key) ?? 0),
+      })),
+    )
+      .map((e) => ({
+        label: e.label,
+        kind: "variable" as const,
+        cents: Math.round((e.monthlyCents * remainingDays) / daysInMonth),
+        detail: `${e.basis}, × ${remainingDays}/${daysInMonth} days`,
+      }))
+      .filter((c) => c.cents > 0);
+
+  const components = project(buckets.all);
+  // what EOM cash counts: the same gate and average over the rows off outside
+  // accounts — a bucket can pass the presence gate on all its rows and fail it on those
+  const lines = new Map(components.map((c) => [c.label, c.cents]));
+  const cashLines = new Map(project(buckets.cash).map((c) => [c.label, c.cents]));
+  let cashCents = 0;
+  const outsideAccountIds = new Set<string>();
+  for (const label of buckets.all.keys()) {
+    const cashLine = cashLines.get(label) ?? 0;
+    cashCents += cashLine;
+    if (cashLine !== (lines.get(label) ?? 0)) for (const id of buckets.outsideAccounts.get(label) ?? []) outsideAccountIds.add(id);
   }
-
-  const trailing = [...buckets].map(([label, perMonth]) => ({
-    label,
-    monthlyTotalsCents: windows.map((w) => perMonth.get(w.key) ?? 0),
-  }));
-
-  return projectOngoingIncome(trailing)
-    .map((e) => ({
-      label: e.label,
-      kind: "variable" as const,
-      cents: Math.round((e.monthlyCents * remainingDays) / daysInMonth),
-      detail: `${e.basis}, × ${remainingDays}/${daysInMonth} days`,
-    }))
-    .filter((c) => c.cents > 0);
+  return { components, cashCents, outsideAccountIds };
 }
 
 /**
@@ -636,39 +805,100 @@ function monthsBetweenKeys(from: string, to: string): number {
  * worth rather than a prorated tail, and the fixed occurrences are the ones due
  * between the 1st and the last — not the ones left after today.
  */
-function futureMonthParts(
-  db: AppDatabase,
-  today: string,
-  key: string,
-  notDrawn: ReadonlySet<string>,
-): {
-  components: ForecastComponent[];
-  monthStart: string;
-  monthEnd: string;
-  daysInMonth: number;
-  net: number;
-  committedNet: number;
-} {
+function futureMonthParts(db: AppDatabase, today: string, key: string, reads: ForecastReads): MonthParts {
   const monthStart = `${key}-01`;
   const monthEnd = periodBounds(monthStart, "monthly").end;
   const daysInMonth = diffDays(monthStart, monthEnd) + 1;
-  const components = [
-    ...fixedComponents(db, today, monthStart, monthEnd),
-    // the whole month remains, so the trailing pace applies in full
-    ...variableIncomeComponents(db, today, daysInMonth, daysInMonth, notDrawn),
-    ...variableComponents(db, today, daysInMonth, daysInMonth, notDrawn),
-  ];
-  const income = components.reduce((sum, c) => (c.cents > 0 ? sum + c.cents : sum), 0);
-  const spend = components.reduce((sum, c) => (c.cents < 0 ? sum + c.cents : sum), 0);
-  const split = forecastSplit(components);
   return {
-    components,
     monthStart,
     monthEnd,
     daysInMonth,
-    net: income + spend,
-    committedNet: split.income.fixedCents + split.spending.fixedCents,
+    // the whole month is ahead of today
+    remainingDays: daysInMonth,
+    ...assembleLegs(
+      [fixedComponents(db, today, monthStart, monthEnd, reads.outside)],
+      [
+        // the whole month remains, so the trailing pace applies in full
+        variableIncomeComponents(db, today, daysInMonth, daysInMonth, reads),
+        variableComponents(db, today, daysInMonth, daysInMonth, reads),
+      ],
+    ),
   };
+}
+
+/** The nets a month contributes to a chain — each reading's, and what EOM cash counts of each. */
+interface ChainedNets {
+  /** Σ every line: the full reading's net */
+  net: number;
+  /** Σ the fixed lines: the committed reading's net */
+  committedNet: number;
+  /** what EOM cash counts of `net` (`ForecastLeg.cashCents`) */
+  cashNet: number;
+  /** what EOM cash counts of `committedNet` */
+  committedCashNet: number;
+  /** the outside accounts that made either pair differ */
+  outsideAccountIds: ReadonlySet<string>;
+}
+
+/** One month's window, its lines, and the nets its readings take from them. */
+interface MonthParts extends ChainedNets {
+  monthStart: string;
+  monthEnd: string;
+  daysInMonth: number;
+  /** today through month end, inclusive — the whole month for a future one */
+  remainingDays: number;
+  components: ForecastComponent[];
+}
+
+/**
+ * The fixed legs, then the variable ones, as ONE array — the math table reads in
+ * this order — with the nets every reading takes from it.
+ *
+ * `committedNet` is the fixed lines by `forecastSplit`, as it always was; the
+ * fixed legs hold exactly those lines, so what EOM cash counts of it is theirs.
+ */
+function assembleLegs(
+  fixed: readonly ForecastLeg[],
+  variable: readonly ForecastLeg[],
+): ChainedNets & { components: ForecastComponent[] } {
+  const legs = [...fixed, ...variable];
+  const components = legs.flatMap((leg) => leg.components);
+  const split = forecastSplit(components);
+  const cashOf = (some: readonly ForecastLeg[]) => some.reduce((sum, leg) => sum + leg.cashCents, 0);
+  return {
+    components,
+    net: components.reduce((sum, c) => sum + c.cents, 0),
+    committedNet: split.income.fixedCents + split.spending.fixedCents,
+    cashNet: cashOf(legs),
+    committedCashNet: cashOf(fixed),
+    outsideAccountIds: new Set(legs.flatMap((leg) => [...leg.outsideAccountIds])),
+  };
+}
+
+/** A chain one month longer. Each pair is chained on its own — see `forecastForMonth`. */
+function chainMonth(sofar: ChainedNets, month: ChainedNets): ChainedNets {
+  return {
+    net: sofar.net + month.net,
+    committedNet: sofar.committedNet + month.committedNet,
+    cashNet: sofar.cashNet + month.cashNet,
+    committedCashNet: sofar.committedCashNet + month.committedCashNet,
+    outsideAccountIds: new Set([...sofar.outsideAccountIds, ...month.outsideAccountIds]),
+  };
+}
+
+/** `MonthForecast.outsideCash` for a chain: what each reading's EOM cash left out, and where it posts. */
+function outsideCashOf(db: AppDatabase, nets: ChainedNets): OutsideCash {
+  const ids = nets.outsideAccountIds;
+  return {
+    netCents: nets.net - nets.cashNet,
+    committedNetCents: nets.committedNet - nets.committedCashNet,
+    accountNames: ids.size === 0 ? [] : listAccountOptions(db).filter((a) => ids.has(a.id)).map((a) => a.name),
+  };
+}
+
+/** What a forecast reads once for its whole chain (`ForecastReads`). */
+function forecastReads(db: AppDatabase): ForecastReads {
+  return { notDrawn: seriesIdsNotDrawnAsRecurring(db), outside: accountsOutsideCash(db) };
 }
 
 /**
@@ -693,34 +923,30 @@ export function forecastForMonth(
   const ahead = monthsBetweenKeys(current, key);
   if (ahead < 0) return null;
   if (ahead > FORECAST_HORIZON_MONTHS) return null;
-  // ONE read for the whole chain: the set cannot change inside this call, and
-  // every month below reaches the trailing pace twice (spend and income)
-  const notDrawn = seriesIdsNotDrawnAsRecurring(db);
-  if (ahead === 0) return currentMonthForecast(db, today, notDrawn);
+  // ONE read of each for the whole chain: neither can change inside this call,
+  // and every month below reaches the trailing pace twice (spend and income)
+  const reads = forecastReads(db);
+  if (ahead === 0) return currentMonthForecast(db, today, reads);
 
-  const parts = futureMonthParts(db, today, key, notDrawn);
+  const parts = futureMonthParts(db, today, key, reads);
 
   /*
    * The running month's own remainder starts the chain — the months between
-   * are whole ones. The running month is forecast once here rather than per
-   * step; the loop below only needs each future month's NET.
-   */
-  const running = currentMonthForecast(db, today, notDrawn);
-  let chainedNet = running.projectedNetCents;
-  /*
+   * are whole ones. The running month is built once here rather than per step;
+   * the chain only needs each month's NETS.
+   *
    * ⛔ The committed reading is chained SEPARATELY, never derived from the full
    * one. "Today's cash plus every month's committed net" and "the full chain
    * minus the pace" are the same number only when the pace is zero, and the
-   * whole reason this figure exists is that it is not.
+   * whole reason this figure exists is that it is not. What EOM cash counts of
+   * each is chained separately again, for the same reason: a pace line can post
+   * outside cash where no committed line does.
    */
-  let chainedCommittedNet = running.committed.netCents;
+  let chained: ChainedNets = currentMonthParts(db, today, reads);
   for (let i = 1; i < ahead; i++) {
-    const between = futureMonthParts(db, today, addMonthKey(current, i), notDrawn);
-    chainedNet += between.net;
-    chainedCommittedNet += between.committedNet;
+    chained = chainMonth(chained, futureMonthParts(db, today, addMonthKey(current, i), reads));
   }
-  chainedNet += parts.net;
-  chainedCommittedNet += parts.committedNet;
+  chained = chainMonth(chained, parts);
 
   // what he can spend today, by the one rule `runwayCard` reads (`cashPosition`)
   const balances = latestBalances(db);
@@ -738,19 +964,19 @@ export function forecastForMonth(
     monthStart: parts.monthStart,
     monthEnd: parts.monthEnd,
     daysInMonth: parts.daysInMonth,
-    // the whole month is ahead of today
-    remainingDays: parts.daysInMonth,
+    remainingDays: parts.remainingDays,
     projectedIncomeCents: income,
     projectedSpendCents: spend,
     projectedNetCents: parts.net,
-    projectedEomCashCents: cashCents + chainedNet,
-    projectedEomNetWorthCents: netWorthCents + chainedNet,
+    // EOM cash chains what it counts; EOM net worth chains every line
+    projectedEomCashCents: cashCents + chained.cashNet,
+    projectedEomNetWorthCents: netWorthCents + chained.net,
     committed: {
       incomeCents: split.income.fixedCents,
       spendCents: split.spending.fixedCents,
       netCents: parts.committedNet,
-      eomCashCents: cashCents + chainedCommittedNet,
-      eomNetWorthCents: netWorthCents + chainedCommittedNet,
+      eomCashCents: cashCents + chained.committedCashNet,
+      eomNetWorthCents: netWorthCents + chained.committedNet,
     },
     components: parts.components,
     /*
@@ -759,27 +985,43 @@ export function forecastForMonth(
      * omitted: this field is a measurement, and an empty one is the answer here.
      */
     unbankedIncome: { totalCents: 0, occurrenceCount: 0, checkedOccurrenceCount: 0, frontier: { kind: "unchecked" }, names: [] },
+    outsideCash: outsideCashOf(db, chained),
   };
 }
 
 export function forecastCurrentMonth(db: AppDatabase, today: string = todayIso()): MonthForecast {
-  return currentMonthForecast(db, today, seriesIdsNotDrawnAsRecurring(db));
+  return currentMonthForecast(db, today, forecastReads(db));
 }
 
-/** The running month, with the not-recurring series already read once (see `forecastForMonth`). */
-function currentMonthForecast(db: AppDatabase, today: string, notDrawn: ReadonlySet<string>): MonthForecast {
+/** The running month's window, lines and nets (see `MonthParts`). */
+function currentMonthParts(db: AppDatabase, today: string, reads: ForecastReads): MonthParts {
   const { start: monthStart, end: monthEnd } = periodBounds(today, "monthly");
   const daysInMonth = diffDays(monthStart, monthEnd) + 1;
   const remainingDays = diffDays(today, monthEnd) + 1;
+  return {
+    monthStart,
+    monthEnd,
+    daysInMonth,
+    remainingDays,
+    ...assembleLegs(
+      [
+        // arrears first: they are dated before every forward occurrence, and the
+        // math table reads in the order this array is built
+        arrearsComponents(db, today, monthStart, reads.outside),
+        fixedComponents(db, today, today, monthEnd, reads.outside),
+      ],
+      [
+        variableIncomeComponents(db, today, remainingDays, daysInMonth, reads),
+        variableComponents(db, today, remainingDays, daysInMonth, reads),
+      ],
+    ),
+  };
+}
 
-  const components = [
-    // arrears first: they are dated before every forward occurrence, and the
-    // math table reads in the order this array is built
-    ...arrearsComponents(db, today, monthStart),
-    ...fixedComponents(db, today, today, monthEnd),
-    ...variableIncomeComponents(db, today, remainingDays, daysInMonth, notDrawn),
-    ...variableComponents(db, today, remainingDays, daysInMonth, notDrawn),
-  ];
+/** The running month, with the chain's reads already taken once (see `forecastForMonth`). */
+function currentMonthForecast(db: AppDatabase, today: string, reads: ForecastReads): MonthForecast {
+  const parts = currentMonthParts(db, today, reads);
+  const { monthStart, monthEnd, daysInMonth, remainingDays, components } = parts;
 
   /*
    * ⛔ Computed, never added. It is not in `components`, so the math table's
@@ -825,16 +1067,18 @@ function currentMonthForecast(db: AppDatabase, today: string, notDrawn: Readonly
     projectedIncomeCents,
     projectedSpendCents,
     projectedNetCents,
-    projectedEomCashCents: cashCents + projectedNetCents,
+    // EOM cash adds what it counts of the net; EOM net worth adds all of it
+    projectedEomCashCents: cashCents + parts.cashNet,
     projectedEomNetWorthCents: latestNetWorth + projectedNetCents,
     committed: {
       incomeCents: committedSplit.income.fixedCents,
       spendCents: committedSplit.spending.fixedCents,
       netCents: committedNetCents,
-      eomCashCents: cashCents + committedNetCents,
+      eomCashCents: cashCents + parts.committedCashNet,
       eomNetWorthCents: latestNetWorth + committedNetCents,
     },
     components,
     unbankedIncome: unbankedIncomeTotals(unbanked),
+    outsideCash: outsideCashOf(db, parts),
   };
 }

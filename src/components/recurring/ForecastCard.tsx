@@ -36,6 +36,45 @@ export function UnbankedIncomeNote({ unbanked: u }: { unbanked: MonthForecast["u
   );
 }
 
+/** "A", "A and B", "A, B, and C" — the platform's own list rather than another hand-rolled join. */
+const ACCOUNT_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
+
+/**
+ * What both EOM cash figures leave out, and where it posts.
+ *
+ * ⚖️ Owner decision 2026-09-15 (3): Robinhood Cash and Robinhood Agentic are
+ * what selling investments would add, and so is whatever posts to them
+ * (`services/forecast` `accountsOutsideCash`). The nets on this card and its EOM
+ * net worth keep those lines; its EOM cash does not. Without this sentence the
+ * headline's EOM cash minus the pace row's stops equalling the headline's net
+ * minus the pace row's, and nothing on the card says by how much or why.
+ *
+ * One amount when both readings leave out the same — no pace line posts there —
+ * and both, each under the reading it belongs to, when they differ.
+ */
+export function OutsideCashNote({ outside }: { outside: MonthForecast["outsideCash"] }) {
+  if (outside.netCents === 0 && outside.committedNetCents === 0) return null;
+  const accounts = ACCOUNT_LIST.format(outside.accountNames);
+  const why = "because that is money selling investments would add, not cash you can spend";
+  return (
+    <p className="mt-1 text-xs text-ink-faint">
+      {outside.netCents === outside.committedNetCents ? (
+        <>
+          EOM cash leaves out the <Money cents={outside.netCents} flow /> projected to post to {accounts} by month end,{" "}
+          {why}.
+        </>
+      ) : (
+        <>
+          EOM cash leaves out what is projected to post to {accounts} by month end, {why}:{" "}
+          <Money cents={outside.committedNetCents} flow /> in the headline and <Money cents={outside.netCents} flow /> at
+          your recent pace.
+        </>
+      )}{" "}
+      EOM net worth keeps it.
+    </p>
+  );
+}
+
 /** One tile of the headline row. */
 function Stat({ label, cents, flow = false }: { label: string; cents: number; flow?: boolean }) {
   return (
@@ -62,7 +101,9 @@ function Stat({ label, cents, flow = false }: { label: string; cents: number; fl
  * been bitten before by one quantity with two definitions. What makes it safe
  * here is that neither is a total of the other's row: each is a complete,
  * internally consistent reading of the month, and each says in its own label
- * which assumption produced it.
+ * which assumption produced it. Where a line posts outside cash (a dividend
+ * paid into Robinhood Cash), each EOM cash leaves out its own reading's share,
+ * and `OutsideCashNote` prints both amounts.
  */
 function PaceRow({ forecast: f }: { forecast: MonthForecast }) {
   const paceIncome = f.projectedIncomeCents - f.committed.incomeCents;
@@ -184,6 +225,8 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
           $1,047.00 apart, which is exactly what `committed`'s own docstring says
           this headline exists to prevent. */}
       {f.unbankedIncome.totalCents > 0 && <UnbankedIncomeNote unbanked={f.unbankedIncome} />}
+
+      <OutsideCashNote outside={f.outsideCash} />
 
       <ForecastComposition split={split} />
 

@@ -106,6 +106,8 @@ describe("forecastCurrentMonth", () => {
     status?: SeriesStatus;
     /** omitted → never matched, which reads as stale (services/recurring.ts) */
     lastMatchedOn?: string;
+    /** omitted → no account, which the forecast reads as cash */
+    accountId?: string;
   }): string {
     return bundle.db
       .insert(recurringSeries)
@@ -689,36 +691,11 @@ describe("forecastCurrentMonth", () => {
   });
 
   /**
-   * ⚖️ Owner decision 2026-09-15: the forecast's month-end cash leaves out
-   * Robinhood Cash ($0.90) and Robinhood Agentic ($26.64). Both are `checking`
-   * for balance replay, and both of this module's walks summed every checking
-   * and savings account. Measured on his ledger 2026-09-15 before the fix:
-   * September EOM cash $1,093.15 (committed $4,369.81), October −$3,390.52
-   * (committed $6,029.84).
-   *
-   * Checked on BOTH walks — the running month's and a future month's — because
-   * each read the balances on its own.
+   * Robinhood as the owner's ledger holds it: the brokerage, its settlement cash
+   * and Claude's trading account, all printed on ONE statement file — the fact
+   * `accountLiquidity` reads to call the two deposit accounts investable.
    */
-  test("brokerage cash printed on an investment statement is not month-end cash, now or next month", () => {
-    for (const [accountId, cents] of [
-      [checkingId, 500000],
-      [savingsId, 100000],
-      [cardId, -50000],
-    ] as const) {
-      bundle.db.insert(dailyBalances).values({ accountId, day: "2026-07-07", balanceCents: cents, basis: "anchored" }).run();
-    }
-    insertSeries({
-      name: "Payroll",
-      kind: "income",
-      cadence: "weekly",
-      intervalDaysAvg: 7,
-      nextExpectedOn: "2026-07-09",
-      nextExpectedAmountCents: 80000,
-      status: "confirmed",
-    });
-    const beforeJul = forecastCurrentMonth(bundle.db, TODAY);
-    const beforeAug = forecastForMonth(bundle.db, "2026-08", TODAY)!;
-
+  function robinhoodPrintedWithBrokerage(): { brokerage: string; settlement: string; agentic: string } {
     const robinhood = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!.id;
     const brokerage = createAccount(bundle.db, {
       institutionId: robinhood,
@@ -759,6 +736,41 @@ describe("forecastCurrentMonth", () => {
         })
         .run();
     });
+    return { brokerage, settlement, agentic };
+  }
+
+  /**
+   * ⚖️ Owner decision 2026-09-15: the forecast's month-end cash leaves out
+   * Robinhood Cash ($0.90) and Robinhood Agentic ($26.64). Both are `checking`
+   * for balance replay, and both of this module's walks summed every checking
+   * and savings account. Measured on his ledger 2026-09-15 before the fix:
+   * September EOM cash $1,093.15 (committed $4,369.81), October −$3,390.52
+   * (committed $6,029.84).
+   *
+   * Checked on BOTH walks — the running month's and a future month's — because
+   * each read the balances on its own.
+   */
+  test("brokerage cash printed on an investment statement is not month-end cash, now or next month", () => {
+    for (const [accountId, cents] of [
+      [checkingId, 500000],
+      [savingsId, 100000],
+      [cardId, -50000],
+    ] as const) {
+      bundle.db.insert(dailyBalances).values({ accountId, day: "2026-07-07", balanceCents: cents, basis: "anchored" }).run();
+    }
+    insertSeries({
+      name: "Payroll",
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+      nextExpectedOn: "2026-07-09",
+      nextExpectedAmountCents: 80000,
+      status: "confirmed",
+    });
+    const beforeJul = forecastCurrentMonth(bundle.db, TODAY);
+    const beforeAug = forecastForMonth(bundle.db, "2026-08", TODAY)!;
+
+    const { settlement, agentic } = robinhoodPrintedWithBrokerage();
     for (const [accountId, cents] of [
       [settlement, 90],
       [agentic, 2664],
@@ -776,6 +788,111 @@ describe("forecastCurrentMonth", () => {
     // the money is still his — net worth carries it on both walks
     expect(jul.projectedEomNetWorthCents).toBe(beforeJul.projectedEomNetWorthCents + 90 + 2664);
     expect(aug.projectedEomNetWorthCents).toBe(beforeAug.projectedEomNetWorthCents + 90 + 2664);
+  });
+
+  /**
+   * 🔴 …AND WHAT POSTS TO THEM. The balance fix above left the flows on every
+   * account: month-end cash stopped starting from Robinhood Cash but still
+   * added the dividends and interest paid into it and took off the withdrawal
+   * fees charged to it. Every trailing Dividends and Interest row on his ledger
+   * posts there. Measured on a backup of it 2026-09-15, with those rows set
+   * aside, September EOM cash read $1,046.18 against the $1,065.61 shipped,
+   * October −$3,473.94 against −$3,418.06, November −$8,744.94 against
+   * −$8,652.61 — the gap carried forward month to month.
+   *
+   * ⛔ Not "rows on spendable accounts only": a card is `owed`, and groceries
+   * on a card leave cash the day the card is paid. Only `investable` accounts
+   * are outside it, and net worth keeps every line.
+   */
+  test("what posts to a brokerage's own accounts moves net worth, not month-end cash, on both readings and both walks", () => {
+    bundle.db
+      .insert(dailyBalances)
+      .values({ accountId: checkingId, day: "2026-07-07", balanceCents: 500000, basis: "anchored" })
+      .run();
+    insertSeries({
+      name: "Payroll",
+      kind: "income",
+      cadence: "weekly",
+      intervalDaysAvg: 7,
+      nextExpectedOn: "2026-07-09",
+      nextExpectedAmountCents: 80000,
+      status: "confirmed",
+    });
+    for (const month of ["2026-04", "2026-05", "2026-06"]) {
+      insertTxn(cardId, `${month}-10`, -30000, { categoryName: "Groceries" });
+      insertTxn(checkingId, `${month}-12`, -300, { categoryName: "ATM Fees" });
+    }
+    const before = forecastCurrentMonth(bundle.db, TODAY);
+    const beforeAug = forecastForMonth(bundle.db, "2026-08", TODAY)!;
+    // nothing posts outside cash yet — a card's groceries included, EOM cash is today's cash plus the net
+    expect(before.components.map((c) => c.label)).toEqual(expect.arrayContaining(["Food", "Fees"]));
+    expect(before.projectedEomCashCents).toBe(500000 + before.projectedNetCents);
+    expect(before.committed.eomCashCents).toBe(500000 + before.committed.netCents);
+    expect(before.outsideCash).toEqual({ netCents: 0, committedNetCents: 0, accountNames: [] });
+
+    const { brokerage, settlement } = robinhoodPrintedWithBrokerage();
+    insertSeries({
+      name: "Robinhood Gold",
+      kind: "subscription",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-20",
+      nextExpectedAmountCents: -500,
+      status: "confirmed",
+      lastMatchedOn: "2026-06-20",
+      accountId: settlement,
+    });
+    // came due Jul 3 and never posted: the arrears leg follows the same rule
+    insertSeries({
+      name: "Margin interest",
+      kind: "bill",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-03",
+      nextExpectedAmountCents: -700,
+      status: "confirmed",
+      lastMatchedOn: "2026-06-03",
+      accountId: settlement,
+    });
+    for (const month of ["2026-04", "2026-05", "2026-06"]) {
+      insertTxn(settlement, `${month}-15`, 4000, { categoryName: "Dividends" });
+      // the same Fees bucket as the checking ATM fee: only this half leaves out
+      insertTxn(settlement, `${month}-20`, -1895, { categoryName: "Bank Fees" });
+      insertTxn(brokerage, `${month}-25`, 111, { categoryName: "Interest" });
+    }
+
+    const after = forecastCurrentMonth(bundle.db, TODAY);
+    const afterAug = forecastForMonth(bundle.db, "2026-08", TODAY)!;
+
+    // the lines still say what he earns and pays
+    expect(after.components.map((c) => c.label)).toEqual(
+      expect.arrayContaining(["Dividends", "Interest", "Robinhood Gold", "Margin interest", "Fees"]),
+    );
+    expect(after.projectedNetCents).not.toBe(before.projectedNetCents);
+
+    // month-end cash is what the cash accounts and the cards project, on both readings and both walks
+    expect(after.projectedEomCashCents).toBe(before.projectedEomCashCents);
+    expect(after.committed.eomCashCents).toBe(before.committed.eomCashCents);
+    expect(afterAug.projectedEomCashCents).toBe(beforeAug.projectedEomCashCents);
+    expect(afterAug.committed.eomCashCents).toBe(beforeAug.committed.eomCashCents);
+
+    // what it leaves out is named, to the cent — and Agentic, with nothing posted, is not
+    expect(after.outsideCash).toEqual({
+      netCents: after.projectedNetCents - before.projectedNetCents,
+      // Gold on Jul 20, and the margin bill that came due Jul 3
+      committedNetCents: -500 - 700,
+      accountNames: ["Robinhood Brokerage", "Robinhood Cash"],
+    });
+    expect(after.projectedEomCashCents).toBe(500000 + after.projectedNetCents - after.outsideCash.netCents);
+    expect(after.committed.eomCashCents).toBe(500000 + after.committed.netCents - after.outsideCash.committedNetCents);
+    // August's chains July's: two of each by the end of it
+    expect(afterAug.outsideCash.committedNetCents).toBe(2 * (-500 - 700));
+
+    // net worth keeps every line, on both walks
+    expect(after.projectedEomNetWorthCents - before.projectedEomNetWorthCents).toBe(after.outsideCash.netCents);
+    expect(after.committed.eomNetWorthCents - before.committed.eomNetWorthCents).toBe(-500 - 700);
+    expect(afterAug.projectedEomNetWorthCents - beforeAug.projectedEomNetWorthCents).toBe(afterAug.outsideCash.netCents);
+    expect(afterAug.committed.eomNetWorthCents - beforeAug.committed.eomNetWorthCents).toBe(2 * (-500 - 700));
   });
 
   test("uncategorized rows already tagged to a series stay out of the bucket", () => {
