@@ -9,6 +9,7 @@ import { benchmarkAssetType } from "@/lib/benchmark-symbol";
 import { rangeStartDay, type ChartRange } from "@/lib/chart-range";
 import { windowedPoints } from "@/lib/chart-window";
 import { addDays, compareDates, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { newestCloses, type ClosePair } from "@/lib/day-change-label";
 import { carryForwardTo } from "@/lib/price-series";
 import {
   aggregateReturn,
@@ -421,26 +422,12 @@ export function hasBenchmark(db: AppDatabase, symbol = "SPY"): boolean {
 
 export interface PortfolioOverview {
   valueCents: number;
-  asOf: string | null;
   /**
-   * Flow-adjusted change vs the prior covered point, and NULL when there is no
-   * prior point to measure against — a portfolio with nothing priced yet, or
-   * with exactly one covered day.
-   *
-   * Nullable rather than 0 because 0 is a measurement: it says the portfolio
-   * moved nowhere. Reachable, not theoretical — /investments guards its empty
-   * state on `investmentAccounts.length`, never on the number of covered days,
-   * so the first render after adding a brokerage account showed `$0.00` and a
-   * flat tone over a portfolio no day had ever been measured for. The sibling
-   * stats on that same header (`costBasisPlCents`, `realizedPlCents`) and every
-   * per-holding row (`HoldingRow.dayChangeCents`) were already nullable for
-   * exactly this reason; this field was the one that guessed.
+   * The series' newest covered day. ⛔ Carried to today whatever the newest
+   * close, so never the day a day change is measured into or named by — see
+   * `portfolioDayChange`.
    */
-  dayChangeCents: number | null;
-  dayChangePct: number | null;
-  dayChangeExact: boolean;
-  /** the prior point's date — labels "day change" honestly across weekends */
-  dayChangeVsDay: string | null;
+  asOf: string | null;
   /** whole-portfolio time-weighted return since its anchor (first covered day) */
   twrPct: number | null;
   twrGainCents: number;
@@ -460,23 +447,14 @@ export interface PortfolioOverview {
   hasCrypto: boolean;
 }
 
-/** The portfolio header bundle: value + day change + whole-portfolio TWR. */
+/**
+ * The portfolio header bundle: value + whole-portfolio TWR. The day change is
+ * `portfolioDayChange`, measured into the newest close rather than into `asOf`.
+ */
 export function portfolioOverview(db: AppDatabase): PortfolioOverview {
   const infos = investmentAccounts(db);
   const days = buildPortfolio(db).days;
   const last = days.at(-1) ?? null;
-  const prev = days.length >= 2 ? days[days.length - 2]! : null;
-
-  let dayChangeCents: number | null = null;
-  let dayChangePct: number | null = null;
-  let dayChangeExact = true;
-  let dayChangeVsDay: string | null = null;
-  if (last && prev) {
-    dayChangeCents = last.navCents - prev.navCents - last.flowCents;
-    dayChangePct = prev.navCents > 0 ? (dayChangeCents / prev.navCents) * 100 : null;
-    dayChangeExact = last.exact;
-    dayChangeVsDay = prev.day;
-  }
 
   // Whole-portfolio TWR, anchored at the first covered day.
   const twr = totalReturn(days);
@@ -489,10 +467,6 @@ export function portfolioOverview(db: AppDatabase): PortfolioOverview {
   return {
     valueCents: last?.navCents ?? 0,
     asOf: last?.day ?? null,
-    dayChangeCents,
-    dayChangePct,
-    dayChangeExact,
-    dayChangeVsDay,
     twrPct: days.length >= 2 ? twr.twrPct : null,
     twrGainCents: twr.gainCents,
     twrAnchor: days[0]?.day ?? null,
@@ -504,6 +478,75 @@ export function portfolioOverview(db: AppDatabase): PortfolioOverview {
     realizedPlExact: realized.exact,
     realizedSellCount: realized.sellCount,
     hasCrypto: infos.some((a) => a.isCrypto),
+  };
+}
+
+export interface PortfolioDayChange {
+  /**
+   * Flow-adjusted move INTO `on` from the covered day before it, and NULL when
+   * there is nothing to measure — no holding with two closes, a newest close
+   * with no covered day before it, or one the series does not reach.
+   *
+   * Nullable rather than 0 because 0 is a measurement: it says the portfolio
+   * moved nowhere. Reachable, not theoretical — /investments guards its empty
+   * state on `investmentAccounts.length`, never on the number of covered days,
+   * so the first render after adding a brokerage account showed `$0.00` and a
+   * flat tone over a portfolio no day had ever been measured for. The sibling
+   * stats on that same header (`costBasisPlCents`, `realizedPlCents`) and every
+   * per-holding row (`HoldingRow.dayChangeCents`) were already nullable for
+   * exactly this reason.
+   */
+  cents: number | null;
+  pct: number | null;
+  /** false when a flow into `on` is not separable to the cent — carries the ≈ */
+  exact: boolean;
+  /** the newest close a held position moved into (`newestCloses`) — never a day the series carried past it */
+  on: string | null;
+  /** the covered day before `on` */
+  vsDay: string | null;
+  /** each moved holding's two closes, for `closesDayChange` to name the move by */
+  closes: ClosePair[];
+}
+
+/**
+ * The portfolio's day change: the flow-adjusted move INTO its newest close.
+ *
+ * 🔴 It was the move into the SERIES' newest day, and `rebuildInvestmentHistory`
+ * carries the series to today whatever the newest close. Measured on the real
+ * ledger, Tue 2026-09-15: every held close is Mon Sep 14, so Tuesday and Monday
+ * were valued at the same closes and the /investments header read "Today $0.00
+ * +0.00%" — the dashboard teaser "$0.00 (+0.00%) today" — while the ten rows
+ * beneath it had moved +$1,904.99 between their last two closes. Measured into
+ * Monday, the figure IS that sum: nine stocks from Friday's close and the coin
+ * from Sunday's, both already inside Sunday's carried value.
+ *
+ * `legs` are the rows the page prints (`holdingRows`). Their closes decide where
+ * the move ends, and the closes it is made of come back for a caller to name it
+ * by (`closesDayChange`), so the figure and its name come from one read. A leg
+ * sold to nothing is not in the NAV, so its closes are not either.
+ *
+ * ⛔ No figure over OTHER days: when the series does not reach the newest close
+ * — prices stored and history not yet rebuilt — this reports nothing rather
+ * than a move those closes cannot name.
+ */
+export function portfolioDayChange(
+  db: AppDatabase,
+  legs: readonly (ClosePair & { quantityE8: number })[],
+): PortfolioDayChange {
+  const { on, closes } = newestCloses(legs.filter((l) => l.quantityE8 > 0));
+  const days = buildPortfolio(db).days;
+  const at = on === null ? -1 : days.findIndex((d) => d.day === on);
+  if (at < 1) return { cents: null, pct: null, exact: true, on: null, vsDay: null, closes: [] };
+  const day = days[at]!;
+  const prev = days[at - 1]!;
+  const cents = day.navCents - prev.navCents - day.flowCents;
+  return {
+    cents,
+    pct: prev.navCents > 0 ? (cents / prev.navCents) * 100 : null,
+    exact: day.exact,
+    on,
+    vsDay: prev.day,
+    closes: closes.map((c) => ({ quotedOn: c.quotedOn, previousQuotedOn: c.previousQuotedOn })),
   };
 }
 
@@ -823,15 +866,23 @@ export interface Mover {
   previousQuotedOn: string;
 }
 
-/** Top winners and losers by day-change %, for the movers strip. */
-export function topMovers(db: AppDatabase, limit = 4): { winners: Mover[]; losers: Mover[] } {
+/**
+ * Top winners and losers by day-change %, for the movers strip. `rows` lets a
+ * caller that already read the holdings hand them over, so its movers and its
+ * other figures come from ONE read rather than two.
+ */
+export function topMovers(
+  db: AppDatabase,
+  limit = 4,
+  rows: readonly HoldingRow[] = holdingRows(db),
+): { winners: Mover[]; losers: Mover[] } {
   // aggregate legs by (assetType, symbol) so a symbol held in two accounts is one
   // mover — matching the aggregated holding page (holding-detail)
   const byKey = new Map<
     string,
     { symbol: string; assetType: AssetType; quotedOn: string; previousQuotedOn: string; dayChangeCents: number; valueCents: number }
   >();
-  for (const r of holdingRows(db)) {
+  for (const r of rows) {
     if (r.dayChangePct === null || r.dayChangeCents === null || r.valueCents === null) continue;
     // implied by a day change (it needs both closes); stated so the dates are typed
     if (r.quotedOn === null || r.previousQuotedOn === null) continue;

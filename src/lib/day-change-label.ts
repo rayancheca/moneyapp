@@ -1,3 +1,4 @@
+import { compareDates } from "@/lib/dates";
 import { dayWindowLabel } from "@/lib/period";
 
 /**
@@ -24,9 +25,9 @@ export interface DayChangeLabel {
 }
 
 export function dayChangeLabel(
-  /** newest covered day (`PortfolioOverview.asOf`) */
+  /** the newer of the two days the move is measured between */
   asOf: string | null,
-  /** the day it is measured against (`PortfolioOverview.dayChangeVsDay`) */
+  /** the day it is measured against */
   vsDay: string | null,
   today: string,
   formatDay: (iso: string) => string,
@@ -34,8 +35,8 @@ export function dayChangeLabel(
   if (asOf !== null && asOf === today) return { label: "Today", interval: null };
   // No covered days at all, or a single one: there is no interval to name, and
   // naming a date the figure was not measured over would be worse than the
-  // vaguer word. `PortfolioOverview.dayChangeCents` is null in this case, so
-  // both surfaces render an em dash under this label rather than a figure.
+  // vaguer word. `PortfolioDayChange.cents` is null in this case, so both
+  // surfaces render an em dash under this label rather than a figure.
   if (asOf === null || vsDay === null) return { label: "Day change", interval: null };
   return { label: "Last close", interval: `${formatDay(asOf)} vs ${formatDay(vsDay)}` };
 }
@@ -57,7 +58,16 @@ export function dayChangeTerm(
   today: string,
   formatDay: (iso: string) => string,
 ): string {
-  const { label, interval } = dayChangeLabel(asOf, vsDay, today, formatDay);
+  return dayChangePhrase(dayChangeLabel(asOf, vsDay, today, formatDay));
+}
+
+/**
+ * Any day-change heading as the phrase that trails a figure — the teaser's
+ * "+$481.18 (+0.49%) <phrase>". One compaction for a `dayChangeLabel` and a
+ * `closesDayChange` heading alike, so a surface speaking either cannot
+ * re-derive it.
+ */
+export function dayChangePhrase({ label, interval }: DayChangeLabel): string {
   // the interval IS the phrase when there is one; the label is a heading and
   // only reads as a trailing phrase in lower case
   return interval ?? label.toLowerCase();
@@ -78,13 +88,18 @@ export interface ClosesDayChange {
   terms: (string | null)[];
 }
 
+/** An item with both closes — the only kind that carries a move to date. */
+function measured<T extends ClosePair>(p: T): p is T & { quotedOn: string; previousQuotedOn: string } {
+  return p.quotedOn !== null && p.previousQuotedOn !== null;
+}
+
 /**
  * What to call a SET of per-holding day moves — the movers strip, the holdings
  * subtotal, the dashboard's top mover — each measured between its OWN two
  * newest closes.
  *
- * 🔴 Those surfaces were handed `PortfolioOverview.asOf`/`dayChangeVsDay`: the
- * PORTFOLIO's two covered days, which its series carries past the newest close.
+ * 🔴 Those surfaces were handed the portfolio header's pair of days: the
+ * PORTFOLIO series' two newest covered days, carried past the newest close.
  * Measured on the real ledger, Tue 2026-09-15: "Top movers · Today" over COKE's
  * +5.77%, a move between Fri Sep 11's and Mon Sep 14's closes, beside a header
  * reading "Today $0.00" — while COKE's own page dated the same +5.77% "Last
@@ -110,8 +125,6 @@ export function closesDayChange(
   today: string,
   formatDay: (iso: string) => string,
 ): ClosesDayChange {
-  const measured = (p: ClosePair): p is { quotedOn: string; previousQuotedOn: string } =>
-    p.quotedOn !== null && p.previousQuotedOn !== null;
   const isoDay = (iso: string): string => iso;
   const names = new Set(
     items.filter(measured).map((p) => dayChangeTerm(p.quotedOn, p.previousQuotedOn, today, isoDay)),
@@ -127,6 +140,44 @@ export function closesDayChange(
     heading: dayChangeLabel(null, null, today, formatDay),
     terms: items.map((p) => (measured(p) ? dayChangeTerm(p.quotedOn, p.previousQuotedOn, today, formatDay) : null)),
   };
+}
+
+/** Where a set of per-holding moves ENDS, and the items a move ending there is made of. */
+export interface NewestCloses<T extends ClosePair> {
+  /** the newest close any item with two closes was quoted on; null when none has two */
+  on: string | null;
+  /** those items quoted ON it, in the order given */
+  closes: T[];
+}
+
+/**
+ * The newest close a set of holdings moved into — where the PORTFOLIO's day
+ * change ends — and the closes that move is made of, for `closesDayChange` to
+ * name.
+ *
+ * 🔴 The portfolio's day change ended on the SERIES' newest day, which
+ * `rebuildInvestmentHistory` carries to today whatever the newest close.
+ * Measured on the real ledger, Tue 2026-09-15: every held close is Mon Sep 14,
+ * so the series valued Tuesday and Monday at the same closes, and /investments
+ * read "Today $0.00 +0.00%" and the dashboard "$0.00 (+0.00%) today" — over ten
+ * holdings that had moved +$1,904.99 between their last two closes, each move
+ * printed in the table beneath the header.
+ *
+ * A move measured into `on` from the covered day before it is made of exactly
+ * the items quoted ON `on`, each from its own previous close. An item quoted
+ * earlier held one close across both days, so it did not move inside that
+ * measurement and its closes are not what it measured: a stock still on
+ * Monday's close beside a coin quoted Tuesday leaves a Monday→Tuesday move that
+ * is the coin's alone. An item with ONE close enters the NAV flow-neutral — no
+ * move of its own — so it neither sets `on` nor joins `closes`.
+ */
+export function newestCloses<T extends ClosePair>(items: readonly T[]): NewestCloses<T> {
+  const moved = items.filter(measured);
+  const on = moved.reduce<string | null>(
+    (newest, p) => (newest === null || compareDates(p.quotedOn, newest) > 0 ? p.quotedOn : newest),
+    null,
+  );
+  return { on, closes: moved.filter((p) => p.quotedOn === on) };
 }
 
 /**

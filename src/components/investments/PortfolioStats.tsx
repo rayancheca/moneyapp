@@ -1,7 +1,7 @@
 import { Money } from "@/components/ui/Money";
-import { dayChangeLabel } from "@/lib/day-change-label";
+import { closesDayChange } from "@/lib/day-change-label";
 import { formatDayShort, formatMonthYear } from "@/lib/format-date";
-import type { PortfolioOverview } from "@/services/portfolio";
+import type { PortfolioDayChange, PortfolioOverview } from "@/services/portfolio";
 
 /**
  * The stat row beneath the portfolio chart: today's flow-adjusted change, the
@@ -20,11 +20,20 @@ function toneClass(value: number | null): string {
   return value < 0 ? "text-negative" : "text-positive";
 }
 
-export function PortfolioStats({ overview, today }: { overview: PortfolioOverview; today: string }) {
+export function PortfolioStats({
+  overview,
+  dayChange,
+  today,
+}: {
+  overview: PortfolioOverview;
+  /** the move INTO the newest close — `portfolioDayChange`, never the series' carried last day */
+  dayChange: PortfolioDayChange;
+  today: string;
+}) {
   /*
    * "Today" is a claim about WHEN, and this stat is never measured over today
    * unless the prices happen to be current. It is always the flow-adjusted move
-   * from `dayChangeVsDay` to `asOf` — two days that both sit in the past
+   * between two covered days — days that both sit in the past
    * whenever prices have not been refreshed, which is this page's normal
    * resting state. On the real ledger `asOf` trails today by a week, so the
    * word asserted that a move measured between Aug 5 and Aug 6 happened today,
@@ -33,13 +42,15 @@ export function PortfolioStats({ overview, today }: { overview: PortfolioOvervie
    *
    * So the word is spent only when it is true, and when it is not, the dates
    * that WERE measured are named instead of estimated over.
+   *
+   * 🔴 …and then it measured into a day NO close was printed on. The series is
+   * carried to today, so on Tue 2026-09-15 this read "Today $0.00 +0.00%" —
+   * Tuesday against Monday, at Monday's closes — over ten holdings that had
+   * moved +$1,904.99 into those closes. The figure is now the move INTO the
+   * newest close, named by the closes it is made of: the rule the movers strip
+   * and the holdings subtotal on this page already use.
    */
-  const { label, interval } = dayChangeLabel(
-    overview.asOf,
-    overview.dayChangeVsDay,
-    today,
-    formatDayShort,
-  );
+  const { label, interval } = closesDayChange(dayChange.closes, today, formatDayShort).heading;
   return (
     <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-4 border-t border-line pt-4 sm:grid-cols-4">
       <div>
@@ -54,15 +65,15 @@ export function PortfolioStats({ overview, today }: { overview: PortfolioOvervie
                 em dash is the same treatment the two P/L stats below use for
                 "not computable", rather than a $0.00 that would read as a
                 portfolio which sat still. */}
-            {overview.dayChangeCents === null ? (
+            {dayChange.cents === null ? (
               <span className="text-sm text-ink-faint">—</span>
             ) : (
               <>
-                <Money cents={overview.dayChangeCents} flow className="text-sm font-medium" />
-                <span className={`figures text-xs ${toneClass(overview.dayChangeCents)}`}>
-                  {pctText(overview.dayChangePct)}
+                <Money cents={dayChange.cents} flow className="text-sm font-medium" />
+                <span className={`figures text-xs ${toneClass(dayChange.cents)}`}>
+                  {pctText(dayChange.pct)}
                 </span>
-                {!overview.dayChangeExact && (
+                {!dayChange.exact && (
                   <span className="text-[11px] text-ink-faint" title="A crypto trade this day — market P/L not separable to the cent">
                     ≈
                   </span>

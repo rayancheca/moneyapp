@@ -5,7 +5,7 @@
 import { getDb } from "@/db/client";
 import { diffDays } from "@/lib/dates";
 import { formatCents, formatCentsSigned } from "@/lib/money";
-import { holdingRows, investmentAccounts, portfolioOverview, portfolioSeries } from "@/services/portfolio";
+import { holdingRows, investmentAccounts, portfolioDayChange, portfolioOverview, portfolioSeries } from "@/services/portfolio";
 
 const db = getDb();
 const o = portfolioOverview(db);
@@ -15,7 +15,8 @@ for (const a of investmentAccounts(db)) console.log(`  ${a.name.padEnd(22)} ${a.
 
 console.log("\nportfolioOverview() — verbatim");
 console.log(`  valueCents         ${formatCents(o.valueCents).padStart(14)}   asOf ${o.asOf}`);
-console.log(`  dayChangeCents     ${o.dayChangeCents === null ? "null".padStart(14) : formatCentsSigned(o.dayChangeCents).padStart(14)}   pct ${o.dayChangePct?.toFixed(4) ?? "null"}  exact=${o.dayChangeExact}  vs ${o.dayChangeVsDay}`);
+const dc = portfolioDayChange(db, holdingRows(db));
+console.log(`  dayChange.cents    ${dc.cents === null ? "null".padStart(14) : formatCentsSigned(dc.cents).padStart(14)}   pct ${dc.pct?.toFixed(4) ?? "null"}  exact=${dc.exact}  ${dc.on} vs ${dc.vsDay}`);
 console.log(`  twrPct             ${(o.twrPct?.toFixed(4) ?? "null").padStart(14)}   gain ${formatCentsSigned(o.twrGainCents)}  anchor ${o.twrAnchor}`);
 console.log(`  xirrPct            ${(o.xirrPct?.toFixed(4) ?? "null").padStart(14)}   exact=${o.xirrExact}`);
 console.log(`  costBasisPlCents   ${o.costBasisPlCents === null ? "null".padStart(14) : formatCentsSigned(o.costBasisPlCents).padStart(14)}   pct ${o.costBasisPlPct?.toFixed(4) ?? "null"}`);

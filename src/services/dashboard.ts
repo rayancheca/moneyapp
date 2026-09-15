@@ -4,14 +4,14 @@ import type { SeriesKind } from "@/db/schema/recurring";
 import { cashFlowCumulative, plottedRunningTotals } from "@/lib/cash-flow-cumulative";
 import { compareDates, diffDays, todayIso } from "@/lib/dates";
 import { daysNotImportedYet } from "@/lib/empty-period";
-import { dayChangeTerm } from "@/lib/day-change-label";
+import { closesDayChange, dayChangePhrase, dayChangeTerm } from "@/lib/day-change-label";
 import { formatDayShort } from "@/lib/format-date";
 import { resolvePeriod } from "@/lib/period";
 import { listAccounts } from "./accounts";
 import { bridgedNetWorthSeries, type BridgedNetWorthPoint } from "./in-flight";
 import { forecastCurrentMonth } from "./forecast";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
-import { portfolioOverview, portfolioSeries, topMovers } from "./portfolio";
+import { holdingRows, portfolioDayChange, portfolioOverview, portfolioSeries, topMovers } from "./portfolio";
 import { upcomingOccurrences } from "./recurring";
 import { statementPulls, type AccountStatementPull } from "./statement-pulls";
 import { needsReviewCount, uncategorizedCount } from "./review-count";
@@ -123,7 +123,7 @@ export interface TeaserMover {
 
 export interface InvestmentsTeaser {
   valueCents: number;
-  /** null when no prior covered day exists — see `PortfolioOverview.dayChangeCents` */
+  /** the move INTO the newest close; null when there is none to measure — see `PortfolioDayChange.cents` */
   dayChangeCents: number | null;
   dayChangePct: number | null;
   dayChangeExact: boolean;
@@ -133,8 +133,9 @@ export interface InvestmentsTeaser {
    *
    * Resolved here rather than in the component because the naming rule needs
    * `today`, which the dashboard model already carries and the teaser's props
-   * do not. `dayChangeTerm` wraps the same `dayChangeLabel` the /investments
-   * header renders, so the two surfaces cannot disagree about the same figure.
+   * do not. It is `closesDayChange` over the closes `portfolioDayChange`
+   * measured — the heading the /investments header renders, as a phrase — so
+   * the two surfaces cannot disagree about the same figure.
    */
   dayChangeTerm: string;
   sparkline: number[];
@@ -317,7 +318,10 @@ function investmentsTeaser(db: AppDatabase, today: string): InvestmentsTeaser | 
     .slice(-SPARKLINE_DAYS)
     .map((p) => p.valueCents);
 
-  const { winners, losers } = topMovers(db, 4);
+  // ONE read of the holdings: their closes decide where the headline's move
+  // ends, and the movers are drawn from the same rows
+  const rows = holdingRows(db, today);
+  const { winners, losers } = topMovers(db, 4, rows);
   const candidates = [...winners, ...losers];
   const top = candidates.reduce<(typeof candidates)[number] | null>(
     (best, m) => (best === null || Math.abs(m.dayChangePct) > Math.abs(best.dayChangePct) ? m : best),
@@ -326,17 +330,20 @@ function investmentsTeaser(db: AppDatabase, today: string): InvestmentsTeaser | 
 
   // "today" is a claim about WHEN, and this figure is measured over today only
   // when the newest close is today's. Between price refreshes it is not, and the
-  // teaser used to say the word anyway.
-  const term = dayChangeTerm(overview.asOf, overview.dayChangeVsDay, today, formatDayShort);
+  // teaser used to say the word anyway. ⛔ And it is the move INTO the newest
+  // close, named by the closes it is made of — never the carried series' last
+  // two days, which on Tue 2026-09-15 read "$0.00 (+0.00%) today".
+  const dayChange = portfolioDayChange(db, rows);
+  const term = dayChangePhrase(closesDayChange(dayChange.closes, today, formatDayShort).heading);
   // …and the mover is measured between ITS OWN two closes, which the carried
   // series can have left behind — the same rule over the right pair of days
   const moverTerm = top ? dayChangeTerm(top.quotedOn, top.previousQuotedOn, today, formatDayShort) : null;
 
   return {
     valueCents: overview.valueCents,
-    dayChangeCents: overview.dayChangeCents,
-    dayChangePct: overview.dayChangePct,
-    dayChangeExact: overview.dayChangeExact,
+    dayChangeCents: dayChange.cents,
+    dayChangePct: dayChange.pct,
+    dayChangeExact: dayChange.exact,
     dayChangeTerm: term,
     sparkline,
     topMover: top

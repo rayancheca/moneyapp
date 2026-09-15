@@ -26,6 +26,7 @@ import {
   holdingRows,
   pnlCalendarMonth,
   portfolioBenchmarkDays,
+  portfolioDayChange,
   portfolioOverview,
   portfolioReturnDays,
   portfolioSeries,
@@ -162,13 +163,16 @@ export default async function InvestmentsPage({
     formatDay: formatDayLong,
   });
   const movers = topMovers(db);
-  // ⛔ NOT the portfolio header's two days. The movers strip and the holdings
-  // subtotal show PER-HOLDING moves, each measured between its own two newest
-  // closes, and the portfolio series is carried past those: on Tue 2026-09-15
-  // `dayChangeLabel(overview.asOf, overview.dayChangeVsDay)` dated a
-  // Friday→Monday move "Today" on both. They are dated by their own closes now —
-  // the strip over its movers (inside `TopMovers`), the subtotal over its rows.
+  // ⛔ NOT the portfolio series' two newest days. The movers strip and the
+  // holdings subtotal show PER-HOLDING moves, each measured between its own two
+  // newest closes, and the portfolio series is carried past those: on Tue
+  // 2026-09-15 the series' pair dated a Friday→Monday move "Today" on both.
+  // They are dated by their own closes now — the strip over its movers (inside
+  // `TopMovers`), the subtotal over its rows.
   const holdingsDayChange = closesDayChange(rows, today, formatDayShort).heading;
+  // …and so is the header's figure: the move INTO the newest of these rows'
+  // closes, never into the carried day, which read "Today $0.00" that Tuesday
+  const dayChange = portfolioDayChange(db, rows);
   const allocation = allocationSlices(db);
   const calendarMonth = pnlCalendarMonth(db, monthKey(overview.asOf ?? today), today);
 
@@ -225,7 +229,7 @@ export default async function InvestmentsPage({
             baseParams={viewBaseParams}
             benchmark={benchmark}
             benchmarkSymbol={benchmarkSymbol}
-            footer={<PortfolioStats overview={overview} today={today} />}
+            footer={<PortfolioStats overview={overview} dayChange={dayChange} today={today} />}
             session={session}
             pricedSymbols={intraday.grid.pricedSymbols}
             totalSymbols={intraday.grid.totalSymbols}
@@ -236,7 +240,7 @@ export default async function InvestmentsPage({
             <p className="py-6 text-sm text-ink-muted">
               A portfolio chart appears once holdings have at least two days of cached prices.
             </p>
-            <PortfolioStats overview={overview} today={today} />
+            <PortfolioStats overview={overview} dayChange={dayChange} today={today} />
           </SurfaceCard>
         )}
 

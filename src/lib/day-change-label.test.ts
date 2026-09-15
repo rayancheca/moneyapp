@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { closesDayChange, dayChangeLabel, dayChangeTerm, asOfSpanTerm } from "./day-change-label";
+import {
+  closesDayChange,
+  dayChangeLabel,
+  dayChangePhrase,
+  dayChangeTerm,
+  asOfSpanTerm,
+  newestCloses,
+} from "./day-change-label";
 import { formatDayShort } from "./format-date";
 
 describe("dayChangeLabel", () => {
@@ -204,5 +211,56 @@ describe("closesDayChange — a set of per-holding moves, dated by their OWN clo
       heading: { label: "Day change", interval: null },
       terms: [null],
     });
+  });
+});
+
+/*
+ * 🔴 THE PORTFOLIO'S DAY CHANGE ENDED ON A DAY NO CLOSE WAS PRINTED ON.
+ *
+ * Measured on the real ledger, Tue 2026-09-15: every held close is Mon Sep 14
+ * (the stocks' previous one Fri Sep 11, ETH's Sun Sep 13), and the NAV series
+ * is carried to today. The /investments header measured Tuesday against Monday
+ * and read "Today $0.00 +0.00%"; the dashboard teaser read "$0.00 (+0.00%)
+ * today". Between those closes the portfolio had moved +$1,904.99 — the sum of
+ * the ten per-holding moves the table beneath it printed.
+ */
+describe("newestCloses — where a set of moves ends, and the closes a move ending there is made of", () => {
+  const pair = (quotedOn: string | null, previousQuotedOn: string | null) => ({ quotedOn, previousQuotedOn });
+
+  test("read on Tue 2026-09-15, every holding's move ends at Monday's closes", () => {
+    const stocks = pair("2026-09-14", "2026-09-11");
+    const eth = pair("2026-09-14", "2026-09-13");
+    expect(newestCloses([stocks, eth])).toEqual({ on: "2026-09-14", closes: [stocks, eth] });
+  });
+
+  test("a coin quoted today beside stocks still on yesterday's closes: the move ends today and is the coin's alone", () => {
+    // the stocks' Fri→Mon move is not inside a Mon→Tue measurement — they did
+    // not move between those two days, so their closes are not what it measured
+    const stocks = pair("2026-09-14", "2026-09-11");
+    const eth = pair("2026-09-15", "2026-09-14");
+    expect(newestCloses([stocks, eth])).toEqual({ on: "2026-09-15", closes: [eth] });
+    expect(newestCloses([eth, stocks])).toEqual({ on: "2026-09-15", closes: [eth] });
+  });
+
+  test("a holding with ONE close neither moves the end nor joins the closes", () => {
+    // a first close enters the NAV flow-neutral — it is not a move of its own
+    const aapl = pair("2026-09-14", "2026-09-11");
+    expect(newestCloses([aapl, pair("2026-09-15", null), pair(null, null)])).toEqual({
+      on: "2026-09-14",
+      closes: [aapl],
+    });
+  });
+
+  test("nothing measured ends nowhere", () => {
+    expect(newestCloses([])).toEqual({ on: null, closes: [] });
+    expect(newestCloses([pair("2026-09-15", null), pair(null, null)])).toEqual({ on: null, closes: [] });
+  });
+});
+
+describe("dayChangePhrase — any heading, compacted to the phrase that trails a figure", () => {
+  test("the interval when there is one, the heading lower-cased when there is not", () => {
+    expect(dayChangePhrase({ label: "Today", interval: null })).toBe("today");
+    expect(dayChangePhrase({ label: "Last close", interval: "Sep 14 vs Sep 11" })).toBe("Sep 14 vs Sep 11");
+    expect(dayChangePhrase({ label: "Day change", interval: null })).toBe("day change");
   });
 });

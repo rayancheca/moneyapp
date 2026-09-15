@@ -614,7 +614,7 @@ describe("dashboardData: the investments teaser", () => {
 
   /*
    * ⚠️ ONE EQUIVALENT MUTANT, RECORDED RATHER THAN PAPERED OVER.
-   * `dayChangeExact: true` in place of `overview.dayChangeExact` survives, and
+   * `dayChangeExact: true` in place of `dayChange.exact` survives, and
    * it survives because it is currently true by construction: `buildPortfolio`
    * writes `flowByDay.set(day, { flowCents, exact: true })` unconditionally
    * (portfolio.ts:169) and nothing else ever sets it false, so the "≈" the
@@ -644,23 +644,63 @@ describe("dashboardData: the investments teaser", () => {
   });
 
   /*
-   * 🔴 THE TOP MOVER SAT UNDATED UNDER A LINE ENDING "today". Measured on the
-   * real ledger, Tue 2026-09-15: the NAV series is carried to today with no
-   * change, so the teaser read "$0.00 (+0.00%) today" and then "Top mover COKE
-   * +5.77%" — a Friday→Monday move between two closes that were not today's.
-   * This fixture is that shape: closes end two days back, history carried to today.
+   * 🔴 THE HEADLINE MEASURED A DAY NO CLOSE WAS PRINTED ON, AND CALLED IT
+   * "today". Measured on the real ledger, Tue 2026-09-15: every held close is
+   * Monday's, the NAV series is carried to today with no change, and the teaser
+   * read "$0.00 (+0.00%) today" over a portfolio that had moved +$1,904.99
+   * between its last closes. This fixture is that shape: closes end two days
+   * back, history carried to today.
    */
-  test("a top mover measured between other days than the headline's names its own closes", () => {
+  test("a series carried past its newest close headlines the move INTO that close, and names it", () => {
     for (let i = 1; i >= 0; i--) {
       cache("AAPL", addDays("2026-07-06", -i), i === 1 ? 10_000 : 10_100);
     }
     hold("2026-07-05", "AAPL", 100_000_000, 9_000);
     rebuildInvestmentHistory(bundle.db, brokerage(), TODAY);
+    expect(portfolioOverview(bundle.db).asOf).toBe(TODAY); // the shape: carried to today
 
     const teaser = dashboardData(bundle.db, TODAY).investments!;
-    expect(teaser.dayChangeTerm).toBe("today"); // the carried series' own claim
+    expect(teaser.dayChangeTerm).toBe(`${formatDayShort("2026-07-06")} vs ${formatDayShort("2026-07-05")}`);
+    // one share, $10,000 → $10,100 — not the $0.00 between two carried days
+    expect(teaser.dayChangeCents).toBe(10_000);
+    expect(teaser.dayChangePct).toBeCloseTo(1, 10);
+    // the mover's closes ARE the headline's now, so they are said once
     expect(teaser.topMover?.symbol).toBe("AAPL");
+    expect(teaser.topMover?.dayChangeTerm).toBeNull();
+  });
+
+  test("holdings whose previous closes differ headline no date, and the mover names its own", () => {
+    cache("AAPL", "2026-07-03", 10_000);
+    cache("AAPL", "2026-07-06", 10_100); // +1%, Jul 3 → Jul 6
+    cache("TSLA", "2026-07-05", 10_000);
+    cache("TSLA", "2026-07-06", 9_600); // −4%, Jul 5 → Jul 6
+    hold("2026-07-03", "AAPL", 100_000_000, 9_000);
+    hold("2026-07-05", "TSLA", 100_000_000, 9_000);
+    rebuildInvestmentHistory(bundle.db, brokerage(), TODAY);
+
+    const teaser = dashboardData(bundle.db, TODAY).investments!;
+    // no one pair of days is true of both moves, so the phrase claims none
+    expect(teaser.dayChangeTerm).toBe("day change");
+    // both end at Jul 6's closes, each from its own previous one: +$100 − $400
+    expect(teaser.dayChangeCents).toBe(10_000 - 40_000);
+    expect(teaser.topMover?.symbol).toBe("TSLA");
     expect(teaser.topMover?.dayChangeTerm).toBe(`${formatDayShort("2026-07-06")} vs ${formatDayShort("2026-07-05")}`);
+  });
+
+  test("a holding whose closes stopped earlier neither moves the headline's day nor un-dates it", () => {
+    cache("TSLA", "2026-07-01", 10_000);
+    cache("TSLA", "2026-07-02", 9_000); // its last move, four days before AAPL's
+    cache("AAPL", "2026-07-05", 10_000);
+    cache("AAPL", "2026-07-06", 10_100);
+    hold("2026-07-01", "TSLA", 100_000_000, 9_000);
+    hold("2026-07-05", "AAPL", 100_000_000, 9_000);
+    rebuildInvestmentHistory(bundle.db, brokerage(), TODAY);
+
+    const teaser = dashboardData(bundle.db, TODAY).investments!;
+    // TSLA sat on its Jul 2 close from Jul 5 to Jul 6, so the move is AAPL's alone…
+    expect(teaser.dayChangeCents).toBe(10_000);
+    // …and it is named by AAPL's closes, not left undated by TSLA's
+    expect(teaser.dayChangeTerm).toBe(`${formatDayShort("2026-07-06")} vs ${formatDayShort("2026-07-05")}`);
   });
 
   test("a top mover measured over the headline's own days does not repeat the dates", () => {

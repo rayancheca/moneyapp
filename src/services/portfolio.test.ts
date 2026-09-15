@@ -4,7 +4,7 @@ import path from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
-import { todayIso } from "@/lib/dates";
+import { addDays, todayIso } from "@/lib/dates";
 import { seedDatabase } from "@/db/seed";
 import { priceCache } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
@@ -12,7 +12,7 @@ import { transactions } from "@/db/schema/transactions";
 import { createAccount } from "./accounts";
 import { rebuildInvestmentHistory } from "./crypto-history";
 import { upsertHolding } from "./holdings";
-import { hasBenchmark, holdingRows, marketChangeBetween, pnlCalendarMonth, pnlDayDetail, portfolioBenchmarkDays, portfolioOverview, portfolioRealizedPl, portfolioReturnDays, portfolioSeries, realizedLegKey, topMovers } from "./portfolio";
+import { hasBenchmark, holdingRows, marketChangeBetween, pnlCalendarMonth, pnlDayDetail, portfolioBenchmarkDays, portfolioDayChange, portfolioOverview, portfolioRealizedPl, portfolioReturnDays, portfolioSeries, realizedLegKey, topMovers } from "./portfolio";
 
 process.env.MONEYAPP_FAKE_PRICES = "1";
 
@@ -203,15 +203,98 @@ describe("portfolioOverview", () => {
     const o = portfolioOverview(bundle.db);
     expect(o.valueCents).toBe(444_000);
     expect(o.asOf).toBe(D3);
-    // day change is whole-portfolio, flow-adjusted (+$10 equity, crypto flat) and
-    // exact — trades are neutralized at close, so no phantom gain, no fabrication
-    expect(o.dayChangeCents).toBe(1_000);
-    expect(o.dayChangeExact).toBe(true);
-    expect(o.dayChangeVsDay).toBe(D2);
     // whole-portfolio TWR gain = D2 (+$110) + D3 (+$10) = $120, never bought capital
     expect(o.twrGainCents).toBe(12_000);
     expect(o.twrAnchor).toBe(D1);
     expect(o.hasCrypto).toBe(true);
+  });
+
+  test("an empty book has no value and no covered day", () => {
+    const o = portfolioOverview(bundle.db);
+    expect(o.asOf).toBeNull();
+    expect(o.valueCents).toBe(0);
+  });
+});
+
+const NO_DAY_CHANGE = { cents: null, pct: null, exact: true, on: null, vsDay: null, closes: [] };
+
+describe("portfolioDayChange — the move INTO the newest close, never into a day the series carried past it", () => {
+  test("whole-portfolio, flow-adjusted and exact: +$10 equity, crypto flat, and a buy is not a gain", () => {
+    seedMixedBook();
+    const dc = portfolioDayChange(bundle.db, holdingRows(bundle.db));
+    // trades are neutralized at close, so no phantom gain, no fabrication
+    expect(dc.cents).toBe(1_000);
+    expect(dc.pct).toBeCloseTo((1_000 / 221_000) * 100, 10);
+    expect(dc.exact).toBe(true);
+    expect([dc.on, dc.vsDay]).toEqual([D3, D2]);
+    expect(dc.closes).toEqual([
+      { quotedOn: D3, previousQuotedOn: D2 },
+      { quotedOn: D3, previousQuotedOn: D2 },
+    ]);
+  });
+
+  /*
+   * 🔴 THE REAL LEDGER'S SHAPE, read Tue 2026-09-15. Stocks closed Fri and Mon,
+   * the coin every day through Mon, and `rebuildInvestmentHistory` carries both
+   * books to today. `portfolioOverview` measured Tuesday against Monday — two
+   * days valued at the same closes — and the header printed "Today $0.00
+   * +0.00%" over a portfolio whose ten holdings had moved +$1,904.99.
+   */
+  test("read the day after Monday's closes, it is Monday's move — not the $0.00 of a carried Tuesday", () => {
+    const [FRI, SAT, SUN, MON, TUE] = ["2026-09-11", "2026-09-12", "2026-09-13", "2026-09-14", "2026-09-15"];
+    cache("AAPL", "stock", "2026-09-10", 100);
+    cache("AAPL", "stock", FRI, 110);
+    cache("AAPL", "stock", MON, 121);
+    for (const [day, close] of [["2026-09-10", 2000], [FRI, 2010], [SAT, 2020], [SUN, 2030], [MON, 2100]] as const) {
+      cache("ETH", "crypto", day, close);
+    }
+    upsertHolding(bundle.db, { accountId: brokerage, symbol: "AAPL", assetType: "stock", quantityE8: 200_000_000, avgCostCents: 10_000, occurredOn: "2026-09-10" });
+    upsertHolding(bundle.db, { accountId: crypto, symbol: "ETH", assetType: "crypto", quantityE8: 100_000_000, avgCostCents: 200_000, occurredOn: "2026-09-10" });
+    rebuildInvestmentHistory(bundle.db, brokerage, TUE);
+    rebuildInvestmentHistory(bundle.db, crypto, TUE);
+
+    // the shape: the series runs to Tuesday, flat from Monday
+    expect(portfolioOverview(bundle.db).asOf).toBe(TUE);
+    // 2 AAPL × $121 + 1 ETH × $2,100
+    expect(portfolioSeries(bundle.db).slice(-2).map((p) => p.valueCents)).toEqual([234_200, 234_200]);
+
+    const rows = holdingRows(bundle.db, TUE);
+    const dc = portfolioDayChange(bundle.db, rows);
+    // AAPL 2 × ($121 − $110) over Fri→Mon, ETH 1 × ($2,100 − $2,030) over Sun→Mon
+    expect(dc.cents).toBe(2_200 + 7_000);
+    // …which is every holding's own move, summed: the figure the table beneath adds up to
+    expect(dc.cents).toBe(rows.reduce((sum, r) => sum + (r.dayChangeCents ?? 0), 0));
+    expect([dc.on, dc.vsDay]).toEqual([MON, SUN]);
+    expect(dc.closes).toEqual([
+      { quotedOn: MON, previousQuotedOn: FRI },
+      { quotedOn: MON, previousQuotedOn: SUN },
+    ]);
+  });
+
+  test("closes newer than every covered day — prices stored, history not rebuilt — give no figure over other days", () => {
+    seedMixedBook(); // covered through D3
+    cache("AAPL", "stock", "2026-03-05", 130);
+    expect(portfolioDayChange(bundle.db, holdingRows(bundle.db, "2026-03-05"))).toEqual(NO_DAY_CHANGE);
+  });
+
+  test("a leg sold to nothing is not in the NAV, and its closes do not move where the change ends", () => {
+    seedMixedBook();
+    const sold = { quotedOn: "2026-03-05", previousQuotedOn: D3, quantityE8: 0 };
+    const dc = portfolioDayChange(bundle.db, [...holdingRows(bundle.db), sold]);
+    expect([dc.on, dc.cents]).toEqual([D3, 1_000]);
+  });
+
+  test("a newest close ON the first covered day has no covered day before it to be measured from", () => {
+    // two closes from before the position was opened: the series starts on the day it was
+    const day = todayIso();
+    cache("AAPL", "stock", addDays(day, -1), 100);
+    cache("AAPL", "stock", day, 110);
+    upsertHolding(bundle.db, { accountId: brokerage, symbol: "AAPL", assetType: "stock", quantityE8: 100_000_000, avgCostCents: 10_000, occurredOn: day });
+    expect(portfolioSeries(bundle.db).map((p) => p.day)).toEqual([day]); // guards the shape
+
+    const rows = holdingRows(bundle.db, day);
+    expect([rows[0]!.quotedOn, rows[0]!.previousQuotedOn]).toEqual([day, addDays(day, -1)]);
+    expect(portfolioDayChange(bundle.db, rows)).toEqual(NO_DAY_CHANGE);
   });
 
   test("a portfolio with no prior covered day reports NO day change, not a flat one", () => {
@@ -242,16 +325,12 @@ describe("portfolioOverview", () => {
     expect(o.asOf).toBe(day);
     expect(o.valueCents).toBeGreaterThan(0);
     // 0 would be a measurement — it would say the portfolio moved nowhere
-    expect(o.dayChangeCents).toBeNull();
-    expect(o.dayChangePct).toBeNull();
-    expect(o.dayChangeVsDay).toBeNull();
+    expect(portfolioDayChange(bundle.db, holdingRows(bundle.db, day))).toEqual(NO_DAY_CHANGE);
   });
 
   test("an empty book reports no day change either", () => {
-    const o = portfolioOverview(bundle.db);
-    expect(o.asOf).toBeNull();
-    expect(o.dayChangeCents).toBeNull();
-    expect(o.dayChangePct).toBeNull();
+    expect(portfolioDayChange(bundle.db, holdingRows(bundle.db))).toEqual(NO_DAY_CHANGE);
+    expect(portfolioDayChange(bundle.db, [])).toEqual(NO_DAY_CHANGE);
   });
 });
 
