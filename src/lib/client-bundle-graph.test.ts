@@ -41,22 +41,38 @@ function sourceFiles(dir: string): string[] {
 }
 
 /**
- * What a browser bundle cannot hold — MEASURED, not assumed. Each specifier was
+ * The build measurement BROWSER_FORBIDDEN is drawn from. Each specifier was
  * imported on its own into SpendHeatmap.tsx on a scratch copy of 25b9435 and
- * built with `next build` (Next 16.2.10, Turbopack), 2026-09-15:
+ * built with `next build` (Next 16.2.10, Turbopack), 2026-09-15.
  *
- *   fails the build                     builds (Turbopack polyfills it)
- *   ─────────────────────────────────   ─────────────────────────────────
- *   fs, node:fs, node:fs/promises       path, node:path
- *   better-sqlite3                      node:crypto
- *   drizzle-orm/better-sqlite3
- *   @/db/client, @/db/backup
+ * ⛔ These rows are the measurement and the list below is the rule. They are kept
+ * as two things on purpose. Cases generated FROM the rule lose their case along
+ * with a deleted entry, so trimming the rule could never go red; before these
+ * rows existed, five of its six entries could be deleted with every test green.
+ * Changing the rule now means building again and changing a row here.
+ */
+const IMPORTS_THAT_FAILED_THE_BUILD = [
+  { specifier: "fs", reportedAt: "fs" },
+  { specifier: "node:fs", reportedAt: "node:fs" },
+  { specifier: "node:fs/promises", reportedAt: "node:fs/promises" },
+  { specifier: "better-sqlite3", reportedAt: "better-sqlite3" },
+  { specifier: "drizzle-orm/better-sqlite3", reportedAt: "drizzle-orm/better-sqlite3" },
+  { specifier: "@/db/client", reportedAt: "src/db/client.ts" },
+  { specifier: "@/db/backup", reportedAt: "src/db/backup.ts" },
+] as const;
+
+/** Specifiers that built (Turbopack polyfills them) — reporting one would be a false alarm. */
+const IMPORTS_THAT_BUILT = ["path", "node:path", "node:crypto"] as const;
+
+/**
+ * What a browser bundle cannot hold, drawn from the measurement above.
  *
- * `path` and `node:crypto` are NOT here because they do not break anything:
- * 13 client roots reach node:crypto today (EditAccountSheet → db/schema/accounts
- * → db/schema/common → lib/ids) and main builds. The two db files are listed
- * even though what breaks is the fs/better-sqlite3 they import, so a leak is
- * reported at the module a reader recognises rather than inside it.
+ * `path` and `node:crypto` are NOT here because they built. node:crypto is in
+ * fact reachable from client roots (EditAccountSheet → db/schema/accounts →
+ * db/schema/common → lib/ids, walked 2026-09-15) and `next build` passes. The
+ * two db files are listed even though what breaks is the fs/better-sqlite3 they
+ * import, so a leak is reported at the module a reader recognises rather than
+ * inside it.
  */
 const BROWSER_FORBIDDEN: ForbiddenTargets = {
   files: ["src/db/backup.ts", "src/db/client.ts"],
@@ -89,6 +105,25 @@ describe("no client bundle reaches the database or the filesystem", () => {
     expect(leaks.map(formatLeak)).toContain(
       `${staged} → src/services/manual-transactions.ts → src/db/backup.ts`,
     );
+  });
+});
+
+describe("BROWSER_FORBIDDEN says what next build measured, entry for entry", () => {
+  // One staged client per row, importing the specifier directly, as each build probe did.
+  const staged = "src/components/zz-staged-probe.tsx";
+  const probe = (specifier: string): SourceTree =>
+    overlay(REAL_TREE, { [staged]: `"use client";\nimport * as probe from "${specifier}";\nexport const x = probe;\n` });
+
+  it.each(IMPORTS_THAT_FAILED_THE_BUILD)(
+    "a client importing $specifier is reported at $reportedAt, and only there — that import failed the build",
+    ({ specifier, reportedAt }) => {
+      const leaks = findClientBundleLeaks(probe(specifier), [staged], BROWSER_FORBIDDEN);
+      expect(leaks.map(formatLeak)).toEqual([`${staged} → ${reportedAt}`]);
+    },
+  );
+
+  it.each(IMPORTS_THAT_BUILT)("a client importing %s is not reported — that import built", (specifier) => {
+    expect(findClientBundleLeaks(probe(specifier), [staged], BROWSER_FORBIDDEN)).toEqual([]);
   });
 });
 
