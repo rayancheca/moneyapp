@@ -23,32 +23,38 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// the owner's first Robinhood Brokerage statement, and the one after it
+// the owner's Robinhood Brokerage and Cash on Hand, by the ids his ledger gives them
+const BROKERAGE = "019f4c7d-cc91-74b0-9349-1c012e2cfb50";
+const CASH_ON_HAND = "019fcd2f-0777-7000-9728-f51c9f2dbd7e";
+
+// the first Robinhood Brokerage statement, and the one after it
 const MARK = {
   count: 2,
   witnesses: [
-    ["Robinhood Brokerage", "2024-08-31"],
-    ["Robinhood Brokerage", "2024-09-30"],
+    [BROKERAGE, "2024-08-31"],
+    [BROKERAGE, "2024-09-30"],
   ],
+  accountNames: { [BROKERAGE]: "Robinhood Brokerage" },
 };
-const LOWERED = { count: 1, witnesses: [["Robinhood Brokerage", "2024-09-30"]] };
+const LOWERED = { count: 1, witnesses: [[BROKERAGE, "2024-09-30"]], accountNames: { [BROKERAGE]: "Robinhood Brokerage" } };
+const ACCOUNTS = { count: 1, witnesses: [[CASH_ON_HAND]], accountNames: { [CASH_ON_HAND]: "Cash on Hand" } };
 
 describe("the store", () => {
   test("a migrated ledger holds no marks — so its first run records them", () => {
     expect(readWitnessMarks(bundle.db)).toEqual({});
   });
 
-  test("a written mark reads back as written", () => {
+  test("a written mark reads back as written, the names of its accounts included", () => {
     writeWitnessMarks(bundle.db, { "value-anchors": MARK });
     expect(readWitnessMarks(bundle.db)).toEqual({ "value-anchors": MARK });
   });
 
   test("writing a kind replaces that kind's mark and leaves every other kind's alone", () => {
-    writeWitnessMarks(bundle.db, { "value-anchors": MARK, accounts: { count: 1, witnesses: [["Cash on Hand"]] } });
-    writeWitnessMarks(bundle.db, { "value-anchors": LOWERED });
+    writeWitnessMarks(bundle.db, { "value-anchors": MARK, accounts: ACCOUNTS });
+    writeWitnessMarks(bundle.db, { "value-anchors": { ...LOWERED, accountNames: { [BROKERAGE]: "Brokerage" } } });
     expect(readWitnessMarks(bundle.db)).toEqual({
-      "value-anchors": LOWERED,
-      accounts: { count: 1, witnesses: [["Cash on Hand"]] },
+      "value-anchors": { ...LOWERED, accountNames: { [BROKERAGE]: "Brokerage" } },
+      accounts: ACCOUNTS,
     });
   });
 
@@ -62,8 +68,16 @@ describe("the store", () => {
 
   test("⛔ a stored mark that cannot be read is an error, never an absent mark that the next run would re-record", () => {
     bundle.sqlite
-      .prepare("INSERT INTO ledger_witness_marks (kind, mark, witnesses, updated_at) VALUES (?, ?, ?, ?)")
-      .run("value-anchors", 43, JSON.stringify(LOWERED.witnesses), "2026-09-15T00:00:00.000Z");
+      .prepare(
+        "INSERT INTO ledger_witness_marks (kind, mark, witnesses, account_names, updated_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(
+        "value-anchors",
+        43,
+        JSON.stringify(LOWERED.witnesses),
+        JSON.stringify(LOWERED.accountNames),
+        "2026-09-15T00:00:00.000Z",
+      );
     expect(() => readWitnessMarks(bundle.db)).toThrow(/the value anchors mark says 43 but lists 1 witness/);
   });
 });

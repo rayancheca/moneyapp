@@ -354,6 +354,14 @@ make the next reconcile find a gap and quarantine the whole file's rows in that 
 ### app_settings
 `key PK · value JSON` — AI budget cap, review thresholds, price staleness, backup config, week-start override.
 
+### ledger_witness_marks (migration 0017)
+`kind PK · mark INTEGER · witnesses JSON · account_names JSON · updated_at` — the high-water
+mark under each kind of witness `pnpm ledger-check` counts (`src/lib/witness-floor.ts`). A run
+counting fewer fails; one counting more raises the row itself. Each witness is keyed by its
+account's **id**, never its name; `account_names` only names an account a drop removed. It
+lives in the ledger, not beside it, so a restored snapshot brings back its own marks. Lowered
+only by `pnpm ledger-check --lower-marks=<kind> --confirm`.
+
 ## Invariants the test suite enforces
 
 1. Every `reconciled` **cash/credit** statement period: `beginning + Σ(active txns in

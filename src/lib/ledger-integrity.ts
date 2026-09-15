@@ -95,6 +95,14 @@ export interface ValueAnchorDrift {
 export interface LedgerObservation {
   /** every account the check read, by name */
   accounts: readonly string[];
+  /**
+   * each account's id, under the name everything else here is keyed by.
+   *
+   * ⛔ The witness floor (`src/lib/witness-floor.ts`) keys a witness by this and
+   * never by the name, which the owner can edit: keyed by name, a rename read
+   * as every witness on the renamed account gone.
+   */
+  accountIds: Readonly<Record<string, string>>;
   /** every chain window walked per account, closing or not — consecutive, so abutting ones measure their span */
   chainWindows: Record<string, readonly ChainWindow[]>;
   breaks: Record<string, ChainBreak[]>;

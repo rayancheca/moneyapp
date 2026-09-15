@@ -24,6 +24,13 @@ import { type LedgerFailure, type LedgerObservation, windowsSpanning } from "./l
  *
  * ⚠️ A COUNT, as he said, not a set. One statement removed and a different one
  * imported between two runs holds the count, and passes.
+ *
+ * ⛔ A witness is keyed by its account's ID, and named only when a message is
+ * printed. A name is something the owner edits: keyed by name, renaming Chase
+ * Checking held every count (so nothing rewrote the mark), and the next real
+ * drop — one Robinhood statement un-imported — listed fifty Chase Checking
+ * windows as gone and hid the two Robinhood Cash windows that were (measured on
+ * a copy, 2026-09-15, review).
  */
 
 export const WITNESS_KINDS = ["value-anchors", "chain-windows", "statement-periods", "accounts"] as const;
@@ -53,41 +60,83 @@ const LABEL: Record<WitnessKind, string> = {
   accounts: "accounts",
 };
 
-/** One witness's identity, field by field: [account, day] · [account, from, to] · [account name]. */
+/** One witness's identity, field by field, its ACCOUNT'S ID first: [id, day] · [id, from, to] · [id]. */
 export type Witness = readonly string[];
 
 export interface WitnessMark {
   count: number;
   /** the witnesses seen when the mark was last set — what a drop is told apart against */
   witnesses: readonly Witness[];
+  /**
+   * id → name of every account those witnesses are on, as it was called when
+   * the mark was set. Only a message reads it, and only for an account no
+   * longer in the ledger: one still there is named as it is called NOW.
+   */
+  accountNames: Readonly<Record<string, string>>;
 }
 
 export type WitnessMarks = Partial<Record<WitnessKind, WitnessMark>>;
 
-/** code-unit order of the whole identity — deterministic on any machine, whatever its locale */
-const ordered = (list: readonly Witness[]): Witness[] =>
-  list
-    .map((w) => JSON.stringify(w))
+/** The account id behind a name the observation keys by — an account with none is refused, never keyed by its name. */
+function idOf(observed: LedgerObservation, name: string): string {
+  const id = observed.accountIds[name];
+  if (id === undefined) {
+    throw new Error(
+      `witness floor: "${name}" has no account id in the observation — a witness is keyed by its account's id, ` +
+        `and keyed by a name a rename would read as every witness on the account gone`,
+    );
+  }
+  return id;
+}
+
+/**
+ * Entries of `[account name, ...fields]` as witnesses keyed by account id, in
+ * code-unit order of the NAMED identity — deterministic on any machine, whatever
+ * its locale, and readable in the order a person would look for them.
+ */
+const keyed = (observed: LedgerObservation, entries: readonly string[][]): Witness[] =>
+  entries
+    .map((entry) => JSON.stringify(entry))
     .sort()
-    .map((key) => JSON.parse(key) as string[]);
+    .map((key) => JSON.parse(key) as string[])
+    .map(([name, ...fields]) => [idOf(observed, name!), ...fields]);
 
 /** Every witness the observation counted, per kind. */
 export function witnessesOf(observed: LedgerObservation): Record<WitnessKind, Witness[]> {
   return {
-    "value-anchors": ordered([
+    "value-anchors": keyed(observed, [
       ...Object.entries(observed.valuedAnchorDays).flatMap(([account, days]) => days.map((on) => [account, on])),
       // a statement the app could not value is still there — `unpriced-anchor` reports it, this counts it
       ...observed.unpricedAnchors.map((a) => [a.account, a.on]),
     ]),
-    "chain-windows": ordered(
+    "chain-windows": keyed(
+      observed,
       Object.entries(observed.chainWindows).flatMap(([account, windows]) => windows.map((w) => [account, w.from, w.to])),
     ),
-    "statement-periods": ordered(
+    "statement-periods": keyed(
+      observed,
       Object.entries(observed.gradedPeriods).flatMap(([account, periods]) =>
         periods.map((p) => [account, p.periodStart, p.periodEnd]),
       ),
     ),
-    accounts: ordered(observed.accounts.map((name) => [name])),
+    accounts: keyed(
+      observed,
+      observed.accounts.map((name) => [name]),
+    ),
+  };
+}
+
+/** id → name of every account the observation read, as it is called now */
+const namesNow = (observed: LedgerObservation): Record<string, string> =>
+  Object.fromEntries(Object.entries(observed.accountIds).map(([name, id]) => [id, name]));
+
+/** The mark `witnesses` set: their count, and the name of every account they are on. */
+function markOf(observed: LedgerObservation, witnesses: Witness[]): WitnessMark {
+  const onAccounts = new Set(witnesses.map(([id]) => id));
+  return {
+    count: witnesses.length,
+    witnesses,
+    accountNames: Object.fromEntries(Object.entries(namesNow(observed)).filter(([id]) => onAccounts.has(id))),
   };
 }
 
@@ -122,25 +171,29 @@ function goneWitnesses(
 ): Witness[] {
   const unseen = subtract(mark, seen);
   if (kind !== "chain-windows") return unseen;
-  return unseen.filter(
-    ([account, from, to]) => windowsSpanning(observed.chainWindows[`${account}`] ?? [], `${from}`, `${to}`) === null,
+  const walked = Object.fromEntries(
+    Object.entries(observed.chainWindows).map(([name, windows]) => [idOf(observed, name), windows]),
   );
+  return unseen.filter(([id, from, to]) => windowsSpanning(walked[`${id}`] ?? [], `${from}`, `${to}`) === null);
 }
 
 const SHOWN = 10;
 
-const describeWitness = ([head, ...rest]: Witness): string =>
-  rest.length === 0 ? `${head}` : `${head} ${rest.join(" → ")}`;
-
-function describeGone(gone: readonly Witness[]): string {
+/**
+ * Gone witnesses as a person reads them, in name order. An account still in the
+ * ledger is named as it is called now; one that is not, as the mark knew it.
+ */
+function describeGone(gone: readonly Witness[], mark: WitnessMark, observed: LedgerObservation): string {
   if (gone.length === 0) {
     return "every witness the mark lists is still accounted for, so which one left cannot be told";
   }
-  const more = gone.length - SHOWN;
-  return (
-    `gone since the mark was set: ${gone.slice(0, SHOWN).map(describeWitness).join(", ")}` +
-    (more > 0 ? ` and ${more} more` : "")
-  );
+  const names: Readonly<Record<string, string>> = { ...mark.accountNames, ...namesNow(observed) };
+  const labels = gone
+    .map(([id, ...fields]) => [names[`${id}`] ?? `account ${id}`, ...fields])
+    .map(([name, ...fields]) => (fields.length === 0 ? `${name}` : `${name} ${fields.join(" → ")}`))
+    .sort();
+  const more = labels.length - SHOWN;
+  return `gone since the mark was set: ${labels.slice(0, SHOWN).join(", ")}` + (more > 0 ? ` and ${more} more` : "");
 }
 
 const HOW_TO_LOWER =
@@ -167,7 +220,7 @@ export function compareToMarks(observed: LedgerObservation, marks: WitnessMarks)
     const mark = marks[kind];
     const counted = `${LABEL[kind]} ${now.length}`;
     if (mark === undefined) {
-      writes[kind] = { count: now.length, witnesses: now };
+      writes[kind] = markOf(observed, now);
       segments.push(`${counted} (recorded)`);
       continue;
     }
@@ -178,13 +231,13 @@ export function compareToMarks(observed: LedgerObservation, marks: WitnessMarks)
         account: LABEL[kind],
         detail:
           `${now.length} seen, below the mark of ${mark.count} — ` +
-          `${describeGone(goneWitnesses(kind, mark.witnesses, now, observed))}. ` +
+          `${describeGone(goneWitnesses(kind, mark.witnesses, now, observed), mark, observed)}. ` +
           `${HOW_TO_LOWER} pnpm ledger-check --lower-marks=${kind}, then the same with --confirm`,
       });
       continue;
     }
     if (now.length > mark.count) {
-      writes[kind] = { count: now.length, witnesses: now };
+      writes[kind] = markOf(observed, now);
       segments.push(`${counted} (raised from ${mark.count})`);
       continue;
     }
@@ -217,10 +270,10 @@ export function planLowering(
       lines.push(`${LABEL[kind]}: ${now.length} seen, mark ${mark.count} — not below it, nothing to lower`);
       continue;
     }
-    writes[kind] = { count: now.length, witnesses: now };
+    writes[kind] = markOf(observed, now);
     lines.push(
       `${LABEL[kind]}: lowers its mark ${mark.count} → ${now.length} — ` +
-        describeGone(goneWitnesses(kind, mark.witnesses, now, observed)),
+        describeGone(goneWitnesses(kind, mark.witnesses, now, observed), mark, observed),
     );
   }
   return { writes, lines };
@@ -280,11 +333,18 @@ export interface WitnessMarkRow {
   kind: string;
   mark: number;
   witnesses: unknown;
+  accountNames: unknown;
 }
 
 const isWitnessList = (value: unknown): value is Witness[] =>
   Array.isArray(value) &&
   value.every((w) => Array.isArray(w) && w.length > 0 && w.every((field) => typeof field === "string"));
+
+const isNameMap = (value: unknown): value is Record<string, string> =>
+  typeof value === "object" &&
+  value !== null &&
+  !Array.isArray(value) &&
+  Object.values(value).every((name) => typeof name === "string");
 
 /**
  * The stored rows as marks.
@@ -299,20 +359,27 @@ export function marksFromRows(rows: readonly WitnessMarkRow[]): WitnessMarks {
   for (const row of rows) {
     if (!isKind(row.kind)) continue;
     const label = LABEL[row.kind];
+    const refuse = (why: string): never => {
+      throw new Error(`ledger_witness_marks: the ${label} mark${why}`);
+    };
     if (!isWitnessList(row.witnesses)) {
-      throw new Error(
-        `ledger_witness_marks: the ${label} mark's witnesses are not a list of fields — refusing to read it as ` +
-          `no mark, which the next run would record afresh`,
-      );
+      return refuse(`'s witnesses are not a list of fields — refusing to read it as no mark, which the next run would record afresh`);
+    }
+    if (!isNameMap(row.accountNames)) {
+      return refuse(`'s account names are not a map of account id to name — refusing to read it as no mark`);
     }
     const listed = row.witnesses.length;
     if (listed !== row.mark) {
-      throw new Error(
-        `ledger_witness_marks: the ${label} mark says ${row.mark} but lists ${listed} witness${listed === 1 ? "" : "es"} — ` +
-          `refusing to trust either`,
+      return refuse(` says ${row.mark} but lists ${listed} witness${listed === 1 ? "" : "es"} — refusing to trust either`);
+    }
+    const names = row.accountNames;
+    const unnamed = row.witnesses.find(([id]) => typeof names[`${id}`] !== "string");
+    if (unnamed !== undefined) {
+      return refuse(
+        ` lists a witness on account ${unnamed[0]} and names no such account — a drop could not say what left`,
       );
     }
-    marks[row.kind] = { count: row.mark, witnesses: row.witnesses };
+    marks[row.kind] = { count: row.mark, witnesses: row.witnesses, accountNames: names };
   }
   return marks;
 }

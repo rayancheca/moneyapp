@@ -355,6 +355,8 @@ for (const [name, list] of Object.entries(valueAnchors)) {
 
 const observation: LedgerObservation = {
   accounts: accounts.map((a) => a.name),
+  // the witness floor keys by id, so a renamed account is the same account
+  accountIds: Object.fromEntries(accounts.map((a) => [a.name, a.id])),
   chainWindows,
   breaks,
   syntheticNetCents,

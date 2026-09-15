@@ -19,9 +19,40 @@ import {
  */
 const B = "Robinhood Brokerage";
 const CC = "Chase Checking";
+const RC = "Robinhood Cash";
+const COH = "Cash on Hand";
+
+/** the owner's thirteen accounts and their ids, read off the same copy */
+const ID: Readonly<Record<string, string>> = {
+  "Capital One 360 Checking": "01a03a43-ab5d-7001-8575-676060f15c78",
+  [COH]: "019fcd2f-0777-7000-9728-f51c9f2dbd7e",
+  [CC]: "019f4ca7-a6bd-7cc7-9a5f-e7f91c499722",
+  "Chase Sapphire": "019f4ca7-a750-7f21-8ffa-2546cac01f3a",
+  Discover: "019f4cd1-b24f-7c43-895b-fc1c219b3dec",
+  "Robinhood Agentic": "01a0a5f7-fdde-7000-85d2-1cd5ddd17902",
+  [B]: "019f4c7d-cc91-74b0-9349-1c012e2cfb50",
+  [RC]: "019f4c92-3250-7cd2-b24a-ba39058990d2",
+  "Robinhood Crypto": "019f4c7d-cc91-7eb1-a3bb-aee70ab6193e",
+  "SoFi Checking": "019f4cbb-9782-7d47-94c3-710d9ec30f05",
+  "SoFi Savings": "019f4cbd-d2e7-78f3-8b38-f19f6a970d09",
+  "Venture X": "019f4ccb-f9dd-7849-acfd-d76140adce62",
+  "Wells Fargo Everyday Checking": "01a03a43-ab5d-7000-a3d4-e4d2c112e2b8",
+};
+
+/** a witness as stored: its account's id, then its fields */
+const at = (name: string, ...fields: string[]): string[] => [ID[name]!, ...fields];
+/** the account names a mark over these accounts carries */
+const named = (...names: string[]): Record<string, string> => Object.fromEntries(names.map((n) => [ID[n]!, n]));
+
+/** Chase Checking, renamed the way the owner might: same id, a different name */
+const CC_RENAMED = "Chase Checking 3522";
+const idsAfterRename: Record<string, string> = Object.fromEntries(
+  Object.entries(ID).map(([name, id]) => [name === CC ? CC_RENAMED : name, id]),
+);
 
 const observation = (over: Partial<LedgerObservation> = {}): LedgerObservation => ({
   accounts: [],
+  accountIds: ID,
   chainWindows: {},
   breaks: {},
   syntheticNetCents: {},
@@ -45,7 +76,7 @@ describe("witnessesOf — what each kind counts", () => {
   it("counts every statement day on an investment account, valued or not; every window walked; every period graded; every account read", () => {
     const seen = witnessesOf(
       observation({
-        accounts: [B, "Cash on Hand"],
+        accounts: [B, COH],
         chainWindows: { [CC]: [{ from: "2022-08-24", to: "2022-09-13" }] },
         gradedPeriods: { [CC]: [{ periodStart: "2022-08-25", periodEnd: "2022-09-13" }] },
         valuedAnchorDays: { [B]: ["2024-09-30", "2024-08-31"] },
@@ -54,38 +85,64 @@ describe("witnessesOf — what each kind counts", () => {
       }),
     );
     expect(seen).toEqual({
-      "value-anchors": [
-        [B, "2024-08-31"],
-        [B, "2024-09-30"],
-        ["Robinhood Crypto", "2025-10-31"],
-      ],
-      "chain-windows": [[CC, "2022-08-24", "2022-09-13"]],
-      "statement-periods": [[CC, "2022-08-25", "2022-09-13"]],
-      accounts: [["Cash on Hand"], [B]],
+      "value-anchors": [at(B, "2024-08-31"), at(B, "2024-09-30"), at("Robinhood Crypto", "2025-10-31")],
+      "chain-windows": [at(CC, "2022-08-24", "2022-09-13")],
+      "statement-periods": [at(CC, "2022-08-25", "2022-09-13")],
+      accounts: [at(COH), at(B)],
     });
   });
 
   it("names the four kinds, in the order the summary prints them", () => {
     expect(WITNESS_KINDS).toEqual(["value-anchors", "chain-windows", "statement-periods", "accounts"]);
   });
+
+  it("⛔ keys a witness by its account's ID — the same ledger with an account renamed is the same witnesses", () => {
+    const ledger = (name: string, accountIds: Record<string, string>) =>
+      observation({
+        accounts: [name, B],
+        accountIds,
+        chainWindows: { [name]: [{ from: "2022-08-24", to: "2022-09-13" }] },
+        gradedPeriods: { [name]: [{ periodStart: "2022-08-25", periodEnd: "2022-09-13" }] },
+      });
+    expect(witnessesOf(ledger(CC_RENAMED, idsAfterRename))).toEqual(witnessesOf(ledger(CC, ID)));
+  });
+
+  it("⛔ an account the observation gives no id is an error — keyed by its name, a rename would read as a removal", () => {
+    const nameless = { accountIds: { [B]: ID[B]! } };
+    const cases: [Partial<LedgerObservation>, string][] = [
+      [{ accounts: [CC] }, CC],
+      [{ chainWindows: { [CC]: [{ from: "2022-08-24", to: "2022-09-13" }] } }, CC],
+      [{ gradedPeriods: { [CC]: [{ periodStart: "2022-08-25", periodEnd: "2022-09-13" }] } }, CC],
+      [{ valuedAnchorDays: { "Robinhood Crypto": ["2025-10-31"] } }, "Robinhood Crypto"],
+      [
+        { unpricedAnchors: [{ account: "Robinhood Crypto", on: "2025-10-31", printedCents: 150_500, derivedCents: null }] },
+        "Robinhood Crypto",
+      ],
+    ];
+    for (const [over, name] of cases) {
+      expect(() => witnessesOf(observation({ ...nameless, ...over }))).toThrow(
+        `"${name}" has no account id in the observation`,
+      );
+    }
+  });
 });
 
 describe("compareToMarks — a floor under every witness kind", () => {
   const today = observation({
-    accounts: ["Cash on Hand", B],
+    accounts: [COH, B],
     chainWindows: { [CC]: [{ from: "2022-08-24", to: "2022-09-13" }] },
     gradedPeriods: { [CC]: [{ periodStart: "2022-08-25", periodEnd: "2022-09-13" }] },
     valuedAnchorDays: { [B]: ["2024-08-31"] },
   });
 
-  it("a ledger with no marks records every kind at what it sees, and passes", () => {
+  it("a ledger with no marks records every kind at what it sees, with the name of every account it saw, and passes", () => {
     const result = compareToMarks(today, {});
     expect(result.failures).toEqual([]);
     expect(result.writes).toEqual({
-      "value-anchors": { count: 1, witnesses: [[B, "2024-08-31"]] },
-      "chain-windows": { count: 1, witnesses: [[CC, "2022-08-24", "2022-09-13"]] },
-      "statement-periods": { count: 1, witnesses: [[CC, "2022-08-25", "2022-09-13"]] },
-      accounts: { count: 2, witnesses: [["Cash on Hand"], [B]] },
+      "value-anchors": { count: 1, witnesses: [at(B, "2024-08-31")], accountNames: named(B) },
+      "chain-windows": { count: 1, witnesses: [at(CC, "2022-08-24", "2022-09-13")], accountNames: named(CC) },
+      "statement-periods": { count: 1, witnesses: [at(CC, "2022-08-25", "2022-09-13")], accountNames: named(CC) },
+      accounts: { count: 2, witnesses: [at(COH), at(B)], accountNames: named(COH, B) },
     });
     expect(result.summary).toBe(
       "witness marks: value anchors 1 (recorded) · chain windows 1 (recorded) · statement periods 1 (recorded) · accounts 2 (recorded)",
@@ -129,7 +186,7 @@ describe("compareToMarks — a floor under every witness kind", () => {
 
     expect(result.failures).toEqual([]);
     expect(result.writes).toEqual({
-      "value-anchors": { count: 2, witnesses: [[B, "2024-08-31"], [B, "2024-09-30"]] },
+      "value-anchors": { count: 2, witnesses: [at(B, "2024-08-31"), at(B, "2024-09-30")], accountNames: named(B) },
     });
     expect(result.summary).toBe(
       "witness marks: value anchors 2 (raised from 1) · chain windows 0 · statement periods 0 · accounts 0",
@@ -166,10 +223,8 @@ describe("compareToMarks — a floor under every witness kind", () => {
     expect(result.writes).toEqual({
       "statement-periods": {
         count: 2,
-        witnesses: [
-          [CC, "2022-08-25", "2022-09-13"],
-          [CC, "2022-09-14", "2022-10-13"],
-        ],
+        witnesses: [at(CC, "2022-08-25", "2022-09-13"), at(CC, "2022-09-14", "2022-10-13")],
+        accountNames: named(CC),
       },
     });
   });
@@ -179,12 +234,13 @@ describe("compareToMarks — a floor under every witness kind", () => {
       "chain-windows": {
         count: 5,
         witnesses: [
-          [CC, "2022-08-24", "2022-10-13"],
-          [CC, "2022-10-13", "2022-11-10"],
-          [CC, "2022-11-10", "2022-12-12"],
-          [CC, "2022-12-12", "2023-01-12"],
-          ["Discover", "2023-01-01", "2023-02-01"],
+          at(CC, "2022-08-24", "2022-10-13"),
+          at(CC, "2022-10-13", "2022-11-10"),
+          at(CC, "2022-11-10", "2022-12-12"),
+          at(CC, "2022-12-12", "2023-01-12"),
+          at("Discover", "2023-01-01", "2023-02-01"),
         ],
+        accountNames: named(CC, "Discover"),
       },
     };
     const after = observation({
@@ -208,7 +264,7 @@ describe("compareToMarks — a floor under every witness kind", () => {
 
   it("a witness recorded twice and seen once is gone once", () => {
     const marks: WitnessMarks = {
-      "value-anchors": { count: 2, witnesses: [[B, "2024-08-31"], [B, "2024-08-31"]] },
+      "value-anchors": { count: 2, witnesses: [at(B, "2024-08-31"), at(B, "2024-08-31")], accountNames: named(B) },
     };
     const [failure] = compareToMarks(observation({ valuedAnchorDays: { [B]: ["2024-08-31"] } }), marks).failures;
     expect(failure?.detail).toContain("1 seen, below the mark of 2 — gone since the mark was set: Robinhood Brokerage 2024-08-31. ");
@@ -216,7 +272,11 @@ describe("compareToMarks — a floor under every witness kind", () => {
 
   it("a drop whose mark's witnesses are all still accounted for says it cannot tell which left — and still fails", () => {
     const marks: WitnessMarks = {
-      "chain-windows": { count: 2, witnesses: [[CC, "2022-08-24", "2022-09-13"], [CC, "2022-08-24", "2022-09-13"]] },
+      "chain-windows": {
+        count: 2,
+        witnesses: [at(CC, "2022-08-24", "2022-09-13"), at(CC, "2022-08-24", "2022-09-13")],
+        accountNames: named(CC),
+      },
     };
     const after = observation({ chainWindows: { [CC]: [{ from: "2022-08-24", to: "2022-09-13" }] } });
 
@@ -228,23 +288,9 @@ describe("compareToMarks — a floor under every witness kind", () => {
     );
   });
 
-  it("names ten gone witnesses and counts the rest", () => {
+  it("names ten gone witnesses, in name order, and counts the rest", () => {
     // the owner's thirteen accounts, as the check reads them
-    const thirteen = [
-      "Capital One 360 Checking",
-      "Cash on Hand",
-      CC,
-      "Chase Sapphire",
-      "Discover",
-      "Robinhood Agentic",
-      B,
-      "Robinhood Cash",
-      "Robinhood Crypto",
-      "SoFi Checking",
-      "SoFi Savings",
-      "Venture X",
-      "Wells Fargo Everyday Checking",
-    ];
+    const thirteen = Object.keys(ID);
     const [failure] = compareToMarks(observation(), marksAt(observation({ accounts: thirteen }))).failures;
     expect(failure?.account).toBe("accounts");
     expect(failure?.detail).toContain(
@@ -254,6 +300,95 @@ describe("compareToMarks — a floor under every witness kind", () => {
     );
     expect(failure?.detail).toContain("pnpm ledger-check --lower-marks=accounts, then the same with --confirm");
   });
+
+  /*
+   * Measured on a copy of the owner's ledger (2026-09-15, review): with the marks
+   * recorded, Chase Checking renamed, then the first Robinhood statement
+   * un-imported, the drop of ONE chain window listed fifty Chase Checking windows
+   * as gone "and 40 more" — and the two Robinhood Cash windows that had actually
+   * left were among the hidden forty.
+   */
+  describe("⛔ a rename moves no witness", () => {
+    const windows = (chase: string, robinhood: { from: string; to: string }[]) => ({
+      [chase]: [
+        { from: "2022-08-24", to: "2022-09-13" },
+        { from: "2022-09-13", to: "2022-10-13" },
+      ],
+      [RC]: robinhood,
+    });
+    const recorded = marksAt(
+      observation({
+        chainWindows: windows(CC, [
+          { from: "2024-06-30", to: "2024-07-31" },
+          { from: "2024-07-31", to: "2024-08-31" },
+        ]),
+      }),
+    );
+
+    it("renaming an account holds every count and writes nothing", () => {
+      const renamed = observation({
+        accountIds: idsAfterRename,
+        chainWindows: windows(CC_RENAMED, [
+          { from: "2024-06-30", to: "2024-07-31" },
+          { from: "2024-07-31", to: "2024-08-31" },
+        ]),
+      });
+      expect(compareToMarks(renamed, recorded)).toEqual({
+        writes: {},
+        failures: [],
+        summary: "witness marks: value anchors 0 · chain windows 4 · statement periods 0 · accounts 0",
+      });
+    });
+
+    it("a drop after a rename names exactly the witnesses that left, and none that were renamed", () => {
+      const dropped = observation({
+        accountIds: idsAfterRename,
+        chainWindows: windows(CC_RENAMED, [{ from: "2024-06-30", to: "2024-08-31" }]),
+      });
+      expect(compareToMarks(dropped, recorded).failures).toEqual([
+        {
+          kind: "witness-drop",
+          account: "chain windows",
+          detail:
+            "3 seen, below the mark of 4 — gone since the mark was set: " +
+            "Robinhood Cash 2024-06-30 → 2024-07-31, Robinhood Cash 2024-07-31 → 2024-08-31. " +
+            `${LOWER_HOW} pnpm ledger-check --lower-marks=chain-windows, then the same with --confirm`,
+        },
+      ]);
+    });
+
+    it("a gone witness on a renamed account is named as the account is called now", () => {
+      const dropped = observation({
+        accountIds: idsAfterRename,
+        chainWindows: {
+          [CC_RENAMED]: [{ from: "2022-08-24", to: "2022-09-13" }],
+          [RC]: [
+            { from: "2024-06-30", to: "2024-07-31" },
+            { from: "2024-07-31", to: "2024-08-31" },
+          ],
+        },
+      });
+      expect(compareToMarks(dropped, recorded).failures[0]?.detail).toContain(
+        "3 seen, below the mark of 4 — gone since the mark was set: Chase Checking 3522 2022-09-13 → 2022-10-13. ",
+      );
+    });
+
+    it("a witness on an account that is itself gone is named as the mark knew it", () => {
+      const before = observation({ accounts: [B, COH] });
+      const after = observation({ accounts: [B], accountIds: { [B]: ID[B]! } });
+      expect(compareToMarks(after, marksAt(before)).failures[0]?.detail).toContain(
+        "1 seen, below the mark of 2 — gone since the mark was set: Cash on Hand. ",
+      );
+    });
+
+    it("a mark that knows no name for an account says its id rather than nothing", () => {
+      const marks: WitnessMarks = { accounts: { count: 1, witnesses: [at(COH)], accountNames: {} } };
+      const after = observation({ accountIds: {} });
+      expect(compareToMarks(after, marks).failures[0]?.detail).toContain(
+        "0 seen, below the mark of 1 — gone since the mark was set: account 019fcd2f-0777-7000-9728-f51c9f2dbd7e. ",
+      );
+    });
+  });
 });
 
 describe("planLowering — the guarded way down, after a removal the owner approved", () => {
@@ -262,13 +397,15 @@ describe("planLowering — the guarded way down, after a removal the owner appro
     chainWindows: { [CC]: [{ from: "2022-08-24", to: "2022-09-13" }] },
   });
   const marks: WitnessMarks = {
-    "value-anchors": { count: 2, witnesses: [[B, "2024-08-31"], [B, "2024-09-30"]] },
-    "chain-windows": { count: 1, witnesses: [[CC, "2022-08-24", "2022-09-13"]] },
+    "value-anchors": { count: 2, witnesses: [at(B, "2024-08-31"), at(B, "2024-09-30")], accountNames: named(B) },
+    "chain-windows": { count: 1, witnesses: [at(CC, "2022-08-24", "2022-09-13")], accountNames: named(CC) },
   };
 
   it("lowers a named kind to exactly what is seen, and says what it forgets", () => {
     const plan = planLowering(seen, marks, ["value-anchors", "chain-windows", "statement-periods"]);
-    expect(plan.writes).toEqual({ "value-anchors": { count: 1, witnesses: [[B, "2024-09-30"]] } });
+    expect(plan.writes).toEqual({
+      "value-anchors": { count: 1, witnesses: [at(B, "2024-09-30")], accountNames: named(B) },
+    });
     expect(plan.lines).toEqual([
       "value anchors: lowers its mark 2 → 1 — gone since the mark was set: Robinhood Brokerage 2024-08-31",
       "chain windows: 1 seen, mark 1 — not below it, nothing to lower",
@@ -277,7 +414,7 @@ describe("planLowering — the guarded way down, after a removal the owner appro
   });
 
   it("⛔ never raises — a kind seen above its mark is left for a plain run", () => {
-    const plan = planLowering(seen, { "chain-windows": { count: 0, witnesses: [] } }, ["chain-windows"]);
+    const plan = planLowering(seen, { "chain-windows": { count: 0, witnesses: [], accountNames: {} } }, ["chain-windows"]);
     expect(plan.writes).toEqual({});
     expect(plan.lines).toEqual(["chain windows: 1 seen, mark 0 — not below it, nothing to lower"]);
   });
@@ -336,30 +473,46 @@ describe("ledgerCheckMode — the command line", () => {
 });
 
 describe("marksFromRows — reading what the ledger stored", () => {
-  it("reads a stored mark as its count and its witnesses", () => {
-    expect(marksFromRows([{ kind: "value-anchors", mark: 1, witnesses: [[B, "2024-08-31"]] }])).toEqual({
-      "value-anchors": { count: 1, witnesses: [[B, "2024-08-31"]] },
+  it("reads a stored mark as its count, its witnesses and the names of their accounts", () => {
+    expect(
+      marksFromRows([{ kind: "value-anchors", mark: 1, witnesses: [at(B, "2024-08-31")], accountNames: named(B) }]),
+    ).toEqual({
+      "value-anchors": { count: 1, witnesses: [at(B, "2024-08-31")], accountNames: named(B) },
     });
   });
 
   it("leaves a kind this version does not know to the version that wrote it", () => {
-    expect(marksFromRows([{ kind: "a-later-kind", mark: 0, witnesses: [] }])).toEqual({});
+    expect(marksFromRows([{ kind: "a-later-kind", mark: 0, witnesses: [], accountNames: {} }])).toEqual({});
   });
 
   it("⛔ a mark whose witnesses are not a list of fields is an error, never an absent mark", () => {
     for (const witnesses of ["[]", [["a"], "b"], [[]], [[1]]]) {
-      expect(() => marksFromRows([{ kind: "accounts", mark: 1, witnesses }])).toThrow(
+      expect(() => marksFromRows([{ kind: "accounts", mark: 1, witnesses, accountNames: {} }])).toThrow(
         /the accounts mark's witnesses are not a list of fields/,
       );
     }
   });
 
+  it("⛔ a mark whose account names are not a map of id to name is an error, never an absent mark", () => {
+    for (const accountNames of ["{}", null, [], { [ID[COH]!]: 1 }]) {
+      expect(() => marksFromRows([{ kind: "accounts", mark: 1, witnesses: [at(COH)], accountNames }])).toThrow(
+        /the accounts mark's account names are not a map of account id to name/,
+      );
+    }
+  });
+
   it("⛔ a mark whose count disagrees with its own witnesses is an error, never an absent mark", () => {
-    expect(() => marksFromRows([{ kind: "accounts", mark: 3, witnesses: [["Cash on Hand"]] }])).toThrow(
-      /the accounts mark says 3 but lists 1 witness —/,
-    );
-    expect(() => marksFromRows([{ kind: "accounts", mark: 1, witnesses: [["Cash on Hand"], [B]] }])).toThrow(
-      /the accounts mark says 1 but lists 2 witnesses —/,
-    );
+    expect(() =>
+      marksFromRows([{ kind: "accounts", mark: 3, witnesses: [at(COH)], accountNames: named(COH) }]),
+    ).toThrow(/the accounts mark says 3 but lists 1 witness —/);
+    expect(() =>
+      marksFromRows([{ kind: "accounts", mark: 1, witnesses: [at(COH), at(B)], accountNames: named(COH, B) }]),
+    ).toThrow(/the accounts mark says 1 but lists 2 witnesses —/);
+  });
+
+  it("⛔ a mark with a witness on an account it names nowhere is an error — its message could not say what left", () => {
+    expect(() =>
+      marksFromRows([{ kind: "accounts", mark: 2, witnesses: [at(COH), at(B)], accountNames: named(B) }]),
+    ).toThrow(/the accounts mark lists a witness on account 019fcd2f-0777-7000-9728-f51c9f2dbd7e and names no such account/);
   });
 });

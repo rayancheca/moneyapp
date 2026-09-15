@@ -24,7 +24,13 @@ import { updatedAt } from "./common";
 export const ledgerWitnessMarks = sqliteTable("ledger_witness_marks", {
   kind: text("kind").primaryKey(),
   mark: integer("mark").notNull(),
-  /** JSON: the witnesses seen when the mark was set, each an array of its identity's fields */
+  /**
+   * JSON: the witnesses seen when the mark was set, each an array of its
+   * identity's fields, its account's ID first — never its name, which a rename
+   * changes while every count holds and nothing rewrites this row
+   */
   witnesses: text("witnesses", { mode: "json" }).$type<string[][]>().notNull(),
+  /** JSON: id → name of every account those witnesses are on, when the mark was set — how a drop names a removed account */
+  accountNames: text("account_names", { mode: "json" }).$type<Record<string, string>>().notNull(),
   updatedAt: updatedAt(),
 });

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "939341d2-6663-4387-8a92-9991fb8f0c71",
+  "id": "6f87e71d-225a-470b-b8d2-229b0bf1f984",
   "prevId": "131fa4fc-0060-4ffa-99df-a13745d59cc2",
   "tables": {
     "institutions": {
@@ -2599,6 +2599,13 @@
         },
         "witnesses": {
           "name": "witnesses",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "account_names": {
+          "name": "account_names",
           "type": "text",
           "primaryKey": false,
           "notNull": true,

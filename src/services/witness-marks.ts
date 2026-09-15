@@ -17,7 +17,16 @@ export function readWitnessMarks(db: AppDatabase): WitnessMarks {
 export function writeWitnessMarks(db: AppDatabase, writes: WitnessMarks): void {
   const rows = WITNESS_KINDS.flatMap((kind) => {
     const mark = writes[kind];
-    return mark === undefined ? [] : [{ kind, mark: mark.count, witnesses: mark.witnesses.map((w) => [...w]) }];
+    return mark === undefined
+      ? []
+      : [
+          {
+            kind,
+            mark: mark.count,
+            witnesses: mark.witnesses.map((w) => [...w]),
+            accountNames: { ...mark.accountNames },
+          },
+        ];
   });
   if (rows.length === 0) return;
   db.transaction((tx) => {
@@ -26,7 +35,12 @@ export function writeWitnessMarks(db: AppDatabase, writes: WitnessMarks): void {
         .values(row)
         .onConflictDoUpdate({
           target: ledgerWitnessMarks.kind,
-          set: { mark: row.mark, witnesses: row.witnesses, updatedAt: new Date().toISOString() },
+          set: {
+            mark: row.mark,
+            witnesses: row.witnesses,
+            accountNames: row.accountNames,
+            updatedAt: new Date().toISOString(),
+          },
         })
         .run();
     }
