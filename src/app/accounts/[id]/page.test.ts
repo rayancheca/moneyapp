@@ -48,3 +48,20 @@ describe("/accounts/[id] — the remove-balance dialog's blast radius", () => {
     expect(source).not.toMatch(/rebuilds from what is left|re-verify these days|leaves the curve exactly as it is/);
   });
 });
+
+/**
+ * 🔴 THE CHART'S EXACT DAYS ARE GRADED HERE, WHERE NO SERVICE TEST LOOKS.
+ * `BalanceChartPanel` is a client component, so the page grades each point before
+ * handing it over. Reverting that one expression to `p.basis === "anchored" ||
+ * p.basis === "derived" || balanceDayIsExact("investment", p.basis)` — every
+ * cash and credit `carried` day dashed again — passed all 163 tests of the six
+ * suites the fix touches. The rule itself is pinned in services/coverage.test.ts.
+ */
+describe("/accounts/[id] — the balance chart's exact days", () => {
+  test("each point is graded by balanceDayIsExact for THIS account's type, and by nothing local", () => {
+    const panel = source.match(/<BalanceChartPanel[\s\S]*?\/>/)?.[0] ?? "";
+    expect(panel).toMatch(/exact: balanceDayIsExact\(account\.type, p\.basis\),/);
+    expect(source.match(/balanceDayIsExact\(/g) ?? []).toHaveLength(1);
+    expect(source).not.toMatch(/basis === "/);
+  });
+});
