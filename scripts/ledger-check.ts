@@ -22,8 +22,9 @@
  *      only what DISAGREES, so a witness that agrees can leave without a word:
  *      un-importing a statement whose valuation agreed took "value anchors: 43
  *      checked" to 42 and exited 0. Each kind the check counts — value anchors,
- *      chain windows, statement periods, accounts — has a high-water mark kept
- *      in the ledger itself (`ledger_witness_marks`). Fewer than the mark fails;
+ *      chain endpoints, chain windows, statement periods, accounts — has a
+ *      high-water mark kept in the ledger itself (`ledger_witness_marks`), each
+ *      witness keyed by its account's id. Fewer than the mark fails;
  *      more raises the mark on its own, with no commit and no hand edit (the
  *      owner's rule, 2026-09-15). src/lib/witness-floor.ts.
  *
@@ -207,6 +208,8 @@ const accounts = sqlite
 const breaks: Record<string, ChainBreak[]> = {};
 /** every window walked, closing or not — what tells a closed break from a vanished one */
 const chainWindows: Record<string, ChainWindow[]> = {};
+/** every endpoint the chain is measured from — a lone anchor bounds no window, and is one all the same */
+const chainEndpoints: Record<string, string[]> = {};
 const syntheticNetCents: Record<string, number> = {};
 const staleVerdicts: StaleVerdict[] = [];
 /** every period re-graded, agreeing or not — what tells a removed period from one that still agrees */
@@ -227,6 +230,7 @@ for (const account of accounts) {
       .all(account.id) as { anchoredOn: string; balanceCents: number; source: string }[];
 
     const { endpoints } = selectEndpoints(pickWinners(anchors as never));
+    chainEndpoints[account.name] = endpoints.map((e) => e.anchoredOn);
     const pairs = [];
     for (let i = 0; i + 1 < endpoints.length; i += 1) {
       const from = endpoints[i]!;
@@ -357,6 +361,7 @@ const observation: LedgerObservation = {
   accounts: accounts.map((a) => a.name),
   // the witness floor keys by id, so a renamed account is the same account
   accountIds: Object.fromEntries(accounts.map((a) => [a.name, a.id])),
+  chainEndpoints,
   chainWindows,
   breaks,
   syntheticNetCents,

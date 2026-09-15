@@ -33,7 +33,7 @@ import { type LedgerFailure, type LedgerObservation, windowsSpanning } from "./l
  * a copy, 2026-09-15, review).
  */
 
-export const WITNESS_KINDS = ["value-anchors", "chain-windows", "statement-periods", "accounts"] as const;
+export const WITNESS_KINDS = ["value-anchors", "chain-endpoints", "chain-windows", "statement-periods", "accounts"] as const;
 export type WitnessKind = (typeof WITNESS_KINDS)[number];
 
 /*
@@ -42,6 +42,19 @@ export type WitnessKind = (typeof WITNESS_KINDS)[number];
  *   value anchors      every statement day on an investment account — the
  *                      pass-73 arbiter's denominator. The baseline lists the
  *                      15 that disagree; the other 28 were unguarded.
+ *   chain endpoints    every anchor a cash account's chain is measured from —
+ *                      `selectEndpoints`, the derivation's own choice. A lone
+ *                      one bounds no window, so windows alone never saw it:
+ *                      Cash on Hand's one typed $5,000.00 (2026-08-03, kept by
+ *                      the owner's decision of 2026-09-14) was deleted through
+ *                      deleteAnchor on a copy, the account's whole balance
+ *                      history went with it, and every mark held (review,
+ *                      2026-09-15).
+ *                      ⚠️ A moment-only account (no statement, no typed
+ *                      balance) whose first statement arrives trades its
+ *                      moments for that one endpoint, and both this count and
+ *                      windows can fall; no account in the ledger is
+ *                      moment-only today (measured).
  *   chain windows      every consecutive chain-grade anchor pair walked. The
  *                      break baseline is EMPTY, so every one of them was.
  *   statement periods  every stored verdict re-graded. Measured: 15 statement
@@ -55,6 +68,7 @@ export type WitnessKind = (typeof WITNESS_KINDS)[number];
  */
 const LABEL: Record<WitnessKind, string> = {
   "value-anchors": "value anchors",
+  "chain-endpoints": "chain endpoints",
   "chain-windows": "chain windows",
   "statement-periods": "statement periods",
   accounts: "accounts",
@@ -109,6 +123,10 @@ export function witnessesOf(observed: LedgerObservation): Record<WitnessKind, Wi
       // a statement the app could not value is still there — `unpriced-anchor` reports it, this counts it
       ...observed.unpricedAnchors.map((a) => [a.account, a.on]),
     ]),
+    "chain-endpoints": keyed(
+      observed,
+      Object.entries(observed.chainEndpoints).flatMap(([account, days]) => days.map((on) => [account, on])),
+    ),
     "chain-windows": keyed(
       observed,
       Object.entries(observed.chainWindows).flatMap(([account, windows]) => windows.map((w) => [account, w.from, w.to])),

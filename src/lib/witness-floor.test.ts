@@ -53,6 +53,7 @@ const idsAfterRename: Record<string, string> = Object.fromEntries(
 const observation = (over: Partial<LedgerObservation> = {}): LedgerObservation => ({
   accounts: [],
   accountIds: ID,
+  chainEndpoints: {},
   chainWindows: {},
   breaks: {},
   syntheticNetCents: {},
@@ -77,7 +78,9 @@ describe("witnessesOf — what each kind counts", () => {
     const seen = witnessesOf(
       observation({
         accounts: [B, COH],
-        chainWindows: { [CC]: [{ from: "2022-08-24", to: "2022-09-13" }] },
+        // Cash on Hand's one typed balance bounds no window, and is an endpoint all the same
+        chainEndpoints: { [CC]: ["2022-09-13", "2022-08-24"], [COH]: ["2026-08-03"] },
+        chainWindows: { [CC]: [{ from: "2022-08-24", to: "2022-09-13" }], [COH]: [] },
         gradedPeriods: { [CC]: [{ periodStart: "2022-08-25", periodEnd: "2022-09-13" }] },
         valuedAnchorDays: { [B]: ["2024-09-30", "2024-08-31"] },
         // a statement the app could not value is still a statement that is there
@@ -86,14 +89,15 @@ describe("witnessesOf — what each kind counts", () => {
     );
     expect(seen).toEqual({
       "value-anchors": [at(B, "2024-08-31"), at(B, "2024-09-30"), at("Robinhood Crypto", "2025-10-31")],
+      "chain-endpoints": [at(COH, "2026-08-03"), at(CC, "2022-08-24"), at(CC, "2022-09-13")],
       "chain-windows": [at(CC, "2022-08-24", "2022-09-13")],
       "statement-periods": [at(CC, "2022-08-25", "2022-09-13")],
       accounts: [at(COH), at(B)],
     });
   });
 
-  it("names the four kinds, in the order the summary prints them", () => {
-    expect(WITNESS_KINDS).toEqual(["value-anchors", "chain-windows", "statement-periods", "accounts"]);
+  it("names the five kinds, in the order the summary prints them", () => {
+    expect(WITNESS_KINDS).toEqual(["value-anchors", "chain-endpoints", "chain-windows", "statement-periods", "accounts"]);
   });
 
   it("⛔ keys a witness by its account's ID — the same ledger with an account renamed is the same witnesses", () => {
@@ -111,6 +115,7 @@ describe("witnessesOf — what each kind counts", () => {
     const nameless = { accountIds: { [B]: ID[B]! } };
     const cases: [Partial<LedgerObservation>, string][] = [
       [{ accounts: [CC] }, CC],
+      [{ chainEndpoints: { [CC]: ["2022-08-24"] } }, CC],
       [{ chainWindows: { [CC]: [{ from: "2022-08-24", to: "2022-09-13" }] } }, CC],
       [{ gradedPeriods: { [CC]: [{ periodStart: "2022-08-25", periodEnd: "2022-09-13" }] } }, CC],
       [{ valuedAnchorDays: { "Robinhood Crypto": ["2025-10-31"] } }, "Robinhood Crypto"],
@@ -130,6 +135,7 @@ describe("witnessesOf — what each kind counts", () => {
 describe("compareToMarks — a floor under every witness kind", () => {
   const today = observation({
     accounts: [COH, B],
+    chainEndpoints: { [CC]: ["2022-08-24", "2022-09-13"] },
     chainWindows: { [CC]: [{ from: "2022-08-24", to: "2022-09-13" }] },
     gradedPeriods: { [CC]: [{ periodStart: "2022-08-25", periodEnd: "2022-09-13" }] },
     valuedAnchorDays: { [B]: ["2024-08-31"] },
@@ -140,12 +146,18 @@ describe("compareToMarks — a floor under every witness kind", () => {
     expect(result.failures).toEqual([]);
     expect(result.writes).toEqual({
       "value-anchors": { count: 1, witnesses: [at(B, "2024-08-31")], accountNames: named(B) },
+      "chain-endpoints": {
+        count: 2,
+        witnesses: [at(CC, "2022-08-24"), at(CC, "2022-09-13")],
+        accountNames: named(CC),
+      },
       "chain-windows": { count: 1, witnesses: [at(CC, "2022-08-24", "2022-09-13")], accountNames: named(CC) },
       "statement-periods": { count: 1, witnesses: [at(CC, "2022-08-25", "2022-09-13")], accountNames: named(CC) },
       accounts: { count: 2, witnesses: [at(COH), at(B)], accountNames: named(COH, B) },
     });
     expect(result.summary).toBe(
-      "witness marks: value anchors 1 (recorded) · chain windows 1 (recorded) · statement periods 1 (recorded) · accounts 2 (recorded)",
+      "witness marks: value anchors 1 (recorded) · chain endpoints 2 (recorded) · chain windows 1 (recorded) · " +
+        "statement periods 1 (recorded) · accounts 2 (recorded)",
     );
   });
 
@@ -153,7 +165,9 @@ describe("compareToMarks — a floor under every witness kind", () => {
     const result = compareToMarks(today, marksAt(today));
     expect(result.failures).toEqual([]);
     expect(result.writes).toEqual({});
-    expect(result.summary).toBe("witness marks: value anchors 1 · chain windows 1 · statement periods 1 · accounts 2");
+    expect(result.summary).toBe(
+      "witness marks: value anchors 1 · chain endpoints 2 · chain windows 1 · statement periods 1 · accounts 2",
+    );
   });
 
   it("⛔ a count ONE below its mark fails, naming the kind, the mark, the count, the witness that left and how to lower it", () => {
@@ -174,7 +188,7 @@ describe("compareToMarks — a floor under every witness kind", () => {
     // the mark stays where it was: a drop never lowers it on its own
     expect(result.writes).toEqual({});
     expect(result.summary).toBe(
-      "witness marks: value anchors 1 (below its mark of 2) · chain windows 0 · statement periods 0 · accounts 0",
+      "witness marks: value anchors 1 (below its mark of 2) · chain endpoints 0 · chain windows 0 · statement periods 0 · accounts 0",
     );
   });
 
@@ -189,7 +203,7 @@ describe("compareToMarks — a floor under every witness kind", () => {
       "value-anchors": { count: 2, witnesses: [at(B, "2024-08-31"), at(B, "2024-09-30")], accountNames: named(B) },
     });
     expect(result.summary).toBe(
-      "witness marks: value anchors 2 (raised from 1) · chain windows 0 · statement periods 0 · accounts 0",
+      "witness marks: value anchors 2 (raised from 1) · chain endpoints 0 · chain windows 0 · statement periods 0 · accounts 0",
     );
   });
 
@@ -227,6 +241,34 @@ describe("compareToMarks — a floor under every witness kind", () => {
         accountNames: named(CC),
       },
     });
+  });
+
+  /*
+   * Measured on a copy of the owner's ledger (2026-09-15, review): Cash on Hand
+   * holds ONE balance anchor, the $5,000.00 typed on 2026-08-03 that he decided
+   * to keep. It bounds no chain window, so deleting it through the app's own
+   * deleteAnchor wiped the account's whole balance history and the floor held
+   * every mark and exited 0.
+   */
+  it("⛔ a lone anchor is a witness: removing Cash on Hand's one typed balance drops chain endpoints, though no window moves", () => {
+    const before = observation({ chainEndpoints: { [COH]: ["2026-08-03"] }, chainWindows: { [COH]: [] } });
+    const after = observation({ chainEndpoints: { [COH]: [] }, chainWindows: { [COH]: [] } });
+
+    const result = compareToMarks(after, marksAt(before));
+
+    expect(result.failures).toEqual([
+      {
+        kind: "witness-drop",
+        account: "chain endpoints",
+        detail:
+          "0 seen, below the mark of 1 — gone since the mark was set: Cash on Hand 2026-08-03. " +
+          `${LOWER_HOW} pnpm ledger-check --lower-marks=chain-endpoints, then the same with --confirm`,
+      },
+    ]);
+    expect(result.writes).toEqual({});
+    expect(result.summary).toBe(
+      "witness marks: value anchors 0 · chain endpoints 0 (below its mark of 1) · chain windows 0 · statement periods 0 · accounts 0",
+    );
   });
 
   it("a chain window an arriving anchor divided is not gone — its span is still walked; a window no walk stops on is", () => {
@@ -336,7 +378,7 @@ describe("compareToMarks — a floor under every witness kind", () => {
       expect(compareToMarks(renamed, recorded)).toEqual({
         writes: {},
         failures: [],
-        summary: "witness marks: value anchors 0 · chain windows 4 · statement periods 0 · accounts 0",
+        summary: "witness marks: value anchors 0 · chain endpoints 0 · chain windows 4 · statement periods 0 · accounts 0",
       });
     });
 
@@ -450,7 +492,7 @@ describe("ledgerCheckMode — the command line", () => {
   it("⛔ --lower-marks with no kinds is refused, and lists the kinds", () => {
     for (const argv of [["--lower-marks"], ["--lower-marks="], ["--lower-marks=,"]]) {
       expect(() => ledgerCheckMode(argv)).toThrow(
-        "--lower-marks needs the kinds to lower: --lower-marks=<kind,...>, of value-anchors, chain-windows, statement-periods, accounts",
+        "--lower-marks needs the kinds to lower: --lower-marks=<kind,...>, of value-anchors, chain-endpoints, chain-windows, statement-periods, accounts",
       );
     }
   });

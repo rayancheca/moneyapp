@@ -103,6 +103,13 @@ export interface LedgerObservation {
    * as every witness on the renamed account gone.
    */
   accountIds: Readonly<Record<string, string>>;
+  /**
+   * every chain endpoint per account — the anchor days `selectEndpoints` measures
+   * the chain from, a lone one included. ⛔ One anchor bounds no window, so
+   * `chainWindows` alone cannot tell an account whose only anchor was deleted
+   * from one that never had any.
+   */
+  chainEndpoints: Record<string, readonly string[]>;
   /** every chain window walked per account, closing or not — consecutive, so abutting ones measure their span */
   chainWindows: Record<string, readonly ChainWindow[]>;
   breaks: Record<string, ChainBreak[]>;
