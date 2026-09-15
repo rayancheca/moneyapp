@@ -108,6 +108,7 @@ export function TransfersCard({ data }: { data: TransfersCardData }) {
         {proof.strandedNote && <p>{proof.strandedNote}</p>}
         {data.churnNote && <p>{data.churnNote}</p>}
         {data.arrivalNote && <p>{data.arrivalNote}</p>}
+        {data.cancelledNote && <p>{data.cancelledNote}</p>}
         {data.otherPartyNote && <p>{data.otherPartyNote}</p>}
       </div>
     </SurfaceCard>

@@ -127,6 +127,7 @@ export default async function FlowPage({
                     ["single-leg", "only one side was found"],
                     ["multi-leg", "more than two legs"],
                     ["same-account", "both legs in one account"],
+                    ["cancelled", "cancelled — left one account and came back to it"],
                   ] as const
                 ).map(([key, why]) =>
                   data.totals.unattributedByReason[key] > 0 ? (

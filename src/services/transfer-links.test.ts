@@ -11,8 +11,10 @@ import { dedupeHash } from "@/lib/hash";
 import { applyUndoPatch } from "./bulk-edit";
 import { createAccount, createInstitution } from "./accounts";
 import {
+  cancelledTransfers,
   detachTransferLegs,
   detachUndoRows,
+  isCancelledTransfer,
   linkTransferPair,
   staleTransferLegs,
   transferCandidates,
@@ -88,6 +90,52 @@ function categoryPathOf(categoryId: string | null): string | null {
   const parent = bundle.db.select().from(categories).where(eq(categories.id, cat.parentId)).get()!;
   return `${parent.name} > ${cat.name}`;
 }
+
+describe("a cancelled transfer — one group, one account, netting to zero", () => {
+  const shape = (accountId: string, amountCents: number) => ({ accountId, amountCents });
+
+  test("two legs in one account whose amounts cancel — and nothing else — is a cancelled transfer", () => {
+    expect(isCancelledTransfer([shape("a", -115_00), shape("a", 115_00)])).toBe(true);
+    expect(isCancelledTransfer([shape("a", 115_00), shape("a", -115_00)])).toBe(true);
+    // a real transfer: the money landed somewhere else
+    expect(isCancelledTransfer([shape("a", -115_00), shape("b", 115_00)])).toBe(false);
+    // one account, but something stayed out: a fee, a partial return
+    expect(isCancelledTransfer([shape("a", -115_00), shape("a", 100_00)])).toBe(false);
+    // the same sign twice is a doubling, not a cancellation
+    expect(isCancelledTransfer([shape("a", -115_00), shape("a", -115_00)])).toBe(false);
+    // two zeroes move nothing, and cancel nothing either
+    expect(isCancelledTransfer([shape("a", 0), shape("a", 0)])).toBe(false);
+    expect(isCancelledTransfer([shape("a", -115_00)])).toBe(false);
+    expect(isCancelledTransfer([shape("a", -115_00), shape("a", 115_00), shape("a", 0)])).toBe(false);
+  });
+
+  test("cancelledTransfers reads the WHOLE live group, not the caller's window, and names what came back", () => {
+    const setGroup = (id: string, groupId: string) =>
+      bundle.db.update(transactions).set({ transferGroupId: groupId }).where(eq(transactions.id, id)).run();
+    // a payment sent on the last day of a month and returned on the first of the next
+    const sent = insertTxn(checkingId, "2026-03-31", -115_00, "PAYMENT TO CARD 03/31");
+    const back = insertTxn(checkingId, "2026-04-01", 115_00, "PAYMENT TO CARD CANCELLED");
+    setGroup(sent, sent);
+    setGroup(back, sent);
+    // a superseded row still naming the group never moved money and does not break it
+    const retired = insertTxn(checkingId, "2026-04-01", 5_00, "RETIRED");
+    setGroup(retired, sent);
+    bundle.db.update(transactions).set({ status: "superseded" }).where(eq(transactions.id, retired)).run();
+    // a real transfer beside it
+    const out = insertTxn(checkingId, "2026-03-04", -50_00, "TO SAVINGS");
+    const inn = insertTxn(savingsId, "2026-03-04", 50_00, "FROM CHECKING");
+    setGroup(out, out);
+    setGroup(inn, out);
+
+    expect(cancelledTransfers(bundle.db, [sent, out, "no-such-group"])).toEqual(new Map([[sent, 115_00]]));
+    expect(cancelledTransfers(bundle.db, [])).toEqual(new Map());
+
+    // a third live leg joins: it is no longer two legs that cancel
+    const third = insertTxn(checkingId, "2026-04-02", 1_00, "THIRD");
+    setGroup(third, sent);
+    expect(cancelledTransfers(bundle.db, [sent])).toEqual(new Map());
+  });
+});
 
 describe("linkTransferPair", () => {
   test("pairs an outflow with an inflow: outflow id keys the group, both leave review", () => {

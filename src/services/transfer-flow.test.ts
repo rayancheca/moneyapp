@@ -124,11 +124,24 @@ describe("reconciliation — nothing is ever silently dropped", () => {
 
   test("a group whose legs sit in ONE account is unattributed, never a self-edge", () => {
     leg(A, "2026-03-04", -50_00, "g1");
-    leg(A, "2026-03-04", 50_00, "g1");
+    leg(A, "2026-03-04", 45_00, "g1");
 
     const data = flow();
     expect(data.edges).toHaveLength(0);
     expect(data.totals.unattributedByReason["same-account"]).toBe(1);
+    expect(data.totals.unattributedByReason.cancelled).toBe(0);
+  });
+
+  test("a one-account group whose legs cancel is a CANCELLED transfer, not a pairing gap — and still accounted for", () => {
+    // Chase Checking, 2026-03-02: a card payment and the bank's "…Cancelled" credit
+    leg(A, "2026-03-04", -50_00, "g1");
+    leg(A, "2026-03-04", 50_00, "g1");
+
+    const data = flow();
+    expect(data.edges).toHaveLength(0);
+    expect(data.totals.unattributedByReason.cancelled).toBe(1);
+    expect(data.totals.unattributedByReason["same-account"]).toBe(0);
+    expect(data.totals.pairedGroupCount + data.totals.unattributedGroupCount).toBe(data.totals.groupCount);
   });
 
   test("paired + unattributed always accounts for EVERY group in range", () => {

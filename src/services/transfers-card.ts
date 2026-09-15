@@ -8,7 +8,7 @@ import { listAccounts } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryIndex } from "./analytics";
 import { baselineWindow, SPEND_BASELINE_MONTHS } from "./committed";
 import { transferFlow } from "./transfer-flow";
-import { transferCandidates, transferCategoryResolver } from "./transfer-links";
+import { cancelledTransfers, transferCandidates, transferCategoryResolver } from "./transfer-links";
 
 /**
  * How much of the money crossing these accounts is just the owner moving his
@@ -209,6 +209,12 @@ export interface TransfersCard {
   /** the transfer rows this card is NOT about — null when there are none */
   otherPartyNote: string | null;
   otherPartyCount: number;
+  /** transfers that left an account and came back to it — null when none */
+  cancelledNote: string | null;
+  /** cancelled transfers (groups) with a leg in the window */
+  cancelledCount: number;
+  /** the money that went out and came back, once per cancelled transfer */
+  cancelledCents: number;
 
   months: number;
   fromMonth: string;
@@ -308,12 +314,33 @@ export function transfersCard(
   const ownLegs = inTransfers.filter((t) => own.has(t.categoryId!));
 
   /*
+   * 🔴 A CANCELLED transfer moved nothing between accounts — one group, two
+   * legs in ONE account, cancelling (transfer-links' `isCancelledTransfer`).
+   * Measured on the owner's ledger, 2026-09-15: linked as a group and read like
+   * any other, Chase Checking's cancelled $115.00 card payment became a LINKED
+   * departure, and the stranded clause grew $24.27 → $139.27 while saying "its
+   * other leg is not inside these months" — of a leg on the same day, in the
+   * same account. So its legs are neither departures nor arrivals, and the card
+   * says it was cancelled. Asked over the WHOLE group, so a return that posted
+   * in the running month does not turn the payment back into a departure.
+   */
+  const cancelled = cancelledTransfers(
+    db,
+    ownLegs.map(linkOf).filter((g): g is string => g !== null),
+  );
+  const movingLegs = ownLegs.filter((t) => {
+    const group = linkOf(t);
+    return group === null || !cancelled.has(group);
+  });
+  const cancelledCents = [...cancelled.values()].reduce((sum, cents) => sum + cents, 0);
+
+  /*
    * Departures and arrivals — the two ENDS of a movement, not spending and its
    * refund. A zero-amount row is neither and is deliberately in neither bucket;
    * it moves nothing, so it can inflate no total (measured: none exist).
    */
-  const departures = ownLegs.filter((t) => t.amountCents < 0);
-  const arrivals = ownLegs.filter((t) => t.amountCents > 0);
+  const departures = movingLegs.filter((t) => t.amountCents < 0);
+  const arrivals = movingLegs.filter((t) => t.amountCents > 0);
   // amountCents is strictly negative here, so the negation cannot produce -0
   const movedCents = departures.reduce((sum, t) => sum - t.amountCents, 0);
   if (movedCents === 0) return null;
@@ -445,6 +472,15 @@ export function transfersCard(
       arrivalCount === 0
         ? null
         : `${formatCents(arrivalCents)} arrived across ${arrivalCount} ${plural(arrivalCount, "leg", "legs")} with no departure linked to it. The money is there and the ledger holds it; what is missing is the other end, so the app cannot say which account it came out of.`,
+
+    cancelledCount: cancelled.size,
+    cancelledCents,
+    cancelledNote:
+      cancelled.size === 0
+        ? null
+        : cancelled.size === 1
+          ? `1 cancelled transfer — ${formatCents(cancelledCents)} — left an account and came back to it, so it moved nothing and is not counted above.`
+          : `${cancelled.size} cancelled transfers — ${formatCents(cancelledCents)} — each left an account and came back to it, so they moved nothing and are not counted above.`,
 
     otherPartyCount: otherParty.length,
     otherPartyNote:

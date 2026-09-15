@@ -62,7 +62,7 @@ function data(partial: Partial<TransferFlowData> = {}): TransferFlowData {
       groupCount: edges.reduce((s, e) => s + e.count, 0),
       unattributedGroupCount: 0,
       unattributedCents: 0,
-      unattributedByReason: { "single-leg": 0, "multi-leg": 0, "same-account": 0 },
+      unattributedByReason: { "single-leg": 0, "multi-leg": 0, "same-account": 0, cancelled: 0 },
       ...partial.totals,
     },
   };

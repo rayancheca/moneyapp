@@ -147,6 +147,61 @@ export function detachUndoRows(legs: readonly StaleTransferLeg[]): BulkResult["u
   return legs.map((leg) => ({ id: leg.id, prev: { transferGroupId: leg.transferGroupId } }));
 }
 
+/** Where a transfer leg sits and what it moved — all a group's SHAPE needs. */
+export interface TransferLegShape {
+  accountId: string;
+  amountCents: number;
+}
+
+/**
+ * A CANCELLED transfer: one group of exactly two legs, both in ONE account,
+ * whose amounts cancel. The money left an account and came back to it, so it
+ * moved nothing between accounts — it is not a departure, not an arrival from
+ * nowhere, and not a pair the flow failed to resolve.
+ *
+ * The real one: Chase Checking, 2026-03-02, "Payment to Chase card ending in
+ * 9805 03/02" −$115.00 and "Payment to Chase card ending in 9805 Cancelled"
+ * +$115.00, both printed by the bank's CSV, recorded as one group on the
+ * owner's answer of 2026-09-15.
+ *
+ * ⛔ Nothing in the app MAKES this shape — `linkTransferPair` and
+ * `detectTransfers` both refuse two legs in one account — so a group like it
+ * was written on purpose, and this is the one definition every reader asks.
+ * Two zero legs cancel nothing; a fee or a partial return is not a
+ * cancellation either, because something stayed out.
+ */
+export function isCancelledTransfer(legs: readonly TransferLegShape[]): boolean {
+  if (legs.length !== 2) return false;
+  const [a, b] = legs as readonly [TransferLegShape, TransferLegShape];
+  return a.accountId === b.accountId && a.amountCents !== 0 && a.amountCents === -b.amountCents;
+}
+
+/**
+ * Of `groupIds`, the cancelled transfers, each with the cents that went out and
+ * came back. Reads every LIVE leg of each group — a superseded row never moved
+ * money, the membership rule `staleTransferLegs` uses — so a caller holding one
+ * month still sees a cancellation whose return posted in the next.
+ */
+export function cancelledTransfers(db: AppDatabase, groupIds: Iterable<string>): Map<string, number> {
+  const ids = [...new Set(groupIds)];
+  if (ids.length === 0) return new Map();
+  const legs = db
+    .select({ groupId: transactions.transferGroupId, accountId: transactions.accountId, amountCents: transactions.amountCents })
+    .from(transactions)
+    .where(and(inArray(transactions.transferGroupId, ids), ne(transactions.status, "superseded")))
+    .all();
+  const byGroup = new Map<string, TransferLegShape[]>();
+  for (const { groupId, accountId, amountCents } of legs) {
+    if (groupId === null) continue; // the IN list already excludes these; narrows the type
+    byGroup.set(groupId, [...(byGroup.get(groupId) ?? []), { accountId, amountCents }]);
+  }
+  return new Map(
+    [...byGroup]
+      .filter(([, group]) => isCancelledTransfer(group))
+      .map(([groupId, group]) => [groupId, Math.abs(group[0]!.amountCents)] as const),
+  );
+}
+
 function prevOf(row: typeof transactions.$inferSelect): UndoFields {
   return {
     transferGroupId: row.transferGroupId,

@@ -6,6 +6,7 @@ import { transactions } from "@/db/schema/transactions";
 import { CATEGORY_HUE_NAMES, categoryHueVar } from "@/lib/category-palette";
 import { ledgerHref } from "@/lib/ledger-href";
 import type { DateRange } from "./analytics";
+import { isCancelledTransfer } from "./transfer-links";
 
 /**
  * Money moving between the owner's OWN accounts — the one part of his financial
@@ -40,8 +41,13 @@ import type { DateRange } from "./analytics";
  * of transfer really happened.
  */
 
-/** A transfer leg pair could not be resolved to exactly one out + one in. */
-export type UnattributedReason = "single-leg" | "multi-leg" | "same-account";
+/**
+ * A transfer leg pair could not be resolved to exactly one out + one in across
+ * two accounts. `cancelled` is the one-account pair whose legs cancel
+ * (transfer-links' `isCancelledTransfer`): money that left and came back, not a
+ * gap in pairing — it is still counted here, so no group is ever dropped.
+ */
+export type UnattributedReason = "single-leg" | "multi-leg" | "same-account" | "cancelled";
 
 export interface TransferAccount {
   id: string;
@@ -183,6 +189,7 @@ export function transferFlow(db: AppDatabase, range: DateRange): TransferFlowDat
     "single-leg": 0,
     "multi-leg": 0,
     "same-account": 0,
+    cancelled: 0,
   };
   let unattributedCents = 0;
   let unattributedGroupCount = 0;
@@ -208,7 +215,7 @@ export function transferFlow(db: AppDatabase, range: DateRange): TransferFlowDat
     let reason: UnattributedReason | null = null;
     if (legs.length === 1) reason = "single-leg";
     else if (out === undefined || inn === undefined) reason = "multi-leg";
-    else if (out.accountId === inn.accountId) reason = "same-account";
+    else if (out.accountId === inn.accountId) reason = isCancelledTransfer(legs) ? "cancelled" : "same-account";
 
     if (reason !== null || out === undefined || inn === undefined) {
       unattributedGroupCount += 1;

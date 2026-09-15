@@ -145,8 +145,9 @@ function everySentence(c: TransfersCard): string[] {
     c.churnNote,
     c.arrivalNote,
     c.otherPartyNote,
+    c.cancelledNote,
     ...c.routes.map((r) => `${r.fromLabel} → ${r.toLabel} ${r.countLabel}`),
-  ].filter((s): s is string => s !== null);
+  ].filter((s): s is string => typeof s === "string");
 }
 
 describe("the happy path", () => {
@@ -311,6 +312,85 @@ describe("sign is DIRECTION, not refund-versus-purchase", () => {
       expect(Object.is(n, -0)).toBe(false);
       expect(n).toBeGreaterThanOrEqual(0);
     }
+  });
+});
+
+describe("a cancelled transfer moved nothing", () => {
+  /*
+   * The real shape, 2026-03-02 on Chase Checking: a card payment debited, and the
+   * bank's "…Cancelled" credit putting it back, in ONE account. Linked as one
+   * group, it is neither a departure (nothing left for another account) nor an
+   * arrival from nowhere — and the link must not be read as a partner "outside
+   * these months", because both legs are right here.
+   */
+  function cancelled(postedOut: string, postedBack: string, cents: number, groupId: string): void {
+    leg(A, postedOut, -cents, "Credit Card Payment", groupId);
+    leg(A, postedBack, cents, "Credit Card Payment", groupId);
+  }
+
+  test("its legs are neither a departure nor an arrival, and the card says it was cancelled", () => {
+    transfer(A, B, "2026-03-04", 500_00, "g1");
+    cancelled("2026-03-02", "2026-03-02", 115_00, "c1");
+
+    const c = cardOrThrow();
+    expect(c.movedCents).toBe(500_00);
+    expect(c.departureCount).toBe(1);
+    expect(c.proof.linkedCents).toBe(500_00);
+    expect(c.proof.strandedCents).toBe(0);
+    expect(c.proof.strandedNote).toBeNull();
+    expect(c.arrivalCount).toBe(0);
+    expect(c.arrivalNote).toBeNull();
+    expect(c.cancelledCount).toBe(1);
+    expect(c.cancelledCents).toBe(115_00);
+    expect(c.cancelledNote).toContain("$115.00");
+    expect(c.cancelledNote).toMatch(/cancelled/);
+    for (const sentence of everySentence(c)) expect(sentence).not.toContain("-$");
+  });
+
+  test("a cancelled transfer that straddles the window's edge is still one cancelled transfer", () => {
+    // sent on the window's last day, returned in the running month the window excludes
+    transfer(A, B, "2026-03-04", 500_00, "g1");
+    cancelled("2026-07-31", "2026-08-01", 115_00, "c1");
+
+    const c = cardOrThrow();
+    expect(c.movedCents).toBe(500_00);
+    expect(c.proof.strandedCents).toBe(0);
+    expect(c.cancelledCount).toBe(1);
+    expect(c.cancelledCents).toBe(115_00);
+  });
+
+  test("a one-account group that does NOT net to zero is not called cancelled", () => {
+    transfer(A, B, "2026-03-04", 500_00, "g1");
+    leg(A, "2026-03-02", -115_00, "Credit Card Payment", "c1");
+    leg(A, "2026-03-02", 100_00, "Credit Card Payment", "c1");
+
+    const c = cardOrThrow();
+    expect(c.cancelledCount).toBe(0);
+    expect(c.cancelledNote).toBeNull();
+    expect(c.movedCents).toBe(615_00);
+    expect(c.proof.strandedCents).toBe(115_00);
+  });
+
+  test("two cancelled transfers are counted as two, by the money that went and came back", () => {
+    transfer(A, B, "2026-03-04", 500_00, "g1");
+    cancelled("2026-03-02", "2026-03-02", 115_00, "c1");
+    cancelled("2026-05-10", "2026-05-11", 40_00, "c2");
+
+    const c = cardOrThrow();
+    expect(c.cancelledCount).toBe(2);
+    expect(c.cancelledCents).toBe(155_00);
+    expect(c.cancelledNote).toContain("2 cancelled transfers");
+    expect(c.cancelledNote).toContain("$155.00");
+  });
+
+  test("the card's own arithmetic still reconciles with a cancelled transfer in the window", () => {
+    transfer(A, B, "2026-03-04", 500_00, "g1");
+    leg(A, "2026-05-02", -75_00, "Internal Transfer");
+    cancelled("2026-03-02", "2026-03-02", 115_00, "c1");
+
+    const c = cardOrThrow();
+    expect(c.proof.linkedCents + c.proof.unpairedCents).toBe(c.movedCents);
+    expect(c.routedCents + c.proof.strandedCents).toBe(c.proof.linkedCents);
   });
 });
 
