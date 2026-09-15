@@ -12,11 +12,14 @@ import { institutions } from "@/db/schema/institutions";
 import { createAccount } from "@/services/accounts";
 import { recurringSeries } from "@/db/schema/recurring";
 import { statementPeriods } from "@/db/schema/imports";
+import { dailyBalances } from "@/db/schema/balances";
 import { transactions } from "@/db/schema/transactions";
 import { latestBalances, netWorthSeries, rebuildAccount } from "@/services/derivation";
 import { listSplits, setSplits } from "@/services/transaction-splits";
-import { fidelityOf, importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, parseContextFor, resolveAccount, type ImportInput } from "./service";
+import { fidelityOf, importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, parseContextFor, reconcileAccounts, resolveAccount, type ImportInput } from "./service";
 import { PROFILES } from "./profiles";
+import { parseChaseCardLines } from "./profiles/chase-card-statement-profile";
+import type { ParserProfile } from "./types";
 import { importFiles as importFilesTable } from "@/db/schema/imports";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
@@ -1259,6 +1262,302 @@ describe("re-parse lifecycle: a parser-version bump preserves user work", () => 
     expect(outcome!.carriedForward).toBe(0);
     expect(liveRow("STARBUCKS").notes).toBeNull();
     expect(liveRow("SHELL OIL").notes).toBeNull();
+  });
+});
+
+/*
+ * 🔴 A card statement prints ONE date per row — the day of the transaction — and
+ * lists the rows that POSTED in its period. A charge made on the last day of a
+ * cycle posts after that cycle closes, so the NEXT statement prints it, dated
+ * before that statement opens. The importer stored the printed day as
+ * posted_on, and reconciliation counts a row in whichever period its posted_on
+ * falls, so the row landed in the previous period and broke both.
+ *
+ * Pass 38 (2026-08-05) moved Chase Sapphire's four such rows onto their period's
+ * opening day as DATA and left the importer as it was, so every re-read brought
+ * them back. Forcing a parser-version re-parse of the 19 Sapphire statements on
+ * a copy of the real ledger (2026-09-15) put 5 periods into `gap`, moved 149
+ * balance days and quarantined 47 rows — identically in file-name order and in
+ * reverse, one file per upload. The order was never the defect; the date was.
+ */
+describe("a statement row printed before its period opens", () => {
+  const LINE_STATEMENT = "card-statement-lines-";
+
+  /**
+   * The Chase card statement's own reader over plain text lines, so a test can
+   * hand the importer a real statement's shape without a PDF. File-name flags
+   * route an `-investment-` statement to a Robinhood investment account, and
+   * strip the transaction day from a `-postedonly-` one.
+   */
+  const lineStatementProfile: ParserProfile = {
+    id: "test-card-statement-lines",
+    version: 1,
+    matches: (f) => f.name.startsWith(LINE_STATEMENT),
+    parse: async (f) => {
+      const parsed = parseChaseCardLines(f.text.split("\n"));
+      const investment = f.name.includes("-investment-");
+      return [
+        {
+          accountHint: {
+            institution: investment ? "Robinhood" : "Chase",
+            type: investment ? "investment" : "credit",
+            ...(parsed.last4 ? { last4: parsed.last4 } : {}),
+          },
+          txns: f.name.includes("-postedonly-")
+            ? parsed.txns.map(({ transactedOn: _printed, ...rest }) => rest)
+            : parsed.txns,
+          period: {
+            start: parsed.periodStart,
+            end: parsed.periodEnd,
+            beginCents: parsed.beginningBalanceCents,
+            endCents: parsed.endingBalanceCents,
+          },
+        },
+      ];
+    },
+  };
+
+  beforeEach(() => {
+    lineStatementProfile.version = 1;
+    PROFILES.unshift(lineStatementProfile);
+  });
+
+  afterEach(() => {
+    PROFILES.splice(PROFILES.indexOf(lineStatementProfile), 1);
+  });
+
+  function statement(
+    name: string,
+    s: { last4: string; period: string; previous: string; next: string; rows: string[] },
+  ): ImportInput {
+    const site = name.includes("-investment-") ? "robinhood.com" : "www.chase.com/cardhelp";
+    return {
+      name: `${LINE_STATEMENT}${name}.txt`,
+      buffer: Buffer.from(
+        [
+          site,
+          `Account Number: XXXX XXXX XXXX ${s.last4}`,
+          `Previous Balance ${s.previous}`,
+          `New Balance ${s.next}`,
+          `Opening/Closing Date ${s.period}`,
+          "PAYMENTS AND OTHER CREDITS",
+          ...s.rows,
+        ].join("\n"),
+      ),
+    };
+  }
+
+  const AUGUST = statement("2025-09", {
+    last4: "5150",
+    period: "08/03/25 - 09/02/25",
+    previous: "$0.00",
+    next: "$40.00",
+    rows: ["08/10 SHELL OIL 555 MIAMI FL 40.00"],
+  });
+  // Sapphire's own straddler: a $92.53 Best Buy credit printed 09/02 by the
+  // statement that opens 09/03 (20251002-statements-9805-.pdf)
+  const SEPTEMBER = statement("2025-10", {
+    last4: "5150",
+    period: "09/03/25 - 10/02/25",
+    previous: "$40.00",
+    next: "-$27.53",
+    rows: ["09/02 BEST BUY CO 00012617 BRONX NY -92.53", "09/15 STARBUCKS STORE 77 MIAMI FL 25.00"],
+  });
+
+  function accountIdOf(last4: string): string {
+    return bundle.db.select().from(accounts).where(eq(accounts.last4, last4)).get()!.id;
+  }
+
+  function liveRowsOf(accountId: string): (typeof transactions.$inferSelect)[] {
+    return bundle.db
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.accountId, accountId), ne(transactions.status, "superseded")))
+      .all();
+  }
+
+  function liveRow(accountId: string, prefix: string): typeof transactions.$inferSelect {
+    const rows = liveRowsOf(accountId).filter((r) => r.rawDescription.startsWith(prefix));
+    expect(rows).toHaveLength(1);
+    return rows[0]!;
+  }
+
+  /** What a re-parse must not move: verdicts, every replayed day, every live row. */
+  function ledgerState(accountId: string) {
+    return {
+      periods: bundle.db
+        .select({
+          start: statementPeriods.periodStart,
+          end: statementPeriods.periodEnd,
+          reconciliation: statementPeriods.reconciliation,
+          gapCents: statementPeriods.gapCents,
+        })
+        .from(statementPeriods)
+        .where(eq(statementPeriods.accountId, accountId))
+        .all()
+        .sort((a, b) => a.start.localeCompare(b.start)),
+      balances: bundle.db
+        .select({ day: dailyBalances.day, balanceCents: dailyBalances.balanceCents, basis: dailyBalances.basis })
+        .from(dailyBalances)
+        .where(eq(dailyBalances.accountId, accountId))
+        .all()
+        .sort((a, b) => a.day.localeCompare(b.day)),
+      rows: liveRowsOf(accountId)
+        .map((r) => `${r.postedOn} ${r.transactedOn} ${r.amountCents} ${r.status} ${r.rawDescription}`)
+        .sort(),
+    };
+  }
+
+  test("it is posted on the opening day of the statement that prints it, and both periods close", async () => {
+    const outcomes = await importStatementFiles(bundle.db, [AUGUST, SEPTEMBER]);
+
+    expect(outcomes.map((o) => o.status)).toEqual(["parsed", "parsed"]);
+    const card = accountIdOf("5150");
+    // the posting day is not printed; the statement whose arithmetic counts the
+    // row proves it lies inside 09-03..10-02, and the printed day stays the
+    // transaction day
+    const bestBuy = liveRow(card, "BEST BUY");
+    expect(bestBuy).toMatchObject({
+      postedOn: "2025-09-03",
+      transactedOn: "2025-09-02",
+      amountCents: 9253,
+      status: "active",
+    });
+    // dedupe_hash covers posted_on, so it names the day the row is stored under
+    // — the hash pass 38 recomputed when it moved Sapphire's four rows by hand
+    expect(bestBuy.dedupeHash).toBe(
+      dedupeHash({
+        accountId: card,
+        postedOn: "2025-09-03",
+        amountCents: 9253,
+        rawDescription: bestBuy.rawDescription,
+        occurrenceIndex: bestBuy.occurrenceIndex,
+      }),
+    );
+    expect(ledgerState(card).periods).toEqual([
+      { start: "2025-08-03", end: "2025-09-02", reconciliation: "reconciled", gapCents: null },
+      { start: "2025-09-03", end: "2025-10-02", reconciliation: "reconciled", gapCents: null },
+    ]);
+  });
+
+  test("a parser-version re-parse leaves every period verdict, every balance day and every row where it was", async () => {
+    await importStatementFiles(bundle.db, [AUGUST, SEPTEMBER]);
+    const card = accountIdOf("5150");
+    // the real ledger's shape: pass 38 moved the straddler onto its opening day
+    // as data, hash recomputed (a no-op once the import places it itself)
+    const bestBuy = liveRow(card, "BEST BUY");
+    bundle.db
+      .update(transactions)
+      .set({
+        postedOn: "2025-09-03",
+        dedupeHash: dedupeHash({
+          accountId: card,
+          postedOn: "2025-09-03",
+          amountCents: bestBuy.amountCents,
+          rawDescription: bestBuy.rawDescription,
+          occurrenceIndex: bestBuy.occurrenceIndex,
+        }),
+      })
+      .where(eq(transactions.id, bestBuy.id))
+      .run();
+    reconcileAccounts(bundle.db, [card]);
+    rebuildAccount(bundle.db, card);
+    const before = ledgerState(card);
+    expect(before.periods.map((p) => p.reconciliation)).toEqual(["reconciled", "reconciled"]);
+
+    lineStatementProfile.version += 1;
+    const outcomes = await importStatementFiles(bundle.db, [AUGUST, SEPTEMBER]);
+
+    // a fresh parse of both files, not a duplicate skip
+    expect(outcomes.map((o) => [o.status, o.inserted])).toEqual([
+      ["parsed", 1],
+      ["parsed", 2],
+    ]);
+    expect(ledgerState(card)).toEqual(before);
+    expect(bundle.db.select().from(transactions).where(eq(transactions.status, "quarantined")).all()).toEqual([]);
+  });
+
+  test("it is still matched on the day it prints — it never claims another charge made on the opening day", async () => {
+    await importStatementFiles(bundle.db, [AUGUST]);
+    const card = accountIdOf("5150");
+    // pass 38's measured hazard: LA GAVIOTA DELI GROCERY, printed before the
+    // period, would claim NEW BEST GOURMET DELI if matched on the opening day
+    const handDescription = "NEW BEST GOURMET DELI";
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId: card,
+        postedOn: "2025-09-03",
+        transactedOn: "2025-09-03",
+        amountCents: -312,
+        rawDescription: handDescription,
+        normalizedDescription: normalizeDescription(handDescription),
+        dedupeHash: dedupeHash({
+          accountId: card,
+          postedOn: "2025-09-03",
+          amountCents: -312,
+          rawDescription: handDescription,
+          occurrenceIndex: 0,
+        }),
+      })
+      .run();
+    const deli = statement("2025-10-deli", {
+      last4: "5150",
+      period: "09/03/25 - 10/02/25",
+      previous: "$40.00",
+      next: "$46.24",
+      rows: ["09/01 LA GAVIOTA DELI GROCERY 3.12", "09/03 NEW BEST GOURMET DELI 3.12"],
+    });
+
+    await importStatementFiles(bundle.db, [deli]);
+
+    const september = liveRowsOf(card)
+      .filter((r) => r.postedOn >= "2025-09-03")
+      .map((r) => ({
+        description: r.rawDescription,
+        postedOn: r.postedOn,
+        transactedOn: r.transactedOn,
+        handEntered: r.importFileId === null,
+      }))
+      .sort((a, b) => a.description.localeCompare(b.description));
+    expect(september).toEqual([
+      { description: "LA GAVIOTA DELI GROCERY", postedOn: "2025-09-03", transactedOn: "2025-09-01", handEntered: false },
+      { description: handDescription, postedOn: "2025-09-03", transactedOn: "2025-09-03", handEntered: true },
+    ]);
+    expect(ledgerState(card).periods.map((p) => p.reconciliation)).toEqual(["reconciled", "reconciled"]);
+  });
+
+  test("a statement that prints no transaction day keeps the day it printed as the transaction day", async () => {
+    const postedOnly = statement("postedonly-2025-10", {
+      last4: "6160",
+      period: "09/03/25 - 10/02/25",
+      previous: "$0.00",
+      next: "$12.00",
+      rows: ["09/01 UBER TRIP HELP.UBER.COM CA 12.00"],
+    });
+
+    await importStatementFiles(bundle.db, [postedOnly]);
+
+    expect(liveRow(accountIdOf("6160"), "UBER TRIP")).toMatchObject({
+      postedOn: "2025-09-03",
+      transactedOn: "2025-09-01",
+    });
+  });
+
+  test("an investment statement's dates stay as printed — its period is a value anchor, not a closing balance", async () => {
+    const brokerage = statement("investment-2025-10", {
+      last4: "7070",
+      period: "09/03/25 - 10/02/25",
+      previous: "$0.00",
+      next: "$10.00",
+      rows: ["09/02 ACME CORP BUY 10.00"],
+    });
+
+    await importStatementFiles(bundle.db, [brokerage]);
+
+    const account = bundle.db.select().from(accounts).where(eq(accounts.last4, "7070")).get()!;
+    expect(account.type).toBe("investment");
+    expect(liveRow(account.id, "ACME CORP")).toMatchObject({ postedOn: "2025-09-02", transactedOn: "2025-09-02" });
   });
 });
 

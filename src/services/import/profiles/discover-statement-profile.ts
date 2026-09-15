@@ -1,5 +1,6 @@
 import { isValidIsoDate } from "@/lib/dates";
 import { parseAmountToCents } from "@/lib/money";
+import { postedInsidePeriod } from "@/lib/statement-period";
 import { ParseError, type CanonicalTxn, type ParsedStatement, type ParserProfile } from "../types";
 import { extractLines, type Line } from "./pdf-profile";
 
@@ -111,8 +112,7 @@ export function parseDiscoverItLines(lines: readonly Line[]): DiscoverParse {
     // real trans date as transactedOn — otherwise a txn transacted just before
     // the cycle opened lands in the prior period and both periods gap.
     const transactedOn = toIso(dm[1]!, dm[2]!, String(inferYear(dm[1]!, dm[2]!)));
-    const postedOn =
-      transactedOn < periodStart ? periodStart : transactedOn > periodEnd ? periodEnd : transactedOn;
+    const postedOn = postedInsidePeriod(transactedOn, { start: periodStart, end: periodEnd });
     txns.push({
       postedOn,
       transactedOn,

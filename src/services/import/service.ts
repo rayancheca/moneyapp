@@ -20,6 +20,7 @@ import { assignOccurrenceIndexes, dedupeHash, fileSha256 } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { sumCents } from "@/lib/money";
 import { RECONCILE_STATUSES, periodVerdict } from "@/lib/reconciliation";
+import { postedInsidePeriod } from "@/lib/statement-period";
 import { categorizeAll, detectTransfers } from "../categorize";
 import { rebuildAccount } from "../derivation";
 import { flagDuplicateCandidates } from "../duplicate-flags";
@@ -828,6 +829,54 @@ async function selectProfile(
 }
 
 /**
+ * Whether an account's statement periods must close to the cent. Every type but
+ * `investment`, whose periods are value anchors — `periodVerdict` books their
+ * residual as market change. The reconcile and the importer's placement below
+ * ask this one rule.
+ */
+function periodsMustClose(account: { readonly type: string }): boolean {
+  return account.type !== "investment";
+}
+
+/** One parsed row as the statement prints it, and as the ledger stores it. */
+interface PlacedTxn {
+  printed: CanonicalTxn;
+  stored: CanonicalTxn;
+}
+
+/**
+ * 🔴 A statement lists the rows that POSTED in its period, but a card statement
+ * prints each row's TRANSACTION day. A charge made on a cycle's last day posts
+ * after it closes, so the next statement prints it dated before that statement
+ * opens. Stored on the printed day it fell in the previous period — where
+ * `reconcileAccounts` counts it by posted_on — and broke both. Pass 38
+ * (2026-08-05) moved Chase Sapphire's four such rows onto their opening day as
+ * data and left this path alone, so every re-read put them back: forcing a
+ * version re-parse of the 21 Sapphire statement files on a copy of the ledger
+ * (2026-09-15) sent 5 periods to `gap` and quarantined 47 rows, in either file
+ * order. The chase-card parser dates 87 of 2,058 rows before their period;
+ * every other statement profile, 0 of 9,475 (Discover's parser already clamps).
+ *
+ * The stored row posts on `postedInsidePeriod`, keeping the printed day as its
+ * transaction day. The printed row is kept too, because nothing may MATCH on a
+ * day the file does not print: pass 38 measured that `consumeIdentity`'s posted
+ * lens — tried first, blind to descriptions — would hand LA GAVIOTA DELI
+ * GROCERY's charge to NEW BEST GOURMET DELI's on the opening day.
+ *
+ * Only periods that must close to the cent: an investment statement's dates are
+ * trade and settle days, and its period absorbs what moves as market change.
+ */
+function placeInsidePeriod(statement: ParsedStatement, periodMustClose: boolean): PlacedTxn[] {
+  const { period } = statement;
+  return statement.txns.map((printed) => {
+    if (!period || !periodMustClose) return { printed, stored: printed };
+    const postedOn = postedInsidePeriod(printed.postedOn, period);
+    if (postedOn === printed.postedOn) return { printed, stored: printed };
+    return { printed, stored: { ...printed, postedOn, transactedOn: printed.transactedOn ?? printed.postedOn } };
+  });
+}
+
+/**
  * A file already imported at the parser version reading it now is skipped as a duplicate — unless its row is
  * one of these. Exported so a write that must know "would the import read this file again?" asks this rule
  * rather than restating it (scripts/robinhood-agentic-account.ts).
@@ -949,18 +998,24 @@ async function importOneFile(
       fileAccountIds.add(accountId);
       const ranges = coveredRanges(db, accountId).filter((r) => r.importFileId !== fileRow.id);
       const myPriority = fidelityOf(file.format, profile.id);
+      const account = db.select({ type: accounts.type }).from(accounts).where(eq(accounts.id, accountId)).get()!;
 
-      const indexed = assignOccurrenceIndexes(statement.txns, (t) => ({
+      // the hash and the occurrence index describe the row as STORED, so both
+      // are computed on the day it posts
+      const indexed = assignOccurrenceIndexes(placeInsidePeriod(statement, periodsMustClose(account)), ({ stored }) => ({
         accountId,
-        postedOn: t.postedOn,
-        amountCents: t.amountCents,
-        rawDescription: t.rawDescription,
+        postedOn: stored.postedOn,
+        amountCents: stored.amountCents,
+        rawDescription: stored.rawDescription,
       }));
 
       const identityPool = existingIdentityPool(db, accountId, fileRow.id);
 
       db.transaction((tx) => {
-        for (const { row: t, occurrenceIndex } of indexed) {
+        // `t` is the row as printed: every decision below that reads another row
+        // (ownership, takeover, identity, carry) reads the day the file prints.
+        // Only `stored` — what is written — carries the day it posted.
+        for (const { row: { printed: t, stored }, occurrenceIndex } of indexed) {
           const coveredBy = ranges.filter((r) => t.postedOn >= r.minDay && t.postedOn <= r.maxDay);
           // `soleSource` rows opt out: the higher-fidelity source covers the
           // DAY but is documented not to carry this row type (CanonicalTxn)
@@ -971,7 +1026,7 @@ async function importOneFile(
 
           const hash = dedupeHash({
             accountId,
-            postedOn: t.postedOn,
+            postedOn: stored.postedOn,
             amountCents: t.amountCents,
             rawDescription: t.rawDescription,
             occurrenceIndex,
@@ -994,7 +1049,7 @@ async function importOneFile(
               if (victim.status !== "quarantined") consumeIdentity(identityPool, t.postedOn, t.transactedOn, t.amountCents);
               // the re-parse carry wins over the victim: same file lineage, so
               // it is the row the user actually edited
-              const inserted = insertTxn(tx, db, accountId, fileRow.id, t, hash, occurrenceIndex, carried ?? victim);
+              const inserted = insertTxn(tx, db, accountId, fileRow.id, stored, hash, occurrenceIndex, carried ?? victim);
               if (inserted) outcome.inserted += 1;
               else outcome.deduped += 1;
               // move any user-entered splits off the superseded victim onto its
@@ -1038,7 +1093,7 @@ async function importOneFile(
             continue;
           }
 
-          const inserted = insertTxn(tx, db, accountId, fileRow.id, t, hash, occurrenceIndex, carried);
+          const inserted = insertTxn(tx, db, accountId, fileRow.id, stored, hash, occurrenceIndex, carried);
           if (inserted) outcome.inserted += 1;
           else outcome.deduped += 1;
           // `inserted === false` means an active twin already held this hash —
@@ -1360,7 +1415,7 @@ export function reconcileAccounts(db: AppDatabase, accountIds: string[]): void {
       // ledger-check` can recompute a verdict with the SAME arithmetic that
       // wrote it — a checker with its own copy of the rule can only report
       // disagreements with itself.
-      const verdict = periodVerdict(period, total, { isInvestment: account.type === "investment" });
+      const verdict = periodVerdict(period, total, { isInvestment: !periodsMustClose(account) });
 
       if (verdict.reconciliation === "value_anchor") {
         db.update(statementPeriods)
