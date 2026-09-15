@@ -113,7 +113,7 @@ test("a kind heading explains what the kind does, and stays quiet until asked", 
   await expect(trigger).toBeVisible();
 
   // present in the DOM, but not shown — the closed-popover contract
-  const tip = page.getByText(/only kind counted as spending/);
+  const tip = page.getByText(/Counted as spending, together with money out that has no category yet/);
   await expect(tip).toHaveCount(1);
   await expect(tip).toBeHidden();
 
