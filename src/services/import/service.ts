@@ -31,6 +31,14 @@ import { detachTransferLegs, type StaleTransferLeg } from "../transfer-links";
 import { accountsOfTransactions, restoreDuplicatesLosingTheirSurvivor } from "../duplicate-lifecycle";
 import { accountSlug, institutionSlug } from "./account-slug";
 import { detachAttachedRows, parsedFromFile, reattachDetachedRows } from "./attached-rows";
+import {
+  bookEventsByCashAccount,
+  equityAssetTypesOf,
+  removeEmptyBooks,
+  removeFileEvents,
+  resolveBook,
+  writeStatementPositions,
+} from "./brokerage-book";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
 import { extractLines } from "./profiles/pdf-profile";
@@ -609,20 +617,23 @@ function rangesCovering(ranges: readonly CoveredRange[], day: string): CoveredRa
  */
 export function parseContextFor(db: AppDatabase): ParseContext {
   const rows = db
-    .select({ institution: institutions.name, last4: accounts.last4, type: accounts.type, subtype: accounts.subtype })
+    .select({ id: accounts.id, institution: institutions.name, last4: accounts.last4, type: accounts.type, subtype: accounts.subtype })
     .from(accounts)
     .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
     .all();
+  // a cash account's brokerage book, by the stored link — what a section's positions are proven against
+  const books = bookEventsByCashAccount(db);
   const knownAccounts: Partial<Record<AccountHint["institution"], KnownAccount[]>> = {};
   for (const r of rows) {
     if (r.last4 === null) continue;
     const institution = r.institution as AccountHint["institution"];
+    const events = books.get(r.id);
     knownAccounts[institution] = [
       ...(knownAccounts[institution] ?? []),
-      { last4: r.last4, type: r.type, subtype: r.subtype },
+      { last4: r.last4, type: r.type, subtype: r.subtype, ...(events === undefined ? {} : { book: { events } }) },
     ];
   }
-  return { knownAccounts };
+  return { knownAccounts, equityAssetTypes: equityAssetTypesOf(db) };
 }
 
 /** Resolve (or create/upgrade) the account a parsed statement belongs to. */
@@ -633,6 +644,8 @@ export function resolveAccount(db: AppDatabase, hint: AccountHint): string {
     .where(eq(institutions.name, hint.institution))
     .get();
   if (!institution) throw new Error(`Unknown institution ${hint.institution}`);
+  // a cash account's brokerage book: by the stored link, never by name or type — see ./brokerage-book.ts
+  if (hint.bookOf !== undefined) return resolveBook(db, institution.id, hint.bookOf);
 
   const all = db.select().from(accounts).where(eq(accounts.institutionId, institution.id)).all();
   // an existing preferred account (the P0.1 settlement-cash ledger) wins over
@@ -797,14 +810,16 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
   const sniffed = files
     .map((f) => sniffFile(f.name, f.buffer))
     .sort((a, b) => FORMAT_PRIORITY[a.format] - FORMAT_PRIORITY[b.format] || a.name.localeCompare(b.name));
+  const selected: { file: ReturnType<typeof sniffFile>; selection: ProfileSelection }[] = [];
+  for (const file of sniffed) selected.push({ file, selection: await selectProfile(file) });
 
   const outcomes: FileOutcome[] = [];
   const touchedAccounts = new Set<string>();
   // the files this call wrote rows under — the only rows linking may claim
   const writtenFileIds = new Set<string>();
 
-  for (const file of sniffed) {
-    const outcome = await importOneFile(db, file, touchedAccounts, writtenFileIds);
+  for (const { file, selection } of oldestFirstWhereItMatters(selected)) {
+    const outcome = await importOneFile(db, file, selection, touchedAccounts, writtenFileIds);
     outcomes.push(outcome);
   }
 
@@ -854,12 +869,17 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
  * The document is extracted at most once, and only when some candidate asks
  * for it, so files with an unambiguous filename cost nothing extra.
  */
-async function selectProfile(
-  file: ReturnType<typeof sniffFile>,
-): Promise<{ profile: ParserProfile | undefined; unreadable: boolean }> {
+interface ProfileSelection {
+  readonly profile: ParserProfile | undefined;
+  readonly unreadable: boolean;
+  /** the text the content gates read — the file's own text, or a PDF's extraction when a gate asked for it */
+  readonly content: string;
+}
+
+async function selectProfile(file: ReturnType<typeof sniffFile>): Promise<ProfileSelection> {
   const candidates = PROFILES.filter((p) => p.matches(file));
-  if (candidates.length === 0) return { profile: undefined, unreadable: false };
-  if (!candidates.some((p) => p.matchesContent)) return { profile: candidates[0], unreadable: false };
+  if (candidates.length === 0) return { profile: undefined, unreadable: false, content: file.text };
+  if (!candidates.some((p) => p.matchesContent)) return { profile: candidates[0], unreadable: false, content: file.text };
 
   let content = file.text;
   if (file.format === "pdf") {
@@ -874,7 +894,31 @@ async function selectProfile(
     // a scanned/image-only statement is a different problem with a different
     // fix than one whose text simply matched no known layout — say which
     unreadable: file.format === "pdf" && content.trim() === "",
+    content,
   };
+}
+
+/**
+ * The batch in its import order, with the files of a profile that declares `orderKey` put OLDEST first among the
+ * places those files already held — every other file keeps its place.
+ *
+ * 🔴 A Robinhood brokerage statement's brokerage-book positions are proven by what the book held BEFORE the period.
+ * Robinhood names its files with UUIDs, so a September named b7d4e2f1… imported before an August named d41f0c83…,
+ * found no August shares to be proven by, and was withheld — and a withheld month is read again only by a version
+ * bump (agentic-book.test.ts). A key the profile cannot read leaves the file where the name put it.
+ */
+function oldestFirstWhereItMatters<T extends { file: ReturnType<typeof sniffFile>; selection: ProfileSelection }>(batch: readonly T[]): T[] {
+  const keyOf = (item: T): string | null => item.selection.profile?.orderKey?.(item.selection.content) ?? null;
+  const keyed = batch.flatMap((item, at) => {
+    const key = keyOf(item);
+    return key === null ? [] : [{ item, at, key }];
+  });
+  const byKey = [...keyed].sort((a, b) => a.key.localeCompare(b.key) || a.item.file.name.localeCompare(b.item.file.name));
+  const ordered = [...batch];
+  keyed.forEach(({ at }, i) => {
+    ordered[at] = (byKey[i] as (typeof byKey)[number]).item;
+  });
+  return ordered;
 }
 
 /**
@@ -985,11 +1029,11 @@ export const REIMPORTABLE_STATUSES: readonly ImportStatus[] = ["superseded", "fa
 async function importOneFile(
   db: AppDatabase,
   file: ReturnType<typeof sniffFile>,
+  { profile, unreadable }: ProfileSelection,
   touchedAccounts: Set<string>,
   writtenFileIds: Set<string>,
 ): Promise<FileOutcome> {
   const sha = fileSha256(file.buffer);
-  const { profile, unreadable } = await selectProfile(file);
   const outcome: FileOutcome = {
     fileName: file.name,
     status: "parsed",
@@ -1028,7 +1072,8 @@ async function importOneFile(
         .filter((f) => f.parserVersion < profile.version)
     : [];
   const carryPool = captureCarryForward(db, stale.map((f) => f.id));
-  for (const old of stale) supersedeFileContribution(db, old.id);
+  // a book whose shares the retired file held is rebuilt with the batch, whether or not the re-read gives them back
+  for (const old of stale) for (const book of supersedeFileContribution(db, old.id)) touchedAccounts.add(book);
 
   const institution = guessInstitution(db, file);
   // basename neutralizes traversal; truncation + control-strip neutralizes
@@ -1263,6 +1308,12 @@ async function importOneFile(
           upsertAnchor(tx, accountId, statement.period.end, statement.period.endCents, "statement", fileRow.id, periodId);
           upsertAnchorAtDayBefore(tx, accountId, statement.period.start, statement.period.beginCents, fileRow.id, periodId);
         }
+        // a brokerage book's trades, in the same transaction as its value anchor — ./brokerage-book.ts
+        if (statement.positions) {
+          const asOf = statement.period?.end ?? statement.declaredRange?.end ?? statement.ledger?.asOf;
+          if (asOf === undefined) throw new Error("a positions statement carries no window to prove its positions through");
+          writeStatementPositions(tx, accountId, fileRow.id, statement.positions, asOf);
+        }
       });
     }
   } catch (error: unknown) {
@@ -1474,9 +1525,15 @@ function quarantinedIdsOn(db: AppDatabase, accountIds: readonly string[]): strin
     .map((r) => r.id);
 }
 
-/** Supersede everything an import file contributed (re-parse lifecycle). */
-function supersedeFileContribution(db: AppDatabase, oldFileId: string): void {
-  db.transaction((tx) => {
+/**
+ * Supersede everything an import file contributed (re-parse lifecycle); the brokerage books whose shares it held.
+ *
+ * ⛔ Its holding events are DELETED, not kept beside the re-read: the file's successor reads the same trades again,
+ * and events carry no status to retire them by — kept, a re-read would add every share a second time.
+ */
+function supersedeFileContribution(db: AppDatabase, oldFileId: string): string[] {
+  return db.transaction((tx) => {
+    const books = removeFileEvents(tx, oldFileId);
     tx.update(transactions)
       .set({ status: "superseded" })
       .where(and(eq(transactions.importFileId, oldFileId), inArray(transactions.status, ["active", "quarantined", "excluded"])))
@@ -1491,6 +1548,7 @@ function supersedeFileContribution(db: AppDatabase, oldFileId: string): void {
     // a parsed file's error is only ever the sections it withheld (`importOneFile`); its successor reads them again
     // and says for itself what is still missing, so the retired row must not keep claiming a section is absent
     tx.update(importFiles).set({ status: "superseded", error: null }).where(eq(importFiles.id, oldFileId)).run();
+    return books;
   });
 }
 
@@ -1718,6 +1776,7 @@ function accountsWrittenBy(db: AppDatabase, importFileId: string): string[] {
     ...new Set([
       ...of(db.selectDistinct({ accountId: transactions.accountId }).from(transactions).where(eq(transactions.importFileId, importFileId)).all()),
       ...of(db.selectDistinct({ accountId: statementPeriods.accountId }).from(statementPeriods).where(eq(statementPeriods.importFileId, importFileId)).all()),
+      // ⚠️ a brokerage book the file wrote shares to is here through its period: every positions statement carries one
       ...of(db.selectDistinct({ accountId: balanceAnchors.accountId }).from(balanceAnchors).where(eq(balanceAnchors.importFileId, importFileId)).all()),
     ]),
   ];
@@ -1775,9 +1834,13 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
         WHERE statement_period_id IN (SELECT id FROM statement_periods WHERE import_file_id = ${importFileId})
       `);
       tx.delete(statementPeriods).where(eq(statementPeriods.importFileId, importFileId)).run();
+      // the trades the file printed leave with it — before the file row, whose id they reference
+      removeFileEvents(tx, importFileId);
       tx.delete(importFiles).where(eq(importFiles.id, importFileId)).run();
     });
-    const scope = [...new Set([...affected, ...accountsOfTransactions(db, restored)])];
+    // a book the file created and nothing else holds leaves too: the un-import restores the ledger it found
+    const removedBooks = new Set(removeEmptyBooks(db, affected));
+    const scope = [...new Set([...affected, ...accountsOfTransactions(db, restored)])].filter((id) => !removedBooks.has(id));
     const quarantinedBefore = quarantinedIdsOn(db, scope);
     reconcileAccounts(db, scope);
     // A restored twin, or a row whose gap this removal closed, is back in the

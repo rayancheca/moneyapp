@@ -460,10 +460,18 @@ export interface PositionsInput {
  * ⛔ Also withheld:
  *  - trades the book already holds inside this window (another statement file of the same month): a second copy
  *    would count the shares twice;
- *  - trades when the book already holds a LATER month: those positions were proven without this month's;
  *  - an opening Total Securities with no position in the book behind it;
  *  - a symbol whose asset type no position in the ledger records — a ticker never says stock or ETF, and a wrong
  *    guess prices it against the wrong series.
+ */
+/*
+ * ⚠️ NOT withheld: a book that already holds LATER months. Only what came BEFORE the period proves it, so an earlier
+ * month reads the same whatever follows. That is what a version bump needs — it supersedes and re-reads every month
+ * in file-name order, so August is re-read while September's trades are live (or the other way round), and a guard
+ * against later trades refused the re-read of every month but the last (measured, agentic-book.test.ts). A later
+ * month that an earlier month's shares would contradict is contradicted on the statement's own day: `pnpm
+ * ledger-check`'s value-anchor witness checks every book period's printed Total Securities against the app's
+ * valuation of the book.
  */
 export function provePositions(input: PositionsInput): StatementPositions | null {
   const { who, period, held, trades, bookEvents, assetTypes } = input;
@@ -479,12 +487,6 @@ export function provePositions(input: PositionsInput): StatementPositions | null
     throw new UnprovableSection(
       `${who}'s book already holds trades inside ${period.start} … ${period.end} from another statement file — refusing to count them twice`,
       `the ledger already holds this account's trades for ${dayWindowLabel(period.start, period.end)} from another statement, and a second copy would count its shares twice`,
-    );
-  }
-  if (trades.length > 0 && bookEvents.some((e) => e.occurredOn > period.end)) {
-    throw new UnprovableSection(
-      `${who}'s book already holds trades after ${period.end} — this period's would land beneath positions a later statement proved without them`,
-      `the ledger already holds this account's trades from a later statement, and those were proven without this month's`,
     );
   }
   const late = trades.find((t) => t.tradedOn > period.end);

@@ -183,6 +183,14 @@ export interface ParserProfile {
    * profile is chosen only if it also returns true.
    */
   matchesContent?(text: string): boolean;
+  /**
+   * For a profile whose files depend on each other month over month: a key that sorts its files OLDEST first
+   * (an ISO statement start), read from the same extracted text `matchesContent` sees. The Robinhood brokerage
+   * statement's brokerage-book positions are proven by what the book held before the period — read in file-name order
+   * (Robinhood's names are UUIDs), a later month would have nothing to be proven by and be withheld, and a withheld
+   * month is read again only by a version bump. Files of other profiles keep their order.
+   */
+  orderKey?(text: string): string | null;
   parse(file: SniffedFile, context?: ParseContext): Promise<ParsedStatement[] | ParsedFile> | ParsedStatement[] | ParsedFile;
 }
 

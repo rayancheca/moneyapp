@@ -922,6 +922,13 @@ export const robinhoodBrokerageStatementPdf: ParserProfile = {
   // Robinhood ships opaque UUID filenames, so content decides routing entirely
   matches: (f) => f.format === "pdf",
   matchesContent: isRobinhoodBrokerageStatementText,
+  // the printed period start: a brokerage book's month is proven by the months before it
+  orderKey: (text) => {
+    const period = PERIOD_RE.exec(text);
+    const [mm, dd, yyyy] = (period?.[1] ?? "").split("/");
+    const iso = `${yyyy}-${mm}-${dd}`;
+    return period && isValidIsoDate(iso) ? iso : null;
+  },
   parse: async (f, context): Promise<ParsedFile> => {
     const lines = await extractLines(f.buffer);
     if (lines.length === 0) throw new ParseError(PROFILE_ID, "No extractable text — scanned PDF?");

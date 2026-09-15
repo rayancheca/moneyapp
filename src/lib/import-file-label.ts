@@ -148,12 +148,21 @@ function accountPhrase(accountName: string | null, last4: string | null): string
  * are in, and statement lag is normal in this app — a notice that named the section but not the consequence would
  * leave the account reading as if its month had simply not arrived yet.
  */
+/** What reads a withheld section later — the last sentence of every notice. */
+export const WITHHELD_SECTION_PATH =
+  "Importing the same file again changes nothing: the next statement parser version reads the section again, " +
+  "and positions it proves go into the account's brokerage book, which the import creates.";
+
 export function withheldSectionNotice(facts: WithheldSectionFacts): string {
   return (
     `Not imported: ${accountPhrase(facts.accountName, facts.last4)}'s statement for ` +
     `${dayWindowLabel(facts.periodStart, facts.periodEnd)} — ${facts.reason}. ` +
     "Nothing from that section is in the ledger: the activity it lists is missing, and the account is not checked " +
-    "for those days unless a later statement's opening balance closes to the cent across them."
+    "for those days unless a later statement's opening balance closes to the cent across them. " +
+    // ⛔ the PATH, because the obvious one does not work: the same bytes at the same parser version are skipped as a
+    // duplicate. A version bump re-reads the file, and a section that then proves positions is written to the cash
+    // account's brokerage book, which the import creates itself (services/import/brokerage-book.ts)
+    WITHHELD_SECTION_PATH
   );
 }
 

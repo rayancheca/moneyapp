@@ -1023,11 +1023,11 @@ describe("a section tracked as a cash account", () => {
     expect(reasonsFor(doc, [])).toEqual(["it opens with $26.22 of securities, and the ledger holds no position for it before Sep 1, 2026"]);
   });
 
-  test("⛔ a month's trades are withheld once the ledger holds a LATER month — those positions were proven without them", () => {
+  test("⛔ a month re-read while a LATER month's trades are in the ledger is proven by what came before it alone — a version bump re-reads in file order", () => {
     const later = [...BOUGHT_IN_AUGUST, { symbol: "WMT", occurredOn: "2026-10-02", quantityDeltaE8: 5_000_000 }];
-    expect(reasonsFor([...SEPTEMBER_BROKERAGE, ...AGENT_SELLS], later)).toEqual([
-      "the ledger already holds this account's trades from a later statement, and those were proven without this month's",
-    ]);
+    const { statements, withheld } = robinhoodBrokerageStatements([...SEPTEMBER_BROKERAGE, ...AGENT_SELLS], [BROKERAGE, CRYPTO, bookHolding(later)], WMT);
+    expect(withheld).toEqual([]);
+    expect(statements[3]!.positions!.held).toEqual([{ symbol: "WMT", assetType: "stock", quantityE8: 15_000_000, marketValueCents: 1664 }]);
   });
 
   test("a trade dated after the section's own period withholds it", () => {
