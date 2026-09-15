@@ -1,6 +1,8 @@
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { forecastSplit } from "@/lib/forecast-split";
+import { formatDayLong } from "@/lib/format-date";
+import { unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
 import type { MonthForecast } from "@/services/forecast";
 import { ForecastComposition } from "./ForecastComposition";
 import { monthLabel, staleComponentEntries } from "./labels";
@@ -8,6 +10,29 @@ import { StaleFooter, StaleMark } from "./StalenessNote";
 
 interface ForecastCardProps {
   forecast: MonthForecast;
+}
+
+/**
+ * The passed paydays this card does not count, and why.
+ *
+ * 🔴 "Cash pay that never reaches a bank", in warning tone, was said of Sep 3
+ * and Sep 10 while Chase Checking — the only account that pay lands in — had
+ * been read through Aug 12 (measured 2026-09-15). The warning and that clause
+ * speak only of paydays on days the ledger has read; the rest are named as not
+ * imported yet (`unbankedIncomeFrontierClause`), as /spending names them.
+ */
+export function UnbankedIncomeNote({ unbanked: u }: { unbanked: MonthForecast["unbankedIncome"] }) {
+  const unread = unbankedIncomeFrontierClause(u, formatDayLong);
+  const names = u.names.length > 0 ? ` (${u.names.join(", ")})` : "";
+  return (
+    <p className={`mt-1 text-xs ${u.checkedOccurrenceCount > 0 ? "text-warning" : "text-ink-faint"}`}>
+      {u.occurrenceCount === 1 ? "1 payday" : `${u.occurrenceCount} paydays`} worth <Money cents={u.totalCents} />{" "}
+      already passed this month{unread === null ? " with no deposit imported" : ""}
+      {names} — not counted above, and not in EOM cash. {unread === null ? "" : `${unread} `}
+      {u.checkedOccurrenceCount > 0 ? "Cash pay that never reaches a bank" : "Pay the ledger has not looked for"}{" "}
+      cannot be projected as arriving; the month strip below counts it, because that line is the schedule.
+    </p>
+  );
 }
 
 /** One tile of the headline row. */
@@ -157,18 +182,7 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
           2026-09-04 the two read "-$426.60" and "as scheduled +$620.40" —
           $1,047.00 apart, which is exactly what `committed`'s own docstring says
           this headline exists to prevent. */}
-      {f.unbankedIncome.totalCents > 0 && (
-        <p className="mt-1 text-xs text-warning">
-          {f.unbankedIncome.occurrenceCount === 1
-            ? "1 payday"
-            : `${f.unbankedIncome.occurrenceCount} paydays`}{" "}
-          worth <Money cents={f.unbankedIncome.totalCents} /> already passed this month with no
-          deposit imported
-          {f.unbankedIncome.names.length > 0 ? ` (${f.unbankedIncome.names.join(", ")})` : ""} — not
-          counted above, and not in EOM cash. Cash pay that never reaches a bank cannot be projected
-          as arriving; the month strip below counts it, because that line is the schedule.
-        </p>
-      )}
+      {f.unbankedIncome.totalCents > 0 && <UnbankedIncomeNote unbanked={f.unbankedIncome} />}
 
       <ForecastComposition split={split} />
 

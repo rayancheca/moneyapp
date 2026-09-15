@@ -28,6 +28,7 @@ import { trailingFullMonths } from "./forecast";
 import {
   overdueForSeries,
   unbankedIncomeForSeries,
+  unbankedIncomeTotals,
   type BudgetTail,
   type BudgetTailSeries,
 } from "./arrears";
@@ -645,6 +646,14 @@ export interface IncomeExpectation {
    */
   passedUnpaidCents: number;
   passedUnpaidOccurrences: number;
+  /**
+   * Of `passedUnpaidOccurrences`, the paydays on days every account the pay
+   * lands in has been read through — the only ones "no deposit against them"
+   * is a statement about (`unbankedIncomeTotals`).
+   */
+  passedUnpaidCheckedOccurrences: number;
+  /** the frontier the other passed paydays fall after; null when an account is unread */
+  passedUnpaidCheckedThrough: string | null;
   /** which figure budgets are graded against, and how this month sits on it */
   basis: IncomeBasis;
   /** the live income series contributing to expectedCents */
@@ -795,8 +804,9 @@ export function incomeExpectation(
    * the forecast for seven months.
    */
   const unbanked = unbankedIncomeForSeries(db, new Set(live.map((s) => s.id)), start, today);
-  const passedUnpaidCents = unbanked.totalCents;
-  const passedUnpaidOccurrences = unbanked.series.reduce((n, s) => n + s.occurrenceCount, 0);
+  const passed = unbankedIncomeTotals(unbanked);
+  const passedUnpaidCents = passed.totalCents;
+  const passedUnpaidOccurrences = passed.occurrenceCount;
   /*
    * The annualised rate every live series pays, summed.
    *
@@ -856,6 +866,8 @@ export function incomeExpectation(
     }),
     passedUnpaidCents,
     passedUnpaidOccurrences,
+    passedUnpaidCheckedOccurrences: passed.checkedOccurrenceCount,
+    passedUnpaidCheckedThrough: passed.checkedThrough,
     series,
   };
 }

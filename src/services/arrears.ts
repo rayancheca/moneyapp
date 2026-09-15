@@ -3,6 +3,8 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, diffDays } from "@/lib/dates";
+import { earliestVerified, landingAccountsBySeries } from "./cash-earnings";
+import { accountCoverage } from "./coverage";
 import { projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
 
 /**
@@ -34,6 +36,23 @@ export interface BudgetTailSeries {
 export interface BudgetTail {
   totalCents: number;
   series: BudgetTailSeries[];
+}
+
+export interface UnbankedIncomeSeries extends BudgetTailSeries {
+  /**
+   * `earliestVerified` over the accounts this pay has landed in — the last day
+   * the ledger has read every place its deposit could arrive — or null when one
+   * of them has no checked record, or the pay has never landed anywhere.
+   */
+  checkedThrough: string | null;
+  /** of `occurrenceCount`, the paydays dated on or before `checkedThrough` */
+  checkedOccurrenceCount: number;
+  checkedCents: number;
+}
+
+export interface UnbankedIncome {
+  totalCents: number;
+  series: UnbankedIncomeSeries[];
 }
 
 /**
@@ -157,7 +176,7 @@ export function unbankedIncomeForSeries(
   seriesIds: ReadonlySet<string>,
   periodStart: string,
   today: string,
-): BudgetTail {
+): UnbankedIncome {
   if (seriesIds.size === 0) return { totalCents: 0, series: [] };
   // the walk is `[periodStart, today)`; an empty or inverted one has nothing past
   if (compareDates(periodStart, today) >= 0) return { totalCents: 0, series: [] };
@@ -203,26 +222,83 @@ export function unbankedIncomeForSeries(
     bankedBySeries.set(row.seriesId, [...(bankedBySeries.get(row.seriesId) ?? []), row.postedOn]);
   }
 
-  const series: BudgetTailSeries[] = [];
-  let totalCents = 0;
-  for (const s of live) {
-    const banked = bankedBySeries.get(s.id) ?? [];
-    const occ = projectOccurrences(toProjectable(s), periodStart, addDays(today, -1))
-      .filter((o) => o.amountCents > 0)
-      .filter((o) => !banked.some((p) => Math.abs(diffDays(p, o.date)) <= s.toleranceDays));
-    if (occ.length === 0) continue;
-    const amountCents = occ.reduce((sum, o) => sum + o.amountCents, 0);
-    totalCents += amountCents;
-    series.push({
+  const unmet = live
+    .map((s) => {
+      const banked = bankedBySeries.get(s.id) ?? [];
+      const occ = projectOccurrences(toProjectable(s), periodStart, addDays(today, -1))
+        .filter((o) => o.amountCents > 0)
+        .filter((o) => !banked.some((p) => Math.abs(diffDays(p, o.date)) <= s.toleranceDays));
+      return { s, occ };
+    })
+    .filter(({ occ }) => occ.length > 0);
+  if (unmet.length === 0) return { totalCents: 0, series: [] };
+
+  /*
+   * 🔴 THE CALENDAR IS NOT THE RECORD. A payday passed; whether anyone has
+   * LOOKED for its deposit is a question about how far the account it lands in
+   * has been read. Measured on the owner's ledger 2026-09-15: /budgets said Sep
+   * 3 and Sep 10 passed "with no deposit against them" and /recurring called
+   * them "Cash pay that never reaches a bank", while Chase Checking — the only
+   * account that pay has landed in — was read through Aug 12.
+   *
+   * ⛔ The frontier is `cashEarningsReadings`' rule, not a second one: the same
+   * `landingAccountsBySeries` and `earliestVerified` over `accountCoverage`, so
+   * /spending and these two surfaces cannot disagree about which paydays were
+   * read. A payday ON the frontier day was read. Coverage is only read when a
+   * payday is actually unmet, so the common month costs nothing extra.
+   */
+  const verifiedThroughByAccount = new Map(
+    accountCoverage(db, today).map((c) => [c.accountId, c.verifiedThrough] as const),
+  );
+  const landings = landingAccountsBySeries(db);
+
+  const series = unmet.map(({ s, occ }): UnbankedIncomeSeries => {
+    const checkedThrough = earliestVerified(landings.get(s.id) ?? new Set<string>(), verifiedThroughByAccount, today);
+    const checked = checkedThrough === null ? [] : occ.filter((o) => compareDates(o.date, checkedThrough) <= 0);
+    return {
       id: s.id,
       name: s.name,
       cadence: occ[0]!.cadence,
       nextDate: occ[0]!.date,
-      amountCents,
+      amountCents: occ.reduce((sum, o) => sum + o.amountCents, 0),
       occurrenceCount: occ.length,
       href: `/recurring/${s.id}`,
-    });
-  }
+      checkedThrough,
+      checkedOccurrenceCount: checked.length,
+      checkedCents: checked.reduce((sum, o) => sum + o.amountCents, 0),
+    };
+  });
   series.sort((a, b) => compareDates(a.nextDate, b.nextDate) || a.name.localeCompare(b.name));
-  return { totalCents, series };
+  return { totalCents: series.reduce((sum, x) => sum + x.amountCents, 0), series };
+}
+
+/** One reading of the unbanked paydays, for a sentence about all of them. */
+export interface UnbankedIncomeTotals {
+  totalCents: number;
+  occurrenceCount: number;
+  /** of those, the paydays on days the ledger has read every landing account through */
+  checkedOccurrenceCount: number;
+  /**
+   * The EARLIEST frontier across the series — every unread payday falls after
+   * it — or null when any series' landing account has not been read, or nothing
+   * passed unpaid.
+   */
+  checkedThrough: string | null;
+  names: string[];
+}
+
+export function unbankedIncomeTotals(u: UnbankedIncome): UnbankedIncomeTotals {
+  const frontiers = u.series.map((s) => s.checkedThrough);
+  const known = frontiers.filter((f): f is string => f !== null);
+  const checkedThrough =
+    known.length === 0 || known.length < frontiers.length
+      ? null
+      : known.reduce((a, b) => (compareDates(a, b) <= 0 ? a : b));
+  return {
+    totalCents: u.totalCents,
+    occurrenceCount: u.series.reduce((n, s) => n + s.occurrenceCount, 0),
+    checkedOccurrenceCount: u.series.reduce((n, s) => n + s.checkedOccurrenceCount, 0),
+    checkedThrough,
+    names: u.series.map((s) => s.name),
+  };
 }

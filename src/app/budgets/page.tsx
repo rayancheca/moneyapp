@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { getDb } from "@/db/client";
 import { periodBounds, todayIso, type PeriodBounds } from "@/lib/dates";
-import { formatDayShort } from "@/lib/format-date";
+import { formatDayLong, formatDayShort } from "@/lib/format-date";
+import { unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
 import {
   budgetGuidanceCents,
   budgetPaceStatuses,
@@ -63,6 +64,15 @@ export default async function BudgetsPage({
   // full month of budgeted amounts against a fraction of a month of income.
   const monthBounds = periodBounds(today, "monthly");
   const income = incomeExpectation(db, monthBounds.start, monthBounds.end, today);
+  // which of the passed paydays the ledger has looked for — null when all of them
+  const passedUnread = unbankedIncomeFrontierClause(
+    {
+      occurrenceCount: income.passedUnpaidOccurrences,
+      checkedOccurrenceCount: income.passedUnpaidCheckedOccurrences,
+      checkedThrough: income.passedUnpaidCheckedThrough,
+    },
+    formatDayLong,
+  );
   // Graded against the BASIS, not against the paydays that happen to fall in
   // this calendar month. Budgets here were sized from a weekly wage annualised
   // ($1,047 × 52 ÷ 12); grading that plan against a four-payday month marked it
@@ -230,14 +240,21 @@ export default async function BudgetsPage({
               is evidence about the imports, not about the job. The spending side
               two lines down says the same shape for bills, and it can add its
               figure because a bill nobody paid is still owed. */}
+          {/* 🔴 "with no deposit against them" was said of Sep 3 and Sep 10 while
+              the account that pay lands in was read through Aug 12 (measured
+              2026-09-15). It is said now only when every passed payday fell on
+              a day the ledger has read; otherwise `passedUnread` names the rest
+              as not imported yet, in /spending's words. */}
           {income.passedUnpaidCents > 0 && (
             <p className="mt-1 text-xs text-ink-faint">
               {income.passedUnpaidOccurrences === 1 ? "1 payday" : `${income.passedUnpaidOccurrences} paydays`}{" "}
-              worth <Money cents={income.passedUnpaidCents} /> already passed this month with no
-              deposit against{" "}
-              {income.passedUnpaidOccurrences === 1 ? "it" : "them"} — counted in neither figure
-              above. That is evidence about what has been imported, not about whether the money was
-              earned.
+              worth <Money cents={income.passedUnpaidCents} /> already passed this month
+              {passedUnread === null && (
+                <> with no deposit against {income.passedUnpaidOccurrences === 1 ? "it" : "them"}</>
+              )}{" "}
+              — counted in neither figure above.{" "}
+              {passedUnread ??
+                "That is evidence about what has been imported, not about whether the money was earned."}
             </p>
           )}
         </SurfaceCard>

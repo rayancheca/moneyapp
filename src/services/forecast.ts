@@ -22,7 +22,7 @@ import {
   lapsedSeriesShouldStopForecasting,
   seriesHasLapsed,
 } from "./recurring";
-import { overdueForSeries, unbankedIncomeForSeries } from "./arrears";
+import { overdueForSeries, unbankedIncomeForSeries, unbankedIncomeTotals, type UnbankedIncomeTotals } from "./arrears";
 import { activeSplitsInRange } from "./transaction-splits";
 import { linkIsNotRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
@@ -208,7 +208,7 @@ export interface MonthForecast {
    * `committed` says in so many words that the whole point of that headline was
    * to stop those two halves disagreeing.
    */
-  unbankedIncome: { totalCents: number; occurrenceCount: number; names: string[] };
+  unbankedIncome: UnbankedIncomeTotals;
 }
 
 interface MonthWindow {
@@ -767,7 +767,7 @@ export function forecastForMonth(
      * to come, so there is nothing that has passed unbanked. Stated rather than
      * omitted: this field is a measurement, and an empty one is the answer here.
      */
-    unbankedIncome: { totalCents: 0, occurrenceCount: 0, names: [] },
+    unbankedIncome: { totalCents: 0, occurrenceCount: 0, checkedOccurrenceCount: 0, checkedThrough: null, names: [] },
   };
 }
 
@@ -853,10 +853,6 @@ function currentMonthForecast(db: AppDatabase, today: string, notDrawn: Readonly
       eomNetWorthCents: latestNetWorth + committedNetCents,
     },
     components,
-    unbankedIncome: {
-      totalCents: unbanked.totalCents,
-      occurrenceCount: unbanked.series.reduce((n, x) => n + x.occurrenceCount, 0),
-      names: unbanked.series.map((x) => x.name),
-    },
+    unbankedIncome: unbankedIncomeTotals(unbanked),
   };
 }
