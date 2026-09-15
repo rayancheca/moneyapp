@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
+import { spendingShare } from "@/lib/insight-facts";
 import { computeMassifLayout, MASSIF_VIEWPOINTS } from "@/lib/massif-layout";
 import { massifCaptionKey, massifDescription, massifTableCaption, reconciliationNote } from "./CategoryMassif";
 
@@ -125,10 +126,41 @@ describe("the relief's readout counts categories in English", () => {
     expect(massifCaptionKey(null, 0, "Jul 2026")).toBe("Jul 2026 · all 0 categories");
   });
 
+  /** a block as the layout publishes it: the share already written, by the Table lens's rule */
+  const block = (label: string, spentCents: number, share: number) => {
+    const s = spendingShare(spentCents, share * 100);
+    return { label, shareLabel: s.label, shareTitle: s.title };
+  };
+
   test("a hovered block names itself and its share instead", () => {
-    expect(massifCaptionKey({ label: "FOOD", share: 0.4237, spentCents: 42_370 }, 12, "Jul 2026")).toBe(
-      "FOOD · 42.4% of Jul 2026",
-    );
+    expect(massifCaptionKey(block("FOOD", 42_370, 0.4237), 12, "Jul 2026")).toBe("FOOD · 42.4% of Jul 2026");
+  });
+
+  /**
+   * 🔴 The readout wrote the hovered block's share afresh — for the tail, its
+   * own sum rounded once — while the rail beside it and the Table lens print
+   * the members' labels added. It reads the block's published label now, so the
+   * readout, the rail and the Table cannot say three things.
+   */
+  test("the hovered tail names the sum of its members' Table labels", () => {
+    const rows = [50_000, 30_000, 16_880, 1_040, 1_040, 1_040].map((spentCents, i) => ({
+      id: `c${i}`,
+      label: `C${i}`,
+      hue: null,
+      spentCents,
+      priorCents: null,
+      txnCount: 1,
+    }));
+    const layout = computeMassifLayout(rows, {
+      width: 720,
+      height: 320,
+      camera: MASSIF_VIEWPOINTS.quarter,
+      maxBlocks: 4,
+    });
+    const tail = layout.blocks.find((b) => b.memberCount > 1)!;
+    expect(tail.label).toBe("3 smaller categories");
+    // 1.0% + 1.0% + 1.0% in the Table lens, where round(3.12) read 3.1%
+    expect(massifCaptionKey(tail, layout.categoryCount, "Jul 2026")).toBe("3 smaller categories · 3.0% of Jul 2026");
   });
 
   /**
@@ -138,15 +170,13 @@ describe("the relief's readout counts categories in English", () => {
    * "Shopping · 0.0% · -$1,605.11".
    */
   test("a block that netted money back took no share, and says so", () => {
-    expect(massifCaptionKey({ label: "SHOPPING", share: 0, spentCents: -160_511 }, 12, "May 2024")).toBe(
+    expect(massifCaptionKey(block("SHOPPING", -160_511, 0), 12, "May 2024")).toBe(
       "SHOPPING · no share of May 2024 — it netted money back",
     );
   });
 
   test("a category that really spent nothing still reads 0.0%", () => {
-    expect(massifCaptionKey({ label: "HOTELS", share: 0, spentCents: 0 }, 12, "May 2024")).toBe(
-      "HOTELS · 0.0% of May 2024",
-    );
+    expect(massifCaptionKey(block("HOTELS", 0, 0), 12, "May 2024")).toBe("HOTELS · 0.0% of May 2024");
   });
 });
 

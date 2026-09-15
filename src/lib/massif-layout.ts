@@ -22,7 +22,7 @@
  * `reconcileMassif` proves that sum against the period totals the StatCards show.
  */
 
-import { spendingShareBase } from "./insight-facts";
+import { spendingShare, spendingShareBase, sumOfPrintedShares } from "./insight-facts";
 import { type ViewSpec } from "./view-state";
 
 // ── Inputs ───────────────────────────────────────────────────────────
@@ -131,6 +131,14 @@ export interface MassifBlock {
   txnCount: number;
   /** 0..1 of the period's positive category spend — the table's own denominator */
   share: number;
+  /**
+   * The share as the rail and the readout PRINT it: a category's own Table
+   * label, "—" when it netted money back; for the tail, the sum of its members'
+   * Table labels. See `printedShareOf`.
+   */
+  shareLabel: string;
+  /** why a block prints no share — `spendingShare`'s refusal — or null */
+  shareTitle: string | null;
   relief: MassifRelief;
   faces: MassifFace[];
   /** the light-catching embossed edge */
@@ -235,9 +243,23 @@ interface WorldFace {
   points: Vec3[];
 }
 
+/** A row as the plate draws it: a category, or the tail standing for several. */
+type DrawnRow = MassifCategoryInput & {
+  memberCount: number;
+  /** each member's own spend — one entry for a category, every folded one for the tail */
+  memberSpentCents: readonly number[];
+};
+
+/** A written share: the label a figure prints, and the refusal when it prints none. */
+interface PrintedShare {
+  label: string;
+  title: string | null;
+}
+
 interface WorldBlock {
-  row: MassifCategoryInput & { memberCount: number };
+  row: DrawnRow;
   share: number;
+  printed: PrintedShare;
   relief: MassifRelief;
   faces: WorldFace[];
   rim: Vec3[];
@@ -320,13 +342,10 @@ export function computeMassifLayout(
  * budget. The tail then sums only non-negative members, so max(0, Σ tail) is
  * Σ max(0, member) and no width can divide a different total from the table's.
  */
-function groupTail(
-  inputs: readonly MassifCategoryInput[],
-  maxBlocks: number,
-): (MassifCategoryInput & { memberCount: number })[] {
-  const ranked = [...inputs]
+function groupTail(inputs: readonly MassifCategoryInput[], maxBlocks: number): DrawnRow[] {
+  const ranked: DrawnRow[] = [...inputs]
     .sort((a, b) => b.spentCents - a.spentCents)
-    .map((r) => ({ ...r, memberCount: 1 }));
+    .map((r) => ({ ...r, memberCount: 1, memberSpentCents: [r.spentCents] }));
   if (maxBlocks < 1) return ranked;
   const spent = ranked.filter((r) => r.spentCents >= 0);
   if (spent.length <= maxBlocks) return ranked;
@@ -341,6 +360,7 @@ function groupTail(
       priorCents: sumPriors(tail),
       txnCount: sumBy(tail, (r) => r.txnCount),
       memberCount: tail.length,
+      memberSpentCents: tail.map((r) => r.spentCents),
     },
     // ranked last already: the refunds follow the tail, never inside it
     ...ranked.filter((r) => r.spentCents < 0),
@@ -361,8 +381,33 @@ interface World {
   points: Vec3[];
 }
 
+/** A category's share of the positive spend — the Table lens's arithmetic, operation for operation. */
+function shareOf(spentCents: number, shareBase: number): number {
+  return shareBase > 0 ? Math.max(0, spentCents) / shareBase : 0;
+}
+
+/**
+ * The share a drawn block PRINTS. One category prints `spendingShare` of its
+ * own share, exactly as its Table row does, refusal and all; the tail prints the
+ * SUM of its members' Table labels.
+ *
+ * 🔴 The rail and the readout each wrote the tail's share as its own sum
+ * rounded ONCE, beside a Table lens printing its members rounded EACH. Measured
+ * on the owner's ledger 2026-09-15 over 72 periods at budgets 6, 8 and 12: 53
+ * of 216 layouts disagreed — `?period=2022-10` at six blocks read 9.9% over
+ * Table rows of 3.4% + 3.3% + 3.1%.
+ *
+ * ⚖️ Owner decision 2026-09-14 (F2) — a subtotal of shares printed elsewhere is
+ * the sum of those rows as printed — taken for the tail, which is that shape.
+ * The tail never holds a refund (`groupTail`), so it never refuses.
+ */
+function printedShareOf(row: DrawnRow, shareBase: number): PrintedShare {
+  if (row.memberCount === 1) return spendingShare(row.spentCents, shareOf(row.spentCents, shareBase) * 100);
+  return { label: sumOfPrintedShares(row.memberSpentCents.map((c) => shareOf(c, shareBase) * 100)), title: null };
+}
+
 function buildWorld(
-  rows: readonly (MassifCategoryInput & { memberCount: number })[],
+  rows: readonly DrawnRow[],
   /**
    * The share denominator, passed in rather than summed here. `spendingShareBase`
    * over the categories is the Table lens's own, and it equals the same sum over
@@ -386,14 +431,14 @@ function buildWorld(
   const blocks: WorldBlock[] = [];
 
   for (const row of rows) {
-    const share = shareBase > 0 ? Math.max(0, row.spentCents) / shareBase : 0;
+    const share = shareOf(row.spentCents, shareBase);
     const x0 = x;
     const x1 = x + share * geom.span;
     const halfDepth = depthFloor + row.txnCount * depthScale;
     // no comparable prior window: no height at all, rather than a measured zero
     const relief = (deltaOf(row.spentCents, row.priorCents) ?? 0) * reliefScale;
     maxHalfDepth = Math.max(maxHalfDepth, halfDepth);
-    blocks.push(buildBlock(row, share, { x0, x1, halfDepth, relief }));
+    blocks.push(buildBlock(row, share, printedShareOf(row, shareBase), { x0, x1, halfDepth, relief }));
     x = x1 + geom.gap;
   }
 
@@ -417,11 +462,7 @@ interface Slab {
   relief: number;
 }
 
-function buildBlock(
-  row: MassifCategoryInput & { memberCount: number },
-  share: number,
-  slab: Slab,
-): WorldBlock {
+function buildBlock(row: DrawnRow, share: number, printed: PrintedShare, slab: Slab): WorldBlock {
   const relief: MassifRelief =
     Math.abs(slab.relief) < LEVEL_EPS ? "level" : slab.relief > 0 ? "raised" : "sunken";
   const shell = relief === "raised" ? raisedShell(slab) : relief === "sunken" ? sunkenShell(slab) : plateShell(slab);
@@ -429,6 +470,7 @@ function buildBlock(
   return {
     row,
     share,
+    printed,
     relief,
     faces: shell.faces,
     rim: shell.rim,
@@ -612,6 +654,8 @@ function toBlock(b: WorldBlock, project: (v: Vec3) => MassifPoint): MassifBlock 
         : round((delta / Math.abs(row.priorCents)) * 100),
     txnCount: row.txnCount,
     share: b.share,
+    shareLabel: b.printed.label,
+    shareTitle: b.printed.title,
     relief: b.relief,
     faces: b.faces.map((f) => ({ kind: f.kind, tone: f.tone, points: f.points.map(project) })),
     rim: b.rim.map(project),

@@ -13,7 +13,7 @@ import {
   type MassifCategoryInput,
   type MassifLayoutOptions,
 } from "./massif-layout";
-import { spendingShareBase } from "./insight-facts";
+import { spendingShare, spendingShareBase, sumOfPrintedShares } from "./insight-facts";
 import { resolveViewState } from "./view-state";
 
 /**
@@ -275,6 +275,70 @@ describe("computeMassifLayout — a refund inside the tail", () => {
     expect(other.memberCount).toBe(2);
     expect(other.spentCents).toBe(15_000);
     expect(byId(overByOne.blocks, "f").memberCount).toBe(1);
+  });
+});
+
+/**
+ * 🔴 The tail's share was its own sum rounded ONCE, while the Table lens of the
+ * same card prints each of its members rounded on its own — a reader switching
+ * lenses and adding them lands a tenth away. Measured on the owner's ledger
+ * 2026-09-15 over 72 periods at budgets 6, 8 and 12: 53 of 216 layouts, e.g.
+ * `?period=2022-10` at six blocks, a tail reading 9.9% over Table rows of
+ * 3.4% + 3.3% + 3.1%.
+ *
+ * ⚖️ Owner decision 2026-09-14 (F2) is the sum of the rounded rows for every
+ * subtotal of shares printed elsewhere; the relief's tail is that shape, so it
+ * takes the same author, `sumOfPrintedShares`.
+ */
+describe("computeMassifLayout — the share a block prints", () => {
+  /** base $1,000.00 — three tail members at 1.04% that each print 1.0%, and a refund */
+  const ROUNDS_DOWN: MassifCategoryInput[] = [
+    cat({ id: "a", spentCents: 50_000 }),
+    cat({ id: "b", spentCents: 30_000 }),
+    cat({ id: "c", spentCents: 16_880 }),
+    cat({ id: "d", spentCents: 1_040 }),
+    cat({ id: "e", spentCents: 1_040 }),
+    cat({ id: "f", spentCents: 1_040 }),
+    cat({ id: "g", spentCents: -2_500 }),
+  ];
+
+  test("the tail prints the sum of its members' Table labels, not its own sum rounded once", () => {
+    const layout = computeMassifLayout(ROUNDS_DOWN, { ...OPTS, maxBlocks: 4 });
+    const other = byId(layout.blocks, MASSIF_OTHER_ID);
+    expect(other.memberCount).toBe(3);
+    expect(spendingShare(other.spentCents, other.share * 100).label).toBe("3.1%");
+    expect(other.shareLabel).toBe("3.0%");
+    expect(other.shareTitle).toBeNull();
+    // a named block and a refund print exactly what the Table lens prints for them
+    expect([byId(layout.blocks, "c").shareLabel, byId(layout.blocks, "c").shareTitle]).toEqual(["16.9%", null]);
+    expect(byId(layout.blocks, "g").shareLabel).toBe("—");
+    expect(byId(layout.blocks, "g").shareTitle).toBe("took no share of spending — this category netted money back");
+  });
+
+  test("every block prints what the Table lens prints for the categories behind it, at every budget", () => {
+    let compared = 0;
+    for (const rows of [ROUNDS_DOWN, ROWS]) {
+      const base = spendingShareBase(rows);
+      const shareOf = (r: MassifCategoryInput): number => (base > 0 ? Math.max(0, r.spentCents) / base : 0);
+      const table = new Map(rows.map((r) => [r.id, spendingShare(r.spentCents, shareOf(r) * 100)]));
+      for (const maxBlocks of [2, 3, 4, 5, 12]) {
+        const layout = computeMassifLayout(rows, { ...OPTS, maxBlocks });
+        const drawn = new Set(layout.blocks.map((b) => b.id));
+        for (const b of layout.blocks) {
+          const expected =
+            b.id === MASSIF_OTHER_ID
+              ? {
+                  label: sumOfPrintedShares(rows.filter((r) => !drawn.has(r.id)).map((r) => shareOf(r) * 100)),
+                  title: null,
+                }
+              : table.get(b.id);
+          expect({ label: b.shareLabel, title: b.shareTitle }).toEqual(expected);
+          compared++;
+        }
+      }
+    }
+    // ROUNDS_DOWN: 3+4+5+6+7 blocks, ROWS: 2+3+3+3+3
+    expect(compared).toBe(39);
   });
 });
 

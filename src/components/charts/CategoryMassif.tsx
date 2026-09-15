@@ -519,11 +519,9 @@ function MassifRail({
             <span className="min-w-0 flex-1">
               <span className="flex items-baseline gap-1.5">
                 <span className="truncate text-sm">{block.label}</span>
-                <span
-                  className="figures shrink-0 text-[11px] text-ink-faint"
-                  title={spendingShare(block.spentCents, block.share * 100).title ?? undefined}
-                >
-                  {spendingShare(block.spentCents, block.share * 100).label}
+                {/* the layout's written share — the Table lens's label, the tail's members' labels added */}
+                <span className="figures shrink-0 text-[11px] text-ink-faint" title={block.shareTitle ?? undefined}>
+                  {block.shareLabel}
                 </span>
               </span>
               <span className="block text-[11px] text-ink-faint">
@@ -717,17 +715,18 @@ function blockFill(hue: string | null): string {
  * read it.
  */
 export function massifCaptionKey(
-  active: { label: string; share: number; spentCents: number } | null,
+  active: Pick<MassifBlock, "label" | "shareLabel" | "shareTitle"> | null,
   categoryCount: number,
   periodLabel: string,
 ): string {
   // ⛔ a refunded block took no share of the period — the readout says so
   // rather than naming a clamped "0.0%" of it. Always ONE category: the tail
   // never folds a refund (`groupTail`), so no aggregate can reach this branch.
+  // 🔴 The share is the block's PUBLISHED label, never written afresh here: this
+  // rounded the tail's own sum once while the rail and the Table added members.
   if (active) {
-    const s = spendingShare(active.spentCents, active.share * 100);
-    return s.title === null
-      ? `${active.label} · ${s.label} of ${periodLabel}`
+    return active.shareTitle === null
+      ? `${active.label} · ${active.shareLabel} of ${periodLabel}`
       : `${active.label} · no share of ${periodLabel} — it netted money back`;
   }
   return `${periodLabel} · all ${categoryCount} categor${categoryCount === 1 ? "y" : "ies"}`;
