@@ -1,10 +1,25 @@
+/**
+ * How far the accounts the passed paydays' pay lands in have been checked.
+ *
+ * ⛔ Three answers, not a nullable day. Several schedules checked through
+ * different days have no one day every unchecked payday falls after, and
+ * neither null ("nothing checked") nor the earliest day says that truthfully.
+ */
+export type UnbankedFrontier =
+  /** an account the pay could land in has no checked record — or nothing passed unpaid */
+  | { kind: "unchecked" }
+  /** every account the pay lands in has been checked through this one day */
+  | { kind: "day"; through: string }
+  /** schedules whose accounts were checked through different days */
+  | { kind: "per-schedule" };
+
 /** What a surface knows about the paydays that passed this month with nothing banked. */
 export interface UnbankedIncomeReading {
   occurrenceCount: number;
   /** of those, the paydays dated on days every landing account has been checked through */
   checkedOccurrenceCount: number;
-  /** the frontier the other paydays fall after; null when a landing account has no checked record */
-  checkedThrough: string | null;
+  /** how far the accounts the other paydays land in have been checked */
+  frontier: UnbankedFrontier;
 }
 
 /**
@@ -28,6 +43,24 @@ export const LAST_CHECKED_DAY = "the last day every account that pay lands in ha
 const NOT_CHECKED = "the ledger has not checked every account that pay could land in";
 
 /**
+ * The one day several schedules' landing accounts were checked through — each
+ * schedule's own `earliestVerified` — when they share one.
+ *
+ * 🔴 NOT THE EARLIEST OF THEM. The reading used to reduce every schedule to its
+ * earliest day, and one sentence then covered them all: with Chase checked
+ * through Aug 12 and the account Tutoring lands in through Sep 4, it said "1
+ * falls on a day already read, with no deposit; the other 3 fall after Wed, Aug
+ * 12, 2026, which nothing has imported yet" — and the payday it called read was
+ * Tutoring's Sep 3, after the day it named (measured 2026-09-15). A later
+ * schedule's unchecked paydays fall after ITS day, not the earliest one.
+ */
+export function sharedFrontier(days: readonly (string | null)[]): UnbankedFrontier {
+  const first = days[0];
+  if (first === undefined || first === null || days.includes(null)) return { kind: "unchecked" };
+  return days.every((d) => d === first) ? { kind: "day", through: first } : { kind: "per-schedule" };
+}
+
+/**
  * The sentence naming the passed paydays nobody has looked for yet — or null
  * when every one of them fell on a day the ledger has checked, so the surface's
  * own "with no deposit" sentence is already true.
@@ -41,7 +74,9 @@ const NOT_CHECKED = "the ledger has not checked every account that pay could lan
  * day; `LAST_CHECKED_DAY` is the phrase all three name it with.
  *
  * ⛔ "Checked", never "read" or "imported": the reading measured neither of
- * those, and both have been false of this day on a real fixture.
+ * those, and both have been false of this day on a real fixture. And a day is
+ * named only when every schedule shares it (`sharedFrontier`); otherwise the
+ * sentence says the day differs by schedule rather than picking one.
  *
  * One home for both surfaces, so /budgets and /recurring cannot word the same
  * two paydays differently.
@@ -58,13 +93,16 @@ export function unbankedIncomeFrontierClause(
     checked === 0 ? null : `${checked} ${checked === 1 ? "falls on a day" : "fall on days"} already checked, with no deposit`;
   const other = unread === 1 ? "the other one" : `the other ${unread}`;
 
-  if (r.checkedThrough === null) {
+  if (r.frontier.kind === "unchecked") {
     return checkedPart === null
       ? `The ledger has not checked every account that pay could land in, so it cannot say whether any of it arrived.`
       : `${checkedPart}; for ${other}, ${NOT_CHECKED}.`;
   }
 
-  const after = `after ${formatDay(r.checkedThrough)}, ${LAST_CHECKED_DAY}`;
+  const after =
+    r.frontier.kind === "day"
+      ? `after ${formatDay(r.frontier.through)}, ${LAST_CHECKED_DAY}`
+      : `after the last day the accounts ${unread === 1 ? "its" : "their"} pay lands in have been checked through, which differs by schedule`;
   if (checkedPart === null) {
     return unread === 1
       ? `It falls ${after} — so the ledger has not looked for its deposit.`

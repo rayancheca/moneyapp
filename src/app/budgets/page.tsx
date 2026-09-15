@@ -69,7 +69,7 @@ export default async function BudgetsPage({
     {
       occurrenceCount: income.passedUnpaidOccurrences,
       checkedOccurrenceCount: income.passedUnpaidCheckedOccurrences,
-      checkedThrough: income.passedUnpaidCheckedThrough,
+      frontier: income.passedUnpaidFrontier,
     },
     formatDayLong,
   );

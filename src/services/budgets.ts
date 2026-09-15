@@ -32,6 +32,7 @@ import {
   type BudgetTail,
   type BudgetTailSeries,
 } from "./arrears";
+import type { UnbankedFrontier } from "@/lib/unbanked-income";
 import { effectiveSeries, projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
 import { linkIsRecurring, rowIsRecurring, seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 
@@ -652,8 +653,8 @@ export interface IncomeExpectation {
    * is a statement about (`unbankedIncomeTotals`).
    */
   passedUnpaidCheckedOccurrences: number;
-  /** the frontier the other passed paydays fall after; null when an account is unread */
-  passedUnpaidCheckedThrough: string | null;
+  /** how far the accounts the other passed paydays land in were checked — one day, per schedule, or not at all */
+  passedUnpaidFrontier: UnbankedFrontier;
   /** which figure budgets are graded against, and how this month sits on it */
   basis: IncomeBasis;
   /** the live income series contributing to expectedCents */
@@ -867,7 +868,7 @@ export function incomeExpectation(
     passedUnpaidCents,
     passedUnpaidOccurrences,
     passedUnpaidCheckedOccurrences: passed.checkedOccurrenceCount,
-    passedUnpaidCheckedThrough: passed.checkedThrough,
+    passedUnpaidFrontier: passed.frontier,
     series,
   };
 }

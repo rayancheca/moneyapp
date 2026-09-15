@@ -325,7 +325,7 @@ describe("forecastCurrentMonth", () => {
      * unpaid would then be reported as a payday — with a NEGATIVE total, in a
      * sentence that reads "1 payday worth -$2,109.00 already passed".
      */
-    expect(f.unbankedIncome).toEqual({ totalCents: 0, occurrenceCount: 0, checkedOccurrenceCount: 0, checkedThrough: null, names: [] });
+    expect(f.unbankedIncome).toEqual({ totalCents: 0, occurrenceCount: 0, checkedOccurrenceCount: 0, frontier: { kind: "unchecked" }, names: [] });
   });
 
   /* ⛔ The kind filter is not enough on its own, and `fixedComponents` says why
@@ -356,9 +356,9 @@ describe("forecastCurrentMonth", () => {
     expect(f.unbankedIncome).toEqual({
       totalCents: 300000,
       occurrenceCount: 1,
-      // no account this pay lands in has been read, so none of it was looked for
+      // no account this pay lands in has been checked, so none of it was looked for
       checkedOccurrenceCount: 0,
-      checkedThrough: null,
+      frontier: { kind: "unchecked" },
       names: ["Payroll"],
     });
   });
@@ -377,7 +377,7 @@ describe("forecastCurrentMonth", () => {
       status: "confirmed",
     });
     const f = forecastCurrentMonth(bundle.db, TODAY);
-    expect(f.unbankedIncome).toEqual({ totalCents: 0, occurrenceCount: 0, checkedOccurrenceCount: 0, checkedThrough: null, names: [] });
+    expect(f.unbankedIncome).toEqual({ totalCents: 0, occurrenceCount: 0, checkedOccurrenceCount: 0, frontier: { kind: "unchecked" }, names: [] });
   });
 
   test("a bill that came due AND posted is not projected on top of what it cost", () => {
@@ -443,9 +443,9 @@ describe("forecastCurrentMonth", () => {
     expect(f.unbankedIncome).toEqual({
       totalCents: 300000,
       occurrenceCount: 1,
-      // no account this pay lands in has been read, so none of it was looked for
+      // no account this pay lands in has been checked, so none of it was looked for
       checkedOccurrenceCount: 0,
-      checkedThrough: null,
+      frontier: { kind: "unchecked" },
       names: ["Payroll"],
     });
   });

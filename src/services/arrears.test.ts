@@ -12,6 +12,8 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays } from "@/lib/dates";
+import { formatDayLong } from "@/lib/format-date";
+import { unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
 import { unbankedIncomeForSeries, unbankedIncomeTotals } from "./arrears";
 import { incomeExpectation } from "./budgets";
 import { forecastCurrentMonth } from "./forecast";
@@ -197,7 +199,16 @@ describe("unbankedIncomeForSeries — a passed payday is measured against the da
 });
 
 describe("unbankedIncomeTotals — one reading for a sentence about several series", () => {
-  test("counts add, and the frontier the unread paydays fall after is the earliest", () => {
+  /**
+   * 🔴 THE EARLIEST FRONTIER IS NOT A FRONTIER FOR EVERY SCHEDULE. The reading
+   * used to reduce several schedules to their earliest day, and the one clause
+   * then said "1 falls on a day already read, with no deposit; the other 3 fall
+   * after Wed, Aug 12, 2026, which nothing has imported yet" — while the account
+   * Tutoring lands in had been checked through Sep 4, and Tutoring's own Sep 3,
+   * after Aug 12, was the payday it called read (measured 2026-09-15, this
+   * fixture). A day is named only when every schedule shares it.
+   */
+  test("schedules checked through different days share no frontier, so no day is named", () => {
     addAccount("acct-sofi");
     addPaySeries("series-tutor", "Tutoring");
     deposit("acct-sofi", "series-tutor", "2026-06-04");
@@ -209,19 +220,34 @@ describe("unbankedIncomeTotals — one reading for a sentence about several seri
       totalCents: 400_000,
       occurrenceCount: 4,
       checkedOccurrenceCount: 1, // Tutoring's Sep 3
-      checkedThrough: "2026-08-12",
+      frontier: { kind: "per-schedule" },
       names: ["Cash job (weekly pay)", "Tutoring"],
     });
+    const words = unbankedIncomeFrontierClause(t, formatDayLong);
+    expect(words).toBe(
+      "1 falls on a day already checked, with no deposit; the other 3 fall after the last day the accounts their pay lands in have been checked through, which differs by schedule.",
+    );
+    expect(words).not.toMatch(/Aug 12|Sep 4/);
   });
 
-  test("one unread landing account makes the whole reading unread", () => {
+  test("schedules checked through the SAME day still name it", () => {
+    addPaySeries("series-tutor", "Tutoring");
+    deposit(CHASE, "series-tutor", "2026-06-04");
+    readThrough(CHASE, "2026-06-01", "2026-08-12");
+
+    const t = unbankedIncomeTotals(unbankedIncomeForSeries(bundle.db, new Set([SERIES, "series-tutor"]), "2026-09-01", TODAY));
+    expect(t.frontier).toEqual({ kind: "day", through: "2026-08-12" });
+    expect(unbankedIncomeFrontierClause(t, formatDayLong)).toContain("They all fall after Wed, Aug 12, 2026,");
+  });
+
+  test("one unchecked landing account makes the whole reading unchecked", () => {
     addAccount("acct-sofi");
     addPaySeries("series-tutor", "Tutoring");
     deposit("acct-sofi", "series-tutor", "2026-06-04");
     readThrough(CHASE, "2026-06-01", "2026-09-14");
 
     const t = unbankedIncomeTotals(unbankedIncomeForSeries(bundle.db, new Set([SERIES, "series-tutor"]), "2026-09-01", TODAY));
-    expect(t.checkedThrough).toBeNull();
+    expect(t.frontier).toEqual({ kind: "unchecked" });
     expect(t.checkedOccurrenceCount).toBe(2);
   });
 
@@ -230,7 +256,7 @@ describe("unbankedIncomeTotals — one reading for a sentence about several seri
       totalCents: 0,
       occurrenceCount: 0,
       checkedOccurrenceCount: 0,
-      checkedThrough: null,
+      frontier: { kind: "unchecked" },
       names: [],
     });
   });
@@ -243,13 +269,13 @@ describe("both surfaces that print the figure carry the split", () => {
     const income = incomeExpectation(bundle.db, "2026-09-01", "2026-09-30", TODAY);
     expect([income.passedUnpaidOccurrences, income.passedUnpaidCents]).toEqual([2, 200_000]);
     expect(income.passedUnpaidCheckedOccurrences).toBe(0);
-    expect(income.passedUnpaidCheckedThrough).toBe("2026-08-12");
+    expect(income.passedUnpaidFrontier).toEqual({ kind: "day", through: "2026-08-12" });
 
     expect(forecastCurrentMonth(bundle.db, TODAY).unbankedIncome).toEqual({
       totalCents: 200_000,
       occurrenceCount: 2,
       checkedOccurrenceCount: 0,
-      checkedThrough: "2026-08-12",
+      frontier: { kind: "day", through: "2026-08-12" },
       names: ["Cash job (weekly pay)"],
     });
   });

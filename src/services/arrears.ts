@@ -3,6 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, diffDays } from "@/lib/dates";
+import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
 import { earliestVerified, landingAccountsBySeries } from "./cash-earnings";
 import { accountCoverage } from "./coverage";
 import { projectOccurrences, seriesHasLapsed, toProjectable } from "./recurring";
@@ -276,29 +277,25 @@ export function unbankedIncomeForSeries(
 export interface UnbankedIncomeTotals {
   totalCents: number;
   occurrenceCount: number;
-  /** of those, the paydays on days the ledger has read every landing account through */
+  /** of those, the paydays on days the ledger has checked every landing account through */
   checkedOccurrenceCount: number;
   /**
-   * The EARLIEST frontier across the series — every unread payday falls after
-   * it — or null when any series' landing account has not been read, or nothing
-   * passed unpaid.
+   * How far the accounts the pay lands in were checked, across every series
+   * (`sharedFrontier`): the one day they share, `per-schedule` when they were
+   * checked through different days, or `unchecked` when one has no checked
+   * record or nothing passed unpaid. Never the earliest of several days — that
+   * is false of every later schedule's paydays.
    */
-  checkedThrough: string | null;
+  frontier: UnbankedFrontier;
   names: string[];
 }
 
 export function unbankedIncomeTotals(u: UnbankedIncome): UnbankedIncomeTotals {
-  const frontiers = u.series.map((s) => s.checkedThrough);
-  const known = frontiers.filter((f): f is string => f !== null);
-  const checkedThrough =
-    known.length === 0 || known.length < frontiers.length
-      ? null
-      : known.reduce((a, b) => (compareDates(a, b) <= 0 ? a : b));
   return {
     totalCents: u.totalCents,
     occurrenceCount: u.series.reduce((n, s) => n + s.occurrenceCount, 0),
     checkedOccurrenceCount: u.series.reduce((n, s) => n + s.checkedOccurrenceCount, 0),
-    checkedThrough,
+    frontier: sharedFrontier(u.series.map((s) => s.checkedThrough)),
     names: u.series.map((s) => s.name),
   };
 }

@@ -767,7 +767,7 @@ export function forecastForMonth(
      * to come, so there is nothing that has passed unbanked. Stated rather than
      * omitted: this field is a measurement, and an empty one is the answer here.
      */
-    unbankedIncome: { totalCents: 0, occurrenceCount: 0, checkedOccurrenceCount: 0, checkedThrough: null, names: [] },
+    unbankedIncome: { totalCents: 0, occurrenceCount: 0, checkedOccurrenceCount: 0, frontier: { kind: "unchecked" }, names: [] },
   };
 }
 
