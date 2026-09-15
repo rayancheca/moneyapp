@@ -5,7 +5,10 @@ import {
   annualizedCaveat,
   shortAgo,
   staleComponentEntries,
+  staleFooterHint,
+  staleFooterIsWarning,
   staleLabel,
+  staleMarkTone,
   staleOccurrenceEntries,
   stalenessSentence,
   stalePartLabel,
@@ -79,8 +82,63 @@ describe("staleLabel", () => {
     expect(staleLabel(staleness())).toBe("last seen 22d ago");
   });
 
-  test("a series nothing ever matched says so rather than inventing a date", () => {
-    expect(staleLabel(staleness({ lastMatchedOn: null, daysSinceLastMatch: null }))).toBe("never seen");
+  /**
+   * 🔴 "never seen", in a WARNING badge, on the Upcoming list and the forecast's
+   * math table — for Car lease, Gym and Rent utilities & fees, measured on the
+   * real ledger 2026-09-15 — while the calendar a tab away called the same
+   * three "never billed" in a neutral badge. The owner chose the All tab's word
+   * (2026-09-14): `SERIES_EVIDENCE_LABEL`, not a third spelling of it.
+   */
+  test("a series nothing ever matched is never billed, in the word every other surface uses", () => {
+    const never = staleness({ lastMatchedOn: null, daysSinceLastMatch: null });
+    expect(staleLabel(never)).toBe("never billed");
+    expect(staleLabel(never)).toBe(upcomingEvidenceWord({ isStale: true, neverBilled: true }));
+    expect(staleLabel(never)).not.toBe("never seen");
+  });
+});
+
+/* A bill the bank has not charged yet is not late — the Day Sheet's own rule:
+   "not a warning: nothing is late about a bill the bank has not charged yet". */
+describe("staleMarkTone", () => {
+  test("late evidence is a warning", () => {
+    expect(staleMarkTone(staleness())).toBe("warning");
+  });
+
+  test("no evidence at all is not", () => {
+    expect(staleMarkTone(staleness({ lastMatchedOn: null, daysSinceLastMatch: null }))).toBe("neutral");
+  });
+});
+
+/**
+ * 🔴 "In the next 30 days, 4 series are running late and 3 have never charged —
+ * all still projected · why these numbers rest on old evidence" — measured on
+ * the real ledger 2026-09-15. Three of the seven have no evidence at all to be
+ * old.
+ */
+describe("staleFooterHint", () => {
+  const late: StaleEntry = { key: "l", name: "Late", staleness: staleness() };
+  const never: StaleEntry = {
+    key: "n",
+    name: "Never",
+    staleness: staleness({ lastMatchedOn: null, daysSinceLastMatch: null }),
+  };
+
+  test("only late evidence is old evidence", () => {
+    expect(staleFooterHint([late])).toBe("why these numbers rest on old evidence");
+  });
+
+  test("only never-billed rests on the schedule, and says nothing is old", () => {
+    expect(staleFooterHint([never])).toBe("why these numbers rest on the schedule alone");
+    expect(staleFooterHint([never])).not.toContain("old");
+  });
+
+  test("a mix names both", () => {
+    expect(staleFooterHint([late, never])).toBe("why these numbers rest on old evidence or on the schedule alone");
+  });
+
+  test("the footer is a warning only when something is actually late", () => {
+    expect(staleFooterIsWarning([late, never])).toBe(true);
+    expect(staleFooterIsWarning([never])).toBe(false);
   });
 });
 

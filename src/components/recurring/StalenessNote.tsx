@@ -1,6 +1,14 @@
 import { Badge } from "@/components/ui/Badge";
 import type { SeriesStaleness } from "@/services/recurring";
-import { staleLabel, stalenessSentence, staleSummaryLabel, type StaleEntry } from "./labels";
+import {
+  staleFooterHint,
+  staleFooterIsWarning,
+  staleLabel,
+  staleMarkTone,
+  stalenessSentence,
+  staleSummaryLabel,
+  type StaleEntry,
+} from "./labels";
 
 /**
  * Staleness disclosure (item 13a). The forecast and the upcoming list keep
@@ -27,7 +35,8 @@ export function StaleMark({
   if (!staleness?.isStale) return null;
   return (
     <span title={stalenessSentence(staleness)}>
-      <Badge tone="warning" className={`whitespace-nowrap ${className ?? ""}`.trim()}>
+      {/* ⛔ Neutral for a series the bank has never billed — see `staleMarkTone` */}
+      <Badge tone={staleMarkTone(staleness)} className={`whitespace-nowrap ${className ?? ""}`.trim()}>
         {staleLabel(staleness)}
       </Badge>
     </span>
@@ -53,14 +62,17 @@ export function StaleFooter({
   if (entries.length === 0) return null;
   return (
     <details className={`group rounded-md border border-line bg-surface ${className ?? ""}`.trim()}>
-      <summary className="cursor-pointer select-none px-4 py-2.5 text-xs font-medium text-warning transition-colors duration-(--duration-fast) hover:text-ink">
+      <summary
+        className={`cursor-pointer select-none px-4 py-2.5 text-xs font-medium ${
+          staleFooterIsWarning(entries) ? "text-warning" : "text-ink-muted"
+        } transition-colors duration-(--duration-fast) hover:text-ink`}
+      >
         {/* ⛔ The count and the WORD for it: a series that has never charged is
             not late, and three of the four on the owner's ledger are not even
             due yet. `staleSummaryLabel` owns the split — see its docstring. */}
         {staleSummaryLabel(entries, window)}
-        <span className="ml-2 font-normal text-ink-faint group-open:hidden">
-          why these numbers rest on old evidence
-        </span>
+        {/* ⛔ …and the hint does not call "no evidence" old — `staleFooterHint` */}
+        <span className="ml-2 font-normal text-ink-faint group-open:hidden">{staleFooterHint(entries)}</span>
       </summary>
       <ul className="divide-y divide-line border-t border-line">
         {entries.map((e) => (

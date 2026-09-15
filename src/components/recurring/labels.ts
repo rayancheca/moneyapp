@@ -150,9 +150,51 @@ export function shortAgo(days: number): string {
   return days <= 0 ? "today" : `${days}d ago`;
 }
 
-/** The inline marker's text: "last seen 22d ago", or "never seen". */
+/**
+ * The inline marker's text: "last seen 22d ago", or "never billed".
+ *
+ * 🔴 It said "never seen". Measured on the real ledger 2026-09-15, `/recurring`
+ * badged Car lease, Gym and Rent utilities & fees "never seen" on the Upcoming
+ * list and in the forecast's math table, while the calendar under the same
+ * forecast card read "Car lease upcoming (scheduled, never billed)" and the All
+ * tab filed them under "Never billed". The owner chose that word on 2026-09-14
+ * — `SERIES_EVIDENCE_LABEL`, through `upcomingEvidenceWord`, not a third
+ * spelling of it.
+ */
 export function staleLabel(s: SeriesStaleness): string {
-  return s.daysSinceLastMatch === null ? "never seen" : `last seen ${shortAgo(s.daysSinceLastMatch)}`;
+  return s.daysSinceLastMatch === null
+    ? SERIES_EVIDENCE_LABEL["never-billed"].toLowerCase()
+    : `last seen ${shortAgo(s.daysSinceLastMatch)}`;
+}
+
+/**
+ * The marker's tone. A bill the bank has not charged yet is NOT a warning —
+ * the calendar's Day Sheet already says so ("nothing is late about a bill the
+ * bank has not charged yet") — and the Upcoming list badged the car lease in
+ * warning amber on the morning of its first payment.
+ */
+export function staleMarkTone(s: SeriesStaleness): "warning" | "neutral" {
+  return s.daysSinceLastMatch === null ? "neutral" : "warning";
+}
+
+/** The footer is a warning only when at least one of its series is actually late. */
+export function staleFooterIsWarning(entries: readonly StaleEntry[]): boolean {
+  return entries.some((e) => e.staleness.daysSinceLastMatch !== null);
+}
+
+/**
+ * What the collapsed footer says it explains.
+ *
+ * 🔴 "why these numbers rest on old evidence", under "4 series are running late
+ * and 3 have never charged" — measured on the real ledger 2026-09-15. A series
+ * nothing has ever matched has no evidence to be OLD; `stalenessSentence` says
+ * it is "still projected, on the schedule alone", and so does this.
+ */
+export function staleFooterHint(entries: readonly StaleEntry[]): string {
+  const late = staleFooterIsWarning(entries);
+  const never = entries.some((e) => e.staleness.daysSinceLastMatch === null);
+  if (late && never) return "why these numbers rest on old evidence or on the schedule alone";
+  return late ? "why these numbers rest on old evidence" : "why these numbers rest on the schedule alone";
 }
 
 /**
@@ -239,8 +281,8 @@ export interface StaleEntry {
  * the FUTURE, and the lease's first payment was a fortnight away.
  *
  * The per-row text already distinguishes them — `stalenessSentence` has a
- * branch for each and the inline badge reads "never seen". Only the count that
- * stands over them did not.
+ * branch for each and the inline badge reads "never billed" (`staleLabel`).
+ * Only the count that stands over them did not.
  */
 /**
  * 🔴 AND IT MUST NAME THE WINDOW IT COUNTED, because two of these sit on one
