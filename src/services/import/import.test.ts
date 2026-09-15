@@ -1829,3 +1829,258 @@ describe("fidelityOf — a format can lie about how much a file can be trusted",
     expect(fidelityOf("csv", null)).toBeLessThan(fidelityOf("pdf", null));
   });
 });
+
+/**
+ * ⚖️ OWNER, 2026-09-15 (answer 4): un-importing a statement must not delete a
+ * row the statement never produced. `scripts/attach-sapphire-payment-rows-2026-09-14.ts`
+ * filed 34 hand-built Chase Sapphire card payments under the 12 statements that
+ * print them. The card parser never inserted those lines — each was absorbed by
+ * the hand row already recording it — so a re-import cannot recreate them, and
+ * `unimportFile` hard-deleted them with the file's own rows: the money, the
+ * category, the transfer link and the note. Read-only on the real ledger the
+ * same day: 20260302-statements-9805-.pdf held 4 parsed rows and 5 attached,
+ * 20260702-statements-9805-.pdf 2 and 4.
+ *
+ * The scene replays that history on the fixture: a statement imported, its rows
+ * removed, two of its lines recorded by hand in other words, the statement
+ * imported again (each hand row absorbs its line), and ONE of the two attached.
+ */
+describe("un-import keeps a row attached to its file, and a re-import files it there again", () => {
+  const NAME = "capone-venturex-2024-09-20_2024-10-19.pdf";
+  const statement = (): ImportInput => load("capital-one", "statements", NAME);
+  const fileNamed = () => bundle.db.select().from(importFilesTable).where(eq(importFilesTable.fileName, NAME)).get();
+  const row = (id: string) => bundle.db.select().from(transactions).where(eq(transactions.id, id)).get();
+  const rowsOf = (fileId: string) =>
+    bundle.db.select().from(transactions).where(eq(transactions.importFileId, fileId)).all();
+  const periodOf = (fileId: string) =>
+    bundle.db.select().from(statementPeriods).where(eq(statementPeriods.importFileId, fileId)).get();
+
+  let seq = 0;
+  function hand(accountId: string, postedOn: string, amountCents: number, raw: string): string {
+    seq += 1;
+    return bundle.db
+      .insert(transactions)
+      .values({
+        accountId,
+        postedOn,
+        amountCents,
+        rawDescription: raw,
+        normalizedDescription: normalizeDescription(raw),
+        dedupeHash: dedupeHash({ accountId, postedOn, amountCents, rawDescription: raw, occurrenceIndex: seq }),
+      })
+      .returning({ id: transactions.id })
+      .get().id;
+  }
+
+  /** What the attach script writes: the file that prints the line, and the marker that says so. */
+  function attach(id: string, fileId: string): void {
+    const changes = bundle.db
+      .update(transactions)
+      .set({ importFileId: fileId, fileLinkSource: "attached" })
+      .where(eq(transactions.id, id))
+      .run().changes;
+    expect(changes).toBe(1);
+  }
+
+  function group(ids: readonly string[], groupId: string): void {
+    bundle.db.update(transactions).set({ transferGroupId: groupId }).where(inArray(transactions.id, [...ids])).run();
+  }
+
+  interface Scene {
+    accountId: string;
+    fileId: string;
+    /** a hand row absorbed by a line, then attached to the file */
+    attached: string;
+    /** a hand row absorbed by a line and never attached */
+    unattached: string;
+    /** the attached row's transfer partner, on another account */
+    partner: string;
+    /** a parsed row of the file with a transfer partner of its own */
+    parsedLeg: string;
+    parsedPartner: string;
+    seriesId: string;
+  }
+
+  async function scene(): Promise<Scene> {
+    await importStatementFiles(bundle.db, [statement()]);
+    const first = fileNamed()!;
+    const parsed = rowsOf(first.id);
+    // lines whose (day, amount) the file prints once, so each hand row absorbs exactly one
+    const once = parsed.filter(
+      (t) => parsed.filter((u) => u.postedOn === t.postedOn && u.amountCents === t.amountCents).length === 1,
+    );
+    expect(once.length).toBeGreaterThanOrEqual(3);
+    const [a, b, c] = once as [(typeof once)[number], (typeof once)[number], (typeof once)[number]];
+    unimportFile(bundle.db, first.id);
+
+    const accountId = a.accountId;
+    const attached = hand(accountId, a.postedOn, a.amountCents, "PAYMENT — reconstructed by hand");
+    const unattached = hand(accountId, b.postedOn, b.amountCents, "TRANSFER — reconstructed by hand");
+    const [outcome] = await importStatementFiles(bundle.db, [statement()]);
+    expect(outcome!.status).toBe("parsed");
+    expect(outcome!.dedupedCrossFormat).toBe(2);
+    const fileId = fileNamed()!.id;
+    expect(periodOf(fileId)!.reconciliation).toBe("reconciled");
+
+    attach(attached, fileId);
+    const { institutionId } = bundle.db.select().from(accounts).where(eq(accounts.id, accountId)).get()!;
+    const other = createAccount(bundle.db, { institutionId, name: "Hand checking", type: "checking" });
+    const partner = hand(other, a.postedOn, -a.amountCents, "PAYMENT TO VENTURE X");
+    group([attached, partner], attached);
+    const parsedLeg = rowsOf(fileId).find((t) => t.postedOn === c.postedOn && t.amountCents === c.amountCents)!.id;
+    const parsedPartner = hand(other, c.postedOn, -c.amountCents, "PAYMENT TO VENTURE X");
+    group([parsedLeg, parsedPartner], parsedLeg);
+
+    const category = bundle.db.select().from(categories).get()!;
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: category.id, categorizationSource: "user", notes: "reconstructed credit-card payment leg" })
+      .where(eq(transactions.id, attached))
+      .run();
+    const seriesId = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "Card payment", kind: "subscription", cadence: "monthly", status: "confirmed", intervalDaysAvg: 30 })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    attachTransactions(bundle.db, seriesId, [attached]);
+    return { accountId, fileId, attached, unattached, partner, parsedLeg, parsedPartner, seriesId };
+  }
+
+  test("un-importing deletes what the file parsed and keeps the row attached to it — money, category, links, note", async () => {
+    const s = await scene();
+    const { importFileId: _file, updatedAt: _updated, ...carried } = row(s.attached)!;
+
+    unimportFile(bundle.db, s.fileId);
+
+    expect(row(s.attached)).toMatchObject({ ...carried, importFileId: null, status: "active", recurringSeriesId: s.seriesId });
+    // its partner keeps the link, because the leg it pairs with is still here…
+    expect(row(s.partner)!.transferGroupId).toBe(s.attached);
+    // …and a partner the deleted rows leave alone is released, as before
+    expect(row(s.parsedPartner)!.transferGroupId).toBeNull();
+    const left = bundle.db.select().from(transactions).where(eq(transactions.accountId, s.accountId)).all();
+    expect(left.map((t) => t.id).sort()).toEqual([s.attached, s.unattached].sort());
+    expect(fileNamed()).toBeUndefined();
+  });
+
+  test("a kept row its statement's gap had quarantined comes back active — the verdict left with the period", async () => {
+    await importStatementFiles(bundle.db, [loadDir("discover", "corrupted")[0]!]);
+    const period = bundle.db.select().from(statementPeriods).all()[0]!;
+    expect(period.reconciliation).toBe("gap");
+    const held = hand(period.accountId, period.periodStart, -1234, "HAND ENTRY");
+    attach(held, period.importFileId);
+    reconcileAccounts(bundle.db, [period.accountId]);
+    expect(bundle.db.select().from(statementPeriods).all()[0]!.reconciliation).toBe("gap");
+    expect(row(held)!.status).toBe("quarantined");
+
+    unimportFile(bundle.db, period.importFileId);
+
+    expect(row(held)).toMatchObject({ importFileId: null, fileLinkSource: "attached", status: "active" });
+  });
+
+  test("re-importing the same bytes brings the parsed rows back and files the kept row under the statement again — once", async () => {
+    const s = await scene();
+    const parsedBefore = rowsOf(s.fileId).filter((t) => t.id !== s.attached).length;
+    const line = row(s.attached)!;
+    // a kept row no period of this statement reaches: it waits for its own statement
+    const elsewhere = hand(s.accountId, "2025-05-15", -4321, "HAND ENTRY OUTSIDE THE PERIOD");
+    bundle.db
+      .update(transactions)
+      .set({ fileLinkSource: "attached", notes: "kept from an un-imported statement" })
+      .where(eq(transactions.id, elsewhere))
+      .run();
+
+    unimportFile(bundle.db, s.fileId);
+    const [outcome] = await importStatementFiles(bundle.db, [statement()]);
+
+    expect(outcome!.status).toBe("parsed");
+    const again = fileNamed()!;
+    expect(again.id).not.toBe(s.fileId);
+    expect(row(s.attached)).toMatchObject({
+      importFileId: again.id,
+      fileLinkSource: "attached",
+      status: "active",
+      transferGroupId: s.attached,
+      recurringSeriesId: s.seriesId,
+    });
+    const recording = bundle.db
+      .select()
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.accountId, s.accountId),
+          eq(transactions.postedOn, line.postedOn),
+          eq(transactions.amountCents, line.amountCents),
+          ne(transactions.status, "superseded"),
+        ),
+      )
+      .all();
+    expect(recording.map((t) => t.id)).toEqual([s.attached]);
+    expect(rowsOf(again.id).filter((t) => t.id !== s.attached)).toHaveLength(parsedBefore);
+    // absorbing a line is not an attachment: the hand row nobody attached stays the owner's
+    expect(row(s.unattached)!.importFileId).toBeNull();
+    expect(row(elsewhere)!.importFileId).toBeNull();
+    expect(periodOf(again.id)!.reconciliation).toBe("reconciled");
+  });
+
+  /**
+   * Linking at import claims only what the call inserted or promoted (owner,
+   * 2026-09-14). Re-filing a kept row is neither: it was already in the ledger.
+   */
+  test("the import that files a kept row again does not claim it for a series", async () => {
+    const s = await scene();
+    bundle.db
+      .update(transactions)
+      .set({ recurringSeriesId: null, seriesLinkSource: null })
+      .where(eq(transactions.id, s.attached))
+      .run();
+    const kept = row(s.attached)!;
+    // a confirmed series that owns the kept row's description, through a row outside the statement
+    const owner = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "Hand payments", kind: "subscription", cadence: "monthly", status: "confirmed", intervalDaysAvg: 30 })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    const sibling = hand(s.accountId, "2024-08-15", kept.amountCents, kept.rawDescription);
+    bundle.db
+      .update(transactions)
+      .set({ recurringSeriesId: owner, seriesLinkSource: "detected" })
+      .where(eq(transactions.id, sibling))
+      .run();
+
+    unimportFile(bundle.db, s.fileId);
+    await importStatementFiles(bundle.db, [statement()]);
+
+    expect(row(s.attached)).toMatchObject({ importFileId: fileNamed()!.id, recurringSeriesId: null, seriesLinkSource: null });
+    expect(row(sibling)!.recurringSeriesId).toBe(owner);
+  });
+
+  test("the confirmation counts exactly the rows un-import deletes and keeps, transfer legs included", async () => {
+    const { unimportCountsByFile } = await import("./unimport-counts");
+    const s = await scene();
+    // a second kept row, and this one is no transfer leg
+    attach(s.unattached, s.fileId);
+    const counts = unimportCountsByFile(bundle.db).get(s.fileId);
+    const rows = rowsOf(s.fileId);
+
+    unimportFile(bundle.db, s.fileId);
+
+    const deleted = rows.filter((t) => row(t.id) === undefined);
+    const kept = rows.filter((t) => row(t.id) !== undefined);
+    expect(kept.map((t) => t.id).sort()).toEqual([s.attached, s.unattached].sort());
+    const activeCents = (sign: 1 | -1) =>
+      deleted.filter((t) => t.status === "active" && Math.sign(t.amountCents) === sign).reduce((n, t) => n + sign * t.amountCents, 0);
+    expect(counts).toEqual({
+      deleted: deleted.length,
+      kept: 2,
+      userCategorizedDeleted: deleted.filter((t) => t.categorizationSource === "user").length,
+      inflowCents: activeCents(1),
+      outflowCents: activeCents(-1),
+      duplicateSurvivors: 0,
+      transferLegsDeleted: deleted.filter((t) => t.transferGroupId !== null).length,
+      transferLegsKept: 1,
+    });
+    // not vacuous: a leg does go, and the one kept row is the owner's own categorization
+    expect(counts!.transferLegsDeleted).toBeGreaterThan(0);
+    expect(row(s.attached)!.categorizationSource).toBe("user");
+  });
+});

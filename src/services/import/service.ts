@@ -28,6 +28,7 @@ import { linkRowsMadeActive, settleSeriesStats } from "../recurring-import-links
 import { detachTransferLegs, type StaleTransferLeg } from "../transfer-links";
 import { accountsOfTransactions, restoreDuplicatesLosingTheirSurvivor } from "../duplicate-lifecycle";
 import { accountSlug, institutionSlug } from "./account-slug";
+import { detachAttachedRows, parsedFromFile, reattachDetachedRows } from "./attached-rows";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
 import { extractLines } from "./profiles/pdf-profile";
@@ -769,6 +770,11 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
     outcomes.push(outcome);
   }
 
+  // A row an un-import detached is filed again under the statement that now
+  // holds its day (`attached-rows`). Before the reconcile, so a gap holds it
+  // with the file's own rows, as it did before the un-import — and this call
+  // did not insert it, so the linking below may not claim it.
+  const refiled = new Set(reattachDetachedRows(db, [...touchedAccounts]));
   for (const accountId of touchedAccounts) rebuildAccount(db, accountId);
   if (touchedAccounts.size > 0) {
     categorizeAll(db);
@@ -782,7 +788,7 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
     // Only what this call inserted or promoted may be claimed (owner,
     // 2026-09-14); a row the reconcile quarantined is not active and waits for
     // its gap to be accepted, which links it then.
-    linkRowsMadeActive(db, [...rowIdsOfFiles(db, writtenFileIds), ...quarantinedBefore]);
+    linkRowsMadeActive(db, [...rowIdsOfFiles(db, writtenFileIds).filter((id) => !refiled.has(id)), ...quarantinedBefore]);
     for (const accountId of touchedAccounts) rebuildAccount(db, accountId);
     // AFTER the reconcile, never before — but NOT to catch the rows the
     // reconcile promotes. reconcileAccounts only promotes when the gap
@@ -1608,7 +1614,10 @@ function accountsWrittenBy(db: AppDatabase, importFileId: string): string[] {
   ];
 }
 
-/** Un-import: removes a file's contributions atomically; derived state rebuilt. */
+/**
+ * Un-import: removes what a file parsed, its periods and its anchors atomically,
+ * and detaches the rows attached to it (`attached-rows`); derived state rebuilt.
+ */
 export function unimportFile(db: AppDatabase, importFileId: string): void {
   const file = db.select().from(importFiles).where(eq(importFiles.id, importFileId)).get();
   if (!file) return;
@@ -1617,14 +1626,15 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
   const doomedRows = db
     .select({ id: transactions.id, seriesId: transactions.recurringSeriesId })
     .from(transactions)
-    .where(eq(transactions.importFileId, importFileId))
+    .where(parsedFromFile(importFileId))
     .all();
   const doomed = doomedRows.map((r) => r.id);
   // every series about to lose a linked row: its stats describe the rows it had
   const seriesLosingRows = doomedRows.flatMap((r) => (r.seriesId === null ? [] : [r.seriesId]));
 
-  // The file's rows leave the database entirely — re-importing re-parses the
-  // original, but every correction made to those rows since is gone.
+  // The rows the file parsed leave the database entirely — re-importing
+  // re-parses the original, but every correction made to those rows since is
+  // gone. A row attached to the file stays, and a re-import files it again.
   withPreMutationSnapshot(db, "unimport-file", () => {
     let restored: string[] = [];
     db.transaction((tx) => {
@@ -1639,10 +1649,15 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
       // on its own, and a later failure would leave rows restored beside
       // survivors that were never deleted — the double count, from the fix.
       restored = restoreDuplicatesLosingTheirSurvivor(tx, doomed);
+      // ⚖️ owner, 2026-09-15: a row ATTACHED to this file was never the file's
+      // to take. Detached before anything below reads "the file's rows", so the
+      // partners left alone and the delete see only what the file parsed — and
+      // a kept leg keeps its partner linked.
+      detachAttachedRows(tx, importFileId);
       // after the restore (a restored twin is a live leg) and before the delete
       // (the rows naming the groups are still here to be read)
       detachTransferLegs(tx, legsLeftAloneBy(tx, importFileId));
-      tx.delete(transactions).where(eq(transactions.importFileId, importFileId)).run();
+      tx.delete(transactions).where(parsedFromFile(importFileId)).run();
       tx.delete(balanceAnchors).where(eq(balanceAnchors.importFileId, importFileId)).run();
       // anchors owned by OTHER files may reference this file's periods — detach
       // them before the periods go (FK integrity under foreign_keys=ON)

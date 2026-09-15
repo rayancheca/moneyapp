@@ -110,10 +110,16 @@ Liability status **derived** from `type='credit'`. Debit cards are intentionally
   never downgraded: when the new row's money is already represented by another file's row, the
   carry only **fills** attributes that row lacks. The per-file `carriedForward` count in the
   import outcome makes every carry visible.
-- **Un-import** is a first-class operation: removes the file's transactions, periods, and
-  anchors atomically. Unlike a re-parse it is **destructive to user work** — the rows leave the
-  database, so their categories, notes, links and splits go with them (a pre-mutation snapshot
-  is taken so the operation is recoverable).
+- **Un-import** is a first-class operation: removes the rows the file **parsed**, its periods,
+  and its anchors atomically. Unlike a re-parse it is **destructive to user work** — those rows
+  leave the database, so their categories, notes, links and splits go with them (a pre-mutation
+  snapshot is taken so the operation is recoverable).
+  A row **attached** to the file (`file_link_source = 'attached'`: recorded without the document,
+  then filed under the statement that prints it — the importer never writes the marker) is not
+  the file's to delete. It is **detached**: `import_file_id` NULL, the marker kept, every other
+  column untouched, a quarantined row made `active`. Importing a statement whose printed-balance
+  period (beginning and ending balance) holds its posted day files it there again; a day two
+  such periods hold leaves it detached (owner, 2026-09-15).
 - Imported transactions are **immutable** in amount/date/description. Corrections happen via
   re-parse or an explicit manual-adjustment transaction — never in-place edits (in-place
   edits would silently break dedupe and reconciliation).

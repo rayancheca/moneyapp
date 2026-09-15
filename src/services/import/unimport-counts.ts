@@ -1,0 +1,98 @@
+import { eq, sql } from "drizzle-orm";
+import type { AppDatabase } from "@/db/client";
+import { importFiles } from "@/db/schema/imports";
+import { transactions } from "@/db/schema/transactions";
+import { attachedRow, parsedRow } from "./attached-rows";
+
+/**
+ * What un-importing a file does to its rows, counted on the rows `unimportFile`
+ * deletes (what the file parsed) and keeps (what was attached to it) — the
+ * /imports confirmation's numbers, with the same predicates the delete uses.
+ */
+export interface UnimportCounts {
+  /** rows the file parsed — every one is deleted */
+  deleted: number;
+  /** rows attached to the file — detached and kept */
+  kept: number;
+  /** deleted rows the owner categorized BY HAND: the work that cannot come back */
+  userCategorizedDeleted: number;
+  /** the deleted rows' money in the ledger — active rows only */
+  inflowCents: number;
+  outflowCents: number;
+  /** deleted rows that are the surviving half of a confirmed duplicate */
+  duplicateSurvivors: number;
+  /** deleted rows that hold a transfer group */
+  transferLegsDeleted: number;
+  /** kept rows that hold a transfer group — their links stay */
+  transferLegsKept: number;
+}
+
+/** A file with no rows: nothing deleted, nothing kept. */
+export const NO_UNIMPORT_ROWS: UnimportCounts = {
+  deleted: 0,
+  kept: 0,
+  userCategorizedDeleted: 0,
+  inflowCents: 0,
+  outflowCents: 0,
+  duplicateSurvivors: 0,
+  transferLegsDeleted: 0,
+  transferLegsKept: 0,
+};
+
+/** Every import file's counts, in ONE grouped query; a file with no rows counts zero throughout. */
+export function unimportCountsByFile(db: AppDatabase): Map<string, UnimportCounts> {
+  // a left join's empty side has a NULL marker too, so a parsed row needs a row
+  const deleted = sql`(${transactions.id} IS NOT NULL AND ${parsedRow()})`;
+  const kept = attachedRow();
+  const tally = (when: ReturnType<typeof sql>) => sql<number>`coalesce(sum(case when ${when} then 1 else 0 end), 0)`;
+  const rows = db
+    .select({
+      fileId: importFiles.id,
+      deleted: tally(deleted),
+      kept: tally(kept),
+      userCategorizedDeleted: tally(sql`${deleted} AND ${transactions.categorizationSource} = 'user'`),
+      /*
+       * 🔴 The MONEY line names the ledger, and a superseded row is not in it.
+       * `rocket-money-export-2026-08-25.csv` holds 39 rows, every one of them
+       * `superseded`, and the confirmation offered "Money leaving the ledger:
+       * $6,447.92 in · $4,051.25 out" — of a file whose rows no total on this
+       * app can see. Eleven files are in that state.
+       *
+       * The row COUNT stays whole: 39 rows really are deleted, and pairing that
+       * with $0.00 is the honest reading of what un-importing one of these does.
+       *
+       * 🔴 …and an attached row's money does not leave at all (2026-09-15):
+       * 20260302-statements-9805-.pdf holds $1,495.48 of payments, and $697.00
+       * of it is five rows the un-import keeps.
+       */
+      inflowCents: sql<number>`coalesce(sum(case when ${deleted} and ${transactions.status} = 'active' and ${transactions.amountCents} > 0 then ${transactions.amountCents} else 0 end), 0)`,
+      outflowCents: sql<number>`coalesce(sum(case when ${deleted} and ${transactions.status} = 'active' and ${transactions.amountCents} < 0 then -${transactions.amountCents} else 0 end), 0)`,
+      /*
+       * ⛔ …and some of what leaves comes straight back. `unimportFile` calls
+       * `restoreDuplicatesLosingTheirSurvivor` BEFORE its delete, so a row that
+       * is the surviving half of a confirmed duplicate hands its money to the
+       * retired twin instead of taking it out of the ledger. All 12 rows of
+       * `20250302-statements-9805-.pdf` were survivors when this was written,
+       * and their twins summed to the same $4,619.92 the confirmation called
+       * money leaving.
+       *
+       * Counted, never re-derived: the restore has slot conflicts and status
+       * floors this page must not reimplement, so the confirmation names how
+       * many rows are in that shape and lets the reader weigh it.
+       */
+      duplicateSurvivors: tally(sql`${deleted} AND exists (
+        select 1 from duplicate_candidates d
+        where d.resolution = 'confirmed_duplicate'
+          and d.retired_transaction_id is not null
+          and d.retired_transaction_id <> ${transactions.id}
+          and (d.transaction_id_a = ${transactions.id} or d.transaction_id_b = ${transactions.id})
+      )`),
+      transferLegsDeleted: tally(sql`${deleted} AND ${transactions.transferGroupId} IS NOT NULL`),
+      transferLegsKept: tally(sql`${kept} AND ${transactions.transferGroupId} IS NOT NULL`),
+    })
+    .from(importFiles)
+    .leftJoin(transactions, eq(transactions.importFileId, importFiles.id))
+    .groupBy(importFiles.id)
+    .all();
+  return new Map(rows.map(({ fileId, ...counts }) => [fileId, counts]));
+}

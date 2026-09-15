@@ -32,6 +32,22 @@ export const SERIES_LINK_SOURCES = ["detected", "user"] as const;
 export type SeriesLinkSource = (typeof SERIES_LINK_SOURCES)[number];
 
 /**
+ * How a row came to be filed under its `import_file_id`. null = the importer
+ * parsed it out of that document — the only value the importer ever writes, by
+ * writing nothing. 'attached' = the row was recorded without the document (by
+ * hand, or reconstructed) and later filed under the statement that prints it.
+ * The importer never produced it, so a re-import cannot recreate it.
+ *
+ * Like `series_link_source`, it stays meaningful when the link it describes is
+ * gone. Un-importing the file deletes what the file parsed and DETACHES an
+ * attached row — `import_file_id` NULL, this marker kept — and importing a
+ * statement whose printed-balance period holds the row files it there again
+ * (owner, 2026-09-15; `services/import/attached-rows`).
+ */
+export const FILE_LINK_SOURCES = ["attached"] as const;
+export type FileLinkSource = (typeof FILE_LINK_SOURCES)[number];
+
+/**
  * Immutable ledger rows (amount/date/description never edited in place —
  * corrections happen via re-parse or manual adjustment transactions).
  * amount_cents is net-worth-signed. dedupe_hash covers RAW description +
@@ -45,6 +61,7 @@ export const transactions = sqliteTable(
       .notNull()
       .references(() => accounts.id),
     importFileId: text("import_file_id").references(() => importFiles.id),
+    fileLinkSource: text("file_link_source", { enum: FILE_LINK_SOURCES }),
     statementPeriodId: text("statement_period_id").references(() => statementPeriods.id),
     postedOn: text("posted_on").notNull(),
     transactedOn: text("transacted_on"),
