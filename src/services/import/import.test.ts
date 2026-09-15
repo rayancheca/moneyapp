@@ -2054,11 +2054,31 @@ describe("un-import keeps a row attached to its file, and a re-import files it t
     expect(row(sibling)!.recurringSeriesId).toBe(owner);
   });
 
-  test("the confirmation counts exactly the rows un-import deletes and keeps, transfer legs included", async () => {
+  /**
+   * 🔴 "Transfer legs kept: 5 legs, still linked" over 20260302-statements-9805-.pdf,
+   * where one of the five (+$115.00 on 2026-03-02) is alone in its group — as is
+   * 20250702's +$20.00 of 2025-06-10 (read-only on the real ledger, 2026-09-15).
+   * A kept leg is linked only if its group holds another live row the same
+   * un-import does not delete: a partner the file parsed goes, and the un-import
+   * then unlinks the kept leg; a superseded member is no transfer at all.
+   */
+  test("the confirmation counts exactly the rows un-import deletes and keeps, and which kept legs are still linked", async () => {
     const { unimportCountsByFile } = await import("./unimport-counts");
     const s = await scene();
+    const other = row(s.partner)!.accountId;
     // a second kept row, and this one is no transfer leg
     attach(s.unattached, s.fileId);
+    // a kept leg whose only partner is a row the file parsed
+    const doomed = rowsOf(s.fileId).find((t) => t.fileLinkSource === null && t.transferGroupId === null)!;
+    const orphaned = hand(s.accountId, "2024-10-01", -777, "HAND LEG OF A PARSED ROW");
+    attach(orphaned, s.fileId);
+    group([orphaned, doomed.id], orphaned);
+    // a kept leg whose only other member is superseded
+    const lone = hand(s.accountId, "2024-10-02", -888, "HAND LEG OF A RETIRED PAIR");
+    attach(lone, s.fileId);
+    const retired = hand(other, "2024-10-02", 888, "RETIRED LEG");
+    bundle.db.update(transactions).set({ status: "superseded" }).where(eq(transactions.id, retired)).run();
+    group([lone, retired], lone);
     const counts = unimportCountsByFile(bundle.db).get(s.fileId);
     const rows = rowsOf(s.fileId);
 
@@ -2066,21 +2086,35 @@ describe("un-import keeps a row attached to its file, and a re-import files it t
 
     const deleted = rows.filter((t) => row(t.id) === undefined);
     const kept = rows.filter((t) => row(t.id) !== undefined);
-    expect(kept.map((t) => t.id).sort()).toEqual([s.attached, s.unattached].sort());
+    expect(kept.map((t) => t.id).sort()).toEqual([s.attached, s.unattached, orphaned, lone].sort());
     const activeCents = (sign: 1 | -1) =>
       deleted.filter((t) => t.status === "active" && Math.sign(t.amountCents) === sign).reduce((n, t) => n + sign * t.amountCents, 0);
+    // linked, read AFTER the un-import: a group that still holds another live row
+    const linkedNow = kept.filter((t) => {
+      const groupId = row(t.id)!.transferGroupId;
+      if (groupId === null) return false;
+      return bundle.db
+        .select()
+        .from(transactions)
+        .where(and(eq(transactions.transferGroupId, groupId), ne(transactions.id, t.id), ne(transactions.status, "superseded")))
+        .all().length > 0;
+    });
+    expect(linkedNow.map((t) => t.id)).toEqual([s.attached]);
+    expect(row(orphaned)!.transferGroupId).toBeNull();
     expect(counts).toEqual({
       deleted: deleted.length,
-      kept: 2,
+      kept: 4,
       userCategorizedDeleted: deleted.filter((t) => t.categorizationSource === "user").length,
       inflowCents: activeCents(1),
       outflowCents: activeCents(-1),
       duplicateSurvivors: 0,
       transferLegsDeleted: deleted.filter((t) => t.transferGroupId !== null).length,
-      transferLegsKept: 1,
+      transferLegsKept: kept.filter((t) => t.transferGroupId !== null).length,
+      transferLegsKeptLinked: linkedNow.length,
     });
-    // not vacuous: a leg does go, and the one kept row is the owner's own categorization
+    // not vacuous: a leg does go, three kept rows are legs, and the one kept row is the owner's own categorization
     expect(counts!.transferLegsDeleted).toBeGreaterThan(0);
+    expect(counts!.transferLegsKept).toBe(3);
     expect(row(s.attached)!.categorizationSource).toBe("user");
   });
 

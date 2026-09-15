@@ -21,9 +21,14 @@ const VENTURE_X_AUG: UnimportCounts = {
   duplicateSurvivors: 0,
   transferLegsDeleted: 3,
   transferLegsKept: 0,
+  transferLegsKeptLinked: 0,
 };
 
-/** 20260302-statements-9805-.pdf — 4 parsed rows, every one a surviving duplicate; 5 attached */
+/**
+ * 20260302-statements-9805-.pdf — 4 parsed rows, every one a surviving
+ * duplicate; 5 attached, and one of those five (+$115.00, 2026-03-02) is alone
+ * in its transfer group
+ */
 const SAPPHIRE_MAR: UnimportCounts = {
   deleted: 4,
   kept: 5,
@@ -33,9 +38,10 @@ const SAPPHIRE_MAR: UnimportCounts = {
   duplicateSurvivors: 4,
   transferLegsDeleted: 4,
   transferLegsKept: 5,
+  transferLegsKeptLinked: 4,
 };
 
-/** 20260702-statements-9805-.pdf — 2 parsed rows, neither a transfer leg; 4 attached */
+/** 20260702-statements-9805-.pdf — 2 parsed rows, neither a transfer leg; 4 attached, all linked */
 const SAPPHIRE_JUL: UnimportCounts = {
   deleted: 2,
   kept: 4,
@@ -45,6 +51,23 @@ const SAPPHIRE_JUL: UnimportCounts = {
   duplicateSurvivors: 0,
   transferLegsDeleted: 0,
   transferLegsKept: 4,
+  transferLegsKeptLinked: 4,
+};
+
+/**
+ * 20250702-statements-9805-.pdf — 11 parsed rows; 2 attached, and the +$20.00
+ * of 2025-06-10 is alone in its transfer group
+ */
+const SAPPHIRE_JUL_2025: UnimportCounts = {
+  deleted: 11,
+  kept: 2,
+  userCategorizedDeleted: 1,
+  inflowCents: 336_699,
+  outflowCents: 0,
+  duplicateSurvivors: 8,
+  transferLegsDeleted: 8,
+  transferLegsKept: 2,
+  transferLegsKeptLinked: 1,
 };
 
 const radius = (subject: string, counts: UnimportCounts, balances: number, periods: number): BlastRadius =>
@@ -84,7 +107,7 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
       { label: "Money leaving the ledger", value: "$798.48 in · $0.00 out" },
       { label: "…of which comes back", value: "4 rows whose retired duplicate is restored" },
       { label: KEPT, value: "5 transactions filed under it by hand" },
-      { label: "Transfer legs kept", value: "5 legs, still linked" },
+      { label: "Transfer legs kept", value: "5 legs — 4 still linked, 1 not linked to any other leg" },
       { label: "Recorded balances removed", value: "2 balances" },
       { label: "Statement periods removed", value: "1 period" },
     ]);
@@ -93,12 +116,23 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
     );
   });
 
-  test("no transfer-leg line where no leg is counted", () => {
+  test("no transfer-leg line where no leg is counted, and every kept leg linked reads as linked", () => {
     const r = radius("20260702-statements-9805-.pdf", SAPPHIRE_JUL, 0, 1);
 
     expect(labels(r)).not.toContain("Transfer legs deleted");
     expect(valueOf(r, KEPT)).toBe("4 transactions filed under it by hand");
     expect(valueOf(r, "Transfer legs kept")).toBe("4 legs, still linked");
+  });
+
+  test("a kept leg alone in its transfer is never called linked", () => {
+    const r = radius("20250702-statements-9805-.pdf", SAPPHIRE_JUL_2025, 1, 1);
+
+    expect(valueOf(r, "Transfer legs kept")).toBe("2 legs — 1 still linked, 1 not linked to any other leg");
+    // …and when none of them is linked, the line says that, not a split of zero
+    const alone = radius("x.pdf", { ...SAPPHIRE_JUL_2025, kept: 1, transferLegsKept: 1, transferLegsKeptLinked: 0 }, 1, 1);
+    expect(valueOf(alone, "Transfer legs kept")).toBe("1 leg, not linked to any other leg");
+    const twoAlone = radius("x.pdf", { ...SAPPHIRE_JUL_2025, transferLegsKeptLinked: 0 }, 1, 1);
+    expect(valueOf(twoAlone, "Transfer legs kept")).toBe("2 legs, none linked to any other leg");
   });
 
   test("a file whose every row was filed by hand deletes nothing, and asks for no acknowledgement", () => {
@@ -114,10 +148,11 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
   });
 
   test("one kept row reads in the singular", () => {
-    const r = radius("x.pdf", { ...SAPPHIRE_JUL, kept: 1, transferLegsKept: 1 }, 0, 1);
+    const r = radius("x.pdf", { ...SAPPHIRE_JUL, kept: 1, transferLegsKept: 1, transferLegsKeptLinked: 1 }, 0, 1);
 
     expect(r.headline).toContain("keeps the 1 row filed under it by hand");
     expect(r.reassurance).toContain("The 1 row filed under it by hand keeps its money");
+    expect(valueOf(r, "Transfer legs kept")).toBe("1 leg, still linked");
   });
 
   test("the sentence a screen reader hears carries both halves", () => {
@@ -125,5 +160,6 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
 
     expect(sentence).toContain("Transactions deleted: 4 transactions");
     expect(sentence).toContain(`${KEPT}: 5 transactions filed under it by hand`);
+    expect(sentence).toContain("Transfer legs kept: 5 legs — 4 still linked, 1 not linked to any other leg");
   });
 });

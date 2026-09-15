@@ -23,8 +23,19 @@ export interface UnimportCounts {
   duplicateSurvivors: number;
   /** deleted rows that hold a transfer group */
   transferLegsDeleted: number;
-  /** kept rows that hold a transfer group — their links stay */
+  /** kept rows that hold a transfer group */
   transferLegsKept: number;
+  /**
+   * kept legs whose group holds another live row the un-import does not delete.
+   * 🔴 The confirmation called every kept leg "still linked": on 2026-09-15 one of
+   * 20260302-statements-9805-.pdf's five (+$115.00, 2026-03-02) and one of
+   * 20250702's two (+$20.00, 2025-06-10) were alone in their groups (read-only,
+   * real ledger). A partner the file parsed is deleted, and the un-import then
+   * unlinks the kept leg (`legsLeftAloneBy`); a superseded member is no transfer.
+   * Read on the ledger as it stands: a retired twin the un-import restores is
+   * not foreseen, as `duplicateSurvivors` explains.
+   */
+  transferLegsKeptLinked: number;
 }
 
 /** A file with no rows: nothing deleted, nothing kept. */
@@ -37,6 +48,7 @@ export const NO_UNIMPORT_ROWS: UnimportCounts = {
   duplicateSurvivors: 0,
   transferLegsDeleted: 0,
   transferLegsKept: 0,
+  transferLegsKeptLinked: 0,
 };
 
 /** Every import file's counts, in ONE grouped query; a file with no rows counts zero throughout. */
@@ -89,6 +101,14 @@ export function unimportCountsByFile(db: AppDatabase): Map<string, UnimportCount
       )`),
       transferLegsDeleted: tally(sql`${deleted} AND ${transactions.transferGroupId} IS NOT NULL`),
       transferLegsKept: tally(sql`${kept} AND ${transactions.transferGroupId} IS NOT NULL`),
+      // `IS`, not `=`: a partner with no file compares false, where `=` would be NULL and drop it
+      transferLegsKeptLinked: tally(sql`${kept} AND ${transactions.transferGroupId} IS NOT NULL AND exists (
+        select 1 from transactions o
+        where o.transfer_group_id = ${transactions.transferGroupId}
+          and o.id <> ${transactions.id}
+          and o.status <> 'superseded'
+          and not (o.import_file_id IS ${importFiles.id} and o.file_link_source IS NULL)
+      )`),
     })
     .from(importFiles)
     .leftJoin(transactions, eq(transactions.importFileId, importFiles.id))

@@ -14,6 +14,11 @@ import type { UnimportCounts } from "@/services/import/unimport-counts";
  * kept", and the transfer legs on each side are counted: the four deleted legs
  * each leave a Chase Checking partner that loses its link, the five kept stay
  * linked.
+ *
+ * 🔴 …"5 legs, still linked" was a claim about every kept leg, and on 2026-09-15
+ * one of those five (+$115.00, 2026-03-02) was alone in its transfer group, as
+ * was one of 20250702's two. A kept leg reads as linked only where its group
+ * still holds another live row after the un-import (`transferLegsKeptLinked`).
  */
 export interface UnimportRadiusInput {
   /** which file, as the row names it (`importRowSubject`) */
@@ -70,6 +75,13 @@ function headline(subject: string, { deleted, kept }: UnimportCounts): string {
   return `Un-importing ${subject} deletes the ${countPhrase(deleted, "row")} it brought in and keeps the ${keptRows} filed under it by hand, detached from the file. ${NO_UNDO}`;
 }
 
+function keptLegs({ transferLegsKept: legs, transferLegsKeptLinked: linked }: UnimportCounts): string {
+  const phrase = countPhrase(legs, "leg");
+  if (linked === legs) return `${phrase}, still linked`;
+  if (linked === 0) return legs === 1 ? `${phrase}, not linked to any other leg` : `${phrase}, none linked to any other leg`;
+  return `${phrase} — ${linked} still linked, ${legs - linked} not linked to any other leg`;
+}
+
 function keptClause({ kept }: UnimportCounts): string {
   if (kept === 0) return "";
   const [keeps, them] = kept === 1 ? ["keeps its", "it"] : ["keep their", "them"];
@@ -105,7 +117,7 @@ export function unimportRadius({ subject, counts, balances, periods }: UnimportR
       }),
       ...optional(counts.transferLegsKept > 0, {
         label: "Transfer legs kept",
-        value: `${countPhrase(counts.transferLegsKept, "leg")}, still linked`,
+        value: keptLegs(counts),
       }),
       { label: "Recorded balances removed", value: countPhrase(balances, "balance") },
       { label: "Statement periods removed", value: countPhrase(periods, "period") },
