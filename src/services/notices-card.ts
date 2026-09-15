@@ -50,7 +50,8 @@ import { recurringCalendar } from "./recurring-calendar";
  * map calls "Flamingos Restaurant" is his RENT, and the recurring series he
  * linked it to already held two earlier charges with no merchant on them, and
  * later a third. "Appears once" was true of the merchant id and false of the
- * payee — see S26 in `noticesCard`.
+ * payee. The later charge is what retires the notice, per the owner's rule —
+ * see S26 in `noticesCard`.
  */
 
 /** How far back a notice can be and still be news. */
@@ -128,19 +129,29 @@ export function noticesCard(db: AppDatabase, today: string = todayIso()): Notice
    * −$2,237.11 (Wells Fargo) — none carrying a merchant.
    *
    * ⛔ A series is the ledger's own identity for a payee (the drift loop below
-   * already reads it), so its charges are counted under the SAME filters as the
-   * merchant history — active, categorized, money out, expense-kind — minus the
-   * merchant check. A superseded twin is not a second charge, and neither is a
-   * credit.
+   * already reads it). The owner's rule (2026-09-14) is that the notice goes when
+   * the charge "has since posted again" — the series holds a LATER linked charge.
+   * A link is the ledger's claim that the payee charged again, whatever the row
+   * is filed under, so the series tally reads every active outflow linked to it,
+   * filed or not. A superseded twin is not a second charge, and neither is a
+   * credit. A second charge on the SAME day is not an earlier one, so it counts.
+   *
+   * 🔴 The first version of this fix reused the merchant history's filters
+   * (categorized, expense-kind): a later rent row still uncategorized, or filed
+   * under Transfers, was not counted and the notice still fired. It also counted
+   * EARLIER charges alone, which the owner did not decide — earlier-only stays
+   * named until he does.
    */
-  const chargesBySeries = new Map<string, Set<string>>();
+  const chargesBySeries = new Map<string, { id: string; day: string }[]>();
   for (const t of db.select().from(transactions).where(eq(transactions.status, "active")).all()) {
-    if (t.categoryId === null || t.amountCents >= 0) continue;
-    if (idx.topLevelOf(t.categoryId).kind !== "expense") continue;
+    if (t.amountCents >= 0) continue;
     if (t.recurringSeriesId !== null) {
-      chargesBySeries.set(t.recurringSeriesId, (chargesBySeries.get(t.recurringSeriesId) ?? new Set()).add(t.id));
+      const linked = chargesBySeries.get(t.recurringSeriesId) ?? [];
+      linked.push({ id: t.id, day: t.postedOn });
+      chargesBySeries.set(t.recurringSeriesId, linked);
     }
-    if (t.merchantId === null) continue;
+    if (t.merchantId === null || t.categoryId === null) continue;
+    if (idx.topLevelOf(t.categoryId).kind !== "expense") continue;
     const list = byMerchant.get(t.merchantId) ?? [];
     list.push({ id: t.id, day: t.postedOn, cents: -t.amountCents, seriesId: t.recurringSeriesId });
     byMerchant.set(t.merchantId, list);
@@ -172,9 +183,11 @@ export function noticesCard(db: AppDatabase, today: string = todayIso()): Notice
 
     // ── the only charge ────────────────────────────────────────────────
     const first = rows[0]!;
-    // the series may know charges this merchant id never saw — see S26 above
-    const chargedUnderSeries = first.seriesId === null ? 1 : (chargesBySeries.get(first.seriesId)?.size ?? 1);
-    if (rows.length === 1 && chargedUnderSeries === 1 && first.day >= from && first.cents >= FIRST_CHARGE_FLOOR_CENTS) {
+    // the series may know a later charge this merchant id never saw — see S26 above
+    const postedAgain =
+      first.seriesId !== null &&
+      (chargesBySeries.get(first.seriesId) ?? []).some((c) => c.id !== first.id && c.day >= first.day);
+    if (rows.length === 1 && !postedAgain && first.day >= from && first.cents >= FIRST_CHARGE_FLOOR_CENTS) {
       candidates.push({
         facts: [countFact("f1", name, 1, "charge", "in your ledger"), scalarFact("f2", name, first.cents, "money")],
         candidate: { claimId: "only_charge", a: "f1", b: "f2" },

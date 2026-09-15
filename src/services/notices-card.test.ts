@@ -212,14 +212,57 @@ describe("a merchant seen once whose charge has posted again under its series", 
     expect(onlyCharges()).toEqual([]);
   });
 
-  test("earlier charges on the same series mean it did not appear once either", () => {
+  /*
+   * 🔴 THE FIRST FIX COUNTED ONLY WHAT THE MERCHANT HISTORY COUNTS. Its series
+   * tally reused the history's filters — categorized, expense-kind — so a later
+   * charge the ledger had linked to the series but not yet filed (a fresh import
+   * auto-linked to rent), or filed under Transfers (rent paid by Zelle), was not
+   * counted, and the notice still said the payee appeared once. A link is the
+   * ledger's claim that the payee charged again, whatever the row is filed under.
+   */
+  test("a later linked charge that is still uncategorized means it posted again", () => {
+    addMerchant("m-1", "Zzz Landlord");
+    const seriesId = addSeries("Zzz Rent", -228_570);
+    linkToSeries(addTxn("2026-07-08", -228_570, "Housing", "m-1"), seriesId);
+    const later = addTxn("2026-08-04", -223_711, "Housing", null);
+    bundle.db.update(transactions).set({ categoryId: null }).where(eq(transactions.id, later)).run();
+    linkToSeries(later, seriesId);
+
+    expect(onlyCharges()).toEqual([]);
+  });
+
+  test("a later linked charge filed under Transfers means it posted again", () => {
+    addMerchant("m-1", "Zzz Landlord");
+    const seriesId = addSeries("Zzz Rent", -228_570);
+    linkToSeries(addTxn("2026-07-08", -228_570, "Housing", "m-1"), seriesId);
+    linkToSeries(addTxn("2026-08-04", -223_711, "Transfers", null), seriesId);
+
+    expect(onlyCharges()).toEqual([]);
+  });
+
+  test("a second linked charge on the same day is not an earlier one — it posted again", () => {
+    addMerchant("m-1", "Zzz Landlord");
+    const seriesId = addSeries("Zzz Rent", -228_570);
+    linkToSeries(addTxn("2026-07-08", -228_570, "Housing", "m-1"), seriesId);
+    linkToSeries(addTxn("2026-07-08", -110_000, "Housing", null), seriesId);
+
+    expect(onlyCharges()).toEqual([]);
+  });
+
+  /*
+   * ⛔ The owner's S26 decision (2026-09-14) is to suppress the notice when the
+   * charge "has since posted again (the series has later linked charges)". The
+   * first fix also suppressed it over EARLIER charges alone, which he did not
+   * decide. Earlier-only stays named until he does.
+   */
+  test("earlier linked charges alone do not suppress it — the owner's rule is a LATER charge", () => {
     addMerchant("m-1", "Zzz Landlord");
     const seriesId = addSeries("Zzz Rent", -228_570);
     linkToSeries(addTxn("2026-06-16", -110_000, "Housing", null), seriesId);
     linkToSeries(addTxn("2026-07-01", -133_480, "Housing", null), seriesId);
     linkToSeries(addTxn("2026-08-12", -228_570, "Housing", "m-1"), seriesId);
 
-    expect(onlyCharges()).toEqual([]);
+    expect(onlyCharges()).toEqual(["Zzz Landlord appears once in your ledger, for $2,285.70."]);
   });
 
   test("a series holding only this charge still lets it be named — a new commitment's first charge", () => {
