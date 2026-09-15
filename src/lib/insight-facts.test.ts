@@ -73,10 +73,41 @@ describe("sumOfPrintedShares — a subtotal is the sum of the rows printed besid
   });
 
   test("rows printing to the whole of something that is not the whole never claim it", () => {
-    // 59.96 prints 60.0 and 39.96 prints 40.0, of 99.92
-    expect(sumOfPrintedShares([59.96, 39.96])).toBe(">99.9%");
+    // 59.97 prints 60.0 and 39.99 prints 40.0, of 99.96 — past renderPercent's own floor
+    expect(sumOfPrintedShares([59.97, 39.99])).toBe(">99.9%");
     // one near-whole row keeps its own floor beside a sliver
     expect(sumOfPrintedShares([99.97, 0.01])).toBe(">99.9%");
+  });
+
+  /**
+   * 🔴 …nor a floor that is false. Whenever the rows printed to 100.0 or more
+   * short of the whole, the subtotal said ">99.9%" — which is true only from
+   * 99.95% up. Ten rows of 9.96% each print 10.0% and add to 100.0 on screen, of
+   * a real 99.6% (second reader on uc/shares-rounding, 2026-09-15). No sum a
+   * reader makes is true there — 100.0% of something that is not the whole, or
+   * 100.2% of anything — so the subtotal is the selection's own share by
+   * renderPercent's rule.
+   */
+  test("rows printing to the whole of well short of it print the real share, never a false floor", () => {
+    expect(sumOfPrintedShares(Array.from({ length: 10 }, () => 9.96))).toBe("99.6%");
+    // nine rows of 10.06 print 10.1 and 9.26 prints 9.3: the rows add to 100.2 of a real 99.8
+    expect(sumOfPrintedShares([...Array.from({ length: 9 }, () => 10.06), 9.26])).toBe("99.8%");
+    // 59.96 prints 60.0 and 39.96 prints 40.0, of 99.92 — which renderPercent prints 99.9%
+    expect(sumOfPrintedShares([59.96, 39.96])).toBe("99.9%");
+  });
+
+  /**
+   * 🔴 The tenths a subtotal adds must be the tenths `sharePercent` PRINTS, and
+   * `sharePercent` rounds `(pct / 100) * 100`, not `pct`: on a tie the round trip
+   * lands on the other tenth. A row reading "0.9%" was added as 0.8, one reading
+   * "7.2%" as 7.3 — 48 of ten million shares on a 0.00001 grid disagreed that way
+   * (measured 2026-09-15).
+   */
+  test("the tenths added are the tenths printed, even on a tie", () => {
+    expect([0.85, 1.65, 7.25].map(sharePercent)).toEqual(["0.9%", "1.7%", "7.2%"]);
+    expect(sumOfPrintedShares([0.85])).toBe("0.9%");
+    expect(sumOfPrintedShares([7.25])).toBe("7.2%");
+    expect(sumOfPrintedShares([0.85, 1.65])).toBe("2.6%");
   });
 
   test("rows printing PAST the whole of the whole stop at the whole", () => {

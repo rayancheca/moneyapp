@@ -427,12 +427,20 @@ export function sharePercent(pct: number): string {
  */
 const SHARE_SUM_PRECISION = 1e9;
 
-/** The tenths `sharePercent` PRINTS for one share — a floor prints no tenths a reader can add. */
-function printedTenths(pct: number): number {
-  if (pct < 0) return -printedTenths(-pct);
-  if (pct < 0.05) return 0;
-  if (pct >= 99.95 && pct < 100) return 999;
-  return Math.round(Number(pct.toFixed(1)) * 10);
+/**
+ * The tenths one printed share ADDS, read off the label `sharePercent` wrote —
+ * so a subtotal adds exactly what the row shows. "<0.1%" shows no tenths a
+ * reader can add. (">99.9%" is never added: `sumOfPrintedShares` refuses first.)
+ *
+ * 🔴 It rounded `pct.toFixed(1)` while `sharePercent` rounds `(pct / 100) * 100`,
+ * and on a tie the round trip lands on the other tenth: a row printing "0.9%"
+ * was added as 0.8, one printing "7.2%" as 7.3 — 48 of ten million shares on a
+ * 0.00001 grid (measured 2026-09-15). One author for a printed figure.
+ */
+function tenthsShown(label: string): number {
+  if (label.startsWith("-")) return -tenthsShown(label.slice(1));
+  if (label.startsWith("<")) return 0;
+  return Math.round(Number.parseFloat(label) * 10);
 }
 
 /**
@@ -450,22 +458,32 @@ function printedTenths(pct: number): number {
  * percents. Not an apportionment: that moves a row off its honest round, and two
  * pages apportioning different row lists would print one holding two ways.
  *
- * `renderPercent`'s rule still holds at both ends, because a sum of printed
- * rows can break it:
- *   · rows that all print "<0.1%" have no tenths to add — the subtotal is
- *     `sharePercent` of their real sum, so never "0.0%" over real money;
- *   · rows printing 100.0 or more (or one printing ">99.9%") may only say
- *     "100.0%" when they ARE the whole; short of it, ">99.9%".
+ * Where no sum a reader makes could be a TRUE share, the subtotal is the
+ * selection's own share by `renderPercent`'s rule instead:
+ *   · rows that all print "<0.1%" have no tenths to add — never "0.0%" over
+ *     real money;
+ *   · rows printing 100.0 or more, or one printing ">99.9%": "100.0%" only when
+ *     they ARE the whole, ">99.9%" only from 99.95%, and below that the real
+ *     share — never "100.2%", and never a floor that is false.
  * Rows printing short of the whole keep the reader's sum: thirds are 99.9%.
+ *
+ * 🔴 That second rule printed ">99.9%" for ANY selection whose rows printed to
+ * the whole short of it: ten rows of 9.96% add to 100.0 on screen and to 99.6%
+ * in fact (second reader on uc/shares-rounding, 2026-09-15).
+ *
+ * ⚠️ OPEN, and reachable today: from 99.95% up the floor and F2 disagree, and
+ * the floor is kept. Ticking every holding on /investments but WMT puts cells
+ * adding to exactly 100.0 above ">99.9%" — see `HoldingSubtotal.allocationShare`.
  *
  * @param parts 0–100 shares, each printed on its own row with `sharePercent`
  */
 export function sumOfPrintedShares(parts: readonly number[]): string {
   const exact = Math.round(parts.reduce((s, p) => s + p, 0) * SHARE_SUM_PRECISION) / SHARE_SUM_PRECISION;
-  const tenths = parts.reduce((s, p) => s + printedTenths(p), 0);
-  if (tenths === 0) return sharePercent(exact);
-  const printsTheWhole = tenths >= 1000 || parts.some((p) => p >= 99.95 && p < 100);
-  if (printsTheWhole) return exact >= 100 ? sharePercent(exact) : ">99.9%";
+  const printed = parts.map(sharePercent);
+  // a row printing ">99.9%" leaves only slivers beside it, and no tenths to add
+  if (printed.some((label) => label.includes(">"))) return sharePercent(exact);
+  const tenths = printed.reduce((s, label) => s + tenthsShown(label), 0);
+  if (tenths === 0 || tenths >= 1000) return sharePercent(exact);
   return `${(tenths / 10).toFixed(1)}%`;
 }
 

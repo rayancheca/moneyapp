@@ -56,6 +56,13 @@ export interface HoldingSubtotal {
    * 🔴 …and never a rounded-away sliver. Ticking WMT alone put "Share 0.0%"
    * under a row already reading "<0.1%" — the same $43.70, two answers, one
    * screen. `sumOfPrintedShares` keeps `sharePercent`'s floors at both ends.
+   *
+   * ⚠️ OPEN, reachable on the owner's ledger 2026-09-15: ticking every row but
+   * WMT puts cells adding to exactly 100.0 (6.5 + 8.2 + 6.2 + 0.1 + 5.5 + 18.2 +
+   * 15.5 + 6.8 + 33.0) above ">99.9%", because those nine are 99.958% of the
+   * portfolio. F2 would print their sum, "100.0%"; the floor says a selection
+   * that leaves a priced holding out is not the whole — the mirror of
+   * "Share 0.0%" over WMT alone. Pinned as shipped until the owner rules.
    */
   allocationShare: string | null;
 }

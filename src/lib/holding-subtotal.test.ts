@@ -167,6 +167,34 @@ describe("the Share a selection prints is the sum of the Alloc cells ticked", ()
     ]);
     expect(subtotalAnnouncement(s, "today")).toContain("29.6% of the portfolio");
   });
+
+  /**
+   * ⚠️ AN OPEN QUESTION, pinned as shipped — and reachable today. Ticking every
+   * row on /investments except WMT puts nine Alloc cells adding to exactly 100.0
+   * above a bar (and a live region) reading ">99.9%" — the only one of the 511
+   * selections without a "<0.1%" row where the bar is not the sum of its cells,
+   * measured on the owner's ledger 2026-09-15 at these shares. Two of his rules
+   * meet here: F2 (2026-09-14) says the subtotal is the sum of the rows, so
+   * "100.0%"; `renderPercent`'s floor says a selection that leaves a priced
+   * holding out is not the whole — the mirror of the "Share 0.0%" over WMT alone
+   * that this bar already refuses. Kept on the floor until he rules.
+   */
+  test("every row but a sliver: the cells add to 100.0, and the bar will not claim the whole", () => {
+    const allButWmt = [
+      6.475920654411064, 8.175320690731345, 6.213988850463129, 0.09923383295589179, 5.528794558528278,
+      18.20668294992252, 15.454985839403612, 6.803528114218564, 33.00000284469098,
+    ];
+    const cells = allButWmt.map(sharePercent);
+    expect(cells).toEqual(["6.5%", "8.2%", "6.2%", "0.1%", "5.5%", "18.2%", "15.5%", "6.8%", "33.0%"]);
+    expect(cells.reduce((s, c) => s + Math.round(Number.parseFloat(c) * 10), 0)).toBe(1000);
+
+    const s = subtotalHoldings(allButWmt.map((p) => row({ allocationPct: p })));
+    expect(s.allocationShare).toBe(">99.9%");
+    expect(subtotalAnnouncement(s, "today")).toContain(">99.9% of the portfolio");
+    // ticking WMT as well IS the whole, and says so
+    const all = [...allButWmt, 0.041541664674618284].map((p) => row({ allocationPct: p }));
+    expect(subtotalHoldings(all).allocationShare).toBe("100.0%");
+  });
 });
 
 describe("subtotalAnnouncement", () => {
