@@ -41,12 +41,26 @@ function GroceriesComparison({
   multiple: EatingOutCardData["multipleOfGroceries"];
   groceriesMonthlyCents: number;
 }) {
+  /*
+   * 🔴 A grocery net of a few cents over six months rounds to a monthly figure
+   * of nothing, and both sentences stated it: "2500.0× what you spend on
+   * groceries, which comes to $0.00 a month." and "Groceries come to $0.00 a
+   * month." over a groceries row reading $0.02. The row carries the window's
+   * total; a monthly figure that rounds to zero is left unsaid, not printed.
+   */
+  const hasMonthlyFigure = groceriesMonthlyCents > 0;
   switch (multiple.kind) {
     case "multiple":
       return (
         <>
-          <span className="font-medium text-ink">{multiple.fact.display}</span> what you spend on groceries, which
-          comes to <Money cents={groceriesMonthlyCents} className="text-ink" /> a month.
+          <span className="font-medium text-ink">{multiple.fact.display}</span> what you spend on groceries
+          {hasMonthlyFigure ? (
+            <>
+              , which comes to <Money cents={groceriesMonthlyCents} className="text-ink" /> a month.
+            </>
+          ) : (
+            "."
+          )}
         </>
       );
     case "no-groceries":
@@ -57,7 +71,7 @@ function GroceriesComparison({
           Refunds came to at least what you spent on {NETTED_BACK[multiple.side]} in this window, so there is no
           multiple to give.
           {/* groceries are still a magnitude here, and still what the card compares against */}
-          {multiple.side === "eating-out" && (
+          {multiple.side === "eating-out" && hasMonthlyFigure && (
             <>
               {" "}
               Groceries come to <Money cents={groceriesMonthlyCents} className="text-ink" /> a month.

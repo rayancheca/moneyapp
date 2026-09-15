@@ -192,6 +192,55 @@ describe("the eating-out card's multiple of groceries", () => {
     expect(t).toContain(
       "Refunds came to at least what you spent on eating out and on groceries in this window, so there is no multiple to give.",
     );
+    // groceries netted back too, so their monthly figure is no magnitude to give
+    expect(t).not.toContain("Groceries come to");
+  });
+
+  /**
+   * 🔴 A grocery net of a few cents over six months is a monthly figure that
+   * rounds to nothing, and the card printed it anyway: "2500.0× what you spend
+   * on groceries, which comes to $0.00 a month." and, under eating out that
+   * refunds cancelled, "Groceries come to $0.00 a month." — a measured zero over
+   * a positive net the groceries row prints as $0.02. The window's total is on
+   * that row; the monthly clause is left out rather than rounded to nothing.
+   */
+  test("a groceries figure that rounds to $0.00 a month is not stated as one beside a multiple", () => {
+    addTxn("2026-06-02", -1500, childId("Groceries"));
+    addTxn("2026-06-03", 1498, childId("Groceries"));
+    addTxn("2026-07-02", -5000, childId("Dining"));
+    const card = eatingOutCard(bundle.db, TODAY)!;
+    expect(card.isEmpty).toBe(false);
+    expect(card.groceries.spentCents).toBe(2);
+    expect(card.groceriesMonthlyCents).toBe(0);
+    const t = text(renderToStaticMarkup(createElement(EatingOutCard, { data: card })));
+    expect(t).not.toContain("comes to $0.00");
+    expect(t).toContain("2500.0× what you spend on groceries.");
+  });
+
+  test("…nor after eating out that refunds cancelled", () => {
+    addTxn("2026-06-02", -1500, childId("Groceries"));
+    addTxn("2026-06-03", 1498, childId("Groceries"));
+    addTxn("2026-07-02", -5000, childId("Dining"));
+    addTxn("2026-07-03", 5000, childId("Dining"));
+    const card = eatingOutCard(bundle.db, TODAY)!;
+    expect(card.isEmpty).toBe(false);
+    expect(card.groceriesMonthlyCents).toBe(0);
+    const t = text(renderToStaticMarkup(createElement(EatingOutCard, { data: card })));
+    expect(t).toContain(
+      "Refunds came to at least what you spent on eating out in this window, so there is no multiple to give.",
+    );
+    expect(t).not.toContain("Groceries come to");
+  });
+
+  /** The control: a monthly figure of one cent is a cent, and keeps its clause. */
+  test("a groceries figure that rounds to a cent a month still states it", () => {
+    addTxn("2026-06-02", -1500, childId("Groceries"));
+    addTxn("2026-06-03", 1496, childId("Groceries"));
+    addTxn("2026-07-02", -5000, childId("Dining"));
+    const card = eatingOutCard(bundle.db, TODAY)!;
+    expect(card.groceriesMonthlyCents).toBe(1);
+    const t = text(renderToStaticMarkup(createElement(EatingOutCard, { data: card })));
+    expect(t).toContain("1250.0× what you spend on groceries, which comes to $0.01 a month.");
   });
 
   /**
