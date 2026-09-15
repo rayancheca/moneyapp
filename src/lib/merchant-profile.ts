@@ -420,7 +420,8 @@ export function merchantProfile(
  *
  * ⛔ The closing end is asked of PAST years only (owner decision E4a). The running
  * year is keyed on today and already says "so far"; asked of it, statement lag
- * would relabel every merchant's current year "through Sep 12" between imports.
+ * would relabel every merchant's current year "through <the day the ledger is
+ * imported through>" between imports.
  */
 function ledgerEndsInside(
   year: string,
@@ -465,7 +466,14 @@ function yearsNoteFor(years: readonly MerchantYear[], thisYear: string, today: s
       return opens === null ? "The current year is still running." : `The current year is still running, and the ledger opens on ${opens} in it.`;
     }
     const closes = y.closesOn === null ? null : formatDayShortIn(y.closesOn, today);
-    const ends = [opens === null ? null : `opens on ${opens}`, closes === null ? null : `stops on ${closes}`]
+    /*
+     * 🔴 S32 (b): "imported through", never "stops on". `closesOn` is
+     * `ledgerReaches`, which since 454ed38 can be a statement's closing day with
+     * no row on it — a day on which nothing stopped. `emptyPeriodCopy` and
+     * MoversCard say "imported through" of the same day (owner decision
+     * 2026-09-14).
+     */
+    const ends = [opens === null ? null : `opens on ${opens}`, closes === null ? null : `is imported through ${closes}`]
       .filter((part): part is string => part !== null)
       .join(" and ");
     return `The ledger ${ends}, so ${y.year} is only partly in it.`;

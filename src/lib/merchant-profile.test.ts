@@ -545,11 +545,28 @@ describe("merchantProfile — a past year the ledger has not reached the end of"
     ]);
   });
 
-  test("the note gives it its own reason", () => {
+  /*
+   * 🔴 S32 (b) HAD A SECOND SURFACE. Once statement ends count as imported
+   * (454ed38), `ledgerReaches` can be a statement's closing day with no row on
+   * it, and the owner chose "imported through" over "the ledger stops on" for
+   * exactly that reason (2026-09-14). `emptyPeriodCopy` was reworded; this note,
+   * built from the same day, still said "stops on".
+   */
+  test("the note gives it its own reason, in the frontier's own words", () => {
     expect(merchantProfile(twoYears, [], JAN_5, STOPS_DEC_12).yearsNote).toBe(
-      "The ledger stops on Dec 12, 2025, so 2025 is only partly in it. " +
+      "The ledger is imported through Dec 12, 2025, so 2025 is only partly in it. " +
         "The marked year is not a like-for-like comparison with the unmarked one.",
     );
+  });
+
+  test("a past year the ledger both opens and is imported through inside names both ends", () => {
+    const oneYear: MerchantVisit[] = [
+      { day: "2024-06-01", amountCents: 1000, categoryName: "Food" },
+      { day: "2025-06-01", amountCents: 3000, categoryName: "Food" },
+    ];
+    const note = merchantProfile(oneYear, [], JAN_5, { ledgerOpens: "2025-03-02", ledgerReaches: "2025-12-12" }).yearsNote;
+    expect(note).toContain("The ledger opens on Mar 2, 2025 and is imported through Dec 12, 2025, so 2025 is only partly in it.");
+    expect(note).not.toMatch(/stops on/);
   });
 
   test("a ledger that reaches Dec 31 holds the year whole", () => {
