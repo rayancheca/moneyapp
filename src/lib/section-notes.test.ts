@@ -157,6 +157,27 @@ describe("budgetSectionNotes", () => {
     expect(notes.find((n) => n.id === "budgets-coverage")!.body).toContain("11 days on Food");
   });
 
+  /*
+   * ❓ PINNED, NOT DECIDED. The 2026-09-04 decision was asked about the all-tie
+   * case only. When rows SHARE the worst gap and another sits lower, the note
+   * names the first of them — measured 2026-09-15, "up to 15 days on Car" over
+   * rows tied at 15 with Travel at 13. Whether a shared lead should drop the
+   * name too is his call; changing it flips this test on purpose.
+   */
+  test("a partial tie at the worst gap still names the first row that holds it", () => {
+    const notes = budgetSectionNotes({
+      rows: [
+        row({ categoryPath: "Car", uncoveredDays: 15 }),
+        row({ categoryPath: "Food", uncoveredDays: 15 }),
+        row({ categoryPath: "Travel", uncoveredDays: 13 }),
+      ],
+    });
+    const body = notes.find((n) => n.id === "budgets-coverage")!.body;
+    expect(body).toContain("3 of 3 budgets");
+    expect(body).toContain("up to 15 days on Car");
+    expect(body).not.toContain("days each");
+  });
+
   test("reports the worst gap even when it is not the first row", () => {
     // the existing case has the worst gap first, so the reduce only ever kept its
     // accumulator — this exercises the arm that replaces it

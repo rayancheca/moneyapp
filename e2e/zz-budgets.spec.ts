@@ -301,10 +301,13 @@ test("the page states what it noticed across rows, measured and without a verdic
   // bill (Meal Kit, $125.00) and every budget grading an under-covered window
   await expect(notes.getByText(/One bill totalling \$125\.00/)).toBeVisible();
   await expect(notes.getByText(/budgets are grading days the ledger has not reached/)).toBeVisible();
-  // the widest gap is counted from each category's accounts: Food's 4 days
-  // (Discover, imported through Jul 4) — not Utilities' 8, which its newest
-  // row (Jun 12) used to report
-  await expect(notes.getByText(/up to 4 days on Food/)).toBeVisible();
+  // the widest gap is counted from each category's accounts: 4 days, where Food
+  // and Subscriptions are both imported through Jul 4 — not Utilities' 8, which
+  // its newest row (Jun 12) used to report. ⚠️ The NAME is not asserted: Food and
+  // Subscriptions tie at 4 while Utilities sits at 3, so which of the two the
+  // note names is `budgetSectionNotes`' first-in-order tie-break, not a fact
+  // about Food (a partial tie is an open owner question; see section-notes.ts).
+  await expect(notes.getByText(/up to 4 days on /)).toBeVisible();
 
   // …and it withholds rather than estimates: no projection or pace verdict is
   // asserted over a window the ledger has not covered

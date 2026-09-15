@@ -147,10 +147,24 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
      * elapsed, none imported), and the `reduce` above, with a strict `>`, keeps
      * whichever came first — alphabetically, Car. Naming one of twelve equals
      * says it is distinctive when nothing distinguishes it. Asked as a concrete
-     * either/or, he chose to name a budget only when one genuinely leads.
+     * either/or about that case, he chose to drop the name when they ALL tie
+     * ("— 4 days each"; handoff 2026-09-04b §10.2).
      *
      * ⚠️ A single under-measured budget is not a tie: there is one, and it is
-     * named. The test is whether more than one row SHARES the worst gap.
+     * named.
+     *
+     * ❓ NOT DECIDED: A PARTIAL TIE. The test is `every`, so when several rows
+     * share the worst gap and another sits lower, the first of them in page
+     * order is still named. 🔴 This comment used to say "the test is whether
+     * more than one row SHARES the worst gap", which the code has never done,
+     * and that the owner chose to name a budget "only when one genuinely leads",
+     * which is not what he was asked. Measured 2026-09-15: the real ledger reads
+     * "9 of 12 budgets … up to 15 days on Car" — over four rows at 15 before
+     * 4c43a7d (Car, Cash & ATM, Fees, Travel) and eight after it (Travel then at
+     * 13), with lower rows beside them both times. The fresh e2e fixture after
+     * 4c43a7d reads "up to 4 days on Food" with Subscriptions also at 4 and
+     * Utilities at 3. Name a budget only when it alone holds the worst
+     * gap, or keep the all-tie rule — his call, pinned in `section-notes.test.ts`.
      */
     const tied = uncovered.length > 1 && uncovered.every((r) => r.uncoveredDays === worst.uncoveredDays);
     const days = `${worst.uncoveredDays} ${worst.uncoveredDays === 1 ? "day" : "days"}`;
