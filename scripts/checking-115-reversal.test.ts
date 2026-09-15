@@ -14,6 +14,7 @@ import {
   REAL_IDS,
   ReversalRefusal,
   applyReversal,
+  cancelledLegsState,
   classifyReversal,
   compareReversal,
   loadFacts,
@@ -119,6 +120,35 @@ describe("the two answers never claim the same row", () => {
   });
 });
 
+describe("cancelledLegsState — the two legs' state, the one reading BOTH scripts ask", () => {
+  const legs = () => cancelledLegsState(loadFacts(bundle, ids), ids);
+
+  test("untouched before this write and applied after it, whether or not answer (1) has run", () => {
+    expect(legs()).toEqual({ kind: "untouched" });
+    applyReversal(bundle, ids);
+    expect(legs()).toEqual({ kind: "applied" });
+    /*
+     * 🔴 answer (1)'s script pinned these two rows as ungrouped, so running it
+     * again AFTER this write refused — exit 1, both rows "not as measured" —
+     * where the guarded-write doctrine says ALREADY APPLIED. It asks this now.
+     */
+    setGroup("paid", null);
+    expect(legs()).toEqual({ kind: "applied" });
+  });
+
+  test("anything else is refused, with the reason", () => {
+    setGroup("sent", "sent");
+    expect(legs().kind).toBe("refuse");
+    setGroup("cancelled", "sent");
+    insert({ id: "stray", accountId: ids.checkingAccountId, postedOn: "2026-03-05", amountCents: 1, raw: "STRAY", group: "sent" });
+    expect(legs().kind).toBe("refuse");
+    setGroup("stray", null);
+    expect(legs().kind).toBe("applied");
+    bundle.db.update(transactions).set({ amountCents: -11_400 }).where(eq(transactions.id, "sent")).run();
+    expect(JSON.stringify(legs())).toContain("the sent −$115.00 is not as measured");
+  });
+});
+
 describe("the plan", () => {
   test("the measured state plans the write, and the written state is ALREADY APPLIED", () => {
     expect(verdict()).toEqual({ kind: "plan" });
@@ -172,8 +202,11 @@ describe("the write and its guards", () => {
     expect(after.figures.linkedCents).toBe(before.figures.linkedCents);
     expect(after.figures.strandedCents).toBe(before.figures.strandedCents);
     expect(after.figures.cancelledCount).toBe(before.figures.cancelledCount + 1);
-    expect(after.figures.flowReasons.cancelled).toBe(1);
-    expect(after.figures.flowReasons["same-account"]).toBe(0);
+    expect(after.figures.flowCancelledCount).toBe(before.figures.flowCancelledCount + 1);
+    expect(after.figures.flowCancelledCents).toBe(before.figures.flowCancelledCents + 11_500);
+    expect(after.figures.flowUnattributedCount).toBe(before.figures.flowUnattributedCount);
+    expect(after.figures.flowUnattributedCents).toBe(before.figures.flowUnattributedCents);
+    expect(after.figures.flowReasons).toEqual(before.figures.flowReasons);
     expect([after.groups.get("sent"), after.groups.get("cancelled")]).toEqual(["sent", "sent"]);
     expect(after.oneAccountGroups).toBe(before.oneAccountGroups + 1);
   });
@@ -208,8 +241,23 @@ describe("the write and its guards", () => {
       ["the card counted it as linked", (s) => ({ ...s, figures: { ...s.figures, linkedCount: s.figures.linkedCount + 1 } }), /transfers linkedCount/],
       [
         "/flow called it a pairing gap",
-        (s) => ({ ...s, figures: { ...s.figures, flowReasons: { ...s.figures.flowReasons, cancelled: 0, "same-account": 1 } } }),
+        (s) => ({ ...s, figures: { ...s.figures, flowReasons: { ...s.figures.flowReasons, "same-account": 1 } } }),
         /transfers flowReasons/,
+      ],
+      [
+        "/flow counted it as a group it could not match",
+        (s) => ({ ...s, figures: { ...s.figures, flowUnattributedCount: s.figures.flowUnattributedCount + 1 } }),
+        /transfers flowUnattributedCount/,
+      ],
+      [
+        "/flow put both legs in its unmatched money",
+        (s) => ({ ...s, figures: { ...s.figures, flowUnattributedCents: s.figures.flowUnattributedCents + 23_000 } }),
+        /transfers flowUnattributedCents/,
+      ],
+      [
+        "/flow did not name it cancelled",
+        (s) => ({ ...s, figures: { ...s.figures, flowCancelledCount: s.figures.flowCancelledCount - 1 } }),
+        /transfers flowCancelledCount/,
       ],
     ];
 

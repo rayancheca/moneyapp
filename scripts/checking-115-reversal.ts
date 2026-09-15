@@ -40,9 +40,10 @@
  * `linkTransferPair`, which refuses one account and stamps `user` — a false
  * claim of the owner's hand, which the un-import confirmation counts. The
  * transfers card and /flow read the shape through transfer-links'
- * `isCancelledTransfer` (fix(transfers), the commit before this one); without
- * it the link made the −$115.00 a LINKED departure and the stranded clause say
- * its partner was "not inside these months".
+ * `cancelledTransfers` (fix(transfers), before this commit); without it the
+ * link made the −$115.00 a LINKED departure and the stranded clause say its
+ * partner was "not inside these months", and /flow filed it under "could not
+ * be matched" with both legs' $230.00.
  *
  * Refused: `excluded` on both rows — two unrelated flags rather than one
  * transfer, set through the owner's own "Exclude from analytics" switch; and
@@ -59,7 +60,8 @@
  * unchanged, one-account groups +1 · the transfers card (read on the day the
  * owner answered) moves by exactly: moved −$115.00, departures −1, unpaired −1
  * and −$115.00, arrivals −1 and −$115.00, cancelled +1 and +$115.00, nothing
- * else · /flow over its window: groups +1, `cancelled` +1, nothing else.
+ * else · /flow over its window: groups +1, cancelled +1 and +$115.00 (once), unattributed
+ * groups and money unchanged, nothing else.
  */
 import os from "node:os";
 import path from "node:path";
@@ -147,8 +149,17 @@ export type ReversalVerdict = { kind: "plan" } | { kind: "applied" } | { kind: "
 const sorted = (ids: readonly string[]): string[] => [...ids].sort();
 const sameIds = (a: readonly string[], b: readonly string[]): boolean => JSON.stringify(sorted(a)) === JSON.stringify(sorted(b));
 
-/** The measured before-state, this write's after-state, or a refusal that says what is off. */
-export function classifyReversal(facts: ReversalFacts, ids: ReversalIds = REAL_IDS): ReversalVerdict {
+export type CancelledLegsState = { kind: "untouched" } | { kind: "applied" } | { kind: "refuse"; reasons: string[] };
+
+/**
+ * The two legs this write links — the sent −$115.00 and the +$115.00
+ * "…Cancelled" — as measured and untouched, as this write leaves them, or a
+ * refusal that says what is off. It does not look at answer (1): it is the one
+ * reading of these two rows BOTH scripts ask. 🔴 Answer (1)'s script pinned
+ * them as ungrouped on its own, so running it again after this write refused
+ * (exit 1, "not as measured") instead of printing ALREADY APPLIED.
+ */
+export function cancelledLegsState(facts: ReversalFacts, ids: ReversalIds = REAL_IDS): CancelledLegsState {
   const reasons: string[] = [];
   const expectLeg = (row: LegRow | undefined, name: string, cents: number, description: string): void => {
     const ok =
@@ -165,7 +176,27 @@ export function classifyReversal(facts: ReversalFacts, ids: ReversalIds = REAL_I
   };
   expectLeg(facts.sent, "the sent −$115.00", -ids.cents, ids.sentDescription);
   expectLeg(facts.cancelled, "the +$115.00 Cancelled", ids.cents, ids.cancelledDescription);
+  if (facts.namingCancelled.length > 0) reasons.push(`rows hold the Cancelled leg's id as their group: ${facts.namingCancelled.join(", ")}`);
+  if (reasons.length > 0) return { kind: "refuse", reasons };
 
+  const sentGroup = facts.sent!.transfer_group_id;
+  const cancelledGroup = facts.cancelled!.transfer_group_id;
+  if (sentGroup === null && cancelledGroup === null && facts.namingSent.length === 0) return { kind: "untouched" };
+  if (sentGroup === ids.sentId && cancelledGroup === ids.sentId && sameIds(facts.namingSent, [ids.sentId, ids.cancelledId])) {
+    return { kind: "applied" };
+  }
+  return {
+    kind: "refuse",
+    reasons: [
+      `neither the measured state nor the applied one: sent leg group ${String(sentGroup)}, Cancelled leg group ${String(cancelledGroup)}, group ${ids.sentId} held by ${JSON.stringify(facts.namingSent)}`,
+    ],
+  };
+}
+
+/** The measured before-state, this write's after-state, or a refusal that says what is off. */
+export function classifyReversal(facts: ReversalFacts, ids: ReversalIds = REAL_IDS): ReversalVerdict {
+  const legs = cancelledLegsState(facts, ids);
+  const reasons = legs.kind === "refuse" ? [...legs.reasons] : [];
   const paid = facts.paid;
   const answerOneApplied =
     paid !== undefined &&
@@ -180,21 +211,8 @@ export function classifyReversal(facts: ReversalFacts, ids: ReversalIds = REAL_I
       `answer (1) is not applied — run scripts/link-sapphire-one-leg-groups-2026-09-15.ts first: ${JSON.stringify({ paid: paid ?? null, group: facts.paidGroup })}`,
     );
   }
-  if (facts.namingCancelled.length > 0) reasons.push(`rows hold the Cancelled leg's id as their group: ${facts.namingCancelled.join(", ")}`);
   if (reasons.length > 0) return { kind: "refuse", reasons };
-
-  const sentGroup = facts.sent!.transfer_group_id;
-  const cancelledGroup = facts.cancelled!.transfer_group_id;
-  if (sentGroup === null && cancelledGroup === null && facts.namingSent.length === 0) return { kind: "plan" };
-  if (sentGroup === ids.sentId && cancelledGroup === ids.sentId && sameIds(facts.namingSent, [ids.sentId, ids.cancelledId])) {
-    return { kind: "applied" };
-  }
-  return {
-    kind: "refuse",
-    reasons: [
-      `neither the measured state nor the applied one: sent leg group ${String(sentGroup)}, Cancelled leg group ${String(cancelledGroup)}, group ${ids.sentId} held by ${JSON.stringify(facts.namingSent)}`,
-    ],
-  };
+  return legs.kind === "untouched" ? { kind: "plan" } : { kind: "applied" };
 }
 
 export function loadFacts({ sqlite }: DbBundle, ids: ReversalIds = REAL_IDS): ReversalFacts {
@@ -254,6 +272,11 @@ export interface TransferFigures {
   flowGroups: number;
   flowPaired: number;
   flowGrossCents: number;
+  /** /flow's groups that "could not be matched" and their money — a cancelled transfer is NOT one */
+  flowUnattributedCount: number;
+  flowUnattributedCents: number;
+  flowCancelledCount: number;
+  flowCancelledCents: number;
   flowReasons: Readonly<Record<string, number>>;
 }
 
@@ -279,6 +302,10 @@ export function transferFigures({ db }: DbBundle, cardDay: string): TransferFigu
     flowGroups: flow.totals.groupCount,
     flowPaired: flow.totals.pairedGroupCount,
     flowGrossCents: flow.totals.grossCents,
+    flowUnattributedCount: flow.totals.unattributedGroupCount,
+    flowUnattributedCents: flow.totals.unattributedCents,
+    flowCancelledCount: flow.totals.cancelledGroupCount,
+    flowCancelledCents: flow.totals.cancelledCents,
     flowReasons: { ...flow.totals.unattributedByReason },
   };
 }
@@ -296,7 +323,8 @@ export function expectedFigures(before: TransferFigures, cents: number): Transfe
     cancelledCount: before.cancelledCount + 1,
     cancelledCents: before.cancelledCents + cents,
     flowGroups: before.flowGroups + 1,
-    flowReasons: { ...before.flowReasons, cancelled: (before.flowReasons.cancelled ?? 0) + 1 },
+    flowCancelledCount: before.flowCancelledCount + 1,
+    flowCancelledCents: before.flowCancelledCents + cents,
   };
 }
 

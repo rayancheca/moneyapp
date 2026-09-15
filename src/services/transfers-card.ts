@@ -4,6 +4,7 @@ import { transactions } from "@/db/schema/transactions";
 import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { formatMonthYear, monthWindowLabel } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
+import { cancelledTransferNote } from "@/lib/cancelled-transfer-note";
 import { listAccounts } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryIndex } from "./analytics";
 import { baselineWindow, SPEND_BASELINE_MONTHS } from "./committed";
@@ -322,7 +323,8 @@ export function transfersCard(
    * other leg is not inside these months" — of a leg on the same day, in the
    * same account. So its legs are neither departures nor arrivals, and the card
    * says it was cancelled. Asked over the WHOLE group, so a return that posted
-   * in the running month does not turn the payment back into a departure.
+   * in the running month does not turn the payment back into a departure — the
+   * membership `transferFlow` asks too, so its routes and this card agree.
    */
   const cancelled = cancelledTransfers(
     db,
@@ -475,12 +477,7 @@ export function transfersCard(
 
     cancelledCount: cancelled.size,
     cancelledCents,
-    cancelledNote:
-      cancelled.size === 0
-        ? null
-        : cancelled.size === 1
-          ? `1 cancelled transfer — ${formatCents(cancelledCents)} — left an account and came back to it, so it moved nothing and is not counted above.`
-          : `${cancelled.size} cancelled transfers — ${formatCents(cancelledCents)} — each left an account and came back to it, so they moved nothing and are not counted above.`,
+    cancelledNote: cancelledTransferNote(cancelled.size, cancelledCents, formatCents, "counted above"),
 
     otherPartyCount: otherParty.length,
     otherPartyNote:

@@ -1,3 +1,4 @@
+import { cancelledTransferNote } from "@/lib/cancelled-transfer-note";
 import { formatCents } from "@/lib/money";
 import type { TransferFlowData } from "@/services/transfer-flow";
 
@@ -48,6 +49,8 @@ export function TransferMatrix({ data, measure, caption }: TransferMatrixProps) 
     measure === "net"
       ? `Net transfers between accounts. Rows send, columns receive; only the winning direction of each pair is shown. ${formatCents(data.totals.netCents)} net of ${formatCents(data.totals.grossCents)} gross.`
       : `All transfers between accounts. Rows send, columns receive. ${formatCents(data.totals.grossCents)} across ${data.totals.pairedGroupCount} transfers.`;
+
+  const cancelledNote = cancelledTransferNote(data.totals.cancelledGroupCount, data.totals.cancelledCents, formatCents, "in this matrix");
 
   return (
     <div className="overflow-x-auto">
@@ -145,6 +148,12 @@ export function TransferMatrix({ data, measure, caption }: TransferMatrixProps) 
             A further {data.totals.unattributedGroupCount} transfer groups (
             {formatCents(data.totals.unattributedCents)}) could not be matched to a pair of accounts
             and are excluded from this matrix.
+          </>
+        )}
+        {cancelledNote !== null && (
+          <>
+            {" "}
+            {cancelledNote}
           </>
         )}
       </p>

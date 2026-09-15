@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { createDatabase, type DbBundle } from "@/db/client";
@@ -129,7 +129,7 @@ describe("reconciliation — nothing is ever silently dropped", () => {
     const data = flow();
     expect(data.edges).toHaveLength(0);
     expect(data.totals.unattributedByReason["same-account"]).toBe(1);
-    expect(data.totals.unattributedByReason.cancelled).toBe(0);
+    expect(data.totals.cancelledGroupCount).toBe(0);
   });
 
   test("a one-account group whose legs cancel is a CANCELLED transfer, not a pairing gap — and still accounted for", () => {
@@ -137,22 +137,65 @@ describe("reconciliation — nothing is ever silently dropped", () => {
     leg(A, "2026-03-04", -50_00, "g1");
     leg(A, "2026-03-04", 50_00, "g1");
 
-    const data = flow();
-    expect(data.edges).toHaveLength(0);
-    expect(data.totals.unattributedByReason.cancelled).toBe(1);
-    expect(data.totals.unattributedByReason["same-account"]).toBe(0);
-    expect(data.totals.pairedGroupCount + data.totals.unattributedGroupCount).toBe(data.totals.groupCount);
+    const t = flow().totals;
+    expect(flow().edges).toHaveLength(0);
+    expect(t.cancelledGroupCount).toBe(1);
+    /*
+     * 🔴 Once, and NOT in the unmatched figure. Measured on the owner's ledger
+     * 2026-09-15: filed as unattributed, the one $115.00 cancellation raised
+     * /flow's "could not be matched" money over Mar–Aug $24.27 → $254.27 — both
+     * legs, $230.00, under a sentence calling it a gap in pairing.
+     */
+    expect(t.cancelledCents).toBe(50_00);
+    expect(t.unattributedGroupCount).toBe(0);
+    expect(t.unattributedCents).toBe(0);
+    expect(t.unattributedByReason).toEqual({ "single-leg": 0, "multi-leg": 0, "same-account": 0 });
+    expect(t.pairedGroupCount + t.unattributedGroupCount + t.cancelledGroupCount).toBe(t.groupCount);
   });
 
-  test("paired + unattributed always accounts for EVERY group in range", () => {
+  test("a cancelled transfer whose return posts outside the range is still ONE cancelled transfer — the card's reading", () => {
+    // sent on the range's last day, returned the next morning
+    leg(A, "2026-03-31", -50_00, "g1");
+    leg(A, "2026-04-01", 50_00, "g1");
+
+    const t = transferFlow(bundle.db, { from: "2026-03-01", to: "2026-03-31" }).totals;
+    expect(t.groupCount).toBe(1);
+    expect(t.cancelledGroupCount).toBe(1);
+    expect(t.cancelledCents).toBe(50_00);
+    expect(t.unattributedByReason["single-leg"]).toBe(0);
+    expect(t.unattributedCents).toBe(0);
+  });
+
+  test("an EXCLUDED return still cancels — the money came back; a QUARANTINED one never moved money and does not", () => {
+    leg(A, "2026-03-04", -50_00, "g1");
+    leg(A, "2026-03-04", 50_00, "g1");
+    const setReturn = (status: "excluded" | "quarantined") =>
+      bundle.db
+        .update(transactions)
+        .set({ status })
+        .where(and(eq(transactions.transferGroupId, "g1"), eq(transactions.amountCents, 50_00)))
+        .run();
+
+    setReturn("excluded");
+    expect(flow().totals).toMatchObject({ groupCount: 1, cancelledGroupCount: 1, cancelledCents: 50_00, unattributedGroupCount: 0 });
+
+    setReturn("quarantined");
+    expect(flow().totals).toMatchObject({ groupCount: 1, cancelledGroupCount: 0, unattributedGroupCount: 1, unattributedCents: 50_00 });
+    expect(flow().totals.unattributedByReason["single-leg"]).toBe(1);
+  });
+
+  test("paired + unattributed + cancelled always accounts for EVERY group in range", () => {
     transfer(A, B, "2026-03-04", 25_00, "g1");
     transfer(B, C, "2026-04-04", 15_00, "g2");
     leg(A, "2026-05-04", 9_00, "orphan1");
     leg(C, "2026-06-04", -4_00, "orphan2");
+    leg(B, "2026-07-04", -3_00, "cancelled1");
+    leg(B, "2026-07-05", 3_00, "cancelled1");
 
     const t = flow().totals;
-    expect(t.pairedGroupCount + t.unattributedGroupCount).toBe(t.groupCount);
-    expect(t.groupCount).toBe(4);
+    expect(t.pairedGroupCount + t.unattributedGroupCount + t.cancelledGroupCount).toBe(t.groupCount);
+    expect([t.pairedGroupCount, t.unattributedGroupCount, t.cancelledGroupCount]).toEqual([2, 2, 1]);
+    expect(t.groupCount).toBe(5);
   });
 
   test("rows with no transfer_group_id are ignored entirely", () => {

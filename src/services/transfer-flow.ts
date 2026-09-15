@@ -6,7 +6,7 @@ import { transactions } from "@/db/schema/transactions";
 import { CATEGORY_HUE_NAMES, categoryHueVar } from "@/lib/category-palette";
 import { ledgerHref } from "@/lib/ledger-href";
 import type { DateRange } from "./analytics";
-import { isCancelledTransfer } from "./transfer-links";
+import { cancelledTransfers } from "./transfer-links";
 
 /**
  * Money moving between the owner's OWN accounts — the one part of his financial
@@ -34,20 +34,17 @@ import { isCancelledTransfer } from "./transfer-links";
  * view that silently dropped those would violate the codebase's reconciliation
  * doctrine and would hide a whole account. So every group in range is accounted
  * for: it either becomes an edge or it lands in `unattributedGroupCount` /
- * `unattributedCents`, which the UI is expected to SHOW, not swallow.
+ * `unattributedCents`, which the UI is expected to SHOW, not swallow — or, when
+ * its money left one account and came back to it, in `cancelledGroupCount` /
+ * `cancelledCents`, which the UI names as cancelled, not as a gap in pairing.
  *
  * Note the deliberate asymmetry with net: netting money must not net away the
  * events. A net edge carries `count = countA + countB`, because both directions
  * of transfer really happened.
  */
 
-/**
- * A transfer leg pair could not be resolved to exactly one out + one in across
- * two accounts. `cancelled` is the one-account pair whose legs cancel
- * (transfer-links' `isCancelledTransfer`): money that left and came back, not a
- * gap in pairing — it is still counted here, so no group is ever dropped.
- */
-export type UnattributedReason = "single-leg" | "multi-leg" | "same-account" | "cancelled";
+/** A transfer leg pair could not be resolved to exactly one out + one in. */
+export type UnattributedReason = "single-leg" | "multi-leg" | "same-account";
 
 export interface TransferAccount {
   id: string;
@@ -94,6 +91,15 @@ export interface TransferFlowTotals {
   /** money sitting in those unattributed groups (absolute leg value) */
   unattributedCents: number;
   unattributedByReason: Readonly<Record<UnattributedReason, number>>;
+  /**
+   * CANCELLED transfers (transfer-links' `cancelledTransfers`, asked of the
+   * whole group): money that left an account and came back to it. Not an edge
+   * — nothing moved between accounts — and not unattributed, because it is not
+   * a gap in pairing. paired + unattributed + cancelled = groupCount.
+   */
+  cancelledGroupCount: number;
+  /** the money that went out and came back, ONCE per cancelled transfer */
+  cancelledCents: number;
 }
 
 export interface TransferFlowData {
@@ -189,10 +195,11 @@ export function transferFlow(db: AppDatabase, range: DateRange): TransferFlowDat
     "single-leg": 0,
     "multi-leg": 0,
     "same-account": 0,
-    cancelled: 0,
   };
   let unattributedCents = 0;
   let unattributedGroupCount = 0;
+  let cancelledGroupCount = 0;
+  let cancelledCents = 0;
   let pairedGroupCount = 0;
   let firstMonth: string | null = null;
   let lastMonth: string | null = null;
@@ -202,7 +209,36 @@ export function transferFlow(db: AppDatabase, range: DateRange): TransferFlowDat
     if (lastMonth === null || m > lastMonth) lastMonth = m;
   };
 
-  for (const legs of groups.values()) {
+  /*
+   * 🔴 A CANCELLED transfer is asked of the WHOLE group — the membership the
+   * transfers card asks — never of the legs this range happens to hold, and it
+   * is neither an edge nor unattributed. Measured 2026-09-15 on the owner's
+   * ledger, Mar–Aug: filed under unattributed, Chase Checking's cancelled
+   * $115.00 card payment raised "could not be matched" $24.27 → $254.27 — both
+   * legs — under a sentence calling it a gap in pairing; and classified from
+   * in-range legs alone, a return posted after the range read "single-leg"
+   * beside a card saying "cancelled".
+   *
+   * Only a group whose in-range legs are at most two, in one account, can be
+   * one: a third leg or a second account in range already rules it out, so
+   * only those groups are asked.
+   */
+  const cancelled = cancelledTransfers(
+    db,
+    [...groups]
+      .filter(([, legs]) => legs.length <= 2 && legs.every((l) => l.accountId === legs[0]!.accountId))
+      .map(([groupId]) => groupId),
+  );
+
+  for (const [groupId, legs] of groups) {
+    const returnedCents = cancelled.get(groupId);
+    if (returnedCents !== undefined) {
+      cancelledGroupCount += 1;
+      cancelledCents += returnedCents;
+      for (const l of legs) noteMonth(monthOf(l.postedOn));
+      continue;
+    }
+
     const outs = legs.filter((l) => l.amountCents < 0);
     const ins = legs.filter((l) => l.amountCents > 0);
 
@@ -215,7 +251,7 @@ export function transferFlow(db: AppDatabase, range: DateRange): TransferFlowDat
     let reason: UnattributedReason | null = null;
     if (legs.length === 1) reason = "single-leg";
     else if (out === undefined || inn === undefined) reason = "multi-leg";
-    else if (out.accountId === inn.accountId) reason = isCancelledTransfer(legs) ? "cancelled" : "same-account";
+    else if (out.accountId === inn.accountId) reason = "same-account";
 
     if (reason !== null || out === undefined || inn === undefined) {
       unattributedGroupCount += 1;
@@ -411,6 +447,8 @@ export function transferFlow(db: AppDatabase, range: DateRange): TransferFlowDat
       unattributedGroupCount,
       unattributedCents,
       unattributedByReason,
+      cancelledGroupCount,
+      cancelledCents,
     },
   };
 }

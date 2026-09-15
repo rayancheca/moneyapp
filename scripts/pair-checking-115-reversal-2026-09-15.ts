@@ -55,6 +55,8 @@ const MONEY: readonly (keyof TransferFigures)[] = [
   "arrivalCents",
   "cancelledCents",
   "flowGrossCents",
+  "flowUnattributedCents",
+  "flowCancelledCents",
 ];
 
 function show(key: keyof TransferFigures, value: TransferFigures[keyof TransferFigures]): string {
@@ -67,7 +69,7 @@ function report(label: string, before: ReversalState, after: ReversalState): voi
   for (const key of Object.keys(before.figures) as (keyof TransferFigures)[]) {
     const a = show(key, before.figures[key]);
     const b = show(key, after.figures[key]);
-    console.log(`    ${key.padEnd(16)} ${a === b ? a : `${a} → ${b}`}`);
+    console.log(`    ${key.padEnd(22)} ${a === b ? a : `${a} → ${b}`}`);
   }
   const worth = (s: ReversalState) => (s.lastNetWorth === null ? "—" : `${s.lastNetWorth.day} ${formatCents(s.lastNetWorth.cents)}`);
   console.log(`    net worth        ${worth(before)} → ${worth(after)} (every day ${before.netWorth === after.netWorth ? "identical" : "MOVED"})`);

@@ -6,6 +6,7 @@ import { transactions } from "@/db/schema/transactions";
 import { addDays, diffDays } from "@/lib/dates";
 import { investmentSideAccountIds } from "./accounts";
 import type { BulkResult, UndoFields } from "./bulk-edit";
+import { REPLAY_STATUSES } from "./derivation";
 import { hasSplits } from "./transaction-splits";
 
 /**
@@ -178,9 +179,19 @@ export function isCancelledTransfer(legs: readonly TransferLegShape[]): boolean 
 
 /**
  * Of `groupIds`, the cancelled transfers, each with the cents that went out and
- * came back. Reads every LIVE leg of each group — a superseded row never moved
- * money, the membership rule `staleTransferLegs` uses — so a caller holding one
- * month still sees a cancellation whose return posted in the next.
+ * came back. Reads every leg of each group that MOVED money — the statuses
+ * balance replay reads, `REPLAY_STATUSES` — across the whole ledger, so a
+ * caller holding one month still sees a cancellation whose return posted in the
+ * next. Both readers ask this one membership: the transfers card and
+ * `transferFlow` (which once classified from its in-range active legs, and
+ * called a return posted after the range "single-leg" beside a card saying
+ * "cancelled").
+ *
+ * An `excluded` leg counts — the owner's switch hides a row from analytics, but
+ * the money still came back. A `quarantined` or `superseded` row never moved
+ * money, so it can neither complete a cancellation nor spoil one as a third
+ * leg; "not superseded" let a quarantined duplicate do the second. Measured
+ * 2026-09-15: every one of the ledger's 1,531 grouped rows is active.
  */
 export function cancelledTransfers(db: AppDatabase, groupIds: Iterable<string>): Map<string, number> {
   const ids = [...new Set(groupIds)];
@@ -188,7 +199,7 @@ export function cancelledTransfers(db: AppDatabase, groupIds: Iterable<string>):
   const legs = db
     .select({ groupId: transactions.transferGroupId, accountId: transactions.accountId, amountCents: transactions.amountCents })
     .from(transactions)
-    .where(and(inArray(transactions.transferGroupId, ids), ne(transactions.status, "superseded")))
+    .where(and(inArray(transactions.transferGroupId, ids), inArray(transactions.status, [...REPLAY_STATUSES])))
     .all();
   const byGroup = new Map<string, TransferLegShape[]>();
   for (const { groupId, accountId, amountCents } of legs) {

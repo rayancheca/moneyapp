@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { TransferFlowPanel } from "@/components/charts/TransferFlowPanel";
+import { TransferReconciliation } from "@/components/charts/TransferReconciliation";
 import { FLOW_SURFACE, FLOW_VIEW_SPEC } from "@/components/charts/transfer-flow-view-spec";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -107,39 +108,8 @@ export default async function FlowPage({
             <TransferFlowPanel data={data} state={view} range={range} />
           </SurfaceCard>
 
-          {/* Reconciliation is shown, never swallowed. On the real database the
-              detector leaves 134 groups unpaired — including every Chase
-              Sapphire card payment — and a view that quietly dropped 21% of the
-              groups would be lying by omission. */}
-          {data.totals.unattributedGroupCount > 0 && (
-            <SurfaceCard>
-              <h2 className="text-sm font-medium text-ink-display">Not shown above</h2>
-              <p className="pt-1 text-sm text-ink-muted">
-                {data.totals.unattributedGroupCount} of {data.totals.groupCount} transfer groups (
-                {formatCents(data.totals.unattributedCents)}) could not be matched to a pair of
-                accounts, so they are excluded from the diagram and the matrix. They are still
-                categorised as transfers, so they are already kept out of spending and income —
-                this is a gap in pairing, not in the money.
-              </p>
-              <dl className="flex flex-wrap gap-x-6 gap-y-1 pt-2 text-xs text-ink-muted">
-                {(
-                  [
-                    ["single-leg", "only one side was found"],
-                    ["multi-leg", "more than two legs"],
-                    ["same-account", "both legs in one account"],
-                    ["cancelled", "cancelled — left one account and came back to it"],
-                  ] as const
-                ).map(([key, why]) =>
-                  data.totals.unattributedByReason[key] > 0 ? (
-                    <div key={key} className="flex gap-1">
-                      <dt className="figures font-medium">{data.totals.unattributedByReason[key]}</dt>
-                      <dd>{why}</dd>
-                    </div>
-                  ) : null,
-                )}
-              </dl>
-            </SurfaceCard>
-          )}
+          {/* Reconciliation is shown, never swallowed — see TransferReconciliation. */}
+          <TransferReconciliation totals={data.totals} />
         </>
       )}
     </div>

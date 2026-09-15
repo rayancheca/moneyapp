@@ -49,7 +49,9 @@ function data(partial: Partial<TransferFlowData> = {}): TransferFlowData {
       groupCount: edges.reduce((s, e) => s + e.count, 0),
       unattributedGroupCount: 0,
       unattributedCents: 0,
-      unattributedByReason: { "single-leg": 0, "multi-leg": 0, "same-account": 0, cancelled: 0 },
+      unattributedByReason: { "single-leg": 0, "multi-leg": 0, "same-account": 0 },
+      cancelledGroupCount: 0,
+      cancelledCents: 0,
       ...partial.totals,
     },
   };
@@ -376,6 +378,24 @@ describe("spineDescription", () => {
     );
     expect(desc).toContain("134 further transfer groups");
     expect(desc).toContain("$50,390.97");
+  });
+
+  test("says a cancelled transfer was cancelled — not that it could not be matched", () => {
+    const d = data();
+    const both = spineDescription(
+      { ...d, totals: { ...d.totals, unattributedGroupCount: 1, unattributedCents: 24_27, cancelledGroupCount: 1, cancelledCents: 115_00 } },
+      fmt,
+    );
+    expect(both).toContain("1 further transfer groups ($24.27) could not be matched");
+    expect(both).toContain(
+      "1 cancelled transfer — $115.00 — left an account and came back to it, so it moved nothing and is not in the diagram.",
+    );
+
+    const onlyCancelled = spineDescription({ ...d, totals: { ...d.totals, cancelledGroupCount: 1, cancelledCents: 115_00 } }, fmt);
+    expect(onlyCancelled).toContain("1 cancelled transfer");
+    expect(onlyCancelled).not.toContain("could not be matched");
+
+    expect(spineDescription(d, fmt)).not.toContain("cancelled");
   });
 
   test("the empty state reads as a sentence, not a blank", () => {

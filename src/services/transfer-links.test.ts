@@ -135,6 +135,31 @@ describe("a cancelled transfer — one group, one account, netting to zero", () 
     setGroup(third, sent);
     expect(cancelledTransfers(bundle.db, [sent])).toEqual(new Map());
   });
+
+  test("a leg counts when it MOVED money — excluded does, quarantined does not (the statuses balance replay reads)", () => {
+    const setGroup = (id: string, groupId: string) =>
+      bundle.db.update(transactions).set({ transferGroupId: groupId }).where(eq(transactions.id, id)).run();
+    const setStatus = (id: string, status: "excluded" | "quarantined") =>
+      bundle.db.update(transactions).set({ status }).where(eq(transactions.id, id)).run();
+    const sent = insertTxn(checkingId, "2026-03-02", -115_00, "PAYMENT TO CARD 03/02");
+    const back = insertTxn(checkingId, "2026-03-02", 115_00, "PAYMENT TO CARD CANCELLED");
+    setGroup(sent, sent);
+    setGroup(back, sent);
+
+    // hidden from analytics by the owner's switch, but the money still came back
+    setStatus(back, "excluded");
+    expect(cancelledTransfers(bundle.db, [sent])).toEqual(new Map([[sent, 115_00]]));
+
+    // a duplicate held in quarantine never moved money, so it cannot be a third leg…
+    const dup = insertTxn(checkingId, "2026-03-02", 115_00, "PAYMENT TO CARD CANCELLED DUP");
+    setGroup(dup, sent);
+    setStatus(dup, "quarantined");
+    expect(cancelledTransfers(bundle.db, [sent])).toEqual(new Map([[sent, 115_00]]));
+
+    // …nor stand in for a return
+    setStatus(back, "quarantined");
+    expect(cancelledTransfers(bundle.db, [sent])).toEqual(new Map());
+  });
 });
 
 describe("linkTransferPair", () => {

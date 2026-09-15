@@ -1,3 +1,4 @@
+import { cancelledTransferNote } from "./cancelled-transfer-note";
 import { renderPercent } from "@/lib/insight-facts";
 import type { TransferEdge, TransferFlowData } from "@/services/transfer-flow";
 
@@ -301,6 +302,8 @@ export function spineDescription(data: TransferFlowData, fmt: (cents: number) =>
         ` could not be matched to a pair of accounts and are excluded from the diagram.`,
     );
   }
+  const cancelled = cancelledTransferNote(data.totals.cancelledGroupCount, data.totals.cancelledCents, fmt, "in the diagram");
+  if (cancelled !== null) parts.push(` ${cancelled}`);
   return parts.join("");
 }
 
