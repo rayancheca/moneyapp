@@ -28,7 +28,7 @@ import {
   type RealizedSale,
   type ValuedTrade,
 } from "@/lib/realized-pnl";
-import { investmentSideAccountIds } from "./accounts";
+import { investmentSideAccountIds, ownPortfolioAccountIds } from "./accounts";
 import { accountSeries } from "./derivation";
 import { adjustedHoldingEvents } from "./holding-timeline";
 import { valueCentsOf } from "./holdings";
@@ -59,8 +59,23 @@ export interface InvestmentAccountInfo {
   isCrypto: boolean;
 }
 
-/** Active investment accounts, crypto flagged (subtype 'crypto'). */
+/**
+ * Active investment accounts in HIS portfolio, crypto flagged (subtype 'crypto') — every scope below that reports
+ * his value, returns or holdings reads this.
+ *
+ * ⚖️ Not the brokerage book paired with Robinhood Agentic: the owner kept that account out of his own brokerage
+ * returns (2026-09-14). See `ownPortfolioAccountIds`.
+ */
 export function investmentAccounts(db: AppDatabase): InvestmentAccountInfo[] {
+  const own = ownPortfolioAccountIds(db);
+  return valuedInvestmentAccounts(db).filter((a) => own.has(a.id));
+}
+
+/**
+ * EVERY active investment account the engine can value, his or not — what a caller asking for a book BY ID reads:
+ * `pnpm ledger-check`'s value-anchor witness checks the agent's book against its statements like any other.
+ */
+export function valuedInvestmentAccounts(db: AppDatabase): InvestmentAccountInfo[] {
   return db
     .select({ id: accounts.id, name: accounts.name, subtype: accounts.subtype })
     .from(accounts)
@@ -228,8 +243,10 @@ const buildPortfolioFor = cache(function buildPortfolioFor(
   scopeKey: string,
 ): BuiltPortfolio {
   const accountIds = scopeKey === "" ? undefined : scopeKey.split(",");
-  const all = investmentAccounts(db);
-  const scoped = accountIds ? all.filter((a) => accountIds.includes(a.id)) : all;
+  // no scope is HIS portfolio; a scope names its books, whosever they are
+  const scoped = accountIds
+    ? valuedInvestmentAccounts(db).filter((a) => accountIds.includes(a.id))
+    : investmentAccounts(db);
   const books = scoped
     .map((a) => ({ account: a, book: buildAccountBook(db, a) }))
     .filter((b): b is { account: InvestmentAccountInfo; book: AccountBook } => b.book !== null);
@@ -608,7 +625,9 @@ export function realizedTradesByLeg(
    * Adjusting alone would leave a zero-quantity trade in the walk — a row that
    * means nothing and that every future reader would have to reason about.
    */
+  const own = ownPortfolioAccountIds(db);
   const events = adjustedHoldingEvents(db)
+    .filter((e) => own.has(e.accountId))
     .filter((e) => e.eventKind !== "split")
     .filter((e) => holding === undefined || (e.assetType === holding.assetType && e.symbol === holding.symbol))
     .map((e) => ({
@@ -764,10 +783,11 @@ export interface HoldingRow {
  */
 const SPARK_RANGE: ChartRange = "1M";
 
-/** Active holdings across the whole portfolio, with day change, P/L, allocation, sparkline. */
+/** Active holdings across HIS whole portfolio (`investmentAccounts`), with day change, P/L, allocation, sparkline. */
 export function holdingRows(db: AppDatabase, today: string = todayIso()): HoldingRow[] {
   const sparkFrom = rangeStartDay(SPARK_RANGE, today) as string;
   const realizedByLeg = portfolioRealizedPl(db).byLeg;
+  const own = ownPortfolioAccountIds(db);
   const rows = db
     .select({
       accountId: holdings.accountId,
@@ -781,7 +801,8 @@ export function holdingRows(db: AppDatabase, today: string = todayIso()): Holdin
     .innerJoin(accounts, eq(holdings.accountId, accounts.id))
     .where(eq(holdings.isActive, true))
     .orderBy(asc(accounts.name), asc(holdings.symbol))
-    .all();
+    .all()
+    .filter((r) => own.has(r.accountId));
 
   const priced = rows.map((r) => {
     const ofSymbol = and(eq(priceCache.symbol, r.symbol), eq(priceCache.assetType, r.assetType));
@@ -1095,7 +1116,8 @@ function holdingDeltasBetween(db: AppDatabase, prevDay: string, day: string): Pn
   // split-adjusted: the quantity entering a day is in today's shares, matching
   // the adjusted closes it is about to be valued against on BOTH sides of the
   // difference — see services/holding-timeline.ts
-  const events = adjustedHoldingEvents(db).map((e) => ({
+  const own = ownPortfolioAccountIds(db);
+  const events = adjustedHoldingEvents(db).filter((e) => own.has(e.accountId)).map((e) => ({
     symbol: e.symbol,
     assetType: e.assetType,
     deltaE8: e.quantityDeltaE8,

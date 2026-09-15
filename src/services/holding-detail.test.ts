@@ -5,6 +5,7 @@ import { and, eq, gt } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { accounts } from "@/db/schema/accounts";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings, priceCache } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
@@ -471,5 +472,23 @@ describe("the day-change figure names its own two days", () => {
     const d = holdingDetail(bundle.db, "stock", "AAPL", "2026-07-01")!;
     expect(d.todayReturnCents).toBeNull();
     expect(d.todayReturnInterval).toBeNull();
+  });
+});
+
+/**
+ * ⚖️ Owner decisions 2026-09-14/15: the positions Claude's agent buys sit in a brokerage book paired with Robinhood
+ * Agentic, and are kept out of his own brokerage returns. A holding page is his holding's returns.
+ */
+describe("⛔ the agent's book is not a leg of his holding page", () => {
+  test("the same symbol held in the book paired with Robinhood Agentic leaves his AAPL page exactly as it was", () => {
+    const before = holdingDetail(bundle.db, "stock", "AAPL", "2026-03-04");
+    const robinhood = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+    const agentic = createAccount(bundle.db, { institutionId: robinhood.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
+    const book = createAccount(bundle.db, { institutionId: robinhood.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
+    bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+
+    upsertHolding(bundle.db, { accountId: book, symbol: "AAPL", assetType: "stock", quantityE8: 50_000_000, avgCostCents: 11_000, occurredOn: "2026-03-03" });
+
+    expect(holdingDetail(bundle.db, "stock", "AAPL", "2026-03-04")).toEqual(before);
   });
 });

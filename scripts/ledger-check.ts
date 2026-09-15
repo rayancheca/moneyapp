@@ -58,7 +58,7 @@ import {
   formatLedgerFailures,
   statementDayValuation,
 } from "@/lib/ledger-integrity";
-import { investmentAccounts, portfolioSeries } from "@/services/portfolio";
+import { portfolioSeries, valuedInvestmentAccounts } from "@/services/portfolio";
 import { formatCents } from "@/lib/money";
 import { isRealDatabasePath } from "@/db/backup";
 import { type LedgerCheckMode, WitnessFlagRefusal, compareToMarks, ledgerCheckMode, planLowering } from "@/lib/witness-floor";
@@ -328,13 +328,14 @@ console.log(`stale verdicts: ${staleVerdicts.length}`);
  */
 const anchors: ValueAnchor[] = [];
 /*
- * ⛔ The app values ACTIVE investment accounts only — `investmentAccounts` is the
- * rule `portfolioSeries` scopes by — and for any other it returns no points,
+ * ⛔ The app values ACTIVE investment accounts only — `valuedInvestmentAccounts` is the
+ * rule a scoped `portfolioSeries` reads — and for any other it returns no points,
  * which reads exactly like a book that never held anything. Asking it about a
  * deactivated account and trusting the empty answer valued all 25 Robinhood
  * Brokerage statements at $0.00 (measured on a copy, 2026-09-15).
  */
-const valuedByApp = new Set(investmentAccounts(db).map((a) => a.id));
+// ⛔ EVERY valued book, his or not: the book paired with Robinhood Agentic is outside his returns, never unchecked
+const valuedByApp = new Set(valuedInvestmentAccounts(db).map((a) => a.id));
 for (const account of accounts.filter((a) => a.type === "investment")) {
   const derivedOn = statementDayValuation(
     valuedByApp.has(account.id) ? portfolioSeries(db, [account.id]) : null,

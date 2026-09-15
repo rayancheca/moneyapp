@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, sqliteTable, text, uniqueIndex, type AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import { id, timestamps } from "./common";
 import { institutions } from "./institutions";
 
@@ -30,7 +30,18 @@ export const accounts = sqliteTable("accounts", {
    * descriptor hint. Service-validated (credit accounts only, never self).
    */
   paymentSourceAccountId: text("payment_source_account_id"),
+  /**
+   * On an INVESTMENT account: the cash account whose statement section it holds the positions of — the pair the
+   * owner decided on 2026-09-15 for Robinhood #655929651, where "Robinhood Agentic" keeps the unspent cash and its
+   * brokerage book holds what the agent bought (as Robinhood Cash and Robinhood Brokerage split #487513525).
+   *
+   * ⛔ A stored LINK, never a name match. The import routes a section's positions through it
+   * (`AccountHint.bookOf`), and the portfolio decides whose returns a book belongs to through it
+   * (`lib/account-side` `isOwnPortfolioBook`). At most one book per cash account: the unique index is what makes
+   * the import's creation of a book idempotent (SQLite unique indexes admit any number of NULLs).
+   */
+  cashAccountId: text("cash_account_id").references((): AnySQLiteColumn => accounts.id),
   ...timestamps(),
-});
+}, (table) => [uniqueIndex("ux_accounts_cash_account").on(table.cashAccountId)]);
 
 export const isLiability = (type: AccountType): boolean => type === "credit";

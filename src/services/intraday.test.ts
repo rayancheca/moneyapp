@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { accounts } from "@/db/schema/accounts";
 import { institutions } from "@/db/schema/institutions";
 import { priceCache, priceIntraday } from "@/db/schema/holdings";
 import { createAccount } from "./accounts";
@@ -409,6 +410,23 @@ describe("intraday", () => {
 
     test("has no baseline for an empty book", () => {
       expect(portfolioSession(bundle.db, DAY).priorCloseCents).toBeNull();
+    });
+
+    // ⚖️ owner, 2026-09-14/15: the agent's positions sit in a book paired with Robinhood Agentic, outside his portfolio
+    test("⛔ leaves out the book paired with Robinhood Agentic — the agent's positions are not his session", () => {
+      hold("VOO", 1);
+      cacheClose("VOO", "2026-07-30", 100);
+      cacheClose("AAPL", "2026-07-30", 200, "stock");
+      const robinhood = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+      const agentic = createAccount(bundle.db, { institutionId: robinhood.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
+      const book = createAccount(bundle.db, { institutionId: robinhood.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
+      bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+      upsertHolding(bundle.db, { accountId: book, symbol: "AAPL", assetType: "stock", quantityE8: 2 * E8 });
+      upsertHolding(bundle.db, { accountId: book, symbol: "VOO", assetType: "etf", quantityE8: 3 * E8 });
+
+      const session = portfolioSession(bundle.db, DAY);
+      expect(session.priorCloseCents).toBe(10_000);
+      expect(session.grid.totalSymbols).toBe(1);
     });
 
     test("ignores a close dated on the day itself", () => {
