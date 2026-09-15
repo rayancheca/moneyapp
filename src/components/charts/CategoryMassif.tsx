@@ -12,6 +12,7 @@ import { useViewState } from "@/hooks/useViewState";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { categoryHueVar, isCategoryHueName } from "@/lib/category-palette";
 import { formatCents, formatCentsSigned } from "@/lib/money";
+import { changeAgainstPriorText } from "@/lib/prior-window-change";
 import { type ViewState } from "@/lib/view-state";
 import {
   MASSIF_VIEW_DIMENSION,
@@ -541,9 +542,13 @@ function MassifRail({
                 </span>
               </span>
               <span className="block text-[11px] text-ink-faint">
+                {/* 🔴 "+$11.10 on Aug 28, 2022 · 1 entry" — `?period=2022-08-29`,
+                    measured 2026-09-15. "On <day>" dates a thing, and neither
+                    figure is the prior day's; the readout above said "against"
+                    for the same block. The words have one home now. */}
                 {priorLabel !== null && block.deltaCents !== null && (
                   <>
-                    {block.deltaCents === 0 ? `level with ${priorLabel}` : `${formatCentsSigned(block.deltaCents)} on ${priorLabel}`}
+                    {changeAgainstPriorText(block.deltaCents, priorLabel)}
                     {" · "}
                   </>
                 )}

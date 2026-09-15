@@ -1,9 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, test } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, test, vi } from "vitest";
 import { spendingShare } from "@/lib/insight-facts";
 import { computeMassifLayout, MASSIF_VIEWPOINTS } from "@/lib/massif-layout";
 import {
+  CategoryMassif,
   massifAbsentNote,
   massifCaptionKey,
   massifDescription,
@@ -403,5 +406,61 @@ describe("a relief with nothing to draw still states the change the Table prints
     expect(source).toMatch(/const empty = massifEmptyState\(layout, periodLabel, priorLabel\);\s*if \(empty !== null\)/);
     expect(source).not.toMatch(/if \(rows\.length === 0\)/);
     expect(source).not.toMatch(/if \(layout\.blocks\.length === 0\)/);
+  });
+});
+
+// the relief renders its viewpoint switcher, which only needs a router to exist
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => undefined }) }));
+
+/**
+ * The rail's one line under each category name, as the server renders it.
+ * `?period=2022-08-29`, measured on the owner's ledger 2026-09-15 (read-only):
+ * Food spent $11.10 in 1 entry against $0.00 on Aug 28, 2022. The totals are
+ * the rows' own sum; nothing below reads them.
+ */
+function railLines(rows: { id: string; name: string; spentCents: number; priorCents: number | null; txnCount: number }[], periodLabel: string, priorLabel: string | null): string[] {
+  const spentCents = rows.reduce((s, r) => s + r.spentCents, 0);
+  const html = renderToStaticMarkup(
+    createElement(CategoryMassif, {
+      rows: rows.map((r) => ({ categoryId: r.id, name: r.name, hue: null, spentCents: r.spentCents, priorCents: r.priorCents, txnCount: r.txnCount })),
+      totals: { blocksCents: spentCents, uncategorizedCents: 0, grossSpentCents: spentCents, refundsCents: 0 },
+      periodLabel,
+      priorLabel,
+      viewpoint: "quarter",
+      onSelectViewpoint: () => undefined,
+      periodQuery: "period=2022-08-29",
+    }),
+  );
+  return [...html.matchAll(/<span class="block text-\[11px\] text-ink-faint">([\s\S]*?)<\/span>/g)].map((m) =>
+    m[1]!.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, ""),
+  );
+}
+
+/**
+ * 🔴 THE RAIL DATED A DAY'S CHANGE TO THE DAY BEFORE. Its line read "<figure> on
+ * <prior window>" where every other surface stating that change says "against":
+ * on `?period=2022-08-29` Food's row read "+$11.10 on Aug 28, 2022 · 1 entry",
+ * while the readout above the plate, hovering the same block, read "+$11.10
+ * against Aug 28, 2022 · 1 entry". "On <day>" is how this app dates a thing, and
+ * neither the $11.10 nor the 1 entry is Aug 28's — the entry is dated Aug 29 and
+ * the figure is the difference. Measured on the owner's ledger 2026-09-15: 3,960
+ * rail rows over 1,528 whole periods said "on", 2,428 of them on 1,261 whole days.
+ */
+describe("the relief's rail states each change against the prior window", () => {
+  test("a change is its figure against the window, as the readout and the List say it", () => {
+    expect(railLines([{ id: "food", name: "Food", spentCents: 1_110, priorCents: 0, txnCount: 1 }], "Aug 29, 2022", "Aug 28, 2022")).toEqual([
+      "+$11.10 against Aug 28, 2022 · 1 entry",
+    ]);
+  });
+
+  // `?period=2023-05-19`: Food $18.45 in 1 entry against $18.45 on May 18, 2023
+  test("no change is level with the window", () => {
+    expect(railLines([{ id: "food", name: "Food", spentCents: 1_845, priorCents: 1_845, txnCount: 1 }], "May 19, 2023", "May 18, 2023")).toEqual([
+      "level with May 18, 2023 · 1 entry",
+    ]);
+  });
+
+  test("with nothing compared, the line is the entries alone", () => {
+    expect(railLines([{ id: "food", name: "Food", spentCents: 1_110, priorCents: null, txnCount: 1 }], "Aug 29, 2022", null)).toEqual(["1 entry"]);
   });
 });
