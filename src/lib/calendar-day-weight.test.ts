@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  compactDayAmount,
   compactDayTotal,
   dayWeight,
   heaviestDayCents,
@@ -132,6 +133,55 @@ describe("dayWeight", () => {
 
   test("counts the entries, so the cell can say there is more than one", () => {
     expect(dayWeight([e(-1), e(-2), e(-3)], HEAVIEST)!.count).toBe(3);
+  });
+});
+
+/**
+ * 🔴 S27. The /spending heatmap wrote its cell figure as `$${Math.round(dollars)}`,
+ * so a day that earned 1–49¢ printed "+$0" over money that really came in.
+ * Measured on the owner's ledger 2026-09-15: 20 cells across 50 months, every one
+ * on the earned side — Sep 8 2025 "$260.01 spent …, $0.29 earned" read "−$260 +$0".
+ * Its thousands tier tested the RAW value, so $999.50 printed "$1000" and
+ * $9,999.99 printed "$10.0k", a sixth character in a five-character cell; no
+ * day on either ledger reaches those bands yet.
+ *
+ * ⚖️ Owner decision 2026-09-14 (F3): under 50¢ prints "<$1", after renderPercent's
+ * "<0.1%" floor; the cell's aria-label and the day sheet keep the exact cents.
+ */
+describe("compactDayAmount — the heatmap cell's figure", () => {
+  test("a day under 50¢ prints <$1, never a printed zero", () => {
+    expect(compactDayAmount(1)).toBe("<$1");
+    expect(compactDayAmount(29)).toBe("<$1");
+    expect(compactDayAmount(49)).toBe("<$1");
+  });
+
+  test("from 50¢ it rounds to whole dollars, the rule every calendar cell follows", () => {
+    expect(compactDayAmount(50)).toBe("$1");
+    expect(compactDayAmount(26_001)).toBe("$260");
+    expect(compactDayAmount(99_949)).toBe("$999");
+  });
+
+  test("$999.50 is a thousand, and says so in thousands — not $1000", () => {
+    expect(compactDayAmount(99_950)).toBe("$1.0k");
+    expect(compactDayAmount(99_999)).toBe("$1.0k");
+    expect(compactDayAmount(100_000)).toBe("$1.0k");
+  });
+
+  test("$9,950 and up is $10k — not $10.0k", () => {
+    expect(compactDayAmount(994_999)).toBe("$9.9k");
+    expect(compactDayAmount(995_000)).toBe("$10k");
+    expect(compactDayAmount(999_999)).toBe("$10k");
+    expect(compactDayAmount(1_000_000)).toBe("$10k");
+  });
+
+  test("never wider than five characters, across compactDayTotal's own range", () => {
+    // the same ceiling `compactDayTotal`'s width test holds to — the ledger's largest day is ~$29,800
+    const amounts = [1, 49, 50, 99_949, 99_950, 99_999, 994_999, 995_000, 999_999, 9_949_999, 99_949_999, 99_950_000, 100_000_000];
+    const tooWide = amounts
+      .map((c) => compactDayAmount(c))
+      .filter((s) => s.length > 5)
+      .map((s) => `${s} (${s.length})`);
+    expect(tooWide).toEqual([]);
   });
 });
 

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { CalendarGrid } from "@/components/ui/CalendarGrid";
 import { Sheet } from "@/components/ui/Sheet";
 import { UNREACHED_PHRASE, unreachedKind, type UnreachedKind } from "@/lib/empty-period";
+import { compactDayAmount } from "@/lib/calendar-day-weight";
 import { formatCents } from "@/lib/money";
 import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { loadSpendHeatmap } from "@/app/spending/actions";
@@ -190,13 +191,6 @@ interface SpendHeatmapProps {
   ledgerReaches: string | null;
 }
 
-/** Compact enough for a calendar cell: $1.2k, $340, $8. */
-function cellAmount(cents: number): string {
-  const dollars = cents / 100;
-  if (dollars >= 1000) return `$${(dollars / 1000).toFixed(dollars >= 10_000 ? 0 : 1)}k`;
-  return `$${Math.round(dollars)}`;
-}
-
 export function SpendHeatmap({ initial, today, ledgerOpens, ledgerReaches }: SpendHeatmapProps) {
   const router = useRouter();
   const [data, setData] = useState(initial);
@@ -320,7 +314,7 @@ function CellAmount({
     <span className="flex w-full min-w-0 flex-col gap-0.5">
       <span className="figures truncate text-[10px] leading-none text-ink-muted">
         {sign}
-        {cellAmount(cents)}
+        {compactDayAmount(cents)}
       </span>
       {/* no track behind it — an empty rail on every active day reads as a
           divider rule across the grid, not as a magnitude */}

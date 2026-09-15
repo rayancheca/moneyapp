@@ -55,6 +55,38 @@ export function compactDayTotal(cents: number): string {
   return `${sign}${(k / 1000).toFixed(1)}M`;
 }
 
+/** Below this a day's money rounds to a printed zero dollars. */
+const ROUNDS_TO_A_DOLLAR_CENTS = 50;
+
+/**
+ * A day's money in the width of a /spending heatmap cell: "<$1", "$260",
+ * "$1.0k", "$10k". A MAGNITUDE — the cell prints its own − or + in front of it,
+ * and the cell's aria-label and the day sheet behind it carry the exact cents.
+ *
+ * ⛔ The tiers are `compactDayTotal`'s, reused rather than copied. The heatmap
+ * kept its own copy, which tested the RAW value where this module tests the
+ * rounded one, so $999.50 printed "$1000" and $9,999.99 printed "$10.0k" — a
+ * sixth character in a five-character cell. No day on the owner's ledger or the
+ * e2e fixture reaches either band yet.
+ *
+ * 🔴 …AND IT ROUNDED REAL MONEY TO A PRINTED ZERO. `$${Math.round(dollars)}`
+ * wrote 1–49¢ as "$0". Measured on the owner's ledger 2026-09-15: 20 cells in
+ * 50 months, all on the earned side — Sep 8 2025, "$260.01 spent across 5
+ * transactions, mostly Food, $0.29 earned", read "−$260 +$0".
+ *
+ * ⚖️ Owner decision 2026-09-14 (F3): under 50¢ is "<$1", following
+ * `renderPercent`'s "<0.1%" floor.
+ *
+ * ⚠️ `compactDayTotal` itself still prints "0" for a non-zero net under 50¢ on
+ * the recurring calendar. Only two such series exist (STOCK LENDING at 1¢, SPY
+ * and COKE), both dismissed, so no cell draws it today; the owner's decision was
+ * about this cell, and that one is left for its own.
+ */
+export function compactDayAmount(cents: number): string {
+  if (cents > 0 && cents < ROUNDS_TO_A_DOLLAR_CENTS) return "<$1";
+  return `$${compactDayTotal(cents)}`;
+}
+
 export interface DayWeight {
   netCents: number;
   /** magnitude relative to the heaviest day in the month, 0..1 */
