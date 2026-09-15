@@ -9,6 +9,7 @@ import { institutions } from "@/db/schema/institutions";
 import { seedDatabase } from "@/db/seed";
 import { listAccountOptions } from "./accounts";
 import { commandEntityGroups } from "./command-index";
+import { institutionGroups } from "./institution-groups";
 import { accountCoverage } from "./coverage";
 import { statementGaps } from "./statement-gaps";
 import { statementPulls } from "./statement-pulls";
@@ -163,4 +164,34 @@ describe("THE account order, wherever accounts are listed", () => {
     const group = commandEntityGroups(bundle.db).find((g) => g.label === "Accounts");
     expect(group?.items.map((i) => i.id)).toEqual(THE_ORDER.map((id) => `account-${id}`));
   });
+
+  test("institutionGroups — the dashboard's and /accounts' institution cards", () => {
+    expect(institutionGroups(bundle.db, TODAY).flatMap((g) => g.accounts.map((a) => a.id))).toEqual(THE_ORDER);
+  });
+});
+
+/**
+ * ⛔ ONE SPELLING. `institutionGroups` wrote the three keys out by hand. It
+ * agreed with `ACCOUNT_ORDER` the day this guard was written — measured
+ * 2026-09-15, the same 13 accounts in the same order on the owner's ledger and
+ * the same 8 on the e2e fixture — which is exactly why no behavioural test can
+ * tell the copy from the rule: they differ only on the day one of them changes.
+ * `ACCOUNT_ORDER`'s own docstring records the order spelled out seven times and
+ * four of them wrong.
+ */
+test("no source file spells the account order out by hand", () => {
+  const src = path.join(process.cwd(), "src");
+  const handSpelled = /asc\(\s*accounts\.displayOrder\s*\)/;
+  const offenders: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) && handSpelled.test(fs.readFileSync(full, "utf8"))) {
+        offenders.push(path.relative(src, full));
+      }
+    }
+  };
+  walk(src);
+  expect(offenders).toEqual(["services/account-order.ts"]);
 });

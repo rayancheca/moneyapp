@@ -7,6 +7,7 @@ import { institutions } from "@/db/schema/institutions";
 import { compareDates, todayIso } from "@/lib/dates";
 import { dayChangeTerm } from "@/lib/day-change-label";
 import { formatDayShort } from "@/lib/format-date";
+import { ACCOUNT_ORDER } from "./account-order";
 import { formatQuantityE8 } from "./holdings";
 import { cutToObserved, observedThrough } from "./observation-frontier";
 import { unreviewedByAccount } from "./review-count";
@@ -185,7 +186,8 @@ export function institutionGroups(
     .from(accounts)
     .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
     .where(eq(accounts.isActive, true))
-    .orderBy(asc(institutions.name), asc(accounts.displayOrder), asc(accounts.name))
+    // THE order — spelled once, in `account-order`; this was its last hand-written copy
+    .orderBy(...ACCOUNT_ORDER)
     .all();
   if (accountRows.length === 0) return [];
 
