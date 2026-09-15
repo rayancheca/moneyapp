@@ -59,11 +59,12 @@ async function bandPartCents(page: Page, label: string): Promise<number> {
 
 /**
  * What the card's own sentence says each EOM cash leaves out, posted to accounts
- * outside cash (`OutsideCashNote`): the headline's then the pace row's when they
- * differ; one amount when both readings leave out the same; one amount under
- * the reading it belongs to ("EOM cash at your recent pace leaves out …") when
- * the other leaves out nothing; and no sentence when neither leaves out
- * anything. Net-worth signed, as the note prints them.
+ * outside cash, read back into both halves. When the sentence prints, and in
+ * which shape, is `OutsideCashNote`'s rule and is not restated here. Reading it:
+ * two amounts are the headline's then the pace row's; one amount belongs to the
+ * reading the sentence names ("EOM cash at your recent pace leaves out …"), or
+ * to both when it names none; no sentence is zero for both. Net-worth signed,
+ * as the note prints them.
  *
  * 🔴 A half that is $0.00 says nothing, and the fixture printed one: "$0.00 in
  * the headline and -$3.87 at your recent pace". So a zero amount fails here.

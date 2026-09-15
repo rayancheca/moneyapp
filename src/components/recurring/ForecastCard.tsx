@@ -52,14 +52,19 @@ const READING = { headline: "in the headline", pace: "at your recent pace" } as 
  * headline's EOM cash minus the pace row's stops equalling the headline's net
  * minus the pace row's, and nothing on the card says by how much or why.
  *
- * One amount when both readings leave out the same — no pace line posts there —
- * and both, each under the reading it belongs to, when they differ.
+ * The sentence prints only what a reading leaves out, and this is the rule's
+ * one home:
+ *   - neither reading leaves out anything (`-0` included): no sentence;
+ *   - both leave out the same amount (no pace line posts there): that amount
+ *     once, under no reading;
+ *   - only one leaves out anything: that amount, under the reading it belongs
+ *     to (`READING`);
+ *   - both leave out different amounts: both, each under its reading.
  *
- * 🔴 A half that is $0.00 says nothing. On the owner's ledger (2026-09-15) no
+ * 🔴 A half that is $0.00 says nothing. The two-amount sentence used to print
+ * whenever the halves differed, and on the owner's ledger (2026-09-15) no
  * commitment posts to Robinhood Cash, so every month the calendar pages to
- * printed "$0.00 in the headline and +$19.43 at your recent pace". When only one
- * reading leaves anything out, the sentence prints that one amount and names
- * its reading instead; when neither does, there is no sentence.
+ * printed "$0.00 in the headline and +$19.43 at your recent pace".
  */
 export function OutsideCashNote({ outside }: { outside: MonthForecast["outsideCash"] }) {
   const headline = outside.committedNetCents;
