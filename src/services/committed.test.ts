@@ -608,6 +608,25 @@ describe("runwayCard", () => {
   });
 
   /**
+   * 🔴 THE CARD'S SPENDING LINKS OPENED A MONTH THE SPEND TERM NEVER READ. The
+   * header's "Spending →" and the "What you spend a month" row were both a bare
+   * `/spending`, which `resolvePeriod` resolves to the RUNNING month — the one
+   * month `spendBaseline` leaves out. Measured on the owner's ledger
+   * 2026-09-15: the spend term averaged Mar 2026 to Aug 2026, and both links
+   * opened September 2026, where the page refuses any comparison.
+   */
+  test("the spending link opens the months the spend term averaged, not the running one", () => {
+    const card = runwayCard(bundle.db, TODAY);
+    expect(card.spend).toMatchObject({ fromMonth: "2026-02", toMonth: "2026-07" });
+    expect(card.spendingHref).toBe("/spending?from=2026-02-01&to=2026-07-31");
+    // the ledger opens 2026-02-01, so in March the window is February alone —
+    // and it ends on the 28th, the month's real last day, not a notional 31st
+    const march = runwayCard(bundle.db, "2026-03-10");
+    expect(march.spend).toMatchObject({ months: 1, fromMonth: "2026-02", toMonth: "2026-02" });
+    expect(march.spendingHref).toBe("/spending?from=2026-02-01&to=2026-02-28");
+  });
+
+  /**
    * 🔴 `/accounts/<x>` promises, by name, that "Archiving takes {name} out of
    * net worth, the assets and owed totals, and every analytic." Every other
    * service that reads accounts keeps that promise — `coverage`, `cards-owed`,

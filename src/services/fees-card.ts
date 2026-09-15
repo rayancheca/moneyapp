@@ -4,6 +4,7 @@ import { monthCount } from "@/lib/committed";
 import { formatMonthYear, monthWindowLabel } from "@/lib/format-date";
 import { ledgerHref } from "@/lib/ledger-href";
 import { formatCents } from "@/lib/money";
+import { resolvePeriod, withPeriod } from "@/lib/period";
 import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryIndex } from "./analytics";
 import { baselineWindow, SPEND_BASELINE_MONTHS } from "./committed";
 import { provenanceFor, type Provenance } from "./provenance";
@@ -219,6 +220,18 @@ export interface FeesCard {
   earnedMonthlyCents: number;
   /** the interest rows' own drill-down — null when there is no interest bucket */
   interestHref: string | null;
+  /**
+   * `/spending` over the window the HEADLINE measured — `recent`, or `allTime`
+   * when that is the basis — for the card's header link.
+   *
+   * 🔴 It was a bare `/spending`, which `resolvePeriod` resolves to the RUNNING
+   * month, a month neither window here reads whole. Measured on the owner's
+   * ledger 2026-09-15: the headline read "more in fees than interest, over the
+   * 6 months to Aug 2026" (Mar 1 – Aug 31, 2026), and the link opened September
+   * 2026, where the page refuses any comparison ("There is no comparison for
+   * September 2026 yet: …").
+   */
+  spendingHref: string;
 
   /**
    * ⛔ EMPTY IS NOT MISSING. A ledger whose `Interest` bucket exists and holds
@@ -644,6 +657,8 @@ export function feesCard(db: AppDatabase, today: string = todayIso()): FeesCard 
       cats.interestTopId === null
         ? null
         : ledgerHref({ category: cats.interestTopId, from: recentFrom, to: recentTo }),
+    // the window the headline measured, whichever basis it took — see the field
+    spendingHref: withPeriod("/spending", resolvePeriod({ period: null, from: shown.from, to: shown.to }, today)),
 
     earnedNote,
     unfiledNote,

@@ -193,6 +193,23 @@ describe("eatingOutCard", () => {
     expect(card.totalSpentCents).toBe(1000);
   });
 
+  /**
+   * 🔴 THE CARD'S LINK OPENED A MONTH THE CARD NEVER READ. "Spending →" was a
+   * bare `/spending`, which `resolvePeriod` resolves to the RUNNING month — the
+   * one month this card leaves out by construction. Measured on the owner's
+   * ledger 2026-09-15: the card averaged Mar 2026 to Aug 2026, and the link
+   * opened September 2026, where the page refuses any comparison ("There is no
+   * comparison for September 2026 yet: Aug 12, 2026, the last day every account
+   * you spend from has been imported through, comes before any of it.").
+   */
+  test("the Spending link opens the months the card averaged, not the running one", () => {
+    addTxn("2026-07-10", -1000, "Dining");
+
+    expect(eatingOutCard(bundle.db, TODAY)!.spendingHref).toBe("/spending?from=2026-02-01&to=2026-07-31");
+    // the window's real last day — a February window ends on the 28th, not a notional 31st
+    expect(eatingOutCard(bundle.db, "2026-03-10")!.spendingHref).toBe("/spending?from=2025-09-01&to=2026-02-28");
+  });
+
   /** A child with nothing in it is an absence, not a row reading "0 coffees $0.00". */
   test("an empty child category is dropped rather than printed as a zero row", () => {
     addTxn("2026-07-02", -2000, "Dining");

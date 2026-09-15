@@ -1,5 +1,6 @@
 import type { AppDatabase } from "@/db/client";
 import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { resolvePeriod, withPeriod } from "@/lib/period";
 import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryIndex } from "./analytics";
 import { baselineWindow, SPEND_BASELINE_MONTHS } from "./committed";
 
@@ -87,6 +88,19 @@ export interface EatingOutCard {
   months: number;
   fromMonth: string;
   toMonth: string;
+  /**
+   * `/spending` over the months averaged — the drill-down contract for the
+   * card's header link.
+   *
+   * 🔴 It was a bare `/spending`, which `resolvePeriod` resolves to the RUNNING
+   * month, and the running month is the one month this card never reads.
+   * Measured on the owner's ledger 2026-09-15: the card averaged Mar 2026 to
+   * Aug 2026, and the link opened September 2026, where the page refuses any
+   * comparison ("There is no comparison for September 2026 yet: Aug 12, 2026,
+   * the last day every account you spend from has been imported through, comes
+   * before any of it.").
+   */
+  spendingHref: string;
   /** true when nothing at all was spent in the window — the card renders empty */
   isEmpty: boolean;
 }
@@ -206,6 +220,8 @@ export function eatingOutCard(
     months: window.months,
     fromMonth,
     toMonth,
+    // the rows above were read over exactly [from, to] — see the field
+    spendingHref: withPeriod("/spending", resolvePeriod({ period: null, from, to }, today)),
     isEmpty: totalCount === 0 || groceries.count === 0,
   };
 }

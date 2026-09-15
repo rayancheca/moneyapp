@@ -61,8 +61,9 @@ export function FeesCard({ data }: { data: FeesCardData }) {
         <h3 className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">
           What the banks charge you
         </h3>
+        {/* the window the headline measured — a bare /spending opens the running month; see `spendingHref` */}
         <Link
-          href="/spending"
+          href={data.spendingHref}
           className="text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:text-ink"
         >
           Spending →

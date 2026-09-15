@@ -27,11 +27,16 @@ import type { RunwayCard as RunwayCardData } from "@/services/committed";
  * above it is a worse lie than no list.
  */
 
-/** Where each assumption sends the reader to check it. */
-const ASSUMPTION_HREF: Record<RunwayAssumptionId, string> = {
+/**
+ * Where each assumption sends the reader to check it.
+ *
+ * ⛔ Not `spend`: its figure is an average over complete months that never
+ * include the running one, and a bare `/spending` opens the running one. That
+ * link is the service's `spendingHref`, built from the months averaged.
+ */
+const ASSUMPTION_HREF: Record<Exclude<RunwayAssumptionId, "spend">, string> = {
   liquid: "/accounts",
   cards: "/accounts",
-  spend: "/spending",
   income: "/spending",
   investments: "/investments",
 };
@@ -39,13 +44,13 @@ const ASSUMPTION_HREF: Record<RunwayAssumptionId, string> = {
 /** Rows the card prints as a subtraction rather than as a balance. */
 const SUBTRACTED: ReadonlySet<RunwayAssumptionId> = new Set<RunwayAssumptionId>(["cards"]);
 
-function AssumptionRow({ a, tip }: { a: RunwayAssumption; tip?: string }) {
+function AssumptionRow({ a, href, tip }: { a: RunwayAssumption; href: string; tip?: string }) {
   const subtracted = SUBTRACTED.has(a.id);
   return (
     <div className="flex items-baseline justify-between gap-3">
       <dt className="flex min-w-0 items-center gap-1.5">
         <Link
-          href={ASSUMPTION_HREF[a.id]}
+          href={href}
           className="truncate text-ink-muted transition-colors duration-(--duration-fast) hover:text-ink"
         >
           {a.label}
@@ -73,6 +78,7 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
   const withheld = runway.kind === "unknown";
   const by = (id: RunwayAssumptionId): RunwayAssumption | undefined =>
     runway.assumptions.find((a) => a.id === id);
+  const hrefOf = (id: RunwayAssumptionId): string => (id === "spend" ? data.spendingHref : ASSUMPTION_HREF[id]);
 
   const cashRows = (["liquid", "cards"] as const).map(by).filter((a) => a !== undefined);
   const flowRows = (["spend", "income"] as const).map(by).filter((a) => a !== undefined);
@@ -85,8 +91,9 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
           Runway
           <InfoTip term="Runway">{RUNWAY_JARGON.runway}</InfoTip>
         </h3>
+        {/* the months the spend term averaged — a bare /spending opens the running one; see `spendingHref` */}
         <Link
-          href="/spending"
+          href={data.spendingHref}
           className="text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:text-ink"
         >
           Spending →
@@ -105,7 +112,7 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
       {/* what you have */}
       <dl className="mt-4 space-y-1.5 border-t border-line pt-3 text-sm">
         {cashRows.map((a) => (
-          <AssumptionRow key={a.id} a={a} />
+          <AssumptionRow key={a.id} a={a} href={hrefOf(a.id)} />
         ))}
         <div className="flex items-baseline justify-between gap-3 border-t border-line pt-1.5">
           <dt className="flex items-center gap-1.5 font-medium">
@@ -126,7 +133,12 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
           "axisStartsAtZero computed, never rendered". */}
       <dl className="mt-3 space-y-1.5 border-t border-line pt-3 text-sm">
         {flowRows.map((a) => (
-          <AssumptionRow key={a.id} a={a} tip={a.id === "income" ? incomeBasisExplanation : undefined} />
+          <AssumptionRow
+            key={a.id}
+            a={a}
+            href={hrefOf(a.id)}
+            tip={a.id === "income" ? incomeBasisExplanation : undefined}
+          />
         ))}
         <div className="flex items-baseline justify-between gap-3 border-t border-line pt-1.5">
           <dt className="flex items-center gap-1.5 font-medium">
@@ -149,7 +161,7 @@ export function RunwayCard({ data }: { data: RunwayCardData }) {
           offers a lever that does not exist. */}
       {investments && investments.cents > 0 && (
         <dl className="mt-3 space-y-1.5 border-t border-line pt-3 text-sm">
-          <AssumptionRow a={investments} />
+          <AssumptionRow a={investments} href={hrefOf(investments.id)} />
           {burning && (
             <p className="text-ink-muted">
               …or <span className="font-medium text-ink">{runway.withInvestments.label}</span> if you sell

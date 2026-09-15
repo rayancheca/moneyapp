@@ -114,9 +114,11 @@ test.describe("dashboard decision cards", () => {
       "href",
       "/accounts",
     );
+    // the months the spend term averaged, never the running one — measured on a
+    // freshly seeded fixture at 2026-07-08, whose spend window is Jan–Jun 2026
     await expect(card.getByRole("link", { name: "What you spend a month" })).toHaveAttribute(
       "href",
-      "/spending",
+      "/spending?from=2026-01-01&to=2026-06-30",
     );
   });
 

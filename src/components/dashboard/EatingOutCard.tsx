@@ -53,8 +53,9 @@ export function EatingOutCard({ data }: { data: EatingOutCardData }) {
     <SurfaceCard>
       <div className="flex items-baseline justify-between gap-3">
         <h3 className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">Eating out</h3>
+        {/* the months averaged — a bare /spending opens the running one; see `spendingHref` */}
         <Link
-          href="/spending"
+          href={data.spendingHref}
           className="text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:text-ink"
         >
           Spending →

@@ -713,6 +713,32 @@ describe("feesCard", () => {
     );
   });
 
+  /**
+   * 🔴 THE HEADER LINK OPENED A MONTH THE CARD NEVER READ. "Spending →" was a
+   * bare `/spending`, which `resolvePeriod` resolves to the RUNNING month — a
+   * month neither window here reads as a whole. Measured on the owner's ledger
+   * 2026-09-15: the headline read "more in fees than interest, over the 6 months
+   * to Aug 2026" (Mar 1 – Aug 31, 2026), and the link opened September 2026,
+   * where the page refuses any comparison.
+   */
+  test("the Spending link opens the window the headline measured, not the running month", () => {
+    fee("2026-07-02", 1000);
+
+    const card = feesCard(bundle.db, TODAY)!;
+    expect(card.basis).toBe("recent");
+    expect(card.spendingHref).toBe("/spending?from=2026-02-01&to=2026-07-31");
+  });
+
+  /** An empty recent window hands the headline to all time; the link follows the headline. */
+  test("over an all-time headline, the Spending link opens the all-time window", () => {
+    fee("2024-01-05", 10_000);
+    interest("2024-01-31", 30_000);
+
+    const card = feesCard(bundle.db, TODAY)!;
+    expect(card.basis).toBe("allTime");
+    expect(card.spendingHref).toBe(`/spending?from=2024-01-05&to=${TODAY}`);
+  });
+
   /** February is 28 days here; a hardcoded "-31" would be a bound, not a date. */
   test("the recent window ends on the real last day of the month", () => {
     fee("2026-02-10", 1000);

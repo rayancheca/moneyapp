@@ -20,6 +20,7 @@ import {
   periodBounds,
   todayIso,
 } from "@/lib/dates";
+import { resolvePeriod, withPeriod } from "@/lib/period";
 import { runway, type Runway } from "@/lib/runway";
 import { listAccounts } from "./accounts";
 import { loadCategoryIndex, monthlySpending, recurringSeriesIdsForCategory } from "./analytics";
@@ -414,6 +415,17 @@ export interface RunwayCard {
   committed: CommittedOutflows;
   /** what the spend term is, and over which months */
   spend: SpendBaseline;
+  /**
+   * `/spending` over the months `spend` averaged — the card's header link and
+   * the "What you spend a month" row.
+   *
+   * 🔴 Both were a bare `/spending`, which `resolvePeriod` resolves to the
+   * RUNNING month, the one month `spendBaseline` leaves out. Measured on the
+   * owner's ledger 2026-09-15: the spend term averaged Mar 2026 to Aug 2026, and
+   * both links opened September 2026, where the page refuses any comparison
+   * ("There is no comparison for September 2026 yet: …").
+   */
+  spendingHref: string;
   /** how the income term was chosen — `incomeBasis`'s own explanation */
   incomeBasisExplanation: string;
   today: string;
@@ -464,6 +476,14 @@ export function runwayCard(db: AppDatabase, today: string = todayIso()): RunwayC
     }),
     committed: committedBook(db, today),
     spend,
+    // the months `spend` averaged, as `baselineWindow` bounds them — see the field
+    spendingHref: withPeriod(
+      "/spending",
+      resolvePeriod(
+        { period: null, from: `${spend.fromMonth}-01`, to: periodBounds(`${spend.toMonth}-01`, "monthly").end },
+        today,
+      ),
+    ),
     incomeBasisExplanation: income.basis.explanation,
     today,
   };
