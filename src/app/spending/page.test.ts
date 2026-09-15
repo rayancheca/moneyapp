@@ -52,6 +52,18 @@ describe("Where it went is cut from the comparison's one population", () => {
     expect(source).toMatch(/const spentRows: CategoryTableRow\[\] = \(listCompares \? compared : .+\)\.map\(/);
   });
 
+  /*
+   * 🔴 The List's change column is `hidden md:block`, so on a phone a category
+   * that stopped read "0.0% $0.00" with no sign it fell (`SpendingCategoriesTable`
+   * prints it on a line of its own there, naming the window). The List and the
+   * relief name ONE prior window, asked once.
+   */
+  test("the List is told which window its change measured — the one the relief and the Table name", () => {
+    expect(source).toMatch(/const wholePriorLabel = comparison\.kind === "whole" \? comparison\.prior\.label : null;/);
+    expect(source).toMatch(/<SpendingCategoriesTable[^>]*\bpriorLabel=\{wholePriorLabel\}/);
+    expect(source).toMatch(/<WhereItWentPanel[^>]*\bpriorLabel=\{wholePriorLabel\}/);
+  });
+
   test("no lens looks a prior figure up for this period's categories on its own", () => {
     expect(source).not.toContain("prevById");
     expect(source).not.toMatch(/breakdown\s*\.filter\(\(r\) => r\.categoryId !== null\)\s*\.map\(/);

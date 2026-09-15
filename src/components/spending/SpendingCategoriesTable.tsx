@@ -66,10 +66,16 @@ export function SpendingCategoriesTable({
   showDelta = true,
   forecastMonthLabel = null,
   periodQuery,
+  priorLabel,
 }: {
   rows: CategoryTableRow[];
   /** the MoM column is only meaningful month-over-month; hidden for quarter/year */
   showDelta?: boolean;
+  /**
+   * The window every row's change was measured against, or null when there is
+   * none. ⛔ Required: the line a phone reads a $0.00 row's fall from names it.
+   */
+  priorLabel: string | null;
   /** the target month for forecasts (e.g. "August 2026"); null hides the forecast line */
   forecastMonthLabel?: string | null;
   /**
@@ -139,6 +145,19 @@ export function SpendingCategoriesTable({
               )}
               <Money cents={row.spentCents} className="w-24 shrink-0 text-right text-sm font-medium" />
             </div>
+
+            {/* 🔴 A $0.00 row's whole story is its change, and the column above is
+                `hidden md:block`: on the owner's 440px phone a category that
+                stopped read "0.0% $0.00" and nothing else, to a screen reader
+                too — 82 rows over 39 of 46 whole months, measured 2026-09-15.
+                Below md the change is a line of its own naming its window; from
+                md up the column carries it, so each width reads it once. */}
+            {showDelta && priorLabel !== null && row.spentCents === 0 && row.momDeltaCents !== 0 && (
+              <p className="-mt-1 mb-1.5 ml-7 text-[11px] text-ink-faint md:hidden">
+                <SpendDelta cents={row.momDeltaCents} />
+                {` against ${priorLabel}`}
+              </p>
+            )}
 
             {/* forward-looking next-month forecast — a secondary line so it never
                 competes with the actuals above; only on month view, only when

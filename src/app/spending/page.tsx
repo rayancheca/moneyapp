@@ -174,6 +174,10 @@ export default async function SpendingPage({
   // The List prints a change only month over month (`showDelta`). A List that
   // prints none lists what THIS period spent, where a $0.00 row says nothing.
   const listCompares = period.granularity === "month" && prevBreakdown !== null;
+  // the ONE name of the window this card's changes were measured against: the
+  // relief and the Table head their figures with it, and the List names it on
+  // the line a phone reads a stopped category's fall from
+  const wholePriorLabel = comparison.kind === "whole" ? comparison.prior.label : null;
   /*
    * "What moved" reads the two windows the comparison names, over their UNION
    * (`deviationRowsFrom` owns that rule and its measurement): the whole periods —
@@ -485,7 +489,7 @@ export default async function SpendingPage({
               totals={massifTotals}
               periodQuery={query}
               periodLabel={period.label}
-              priorLabel={comparison.kind === "whole" ? comparison.prior.label : null}
+              priorLabel={wholePriorLabel}
               viewState={whereView}
               baseParams={whereBaseParams}
             >
@@ -493,6 +497,7 @@ export default async function SpendingPage({
                 rows={categoryRows}
                 periodQuery={query}
                 showDelta={listCompares}
+                priorLabel={wholePriorLabel}
                 forecastMonthLabel={forecastMonthLabel}
               />
             </WhereItWentPanel>
