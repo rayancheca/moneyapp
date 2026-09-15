@@ -1510,17 +1510,34 @@ function legsLeftAloneBy(tx: AppDatabase, importFileId: string): StaleTransferLe
   return alone;
 }
 
+/**
+ * Every account an import file wrote to: its rows, its periods, its anchors.
+ * Read BEFORE the delete — afterwards nothing names the file.
+ *
+ * 🔴 The rebuild scope was the accounts the file had ROWS on. A statement that
+ * gave an account a period and a balance anchor and nothing else lost both and
+ * was never rebuilt, so daily_balances stayed `anchored` on a day no anchor
+ * names and provenance said "checked through" it. Measured on a copy of the
+ * real ledger, 2026-09-15: un-importing the August 2026 Robinhood brokerage PDF
+ * left Robinhood Agentic anchored on 2026-08-31 with anchors only on Jun 30 and
+ * Jul 31.
+ */
+function accountsWrittenBy(db: AppDatabase, importFileId: string): string[] {
+  const of = (rows: { accountId: string }[]) => rows.map((r) => r.accountId);
+  return [
+    ...new Set([
+      ...of(db.selectDistinct({ accountId: transactions.accountId }).from(transactions).where(eq(transactions.importFileId, importFileId)).all()),
+      ...of(db.selectDistinct({ accountId: statementPeriods.accountId }).from(statementPeriods).where(eq(statementPeriods.importFileId, importFileId)).all()),
+      ...of(db.selectDistinct({ accountId: balanceAnchors.accountId }).from(balanceAnchors).where(eq(balanceAnchors.importFileId, importFileId)).all()),
+    ]),
+  ];
+}
+
 /** Un-import: removes a file's contributions atomically; derived state rebuilt. */
 export function unimportFile(db: AppDatabase, importFileId: string): void {
   const file = db.select().from(importFiles).where(eq(importFiles.id, importFileId)).get();
   if (!file) return;
-  const affected = db
-    .select({ accountId: transactions.accountId })
-    .from(transactions)
-    .where(eq(transactions.importFileId, importFileId))
-    .groupBy(transactions.accountId)
-    .all()
-    .map((r) => r.accountId);
+  const affected = accountsWrittenBy(db, importFileId);
 
   const doomedRows = db
     .select({ id: transactions.id, seriesId: transactions.recurringSeriesId })

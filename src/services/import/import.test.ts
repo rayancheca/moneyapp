@@ -6,13 +6,14 @@ import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
+import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { createAccount } from "@/services/accounts";
 import { recurringSeries } from "@/db/schema/recurring";
 import { statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
-import { latestBalances, netWorthSeries } from "@/services/derivation";
+import { latestBalances, netWorthSeries, rebuildAccount } from "@/services/derivation";
 import { listSplits, setSplits } from "@/services/transaction-splits";
 import { fidelityOf, importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, parseContextFor, resolveAccount, type ImportInput } from "./service";
 import { PROFILES } from "./profiles";
@@ -266,6 +267,49 @@ describe("structured imports", () => {
     unimportFile(bundle.db, file.id);
     expect(activeTxnStats("4321").count).toBe(0);
     expect(bundle.db.select().from(importFilesTable).all()).toHaveLength(0);
+  });
+
+  /**
+   * 🔴 Un-importing rebuilt only the accounts the file had ROWS on. A statement
+   * that gave an account a period and a balance anchor and nothing else took
+   * both away and never rebuilt the account, so daily_balances stayed
+   * `anchored` on a day no anchor names and provenance kept saying "checked
+   * through" it. Measured on a copy of the real ledger, 2026-09-15:
+   * un-importing the August 2026 Robinhood brokerage PDF left Robinhood Agentic
+   * anchored on 2026-08-31 with anchors only on Jun 30 and Jul 31.
+   */
+  test("un-import rebuilds an account the file gave only a period and an anchor", async () => {
+    const next = load("chase", "Chase4321_Activity_2024-10-01_2024-12-31.QFX");
+    const noRows: ImportInput = {
+      name: next.name,
+      buffer: Buffer.from(next.buffer.toString("utf8").replaceAll(/<STMTTRN>[\s\S]*?<\/STMTTRN>\s*/g, "")),
+    };
+    await importStatementFiles(bundle.db, [load("chase", "Chase4321_Activity_2024-07-01_2024-09-30.QFX")]);
+    await importStatementFiles(bundle.db, [noRows]);
+    const file = bundle.db.select().from(importFilesTable).all().find((f) => f.fileName === noRows.name)!;
+    const [anchor] = bundle.db.select().from(balanceAnchors).where(eq(balanceAnchors.importFileId, file.id)).all();
+    const dayRows = (accountId: string) =>
+      bundle.db
+        .select({ day: dailyBalances.day, balanceCents: dailyBalances.balanceCents, basis: dailyBalances.basis })
+        .from(dailyBalances)
+        .where(eq(dailyBalances.accountId, accountId))
+        .orderBy(dailyBalances.day)
+        .all();
+    const basisOn = (accountId: string, day: string) => dayRows(accountId).find((r) => r.day === day)?.basis;
+    // the premise: the file holds a period and an anchor, no rows, and its anchor day reads checked
+    expect(anchor).toBeDefined();
+    expect(bundle.db.select().from(transactions).where(eq(transactions.importFileId, file.id)).all()).toEqual([]);
+    expect(bundle.db.select().from(statementPeriods).where(eq(statementPeriods.importFileId, file.id)).all()).toHaveLength(1);
+    expect(basisOn(anchor!.accountId, anchor!.anchoredOn)).toBe("anchored");
+
+    unimportFile(bundle.db, file.id);
+
+    expect(bundle.db.select().from(balanceAnchors).where(eq(balanceAnchors.anchoredOn, anchor!.anchoredOn)).all()).toEqual([]);
+    expect(basisOn(anchor!.accountId, anchor!.anchoredOn)).not.toBe("anchored");
+    // …and the cache is exactly what a rebuild from what is left would write
+    const left = dayRows(anchor!.accountId);
+    rebuildAccount(bundle.db, anchor!.accountId);
+    expect(left).toEqual(dayRows(anchor!.accountId));
   });
 
   /**
