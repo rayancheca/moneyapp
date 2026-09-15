@@ -1,7 +1,7 @@
 /**
  * Does the ledger still say what it said?
  *
- * Three things, none of which any existing arbiter asks:
+ * Four things, none of which any existing arbiter asks:
  *
  *   1. CHAIN BREAKS — every consecutive chain-grade anchor pair on a cash
  *      account, walked with the derivation service's OWN endpoint selection
@@ -18,12 +18,27 @@
  * with no source document, marked `excluded` so no spend view showed it, whose
  * only visible effect was to make a $3,811.52 hole read as $231.85.
  *
+ *   4. A WITNESS FLOOR — (1), (2), (3) and the pass-73 value anchors report
+ *      only what DISAGREES, so a witness that agrees can leave without a word:
+ *      un-importing a statement whose valuation agreed took "value anchors: 43
+ *      checked" to 42 and exited 0. Each kind the check counts — value anchors,
+ *      chain windows, statement periods, accounts — has a high-water mark kept
+ *      in the ledger itself (`ledger_witness_marks`). Fewer than the mark fails;
+ *      more raises the mark on its own, with no commit and no hand edit (the
+ *      owner's rule, 2026-09-15). src/lib/witness-floor.ts.
+ *
  * The rules live in src/lib/ledger-integrity.ts and src/lib/reconciliation.ts
  * and are unit-tested there; this file is the I/O around them.
  *
- * Exit 0 = the ledger matches BASELINE below, and no verdict has gone stale.
+ * Exit 0 = the ledger matches BASELINE below, no verdict has gone stale, and no
+ * witness count is below its mark.
  *
  *   pnpm ledger-check
+ *
+ * After a removal the OWNER APPROVED — never to quiet a failure nobody understands:
+ *
+ *   pnpm ledger-check --lower-marks=value-anchors            # dry run: prints what it would lower
+ *   pnpm ledger-check --lower-marks=value-anchors --confirm  # lowers it to what is seen now
  */
 import { createDatabase } from "@/db/client";
 import { pickWinners, selectEndpoints } from "@/services/derivation";
@@ -33,6 +48,7 @@ import {
   type ChainWindow,
   type GradedPeriod,
   type LedgerBaseline,
+  type LedgerObservation,
   type StaleVerdict,
   type ValueAnchor,
   compareToBaseline,
@@ -43,6 +59,9 @@ import {
 } from "@/lib/ledger-integrity";
 import { investmentAccounts, portfolioSeries } from "@/services/portfolio";
 import { formatCents } from "@/lib/money";
+import { isRealDatabasePath } from "@/db/backup";
+import { type LedgerCheckMode, WitnessFlagRefusal, compareToMarks, ledgerCheckMode, planLowering } from "@/lib/witness-floor";
+import { readWitnessMarks, writeWitnessMarks } from "@/services/witness-marks";
 
 /**
  * The ledger as of 2026-08-17, pass 59, AFTER the crypto-movement migration.
@@ -163,7 +182,23 @@ const BASELINE: LedgerBaseline = {
   },
 };
 
-const { db, sqlite } = createDatabase(process.env.MONEYAPP_DB_PATH ?? "data/moneyapp.db");
+/*
+ * ⛔ Parsed before the database is opened, and anything unknown is refused: the
+ * database comes from MONEYAPP_DB_PATH, so an ignored `--db=<copy>` would check
+ * — and, on a first run or a rise, WRITE the marks of — the real ledger.
+ */
+const MODE: LedgerCheckMode = (() => {
+  try {
+    return ledgerCheckMode(process.argv.slice(2));
+  } catch (error: unknown) {
+    if (!(error instanceof WitnessFlagRefusal)) throw error;
+    console.error(`REFUSED: ${error.message}`);
+    process.exit(2);
+  }
+})();
+
+const DB_PATH = process.env.MONEYAPP_DB_PATH ?? "data/moneyapp.db";
+const { db, sqlite } = createDatabase(DB_PATH);
 
 const accounts = sqlite
   .prepare(`SELECT id, name, type FROM accounts ORDER BY name`)
@@ -318,21 +353,47 @@ for (const [name, list] of Object.entries(valueAnchors)) {
   for (const d of list) console.log(`  ${name} ${d.on}  off by ${formatCents(d.offByCents)}`);
 }
 
-const failures = compareToBaseline(
-  {
-    accounts: accounts.map((a) => a.name),
-    chainWindows,
-    breaks,
-    syntheticNetCents,
-    staleVerdicts,
-    valuedAnchorDays,
-    valueAnchors,
-    // an anchor the app cannot value is a finding of its own — the rule makes it, once per statement
-    unpricedAnchors: unpriced,
-    gradedPeriods,
-  },
-  BASELINE,
-);
+const observation: LedgerObservation = {
+  accounts: accounts.map((a) => a.name),
+  chainWindows,
+  breaks,
+  syntheticNetCents,
+  staleVerdicts,
+  valuedAnchorDays,
+  valueAnchors,
+  // an anchor the app cannot value is a finding of its own — the rule makes it, once per statement
+  unpricedAnchors: unpriced,
+  gradedPeriods,
+};
+
+/*
+ * 4. THE WITNESS FLOOR. The marks live in the database this run opened, so a
+ * rehearsal on a copy raises the copy's marks and never the real ledger's, and a
+ * restored snapshot brings back the marks it was taken with.
+ */
+const marks = readWitnessMarks(db);
+
+if (MODE.mode === "lower") {
+  const plan = planLowering(observation, marks, MODE.kinds);
+  const lowering = Object.keys(plan.writes).length;
+  console.log(`\nLOWER WITNESS MARKS — ${DB_PATH}${isRealDatabasePath(DB_PATH) ? " (the real ledger)" : ""}`);
+  for (const line of plan.lines) console.log(`  ${line}`);
+  if (!MODE.confirm) {
+    console.log("\ndry run: nothing was written. Only for a removal the owner approved: the same command with --confirm");
+    process.exit(0);
+  }
+  writeWitnessMarks(db, plan.writes);
+  console.log(`\nlowered ${lowering} mark${lowering === 1 ? "" : "s"}; the next plain run checks against what is seen now`);
+  process.exit(0);
+}
+
+const floor = compareToMarks(observation, marks);
+// recorded for the first time, or raised — a drop writes nothing, so the mark stays until lowered
+writeWitnessMarks(db, floor.writes);
+console.log(floor.summary);
+
+// the floor's findings come last, so every finding the check made before it prints where it always did
+const failures = [...compareToBaseline(observation, BASELINE), ...floor.failures];
 if (failures.length > 0) {
   console.error(`\nLEDGER CHECK FAILED — ${failures.length} finding(s):`);
   console.error(formatLedgerFailures(failures));

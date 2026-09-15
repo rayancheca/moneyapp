@@ -24,6 +24,11 @@
 # Wired by `pnpm run prepare` (git config core.hooksPath .githooks), so it
 # arrives with an install rather than having to be copied into .git/hooks by
 # hand, where it would be untracked and invisible.
+# ⚠️ It WRITES, rarely. The first run on a ledger records a high-water mark per
+# kind of witness it counts (ledger_witness_marks, inside the ledger), and a run
+# that counts more raises it — so a new statement needs no commit. A run that
+# counts FEWER fails and names what left; lowering a mark after a removal the
+# owner approved is `pnpm ledger-check --lower-marks=<kind> --confirm`.
 set -e
 
 DB="${MONEYAPP_DB_PATH:-data/moneyapp.db}"
@@ -41,7 +46,7 @@ fi
 OUT=$(pnpm --silent ledger-check 2>&1) || {
   echo "$OUT" >&2
   echo "" >&2
-  echo "The ledger does not match its recorded baseline (scripts/ledger-check.ts)." >&2
+  echo "The ledger does not match its recorded baseline, or a witness it counted is gone (scripts/ledger-check.ts)." >&2
   echo "Understand what the money is before committing; 'git commit --no-verify' if you must." >&2
   exit 1
 }
