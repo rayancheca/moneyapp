@@ -513,6 +513,50 @@ describe("provenanceFor — a transaction", () => {
     expect(p.verdict).toBe("derived");
   });
 
+  /*
+   * ⛔ Two guards 8013a5b added that no test could make fail (mutation-tested on
+   * review, 2026-09-15): reversing the same-day rows instead of `pickWinners`,
+   * and dropping "only a reconciled period earns a checked-through date", each
+   * left the whole file green. Same-day ties are live on the real ledger —
+   * Robinhood Cash on 2023-12-31 (ofx_ledger + statement).
+   */
+  test("among balances recorded on one day, the sheet names the one the replay uses", () => {
+    const id = addAccount("a", "Chase Checking", "checking");
+    const rocket = addFile("f0", "rocket-money-export.csv", "rocket-money-csv");
+    const csv = addFile("f1", "Chase3522_Activity_20260710.CSV", "chase-deposit-csv");
+    const pdf = addFile("f2", "20260710-statements-3522-.pdf", "chase-checking-statement-pdf");
+    // neither insertion order nor its reverse puts the statement first
+    addAnchor(id, "2026-07-10", "manual");
+    addAnchor(id, "2026-07-10", "statement", pdf);
+    addAnchor(id, "2026-07-10", "ofx_ledger", csv);
+    addDays(id, [
+      { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-07-10", basis: "anchored" },
+    ]);
+    const txn = addTxn(id, "2026-07-10", { importFileId: rocket });
+
+    const p = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;
+    expect(p.headline).toContain("was recorded by 20260710-statements-3522-.pdf");
+    expect(p.sources.filter((s) => s.kind === "anchor").map((s) => s.label)).toEqual(["20260710-statements-3522-.pdf"]);
+  });
+
+  test("a period covering the day that reconciled nothing earns no checked-through date", () => {
+    const id = addAccount("a", "Chase Checking", "checking");
+    const csv = addFile("f1", "Chase3522_Activity.CSV", "chase-deposit-csv");
+    const rocket = addFile("f2", "rocket-money-export.csv", "rocket-money-csv");
+    addPeriod("p1", id, rocket, "2026-07-01", "2026-07-31", "not_applicable", { beginning: null, ending: null });
+    addAnchor(id, "2026-07-10", "manual");
+    addDays(id, [
+      { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-07-10", basis: "anchored" },
+    ]);
+    const txn = addTxn(id, "2026-07-10", { importFileId: csv });
+
+    const p = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;
+    expect(p.verdict).toBe("derived");
+    expect(p.checkedThrough).toBeNull();
+  });
+
   test("a row that does not exist is null", () => {
     expect(provenanceFor(bundle.db, { kind: "transaction", id: "nope" })).toBeNull();
   });
