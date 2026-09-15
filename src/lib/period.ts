@@ -9,6 +9,7 @@
 
 import { addCalendarMonths, addDays, compareDates, diffDays, isValidIsoDate, monthKey, periodBounds } from "./dates";
 import { addMonths, monthLabel } from "./calendar-math";
+import { isSummaryYear } from "./year-summary";
 
 export type PeriodGranularity = "day" | "week" | "month" | "quarter" | "year" | "ytd" | "all" | "custom";
 
@@ -241,6 +242,41 @@ export function resolvePeriod(
 
   const [ty, tm] = monthKey(today).split("-").map(Number) as [number, number];
   return monthPeriod(ty, tm, today);
+}
+
+/** A URL period value's year — `2026`, `2026-07`, `2026-Q3`, `W2026-07-13`, `2026-07-13`. */
+const LEADING_YEAR_RE = /^W?(\d{4})(?:-|$)/;
+
+function withinDescribedYears(value: string | null | undefined): string | null {
+  if (value === undefined || value === null) return null;
+  const m = LEADING_YEAR_RE.exec(value);
+  return m === null || isSummaryYear(Number(m[1])) ? value : null;
+}
+
+/**
+ * URL period params as a page may hand them to `resolvePeriod`: any value
+ * whose year the app does not describe is dropped, so it takes the documented
+ * current-month fallback instead of reaching a throw during render.
+ *
+ * 🔴 /spending and /categories/[id] read any four digits. Measured on the
+ * owner's ledger 2026-09-15, "This page didn't render." over `Invalid ISO date:
+ * "0099-01-01"` for ?period=0100 (the prior window), `"10000-01-01"` for 9999
+ * (the next month), `"0099-12-28"` for 0100-01-01 (the Week pill's Monday).
+ * /summary fixed the same defect with `parseSummaryYear`; this reads the SAME
+ * bound, `isSummaryYear`, so the two routes cannot drift apart.
+ *
+ * ⛔ At the page boundary, never inside `resolvePeriod`: the comparison
+ * resolves the prior window through it, so a bound there would set January
+ * 1900 against the current month. Inside [1900, 2200] every neighbour a page
+ * derives — 1899-12, the Monday before 1900-01-01, 2201-01-01, a year of months
+ * back — stays inside the date engine's [100, 9999].
+ */
+export function parsePeriodParams(params: PeriodParams): PeriodParams {
+  return {
+    period: withinDescribedYears(params.period),
+    from: withinDescribedYears(params.from),
+    to: withinDescribedYears(params.to),
+  };
 }
 
 /** ‹ › paging within the same granularity. Returns fresh URL params. */

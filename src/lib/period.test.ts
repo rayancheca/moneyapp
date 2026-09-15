@@ -1,10 +1,13 @@
 import { describe, expect, test } from "vitest";
-import { compareDates, periodBounds } from "./dates";
+import { comparePeriods } from "./compared-windows";
+import { addCalendarMonths, compareDates, periodBounds } from "./dates";
 import {
   dayWindowLabel,
   ALL_TIME_FLOOR,
   currentPeriodLabel,
+  parsePeriodParams,
   periodParams,
+  type PeriodParams,
   periodQuery,
   withPeriod,
   currentPeriodParams,
@@ -111,6 +114,80 @@ describe("resolvePeriod", () => {
     expect(resolvePeriod({ period: "2026" }, "2026-01-01").isCurrent).toBe(true);
     expect(resolvePeriod({ period: "2026" }, "2026-12-31").isCurrent).toBe(true);
     expect(resolvePeriod({ period: "2026" }, "2025-12-31").isCurrent).toBe(false);
+  });
+});
+
+/**
+ * 🔴 THE URL ADMITTED ANY FOUR DIGITS; THE DATE ENGINE DOES NOT.
+ *
+ * Measured on the owner's ledger 2026-09-15, in page order: /spending and
+ * /categories/[id] rendered "This page didn't render." over `Invalid ISO date:
+ * "0099-01-01"` for ?period=0100 (the prior window), `"10000-01-01"` for 9999
+ * (the next month), `"0099-12-28"` for 0100-01-01 (the Week pill's Monday) and
+ * `"0050-01-01"` for 0050 — while `resolvePeriod` promises that anything
+ * malformed falls back to the current month. /summary had the same defect and
+ * fixed it at the route with `parseSummaryYear`; this is that bound, at these
+ * pages' boundary, and deliberately NOT inside `resolvePeriod` — the prior
+ * window is resolved through it, so a bound there would compare January 1900
+ * against the current month.
+ */
+describe("parsePeriodParams — a URL year the app does not describe never reaches the engine", () => {
+  test("a year outside isSummaryYear's bound is dropped, so the page falls back to the current month", () => {
+    for (const period of ["0000", "0050", "0099", "0099-12", "0100", "0100-Q1", "1899", "1899-12", "2201", "9999", "9999-12", "9999-Q4", "W0100-01-04", "0100-01-01"]) {
+      expect(parsePeriodParams({ period }).period, period).toBeNull();
+      expect(resolvePeriod(parsePeriodParams({ period }), TODAY), period).toMatchObject({ granularity: "month", key: "2026-07" });
+    }
+    expect(parsePeriodParams({ from: "0100-01-01", to: "0100-01-02" })).toEqual({ period: null, from: null, to: null });
+    expect(parsePeriodParams({ from: "2026-01-01", to: "9999-12-31" }).to).toBeNull();
+  });
+
+  test("the bound's own ends, and every non-year form, pass through untouched", () => {
+    for (const period of ["1900", "1900-01", "1900-Q1", "W1900-01-01", "1900-01-01", "2200", "2200-12", "2200-Q4", "2200-12-31", "2026-07", "YTD", "ALL", "nonsense", "2026-13", "12345"]) {
+      expect(parsePeriodParams({ period }).period, period).toBe(period);
+    }
+    expect(parsePeriodParams({ from: "1900-01-01", to: "2200-12-31" })).toEqual({ period: null, from: "1900-01-01", to: "2200-12-31" });
+    expect(parsePeriodParams({})).toEqual({ period: null, from: null, to: null });
+  });
+
+  /*
+   * ⛔ The agreement loop, over EVERY four-digit year in every URL form: resolve
+   * through the boundary, then run what the two pages derive from the window —
+   * both neighbours, every granularity switch, the buckets, the comparison and
+   * a year of months back (the category trend) — and nothing may throw. The
+   * same shape cb32720 pinned for /summary.
+   */
+  test("every four-digit year in every form resolves, pages, switches and compares without throwing", () => {
+    const seen = new Set<string>();
+    const exercise = (p: ResolvedPeriod): void => {
+      const key = `${p.granularity}:${p.from}:${p.to}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      for (const delta of [-1, 1]) resolvePeriod(parsePeriodParams(stepPeriodParams(p, delta)), TODAY);
+      for (const target of ["day", "week", "month", "quarter", "year"] as const) {
+        resolvePeriod(parsePeriodParams(switchGranularityParams(p, target)), TODAY);
+      }
+      subBuckets(p);
+      comparePeriods({ period: p, today: TODAY, importedThrough: TODAY, ledgerOpens: "1900-01-01" });
+      addCalendarMonths(p.to, -12);
+    };
+    for (let y = 0; y <= 9999; y += 1) {
+      const yyyy = String(y).padStart(4, "0");
+      const forms: PeriodParams[] = [
+        { period: yyyy },
+        { period: `${yyyy}-01` },
+        { period: `${yyyy}-12` },
+        { period: `${yyyy}-Q1` },
+        { period: `${yyyy}-Q4` },
+        { period: `W${yyyy}-01-01` },
+        { period: `${yyyy}-01-01` },
+        { period: `${yyyy}-12-31` },
+        { from: `${yyyy}-01-01`, to: `${yyyy}-01-02` },
+        { from: `${yyyy}-12-30`, to: `${yyyy}-12-31` },
+      ];
+      for (const form of forms) {
+        expect(() => exercise(resolvePeriod(parsePeriodParams(form), TODAY)), JSON.stringify(form)).not.toThrow();
+      }
+    }
   });
 });
 

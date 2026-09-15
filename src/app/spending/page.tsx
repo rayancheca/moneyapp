@@ -12,6 +12,7 @@ import {
   heatmapInitialMonth,
   periodParams as periodParamsOf,
   periodQuery,
+  parsePeriodParams,
   resolvePeriod,
 } from "@/lib/period";
 import { WHERE_VIEW_SPEC } from "@/lib/massif-layout";
@@ -73,7 +74,7 @@ export default async function SpendingPage({
   // "All time" needs the ledger's real first day, or it draws years of empty
   // axis before the first transaction
   const period = resolvePeriod(
-    { period: firstParam(raw.period), from: firstParam(raw.from), to: firstParam(raw.to) },
+    parsePeriodParams({ period: firstParam(raw.period), from: firstParam(raw.from), to: firstParam(raw.to) }),
     today,
     ledgerFirstDay(db) ?? undefined,
   );

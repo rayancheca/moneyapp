@@ -6,7 +6,7 @@ import { categories } from "@/db/schema/categories";
 import { compareDates, todayIso } from "@/lib/dates";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
-import { resolvePeriod, withPeriod } from "@/lib/period";
+import { parsePeriodParams, resolvePeriod, withPeriod } from "@/lib/period";
 import { emptyPeriodCopy, emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "@/services/observation-frontier";
 import { categorySpending } from "@/services/analytics";
@@ -74,7 +74,7 @@ export default async function CategoryPage({
   // without it this page started 2020-01-01, 967 days earlier, so the same
   // words named two windows one click apart
   const period = resolvePeriod(
-    { period: firstParam(raw.period), from: firstParam(raw.from), to: firstParam(raw.to) },
+    parsePeriodParams({ period: firstParam(raw.period), from: firstParam(raw.from), to: firstParam(raw.to) }),
     today,
     ledgerFirstDay(db) ?? undefined,
   );
