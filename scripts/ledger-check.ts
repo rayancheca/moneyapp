@@ -136,6 +136,9 @@ const BASELINE: LedgerBaseline = {
       { on: "2025-08-31", offByCents: 816 },
       { on: "2026-02-28", offByCents: -8_915 },
       { on: "2026-07-31", offByCents: -19_762 },
+      // 2026-09-15: the August statement imported; the rebuilt holdings match all
+      // nine of its positions to the share, so this is the price mark alone
+      { on: "2026-08-31", offByCents: 10_625 },
     ],
     "Robinhood Crypto": [
       { on: "2025-10-31", offByCents: -14 },
@@ -147,6 +150,12 @@ const BASELINE: LedgerBaseline = {
       { on: "2026-04-30", offByCents: -1_618 },
       { on: "2026-05-31", offByCents: 40 },
       { on: "2026-06-30", offByCents: -2_449 },
+      // 2026-09-15: the July and August crypto statements were imported and the
+      // typed ETH event replaced by their 15 trades — the quantity matches both
+      // closes exactly; what is left is the price mark (the cached close vs the
+      // price Robinhood printed), the same kind as every entry above
+      { on: "2026-07-31", offByCents: 4_006 },
+      { on: "2026-08-31", offByCents: 2_811 },
     ],
   },
 };
