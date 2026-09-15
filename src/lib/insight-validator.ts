@@ -8,7 +8,7 @@ import {
   type ClaimTemplate,
   type FactField,
 } from "./insight-grammar";
-import { normalizeForCheck } from "./insight-text";
+import { containsFigure, normalizeForCheck } from "./insight-text";
 
 /**
  * The two gates an insight passes before a reader sees it.
@@ -91,17 +91,11 @@ function predicateFails(claim: ClaimTemplate, a: Fact, b: Fact | undefined): Rej
   return reject("unsupported-claim", `"${claim.id}" needs ${claim.why} — ${a.subject} does not have one`);
 }
 
-/** see `lib/insight-text` — the one fold both this gate and the template check read */
-export { normalizeForCheck };
-
 /**
- * Does this text contain a figure at all? Used only to give a SHARPER REASON
- * when wording is unknown — never as the check itself, which is the mistake
- * that made a digit scan look like an anti-fabrication guard in the first place.
+ * see `lib/insight-text` — the one fold and the one figure scan both this gate
+ * and the template check read
  */
-export function containsFigure(text: string): boolean {
-  return /\d/u.test(normalizeForCheck(text));
-}
+export { containsFigure, normalizeForCheck };
 
 function bindingFor(claim: ClaimTemplate, facts: FactSet, aId: string, bId: string | undefined): Verdict | { a: Fact; b?: Fact } {
   const a = facts.get(aId);

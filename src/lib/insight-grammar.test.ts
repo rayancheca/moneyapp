@@ -161,6 +161,19 @@ describe("a malformed vocabulary fails at import, not at render", () => {
     expect(bad({ template: "{{a.name}} came to {{a.value}} per m²." })).toThrow(/figure of its own/);
   });
 
+  /**
+   * 🔴 …and the fold is not the whole of it. NFKC maps fullwidth and
+   * mathematical digits to ASCII but leaves every other script's decimal digits
+   * as they are, and `/\d/u` matches only [0-9] — so "٣", "३" and "৩" (three, in
+   * Arabic-Indic, Devanagari and Bengali) were still ACCEPTED at import once the
+   * fold went in (measured 2026-09-15).
+   */
+  test("a figure in another script's digits is still a figure", () => {
+    for (const three of ["٣", "३", "৩"]) {
+      expect(bad({ template: `{{a.name}} came to {{a.value}} across ${three} months.` })).toThrow(/figure of its own/);
+    }
+  });
+
   test("two sentences pretending to be one claim", () => {
     expect(bad({ template: "{{a.name}} came to {{a.value}}. That is a lot." })).toThrow(/exactly one sentence/);
     expect(bad({ template: "{{a.name}} came to {{a.value}}" })).toThrow(/exactly one sentence/);

@@ -21,3 +21,22 @@
 export function normalizeForCheck(text: string): string {
   return text.normalize("NFKC").replace(/\s+/gu, " ").trim();
 }
+
+/**
+ * Does this text state a figure at all, in any script?
+ *
+ * Used for two things and never as an anti-fabrication guard: the grammar's
+ * import-time refusal of a template that states a figure of its own, and the
+ * validator's SHARPER REASON when wording is unknown. A digit scan is the
+ * mistake that made pass 46 look guarded.
+ *
+ * 🔴 Folded first, then scanned for every decimal digit and numeric character
+ * rather than `\d`. NFKC turns `½`, `１０` and `²` into ASCII but leaves "٣",
+ * "३" and "৩" (three, in Arabic-Indic, Devanagari and Bengali) as they are, and
+ * `/\d/u` matches only [0-9] — so a template stating its own figure in one of
+ * those scripts still passed the import-time check (measured 2026-09-15). One
+ * scan, so the two callers cannot disagree about what a figure is.
+ */
+export function containsFigure(text: string): boolean {
+  return /[\p{Nd}\p{No}]/u.test(normalizeForCheck(text));
+}

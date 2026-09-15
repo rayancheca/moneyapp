@@ -413,6 +413,14 @@ describe("normalisation", () => {
     expect(containsFigure("１０ things")).toBe(true);
     expect(containsFigure("no numbers here")).toBe(false);
   });
+
+  test("containsFigure sees a digit in any script, not only the ones the fold turns into ASCII", () => {
+    for (const three of ["٣", "३", "৩"]) {
+      // the fold leaves them alone, so the scan itself has to know them
+      expect(normalizeForCheck(three)).toBe(three);
+      expect(containsFigure(`${three} things`)).toBe(true);
+    }
+  });
 });
 
 describe("the delta and trend claims that need a direction", () => {
