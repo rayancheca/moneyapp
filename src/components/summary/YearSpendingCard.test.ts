@@ -43,7 +43,7 @@ describe("YearSpendingCard — the figures survive the insights switch", () => {
     expect(html).toContain("$66,477.60");
     expect(html).toContain("Change from Jan 1 – Aug 12, 2025");
     expect(html).toContain("+$42,950.02");
-    expect(html).toContain('aria-label="How Spending in Jan 1 – Aug 12, 2026 is proven — a proof"');
+    expect(html).toContain('aria-label="How Spending in Jan 1 – Aug 12, 2026 is known — a proof"');
     // not the insight list: nothing here is a sentence the switch turned off
     expect(html).not.toContain('id="ledger-insights"');
     // a badge's popover is a div, and a div may never sit inside a <p>

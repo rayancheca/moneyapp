@@ -34,6 +34,7 @@ describe("the window captions beside the runway card", () => {
     months,
     fromMonth: "2022-09",
     toMonth: "2022-09",
+    spendingHref: "/spending?period=2022-09",
     isEmpty: false,
   });
 
