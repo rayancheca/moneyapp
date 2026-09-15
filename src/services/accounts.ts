@@ -7,6 +7,7 @@ import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { isInvestmentSide } from "@/lib/account-side";
 import { isPrintableName } from "@/lib/printable-name";
+import { ACCOUNT_ORDER } from "./account-order";
 import { latestBalances, rebuildAccount, type AccountBalance } from "./derivation";
 
 export const accountInputSchema = z.object({
@@ -77,18 +78,14 @@ export function investmentSideAccountIds(db: AppDatabase): Set<string> {
 }
 
 /**
- * Every account as `{id, name}`, in THE order — institution, then the
- * within-institution `displayOrder`, then name.
+ * Every account as `{id, name}`, in THE order — `ACCOUNT_ORDER`: institution,
+ * then the within-institution `displayOrder`, then name.
  *
- * 🔴 `/transactions`' account picker ran its own `orderBy(displayOrder, name)`.
- * `displayOrder` is an ordinal `reorderAccounts` writes across ONE
- * institution's list (see its docstring below), so ordering the whole ledger by
- * it alone orders by a number that means nothing between institutions: on the
- * owner's ledger it listed nine accounts alphabetically and then appended Chase
- * Checking, Robinhood Cash and Robinhood Crypto — the 1s and the 2 — after
- * Wells Fargo, splitting both Chase accounts and all three Robinhood ones
- * apart. The one list where a reader has to FIND a name was the one list in no
- * order at all.
+ * 🔴 `/transactions`' account picker ran its own `orderBy(displayOrder, name)`,
+ * which on the owner's ledger listed nine accounts alphabetically and then
+ * appended Chase Checking, Robinhood Cash and Robinhood Crypto — the 1s and the
+ * 2 — after Wells Fargo. The one list where a reader has to FIND a name was the
+ * one list in no order at all.
  *
  * ⚠️ Not `listAccounts().map(...)`. That one also runs `latestBalances`, a full
  * scan of the derived cache, and a dropdown does not need a balance.
@@ -98,7 +95,7 @@ export function listAccountOptions(db: AppDatabase): { id: string; name: string 
     .select({ id: accounts.id, name: accounts.name })
     .from(accounts)
     .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
-    .orderBy(asc(institutions.name), asc(accounts.displayOrder), asc(accounts.name))
+    .orderBy(...ACCOUNT_ORDER)
     .all();
 }
 
@@ -117,7 +114,7 @@ export function listAccounts(db: AppDatabase): AccountView[] {
     })
     .from(accounts)
     .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
-    .orderBy(asc(institutions.name), asc(accounts.displayOrder), asc(accounts.name))
+    .orderBy(...ACCOUNT_ORDER)
     .all();
 
   const balances = latestBalances(db);

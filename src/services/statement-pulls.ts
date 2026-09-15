@@ -1,9 +1,11 @@
-import { asc, eq, ne } from "drizzle-orm";
+import { eq, ne } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { statementPeriods } from "@/db/schema/imports";
+import { institutions } from "@/db/schema/institutions";
 import { todayIso } from "@/lib/dates";
 import { statementPull, type StatementPull } from "@/lib/statement-cadence";
+import { ACCOUNT_ORDER } from "./account-order";
 
 /**
  * Which accounts have a statement waiting to be downloaded (ux: the Imports
@@ -41,8 +43,10 @@ export function statementPulls(
   const rows = db
     .select({ id: accounts.id, name: accounts.name })
     .from(accounts)
+    .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
     .where(eq(accounts.isActive, true))
-    .orderBy(asc(accounts.displayOrder), asc(accounts.name))
+    // THE order: the dashboard Statements teaser prints these as they come
+    .orderBy(...ACCOUNT_ORDER)
     .all();
 
   const closes = db

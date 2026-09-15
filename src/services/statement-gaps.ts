@@ -2,8 +2,10 @@ import { asc, eq } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { statementPeriods } from "@/db/schema/imports";
+import { institutions } from "@/db/schema/institutions";
 import { statementCadence } from "@/lib/statement-cadence";
 import { statementHoles, type StatementHole } from "@/lib/statement-holes";
+import { ACCOUNT_ORDER } from "./account-order";
 
 /**
  * Which statements are NOT in the ledger, per account.
@@ -38,8 +40,10 @@ export function statementGaps(db: AppDatabase): AccountStatementGaps[] {
   const rows = db
     .select({ id: accounts.id, name: accounts.name })
     .from(accounts)
+    .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
     .where(eq(accounts.isActive, true))
-    .orderBy(accounts.displayOrder, accounts.name)
+    // THE order: StatementGapsPanel prints these as they come
+    .orderBy(...ACCOUNT_ORDER)
     .all();
 
   const out: AccountStatementGaps[] = [];

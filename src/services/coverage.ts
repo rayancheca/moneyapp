@@ -4,8 +4,10 @@ import type { AppDatabase } from "@/db/client";
 import { accounts, type AccountType } from "@/db/schema/accounts";
 import { balanceAnchors, dailyBalances, type BalanceBasis } from "@/db/schema/balances";
 import { statementPeriods } from "@/db/schema/imports";
+import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { diffDays, todayIso } from "@/lib/dates";
+import { ACCOUNT_ORDER } from "./account-order";
 
 /**
  * Per-account answer to "is this account's money actually checked, and through
@@ -186,8 +188,10 @@ const accountCoverageCached = cache(function accountCoverageCached(
   const rows = db
     .select({ id: accounts.id, name: accounts.name, type: accounts.type })
     .from(accounts)
+    .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
     .where(eq(accounts.isActive, true))
-    .orderBy(accounts.displayOrder, accounts.name)
+    // THE order: the net-worth popover and ConcentrationCard print these as they come
+    .orderBy(...ACCOUNT_ORDER)
     .all();
 
   return rows.map((account) => {
