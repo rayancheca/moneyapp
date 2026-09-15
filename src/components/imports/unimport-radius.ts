@@ -17,7 +17,8 @@ import type { UnimportCounts } from "@/services/import/unimport-counts";
  *
  * 🔴 …"5 legs, still linked" was a claim about every kept leg, and on 2026-09-15
  * one of those five (+$115.00, 2026-03-02) was alone in its transfer group, as
- * was one of 20250702's two. A kept leg reads as linked only where its group
+ * was one of 20250702's two, until `link-sapphire-one-leg-groups-2026-09-15.ts`
+ * linked both the same day. A kept leg reads as linked only where its group
  * still holds another live row after the un-import (`transferLegsKeptLinked`).
  */
 export interface UnimportRadiusInput {

@@ -26,8 +26,9 @@ const VENTURE_X_AUG: UnimportCounts = {
 
 /**
  * 20260302-statements-9805-.pdf — 4 parsed rows, every one a surviving
- * duplicate; 5 attached, and one of those five (+$115.00, 2026-03-02) is alone
- * in its transfer group
+ * duplicate; 5 attached, and one of those five (+$115.00, 2026-03-02) alone in
+ * its transfer group — the file's counts as read on 2026-09-15, before
+ * `link-sapphire-one-leg-groups-2026-09-15.ts` linked that leg
  */
 const SAPPHIRE_MAR: UnimportCounts = {
   deleted: 4,
@@ -56,7 +57,8 @@ const SAPPHIRE_JUL: UnimportCounts = {
 
 /**
  * 20250702-statements-9805-.pdf — 11 parsed rows; 2 attached, and the +$20.00
- * of 2025-06-10 is alone in its transfer group
+ * of 2025-06-10 alone in its transfer group — as read on 2026-09-15, before
+ * `link-sapphire-one-leg-groups-2026-09-15.ts` linked it
  */
 const SAPPHIRE_JUL_2025: UnimportCounts = {
   deleted: 11,

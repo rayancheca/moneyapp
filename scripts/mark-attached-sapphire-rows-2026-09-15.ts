@@ -43,6 +43,19 @@
  * The migration runs when this script opens the database (every
  * `createDatabase` does): an added nullable column, nothing else.
  *
+ * ⛔ ORDER on the real ledger: stop the dev server and take the restore point
+ * BEFORE anything running code that carries migration 0016 opens
+ * `data/moneyapp.db` — the app, this script, any other script. The first open
+ * applies it, so a restore point taken afterwards is already migrated.
+ *
+ * ⚠️ `attach-sapphire-payment-rows-2026-09-14.ts` is no post-check for this write
+ * on today's ledger. `pair-checking-115-reversal-2026-09-15.ts` grouped Chase
+ * Checking's cancelled −$115.00 (019f4ca7-a6cd-7694-9efd-664fae9f334e) with the
+ * leg it cancels, and the attach script's after-state still expects that row
+ * ungrouped, so it REFUSES naming it whether or not the 34 are marked. Measured
+ * on .backup copies, 2026-09-15: unmarked, it names the 34 and that row; marked,
+ * that row alone. Read the marker back instead (runbook).
+ *
  *   pnpm tsx scripts/mark-attached-sapphire-rows-2026-09-15.ts --db=data/moneyapp.db
  *   pnpm tsx scripts/mark-attached-sapphire-rows-2026-09-15.ts --db=data/moneyapp.db --confirm
  */

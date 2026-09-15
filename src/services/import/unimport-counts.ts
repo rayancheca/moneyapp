@@ -30,7 +30,8 @@ export interface UnimportCounts {
    * 🔴 The confirmation called every kept leg "still linked": on 2026-09-15 one of
    * 20260302-statements-9805-.pdf's five (+$115.00, 2026-03-02) and one of
    * 20250702's two (+$20.00, 2025-06-10) were alone in their groups (read-only,
-   * real ledger). A partner the file parsed is deleted, and the un-import then
+   * real ledger), until `link-sapphire-one-leg-groups-2026-09-15.ts` linked both
+   * the same day. A partner the file parsed is deleted, and the un-import then
    * unlinks the kept leg (`legsLeftAloneBy`); a superseded member is no transfer.
    * Read on the ledger as it stands: a retired twin the un-import restores is
    * not foreseen, as `duplicateSurvivors` explains.
