@@ -12,6 +12,7 @@ import {
   sharePercent,
   spendingShare,
   spendingShareBase,
+  sumOfPrintedShares,
 } from "./insight-facts";
 
 /**
@@ -30,6 +31,68 @@ describe("spendingShareBase — the one denominator of a share of spending", () 
     expect(spendingShareBase([])).toBe(0);
     expect(spendingShareBase([{ spentCents: -1 }])).toBe(0);
     expect(spendingShareBase([{ spentCents: 0 }])).toBe(0);
+  });
+});
+
+/**
+ * 🔴 S28. A subtotal printed beside rows was `sharePercent(Σ)` — the unrounded
+ * sum rounded once — while each row rounds on its own, so a reader adding the
+ * rows landed a tenth away from the figure beside them. Measured on the owner's
+ * ledger 2026-09-15: "Individual stocks 51.5%" under stock rows adding to 51.6,
+ * and "Share 30.1%" under ticked Alloc cells adding to 30.2.
+ *
+ * ⚖️ Owner decision 2026-09-14 (F2): the subtotal is the SUM of the rounded rows,
+ * the movers card's "the total is the sum of the rows" — never an apportionment
+ * that moves a row off its honest round.
+ */
+describe("sumOfPrintedShares — a subtotal is the sum of the rows printed beside it", () => {
+  test("adds the tenths the rows print, not the unrounded shares", () => {
+    // ETH 54.7375% prints 54.7% and AAPL 13.5147% prints 13.5%: a reader adds 68.2
+    expect(sumOfPrintedShares([54.7375, 13.5147])).toBe("68.2%");
+    expect(sharePercent(54.7375 + 13.5147)).toBe("68.3%");
+    expect(sumOfPrintedShares([21.3886, 8.1522])).toBe("29.6%");
+    expect(sumOfPrintedShares([33.8685, 6.4576])).toBe("40.4%");
+  });
+
+  test("one row's subtotal is that row, floors and all", () => {
+    const rows = [0, 0.0413, 0.05, 8.000000000000002, 33, 49.92, 99.94, 99.97, 100, -0.03, -30];
+    for (const p of rows) expect(sumOfPrintedShares([p])).toBe(sharePercent(p));
+    expect(rows.map((p) => sumOfPrintedShares([p]))).toHaveLength(11);
+  });
+
+  test("rows that all print a floor never add to a printed zero", () => {
+    expect(sumOfPrintedShares([0.02, 0.02])).toBe("<0.1%");
+    // three slivers really are 0.12% — "<0.1%" would be false, "0.0%" worse
+    expect(sumOfPrintedShares([0.04, 0.04, 0.04])).toBe("0.1%");
+    expect(sumOfPrintedShares([0, 0])).toBe("0.0%");
+    expect(sumOfPrintedShares([])).toBe("0.0%");
+  });
+
+  test("a sliver beside a printed row adds nothing a reader can see", () => {
+    expect(sumOfPrintedShares([0.0413, 21.3886])).toBe("21.4%");
+  });
+
+  test("rows printing to the whole of something that is not the whole never claim it", () => {
+    // 59.96 prints 60.0 and 39.96 prints 40.0, of 99.92
+    expect(sumOfPrintedShares([59.96, 39.96])).toBe(">99.9%");
+    // one near-whole row keeps its own floor beside a sliver
+    expect(sumOfPrintedShares([99.97, 0.01])).toBe(">99.9%");
+  });
+
+  test("rows printing PAST the whole of the whole stop at the whole", () => {
+    // 33.35 prints 33.4 twice: 100.1 of exactly 100
+    expect(sumOfPrintedShares([33.35, 33.35, 33.3])).toBe("100.0%");
+    // sevenths print 14.3 seven times (100.1) and their float sum is 99.99999999999997 —
+    // a whole that floating point shaved must not read as short of it
+    const sevenths = Array.from({ length: 7 }, () => (1 / 7) * 100);
+    expect(sevenths.reduce((s, p) => s + p, 0)).toBeLessThan(100);
+    expect(sumOfPrintedShares(sevenths)).toBe("100.0%");
+  });
+
+  test("rows printing short of the whole keep the sum a reader makes", () => {
+    // thirds print 33.3 three times: the rows say 99.9, and so does their subtotal
+    const thirds = Array.from({ length: 3 }, () => (1 / 3) * 100);
+    expect(sumOfPrintedShares(thirds)).toBe("99.9%");
   });
 });
 

@@ -2,7 +2,6 @@ import Link from "next/link";
 import { Money } from "@/components/ui/Money";
 import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
-import { sharePercent } from "@/lib/insight-facts";
 import type { ConcentrationCard as ConcentrationCardData } from "@/services/concentration-card";
 
 /**
@@ -10,10 +9,17 @@ import type { ConcentrationCard as ConcentrationCardData } from "@/services/conc
  *
  * ⛔ Presentation only. Every sentence here — the headline, the line under it,
  * the fund note, the rest-of-net-worth note, the price note — arrives from
- * `concentrationCard()` already written. The card formats money and rounds a
- * percentage; it decides nothing. That is not ceremony: the one judgement this
- * card makes (a fund is not the same risk as a company) has to be made in ONE
- * place, or the ranking and the sentence explaining the ranking drift apart.
+ * `concentrationCard()` already written, and so does every percentage. The card
+ * formats money; it decides nothing. That is not ceremony: the one judgement
+ * this card makes (a fund is not the same risk as a company) has to be made in
+ * ONE place, or the ranking and the sentence explaining the ranking drift apart.
+ *
+ * 🔴 The percentages used to be rounded HERE, one figure at a time, from the
+ * unrounded shares the service summed — so a subtotal was round(Σ) printed
+ * beside rows that each round on their own. Measured 2026-09-15 on the owner's
+ * ledger: "Individual stocks 51.5%" under stock lines adding to 51.6. Each
+ * `shareLabel` is written by the service now, subtotals as the sum of the rows
+ * printed above them (owner decision 2026-09-14).
  *
  * The fund is deliberately still IN the list, wearing what it is, rather than
  * hidden below it. Removing it would make the column stop adding up to the
@@ -69,7 +75,7 @@ export function ConcentrationCard({ data }: { data: ConcentrationCardData }) {
               {p.spreadNote && <span className="shrink-0 text-[11px] text-ink-faint">{p.spreadNote}</span>}
             </dt>
             <dd className="flex shrink-0 items-baseline gap-2">
-              <span className="figures text-xs text-ink-muted">{sharePercent(p.portfolioPct)}</span>
+              <span className="figures text-xs text-ink-muted">{p.shareLabel}</span>
               <Money cents={p.valueCents} />
             </dd>
           </div>
@@ -81,7 +87,7 @@ export function ConcentrationCard({ data }: { data: ConcentrationCardData }) {
               {remainder.count} smaller position{remainder.count === 1 ? "" : "s"}
             </dt>
             <dd className="flex shrink-0 items-baseline gap-2 text-ink-faint">
-              <span className="figures text-xs">{sharePercent(remainder.portfolioPct)}</span>
+              <span className="figures text-xs">{remainder.shareLabel}</span>
               <Money cents={remainder.valueCents} />
             </dd>
           </div>
@@ -105,7 +111,7 @@ export function ConcentrationCard({ data }: { data: ConcentrationCardData }) {
               {!k.isSingleName && <span className="shrink-0 text-[11px] text-ink-faint">spread</span>}
             </dt>
             <dd className="flex shrink-0 items-baseline gap-2">
-              <span className="figures text-xs text-ink-muted">{sharePercent(k.portfolioPct)}</span>
+              <span className="figures text-xs text-ink-muted">{k.shareLabel}</span>
               <Money cents={k.valueCents} />
             </dd>
           </div>

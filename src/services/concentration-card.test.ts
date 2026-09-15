@@ -260,6 +260,135 @@ describe("concentrationCard — what the portfolio is riding on", () => {
     );
   });
 
+  /**
+   * 🔴 S28. The test above compares FLOATS, and a float sum always equals the
+   * same float sum — it cannot fail. What a reader adds is the tenths printed on
+   * the rows, and the card printed round(Σ) beside Σ round. Measured on the
+   * owner's ledger 2026-09-15: "Individual stocks 51.5%" under the stock rows
+   * MSFT 18.2% · AMZN 8.2% · UNH 6.8% · 5 smaller positions 18.4%, which add to
+   * 51.6. This fixture showed it all along: ETH 54.7% and AAPL 13.5% add to
+   * 68.2, and the top-two sentence read 68.3%.
+   *
+   * ⚖️ Owner decision 2026-09-14 (F2): a subtotal is the SUM of the rounded
+   * rows printed beside it — no apportionment, so no holding's share moves.
+   */
+  test("the top two's printed share is the sum of the two rows' printed shares", () => {
+    seedBook();
+    const c = concentrationCard(bundle.db, TODAY)!;
+    const printed = (symbol: string): string => c.positions.find((p) => p.symbol === symbol)!.shareLabel;
+
+    expect(printed("ETH")).toBe("54.7%");
+    expect(printed("AAPL")).toBe("13.5%");
+    expect(c.topTwo!.shareLabel).toBe("68.2%");
+    expect(c.topTwoNote).toContain("together are 68.2% of the portfolio");
+    // the sentence under the headline reads the row's own label, not a third rounding
+    expect(c.summary).toContain("— 54.7% of it —");
+  });
+
+  test("an asset class's printed share is the sum of its printed rows", () => {
+    // $4,992 · $3,004 · $2,004 = $10,000.00 — each share ends in .x2 or .x4, so every row rounds down
+    cache("ETH", "crypto", 1_248);
+    cache("MSFT", "stock", 751);
+    cache("AAPL", "stock", 501);
+    hold(crypto, "ETH", "crypto", 400_000_000);
+    hold(brokerage, "MSFT", "stock", 400_000_000);
+    hold(brokerage, "AAPL", "stock", 400_000_000);
+    rebuildInvestmentHistory(bundle.db, brokerage, TODAY);
+    rebuildInvestmentHistory(bundle.db, crypto, TODAY);
+
+    const c = concentrationCard(bundle.db, TODAY)!;
+    expect(c.portfolioCents).toBe(1_000_000);
+    expect(c.positions.map((p) => [p.symbol, p.shareLabel])).toEqual([
+      ["ETH", "49.9%"],
+      ["MSFT", "30.0%"],
+      ["AAPL", "20.0%"],
+    ]);
+    const kind = (t: AssetType): string => c.byKind.find((k) => k.assetType === t)!.shareLabel;
+    expect(kind("stock")).toBe("50.0%"); // round(50.08) printed 50.1% over rows adding to 50.0
+    expect(kind("crypto")).toBe("49.9%"); // a class of one is its row
+    expect(c.topTwo!.shareLabel).toBe("79.9%"); // round(79.96) printed 80.0%
+    expect(c.topTwoNote).toContain("together are 79.9%");
+  });
+
+  /** ETH $4,000 · SPY $2,000 · AAPL $1,504 · MSFT $1,204 · NVDA $904 · GOOG $204 · a sixth at $184 */
+  function seedTail(sixth: { symbol: string; assetType: AssetType }): void {
+    const book: [string, AssetType, number, string][] = [
+      ["ETH", "crypto", 4_000, crypto],
+      ["SPY", "etf", 2_000, brokerage],
+      ["AAPL", "stock", 1_504, brokerage],
+      ["MSFT", "stock", 1_204, brokerage],
+      ["NVDA", "stock", 904, brokerage],
+      ["GOOG", "stock", 204, brokerage],
+      [sixth.symbol, sixth.assetType, 184, brokerage],
+    ];
+    for (const [symbol, assetType, close, account] of book) {
+      cache(symbol, assetType, close);
+      hold(account, symbol, assetType, 100_000_000);
+    }
+    rebuildInvestmentHistory(bundle.db, brokerage, TODAY);
+    rebuildInvestmentHistory(bundle.db, crypto, TODAY);
+  }
+
+  test("a remainder wholly of one class adds into that class as the line it prints", () => {
+    seedTail({ symbol: "META", assetType: "stock" });
+
+    const c = concentrationCard(bundle.db, TODAY)!;
+    expect(c.positions.map((p) => [p.symbol, p.shareLabel])).toEqual([
+      ["ETH", "40.0%"],
+      ["SPY", "20.0%"],
+      ["AAPL", "15.0%"],
+      ["MSFT", "12.0%"],
+      ["NVDA", "9.0%"],
+    ]);
+    expect(c.remainder!.count).toBe(2);
+    expect(c.remainder!.shareLabel).toBe("3.9%");
+    const kind = (t: AssetType): string => c.byKind.find((k) => k.assetType === t)!.shareLabel;
+    // 15.0 + 12.0 + 9.0 + 3.9 — where round(40.00) printed 40.0%
+    expect(kind("stock")).toBe("39.9%");
+    expect(kind("crypto")).toBe("40.0%");
+    expect(kind("etf")).toBe("20.0%");
+    // the fund sentence quotes the Funds line, not a fourth author
+    expect(c.fundNote).toContain("$2,000.00, 20.0% of the portfolio");
+  });
+
+  test("a remainder that mixes classes cannot be added by class, so those classes print their own share", () => {
+    seedTail({ symbol: "VOO", assetType: "etf" });
+
+    const c = concentrationCard(bundle.db, TODAY)!;
+    expect(c.remainder!.shareLabel).toBe("3.9%"); // GOOG 2.04 + VOO 1.84
+    const kind = (t: AssetType): string => c.byKind.find((k) => k.assetType === t)!.shareLabel;
+    // no reader can split "2 smaller positions 3.9%" by class, so these are the classes' own shares
+    expect(kind("stock")).toBe("38.2%"); // 15.04 + 12.04 + 9.04 + 2.04
+    expect(kind("etf")).toBe("21.8%"); // 20.00 + 1.84
+    // a class with nothing in the remainder is still the sum of its rows
+    expect(kind("crypto")).toBe("40.0%");
+    expect(c.fundNote).toContain("$2,184.00, 21.8% of the portfolio");
+  });
+
+  test("a subtotal of slivers is a sliver, never a printed zero — and a near-whole never the whole", () => {
+    cache("SPY", "etf", 9_996);
+    cache("AAPL", "stock", 21);
+    cache("MSFT", "stock", 19);
+    hold(brokerage, "SPY", "etf", 1_000_000_000); // $99,960
+    hold(brokerage, "AAPL", "stock", 100_000_000); // $21
+    hold(brokerage, "MSFT", "stock", 100_000_000); // $19
+    rebuildInvestmentHistory(bundle.db, brokerage, TODAY);
+
+    const c = concentrationCard(bundle.db, TODAY)!;
+    expect(c.positions.map((p) => [p.symbol, p.shareLabel])).toEqual([
+      ["SPY", ">99.9%"],
+      ["AAPL", "<0.1%"],
+      ["MSFT", "<0.1%"],
+    ]);
+    expect(c.topTwo!.shareLabel).toBe("<0.1%");
+    const kind = (t: AssetType): string => c.byKind.find((k) => k.assetType === t)!.shareLabel;
+    expect(kind("stock")).toBe("<0.1%");
+    expect(kind("etf")).toBe(">99.9%");
+    // toFixed printed "100.0%" of a fund that is not the whole portfolio
+    expect(c.fundNote).toContain(">99.9% of the portfolio");
+    expect(c.summary).toContain("— <0.1% of it —");
+  });
+
   /** Two accounts holding one ticker are one position — allocationSlices' rule. */
   test("a symbol held in two accounts is one position, not two rows", () => {
     cache("ETH", "crypto", 2_000);

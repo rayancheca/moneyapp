@@ -420,6 +420,56 @@ export function sharePercent(pct: number): string {
 }
 
 /**
+ * Floating point can shave a whole: seven shares of 1/7 sum to
+ * 99.99999999999997, and `renderPercent` would call that ">99.9%". A real
+ * shortfall from the whole is at least a cent of the total, which is far above
+ * this precision for any portfolio or period the ledger holds.
+ */
+const SHARE_SUM_PRECISION = 1e9;
+
+/** The tenths `sharePercent` PRINTS for one share — a floor prints no tenths a reader can add. */
+function printedTenths(pct: number): number {
+  if (pct < 0) return -printedTenths(-pct);
+  if (pct < 0.05) return 0;
+  if (pct >= 99.95 && pct < 100) return 999;
+  return Math.round(Number(pct.toFixed(1)) * 10);
+}
+
+/**
+ * A subtotal of shares that are PRINTED beside it: the sum of the tenths those
+ * rows show, never the unrounded sum rounded once.
+ *
+ * 🔴 round(Σ) beside Σ round. Every subtotal on the dashboard's concentration
+ * card summed the unrounded shares and then rounded, while each row rounded on
+ * its own — measured on the owner's ledger 2026-09-15, "Individual stocks
+ * 51.5%" under stock lines adding to 51.6. /investments' tick-to-subtotal bar
+ * did the same: "Share 30.1%" under Alloc cells of 6.5%, 8.2% and 15.5%.
+ *
+ * ⚖️ Owner decision 2026-09-14 (F2): the subtotal is the SUM of the rounded
+ * rows — the movers card's "the total is the sum of the rows", applied to
+ * percents. Not an apportionment: that moves a row off its honest round, and two
+ * pages apportioning different row lists would print one holding two ways.
+ *
+ * `renderPercent`'s rule still holds at both ends, because a sum of printed
+ * rows can break it:
+ *   · rows that all print "<0.1%" have no tenths to add — the subtotal is
+ *     `sharePercent` of their real sum, so never "0.0%" over real money;
+ *   · rows printing 100.0 or more (or one printing ">99.9%") may only say
+ *     "100.0%" when they ARE the whole; short of it, ">99.9%".
+ * Rows printing short of the whole keep the reader's sum: thirds are 99.9%.
+ *
+ * @param parts 0–100 shares, each printed on its own row with `sharePercent`
+ */
+export function sumOfPrintedShares(parts: readonly number[]): string {
+  const exact = Math.round(parts.reduce((s, p) => s + p, 0) * SHARE_SUM_PRECISION) / SHARE_SUM_PRECISION;
+  const tenths = parts.reduce((s, p) => s + printedTenths(p), 0);
+  if (tenths === 0) return sharePercent(exact);
+  const printsTheWhole = tenths >= 1000 || parts.some((p) => p >= 99.95 && p < 100);
+  if (printsTheWhole) return exact >= 100 ? sharePercent(exact) : ">99.9%";
+  return `${(tenths / 10).toFixed(1)}%`;
+}
+
+/**
  * A category's share of a period's spending — or the REASON it has none.
  *
  * 🔴 The other half of `renderPercent`'s rule. That one stops a real quantity

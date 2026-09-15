@@ -4,6 +4,7 @@ import { formatNameList } from "@/lib/coverage-label";
 import { diffDays, todayIso } from "@/lib/dates";
 import { formatDayShort } from "@/lib/format-date";
 import { priceColumnAge, type HoldingPriceAge } from "@/lib/holding-price-age";
+import { sharePercent, sumOfPrintedShares } from "@/lib/insight-facts";
 import { formatCents } from "@/lib/money";
 import { latestBridgedNetWorthCents } from "./in-flight";
 import { allocationSlices, holdingRows } from "./portfolio";
@@ -34,9 +35,15 @@ import { provenanceFor, type Provenance } from "./provenance";
  * Even the per-position percentages are `allocationSlices`' own `allocationPct`
  * rather than a fresh `value / total`, and every share this module DOES compute
  * (the top two together, each asset class) is the SUM of those published
- * percentages rather than an independent division. That is not superstition
- * about floating point: it is what makes the rows a reader adds up in his head
- * agree with the subtotals printed beside them.
+ * percentages rather than an independent division.
+ *
+ * 🔴 That was meant to make the rows a reader adds up in his head agree with
+ * the subtotals printed beside them, and it did not: the card rounded each
+ * float sum ONCE, and a reader adds rows rounded EACH. Measured on the owner's
+ * ledger 2026-09-15: "Individual stocks 51.5%" under stock lines adding to 51.6.
+ * Every percentage now leaves this module written (`shareLabel`), and a subtotal
+ * is `sumOfPrintedShares` of the lines above it — owner decision 2026-09-14,
+ * the sum of the rounded rows, so no holding's share moves anywhere.
  *
  * ## 🔴 An index fund is not the same kind of concentration as one company
  *
@@ -111,6 +118,11 @@ export interface ConcentrationPosition {
   /** `allocationSlices`' own share of the priced portfolio, never recomputed */
   portfolioPct: number;
   /**
+   * That share as the card prints it — `sharePercent`, the rule every holding's
+   * share follows on every page, so a subtotal can add exactly this.
+   */
+  shareLabel: string;
+  /**
    * Share of everything he owns.
    *
    * ⛔ Null when net worth is not positive. `x / 0` is `Infinity` and a share of
@@ -129,6 +141,11 @@ export interface ConcentrationRemainder {
   count: number;
   valueCents: number;
   portfolioPct: number;
+  /**
+   * Its own share, printed — a PART, not a subtotal: the positions behind it
+   * are not on the card, so there is nothing printed for a reader to add.
+   */
+  shareLabel: string;
 }
 
 /** One asset class, summed from the published position shares. */
@@ -137,6 +154,13 @@ export interface ConcentrationKind {
   label: string;
   valueCents: number;
   portfolioPct: number;
+  /**
+   * The SUM of the lines printed for this class — its named rows, plus the
+   * remainder line when every position behind it is of this class. When the
+   * remainder mixes classes no reader can split it, so the class prints its own
+   * share instead. See `kindShareLabel`.
+   */
+  shareLabel: string;
   isSingleName: boolean;
 }
 
@@ -145,6 +169,8 @@ export interface ConcentrationTopTwo {
   symbols: string[];
   valueCents: number;
   portfolioPct: number;
+  /** the sum of the two rows' printed shares — both rows are always named */
+  shareLabel: string;
   netWorthPct: number | null;
 }
 
@@ -265,6 +291,7 @@ export function concentrationCard(
       assetType: s.assetType,
       valueCents: s.valueCents,
       portfolioPct: s.allocationPct,
+      shareLabel: sharePercent(s.allocationPct),
       netWorthPct: shareOfNetWorth(s.valueCents),
       isSingleName: isSingleName(s.assetType),
       spreadNote: isSingleName(s.assetType) ? null : FUND_ROW_NOTE,
@@ -289,6 +316,11 @@ export function concentrationCard(
    * two rows above must land on this number exactly; an independent division
    * is a second author for one figure, which is how "54.9%" ends up beside two
    * rows reading 33.7% and 21.2%.
+   *
+   * 🔴 …AND ADDED AS PRINTED. A float sum rounded once is not two rows rounded
+   * each: this module's own test book printed "ETH and AAPL together are 68.3%"
+   * under rows of 54.7% and 13.5%. Both rows are forced into the named list
+   * below, so both are always on the card for the reader to add.
    */
   const topTwo: ConcentrationTopTwo | null =
     top && second
@@ -296,6 +328,7 @@ export function concentrationCard(
           symbols: [top.symbol, second.symbol],
           valueCents: top.valueCents + second.valueCents,
           portfolioPct: top.portfolioPct + second.portfolioPct,
+          shareLabel: sumOfPrintedShares([top.portfolioPct, second.portfolioPct]),
           netWorthPct: shareOfNetWorth(top.valueCents + second.valueCents),
         }
       : null;
@@ -306,13 +339,15 @@ export function concentrationCard(
   for (const p of [top, second]) if (p) namedKeys.add(keyOf(p));
   const named = positions.filter((p) => namedKeys.has(keyOf(p)));
   const rest = positions.filter((p) => !namedKeys.has(keyOf(p)));
+  const remainderPct = rest.reduce((s, p) => s + p.portfolioPct, 0);
   const remainder: ConcentrationRemainder | null =
     rest.length === 0
       ? null
       : {
           count: rest.length,
           valueCents: rest.reduce((s, p) => s + p.valueCents, 0),
-          portfolioPct: rest.reduce((s, p) => s + p.portfolioPct, 0),
+          portfolioPct: remainderPct,
+          shareLabel: sharePercent(remainderPct),
         };
 
   const kindTotals = new Map<AssetType, { valueCents: number; portfolioPct: number }>();
@@ -323,12 +358,34 @@ export function concentrationCard(
       portfolioPct: cur.portfolioPct + p.portfolioPct,
     });
   }
+
+  /*
+   * What a reader can add up for one class: its named rows, and the remainder
+   * line only when every position behind that line is of this class.
+   *
+   * 🔴 Measured on the owner's ledger 2026-09-15: "Individual stocks 51.5%"
+   * under stock lines MSFT 18.2% · AMZN 8.2% · UNH 6.8% and "5 smaller
+   * positions 18.4%" — all five of them stocks — which add to 51.6.
+   *
+   * ⚖️ Owner decision 2026-09-14 (F2): the sum of the rounded rows. A remainder
+   * that MIXES classes cannot be split by class on the card, so a class with a
+   * position inside it prints its own share: there is nothing printed to add.
+   * Not reachable on the owner's ledger today — AAPL, COKE, GOOG, META and WMT
+   * are all stocks.
+   */
+  const remainderKinds = new Set(rest.map((p) => p.assetType));
+  const kindShareLabel = (assetType: AssetType, exactPct: number): string => {
+    const printed = named.filter((p) => p.assetType === assetType).map((p) => p.portfolioPct);
+    if (!remainderKinds.has(assetType)) return sumOfPrintedShares(printed);
+    return remainderKinds.size === 1 ? sumOfPrintedShares([...printed, remainderPct]) : sharePercent(exactPct);
+  };
   const byKind: ConcentrationKind[] = [...kindTotals.entries()]
     .map(([assetType, t]) => ({
       assetType,
       label: KIND_LABEL[assetType],
       valueCents: t.valueCents,
       portfolioPct: t.portfolioPct,
+      shareLabel: kindShareLabel(assetType, t.portfolioPct),
       isSingleName: isSingleName(assetType),
     }))
     .sort((a, b) => b.valueCents - a.valueCents);
@@ -355,14 +412,19 @@ export function concentrationCard(
 
   /* ── the words ─────────────────────────────────────────────────────────── */
 
-  const pct = (n: number): string => `${n.toFixed(1)}%`;
-
+  /*
+   * 🔴 A third rounding author lived here: `pct`, a bare `toFixed(1)` with no
+   * floors, wrote the headline, the summary and both notes while the rows used
+   * `sharePercent` — so a fund at 99.96% of the portfolio read "100.0%" in the
+   * fund note under a Funds line reading ">99.9%". Every percentage below is a
+   * printed line's own label, or `sharePercent` for the figures no line prints.
+   */
   const headline =
     top === null
       ? "Nothing"
       : top.netWorthPct !== null
-        ? pct(top.netWorthPct)
-        : pct(top.portfolioPct);
+        ? sharePercent(top.netWorthPct)
+        : top.shareLabel;
   /*
    * 🔴 "everything you own" is ASSETS; this denominator is net worth, which is
    * assets minus debts. Read on the owner's ledger 2026-09-04: assets
@@ -386,16 +448,16 @@ export function concentrationCard(
         `across hundreds of companies rather than resting on any one of them.`
       : portfolioSharePct === null
         ? `${top.symbol} is ${formatCents(top.valueCents)} of a ${formatCents(portfolioCents)} ` +
-          `portfolio, ${pct(top.portfolioPct)} of it. Your net worth is not positive, so there is ` +
+          `portfolio, ${top.shareLabel} of it. Your net worth is not positive, so there is ` +
           `no share of it to measure this against.`
         : `${top.symbol} is ${formatCents(top.valueCents)} of a ${formatCents(portfolioCents)} ` +
-          `portfolio — ${pct(top.portfolioPct)} of it — and the portfolio is ` +
-          `${pct(portfolioSharePct)} of your net worth — what you own with your debts netted off.`;
+          `portfolio — ${top.shareLabel} of it — and the portfolio is ` +
+          `${sharePercent(portfolioSharePct)} of your net worth — what you own with your debts netted off.`;
 
   const topTwoNote =
     topTwo === null
       ? null
-      : `${topTwo.symbols[0]} and ${topTwo.symbols[1]} together are ${pct(topTwo.portfolioPct)} of ` +
+      : `${topTwo.symbols[0]} and ${topTwo.symbols[1]} together are ${topTwo.shareLabel} of ` +
         `the portfolio, ${formatCents(topTwo.valueCents)}.`;
 
   const restNote =
@@ -424,15 +486,16 @@ export function concentrationCard(
           `Outside these positions you owe ${formatCents(Math.abs(restOfNetWorthCents))} more than ` +
           `you hold, so your net worth rests entirely on the portfolio — everything else nets to a debt.`;
 
-  const fundCents = funds.reduce((s, f) => s + f.valueCents, 0);
-  const fundPct = funds.reduce((s, f) => s + f.portfolioPct, 0);
+  // the Funds line itself — `etf` is the one class that is not a single name —
+  // so the sentence quotes that line's value and label rather than re-summing them
+  const fundKind = byKind.find((k) => !k.isSingleName) ?? null;
   const fundNote =
-    funds.length === 0
+    fundKind === null
       ? null
       : `${formatNameList(funds.map((f) => f.symbol), 3)} ` +
         `${funds.length === 1 ? "is a fund" : "are funds"}, not ` +
         `${funds.length === 1 ? "a company" : "companies"} — one ticker holding hundreds of them. ` +
-        `That is ${formatCents(fundCents)}, ${pct(fundPct)} of the portfolio: counted in every total ` +
+        `That is ${formatCents(fundKind.valueCents)}, ${fundKind.shareLabel} of the portfolio: counted in every total ` +
         `here, but never ranked beside a single stock, because a fund falling is the market falling ` +
         `rather than one thing going wrong.`;
 
