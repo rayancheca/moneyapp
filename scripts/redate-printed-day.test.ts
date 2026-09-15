@@ -15,8 +15,9 @@ import { rebuildAccount } from "@/services/derivation";
 import { PROFILES } from "@/services/import/profiles";
 import { chaseCardStatementPdf } from "@/services/import/profiles/chase-card-statement-profile";
 import type { Line } from "@/services/import/profiles/pdf-profile";
-import { importStatementFiles, parseContextFor, resolveAccount, storedLines, type ImportInput } from "@/services/import/service";
+import { asParsedFile, importStatementFiles, parseContextFor, resolveAccount, storedLines, unimportFile, type ImportInput } from "@/services/import/service";
 import { sniffFile } from "@/services/import/sniff";
+import { unimportCountsByFile } from "@/services/import/unimport-counts";
 import { Refusal, applyRedate, classifyRedate, lineFor, type RedateSpec } from "./redate-printed-day";
 import { captureLedger, compareLedger } from "./redate-printed-day-guards";
 
@@ -88,7 +89,8 @@ interface Fixture {
 
 /**
  * The real history of the row: reconstructed by hand posted 07-01 and transacted 06-30, the statement then
- * imported (its 06/30 line absorbed by the hand row's transaction day), and the row attached to that statement.
+ * imported (its 06/30 line absorbed by the hand row's transaction day), and the row attached to that statement
+ * with the marker the attach script writes (`file_link_source`, migration 0016).
  */
 async function attachedPayment(): Promise<Fixture> {
   const { db } = bundle;
@@ -130,7 +132,7 @@ async function attachedPayment(): Promise<Fixture> {
   const [outcome] = await importStatementFiles(db, [file]);
   expect(outcome).toMatchObject({ status: "parsed", inserted: 2, dedupedCrossFormat: 1 });
   const importFileId = db.select().from(importFiles).where(eq(importFiles.fileName, JULY)).get()!.id;
-  db.update(transactions).set({ importFileId }).where(eq(transactions.id, rowId)).run();
+  db.update(transactions).set({ importFileId, fileLinkSource: "attached" }).where(eq(transactions.id, rowId)).run();
   rebuildAccount(db, cardId, TODAY);
   rebuildAccount(db, checkingAccountId, TODAY);
 
@@ -153,7 +155,7 @@ async function attachedPayment(): Promise<Fixture> {
 }
 
 async function julyLines(f: Fixture) {
-  const [statement] = await chaseCardStatementPdf.parse(sniffFile(f.file.name, f.file.buffer), parseContextFor(bundle.db));
+  const [statement] = asParsedFile(await chaseCardStatementPdf.parse(sniffFile(f.file.name, f.file.buffer), parseContextFor(bundle.db))).statements;
   return storedLines(f.cardId, { type: "credit" }, statement!);
 }
 
@@ -220,15 +222,15 @@ describe("applyRedate — the app's supersede-and-replace, for one row", () => {
     expect(classifyRedate(bundle, f.spec, line)).toEqual({ kind: "applied", successorId });
   });
 
-  test("every column the table holds travels, including one a later migration adds", async () => {
+  test("every column the table holds travels — the attached marker, and one a later migration adds", async () => {
     const f = await attachedPayment();
-    // uc/unimport-keeps-attached's marker (migration 0016), which this branch's schema does not know
-    bundle.sqlite.exec("ALTER TABLE transactions ADD COLUMN file_link_source TEXT");
-    bundle.sqlite.prepare("UPDATE transactions SET file_link_source = 'attached' WHERE id = ?").run(f.spec.rowId);
+    // a column no schema in this checkout knows: the carry reads the table, not the schema
+    bundle.sqlite.exec("ALTER TABLE transactions ADD COLUMN later_migration_column TEXT");
+    bundle.sqlite.prepare("UPDATE transactions SET later_migration_column = 'carried' WHERE id = ?").run(f.spec.rowId);
 
     const successorId = await redated(f);
 
-    expect(rowById(successorId).file_link_source).toBe("attached");
+    expect(rowById(successorId)).toMatchObject({ file_link_source: "attached", later_migration_column: "carried" });
   });
 
   test("only the card's balance on the printed day moves, by the payment", async () => {
@@ -258,6 +260,68 @@ describe("applyRedate — the app's supersede-and-replace, for one row", () => {
     const { failures } = compareLedger(before, captureLedger(bundle, TODAY), f.spec, successorId);
     expect(failures.join(" | ")).toMatch(/daily_balances/);
     expect(failures.join(" | ")).toMatch(/every other transaction row/);
+  });
+
+  /*
+   * One tamper per guard, applied after a correct re-date: each guard must be able to fail on its own. The
+   * review (2026-09-15) deleted eight of them with this file still green.
+   */
+  const touch = (query: string, ...params: unknown[]): void => {
+    expect(bundle.sqlite.prepare(query).run(...params).changes).toBeGreaterThan(0);
+  };
+  const uberId = (): string =>
+    bundle.db.select().from(transactions).where(eq(transactions.rawDescription, "UBER *EATS 8005928996 CA")).get()!.id;
+  const june25Id = (cardId: string): string => livePaymentsOf(cardId).find((r) => r.postedOn === "2026-06-25")!.id;
+  test.each<[string, RegExp, (f: Fixture) => void]>([
+    [
+      "daily_balances: only the re-dated account, on the moved days, by the amount",
+      /2026-06-20 changed basis/,
+      (f) =>
+        touch(
+          "UPDATE daily_balances SET basis = CASE basis WHEN 'derived' THEN 'anchored' ELSE 'derived' END WHERE account_id = ? AND day = '2026-06-20'",
+          f.cardId,
+        ),
+    ],
+    [
+      "net worth: the moved days by the amount, every other day identical",
+      /2026-06-20: -?\d+ → -?\d+/,
+      (f) => touch("UPDATE daily_balances SET balance_cents = balance_cents + 1 WHERE account_id = ? AND day = '2026-06-20'", f.cardId),
+    ],
+    ["statement periods (every column)", /./, (f) => touch("UPDATE statement_periods SET reconciliation = 'accepted' WHERE import_file_id = ?", f.spec.importFileId)],
+    ["statuses: superseded +1, every other status identical", /excluded \+1/, () => touch("UPDATE transactions SET status = 'excluded' WHERE id = ?", uberId())],
+    ["active rows: count and sum identical", /→/, () => touch("UPDATE transactions SET status = 'excluded' WHERE id = ?", uberId())],
+    ["transfer group sizes identical", /./, (f) => touch("UPDATE transactions SET transfer_group_id = NULL WHERE id = ?", f.checkingId)],
+    ["no superseded row gains a link", /0 → 1/, (f) => touch("UPDATE transactions SET transfer_group_id = ? WHERE id = ?", f.checkingId, f.spec.rowId)],
+    [
+      "transfer groups inside one account unchanged",
+      /0 → 1/,
+      (f) => touch("UPDATE transactions SET transfer_group_id = ? WHERE id IN (?, ?)", uberId(), uberId(), june25Id(f.cardId)),
+    ],
+    ["the transfers card reads identically", /card\./, (f) => touch("UPDATE transactions SET transfer_group_id = NULL WHERE id = ?", f.checkingId)],
+    ["un-importing any file deletes and keeps what it did", /"kept":2/, () => touch("UPDATE transactions SET file_link_source = 'attached' WHERE id = ?", uberId())],
+  ])("the guard %s fails on its own tamper", async (name, detail, tamper) => {
+    const f = await attachedPayment();
+    const before = captureLedger(bundle, TODAY);
+    const successorId = await redated(f);
+    expect(compareLedger(before, captureLedger(bundle, TODAY), f.spec, successorId).failures).toEqual([]);
+
+    tamper(f);
+
+    const report = compareLedger(before, captureLedger(bundle, TODAY), f.spec, successorId);
+    expect(report.failures).toContain(name);
+    expect(report.lines.find((l) => l.startsWith(`FAIL  ${name} — `))).toMatch(detail);
+  });
+
+  test("the balance guard fails when the printed day did not move — a re-date whose balances were never rebuilt", async () => {
+    const f = await attachedPayment();
+    const line = lineFor(await julyLines(f), f.spec);
+    const before = captureLedger(bundle, TODAY);
+
+    const successorId = applyRedate(bundle, f.spec, line);
+
+    const report = compareLedger(before, captureLedger(bundle, TODAY), f.spec, successorId);
+    expect(report.failures).toContain("daily_balances: only the re-dated account, on the moved days, by the amount");
+    expect(report.lines.join("\n")).toMatch(/2026-06-30 did not move/);
   });
 });
 
@@ -296,6 +360,32 @@ describe("classifyRedate — the measured state, this write's state, or a refusa
     expect(() => classifyRedate(bundle, f.spec, line)).toThrow(/transaction_splits/);
   });
 
+  test("a row whose file prints no one period holding both days is refused", async () => {
+    const f = await attachedPayment();
+    const line = lineFor(await julyLines(f), f.spec);
+    bundle.sqlite.prepare("UPDATE statement_periods SET period_end = '2026-06-30' WHERE import_file_id = ?").run(f.spec.importFileId);
+
+    expect(() => classifyRedate(bundle, f.spec, line)).toThrow(/not one period holding 2026-07-01 and 2026-06-30/);
+  });
+
+  test("a row whose group is not one opposite leg in another account is refused", async () => {
+    const f = await attachedPayment();
+    const line = lineFor(await julyLines(f), f.spec);
+    bundle.sqlite.prepare("UPDATE transactions SET amount_cents = -9999 WHERE id = ?").run(f.checkingId);
+
+    expect(() => classifyRedate(bundle, f.spec, line)).toThrow(/not one opposite leg in another account/);
+  });
+
+  test("a row whose printed line a live row already records under its hash is refused", async () => {
+    const f = await attachedPayment();
+    const line = lineFor(await julyLines(f), f.spec);
+    const uber = bundle.db.select().from(transactions).where(eq(transactions.rawDescription, "UBER *EATS 8005928996 CA")).get()!;
+    bundle.sqlite.prepare("UPDATE transactions SET dedupe_hash = ? WHERE id = ?").run(line.hash, uber.id);
+
+    expect(() => classifyRedate(bundle, f.spec, line)).toThrow(/1 live row\(s\) already hold the line's dedupe_hash/);
+    expect(() => applyRedate(bundle, f.spec, line)).toThrow(Refusal);
+  });
+
   test("lineFor refuses a day the statement does not print once, and a line it stores on another day", async () => {
     const f = await attachedPayment();
     const lines = await julyLines(f);
@@ -308,7 +398,7 @@ describe("classifyRedate — the measured state, this write's state, or a refusa
         l.text.startsWith("New Balance") ? { ...l, text: "New Balance $323.43" } : l,
       ),
     );
-    const [statement] = await chaseCardStatementPdf.parse(sniffFile(straddler.name, straddler.buffer), parseContextFor(bundle.db));
+    const [statement] = asParsedFile(await chaseCardStatementPdf.parse(sniffFile(straddler.name, straddler.buffer), parseContextFor(bundle.db))).statements;
     const withStraddler = storedLines(f.cardId, { type: "credit" }, statement!);
     expect(() => lineFor(withStraddler, { printedOn: "2026-06-02", amountCents: -1713 })).toThrow(/stores it on 2026-06-03/);
   });
@@ -341,7 +431,7 @@ describe("after the re-date, the card parser leaves it where the owner put it", 
     const [june25, june30] = livePaymentsOf(f.cardId);
     expect(livePaymentsOf(f.cardId)).toHaveLength(2);
     expect(june25!.postedOn).toBe("2026-06-25");
-    expect(june30).toMatchObject({ postedOn: "2026-06-30", notes: NOTE, transferGroupId: f.checkingId, dedupeHash: line.hash });
+    expect(june30).toMatchObject({ postedOn: "2026-06-30", notes: NOTE, transferGroupId: f.checkingId, dedupeHash: line.hash, fileLinkSource: "attached" });
     expect(liveGroup(f.checkingId)).toEqual([f.checkingId, june30!.id].sort());
     expect(balances()).toEqual(before);
   });
@@ -353,6 +443,28 @@ describe("after the re-date, the card parser leaves it where the owner put it", 
     const [outcome] = await importStatementFiles(bundle.db, [julyStatement("20260702-statements-9805- (1).pdf")]);
 
     expect(outcome).toMatchObject({ status: "parsed", inserted: 0, deduped: 3, dedupedCrossFormat: 0 });
+    expect(livePaymentsOf(f.cardId).map((r) => r.postedOn)).toEqual(["2026-06-25", "2026-06-30"]);
+  });
+
+  test("un-importing the statement keeps the successor and its history, counts it once, and a re-import files the successor again", async () => {
+    const f = await attachedPayment();
+    const counted = unimportCountsByFile(bundle.db).get(f.spec.importFileId);
+    expect(counted).toMatchObject({ deleted: 2, kept: 1, transferLegsKept: 1, transferLegsKeptLinked: 1 });
+    const successorId = await redated(f);
+    expect(unimportCountsByFile(bundle.db).get(f.spec.importFileId)).toEqual(counted);
+
+    unimportFile(bundle.db, f.spec.importFileId);
+
+    expect(rowById(successorId)).toMatchObject({ import_file_id: null, file_link_source: "attached", status: "active", transfer_group_id: f.checkingId, notes: NOTE });
+    expect(rowById(f.spec.rowId)).toMatchObject({ import_file_id: null, status: "superseded", posted_on: "2026-07-01" });
+    expect(livePaymentsOf(f.cardId).map((r) => r.postedOn)).toEqual(["2026-06-30"]);
+
+    const [outcome] = await importStatementFiles(bundle.db, [julyStatement(JULY)]);
+
+    const again = bundle.db.select().from(importFiles).where(eq(importFiles.fileName, JULY)).get()!;
+    expect(outcome).toMatchObject({ status: "parsed", inserted: 2 });
+    expect(rowById(successorId)).toMatchObject({ import_file_id: again.id, file_link_source: "attached", status: "active" });
+    expect(rowById(f.spec.rowId).import_file_id).toBeNull();
     expect(livePaymentsOf(f.cardId).map((r) => r.postedOn)).toEqual(["2026-06-25", "2026-06-30"]);
   });
 });

@@ -7,6 +7,7 @@ import type { DbBundle } from "@/db/client";
 import { diffDays } from "@/lib/dates";
 import { formatCents } from "@/lib/money";
 import { netWorthSeries } from "@/services/derivation";
+import { unimportCountsByFile } from "@/services/import/unimport-counts";
 import { transfersCard } from "@/services/transfers-card";
 import type { RedateSpec } from "./redate-printed-day";
 import type { GuardReport } from "./sapphire-attach-guards";
@@ -27,6 +28,8 @@ export interface LedgerSnapshot {
   supersededWithLink: number;
   sameAccountGroups: number;
   transfers: string;
+  /** import file id → what un-importing it deletes and keeps, as the /imports confirmation reads it */
+  unimport: Map<string, string>;
 }
 
 type Row = Record<string, unknown>;
@@ -66,6 +69,7 @@ export function captureLedger({ db, sqlite }: DbBundle, today: string): LedgerSn
       ).n,
     ),
     transfers: JSON.stringify(transfersCard(db, today)),
+    unimport: new Map([...unimportCountsByFile(db)].map(([fileId, counts]) => [fileId, JSON.stringify(counts)])),
   };
 }
 
@@ -173,6 +177,13 @@ export function compareLedger(before: LedgerSnapshot, after: LedgerSnapshot, spe
     `${after.sameAccountGroups}`,
   );
   check("the transfers card reads identically", jsonDifferences(JSON.parse(before.transfers), JSON.parse(after.transfers)), `${before.transfers.length} chars`);
+  // the retired row stays filed under a live statement beside its successor: the confirmation must not count it twice
+  const unimport = diffKeyed(before.unimport, after.unimport);
+  check(
+    "un-importing any file deletes and keeps what it did",
+    [...unimport.changed.map((c) => `${c.key}: ${c.before} → ${c.after}`), ...unimport.removed, ...unimport.added],
+    `${before.unimport.size} files · ${spec.importFileId} ${after.unimport.get(spec.importFileId) ?? "absent"}`,
+  );
   return { lines, failures };
 }
 

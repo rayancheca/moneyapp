@@ -10,7 +10,7 @@ import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import type { Line } from "./profiles/pdf-profile";
 import { chaseCardStatementPdf } from "./profiles/chase-card-statement-profile";
-import { importStatementFiles, parseContextFor, storedLines, type ImportInput } from "./service";
+import { asParsedFile, importStatementFiles, parseContextFor, storedLines, type ImportInput } from "./service";
 import { sniffFile } from "./sniff";
 
 /*
@@ -80,7 +80,7 @@ describe("storedLines — the identity a statement's rows are stored under", () 
     expect(outcome).toMatchObject({ status: "parsed", inserted: 4 });
     const card = bundle.db.select().from(accounts).where(eq(accounts.last4, "9805")).get()!;
 
-    const [statement] = await chaseCardStatementPdf.parse(sniffFile(file.name, file.buffer), parseContextFor(bundle.db));
+    const [statement] = asParsedFile(await chaseCardStatementPdf.parse(sniffFile(file.name, file.buffer), parseContextFor(bundle.db))).statements;
     const lines = storedLines(card.id, card, statement!);
 
     const stored = bundle.db
@@ -116,7 +116,7 @@ describe("storedLines — the identity a statement's rows are stored under", () 
 
   test("an account whose periods need not close keeps every printed day", async () => {
     const file = cardPdf("20251002-statements-9805-.pdf", ROWS, BALANCES);
-    const [statement] = await chaseCardStatementPdf.parse(sniffFile(file.name, file.buffer), parseContextFor(bundle.db));
+    const [statement] = asParsedFile(await chaseCardStatementPdf.parse(sniffFile(file.name, file.buffer), parseContextFor(bundle.db))).statements;
 
     const lines = storedLines("any-account", { type: "investment" }, statement!);
 

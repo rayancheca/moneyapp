@@ -1296,8 +1296,12 @@ async function importOneFile(
   return { ...outcome, withheld };
 }
 
-/** A profile that never withholds returns its statements alone; one that can returns what it left out beside them. */
-function asParsedFile(parsed: ParsedStatement[] | ParsedFile): ParsedFile {
+/**
+ * A profile that never withholds returns its statements alone; one that can returns what it left out beside them.
+ * Exported so a write that reads a file with a profile outside the import (scripts/redate-sapphire-0630-payment-2026-09-15.ts)
+ * asks this rule rather than restating it.
+ */
+export function asParsedFile(parsed: ParsedStatement[] | ParsedFile): ParsedFile {
   return Array.isArray(parsed) ? { statements: parsed, withheld: [] } : parsed;
 }
 

@@ -9,7 +9,9 @@
  *    "PAYMENT — Chase ····3522 · Payment to Chase card ending in 9805 07/01", note "reconstructed credit-card
  *    payment leg", Transfers › Credit Card Payment by `transfer_detect`, no merchant, series, split, duplicate
  *    record or transfer question. One of the 34 payments `attach-sapphire-payment-rows-2026-09-14.ts` filed
- *    under the statement that prints them — the only one matched on its transaction day:
+ *    under the statement that prints them, marked `file_link_source = 'attached'` by
+ *    `mark-attached-sapphire-rows-2026-09-15.ts` (applied; all 34 carry it) — the only one matched on its
+ *    transaction day:
  *    20260702-statements-9805-.pdf (06-03 → 07-02, reconciled) prints `06/30 Payment Thank You-Mobile -100.00`.
  *  - Its transfer group is Chase Checking's −$100.00 of 2026-07-01 (`…702124851376`). Legs a day apart are
  *    ordinary: 160 live two-leg groups with a card leg sit on two days, 71 of them Sapphire's.
@@ -34,8 +36,12 @@
  *  - successor: posted 2026-06-30, transacted 2026-06-30, "Payment Thank You-Mobile", occurrence 0, the
  *    parser's hash — all from `storedLines` over the statement the app's own card profile reads, refused unless
  *    those bytes are the imported file. Every other column is the old row's: category, source, confidence,
- *    merchant, review flag, series and its owner, transfer group, note, file, `created_at`, and any column a later
- *    migration adds (uc/unimport-keeps-attached's `file_link_source`).
+ *    merchant, review flag, series and its owner, transfer group, note, file, the `attached` marker
+ *    (`file_link_source`, migration 0016), `created_at` — read from the table, not the schema, so a column a
+ *    later migration adds travels too.
+ *  - the old row stays filed under the statement with its marker, as history. It is no kept money:
+ *    `unimportCountsByFile` counts live attached rows only, so the /imports confirmation for 20260702 reads
+ *    "keeps 4" before and after, and an un-import detaches it without deleting it.
  *  - the old row: `superseded`, link released, a note naming its successor. Its day, amount and text stay.
  *
  * Then `rebuildAccount(Sapphire)` with the day this RUNS, which also regrades its periods.
@@ -47,8 +53,11 @@
  * Before vs after: `daily_balances` of every account — only Sapphire's days in [06-30, 07-01) move, by +$100.00,
  * basis unchanged; net worth the same days, every other day (today included) identical; every
  * `statement_periods` and `balance_anchors` column; every transaction column of every other row; statuses
- * (superseded +1); active count and sum; group sizes; no superseded row gains a link; no one-account group; the
- * transfers card. Then the successor, column by column, and a second run reads ALREADY APPLIED.
+ * (superseded +1); active count and sum; group sizes; no superseded row gains a link; one-account groups
+ * unchanged (1 before: Chase Checking's cancelled $115.00 of 2026-03-02, grouped with its −$115.00 on purpose by
+ * owner answer 2 — so not "none"); the transfers card; every import file's un-import counts (what the /imports
+ * confirmation says it deletes and keeps). Then the successor, column by column, and a second run reads ALREADY
+ * APPLIED.
  *
  *   pnpm tsx scripts/redate-sapphire-0630-payment-2026-09-15.ts --db=data/moneyapp.db
  *   pnpm tsx scripts/redate-sapphire-0630-payment-2026-09-15.ts --db=data/moneyapp.db --confirm
@@ -69,7 +78,7 @@ import { fileSha256 } from "@/lib/hash";
 import { formatCents } from "@/lib/money";
 import { rebuildAccount } from "@/services/derivation";
 import { chaseCardStatementPdf } from "@/services/import/profiles/chase-card-statement-profile";
-import { parseContextFor, storedLines, type StoredLine } from "@/services/import/service";
+import { asParsedFile, parseContextFor, storedLines, type StoredLine } from "@/services/import/service";
 import { sniffFile } from "@/services/import/sniff";
 import { dbTargetFrom, strayFlags } from "./db-target";
 import { onRehearsalCopy } from "./guarded-write-harness";
@@ -117,7 +126,7 @@ async function printedLine({ db }: DbBundle): Promise<StoredLine> {
   const account = db.select().from(accounts).where(eq(accounts.id, SAPPHIRE_ID)).get();
   if (!account) throw new Refusal("REFUSED — no Chase Sapphire account");
 
-  const statements = await chaseCardStatementPdf.parse(sniffFile(file.fileName, buffer), parseContextFor(db));
+  const { statements, withheld } = asParsedFile(await chaseCardStatementPdf.parse(sniffFile(file.fileName, buffer), parseContextFor(db)));
   const stored = db
     .select()
     .from(statementPeriods)
@@ -127,6 +136,7 @@ async function printedLine({ db }: DbBundle): Promise<StoredLine> {
   const printed = statement?.period;
   if (
     statements.length !== 1 ||
+    withheld.length !== 0 ||
     statement!.accountHint.last4 !== account.last4 ||
     stored.length !== 1 ||
     printed?.start !== STATEMENT.periodStart ||
