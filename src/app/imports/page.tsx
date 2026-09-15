@@ -16,7 +16,7 @@ import { provenanceFor } from "@/services/provenance";
 import { statementPulls } from "@/services/statement-pulls";
 import { unimportAcknowledgement, unimportRadius } from "@/components/imports/unimport-radius";
 import { NO_UNIMPORT_ROWS, unimportCountsByFile, type UnimportCounts } from "@/services/import/unimport-counts";
-import { importRowQualifiers, importRowSubject } from "@/lib/import-file-label";
+import { importRowQualifiers, importRowSubject, withheldNoticeOf } from "@/lib/import-file-label";
 import { dayWindowLabel } from "@/lib/period";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -84,6 +84,9 @@ export default async function ImportsPage({
      confirmations differ by a statement balance. Null for every unique name,
      so the column that has to stay scannable is untouched for 218 of them. */
   const qualifierById = importRowQualifiers(files);
+  /* A parsed file that left one account's section out (a Robinhood brokerage PDF whose #655929651 section the cash
+     reader could not prove). Its row must not read plain "Parsed": that account is not checked for the month. */
+  const withheldById = new Map(files.map((f) => [f.id, withheldNoticeOf(f)]));
 
   // the rest of what un-importing takes with it — counted per file rather than
   // joined into the query above, where they would fan out against the rows
@@ -380,7 +383,10 @@ export default async function ImportsPage({
                             {qualifierById.get(f.id)}
                           </div>
                         ) : null}
-                        {f.error ? (
+                        {withheldById.get(f.id) ? (
+                          // whole, not truncated: which account, which statement and why are the point
+                          <div className="text-[11px] text-warning">{withheldById.get(f.id)}</div>
+                        ) : f.error ? (
                           <div className="truncate text-[11px] text-negative" title={f.error}>
                             {f.error}
                           </div>
@@ -392,9 +398,9 @@ export default async function ImportsPage({
                         <span className="inline-flex items-center gap-1.5">
                           <span
                             aria-hidden
-                            className={`size-1.5 rounded-full ${STATUS_META[f.status].tone}`}
+                            className={`size-1.5 rounded-full ${withheldById.get(f.id) ? "bg-warning" : STATUS_META[f.status].tone}`}
                           />
-                          {STATUS_META[f.status].label}
+                          {withheldById.get(f.id) ? "Partly imported" : STATUS_META[f.status].label}
                         </span>
                       </td>
                       <td className="py-1.5 text-right">

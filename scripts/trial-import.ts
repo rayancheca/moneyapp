@@ -177,6 +177,13 @@ async function main(): Promise<void> {
     for (const [reason, n] of Object.entries(reasons)) console.log(`  ${n}x  ${reason}`);
   }
 
+  // parsed files that left one account's section out: the rest of each file imported, that account did not
+  const withheld = outcomes.flatMap((o) => o.withheld.map((w) => `${o.fileName}: ${w.notice}`));
+  if (withheld.length > 0) {
+    console.log(`\nWITHHELD SECTIONS (${withheld.length})`);
+    for (const w of withheld) console.log(`  ${w}`);
+  }
+
   const after = snapshot(db, sqlite);
 
   diffTable("TRANSACTIONS BY STATUS", before.txnByStatus, after.txnByStatus);

@@ -108,6 +108,10 @@ async function main(): Promise<void> {
   for (const f of outcomes.filter((o) => o.status === "failed")) {
     console.log(`  FAILED  ${f.fileName}: ${f.error}`);
   }
+  // parsed, but one account's section was left out — the rest of the file is in, that account is not checked for the month
+  for (const f of outcomes) {
+    for (const w of f.withheld) console.log(`  WITHHELD  ${f.fileName}: ${w.notice}`);
+  }
 
   const after = {
     netWorth: netWorthSeries(db).at(-1)?.totalCents ?? 0,
