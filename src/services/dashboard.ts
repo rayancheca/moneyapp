@@ -1,6 +1,7 @@
 import type { AppDatabase } from "@/db/client";
 import type { AssetType } from "@/db/schema/holdings";
 import type { SeriesKind } from "@/db/schema/recurring";
+import { cashFlowCumulative, plottedRunningTotals } from "@/lib/cash-flow-cumulative";
 import { compareDates, diffDays, todayIso } from "@/lib/dates";
 import { daysNotImportedYet } from "@/lib/empty-period";
 import { dayChangeTerm } from "@/lib/day-change-label";
@@ -75,7 +76,7 @@ export interface UpcomingBills {
 
 export interface PacePoint {
   label: string;
-  /** cumulative actual spend through this sub-bucket; null once past today */
+  /** cumulative actual spend through this sub-bucket; null where the ledger has not read it (`plottedRunningTotals`) */
   actualCents: number | null;
 }
 
@@ -214,12 +215,29 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
   const cashFlow = cashFlowByPeriod(db, period, today);
   if (!cashFlow.pace) return null;
 
-  let cumulative = 0;
-  const points: PacePoint[] = cashFlow.buckets.map((b) => {
-    const past = compareDates(b.from, today) <= 0;
-    if (past) cumulative += b.spendingCents;
-    return { label: b.label, actualCents: past ? cumulative : null };
-  });
+  /*
+   * 🔴 THE STAIRCASE RAN FLAT THROUGH DAYS ITS OWN TEXT SAYS ARE NOT IMPORTED.
+   * A bucket was drawn whenever `b.from <= today`, so the last total read was
+   * held level across every elapsed day after it — under words saying "at least"
+   * and "3 days of September 2026 not imported yet". Measured on the owner's
+   * ledger 2026-09-15 (newest row 2026-09-12): Sep 13, 14 and 15 drawn at
+   * $1,431.05, all three `after-records`. /spending's graph lens had stopped
+   * drawing its running totals through those days; this tile had not.
+   *
+   * ⛔ The frontier AND the arithmetic are the graph's own — `cashFlowCumulative`,
+   * then `plottedRunningTotals` — so the two cannot stop on different days, and
+   * a day before the records begin is left undrawn as well.
+   *
+   * ⛔ …AND NEVER PAST TODAY. The graph draws a bucket holding a row as a figure
+   * even when it is dated after today (data wins, `holdsRows`), which would put
+   * a step of this "so far" line — and the marker where measuring stops — on a
+   * day that has not happened. Today's bucket is drawn exactly when it is read.
+   */
+  const running = plottedRunningTotals(cashFlowCumulative(cashFlow.buckets, null, 0), cashFlow.buckets);
+  const points: PacePoint[] = cashFlow.buckets.map((b, i) => ({
+    label: b.label,
+    actualCents: compareDates(b.from, today) <= 0 ? running[i]!.spentCum : null,
+  }));
 
   // free-to-spend = full-month income (actual + upcoming fixed) minus spend so
   // far and the fixed bills still due — the discretionary headroom left (§7.1)

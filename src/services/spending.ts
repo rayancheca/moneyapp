@@ -140,7 +140,9 @@ export interface CashFlowBucket {
    *
    * ⛔ ADDITIVE: the figures stay zero. `computePace`, the dashboard's pace tile
    * and the graph's running totals read them, and a null in any of those would
-   * move a number nobody asked to move.
+   * move a number nobody asked to move. The tile's staircase and the graph's
+   * lines read THIS field to stop drawing (`plottedRunningTotals`); no figure
+   * either prints changes.
    */
   unreached: UnreachedKind | null;
 }

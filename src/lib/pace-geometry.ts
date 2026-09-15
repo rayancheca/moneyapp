@@ -29,7 +29,10 @@ export interface PaceGeometry {
 }
 
 export interface PaceGeometryInput {
-  /** cumulative spend per bucket; null once past today */
+  /**
+   * cumulative spend per bucket; null where the ledger has not read it — before
+   * it opens, after it reaches, past today. What is read is one unbroken run.
+   */
   readonly actualCents: readonly (number | null)[];
   readonly projectedCents: number;
 }
@@ -49,11 +52,22 @@ export function paceGeometry(input: PaceGeometryInput): PaceGeometry | null {
   const n = actualCents.length;
   if (n < 2) return null;
 
+  /*
+   * 🔴 The staircase began at bucket 0 whatever it held, and `y(null)` is
+   * `y(0)` — so in a month the ledger opens inside, every day before the
+   * records begin was drawn along the baseline as a $0 day nobody measured. It
+   * starts on the first measured bucket.
+   */
+  let firstActualIdx = -1;
   let lastActualIdx = -1;
-  for (let i = 0; i < n; i++) if (actualCents[i] !== null) lastActualIdx = i;
+  for (let i = 0; i < n; i++) {
+    if (actualCents[i] === null) continue;
+    if (firstActualIdx < 0) firstActualIdx = i;
+    lastActualIdx = i;
+  }
   if (lastActualIdx < 0) return null;
 
-  const measured = actualCents.slice(0, lastActualIdx + 1) as number[];
+  const measured = actualCents.slice(firstActualIdx, lastActualIdx + 1) as number[];
   const peak = measured[measured.length - 1]!;
   // nothing spent AND nothing projected — see the note above
   if (projectedCents <= 0 && peak <= 0) return null;
@@ -67,9 +81,9 @@ export function paceGeometry(input: PaceGeometryInput): PaceGeometry | null {
   // nothing was measured between two of them. Stepping (hold, then jump) asserts
   // strictly LESS than a diagonal, which would claim money trickled out evenly
   // across each day.
-  let solid = `M ${x(0)} ${y(measured[0]!)}`;
+  let solid = `M ${x(firstActualIdx)} ${y(measured[0]!)}`;
   for (let i = 1; i < measured.length; i++) {
-    solid += ` H ${x(i)} V ${y(measured[i]!)}`;
+    solid += ` H ${x(firstActualIdx + i)} V ${y(measured[i]!)}`;
   }
 
   // Filled, because `projectedCents` is `actualToDate × daysInMonth / elapsed`
@@ -79,7 +93,7 @@ export function paceGeometry(input: PaceGeometryInput): PaceGeometry | null {
   // was spent: measured on the fixture, an 8-day range came to 2.0px against a
   // 1.75px stroke, so a staircase rendered as a flat hairline. A region against
   // a true zero survives that squeeze; a hairline does not.
-  const area = `${solid} V ${y(0)} H ${x(0)} Z`;
+  const area = `${solid} V ${y(0)} H ${x(firstActualIdx)} Z`;
 
   const projection =
     lastActualIdx < n - 1

@@ -243,7 +243,7 @@ describe("dashboardData: spending pace", () => {
     expect(pace).not.toBeNull();
     // one point per day of July
     expect(pace!.points).toHaveLength(31);
-    // days on/before today carry a cumulative number; later days are null
+    // days the ledger has read carry a cumulative number; later days are null
     const beforeToday = pace!.points.filter((p) => p.actualCents !== null);
     expect(beforeToday.length).toBeGreaterThan(0);
     expect(pace!.points.at(-1)!.actualCents).toBeNull();
@@ -259,17 +259,51 @@ describe("dashboardData: spending pace", () => {
    * and on the FIRST of a month every point becomes null — the actual-spend
    * line vanishes from the dashboard entirely while the projection still draws.
    * Found by mutation; nothing asserted the count of non-null points.
+   *
+   * ⚠️ The ledger has to OPEN by the 1st for the 1st to be drawn: a day before
+   * the records begin carries no running total (see the staircase test below).
    */
   test("today's bucket is part of the line, and the 1st of a month still draws one", () => {
+    spend("Coffee", "2026-07-01", -5_00);
     spend("Groceries", "2026-07-08", -25_00); // today
     const { pace } = dashboardData(bundle.db, TODAY);
     // eight days of July have passed, today included
     expect(pace!.points.filter((p) => p.actualCents !== null)).toHaveLength(8);
-    expect(pace!.points[7]!.actualCents).toBe(25_00);
+    expect(pace!.points[7]!.actualCents).toBe(30_00);
 
-    // and on the 1st, exactly one point is drawn rather than none
+    // and on the 1st, exactly one point is drawn rather than none — and the row
+    // dated the 8th, a week after that "today", does not pull a step onto a day
+    // that has not happened (to the graph a bucket holding a row is a figure)
     const firstOfMonth = dashboardData(bundle.db, "2026-07-01").pace!;
     expect(firstOfMonth.points.filter((p) => p.actualCents !== null)).toHaveLength(1);
+  });
+
+  /*
+   * 🔴 THE STAIRCASE RAN FLAT THROUGH DAYS ITS OWN TEXT SAYS ARE NOT IMPORTED.
+   * The tile marked a bucket drawn by `b.from <= today`, so the last total read
+   * was held level across every elapsed day after it — while the words beside
+   * it said "at least" and "3 days of September 2026 not imported yet". /spending's
+   * graph lens ends its running totals at the frontier (`plottedRunningTotals`);
+   * the tile was the second surface drawing a cumulative line, and it did not.
+   * Measured on the owner's ledger 2026-09-15 (newest row 2026-09-12): Sep 13,
+   * 14 and 15 at $1,431.05, all `after-records`. On the e2e fixture (fake today
+   * 2026-07-08, newest row 2026-07-04): Jul 5–8 at $2,607.01.
+   *
+   * ⛔ Both ends: a day before the records begin is not a $0 day either.
+   */
+  test("the staircase stops where the ledger does, at both ends", () => {
+    spend("Groceries", "2026-07-02", -80_00);
+    spend("Gas", "2026-07-04", -30_00);
+    const { pace } = dashboardData(bundle.db, TODAY);
+    // Jul 1 is before the records begin; Jul 5–8 have passed and are not imported yet
+    expect(pace!.points.slice(0, 9).map((p) => p.actualCents)).toEqual([
+      null, 80_00, 80_00, 110_00, null, null, null, null, null,
+    ]);
+    // the undrawn days past Jul 4 are the four the text counts; Jul 1 is not
+    // counted there, because it is not "not imported yet" (`daysNotImportedYet`)
+    expect(pace!.uncoveredDays).toBe(4);
+    // the figures beside it do not move
+    expect(pace!.actualToDateCents).toBe(110_00);
   });
 
   test("free-to-spend = full-month income minus spend-so-far and upcoming fixed bills", () => {

@@ -111,6 +111,24 @@ describe("paceGeometry", () => {
     }
   });
 
+  /**
+   * 🔴 A month the ledger opens inside: the days before the records begin carry
+   * no running total (`plottedRunningTotals`, via the dashboard's pace tile), and
+   * the staircase drew each of them along the zero baseline — `y(null)` is
+   * `y(0)` — a $0 day nobody measured. It starts where the first measured day is.
+   */
+  test("a staircase starts on the first measured day, not on the first day of the month", () => {
+    const x = (i: number): number => Math.round((i / 30) * PACE_VW * 10) / 10;
+    const opensOnThe3rd = [null, null, 1000, 2000, ...month(27, [])];
+    const geo = paceGeometry({ actualCents: opensOnThe3rd, projectedCents: 31000 })!;
+    expect(geo.solid.startsWith(`M ${x(2)} `)).toBe(true);
+    expect(geo.solid.match(/H/g)).toHaveLength(1);
+    // the one step lands on the day it measured, not on the month's second day
+    expect(geo.solid).toContain(` H ${x(3)} V `);
+    expect(geo.area.endsWith(`H ${x(2)} Z`)).toBe(true);
+    expect(geo.todayX).toBe(x(3));
+  });
+
   test("today's marker sits on the last measured point", () => {
     const geo = paceGeometry({ actualCents: JULY, projectedCents: JULY_PROJECTED })!;
     expect(geo.solid.endsWith(`V ${geo.todayY}`)).toBe(true);
