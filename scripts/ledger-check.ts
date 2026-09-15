@@ -31,6 +31,7 @@ import { RECONCILE_STATUSES, isVerdictStale, periodVerdict } from "@/lib/reconci
 import {
   type ChainBreak,
   type ChainWindow,
+  type GradedPeriod,
   type LedgerBaseline,
   type StaleVerdict,
   type ValueAnchor,
@@ -173,6 +174,8 @@ const breaks: Record<string, ChainBreak[]> = {};
 const chainWindows: Record<string, ChainWindow[]> = {};
 const syntheticNetCents: Record<string, number> = {};
 const staleVerdicts: StaleVerdict[] = [];
+/** every period re-graded, agreeing or not — what tells a removed period from one that still agrees */
+const gradedPeriods: Record<string, GradedPeriod[]> = {};
 
 for (const account of accounts) {
   const isInvestment = account.type === "investment";
@@ -233,6 +236,7 @@ for (const account of accounts) {
     gapCents: number | null;
   }[];
 
+  gradedPeriods[account.name] = periods.map(({ periodStart, periodEnd }) => ({ periodStart, periodEnd }));
   for (const p of periods) {
     const movement = (
       sqlite
@@ -325,6 +329,7 @@ const failures = compareToBaseline(
     valueAnchors,
     // an anchor the app cannot value is a finding of its own — the rule makes it, once per statement
     unpricedAnchors: unpriced,
+    gradedPeriods,
   },
   BASELINE,
 );

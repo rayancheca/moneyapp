@@ -65,6 +65,7 @@ const observation = (over: Partial<LedgerObservation> = {}): LedgerObservation =
   valuedAnchorDays: {},
   valueAnchors: {},
   unpricedAnchors: [],
+  gradedPeriods: {},
   ...over,
 });
 

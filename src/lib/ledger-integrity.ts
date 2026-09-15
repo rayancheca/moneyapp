@@ -107,6 +107,20 @@ export interface LedgerObservation {
   valueAnchors: Record<string, ValueAnchorDrift[]>;
   /** every statement the app could NOT value (`findValueAnchorDrift`'s `unpriced`) — each one a finding */
   unpricedAnchors: readonly ValueAnchor[];
+  /**
+   * every statement period whose stored verdict was re-graded, per account.
+   *
+   * ⛔ `staleVerdicts` lists only the periods that no longer match, so a period
+   * that was removed reads exactly like one that still agrees. This is its
+   * denominator, floored by `src/lib/witness-floor.ts`.
+   */
+  gradedPeriods: Record<string, readonly GradedPeriod[]>;
+}
+
+/** A statement period's identity — its account is the key it is listed under. */
+export interface GradedPeriod {
+  periodStart: string;
+  periodEnd: string;
 }
 
 export interface LedgerBaseline {
@@ -129,7 +143,8 @@ export type LedgerFailure = {
     | "changed-value-drift"
     | "fixed-value-drift"
     | "unmeasured-value-drift"
-    | "unpriced-anchor";
+    | "unpriced-anchor"
+    | "witness-drop";
   account: string;
   detail: string;
 };
@@ -251,7 +266,7 @@ const windowKey = (b: ChainWindow): string => `${b.from}→${b.to}`;
  * present, asking only for the identical pair said "find which anchor left"
  * about an anchor that had arrived, over halves that both close.
  */
-function windowsSpanning(walked: readonly ChainWindow[], from: string, to: string): ChainWindow[] | null {
+export function windowsSpanning(walked: readonly ChainWindow[], from: string, to: string): ChainWindow[] | null {
   const startingOn = new Map(walked.map((w) => [w.from, w]));
   const span: ChainWindow[] = [];
   let at = from;
