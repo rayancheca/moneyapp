@@ -542,3 +542,25 @@ describe("moversCard — what it admits it cannot see", () => {
     expect(card.headlineNoun).toContain("Jul 2026");
   });
 });
+
+/**
+ * 🔴 THE CARD'S LINK OPENED A DIFFERENT MONTH FROM THE ONE IT DESCRIBES. The
+ * header's "Spending →" was a bare `/spending`, which `resolvePeriod` resolves
+ * to the current calendar month. Measured on the owner's ledger 2026-09-15: the
+ * card read "$3,040.49 more than usual, in Jul 2026", and the link opened
+ * "September 2026", where the page refuses any comparison ("There is no
+ * comparison for September 2026 yet: Aug 12, 2026, the last day every account
+ * you spend from has been imported through, comes before any of it."). With
+ * `?period=2026-07` the same page compares July against June whole.
+ */
+describe("moversCard — where its link lands", () => {
+  test("the Spending link carries the compared month, not the running one", () => {
+    spendAllBaselineMonths("Food", 10_000);
+    addTxn("2026-07-10", -30_000, "Food");
+    importedThrough("2026-08-20", MAIN);
+
+    const card = moversCard(bundle.db, TODAY)!;
+    expect(card.month).toBe("2026-07");
+    expect(card.spendingHref).toBe("/spending?period=2026-07");
+  });
+});

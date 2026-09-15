@@ -43,8 +43,9 @@ export function MoversCard({ data }: { data: MoversCardData }) {
     <SurfaceCard>
       <div className="flex items-baseline justify-between gap-3">
         <h3 className="text-xs font-medium uppercase tracking-[0.12em] text-ink-faint">What changed</h3>
+        {/* the month the card is ABOUT — a bare /spending opens the running one; see `spendingHref` */}
         <Link
-          href="/spending"
+          href={data.spendingHref}
           className="text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:text-ink"
         >
           Spending →

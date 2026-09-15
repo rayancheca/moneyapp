@@ -2,6 +2,7 @@ import type { AppDatabase } from "@/db/client";
 import { apportionPercents } from "@/lib/apportion";
 import { addCalendarMonths, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { formatDayShort, formatMonthYear, monthWindowLabel } from "@/lib/format-date";
+import { resolvePeriod, withPeriod } from "@/lib/period";
 import { formatCents } from "@/lib/money";
 import { listAccounts } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, monthlySpending, spendingBucket, transactionsHref } from "./analytics";
@@ -204,6 +205,20 @@ export interface MoversCard {
   /** the compared month, e.g. "2026-07" */
   month: string;
   monthLabel: string;
+  /**
+   * `/spending` for the compared month — the drill-down contract for the card's
+   * header link.
+   *
+   * 🔴 It was a bare `/spending`, which `resolvePeriod` resolves to the RUNNING
+   * month, and this card is by construction almost never about the running
+   * month. Measured on the owner's ledger 2026-09-15: the card read "$3,040.49
+   * more than usual, in Jul 2026" and the link opened September 2026, where the
+   * page refuses any comparison ("There is no comparison for September 2026
+   * yet: Aug 12, 2026, the last day every account you spend from has been
+   * imported through, comes before any of it."). `/spending?period=2026-07`
+   * compares July against June whole.
+   */
+  spendingHref: string;
   /** the running month, which is deliberately NOT the compared one */
   currentMonthLabel: string;
   baselineMonths: number;
@@ -618,6 +633,7 @@ export function moversCard(db: AppDatabase, today: string = todayIso()): MoversC
   return {
     month,
     monthLabel,
+    spendingHref: withPeriod("/spending", resolvePeriod({ period: month, from: null, to: null }, today)),
     currentMonthLabel,
     baselineMonths: months,
     baselineFromLabel: formatMonthYear(`${baselineKeys[0]!}-01`),
