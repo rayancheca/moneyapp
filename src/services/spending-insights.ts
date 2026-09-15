@@ -81,6 +81,8 @@ interface Candidate {
 function buildCandidates(
   db: AppDatabase,
   card: MoversCard,
+  /** the page's today — handed to the trend so its frontier is asked, not assumed */
+  today: string,
   /**
    * Which category the sentences are about. `"largest"` is /spending's
    * question ("what dominated the month?"); a category id is
@@ -201,7 +203,7 @@ function buildCandidates(
   // the flag is not read here — `monotonicDirection` runs on the figures — but
   // the frontier is passed rather than faked, so this caller cannot drift into
   // asserting a reach it never checked
-  const points = categoryMonthlyTrend(db, top.categoryId!, TREND_MONTHS, to, ledgerReaches(db), ledgerOpens(db));
+  const points = categoryMonthlyTrend(db, top.categoryId!, TREND_MONTHS, to, ledgerReaches(db), ledgerOpens(db), today);
   const direction = monotonicDirection(points.map((p) => p.spentCents));
   if (direction !== null && points.length >= 3) {
     facts.push(trendFact("f6", top.name, direction, formatMonthYear(`${points[0]!.month}-01`), points.length));
@@ -277,7 +279,7 @@ export function categoryInsightInput(
   // here names. Nothing to say is not a weakness — it renders as nothing.
   if (card === null) return null;
 
-  const built = buildCandidates(db, card, subject);
+  const built = buildCandidates(db, card, today, subject);
   if (built === null) return null;
 
   const candidates: InsightCandidate[] = built.candidates.map((c) => ({

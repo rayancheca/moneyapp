@@ -307,11 +307,11 @@ describe("the uncategorized-bucket clause", () => {
 });
 
 describe("emptyTrendCopy — an unread month is not an empty one, and the window is named", () => {
-  /** twelve months ending Dec 2025, the first `unreadBefore` and last `unreadAfter` unreached */
-  const months = (unreadBefore: number, unreadAfter: number, total = 12) =>
+  /** twelve months of 2025: the first `before` predate the records, the last `after` are not imported yet */
+  const months = (before: number, after: number, total = 12) =>
     Array.from({ length: total }, (_, i) => ({
       month: `2025-${String(i + 1).padStart(2, "0")}`,
-      reached: i >= unreadBefore && i < total - unreadAfter,
+      unreached: i < before ? ("before-records" as const) : i >= total - after ? ("after-records" as const) : null,
     }));
 
   /**
@@ -326,23 +326,68 @@ describe("emptyTrendCopy — an unread month is not an empty one, and the window
 
   test("months after the ledger stops are discounted, and said", () => {
     expect(emptyTrendCopy(months(0, 1))).toBe(
-      "No activity in the 11 months of Jan 2025 to Dec 2025 the ledger covers. The other 1 month has not been imported, " +
+      "No activity in the 11 months of Jan 2025 to Dec 2025 the ledger covers. The other 1 month has not been imported yet, " +
         "so it is a window nobody has looked at rather than an empty one.",
     );
   });
 
-  /** 🔴 the other end — months before the ledger opens are just as unread */
-  test("months before the ledger opens are discounted the same way", () => {
-    expect(emptyTrendCopy(months(3, 0))).toBe(
-      "No activity in the 9 months of Jan 2025 to Dec 2025 the ledger covers. The other 3 months have not been imported, " +
+  /**
+   * 🔴 THE OTHER END WAS DISCOUNTED UNDER THE WRONG CAUSE. Months before the
+   * ledger opens were counted out — and then called "not been imported", the
+   * words for the months past its newest row. Measured on the owner's ledger
+   * 2026-09-15 (first row 2022-08-25): `/categories/<Interest>?period=2023-06`
+   * printed "No activity in the 11 months of Jul 2022 to Jun 2023 the ledger
+   * covers. The other 1 month has not been imported" of July 2022, while the
+   * same page's heatmap and cash-flow table on /spending say "before your
+   * records begin" of every day of it.
+   */
+  test("months before the ledger opens are discounted as before the records begin", () => {
+    const copy = emptyTrendCopy(months(3, 0));
+    expect(copy).toBe(
+      "No activity in the 9 months of Jan 2025 to Dec 2025 the ledger covers. The other 3 months are before your records begin, " +
         "so they are a window nobody has looked at rather than an empty one.",
+    );
+    expect(copy).not.toContain("imported");
+  });
+
+  test("one month before the records begin is singular", () => {
+    expect(emptyTrendCopy(months(1, 0))).toContain("The other 1 month is before your records begin, so it is");
+  });
+
+  /** a ledger shorter than the window: both ends inside it, each named by its own cause, in calendar order */
+  test("a window past both ends names each end by its own cause", () => {
+    expect(emptyTrendCopy(months(3, 1))).toBe(
+      "No activity in the 8 months of Jan 2025 to Dec 2025 the ledger covers. Of the other 4 months, 3 months are before " +
+        "your records begin and 1 month has not been imported yet, so they are a window nobody has looked at rather than an empty one.",
     );
   });
 
   test("nothing imported at all measures nothing at all", () => {
-    expect(emptyTrendCopy(months(12, 0))).toBe(
+    expect(emptyTrendCopy(months(0, 12))).toBe(
       "None of Jan 2025 to Dec 2025 has been imported — there is nothing here to measure.",
     );
+    const empty = months(0, 0).map((p) => ({ ...p, unreached: "no-ledger" as const }));
+    expect(emptyTrendCopy(empty)).toBe("None of Jan 2025 to Dec 2025 has been imported — there is nothing here to measure.");
+  });
+
+  /**
+   * 🔴 …AND A WINDOW WHOLLY BEFORE THE RECORDS said "None of Feb 2020 to Jan
+   * 2021 has been imported" on `/categories/<Income>?period=2021-01`, directly
+   * over the page's own "January 2021 is before your records begin".
+   */
+  test("a window wholly before the records begin says so, in the page's own words", () => {
+    const copy = emptyTrendCopy(months(12, 0));
+    expect(copy).toBe("Jan 2025 to Dec 2025 is before your records begin — there is nothing here to measure.");
+    expect(copy).not.toContain("imported");
+  });
+
+  test("a window no month of which can be read, for more than one reason, names each", () => {
+    expect(
+      emptyTrendCopy([
+        { month: "2026-08", unreached: "after-records" },
+        { month: "2026-09", unreached: "future" },
+      ]),
+    ).toBe("None of Aug 2026 to Sep 2026 can be measured: 1 month has not been imported yet and 1 month has not happened yet.");
   });
 
   test("the noun is the page's own word for the figure", () => {

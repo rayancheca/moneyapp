@@ -131,12 +131,25 @@ export const UNREACHED_PHRASE: Readonly<Record<UnreachedKind, string>> = {
   "no-ledger": "not imported yet",
 };
 
-/** each world as the verb phrase after "a day that …", in calendar order */
-const DASH_REASONS: readonly (readonly [readonly UnreachedKind[], string])[] = [
-  [["before-records"], "is before your records begin"],
-  [["after-records", "no-ledger"], "has not been imported yet"],
-  [["future"], "has not happened yet"],
+/**
+ * Each world as the predicate of a sentence about the windows in it — "a day
+ * that IS before your records begin", "3 months ARE" — in calendar order.
+ *
+ * ⛔ One table for the table's dash note and the trend's absence line, so the
+ * two cannot sort the worlds differently or name one of them in other words.
+ */
+const UNREACHED_PREDICATES: readonly { kinds: readonly UnreachedKind[]; one: string; many: string }[] = [
+  { kinds: ["before-records"], one: "is before your records begin", many: "are before your records begin" },
+  { kinds: ["after-records", "no-ledger"], one: "has not been imported yet", many: "have not been imported yet" },
+  { kinds: ["future"], one: "has not happened yet", many: "have not happened yet" },
 ];
+
+/** "a", "a or b", "a, b, or c" */
+function listOf(items: readonly string[], conjunction: "and" | "or"): string {
+  return items.length === 1
+    ? items[0]!
+    : `${items.slice(0, -1).join(", ")}${items.length > 2 ? "," : ""} ${conjunction} ${items[items.length - 1]}`;
+}
 
 /**
  * The line a table prints about its dashes — naming only the worlds its dashes
@@ -150,13 +163,9 @@ const DASH_REASONS: readonly (readonly [readonly UnreachedKind[], string])[] = [
  */
 export function unreachedDashNote(kinds: Iterable<UnreachedKind>, bucketNoun: "day" | "month"): string | null {
   const present = new Set(kinds);
-  const phrases = DASH_REASONS.filter(([ks]) => ks.some((k) => present.has(k))).map(([, phrase]) => phrase);
+  const phrases = UNREACHED_PREDICATES.filter(({ kinds: ks }) => ks.some((k) => present.has(k))).map(({ one }) => one);
   if (phrases.length === 0) return null;
-  const list =
-    phrases.length === 1
-      ? phrases[0]!
-      : `${phrases.slice(0, -1).join(", ")}${phrases.length > 2 ? "," : ""} or ${phrases[phrases.length - 1]}`;
-  return `A dash is not a zero: it marks a ${bucketNoun} that ${list}.`;
+  return `A dash is not a zero: it marks a ${bucketNoun} that ${listOf(phrases, "or")}.`;
 }
 
 /**
@@ -319,25 +328,52 @@ export function emptyPeriodCopy(
  * or after it stops — are discounted. A window fully inside the records that
  * holds nothing really is a measured zero and still says so — the same line
  * `emptyPeriodCopy`'s `measured` branch draws.
+ *
+ * 🔴 …AND EACH END IS NAMED BY ITS OWN CAUSE. The months before the ledger
+ * opens were discounted and then called "not been imported" — the words for the
+ * months past its newest row — because the points carried one boolean for both.
+ * Measured on the owner's ledger 2026-09-15 (first row 2022-08-25):
+ * `/categories/<Interest>?period=2023-06` read "The other 1 month has not been
+ * imported" of July 2022, and `<Income>?period=2021-01` "None of Feb 2020 to
+ * Jan 2021 has been imported" over the page's own "January 2021 is before your
+ * records begin"; 2,032 (category × month) pages printed this line over a window
+ * holding a month before the records begin. The worlds and their words are
+ * `UNREACHED_PREDICATES`, the dash note's own table.
  */
 export function emptyTrendCopy(
-  points: readonly { month: string; reached: boolean }[],
+  points: readonly { month: string; unreached: UnreachedKind | null }[],
   /** what the page calls this figure — "Spent", "Received", "Net" */
   flowNoun = "activity",
 ): string {
   const first = points[0]?.month;
   const last = points[points.length - 1]?.month;
   const window = first === undefined || last === undefined ? "this window" : monthWindowLabel(first, last);
-  const unreached = points.filter((p) => !p.reached).length;
-  const covered = points.length - unreached;
+  const unreached = points.filter((p) => p.unreached !== null);
+  const covered = points.length - unreached.length;
+  const worlds = UNREACHED_PREDICATES.flatMap((w) => {
+    const n = unreached.filter((p) => w.kinds.includes(p.unreached!)).length;
+    return n === 0 ? [] : [{ ...w, clause: `${monthsWord(n)} ${n === 1 ? w.one : w.many}` }];
+  });
   // covered first: an EMPTY run has nothing unreached AND nothing reached, and it
   // is the second fact — no month measured — that the sentence must state
-  if (covered === 0) return `None of ${window} has been imported — there is nothing here to measure.`;
-  if (unreached === 0) return `No ${flowNoun} in ${window}.`;
+  if (covered === 0) {
+    const only = worlds.length === 1 ? worlds[0]! : null;
+    if (worlds.length === 0 || only?.kinds.includes("after-records")) {
+      return `None of ${window} has been imported — there is nothing here to measure.`;
+    }
+    // one world names the window in it, as the page's own empty state names a period
+    if (only) return `${window} ${only.one} — there is nothing here to measure.`;
+    return `None of ${window} can be measured: ${listOf(worlds.map((w) => w.clause), "and")}.`;
+  }
+  if (unreached.length === 0) return `No ${flowNoun} in ${window}.`;
+  const n = unreached.length;
+  const rest =
+    worlds.length === 1
+      ? `The other ${worlds[0]!.clause}`
+      : `Of the other ${monthsWord(n)}, ${listOf(worlds.map((w) => w.clause), "and")}`;
   return (
     `No ${flowNoun} in the ${monthsWord(covered)} of ${window} the ledger covers. ` +
-    `The other ${monthsWord(unreached)} ${unreached === 1 ? "has" : "have"} not been imported, ` +
-    `so ${unreached === 1 ? "it is" : "they are"} a window nobody has looked at rather than an empty one.`
+    `${rest}, so ${n === 1 ? "it is" : "they are"} a window nobody has looked at rather than an empty one.`
   );
 }
 

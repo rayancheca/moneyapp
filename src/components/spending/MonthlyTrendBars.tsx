@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { emptyTrendCopy } from "@/lib/empty-period";
+import { emptyTrendCopy, UNREACHED_PHRASE } from "@/lib/empty-period";
 import { formatCents } from "@/lib/money";
 import { formatMonthYear, monthWindowLabel } from "@/lib/format-date";
 import type { CategoryMonthPoint } from "@/services/category-detail";
@@ -64,8 +64,8 @@ export function MonthlyTrendBars({
   //
   // ⛔ …AND ONLY FOR THE MONTHS THE LEDGER HAS REACHED. The bars below already
   // refuse to report a zero for a month nobody has imported; the sentence that
-  // REPLACES all twelve of them asserted one for the whole year. `reached` is
-  // the ledger's own frontier — see `categoryMonthlyTrend`.
+  // REPLACES all twelve of them asserted one for the whole year. `unreached` is
+  // the ledger's own frontier, both ends — see `categoryMonthlyTrend`.
   if (max === 0) return <p className="text-sm text-ink-muted">{emptyTrendCopy(points)}</p>;
 
   return (
@@ -93,12 +93,17 @@ export function MonthlyTrendBars({
                  "Sep 2026: $0.00, 0 transactions" read as a measurement on all
                  76 category pages, three cards above the same page's "September
                  2026 has not been imported yet … a window nobody has looked at,
-                 not one in which nothing happened." `reached` is the ledger's
-                 own frontier — see `categoryMonthlyTrend`. */
+                 not one in which nothing happened." `unreached` is the
+                 ledger's own frontier — see `categoryMonthlyTrend`. */
+              /* 🔴 …IN THE WORDS OF THE WORLD IT IS IN. Every unreached month
+                 read "not imported yet", so "Apr 2022: not imported yet" sat on
+                 /categories/<Groceries>?period=2023-03 of a month before the
+                 records begin — /spending's heatmap and table say "before your
+                 records begin" of those days. One phrase map, `UNREACHED_PHRASE`. */
               aria-label={
-                p.reached
+                p.unreached === null
                   ? `${formatMonthYear(`${p.month}-01`)}: ${formatCents(p.spentCents)}, ${p.txnCount} ${p.txnCount === 1 ? "transaction" : "transactions"}`
-                  : `${formatMonthYear(`${p.month}-01`)}: not imported yet`
+                  : `${formatMonthYear(`${p.month}-01`)}: ${UNREACHED_PHRASE[p.unreached]}`
               }
               className="group flex w-full flex-col items-center gap-1"
             >

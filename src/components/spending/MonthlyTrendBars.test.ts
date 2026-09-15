@@ -10,7 +10,7 @@ function months(values: readonly number[]): CategoryMonthPoint[] {
     spentCents: cents,
     txnCount: cents === 0 ? 0 : 1,
     href: "/transactions",
-    reached: true,
+    unreached: null,
   }));
 }
 
@@ -66,7 +66,7 @@ describe("MonthlyTrendBars", () => {
    */
   test("an unread month is discounted, not asserted over", () => {
     const points = months([0, 0, 0]);
-    points[2]!.reached = false;
+    points[2] = { ...points[2]!, unreached: "after-records" };
     const html = renderToStaticMarkup(createElement(MonthlyTrendBars, { points }));
     expect(html).toContain("No activity in the 2 months of Jan 2026 to Mar 2026 the ledger covers");
     expect(html).toContain("The other 1 month has not been imported");
@@ -113,8 +113,8 @@ describe("a month nobody has imported has no zero to report", () => {
    * Measured 2026-09-10.
    */
   const mixed: CategoryMonthPoint[] = [
-    { month: "2026-08", spentCents: 5_000, txnCount: 2, href: "/transactions", reached: true },
-    { month: "2026-09", spentCents: 0, txnCount: 0, href: "/transactions", reached: false },
+    { month: "2026-08", spentCents: 5_000, txnCount: 2, href: "/transactions", unreached: null },
+    { month: "2026-09", spentCents: 0, txnCount: 0, href: "/transactions", unreached: "after-records" },
   ];
 
   test("an unreached month says so instead of naming a measured zero", () => {
@@ -125,12 +125,60 @@ describe("a month nobody has imported has no zero to report", () => {
 
   test("a reached month still reports its figures, zero included", () => {
     const zeroButReached: CategoryMonthPoint[] = [
-      { month: "2026-07", spentCents: 5_000, txnCount: 2, href: "/transactions", reached: true },
-      { month: "2026-08", spentCents: 0, txnCount: 0, href: "/transactions", reached: true },
+      { month: "2026-07", spentCents: 5_000, txnCount: 2, href: "/transactions", unreached: null },
+      { month: "2026-08", spentCents: 0, txnCount: 0, href: "/transactions", unreached: null },
     ];
     const html = renderToStaticMarkup(createElement(MonthlyTrendBars, { points: zeroButReached }));
     // a month the ledger walked through and found empty IS a measurement
     expect(html).toContain("Aug 2026: $0.00, 0 transactions");
+  });
+
+  /**
+   * 🔴 THE OTHER END, IN THE WRONG WORDS. A month before the ledger opens was
+   * read out as "not imported yet" — the words for a month past its newest row
+   * — while /spending's heatmap and cash-flow table say "before your records
+   * begin" of the same days. Measured on the owner's ledger 2026-09-15 (first
+   * row 2022-08-25): `/categories/<Groceries>?period=2023-03` read "Apr 2022:
+   * not imported yet" … "Jul 2022: not imported yet" beside "Aug 2022: $19.35,
+   * 4 transactions"; 1,863 bars on 368 of 2,880 (category × month) pages.
+   */
+  test("a month before the records begin says so, in the words every other surface uses", () => {
+    const opening: CategoryMonthPoint[] = [
+      { month: "2022-07", spentCents: 0, txnCount: 0, href: "/transactions", unreached: "before-records" },
+      { month: "2022-08", spentCents: 1_935, txnCount: 4, href: "/transactions", unreached: null },
+    ];
+    const html = renderToStaticMarkup(createElement(MonthlyTrendBars, { points: opening }));
+    expect(html).toContain("Jul 2022: before your records begin");
+    expect(html).not.toContain("Jul 2022: not imported yet");
+    expect(html).toContain("Aug 2022: $19.35, 4 transactions");
+  });
+
+  test("a month that has not happened says that, not that nobody imported it", () => {
+    const html = renderToStaticMarkup(
+      createElement(MonthlyTrendBars, {
+        points: [
+          { month: "2026-09", spentCents: 5_000, txnCount: 2, href: "/transactions", unreached: null },
+          { month: "2026-10", spentCents: 0, txnCount: 0, href: "/transactions", unreached: "future" },
+        ],
+      }),
+    );
+    expect(html).toContain("Oct 2026: has not happened yet");
+  });
+
+  /**
+   * 🔴 …AND THE SENTENCE THAT REPLACES ALL TWELVE BARS said "The other 1 month
+   * has not been imported" of July 2022 on `/categories/<Interest>?period=2023-06`.
+   */
+  test("the absence line names a pre-records month by its own cause too", () => {
+    const window: CategoryMonthPoint[] = Array.from({ length: 12 }, (_, i) => {
+      const month = i === 0 ? "2022-07" : i < 6 ? `2022-${String(i + 7).padStart(2, "0")}` : `2023-${String(i - 5).padStart(2, "0")}`;
+      return { month, spentCents: 0, txnCount: 0, href: "/transactions", unreached: i === 0 ? "before-records" : null };
+    });
+    const html = renderToStaticMarkup(createElement(MonthlyTrendBars, { points: window }));
+    expect(html).toContain(
+      "No activity in the 11 months of Jul 2022 to Jun 2023 the ledger covers. The other 1 month is before your records begin",
+    );
+    expect(html).not.toContain("has not been imported");
   });
 });
 
@@ -143,7 +191,7 @@ describe("a month nobody has imported has no zero to report", () => {
  * and every past period.
  */
 describe("trendWindowLabel — the bars name the months they are drawn over", () => {
-  const at = (month: string) => ({ month, spentCents: 0, txnCount: 0, href: "/x", reached: true });
+  const at = (month: string): CategoryMonthPoint => ({ month, spentCents: 0, txnCount: 0, href: "/x", unreached: null });
 
   test("names both ends of the run", () => {
     expect(trendWindowLabel([at("2022-12"), at("2023-06"), at("2023-11")])).toBe("Dec 2022 to Nov 2023");

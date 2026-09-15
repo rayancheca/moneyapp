@@ -98,7 +98,7 @@ describe("categoryMonthlyTrend", () => {
     insertTxn({ postedOn: "2026-07-05", amountCents: -5_000, category: "Food > Dining" });
     insertTxn({ postedOn: "2026-07-06", amountCents: -1_500, category: "Food > Coffee" });
 
-    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 2, TODAY, "2026-07-06", "2026-06-05");
+    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 2, TODAY, "2026-07-06", "2026-06-05", TODAY);
     expect(trend.map((t) => [t.month, t.spentCents])).toEqual([
       ["2026-06", 3_000],
       ["2026-07", 6_500],
@@ -115,11 +115,11 @@ describe("categoryMonthlyTrend", () => {
     insertTxn({ postedOn: "2026-06-05", amountCents: -3_000, category: "Food > Dining" });
 
     // the ledger stops on 2026-07-06 — July HAS been walked into, August has not
-    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 3, "2026-08-20", "2026-07-06", "2026-06-05");
-    expect(trend.map((t) => [t.month, t.reached])).toEqual([
-      ["2026-06", true],
-      ["2026-07", true],
-      ["2026-08", false],
+    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 3, "2026-08-20", "2026-07-06", "2026-06-05", "2026-08-20");
+    expect(trend.map((t) => [t.month, t.unreached])).toEqual([
+      ["2026-06", null],
+      ["2026-07", null],
+      ["2026-08", "after-records"],
     ]);
   });
 
@@ -133,17 +133,46 @@ describe("categoryMonthlyTrend", () => {
     insertTxn({ postedOn: "2026-06-05", amountCents: -3_000, category: "Food > Dining" });
 
     // the ledger opens 2026-06-05 — May predates it, June is opened inside
-    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 3, "2026-07-06", "2026-07-06", "2026-06-05");
-    expect(trend.map((t) => [t.month, t.reached])).toEqual([
-      ["2026-05", false],
-      ["2026-06", true],
-      ["2026-07", true],
+    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 3, "2026-07-06", "2026-07-06", "2026-06-05", TODAY);
+    expect(trend.map((t) => [t.month, t.unreached])).toEqual([
+      ["2026-05", "before-records"],
+      ["2026-06", null],
+      ["2026-07", null],
+    ]);
+  });
+
+  /**
+   * 🔴 THE TWO ENDS WERE ONE BOOLEAN, so the bar could not tell them apart:
+   * "Apr 2022: not imported yet" of a month before the records begin, on
+   * `/categories/<Groceries>?period=2023-03` (owner's ledger, 2026-09-15). The
+   * kind is asked through `unreachedKind` — the rule /spending's heatmap and
+   * cash-flow table already use — rather than a third inline copy of it.
+   */
+  test("the two ends are told apart, each by its own cause", () => {
+    insertTxn({ postedOn: "2026-06-05", amountCents: -3_000, category: "Food > Dining" });
+
+    // a ledger that opens 2026-06-05 and stops 2026-06-20: May before it, July and August after
+    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 4, "2026-08-20", "2026-06-20", "2026-06-05", "2026-08-20");
+    expect(trend.map((t) => [t.month, t.unreached])).toEqual([
+      ["2026-05", "before-records"],
+      ["2026-06", null],
+      ["2026-07", "after-records"],
+      ["2026-08", "after-records"],
+    ]);
+  });
+
+  /** ⛔ future is asked first, as every other caller of `unreachedKind` asks it */
+  test("a month that has not started is future, not unimported", () => {
+    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 2, "2026-08-20", "2026-07-06", "2026-06-05", TODAY);
+    expect(trend.map((t) => [t.month, t.unreached])).toEqual([
+      ["2026-07", null],
+      ["2026-08", "future"],
     ]);
   });
 
   test("an empty ledger has reached no month at all", () => {
-    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 2, TODAY, null, null);
-    expect(trend.every((t) => t.reached)).toBe(false);
+    const trend = categoryMonthlyTrend(bundle.db, catId("Food"), 2, TODAY, null, null, TODAY);
+    expect(trend.map((t) => t.unreached)).toEqual(["no-ledger", "no-ledger"]);
   });
 });
 

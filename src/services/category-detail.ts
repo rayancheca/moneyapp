@@ -2,7 +2,8 @@ import { eq } from "drizzle-orm";
 import { seriesDrawsAsRecurring, seriesRowLabel, type SeriesEvidence } from "@/lib/series-evidence";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
-import { addDays, compareDates, monthKey, periodBounds } from "@/lib/dates";
+import { addDays, monthKey, periodBounds } from "@/lib/dates";
+import { unreachedKind, type UnreachedKind } from "@/lib/empty-period";
 import {
   categorySpending,
   spendingTransactions,
@@ -66,10 +67,12 @@ export interface CategoryMonthPoint {
   txnCount: number;
   href: string;
   /**
-   * The ledger has walked into this month. False means nobody has looked, and
-   * its zero is not a measurement — see `categoryMonthlyTrend`.
+   * Null when the ledger has walked into this month — its figure is a
+   * measurement, a month the ledger opens or stops inside included. Otherwise
+   * which world it sits in — before the records begin, not imported yet, not
+   * happened — and its zero is not a measurement. See `categoryMonthlyTrend`.
    */
-  reached: boolean;
+  unreached: UnreachedKind | null;
 }
 
 /**
@@ -112,6 +115,19 @@ export function categoryMonthlyTrend(
    * end of the timeline two commits after it was killed.
    */
   opensFrom: string | null,
+  /**
+   * The page's today — the future is asked first, as every caller of
+   * `unreachedKind` asks it.
+   *
+   * 🔴 REQUIRED, because `reached` was one boolean for both ends and the bar
+   * could not tell them apart: `/categories/<Groceries>?period=2023-03` read
+   * "Apr 2022: not imported yet" … "Jul 2022: not imported yet" of months before
+   * the records begin (owner's ledger 2026-09-15, first row 2022-08-25), while
+   * /spending's heatmap and table say "before your records begin" of the same
+   * days — 1,863 bars on 368 of 2,880 (category × month) pages. The both-ends
+   * check was a third inline copy of the rule those two already share.
+   */
+  today: string,
 ): CategoryMonthPoint[] {
   // the system "Uncategorized" row is the bucket, and a link carrying its raw
   // id would filter by that id alone — see `hrefCategoryId`
@@ -125,16 +141,10 @@ export function categoryMonthlyTrend(
       spentCents,
       txnCount,
       href: ledgerHref({ category: linkCategory, from, to }),
-      // reached the month at all — its first day, not its last: a month the
-      // ledger stops inside HAS been looked at, and its figure is a real
-      // (if partial) measurement the page's coverage notes already qualify
-      // …and not a month that ENDS before the ledger opens: a month the ledger
-      // opens inside has been looked at from that day on, like the closing one
-      reached:
-        reachesThrough !== null &&
-        opensFrom !== null &&
-        compareDates(reachesThrough, from) >= 0 &&
-        compareDates(opensFrom, to) <= 0,
+      // a month the ledger stops or opens INSIDE has been looked at, and its
+      // figure is a real (if partial) measurement the page's coverage notes
+      // already qualify — `unreachedKind` calls it partly covered, not unreached
+      unreached: unreachedKind({ from, to, today, ledgerOpens: opensFrom, ledgerReaches: reachesThrough }),
     };
   });
 }
