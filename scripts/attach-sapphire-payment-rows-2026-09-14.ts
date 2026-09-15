@@ -63,7 +63,8 @@
  * lost as a hand row: its replacement is dated the printed 06/30, moving
  * Sapphire's 2026-06-30 balance −$29.11 → $70.89, and it has no link, leaving
  * Chase Checking's −$100.00 (…702124851376) grouped with a superseded row only.
- * That is an open question for the owner, not something this script decides.
+ * The link is carried since 8dfe304, and the day was the owner's to decide: on
+ * 2026-09-15 he chose the printed 06/30 (see the audit below).
  *
  * ⚠️ AUDIT, 2026-09-15 (copies of the applied ledger) — what this left unsaid:
  *
@@ -98,8 +99,22 @@
  *        so no figure does.
  *      - 108 superseded rows keep the transfer group id their successor now
  *        carries.
- *    The 06/30 posting day is still the owner's call: do not bump
- *    `chase-card-statement-pdf` before he has made it.
+ *    ✅ The 06/30 posting day is DECIDED (owner, 2026-09-15): the payment
+ *    carries its PRINTED 06/30. `redate-sapphire-0630-payment-2026-09-15.ts`
+ *    puts it there the way a re-parse would, for that one row: superseded,
+ *    and replaced by a successor holding the statement line's identity
+ *    (posted and transacted 06/30, "Payment Thank You-Mobile", the parser's
+ *    dedupe hash) and every other column, the `attached` marker included.
+ *    Rehearsed on copies of the ledger: only Sapphire 2026-06-30 moves
+ *    (−$29.11 → $70.89). A forced re-parse of 20260702 and its re-downloaded
+ *    twin AFTER it moves no balance day and no period, and brings the payment
+ *    back on 06/30 with its link, note, marker and the same hash;
+ *    `ledger-check` exits 0. A bump BEFORE it makes the same move itself, and
+ *    the re-date then refuses (its file row is superseded). So a bump no
+ *    longer waits on this decision; what it still rewrites is listed above.
+ *  - ⛔ Once the re-date has run, THIS script refuses a re-run: the row it
+ *    measured is superseded, and its successor now claims the 06/30 line as a
+ *    statement-backed row. That is correct — nothing is left for it to do.
  *  - Un-importing any of the 12 statements hard-deleted the attached rows it
  *    owned, and a re-import brought the money back as fresh parser rows
  *    without their notes (20260302's five came back quarantined).
