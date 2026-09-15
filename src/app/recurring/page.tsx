@@ -104,8 +104,11 @@ export default async function RecurringPage({
           ⛔ The calendar tab renders its OWN forecast card, because on that tab
           the card follows the month the grid is showing — and the card sits
           above the tab strip, so the two cannot share state without something
-          wrapping both. The tabs are passed through as a prop precisely so the
-          DOM order is unchanged: card, tabs, content, on every tab.
+          wrapping both. The tab strip is rendered INSIDE ForecastAndCalendar,
+          between the card and the grid, so the DOM order is unchanged — card,
+          tabs, content, on every tab — and the Calendar badge can follow the
+          month on screen — it reads that badge from the month its grid holds,
+          not from `counts.calendar`.
         */}
         {!hasSeries ? (
           <>
