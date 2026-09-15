@@ -514,6 +514,115 @@ describe("provenanceFor — a transaction", () => {
   });
 
   /*
+   * 🔴 S19, A COPY OF THE RULE RATHER THAN THE RULE. The anchored-day branch
+   * above hard-coded "adds up" (`sourced` → `derived`) and always said "so the
+   * total it sits in is checked", on the premise that `summedRowsProvenance`
+   * grades the same row `derived`. That premise holds only while the account's
+   * `verifiedThrough` reaches the row. On an anchored day AFTER a gap, or after
+   * a run nothing checked, the sheet read "adds up … checked through Jul 10"
+   * while a total holding only that row read "broken" / "unverified" and "0 of
+   * 1 checked" (review of uc/provenance-main, 2026-09-15; not live on the real
+   * ledger, where no account has a gap day).
+   *
+   * ⛔ The owner's decision (S19 a, 2026-09-14) is the grade the TOTAL gives —
+   * so each case below asks the total and the sheet the same question.
+   */
+  function sheetAndTotal(txn: string, day: string) {
+    const cat = addCategory("c-one-row", "Fixture One Row");
+    categorize(txn, cat);
+    return {
+      sheet: provenanceFor(bundle.db, { kind: "transaction", id: txn })!,
+      total: provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: day, to: day })!,
+    };
+  }
+
+  test("an anchored day after a gap is broken on the sheet, as in a total over that row", () => {
+    const id = addAccount("a", "Chase Checking", "checking");
+    const csv = addFile("f1", "Chase3522_Activity_20260710.CSV", "chase-deposit-csv");
+    const pdf = addFile("f2", "20260710-statements-3522-.pdf", "chase-checking-statement-pdf");
+    addPeriod("p2", id, pdf, "2026-06-11", "2026-07-10", "reconciled");
+    addAnchor(id, "2026-07-10", "statement", pdf);
+    addDays(id, [
+      { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-07-02", basis: "gap" },
+      { day: "2026-07-10", basis: "anchored" },
+    ]);
+    const txn = addTxn(id, "2026-07-10", { importFileId: csv });
+
+    const { sheet, total } = sheetAndTotal(txn, "2026-07-10");
+    expect(total.verdict).toBe("broken");
+    expect(sheet.verdict).toBe(total.verdict);
+    expect(sheet.headline).not.toMatch(/is checked/);
+    expect(sheet.headline).toContain("stopped adding up on Jul 2, 2026");
+    expect(sheet.checkedThrough).toBeNull();
+    // the day keeps its own verdict, and the document that anchors it is still listed
+    expect(sheet.inputs[0]!.verdict).toBe("sourced");
+    expect(sheet.sources.some((s) => s.kind === "anchor" && s.label === "20260710-statements-3522-.pdf")).toBe(true);
+  });
+
+  test("an anchored day after a run nothing checked is unverified on the sheet, as in a total over that row", () => {
+    const id = addAccount("a", "Chase Checking", "checking");
+    const csv = addFile("f1", "Chase3522_Activity_20260710.CSV", "chase-deposit-csv");
+    addAnchor(id, "2026-07-10", "live");
+    addDays(id, [
+      { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-07-03", basis: "derived_unverified" },
+      { day: "2026-07-10", basis: "anchored" },
+    ]);
+    const txn = addTxn(id, "2026-07-10", { importFileId: csv });
+
+    const { sheet, total } = sheetAndTotal(txn, "2026-07-10");
+    expect(total.verdict).toBe("unverified");
+    expect(sheet.verdict).toBe(total.verdict);
+    expect(sheet.headline).not.toMatch(/is checked/);
+    expect(sheet.headline).toMatch(/nothing checks the total it sits in/);
+    expect(sheet.checkedThrough).toBeNull();
+  });
+
+  test("a derived day after a gap is graded the way a total grades it, not by the day alone", () => {
+    const id = addAccount("a", "Chase Checking", "checking");
+    const csv = addFile("f1", "Chase3522_Activity.CSV", "chase-deposit-csv");
+    addDays(id, [
+      { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-07-02", basis: "gap" },
+      { day: "2026-07-03", basis: "anchored" },
+      { day: "2026-07-04", basis: "derived" },
+    ]);
+    const txn = addTxn(id, "2026-07-04", { importFileId: csv });
+
+    const { sheet, total } = sheetAndTotal(txn, "2026-07-04");
+    expect(sheet.verdict).toBe(total.verdict);
+    expect(sheet.verdict).toBe("broken");
+    expect(sheet.headline).toContain("stopped adding up on Jul 2, 2026");
+    expect(sheet.headline).not.toMatch(/chain closes across this day/);
+  });
+
+  /*
+   * 🔴 S31 AT THE OTHER END. The derived and anchored branches ask whether the
+   * row's own file recorded a balance; the last branch did not, and told a row
+   * from `Chase3522_Activity_20260710.CSV` — which records Chase Checking's
+   * balance on Jul 8 — that its file "carries no balances". Reachable on the
+   * real ledger's shape (that CSV carries rows dated after Jul 8); not live on
+   * 2026-09-15 only because a later statement anchors those days.
+   */
+  test("an unchecked day does not say the file that recorded a balance carries none", () => {
+    const id = addAccount("a", "Chase Checking", "checking");
+    const csv = addFile("f1", "Chase3522_Activity_20260710.CSV", "chase-deposit-csv");
+    addAnchor(id, "2026-07-08", "ofx_ledger", csv);
+    addDays(id, [
+      { day: "2026-07-08", basis: "anchored" },
+      { day: "2026-07-09", basis: "derived_unverified" },
+    ]);
+    const txn = addTxn(id, "2026-07-09", { importFileId: csv });
+
+    const p = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;
+    expect(p.verdict).toBe("unverified");
+    expect(p.headline).not.toMatch(/carries no balances/);
+    expect(p.headline).toContain("recorded Chase Checking's balance on Jul 8, 2026");
+    expect(p.headline).toMatch(/nothing checks the total it sits in/);
+  });
+
+  /*
    * ⛔ Two guards 8013a5b added that no test could make fail (mutation-tested on
    * review, 2026-09-15): reversing the same-day rows instead of `pickWinners`,
    * and dropping "only a reconciled period earns a checked-through date", each

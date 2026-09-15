@@ -407,12 +407,11 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
    * FPL row from `Chase3522_Activity_20260710.CSV` (Jul 10, 2026) read exactly
    * that.
    *
-   * ⛔ The badge is the owner's decision (2026-09-14, S19 option a): "adds up".
-   * The row did not come from a statement, and `summedRowsProvenance.gradeRow`
-   * already grades this same row `derived` inside every category, merchant and
-   * spending total — the sheet and a total over one row disagreed. The DAY
-   * keeps its own verdict in `inputs`, and only a reconciled period covering
-   * the day earns a "checked through" date.
+   * ⛔ The badge is the owner's decision (2026-09-14, S19 option a): the grade
+   * `rowGrade` gives this same row inside every category, merchant and spending
+   * total — "adds up" wherever the account's chain is checked across the day.
+   * The DAY keeps its own verdict in `inputs`, and only a reconciled period
+   * covering the day earns a "checked through" date.
    */
   const dayAnchor = !reconciled && dayVerdict === "sourced" ? anchorOnOrBefore(db, txn.accountId, txn.postedOn) : null;
   const anchorOfDay = dayAnchor !== null && dayAnchor.anchor.anchoredOn === txn.postedOn ? dayAnchor : null;
@@ -425,13 +424,44 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
   if (anchorOfDay) sources.push(anchorOfDay.source);
   if (checkingPeriod) sources.push(periodSource(checkingPeriod));
 
-  const verdict: ProvenanceVerdict = reconciled ? "sourced" : dayVerdict === "sourced" ? "derived" : dayVerdict;
+  /*
+   * 🔴 S19 WAS SHIPPED AS A COPY OF THE RULE. This line read `dayVerdict ===
+   * "sourced" ? "derived" : dayVerdict`, and the headline always ended "so the
+   * total it sits in is checked", on the premise that a total grades the row
+   * `derived`. A total grades it from the ACCOUNT's chain, not the day's basis:
+   * on an anchored day after a gap the sheet read "adds up · checked through Jul
+   * 10" while a total over that one row read "broken · 0 of 1 checked", and
+   * after a run nothing checked, "unverified" (review of this branch,
+   * 2026-09-15). The derived-day branch had the same split: a row after a gap
+   * read "adds up" here and "nothing checking it" in every total.
+   *
+   * ⛔ `rowGrade` IS the rule. A statement that reconciles the row's own period
+   * still says `sourced` — that is a document about this row, not a grade. An
+   * investment row keeps the day's `market_value`, and an account
+   * `accountCoverage` does not hold (a deactivated one) keeps the day's own
+   * verdict rather than borrowing a total's `unknown`.
+   *
+   * Not live on the real ledger 2026-09-15: no account has a gap day, and the
+   * only rows the day and the rule disagree about are Robinhood Cash's two
+   * prehistory rows, which read `unverified` either way.
+   */
+  const coverage =
+    account && !isInvestment(account.type) ? accountCoverage(db).find((c) => c.accountId === txn.accountId) : undefined;
+  const verdict: ProvenanceVerdict = reconciled
+    ? "sourced"
+    : coverage
+      ? rowGrade(coverage, txn.postedOn)
+      : dayVerdict === "sourced"
+        ? "derived"
+        : dayVerdict;
 
   const headline = rowHeadline({
     fileName: file?.fileName,
     accountName: account?.name ?? "the account",
     reconciled,
+    grade: verdict,
     dayVerdict,
+    brokenSince: coverage?.brokenSince ?? null,
     periodBalance,
     fileAnchorOn: fileAnchor?.anchoredOn,
     anchorOfDay,
@@ -442,7 +472,8 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
     verdict,
     headline,
     sources,
-    checkedThrough: reconciled ? period.periodEnd : (checkingPeriod?.periodEnd ?? null),
+    // a checked-through date only where the grade says the row is checked
+    checkedThrough: reconciled ? period.periodEnd : verdict === "derived" ? (checkingPeriod?.periodEnd ?? null) : null,
     inputs:
       day && account
         ? [
@@ -461,7 +492,12 @@ interface RowHeadlineFacts {
   fileName: string | undefined;
   accountName: string;
   reconciled: boolean;
+  /** the row's verdict — `rowGrade`'s, which decides whether "checked" may be said at all */
+  grade: ProvenanceVerdict;
+  /** the day's own basis, which decides how a checked row's check is described */
   dayVerdict: ProvenanceVerdict;
+  /** the first day the account's chain missed a balance, when it has */
+  brokenSince: string | null;
   /** the row's own period states an ending balance */
   periodBalance: boolean;
   /** the newest balance the row's own file recorded for this account */
@@ -481,24 +517,38 @@ function rowHeadline(f: RowHeadlineFacts): string {
   }
   const from = `This row came from ${f.fileName ?? "an imported file"}`;
   const ownBalance = f.fileAnchorOn ? `, which recorded ${f.accountName}'s balance on ${readableDay(f.fileAnchorOn)}` : null;
-  if (f.dayVerdict === "derived") {
+  // ⛔ "checked" is said only of a row the grade calls checked — see S19 above
+  if (f.grade === "derived") {
+    if (f.dayVerdict === "sourced") {
+      if (f.anchorOfDay?.anchor.importFileId === f.rowFileId) {
+        return `${from}, which recorded ${f.accountName}'s balance on this very day, so the total it sits in is checked.`;
+      }
+      const own = ownBalance ? `${ownBalance} — and` : ", which carries no balances of its own — but";
+      const by = f.anchorOfDay
+        ? `was recorded by ${f.anchorOfDay.anchor.source === "manual" ? "you" : f.anchorOfDay.source.label}`
+        : "is anchored";
+      return `${from}${own} ${f.accountName}'s balance on this day ${by}, so the total it sits in is checked.`;
+    }
     return ownBalance
       ? `${from}${ownBalance}, and ${f.accountName}'s chain closes across this day.`
       : `${from}. That file carries no balances of its own, but ${f.accountName}'s chain closes across this day.`;
   }
-  if (f.dayVerdict === "sourced") {
-    if (f.anchorOfDay?.anchor.importFileId === f.rowFileId) {
-      return `${from}, which recorded ${f.accountName}'s balance on this very day, so the total it sits in is checked.`;
-    }
-    const own = ownBalance ? `${ownBalance} — and` : ", which carries no balances of its own — but";
-    const by = f.anchorOfDay
-      ? `was recorded by ${f.anchorOfDay.anchor.source === "manual" ? "you" : f.anchorOfDay.source.label}`
-      : "is anchored";
-    return `${from}${own} ${f.accountName}'s balance on this day ${by}, so the total it sits in is checked.`;
+  if (f.grade === "broken" && f.brokenSince !== null) {
+    return `${from}${ownBalance ?? ", which carries no balances of its own"} — but ${f.accountName}'s balance stopped adding up on ${readableDay(f.brokenSince)}, so nothing checks the total it sits in.`;
   }
-  return f.periodBalance
-    ? `${from}, which records a value for ${f.accountName} rather than proving the rows add up.`
-    : `${from} — which carries no balances, so nothing checks the total it sits in.`;
+  if (f.periodBalance) {
+    return `${from}, which records a value for ${f.accountName} rather than proving the rows add up.`;
+  }
+  /*
+   * 🔴 S31 AT THE OTHER END: this sentence told a row from a file that DID
+   * record a balance — `Chase3522_Activity_20260710.CSV`, Chase Checking on Jul
+   * 8 — that its file "carries no balances", whenever the row's own day was not
+   * checked. The two branches above had been fixed and this one had not.
+   */
+  if (ownBalance && f.grade !== "market_value") {
+    return `${from}${ownBalance} — but ${f.accountName}'s chain does not close across this day, so nothing checks the total it sits in.`;
+  }
+  return `${from} — which carries no balances, so nothing checks the total it sits in.`;
 }
 
 /** The balance a day rests on, and how a reader should hear its source named. */
@@ -1635,7 +1685,13 @@ function summedRowsProvenance(
 
 /**
  * The grade ONE imported row gets from its account's chain — inside every
- * category, merchant, spending and account-rows total.
+ * category, merchant, spending and account-rows total, and on the row's own
+ * sheet (`transactionProvenance`).
+ *
+ * ⛔ One function, because it was a closure inside `summedRowsProvenance` and
+ * the sheet kept a copy of what it believed the closure said — see S19 in
+ * `transactionProvenance`. A second opinion about whether a row is checked is
+ * the defect, whichever of the two is right.
  *
  * 🔴 A row before the chain OPENS is not checked, however far `verifiedThrough`
  * reaches — see `AccountCoverage.chainOpensOn`. Robinhood Cash's Dec 6 and Dec
