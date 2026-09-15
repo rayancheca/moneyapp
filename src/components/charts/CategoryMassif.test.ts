@@ -464,3 +464,34 @@ describe("the relief's rail states each change against the prior window", () => 
     expect(railLines([{ id: "food", name: "Food", spentCents: 1_110, priorCents: null, txnCount: 1 }], "Aug 29, 2022", null)).toEqual(["1 entry"]);
   });
 });
+
+/**
+ * 🔴 "THE 1 HEIGHT SUMS TO LEVEL WITH MAY 18, 2023." A sum is a figure, and the
+ * description put the words for no change where the figure goes. Measured on the
+ * owner's ledger 2026-09-15 (read-only) over every whole period: 2 read that way,
+ * `?period=2023-05-19` (Food $18.45 against $18.45 on May 18, 2023) and
+ * `?period=2025-08-24` (Travel's 2 entries netting to $0.00, against $0.00 on
+ * Aug 23, 2025). The figure is $0.00, and it is level with the window.
+ */
+describe("the relief's description sums a zero change to a figure", () => {
+  const OPTIONS = { width: 720, height: 320, camera: MASSIF_VIEWPOINTS.quarter };
+
+  test("the heights sum to $0.00, level with the window", () => {
+    const food = { id: "food", label: "Food", hue: null, spentCents: 1_845, priorCents: 1_845, txnCount: 1 };
+    const d = massifDescription(computeMassifLayout([food], OPTIONS), "May 19, 2023", "May 18, 2023");
+    expect(d).toContain("The 1 height sums to $0.00, level with May 18, 2023. ");
+    expect(d).not.toContain("sums to level with");
+  });
+
+  test("entries that net to nothing, against a window that did too", () => {
+    const travel = { id: "travel", label: "Travel", hue: null, spentCents: 0, priorCents: 0, txnCount: 2 };
+    const d = massifDescription(computeMassifLayout([travel], OPTIONS), "Aug 24, 2025", "Aug 23, 2025");
+    expect(d).toContain("The 1 height sums to $0.00, level with Aug 23, 2025. ");
+  });
+
+  test("a change keeps its signed figure against the window", () => {
+    const food = { id: "food", label: "Food", hue: null, spentCents: 1_110, priorCents: 0, txnCount: 1 };
+    const d = massifDescription(computeMassifLayout([food], OPTIONS), "Aug 29, 2022", "Aug 28, 2022");
+    expect(d).toContain("The 1 height sums to +$11.10 against Aug 28, 2022. ");
+  });
+});

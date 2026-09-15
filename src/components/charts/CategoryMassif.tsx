@@ -12,7 +12,7 @@ import { useViewState } from "@/hooks/useViewState";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { categoryHueVar, isCategoryHueName } from "@/lib/category-palette";
 import { formatCents, formatCentsSigned } from "@/lib/money";
-import { changeAgainstPriorText } from "@/lib/prior-window-change";
+import { changeAgainstPrior, changeAgainstPriorText } from "@/lib/prior-window-change";
 import { type ViewState } from "@/lib/view-state";
 import {
   MASSIF_VIEW_DIMENSION,
@@ -854,10 +854,15 @@ export function massifDescription(
       `depth grows with the number of entries it holds. No earlier window is comparable here, so every block stands level. ${exact}`
     );
   }
-  const move =
-    layout.totalDeltaCents === 0
-      ? `level with ${priorLabel}`
-      : `${formatCentsSigned(layout.totalDeltaCents)} against ${priorLabel}`;
+  /*
+   * 🔴 "The 1 height sums to level with May 18, 2023." A sum is a figure, and
+   * this put the words for no change where the figure goes: `?period=2023-05-19`
+   * and `?period=2025-08-24`, measured on the owner's ledger 2026-09-15. The
+   * figure is printed whatever it is, and the words after it are the rail's and
+   * the List's (`lib/prior-window-change`) — "$0.00, level with May 18, 2023".
+   */
+  const change = changeAgainstPrior(layout.totalDeltaCents, priorLabel);
+  const move = `${formatCentsSigned(layout.totalDeltaCents)}${change.level ? "," : ""} ${change.words}`;
   /*
    * 🔴 THE SUM COVERS WHAT HAS NO BLOCK. The heights were the only terms this
    * sentence could see, because the categories that stopped spending were never
