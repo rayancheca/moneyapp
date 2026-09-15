@@ -21,8 +21,10 @@
  * (20250702) and one `03/02 … -115.00` (20260302). The same-day +$20.00 on
  * checking is a Zelle in Reimbursements, not a card payment. On 2026-03-02
  * checking also holds a second −$115.00 (…7081) and the "Cancelled" +$115.00
- * reversal (…7694); the group id names …7d70, so those two are NOT touched —
- * how to represent that same-day reversal is a separate owner question.
+ * reversal (…7694); the group id names …7d70, so those two are NOT touched
+ * here. The owner's answer (2) of 2026-09-15 records them as ONE cancelled
+ * transfer — `pair-checking-115-reversal-2026-09-15.ts`, run after this one —
+ * so this script accepts them as measured or as that write leaves them.
  *
  * ## What is written — the link only, in ONE transaction, behind a restore point
  *
@@ -37,17 +39,20 @@
  * that stamp would be a false claim. The category (Credit Card Payment) is
  * already right on all four.
  *
- * ## Effect (audit, transfersCard over Mar–Aug 2026)
+ * ## Effect (transfersCard read 2026-09-15, Mar–Aug 2026, on a `.backup` of that day's ledger)
  *
- * linked departures 89 → 90, unpaired 22 → 21 ($2,683.34 → $2,568.34), a
- * Checking → Sapphire route +$115. The 2025 pair is outside that window.
- * Ledger-wide one-leg groups −2. No balance moves.
+ * linked departures 90 → 91 ($67,277.24 → $67,392.24), unpaired 21 → 20
+ * ($2,656.70 → $2,541.70), Chase Checking → Sapphire $6,667.58 (10) →
+ * $6,782.58 (11). The 2025 pair is outside that window. Ledger-wide one-leg
+ * groups 23 → 21. No balance moves.
  *
  * ## Guards — refuse on anything but the measured before-state or this script's after-state
  *
  * each leg: account, day, amount, active, category, no split · each Sapphire
  * leg's group names its checking leg and holds only it (before) or both
- * (after) · the two untouched 2026-03-02 checking rows hold no group · then,
+ * (after) · the other two 2026-03-02 checking rows are as measured
+ * (ungrouped) or ONE cancelled transfer as answer (2) leaves them —
+ * `cancelledLegsState`, the reversal module's reading, not a copy of it · then,
  * before vs after: every `daily_balances` row · status counts · every
  * transaction column but `transfer_group_id` (and `updated_at`) · the group
  * id changed on exactly the two checking legs · one-leg groups ledger-wide −2.
@@ -60,6 +65,7 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { withPreMutationSnapshot } from "@/db/backup";
 import { transactions } from "@/db/schema/transactions";
 import { formatCents } from "@/lib/money";
+import { cancelledLegsState, loadFacts } from "./checking-115-reversal";
 import { balancesHash, changedKeys, onRehearsalCopy, parseGuardedArgs, statusCounts } from "./guarded-write-harness";
 
 const CHASE_CHECKING_ID = "019f4ca7-a6bd-7cc7-9a5f-e7f91c499722";
@@ -71,9 +77,6 @@ const PAIRS = [
   { day: "2026-03-02", cents: 11_500, sapphireId: "019f4ea0-240c-7003-bc3d-8f309bfdeff6", checkingId: "019f4ca7-a6cc-7d70-93d1-0295d19aa1ed" },
 ] as const;
 type Pair = (typeof PAIRS)[number];
-
-/** Chase Checking's other 2026-03-02 rows — the second −$115.00 and the "Cancelled" +$115.00 */
-const UNTOUCHED_IDS = ["019f4ca7-a6cc-7081-bee2-87b82db8b194", "019f4ca7-a6cd-7694-9efd-664fae9f334e"] as const;
 
 interface Leg {
   id: string;
@@ -125,10 +128,16 @@ function pairState(bundle: DbBundle, pair: Pair): "before" | "after" | string {
 
 function planFor(bundle: DbBundle): Verdict {
   const reasons: string[] = [];
-  for (const id of UNTOUCHED_IDS) {
-    const row = leg(bundle, id);
-    if (row?.status !== "active" || row.transfer_group_id !== null) reasons.push(`2026-03-02 checking row ${id} is not as measured: ${JSON.stringify(row)}`);
-  }
+  /*
+   * Chase Checking's other two 2026-03-02 rows — the second −$115.00 (…7081)
+   * and the "Cancelled" +$115.00 (…7694) — are not this script's to link. As
+   * measured they hold no group; answer (2)'s write makes them ONE cancelled
+   * transfer. Anything else refuses. 🔴 This loop used to pin them as
+   * ungrouped, so running this script again after answer (2) refused — exit 1,
+   * both rows "not as measured" — instead of printing ALREADY APPLIED.
+   */
+  const cancelledLegs = cancelledLegsState(loadFacts(bundle));
+  if (cancelledLegs.kind === "refuse") reasons.push(...cancelledLegs.reasons.map((r) => `2026-03-02 checking rows …7081 / …7694: ${r}`));
   const states = PAIRS.map((p) => [p, pairState(bundle, p)] as const);
   for (const [, state] of states) if (state !== "before" && state !== "after") reasons.push(state);
   if (reasons.length > 0) return { kind: "refuse", reasons };

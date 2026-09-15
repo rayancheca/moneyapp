@@ -112,10 +112,12 @@ afterEach(() => {
 });
 
 describe("the two answers never claim the same row", () => {
-  test("answer (1)'s script pairs the OTHER −$115.00, and pins these two legs as the rows it leaves alone", () => {
+  test("answer (1)'s script pairs the OTHER −$115.00, and reads these two legs through this module's one rule", () => {
     const link = fs.readFileSync(path.join(process.cwd(), "scripts", "link-sapphire-one-leg-groups-2026-09-15.ts"), "utf8");
     expect(link).toContain(`sapphireId: "${REAL_IDS.paidSapphireId}", checkingId: "${REAL_IDS.paidId}"`);
-    expect(link).toContain(`UNTOUCHED_IDS = ["${REAL_IDS.sentId}", "${REAL_IDS.cancelledId}"]`);
+    expect(link).not.toContain(`checkingId: "${REAL_IDS.sentId}"`);
+    expect(link).not.toContain(`checkingId: "${REAL_IDS.cancelledId}"`);
+    expect(link).toMatch(/cancelledLegsState\(loadFacts\(/);
     expect(new Set([REAL_IDS.sentId, REAL_IDS.cancelledId, REAL_IDS.paidId]).size).toBe(3);
   });
 });
