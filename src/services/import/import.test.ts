@@ -846,6 +846,22 @@ describe("an import links what it brought in to the series that already carry it
   });
 });
 
+/**
+ * The owner improves a parser and re-drops the same statements: the profile's
+ * `version` is what drives the re-parse lifecycle, so bumping it is the whole
+ * simulation. Restored afterwards — PROFILES is module-level state.
+ */
+async function withBumpedParserVersion<T>(profileId: string, fn: () => Promise<T>): Promise<T> {
+  const profile = PROFILES.find((p) => p.id === profileId)!;
+  const original = profile.version;
+  profile.version = original + 1;
+  try {
+    return await fn();
+  } finally {
+    profile.version = original;
+  }
+}
+
 describe("re-parse lifecycle: a parser-version bump preserves user work", () => {
   const cardCsv = (rows: string[]): string =>
     ["Card,Transaction Date,Post Date,Description,Category,Type,Amount,Memo", ...rows].join("\n");
@@ -862,22 +878,6 @@ describe("re-parse lifecycle: a parser-version bump preserves user work", () => 
       ]),
     ),
   };
-
-  /**
-   * The owner improves a parser and re-drops the same statements: the profile's
-   * `version` is what drives the re-parse lifecycle, so bumping it is the whole
-   * simulation. Restored afterwards — PROFILES is module-level state.
-   */
-  async function withBumpedParserVersion<T>(profileId: string, fn: () => Promise<T>): Promise<T> {
-    const profile = PROFILES.find((p) => p.id === profileId)!;
-    const original = profile.version;
-    profile.version = original + 1;
-    try {
-      return await fn();
-    } finally {
-      profile.version = original;
-    }
-  }
 
   function liveRow(fragment: string): typeof transactions.$inferSelect {
     const row = bundle.db
@@ -2082,5 +2082,63 @@ describe("un-import keeps a row attached to its file, and a re-import files it t
     // not vacuous: a leg does go, and the one kept row is the owner's own categorization
     expect(counts!.transferLegsDeleted).toBeGreaterThan(0);
     expect(row(s.attached)!.categorizationSource).toBe("user");
+  });
+
+  /**
+   * 🔴 A parser-version re-parse supersedes every row of the file, the attached
+   * ones included, and the statement's line comes back as a FRESH row that the
+   * carry hands the attached row's note, category and links — but not the
+   * marker. The next un-import then deleted that row as parsed, note and links
+   * with it, and owner answer (4) stopped protecting all 34 rows after any bump
+   * (the review, 2026-09-15, on this fixture).
+   */
+  test("a parser-version re-parse keeps the marker on the rows that inherit the attached rows, and a later un-import keeps them", async () => {
+    const s = await scene();
+    // a second attached row with nothing else on it: the marker alone must travel too
+    attach(s.unattached, s.fileId);
+    const bare = row(s.unattached)!;
+    const profileId = fileNamed()!.parserProfile!;
+
+    const [outcome] = await withBumpedParserVersion(profileId, () => importStatementFiles(bundle.db, [statement()]));
+
+    expect(outcome!.status).toBe("parsed");
+    expect(row(s.attached)!.status).toBe("superseded");
+    expect(row(s.unattached)!.status).toBe("superseded");
+    const reparsed = bundle.db
+      .select()
+      .from(importFilesTable)
+      .where(and(eq(importFilesTable.fileName, NAME), ne(importFilesTable.status, "superseded")))
+      .get()!;
+    const heirOf = (postedOn: string, amountCents: number) =>
+      rowsOf(reparsed.id).filter((t) => t.postedOn === postedOn && t.amountCents === amountCents && t.status !== "superseded");
+    const line = row(s.attached)!;
+    const [heir, ...more] = heirOf(line.postedOn, line.amountCents);
+    expect(more).toEqual([]);
+    expect(heir).toMatchObject({
+      fileLinkSource: "attached",
+      status: "active",
+      notes: "reconstructed credit-card payment leg",
+      categorizationSource: "user",
+      transferGroupId: s.attached,
+      recurringSeriesId: s.seriesId,
+    });
+    const [bareHeir] = heirOf(bare.postedOn, bare.amountCents);
+    expect(bareHeir).toMatchObject({ fileLinkSource: "attached", status: "active" });
+    // …and no row the re-parse produced for any other line took the marker
+    expect(rowsOf(reparsed.id).filter((t) => t.fileLinkSource !== null).map((t) => t.id).sort()).toEqual(
+      [heir!.id, bareHeir!.id].sort(),
+    );
+
+    unimportFile(bundle.db, reparsed.id);
+
+    expect(row(heir!.id)).toMatchObject({
+      importFileId: null,
+      fileLinkSource: "attached",
+      status: "active",
+      notes: "reconstructed credit-card payment leg",
+      transferGroupId: s.attached,
+      recurringSeriesId: s.seriesId,
+    });
+    expect(row(bareHeir!.id)).toMatchObject({ importFileId: null, fileLinkSource: "attached", status: "active" });
   });
 });

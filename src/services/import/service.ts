@@ -11,6 +11,7 @@ import { institutions } from "@/db/schema/institutions";
 import {
   transactions,
   type CategorizationSource,
+  type FileLinkSource,
   type SeriesLinkSource,
   type TransactionStatus,
 } from "@/db/schema/transactions";
@@ -215,6 +216,15 @@ function consumeIdentity(pool: IdentityPool, postedOn: string, transactedOn: str
  * Deliberately NOT carried: needs_review (re-derived every import) and
  * quarantined status (a reconciliation verdict on the OLD file's period —
  * the new file reconciles for itself).
+ *
+ * `fileLinkSource` travels onto the row this file inserts for the same money
+ * (`applyCarry`) and nowhere else. 🔴 A version bump supersedes an attached row
+ * (`attached-rows`) with the rest of its file and inserts the statement's line
+ * fresh: the note, category and links moved, the marker did not, and the next
+ * un-import deleted the owner's reconstruction as a parsed row (the review,
+ * 2026-09-15). It never fills another source's row (`fillFromCarry`): that row
+ * is filed under the file that parsed it. A takeover victim belongs to another
+ * file, so `insertTxn` does not take it from one.
  */
 interface CarryAttributes {
   categoryId: string | null;
@@ -225,6 +235,7 @@ interface CarryAttributes {
   transferGroupId: string | null;
   recurringSeriesId: string | null;
   seriesLinkSource: SeriesLinkSource | null;
+  fileLinkSource: FileLinkSource | null;
   status: TransactionStatus;
 }
 
@@ -283,6 +294,8 @@ function hasCarryableAttributes(row: CarryRow): boolean {
     row.transferGroupId !== null ||
     row.recurringSeriesId !== null ||
     isDetach(row) ||
+    // an attached row with nothing else on it is still not the parser's
+    row.fileLinkSource !== null ||
     row.status === "excluded"
   );
 }
@@ -390,6 +403,8 @@ function applyCarry(tx: AppDatabase, txnId: string, carry: CarryAttributes): voi
       recurringSeriesId: carry.recurringSeriesId,
       // …and a detach travels as a detach (see `isDetach`)
       seriesLinkSource: carriedLinkSource(carry),
+      // an attached row's successor stays attached (see `CarryAttributes`)
+      fileLinkSource: carry.fileLinkSource,
       // a user-excluded row stays excluded — a re-parse must not resurrect it
       ...(carry.status === "excluded" ? { status: "excluded" as const } : {}),
     })

@@ -29,6 +29,12 @@ import { transactions, type FileLinkSource } from "@/db/schema/transactions";
  *    deleted with no warning, and once detached (file NULL) no timestamp says
  *    the row was ever filed anywhere — so a re-import could not file it again.
  *  - `statement_period_id` is an FK into the periods the un-import deletes.
+ *
+ * The marker belongs to the MONEY, like a note: a parser-version re-parse
+ * supersedes an attached row with the rest of its file, and the carry puts the
+ * marker on the fresh row that inherits its note and links (`CarryAttributes`,
+ * services/import/service.ts). Without it, un-importing after a bump deleted
+ * that row as parsed.
  */
 export const ATTACHED: FileLinkSource = "attached";
 

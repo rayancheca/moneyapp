@@ -101,6 +101,9 @@ Liability status **derived** from `type='credit'`. Debit cards are intentionally
     confidence, because categorizeAll never revisits a user-categorized row)
   - `notes`, `transfer_group_id`, `recurring_series_id` + `series_link_source`
   - `status='excluded'` — a user's exclusion is a decision, not a parse artifact
+  - `file_link_source='attached'`, onto the row the re-parse inserts for that money only — the
+    owner's reconstruction stays his, so a later un-import still keeps it (never filled onto
+    another file's row, never taken from a takeover victim)
   - `transaction_splits`, moved wholesale onto the new parent (same amount ⇒ the parts still sum;
     the parent stays immutable)
 

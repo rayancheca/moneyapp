@@ -113,9 +113,11 @@
  *    with the file. The 34 attached on 2026-09-15, before the marker existed,
  *    get it from `mark-attached-sapphire-rows-2026-09-15.ts` — ⛔ until that
  *    runs, un-importing one of the 12 still deletes them.
- *    ⛔ A version bump supersedes an attached row and inserts the statement's
- *    line as a fresh row carrying its note and links but NOT the marker, so
- *    un-importing after a bump deletes that row like any parsed one.
+ *    A version bump supersedes an attached row and inserts the statement's
+ *    line fresh; the carry moves the marker onto that row with its note and
+ *    links, so un-importing after a bump still keeps it (`CarryAttributes`).
+ *    🔴 Until 2026-09-15 the marker did not travel, and the next un-import
+ *    deleted the reconstruction as a parsed row.
  *
  * ## What is written, in ONE transaction
  *
