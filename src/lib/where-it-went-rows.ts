@@ -57,6 +57,8 @@ export function whereItWentRows<Row extends DeviationSourceRow>(
     spentCents: c.spentCents,
     sharePct: shareBaseCents > 0 ? (Math.max(0, c.spentCents) / shareBaseCents) * 100 : 0,
     momDeltaCents: c.priorCents === null ? 0 : c.spentCents - c.priorCents,
+    // no breakdown row this period: it is here for the prior window's entries
+    stopped: c.current === null,
     forecast: forecastById.get(c.categoryId) ?? null,
     // a category with no row this period has no children in it either
     children: c.current === null ? [] : childrenOf(c.current),
@@ -73,6 +75,7 @@ export function whereItWentRows<Row extends DeviationSourceRow>(
       spentCents: 0,
       sharePct: 0,
       momDeltaCents: 0,
+      stopped: false,
       forecast: f.forecast,
       children: [],
     }));

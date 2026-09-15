@@ -28,6 +28,7 @@ function row(over: Partial<CategoryTableRow>): CategoryTableRow {
     spentCents: 0,
     sharePct: 0,
     momDeltaCents: -225_000,
+    stopped: true,
     children: [],
     ...over,
   };
@@ -59,14 +60,40 @@ describe("the List's change for a category that spent nothing this period", () =
   });
 
   test("a row that spent keeps the one column it had", () => {
-    const html = render([row({ name: "Travel", spentCents: 244_888, sharePct: 23.9, momDeltaCents: 185_864 })], JUNE);
+    const html = render(
+      [row({ name: "Travel", spentCents: 244_888, sharePct: 23.9, momDeltaCents: 185_864, stopped: false })],
+      JUNE,
+    );
 
     expect(textOfClass(html, "md:hidden")).toEqual([]);
     expect(textOfClass(html, "hidden", "md:block")).toEqual(["+$1,858.64"]);
   });
 
-  test("a $0.00 row with no change has nothing to say below md either", () => {
-    expect(textOfClass(render([row({ momDeltaCents: 0 })], JUNE), "md:hidden")).toEqual([]);
+  test("a row whose entries this period netted to $0.00, level with the prior window, has nothing to say below md", () => {
+    expect(textOfClass(render([row({ momDeltaCents: 0, stopped: false })], JUNE), "md:hidden")).toEqual([]);
+  });
+
+  /*
+   * 🔴 A ROW WITH NO REASON TO BE THERE. A category with no entries this period
+   * whose prior window's entries netted to $0.00 is a row — the Table lists it —
+   * but the phone line printed only for a NON-zero change, so below md it read
+   * "Travel 0.0% $0.00", the same as a category that spent nothing, and said
+   * nothing of why it was listed. Measured on the owner's ledger 2026-09-15:
+   * `?period=2025-08-25` against Aug 24, 2025 and `?period=W2025-08-25` against
+   * Aug 18 – 24, 2025, Travel both times. The relief's words for a zero change.
+   */
+  test("a category that stopped over a prior window that netted to $0.00 is level with it, and says so below md", () => {
+    const html = render([row({ name: "Travel", momDeltaCents: 0 })], "Aug 24, 2025");
+
+    expect(textOfClass(html, "md:hidden")).toEqual(["level with Aug 24, 2025"]);
+    // from md up the column still carries it — the one element there, as before
+    expect(textOfClass(html, "hidden", "md:block")).toEqual(["$0.00"]);
+  });
+
+  test("a forecast-only row was in neither window, so below md it has no change to state", () => {
+    const html = render([row({ name: "Insurance", momDeltaCents: 0, stopped: false })], JUNE);
+
+    expect(textOfClass(html, "md:hidden")).toEqual([]);
   });
 
   test("a List that compares nothing prints no change at any width", () => {

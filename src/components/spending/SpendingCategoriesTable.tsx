@@ -57,6 +57,13 @@ export interface CategoryTableRow {
   sharePct: number;
   /** current period − previous period (positive = spending rose) */
   momDeltaCents: number;
+  /**
+   * No entries this period — the row is here for the prior window's: a category
+   * that stopped (only a whole comparison has one). ⛔ `spentCents === 0` cannot
+   * say it: entries that net to zero read the same, and a forecast-only row was
+   * in neither window.
+   */
+  stopped: boolean;
   /** next-month predicted spend for this category, or null (no confident forecast) */
   forecast?: CategoryForecastAnnotation | null;
   children: CategoryTableChild[];
@@ -165,11 +172,22 @@ export function SpendingCategoriesTable({
                 stopped read "0.0% $0.00" and nothing else, to a screen reader
                 too — 82 rows over 39 of 46 whole months, measured 2026-09-15.
                 Below md the change is a line of its own naming its window; from
-                md up the column carries it, so each width reads it once. */}
-            {compares && row.spentCents === 0 && row.momDeltaCents !== 0 && (
+                md up the column carries it, so each width reads it once.
+                🔴 A category that STOPPED over a prior window whose entries
+                netted to $0.00 had no line, so it read like one that spent
+                nothing and gave no reason for being listed — Travel on
+                `?period=2025-08-25` and `?period=W2025-08-25`, measured
+                2026-09-15. It is level with that window, in the relief's words. */}
+            {compares && row.spentCents === 0 && (row.stopped || row.momDeltaCents !== 0) && (
               <p className="-mt-1 mb-1.5 ml-7 text-[11px] text-ink-faint md:hidden">
-                <SpendDelta cents={row.momDeltaCents} />
-                {` against ${priorLabel}`}
+                {row.momDeltaCents === 0 ? (
+                  `level with ${priorLabel}`
+                ) : (
+                  <>
+                    <SpendDelta cents={row.momDeltaCents} />
+                    {` against ${priorLabel}`}
+                  </>
+                )}
               </p>
             )}
 

@@ -79,6 +79,7 @@ describe("whereItWentRows — the List and the Table cut from one population", (
       spentCents: 0,
       sharePct: 0,
       momDeltaCents: -1_040,
+      stopped: true,
       forecast: null,
       children: [],
     });
@@ -96,11 +97,11 @@ describe("whereItWentRows — the List and the Table cut from one population", (
     const { list } = rowsOf(Q2, Q1);
     const byId = new Map(list.map((r) => [r.categoryId, r]));
 
-    expect(byId.get("travel")).toMatchObject({ hue: "sky", icon: "plane", sharePct: 60, momDeltaCents: 80_000 });
+    expect(byId.get("travel")).toMatchObject({ hue: "sky", icon: "plane", sharePct: 60, momDeltaCents: 80_000, stopped: false });
     expect(byId.get("travel")!.children.map((c) => c.categoryId)).toEqual(["flights"]);
-    expect(byId.get("food")).toMatchObject({ hue: null, icon: null, sharePct: 40, momDeltaCents: -10_000 });
+    expect(byId.get("food")).toMatchObject({ hue: null, icon: null, sharePct: 40, momDeltaCents: -10_000, stopped: false });
     // a category that netted a refund takes no share, and had nothing in Q1
-    expect(byId.get("shopping")).toMatchObject({ spentCents: -2_500, sharePct: 0, momDeltaCents: -2_500 });
+    expect(byId.get("shopping")).toMatchObject({ spentCents: -2_500, sharePct: 0, momDeltaCents: -2_500, stopped: false });
   });
 
   test("with no whole prior window: this period's categories alone, none stopped, no change measured", () => {
@@ -108,7 +109,7 @@ describe("whereItWentRows — the List and the Table cut from one population", (
 
     expect(list.map((r) => r.categoryId)).toEqual(["travel", "food", "shopping"]);
     expect(where.map((r) => r.categoryId)).toEqual(["travel", "food", "shopping"]);
-    expect(list.every((r) => r.momDeltaCents === 0)).toBe(true);
+    expect(list.every((r) => r.momDeltaCents === 0 && !r.stopped)).toBe(true);
     // ⛔ null, never 0: a zero is a measurement
     expect(where.every((r) => r.priorCents === null)).toBe(true);
   });
@@ -122,7 +123,7 @@ describe("whereItWentRows — the List and the Table cut from one population", (
     expect(list.map((r) => r.categoryId)).toEqual([...where.map((r) => r.categoryId), "insurance"]);
     expect(list.find((r) => r.categoryId === "food")!.forecast).toBe(FORECAST);
     expect(list.find((r) => r.categoryId === "travel")!.forecast).toBeNull();
-    // in neither window: no change
+    // in neither window: no change, and it did not stop — it never started
     expect(list.at(-1)).toEqual({
       categoryId: "insurance",
       name: "Insurance",
@@ -131,6 +132,7 @@ describe("whereItWentRows — the List and the Table cut from one population", (
       spentCents: 0,
       sharePct: 0,
       momDeltaCents: 0,
+      stopped: false,
       forecast: FORECAST,
       children: [],
     });
