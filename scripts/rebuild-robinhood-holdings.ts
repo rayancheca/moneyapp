@@ -267,6 +267,8 @@ function main(): void {
             quantityDeltaE8: toInt(e.quantityDeltaE8, `${e.symbol} delta`),
             costCents: e.costCents,
             note: e.note,
+            // the split marker the valuation reads — see ShareEvent.eventKind
+            eventKind: e.eventKind,
           })
           .run();
       }

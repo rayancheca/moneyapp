@@ -1,3 +1,5 @@
+import type { HoldingEventKind } from "@/db/schema/holding-events";
+
 /**
  * The share book, reconstructed from the Robinhood activity export.
  *
@@ -86,6 +88,15 @@ export interface ShareEvent {
   costCents: number | null;
   /** provenance when the printed quantity was not used verbatim */
   note: string | null;
+  /**
+   * 🔴 A split is not a trade, and the valuation reads the difference: the cost
+   * walk drops splits and pre-split quantities are rescaled against split-adjusted
+   * closes. The rebuild once wrote every row as the column default `trade`,
+   * erasing COKE's 2025-05-27 marker — spring-2025 NAV fell by up to $1,021.71
+   * until it was re-marked (2026-09-15). The kind is decided HERE, where the split
+   * row is recognised, so every writer carries it.
+   */
+  eventKind: HoldingEventKind;
 }
 
 /** A symbol's reconstructed position and cost. */
@@ -390,6 +401,7 @@ export function reconstructHoldings(rows: readonly ActivityRow[]): Reconstructio
       quantityDeltaE8: delta,
       costCents: eventCost,
       note,
+      eventKind: row.code === SPLIT_CODE ? "split" : "trade",
     });
   }
 

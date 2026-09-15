@@ -206,6 +206,10 @@ describe("reconstructHoldings — splits are a ratio, not the printed delta", ()
     expect(events[1]!.quantityDeltaE8).toBe(901_309_500n);
     expect(positions[0]!.quantityE8).toBe(1_001_455_000n);
     expect(events[1]!.note).toBe("split 10.01455/1.001455 — export printed 9.0131");
+    // 🔴 the kind travels with the event: a rebuild that wrote this row as a "trade"
+    // (2026-09-15) erased the marker the valuation reads, and spring-2025 NAV fell
+    // by up to $1,021.71 until the split was re-marked
+    expect(events.map((e) => e.eventKind)).toEqual(["trade", "split"]);
   });
 
   it("leaves cost untouched across a split, so avg cost divides by the ratio", () => {
