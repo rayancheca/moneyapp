@@ -205,6 +205,8 @@ describe("holdings service against a real database", () => {
     // Assert
     expect(row!.latestClose).toBe(121);
     expect(row!.quotedOn).toBe("2026-07-10");
+    // the close the day change is measured FROM travels with it, so the table can date the move
+    expect(row!.previousQuotedOn).toBe("2026-07-09");
     expect(row!.valueCents).toBe(121_000); // 10 × $121
     expect(row!.dayChangeCents).toBe(11_000); // 10 × ($121 − $110)
     expect(row!.dayChangePct).toBeCloseTo(10, 5);
@@ -243,6 +245,7 @@ describe("holdings service against a real database", () => {
     expect(rows[0]!.symbol).toBe("ETH");
     expect(rows[0]!.valueCents).toBe(360_000);
     expect(rows[0]!.dayChangeCents).toBeNull();
+    expect(rows[0]!.previousQuotedOn).toBeNull(); // one close: nothing to date a move by
     expect(rows[0]!.plCents).toBeNull(); // no avg cost recorded
   });
 

@@ -214,6 +214,12 @@ export interface AccountHoldingRow {
   avgCostCents: number | null;
   latestClose: number | null;
   quotedOn: string | null;
+  /**
+   * The close `dayChangeCents` is measured FROM; null with fewer than two. The
+   * move's two days travel with it, so the account's Day column can date it by
+   * them (`closesDayChange`) rather than print a bare percentage.
+   */
+  previousQuotedOn: string | null;
   valueCents: number | null;
   /** value move vs the previous cached close × quantity */
   dayChangeCents: number | null;
@@ -265,6 +271,7 @@ export function listAccountHoldings(db: AppDatabase, accountId: string): Account
       avgCostCents: r.avgCostCents,
       latestClose: latest?.close ?? null,
       quotedOn: latest?.quotedOn ?? null,
+      previousQuotedOn: previous?.quotedOn ?? null,
       valueCents,
       dayChangeCents,
       dayChangePct,
