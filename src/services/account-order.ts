@@ -21,6 +21,7 @@ import { institutions } from "@/db/schema/institutions";
  * name)` was still ordering the dashboard net-worth popover and
  * ConcentrationCard's copy of it (`accountCoverage`), the dashboard Statements
  * teaser (`statementPulls`) and the /imports missing-statements panel
- * (`statementGaps`).
+ * (`statementGaps`), and the ⌘K palette (`commandEntityGroups`) sorted by
+ * institution then NAME, ignoring the drag-reorder outright.
  */
 export const ACCOUNT_ORDER: readonly SQL[] = [asc(institutions.name), asc(accounts.displayOrder), asc(accounts.name)];

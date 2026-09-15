@@ -5,6 +5,7 @@ import { categories } from "@/db/schema/categories";
 import { holdings } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
+import { ACCOUNT_ORDER } from "./account-order";
 import { hrefCategoryId } from "./analytics";
 import { ledgerHref } from "@/lib/ledger-href";
 import { isIconName, type IconName } from "@/components/shell/Icon";
@@ -25,7 +26,8 @@ export function commandEntityGroups(db: AppDatabase): CommandPaletteGroup[] {
     .from(accounts)
     .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
     .where(eq(accounts.isActive, true))
-    .orderBy(asc(institutions.name), asc(accounts.name))
+    // THE order, drag-reorder included: the palette lists these as they come
+    .orderBy(...ACCOUNT_ORDER)
     .all();
   if (accountRows.length > 0) {
     groups.push({

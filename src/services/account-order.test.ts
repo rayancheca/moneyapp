@@ -8,6 +8,7 @@ import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { seedDatabase } from "@/db/seed";
 import { listAccountOptions } from "./accounts";
+import { commandEntityGroups } from "./command-index";
 import { accountCoverage } from "./coverage";
 import { statementGaps } from "./statement-gaps";
 import { statementPulls } from "./statement-pulls";
@@ -156,5 +157,10 @@ describe("THE account order, wherever accounts are listed", () => {
 
   test("statementGaps — the /imports missing-statements panel", () => {
     expect(statementGaps(bundle.db).map((g) => g.accountId)).toEqual(THE_ORDER);
+  });
+
+  test("commandEntityGroups — the ⌘K palette honours the drag-reorder", () => {
+    const group = commandEntityGroups(bundle.db).find((g) => g.label === "Accounts");
+    expect(group?.items.map((i) => i.id)).toEqual(THE_ORDER.map((id) => `account-${id}`));
   });
 });
