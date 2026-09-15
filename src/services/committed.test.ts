@@ -7,6 +7,7 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { addCalendarMonths, addDays, daysInMonthOf, monthKey } from "@/lib/dates";
 import { dailyBalances } from "@/db/schema/balances";
+import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
@@ -652,6 +653,68 @@ describe("runwayCard", () => {
     expect(after.netCashCents).toBe(-80000);
     // the brokerage is untouched — only the archived account leaves
     expect(after.assumptions.find((a) => a.id === "investments")!.cents).toBe(2000000);
+  });
+
+  /**
+   * ⚖️ Owner decision 2026-09-15: Robinhood Cash ($0.90, the brokerage's
+   * settlement cash) and Robinhood Agentic ($26.64, Claude's trading money) are
+   * not "Cash you can spend today" — they are what selling investments would add.
+   * Both are typed `checking` so balance replay can run them, and this card
+   * counted every checking account as spendable. Measured on his ledger
+   * 2026-09-15 before the fix: $5,431.92 spendable, $108,974.93 from selling
+   * investments, "27 days of cash".
+   */
+  test("brokerage cash leaves Cash you can spend today and joins what selling investments would add", () => {
+    const robinhood = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!.id;
+    const rhBrokerage = createAccount(bundle.db, {
+      institutionId: robinhood,
+      name: "Robinhood Brokerage",
+      type: "investment",
+      subtype: "brokerage",
+    });
+    const rhCash = createAccount(bundle.db, { institutionId: robinhood, name: "Robinhood Cash", type: "checking" });
+    const agentic = createAccount(bundle.db, { institutionId: robinhood, name: "Robinhood Agentic", type: "checking" });
+    const now = new Date().toISOString();
+    bundle.db
+      .insert(importFiles)
+      .values({
+        id: "rh-statement",
+        fileName: "rh.pdf",
+        fileSha256: "sha-rh",
+        format: "pdf",
+        institutionId: robinhood,
+        status: "parsed",
+        storagePath: "/tmp/rh.pdf",
+        importedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+    [rhCash, rhBrokerage, agentic].forEach((accountId, i) => {
+      bundle.db
+        .insert(statementPeriods)
+        .values({
+          id: `rh-period-${i}`,
+          importFileId: "rh-statement",
+          accountId,
+          periodStart: "2026-07-01",
+          periodEnd: "2026-07-31",
+          reconciliation: "reconciled",
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run();
+    });
+    setBalance(rhCash, TODAY, 90);
+    setBalance(agentic, TODAY, 2664);
+
+    const r = runwayCard(bundle.db, TODAY).runway;
+    const cents = (id: string) => r.assumptions.find((a) => a.id === id)!.cents;
+    expect(cents("liquid")).toBe(500000);
+    expect(r.netCashCents).toBe(500000 - 80000);
+    expect(cents("investments")).toBe(2000000 + 90 + 2664);
+    // moved, not lost: the second horizon spends exactly what it did
+    expect(r.withInvestments.cents).toBe(500000 - 80000 + 2000000 + 90 + 2664);
   });
 });
 

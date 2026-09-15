@@ -1,11 +1,12 @@
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import type { AppDatabase } from "@/db/client";
 import { accounts, ACCOUNT_TYPES, ACCOUNT_SUBTYPES, isLiability } from "@/db/schema/accounts";
 import { holdingEvents } from "@/db/schema/holding-events";
+import { statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
-import { isInvestmentSide } from "@/lib/account-side";
+import { isInvestmentSide, liquidityOf, type Liquidity } from "@/lib/account-side";
 import { isPrintableName } from "@/lib/printable-name";
 import { ACCOUNT_ORDER } from "./account-order";
 import { latestBalances, rebuildAccount, type AccountBalance } from "./derivation";
@@ -75,6 +76,92 @@ export function investmentSideAccountIds(db: AppDatabase): Set<string> {
       )
       .map((r) => r.id),
   );
+}
+
+/**
+ * What every account's balance is to the runway and the forecast: `liquidityOf`
+ * (lib/account-side), given the one fact the account row does not carry —
+ * whether a statement file that prints the account also prints an investment
+ * account. Every account, active or not; `cashPosition` is where archived ones
+ * leave.
+ *
+ * ⛔ NOT `investmentSideAccountIds`. That set is transfer semantics keyed off a
+ * settlement NAME, and it leaves Robinhood Agentic out on purpose.
+ */
+export function accountLiquidity(db: AppDatabase): Map<string, Liquidity> {
+  const investmentStatementFiles = db
+    .select({ importFileId: statementPeriods.importFileId })
+    .from(statementPeriods)
+    .innerJoin(accounts, eq(accounts.id, statementPeriods.accountId))
+    .where(eq(accounts.type, "investment"));
+  const printedWithInvestment = new Set(
+    db
+      .selectDistinct({ accountId: statementPeriods.accountId })
+      .from(statementPeriods)
+      .where(inArray(statementPeriods.importFileId, investmentStatementFiles))
+      .all()
+      .map((r) => r.accountId),
+  );
+  const rows = db.select({ id: accounts.id, type: accounts.type }).from(accounts).all();
+  return new Map(
+    rows.map((r) => [r.id, liquidityOf({ type: r.type, printedWithInvestment: printedWithInvestment.has(r.id) })]),
+  );
+}
+
+export interface CashPosition {
+  /** "Cash you can spend today", and the forecast's month-end cash starts from it */
+  spendableCents: number;
+  /** "What selling investments would add" — a brokerage's own cash included */
+  investableCents: number;
+  /** positive magnitude owed on cards; a card in credit nets it DOWN */
+  cardDebtCents: number;
+  /** the part of `cardDebtCents` that is a net: credit balances on cards */
+  cardCreditCents: number;
+}
+
+/**
+ * The ONE place a balance becomes cash, investments or card debt.
+ *
+ * ⚖️ Owner decision 2026-09-15. `runwayCard` and both of `forecast`'s EOM-cash
+ * walks each summed "checking or savings" on their own, so Robinhood Cash
+ * ($0.90) and Robinhood Agentic ($26.64) — typed `checking` for balance replay —
+ * were "Cash you can spend today" and month-end cash. Measured on his ledger
+ * that day before the fix: $5,431.92 spendable, $108,974.93 from selling
+ * investments, "27 days of cash"; September EOM cash $1,093.15.
+ *
+ * Active accounts only: archiving takes an account out of every analytic, as
+ * `/accounts/<x>` promises. A missing balance counts as zero, as it always has.
+ * `balances` lets a caller already holding `latestBalances` pass it rather than
+ * read the cache twice.
+ */
+export function cashPosition(
+  db: AppDatabase,
+  balances: ReadonlyMap<string, AccountBalance> = latestBalances(db),
+): CashPosition {
+  const liquidity = accountLiquidity(db);
+  const active = db.select({ id: accounts.id }).from(accounts).where(eq(accounts.isActive, true)).all();
+  let spendableCents = 0;
+  let investableCents = 0;
+  let cardDebtCents = 0;
+  let cardCreditCents = 0;
+  for (const { id } of active) {
+    const cents = balances.get(id)?.balanceCents ?? 0;
+    switch (liquidity.get(id)) {
+      case "spendable":
+        spendableCents += cents;
+        break;
+      case "investable":
+        investableCents += cents;
+        break;
+      case "owed":
+        // stored negative; the runway wants a positive debt, and a card in
+        // credit nets it down, which the line then says (lib/runway)
+        cardDebtCents -= cents;
+        if (cents > 0) cardCreditCents += cents;
+        break;
+    }
+  }
+  return { spendableCents, investableCents, cardDebtCents, cardCreditCents };
 }
 
 /**

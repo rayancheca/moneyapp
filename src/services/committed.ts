@@ -22,7 +22,7 @@ import {
 } from "@/lib/dates";
 import { resolvePeriod, withPeriod } from "@/lib/period";
 import { runway, type Runway } from "@/lib/runway";
-import { listAccounts } from "./accounts";
+import { cashPosition } from "./accounts";
 import { loadCategoryIndex, monthlySpending, recurringSeriesIdsForCategory } from "./analytics";
 import { incomeExpectation, overdueForSeries } from "./budgets";
 import { ledgerOpens } from "./observation-frontier";
@@ -432,10 +432,6 @@ export interface RunwayCard {
 }
 
 export function runwayCard(db: AppDatabase, today: string = todayIso()): RunwayCard {
-  let liquidCents = 0;
-  let investableCents = 0;
-  let cardDebtCents = 0;
-  let cardCreditCents = 0;
   /*
    * 🔴 ARCHIVED ACCOUNTS WERE STILL SPENDING. `/accounts/<x>` promises by name
    * that "Archiving takes {name} out of net worth, the assets and owed totals,
@@ -448,18 +444,15 @@ export function runwayCard(db: AppDatabase, today: string = todayIso()): RunwayC
    *
    * ⚠️ Latent on the real ledger, which has archived nothing: the promise goes
    * false the day the button is used, not before.
+   *
+   * ⚖️ AND BROKERAGE CASH WAS SPENDING. Every checking and savings account read
+   * as "Cash you can spend today", so Robinhood Cash ($0.90) and Robinhood
+   * Agentic ($26.64) — typed `checking` so balance replay can run them — funded
+   * the headline. The owner's decision of 2026-09-15 moves them into what
+   * selling investments would add. `cashPosition` holds that rule and the active
+   * filter above, and the forecast's month-end cash reads the same one.
    */
-  for (const a of listAccounts(db).filter((a) => a.isActive)) {
-    const cents = a.balance?.balanceCents ?? 0;
-    if (a.type === "checking" || a.type === "savings") liquidCents += cents;
-    else if (a.type === "investment") investableCents += cents;
-    else if (a.type === "credit") {
-      // a credit balance is stored negative; the runway wants a positive debt —
-      // and a card in credit nets it DOWN, which the line then says (lib/runway)
-      cardDebtCents -= cents;
-      if (cents > 0) cardCreditCents += cents;
-    }
-  }
+  const cash = cashPosition(db);
 
   const month = periodBounds(today, "monthly");
   const income = incomeExpectation(db, month.start, month.end, today);
@@ -467,10 +460,10 @@ export function runwayCard(db: AppDatabase, today: string = todayIso()): RunwayC
 
   return {
     runway: runway({
-      liquidCents,
-      cardDebtCents,
-      cardCreditCents,
-      investableCents,
+      liquidCents: cash.spendableCents,
+      cardDebtCents: cash.cardDebtCents,
+      cardCreditCents: cash.cardCreditCents,
+      investableCents: cash.investableCents,
       monthlyIncomeCents: income.basis.cents,
       monthlySpendCents: spend.monthlyCents,
     }),

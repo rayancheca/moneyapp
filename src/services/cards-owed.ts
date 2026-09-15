@@ -69,18 +69,18 @@ import { MIN_OCCURRENCES } from "./recurring";
  * ## Agreeing with the runway card
  *
  * Both cards sit on the dashboard and both publish card debt, so they are
- * assembled from the same rows: `listAccounts` → `latestBalances`, negated.
- * Measured 2026-08-26 both read $925.61. Two differences are latent rather
- * than live, and are DISCLOSED instead of hidden, because either would make
- * one screen contradict itself:
+ * assembled from the same balances: `latestBalances` over active cards,
+ * negated — here through `listAccounts`, there through `cashPosition`.
+ * Measured 2026-08-26 both read $925.61. One difference is latent rather than
+ * live, and is DISCLOSED instead of hidden, because it would make one screen
+ * contradict itself:
  *
- *  - `runwayCard` iterates every account `listAccounts` returns, including
- *    deactivated ones. This card is scoped to active cards, so a closed card
- *    still carrying a balance is counted there and not here — `closedOwedCents`
- *    names that money.
- *  - `runwayCard` reads a missing balance as `?? 0`. A card the ledger has no
+ *  - `cashPosition` reads a missing balance as `?? 0`. A card the ledger has no
  *    balance for is not a card you owe nothing on, so `owedCents` here is
  *    `null` for it and `unpricedCards` says the total is a floor.
+ *
+ * (A closed card still carrying a balance is in neither total; `closedOwedCents`
+ * names that money.)
  *
  * ## What it costs
  *

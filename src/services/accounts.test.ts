@@ -6,8 +6,12 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
+import { dailyBalances } from "@/db/schema/balances";
+import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import {
+  accountLiquidity,
+  cashPosition,
   updateAccount,
   createAccount,
   createInstitution,
@@ -259,5 +263,176 @@ describe("listAccountOptions", () => {
     const options = listAccountOptions(bundle.db);
     expect(options.map((o) => o.id)).toEqual(listAccounts(bundle.db).map((a) => a.id));
     expect(options.find((o) => o.id === id)).toEqual({ id, name: "Solo" });
+  });
+});
+
+let statementSeq = 0;
+
+/** One imported statement file that prints every account in `accountIds`. */
+function printOnOneStatement(institutionId: string, accountIds: readonly string[]): void {
+  statementSeq += 1;
+  const fileId = `statement-${statementSeq}`;
+  const now = new Date().toISOString();
+  bundle.db
+    .insert(importFiles)
+    .values({
+      id: fileId,
+      fileName: `${fileId}.pdf`,
+      fileSha256: `sha-${fileId}`,
+      format: "pdf",
+      institutionId,
+      status: "parsed",
+      storagePath: `/tmp/${fileId}.pdf`,
+      importedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .run();
+  accountIds.forEach((accountId, i) => {
+    bundle.db
+      .insert(statementPeriods)
+      .values({
+        id: `${fileId}-${i}`,
+        importFileId: fileId,
+        accountId,
+        periodStart: "2026-08-01",
+        periodEnd: "2026-08-31",
+        reconciliation: "reconciled",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+  });
+}
+
+function setBalance(accountId: string, balanceCents: number): void {
+  bundle.db.insert(dailyBalances).values({ accountId, day: "2026-09-15", balanceCents, basis: "anchored" }).run();
+}
+
+/**
+ * ⚖️ Owner decision 2026-09-15: Robinhood Cash and Robinhood Agentic leave "Cash
+ * you can spend today" and the forecast's month-end cash, for what selling
+ * investments would add. Both are `checking` so balance replay can run them, so
+ * the account TYPE cannot tell them from a bank account.
+ */
+describe("accountLiquidity", () => {
+  /**
+   * The owner's thirteen accounts as the ledger held them on 2026-09-15 —
+   * institution, type, and which statement file prints each. Measured read-only:
+   * of the deposit accounts, exactly Robinhood Cash (25 files) and Robinhood
+   * Agentic (3) share a statement file with an investment account; SoFi prints
+   * checking and savings on one combined file with no investment on it;
+   * Capital One 360 and Cash on Hand have no statement at all.
+   */
+  test("the owner's thirteen accounts: only the two Robinhood's brokerage statement prints move", () => {
+    const acct = (institution: string, name: string, type: "checking" | "savings" | "credit" | "investment") =>
+      createAccount(bundle.db, { institutionId: createInstitution(bundle.db, institution), name, type });
+    const id = {
+      capitalOne360: acct("Capital One", "Capital One 360 Checking", "checking"),
+      ventureX: acct("Capital One", "Venture X", "credit"),
+      cashOnHand: acct("Cash", "Cash on Hand", "checking"),
+      sapphire: acct("Chase", "Chase Sapphire", "credit"),
+      chaseChecking: acct("Chase", "Chase Checking", "checking"),
+      discover: acct("Discover", "Discover", "credit"),
+      robinhoodAgentic: acct("Robinhood", "Robinhood Agentic", "checking"),
+      robinhoodBrokerage: acct("Robinhood", "Robinhood Brokerage", "investment"),
+      robinhoodCash: acct("Robinhood", "Robinhood Cash", "checking"),
+      robinhoodCrypto: acct("Robinhood", "Robinhood Crypto", "investment"),
+      sofiChecking: acct("SoFi", "SoFi Checking", "checking"),
+      sofiSavings: acct("SoFi", "SoFi Savings", "savings"),
+      wellsFargo: acct("Wells Fargo", "Wells Fargo Everyday Checking", "checking"),
+    };
+    const inst = (name: string) => createInstitution(bundle.db, name);
+    printOnOneStatement(inst("Robinhood"), [id.robinhoodCash, id.robinhoodBrokerage, id.robinhoodAgentic]);
+    printOnOneStatement(inst("Robinhood"), [id.robinhoodCrypto]);
+    printOnOneStatement(inst("Chase"), [id.chaseChecking]);
+    printOnOneStatement(inst("Chase"), [id.sapphire]);
+    printOnOneStatement(inst("Discover"), [id.discover]);
+    printOnOneStatement(inst("Capital One"), [id.ventureX]);
+    printOnOneStatement(inst("SoFi"), [id.sofiChecking, id.sofiSavings]);
+    printOnOneStatement(inst("Wells Fargo"), [id.wellsFargo]);
+
+    const liquidity = accountLiquidity(bundle.db);
+    expect(Object.fromEntries(Object.entries(id).map(([key, accountId]) => [key, liquidity.get(accountId)]))).toEqual({
+      capitalOne360: "spendable",
+      ventureX: "owed",
+      cashOnHand: "spendable",
+      sapphire: "owed",
+      chaseChecking: "spendable",
+      discover: "owed",
+      robinhoodAgentic: "investable",
+      robinhoodBrokerage: "investable",
+      robinhoodCash: "investable",
+      robinhoodCrypto: "investable",
+      sofiChecking: "spendable",
+      sofiSavings: "spendable",
+      wellsFargo: "spendable",
+    });
+  });
+
+  /**
+   * ⛔ The institution is NOT the divider. A bank that also runs a brokerage
+   * (SoFi Invest, J.P. Morgan self-directed at Chase) prints its checking on the
+   * bank's statement and the brokerage on its own, and that checking is still
+   * money he spends. "Deposit account at an institution holding an investment
+   * account" selects the same two accounts on today's ledger and would have
+   * shipped green — this is the case it gets wrong.
+   */
+  test("a bank that also runs a brokerage keeps its checking spendable", () => {
+    const checking = createAccount(bundle.db, { institutionId: instId, name: "Chase Checking", type: "checking" });
+    const brokerage = createAccount(bundle.db, {
+      institutionId: instId,
+      name: "Chase Self-Directed",
+      type: "investment",
+      subtype: "brokerage",
+    });
+    printOnOneStatement(instId, [checking]);
+    printOnOneStatement(instId, [brokerage]);
+
+    expect(accountLiquidity(bundle.db).get(checking)).toBe("spendable");
+    expect(accountLiquidity(bundle.db).get(brokerage)).toBe("investable");
+  });
+});
+
+describe("cashPosition", () => {
+  function robinhoodLedger() {
+    const robinhood = createInstitution(bundle.db, "Robinhood");
+    const checking = createAccount(bundle.db, { institutionId: instId, name: "Checking", type: "checking" });
+    const brokerage = createAccount(bundle.db, {
+      institutionId: robinhood,
+      name: "Robinhood Brokerage",
+      type: "investment",
+      subtype: "brokerage",
+    });
+    const settlement = createAccount(bundle.db, { institutionId: robinhood, name: "Robinhood Cash", type: "checking" });
+    const agentic = createAccount(bundle.db, { institutionId: robinhood, name: "Robinhood Agentic", type: "checking" });
+    printOnOneStatement(robinhood, [settlement, brokerage, agentic]);
+    setBalance(checking, 300760);
+    setBalance(brokerage, 7301320);
+    setBalance(settlement, 90);
+    setBalance(agentic, 2664);
+    return { checking, brokerage, settlement, agentic };
+  }
+
+  test("brokerage cash is investable, and no money leaves both totals", () => {
+    robinhoodLedger();
+    const position = cashPosition(bundle.db);
+    expect(position.spendableCents).toBe(300760);
+    expect(position.investableCents).toBe(7301320 + 90 + 2664);
+    expect(position.spendableCents + position.investableCents).toBe(300760 + 7301320 + 90 + 2664);
+  });
+
+  test("an archived account is in neither total", () => {
+    const { settlement } = robinhoodLedger();
+    updateAccount(bundle.db, settlement, { isActive: false });
+    expect(cashPosition(bundle.db).investableCents).toBe(7301320 + 2664);
+  });
+
+  test("card debt is a positive magnitude, netted down by a card in credit", () => {
+    const owing = createAccount(bundle.db, { institutionId: instId, name: "Owing", type: "credit" });
+    const inCredit = createAccount(bundle.db, { institutionId: instId, name: "In credit", type: "credit" });
+    setBalance(owing, -112693);
+    setBalance(inCredit, 8272);
+    expect(cashPosition(bundle.db)).toMatchObject({ cardDebtCents: 112693 - 8272, cardCreditCents: 8272 });
   });
 });
