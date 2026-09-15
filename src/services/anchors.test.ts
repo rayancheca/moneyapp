@@ -254,6 +254,7 @@ describe("anchorRemovalEffects — the dialog's prediction equals what deleteAnc
 
     expect(prediction).toEqual({
       pricedFromHoldings: false,
+      isInvestment: false,
       catchUpDays: 0,
       lostDays: 0,
       lostRuns: [],
@@ -300,6 +301,7 @@ describe("anchorRemovalEffects — the dialog's prediction equals what deleteAnc
     expect(after).toEqual([]);
     expect(prediction).toEqual({
       pricedFromHoldings: false,
+      isInvestment: false,
       catchUpDays: 0,
       ...measured(before, after),
       lostRuns: [{ from: "2026-08-03", to: "2026-08-10" }],
@@ -322,6 +324,7 @@ describe("anchorRemovalEffects — the dialog's prediction equals what deleteAnc
     expect(effect.lostDays).toBe(8);
     expect(prediction).toEqual({
       pricedFromHoldings: false,
+      isInvestment: false,
       catchUpDays: 0,
       ...effect,
       lostRuns: [{ from: "2026-07-05", to: "2026-07-12" }],
@@ -381,6 +384,8 @@ describe("anchorRemovalEffects — the dialog's prediction equals what deleteAnc
 
     expect(anchorRemovalEffects(bundle.db, bare, "2026-07-08").get(manual)).toEqual({
       pricedFromHoldings: false,
+      // the dialog's words: a step-held value is never called verified
+      isInvestment: true,
       catchUpDays: 0,
       lostDays: 0,
       lostRuns: [],

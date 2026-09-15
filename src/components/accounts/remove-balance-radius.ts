@@ -47,6 +47,55 @@ export interface RemoveBalanceInput {
   balancesLeft: number;
 }
 
+/**
+ * What a recorded balance does to the days it reaches, in words. ⛔ Two sets,
+ * chosen by the branch the derivation takes (`effect.isInvestment`), never by a
+ * verdict: on a cash or credit account a balance closes transaction arithmetic
+ * and VERIFIES those days; on an investment account with no holdings the curve is
+ * its recorded balances held flat, and a balance only SETS a value.
+ *
+ * 🔴 The investment dialog read "This balance is what verifies Bare holding on
+ * Jul 1 – 4, 2026" and "Days that stop being verified: 4 days", while
+ * `accountCoverage` grades that account `market_value`, the balance chart on the
+ * same page draws its carried days dashed (`balanceDayIsExact`), and its
+ * provenance headline says "no transaction arithmetic checks it".
+ */
+interface RemovalWords {
+  lostLabel: string;
+  /** the headline's opening sentence over the days only this balance reaches */
+  alone: (name: string, place: string) => string;
+  /** a day the balance re-bases, as the noun `countPhrase` counts */
+  rebasedDay: string;
+  noneLost: (name: string) => string;
+  keeps: string;
+  recordAgain: string;
+  restores: string;
+}
+
+const CHECKED_WORDS: RemovalWords = {
+  lostLabel: "Days that stop being verified",
+  alone: (name, place) => `This balance is what verifies ${name} on ${place}.`,
+  rebasedDay: "verified day",
+  noneLost: (name) => `No day of ${name} stops being verified without this balance`,
+  keeps: "the same balance and the same verification",
+  recordAgain: "Record a balance again and the curve is derived from it and the transactions.",
+  restores: "Record the balance again to re-verify these days.",
+};
+
+const HELD_WORDS: RemovalWords = {
+  lostLabel: "Days that lose their balance",
+  alone: (name, place) => `This balance alone sets ${name}'s value on ${place}.`,
+  rebasedDay: "day",
+  noneLost: (name) => `No day of ${name} loses its balance without this one`,
+  keeps: "the same balance",
+  // step-hold never replays a transaction
+  recordAgain: "Record a balance again and the curve is derived from it.",
+  restores: "Record the balance again to restore these days.",
+};
+
+const wordsFor = (effect: AnchorRemovalEffect): RemovalWords =>
+  !effect.pricedFromHoldings && effect.isInvestment ? HELD_WORDS : CHECKED_WORDS;
+
 export function removeBalanceRadius(input: RemoveBalanceInput): BlastRadius {
   const { effect } = input;
   return {
@@ -54,7 +103,7 @@ export function removeBalanceRadius(input: RemoveBalanceInput): BlastRadius {
     lines: [
       { label: `${input.recorded.label}, as recorded`, value: input.recorded.value, irreversible: true },
       {
-        label: "Days that stop being verified",
+        label: wordsFor(effect).lostLabel,
         value: effect.pricedFromHoldings
           ? "none — the curve comes from holdings"
           : countPhrase(effect.lostDays, "day"),
@@ -70,20 +119,23 @@ function removeBalanceHeadline(name: string, effect: AnchorRemovalEffect): strin
   if (effect.pricedFromHoldings) {
     return `${name} is priced from its holdings, so this recorded balance verifies nothing and plays no part in its curve.`;
   }
-  const verifies = effect.lostDays > 0 ? `This balance is what verifies ${name} on ${lostPlace(effect)}. ` : "";
+  const words = wordsFor(effect);
+  const alone = effect.lostDays > 0 ? `${words.alone(name, lostPlace(effect))} ` : "";
   if (effect.daysLeft === 0) {
-    return `${verifies}It is the only balance ${name} has, so removing it leaves nothing to derive a curve from, and every day comes off it.`;
+    return `${alone}It is the only balance ${name} has, so removing it leaves nothing to derive a curve from, and every day comes off it.`;
   }
   if (effect.lostDays > 0) {
     const rebased =
-      effect.rebasedDays > 0 ? ` It also sets the balance on ${countPhrase(effect.rebasedDays, "other verified day")}.` : "";
-    return `${verifies}${lostFate(effect)}${rebased}`;
+      effect.rebasedDays > 0
+        ? ` It also sets the balance on ${countPhrase(effect.rebasedDays, `other ${words.rebasedDay}`)}.`
+        : "";
+    return `${alone}${lostFate(effect)}${rebased}`;
   }
   if (effect.curveUnchanged) {
-    return `This balance pins no day of ${name} that another balance does not already pin. Without it, every day keeps the same balance and the same verification.`;
+    return `This balance pins no day of ${name} that another balance does not already pin. Without it, every day keeps ${words.keeps}.`;
   }
   if (effect.rebasedDays > 0) {
-    return `No day of ${name} stops being verified without this balance, but it sets the balance on ${countPhrase(effect.rebasedDays, "verified day")}, so removing it re-derives ${countPhrase(effect.changedDays, "day")} from the balances around it.`;
+    return `${words.noneLost(name)}, but it sets the balance on ${countPhrase(effect.rebasedDays, words.rebasedDay)}, so removing it re-derives ${countPhrase(effect.changedDays, "day")} from the balances around it.`;
   }
   return `This balance pins no day of ${name} that another balance does not already pin, but removing it re-derives ${countPhrase(effect.changedDays, "day")} from the balances around it.`;
 }
@@ -137,9 +189,10 @@ function removeBalanceReassurance(effect: AnchorRemovalEffect): string {
   if (effect.pricedFromHoldings) {
     return "No transaction and no holding is touched — this account's value history is rebuilt from its holdings and their stored closes, which this balance is not part of.";
   }
+  const words = wordsFor(effect);
   if (effect.daysLeft === 0) {
-    return "No transaction is touched. Record a balance again and the curve is derived from it and the transactions.";
+    return `No transaction is touched. ${words.recordAgain}`;
   }
   const rebuilds = "No transaction is touched — the balance curve is derived, so it rebuilds from what is left.";
-  return effect.lostDays > 0 ? `${rebuilds} Record the balance again to re-verify these days.` : rebuilds;
+  return effect.lostDays > 0 ? `${rebuilds} ${words.restores}` : rebuilds;
 }

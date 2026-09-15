@@ -35,7 +35,7 @@ function dialog(
   const effect = removalEffect(anchors, removedId, new Map(txns), { isInvestment, today });
   return removeBalanceRadius({
     accountName,
-    effect: { pricedFromHoldings: false, catchUpDays, ...effect },
+    effect: { pricedFromHoldings: false, isInvestment, catchUpDays, ...effect },
     recorded: { label: "Balance", value: "$1.00" },
     balancesLeft: anchors.length - 1,
   });
@@ -43,6 +43,7 @@ function dialog(
 
 const valueOf = (radius: BlastRadius, label: string) => radius.lines?.find((l) => l.label === label)?.value;
 const DAYS_LOST = "Days that stop being verified";
+const VALUE_LOST = "Days that lose their balance";
 const CATCH_UP = "Days rebuilt up to today, with or without this balance";
 
 describe("removeBalanceRadius — the lost days, by what becomes of them", () => {
@@ -122,8 +123,17 @@ describe("removeBalanceRadius — the lost days, by what becomes of them", () =>
     );
   });
 
-  /** investment derivation never replays transactions, so nothing is derived from them */
-  test("an investment account's first balance: those days lose their balance, never 'derived from transactions'", () => {
+  /**
+   * investment derivation never replays transactions, so nothing is derived from them
+   *
+   * 🔴 …and nothing on it is verified either. `accountCoverage` grades every
+   * investment account `market_value`, the balance chart on the same page draws a
+   * carried price dashed (`balanceDayIsExact`), and the provenance headline says
+   * "no transaction arithmetic checks it" — while this dialog read "This balance
+   * is what verifies Bare holding on Jul 1 – 4, 2026" and "Days that stop being
+   * verified: 4 days".
+   */
+  test("an investment account's first balance: those days lose their balance, and none was ever verified", () => {
     const radius = dialog(
       "Bare holding",
       [anchor("manual", "2026-07-01", 10_000, "manual"), anchor("s-jul", "2026-07-05", 12_000, "statement")],
@@ -134,8 +144,14 @@ describe("removeBalanceRadius — the lost days, by what becomes of them", () =>
     );
 
     expect(radius.headline).toBe(
-      "This balance is what verifies Bare holding on Jul 1 – 4, 2026. Removing it leaves those days with no balance at all.",
+      "This balance alone sets Bare holding's value on Jul 1 – 4, 2026. Removing it leaves those days with no balance at all.",
     );
+    expect(valueOf(radius, VALUE_LOST)).toBe("4 days");
+    expect(valueOf(radius, DAYS_LOST)).toBeUndefined();
+    expect(radius.reassurance).toBe(
+      "No transaction is touched — the balance curve is derived, so it rebuilds from what is left. Record the balance again to restore these days.",
+    );
+    expect(blastRadiusSentence(radius)).not.toMatch(/verif|derived from transactions/i);
   });
 
   test("a middle balance that closes two spans: without it the days are a gap, not derived", () => {
@@ -199,6 +215,89 @@ describe("removeBalanceRadius — the lost days, by what becomes of them", () =>
     expect(radius.headline).toBe(
       "This balance is what verifies Checking on 6 days within Jul 5 – 11, 2026. Removing it leaves 3 days to be derived from transactions alone and 3 days as a gap. It also sets the balance on 4 other verified days.",
     );
+  });
+});
+
+/**
+ * ⛔ On an investment account with no holdings the curve is its recorded
+ * balances held flat: a VALUE, never a verification. Every branch the dialog can
+ * take there says what the balance sets, and not one says "verified".
+ */
+describe("removeBalanceRadius — an investment account's balances are values, never verification", () => {
+  const investment = { isInvestment: true };
+
+  test("a middle balance: no day loses its balance, and the days it sets are not called verified", () => {
+    const radius = dialog(
+      "Bare holding",
+      [
+        anchor("s-jun", "2026-06-30", 8_900_000, "statement"),
+        anchor("manual", "2026-07-03", 9_000_000, "manual"),
+        anchor("s-jul", "2026-07-06", 9_100_000, "statement"),
+      ],
+      "manual",
+      [],
+      "2026-07-08",
+      investment,
+    );
+
+    expect(radius.headline).toBe(
+      "No day of Bare holding loses its balance without this one, but it sets the balance on 3 days, so removing it re-derives 3 days from the balances around it.",
+    );
+    expect(valueOf(radius, VALUE_LOST)).toBe("no days");
+    expect(radius.reassurance).toBe(
+      "No transaction is touched — the balance curve is derived, so it rebuilds from what is left.",
+    );
+    expect(blastRadiusSentence(radius)).not.toMatch(/verif/i);
+  });
+
+  test("the only chain-grade balance hands the curve to a live reading: the days it re-bases are not called verified", () => {
+    const radius = dialog(
+      "Bare holding",
+      [anchor("manual", "2026-07-01", 10_000, "manual"), anchor("live", "2026-07-03", 12_000, "live")],
+      "manual",
+      [],
+      "2026-07-06",
+      investment,
+    );
+
+    expect(radius.headline).toBe(
+      "This balance alone sets Bare holding's value on Jul 1 – 2, 2026. Removing it leaves those days with no balance at all. It also sets the balance on 4 other days.",
+    );
+    expect(blastRadiusSentence(radius)).not.toMatch(/verif/i);
+  });
+
+  test("a balance a same-day statement outranks: every day keeps its balance, and nothing is said of verification", () => {
+    const radius = dialog(
+      "Bare holding",
+      [anchor("s-jul", "2026-07-01", 10_000, "statement"), anchor("manual", "2026-07-01", 12_000, "manual")],
+      "manual",
+      [],
+      "2026-07-08",
+      investment,
+    );
+
+    expect(radius.headline).toBe(
+      "This balance pins no day of Bare holding that another balance does not already pin. Without it, every day keeps the same balance.",
+    );
+    expect(blastRadiusSentence(radius)).not.toMatch(/verif/i);
+  });
+
+  test("the account's only balance: every day comes off, and no curve is promised from transactions", () => {
+    const radius = dialog(
+      "Bare holding",
+      [anchor("opening", "2026-07-01", 10_000, "manual")],
+      "opening",
+      [],
+      "2026-07-04",
+      investment,
+    );
+
+    expect(radius.headline).toBe(
+      "This balance alone sets Bare holding's value on Jul 1 – 4, 2026. It is the only balance Bare holding has, so removing it leaves nothing to derive a curve from, and every day comes off it.",
+    );
+    expect(valueOf(radius, VALUE_LOST)).toBe("4 days");
+    expect(radius.reassurance).toBe("No transaction is touched. Record a balance again and the curve is derived from it.");
+    expect(blastRadiusSentence(radius)).not.toMatch(/verif|and the transactions/i);
   });
 });
 

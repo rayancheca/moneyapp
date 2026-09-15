@@ -111,6 +111,13 @@ export type AnchorRemovalEffect =
   | ({
       pricedFromHoldings: false;
       /**
+       * The branch `deriveDailyRows` takes for this account. True: its recorded
+       * balances are held flat as a VALUE, which `accountCoverage` grades
+       * `market_value` — the dialog says what a balance sets, never what it
+       * verifies. False: balances close transaction arithmetic.
+       */
+      isInvestment: boolean;
+      /**
        * Days the STORED curve differs from a rebuild at `today` with every balance
        * kept: the part of confirming that happens whichever balance goes, or none.
        * `RemovalEffect` compares two derivations at today and cannot see it.
@@ -166,7 +173,12 @@ export function anchorRemovalEffects(
       .filter((a) => isRemovableAnchorSource(a.source))
       .map((a): [string, AnchorRemovalEffect] => [
         a.id,
-        { pricedFromHoldings: false, catchUpDays, ...removalEffect(anchors, a.id, txnSumByDay, options) },
+        {
+          pricedFromHoldings: false,
+          isInvestment: options.isInvestment,
+          catchUpDays,
+          ...removalEffect(anchors, a.id, txnSumByDay, options),
+        },
       ]),
   );
 }
