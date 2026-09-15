@@ -3,6 +3,7 @@ import { STALE_PERIODS, type CashEarningsBasis } from "@/lib/cash-earnings";
 import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
+import { LAST_CHECKED_DAY } from "@/lib/unbanked-income";
 import { incomeExpectation } from "./budgets";
 import {
   cashEarningsReadings,
@@ -50,8 +51,10 @@ import { accountCoverage } from "./coverage";
  *
  *   - paydays that fell on days the records already cover — the ledger LOOKED
  *     and no deposit was there;
- *   - paydays inside the stretch nothing has imported yet — the ledger has not
- *     looked, and saying anything about them would be inventing news.
+ *   - paydays past that day, which no checked record covers yet — the ledger
+ *     has not looked, and saying anything about them would be inventing news.
+ *     (Past it, not "nothing imported": rows can be imported beyond a chain
+ *     that has not closed — see `LAST_CHECKED_DAY`.)
  *
  * On the real ledger 2026-08-26 that comes to 9 checked against 2 unread, so
  * the silence is real and not a statement lag. The verdict sentence says which,
@@ -263,7 +266,7 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
   }
 
   const unlooked = silentPeriods - checkedSilentPeriods;
-  return `${since}, but only ${checkedSilentPeriods} of them fall on days the records cover. The other ${unlooked} sit inside the ${unreadDays ?? 0} days past ${formatDayShort(checkedThrough)} that nothing has imported yet, so the ledger has not looked.`;
+  return `${since}, but only ${checkedSilentPeriods} of them fall on days the records cover. The other ${unlooked} sit inside the ${unreadDays ?? 0} days past ${formatDayShort(checkedThrough)}, ${LAST_CHECKED_DAY}, so the ledger has not looked.`;
 }
 
 export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeCard | null {

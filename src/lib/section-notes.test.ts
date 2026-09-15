@@ -628,8 +628,16 @@ describe("cashEarningsSectionNotes", () => {
       checkedPeriodsCovered: 0,
     });
     expect(note!.body).not.toContain("reached an account");
-    expect(note!.body).toContain("2026-08-12");
-    expect(note!.body).toContain("imported");
+    /*
+     * 🔴 The frontier is a CHECKED day (`earliestVerified` over `verifiedThrough`),
+     * and this said "which nothing has imported yet" of it. On the e2e fixture
+     * Chase Total Checking is checked through Jun 30 with rows imported to Jul 4,
+     * and /spending?period=2026-07 printed exactly that (measured 2026-09-15).
+     */
+    expect(note!.body).toContain(
+      ", all of it after 2026-08-12, the last day every account that pay lands in has been checked through — so the ledger has not looked for it.",
+    );
+    expect(note!.body).not.toContain("nothing has imported");
     // …and the silence says how much of it the records actually cover
     expect(note!.body).toContain("9 of them");
   });
@@ -637,7 +645,10 @@ describe("cashEarningsSectionNotes", () => {
   test("a window straddling the frontier scopes the claim to the days that were read", () => {
     const [note] = notes({ ...checked, impliedCents: 418_800, unbankedCents: 418_800, periodsCovered: 4, checkedPeriodsCovered: 1 });
     expect(note!.body).toContain("none of it reached an account through 2026-08-12");
-    expect(note!.body).toContain("the other 3 paydays");
+    expect(note!.body).toContain(
+      "; the other 3 paydays fall after that, the last day every account that pay lands in has been checked through.",
+    );
+    expect(note!.body).not.toContain("nothing has imported");
   });
 
   test("the 'only' branch is scoped too — never a bare total over unread paydays", () => {

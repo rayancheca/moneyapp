@@ -17,9 +17,10 @@ interface ForecastCardProps {
  *
  * 🔴 "Cash pay that never reaches a bank", in warning tone, was said of Sep 3
  * and Sep 10 while Chase Checking — the only account that pay lands in — had
- * been read through Aug 12 (measured 2026-09-15). The warning and that clause
- * speak only of paydays on days the ledger has read; the rest are named as not
- * imported yet (`unbankedIncomeFrontierClause`), as /spending names them.
+ * been checked through Aug 12 (measured 2026-09-15). The warning and that
+ * clause speak only of paydays on days the ledger has checked; the rest are
+ * named as not looked for (`unbankedIncomeFrontierClause`), as /spending names
+ * them.
  */
 export function UnbankedIncomeNote({ unbanked: u }: { unbanked: MonthForecast["unbankedIncome"] }) {
   const unread = unbankedIncomeFrontierClause(u, formatDayLong);

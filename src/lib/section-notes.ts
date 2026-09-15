@@ -2,6 +2,7 @@ import { isStaleClose } from "./holding-price-age";
 import { formatCents } from "./money";
 import { dayWindowLabel } from "./period";
 import { STALE_PERIODS, type CashEarningsBasis } from "./cash-earnings";
+import { LAST_CHECKED_DAY } from "./unbanked-income";
 
 /**
  * A section note is AUTHORED COPY selected by a MEASURED predicate, with every
@@ -515,7 +516,8 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
      * false sentence (measured 2026-09-14). With the frontier in hand the note
      * speaks only when three missed paydays fall on READ days (the dashboard's
      * bar), scopes "reached an account" to those days, and names the rest as
-     * unimported rather than unpaid.
+     * unchecked rather than unpaid — past `LAST_CHECKED_DAY`, never "nothing
+     * imported", which was false of the e2e fixture's own Jun 30.
      */
     const measuredRead = r.checkedThrough !== undefined;
     const readSilence = r.checkedPeriodsSinceBanked ?? 0;
@@ -545,8 +547,8 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
         : through === null
           ? ` — and the account it lands in has not been checked, so the ledger cannot say whether any of it arrived.`
           : readCovered === 0
-            ? `, all of it after ${through}, which nothing has imported yet — so the ledger has not looked for it.`
-            : ` and ${reached} through ${through}; the other ${unread} ${unread === 1 ? "payday falls" : "paydays fall"} after that, which nothing has imported yet.`;
+            ? `, all of it after ${through}, ${LAST_CHECKED_DAY} — so the ledger has not looked for it.`
+            : ` and ${reached} through ${through}; the other ${unread} ${unread === 1 ? "payday falls" : "paydays fall"} after that, ${LAST_CHECKED_DAY}.`;
 
       const readPart =
         measuredRead && through !== null && readSilence < r.periodsSinceBanked

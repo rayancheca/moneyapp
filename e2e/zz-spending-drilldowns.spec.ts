@@ -167,14 +167,17 @@ test("cash-earnings note is silent on a month whose paydays all banked", async (
   await expect(page.getByLabel("What this page cannot see")).toHaveCount(0);
 });
 
-test("cash-earnings note calls a payday past the import frontier unimported, not unpaid", async ({ page }) => {
+test("cash-earnings note calls a payday past the checked frontier unlooked-for, not unpaid", async ({ page }) => {
   // Jul 3, 2026 is a Paycheck payday, and Chase Total Checking — where that pay
-  // lands — is read through Jun 30: nobody has looked for the deposit yet.
+  // lands — is checked through Jun 30: nobody has looked for the deposit yet.
+  // 🔴 Its rows are imported to Jul 4, so this used to pin a false sentence:
+  // "after Tue, Jun 30, 2026, which nothing has imported yet".
   await page.goto("/spending?period=2026-07");
   const note = page.getByLabel("What this page cannot see");
   await expect(note).toHaveCount(1);
   await expect(note).toContainText(
-    "Paycheck implies $2,943.19 of earnings on Jul 3, 2026, all of it after Tue, Jun 30, 2026, which nothing has imported yet",
+    "Paycheck implies $2,943.19 of earnings on Jul 3, 2026, all of it after Tue, Jun 30, 2026, the last day every account that pay lands in has been checked through",
   );
+  await expect(note).not.toContainText("nothing has imported");
   await expect(note).not.toContainText("none of it reached an account");
 });

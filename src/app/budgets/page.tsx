@@ -241,10 +241,10 @@ export default async function BudgetsPage({
               two lines down says the same shape for bills, and it can add its
               figure because a bill nobody paid is still owed. */}
           {/* 🔴 "with no deposit against them" was said of Sep 3 and Sep 10 while
-              the account that pay lands in was read through Aug 12 (measured
+              the account that pay lands in was checked through Aug 12 (measured
               2026-09-15). It is said now only when every passed payday fell on
-              a day the ledger has read; otherwise `passedUnread` names the rest
-              as not imported yet, in /spending's words. */}
+              a day the ledger has checked; otherwise `passedUnread` names the
+              rest as not looked for, in /spending's words. */}
           {income.passedUnpaidCents > 0 && (
             <p className="mt-1 text-xs text-ink-faint">
               {income.passedUnpaidOccurrences === 1 ? "1 payday" : `${income.passedUnpaidOccurrences} paydays`}{" "}

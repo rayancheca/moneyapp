@@ -29,7 +29,7 @@ describe("UnbankedIncomeNote — /recurring names unread paydays as unimported, 
     const { html, words } = text({ ...cashJob, checkedOccurrenceCount: 0, checkedThrough: "2026-08-12" });
     expect(words).toBe(
       "2 paydays worth $2,094.00 already passed this month (Cash job (weekly pay)) — not counted above, and not in EOM cash. " +
-        "They all fall after Wed, Aug 12, 2026, which nothing has imported yet — so the ledger has not looked for their deposits. " +
+        "They all fall after Wed, Aug 12, 2026, the last day every account that pay lands in has been checked through — so the ledger has not looked for their deposits. " +
         "Pay the ledger has not looked for cannot be projected as arriving; the month strip below counts it, because that line is the schedule.",
     );
     expect(words).not.toMatch(/no deposit imported|never reaches a bank/);
@@ -48,7 +48,7 @@ describe("UnbankedIncomeNote — /recurring names unread paydays as unimported, 
   test("a window straddling the frontier keeps the warning for the read payday and names the rest", () => {
     const { html, words } = text({ totalCents: 314_100, occurrenceCount: 3, names: ["Cash job (weekly pay)"], checkedOccurrenceCount: 1, checkedThrough: "2026-08-12" });
     expect(words).toContain(
-      "1 falls on a day already read, with no deposit; the other 2 fall after Wed, Aug 12, 2026, which nothing has imported yet. Cash pay that never reaches a bank",
+      "1 falls on a day already checked, with no deposit; the other 2 fall after Wed, Aug 12, 2026, the last day every account that pay lands in has been checked through. Cash pay that never reaches a bank",
     );
     expect(words).not.toContain("with no deposit imported");
     expect(html).toContain("text-warning");

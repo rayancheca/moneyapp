@@ -207,6 +207,12 @@ describe("incomeCard", () => {
     expect(line.checkedSilentPeriods).toBe(1);
     expect(line.verdict).toContain("has not looked");
     expect(line.verdict).not.toContain("did not reach a bank");
+    // 🔴 Jul 9 is the day the records are CHECKED through, not the last day
+    // imported — "that nothing has imported yet" said the second of the first
+    expect(line.verdict).toContain(
+      "The other 6 sit inside the 48 days past Jul 9, the last day every account that pay lands in has been checked through, so the ledger has not looked.",
+    );
+    expect(line.verdict).not.toContain("imported");
   });
 
   /**
