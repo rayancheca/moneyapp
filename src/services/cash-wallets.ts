@@ -7,7 +7,7 @@ import { isWithinFinancialWindow, MIN_OPENING_DATE } from "@/lib/date-window";
 import { addDays, compareDates, isValidIsoDate, todayIso } from "@/lib/dates";
 import { createAccount, getAccount, listAccounts, type AccountView } from "./accounts";
 import { addManualAnchor, listAnchors } from "./anchors";
-import { CASH_INSTITUTION_NAME, isCashWallet } from "./manual-transactions";
+import { CASH_INSTITUTION_NAME, cashWalletIds, isCashWallet } from "./manual-transactions";
 
 /**
  * Cash wallets (ux-overhaul-plan §3.7): manual, import-free accounts for the
@@ -156,7 +156,9 @@ export function setCashWalletOpening(
 
 /** Active accounts that qualify as cash wallets (import-free — see isCashWallet). */
 export function listCashWallets(db: AppDatabase): AccountView[] {
-  return listAccounts(db).filter((a) => a.isActive && isCashWallet(db, a.id));
+  // the rule asked once for the whole list, not once per account
+  const wallets = cashWalletIds(db);
+  return listAccounts(db).filter((a) => a.isActive && wallets.has(a.id));
 }
 
 export interface CashWalletSummary {

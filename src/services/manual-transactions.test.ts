@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
@@ -16,6 +17,7 @@ import { createAccount } from "./accounts";
 import { addManualAnchor } from "./anchors";
 import {
   addManualTransaction,
+  cashWalletIds,
   deleteManualTransaction,
   editManualTransaction,
   isCashWallet,
@@ -227,6 +229,71 @@ describe("addManualTransaction — cash-wallet gate", () => {
         description: "cash tip",
       }),
     ).toThrow(/cash-wallet/);
+  });
+});
+
+/**
+ * The wallet rule asked of every account at once. `/budgets` needs "which of
+ * the accounts this category was spent from are wallets" for every row of the
+ * page, and a second, batch spelling of the rule beside `isCashWallet` would be
+ * two rules that can drift — so `isCashWallet` reads this one.
+ */
+describe("cashWalletIds — the cash-wallet rule over every account", () => {
+  test("holds exactly the accounts isCashWallet accepts, and nothing an import has touched", () => {
+    const bare = makeCashWallet("Bare");
+    const anchored = makeCashWallet("Anchored");
+    bundle.db
+      .insert(balanceAnchors)
+      .values({ accountId: anchored, anchoredOn: "2026-06-30", balanceCents: 100_000, source: "statement" })
+      .run();
+    const withPeriod = makeCashWallet("Period");
+    bundle.db
+      .insert(statementPeriods)
+      .values({
+        importFileId: makeImportFile(),
+        accountId: withPeriod,
+        periodStart: "2026-06-01",
+        periodEnd: "2026-06-30",
+        reconciliation: "reconciled",
+      })
+      .run();
+    const withImportedRow = makeCashWallet("Imported");
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId: withImportedRow,
+        importFileId: makeImportFile(),
+        postedOn: "2026-06-15",
+        amountCents: -3_000,
+        rawDescription: "IMPORTED ROW",
+        normalizedDescription: "IMPORTED ROW",
+        dedupeHash: dedupeHash({
+          accountId: withImportedRow,
+          postedOn: "2026-06-15",
+          amountCents: -3_000,
+          rawDescription: "IMPORTED ROW",
+          occurrenceIndex: 0,
+        }),
+      })
+      .run();
+    const regular = createAccount(bundle.db, { institutionId: chaseId, name: "Empty Checking", type: "checking" });
+
+    const wallets = cashWalletIds(bundle.db);
+    expect([...wallets]).toEqual([bare]);
+    for (const id of [bare, anchored, withPeriod, withImportedRow, regular, "no-such-account"]) {
+      expect(isCashWallet(bundle.db, id)).toBe(wallets.has(id));
+    }
+  });
+
+  test("an archived wallet is still a wallet — archiving does not let an import reach it", () => {
+    const wallet = makeCashWallet("Old wallet");
+    bundle.db.update(accounts).set({ isActive: false }).where(eq(accounts.id, wallet)).run();
+    expect(cashWalletIds(bundle.db).has(wallet)).toBe(true);
+  });
+
+  test("with no Cash institution there are no wallets", () => {
+    bundle.db.delete(institutions).where(eq(institutions.id, cashInstId)).run();
+    expect(cashWalletIds(bundle.db).size).toBe(0);
   });
 });
 
