@@ -1,6 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
+import { multipleFact } from "@/lib/insight-facts";
 import { resolvePeriod, withPeriod } from "@/lib/period";
 import type { EatingOutCard as EatingOutCardData } from "@/services/eating-out";
 import type { SubscriptionsCard as SubscriptionsCardData } from "@/services/subscriptions-card";
@@ -25,7 +26,7 @@ describe("the window captions beside the runway card", () => {
   const eatingOut = (months: number): EatingOutCardData => ({
     monthlyCents: 24057,
     groceriesMonthlyCents: 1772,
-    multipleOfGroceries: 13.6,
+    multipleOfGroceries: { kind: "multiple", fact: multipleFact("f1", "Eating out", 13.6, "what you spend on groceries") },
     eatingOut: [{ name: "Dining", unit: "visit", spentCents: 24057, count: 21, averageTicketCents: 1146 }],
     groceries: { name: "Groceries", unit: "trip", spentCents: 1772, count: 2, averageTicketCents: 886 },
     totalSpentCents: 24057,

@@ -7,6 +7,7 @@ import {
   scalarFact,
   shareFact,
   multipleFact,
+  multipleOfMagnitudes,
   trendFact,
   renderPercent,
   sharePercent,
@@ -196,6 +197,50 @@ describe("a multiple", () => {
     expect(() => multipleFact("f1", "x", 0, "y")).toThrow(/above zero/);
     expect(() => multipleFact("f1", "x", -3, "y")).toThrow(/above zero/);
     expect(() => multipleFact("f1", "x", Number.POSITIVE_INFINITY, "y")).toThrow(/above zero/);
+  });
+});
+
+/**
+ * 🔴 The rule `multipleFact` enforces had one caller. The eating-out card
+ * divided its two nets itself and printed "-2.0×" and "0.0×" when refunds
+ * outweighed a bucket — see `eating-out-multiple.test.ts`. This is the rule
+ * where a caller holding two quantities can ask it BEFORE dividing.
+ */
+describe("a multiple of two magnitudes", () => {
+  test("is the ratio when both are above zero", () => {
+    expect(multipleOfMagnitudes(6000, 1500)).toBe(4);
+    expect(multipleOfMagnitudes(1500, 6000)).toBe(0.25);
+  });
+
+  test("⛔ is nothing when either side is at or below zero", () => {
+    expect(multipleOfMagnitudes(0, 1500)).toBeNull();
+    expect(multipleOfMagnitudes(-3000, 1500)).toBeNull();
+    expect(multipleOfMagnitudes(6000, 0)).toBeNull();
+    expect(multipleOfMagnitudes(6000, -1500)).toBeNull();
+  });
+
+  /** ⛔ The trap a check on the RATIO alone walks into: −3000 / −2000 is a healthy-looking 1.5. */
+  test("⛔ two nets that both went negative are no multiple, though their ratio is positive", () => {
+    expect(multipleOfMagnitudes(-3000, -2000)).toBeNull();
+  });
+
+  test("a ratio that is not a finite number is no multiple", () => {
+    expect(multipleOfMagnitudes(Number.POSITIVE_INFINITY, 1)).toBeNull();
+    expect(multipleOfMagnitudes(Number.NaN, 1)).toBeNull();
+    expect(multipleOfMagnitudes(1, Number.NaN)).toBeNull();
+    expect(multipleOfMagnitudes(1e308, 1e-10)).toBeNull();
+    // two positive sides whose ratio is an exact zero — found by the loop below
+    expect(multipleOfMagnitudes(1, Number.POSITIVE_INFINITY)).toBeNull();
+  });
+
+  test("everything it returns, multipleFact accepts", () => {
+    const sides = [-1e308, -2000, -1, 0, 1e-10, 1, 1500, 6000, 1e308, Number.NaN, Number.POSITIVE_INFINITY];
+    for (const is of sides) {
+      for (const of of sides) {
+        const value = multipleOfMagnitudes(is, of);
+        if (value !== null) expect(() => multipleFact("f1", "x", value, "y")).not.toThrow();
+      }
+    }
   });
 });
 

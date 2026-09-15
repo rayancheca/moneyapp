@@ -293,6 +293,8 @@ export function shareFact(id: string, subject: string, value: number, ofLabel: s
  * below zero has divided by something that was not a magnitude — most often a
  * median that netted to zero across refunds. Refusing is how that surfaces as a
  * throw in a service test rather than as a sentence on his dashboard.
+ *
+ * A caller still holding the two quantities asks `multipleOfMagnitudes` first.
  */
 export function multipleFact(id: string, subject: string, value: number, ofLabel: string): MultipleFact {
   assertSlotId(id);
@@ -300,6 +302,29 @@ export function multipleFact(id: string, subject: string, value: number, ofLabel
   assertLabel("ofLabel", ofLabel);
   if (!Number.isFinite(value) || value <= 0) throw new Error(`A multiple must be above zero, got ${value}`);
   return { kind: "multiple", id, subject, value, ofLabel, display: `${value.toFixed(1)}×` };
+}
+
+/**
+ * How many times `of` the quantity `is` is — or null when the two are not both
+ * magnitudes, which is exactly when `multipleFact` would refuse the division.
+ *
+ * 🔴 That refusal had ONE caller, and the one other surface printing "N×"
+ * divided for itself. The dashboard's eating-out card nets refunds inside each
+ * of its two buckets, so either can land at or below zero, and it printed
+ * "-2.0× what you spend on groceries" and "0.0× what you spend on groceries" —
+ * and, when groceries were the side that netted back, "No groceries in this
+ * window" over grocery trips. A caller holding two quantities asks HERE, before
+ * it divides, and gets nothing a magnitude cannot be.
+ *
+ * ⛔ BOTH SIDES, not the ratio. Two nets that both went negative divide to a
+ * positive, plausible-looking 1.5 that a check on the ratio alone would print.
+ * …AND the ratio too: two positive sides can still divide to Infinity, or to an
+ * exact 0 (1 / Infinity), and neither is a multiple.
+ */
+export function multipleOfMagnitudes(is: number, of: number): number | null {
+  if (!(is > 0 && of > 0)) return null;
+  const value = is / of;
+  return Number.isFinite(value) && value > 0 ? value : null;
 }
 
 export function rankFact(id: string, subject: string, value: number, outOf: number, amongLabel: string): RankFact {

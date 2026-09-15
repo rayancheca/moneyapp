@@ -19,6 +19,55 @@ function counted(n: number, singular: string): string {
   return `${n} ${singular}${n === 1 ? "" : "s"}`;
 }
 
+/** What refunds cancelled, named inside the one sentence that says so. */
+const NETTED_BACK: Record<"eating-out" | "groceries" | "both", string> = {
+  "eating-out": "eating out",
+  groceries: "groceries",
+  both: "eating out and on groceries",
+};
+
+/**
+ * The ratio sentence — the multiple `multipleFact` spells, or why there is none.
+ *
+ * 🔴 This printed `multipleOfGroceries.toFixed(1)` over whatever the service
+ * divided: "-2.0×" and "0.0× what you spend on groceries" when refunds outweighed
+ * or matched a bucket, and "No groceries in this window" over grocery trips. See
+ * `GroceriesMultiple`.
+ */
+function GroceriesComparison({
+  multiple,
+  groceriesMonthlyCents,
+}: {
+  multiple: EatingOutCardData["multipleOfGroceries"];
+  groceriesMonthlyCents: number;
+}) {
+  switch (multiple.kind) {
+    case "multiple":
+      return (
+        <>
+          <span className="font-medium text-ink">{multiple.fact.display}</span> what you spend on groceries, which
+          comes to <Money cents={groceriesMonthlyCents} className="text-ink" /> a month.
+        </>
+      );
+    case "no-groceries":
+      return <>No groceries in this window, so everything you ate was bought ready to eat.</>;
+    case "netted-back":
+      return (
+        <>
+          Refunds came to at least what you spent on {NETTED_BACK[multiple.side]} in this window, so there is no
+          multiple to give.
+          {/* groceries are still a magnitude here, and still what the card compares against */}
+          {multiple.side === "eating-out" && (
+            <>
+              {" "}
+              Groceries come to <Money cents={groceriesMonthlyCents} className="text-ink" /> a month.
+            </>
+          )}
+        </>
+      );
+  }
+}
+
 /**
  * What eating out costs — the biggest real line in the ledger, and the one the
  * `Food` total hides.
@@ -69,14 +118,7 @@ export function EatingOutCard({ data }: { data: EatingOutCardData }) {
 
       {/* the comparison, not the number, is the point — so it gets the sentence */}
       <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-        {multipleOfGroceries === null ? (
-          <>No groceries in this window, so everything you ate was bought ready to eat.</>
-        ) : (
-          <>
-            <span className="font-medium text-ink">{multipleOfGroceries.toFixed(1)}×</span> what you spend on
-            groceries, which comes to <Money cents={groceriesMonthlyCents} className="text-ink" /> a month.
-          </>
-        )}
+        <GroceriesComparison multiple={multipleOfGroceries} groceriesMonthlyCents={groceriesMonthlyCents} />
       </p>
 
       <dl className="mt-4 space-y-1.5 border-t border-line pt-3 text-sm">

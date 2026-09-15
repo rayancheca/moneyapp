@@ -129,7 +129,7 @@ describe("eatingOutCard", () => {
     expect(card.totalSpentCents).toBe(6000);
     expect(card.totalCount).toBe(3);
     expect(card.groceries.spentCents).toBe(1500);
-    expect(card.multipleOfGroceries).toBeCloseTo(4);
+    expect(card.multipleOfGroceries).toMatchObject({ kind: "multiple", fact: { value: 4, display: "4.0×" } });
     // 6 complete months in the window, so the monthly rate divides by 6
     expect(card.monthlyCents).toBe(1000);
     expect(card.months).toBe(6);
@@ -156,12 +156,30 @@ describe("eatingOutCard", () => {
    * ⛔ `x / 0` is Infinity, which renders as "Infinity× what you spend on
    * groceries". A ledger with no groceries has no ratio to publish.
    */
-  test("no groceries yields a null ratio rather than Infinity", () => {
+  test("no groceries yields no multiple rather than Infinity", () => {
     addTxn("2026-07-02", -2000, "Dining");
 
     const card = eatingOutCard(bundle.db, TODAY)!;
-    expect(card.multipleOfGroceries).toBeNull();
-    expect(Number.isFinite(card.multipleOfGroceries ?? 0)).toBe(true);
+    expect(card.multipleOfGroceries).toEqual({ kind: "no-groceries" });
+  });
+
+  /**
+   * 🔴 Refunds net inside a bucket, so either net can reach zero or below while
+   * both buckets hold a charge — and the card printed "-2.0×" and "0.0×" over
+   * them. `eating-out-multiple.test.ts` reads the sentence; this pins which
+   * bucket the service says refunds cancelled.
+   */
+  test("a bucket whose refunds came to at least its charges gives no multiple, and is named", () => {
+    addTxn("2026-07-02", -2000, "Dining");
+    addTxn("2026-07-03", 5000, "Dining");
+    addTxn("2026-07-04", -1500, "Groceries");
+    expect(eatingOutCard(bundle.db, TODAY)!.multipleOfGroceries).toEqual({ kind: "netted-back", side: "eating-out" });
+
+    addTxn("2026-07-05", 1500, "Groceries");
+    expect(eatingOutCard(bundle.db, TODAY)!.multipleOfGroceries).toEqual({ kind: "netted-back", side: "both" });
+
+    addTxn("2026-07-06", -9000, "Dining");
+    expect(eatingOutCard(bundle.db, TODAY)!.multipleOfGroceries).toEqual({ kind: "netted-back", side: "groceries" });
   });
 
   test("an average ticket over zero purchases is null, not zero", () => {

@@ -1,5 +1,6 @@
 import type { AppDatabase } from "@/db/client";
 import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { multipleFact, multipleOfMagnitudes, type MultipleFact } from "@/lib/insight-facts";
 import { resolvePeriod, withPeriod } from "@/lib/period";
 import { activeTxnsInRange, loadCategoryIndex, type AnalyticsTxn, type CategoryIndex } from "./analytics";
 import { baselineWindow, SPEND_BASELINE_MONTHS } from "./committed";
@@ -63,19 +64,40 @@ export interface EatingOutLine {
   averageTicketCents: number | null;
 }
 
+/**
+ * Eating out as a multiple of groceries, or the reason the card has none.
+ *
+ * 🔴 It was `number | null`, divided here and printed with `toFixed(1)` by the
+ * card, and refunds net inside each bucket (the header's ⛔) — so a bucket whose
+ * refunds matched its charges printed "0.0× what you spend on groceries", one
+ * whose refunds outweighed them "-2.0×", and a groceries net at or below zero
+ * reached the null branch's "No groceries in this window" over grocery trips.
+ * The dashboard shows only a card holding a charge in BOTH buckets (`isEmpty`),
+ * so that sentence was false every time the dashboard could print it.
+ *
+ * Measured on the owner's ledger 2026-09-15 at every month-end 2022-10-31 →
+ * 2026-08-31 and at 2026-09-15: 48 of 48 print a positive multiple (1.7× to
+ * 22.7×), smallest nets $240.57 eating out and $106.33 groceries. Unreachable on
+ * his ledger today; the rule is `multipleFact`'s, which his notices already obey.
+ */
+export type GroceriesMultiple =
+  /** both nets are magnitudes — `fact.display` is the figure's only spelling */
+  | { readonly kind: "multiple"; readonly fact: MultipleFact }
+  /** not one grocery charge in the window, whatever may have come back */
+  | { readonly kind: "no-groceries" }
+  /** refunds came to at least the charges in one bucket, or in both */
+  | { readonly kind: "netted-back"; readonly side: "eating-out" | "groceries" | "both" };
+
 export interface EatingOutCard {
   /** mean monthly spend on food someone else made */
   monthlyCents: number;
   /** mean monthly spend on groceries */
   groceriesMonthlyCents: number;
   /**
-   * How many times over the groceries figure the eating-out figure is.
-   *
-   * ⛔ Null when groceries are zero. `x / 0` is `Infinity` and would render as
-   * "Infinity× what you spend on groceries"; a ledger with no grocery rows has
-   * no ratio to publish, and the card says something else instead.
+   * How many times over the groceries figure the eating-out figure is — or why
+   * there is no such figure. See `GroceriesMultiple`.
    */
-  multipleOfGroceries: number | null;
+  multipleOfGroceries: GroceriesMultiple;
   eatingOut: EatingOutLine[];
   groceries: EatingOutLine;
   /** every eating-out line summed */
@@ -117,6 +139,20 @@ function lineOf(name: string, unit: string, txns: readonly AnalyticsTxn[]): Eati
     count,
     averageTicketCents: count === 0 ? null : Math.round(spentCents / count),
   };
+}
+
+/** The multiple only `multipleOfMagnitudes` allows, and otherwise which bucket refunds cancelled. */
+function groceriesMultiple(eatingOutCents: number, groceries: EatingOutLine): GroceriesMultiple {
+  const value = multipleOfMagnitudes(eatingOutCents, groceries.spentCents);
+  if (value !== null) {
+    return { kind: "multiple", fact: multipleFact("f1", "Eating out", value, "what you spend on groceries") };
+  }
+  // a refund is not a trip (`lineOf`), so a window of grocery refunds alone bought no groceries
+  if (groceries.count === 0) return { kind: "no-groceries" };
+  const eatingOutBack = eatingOutCents <= 0;
+  const groceriesBack = groceries.spentCents <= 0;
+  if (eatingOutBack && groceriesBack) return { kind: "netted-back", side: "both" };
+  return { kind: "netted-back", side: eatingOutBack ? "eating-out" : "groceries" };
 }
 
 /**
@@ -209,7 +245,7 @@ export function eatingOutCard(
   return {
     monthlyCents,
     groceriesMonthlyCents,
-    multipleOfGroceries: groceries.spentCents > 0 ? totalSpentCents / groceries.spentCents : null,
+    multipleOfGroceries: groceriesMultiple(totalSpentCents, groceries),
     eatingOut,
     groceries,
     totalSpentCents,
