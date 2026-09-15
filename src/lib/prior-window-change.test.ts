@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { describe, expect, test } from "vitest";
-import { changeAgainstPrior, changeAgainstPriorText } from "./prior-window-change";
+import { changeAgainstPrior, changeAgainstPriorSum, changeAgainstPriorText } from "./prior-window-change";
 
 const PHRASE = /\blevel\s+with\b/i;
 
@@ -112,3 +112,18 @@ describe("a change against the prior window, in words", () => {
   });
 });
 
+/**
+ * A sentence that SUMS to a figure has to print it — the relief's description,
+ * "The 1 height sums to …". `?period=2023-05-19`: Food's $18.45 against $18.45.
+ */
+describe("a sum against the prior window prints its figure, then the words", () => {
+  test("no change is $0.00, level with the window — never \"$0.00 against\"", () => {
+    expect(changeAgainstPriorSum(1_845 - 1_845, "May 18, 2023")).toBe("$0.00, level with May 18, 2023");
+    expect(changeAgainstPriorSum(-0, "May 18, 2023")).toBe("$0.00, level with May 18, 2023");
+  });
+
+  test("a change is its signed figure against the window", () => {
+    expect(changeAgainstPriorSum(1_110, "Aug 28, 2022")).toBe("+$11.10 against Aug 28, 2022");
+    expect(changeAgainstPriorSum(-1_040, "Q1 2026")).toBe("-$10.40 against Q1 2026");
+  });
+});

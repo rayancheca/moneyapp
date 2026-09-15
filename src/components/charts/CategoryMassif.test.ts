@@ -418,9 +418,11 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => undefined })
  * Food spent $11.10 in 1 entry against $0.00 on Aug 28, 2022. The totals are
  * the rows' own sum; nothing below reads them.
  */
-function railLines(rows: { id: string; name: string; spentCents: number; priorCents: number | null; txnCount: number }[], periodLabel: string, priorLabel: string | null): string[] {
+type ReliefRow = { id: string; name: string; spentCents: number; priorCents: number | null; txnCount: number };
+
+function reliefHtml(rows: ReliefRow[], periodLabel: string, priorLabel: string | null): string {
   const spentCents = rows.reduce((s, r) => s + r.spentCents, 0);
-  const html = renderToStaticMarkup(
+  return renderToStaticMarkup(
     createElement(CategoryMassif, {
       rows: rows.map((r) => ({ categoryId: r.id, name: r.name, hue: null, spentCents: r.spentCents, priorCents: r.priorCents, txnCount: r.txnCount })),
       totals: { blocksCents: spentCents, uncategorizedCents: 0, grossSpentCents: spentCents, refundsCents: 0 },
@@ -431,9 +433,19 @@ function railLines(rows: { id: string; name: string; spentCents: number; priorCe
       periodQuery: "period=2022-08-29",
     }),
   );
-  return [...html.matchAll(/<span class="block text-\[11px\] text-ink-faint">([\s\S]*?)<\/span>/g)].map((m) =>
-    m[1]!.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, ""),
-  );
+}
+
+const plain = (html: string) => html.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, "");
+
+function railLines(rows: ReliefRow[], periodLabel: string, priorLabel: string | null): string[] {
+  const html = reliefHtml(rows, periodLabel, priorLabel);
+  return [...html.matchAll(/<span class="block text-\[11px\] text-ink-faint">([\s\S]*?)<\/span>/g)].map((m) => plain(m[1]!));
+}
+
+/** The readout above the plate as the server paints it — the whole period, which is nothing hovered. */
+function readoutLines(rows: ReliefRow[], periodLabel: string, priorLabel: string | null): string[] {
+  const html = reliefHtml(rows, periodLabel, priorLabel);
+  return [...html.matchAll(/<div class="text-xs">([\s\S]*?)<\/div>/g)].map((m) => plain(m[1]!));
 }
 
 /**
@@ -443,8 +455,11 @@ function railLines(rows: { id: string; name: string; spentCents: number; priorCe
  * while the readout above the plate, hovering the same block, read "+$11.10
  * against Aug 28, 2022 · 1 entry". "On <day>" is how this app dates a thing, and
  * neither the $11.10 nor the 1 entry is Aug 28's — the entry is dated Aug 29 and
- * the figure is the difference. Measured on the owner's ledger 2026-09-15: 3,960
- * rail rows over 1,528 whole periods said "on", 2,428 of them on 1,261 whole days.
+ * the figure is the difference. Measured on the owner's ledger 2026-09-15 at
+ * 25b9435, over the 1,340 whole periods whose page renders this card (every day,
+ * week, month, quarter and year from 2022-08-25; /spending shows "No activity"
+ * instead on 188 more whole periods with category rows): 3,958 rail rows in 1,320
+ * of them said "on", 2,426 of those over 1,055 whole days.
  */
 describe("the relief's rail states each change against the prior window", () => {
   test("a change is its figure against the window, as the readout and the List say it", () => {
@@ -462,6 +477,41 @@ describe("the relief's rail states each change against the prior window", () => 
 
   test("with nothing compared, the line is the entries alone", () => {
     expect(railLines([{ id: "food", name: "Food", spentCents: 1_110, priorCents: null, txnCount: 1 }], "Aug 29, 2022", null)).toEqual(["1 entry"]);
+  });
+});
+
+/**
+ * 🔴 THE READOUT SAID "$0.00 AGAINST" ABOVE THE RAIL'S "LEVEL WITH". For a change
+ * of exactly nothing the readout above the plate printed a figure against the
+ * window, while the rail row for the same block said it was level with it.
+ * Measured on the owner's ledger 2026-09-15 (read-only), rendered as the page
+ * paints it: `?period=2023-05-19` read "$0.00 against May 18, 2023 · 1 entry"
+ * above a rail reading "level with May 18, 2023 · 1 entry" (Food, $18.45 against
+ * $18.45); `?period=2025-08-24` read "$0.00 against Aug 23, 2025 · 2 entries";
+ * and each of the 61 blocks whose rail row says "level with" read "$0.00
+ * against" when hovered — the readout writes a hovered block and the whole
+ * period with the same lines.
+ */
+describe("the relief's readout words a change as the rail beneath it does", () => {
+  test("no change is level with the window, above the plate and beside it", () => {
+    const food = [{ id: "food", name: "Food", spentCents: 1_845, priorCents: 1_845, txnCount: 1 }];
+    expect(readoutLines(food, "May 19, 2023", "May 18, 2023")).toEqual(["level with May 18, 2023 · 1 entry"]);
+    expect(railLines(food, "May 19, 2023", "May 18, 2023")).toEqual(["level with May 18, 2023 · 1 entry"]);
+  });
+
+  test("entries that net to nothing, against a window that did too", () => {
+    const travel = [{ id: "travel", name: "Travel", spentCents: 0, priorCents: 0, txnCount: 2 }];
+    expect(readoutLines(travel, "Aug 24, 2025", "Aug 23, 2025")).toEqual(["level with Aug 23, 2025 · 2 entries"]);
+  });
+
+  test("a change keeps its signed figure against the window", () => {
+    const food = [{ id: "food", name: "Food", spentCents: 1_110, priorCents: 0, txnCount: 1 }];
+    expect(readoutLines(food, "Aug 29, 2022", "Aug 28, 2022")).toEqual(["+$11.10 against Aug 28, 2022 · 1 entry"]);
+  });
+
+  test("with nothing compared, the readout is the entries alone", () => {
+    const food = [{ id: "food", name: "Food", spentCents: 1_110, priorCents: null, txnCount: 1 }];
+    expect(readoutLines(food, "Aug 29, 2022", null)).toEqual(["1 entry"]);
   });
 });
 

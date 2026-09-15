@@ -12,7 +12,7 @@ import { useViewState } from "@/hooks/useViewState";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { categoryHueVar, isCategoryHueName } from "@/lib/category-palette";
 import { formatCents, formatCentsSigned } from "@/lib/money";
-import { changeAgainstPrior, changeAgainstPriorText } from "@/lib/prior-window-change";
+import { changeAgainstPrior, changeAgainstPriorSum, changeAgainstPriorText } from "@/lib/prior-window-change";
 import { type ViewState } from "@/lib/view-state";
 import {
   MASSIF_VIEW_DIMENSION,
@@ -464,6 +464,15 @@ function Slug({
   const delta = active ? active.deltaCents : layout.totalDeltaCents;
   const entries = active ? active.txnCount : layout.totalTxnCount;
   const key = massifCaptionKey(active, layout, periodLabel);
+  /*
+   * 🔴 "$0.00 against May 18, 2023 · 1 entry" above a rail row reading "level
+   * with May 18, 2023 · 1 entry" for the same block — `?period=2023-05-19`,
+   * measured on the owner's ledger 2026-09-15, and every one of the 61 blocks
+   * with no change when hovered. The readout's words are the rail's now
+   * (`lib/prior-window-change`): a change is its figure against the window, and
+   * no change is level with it, with no figure.
+   */
+  const change = priorLabel === null || delta === null ? null : { delta, ...changeAgainstPrior(delta, priorLabel) };
   return (
     // NOT a live region: this changes on every block the pointer crosses, and
     // AT would announce a new category each time. The figure's own aria-label
@@ -477,12 +486,12 @@ function Slug({
       </div>
       <div className="figures text-xl font-medium">{formatCents(spent)}</div>
       <div className="text-xs">
-        {priorLabel !== null && delta !== null ? (
+        {change !== null ? (
           <>
-            <SpendDelta cents={delta} />
+            {change.level ? null : <SpendDelta cents={change.delta} />}
             <span className="text-ink-faint">
-              {" "}
-              against {priorLabel} · {entries} {entries === 1 ? "entry" : "entries"}
+              {change.level ? null : " "}
+              {change.words} · {entries} {entries === 1 ? "entry" : "entries"}
             </span>
           </>
         ) : (
@@ -828,7 +837,16 @@ export function massifEmptyState(
   );
 }
 
-/** Each category with no entries, named with its own change: "A (-$1.00), B (-$2.00) and C (+$3.00)". */
+/**
+ * Each category with no entries, named with its own change: "A (-$1.00), B (-$2.00) and C (+$3.00)".
+ *
+ * ⚠️ A zero change stays a figure here, "Travel ($0.00)", and is not put in
+ * `lib/prior-window-change`'s words. Each name carries its own figure in a list
+ * of figures ("Subscriptions (-$9.99) and Travel ($0.00)", `?period=W2025-08-25`,
+ * measured 2026-09-15), no window is joined to the figure, and the sentence says
+ * why the category is named at all: it had no entries, so it has no block. The
+ * List's phone line had neither, which is why that line says it in words.
+ */
 function absentNamed(absent: readonly MassifAbsentCategory[]): string {
   const named = absent.map((a) => (a.deltaCents === null ? a.label : `${a.label} (${formatCentsSigned(a.deltaCents)})`));
   return named.length === 1 ? named[0]! : `${named.slice(0, -1).join(", ")} and ${named[named.length - 1]!}`;
@@ -861,8 +879,7 @@ export function massifDescription(
    * figure is printed whatever it is, and the words after it are the rail's and
    * the List's (`lib/prior-window-change`) — "$0.00, level with May 18, 2023".
    */
-  const change = changeAgainstPrior(layout.totalDeltaCents, priorLabel);
-  const move = `${formatCentsSigned(layout.totalDeltaCents)}${change.level ? "," : ""} ${change.words}`;
+  const move = changeAgainstPriorSum(layout.totalDeltaCents, priorLabel);
   /*
    * 🔴 THE SUM COVERS WHAT HAS NO BLOCK. The heights were the only terms this
    * sentence could see, because the categories that stopped spending were never
