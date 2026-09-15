@@ -141,28 +141,40 @@ test("the day heatmap follows the selected period (regression: prop-desync)", as
 });
 
 /**
- * The cash-earnings note stays SILENT while the schedule is keeping up.
+ * The cash-earnings note: silent on a month whose paydays all banked, and scoped
+ * to what has been imported on a month whose payday has not been looked for.
  *
- * ⚠️ Read what this does and does not prove. The seeded ledger's cash series
- * ("Employer (cash)", weekly) banks on time right up to FAKE_TODAY, so the
- * correct rendering is nothing at all — and the assertion below pins exactly
- * that: the note must not cry wolf about unbanked pay on a schedule that is
- * current. False POSITIVES are the dangerous direction for this feature, and
- * this is the direction the fixture can test.
+ * ⚠️ Read what the fixture holds before changing either test. The note reads
+ * CONFIRMED income series only. The seed's one confirmed series is Paycheck
+ * (biweekly, $2,943.19), and seed-helpers links the ACME direct deposits to it —
+ * which stop on 2026-05-08 on purpose. "Employer (cash)", the weekly ATM series
+ * that does bank up to FAKE_TODAY, is only `detected`, so the note never reads it.
  *
- * It does NOT cover the note's visible states. Producing one needs a confirmed
- * schedule that has gone silent for three pay periods, and the simulator emits
- * a perfectly regular series — the same "drawn with a ruler" blindness pass 53
- * found in the price fixtures. Seeding the silent case moves income totals and
- * ripples through several visual baselines, so it belongs in the state-coverage
- * audit (plan pass 75) where every unreachable state is seeded together and the
- * baselines regenerate once, not in a feature pass where the regeneration would
- * be incidental. The positive states are covered in
- * `src/lib/section-notes.test.ts` and were verified against the real ledger for
- * three separate periods.
+ * 🔴 This file used to assert the note was ABSENT on 2026-07, calling the
+ * schedule current. It passed only because zz-inline-renames' "Detect now" runs
+ * before this file (workers: 1) and, until 622fbff, moved Paycheck's 49 seeded
+ * deposits onto a detected "Acme Corp (payroll)" — so the note had no evidence
+ * left to read. The `spending` visual baseline, photographed before any Detect,
+ * showed the note all along. Measured 2026-09-15: base code (e818154) on the
+ * fixture prints "Paycheck implies $2,943.19 of earnings on Jul 3, 2026 and none
+ * of it reached an account" for 2026-07.
  */
-test("cash-earnings note is silent on a schedule that is banking on time", async ({ page }) => {
-  await page.goto("/spending?period=2026-07");
-  await expect(page.getByRole("region", { name: "Cash flow" }).or(page.locator("main"))).toBeVisible();
+test("cash-earnings note is silent on a month whose paydays all banked", async ({ page }) => {
+  // Apr 10 and Apr 24, 2026 both posted. The schedule still reads series-stale
+  // as of FAKE_TODAY, so this is the `unbankedCents > 0` half of the gate.
+  await page.goto("/spending?period=2026-04");
+  await expect(page.getByRole("link", { name: /^Savings rate/ }).first()).toBeVisible();
   await expect(page.getByLabel("What this page cannot see")).toHaveCount(0);
+});
+
+test("cash-earnings note calls a payday past the import frontier unimported, not unpaid", async ({ page }) => {
+  // Jul 3, 2026 is a Paycheck payday, and Chase Total Checking — where that pay
+  // lands — is read through Jun 30: nobody has looked for the deposit yet.
+  await page.goto("/spending?period=2026-07");
+  const note = page.getByLabel("What this page cannot see");
+  await expect(note).toHaveCount(1);
+  await expect(note).toContainText(
+    "Paycheck implies $2,943.19 of earnings on Jul 3, 2026, all of it after Tue, Jun 30, 2026, which nothing has imported yet",
+  );
+  await expect(note).not.toContainText("none of it reached an account");
 });
