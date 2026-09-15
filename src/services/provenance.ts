@@ -17,7 +17,7 @@ import { formatCents } from "@/lib/money";
 import { emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { activeTxnsInRange, loadCategoryIndex, spendingBucket, uncategorizedWhere } from "./analytics";
-import { accountCoverage, type CoverageGrade } from "./coverage";
+import { accountCoverage, type AccountCoverage, type CoverageGrade } from "./coverage";
 import { pickWinners } from "./derivation";
 import { MIN_OCCURRENCES } from "./recurring";
 
@@ -1555,17 +1555,9 @@ function summedRowsProvenance(
   }
 
   const coverage = new Map(accountCoverage(db, to).map((c) => [c.accountId, c]));
-  const gradeRow = (accountId: string, postedOn: string): ProvenanceVerdict => {
-    const c = coverage.get(accountId);
-    if (!c) return "unknown";
-    if (c.grade === "market_value" || c.grade === "manual") return GRADE_VERDICT[c.grade];
-    if (c.brokenSince !== null && postedOn >= c.brokenSince) return "broken";
-    if (c.verifiedThrough !== null && postedOn <= c.verifiedThrough) return "derived";
-    return c.grade === "unknown" ? "unknown" : "unverified";
-  };
 
   const handEntered = rows.filter((r) => r.importFileId === null).length;
-  const verdicts = rows.map((r) => (r.importFileId === null ? "manual" : gradeRow(r.accountId, r.postedOn)));
+  const verdicts = rows.map((r) => (r.importFileId === null ? "manual" : rowGrade(coverage.get(r.accountId), r.postedOn)));
   const proven = verdicts.filter((v) => v === "derived" || v === "sourced").length;
   /**
    * ⛔ Three buckets, not two. Folding `market_value` into "not checked" told
@@ -1639,6 +1631,25 @@ function summedRowsProvenance(
     checkedThrough: closed[0] ?? null,
     inputs: [],
   };
+}
+
+/**
+ * The grade ONE imported row gets from its account's chain — inside every
+ * category, merchant, spending and account-rows total.
+ *
+ * 🔴 A row before the chain OPENS is not checked, however far `verifiedThrough`
+ * reaches — see `AccountCoverage.chainOpensOn`. Robinhood Cash's Dec 6 and Dec
+ * 7, 2023 rows counted in "2,387 of 2,392 checked" beside sheets saying nothing
+ * checks them (measured 2026-09-15).
+ */
+function rowGrade(c: AccountCoverage | undefined, postedOn: string): ProvenanceVerdict {
+  if (!c) return "unknown";
+  if (c.grade === "market_value" || c.grade === "manual") return GRADE_VERDICT[c.grade];
+  if (c.brokenSince !== null && postedOn >= c.brokenSince) return "broken";
+  if (c.verifiedThrough !== null && c.chainOpensOn !== null && postedOn >= c.chainOpensOn && postedOn <= c.verifiedThrough) {
+    return "derived";
+  }
+  return c.grade === "unknown" ? "unknown" : "unverified";
 }
 
 /* ── a plan, rather than a measurement ────────────────────────────────── */

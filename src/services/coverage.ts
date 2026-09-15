@@ -75,6 +75,24 @@ export interface AccountCoverage {
   grade: CoverageGrade;
   /** last day whose balance rests on a closed arithmetic chain */
   verifiedThrough: string | null;
+  /**
+   * The day the checked chain opens on: the account's first trusted day, which
+   * is its first recorded balance. Null when nothing is checked at all.
+   *
+   * 🔴 Days BEFORE it are prehistory, replayed backwards from that balance with
+   * nothing earlier to check them against — and `verifiedThrough` below
+   * deliberately does not call them a break, so a row there sat "on or before
+   * verifiedThrough" and a total counted it checked. Measured 2026-09-15:
+   * Robinhood Cash opens 2023-12-05, its first recorded balance is 2023-12-31,
+   * and `/accounts/<Robinhood Cash>` read "2,387 of 2,392 checked" while the Dec
+   * 6 and Dec 7, 2023 rows each read "nothing checks the total it sits in" on
+   * their own sheet. `provenance.rowGrade` reads this so the two agree.
+   *
+   * ⚠️ Inclusive, like `verifiedThrough`: a row ON the opening day counts as
+   * checked. No such row exists on the real ledger or the e2e fixture
+   * (2026-09-15), so the stricter reading has nothing to decide yet.
+   */
+  chainOpensOn: string | null;
   /** first day the chain stopped being checkable */
   unverifiedSince: string | null;
   /**
@@ -199,6 +217,7 @@ const accountCoverageCached = cache(function accountCoverageCached(
         ...base,
         grade: "market_value" as const,
         verifiedThrough: null,
+        chainOpensOn: null,
         unverifiedSince: null,
         brokenSince: null,
         uncheckedSince: null,
@@ -212,6 +231,7 @@ const accountCoverageCached = cache(function accountCoverageCached(
         ...base,
         grade: "unknown" as const,
         verifiedThrough: null,
+        chainOpensOn: null,
         unverifiedSince: null,
         brokenSince: null,
         uncheckedSince: null,
@@ -277,6 +297,7 @@ const accountCoverageCached = cache(function accountCoverageCached(
         ...base,
         grade: "manual" as const,
         verifiedThrough: null,
+        chainOpensOn: null,
         unverifiedSince: null,
         brokenSince: null,
         uncheckedSince: null,
@@ -291,6 +312,7 @@ const accountCoverageCached = cache(function accountCoverageCached(
       ...base,
       grade,
       verifiedThrough,
+      chainOpensOn: firstTrusted?.day ?? null,
       unverifiedSince: firstUntrusted?.day ?? null,
       brokenSince: firstGap?.day ?? null,
       uncheckedSince,

@@ -589,6 +589,34 @@ describe("provenanceFor — an account's rows", () => {
     expect(p.checkedThrough).toBe("2026-08-02");
   });
 
+  /*
+   * 🔴 PREHISTORY WAS COUNTED AS CHECKED. `gradeRow` called any row on or before
+   * `verifiedThrough` checked, and `accountCoverage` deliberately does not treat
+   * the days before an account's first recorded balance as a break — so those
+   * rows passed. Measured 2026-09-15 on the real ledger: `/accounts/<Robinhood
+   * Cash>` read "2,387 of 2,392 checked" while two of the 2,387 — the Dec 6 and
+   * Dec 7, 2023 rows, before its first recorded balance on Dec 31 — each read
+   * "nothing checks the total it sits in" on their own sheet. The badge and the
+   * sheet disagreed about the same two rows; the sheet was right.
+   */
+  test("a row before the account's first recorded balance is unchecked — in the count and on its own sheet", () => {
+    const id = addAccount("a", "Robinhood Cash", "checking");
+    const csv = addFile("f1", "3ab6c2a8-5f00-5de8-b339-c3e514d5b7a7.csv", "robinhood-csv");
+    addDays(id, [
+      { day: "2023-12-05", basis: "derived_unverified" },
+      { day: "2023-12-07", basis: "derived_unverified" },
+      { day: "2023-12-31", basis: "anchored" },
+      { day: "2024-01-10", basis: "derived" },
+    ]);
+    const early = addTxn(id, "2023-12-07", { importFileId: csv });
+    addTxn(id, "2024-01-10", { importFileId: csv });
+
+    const count = provenanceFor(bundle.db, { kind: "accountRows", accountId: id })!;
+    expect(count.verdict).toBe("unverified");
+    expect(count.badgeWord).toBe("1 of 2 checked");
+    expect(provenanceFor(bundle.db, { kind: "transaction", id: early })!.verdict).toBe("unverified");
+  });
+
   test("rows you entered by hand read as yours, one rule with every other total", () => {
     const id = addAccount("a", "Cash on Hand", "cash");
     addTxn(id, "2026-08-11");
