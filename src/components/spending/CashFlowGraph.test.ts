@@ -1,8 +1,11 @@
-import { createElement } from "react";
+import { createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { Line, type DotItemDotProps } from "recharts";
 import { describe, expect, test } from "vitest";
 import type { CashCumulativePoint } from "@/lib/cash-flow-cumulative";
-import { RunningTotalTooltip } from "./CashFlowGraph";
+import type { UnreachedKind } from "@/lib/empty-period";
+import type { CashFlow, CashFlowBucket } from "@/services/spending";
+import { CashFlowGraph, RunningTotalTooltip } from "./CashFlowGraph";
 
 const textOf = (html: string): string => html.replace(/<[^>]*>/g, "");
 
@@ -81,5 +84,98 @@ describe("CashFlowGraph's tooltip — a running total is only as far as the ledg
     );
     expect(textOf(text)).toContain("Spent by here, August 2026");
     expect(textOf(text)).toContain("$9,935.87");
+  });
+});
+
+/**
+ * 🔴 ONE BUCKET READ, NO LINE AT ALL. The lines end where the ledger does
+ * (`plottedRunningTotals`), and every one of them was `dot={false}` — so a
+ * window with exactly one bucket read showed axes and a legend naming Earned,
+ * Spent and Net over no line at all. Reachable on the e2e fixture at
+ * `?period=2026-Q3` (fake today 2026-07-08, newest row 2026-07-04: July alone
+ * read of three months). See `isLonePoint`.
+ */
+describe("CashFlowGraph — a line with one point read still shows that point", () => {
+  type LineProps = { dataKey: string; stroke: string; dot: unknown; children?: ReactNode };
+
+  /** the chart's <Line> elements, in the order it declares them — read off the element tree, no DOM */
+  function linesIn(node: ReactNode): ReactElement<LineProps>[] {
+    if (Array.isArray(node)) return node.flatMap(linesIn);
+    if (!isValidElement<LineProps>(node)) return [];
+    return node.type === Line ? [node] : linesIn(node.props.children);
+  }
+
+  /** what a line's `dot` draws at one point, given the props recharts passes it */
+  function dotAt(line: ReactElement<LineProps>, index: number): string {
+    expect(typeof line.props.dot).toBe("function");
+    const props: DotItemDotProps = {
+      index,
+      cx: 40 + index * 10,
+      cy: 20,
+      points: [],
+      payload: {},
+      dataKey: line.props.dataKey,
+      value: null,
+    };
+    const drawn = (line.props.dot as (p: DotItemDotProps) => ReactNode)(props);
+    return renderToStaticMarkup(createElement("svg", null, drawn));
+  }
+
+  const monthBucket = (
+    key: string,
+    incomeCents: number,
+    spendingCents: number,
+    unreached: UnreachedKind | null,
+  ): CashFlowBucket => ({
+    key,
+    label: key,
+    from: `${key}-01`,
+    to: `${key}-28`,
+    income: {},
+    spending: {},
+    incomeCents,
+    spendingCents,
+    refundsCents: 0,
+    netCents: incomeCents - spendingCents,
+    unreached,
+  });
+
+  const linesOf = (buckets: CashFlowBucket[]) => {
+    const data: CashFlow = { buckets, incomeSeries: [], spendingSeries: [], totals: {} as CashFlow["totals"], pace: null };
+    return linesIn(CashFlowGraph({ data, projection: null }));
+  };
+
+  // the SHAPE of the fixture's `?period=2026-Q3`; the cents are constructed
+  const quarter = [
+    monthBucket("2026-07", 100_000, 40_000, null),
+    monthBucket("2026-08", 0, 0, "future"),
+    monthBucket("2026-09", 0, 0, "future"),
+  ];
+
+  test("each of the period's own lines marks its one point, and nothing else", () => {
+    const lines = linesOf(quarter);
+    expect(lines.map((l) => l.props.dataKey)).toEqual(["earnedCum", "spentCum", "netCum"]);
+    for (const line of lines) {
+      expect(dotAt(line, 0)).toContain("<circle");
+      expect(dotAt(line, 1)).toBe("<svg></svg>");
+      expect(dotAt(line, 2)).toBe("<svg></svg>");
+    }
+  });
+
+  test("the mark sits where recharts places the point, in the line's own colour", () => {
+    const spent = linesOf(quarter).find((l) => l.props.dataKey === "spentCum")!;
+    const markup = dotAt(spent, 0);
+    expect(markup).toContain('cx="40"');
+    expect(markup).toContain('cy="20"');
+    expect(markup).toContain(`fill="${spent.props.stroke}"`);
+  });
+
+  test("a line with a segment to draw carries no marks", () => {
+    const lines = linesOf([
+      monthBucket("2026-06", 90_000, 30_000, null),
+      monthBucket("2026-07", 100_000, 40_000, null),
+      monthBucket("2026-08", 0, 0, "future"),
+    ]);
+    for (const line of lines) for (const i of [0, 1, 2]) expect(dotAt(line, i)).toBe("<svg></svg>");
   });
 });

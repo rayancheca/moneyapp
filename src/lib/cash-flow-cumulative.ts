@@ -147,3 +147,25 @@ export function plottedRunningTotals(
       : { ...p, earnedCum: null, refundsCum: null, spentCum: null, netCum: null },
   );
 }
+
+/**
+ * Whether the value at `index` is drawn with neither neighbour drawn — a point
+ * no segment reaches, which a line drawn without dots paints as nothing at all.
+ *
+ * 🔴 ONE BUCKET READ, NO LINE AT ALL. `plottedRunningTotals` ends each line at
+ * the frontier and the graph draws its lines dot-free, so a window with exactly
+ * one bucket read showed axes and a legend naming Earned, Spent and Net over no
+ * line: d3's curve draws a lone defined point as a bare moveto, and recharts sets
+ * no line cap. Reachable on the e2e fixture at `?period=2026-Q3` (seeded fresh,
+ * fake today 2026-07-08, newest row 2026-07-04: July alone read of three
+ * months); on the owner's ledger (read 2026-09-15, newest row 2026-09-12) over
+ * `?from=2026-09-01&to=2026-11-30`, `?from=2026-09-12&to=2026-09-30`,
+ * `?from=2022-06-01&to=2022-08-31` and `?from=2022-08-01&to=2022-08-25`.
+ *
+ * ⛔ Asked of the NEIGHBOURS, not of how many points a line has: d3 joins only
+ * adjacent defined points, so this is the rule wherever the point sits.
+ */
+export function isLonePoint(values: readonly (number | null)[], index: number): boolean {
+  const drawn = (i: number): boolean => i >= 0 && i < values.length && values[i] != null;
+  return drawn(index) && !drawn(index - 1) && !drawn(index + 1);
+}

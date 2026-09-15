@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import {
   CartesianGrid,
   Line,
@@ -9,10 +10,12 @@ import {
   Tooltip,
   XAxis,
   YAxis,
+  type DotItemDotProps,
 } from "recharts";
 import {
   cashFlowCumulative,
   ghostRowLabel,
+  isLonePoint,
   plottedRunningTotals,
   type CashCumulativePoint,
 } from "@/lib/cash-flow-cumulative";
@@ -109,6 +112,25 @@ export function RunningTotalTooltip({
   );
 }
 
+/** recharts' own dot radius — the size it gives a series of a single point */
+const LONE_POINT_R = 3;
+
+/**
+ * A line's `dot`: a mark at a point no segment reaches, nothing anywhere else.
+ * The lines end where the ledger does, so a window with ONE bucket read has a
+ * point on each line and no segment to draw it with — see `isLonePoint`. In the
+ * line's own colour, so the mark reads as the line it stands in for.
+ *
+ * ⛔ The prior period's line keeps `dot={false}`: it carries a figure at every
+ * point or at none, so it is never broken into a lone point.
+ */
+function lonePointDot(values: readonly (number | null)[], color: string): (props: DotItemDotProps) => ReactNode {
+  return function LonePoint({ index, cx, cy }) {
+    if (!isLonePoint(values, index) || typeof cx !== "number" || typeof cy !== "number") return null;
+    return <circle cx={cx} cy={cy} r={LONE_POINT_R} fill={color} />;
+  };
+}
+
 export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
   const { buckets } = data;
   const priorLabel = projection?.prior?.label ?? null;
@@ -194,7 +216,7 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
               name="Earned (cumulative)"
               stroke="var(--chart-2)"
               strokeWidth={2}
-              dot={false}
+              dot={lonePointDot(plotted.map((p) => p.earnedCum), "var(--chart-2)")}
               isAnimationActive={false}
             />
             <Line
@@ -203,7 +225,7 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
               name="Spent (cumulative)"
               stroke="var(--negative)"
               strokeWidth={2}
-              dot={false}
+              dot={lonePointDot(plotted.map((p) => p.spentCum), "var(--negative)")}
               isAnimationActive={false}
             />
             <Line
@@ -212,7 +234,7 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
               name="Net (cumulative)"
               stroke="var(--accent)"
               strokeWidth={2}
-              dot={false}
+              dot={lonePointDot(plotted.map((p) => p.netCum), "var(--accent)")}
               isAnimationActive={false}
             />
           </LineChart>

@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { cashFlowCumulative, ghostRowLabel, plottedRunningTotals, type CashCumulativeInput } from "./cash-flow-cumulative";
+import {
+  cashFlowCumulative,
+  ghostRowLabel,
+  isLonePoint,
+  plottedRunningTotals,
+  type CashCumulativeInput,
+} from "./cash-flow-cumulative";
 import type { UnreachedKind } from "./empty-period";
 
 /** a bucket in the service's sign convention: net = income + refunds − spending */
@@ -174,5 +180,56 @@ describe("plottedRunningTotals — a line is drawn only through buckets the ledg
   test("a bucket is matched by its key, not by where it sits", () => {
     const { buckets, points } = withKinds([null, "after-records"]);
     expect(plottedRunningTotals(points, [...buckets].reverse()).map((p) => p.spentCum)).toEqual([1_000, null]);
+  });
+});
+
+/**
+ * 🔴 ONE BUCKET READ, NO LINE AT ALL. `plottedRunningTotals` ends each line at
+ * the frontier, and each of the graph's lines is drawn with no dots — so a window
+ * with exactly one bucket read drew axes and a legend naming three lines with
+ * nothing on them: d3 draws a lone defined point as a moveto, which paints
+ * nothing. Reachable on the e2e fixture at `?period=2026-Q3` (seeded fresh, fake
+ * today 2026-07-08, newest row 2026-07-04: three months, July alone read); on
+ * the owner's ledger (read 2026-09-15, newest row 2026-09-12) over
+ * `?from=2026-09-01&to=2026-11-30`, `?from=2026-09-12&to=2026-09-30`,
+ * `?from=2022-06-01&to=2022-08-31` and `?from=2022-08-01&to=2022-08-25`.
+ */
+describe("isLonePoint — a drawn point no segment reaches", () => {
+  const lonesOf = (values: readonly (number | null)[]) => values.map((_, i) => isLonePoint(values, i));
+
+  // the SHAPE of the fixture's `?period=2026-Q3`; the cents are constructed
+  const quarter = [
+    { ...bucket("2026-07", 100_000, 40_000), unreached: null },
+    { ...bucket("2026-08", 0, 0), unreached: "future" as const },
+    { ...bucket("2026-09", 0, 0), unreached: "future" as const },
+  ];
+
+  test("one month read of three: each of the period's own lines is that one point", () => {
+    const plotted = plottedRunningTotals(cashFlowCumulative(quarter, null, 0), quarter);
+    for (const key of ["earnedCum", "spentCum", "netCum"] as const) {
+      expect(lonesOf(plotted.map((p) => p[key]))).toEqual([true, false, false]);
+    }
+  });
+
+  test("two points read are a segment, not two lone points", () => {
+    expect(lonesOf([1_000, 3_000, null])).toEqual([false, false, false]);
+  });
+
+  test("the one point read can sit at the window's close — a range the ledger opens on its last day", () => {
+    expect(lonesOf([null, null, 138_810])).toEqual([false, false, true]);
+  });
+
+  test("…or between two unread buckets", () => {
+    expect(lonesOf([null, 475, null])).toEqual([false, true, false]);
+  });
+
+  test("a one-bucket window's only point stands alone", () => {
+    expect(lonesOf([0])).toEqual([true]);
+  });
+
+  /* ⛔ the prior period's line carries a figure at every point or at none, so it is never broken */
+  test("the prior period's line beside a lone point is a whole line", () => {
+    const plotted = plottedRunningTotals(cashFlowCumulative(quarter, [5_000, 6_000, 7_000], 18_000), quarter);
+    expect(lonesOf(plotted.map((p) => p.ghostCum))).toEqual([false, false, false]);
   });
 });
