@@ -7,6 +7,7 @@ import {
   massifAbsentNote,
   massifCaptionKey,
   massifDescription,
+  massifEmptyState,
   massifTableCaption,
   reconciliationNote,
 } from "./CategoryMassif";
@@ -118,18 +119,21 @@ describe("the relief's tracks can shrink", () => {
 });
 
 describe("the relief's readout counts categories in English", () => {
+  /** a readout over categories that all drew a block */
+  const drawnOnly = (categoryCount: number) => ({ categoryCount, absent: [] });
+
   /* 🔴 "Aug 2022 · all 1 categories" — the `<desc>` this card also writes
      pluralises "block" from the same count. */
   test("one category is a category", () => {
-    expect(massifCaptionKey(null, 1, "Aug 2022")).toBe("Aug 2022 · all 1 category");
+    expect(massifCaptionKey(null, drawnOnly(1), "Aug 2022")).toBe("Aug 2022 · all 1 category");
   });
 
   test("more than one is categories", () => {
-    expect(massifCaptionKey(null, 12, "Jul 2026")).toBe("Jul 2026 · all 12 categories");
+    expect(massifCaptionKey(null, drawnOnly(12), "Jul 2026")).toBe("Jul 2026 · all 12 categories");
   });
 
   test("zero is categories too", () => {
-    expect(massifCaptionKey(null, 0, "Jul 2026")).toBe("Jul 2026 · all 0 categories");
+    expect(massifCaptionKey(null, drawnOnly(0), "Jul 2026")).toBe("Jul 2026 · all 0 categories");
   });
 
   /** a block as the layout publishes it: the share already written, by the Table lens's rule */
@@ -139,7 +143,7 @@ describe("the relief's readout counts categories in English", () => {
   };
 
   test("a hovered block names itself and its share instead", () => {
-    expect(massifCaptionKey(block("FOOD", 42_370, 0.4237), 12, "Jul 2026")).toBe("FOOD · 42.4% of Jul 2026");
+    expect(massifCaptionKey(block("FOOD", 42_370, 0.4237), drawnOnly(12), "Jul 2026")).toBe("FOOD · 42.4% of Jul 2026");
   });
 
   /**
@@ -166,7 +170,7 @@ describe("the relief's readout counts categories in English", () => {
     const tail = layout.blocks.find((b) => b.memberCount > 1)!;
     expect(tail.label).toBe("3 smaller categories");
     // 1.0% + 1.0% + 1.0% in the Table lens, where round(3.12) read 3.1%
-    expect(massifCaptionKey(tail, layout.categoryCount, "Jul 2026")).toBe("3 smaller categories · 3.0% of Jul 2026");
+    expect(massifCaptionKey(tail, layout, "Jul 2026")).toBe("3 smaller categories · 3.0% of Jul 2026");
   });
 
   /**
@@ -176,13 +180,13 @@ describe("the relief's readout counts categories in English", () => {
    * "Shopping · 0.0% · -$1,605.11".
    */
   test("a block that netted money back took no share, and says so", () => {
-    expect(massifCaptionKey(block("SHOPPING", -160_511, 0), 12, "May 2024")).toBe(
+    expect(massifCaptionKey(block("SHOPPING", -160_511, 0), drawnOnly(12), "May 2024")).toBe(
       "SHOPPING · no share of May 2024 — it netted money back",
     );
   });
 
   test("a category that really spent nothing still reads 0.0%", () => {
-    expect(massifCaptionKey(block("HOTELS", 0, 0), 12, "May 2024")).toBe("HOTELS · 0.0% of May 2024");
+    expect(massifCaptionKey(block("HOTELS", 0, 0), drawnOnly(12), "May 2024")).toBe("HOTELS · 0.0% of May 2024");
   });
 });
 
@@ -305,5 +309,99 @@ describe("the relief's sum counts the categories it has no block for", () => {
     expect(massifAbsentNote(computeMassifLayout(spent, OPTIONS).absent, "July 2026", "June 2026")).toBeNull();
     const layout = computeMassifLayout([...spent, government], OPTIONS);
     expect(massifAbsentNote(layout.absent, "July 2026", null)).toBeNull();
+  });
+});
+
+/**
+ * 🔴 THE READOUT NAMED THE BLOCKS WHILE ITS CHANGE COVERED MORE. `categoryCount`
+ * is the categories behind the blocks, and the readout printed it as "all N
+ * categories" above a change that also counts the categories with no entries
+ * (`MassifLayout.absent`). Measured on the owner's ledger 2026-09-15 at ebf463e:
+ * `?period=2024-07` read "July 2024 · all 3 categories" above -$2,438.09 against
+ * June 2024, where 9 more categories with no July entries are in that change.
+ * It undercounted in 39 of 46 whole months, 11 of 14 whole quarters, 160 of 205
+ * whole weeks and 614 of 1,448 whole days.
+ */
+describe("the relief's readout names every category its change covers", () => {
+  const OPTIONS = { width: 720, height: 320, camera: MASSIF_VIEWPOINTS.quarter };
+  const spent = [
+    { id: "travel", label: "Travel", hue: null, spentCents: 244_888, priorCents: 59_024, txnCount: 9 },
+    { id: "food", label: "Food", hue: null, spentCents: 181_559, priorCents: 204_091, txnCount: 60 },
+  ];
+  const government = { id: "gov", label: "Government", hue: null, spentCents: 0, priorCents: 225_000, txnCount: 0 };
+  const gambling = { id: "gambling", label: "Gambling", hue: null, spentCents: 0, priorCents: 2_000, txnCount: 0 };
+
+  test("it counts the categories with no entries, and says how many those are", () => {
+    const layout = computeMassifLayout([...spent, government, gambling], OPTIONS);
+    expect(massifCaptionKey(null, layout, "July 2026")).toBe("July 2026 · all 4 categories · 2 with no entries");
+  });
+
+  test("one of them", () => {
+    const layout = computeMassifLayout([...spent, government], OPTIONS);
+    expect(massifCaptionKey(null, layout, "July 2026")).toBe("July 2026 · all 3 categories · 1 with no entries");
+  });
+
+  test("with every category drawn, the readout is the one it was", () => {
+    expect(massifCaptionKey(null, computeMassifLayout(spent, OPTIONS), "July 2026")).toBe("July 2026 · all 2 categories");
+  });
+
+  test("the readout is handed the layout, not a count of its blocks", () => {
+    expect(source).toContain("massifCaptionKey(active, layout, periodLabel)");
+  });
+});
+
+/**
+ * 🔴 A RELIEF WITH NOTHING TO DRAW. When every compared category has no entries
+ * this period there is no block, and the relief printed "No categorized spending
+ * in this period." — dropping the change the Table lens prints row by row for the
+ * same categories. Measured on the owner's ledger 2026-09-15 at ebf463e:
+ * `?period=2026-08-08` (whole against Aug 7, 2026) has no categorized spending,
+ * uncategorized spending (so the page renders), and Food (-$51.42) and
+ * Subscriptions (-$35.00) with no entries: the Table printed 2 rows, the relief
+ * none of it. 15 whole days and 2 whole weeks render that way.
+ */
+describe("a relief with nothing to draw still states the change the Table prints", () => {
+  const OPTIONS = { width: 720, height: 320, camera: MASSIF_VIEWPOINTS.quarter };
+  const food = { id: "food", label: "Food", hue: null, spentCents: 0, priorCents: 5_142, txnCount: 0 };
+  const subscriptions = { id: "subs", label: "Subscriptions", hue: null, spentCents: 0, priorCents: 3_500, txnCount: 0 };
+
+  test("it names each category with its change, the total against the prior window, and where the rows are", () => {
+    const layout = computeMassifLayout([food, subscriptions], OPTIONS);
+    expect(massifEmptyState(layout, "Aug 8, 2026", "Aug 7, 2026")).toBe(
+      "No categorized spending in Aug 8, 2026, so there is no block to draw. " +
+        "Against Aug 7, 2026 the change is -$86.42: Food (-$51.42) and Subscriptions (-$35.00) had no entries, " +
+        "and each is a row in the Table lens.",
+    );
+  });
+
+  test("one of them", () => {
+    const layout = computeMassifLayout([food], OPTIONS);
+    expect(massifEmptyState(layout, "Aug 8, 2026", "Aug 7, 2026")).toBe(
+      "No categorized spending in Aug 8, 2026, so there is no block to draw. " +
+        "Against Aug 7, 2026 the change is -$51.42: Food (-$51.42) had no entries, and it is a row in the Table lens.",
+    );
+  });
+
+  test("a relief with a block to draw has no empty state", () => {
+    const layout = computeMassifLayout(
+      [{ id: "fees", label: "Fees", hue: null, spentCents: 486, priorCents: 0, txnCount: 1 }, food],
+      OPTIONS,
+    );
+    expect(massifEmptyState(layout, "Aug 8, 2026", "Aug 7, 2026")).toBeNull();
+  });
+
+  test("with no rows, or no prior window to state a change against, it is the sentence it always was", () => {
+    expect(massifEmptyState(computeMassifLayout([], OPTIONS), "Aug 8, 2026", "Aug 7, 2026")).toBe(
+      "No categorized spending in this period.",
+    );
+    expect(massifEmptyState(computeMassifLayout([food], OPTIONS), "Aug 8, 2026", null)).toBe(
+      "No categorized spending in this period.",
+    );
+  });
+
+  test("the relief returns that empty state, asked of the layout", () => {
+    expect(source).toMatch(/const empty = massifEmptyState\(layout, periodLabel, priorLabel\);\s*if \(empty !== null\)/);
+    expect(source).not.toMatch(/if \(rows\.length === 0\)/);
+    expect(source).not.toMatch(/if \(layout\.blocks\.length === 0\)/);
   });
 });

@@ -24,6 +24,7 @@ import {
   reconcileMassif,
   type MassifAbsentCategory,
   type MassifBlock,
+  type MassifLayout,
   type MassifReconciliation,
   type MassifTotalsInput,
   type MassifViewpoint,
@@ -253,10 +254,13 @@ export function CategoryMassif({
   // compositor-friendly only: the lift is a transform, the focus is opacity
   const motion = reducedMotion ? "" : "transition-[transform,opacity] duration-(--duration-fast)";
 
-  // ⛔ asked of the BLOCKS: a compared category with no entries this period is a
-  // row here and draws nothing, so rows alone would open an empty plate
-  if (layout.blocks.length === 0) {
-    return <p className="text-sm text-ink-muted">No categorized spending in this period.</p>;
+  // ⛔ asked of the LAYOUT, never of `rows`: a compared category with no entries
+  // this period is a row here and draws nothing, so rows alone would open an
+  // empty plate — and a plate with nothing to draw still owes the change the
+  // Table lens prints for those same rows (`massifEmptyState`)
+  const empty = massifEmptyState(layout, periodLabel, priorLabel);
+  if (empty !== null) {
+    return <p className="text-sm text-ink-muted">{empty}</p>;
   }
 
   return (
@@ -458,7 +462,7 @@ function Slug({
   const spent = active ? active.spentCents : layout.totalSpentCents;
   const delta = active ? active.deltaCents : layout.totalDeltaCents;
   const entries = active ? active.txnCount : layout.totalTxnCount;
-  const key = massifCaptionKey(active, layout.categoryCount, periodLabel);
+  const key = massifCaptionKey(active, layout, periodLabel);
   return (
     // NOT a live region: this changes on every block the pointer crosses, and
     // AT would announce a new category each time. The figure's own aria-label
@@ -729,7 +733,12 @@ function blockFill(hue: string | null): string {
  */
 export function massifCaptionKey(
   active: Pick<MassifBlock, "label" | "shareLabel" | "shareTitle"> | null,
-  categoryCount: number,
+  /**
+   * The categories behind the readout's figures: the ones with a block and the
+   * ones with no entries. ⛔ The layout, never a count — a count of the blocks
+   * alone is what this printed as "all N" (see below).
+   */
+  counted: Pick<MassifLayout, "categoryCount" | "absent">,
   periodLabel: string,
 ): string {
   // ⛔ a refunded block took no share of the period — the readout says so
@@ -742,7 +751,20 @@ export function massifCaptionKey(
       ? `${active.label} · ${active.shareLabel} of ${periodLabel}`
       : `${active.label} · no share of ${periodLabel} — it netted money back`;
   }
-  return `${periodLabel} · all ${categoryCount} categor${categoryCount === 1 ? "y" : "ies"}`;
+  /*
+   * 🔴 "all 3 categories" above a change over 12. The change beneath this covers
+   * every compared category (`MassifLayout.totalDeltaCents`), and `categoryCount`
+   * is only the ones with a block: `?period=2024-07` read "July 2024 · all 3
+   * categories" over -$2,438.09 against June 2024, where 9 more categories had no
+   * July entries. Measured at ebf463e on 2026-09-15: 39 of 46 whole months, 11 of
+   * 14 quarters, 160 of 205 weeks and 614 of 1,448 days. Every figure here covers
+   * them — they spent $0.00 in 0 entries — so "all" counts them, and says how many
+   * drew nothing.
+   */
+  const k = counted.absent.length;
+  const n = counted.categoryCount + k;
+  const all = `${periodLabel} · all ${n} categor${n === 1 ? "y" : "ies"}`;
+  return k === 0 ? all : `${all} · ${k} with no entries`;
 }
 
 /**
@@ -761,13 +783,50 @@ export function massifAbsentNote(
   priorLabel: string | null,
 ): string | null {
   if (priorLabel === null || absent.length === 0) return null;
-  const named = absent.map((a) => (a.deltaCents === null ? a.label : `${a.label} (${formatCentsSigned(a.deltaCents)})`));
-  const list = named.length === 1 ? named[0]! : `${named.slice(0, -1).join(", ")} and ${named[named.length - 1]!}`;
-  return named.length === 1
+  const list = absentNamed(absent);
+  return absent.length === 1
     ? `${list} had no entries in ${periodLabel}, so it has no block. ` +
         `Its change is counted in the total against ${priorLabel}, and it is a row in the Table lens.`
     : `${list} had no entries in ${periodLabel}, so they have no block. ` +
         `Their changes are counted in the total against ${priorLabel}, and each is a row in the Table lens.`;
+}
+
+/**
+ * The relief's words when it has no block to draw — null when it has one.
+ *
+ * 🔴 It printed "No categorized spending in this period." and nothing else over
+ * compared categories that all had no entries, while the Table lens one pill over
+ * prints each of them at $0.00 with its fall — and the rail note pointing there
+ * never renders on an empty plate. Measured on the owner's ledger 2026-09-15 at
+ * ebf463e: `?period=2026-08-08`, whole against Aug 7, 2026, has no categorized
+ * spending, uncategorized spending (so the page renders), and Food (-$51.42) and
+ * Subscriptions (-$35.00) with no entries. 15 whole days and 2 whole weeks read
+ * that way.
+ *
+ * ⛔ Asked of the BLOCKS, not of the inputs: a compared category with no entries
+ * is an input and draws nothing.
+ */
+export function massifEmptyState(
+  layout: Pick<MassifLayout, "blocks" | "absent" | "totalDeltaCents">,
+  periodLabel: string,
+  priorLabel: string | null,
+): string | null {
+  if (layout.blocks.length > 0) return null;
+  if (priorLabel === null || layout.absent.length === 0 || layout.totalDeltaCents === null) {
+    return "No categorized spending in this period.";
+  }
+  const one = layout.absent.length === 1;
+  return (
+    `No categorized spending in ${periodLabel}, so there is no block to draw. ` +
+    `Against ${priorLabel} the change is ${formatCentsSigned(layout.totalDeltaCents)}: ` +
+    `${absentNamed(layout.absent)} had no entries, and ${one ? "it is" : "each is"} a row in the Table lens.`
+  );
+}
+
+/** Each category with no entries, named with its own change: "A (-$1.00), B (-$2.00) and C (+$3.00)". */
+function absentNamed(absent: readonly MassifAbsentCategory[]): string {
+  const named = absent.map((a) => (a.deltaCents === null ? a.label : `${a.label} (${formatCentsSigned(a.deltaCents)})`));
+  return named.length === 1 ? named[0]! : `${named.slice(0, -1).join(", ")} and ${named[named.length - 1]!}`;
 }
 
 export function massifDescription(
