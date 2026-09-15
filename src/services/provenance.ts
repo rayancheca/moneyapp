@@ -1,7 +1,7 @@
 import { and, asc, count, desc, eq, inArray, lte, gte, sum } from "drizzle-orm";
 import { formatDayFull } from "@/lib/format-date";
 import type { AppDatabase } from "@/db/client";
-import { accounts } from "@/db/schema/accounts";
+import { accounts, type AccountType } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { merchants } from "@/db/schema/merchants";
 import { balanceAnchors, dailyBalances, type BalanceBasis } from "@/db/schema/balances";
@@ -277,6 +277,23 @@ function isInvestment(type: string): boolean {
   return type === "investment" || type === "crypto";
 }
 
+/**
+ * The badge word a `market_value` figure wears when a holding does NOT price
+ * all of it, so the trigger's accessible name stops saying one does.
+ *
+ * ⛔ With no badge word, `provenanceTriggerName` completes the name with
+ * `VERDICT_PRESENTATION.market_value.ariaSuffix` — "is priced from holdings,
+ * not checked by arithmetic". `market_value` is every investment account;
+ * `derivesFromHoldings` decides which of them a holding prices. The word is the
+ * verdict's own, so the visible badge reads exactly as it did.
+ *
+ * ⚠️ Not for a holding's own proof: that figure IS a count × a price, whatever
+ * the account's curve is built from.
+ */
+function marketValueBadgeWord(pricedFromHoldings: boolean): string | undefined {
+  return pricedFromHoldings ? undefined : VERDICT_PRESENTATION.market_value.word;
+}
+
 /** `2026-08-24` → `Aug 24, 2026`, for a sentence rather than a table cell. */
 function readableDay(day: string): string {
   return formatDayFull(day);
@@ -471,6 +488,8 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
 
   return {
     verdict,
+    // 🔴 a row on an investment account no holding prices was named "priced from holdings"
+    badgeWord: verdict === "market_value" && account ? marketValueBadgeWord(derivesFromHoldings(db, account)) : undefined,
     headline,
     sources,
     // a checked-through date only where the grade says the row is checked
@@ -722,9 +741,7 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
     sources,
     checkedThrough: isInvestment(account.type) ? null : (lastClosed?.day ?? null),
     inputs: [],
-    // the verdict's own accessible name says "priced from holdings"; the badge
-    // keeps its word and drops that claim
-    badgeWord: heldAtRecordedBalance ? VERDICT_PRESENTATION.market_value.word : undefined,
+    badgeWord: isInvestment(account.type) ? marketValueBadgeWord(pricedFromHoldings) : undefined,
   };
 }
 
@@ -827,6 +844,8 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
 
   return {
     verdict,
+    // 🔴 a value-anchor statement of an account no holding prices was named "priced from holdings"
+    badgeWord: verdict === "market_value" && account ? marketValueBadgeWord(derivesFromHoldings(db, account)) : undefined,
     headline,
     sources,
     checkedThrough: period.reconciliation === "reconciled" ? period.periodEnd : null,
@@ -875,6 +894,23 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
     coverage.filter((c) => c.grade === "unknown" && (rowSums.get(c.accountId)?.n ?? 0) === 0).map((c) => c.accountId),
   );
 
+  /*
+   * 🔴 "PRICED FROM HOLDINGS" OF EVERY `market_value` ACCOUNT. The grade covers
+   * every investment account, and an account with no holding events is a
+   * recorded balance held flat — the per-account line and the count both said
+   * holdings priced it, and the trust card prints that count verbatim.
+   * `derivesFromHoldings` is the rule `accountBalanceProvenance` and /imports'
+   * coverage row already read; it cannot live in `accountCoverage` (see
+   * `CoverageDetailInput.pricedFromHoldings`).
+   */
+  const pricedFromHoldings = new Set(
+    coverage
+      .filter(
+        (c) => c.grade === "market_value" && derivesFromHoldings(db, { id: c.accountId, type: c.accountType as AccountType }),
+      )
+      .map((c) => c.accountId),
+  );
+
   const inputs: ProvenanceInput[] = coverage.map((c) => ({
     id: c.accountId,
     label: c.accountName,
@@ -895,7 +931,9 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
             : c.grade === "unverified" && c.unverifiedSince
               ? `checked through ${readableDay(c.verifiedThrough ?? c.unverifiedSince)}, and unchecked days before that`
             : c.grade === "market_value"
-              ? "priced from holdings"
+              ? pricedFromHoldings.has(c.accountId)
+                ? "priced from holdings"
+                : "held at its recorded balance"
               : c.grade === "manual"
                 ? c.lastManualUpdate
                   ? `you last counted it on ${readableDay(c.lastManualUpdate)}`
@@ -912,6 +950,7 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
   const counted = inputs.length;
   const proven = inputs.filter((i) => i.verdict === "derived" || i.verdict === "sourced").length;
   const marked = inputs.filter((i) => i.verdict === "market_value").length;
+  const heldAccounts = marked - pricedFromHoldings.size;
   // `manual` is a basis, not an absence — see the note in categorySpendProvenance
   const byHand = inputs.filter((i) => i.verdict === "manual").length;
   /**
@@ -936,7 +975,14 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
   // A total is only as proven as its weakest part, and saying so plainly is the
   // whole reason this figure gets a popover at all.
   const parts = [`${proven} of ${counted} accounts add up against a document`];
-  if (marked > 0) parts.push(`${marked} ${marked === 1 ? "is" : "are"} priced from holdings`);
+  if (pricedFromHoldings.size > 0) {
+    parts.push(`${pricedFromHoldings.size} ${pricedFromHoldings.size === 1 ? "is" : "are"} priced from holdings`);
+  }
+  if (heldAccounts > 0) {
+    parts.push(
+      `${heldAccounts} ${heldAccounts === 1 ? "is held at its recorded balance" : "are held at their recorded balances"}`,
+    );
+  }
   if (byHand > 0) parts.push(`${byHand} you count yourself`);
   if (weak > 0) parts.push(`${weak} ${weak === 1 ? "has" : "have"} nothing checking ${weak === 1 ? "it" : "them"}`);
   if (empty > 0) parts.push(`${empty} ${empty === 1 ? "is" : "are"} empty`);
@@ -1691,6 +1737,19 @@ function summedRowsProvenance(
    * a different kind of basis, not an absent one.
    */
   const marked = verdicts.filter((v) => v === "market_value").length;
+  /*
+   * 🔴 …and not every one of them is priced from holdings. `market_value` is
+   * every investment account's grade; a row on one with no holding events sits
+   * in a recorded balance held flat, and the sentence said holdings priced it.
+   * `derivesFromHoldings`, once per account — the rule net worth reads above.
+   */
+  const heldAccountIds = new Set(
+    [...new Set(rows.filter((_, i) => verdicts[i] === "market_value").map((r) => r.accountId))].filter(
+      (id) => !derivesFromHoldings(db, { id, type: coverage.get(id)!.accountType as AccountType }),
+    ),
+  );
+  const held = rows.filter((r, i) => verdicts[i] === "market_value" && heldAccountIds.has(r.accountId)).length;
+  const priced = marked - held;
   /**
    * ⛔ FOUR buckets. `manual` is a basis, not an absence — for cash in a safe
    * the owner IS the best evidence that will ever exist, and calling his own
@@ -1734,7 +1793,8 @@ function summedRowsProvenance(
   const parts = [
     `${grouped(rows.length)} ${rows.length === 1 ? "row" : "rows"} from ${grouped(files.length)} ${files.length === 1 ? "document" : "documents"}`,
   ];
-  if (marked > 0) parts.push(`${grouped(marked)} ${marked === 1 ? "is" : "are"} priced from holdings rather than checked by arithmetic`);
+  if (priced > 0) parts.push(`${grouped(priced)} ${priced === 1 ? "is" : "are"} priced from holdings rather than checked by arithmetic`);
+  if (held > 0) parts.push(`${grouped(held)} ${held === 1 ? "is" : "are"} held at a recorded balance rather than checked by arithmetic`);
   if (byHand > 0) parts.push(`${grouped(byHand)} you entered yourself`);
   if (weak > 0) parts.push(`${grouped(weak)} ${weak === 1 ? "has" : "have"} nothing checking ${weak === 1 ? "it" : "them"}`);
 
@@ -1749,7 +1809,13 @@ function summedRowsProvenance(
     verdict,
     // the badge only overrides when rows are genuinely UNCHECKED — a category
     // that is entirely market value should read "market value", not a fraction
-    badgeWord: weak === 0 ? undefined : `${grouped(rows.length - weak)} of ${grouped(rows.length)} checked`,
+    // …and a market-value total wears the verdict's word whenever any of it is not priced from holdings
+    badgeWord:
+      weak === 0
+        ? verdict === "market_value"
+          ? marketValueBadgeWord(held === 0)
+          : undefined
+        : `${grouped(rows.length - weak)} of ${grouped(rows.length)} checked`,
     headline: `This total is the sum of ${parts.join(", ")}. A total is only as proven as its weakest row.`,
     sources,
     checkedThrough: closed[0] ?? null,

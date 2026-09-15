@@ -16,6 +16,7 @@ import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { transactionSplits } from "@/db/schema/transaction-splits";
+import { provenanceTriggerName, type PresentedVerdict } from "@/lib/provenance-verdict";
 import { provenanceFor, weakestVerdict, type ProvenanceVerdict } from "./provenance";
 
 /**
@@ -1063,6 +1064,8 @@ describe("provenanceFor — a category total", () => {
    */
   test("priced-from-holdings rows are not reported as unchecked", () => {
     const acct = addAccount("a", "Robinhood Brokerage", "investment");
+    // a holding prices it — without one this account is held at a recorded balance (see the describe at the end)
+    addHoldingEvent(acct, "AAPL", "stock", "2026-07-01", 100_000_000);
     const cat = addCategory("c-buys", "Fixture Buys");
     const file = addFile("f1", "rh.pdf", "robinhood-brokerage-statement-pdf");
     addDays(acct, [{ day: "2026-07-10", basis: "derived" }]);
@@ -2081,5 +2084,150 @@ describe("provenanceFor — a count of one keeps its numeral and a singular noun
     addHoldingEvent(acct, "AAPL", "stock", "2025-02-02", 50000000);
     const two = provenanceFor(bundle.db, { kind: "holding", symbol: "AAPL", assetType: "stock", day: TODAY })!;
     expect(two.headline).toContain("2 recorded buys and sells do not sum to the 3 on file");
+  });
+});
+
+/* ── market value that no holding prices ──────────────────────────────── */
+
+/**
+ * 🔴 "PRICED FROM HOLDINGS" OF AN ACCOUNT NO HOLDING PRICES. `market_value` is
+ * every investment account; `derivesFromHoldings` is the rule for which of them
+ * a holding prices — the branch the rebuild takes, and the one
+ * `accountBalanceProvenance` and /imports' coverage row already read. An
+ * investment account with no holding events is a recorded balance held flat,
+ * and three more surfaces still said holdings priced it:
+ *
+ *  - the net-worth popover's per-account line ("priced from holdings") and its
+ *    count ("1 is priced from holdings"), which the trust card prints verbatim;
+ *  - every summed-rows total — category, merchant, spending, account rows —
+ *    "N are priced from holdings rather than checked by arithmetic";
+ *  - the badge's accessible name wherever a `market_value` proof set no badge
+ *    word: "How X is known — it is priced from holdings, not checked by
+ *    arithmetic" (`VERDICT_PRESENTATION.market_value.ariaSuffix`), on a row's
+ *    sheet, a statement period and a total entirely in market value.
+ *
+ * Latent on the owner's ledger and the e2e fixture (measured 2026-09-15: every
+ * investment account has holding events); AccountForm creates one — type
+ * investment, "Current balance (optional)".
+ */
+describe("provenanceFor — market value that no holding prices", () => {
+  /** an investment account with a balance recorded by hand and no holding events */
+  function heldAccount(id: string, name: string): string {
+    const acct = addAccount(id, name, "investment");
+    addAnchor(acct, "2026-07-01", "manual");
+    addDays(acct, [
+      { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-07-10", basis: "carried" },
+    ]);
+    return acct;
+  }
+
+  /** an investment account a holding prices */
+  function pricedAccount(id: string, name: string): string {
+    const acct = addAccount(id, name, "investment");
+    addHoldingEvent(acct, "AAPL", "stock", "2026-07-01", 100_000_000);
+    addDays(acct, [
+      { day: "2026-07-01", basis: "derived" },
+      { day: "2026-07-10", basis: "derived" },
+    ]);
+    return acct;
+  }
+
+  const name = (label: string, p: { verdict: ProvenanceVerdict; badgeWord?: string }): string =>
+    provenanceTriggerName(label, p.verdict as PresentedVerdict, p.badgeWord);
+
+  test("net worth names each account by what values it, and counts them apart", () => {
+    heldAccount("held", "Brokerage");
+    pricedAccount("priced", "Robinhood Brokerage");
+
+    const p = provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!;
+    const detail = (label: string) => p.inputs.find((i) => i.label === label)!.detail;
+    expect(detail("Robinhood Brokerage")).toBe("priced from holdings");
+    expect(detail("Brokerage")).toBe("held at its recorded balance");
+    expect(p.headline).toContain("1 is priced from holdings, 1 is held at its recorded balance");
+  });
+
+  test("net worth with only held accounts never says holdings price one", () => {
+    heldAccount("held-a", "Brokerage");
+    heldAccount("held-b", "Old IRA");
+
+    const p = provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!;
+    expect(p.headline).not.toContain("priced from holdings");
+    expect(p.headline).toContain("2 are held at their recorded balances");
+    expect(p.inputs.map((i) => i.detail)).toEqual(["held at its recorded balance", "held at its recorded balance"]);
+  });
+
+  test("a total of rows on a held account says so, and its badge's name drops holdings", () => {
+    const held = heldAccount("held", "Brokerage");
+    const cat = addCategory("c-buys", "Fixture Buys");
+    const file = addFile("f1", "b.pdf", "robinhood-brokerage-statement-pdf");
+    categorize(addTxn(held, "2026-07-10", { importFileId: file }), cat);
+
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
+    expect(p.verdict).toBe("market_value");
+    expect(p.headline).not.toContain("priced from holdings");
+    expect(p.headline).toContain("1 is held at a recorded balance rather than checked by arithmetic");
+    expect(p.badgeWord).toBe("market value");
+    expect(name("Fixture Buys", p)).not.toContain("priced from holdings");
+  });
+
+  test("a total over both kinds counts each, and still names no holdings on its badge", () => {
+    const held = heldAccount("held", "Brokerage");
+    const priced = pricedAccount("priced", "Robinhood Brokerage");
+    const cat = addCategory("c-buys", "Fixture Buys");
+    const file = addFile("f1", "b.pdf", "robinhood-brokerage-statement-pdf");
+    categorize(addTxn(held, "2026-07-10", { importFileId: file }), cat);
+    categorize(addTxn(priced, "2026-07-10", { importFileId: file }), cat);
+    categorize(addTxn(priced, "2026-07-10", { importFileId: file }), cat);
+
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
+    expect(p.headline).toContain(
+      "2 are priced from holdings rather than checked by arithmetic, 1 is held at a recorded balance rather than checked by arithmetic",
+    );
+    expect(p.badgeWord).toBe("market value");
+  });
+
+  test("a total entirely priced from holdings keeps its sentence and its unset badge", () => {
+    const priced = pricedAccount("priced", "Robinhood Brokerage");
+    const cat = addCategory("c-buys", "Fixture Buys");
+    const file = addFile("f1", "b.pdf", "robinhood-brokerage-statement-pdf");
+    categorize(addTxn(priced, "2026-07-10", { importFileId: file }), cat);
+
+    const p = provenanceFor(bundle.db, { kind: "categorySpend", categoryId: cat, from: "2026-07-01", to: "2026-07-31" })!;
+    expect(p.headline).toContain("1 is priced from holdings rather than checked by arithmetic");
+    expect(p.badgeWord).toBeUndefined();
+    expect(name("Fixture Buys", p)).toContain("priced from holdings");
+  });
+
+  test("a row's sheet: the badge's name claims holdings only where a holding prices the account", () => {
+    const file = addFile("f1", "b.pdf", "robinhood-brokerage-statement-pdf");
+    const heldRow = provenanceFor(bundle.db, {
+      kind: "transaction",
+      id: addTxn(heldAccount("held", "Brokerage"), "2026-07-10", { importFileId: file }),
+    })!;
+    expect(heldRow.verdict).toBe("market_value");
+    expect(heldRow.badgeWord).toBe("market value");
+    expect(name("This row", heldRow)).not.toContain("priced from holdings");
+
+    const pricedRow = provenanceFor(bundle.db, {
+      kind: "transaction",
+      id: addTxn(pricedAccount("priced", "Robinhood Brokerage"), "2026-07-10", { importFileId: file }),
+    })!;
+    expect(pricedRow.verdict).toBe("market_value");
+    expect(pricedRow.badgeWord).toBeUndefined();
+  });
+
+  test("a statement period that records a value: the same branch", () => {
+    const file = addFile("f1", "b.pdf", "robinhood-brokerage-statement-pdf");
+    addPeriod("held-p", heldAccount("held", "Brokerage"), file, "2026-07-01", "2026-07-31", "value_anchor");
+    addPeriod("priced-p", pricedAccount("priced", "Robinhood Brokerage"), file, "2026-07-01", "2026-07-31", "value_anchor");
+
+    const held = provenanceFor(bundle.db, { kind: "statementPeriod", id: "held-p" })!;
+    expect(held.verdict).toBe("market_value");
+    expect(held.badgeWord).toBe("market value");
+    expect(name("This statement", held)).not.toContain("priced from holdings");
+
+    const priced = provenanceFor(bundle.db, { kind: "statementPeriod", id: "priced-p" })!;
+    expect(priced.badgeWord).toBeUndefined();
   });
 });

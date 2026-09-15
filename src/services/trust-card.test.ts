@@ -6,6 +6,7 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
 import { dailyBalances } from "@/db/schema/balances";
+import { holdingEvents } from "@/db/schema/holding-events";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
@@ -243,6 +244,20 @@ describe("trustCard — groups speak the badges' language", () => {
     addVerifiedAccount("b", "SoFi Checking");
     addAccount("c", "Robinhood Brokerage", "investment");
     addDays("c", [{ day: "2026-08-01", basis: "derived" }]);
+    // a holding prices it — with no holding events the clause reads "held at its recorded balance"
+    bundle.db
+      .insert(holdingEvents)
+      .values({
+        id: "he-c",
+        accountId: "c",
+        symbol: "AAPL",
+        assetType: "stock",
+        occurredOn: "2026-08-01",
+        quantityDeltaE8: 100_000_000,
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
 
     const card = trustCard(bundle.db, TODAY)!;
     const nw = provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!;
