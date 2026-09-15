@@ -703,3 +703,43 @@ describe("recurringCalendar", () => {
     expect(() => recurringCalendar(bundle.db)).not.toThrow();
   });
 });
+
+/**
+ * ⛔ G2 (a), the owner's decision of 2026-09-14: a series with only one or two
+ * linked charges is not graded "missed", EVEN WHEN he typed its next date
+ * (`user_next_expected_on`). He was shown the alternative — trust a typed date at
+ * any posting count — with its consequence (a red ✕ on a bill whose payment
+ * sits on an account not imported yet) and chose to keep the count.
+ *
+ * The test above fakes the typed date with `nextExpectedOn` + `userAmountCents`,
+ * so it stays green under the exact form of that widening a rebase once carried
+ * (`s.userNextExpectedOn !== null || scheduleIsProven(…)`). This one types the
+ * date the way the owner does.
+ */
+describe("G2 (a) — a date the owner typed does not make one charge a proven schedule", () => {
+  test("one linked charge + a user next date: the miss reads too few charges to grade, not missed", () => {
+    insertTxn({ postedOn: "2026-06-12", amountCents: -35758, rawDescription: "PROGRESSIVE INS" });
+    // the card is imported past the 11th, so the reason is the schedule, not the import
+    insertTxn({ postedOn: "2026-07-18", amountCents: -2200, rawDescription: "GROCERY" });
+    const id = bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "Car insurance",
+        accountId: null,
+        kind: "bill",
+        cadence: "monthly",
+        nextExpectedOn: "2026-07-11",
+        nextExpectedAmountCents: -35758,
+        userAmountCents: -35758,
+        userNextExpectedOn: "2026-07-11",
+        lastMatchedOn: "2026-06-12",
+        status: "confirmed",
+      })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    bundle.db.update(transactions).set({ recurringSeriesId: id }).where(eq(transactions.rawDescription, "PROGRESSIVE INS")).run();
+
+    const entry = recurringCalendar(bundle.db, "2026-07", "2026-07-20").entriesByDay["2026-07-11"]?.find((e) => e.name === "Car insurance");
+    expect(entry).toMatchObject({ state: "unsettled", unsettledReason: "schedule_unproven" });
+  });
+});
