@@ -43,9 +43,14 @@ import { recurringCalendar } from "./recurring-calendar";
  * The first-charge notice turned out to be the valuable one, and not for the
  * reason the pass expected: over ninety days it names his car insurance's first
  * payment, HBO Max — the annual subscription he asked about on the day this was
- * built, invisible until then — and a $2,285.70 charge the merchant map calls
- * "Flamingos Restaurant", which is his RENT. A first sighting is the shape a
- * new commitment has.
+ * built, invisible until then. A first sighting is the shape a new commitment
+ * has.
+ *
+ * ⚠️ The third charge it named then was NOT one: $2,285.70 under a merchant the
+ * map calls "Flamingos Restaurant" is his RENT, and the recurring series he
+ * linked it to already held two earlier charges with no merchant on them, and
+ * later a third. "Appears once" was true of the merchant id and false of the
+ * payee — see S26 in `noticesCard`.
  */
 
 /** How far back a notice can be and still be news. */
@@ -111,12 +116,33 @@ export function noticesCard(db: AppDatabase, today: string = todayIso()): Notice
   const merchantNames = new Map(db.select().from(merchants).all().map((m) => [m.id, m.canonicalName]));
 
   /* one pass over the active rows: every notice class reads the same history */
-  const byMerchant = new Map<string, { id: string; day: string; cents: number }[]>();
+  const byMerchant = new Map<string, { id: string; day: string; cents: number; seriesId: string | null }[]>();
+  /*
+   * 🔴 S26 — "APPEARS ONCE" OVER A PAYEE THE LEDGER HAD ALREADY LINKED. The
+   * history above is keyed by merchant id, and a row with no merchant was never
+   * read, so a merchant with one row was "seen once" even when the recurring
+   * series that row belongs to held other charges. Measured on the real ledger
+   * 2026-09-15: the dashboard printed "Flamingos Restaurant appears once in your
+   * ledger, for $2,285.70." over his July rent, while its series "Flamingo South
+   * Beach (rent)" held Jun 16 −$1,100.00 and −$1,334.80 (Venture X) and Aug 4
+   * −$2,237.11 (Wells Fargo) — none carrying a merchant.
+   *
+   * ⛔ A series is the ledger's own identity for a payee (the drift loop below
+   * already reads it), so its charges are counted under the SAME filters as the
+   * merchant history — active, categorized, money out, expense-kind — minus the
+   * merchant check. A superseded twin is not a second charge, and neither is a
+   * credit.
+   */
+  const chargesBySeries = new Map<string, Set<string>>();
   for (const t of db.select().from(transactions).where(eq(transactions.status, "active")).all()) {
-    if (t.merchantId === null || t.categoryId === null || t.amountCents >= 0) continue;
+    if (t.categoryId === null || t.amountCents >= 0) continue;
     if (idx.topLevelOf(t.categoryId).kind !== "expense") continue;
+    if (t.recurringSeriesId !== null) {
+      chargesBySeries.set(t.recurringSeriesId, (chargesBySeries.get(t.recurringSeriesId) ?? new Set()).add(t.id));
+    }
+    if (t.merchantId === null) continue;
     const list = byMerchant.get(t.merchantId) ?? [];
-    list.push({ id: t.id, day: t.postedOn, cents: -t.amountCents });
+    list.push({ id: t.id, day: t.postedOn, cents: -t.amountCents, seriesId: t.recurringSeriesId });
     byMerchant.set(t.merchantId, list);
   }
 
@@ -146,7 +172,9 @@ export function noticesCard(db: AppDatabase, today: string = todayIso()): Notice
 
     // ── the only charge ────────────────────────────────────────────────
     const first = rows[0]!;
-    if (rows.length === 1 && first.day >= from && first.cents >= FIRST_CHARGE_FLOOR_CENTS) {
+    // the series may know charges this merchant id never saw — see S26 above
+    const chargedUnderSeries = first.seriesId === null ? 1 : (chargesBySeries.get(first.seriesId)?.size ?? 1);
+    if (rows.length === 1 && chargedUnderSeries === 1 && first.day >= from && first.cents >= FIRST_CHARGE_FLOOR_CENTS) {
       candidates.push({
         facts: [countFact("f1", name, 1, "charge", "in your ledger"), scalarFact("f2", name, first.cents, "money")],
         candidate: { claimId: "only_charge", a: "f1", b: "f2" },

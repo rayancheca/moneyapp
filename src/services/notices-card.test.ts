@@ -74,6 +74,39 @@ function addTxn(day: string, cents: number, categoryName: string, merchantId: st
   return id;
 }
 
+function addSeries(name: string, expectedCents: number): string {
+  const id = `s-${name}`;
+  bundle.db
+    .insert(recurringSeries)
+    .values({
+      id,
+      name,
+      kind: "bill",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      amountCentsAvg: expectedCents,
+      /*
+       * ⚠️ Without a measured spread the calendar refuses to call ANYTHING a
+       * change — `classifyPostedAmount` returns "paid" on a null stddev,
+       * deliberately, because a series nobody has measured has no normal to
+       * depart from. A fixture that omits it is testing silence.
+       */
+      amountCentsStddev: 500,
+      userAmountCents: expectedCents,
+      nextExpectedOn: "2026-09-16",
+      status: "confirmed",
+      lastMatchedOn: "2026-08-16",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+    .run();
+  return id;
+}
+
+function linkToSeries(txnId: string, seriesId: string): void {
+  bundle.db.update(transactions).set({ recurringSeriesId: seriesId }).where(eq(transactions.id, txnId)).run();
+}
+
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-notices-"));
   bundle = createDatabase(path.join(dir, "t.db"));
@@ -156,6 +189,68 @@ describe("a merchant seen once", () => {
   });
 });
 
+/*
+ * 🔴 S26 — "APPEARS ONCE" OVER A PAYEE THE LEDGER HAS ALREADY LINKED. The first
+ * sighting was keyed by merchant id alone, and a row with no merchant was never
+ * read. Measured on the real ledger 2026-09-15: the dashboard printed
+ * "Flamingos Restaurant appears once in your ledger, for $2,285.70." over his
+ * July rent, while the recurring series he linked it to — "Flamingo South Beach
+ * (rent)" — holds two earlier charges (Jun 16, $1,100.00 and $1,334.80, Venture
+ * X) and one later one (Aug 4, $2,237.11, Wells Fargo), none of them carrying a
+ * merchant. The series is the ledger's own identity for that payee.
+ */
+describe("a merchant seen once whose charge has posted again under its series", () => {
+  const onlyCharges = () =>
+    (noticesCard(bundle.db, TODAY)?.notices ?? []).filter((n) => n.claimId === "only_charge").map((n) => n.text);
+
+  test("a later charge on the same series means it did not appear once", () => {
+    addMerchant("m-1", "Zzz Landlord");
+    const seriesId = addSeries("Zzz Rent", -228_570);
+    linkToSeries(addTxn("2026-07-08", -228_570, "Housing", "m-1"), seriesId);
+    linkToSeries(addTxn("2026-08-04", -223_711, "Housing", null), seriesId);
+
+    expect(onlyCharges()).toEqual([]);
+  });
+
+  test("earlier charges on the same series mean it did not appear once either", () => {
+    addMerchant("m-1", "Zzz Landlord");
+    const seriesId = addSeries("Zzz Rent", -228_570);
+    linkToSeries(addTxn("2026-06-16", -110_000, "Housing", null), seriesId);
+    linkToSeries(addTxn("2026-07-01", -133_480, "Housing", null), seriesId);
+    linkToSeries(addTxn("2026-08-12", -228_570, "Housing", "m-1"), seriesId);
+
+    expect(onlyCharges()).toEqual([]);
+  });
+
+  test("a series holding only this charge still lets it be named — a new commitment's first charge", () => {
+    addMerchant("m-1", "Zzz Streaming");
+    const seriesId = addSeries("Zzz Streaming annual", -26_026);
+    linkToSeries(addTxn("2026-07-18", -26_026, "Entertainment", "m-1"), seriesId);
+
+    expect(onlyCharges()).toEqual(["Zzz Streaming appears once in your ledger, for $260.26."]);
+  });
+
+  test("a superseded copy on the series is not a second charge", () => {
+    addMerchant("m-1", "Zzz Landlord");
+    const seriesId = addSeries("Zzz Rent", -228_570);
+    linkToSeries(addTxn("2026-08-12", -228_570, "Housing", "m-1"), seriesId);
+    const twin = addTxn("2026-08-13", -228_570, "Housing", null);
+    linkToSeries(twin, seriesId);
+    bundle.db.update(transactions).set({ status: "superseded" }).where(eq(transactions.id, twin)).run();
+
+    expect(onlyCharges()).toEqual(["Zzz Landlord appears once in your ledger, for $2,285.70."]);
+  });
+
+  test("a credit on the series is money back, not a second charge", () => {
+    addMerchant("m-1", "Zzz Landlord");
+    const seriesId = addSeries("Zzz Rent", -228_570);
+    linkToSeries(addTxn("2026-08-12", -228_570, "Housing", "m-1"), seriesId);
+    linkToSeries(addTxn("2026-08-14", 5_000, "Housing", null), seriesId);
+
+    expect(onlyCharges()).toEqual(["Zzz Landlord appears once in your ledger, for $2,285.70."]);
+  });
+});
+
 describe("a charge far above what he usually pays there", () => {
   const usual = (merchantId: string, cents: number, count: number): void => {
     for (let i = 0; i < count; i += 1) addTxn(`2026-0${(i % 5) + 1}-0${(i % 8) + 1}`, -cents, "Shopping", merchantId);
@@ -199,35 +294,6 @@ describe("a charge far above what he usually pays there", () => {
 });
 
 describe("a recurring bill that posted at a different amount", () => {
-  function addSeries(name: string, expectedCents: number): string {
-    const id = `s-${name}`;
-    bundle.db
-      .insert(recurringSeries)
-      .values({
-        id,
-        name,
-        kind: "bill",
-        cadence: "monthly",
-        intervalDaysAvg: 30,
-        amountCentsAvg: expectedCents,
-        /*
-         * ⚠️ Without a measured spread the calendar refuses to call ANYTHING a
-         * change — `classifyPostedAmount` returns "paid" on a null stddev,
-         * deliberately, because a series nobody has measured has no normal to
-         * depart from. A fixture that omits it is testing silence.
-         */
-        amountCentsStddev: 500,
-        userAmountCents: expectedCents,
-        nextExpectedOn: "2026-09-16",
-        status: "confirmed",
-        lastMatchedOn: "2026-08-16",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      })
-      .run();
-    return id;
-  }
-
   test("⛔ a bill that posted LESS is never described as a rise", () => {
     /*
      * The bug this test exists for. A bill is stored NEGATIVE, so rent posting
