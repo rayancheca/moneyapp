@@ -17,10 +17,10 @@ import {
   sumRealized,
   type RealizedPnl,
   type RealizedSale,
-  type ValuedTrade,
 } from "@/lib/realized-pnl";
 import { ledgerHref } from "./analytics";
-import { holdingRows } from "./portfolio";
+import { adjustedHoldingEvents } from "./holding-timeline";
+import { holdingRows, realizedTradesByLeg } from "./portfolio";
 import { valueCentsOf } from "./holdings";
 
 /**
@@ -50,6 +50,7 @@ export interface HoldingAccountLeg {
 export interface HoldingEventMark {
   day: string;
   kind: "buy" | "sell";
+  /** in today's shares — the terms `closeCents`, a split-adjusted close, is quoted in */
   quantityE8: number;
   /** that day's close in cents-per-share, for placing a chart mark */
   closeCents: number | null;
@@ -208,8 +209,8 @@ export function holdingDetail(
     .where(and(eq(holdings.symbol, symbol), eq(holdings.assetType, assetType)))
     .all();
 
-  // (createdAt, id) tiebreak matches portfolioRealizedPl exactly — the avg-cost
-  // walk is same-day order-sensitive, and this page must reconcile with the header
+  // the rows AS STORED — what he traded and what it cost. The trade history lists
+  // these; nothing on this page VALUES them (that is `valued`, below)
   const events = db
     .select()
     .from(holdingEvents)
@@ -220,6 +221,26 @@ export function holdingDetail(
   if (holdingLegs.length === 0 && events.length === 0) {
     throw new UnknownHoldingError(assetType, symbol);
   }
+
+  /*
+   * 🔴 THE VALUATION TIMELINE: split-adjusted, in the walk's order (occurredOn,
+   * createdAt, id). `holding-timeline` is the one reader of `holding_events` for
+   * valuation, and this page read the table itself — so COKE's 10-for-1 still
+   * reached it as stored. Its return line valued as-traded pre-split shares
+   * against split-adjusted closes, and the split entered as money. Measured on
+   * the real ledger 2026-09-15, /investments/stock/COKE:
+   *
+   *     NAV 2025-04-30   $74.21, where the April statement prints
+   *                      0.547327 sh × $1,355.81 = $742.07
+   *     flow 2025-05-27  $1,018.83 "put in" on a day he bought $10
+   *     Money-weighted +56.11% · Net contributed +$4,046.63
+   *
+   * Splits DROPPED, as `realizedTradesByLeg` drops them: a split's adjusted
+   * delta is zero, so it is neither a flow nor a trade mark.
+   */
+  const valued = adjustedHoldingEvents(db).filter(
+    (e) => e.assetType === assetType && e.symbol === symbol && e.eventKind !== "split",
+  );
 
   const closes = db
     .select({ quotedOn: priceCache.quotedOn, close: priceCache.close })
@@ -238,7 +259,7 @@ export function holdingDetail(
   // a buy that day is a flow, not a gain (the return engine's convention), so
   // this stat agrees with the Return view's flow-adjusted last day
   const qtyTradedOnOrAfterLatestE8 = latest
-    ? events
+    ? valued
         .filter((e) => compareDates(e.occurredOn, latest.quotedOn) >= 0)
         .reduce((s, e) => s + e.quantityDeltaE8, 0)
     : 0;
@@ -286,38 +307,16 @@ export function holdingDetail(
       ? ((latest.close - previous.close) / previous.close) * 100
       : null;
 
-  // realized P/L: an avg-cost walk PER ACCOUNT (each account keeps its own basis
-  // book, matching portfolioRealizedPl), every trade valued at the latest close
-  // on/before its day — so this card reconciles with the portfolio header.
-  const carriedCloseCents = (day: string): number | null => {
-    let lo = 0;
-    let hi = closes.length - 1;
-    let found = -1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (closes[mid]!.quotedOn <= day) {
-        found = mid;
-        lo = mid + 1;
-      } else {
-        hi = mid - 1;
-      }
-    }
-    // × 100 UNROUNDED — the walk rounds the qty × close product once (valueCentsOf)
-    return found >= 0 ? closes[found]!.close * 100 : null;
-  };
-  const tradesByAccount = new Map<string, ValuedTrade[]>();
-  for (const e of events) {
-    const list = tradesByAccount.get(e.accountId) ?? [];
-    list.push({ day: e.occurredOn, qtyE8: e.quantityDeltaE8, closeCents: carriedCloseCents(e.occurredOn) });
-    tradesByAccount.set(e.accountId, list);
-  }
-  const accountWalks = [...tradesByAccount.values()];
+  // realized P/L: THE walk the holdings table and the header read — per account,
+  // split-adjusted, each trade valued at the latest close on/before its day —
+  // scoped to this holding. A copy lived here, and the split fix never reached it.
+  const accountWalks = [...realizedTradesByLeg(db, { assetType, symbol }).values()].map((leg) => leg.trades);
   const realized = sumRealized(accountWalks.map((trades) => realizedPnl(trades)));
   const allSales = accountWalks
     .flatMap((trades) => realizedSales(trades))
     .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
 
-  const marks: HoldingEventMark[] = events.map((e) => ({
+  const marks: HoldingEventMark[] = valued.map((e) => ({
     day: e.occurredOn,
     kind: e.quantityDeltaE8 >= 0 ? "buy" : "sell",
     quantityE8: e.quantityDeltaE8,
@@ -363,7 +362,10 @@ export function holdingDetail(
   // crypto trades live only in monthly statements (no ledger transactions), so
   // their events do not link out — equity trades deep-link to their CUSIP rows
   const linkEvents = assetType !== "crypto";
-  const eventRows: HoldingEventRow[] = events
+  // TRADES, as traded: a split moves no money and is not one, and COKE's page
+  // counted it — "40 most recent of 258" over 257 trades
+  const trades = events.filter((e) => e.eventKind !== "split");
+  const eventRows: HoldingEventRow[] = trades
     .slice()
     .reverse()
     .slice(0, EVENTS_SHOWN)
@@ -380,7 +382,7 @@ export function holdingDetail(
   const dayNaming = dayChangeLabel(latest?.quotedOn ?? null, previous?.quotedOn ?? null, today, formatDayShort);
 
   const returnDays = holdingReturnDays(
-    events.map((e) => ({ day: e.occurredOn, deltaE8: e.quantityDeltaE8 })),
+    valued.map((e) => ({ day: e.occurredOn, deltaE8: e.quantityDeltaE8 })),
     closes.map((c) => ({ day: c.quotedOn, close: c.close })),
   );
   const holdingMwr = moneyWeightedReturn(returnDays);
@@ -430,7 +432,7 @@ export function holdingDetail(
     realized,
     realizedSales: allSales,
     events: eventRows,
-    eventsTotal: events.length,
+    eventsTotal: trades.length,
     allTradesHref: linkEvents ? ledgerHref({ q: ledgerTag(symbol) }) : null,
     ledgerRowCount,
   };

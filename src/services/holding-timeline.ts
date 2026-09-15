@@ -22,6 +22,11 @@ import { splitAdjustedDeltas } from "@/lib/split-adjust";
  *                               cost walk as a purchase of 9.013095 shares
  *   `holdingDeltasBetween`      the P&L calendar's per-holding day breakdown
  *
+ * …and a FIFTH it missed, because it read the table itself: `holdingDetail`,
+ * the holding page, where the split was still a $1,018.83 purchase on
+ * 2025-05-27. Its return line, XIRR and contributions read this loader now, and
+ * its realized walk is `realizedTradesByLeg`'s, scoped to the one holding.
+ *
  * `lib/split-adjust.ts` carries the measurements and the arithmetic; this module
  * is only the loader, the grouping, and the order.
  *

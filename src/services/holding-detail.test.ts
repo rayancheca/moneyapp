@@ -1,17 +1,20 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
-import { priceCache } from "@/db/schema/holdings";
+import { holdingEvents } from "@/db/schema/holding-events";
+import { holdings, priceCache } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { parseFilters } from "@/components/transactions/query";
+import { decomposeValue } from "@/lib/portfolio-returns";
 import { createAccount } from "./accounts";
 import { holdingDetail, UnknownHoldingError } from "./holding-detail";
 import { upsertHolding } from "./holdings";
+import { portfolioRealizedPl, realizedLegKey } from "./portfolio";
 import { matchingTransactionIds } from "./transactions-query";
 
 process.env.MONEYAPP_FAKE_PRICES = "1";
@@ -295,6 +298,139 @@ describe("holdingDetail", () => {
   test("throws on an unknown symbol or asset type (→ notFound)", () => {
     expect(() => holdingDetail(bundle.db, "stock", "ZZZZ")).toThrow(UnknownHoldingError);
     expect(() => holdingDetail(bundle.db, "bogus", "AAPL")).toThrow(UnknownHoldingError);
+  });
+});
+
+/*
+ * 🔴 THE SPLIT FIX NEVER REACHED THIS PAGE. `holdingDetail` read `holding_events`
+ * raw, so COKE's 10-for-1 (stored as `event_kind = 'split'`, +9.013095 shares)
+ * entered its cost walk as a PURCHASE at the split day's close, and its return
+ * series valued as-traded pre-split shares against split-ADJUSTED closes — the
+ * two defects `lib/split-adjust.ts` documents, still uncancelled here.
+ *
+ * Measured on the real ledger 2026-09-15, /investments/stock/COKE against the
+ * /investments holdings table for the same single sale (3 sh, 2026-02-09):
+ *
+ *     holding page   Realized +$112.54  ($462.27 − $349.73 basis)  XIRR 56.11%
+ *     table          Realized +$102.32  ($462.27 − $359.95 basis)
+ *     NAV 2025-05-23 $113.52 (a tenth) · a $1,018.83 "flow" on the split day
+ *
+ * ⚠️ The price MOVES between the buy and the split here on purpose. With a flat
+ * close the phantom purchase costs exactly what scaling the earlier buy costs,
+ * and the raw walk reaches the right basis by accident — a fixture that cannot
+ * tell the two walks apart cannot test which one the page uses.
+ */
+describe("a stock split on the holding page", () => {
+  const SPLIT_DAY = "2025-05-27";
+
+  beforeEach(() => {
+    for (const [day, close] of [
+      ["2025-05-23", 100], // adjusted: a real pre-split share cost $1,000
+      [SPLIT_DAY, 150],
+      ["2025-05-28", 150],
+      ["2026-02-09", 120],
+    ] as const) {
+      bundle.db
+        .insert(priceCache)
+        .values({ symbol: "COKE", assetType: "stock", quotedOn: day, close, source: "yahoo", fetchedAt: `${day}T20:00:00.000Z` })
+        .run();
+    }
+    const event = (occurredOn: string, quantityDeltaE8: number, eventKind: "trade" | "split", costCents: number | null) =>
+      bundle.db
+        .insert(holdingEvents)
+        .values({ accountId: brokerage, symbol: "COKE", assetType: "stock", occurredOn, quantityDeltaE8, eventKind, costCents })
+        .run();
+    event("2025-05-23", 1e8, "trade", 100_000); // 1 share as traded
+    event(SPLIT_DAY, 9e8, "split", null); // the 10-for-1, as the ledger stores it
+    event("2026-02-09", -3e8, "trade", -36_000); // 3 post-split shares
+    bundle.db
+      .insert(holdings)
+      .values({ accountId: brokerage, symbol: "COKE", assetType: "stock", quantityE8: 7e8, avgCostCents: 10_000 })
+      .run();
+  });
+
+  test("realized P/L is the /investments table's figure for the same sale", () => {
+    const d = holdingDetail(bundle.db, "stock", "COKE", "2026-02-09");
+    const table = portfolioRealizedPl(bundle.db).byLeg.get(realizedLegKey(brokerage, "stock", "COKE"))!;
+
+    // 10 shares at $100 adjusted = $1,000 of basis; 3 sold at $120 → $360 − $300
+    expect(d.realized.realizedCents).toBe(6_000);
+    expect(d.realized).toEqual({
+      realizedCents: table.realizedCents,
+      proceedsCents: table.proceedsCents,
+      basisCents: table.basisCents,
+      sellCount: table.sellCount,
+      exact: table.exact,
+    });
+    expect(d.realizedSales.map((s) => [s.proceedsCents, s.basisCents, s.gainCents])).toEqual([[36_000, 30_000, 6_000]]);
+  });
+
+  /*
+   * ⛔ The page's realized walk is the portfolio's, SCOPED — and the scope is the
+   * one new thing in it that can be wrong: another symbol's sale, or a coin that
+   * shares this ticker's symbol (schema.md's ETH), must never land on this page.
+   * Not RED at the base, which scoped by its own query; mutation-tested instead.
+   */
+  test("the walk is scoped to this holding: another symbol's sale and a same-named coin's are not its own", () => {
+    upsertHolding(bundle.db, { accountId: brokerage, symbol: "AAPL", assetType: "stock", quantityE8: 100_000_000, avgCostCents: 11_000, occurredOn: "2026-03-04" });
+    const robinhood = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+    const crypto = createAccount(bundle.db, { institutionId: robinhood.id, name: "Robinhood Crypto", type: "investment", subtype: "crypto" });
+    for (const [day, close] of [["2026-02-02", 5], ["2026-02-09", 9]] as const) {
+      bundle.db
+        .insert(priceCache)
+        .values({ symbol: "COKE", assetType: "crypto", quotedOn: day, close, source: "coinbase", fetchedAt: `${day}T20:00:00.000Z` })
+        .run();
+    }
+    bundle.db
+      .insert(holdingEvents)
+      .values([
+        { accountId: crypto, symbol: "COKE", assetType: "crypto", occurredOn: "2026-02-02", quantityDeltaE8: 100e8 },
+        { accountId: crypto, symbol: "COKE", assetType: "crypto", occurredOn: "2026-02-09", quantityDeltaE8: -100e8 },
+      ])
+      .run();
+
+    const d = holdingDetail(bundle.db, "stock", "COKE", "2026-03-04");
+    expect(d.realized.sellCount).toBe(1);
+    expect(d.realized.realizedCents).toBe(6_000);
+    expect(d.realizedSales.map((s) => s.day)).toEqual(["2026-02-09"]);
+  });
+
+  test("the return series counts pre-split shares in today's terms and books no flow for the split", () => {
+    const d = holdingDetail(bundle.db, "stock", "COKE", "2026-02-09");
+    const on = (day: string) => d.returnDays.find((r) => r.day === day)!;
+
+    expect(on("2025-05-23").navCents).toBe(100_000); // 10 adjusted shares × $100, not 1 × $100
+    expect(on(SPLIT_DAY).flowCents).toBe(0); // a split moves no money
+    expect(on(SPLIT_DAY).navCents).toBe(150_000);
+    // contributions are what was put in: the opening $1,000, nothing on the split day
+    expect(decomposeValue(d.returnDays)!.grossContributedCents).toBe(100_000);
+  });
+
+  test("a split is neither a trade mark on the chart nor a row in the trade history", () => {
+    const d = holdingDetail(bundle.db, "stock", "COKE", "2026-02-09");
+
+    expect(d.marks.map((m) => [m.day, m.kind])).toEqual([
+      ["2025-05-23", "buy"],
+      ["2026-02-09", "sell"],
+    ]);
+    expect(d.events.map((e) => [e.day, e.kind])).toEqual([
+      ["2026-02-09", "sell"],
+      ["2025-05-23", "buy"],
+    ]);
+    expect(d.eventsTotal).toBe(2); // "2 trades" — the split is not one
+  });
+
+  test("a split on the newest quoted day is not a flow that shrinks the shares entering it", () => {
+    // stop the book on the split day: its close is the newest, and nothing was sold yet
+    bundle.db.delete(priceCache).where(and(eq(priceCache.symbol, "COKE"), gt(priceCache.quotedOn, SPLIT_DAY))).run();
+    bundle.db.delete(holdingEvents).where(eq(holdingEvents.occurredOn, "2026-02-09")).run();
+    bundle.db.update(holdings).set({ quantityE8: 10e8 }).where(eq(holdings.symbol, "COKE")).run();
+
+    const d = holdingDetail(bundle.db, "stock", "COKE", SPLIT_DAY);
+    expect(d.quotedOn).toBe(SPLIT_DAY);
+    // all 10 shares held entering the day earn ($150 − $100); the raw walk
+    // subtracted the split's 9 "bought" shares first and credited 1 × $50
+    expect(d.todayReturnCents).toBe(50_000);
   });
 });
 

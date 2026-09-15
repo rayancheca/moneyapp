@@ -541,7 +541,16 @@ interface LegTrades {
  * each trade is valued at the latest close on/before its day, close × 100
  * UNROUNDED so the walk's product-rounding matches valueCentsOf to the cent.
  */
-function realizedTradesByLeg(db: AppDatabase): Map<string, LegTrades> {
+export function realizedTradesByLeg(
+  db: AppDatabase,
+  /**
+   * One holding's legs only, for its own page. ⛔ A SCOPE, never a second walk:
+   * the holding page kept its own copy of this function, and the split fix
+   * below never reached it — COKE's page read "Realized +$112.54" for the same
+   * sale the holdings table read as +$102.32 (measured 2026-09-15).
+   */
+  holding?: { assetType: AssetType; symbol: string },
+): Map<string, LegTrades> {
   /*
    * ⛔ Split-adjusted, and splits DROPPED rather than zeroed. A split is not a
    * trade: fed to the cost walk as stored it was a purchase of 9.013095 COKE
@@ -551,6 +560,7 @@ function realizedTradesByLeg(db: AppDatabase): Map<string, LegTrades> {
    */
   const events = adjustedHoldingEvents(db)
     .filter((e) => e.eventKind !== "split")
+    .filter((e) => holding === undefined || (e.assetType === holding.assetType && e.symbol === holding.symbol))
     .map((e) => ({
       accountId: e.accountId,
       symbol: e.symbol,
