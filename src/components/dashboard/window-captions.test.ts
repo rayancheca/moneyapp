@@ -1,6 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
+import { resolvePeriod, withPeriod } from "@/lib/period";
 import type { EatingOutCard as EatingOutCardData } from "@/services/eating-out";
 import type { SubscriptionsCard as SubscriptionsCardData } from "@/services/subscriptions-card";
 import { EatingOutCard } from "./EatingOutCard";
@@ -34,7 +35,11 @@ describe("the window captions beside the runway card", () => {
     months,
     fromMonth: "2022-09",
     toMonth: "2022-09",
-    spendingHref: "/spending?period=2022-09",
+    // the rule `eatingOutCard` builds its link with, over this fixture's window
+    spendingHref: withPeriod(
+      "/spending",
+      resolvePeriod({ period: null, from: "2022-09-01", to: "2022-09-30" }, "2022-10-15"),
+    ),
     isEmpty: false,
   });
 
@@ -73,6 +78,19 @@ describe("the window captions beside the runway card", () => {
     expect(subs).not.toContain("0 complete months");
     expect(subs).not.toContain("Sep 2022");
     expect(subs).toContain("No complete month has been imported yet");
+  });
+
+  /*
+   * 🔴 The fixture's link read `/spending?period=2022-09` — Sep 2022, but in a
+   * spelling `eatingOutCard` never builds. For a complete-month window it builds
+   * `withPeriod("/spending", resolvePeriod({ period: null, from, to }, today))`,
+   * the from/to form `spending-links.test.ts` pins on the rendered card. No
+   * assertion read it, so nothing failed; an href assertion copied from this
+   * fixture would have pinned the wrong string.
+   */
+  test("the Spending link opens the month the caption names, as the service spells it", () => {
+    const eat = renderToStaticMarkup(createElement(EatingOutCard, { data: eatingOut(1) }));
+    expect(eat).toContain('href="/spending?from=2022-09-01&amp;to=2022-09-30"');
   });
 
   test("a full window reads exactly as it did", () => {
