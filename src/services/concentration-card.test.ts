@@ -625,6 +625,40 @@ describe("concentrationCard — what the portfolio is riding on", () => {
     expect(c.portfolioCents).toBeLessThan(1_013_450); // total assets
   });
 
+  /**
+   * 🔴 THE MULTIPLE ROUNDED A REAL POSITION AWAY. The clause divided for itself
+   * and printed `topOverRest.toFixed(1)`, so a top position under a twentieth
+   * of the rest read "0.0 times that" beside two positive amounts — the
+   * measured zero `multipleFact`'s "<0.1×" floor keeps off every other multiple.
+   * The multiple is `multipleOfMagnitudes`', spelled by `renderMultiple`.
+   *
+   * ⚠️ Not reachable on the owner's ledger today: 2026-09-15 reads "ETH on its
+   * own is 8.7 times that."
+   */
+  test("a top position under a twentieth of the rest reads <0.1 times that, never 0.0", () => {
+    seedBook();
+    balance(checking, 10_100_000); // the rest is $101,000.00, and ETH 0.0495 of it
+
+    const c = concentrationCard(bundle.db, TODAY)!;
+    expect(c.restOfNetWorthCents).toBe(10_100_000);
+    expect(c.topOverRest).toBeCloseTo(ETH_CENTS / 10_100_000, 9);
+    expect(c.restNote).not.toContain("0.0 times");
+    expect(c.restNote).toBe(
+      "The rest of your net worth comes to $101,000.00, debts already netted off — ETH on its own is <0.1 times that.",
+    );
+  });
+
+  /** The control: a multiple with a tenth to print keeps it, in the card's own words. */
+  test("a multiple of the rest with a tenth to print keeps it", () => {
+    seedBook();
+    balance(checking, 86_550);
+
+    const c = concentrationCard(bundle.db, TODAY)!;
+    expect(c.restNote).toBe(
+      "The rest of your net worth comes to $865.50, debts already netted off — ETH on its own is 5.8 times that.",
+    );
+  });
+
   /* ── signs ─────────────────────────────────────────────────────────────── */
 
   /**

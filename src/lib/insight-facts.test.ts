@@ -8,6 +8,7 @@ import {
   shareFact,
   multipleFact,
   multipleOfMagnitudes,
+  renderMultiple,
   trendFact,
   renderPercent,
   sharePercent,
@@ -257,6 +258,30 @@ describe("a multiple of two magnitudes", () => {
         const value = multipleOfMagnitudes(is, of);
         if (value !== null) expect(() => multipleFact("f1", "x", value, "y")).not.toThrow();
       }
+    }
+  });
+});
+
+/**
+ * 🔴 The floor lived inside `multipleFact`, and the concentration card states a
+ * multiple in words — "ETH on its own is 8.7 times that" — with a bare
+ * `toFixed(1)` of its own, so a top position under a twentieth of the rest read
+ * "0.0 times that". A multiple's figure has one rounding rule, with or without
+ * its sign.
+ */
+describe("a multiple's figure", () => {
+  test("is the one rounding rule multipleFact's display is made of", () => {
+    for (const v of [1e-6, 0.03, 0.049999, 0.05, 0.3, 1, 8.66, 22.7, 2500]) {
+      expect(multipleFact("f1", "x", v, "y").display).toBe(`${renderMultiple(v)}×`);
+    }
+    expect(renderMultiple(0.049999)).toBe("<0.1");
+    expect(renderMultiple(0.05)).toBe("0.1");
+    expect(renderMultiple(8.66)).toBe("8.7");
+  });
+
+  test("⛔ refuses exactly what multipleFact refuses", () => {
+    for (const v of [0, -0, -3, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => renderMultiple(v)).toThrow(/above zero/);
     }
   });
 });

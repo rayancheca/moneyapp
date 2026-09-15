@@ -4,7 +4,7 @@ import { formatNameList } from "@/lib/coverage-label";
 import { diffDays, todayIso } from "@/lib/dates";
 import { formatDayShort } from "@/lib/format-date";
 import { priceColumnAge, type HoldingPriceAge } from "@/lib/holding-price-age";
-import { sharePercent, sumOfPrintedShares } from "@/lib/insight-facts";
+import { multipleOfMagnitudes, renderMultiple, sharePercent, sumOfPrintedShares } from "@/lib/insight-facts";
 import { formatCents } from "@/lib/money";
 import { latestBridgedNetWorthCents } from "./in-flight";
 import { allocationSlices, holdingRows } from "./portfolio";
@@ -414,8 +414,8 @@ export function concentrationCard(
    * returns +0 for -0 as well.
    */
   const restOfNetWorthCents = netWorthCents - portfolioCents;
-  const topOverRest =
-    top !== null && restOfNetWorthCents > 0 ? top.valueCents / restOfNetWorthCents : null;
+  // null for a rest at or below zero (the field's ⛔) — `multipleOfMagnitudes` is that refusal, shared
+  const topOverRest = top !== null ? multipleOfMagnitudes(top.valueCents, restOfNetWorthCents) : null;
 
   /* ── the words ─────────────────────────────────────────────────────────── */
 
@@ -471,7 +471,7 @@ export function concentrationCard(
     restOfNetWorthCents > 0
       ? topOverRest !== null && top !== null
         ? `The rest of your net worth comes to ${formatCents(restOfNetWorthCents)}, debts already ` +
-          `netted off — ${top.symbol} on its own is ${topOverRest.toFixed(1)} times that.`
+          `netted off — ${top.symbol} on its own is ${renderMultiple(topOverRest)} times that.`
         : `The rest of your net worth comes to ${formatCents(restOfNetWorthCents)}, debts already ` +
           `netted off.`
       : restOfNetWorthCents === 0
