@@ -93,6 +93,24 @@ describe("the window captions beside the runway card", () => {
     expect(eat).toContain('href="/spending?from=2022-09-01&amp;to=2022-09-30"');
   });
 
+  /**
+   * 🔴 "Together these took $2,150.00 out across 1 charges over 6 complete
+   * months" — the e2e fixture holds exactly ONE posted subscription charge
+   * (measured on a freshly seeded copy at its today, 2026-07-08), and the
+   * dashboard-grid baseline carries the sentence. The numeral stays, as every
+   * other count on the card keeps its numeral; only the noun agrees with it.
+   */
+  test("one charge is one charge, and the numeral stays", () => {
+    const one = text(
+      renderToStaticMarkup(createElement(SubscriptionsCard, { data: { ...subscriptions(6), postedCount: 1 } })),
+    );
+    expect(one).toContain("out across 1 charge over 6 complete months");
+    expect(one).not.toContain("1 charges");
+
+    const three = text(renderToStaticMarkup(createElement(SubscriptionsCard, { data: subscriptions(6) })));
+    expect(three).toContain("out across 3 charges over 6 complete months");
+  });
+
   test("a full window reads exactly as it did", () => {
     const eat = text(
       renderToStaticMarkup(

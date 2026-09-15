@@ -2024,3 +2024,62 @@ describe("provenanceFor — all spending, compared against another window", () =
     expect(forward.checkedThrough).toBe(backward.checkedThrough);
   });
 });
+
+/* ── a count of one ───────────────────────────────────────────────────── */
+
+/**
+ * 🔴 THREE PROOFS PRINTED "1" BESIDE A PLURAL NOUN, each beside a sibling that
+ * already agreed with its count: the net-worth hole's own sentence says "holds
+ * 1 row", the holding's sources say "1 recorded buy or sell". None is live on
+ * the owner's ledger or the e2e fixture (measured 2026-09-15: no account with
+ * rows and no balance, no statement gap of a cent, no holding whose one trade
+ * disagrees with it) — every one is a shape the next import can make.
+ */
+describe("provenanceFor — a count of one keeps its numeral and a singular noun", () => {
+  test("a hole of ONE row is one row, in the account's line as in the sentence", () => {
+    const hole = addAccount("b", "Wells Fargo Everyday Checking", "checking");
+    addTxn(hole, "2026-08-02", { cents: 150_000 });
+
+    const p = provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!;
+    expect(p.inputs.find((i) => i.label === "Wells Fargo Everyday Checking")!.detail).toBe(
+      "1 row but no recorded balance — not in this total",
+    );
+    expect(p.headline).toContain("holds 1 row worth $1,500.00");
+
+    addTxn(hole, "2026-08-03", { cents: -50_000 });
+    expect(
+      provenanceFor(bundle.db, { kind: "netWorth", day: TODAY })!.inputs.find(
+        (i) => i.label === "Wells Fargo Everyday Checking",
+      )!.detail,
+    ).toBe("2 rows but no recorded balance — not in this total");
+  });
+
+  test.each([
+    [1, "1 cent"],
+    [-1, "-1 cent"],
+    [2, "2 cents"],
+  ])("a statement gap of %i reads %s", (gapCents, detail) => {
+    const acct = addAccount("a", "Chase Checking", "checking");
+    const file = addFile("f1", "s.pdf", "chase-checking-statement-pdf");
+    addPeriod("p1", acct, file, "2026-07-01", "2026-07-31", "gap");
+    bundle.db.run(sql`update statement_periods set gap_cents = ${gapCents} where id = 'p1'`);
+
+    const p = provenanceFor(bundle.db, { kind: "statementPeriod", id: "p1" })!;
+    expect(p.sources.find((s) => s.label === "unexplained difference")!.detail).toBe(detail);
+  });
+
+  test("ONE trade that does not close is one buy or sell, not 'buys and sells'", () => {
+    const acct = addAccount("rh", "Robinhood Brokerage", "investment");
+    addHolding(acct, "AAPL", "stock", 300000000);
+    addHoldingEvent(acct, "AAPL", "stock", "2025-01-02", 150000000);
+    addPrice("AAPL", "stock", TODAY, 100);
+
+    const one = provenanceFor(bundle.db, { kind: "holding", symbol: "AAPL", assetType: "stock", day: TODAY })!;
+    expect(one.headline).toContain("1 recorded buy or sell does not sum to the 3 on file");
+    expect(one.headline).not.toContain("1 recorded buys");
+
+    addHoldingEvent(acct, "AAPL", "stock", "2025-02-02", 50000000);
+    const two = provenanceFor(bundle.db, { kind: "holding", symbol: "AAPL", assetType: "stock", day: TODAY })!;
+    expect(two.headline).toContain("2 recorded buys and sells do not sum to the 3 on file");
+  });
+});

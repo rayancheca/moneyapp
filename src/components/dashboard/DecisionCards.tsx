@@ -52,14 +52,18 @@ export function DecisionCards({
   );
 
   const mode = state.cards === "grid" ? "grid" : "deck";
+  // 🔴 "1 readings": the runway card is built unconditionally and every other
+  // card only when its service has something to say, so a young ledger's deck
+  // can hold one
+  const count = `${cards.length} ${cards.length === 1 ? "reading" : "readings"}`;
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-ink-faint">
           {mode === "deck"
-            ? `${cards.length} readings — swipe, scroll or use ← →`
-            : `${cards.length} readings`}
+            ? `${count} — swipe, scroll or use ← →`
+            : count}
         </p>
         <ViewSwitcher
           dimension={DECISIONS_VIEW_SPEC[0]!}

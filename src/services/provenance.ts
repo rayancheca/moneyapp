@@ -820,7 +820,9 @@ function statementPeriodProvenance(db: AppDatabase, id: string): Provenance | nu
     });
   }
   if (period.gapCents !== null && period.gapCents !== 0) {
-    sources.push({ kind: "period", label: "unexplained difference", detail: `${period.gapCents} cents` });
+    // 🔴 "1 cents" / "-1 cents" — a gap of a cent is the smallest one a statement can leave
+    const cents = Math.abs(period.gapCents) === 1 ? "cent" : "cents";
+    sources.push({ kind: "period", label: "unexplained difference", detail: `${period.gapCents} ${cents}` });
   }
 
   return {
@@ -899,7 +901,8 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
                   ? `you last counted it on ${readableDay(c.lastManualUpdate)}`
                   : "you are the statement"
                 : (rowSums.get(c.accountId)?.n ?? 0) > 0
-                  ? `${grouped(rowSums.get(c.accountId)!.n)} rows but no recorded balance — not in this total`
+                  ? // 🔴 "1 rows" — beside the headline's own "holds 1 row" for the same account
+                    `${grouped(rowSums.get(c.accountId)!.n)} ${rowSums.get(c.accountId)!.n === 1 ? "row" : "rows"} but no recorded balance — not in this total`
                   : "empty — no rows, no balance",
   }));
 
@@ -1116,7 +1119,7 @@ function holdingProvenance(db: AppDatabase, symbol: string, assetType: AssetType
       : !price
         ? `No price has ever been recorded for ${symbol}, so there is nothing to value ${shares} ${unit} at. ${countSentence}`
         : countIsChecked && !countMatches
-          ? `⚠️ ${symbol}'s ${unit === "coins" ? "coin" : "share"} count does not add up: ${events.length} recorded buys and sells do not sum to the ${shares} on file. This value is ${shares} × a price, and the ${shares} is in doubt.`
+          ? `⚠️ ${symbol}'s ${unit === "coins" ? "coin" : "share"} count does not add up: ${events.length} recorded ${events.length === 1 ? "buy or sell does" : "buys and sells do"} not sum to the ${shares} on file. This value is ${shares} × a price, and the ${shares} is in doubt.`
           : `${shares} ${unit} × ${price.source === "manual" ? "a price you entered" : `${price.source}'s $${price.close.toFixed(2)} close`} on ${readableDay(price.quotedOn)}${priceIsStale ? `, now ${agePhrase}` : ""}. ${countSentence} The price is an observation, not a document — no statement in the ledger states it.`;
 
   const inputs: ProvenanceInput[] =

@@ -194,9 +194,12 @@ export function SubscriptionsCard({ data }: { data: SubscriptionsCardData }) {
         {/* ⛔ `baselineSpan`, the runway caption's phrase. Spelled here it read
             "over 0 complete months, Sep 2022" and "1 complete months" on a
             young ledger (replayed at today 2022-09-10 and 2022-10-15). */}
+        {/* 🔴 "across 1 charges": the e2e fixture posts ONE subscription charge
+            in its window, and the dashboard-grid baseline printed it. The
+            numeral stays, as the counts below keep theirs. */}
         {span === null
           ? "No complete month has been imported yet, so nothing here has been totalled from the charges themselves."
-          : `Together these took ${formatCents(postedCents)} out across ${postedCount} charges over ${span}, refunds netted off. That is a total, not a rate — a bill that started or ended inside the window did not charge for all of it.`}
+          : `Together these took ${formatCents(postedCents)} out across ${postedCount} ${postedCount === 1 ? "charge" : "charges"} over ${span}, refunds netted off. That is a total, not a rate — a bill that started or ended inside the window did not charge for all of it.`}
         {unforecastableCount > 0 &&
           ` ${unforecastableCount} more ${unforecastableCount === 1 ? "has" : "have"} no expected amount or no expected date, so nothing could be levelled from ${unforecastableCount === 1 ? "it" : "them"}.`}
         {/* ⛔ A separate sentence: an ended commitment has both an amount and a

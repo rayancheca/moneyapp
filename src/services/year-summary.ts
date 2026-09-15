@@ -514,7 +514,11 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
         inbound,
         undefined,
         hasReturnLeg
-          ? { counterCents: outbound.amountCents, counterLabel: `sent back over ${outbound.rowCount} rows` }
+          ? {
+              counterCents: outbound.amountCents,
+              // 🔴 "sent back over 1 rows" — a year with one return leg
+              counterLabel: `sent back over ${outbound.rowCount} ${outbound.rowCount === 1 ? "row" : "rows"}`,
+            }
           : undefined,
       );
     })(),

@@ -348,6 +348,21 @@ describe("yearSummaryView — the pass-through shows both legs", () => {
     expect(line.counterLabel).toMatch(/sent back/);
   });
 
+  /*
+   * 🔴 "sent back over 1 rows". The counter spelled its noun plural at every
+   * count, and this describe's own year sends back exactly one. Not live on the
+   * owner's ledger (2025 and 2026 each send back 4, measured 2026-09-15), but a
+   * year with one return leg is the shape 2022 had inbound.
+   */
+  test("one row sent back is one row, and more keep the plural", () => {
+    const counter = (): string | undefined =>
+      yearSummaryView(bundle.db, YEAR, TODAY).summary.sections.find((s) => s.id === "excluded")!.lines[0]!.counterLabel;
+    expect(counter()).toBe("sent back over 1 row");
+
+    insert({ postedOn: "2025-02-20", amountCents: -100000, rawDescription: "WIRE OUT", categoryName: "Pass-through" });
+    expect(counter()).toBe("sent back over 2 rows");
+  });
+
   test("neither leg reaches a total the page adds up", () => {
     const v = yearSummaryView(bundle.db, YEAR, TODAY);
     expect(v.summary.totalReceivedCents).toBe(0);
