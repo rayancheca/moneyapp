@@ -51,8 +51,10 @@ import { dayWindowLabel, resolvePeriod, stepDayWithin, stepPeriodParams, type Re
  * row (Sep 12) still read Housing −$2,229.85, because the rent sits on an account
  * with no September rows. The cut has to be per account.
  *
- * ⚠️ Not `emptyPeriodReason`: its far end is the whole ledger's newest
- * TRANSACTION, which is the rule the paragraph above measured insufficient.
+ * ⚠️ Not `emptyPeriodReason`: its far end is `ledgerReaches`, ONE day for the
+ * whole ledger (the newest active row or non-investment statement end on any
+ * account), and a whole-ledger cut is what the paragraph above measured
+ * insufficient.
  */
 
 export interface ComparedWindow {

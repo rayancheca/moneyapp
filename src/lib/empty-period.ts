@@ -39,7 +39,10 @@ export interface EmptyPeriodInput {
   today: string;
   /** oldest day the ledger holds an active row for, or null when empty */
   ledgerOpens: string | null;
-  /** newest such day */
+  /**
+   * the day the ledger is imported through — its newest active row or newest
+   * non-investment statement end (`ledgerReaches`), or null when empty
+   */
   ledgerReaches: string | null;
 }
 
@@ -157,8 +160,9 @@ export function unreachedDashNote(kinds: Iterable<UnreachedKind>, bucketNoun: "d
 }
 
 /**
- * How many ELAPSED days of a window lie past the newest imported row — the days
- * a pace figure has not seen, and the reason it is a lower bound.
+ * How many ELAPSED days of a window lie past the day the ledger is imported
+ * through (`ledgerReaches`: its newest row or non-investment statement end) —
+ * the days a pace figure has not seen, and the reason it is a lower bound.
  *
  * 🔴 Two surfaces grade these days, and only one did. The dashboard's pace tile
  * computed them inline and printed "2 days of September 2026 not imported yet"

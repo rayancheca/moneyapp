@@ -94,7 +94,7 @@ export function categoryMonthlyTrend(
   categoryId: string,
   months: number,
   refDate: string,
-  /** `ledgerReaches(db)` — the newest day the import has walked to, null when empty */
+  /** `ledgerReaches(db)` — the day the ledger is imported through, null when empty */
   reachesThrough: string | null,
   /**
    * `ledgerOpens(db)` — the OLDEST day the ledger holds, null when empty.

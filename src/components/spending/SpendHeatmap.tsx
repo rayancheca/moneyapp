@@ -39,7 +39,7 @@ interface HeatDayFrontier {
    * records begin came to read "nothing spent or earned".
    */
   ledgerOpens: string | null;
-  /** `ledgerReaches(db)` — the newest such day */
+  /** `ledgerReaches(db)` — the day the ledger is imported through: its newest row or non-investment statement end */
   ledgerReaches: string | null;
 }
 
@@ -182,7 +182,7 @@ interface SpendHeatmapProps {
    */
   ledgerOpens: string | null;
   /**
-   * `ledgerReaches(db)` — the newest day the import has walked to. A cell after
+   * `ledgerReaches(db)` — the day the ledger is imported through. A cell after
    * it has no zero to report; see `cellLabel`. Both ends are passed as props
    * rather than carried in the payload because month paging reloads the payload
    * and neither moves.

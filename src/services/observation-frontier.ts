@@ -239,8 +239,11 @@ export function ledgerOpens(db: AppDatabase): string | null {
  * imported yet" while calling Sep 9 — covered by the same statement — "nothing
  * spent or earned", and `/spending?period=2026-09-13` said "the ledger stops on
  * Sat, Sep 12, 2026", all beside MoversCard's "Venture X imported through Sep
- * 13". Every caller (the pace tile, the heatmap, `emptyPeriodReason`'s pages,
- * `summedRowsProvenance`'s empty branch, the category trend) inherits this.
+ * 13". Every caller inherits this: the dashboard's pace tile, /spending's
+ * readout, heatmap and cash-flow buckets (`spending.ts`), `emptyPeriodReason`'s
+ * pages, `summedRowsProvenance`'s empty branch, the category trend (on
+ * /categories/[id] and in `spending-insights`), and merchants' year marks and
+ * note (`merchants.ts` → `merchantProfile`).
  *
  * ⚠️ Two asymmetries, both deliberate:
  *
