@@ -3,7 +3,13 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 import { spendingShare } from "@/lib/insight-facts";
 import { computeMassifLayout, MASSIF_VIEWPOINTS } from "@/lib/massif-layout";
-import { massifCaptionKey, massifDescription, massifTableCaption, reconciliationNote } from "./CategoryMassif";
+import {
+  massifAbsentNote,
+  massifCaptionKey,
+  massifDescription,
+  massifTableCaption,
+  reconciliationNote,
+} from "./CategoryMassif";
 
 /**
  * 🔴 S8/S13/Q8. With no comparable prior window the relief still described every
@@ -217,5 +223,87 @@ describe("the relief's two denominators, and a window that took money IN", () =>
     );
     expect(note).toContain("came back in the stat cards above");
     expect(note).not.toContain("of money out in the stat cards");
+  });
+});
+
+/**
+ * 🔴 A category that spent in the prior window and has NO ENTRIES in this one.
+ *
+ * Measured on the owner's ledger 2026-09-15, `/spending?period=2026-07&where=relief`:
+ * Government ($2,250.00), Personal Care ($375.89) and Gambling ($20.00) spent in
+ * June 2026 and nothing in July, and the page never handed them to the relief. Its
+ * readout and its description both said "+$588.75 against June 2026" — spending
+ * ROSE — while "What moved" directly above counted 9 of 15 categories down and
+ * June's categorized spending was $12,297.99 against July's $10,240.85: a change
+ * of -$2,057.14. 5 of the 62 whole comparisons on the ledger had the sign wrong.
+ *
+ * ⛔ They get no block — no entries is no footprint — but their change is part of
+ * the sum, and the sentence says the sum covers them.
+ */
+describe("the relief's sum counts the categories it has no block for", () => {
+  const OPTIONS = { width: 720, height: 320, camera: MASSIF_VIEWPOINTS.quarter };
+  const spent = [
+    { id: "travel", label: "Travel", hue: null, spentCents: 244_888, priorCents: 59_024, txnCount: 9 },
+    { id: "food", label: "Food", hue: null, spentCents: 181_559, priorCents: 204_091, txnCount: 60 },
+  ];
+  const government = { id: "gov", label: "Government", hue: null, spentCents: 0, priorCents: 225_000, txnCount: 0 };
+  const gambling = { id: "gambling", label: "Gambling", hue: null, spentCents: 0, priorCents: 2_000, txnCount: 0 };
+
+  test("the sentence's figure is the whole change, and it names what that covers", () => {
+    const d = massifDescription(computeMassifLayout([...spent, government], OPTIONS), "July 2026", "June 2026");
+    // Travel +$1,858.64, Food -$225.32, Government -$2,250.00
+    expect(d).toContain(
+      "The 2 heights, and the 1 category with no entries in July 2026 and so no block, sum to -$616.68 against June 2026.",
+    );
+    // the two heights alone — the figure that said spending rose
+    expect(d).not.toContain("+$1,633.32");
+    expect(d).toContain("2 category blocks");
+  });
+
+  test("more than one is categories", () => {
+    const d = massifDescription(computeMassifLayout([...spent, government, gambling], OPTIONS), "July 2026", "June 2026");
+    expect(d).toContain("The 2 heights, and the 2 categories with no entries in July 2026 and so no block, sum to -$636.68");
+  });
+
+  test("with every category drawn, the sentence is the one it always was", () => {
+    const d = massifDescription(computeMassifLayout(spent, OPTIONS), "July 2026", "June 2026");
+    expect(d).toContain("The 2 heights sum to +$1,633.32 against June 2026.");
+    expect(d).not.toContain("no entries");
+  });
+
+  test("beside the plate, each is named with its own change", () => {
+    const one = computeMassifLayout([...spent, government], OPTIONS);
+    expect(massifAbsentNote(one.absent, "July 2026", "June 2026")).toBe(
+      "Government (-$2,250.00) had no entries in July 2026, so it has no block. " +
+        "Its change is counted in the total against June 2026, and it is a row in the Table lens.",
+    );
+    const two = computeMassifLayout([...spent, government, gambling], OPTIONS);
+    expect(massifAbsentNote(two.absent, "July 2026", "June 2026")).toBe(
+      "Government (-$2,250.00) and Gambling (-$20.00) had no entries in July 2026, so they have no block. " +
+        "Their changes are counted in the total against June 2026, and each is a row in the Table lens.",
+    );
+  });
+
+  test("a prior window that netted a refund is a rise, and three names take commas", () => {
+    // `?period=2025-03`: Gambling netted -$84.63 in February 2025 and had no March row
+    const layout = computeMassifLayout(
+      [
+        ...spent,
+        government,
+        gambling,
+        { id: "refunded", label: "Refunded", hue: null, spentCents: 0, priorCents: -8_463, txnCount: 0 },
+      ],
+      OPTIONS,
+    );
+    expect(massifAbsentNote(layout.absent, "March 2025", "February 2025")).toBe(
+      "Government (-$2,250.00), Gambling (-$20.00) and Refunded (+$84.63) had no entries in March 2025, so they have no block. " +
+        "Their changes are counted in the total against February 2025, and each is a row in the Table lens.",
+    );
+  });
+
+  test("no note when every category is drawn, or when nothing was compared", () => {
+    expect(massifAbsentNote(computeMassifLayout(spent, OPTIONS).absent, "July 2026", "June 2026")).toBeNull();
+    const layout = computeMassifLayout([...spent, government], OPTIONS);
+    expect(massifAbsentNote(layout.absent, "July 2026", null)).toBeNull();
   });
 });

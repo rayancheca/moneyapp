@@ -186,12 +186,47 @@ export interface MassifLayout {
    * its own figure beside it reads $960.60, where 43.3% of $675.87 is $292.65.
    */
   shareBaseCents: number;
-  /** null the moment any input has no prior — a sum cannot stand on a missing term */
+  /**
+   * null the moment any input has no prior — a sum cannot stand on a missing term.
+   * Summed over EVERY input, the `absent` ones included: the prior window's total
+   * is the prior window's, not the part of it that still spends.
+   */
   totalPriorCents: number | null;
+  /**
+   * Σ spent − Σ prior over every input: the blocks' heights AND the `absent`
+   * categories' falls. ⛔ Never the heights alone — see `absent`.
+   */
   totalDeltaCents: number | null;
   totalTxnCount: number;
-  /** how many real categories are behind the blocks */
+  /** how many real categories are behind the blocks — the ones with entries this period */
   categoryCount: number;
+  /**
+   * The categories fed in with NO ENTRIES this period — compared against a prior
+   * window they spent in, and drawn nowhere.
+   *
+   * 🔴 Measured on the owner's ledger 2026-09-15, `/spending?period=2026-07`:
+   * Government $2,250.00, Personal Care $375.89 and Gambling $20.00 spent in June
+   * 2026 and nothing in July, and the relief never saw them. Its readout said
+   * "+$588.75 against June 2026" — spending ROSE — beside a "What moved" counting
+   * 9 of 15 categories down, over a change of -$2,057.14. 50 of the ledger's 62
+   * whole comparisons left at least one out; 5 printed the wrong sign.
+   *
+   * ⛔ Not drawn, because a period with no entries in a category gives it no
+   * footprint: a zero-width well would set the height scale for every block while
+   * nobody could see it, and `groupTail` would fold it into "N smaller
+   * categories" beside real spending. Its change is in `totalDeltaCents`, and the
+   * renderer names it.
+   */
+  absent: MassifAbsentCategory[];
+}
+
+/** A compared category with no entries this period — see `MassifLayout.absent`. */
+export interface MassifAbsentCategory {
+  id: string;
+  label: string;
+  priorCents: number | null;
+  /** 0 − prior: its whole prior net, as a change; null with no prior */
+  deltaCents: number | null;
 }
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -276,17 +311,28 @@ export function computeMassifLayout(
 ): MassifLayout {
   const width = Math.max(options.width, MIN_CANVAS);
   const height = Math.max(options.height, MIN_CANVAS);
-  const rows = groupTail(inputs, options.maxBlocks ?? DEFAULT_MAX_BLOCKS);
+  // no entries and no spend: nothing of this period to stand on (`MassifLayout.absent`)
+  const isAbsent = (r: MassifCategoryInput): boolean => r.txnCount === 0 && r.spentCents === 0;
+  const drawn = inputs.filter((r) => !isAbsent(r));
+  const rows = groupTail(drawn, options.maxBlocks ?? DEFAULT_MAX_BLOCKS);
 
   // the WIDTH denominator — the Table lens's own author, over the same categories
+  // (an absent category adds max(0, 0) to it, so it divides the same total either way)
   const shareBaseCents = spendingShareBase(inputs);
+  // ⛔ every total over ALL inputs: the change covers the categories that stopped too
   const totals = {
     totalSpentCents: sumBy(inputs, (r) => r.spentCents),
     shareBaseCents,
     totalPriorCents: sumPriors(inputs),
     totalDeltaCents: deltaOf(sumBy(inputs, (r) => r.spentCents), sumPriors(inputs)),
     totalTxnCount: sumBy(inputs, (r) => r.txnCount),
-    categoryCount: inputs.length,
+    categoryCount: drawn.length,
+    absent: inputs.filter(isAbsent).map((r) => ({
+      id: r.id,
+      label: r.label,
+      priorCents: r.priorCents,
+      deltaCents: deltaOf(r.spentCents, r.priorCents),
+    })),
   };
 
   if (rows.length === 0) {

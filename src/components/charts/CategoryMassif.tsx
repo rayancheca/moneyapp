@@ -22,6 +22,7 @@ import {
   computeMassifLayout,
   pointsAttr,
   reconcileMassif,
+  type MassifAbsentCategory,
   type MassifBlock,
   type MassifReconciliation,
   type MassifTotalsInput,
@@ -252,7 +253,9 @@ export function CategoryMassif({
   // compositor-friendly only: the lift is a transform, the focus is opacity
   const motion = reducedMotion ? "" : "transition-[transform,opacity] duration-(--duration-fast)";
 
-  if (rows.length === 0) {
+  // ⛔ asked of the BLOCKS: a compared category with no entries this period is a
+  // row here and draws nothing, so rows alone would open an empty plate
+  if (layout.blocks.length === 0) {
     return <p className="text-sm text-ink-muted">No categorized spending in this period.</p>;
   }
 
@@ -356,7 +359,13 @@ export function CategoryMassif({
           </ul>
         </div>
 
-        <MassifRail layout={layout} hovered={hovered} onHover={setHovered} priorLabel={priorLabel} />
+        <MassifRail
+          layout={layout}
+          hovered={hovered}
+          onHover={setHovered}
+          periodLabel={periodLabel}
+          priorLabel={priorLabel}
+        />
       </div>
 
       <p className="mt-3 border-t border-line pt-2 text-[11px] text-ink-faint">
@@ -490,17 +499,20 @@ function MassifRail({
   layout,
   hovered,
   onHover,
+  periodLabel,
   priorLabel,
 }: {
   layout: ReturnType<typeof computeMassifLayout>;
   hovered: string | null;
   onHover: (id: string | null) => void;
+  periodLabel: string;
   priorLabel: string | null;
 }) {
   // bars share ONE scale — the largest block is full width, as the design sets
   // it — so a glance down the rail ranks the month without reading a figure
   const widest = Math.max(0, ...layout.blocks.map((b) => b.share));
   const aggregated = layout.blocks.some((b) => b.memberCount > 1);
+  const absentNote = massifAbsentNote(layout.absent, periodLabel, priorLabel);
   return (
     <div>
       <ul className="divide-y divide-line lg:max-h-[22rem] lg:overflow-y-auto">
@@ -579,6 +591,7 @@ function MassifRail({
           on its own, with its own figures, in the List and Table lenses.
         </p>
       )}
+      {absentNote !== null && <p className="mt-2 text-[11px] text-ink-faint">{absentNote}</p>}
     </div>
   );
 }
@@ -732,6 +745,31 @@ export function massifCaptionKey(
   return `${periodLabel} · all ${categoryCount} categor${categoryCount === 1 ? "y" : "ies"}`;
 }
 
+/**
+ * What the rail says about the compared categories that have no block — each
+ * named with its own change, since the ranked list above it cannot hold them.
+ * Null when every compared category is drawn, or when nothing was compared.
+ *
+ * 🔴 Without it the readout's "against <prior>" total counted money the plate
+ * and the rail never showed: `?period=2026-07` reads -$2,057.14 against June
+ * 2026 over twelve blocks whose heights add to +$588.75, and the $2,645.89
+ * between them is Government, Personal Care and Gambling (`MassifLayout.absent`).
+ */
+export function massifAbsentNote(
+  absent: readonly MassifAbsentCategory[],
+  periodLabel: string,
+  priorLabel: string | null,
+): string | null {
+  if (priorLabel === null || absent.length === 0) return null;
+  const named = absent.map((a) => (a.deltaCents === null ? a.label : `${a.label} (${formatCentsSigned(a.deltaCents)})`));
+  const list = named.length === 1 ? named[0]! : `${named.slice(0, -1).join(", ")} and ${named[named.length - 1]!}`;
+  return named.length === 1
+    ? `${list} had no entries in ${periodLabel}, so it has no block. ` +
+        `Its change is counted in the total against ${priorLabel}, and it is a row in the Table lens.`
+    : `${list} had no entries in ${periodLabel}, so they have no block. ` +
+        `Their changes are counted in the total against ${priorLabel}, and each is a row in the Table lens.`;
+}
+
 export function massifDescription(
   layout: ReturnType<typeof computeMassifLayout>,
   periodLabel: string,
@@ -756,6 +794,20 @@ export function massifDescription(
     layout.totalDeltaCents === 0
       ? `level with ${priorLabel}`
       : `${formatCentsSigned(layout.totalDeltaCents)} against ${priorLabel}`;
+  /*
+   * 🔴 THE SUM COVERS WHAT HAS NO BLOCK. The heights were the only terms this
+   * sentence could see, because the categories that stopped spending were never
+   * fed in: `?period=2026-07` said "The 12 heights sum to +$588.75 against June
+   * 2026" where the categories' change was -$2,057.14. They are fed in now and
+   * drawn nowhere (`MassifLayout.absent`), so the figure is the whole change and
+   * the subject says so.
+   */
+  const k = layout.absent.length;
+  const summed =
+    k === 0
+      ? `The ${n} height${n === 1 ? "" : "s"} sum${n === 1 ? "s" : ""} to ${move}. `
+      : `The ${n} height${n === 1 ? "" : "s"}, and the ${k} categor${k === 1 ? "y" : "ies"} with no entries in ` +
+        `${periodLabel} and so no block, sum to ${move}. `;
   return (
     `Where ${periodLabel} went, as a relief. ${n} category block${n === 1 ? "" : "s"} set on a plane. ` +
     /* 🔴 THE DENOMINATOR THE WIDTHS ACTUALLY DIVIDE. This named
@@ -768,7 +820,7 @@ export function massifDescription(
     `A block's footprint width is its share of the ${formatCents(layout.shareBaseCents)} of spending drawn here, its footprint ` +
     `depth grows with the number of entries it holds, and its height is the change against ${priorLabel} — blocks pressed ` +
     /* 🔴 the same sentence pluralises "block" four lines up and not this */
-    `below the plane cost less than they did then. The ${n} height${n === 1 ? "" : "s"} sum${n === 1 ? "s" : ""} to ${move}. ` +
+    `below the plane cost less than they did then. ${summed}` +
     exact
   );
 }

@@ -150,6 +150,79 @@ describe("computeMassifLayout — the figure sums to the ledger", () => {
 });
 
 /**
+ * 🔴 A category that spent in the prior window and has NO ENTRIES in this one —
+ * `/spending?period=2026-07`: Government $2,250.00 and Gambling $20.00 in June
+ * 2026, nothing in July. The page never fed them in, so the relief's total read
+ * "+$588.75 against June 2026" where the categories' change was -$2,057.14.
+ *
+ * Fed in, they must not be DRAWN: no entries is no footprint, and a zero-width
+ * well would set the height scale for every block while nobody could see it, or
+ * fold into the tail as a "smaller category". They are published beside the
+ * blocks, and their change is part of the total.
+ */
+describe("computeMassifLayout — a category with no entries this period", () => {
+  const SPENT: MassifCategoryInput[] = [
+    cat({ id: "housing", label: "Housing", spentCents: 265_000, priorCents: 424_952, txnCount: 3 }),
+    cat({ id: "travel", label: "Travel", spentCents: 244_888, priorCents: 59_024, txnCount: 9 }),
+    cat({ id: "food", label: "Food", spentCents: 181_559, priorCents: 204_091, txnCount: 60 }),
+    cat({ id: "fees", label: "Fees", spentCents: 5_550, priorCents: 2_495, txnCount: 4 }),
+  ];
+  const ABSENT: MassifCategoryInput[] = [
+    cat({ id: "gov", label: "Government", spentCents: 0, priorCents: 225_000, txnCount: 0 }),
+    cat({ id: "gambling", label: "Gambling", spentCents: 0, priorCents: 2_000, txnCount: 0 }),
+  ];
+  const INPUTS = [...SPENT, ...ABSENT];
+
+  test("it draws no block, and folds into no tail — the plate is the one its spenders draw", () => {
+    for (const maxBlocks of [12, 3, 2]) {
+      const layout = computeMassifLayout(INPUTS, { ...OPTS, maxBlocks });
+      const spendersOnly = computeMassifLayout(SPENT, { ...OPTS, maxBlocks });
+      expect(layout.blocks).toEqual(spendersOnly.blocks);
+      expect(layout.plane).toEqual(spendersOnly.plane);
+      expect(layout.categoryCount).toBe(4);
+      expect(layout.blocks.reduce((s, b) => s + b.memberCount, 0)).toBe(layout.categoryCount);
+    }
+  });
+
+  test("its change still counts: the heights and the absent categories sum to the total", () => {
+    const layout = computeMassifLayout(INPUTS, { ...OPTS, maxBlocks: 3 });
+
+    expect(layout.absent).toEqual([
+      { id: "gov", label: "Government", priorCents: 225_000, deltaCents: -225_000 },
+      { id: "gambling", label: "Gambling", priorCents: 2_000, deltaCents: -2_000 },
+    ]);
+    const heights = layout.blocks.reduce((s, b) => s + b.deltaCents!, 0);
+    const absent = layout.absent.reduce((s, a) => s + a.deltaCents!, 0);
+    expect(heights + absent).toBe(layout.totalDeltaCents);
+    expect(layout.totalDeltaCents).toBe(INPUTS.reduce((s, r) => s + r.spentCents - r.priorCents!, 0));
+    expect(layout.totalPriorCents).toBe(INPUTS.reduce((s, r) => s + r.priorCents!, 0));
+    expect(layout.totalSpentCents).toBe(SPENT.reduce((s, r) => s + r.spentCents, 0));
+  });
+
+  test("entries that net to nothing are still a footprint — a block, not an absence", () => {
+    // a charge and its return inside the period: two entries, no spend
+    const layout = computeMassifLayout(
+      [...SPENT, cat({ id: "returned", spentCents: 0, priorCents: 1_000, txnCount: 2 })],
+      OPTS,
+    );
+
+    expect(layout.blocks.map((b) => b.id)).toContain("returned");
+    expect(layout.absent).toEqual([]);
+    expect(layout.categoryCount).toBe(5);
+  });
+
+  test("with no comparable prior window an absent category carries no change either", () => {
+    const layout = computeMassifLayout(
+      [cat({ id: "a", priorCents: null }), cat({ id: "gone", spentCents: 0, priorCents: null, txnCount: 0 })],
+      OPTS,
+    );
+
+    expect(layout.absent).toEqual([{ id: "gone", label: "gone", priorCents: null, deltaCents: null }]);
+    expect(layout.totalDeltaCents).toBeNull();
+  });
+});
+
+/**
  * 🔴 S17. A category that netted money back ranks LAST, so it lands in the tail
  * whenever one forms — and `groupTail` summed it SIGNED into the aggregate
  * before any clamp. Measured on the owner's ledger 2026-09-15, relief at the
@@ -463,12 +536,16 @@ describe("computeMassifLayout — the encodings", () => {
     expect(layout.blocks.every((b) => b.relief === "level")).toBe(true);
   });
 
-  test("rows with no entries and no spend still lay out without dividing by zero", () => {
+  test("rows with no spend and no change still lay out without dividing by zero", () => {
+    // entries that net to nothing: a zero share base and a zero peak change.
+    // (Rows with no ENTRIES are not drawn at all — see "a category with no
+    // entries this period" — so they cannot reach these divisions.)
     const layout = computeMassifLayout(
-      [cat({ id: "a", spentCents: 0, priorCents: 0, txnCount: 0 }), cat({ id: "b", spentCents: 0, priorCents: 0, txnCount: 0 })],
+      [cat({ id: "a", spentCents: 0, priorCents: 0, txnCount: 2 }), cat({ id: "b", spentCents: 0, priorCents: 0, txnCount: 2 })],
       OPTS,
     );
 
+    expect(layout.blocks).toHaveLength(2);
     const coords = layout.blocks.flatMap((b) => b.faces.flatMap((f) => f.points.flatMap((p) => [p.x, p.y])));
     expect(coords.every(Number.isFinite)).toBe(true);
     expect(layout.blocks.every((b) => b.share === 0)).toBe(true);
