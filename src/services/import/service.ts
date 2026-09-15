@@ -22,7 +22,7 @@ import { normalizeDescription } from "@/lib/normalize";
 import { sumCents } from "@/lib/money";
 import { RECONCILE_STATUSES, periodVerdict } from "@/lib/reconciliation";
 import { postedInsidePeriod } from "@/lib/statement-period";
-import { withheldSectionNotice } from "@/lib/import-file-label";
+import { recordWithheldSections, withheldSectionNotice } from "@/lib/import-file-label";
 import { categorizeAll, detectTransfers } from "../categorize";
 import { rebuildAccount } from "../derivation";
 import { flagDuplicateCandidates } from "../duplicate-flags";
@@ -93,13 +93,14 @@ export interface PeriodOutcome {
 /** A section of a file that was NOT imported, as the owner reads it — see `WithheldSection`. */
 export interface WithheldOutcome {
   /** the tracked account the section belongs to; null only when no account at the institution carries its last4 */
+  accountId: string | null;
   accountName: string | null;
   last4: string | null;
   periodStart: string;
   periodEnd: string;
   /** why, in plain words */
   reason: string;
-  /** the sentence /imports shows under the file — its `import_files.error` */
+  /** the sentence /imports shows under the file, built from these facts — `withheldNoticeOf` */
   notice: string;
 }
 
@@ -109,7 +110,8 @@ export interface FileOutcome {
   error?: string;
   /**
    * Sections of a `parsed` file that were NOT imported because the parser could not prove them. Everything else in
-   * the file imported; the file's `import_files.error` carries these notices so /imports says so.
+   * the file imported; the file's `import_files.error` records these sections (`recordWithheldSections`) so /imports,
+   * the statement-gaps panel and the scripts can read which account and which window.
    */
   withheld: WithheldOutcome[];
   inserted: number;
@@ -1259,8 +1261,9 @@ async function importOneFile(
   db.update(importFiles)
     .set({
       status: "parsed",
-      // ⛔ durable and visible: a file that left a section out must not read as if every account in it were read
-      error: withheld.length === 0 ? null : withheld.map((w) => w.notice).join(" "),
+      // ⛔ durable and visible: a file that left a section out must not read as if every account in it were read.
+      // FACTS, not the sentence — see `WithheldSectionFacts` for the three readers that need the window.
+      error: withheld.length === 0 ? null : recordWithheldSections(withheld),
       parserProfile: profile.id,
       parserVersion: profile.version,
       storagePath: finalPath,
@@ -1288,13 +1291,15 @@ function withheldOutcome(db: AppDatabase, section: WithheldSection): WithheldOut
     last4 === undefined
       ? []
       : db
-          .select({ name: accounts.name })
+          .select({ id: accounts.id, name: accounts.name })
           .from(accounts)
           .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
           .where(and(eq(institutions.name, institution), eq(accounts.last4, last4)))
           .all();
+  const [only] = named.length === 1 ? named : [];
   const facts = {
-    accountName: named.length === 1 ? (named[0] as { name: string }).name : null,
+    accountId: only?.id ?? null,
+    accountName: only?.name ?? null,
     last4: last4 ?? null,
     periodStart: section.period.start,
     periodEnd: section.period.end,

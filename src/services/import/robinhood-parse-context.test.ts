@@ -10,7 +10,10 @@ import { institutions } from "@/db/schema/institutions";
 import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
+import { withheldNoticeOf, withheldSectionsOf } from "@/lib/import-file-label";
 import { createAccount } from "@/services/accounts";
+import { accountCoverage } from "@/services/coverage";
+import { statementGaps } from "@/services/statement-gaps";
 import { PROFILES } from "./profiles";
 import type { Line } from "./profiles/pdf-profile";
 import { importStatementFiles, resolveAccount, type ImportInput } from "./service";
@@ -407,6 +410,27 @@ const JUNE_FILE = "747059b1-3904-3242-af2e-de66f2c94f5e.pdf";
 /** a name for the constructed file — its bytes differ from the real August's, as a re-issued statement's would */
 const AGENT_BUYS_FILE = "d41f0c83-5a7e-4b2c-9e61-3f8a2b7c9d10.pdf";
 
+/**
+ * #655929651's real August with its Total Funds line taken out — CONSTRUCTED: a section the cash reader cannot check,
+ * whose balance did not move ($26.64 → $26.64).
+ */
+const AUGUST_UNCHECKABLE = AUGUST_SECOND.filter((l) => !l.text.startsWith("Total Funds Paid and Received"));
+const UNCHECKABLE_AUGUST_FILE = "5e2a9c41-7b3d-4f08-a6e1-c9d2b8f47a13.pdf";
+const SEPTEMBER = "09/01/2026 to 09/30/2026";
+/** CONSTRUCTED: #655929651's real August figures re-dated to September — cash only, opening at $26.64. */
+const SEPTEMBER_SECOND = [line(SEPTEMBER), ...AUGUST_SECOND.slice(1)];
+/** CONSTRUCTED: #487513525 opening September where its real August closed, with nothing moving. */
+const SEPTEMBER_BROKERAGE = [
+  SEPTEMBER,
+  "Individual Account #:487513525",
+  "Account Summary",
+  "Brokerage Cash Balance * $0.68 $0.68",
+  "Deposit Sweep Balance $1,000.33 $1,000.33",
+  "Total Securities ** $72,959.32 $72,959.32",
+  "Portfolio Value $73,960.33 $73,960.33",
+].map((t) => line(t));
+const SEPTEMBER_FILE = "b7d4e2f1-3c8a-4d59-9e06-2a1f7c5b8e34.pdf";
+
 /** Everything the ledger holds for one account, in a stable order — what "untouched" and "identical" are measured on. */
 function stateOf(db: AppDatabase, accountName: string) {
   const { id } = db.select({ id: accounts.id }).from(accounts).where(eq(accounts.name, accountName)).get()!;
@@ -455,7 +479,7 @@ describe("an unprovable Robinhood Agentic section is withheld, and the rest of t
       await importStatementFiles(normal.db, [pdf(JUNE_FILE, [...JUNE_BROKERAGE, ...JUNE_SECOND])]);
       await importStatementFiles(normal.db, [pdf("48afc52f-8955-351d-bdad-7248305c5a2b.pdf", [...AUGUST_SECOND, ...AUGUST_BROKERAGE_WITH_CREDITS])]);
 
-      trackAllThree();
+      const agenticId = trackAllThree();
       await importStatementFiles(bundle.db, [pdf(JUNE_FILE, [...JUNE_BROKERAGE, ...JUNE_SECOND])]);
       const agenticBefore = stateOf(bundle.db, "Robinhood Agentic");
       expect(agenticBefore.liveRows).toHaveLength(1); // June's +$26.64, so "untouched" is measured on something
@@ -467,6 +491,7 @@ describe("an unprovable Robinhood Agentic section is withheld, and the rest of t
       expect(outcome!.error).toBeUndefined();
       expect(outcome!.withheld).toEqual([
         {
+          accountId: agenticId,
           accountName: "Robinhood Agentic",
           last4: "9651",
           periodStart: "2026-08-01",
@@ -474,13 +499,25 @@ describe("an unprovable Robinhood Agentic section is withheld, and the rest of t
           reason: "it shows $26.22 of securities, and this account is read as cash only",
           notice:
             "Not imported: Robinhood Agentic ····9651's statement for Aug 1 – 31, 2026 — it shows $26.22 of securities, " +
-            "and this account is read as cash only. Nothing from that section is in the ledger, so the account is not checked for those days.",
+            "and this account is read as cash only. Nothing from that section is in the ledger: the activity it lists is missing, " +
+            "and the account is not checked for those days unless a later statement's opening balance closes to the cent across them.",
         },
       ]);
       // durable, on the file's own row — what /imports reads
       const file = bundle.db.select().from(importFiles).where(eq(importFiles.fileName, AGENT_BUYS_FILE)).get()!;
       expect(file.status).toBe("parsed");
-      expect(file.error).toBe(outcome!.withheld[0]!.notice);
+      expect(withheldNoticeOf(file)).toBe(outcome!.withheld[0]!.notice);
+      // …kept as FACTS, so the gaps panel and the scripts read which account and which window, not a sentence
+      expect(withheldSectionsOf(file)).toEqual([
+        {
+          accountId: agenticId,
+          accountName: "Robinhood Agentic",
+          last4: "9651",
+          periodStart: "2026-08-01",
+          periodEnd: "2026-08-31",
+          reason: "it shows $26.22 of securities, and this account is read as cash only",
+        },
+      ]);
 
       // Robinhood Agentic: not a row, a period, an anchor or a day moved — nothing reads as checked for August
       expect(stateOf(bundle.db, "Robinhood Agentic")).toEqual(agenticBefore);
@@ -512,8 +549,9 @@ describe("an unprovable Robinhood Agentic section is withheld, and the rest of t
     const [again] = await importStatementFiles(bundle.db, [file]);
 
     expect(again!.status).toBe("skipped_duplicate");
-    expect(bundle.db.select({ status: importFiles.status, error: importFiles.error }).from(importFiles).all()).toEqual([
-      { status: "parsed", error: expect.stringMatching(/^Not imported: Robinhood Agentic ····9651's statement for Aug 1 – 31, 2026/) },
+    const rows = bundle.db.select({ status: importFiles.status, error: importFiles.error }).from(importFiles).all();
+    expect(rows.map((r) => [r.status, withheldNoticeOf(r)])).toEqual([
+      ["parsed", expect.stringMatching(/^Not imported: Robinhood Agentic ····9651's statement for Aug 1 – 31, 2026/)],
     ]);
   });
 
@@ -586,6 +624,46 @@ describe("an unprovable Robinhood Agentic section is withheld, and the rest of t
     expect(stateOf(bundle.db, "Robinhood Agentic").periods).toEqual([
       { start: "2026-08-01", end: "2026-08-31", beginCents: 2664, endCents: 164, reconciliation: "reconciled", gapCents: null },
     ]);
+  });
+
+  /**
+   * 🔴 Measured by a second reader on a copy of the real ledger: a withheld August whose balance did not move, then a
+   * September opening at that balance. The opening anchor lands on Aug 31, August's days carry, and Robinhood Agentic
+   * read verified through Sep 30 with ledger-check green — the rule that an anchor on the far side of a hole closes
+   * it. What the file says about August, and what /imports lists for it, must still hold AFTER September.
+   */
+  test("⛔ a later statement opening at the same balance closes the chain across a withheld month — the notice says it can, and the gaps panel does not send him to fetch it", async () => {
+    const fakeToday = process.env.MONEYAPP_FAKE_TODAY;
+    process.env.MONEYAPP_FAKE_TODAY = "2026-10-05";
+    try {
+      const agenticId = trackAllThree();
+      await importStatementFiles(bundle.db, [pdf(JUNE_FILE, [...JUNE_BROKERAGE, ...JUNE_SECOND])]);
+      const [august] = await importStatementFiles(bundle.db, [pdf(UNCHECKABLE_AUGUST_FILE, [...AUGUST_UNCHECKABLE, ...AUGUST_BROKERAGE])]);
+      expect([august!.status, august!.withheld.map((w) => [w.accountId, w.periodStart, w.periodEnd])]).toEqual([
+        "parsed",
+        [[agenticId, "2026-08-01", "2026-08-31"]],
+      ]);
+
+      await importStatementFiles(bundle.db, [pdf(SEPTEMBER_FILE, [...SEPTEMBER_SECOND, ...SEPTEMBER_BROKERAGE])]);
+
+      const agentic = accountCoverage(bundle.db, "2026-10-05").find((c) => c.accountId === agenticId)!;
+      expect([agentic.verifiedThrough, agentic.brokenSince]).toEqual(["2026-09-30", null]);
+
+      const file = bundle.db.select().from(importFiles).where(eq(importFiles.fileName, UNCHECKABLE_AUGUST_FILE)).get()!;
+      expect(withheldNoticeOf(file)).toBe(
+        "Not imported: Robinhood Agentic ····9651's statement for Aug 1 – 31, 2026 — it prints no Total Funds Paid and Received line, " +
+          "so its activity cannot be checked. Nothing from that section is in the ledger: the activity it lists is missing, " +
+          "and the account is not checked for those days unless a later statement's opening balance closes to the cent across them.",
+      );
+
+      const gaps = statementGaps(bundle.db).find((g) => g.accountId === agenticId);
+      expect(gaps?.withheld).toEqual([{ from: "2026-08-01", to: "2026-08-31", days: 31, fileName: UNCHECKABLE_AUGUST_FILE }]);
+      // July was never imported here: THAT is a file to fetch
+      expect(gaps?.holes.map((h) => [h.from, h.to])).toEqual([["2026-07-01", "2026-07-31"]]);
+    } finally {
+      if (fakeToday === undefined) delete process.env.MONEYAPP_FAKE_TODAY;
+      else process.env.MONEYAPP_FAKE_TODAY = fakeToday;
+    }
   });
 });
 

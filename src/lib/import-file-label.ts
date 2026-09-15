@@ -100,8 +100,25 @@ export function importRowSubject(fileName: string, qualifier: string | null): st
   return qualifier === null ? fileName : `${fileName} (${qualifier})`;
 }
 
-/** What a withheld section's notice is built from — `WithheldOutcome` (services/import/service.ts) without the notice. */
+/**
+ * A section of a parsed file that was NOT imported — what the import records, and what every reader reads back.
+ *
+ * ⛔ STORED AS FACTS, NOT AS A SENTENCE. A parsed file's `import_files.error` holds `recordWithheldSections` of these,
+ * and nothing else (`importOneFile`); the sentence is built from them when it is read (`withheldNoticeOf`). Three
+ * readers need the account and the window, not the words:
+ *
+ *  - `/imports` says which account's statement a file left out;
+ *  - `statementGaps` must not call that window a file to fetch — a re-download is the same bytes, skipped as a
+ *    duplicate, and fills nothing;
+ *  - `scripts/robinhood-agentic-account.ts` must not read a WITHHELD section as one the import SKIPPED because the
+ *    account did not exist yet — measured by a second reader on a copy of the real ledger, it refused an account that
+ *    existed before the import and advised restoring the ledger, which re-imports the same refusal.
+ *
+ * A sentence in the column would have made each of those a parse of English.
+ */
 export interface WithheldSectionFacts {
+  /** the tracked account the section belongs to; null only when no account at the institution carries its last4 */
+  readonly accountId: string | null;
   readonly accountName: string | null;
   readonly last4: string | null;
   readonly periodStart: string;
@@ -120,24 +137,85 @@ function accountPhrase(accountName: string | null, last4: string | null): string
  * The sentence a file carries for a section it did NOT import: which account, which statement, why — and what that
  * means for the account.
  *
- * ⛔ It says the account is not checked for those days, in so many words. The file beside it reads parsed, the other
- * accounts' months are in, and statement lag is normal in this app — a notice that named the section but not the
- * consequence would leave the account reading as if its month had simply not arrived yet.
+ * ⛔ The consequence must stay true AFTER the account's next statement arrives, not only on the day of the import.
+ * An unconditional "the account is not checked for those days" did not: measured by a second reader on a copy of the
+ * real ledger, a withheld August whose balance did not move, then a September opening at that same balance, gave
+ * Robinhood Agentic an opening anchor on Aug 31, 30 carried days, `verifiedThrough` 2026-09-30 and a green
+ * ledger-check — the documented rule that an anchor on the far side of a hole closes it. The notice beside that
+ * still said "not checked". What stays false either way is the activity: none of the section's rows are in.
+ *
+ * ⛔ It still names the consequence, in so many words. The file beside it reads parsed, the other accounts' months
+ * are in, and statement lag is normal in this app — a notice that named the section but not the consequence would
+ * leave the account reading as if its month had simply not arrived yet.
  */
 export function withheldSectionNotice(facts: WithheldSectionFacts): string {
   return (
     `Not imported: ${accountPhrase(facts.accountName, facts.last4)}'s statement for ` +
     `${dayWindowLabel(facts.periodStart, facts.periodEnd)} — ${facts.reason}. ` +
-    "Nothing from that section is in the ledger, so the account is not checked for those days."
+    "Nothing from that section is in the ledger: the activity it lists is missing, and the account is not checked " +
+    "for those days unless a later statement's opening balance closes to the cent across them."
   );
+}
+
+/** The `import_files.error` a parsed file carries for what it withheld — facts only, see `WithheldSectionFacts`. */
+export function recordWithheldSections(sections: readonly WithheldSectionFacts[]): string {
+  return JSON.stringify({
+    withheld: sections.map(({ accountId, accountName, last4, periodStart, periodEnd, reason }) => ({
+      accountId,
+      accountName,
+      last4,
+      periodStart,
+      periodEnd,
+      reason,
+    })),
+  });
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const isNullableString = (v: unknown): v is string | null => v === null || typeof v === "string";
+
+function isWithheldSectionFacts(v: unknown): v is WithheldSectionFacts {
+  if (typeof v !== "object" || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return (
+    isNullableString(r.accountId) &&
+    isNullableString(r.accountName) &&
+    isNullableString(r.last4) &&
+    typeof r.periodStart === "string" &&
+    ISO_DAY.test(r.periodStart) &&
+    typeof r.periodEnd === "string" &&
+    ISO_DAY.test(r.periodEnd) &&
+    typeof r.reason === "string"
+  );
+}
+
+/**
+ * The sections an import row withheld — empty for every row that withheld nothing.
+ *
+ * Only a `parsed` file's: the import writes `error` on a parsed file for nothing else, a failed file's error is why
+ * it failed, and a superseded file's contribution has left the ledger. ⛔ A value that is not a whole record reads as
+ * NO sections, never as some of them: a reader that acts on a window must not act on half of one.
+ */
+export function withheldSectionsOf(file: { readonly status: ImportStatus; readonly error: string | null }): WithheldSectionFacts[] {
+  if (file.status !== "parsed" || file.error === null || !file.error.startsWith('{"withheld":')) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(file.error);
+  } catch {
+    return [];
+  }
+  const sections = (parsed as { withheld?: unknown }).withheld;
+  return Array.isArray(sections) && sections.every(isWithheldSectionFacts) ? sections : [];
 }
 
 /**
  * The withheld-section notice an import row carries, or null.
  *
- * Only a `parsed` file's: the import writes `error` on a parsed file for nothing else, a failed file's error is why
- * it failed, and a superseded file's contribution has left the ledger.
+ * ⚠️ A parsed file whose `error` is not a record is shown as it is rather than hidden: whatever wrote it, a parsed
+ * row with something to say must not read as plain "Parsed".
  */
 export function withheldNoticeOf(file: { readonly status: ImportStatus; readonly error: string | null }): string | null {
-  return file.status === "parsed" ? file.error : null;
+  if (file.status !== "parsed" || file.error === null) return null;
+  const sections = withheldSectionsOf(file);
+  return sections.length === 0 ? file.error : sections.map(withheldSectionNotice).join(" ");
 }

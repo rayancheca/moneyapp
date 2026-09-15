@@ -8,6 +8,7 @@ import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
 import { importFiles } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
+import { recordWithheldSections } from "@/lib/import-file-label";
 import { createAccount } from "@/services/accounts";
 import type { Line } from "@/services/import/profiles/pdf-profile";
 import { importStatementFiles, parseContextFor, resolveAccount, type ImportInput } from "@/services/import/service";
@@ -177,6 +178,12 @@ const AUGUST_BROKERAGE = (period: string): Line[] => [
 ];
 const AUGUST = "08/01/2026 to 08/31/2026";
 const AUGUST_FILE = "48afc52f-8955-351d-bdad-7248305c5a2b.pdf";
+/**
+ * #655929651's real August with its Total Funds line taken out — CONSTRUCTED: a section the cash reader cannot check,
+ * so the import withholds it and imports the rest of the file.
+ */
+const AUGUST_UNCHECKABLE = (period: string): Line[] =>
+  AUGUST_SECOND(period).filter((l) => !l.text.startsWith("Total Funds Paid and Received"));
 
 function pdf(name: string, lines: Line[]): ImportInput {
   const buffer = Buffer.from(`%PDF-1.7\n% ${name}\n`, "latin1");
@@ -217,6 +224,39 @@ describe("⛔ the statements were imported BEFORE the account existed", () => {
     const [outcome] = await importAugust();
     expect([outcome!.status, outcome!.error]).toEqual(["parsed", undefined]);
     expect(planAgenticAccount(bundle.db, spec)).toEqual({ kind: "already-tracked", accountId });
+  });
+
+  /**
+   * 🔴 Measured by a second reader on a copy of the real ledger: the account created, then an August whose ····9651
+   * section was withheld (the rest of the file imported) — and the plan refused with "Restore the ledger from the
+   * restore point taken before that import, then create the account FIRST". The account WAS first; restoring and
+   * importing the same bytes withholds the same section again.
+   */
+  test("⛔ in the runbook's order with a WITHHELD ····9651 section, the re-run is still a no-op — not a refusal to restore the ledger", async () => {
+    const { accountId } = createAgenticAccount(bundle, spec);
+    const [outcome] = await importStatementFiles(bundle.db, [pdf(AUGUST_FILE, [...AUGUST_UNCHECKABLE(AUGUST), ...AUGUST_BROKERAGE(AUGUST)])]);
+    expect([outcome!.status, outcome!.withheld.map((w) => [w.accountId, w.periodStart, w.periodEnd])]).toEqual([
+      "parsed",
+      [[accountId, "2026-08-01", "2026-08-31"]],
+    ]);
+
+    expect(planAgenticAccount(bundle.db, spec)).toEqual({ kind: "already-tracked", accountId });
+    expect(createAgenticAccount(bundle, spec)).toEqual({ kind: "already-tracked", accountId, guards: [] });
+  });
+
+  test("⛔ …but a section withheld from ANOTHER account excuses nothing", async () => {
+    await importAugust(); // ····9651 untracked: its section skipped
+    const otherAccount = {
+      accountId: null,
+      accountName: null,
+      last4: "1234",
+      periodStart: "2026-08-01",
+      periodEnd: "2026-08-31",
+      reason: "it shows $26.22 of securities, and this account is read as cash only",
+    };
+    bundle.db.update(importFiles).set({ error: recordWithheldSections([otherAccount]) }).run();
+    add({});
+    expect(() => planAgenticAccount(bundle.db, spec)).toThrow(/already imported .* without ····9651/);
   });
 
   test("a statement from before the account's first month does not block it — none of those prints #655929651", async () => {

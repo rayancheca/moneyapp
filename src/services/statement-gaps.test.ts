@@ -7,6 +7,7 @@ import { accounts } from "@/db/schema/accounts";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { seedDatabase } from "@/db/seed";
+import { recordWithheldSections } from "@/lib/import-file-label";
 import { statementGaps } from "./statement-gaps";
 
 /**
@@ -68,6 +69,38 @@ function addPeriod(accountId: string, start: string, end: string): void {
     .run();
 }
 
+/** A file that imported WITHOUT this account's section — the record `importOneFile` writes on its row. */
+function addWithheldFile(accountId: string, start: string, end: string, status: "parsed" | "superseded" | "failed" = "parsed"): string {
+  seq += 1;
+  const fileName = `w-${seq}.pdf`;
+  bundle.db
+    .insert(importFiles)
+    .values({
+      id: `f-${seq}`,
+      fileName,
+      fileSha256: `sha-${seq}`,
+      format: "pdf",
+      institutionId: bundle.db.select().from(institutions).all()[0]!.id,
+      status,
+      error: recordWithheldSections([
+        {
+          accountId,
+          accountName: "Robinhood Agentic",
+          last4: "9651",
+          periodStart: start,
+          periodEnd: end,
+          reason: "it shows $26.22 of securities, and this account is read as cash only",
+        },
+      ]),
+      storagePath: `/tmp/${fileName}`,
+      importedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+    .run();
+  return fileName;
+}
+
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-gaps-"));
   bundle = createDatabase(path.join(dir, "t.db"));
@@ -96,6 +129,7 @@ describe("what is missing", () => {
         holes: [{ from: "2024-08-19", to: "2024-09-18", days: 31, closes: 1 }],
         missingCloses: 1,
         missingDays: 31,
+        withheld: [],
       },
     ]);
   });
@@ -178,5 +212,93 @@ describe("what it refuses to call missing", () => {
     addPeriod("a-2", "2024-02-15", "2024-03-14");
     const out = statementGaps(bundle.db);
     expect(out.map((g) => g.accountName)).toEqual(["Discover"]);
+  });
+});
+
+describe("a statement imported WITHOUT this account's section", () => {
+  /**
+   * 🔴 Measured by a second reader on copies of the real ledger: a withheld Robinhood Agentic August, then any later
+   * statement, and the panel listed Aug 1 – 31, 2026 under "These are files to fetch" — though a re-download is the
+   * same bytes, skipped as a duplicate, and fills nothing.
+   */
+  test("⛔ is not a hole to fetch: it is reported as withheld, naming the file that left it out", () => {
+    addAccount("a-1", "Robinhood Agentic");
+    addPeriod("a-1", "2026-06-01", "2026-06-30");
+    addPeriod("a-1", "2026-07-01", "2026-07-31");
+    addPeriod("a-1", "2026-09-01", "2026-09-30");
+    // the control: without the file, August is a hole like any other
+    expect(statementGaps(bundle.db).map((g) => g.holes.map((h) => [h.from, h.to]))).toEqual([[["2026-08-01", "2026-08-31"]]]);
+
+    const fileName = addWithheldFile("a-1", "2026-08-01", "2026-08-31");
+
+    expect(statementGaps(bundle.db)).toEqual([
+      {
+        accountId: "a-1",
+        accountName: "Robinhood Agentic",
+        holes: [],
+        missingCloses: null,
+        missingDays: 0,
+        withheld: [{ from: "2026-08-01", to: "2026-08-31", days: 31, fileName }],
+      },
+    ]);
+  });
+
+  test("only the withheld month leaves a longer hole — the months around it are still files to fetch", () => {
+    addAccount("a-1", "Robinhood Agentic");
+    addPeriod("a-1", "2026-05-01", "2026-05-31");
+    addPeriod("a-1", "2026-06-01", "2026-06-30");
+    addPeriod("a-1", "2026-10-01", "2026-10-31");
+    const fileName = addWithheldFile("a-1", "2026-08-01", "2026-08-31");
+
+    const [g] = statementGaps(bundle.db);
+
+    expect(g!.holes.map((h) => [h.from, h.to, h.days])).toEqual([
+      ["2026-07-01", "2026-07-31", 31],
+      ["2026-09-01", "2026-09-30", 30],
+    ]);
+    expect(g!.missingDays).toBe(61);
+    expect(g!.withheld).toEqual([{ from: "2026-08-01", to: "2026-08-31", days: 31, fileName }]);
+  });
+
+  test("reported before any later statement arrives, too — that month is not in the ledger either way", () => {
+    addAccount("a-1", "Robinhood Agentic");
+    addPeriod("a-1", "2026-06-01", "2026-06-30");
+    addPeriod("a-1", "2026-07-01", "2026-07-31");
+    const fileName = addWithheldFile("a-1", "2026-08-01", "2026-08-31");
+
+    expect(statementGaps(bundle.db)).toEqual([
+      {
+        accountId: "a-1",
+        accountName: "Robinhood Agentic",
+        holes: [],
+        missingCloses: null,
+        missingDays: 0,
+        withheld: [{ from: "2026-08-01", to: "2026-08-31", days: 31, fileName }],
+      },
+    ]);
+  });
+
+  test("⛔ another account's withheld section, and a superseded or failed file's, cover nothing", () => {
+    addAccount("a-1", "Robinhood Agentic");
+    addPeriod("a-1", "2026-06-01", "2026-06-30");
+    addPeriod("a-1", "2026-07-01", "2026-07-31");
+    addPeriod("a-1", "2026-09-01", "2026-09-30");
+    addWithheldFile("a-2", "2026-08-01", "2026-08-31");
+    addWithheldFile("a-1", "2026-08-01", "2026-08-31", "superseded");
+    addWithheldFile("a-1", "2026-08-01", "2026-08-31", "failed");
+
+    const [g] = statementGaps(bundle.db);
+
+    expect(g!.holes.map((h) => [h.from, h.to])).toEqual([["2026-08-01", "2026-08-31"]]);
+    expect(g!.withheld).toEqual([]);
+  });
+
+  test("a month another file's statement DID prove is no longer listed as withheld", () => {
+    addAccount("a-1", "Robinhood Agentic");
+    addPeriod("a-1", "2026-07-01", "2026-07-31");
+    addWithheldFile("a-1", "2026-08-01", "2026-08-31");
+    addPeriod("a-1", "2026-08-01", "2026-08-31");
+
+    expect(statementGaps(bundle.db)).toEqual([]);
   });
 });

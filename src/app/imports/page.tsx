@@ -85,7 +85,7 @@ export default async function ImportsPage({
      so the column that has to stay scannable is untouched for 218 of them. */
   const qualifierById = importRowQualifiers(files);
   /* A parsed file that left one account's section out (a Robinhood brokerage PDF whose #655929651 section the cash
-     reader could not prove). Its row must not read plain "Parsed": that account is not checked for the month. */
+     reader could not prove). Its row must not read plain "Parsed": that section's activity is not in the ledger. */
   const withheldById = new Map(files.map((f) => [f.id, withheldNoticeOf(f)]));
 
   // the rest of what un-importing takes with it — counted per file rather than
@@ -394,7 +394,8 @@ export default async function ImportsPage({
                       </td>
                       <td className="py-1.5 pr-2 text-xs text-ink-muted">{f.parserProfile ?? "—"}</td>
                       <td className="figures py-1.5 pr-2 text-right text-xs">{f.txnCount}</td>
-                      <td className="py-1.5 pr-2 text-xs" title={f.error ?? undefined}>
+                      {/* a withheld file's error is its sections as facts — the tooltip shows the sentence, never the record */}
+                      <td className="py-1.5 pr-2 text-xs" title={withheldById.get(f.id) ?? f.error ?? undefined}>
                         <span className="inline-flex items-center gap-1.5">
                           <span
                             aria-hidden

@@ -18,6 +18,11 @@ import type { AccountStatementGaps } from "@/services/statement-gaps";
  * the panel says where they are without grading him for them. It is also
  * present when there is nothing to report, for the reason `StatementsTeaser`
  * gives: a panel that vanishes when satisfied cannot tell you it is satisfied.
+ *
+ * ⛔ A withheld window is listed under its account but never counted as a
+ * statement to fetch: its file is already imported, and fetching it again adds
+ * nothing (`statementGaps`). The intro paragraph is unchanged for every ledger
+ * with no such window, which is every ledger today.
  */
 
 /** "Aug 19 – Sep 18, 2024", collapsing a shared year and a shared month. */
@@ -39,7 +44,7 @@ export function StatementGapsPanel({ gaps }: { gaps: readonly AccountStatementGa
     <SurfaceCard>
       <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h2 className="text-sm font-medium">Statements you do not have</h2>
-        {gaps.length > 0 && (
+        {totalDays > 0 && (
           <p className="figures text-xs text-ink-muted">
             {totalCloses > 0 && `${totalCloses} ${totalCloses === 1 ? "statement" : "statements"} · `}
             {totalDays} {totalDays === 1 ? "day" : "days"} uncovered
@@ -63,11 +68,13 @@ export function StatementGapsPanel({ gaps }: { gaps: readonly AccountStatementGa
             <li key={g.accountId} className="py-2.5">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <span className="text-sm font-medium">{g.accountName}</span>
-                <span className="figures ml-auto text-xs text-ink-faint">
-                  {g.missingCloses === null
-                    ? `${g.missingDays} ${g.missingDays === 1 ? "day" : "days"}`
-                    : `${g.missingCloses} ${g.missingCloses === 1 ? "statement" : "statements"} · ${g.missingDays} days`}
-                </span>
+                {g.holes.length > 0 && (
+                  <span className="figures ml-auto text-xs text-ink-faint">
+                    {g.missingCloses === null
+                      ? `${g.missingDays} ${g.missingDays === 1 ? "day" : "days"}`
+                      : `${g.missingCloses} ${g.missingCloses === 1 ? "statement" : "statements"} · ${g.missingDays} days`}
+                  </span>
+                )}
               </div>
               <ul className="mt-1 space-y-0.5">
                 {g.holes.map((h) => (
@@ -77,6 +84,14 @@ export function StatementGapsPanel({ gaps }: { gaps: readonly AccountStatementGa
                       {" · "}
                       {h.days} {h.days === 1 ? "day" : "days"}
                       {h.closes !== null && `, ${h.closes} ${h.closes === 1 ? "statement" : "statements"}`}
+                    </span>
+                  </li>
+                ))}
+                {g.withheld.map((w) => (
+                  <li key={`withheld-${w.from}`} className="figures text-xs text-ink-muted">
+                    {holeRange(w.from, w.to)}
+                    <span className="text-warning">
+                      {" · "}imported in {w.fileName} without this account&apos;s section — fetching it again adds nothing
                     </span>
                   </li>
                 ))}

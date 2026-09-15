@@ -1,38 +1,94 @@
 import { describe, expect, test } from "vitest";
-import { importRowQualifiers, importRowSubject, withheldNoticeOf, withheldSectionNotice } from "./import-file-label";
+import {
+  importRowQualifiers,
+  importRowSubject,
+  recordWithheldSections,
+  withheldNoticeOf,
+  withheldSectionNotice,
+  withheldSectionsOf,
+  type WithheldSectionFacts,
+} from "./import-file-label";
+
+const AGENTIC_AUGUST: WithheldSectionFacts = {
+  accountId: "0a1b2c3d-agentic",
+  accountName: "Robinhood Agentic",
+  last4: "9651",
+  periodStart: "2026-08-01",
+  periodEnd: "2026-08-31",
+  reason: "it shows $26.22 of securities, and this account is read as cash only",
+};
+
+const AGENTIC_AUGUST_NOTICE =
+  "Not imported: Robinhood Agentic ····9651's statement for Aug 1 – 31, 2026 — it shows $26.22 of securities, " +
+  "and this account is read as cash only. Nothing from that section is in the ledger: the activity it lists is missing, " +
+  "and the account is not checked for those days unless a later statement's opening balance closes to the cent across them.";
 
 describe("withheldSectionNotice", () => {
-  const AGENTIC_AUGUST = {
-    accountName: "Robinhood Agentic",
-    last4: "9651",
-    periodStart: "2026-08-01",
-    periodEnd: "2026-08-31",
-    reason: "it shows $26.22 of securities, and this account is read as cash only",
-  };
-
-  test("names the account, the statement's window and why — and says the account is not checked for those days", () => {
-    expect(withheldSectionNotice(AGENTIC_AUGUST)).toBe(
-      "Not imported: Robinhood Agentic ····9651's statement for Aug 1 – 31, 2026 — it shows $26.22 of securities, " +
-        "and this account is read as cash only. Nothing from that section is in the ledger, so the account is not checked for those days.",
-    );
+  /**
+   * 🔴 Measured by a second reader on a copy of the real ledger: a withheld August whose balance did not move, then a
+   * September opening at that balance — Robinhood Agentic read verified through 2026-09-30 and ledger-check exited 0,
+   * beside a notice that still said "the account is not checked for those days".
+   */
+  test("names the account, the statement's window and why — and a consequence still true once a later statement closes across it", () => {
+    expect(withheldSectionNotice(AGENTIC_AUGUST)).toBe(AGENTIC_AUGUST_NOTICE);
+    expect(withheldSectionNotice(AGENTIC_AUGUST)).not.toMatch(/not checked for those days\.$/);
   });
 
   test("an account the ledger cannot name is still named by its number", () => {
-    expect(withheldSectionNotice({ ...AGENTIC_AUGUST, accountName: null })).toMatch(/^Not imported: the account ····9651's statement for Aug 1 – 31, 2026 — /);
+    expect(withheldSectionNotice({ ...AGENTIC_AUGUST, accountId: null, accountName: null })).toMatch(
+      /^Not imported: the account ····9651's statement for Aug 1 – 31, 2026 — /,
+    );
+  });
+});
+
+describe("recordWithheldSections → withheldSectionsOf: a parsed file keeps FACTS, not a sentence", () => {
+  test("every fact round-trips, and a sentence riding along is not stored", () => {
+    const error = recordWithheldSections([{ ...AGENTIC_AUGUST, notice: AGENTIC_AUGUST_NOTICE } as WithheldSectionFacts]);
+    expect(error).not.toContain("Not imported");
+    expect(withheldSectionsOf({ status: "parsed", error })).toEqual([AGENTIC_AUGUST]);
+  });
+
+  test("two sections, in the order they were withheld", () => {
+    const july = { ...AGENTIC_AUGUST, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+    expect(withheldSectionsOf({ status: "parsed", error: recordWithheldSections([AGENTIC_AUGUST, july]) })).toEqual([AGENTIC_AUGUST, july]);
+  });
+
+  test("only a parsed file's: a failure is why it failed, and a superseded file's contribution has left the ledger", () => {
+    const error = recordWithheldSections([AGENTIC_AUGUST]);
+    expect(withheldSectionsOf({ status: "failed", error })).toEqual([]);
+    expect(withheldSectionsOf({ status: "superseded", error })).toEqual([]);
+    expect(withheldSectionsOf({ status: "parsed", error: null })).toEqual([]);
+  });
+
+  test.each([
+    ["plain text", "Not imported: Robinhood Agentic ····9651's statement for Aug 1 – 31, 2026 — …"],
+    ["a record cut short", recordWithheldSections([AGENTIC_AUGUST]).slice(0, -5)],
+    ["a window that is not a day", recordWithheldSections([{ ...AGENTIC_AUGUST, periodEnd: "Aug 31" }])],
+    ["a section with no reason", JSON.stringify({ withheld: [{ ...AGENTIC_AUGUST, reason: undefined }] })],
+    ["one good section beside a bad one", JSON.stringify({ withheld: [AGENTIC_AUGUST, { ...AGENTIC_AUGUST, last4: 9651 }] })],
+    ["no list", JSON.stringify({ withheld: AGENTIC_AUGUST })],
+  ])("⛔ %s reads as NO sections, never as some of them", (_, error) => {
+    expect(withheldSectionsOf({ status: "parsed", error })).toEqual([]);
   });
 });
 
 describe("withheldNoticeOf", () => {
-  const notice = "Not imported: Robinhood Agentic ····9651's statement for Aug 1 – 31, 2026 — …";
-
-  test("a parsed file's error is what it withheld", () => {
-    expect(withheldNoticeOf({ status: "parsed", error: notice })).toBe(notice);
+  test("a parsed file's record reads as one sentence per section, built when it is read", () => {
+    const july = { ...AGENTIC_AUGUST, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+    expect(withheldNoticeOf({ status: "parsed", error: recordWithheldSections([AGENTIC_AUGUST]) })).toBe(AGENTIC_AUGUST_NOTICE);
+    expect(withheldNoticeOf({ status: "parsed", error: recordWithheldSections([AGENTIC_AUGUST, july]) })).toBe(
+      `${AGENTIC_AUGUST_NOTICE} ${withheldSectionNotice(july)}`,
+    );
   });
 
   test("a clean parse withheld nothing, and a failure is not a withheld section", () => {
     expect(withheldNoticeOf({ status: "parsed", error: null })).toBeNull();
     expect(withheldNoticeOf({ status: "failed", error: "[robinhood-brokerage-statement-pdf] No account number found" })).toBeNull();
-    expect(withheldNoticeOf({ status: "superseded", error: notice })).toBeNull();
+    expect(withheldNoticeOf({ status: "superseded", error: recordWithheldSections([AGENTIC_AUGUST]) })).toBeNull();
+  });
+
+  test("⚠️ a parsed file whose error is not a record is shown as it is — never hidden behind plain \"Parsed\"", () => {
+    expect(withheldNoticeOf({ status: "parsed", error: "something the import said" })).toBe("something the import said");
   });
 });
 

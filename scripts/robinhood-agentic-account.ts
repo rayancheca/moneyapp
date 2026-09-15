@@ -6,6 +6,7 @@ import type { AppDatabase, DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
+import { withheldSectionsOf } from "@/lib/import-file-label";
 import { createAccount } from "@/services/accounts";
 import { robinhoodBrokerageStatementPdf } from "@/services/import/profiles/robinhood-brokerage-statement-profile";
 import { REIMPORTABLE_STATUSES, parseContextFor } from "@/services/import/service";
@@ -95,11 +96,24 @@ type AccountRow = typeof accounts.$inferSelect;
  *
  * A file at an OLDER version does not count (the real ledger's June–August files are v3): the v4 import
  * supersedes it and reads the section. Nor does a row the import would read again — the service's own rule.
+ *
+ * ⛔ Nor does a file that WITHHELD the account's section. The parser read that section — the account was tracked —
+ * and could not prove it, so it wrote no period (`WithheldSectionFacts`). It was not skipped for want of the account,
+ * and the refusal's advice cannot work for it: measured by a second reader on a copy of the real ledger, an August
+ * whose ····9651 section was withheld, imported AFTER the account was created, made `planAgenticAccount` refuse and
+ * advise restoring the ledger and creating the account first. The account already existed; restoring and importing
+ * the same bytes withholds the same section again.
  */
-function statementsReadWithout(db: AppDatabase, accountId: string | null): string[] {
+function statementsReadWithout(db: AppDatabase, accountId: string | null, last4: string): string[] {
   const profile = robinhoodBrokerageStatementPdf;
   const rows = db
-    .select({ fileId: importFiles.id, fileName: importFiles.fileName, accountId: statementPeriods.accountId })
+    .select({
+      fileId: importFiles.id,
+      fileName: importFiles.fileName,
+      status: importFiles.status,
+      error: importFiles.error,
+      accountId: statementPeriods.accountId,
+    })
     .from(importFiles)
     .innerJoin(statementPeriods, eq(statementPeriods.importFileId, importFiles.id))
     .where(
@@ -111,12 +125,14 @@ function statementsReadWithout(db: AppDatabase, accountId: string | null): strin
       ),
     )
     .all();
-  const carrying = new Set(rows.filter((r) => r.accountId === accountId).map((r) => r.fileId));
+  const carrying = new Set(
+    rows.filter((r) => r.accountId === accountId || withheldSectionsOf(r).some((w) => w.last4 === last4)).map((r) => r.fileId),
+  );
   return [...new Map(rows.filter((r) => !carrying.has(r.fileId)).map((r) => [r.fileId, r.fileName])).values()].sort();
 }
 
 function refuseStatementsReadWithout(db: AppDatabase, accountId: string | null, spec: AgenticAccountSpec): void {
-  const files = statementsReadWithout(db, accountId);
+  const files = statementsReadWithout(db, accountId, spec.last4);
   if (files.length === 0) return;
   const profile = robinhoodBrokerageStatementPdf;
   throw new Refusal(
