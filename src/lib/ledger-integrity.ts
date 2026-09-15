@@ -95,7 +95,7 @@ export interface ValueAnchorDrift {
 export interface LedgerObservation {
   /** every account the check read, by name */
   accounts: readonly string[];
-  /** every chain window walked per account, closing or not */
+  /** every chain window walked per account, closing or not — consecutive, so abutting ones measure their span */
   chainWindows: Record<string, readonly ChainWindow[]>;
   breaks: Record<string, ChainBreak[]>;
   /** net cents of replay-status rows with no import file, per account */
@@ -105,6 +105,8 @@ export interface LedgerObservation {
   valuedAnchorDays: Record<string, readonly string[]>;
   /** printed-vs-derived market value, per account (pass 73) */
   valueAnchors: Record<string, ValueAnchorDrift[]>;
+  /** every statement the app could NOT value (`findValueAnchorDrift`'s `unpriced`) — each one a finding */
+  unpricedAnchors: readonly ValueAnchor[];
 }
 
 export interface LedgerBaseline {
@@ -118,6 +120,7 @@ export type LedgerFailure = {
     | "new-break"
     | "changed-break"
     | "fixed-break"
+    | "split-break"
     | "unmeasured-break"
     | "synthetic-drift"
     | "unmeasured-synthetic"
@@ -236,6 +239,32 @@ export function findChainBreaks(pairs: readonly ChainPair[]): ChainBreak[] {
 const windowKey = (b: ChainWindow): string => `${b.from}→${b.to}`;
 
 /**
+ * The walked windows that tile `from → to` exactly, in order — or null when the
+ * walk does not stop on both days with no hole between them.
+ *
+ * ⛔ A recorded window is measured when its SPAN is, not only when the same pair
+ * is walked again. The usual fix for a break is the missing statement ARRIVING,
+ * and its anchor lands inside the window: that exact pair is never walked again,
+ * but both halves are, and replay adds up across windows that abut. Measured on
+ * a copy of the owner's ledger (2026-09-15, review): with Robinhood Cash's
+ * -$8,562.85 over 2026-04-30 → 2026-06-30 recorded and the June statement
+ * present, asking only for the identical pair said "find which anchor left"
+ * about an anchor that had arrived, over halves that both close.
+ */
+function windowsSpanning(walked: readonly ChainWindow[], from: string, to: string): ChainWindow[] | null {
+  const startingOn = new Map(walked.map((w) => [w.from, w]));
+  const span: ChainWindow[] = [];
+  let at = from;
+  while (at < to) {
+    const next = startingOn.get(at);
+    if (next === undefined || next.to <= at) return null;
+    span.push(next);
+    at = next.to;
+  }
+  return at === to && span.length > 0 ? span : null;
+}
+
+/**
  * Observation vs recorded baseline.
  *
  * A DISAPPEARING break fails too. That reads odd — a fixed break is good news —
@@ -255,6 +284,10 @@ const windowKey = (b: ChainWindow): string => `${b.from}→${b.to}`;
  * The last two used to be one branch. Following `fixed-*`'s advice for an
  * unmeasured entry deletes the record of a disagreement nobody resolved, on the
  * hook that runs before every commit — a witness lost, reported as a fix.
+ *
+ * A break has one case more. An anchor that ARRIVED inside its window divides
+ * it, and the halves still measure the whole: `fixed-break` when they add up to
+ * zero, `split-break` when they do not.
  */
 export function compareToBaseline(
   observed: LedgerObservation,
@@ -285,17 +318,30 @@ export function compareToBaseline(
         });
       }
     }
-    const walked = new Set((observed.chainWindows[account] ?? []).map(windowKey));
+    const walked = observed.chainWindows[account] ?? [];
     for (const [key, b] of known) {
       if (seen.has(key)) continue;
-      if (!walked.has(key)) {
+      const span = windowsSpanning(walked, b.from, b.to);
+      if (span === null) {
         failures.push({
           kind: "unmeasured-break",
           account,
           detail:
-            `${b.from} → ${b.to} (${formatCents(b.offByCents)}) is recorded as a known break, but no anchor pair ` +
-            `spans that window any more — nothing was measured, so it has not closed. Find which anchor left ` +
-            `before touching the baseline`,
+            `${b.from} → ${b.to} (${formatCents(b.offByCents)}) is recorded as a known break, but the walk no ` +
+            `longer stops on both of those days — nothing was measured across it, so it has not closed. Find ` +
+            `which anchor left before touching the baseline`,
+        });
+        continue;
+      }
+      const spanOffByCents = span.reduce((sum, w) => sum + (seen.get(windowKey(w))?.offByCents ?? 0), 0);
+      if (spanOffByCents !== 0) {
+        failures.push({
+          kind: "split-break",
+          account,
+          detail:
+            `${b.from} → ${b.to} is recorded as a known break of ${formatCents(b.offByCents)}, but an anchor ` +
+            `inside it now divides it into ${span.length} windows that together are still off by ` +
+            `${formatCents(spanOffByCents)} — it has not closed. Record the windows that do not close in its place`,
         });
         continue;
       }
@@ -371,8 +417,11 @@ export function compareToBaseline(
       }
     }
     const valued = new Set(observed.valuedAnchorDays[account] ?? []);
+    // a statement the app could not value is still THERE — `unpriced-anchor` below says so, once
+    const unvalued = new Set(observed.unpricedAnchors.filter((a) => a.account === account).map((a) => a.on));
     for (const [on, d] of known) {
       if (seen.has(on)) continue;
+      if (unvalued.has(on)) continue;
       if (!valued.has(on)) {
         failures.push({
           kind: "unmeasured-value-drift",
@@ -380,7 +429,7 @@ export function compareToBaseline(
           detail:
             `${on} (${formatCents(d.offByCents)}) is recorded as a known disagreement, but no statement on that ` +
             `day was valued — the witness is gone, not the disagreement. Find what removed it (an un-import, a ` +
-            `deactivated account) before touching the baseline`,
+            `renamed account) before touching the baseline`,
         });
         continue;
       }
@@ -401,6 +450,31 @@ export function compareToBaseline(
       detail:
         `${s.periodStart} stores a gap of ${formatCents(s.storedGapCents ?? 0)} but recomputes to ` +
         `${formatCents(s.freshGapCents ?? 0)} — the ledger changed after the verdict was written`,
+    });
+  }
+
+  /*
+   * An anchor the app cannot value is its own finding. It is not a drift — a
+   * missing valuation reported as a drift of the whole printed amount would read
+   * as a total loss — and it is not nothing, because an anchor nobody can check
+   * is an anchor that is not doing its job.
+   *
+   * ⛔ ONE line per statement. Measured on a copy of the owner's ledger
+   * (2026-09-15, review): with this finding built in the script and the
+   * baseline's unmeasured branch built here, a deactivated Robinhood Brokerage
+   * printed 29 findings for 25 statements, four of them saying "the witness is
+   * gone" about statements that were still there.
+   */
+  for (const a of observed.unpricedAnchors) {
+    const recorded = baseline.valueAnchors[a.account]?.find((d) => d.on === a.on);
+    failures.push({
+      kind: "unpriced-anchor",
+      account: a.account,
+      detail:
+        `${a.on} prints ${formatCents(a.printedCents)} of securities and the ledger has no valuation for that day` +
+        (recorded === undefined
+          ? ""
+          : ` — its recorded disagreement of ${formatCents(recorded.offByCents)} was not re-measured, so it has not agreed`),
     });
   }
 

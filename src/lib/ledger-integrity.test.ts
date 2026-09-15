@@ -64,6 +64,7 @@ const observation = (over: Partial<LedgerObservation> = {}): LedgerObservation =
   staleVerdicts: [],
   valuedAnchorDays: {},
   valueAnchors: {},
+  unpricedAnchors: [],
   ...over,
 });
 
@@ -519,6 +520,184 @@ describe("compareToBaseline — a witness that is gone is not a fix", () => {
       { ...baseline, valueAnchors: { "Robinhood Brokerage": [{ on: "2026-08-31", offByCents: 10_625 }] } },
     );
     expect(failures).toEqual([]);
+  });
+
+  /*
+   * ⛔ The usual way a break gets fixed is the missing statement ARRIVING — and
+   * its anchor lands inside the recorded window, so the exact window is never
+   * walked again. Measured on a copy of the owner's ledger (2026-09-15, review):
+   * with Robinhood Cash's -$8,562.85 over 2026-04-30 → 2026-06-30 recorded and
+   * the June statement present, the check said "no anchor pair spans that window
+   * any more — nothing was measured". Both halves were walked and closed; an
+   * anchor ARRIVED. Replay adds up across windows that abut, so the halves
+   * measure the whole.
+   */
+  describe("a recorded window an arriving anchor divided", () => {
+    const recorded: LedgerBaseline = {
+      breaks: { "Robinhood Cash": [{ from: "2026-04-30", to: "2026-06-30", offByCents: -856_285 }] },
+      syntheticNetCents: {},
+      valueAnchors: {},
+    };
+    const walk = [
+      { from: "2026-03-31", to: "2026-04-30" },
+      { from: "2026-04-30", to: "2026-05-31" },
+      { from: "2026-05-31", to: "2026-06-30" },
+      { from: "2026-06-30", to: "2026-07-31" },
+    ];
+
+    it("whose halves both close is FIXED — the span was measured, and closes", () => {
+      const failures = compareToBaseline(
+        observation({ accounts: ["Robinhood Cash"], chainWindows: { "Robinhood Cash": walk } }),
+        recorded,
+      );
+      expect(failures.map((f) => f.kind)).toEqual(["fixed-break"]);
+      expect(failures[0]!.detail).toContain("2026-04-30 → 2026-06-30");
+      expect(failures[0]!.detail).toContain("now closes");
+    });
+
+    it("whose halves still do not close across it is neither fixed nor unmeasured", () => {
+      const failures = compareToBaseline(
+        observation({
+          accounts: ["Robinhood Cash"],
+          chainWindows: { "Robinhood Cash": walk },
+          breaks: { "Robinhood Cash": [{ from: "2026-05-31", to: "2026-06-30", offByCents: -856_285 }] },
+        }),
+        recorded,
+      );
+      expect(failures.map((f) => f.kind)).toEqual(["new-break", "split-break"]);
+      const split = failures[1]!.detail;
+      expect(split).toContain("2026-04-30 → 2026-06-30");
+      expect(split).toContain("2 windows");
+      expect(split).toContain("-$8,562.85");
+      expect(split).not.toContain("now closes");
+      expect(split).not.toContain("nothing was measured");
+    });
+
+    it("the span's money is the SUM of its halves — two breaks that cancel close it", () => {
+      const failures = compareToBaseline(
+        observation({
+          accounts: ["Robinhood Cash"],
+          chainWindows: { "Robinhood Cash": walk },
+          breaks: {
+            "Robinhood Cash": [
+              { from: "2026-04-30", to: "2026-05-31", offByCents: 1_200 },
+              { from: "2026-05-31", to: "2026-06-30", offByCents: -1_200 },
+            ],
+          },
+        }),
+        recorded,
+      );
+      expect(failures.map((f) => f.kind)).toEqual(["new-break", "new-break", "fixed-break"]);
+    });
+
+    it("a split whose halves are still off by a DIFFERENT amount says the new total", () => {
+      const failures = compareToBaseline(
+        observation({
+          accounts: ["Robinhood Cash"],
+          chainWindows: { "Robinhood Cash": walk },
+          breaks: { "Robinhood Cash": [{ from: "2026-04-30", to: "2026-05-31", offByCents: -100 }] },
+        }),
+        recorded,
+      );
+      expect(failures.map((f) => f.kind)).toEqual(["new-break", "split-break"]);
+      expect(failures[1]!.detail).toContain("-$1.00");
+    });
+
+    it("a walk that reaches past the recorded end without stopping on it is UNMEASURED", () => {
+      // 2026-06-30 left: the walk starts on the recorded day and never lands on the other
+      const failures = compareToBaseline(
+        observation({
+          accounts: ["Robinhood Cash"],
+          chainWindows: {
+            "Robinhood Cash": [
+              { from: "2026-04-30", to: "2026-05-31" },
+              { from: "2026-05-31", to: "2026-07-31" },
+            ],
+          },
+        }),
+        recorded,
+      );
+      expect(failures.map((f) => f.kind)).toEqual(["unmeasured-break"]);
+    });
+
+    it("both ends walked with a HOLE between them is UNMEASURED — the span is not tiled", () => {
+      const failures = compareToBaseline(
+        observation({
+          accounts: ["Robinhood Cash"],
+          chainWindows: {
+            "Robinhood Cash": [
+              { from: "2026-04-30", to: "2026-05-15" },
+              { from: "2026-05-31", to: "2026-06-30" },
+            ],
+          },
+        }),
+        recorded,
+      );
+      expect(failures.map((f) => f.kind)).toEqual(["unmeasured-break"]);
+    });
+  });
+
+  /*
+   * ⛔ A statement day the app cannot value is ONE finding. Measured on a copy
+   * of the owner's ledger (2026-09-15, review): a deactivated Robinhood
+   * Brokerage printed 29 findings for 25 statements — each of its four recorded
+   * days twice, once as `unpriced-anchor` and once as "no statement on that day
+   * was valued — the witness is gone". The statement is not gone; the app had
+   * no answer for it.
+   */
+  describe("a statement day the app cannot value", () => {
+    const unvalued = (on: string, printedCents: number): ValueAnchor => ({
+      account: "Robinhood Brokerage",
+      on,
+      printedCents,
+      derivedCents: null,
+    });
+
+    it("fails on its own, naming the printed amount", () => {
+      const failures = compareToBaseline(
+        observation({ unpricedAnchors: [unvalued("2026-08-31", 7_295_932)] }),
+        { breaks: {}, syntheticNetCents: {}, valueAnchors: {} },
+      );
+      expect(failures).toEqual([
+        {
+          kind: "unpriced-anchor",
+          account: "Robinhood Brokerage",
+          detail: "2026-08-31 prints $72,959.32 of securities and the ledger has no valuation for that day",
+        },
+      ]);
+    });
+
+    it("that the baseline records a disagreement on is still ONE finding, and says the record was not re-measured", () => {
+      const failures = compareToBaseline(
+        observation({ unpricedAnchors: [unvalued("2026-08-31", 7_295_932)] }),
+        {
+          breaks: {},
+          syntheticNetCents: {},
+          valueAnchors: { "Robinhood Brokerage": [{ on: "2026-08-31", offByCents: 10_625 }] },
+        },
+      );
+      expect(failures.map((f) => f.kind)).toEqual(["unpriced-anchor"]);
+      expect(failures[0]!.detail).toContain("$72,959.32");
+      expect(failures[0]!.detail).toContain("$106.25");
+      expect(failures[0]!.detail).not.toContain("witness is gone");
+      expect(failures[0]!.detail).not.toContain("now agrees");
+    });
+
+    it("only covers ITS account's day — the same day on another account is still unmeasured", () => {
+      const failures = compareToBaseline(
+        observation({ unpricedAnchors: [unvalued("2026-08-31", 7_295_932)] }),
+        {
+          breaks: {},
+          syntheticNetCents: {},
+          valueAnchors: { "Robinhood Crypto": [{ on: "2026-08-31", offByCents: 2_811 }] },
+        },
+      );
+      expect(failures.map((f) => [f.kind, f.account])).toEqual([
+        ["unmeasured-value-drift", "Robinhood Crypto"],
+        ["unpriced-anchor", "Robinhood Brokerage"],
+      ]);
+      expect(failures[1]!.detail).not.toContain("recorded disagreement");
+    });
   });
 
   it("every unmeasured kind still fails the check — none of them is silence", () => {

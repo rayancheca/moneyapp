@@ -323,20 +323,10 @@ const failures = compareToBaseline(
     staleVerdicts,
     valuedAnchorDays,
     valueAnchors,
+    // an anchor the app cannot value is a finding of its own — the rule makes it, once per statement
+    unpricedAnchors: unpriced,
   },
   BASELINE,
-).concat(
-  /*
-   * An anchor the app cannot value is its own finding. It is not a drift — a
-   * missing valuation reported as a drift of the whole printed amount would
-   * read as a total loss — and it is not nothing, because an anchor nobody can
-   * check is an anchor that is not doing its job.
-   */
-  unpriced.map((a) => ({
-    kind: "unpriced-anchor" as const,
-    account: a.account,
-    detail: `${a.on} prints ${formatCents(a.printedCents)} of securities and the ledger has no valuation for that day`,
-  })),
 );
 if (failures.length > 0) {
   console.error(`\nLEDGER CHECK FAILED — ${failures.length} finding(s):`);
