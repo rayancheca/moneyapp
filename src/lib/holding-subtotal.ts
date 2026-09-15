@@ -18,7 +18,7 @@
  * symbol are two independent shares whose sum is the combined share.
  */
 
-import { sharePercent } from "./insight-facts";
+import { sumOfPrintedShares } from "./insight-facts";
 import { formatCents, formatCentsSigned } from "./money";
 
 /** The nullable fields a subtotal reads — HoldingRow satisfies this structurally. */
@@ -41,10 +41,31 @@ export interface HoldingSubtotal {
   valueCents: SubtotalFigure;
   dayChangeCents: SubtotalFigure;
   allocationPct: SubtotalFigure;
+  /**
+   * The Share the subtotal bar prints: the SUM of the Alloc cells ticked, as
+   * those cells print them — null when no ticked row has a share.
+   *
+   * 🔴 It was `sharePercent(allocationPct.total)`, the unrounded sum rounded
+   * once, under cells that each round on their own. Measured on the owner's
+   * ledger 2026-09-15: ticking AAPL 6.5%, AMZN 8.2% and SPY 15.5% printed
+   * "Share 30.1%" under rows adding to 30.2 — 13 of the 120 two- and three-row
+   * selections that hold no sliver row disagreed that way. Owner decision
+   * 2026-09-14: a subtotal is the sum of the rounded rows, so no holding's share
+   * moves off the one it prints everywhere else.
+   *
+   * 🔴 …and never a rounded-away sliver. Ticking WMT alone put "Share 0.0%"
+   * under a row already reading "<0.1%" — the same $43.70, two answers, one
+   * screen. `sumOfPrintedShares` keeps `sharePercent`'s floors at both ends.
+   */
+  allocationShare: string | null;
+}
+
+function presentValues(values: readonly (number | null)[]): number[] {
+  return values.filter((v): v is number => v !== null);
 }
 
 function sumPresent(values: readonly (number | null)[]): SubtotalFigure {
-  const present = values.filter((v): v is number => v !== null);
+  const present = presentValues(values);
   return {
     total: present.length === 0 ? null : present.reduce((sum, v) => sum + v, 0),
     contributors: present.length,
@@ -53,11 +74,13 @@ function sumPresent(values: readonly (number | null)[]): SubtotalFigure {
 
 /** Sums the selected holdings, one figure at a time, omitting nothing silently. */
 export function subtotalHoldings(rows: readonly SubtotalSource[]): HoldingSubtotal {
+  const shares = presentValues(rows.map((r) => r.allocationPct));
   return {
     selected: rows.length,
     valueCents: sumPresent(rows.map((r) => r.valueCents)),
     dayChangeCents: sumPresent(rows.map((r) => r.dayChangeCents)),
     allocationPct: sumPresent(rows.map((r) => r.allocationPct)),
+    allocationShare: shares.length === 0 ? null : sumOfPrintedShares(shares),
   };
 }
 
@@ -72,19 +95,6 @@ export function subtotalCoverage(
 ): string | null {
   if (figure.contributors === selected) return null;
   return `${figure.contributors} of ${selected} ${contributed}`;
-}
-
-/**
- * Allocation share at the Alloc column's precision — and never rounding a real
- * sliver away: `sharePercent` floors at "<0.1%".
- *
- * 🔴 Ticking WMT alone on /investments put "Share 0.0%" in the subtotal bar
- * directly under a row whose own Alloc cell already read "<0.1%" — the same
- * $43.70, two answers, one screen. The column was converted on 2026-09-10; the
- * subtotal that adds it up was not.
- */
-export function formatSharePct(pct: number): string {
-  return sharePercent(pct);
 }
 
 function withCoverage(text: string, note: string | null): string {
@@ -120,10 +130,11 @@ export function subtotalAnnouncement(subtotal: HoldingSubtotal, dayTerm: string)
           subtotalCoverage(subtotal.valueCents, subtotal.selected, "priced"),
         );
   const share =
-    subtotal.allocationPct.total === null
+    subtotal.allocationShare === null
       ? "no share of the portfolio"
       : withCoverage(
-          `${formatSharePct(subtotal.allocationPct.total)} of the portfolio`,
+          // the bar's own figure — the live region never says a different number
+          `${subtotal.allocationShare} of the portfolio`,
           subtotalCoverage(subtotal.allocationPct, subtotal.selected, "with a share"),
         );
   const day =

@@ -7,7 +7,6 @@ import { RULE_STRONG } from "@/components/ui/letterpress";
 import { Money } from "@/components/ui/Money";
 import { holdingMetricLabel, nextHoldingMetric, type HoldingMetric } from "@/lib/holding-cycle";
 import {
-  formatSharePct,
   subtotalAnnouncement,
   subtotalCoverage,
   subtotalHoldings,
@@ -340,9 +339,8 @@ export function PortfolioHoldingsTable({
               note={subtotalCoverage(subtotal.allocationPct, subtotal.selected, "with a share")}
             >
               <span className="figures font-medium text-ink-muted">
-                {subtotal.allocationPct.total !== null
-                  ? formatSharePct(subtotal.allocationPct.total)
-                  : "—"}
+                {/* the sum of the Alloc cells ticked, as they print — `subtotalHoldings` */}
+                {subtotal.allocationShare ?? "—"}
               </span>
             </SubtotalStat>
             <SubtotalStat

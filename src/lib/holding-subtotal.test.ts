@@ -1,7 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { sharePercent } from "./insight-facts";
 import {
-  formatSharePct,
   subtotalAnnouncement,
   subtotalCoverage,
   subtotalHoldings,
@@ -85,6 +84,7 @@ describe("subtotalHoldings", () => {
       valueCents: { total: null, contributors: 0 },
       dayChangeCents: { total: null, contributors: 0 },
       allocationPct: { total: null, contributors: 0 },
+      allocationShare: null,
     });
   });
 });
@@ -103,27 +103,69 @@ describe("subtotalCoverage", () => {
   });
 });
 
-describe("formatSharePct", () => {
-  test("prints one decimal, matching the Alloc column", () => {
-    expect(formatSharePct(8.000000000000002)).toBe("8.0%");
-    expect(formatSharePct(0)).toBe("0.0%");
+/**
+ * 🔴 S28's second surface. The bar printed `sharePercent(Σ allocationPct)` — the
+ * unrounded sum, rounded once — directly under Alloc cells that each round on
+ * their own. Measured on the owner's ledger 2026-09-15: ticking AAPL 6.5%, AMZN
+ * 8.2% and SPY 15.5% put "Share 30.1%" under rows adding to 30.2 — 13 of the 120
+ * two- and three-row selections that hold no sliver row disagreed that way.
+ *
+ * ⚖️ Owner decision 2026-09-14 (F2): the subtotal is the SUM of the rounded rows,
+ * so every holding keeps the one share it prints everywhere.
+ */
+describe("the Share a selection prints is the sum of the Alloc cells ticked", () => {
+  test("adds the tenths the ticked rows print, not the unrounded shares", () => {
+    // today's AAPL, AMZN and SPY on the owner's ledger
+    const s = subtotalHoldings([
+      row({ allocationPct: 6.475920654411064 }),
+      row({ allocationPct: 8.175320690731345 }),
+      row({ allocationPct: 15.454985839403612 }),
+    ]);
+    expect(s.allocationShare).toBe("30.2%");
+    expect(subtotalHoldings([row({ allocationPct: 21.3886 }), row({ allocationPct: 8.1522 })]).allocationShare).toBe(
+      "29.6%",
+    );
+    expect(subtotalHoldings([row({ allocationPct: 33.8685 }), row({ allocationPct: 6.4576 })]).allocationShare).toBe(
+      "40.4%",
+    );
   });
 
   /**
-   * 🔴 The subtotal bar sat directly under the Alloc column it adds up, and the
-   * two disagreed about the same number. Ticking WMT alone on /investments —
-   * $43.70 of $109,204.16, or 0.040% — put "Share 0.0%" under a row already
-   * reading "<0.1%". A measured zero over a position the same screen prices.
+   * 🔴 Ticking WMT alone on /investments put "Share 0.0%" in the subtotal bar
+   * directly under a row whose own Alloc cell already read "<0.1%" — the same
+   * $43.70, two answers, one screen.
    */
-  test("a real sliver reads <0.1%, exactly as the column it subtotals does", () => {
-    expect(formatSharePct(0.04001679056915048)).toBe("<0.1%");
-    expect(formatSharePct(0.04001679056915048)).toBe(sharePercent(0.04001679056915048));
+  test("a lone sliver reads <0.1%, exactly as the row it subtotals does", () => {
+    expect(subtotalHoldings([row({ allocationPct: 0.04001679056915048 })]).allocationShare).toBe(
+      sharePercent(0.04001679056915048),
+    );
+    expect(subtotalHoldings([row({ allocationPct: 0.04001679056915048 })]).allocationShare).toBe("<0.1%");
+    // …and a sliver beside a printed row adds nothing a reader can see
+    expect(subtotalHoldings([row({ allocationPct: 0.0413 }), row({ allocationPct: 21.3886 })]).allocationShare).toBe(
+      "21.4%",
+    );
   });
 
-  /** a share that IS zero still prints a zero — the floor is for real slivers only */
-  test("only a nonzero share is floored", () => {
-    expect(formatSharePct(0)).toBe("0.0%");
-    expect(formatSharePct(0.05)).toBe("0.1%");
+  test("a share that IS zero still prints a zero, and one row prints its own cell", () => {
+    expect(subtotalHoldings([row({ allocationPct: 0 })]).allocationShare).toBe("0.0%");
+    expect(subtotalHoldings([row({ allocationPct: 8.000000000000002 })]).allocationShare).toBe("8.0%");
+    expect(subtotalHoldings([row({ allocationPct: 0.05 })]).allocationShare).toBe("0.1%");
+  });
+
+  test("an unshared row is left out of the sum as it is left out of the total", () => {
+    expect(subtotalHoldings([row({ allocationPct: 21.3886 }), row({ allocationPct: null })]).allocationShare).toBe(
+      "21.4%",
+    );
+    expect(subtotalHoldings([row({ allocationPct: null })]).allocationShare).toBeNull();
+    expect(subtotalHoldings([]).allocationShare).toBeNull();
+  });
+
+  test("the live region says the figure the bar prints", () => {
+    const s = subtotalHoldings([
+      row({ valueCents: 1_000_00, dayChangeCents: 0, allocationPct: 21.3886 }),
+      row({ valueCents: 1_000_00, dayChangeCents: 0, allocationPct: 8.1522 }),
+    ]);
+    expect(subtotalAnnouncement(s, "today")).toContain("29.6% of the portfolio");
   });
 });
 
