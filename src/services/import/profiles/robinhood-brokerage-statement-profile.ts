@@ -533,6 +533,12 @@ export function isRobinhoodBrokerageStatementText(text: string): boolean {
 /** `Total Funds Paid and Received $0.00 $26.64` — the Account Activity table's Debit and Credit column totals. */
 const TOTAL_FUNDS_RE = new RegExp(String.raw`^Total Funds Paid and Received ${MONEY} ${MONEY}$`);
 
+/** `Total Executed Trades Pending Settlement $0.00 $0.00` — the pending-trades table's Debit and Credit totals. */
+const PENDING_TITLE = "Executed Trades Pending Settlement";
+const TOTAL_PENDING_RE = new RegExp(String.raw`^Total ${PENDING_TITLE} ${MONEY} ${MONEY}$`);
+/** a row of that table carries a trade date or an amount; its title, note, header and a page break carry neither */
+const PENDING_ROW_RE = new RegExp(String.raw`\d{2}/\d{2}/\d{4}|${MONEY}`);
+
 type SectionRoute = { kind: "brokerage" } | { kind: "cash"; last4: string };
 
 /**
@@ -715,7 +721,8 @@ function brokerageStatements(lines: readonly Line[], texts: readonly string[], s
  *  - any printed securities, including a first month whose opening is `N/A`;
  *  - any Account Activity row that is not an `ITRF` (a Buy by the agent);
  *  - rows that do not sum to the printed Total Funds Paid and Received — the
- *    bank's own arithmetic, as the sweep table's check 3 is.
+ *    bank's own arithmetic, as the sweep table's check 3 is;
+ *  - any trade pending settlement — see `refusePendingTrades`.
  */
 function cashAccountStatement(
   lines: readonly Line[],
@@ -733,6 +740,8 @@ function cashAccountStatement(
     last4,
   );
   const txns = transferRows(own, who);
+  // after the Account Activity table is read, so a pending row is named as the pending trade it is
+  refusePendingTrades(own, who, last4);
   const accountHint: AccountHint = { institution: "Robinhood", last4 };
 
   // its first statement prints N/A for the opening: an observation, never a $0.00 opening it did not print
@@ -776,6 +785,49 @@ function refuseSecurities(texts: readonly string[], who: string, last4: string):
     throw new ParseError(
       PROFILE_ID,
       `${who} prints ${held} of securities, and the ledger tracks it as a cash account (····${last4}) — refusing to drop them`,
+    );
+  }
+}
+
+/**
+ * A cash account has no trade waiting to settle, and must SAY so.
+ *
+ * 🔴 Found by a second reader before any real statement printed one: the Executed Trades Pending Settlement table
+ * sits in #655929651's own section, below Account Activity, and Robinhood prints over it "These transactions may
+ * not be reflected in the other summaries". A Buy the agent executed on the 29th and Robinhood settles on the 1st
+ * is in NO other table that month — Total Securities still reads $0.00, Account Activity has no row — so the month
+ * imported as cash (measured on the real lines with such a row added: June a $26.64 observation, August a
+ * reconciled 2664 → 2664 period), and the owner's rule is that a section showing securities is refused.
+ *
+ * Every real month prints the table empty: `Total Executed Trades Pending Settlement $0.00 $0.00`, the title above
+ * it, and nothing between them but a note, a column header and (June) a page break. A missing total or title is
+ * refused too: then nothing shows that no trade is pending.
+ */
+function refusePendingTrades(own: readonly Line[], who: string, last4: string): void {
+  const totalAt = own.findIndex((l) => TOTAL_PENDING_RE.test(l.text));
+  if (totalAt === -1) {
+    throw new ParseError(
+      PROFILE_ID,
+      `${who} prints no Total ${PENDING_TITLE} line, so nothing shows no trade is pending — refusing to import it as a cash account (····${last4})`,
+    );
+  }
+  const titleAt = own.findIndex((l) => l.text === PENDING_TITLE);
+  if (titleAt === -1 || titleAt > totalAt) {
+    throw new ParseError(PROFILE_ID, `${who} prints no ${PENDING_TITLE} title above its total — refusing to read the table unbounded`);
+  }
+  const row = own.slice(titleAt + 1, totalAt).find((l) => PENDING_ROW_RE.test(l.text));
+  if (row) {
+    throw new ParseError(
+      PROFILE_ID,
+      `${who} prints a trade pending settlement — "${row.text}" — and the ledger tracks it as a cash account (····${last4}), refusing to drop it`,
+    );
+  }
+  const totals = TOTAL_PENDING_RE.exec((own[totalAt] as Line).text) as RegExpExecArray;
+  const pending = [totals[1], totals[2]].find((v) => parseAmountToCents(v as string) !== 0);
+  if (pending !== undefined) {
+    throw new ParseError(
+      PROFILE_ID,
+      `${who} prints ${pending} of trades pending settlement, and the ledger tracks it as a cash account (····${last4}) — refusing to drop them`,
     );
   }
 }

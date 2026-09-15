@@ -508,6 +508,85 @@ describe("a section tracked as a cash account", () => {
     expect(() => robinhoodBrokerageStatements(juneHolding, TRACKED_ALL)).toThrow(/#655929651.*\$12\.34 of securities/);
   });
 
+  test("⛔ refuses a cash-account section that prints no Total Securities line — nothing then shows it holds only cash", () => {
+    // 🔴 measured by a second reader: turning this refusal into a `return` left every test green
+    const july = [...asLines(ERA_C), ...quietMonth("07/01/2026 to 07/31/2026").filter((l) => !l.text.startsWith("Total Securities"))];
+    expect(() => robinhoodBrokerageStatements(july, TRACKED_ALL)).toThrow(/#655929651 prints no Total Securities line/);
+  });
+
+  /**
+   * #655929651's Executed Trades Pending Settlement table (747059b1…, lines 413–416): the page itself says these
+   * "may not be reflected in the other summaries". The Buy is invented — no statement has printed one — and set in
+   * the real table's columns.
+   */
+  const PENDING_TITLE = "Executed Trades Pending Settlement";
+  const pendingTotal = (debit: string, credit: string): Line =>
+    line(`Total Executed Trades Pending Settlement ${debit} ${credit}`, [
+      ["Total Executed Trades Pending Settlement", 36],
+      [debit, 691.65],
+      [credit, 745.05],
+    ]);
+  const pendingBuy = line("SPY Cash Buy 06/29/2026 07/01/2026 0.03 $650.00 $19.50", [
+    ["SPY", 36],
+    ["Cash", 190.65],
+    ["Buy", 329.1],
+    ["06/29/2026", 423.38],
+    ["07/01/2026", 511.28],
+    ["0.03", 601.09],
+    ["$650.00", 641.33],
+    ["$19.50", 691.65],
+  ]);
+  const juneWithPending = (rows: readonly Line[], total: Line): Line[] =>
+    JUNE.flatMap((l) => {
+      if (l.text === PENDING_TITLE) {
+        return [
+          l,
+          line("These transactions may not be reflected in the other summaries"),
+          line("Description Acct Type Transaction Trade Date Settle Date Qty Price Debit Credit", [
+            ["Debit", 691.65],
+            ["Credit", 745.05],
+          ]),
+          ...rows,
+        ];
+      }
+      return l.text.startsWith("Total Executed Trades Pending Settlement") ? [total] : [l];
+    });
+
+  test("⛔ refuses a trade pending settlement, though Total Securities still reads $0.00 — the agent's first Buy", () => {
+    const pending = juneWithPending([pendingBuy], pendingTotal("$19.50", "$0.00"));
+    // named as the pending trade it is — not read as an Account Activity row, whose table ended above it
+    expect(() => robinhoodBrokerageStatements(pending, TRACKED_ALL)).toThrow(/#655929651 prints a trade pending settlement — "SPY Cash Buy/);
+  });
+
+  test("⛔ refuses a pending row under $0.00 totals, and non-zero totals with no row — either half is enough", () => {
+    expect(() => robinhoodBrokerageStatements(juneWithPending([pendingBuy], pendingTotal("$0.00", "$0.00")), TRACKED_ALL)).toThrow(
+      /#655929651 prints a trade pending settlement — "SPY Cash Buy/,
+    );
+    expect(() => robinhoodBrokerageStatements(juneWithPending([], pendingTotal("$0.00", "$19.50")), TRACKED_ALL)).toThrow(
+      /#655929651 prints \$19\.50 of trades pending settlement/,
+    );
+  });
+
+  test("⛔ refuses a cash-account section that prints no pending-trades table — nothing then shows none is pending", () => {
+    const julyWithoutTotal = JULY.filter((l) => !l.text.startsWith("Total Executed Trades Pending Settlement"));
+    expect(() => robinhoodBrokerageStatements(julyWithoutTotal, TRACKED_ALL)).toThrow(
+      /#655929651 prints no Total Executed Trades Pending Settlement line/,
+    );
+    const julyWithoutTitle = JULY.filter((l) => l.text !== PENDING_TITLE);
+    expect(() => robinhoodBrokerageStatements(julyWithoutTitle, TRACKED_ALL)).toThrow(
+      /#655929651 prints no Executed Trades Pending Settlement title above its total/,
+    );
+  });
+
+  test("the real months' empty pending table, with the page break printed inside it, is nothing pending", () => {
+    const june = JUNE.flatMap((l) =>
+      l.text === PENDING_TITLE
+        ? [l, line("Page 21 of 22"), line("These transactions may not be reflected in the other summaries")]
+        : [l],
+    );
+    expect(robinhoodBrokerageStatements(june, TRACKED_ALL)[2]!.ledger).toEqual({ cents: 2664, asOf: "2026-06-30" });
+  });
+
   test("⛔ refuses a section tracked as an account type a brokerage statement cannot be", () => {
     const savings: KnownAccount = { last4: "9651", type: "savings", subtype: null };
     expect(() => robinhoodBrokerageStatements(JUNE, [BROKERAGE, savings])).toThrow(/#655929651.*savings/);
