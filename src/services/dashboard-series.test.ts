@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
-import { balanceAnchors } from "@/db/schema/balances";
+import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
@@ -120,5 +120,63 @@ describe("dashboardChartData", () => {
     const data = dashboardChartData(bundle.db, "accounts", ["nonexistent-id"]);
     expect(data.selectedAccountIds).toEqual(data.accounts.map((o) => o.id));
     expect(data.series.length).toBe(data.accounts.length);
+  });
+
+  function basisOn(accountId: string, day: string): string | undefined {
+    return bundle.db
+      .select({ basis: dailyBalances.basis })
+      .from(dailyBalances)
+      .where(and(eq(dailyBalances.accountId, accountId), eq(dailyBalances.day, day)))
+      .get()?.basis;
+  }
+
+  /**
+   * 🔴 A stored `carried` day on a cash or credit account means nothing posted
+   * since its recorded balance — `basisIsChecked` calls it checked, and so do
+   * provenance and the trust card. This service kept `{anchored, derived}` and
+   * drew every such day broken: on the owner's ledger (2026-09-15) the Owed line
+   * went dashed Sep 3 – 15 over Chase Sapphire's untouched Sep 2 statement
+   * balance, and the terrain counted 118 broken spans where 76 are.
+   */
+  test("a carried day on a cash or credit account draws solid, in a rollup and on its own line", () => {
+    const { a, card } = fixture();
+    // not green for the wrong reason: these days really are stored `carried`
+    expect(basisOn(card, "2026-07-03")).toBe("carried");
+    expect(basisOn(a, "2026-07-07")).toBe("carried");
+
+    const owed = dashboardChartData(bundle.db, "liabilities").series[0]!;
+    expect(owed.points.filter((p) => p.day >= "2026-07-01").every((p) => p.complete)).toBe(true);
+
+    const [aLine, cardLine] = dashboardChartData(bundle.db, "accounts", [a, card]).series;
+    expect(aLine!.points.find((p) => p.day === "2026-07-07")?.complete).toBe(true);
+    expect(cardLine!.points.find((p) => p.day === "2026-07-03")?.complete).toBe(true);
+  });
+
+  test("a replay nobody checks still draws dashed", () => {
+    const { a } = fixture();
+    txn(a, "2026-07-06", -500, null);
+    rebuildAccount(bundle.db, a, TODAY);
+    expect(basisOn(a, "2026-07-06")).toBe("derived_unverified");
+
+    const aLine = dashboardChartData(bundle.db, "accounts", [a]).series[0]!;
+    expect(aLine.points.find((p) => p.day === "2026-07-06")?.complete).toBe(false);
+  });
+
+  /**
+   * ⛔ An investment account's `carried` is a carried PRICE (or a recorded value
+   * held flat across a moving market), not a balance nothing moved.
+   */
+  test("an investment account's carried day stays dashed", () => {
+    const inv = createAccount(bundle.db, { institutionId: institutionId("Robinhood"), name: "Brokerage", type: "investment" });
+    anchor(inv, "2026-07-01", 500_000);
+    rebuildAccount(bundle.db, inv, TODAY);
+    expect(basisOn(inv, "2026-07-01")).toBe("anchored");
+    expect(basisOn(inv, "2026-07-03")).toBe("carried");
+
+    const line = dashboardChartData(bundle.db, "accounts", [inv]).series[0]!;
+    expect(line.points.find((p) => p.day === "2026-07-01")?.complete).toBe(true);
+    expect(line.points.find((p) => p.day === "2026-07-03")?.complete).toBe(false);
+    const assets = dashboardChartData(bundle.db, "assets").series[0]!;
+    expect(assets.points.find((p) => p.day === "2026-07-03")?.complete).toBe(false);
   });
 });

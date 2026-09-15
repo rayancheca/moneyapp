@@ -11,7 +11,8 @@ import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { BALANCE_BASES } from "@/db/schema/balances";
-import { accountCoverage, basisIsChecked } from "./coverage";
+import { ACCOUNT_TYPES } from "@/db/schema/accounts";
+import { accountCoverage, balanceDayIsExact, basisIsChecked } from "./coverage";
 
 /**
  * Coverage grading exists because the two questions "is this account's money
@@ -520,5 +521,37 @@ describe("basisIsChecked — the rule three surfaces were answering separately",
   test("every basis the schema allows has an answer", () => {
     // a new basis must be classified here deliberately rather than defaulting
     expect(BALANCE_BASES.filter(basisIsChecked)).toEqual(["anchored", "derived", "carried"]);
+  });
+});
+
+describe("balanceDayIsExact — what a chart may draw solid", () => {
+  /**
+   * 🔴 The dashboard's terrain and rollup lines kept a third local
+   * `{anchored, derived}` set, so every stored `carried` day on a cash or credit
+   * account drew broken. Measured 2026-09-15 on the owner's ledger: Chase
+   * Sapphire's rail read "+$82.72 since Feb 2025 · 1 unverified" and its Sep 15
+   * slug "this day is estimated" over 13 carried days that sit on the Sep 2
+   * statement with nothing posted — while the trust card on the same page calls
+   * such days "as proven as that balance, and not a gap".
+   */
+  test("a cash or credit account's day is exact exactly when it is checked", () => {
+    for (const type of ACCOUNT_TYPES.filter((t) => t !== "investment")) {
+      for (const basis of BALANCE_BASES) {
+        expect(balanceDayIsExact(type, basis), `${type} ${basis}`).toBe(basisIsChecked(basis));
+      }
+    }
+    expect(balanceDayIsExact("credit", "carried")).toBe(true);
+  });
+
+  /**
+   * ⛔ The type branch `accountCoverage` takes first. On an investment account
+   * `carried` is a CARRIED PRICE — `rebuildInvestmentHistory` writes it when a
+   * held symbol had no close that day, and value-anchor step-hold writes it for
+   * a recorded value held flat across a market that moved. Neither is an exact
+   * figure, so it stays dashed.
+   */
+  test("an investment account's carried day is a carried price, never exact", () => {
+    expect(balanceDayIsExact("investment", "carried")).toBe(false);
+    expect(BALANCE_BASES.filter((b) => balanceDayIsExact("investment", b))).toEqual(["anchored", "derived"]);
   });
 });

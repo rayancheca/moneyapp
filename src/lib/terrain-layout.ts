@@ -19,7 +19,9 @@
  *
  * 1. A SPAN THE LEDGER COULD NOT VERIFY IS NEVER DRAWN AS A SURFACE. derivation
  *    marks a span it cannot reconstruct as `gap` and refuses to publish it, and
- *    multi-series flags every carried/estimated day `complete: false`. Sampling
+ *    multi-series flags every estimated day `complete: false` — a replay nobody
+ *    checks, an investment's carried price, a day carried past an account's
+ *    last balance. Sampling
  *    a long axis down to drawable columns could hide exactly those days between
  *    two samples, so a column's span is verified only when EVERY day it stands
  *    for is (`spanVerification`) — and an unverified span comes back as its own
@@ -44,8 +46,9 @@ import { compareDates } from "./dates";
 export interface TerrainDayInput {
   day: string;
   valueCents: number;
-  /** false for any day the ledger cannot stand behind — a day carried across a
-   *  gap, or an estimated basis. Exactly multi-series' `complete` flag. */
+  /** false for any day the ledger cannot stand behind — a day carried past the
+   *  account's last balance, or a basis `balanceDayIsExact` calls estimated.
+   *  Exactly multi-series' `complete` flag. */
   verified: boolean;
 }
 

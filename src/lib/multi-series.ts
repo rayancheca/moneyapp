@@ -15,8 +15,9 @@
  * Honesty flags:
  *   - a rollup day is `complete` only when EVERY member account is covered
  *     (natively or carried) AND every covering value is exact — an estimated
- *     (derived_unverified/carried-basis) member day marks the whole rollup
- *     point estimated, so the chart draws it dashed;
+ *     member day (`balanceDayIsExact` false: a replay nobody checks, or an
+ *     investment's carried price) marks the whole rollup point estimated, so
+ *     the chart draws it dashed;
  *   - a per-account day is `complete` only when it is a native, exact day
  *     (carry-forward filler always draws dashed — same convention as the
  *     account-detail chart).
@@ -29,12 +30,14 @@
 import { compareDates } from "./dates";
 import { splitMissing } from "./coverage-label";
 
-/** One account's daily balance point. `exact` = anchored/derived basis. */
+/** One account's daily balance point. */
 export interface DailyBalancePoint {
   day: string;
   /** net-worth-signed integer cents (liabilities negative) */
   balanceCents: number;
-  /** false for estimated bases (carried / derived_unverified) */
+  /** `balanceDayIsExact` (services/coverage): false for a replay nobody checks
+   *  and for an investment's carried price — never for a cash account's
+   *  `carried` day, which is as proven as the balance it rests on */
   exact: boolean;
 }
 

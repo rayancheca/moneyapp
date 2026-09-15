@@ -36,6 +36,7 @@ import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { countPhrase } from "@/components/ui/blast-radius";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
 import { provenanceFor } from "@/services/provenance";
+import { balanceDayIsExact } from "@/services/coverage";
 import { Money } from "@/components/ui/Money";
 import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
@@ -305,7 +306,12 @@ export default async function AccountDetailPage({
               Balance history
             </h2>
             <BalanceChartPanel
-              points={series.map((p) => ({ day: p.day, balanceCents: sign * p.balanceCents, basis: p.basis }))}
+              points={series.map((p) => ({
+                day: p.day,
+                balanceCents: sign * p.balanceCents,
+                basis: p.basis,
+                exact: balanceDayIsExact(account.type, p.basis),
+              }))}
               today={today}
               viewState={balanceView}
               basePath={`/accounts/${id}`}

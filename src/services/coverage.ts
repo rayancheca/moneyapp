@@ -1,7 +1,7 @@
 import { cache } from "react";
 import { desc, eq } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
-import { accounts } from "@/db/schema/accounts";
+import { accounts, type AccountType } from "@/db/schema/accounts";
 import { balanceAnchors, dailyBalances, type BalanceBasis } from "@/db/schema/balances";
 import { statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
@@ -66,6 +66,33 @@ export type CoverageGrade =
  */
 export function basisIsChecked(basis: BalanceBasis): boolean {
   return basis === "anchored" || basis === "derived" || basis === "carried";
+}
+
+/**
+ * Whether a chart may draw one account's day as an exact figure — solid, not
+ * broken or dashed. `basisIsChecked`, behind the type branch `accountCoverage`
+ * takes first.
+ *
+ * ⛔ An investment account's `carried` is not a cash account's. There it is a
+ * CARRIED PRICE: `rebuildInvestmentHistory` writes it when a held symbol had no
+ * close that day, and value-anchor step-hold writes it for a recorded value held
+ * flat across a market that moved. Only `anchored` and `derived` (every close
+ * real) are exact figures there, and even those are market value rather than
+ * arithmetic, which is `accountCoverage`'s question, not this one.
+ *
+ * 🔴 The dashboard's chart modes kept a third local `{anchored, derived}` set,
+ * and /accounts/[id]'s balance chart a fourth. Measured 2026-09-15 on the
+ * owner's ledger: the terrain announced "118 spans are drawn broken, because the
+ * ledger cannot verify them" at 104 columns, Chase Sapphire's rail read "+$82.72
+ * since Feb 2025 · 1 unverified" and its Sep 15 slug "this day is estimated",
+ * and the Owed line went dashed Sep 3 – 15 — all over 13 stored `carried` days
+ * resting on the Sep 2 statement with nothing posted since. The trust card on
+ * the same page calls those days "as proven as that balance, and not a gap",
+ * and the hero's own net-worth series already drew them solid.
+ */
+export function balanceDayIsExact(accountType: AccountType, basis: BalanceBasis): boolean {
+  if (accountType === "investment") return basis === "anchored" || basis === "derived";
+  return basisIsChecked(basis);
 }
 
 export interface AccountCoverage {

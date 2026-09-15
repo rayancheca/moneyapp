@@ -25,11 +25,15 @@ import {
 
 /**
  * One account's balance history on the ScrubChart (ux-overhaul-plan §7.3). Exact
- * days (anchored / derived-from-transactions) draw solid; carried and unverified
- * days draw dashed — and the scrub SPEAKS the basis of the day it lands on, so
- * the "this level is estimated" honesty survives the move off the old
- * dual-Area BalanceChart. Values arrive already sign-adjusted (owed-frame for
+ * days draw solid and the rest dashed — and the scrub SPEAKS the basis of the day
+ * it lands on, so the "this level is estimated" honesty survives the move off the
+ * old dual-Area BalanceChart. Values arrive already sign-adjusted (owed-frame for
  * liabilities), so a rising line = a rising displayed figure.
+ *
+ * ⛔ Which days are exact is `balanceDayIsExact` (services/coverage), graded by
+ * the page. This kept its own `{anchored, derived}` and dashed every `carried`
+ * day on a cash or credit account — a day nothing has moved since its recorded
+ * balance, which the dialog on the same page counts as verified.
  *
  * ⛔ That frame is exactly why the accent cannot be read off the delta's sign
  * alone: in the owed frame a RISING line is a growing debt. `isLiability` is
@@ -43,6 +47,8 @@ export interface BalancePanelPoint {
   /** display cents, already sign-adjusted by the caller (owed-frame for debts) */
   balanceCents: number;
   basis: BalanceBasis;
+  /** `balanceDayIsExact` for this account — solid when true, dashed when not */
+  exact: boolean;
 }
 
 const BASIS_PHRASE: Record<BalanceBasis, string | null> = {
@@ -52,11 +58,6 @@ const BASIS_PHRASE: Record<BalanceBasis, string | null> = {
   carried: "carried forward",
   gap: "gap",
 };
-
-/** Exact days are solid; everything else is a dashed, estimated span. */
-function isExact(basis: BalanceBasis): boolean {
-  return basis === "anchored" || basis === "derived";
-}
 
 interface BalanceChartPanelProps {
   points: readonly BalancePanelPoint[];
@@ -100,7 +101,7 @@ export function BalanceChartPanel({
   });
   const isTable = isTableLens(state);
   const scrubPoints: ScrubPoint[] = useMemo(
-    () => points.map((p) => ({ day: p.day, valueCents: p.balanceCents, complete: isExact(p.basis) })),
+    () => points.map((p) => ({ day: p.day, valueCents: p.balanceCents, complete: p.exact })),
     [points],
   );
   const basisByDay = useMemo(() => new Map(points.map((p) => [p.day, p.basis] as const)), [points]);

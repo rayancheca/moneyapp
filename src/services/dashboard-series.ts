@@ -3,6 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { transactions } from "@/db/schema/transactions";
 import { buildDashboardSeries, type AccountSeriesInput, type DashboardMode } from "@/lib/multi-series";
 import { bridgeDashboardSeries, type BridgedDashboardSeries } from "@/lib/multi-series-bridge";
+import { balanceDayIsExact } from "./coverage";
 import { accountSeries } from "./derivation";
 import { listAccounts } from "./accounts";
 import { transferFloats } from "./in-flight";
@@ -36,9 +37,6 @@ export interface DashboardChartData {
   selectedAccountIds: string[];
 }
 
-/** exact bases: anchored/derived; carried + derived_unverified draw dashed */
-const EXACT_BASES = new Set(["anchored", "derived"]);
-
 function seriesInputs(db: AppDatabase): { inputs: AccountSeriesInput[]; options: DashboardAccountOption[] } {
   const active = listAccounts(db).filter((a) => a.isActive);
   /*
@@ -64,7 +62,8 @@ function seriesInputs(db: AppDatabase): { inputs: AccountSeriesInput[]; options:
     points: accountSeries(db, a.id).map((p) => ({
       day: p.day,
       balanceCents: p.balanceCents,
-      exact: EXACT_BASES.has(p.basis),
+      // ⛔ `coverage`'s rule, never a local set — see `balanceDayIsExact`
+      exact: balanceDayIsExact(a.type, p.basis),
     })),
   }));
   const options = active.map((a) => ({ id: a.id, label: a.name, isLiability: a.isLiability }));
