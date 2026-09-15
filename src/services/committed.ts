@@ -4,8 +4,8 @@ import { recurringSeries, type Cadence } from "@/db/schema/recurring";
 import { carCost, carEvidenceCaption, type CarCost } from "@/lib/car-cost";
 import {
   committedOutflows,
-  endingLead,
-  heaviestMonthOutflowCents,
+  heaviestMonth,
+  heaviestMonthEnding,
   monthHorizon,
   withinMonthHorizon,
   type CommittedOccurrence,
@@ -473,7 +473,7 @@ export interface CarCard {
   cost: CarCost;
   /** the car's own committed lines, largest first */
   book: CommittedOutflows;
-  /** when the monthly figure stops being true, naming the line — `carEvidenceCaption`; null when nothing ends */
+  /** when the monthly figure stops being true, naming the line — `carEvidenceCaption`; null when nothing billed in it ends */
   evidenceCaption: string | null;
   /** the spend baseline the share is measured against, car spend removed */
   baseline: SpendBaseline;
@@ -534,10 +534,12 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
    * "Lease and insurance, a month while both are billed $1,125.36" — $695.04 +
    * $357.58 + $72.74, the premium's remainder priced as a second monthly
    * premium. No month bills that: November is $767.78, December and January
-   * $1,052.62. `heaviestMonthOutflowCents` reads the months instead, and says
-   * why dropping every line "billed once" is the same defect three months on.
+   * $1,052.62. `heaviestMonth` reads the months instead, and says why
+   * dropping every line "billed once" is the same defect three months on — and
+   * what reading the months still cannot tell.
    */
-  const committedMonthlyCents = heaviestMonthOutflowCents(occurrences);
+  const heaviest = heaviestMonth(occurrences);
+  const committedMonthlyCents = heaviest.cents;
 
   // money already handed over: every posted row in the Car subtree that no
   // commitment accounts for
@@ -601,11 +603,16 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
    * 🔴 It was the EARLIEST `userEndsOn` of any car series, printed under the
    * hard-coded word "Insurance". On 2026-09-15 that was the one-payment Nov 11
    * balance, beside a runway card naming the premium's Jan 11, 2027 — and a
-   * lease ending in 2028 would have been printed as "Insurance" too. The book
-   * already knows which lines stop inside it; `endingLead` is the runway card's
-   * own choice of which one to name.
+   * lease ending in 2028 would have been printed as "Insurance" too.
+   *
+   * 🔴 AND THEN IT NAMED THE RUNWAY CARD'S LEAD (`endingLead`), the line that
+   * lowers the RATE most — a different question. A review built a lease ending
+   * Feb 15, 2027 beside a policy ending Nov 11, 2026 (2026-09-15): the card
+   * dated the lease over a monthly figure holding the premium, which stops
+   * three months sooner. `heaviestMonthEnding` names the line whose end stops
+   * THIS figure. Computed once: `evidencedThrough` and the sentence share it.
    */
-  const ending = endingLead(book);
+  const ending = heaviestMonthEnding(book, heaviest);
 
   return {
     cost: carCost({
@@ -618,7 +625,7 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
       evidencedThrough: ending?.endsOn ?? null,
     }),
     book,
-    evidenceCaption: carEvidenceCaption(book),
+    evidenceCaption: carEvidenceCaption(ending, months),
     baseline: { ...baseline, monthlyCents: baselineMonthlySpendCents },
     today,
   };

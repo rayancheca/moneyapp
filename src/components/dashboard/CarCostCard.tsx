@@ -62,7 +62,7 @@ export function CarCostCard({ data }: { data: CarCardData }) {
               than throughout". The card already discloses the end date at the
               bottom — and a disclosure underneath does not undo a wrong label on
               top. `monthlyCents` is the heaviest calendar month the book bills
-              (`heaviestMonthOutflowCents`), which is exactly "a month while both
+              (`heaviestMonth`), which is exactly "a month while both
               are billed" — not one occurrence of each series, which priced a
               one-payment balance as a second premium on 2026-09-15. */}
           {/* ⚠️ The qualifier goes on its OWN line, the shape the row beneath
@@ -124,8 +124,8 @@ export function CarCostCard({ data }: { data: CarCardData }) {
         </p>
       )}
 
-      {/* ⛔ Names the commitment it dates — `carEvidenceCaption`, the runway
-          card's own choice. It read "Insurance is evidenced through Nov 11,
+      {/* ⛔ Names the commitment it dates — `carEvidenceCaption`, the line
+          whose end stops the monthly figure (`heaviestMonthEnding`). It read "Insurance is evidenced through Nov 11,
           2026" on 2026-09-15: the earliest end of any car series, under a
           hard-coded word, beside a runway card saying Jan 11, 2027. */}
       {data.evidenceCaption && (

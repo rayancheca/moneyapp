@@ -25,7 +25,7 @@ import type { Cadence } from "@/db/schema/recurring";
 import { addCalendarMonths, compareDates, daysInMonthOf, monthKey, withDayOfMonth } from "@/lib/dates";
 import { monthWindowLabel } from "@/lib/format-date";
 import { dayWindowLabel } from "@/lib/period";
-import { levelledMonthlyCents } from "@/lib/income-basis";
+import { levelledMonthlyCents, OCCURRENCES_PER_YEAR } from "@/lib/income-basis";
 import { formatCents } from "@/lib/money";
 
 /** Where a committed payment came from — already late, or still to come. */
@@ -410,8 +410,43 @@ export function endingOthersClause(others: number): string {
   return others === 0 ? "" : others === 1 ? ", and one other does too" : `, and ${others} others do too`;
 }
 
+/** The heaviest calendar month of a set of payments — see `heaviestMonth`. */
+export interface HeaviestMonth {
+  /** the most money out any one calendar month bills, positive magnitude; 0 when nothing goes out */
+  cents: number;
+  /** the LAST calendar month (`yyyy-mm`) that bills `cents`; null when nothing goes out */
+  month: string | null;
+  /** the series billed in that month */
+  seriesIds: readonly string[];
+}
+
+/** One series' payments inside one calendar month. */
+interface MonthBucket {
+  cents: number;
+  count: number;
+  cadence: Cadence;
+}
+
 /**
- * The most money out any ONE calendar month of these occurrences bills.
+ * What one series adds to a calendar month it bills in.
+ *
+ * ⛔ A series that bills MORE OFTEN THAN MONTHLY counts at its levelled rate,
+ * not at however many of its payments this month happens to hold. A review
+ * measured the alternative on 2026-09-15: a $20 weekly line beside the lease
+ * priced October at five Fridays ($795.04) — and November, with four, would
+ * have said $775.04 — so the calendar's extra Friday picked "a month". Levelled,
+ * every month it bills says $781.71. A monthly-or-longer series bills at most
+ * once a calendar month, so its month holds exactly the bill.
+ */
+function monthContributionCents(bucket: MonthBucket): number {
+  return OCCURRENCES_PER_YEAR[bucket.cadence] > OCCURRENCES_PER_YEAR.monthly
+    ? levelledMonthlyCents(Math.round(bucket.cents / bucket.count), bucket.cadence)
+    : bucket.cents;
+}
+
+/**
+ * The most money out any ONE calendar month of these occurrences bills — and
+ * which month, and which series bill in it.
  *
  * 🔴 "A month, while both are billed" was the FIRST occurrence of every series,
  * summed. On the owner's ledger 2026-09-15 that priced the one-payment Nov 11
@@ -422,20 +457,83 @@ export function endingOthersClause(others: number): string {
  * ⛔ AND NOT "drop every line billed once". A book cannot tell a one-off from a
  * series on its LAST payment: on 2026-12-12 the real premium has one payment
  * left (Jan 11) and would be dropped with the balance, printing the lease alone
- * over a January that bills both. The months themselves can tell — so this
- * reads them.
+ * over a January that bills both.
+ *
+ * ⚠️ WHAT READING THE MONTHS DOES NOT FIX, EITHER. The fix above is right on the
+ * owner's ledger because the balance falls in NOVEMBER, a month the premium
+ * does not bill. Had it fallen on Dec 11 it would be summed in beside the
+ * premium and print $1,125.36 again — a review demonstrated exactly that on
+ * 2026-09-15. Its occurrences are indistinguishable from a premium paid ahead
+ * to its last payment (one payment, ending on it), which DOES bill that month,
+ * so there is nothing in a book to drop it by. Disclosed rather than guessed
+ * around; its test pins the two books to one answer.
+ *
+ * The LAST month that reaches the most is the one kept, because the sentence
+ * that dates this figure asks when it stops being what he pays — see
+ * `heaviestMonthEnding`.
  *
  * ⛔ Money in is never netted against money out (this module's rule): an inflow
  * does not lower a month.
  */
-export function heaviestMonthOutflowCents(occurrences: readonly CommittedOccurrence[]): number {
-  const byMonth = new Map<string, number>();
+export function heaviestMonth(occurrences: readonly CommittedOccurrence[]): HeaviestMonth {
+  const byMonth = new Map<string, Map<string, MonthBucket>>();
   for (const o of occurrences) {
     if (o.amountCents >= 0) continue;
-    const month = monthKey(o.date);
-    byMonth.set(month, (byMonth.get(month) ?? 0) - o.amountCents);
+    const key = monthKey(o.date);
+    const series = byMonth.get(key) ?? new Map<string, MonthBucket>();
+    const bucket = series.get(o.seriesId) ?? { cents: 0, count: 0, cadence: o.cadence };
+    series.set(o.seriesId, { ...bucket, cents: bucket.cents - o.amountCents, count: bucket.count + 1 });
+    byMonth.set(key, series);
   }
-  return Math.max(0, ...byMonth.values());
+
+  const months = [...byMonth.entries()].sort(([a], [b]) => a.localeCompare(b));
+  return months.reduce<HeaviestMonth>(
+    (heaviest, [month, series]) => {
+      const cents = [...series.values()].reduce((sum, bucket) => sum + monthContributionCents(bucket), 0);
+      // `>=`: a later month that ties replaces an earlier one — the LAST is kept
+      return cents >= heaviest.cents ? { cents, month, seriesIds: [...series.keys()] } : heaviest;
+    },
+    { cents: 0, month: null, seriesIds: [] },
+  );
+}
+
+/**
+ * WHICH ending commitment the monthly figure stops with — the car card's
+ * sentence under `heaviestMonth`, as a value.
+ *
+ * 🔴 IT BORROWED THE RUNWAY CARD'S ANSWER TO A DIFFERENT QUESTION. The car card
+ * named `endingLead`'s line: the one that lowers the RATE most, which is right
+ * for the runway's rate sentence. The car card's sentence says when "the
+ * monthly figure above stops being what you pay", and that figure is the
+ * heaviest month. A review built the book where the two differ (2026-09-15): a
+ * lease ending Feb 15, 2027 and a policy whose last premium is Nov 11, 2026.
+ * The card printed "Car lease stops inside the next 12 months — evidenced
+ * through Feb 15, 2027 …" over a $1,052.62 that holds the premium, which is not
+ * what he pays after Nov 11, 2026.
+ *
+ * The figure stops being true when a line billed in the LAST month that
+ * reaches it stops, so the lead is the EARLIEST-ending of those lines, and the
+ * date printed is its own — a name and a date from one line. Null when none of
+ * them ends inside the horizon: a line ending outside that month (the
+ * one-payment Nov 11 balance, before a premium that runs on) does not stop the
+ * figure. On the owner's ledger 2026-09-15 this and `endingLead` name the same
+ * line, the premium, through Jan 11, 2027.
+ *
+ * `others` counts every OTHER line that stops inside the horizon, for
+ * `endingOthersClause`.
+ */
+export function heaviestMonthEnding(
+  book: { lines: readonly CommittedLine[] },
+  heaviest: HeaviestMonth,
+): EndingLead | null {
+  const ending = book.lines.filter(
+    (l): l is CommittedLine & { endsOn: string } => l.endsInHorizon && l.endsOn !== null,
+  );
+  const billed = new Set(heaviest.seriesIds);
+  // stable: lines arrive largest first, so a tie on the day names the larger
+  const lead = ending.filter((l) => billed.has(l.seriesId)).sort((a, b) => compareDates(a.endsOn, b.endsOn))[0];
+  if (lead === undefined) return null;
+  return { lead, endsOn: lead.endsOn, others: ending.length - 1 };
 }
 
 /**

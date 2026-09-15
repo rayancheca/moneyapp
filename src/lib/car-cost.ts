@@ -12,7 +12,7 @@
  * evidence runs out is published rather than assumed past.
  */
 
-import { endingLead, endingOthersClause, type CommittedLine } from "@/lib/committed";
+import { endingOthersClause, type EndingLead } from "@/lib/committed";
 import { dayWindowLabel } from "@/lib/period";
 
 export interface CarCostInput {
@@ -128,17 +128,22 @@ export function carCost(input: CarCostInput): CarCost {
  * hard-coded word. The earliest was a one-payment $72.74 balance; the premium
  * runs to Jan 11, 2027, which is what the runway card two tiles away said.
  *
- * ⛔ THE RUNWAY CARD'S CHOICE, not a second one — `endingLead` picks the line
- * and `endingOthersClause` counts the rest, so the two cards cannot name
- * different commitments or different dates for one book. Null when nothing
- * stops inside the horizon: an end date past it does not stop the monthly
- * figure inside it.
+ * ⛔ THE LINE THAT STOPS THE MONTHLY FIGURE — `heaviestMonthEnding` — and NOT
+ * the runway card's lead. This sentence first borrowed that one (`endingLead`,
+ * the line that lowers the RATE most), and a review built the book where the
+ * two differ (2026-09-15): a lease ending Feb 15, 2027 beside a policy whose
+ * last premium is Nov 11, 2026 printed "Car lease stops … evidenced through
+ * Feb 15, 2027" over a monthly figure holding the premium. The caller computes
+ * `ending` once and publishes its date as `evidencedThrough` too, so the
+ * sentence and that field cannot disagree; `endingOthersClause` is shared, so
+ * the count is spelled as the runway spells it. Null when nothing billed in the
+ * monthly figure stops inside the horizon — an end date past it, or a line that
+ * bills outside the heaviest month, does not stop that figure.
  */
-export function carEvidenceCaption(book: { lines: readonly CommittedLine[]; months: number }): string | null {
-  const ending = endingLead(book);
+export function carEvidenceCaption(ending: EndingLead | null, months: number): string | null {
   if (ending === null) return null;
   return (
-    `${ending.lead.name} stops inside the next ${book.months} months — evidenced through ` +
+    `${ending.lead.name} stops inside the next ${months} months — evidenced through ` +
     `${dayWindowLabel(ending.endsOn, ending.endsOn)}, with no renewal in the ledger${endingOthersClause(ending.others)} — ` +
     `so the monthly figure above stops being what you pay after that date.`
   );

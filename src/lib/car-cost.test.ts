@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { carCost, carEvidenceCaption, type CarCostInput } from "./car-cost";
-import { committedOutflows, type CommittedOccurrence } from "./committed";
+import { committedOutflows, heaviestMonth, heaviestMonthEnding, type CommittedOccurrence } from "./committed";
 
 /**
  * The car, measured on the live ledger 2026-08-24.
@@ -151,25 +151,47 @@ describe("carCost — what it refuses to claim", () => {
  * series (a one-payment balance), and the word was hard-coded.
  */
 describe("carEvidenceCaption", () => {
-  const book = (occurrences: CommittedOccurrence[]) =>
-    committedOutflows({ from: "2026-09-15", to: "2027-09-15", months: 12, occurrences, overdue: [] });
+  const caption = (occurrences: CommittedOccurrence[]) =>
+    carEvidenceCaption(
+      heaviestMonthEnding(
+        committedOutflows({ from: "2026-09-15", to: "2027-09-15", months: 12, occurrences, overdue: [] }),
+        heaviestMonth(occurrences),
+      ),
+      12,
+    );
   const line = (name: string, cents: number, dates: string[], endsOn: string | null): CommittedOccurrence[] =>
     dates.map((date) => ({ seriesId: name, name, date, amountCents: cents, lastMatchedOn: null, isStale: true, cadence: "monthly", endsOn }));
 
   test("nothing ending inside the horizon is silence", () => {
-    expect(carEvidenceCaption(book(line("Car lease", -69504, ["2026-09-15"], "2028-08-15")))).toBeNull();
+    expect(carEvidenceCaption(null, 12)).toBeNull();
+    expect(caption(line("Car lease", -69504, ["2026-09-15"], "2028-08-15"))).toBeNull();
   });
 
   test("names the commitment it dates, and counts the others that end", () => {
-    const caption = carEvidenceCaption(
-      book([
-        ...line("Car lease", -69504, ["2026-09-15", "2026-10-15"], "2028-08-15"),
+    expect(
+      caption([
+        ...line("Car lease", -69504, ["2026-09-15", "2026-10-15", "2026-11-15", "2026-12-15", "2027-01-15"], "2028-08-15"),
         ...line("Car insurance", -35758, ["2026-12-11", "2027-01-11"], "2027-01-11"),
         ...line("Nov 11 balance", -7274, ["2026-11-11"], "2026-11-11"),
       ]),
-    )!;
-    expect(caption).toBe(
+    ).toBe(
       "Car insurance stops inside the next 12 months — evidenced through Jan 11, 2027, with no renewal in the ledger, and one other does too — so the monthly figure above stops being what you pay after that date.",
+    );
+  });
+
+  /**
+   * 🔴 Built by a review on 2026-09-15, when this sentence named the runway's
+   * lead: "Car lease stops inside the next 12 months — evidenced through Feb 15,
+   * 2027 …" over $1,052.62 a month that holds a premium whose last payment is
+   * Nov 11, 2026.
+   */
+  test("dates the line that stops the monthly figure, when it is not the line that lowers the rate most", () => {
+    const text = caption([
+      ...line("Car lease", -69504, ["2026-09-15", "2026-10-15", "2026-11-15", "2026-12-15", "2027-01-15", "2027-02-15"], "2027-02-15"),
+      ...line("Car insurance", -35758, ["2026-10-11", "2026-11-11"], "2026-11-11"),
+    ]);
+    expect(text).toBe(
+      "Car insurance stops inside the next 12 months — evidenced through Nov 11, 2026, with no renewal in the ledger, and one other does too — so the monthly figure above stops being what you pay after that date.",
     );
   });
 });

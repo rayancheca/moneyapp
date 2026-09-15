@@ -6,7 +6,8 @@ import {
   monthCount,
   endingLead,
   endingOthersClause,
-  heaviestMonthOutflowCents,
+  heaviestMonth,
+  heaviestMonthEnding,
   COMMITTED_ORIGIN_LABEL,
   monthHorizon,
   shrinkCaption,
@@ -604,24 +605,132 @@ describe("endingLead", () => {
  * occurrence of every series — $1,125.36 on the owner's ledger, a month no
  * calendar holds. What a month bills is read off the months themselves.
  */
-describe("heaviestMonthOutflowCents", () => {
+describe("heaviestMonth", () => {
   test("no payments is no month", () => {
-    expect(heaviestMonthOutflowCents([])).toBe(0);
+    expect(heaviestMonth([])).toEqual({ cents: 0, month: null, seriesIds: [] });
   });
 
-  test("the month that bills the most, summed by calendar month", () => {
+  test("the month that bills the most, summed by calendar month, and who bills in it", () => {
     const occurrences = [
       ...occ("Lease", -69504, ["2026-09-15", "2026-10-15", "2026-11-15", "2026-12-15"], null),
       ...occ("Insurance", -35758, ["2026-12-11"], null),
       ...occ("Balance", -7274, ["2026-11-11"], null),
     ];
-    expect(heaviestMonthOutflowCents(occurrences)).toBe(69504 + 35758);
+    const heaviest = heaviestMonth(occurrences);
+    expect(heaviest.cents).toBe(69504 + 35758);
+    expect(heaviest.month).toBe("2026-12");
+    expect([...heaviest.seriesIds].sort()).toEqual(["insurance", "lease"]);
+  });
+
+  /* the figure is dated by when it STOPS being paid, so a tie keeps the later month */
+  test("a tie keeps the later month", () => {
+    const occurrences = [
+      ...occ("Lease", -69504, ["2026-12-15", "2027-01-15", "2027-02-15"], null),
+      ...occ("Insurance", -35758, ["2026-12-11", "2027-01-11"], null),
+    ];
+    expect(heaviestMonth(occurrences).month).toBe("2027-01");
   });
 
   /* ⛔ money in is never netted against money out — the rule this module owns */
   test("money in does not lower a month", () => {
     const occurrences = [...occ("Lease", -69504, ["2026-09-15"], null), ...occ("Refund", 50000, ["2026-09-20"], null)];
-    expect(heaviestMonthOutflowCents(occurrences)).toBe(69504);
+    expect(heaviestMonth(occurrences).cents).toBe(69504);
+  });
+
+  /**
+   * 🔴 A review measured this on 2026-09-15: the lease plus $20 weekly on
+   * October 2026's five Fridays read $795.04 — and the month with four would
+   * have read $775.04 — so which month had the extra Friday chose "a month".
+   */
+  test("a series billed more often than monthly counts at its levelled rate, whichever month has the extra Friday", () => {
+    const fridays = ["2026-10-02", "2026-10-09", "2026-10-16", "2026-10-23", "2026-10-30", "2026-11-06", "2026-11-13", "2026-11-20", "2026-11-27"];
+    const occurrences = [
+      ...occ("Lease", -69504, ["2026-10-15", "2026-11-15"], null),
+      ...occ("Parking", -2000, fridays, null, { cadence: "weekly" }),
+    ];
+    const heaviest = heaviestMonth(occurrences);
+    // $20 × 52 ÷ 12 = $86.67 — October (five Fridays) and November (four) alike, so the later is kept
+    expect(heaviest.cents).toBe(69504 + 8667);
+    expect(heaviest.month).toBe("2026-11");
+    expect(heaviest.cents).not.toBe(69504 + 5 * 2000);
+  });
+
+  /* a monthly-or-longer series bills at most once a calendar month: its month holds the bill */
+  test("a quarterly bill counts in full in the month it bills", () => {
+    const occurrences = [
+      ...occ("Lease", -69504, ["2026-10-15", "2026-11-15"], null),
+      ...occ("Registration", -30000, ["2026-11-02"], null, { cadence: "quarterly" }),
+    ];
+    expect(heaviestMonth(occurrences).cents).toBe(69504 + 30000);
+  });
+
+  /**
+   * ⚠️ THE LIMIT, PINNED. A one-payment REMAINDER in a month the bill it remains
+   * of also bills is summed in beside it — a review demonstrated $1,125.36 again
+   * with the owner's $72.74 moved from Nov 11 to Dec 11 (2026-09-15). It cannot
+   * be dropped: its occurrences are the same as a second policy paid ahead to
+   * its last payment, which does bill that month. On the owner's ledger the
+   * balance falls in November, which the premium does not bill.
+   */
+  test("a one-payment remainder beside its own bill counts, because a last payment paid ahead looks the same", () => {
+    const lease = occ("Lease", -69504, ["2026-12-15"], null);
+    const premium = occ("Car insurance", -35758, ["2026-12-11"], "2026-08-12", { endsOn: "2027-01-11" });
+    const remainder = [...lease, ...premium, ...occ("Dec 11 balance", -7274, ["2026-12-11"], null, { endsOn: "2026-12-11" })];
+    const lastPaymentPaidAhead = [...lease, ...premium, ...occ("Roadside cover", -7274, ["2026-12-11"], null, { endsOn: "2026-12-11" })];
+    expect(heaviestMonth(lastPaymentPaidAhead).cents).toBe(69504 + 35758 + 7274);
+    expect(heaviestMonth(remainder).cents).toBe(heaviestMonth(lastPaymentPaidAhead).cents);
+  });
+});
+
+/**
+ * 🔴 The car card's date came from `endingLead`, the runway's answer to "which
+ * ending line lowers the RATE most". The card asks when its MONTHLY figure
+ * stops being what he pays — and a review built the book where those are two
+ * different lines (2026-09-15).
+ */
+describe("heaviestMonthEnding", () => {
+  const TWELVE = { from: "2026-09-15", to: "2027-09-15", months: 12, overdue: [] };
+  const LEASE_YEAR = ["2026-09", "2026-10", "2026-11", "2026-12", "2027-01", "2027-02", "2027-03", "2027-04", "2027-05", "2027-06", "2027-07", "2027-08"];
+  const endingOf = (occurrences: CommittedOccurrence[]) =>
+    heaviestMonthEnding(committedOutflows({ ...TWELVE, occurrences }), heaviestMonth(occurrences));
+
+  test("a lease that ends after the policy: the policy stops the figure first, though the lease lowers the rate more", () => {
+    const occurrences = [
+      ...occ("Car lease", -69504, LEASE_YEAR.slice(0, 6).map((m) => `${m}-15`), null, { endsOn: "2027-02-15" }),
+      ...occ("Car insurance", -35758, ["2026-10-11", "2026-11-11"], null, { endsOn: "2026-11-11" }),
+    ];
+    const ending = endingOf(occurrences)!;
+    expect([ending.lead.name, ending.endsOn, ending.others]).toEqual(["Car insurance", "2026-11-11", 1]);
+    // the runway's rate sentence leads with the lease, and is right to
+    expect(endingLead(committedOutflows({ ...TWELVE, occurrences }))!.lead.name).toBe("Car lease");
+  });
+
+  test("the owner's car on 2026-09-15: the premium through Jan 11, 2027 — the line the runway names too", () => {
+    const occurrences = [
+      ...occ("Car lease", -69504, LEASE_YEAR.map((m) => `${m}-15`), null, { endsOn: "2028-08-15" }),
+      ...occ("Car insurance", -35758, ["2026-12-11", "2027-01-11"], "2026-08-12", { endsOn: "2027-01-11" }),
+      ...occ("Nov 11 balance", -7274, ["2026-11-11"], null, { endsOn: "2026-11-11" }),
+    ];
+    const ending = endingOf(occurrences)!;
+    expect([ending.lead.name, ending.endsOn, ending.others]).toEqual(["Car insurance", "2027-01-11", 1]);
+    expect(endingLead(committedOutflows({ ...TWELVE, occurrences }))!.lead.name).toBe("Car insurance");
+  });
+
+  /* the balance stops inside the horizon, but in a month lighter than the
+     lease and a premium that runs on — so the figure does not stop with it;
+     `endingLead` would have named it */
+  test("a line that ends outside the heaviest month does not stop the figure", () => {
+    const occurrences = [
+      ...occ("Car lease", -69504, LEASE_YEAR.map((m) => `${m}-15`), null),
+      ...occ("Car insurance", -35758, LEASE_YEAR.slice(3).map((m) => `${m}-11`), "2026-08-12"),
+      ...occ("Nov 11 balance", -7274, ["2026-11-11"], null, { endsOn: "2026-11-11" }),
+    ];
+    expect(endingOf(occurrences)).toBeNull();
+    expect(endingLead(committedOutflows({ ...TWELVE, occurrences }))!.lead.name).toBe("Nov 11 balance");
+  });
+
+  test("nothing ending is no lead", () => {
+    expect(endingOf(occ("Car lease", -69504, LEASE_YEAR.map((m) => `${m}-15`), null))).toBeNull();
   });
 });
 

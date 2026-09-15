@@ -1097,7 +1097,7 @@ describe("carCard", () => {
    * of any car series and printed it under a hard-coded word; the earliest was
    * the one-payment balance, and after it he still pays the premium twice.
    */
-  test("names the commitment whose end it prints, the one the runway card leads with", () => {
+  test("names the commitment whose end it prints — on the owner's car, the one the runway card leads with too", () => {
     ownersCar();
     const c = carCard(bundle.db, "2026-09-15")!;
     expect(c.cost.evidencedThrough).toBe("2027-01-11");
@@ -1115,6 +1115,25 @@ describe("carCard", () => {
     const c = carCard(bundle.db, "2026-09-15")!;
     expect(c.cost.evidencedThrough).toBeNull();
     expect(c.evidenceCaption).toBeNull();
+  });
+
+  /**
+   * 🔴 A review built this car on 2026-09-15, when the card named the runway
+   * card's lead — the line that lowers the RATE most. It read "Car lease stops
+   * inside the next 12 months — evidenced through Feb 15, 2027 … so the monthly
+   * figure above stops being what you pay after that date" over $1,052.62 a
+   * month that includes a premium whose last payment is Nov 11, 2026.
+   */
+  test("dates the line that stops the monthly figure, not the line that lowers the rate most", () => {
+    const carId = createCarCategory();
+    addSeries({ name: "Car lease", kind: "bill", nextExpectedOn: "2026-09-15", amountCents: -69504, userCategoryId: carId, userEndsOn: "2027-02-15" });
+    addSeries({ name: "Car insurance", kind: "bill", nextExpectedOn: "2026-10-11", amountCents: -35758, userCategoryId: carId, userEndsOn: "2026-11-11" });
+    const c = carCard(bundle.db, "2026-09-15")!;
+    expect(c.cost.monthlyCents).toBe(69504 + 35758);
+    expect(c.cost.evidencedThrough).toBe("2026-11-11");
+    expect(c.evidenceCaption).toBe(
+      "Car insurance stops inside the next 12 months — evidenced through Nov 11, 2026, with no renewal in the ledger, and one other does too — so the monthly figure above stops being what you pay after that date.",
+    );
   });
 
   /**
