@@ -178,20 +178,107 @@ describe("THE account order, wherever accounts are listed", () => {
  * tell the copy from the rule: they differ only on the day one of them changes.
  * `ACCOUNT_ORDER`'s own docstring records the order spelled out seven times and
  * four of them wrong.
+ *
+ * 🔴 The first version of this guard matched only `asc(accounts.displayOrder)`.
+ * Drizzle sorts a bare column ascending, so `institutionGroups` put back as
+ * `.orderBy(asc(institutions.name), accounts.displayOrder, asc(accounts.name))`
+ * got past it with all seven tests green, and so did `desc(…)`, a `sql`
+ * template, a comparator and a raw `ORDER BY display_order`. The guard now
+ * looks for the COLUMN rather than for one way of wrapping it.
  */
-test("no source file spells the account order out by hand", () => {
-  const src = path.join(process.cwd(), "src");
-  const handSpelled = /asc\(\s*accounts\.displayOrder\s*\)/;
-  const offenders: string[] = [];
-  const walk = (dir: string): void => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) && handSpelled.test(fs.readFileSync(full, "utf8"))) {
-        offenders.push(path.relative(src, full));
+describe("no source file spells the account order out by hand", () => {
+  test("the one home is found, and nothing else is", () => {
+    const src = path.join(process.cwd(), "src");
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) && spellsAccountOrder(fs.readFileSync(full, "utf8"))) {
+          offenders.push(path.relative(src, full));
+        }
       }
-    }
-  };
-  walk(src);
-  expect(offenders).toEqual(["services/account-order.ts"]);
+    };
+    walk(src);
+    expect(offenders).toEqual(["services/account-order.ts"]);
+  });
+
+  test.each([
+    ["the copy institutionGroups carried", ".orderBy(asc(institutions.name), asc(accounts.displayOrder), asc(accounts.name))"],
+    ["a bare column, which drizzle sorts ascending", ".orderBy(asc(institutions.name), accounts.displayOrder, asc(accounts.name))"],
+    ["descending", ".orderBy(desc(accounts.displayOrder))"],
+    ["a sql template", ".orderBy(sql`${accounts.displayOrder} asc`)"],
+    ["keys built elsewhere and spread", "const KEYS = [institutions.name, accounts.displayOrder];\nq.orderBy(...KEYS)"],
+    ["a comparator", "rows.sort((a, b) => a.displayOrder - b.displayOrder)"],
+    ["a relational query", 'db.query.accounts.findMany({ orderBy: { displayOrder: "asc" } })'],
+    ["a destructured column", "const { displayOrder } = accounts;\nq.orderBy(displayOrder)"],
+    ["raw SQL", 'sqlite.prepare("SELECT id FROM accounts ORDER BY display_order, name")'],
+  ])("flags %s", (_label, source) => {
+    expect(spellsAccountOrder(source)).toBe(true);
+  });
+
+  test.each([
+    ["the rule itself, spread", ".orderBy(...ACCOUNT_ORDER)"],
+    ["a select projection", ".select({ id: accounts.id, displayOrder: accounts.displayOrder })"],
+    ["the drag-reorder write", "tx.update(accounts).set({ displayOrder: index }).where(eq(accounts.id, id)).run();"],
+    ["the schema column", 'displayOrder: integer("display_order").notNull().default(0),'],
+    ["a line comment quoting a wrong order", "// this page ran its own `orderBy(displayOrder, name)`\nq.orderBy(...ACCOUNT_ORDER)"],
+    ["a docstring quoting a wrong order", "/**\n * ran its own `orderBy(displayOrder, name)`,\n */\nq.orderBy(...ACCOUNT_ORDER)"],
+    ["a URL in a string", 'const u = "https://example.com"; q.orderBy(...ACCOUNT_ORDER)'],
+  ])("does not flag %s", (_label, source) => {
+    expect(spellsAccountOrder(source)).toBe(false);
+  });
 });
+
+/**
+ * Whether `source` orders by `displayOrder` itself instead of spreading
+ * `ACCOUNT_ORDER`. Two readings, because the column can be named two ways:
+ *
+ *   - any `x.displayOrder` READ other than a select projection
+ *     (`displayOrder: accounts.displayOrder`). Measured 2026-09-15, every read
+ *     under src/ is one of those or `ACCOUNT_ORDER` itself, so a new read is a
+ *     sort key until shown otherwise: a wrapped or bare column, a `sql`
+ *     template, a key array spread later, a comparator.
+ *   - any ordering clause (`orderBy(…)`, `orderBy: …`, SQL `ORDER BY …`) that
+ *     names `displayOrder` or `display_order` without a dot: a relational
+ *     query's `{ displayOrder: "asc" }`, a destructured column, raw SQL.
+ *
+ * Comments are stripped first: accounts.ts and transactions/page.tsx both
+ * quote the old `orderBy(displayOrder, name)` in their docstrings.
+ */
+function spellsAccountOrder(source: string): boolean {
+  const code = stripComments(source);
+  if (/\.displayOrder\b/.test(code.replace(/\bdisplayOrder\s*:\s*[\w$]+\.displayOrder\b/g, ""))) return true;
+  return orderingClauses(code).some((clause) => /\bdisplay_?order\b/i.test(clause));
+}
+
+/** A comment opens at a line start or after whitespace, so the `//` in "https://" is code. */
+function stripComments(source: string): string {
+  return source.replace(/(^|\s)\/\*[\s\S]*?\*\//g, "$1").replace(/(^|\s)\/\/.*$/gm, "$1");
+}
+
+function orderingClauses(code: string): string[] {
+  return [
+    ...[...code.matchAll(/\borderBy\s*\(/g)].map((m) => balancedFrom(code, m.index + m[0].length, false)),
+    ...[...code.matchAll(/\borderBy\s*:/g)].map((m) => balancedFrom(code, m.index + m[0].length, true)),
+    ...[...code.matchAll(/\bORDER\s+BY\b[^`"';]*/gi)].map((m) => m[0]),
+  ];
+}
+
+/**
+ * The text from `start` up to the bracket that closes the one it sits inside —
+ * a call's argument list — or, for an object property's value, up to the first
+ * comma at the same depth, whichever comes first.
+ */
+function balancedFrom(code: string, start: number, stopAtComma: boolean): string {
+  let depth = 0;
+  for (let i = start; i < code.length; i += 1) {
+    const ch = code.charAt(i);
+    if ("([{".includes(ch)) depth += 1;
+    else if (")]}".includes(ch)) {
+      if (depth === 0) return code.slice(start, i);
+      depth -= 1;
+    } else if (stopAtComma && ch === "," && depth === 0) return code.slice(start, i);
+  }
+  return code.slice(start);
+}
