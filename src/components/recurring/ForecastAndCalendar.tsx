@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, type ReactNode } from "react";
+import { useState, useTransition } from "react";
 import { loadMonthForecastAction } from "@/app/recurring/actions";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
@@ -10,6 +10,7 @@ import type { RecurringCalendarMonth } from "@/services/recurring-calendar";
 import { ForecastCard } from "./ForecastCard";
 import { monthLabel } from "./labels";
 import { RecurringCalendar } from "./RecurringCalendar";
+import { RecurringTabs, type RecurringTab } from "./RecurringTabs";
 import {
   CALENDAR_VIEW_LABELS,
   CALENDAR_VIEW_SPEC,
@@ -22,8 +23,13 @@ interface ForecastAndCalendarProps {
   today: string;
   /** resolved `?cal=` state from the server (URL > persisted > default) */
   view: Record<string, string>;
-  /** the tab strip, rendered between the card and the grid so DOM order is unchanged */
-  tabs: ReactNode;
+  /** the active tab, for the strip rendered between the card and the grid */
+  tab: RecurringTab;
+  /**
+   * The per-tab badges. ⚠️ `calendar` is NOT read from here — it is the count
+   * of the month the grid is SHOWING, which this component owns (see below).
+   */
+  counts: Record<RecurringTab, number>;
 }
 
 /**
@@ -35,11 +41,18 @@ interface ForecastAndCalendarProps {
  * a projection is *about* a month, and the only month on screen was the other
  * one.
  *
+ * 🔴 AND THE TAB BADGE BETWEEN THEM DID NOT MOVE. The strip was rendered once on
+ * the server with the CURRENT month's count and handed in as a finished node, so
+ * nothing could update it. Measured on the real ledger 2026-09-15: September
+ * holds 12 entries, October 14 — paged to October the page read "Forecast ·
+ * October 2026" over "Calendar 12" over a 14-entry grid. The strip is rendered
+ * here now, from the month that was loaded, the same way the card follows it.
+ *
  * ## Why this component exists at all
  *
  * The card sits ABOVE the tab strip and the grid sits below it, so the two
  * cannot share state without something wrapping both. This is that something,
- * and it takes the tabs as a prop precisely so the DOM order does not change:
+ * and it renders the tabs between them so the DOM order does not change:
  * card, tabs, grid, exactly as before.
  *
  * ## What a future month's forecast means, and what it cannot mean
@@ -59,10 +72,13 @@ export function ForecastAndCalendar({
   initialMonth,
   today,
   view,
-  tabs,
+  tab,
+  counts,
 }: ForecastAndCalendarProps) {
   const [forecast, setForecast] = useState<MonthForecast | null>(initialForecast);
   const [shownMonth, setShownMonth] = useState(initialForecast.monthKey);
+  // the badge counts the month ON SCREEN — the same month the card follows
+  const [calendarCount, setCalendarCount] = useState(initialMonth.entryCount);
   const [, startTransition] = useTransition();
 
   const { state, setView } = useViewState({
@@ -74,10 +90,11 @@ export function ForecastAndCalendar({
   });
   const density = state[CALENDAR_VIEW_SPEC[0]!.key] ?? "regular";
 
-  function followMonth(monthKey: string): void {
-    setShownMonth(monthKey);
+  function followMonth(month: RecurringCalendarMonth): void {
+    setShownMonth(month.monthKey);
+    setCalendarCount(month.entryCount);
     startTransition(async () => {
-      const r = await loadMonthForecastAction({ monthKey });
+      const r = await loadMonthForecastAction({ monthKey: month.monthKey });
       // a failed load leaves the previous card standing rather than blanking it:
       // a stale-but-labelled projection beats an empty space with no reason
       if (r.ok) setForecast(r.data);
@@ -98,7 +115,7 @@ export function ForecastAndCalendar({
       )}
 
       <div className="space-y-4">
-        {tabs}
+        <RecurringTabs tab={tab} counts={{ ...counts, calendar: calendarCount }} />
         <div className="flex items-center justify-end">
           <ViewSwitcher
             dimension={CALENDAR_VIEW_SPEC[0]!}

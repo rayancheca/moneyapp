@@ -121,7 +121,8 @@ export default async function RecurringPage({
             initialMonth={calendarMonth}
             today={today}
             view={calendarView}
-            tabs={<RecurringTabs tab={tab} counts={counts} />}
+            tab={tab}
+            counts={counts}
           />
         ) : (
           <>

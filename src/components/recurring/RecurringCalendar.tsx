@@ -46,7 +46,7 @@ interface RecurringCalendarProps {
    * focus, which is the whole keyboard story of the grid. The density is the
    * opposite — a rare, deliberate choice worth putting in a link.
    */
-  onMonthLoaded?: (monthKey: string) => void;
+  onMonthLoaded?: (month: RecurringCalendarMonth) => void;
 }
 
 /**
@@ -215,7 +215,8 @@ export function RecurringCalendar({ initialMonth, today, density = "tall", onMon
       const r = await loadRecurringMonthAction({ monthKey });
       if (r.ok) {
         setMonth(r.data);
-        onMonthLoaded?.(monthKey);
+        // the whole month, not its key — the tab badge above counts it too
+        onMonthLoaded?.(r.data);
       } else {
         toast({ title: r.error, tone: "negative" });
       }
