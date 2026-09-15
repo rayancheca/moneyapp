@@ -1,6 +1,14 @@
 import { describe, expect, test } from "vitest";
 import { formatCents } from "@/lib/money";
-import { sankeyFrameNote, sankeyNodeLabel, sankeySummary } from "./SankeyChart";
+import {
+  sankeyFrameNote,
+  sankeyLinkSide,
+  sankeyNodeLabel,
+  sankeyNodeSide,
+  sankeyShareCell,
+  sankeyShareClause,
+  sankeySummary,
+} from "./SankeyChart";
 
 type Node = { column: number; valueCents: number; meta?: { kind?: string } };
 
@@ -132,5 +140,79 @@ describe("sankeyNodeLabel", () => {
     expect(
       sankeyNodeLabel({ label: "Housing", valueCents: 0, column: 2, meta: { kind: "category" } }, formatCents, share, 0),
     ).toBe("Housing, $0.00 charged — view transactions");
+  });
+});
+
+/*
+ * 🔴 THE TOOLTIP AND THE TABLE LENS KEPT THE BARE SHARE. `sankeyNodeLabel` was
+ * made to name its leg, and only the aria-label took it: the pointer tooltip on
+ * the same node printed "26.7% of flow", and the dashboard's table lens printed
+ * a Share column with no leg at all. Measured on the owner's ledger 2026-09-15,
+ * `/spending?period=2026-07`: the left column's tooltips sum to 100.0%, the
+ * right column's to 100.0%, and the table's Share column over its 17 flow rows
+ * to 200.0% — structural, because every ribbon either enters or leaves the hub.
+ */
+describe("the side a share is on", () => {
+  const nodes = [
+    { id: "hub", column: 1, meta: { kind: "hub" } },
+    { id: "inc:1", column: 0, meta: { kind: "income" } },
+    { id: "refunds", column: 0, meta: { kind: "refund" } },
+    { id: "drawdown", column: 0, meta: { kind: "drawdown" } },
+    { id: "cat:1", column: 2, meta: { kind: "category" } },
+    { id: "uncat", column: 2, meta: { kind: "uncategorized" } },
+    { id: "saved", column: 2, meta: { kind: "saved" } },
+  ];
+
+  test("sources are on the way in; every destination, net saved included, on the way out", () => {
+    expect(nodes.map((n) => sankeyNodeSide(n))).toEqual([null, "in", "in", "in", "out", "out", "out"]);
+  });
+
+  test("a ribbon is on the side of whichever end is not the hub", () => {
+    expect(sankeyLinkSide({ source: "drawdown", target: "hub" }, nodes)).toBe("in");
+    expect(sankeyLinkSide({ source: "hub", target: "cat:1" }, nodes)).toBe("out");
+    expect(sankeyLinkSide({ source: "hub", target: "saved" }, nodes)).toBe("out");
+  });
+
+  test("net saved is money leaving the hub, and its label says so", () => {
+    // it read "on the way in": the side was inferred from `kind === category`, and saved is not one
+    expect(
+      sankeyNodeLabel({ label: "Net saved", valueCents: 10_000, column: 2, meta: { kind: "saved" } }, formatCents, () => "1.0%", 1_000_000),
+    ).toContain("on the way out");
+  });
+});
+
+describe("sankeyShareClause — the tooltip's share line", () => {
+  const share = () => "26.7%";
+  const TOTAL = 1_035_396;
+
+  test("names the denominator and the leg, in the aria-label's own words", () => {
+    expect(sankeyShareClause(276_379, "out", formatCents, share, TOTAL)).toBe(
+      "26.7% of the $10,353.96 that passed through, on the way out",
+    );
+    expect(sankeyShareClause(1_018_790, "in", formatCents, () => "98.4%", TOTAL)).toBe(
+      "98.4% of the $10,353.96 that passed through, on the way in",
+    );
+  });
+
+  test("the spoken label and the pointer tooltip are one clause, not two phrasings", () => {
+    const node = { label: "Housing", valueCents: 276_379, column: 2, meta: { kind: "category" } };
+    const clause = sankeyShareClause(node.valueCents, sankeyNodeSide(node), formatCents, share, TOTAL);
+    expect(clause).not.toBeNull();
+    expect(sankeyNodeLabel(node, formatCents, share, TOTAL)).toContain(clause!);
+  });
+
+  test("no throughput means no share line, rather than a 0% that states a measurement", () => {
+    expect(sankeyShareClause(100, "in", formatCents, share, 0)).toBeNull();
+  });
+
+  test("the hub IS the throughput, so it has no share of it to state", () => {
+    expect(sankeyShareClause(TOTAL, null, formatCents, share, TOTAL)).toBeNull();
+  });
+});
+
+describe("sankeyShareCell — the table lens", () => {
+  test("each row names its leg, so the column cannot be read as one 100%", () => {
+    expect(sankeyShareCell(1_018_790, "in", () => "98.4%")).toBe("98.4% in");
+    expect(sankeyShareCell(276_379, "out", () => "26.7%")).toBe("26.7% out");
   });
 });

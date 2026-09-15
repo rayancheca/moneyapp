@@ -73,7 +73,8 @@ interface Tooltip {
   y: number;
   title: string;
   amount: string;
-  share: string;
+  /** `sankeyShareClause` — null for the hub, or when nothing passed through */
+  share: string | null;
 }
 
 // The dimension and its labels live with the SURFACE that owns them
@@ -127,6 +128,71 @@ export function sankeyFrameNote(
   );
 }
 
+/** Which leg of the hub a share is a share of — see `sankeyNodeLabel`. */
+export type SankeySide = "in" | "out";
+
+/**
+ * The leg a node's share belongs to.
+ *
+ * ⛔ Read off the node's POSITION, not off whether it spends. The side used to
+ * be inferred from `kind === "category" || kind === "uncategorized"` — the
+ * FRAME question ("is this figure what was charged?") answered in place of the
+ * SIDE question. The two part company at Net saved, which leaves the hub
+ * without being a charge, so its share read "on the way in". Sources sit in the
+ * first column by construction (`sankey.ts`, and `sankeySummary` counts them
+ * there), everything past the hub is on the way out, and the hub IS the
+ * throughput rather than a share of it.
+ */
+export function sankeyNodeSide(node: { column: number; meta?: { kind?: string } }): SankeySide | null {
+  if (node.meta?.kind === "hub") return null;
+  return node.column === 0 ? "in" : "out";
+}
+
+/** A ribbon's leg is the leg of whichever end is not the hub. */
+export function sankeyLinkSide(
+  link: { source: string; target: string },
+  nodes: readonly { id: string; column: number; meta?: { kind?: string } }[],
+): SankeySide | null {
+  const source = nodes.find((n) => n.id === link.source);
+  const end = source?.meta?.kind === "hub" ? nodes.find((n) => n.id === link.target) : source;
+  return end === undefined ? null : sankeyNodeSide(end);
+}
+
+/**
+ * "26.7% of the $10,353.96 that passed through, on the way out" — THE phrasing
+ * of a share, spoken by a node's aria-label and printed by the pointer tooltip.
+ *
+ * 🔴 It had two. `sankeyNodeLabel` was made to name its leg and the tooltip on
+ * the very same node kept "26.7% of flow". Measured on the owner's ledger
+ * 2026-09-15, `/spending?period=2026-07`: the left column's tooltips read
+ * 98.4% + 1.1% + 0.3% + 0.1% + 0.1% of flow, and the right column's another
+ * 100.0% — every reader's addition came to 200%.
+ *
+ * Null when nothing passed through (a 0% would state a measurement) and for the
+ * hub, which is the whole denominator rather than a share of it.
+ */
+export function sankeyShareClause(
+  cents: number,
+  side: SankeySide | null,
+  formatValue: (cents: number) => string,
+  share: (cents: number) => string,
+  totalFlow: number,
+): string | null {
+  if (side === null || totalFlow <= 0) return null;
+  return `${share(cents)} of the ${formatValue(totalFlow)} that passed through, on the way ${side}`;
+}
+
+/**
+ * The table lens's Share cell: the percent AND its leg.
+ *
+ * 🔴 Every row of that table is a ribbon into or out of the hub, so a bare
+ * column of percents reads as one whole and sums to 200% — measured 2026-09-15
+ * over July 2026's 17 rows, to the tenth.
+ */
+export function sankeyShareCell(cents: number, side: SankeySide | null, share: (cents: number) => string): string {
+  return side === null ? share(cents) : `${share(cents)} ${side}`;
+}
+
 /**
  * A node's complete spoken name. The spend destinations say which FRAME their
  * figure is in — see `sankeyFrameNote` — and every node names the denominator
@@ -137,7 +203,8 @@ export function sankeyFrameNote(
  * (categories + uncategorized + net saved) are each the whole of it, so a bare
  * "26.7% of the flow" on every node invites an addition that comes to 200%.
  * `spineNodeLabel` was fixed for exactly this on the same day and its remedy is
- * the one used here: every share names its leg.
+ * the one used here: every share names its leg — in `sankeyShareClause`, which
+ * the pointer tooltip prints too.
  *
  * ⚠️ The denominator is the THROUGHPUT, not "what came in" — on `/spending` for
  * July 2026 only $166.06 flowed in and $10,187.90 was drawn from outside the
@@ -153,12 +220,8 @@ export function sankeyNodeLabel(
   const spends = node.meta?.kind === "category" || node.meta?.kind === "uncategorized";
   const amount = spends ? `${formatValue(node.valueCents)} charged` : formatValue(node.valueCents);
   const head = `${node.label}, ${amount}`;
-  if (totalFlow <= 0) return `${head} — view transactions`;
-  const side = spends ? "on the way out" : "on the way in";
-  return (
-    `${head}, ${share(node.valueCents)} of the ${formatValue(totalFlow)} that passed through, ` +
-    `${side} — view transactions`
-  );
+  const clause = sankeyShareClause(node.valueCents, sankeyNodeSide(node), formatValue, share, totalFlow);
+  return clause === null ? `${head} — view transactions` : `${head}, ${clause} — view transactions`;
 }
 
 export function sankeySummary(
@@ -232,9 +295,10 @@ export function SankeyChart({
           from: labelOf.get(l.source) ?? l.source,
           to: labelOf.get(l.target) ?? l.target,
           cents: l.valueCents,
+          side: sankeyLinkSide(l, layout.nodes),
         }))
         .sort((a, b) => b.cents - a.cents),
-    [graph.links, labelOf],
+    [graph.links, labelOf, layout.nodes],
   );
 
   const summary = useMemo(
@@ -249,10 +313,16 @@ export function SankeyChart({
   const isConnected = (linkSource: string, linkTarget: string) =>
     hovered === null || hovered === linkSource || hovered === linkTarget;
 
-  function moveTooltip(e: ReactPointerEvent, title: string, cents: number) {
+  function moveTooltip(e: ReactPointerEvent, title: string, cents: number, side: SankeySide | null) {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
-    setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, title, amount: formatValue(cents), share: share(cents) });
+    setTooltip({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+      title,
+      amount: formatValue(cents),
+      share: sankeyShareClause(cents, side, formatValue, share, totalFlow),
+    });
   }
 
   function drill(node: SankeyLayoutNode, e: ReactMouseEvent) {
@@ -297,7 +367,12 @@ export function SankeyChart({
               className={motion}
               style={{ opacity: isConnected(l.source, l.target) ? (hovered ? LINK_HOT : LINK_REST) : DIM_OPACITY }}
               onPointerMove={(e) =>
-                moveTooltip(e, `${labelOf.get(l.source) ?? l.source} → ${labelOf.get(l.target) ?? l.target}`, l.valueCents)
+                moveTooltip(
+                  e,
+                  `${labelOf.get(l.source) ?? l.source} → ${labelOf.get(l.target) ?? l.target}`,
+                  l.valueCents,
+                  sankeyLinkSide(l, layout.nodes),
+                )
               }
               onPointerLeave={() => setTooltip(null)}
             />
@@ -319,7 +394,7 @@ export function SankeyChart({
               className={motion}
               style={{ opacity: dim ? 0.35 : 1 }}
               onPointerEnter={() => setHovered(n.id)}
-              onPointerMove={(e) => moveTooltip(e, n.label, n.valueCents)}
+              onPointerMove={(e) => moveTooltip(e, n.label, n.valueCents, sankeyNodeSide(n))}
             >
               <rect x={n.x0} y={n.y0} width={n.x1 - n.x0} height={Math.max(n.y1 - n.y0, 1)} rx={2.5} fill={n.color ?? "var(--ink-muted)"} />
               <text
@@ -358,14 +433,16 @@ export function SankeyChart({
       {tooltip ? (
         <div
           // purely a pointer affordance (no keyboard trigger) — NOT a live region,
-          // or AT would announce a new flow on every ribbon the cursor crosses
+          // or AT would announce a new flow on every ribbon the cursor crosses.
+          // Capped in width: the share clause names its denominator and its leg,
+          // and wraps rather than running off the card's edge
           aria-hidden="true"
-          className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-[calc(100%+10px)] rounded-md border border-line bg-surface-raised px-3 py-2 text-xs shadow-md"
+          className="pointer-events-none absolute z-20 w-max max-w-[15rem] -translate-x-1/2 -translate-y-[calc(100%+10px)] rounded-md border border-line bg-surface-raised px-3 py-2 text-xs shadow-md"
           style={{ left: tooltip.x, top: tooltip.y }}
         >
           <div className="font-medium">{tooltip.title}</div>
           <div className="figures mt-0.5">{tooltip.amount}</div>
-          <div className="text-ink-faint">{tooltip.share} of flow</div>
+          {tooltip.share !== null ? <div className="text-ink-faint">{tooltip.share}</div> : null}
         </div>
       ) : null}
     </div>
@@ -408,13 +485,19 @@ export function SankeyChart({
   );
 }
 
-type FlowRow = { id: string; from: string; to: string; cents: number };
+type FlowRow = { id: string; from: string; to: string; cents: number; side: SankeySide | null };
 
 function FLOW_COLUMNS(formatValue: (c: number) => string, share: (c: number) => string): Column<FlowRow>[] {
   return [
     { key: "flow", header: "Flow", render: (r) => `${r.from} → ${r.to}` },
     { key: "amount", header: "Amount", align: "right", render: (r) => <span className="figures">{formatValue(r.cents)}</span> },
-    { key: "share", header: "Share", align: "right", render: (r) => <span className="text-ink-faint">{share(r.cents)}</span> },
+    {
+      key: "share",
+      // the denominator in the header, the leg in every cell — see `sankeyShareCell`
+      header: "Share of what passed through",
+      align: "right",
+      render: (r) => <span className="text-ink-faint">{sankeyShareCell(r.cents, r.side, share)}</span>,
+    },
   ];
 }
 
