@@ -172,22 +172,36 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
 
 ## 7. ⏳ IN FLIGHT AT WRITING (16:30) — finish these first
 
-1. **`uc/ledger-check-witness-floor`** (your answer: the pre-commit check fails when its count of witnesses drops;
-   growth raises the mark on its own). Implemented and reviewed; a fixer was running. ⛔ Its migration was numbered
-   **0016**, colliding with main's `0016_file_link_source` that the REAL ledger applied at 15:50. Before merging:
-   the migration must be 0017+ with a matching `src/db/migrations/meta/_journal.json` entry; take
-   `data/backups/pre-2026-09-15-migration-0017.db` BEFORE the first commit/ledger-check on the merged code (the
-   pre-commit hook opens the ledger and migrates); confirm `__drizzle_migrations` gains exactly one row. Review also
-   found: deleting a lone chain-grade anchor (Cash on Hand's kept $5,000) was silent — check the fixer's outcome.
+1. ✅ **DONE 16:35 — `uc/ledger-check-witness-floor` merged** (your answer: the pre-commit check fails when its
+   count of witnesses drops; growth raises the mark on its own). The migration was renumbered to
+   `0017_ledger_witness_marks`; the first real `ledger-check` applied it (18 migration rows) and recorded marks
+   INSIDE the ledger — value anchors 43 · chain endpoints 221 · chain windows 211 · statement periods 255 ·
+   accounts 13 — and a second run held (exit 0). A drop now fails the hook and names what left; after a removal you
+   approved: `pnpm ledger-check --lower-marks=<kind> --confirm`. A lone chain-grade anchor (Cash on Hand's $5,000)
+   is its own witness now. Known limits: a swap (one witness out, a different one in) passes; editing a balance
+   changes no count; a moment-only account's first statement can drop endpoints. Restore point:
+   `data/backups/pre-2026-09-15-migration-0017.db`.
 2. **`uc/agentic-two-accounts`** (your answer: two accounts when the agent buys stock). Built on the section safety
    net now on main. Constraints given: positions from statements only; the cash account paired to its brokerage by a
    stored link, not a name; the agent's positions kept OUT of your own brokerage returns (your 2026-09-14 naming
    decision); Agentic cash not spendable; the brokerage account NOT created on the real ledger until a
-   securities-bearing statement arrives. Still implementing at writing; needs its two reviews and fix, then merge,
-   `next build`, suite, gate, push.
-3. **Your background task** "Rebuild accounts whose only link to an unimported file is a period" runs in its own
-   session on the import code; merge after checking it against `uc/unimport-keeps-attached` (on main) and the
-   card re-parse boundary (on main).
+   securities-bearing statement arrives. Implemented (`bf443ef`: `accounts.cash_account_id` UNIQUE,
+   `holding_events.import_file_id`, `isOwnPortfolioBook`; measured on a ledger copy — 0 differing surfaces, net worth
+   $113,125.01); reviews and fix running.
+   ⛔ **MIGRATION HAZARD:** the branch names its migration `0017_statement_positions` with a journal `when` EARLIER
+   than main's `0017_ledger_witness_marks`, which is already applied to the real ledger. drizzle applies only
+   migrations later than the last one applied, so a plain renumber would be SKIPPED there and every query touching
+   the two new columns would fail. Merge with `scratchpad/renumber-agentic-migration.py <branch>` (dry-run with
+   `--check` passed at 16:50: only `accounts` + `holding_events` change; 0018 gets a later `when` and a snapshot
+   chained onto main's 0017), take a restore point, then verify 19 migration rows and both columns on the real
+   ledger.
+3. ✅ **DONE — your background task** "Rebuild accounts whose only link to an unimported file is a period"
+   (`9cd7acb`, session 8bb0cb0a) is on main since `14759a7`; its branch holds nothing unmerged.
+3b. **Queue defects** (workflow running): the end-of-month note's `$0.00` half, the eating-out multiple, "level
+   with" wording given one home, and a unit guard that no client component's import graph reaches `better-sqlite3`
+   (the `97d7a5c` build break, §4). Branches `uc/eom-note-zero-half`, `uc/eating-out-multiple`,
+   `uc/level-with-one-home`, `uc/client-graph-guard`. The end-of-month fix will move the recurring and
+   recurring-calendar baselines — trace them before regenerating.
 4. After every merge batch: `pnpm exec next build` BEFORE the gate (§4).
 
 Session scratchpad (9ebfed64): `queue-after-merges.md` (the full queue with evidence), `hunt-result.json` +
