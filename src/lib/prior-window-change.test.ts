@@ -1,7 +1,39 @@
 import fs from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 import { describe, expect, test } from "vitest";
 import { changeAgainstPrior, changeAgainstPriorText } from "./prior-window-change";
+
+const PHRASE = /\blevel\s+with\b/i;
+
+/**
+ * Whether a source file spells the phrase in CODE — a string, a template, JSX
+ * text or an attribute — rather than in a comment naming it. Comments are how a
+ * fix records the words it replaced, and three do.
+ *
+ * 🔴 The guard looked for the text `level with ${` alone. An inline copy written
+ * as JSX text (`<>level with {priorLabel}</>`, the way the relief's readout
+ * writes its "against") or joined with + (`"level with " + priorLabel`) passed
+ * it: each was planted in CategoryMassif.tsx on 2026-09-15 and the guard stayed
+ * green. It reads the parsed file now.
+ */
+function spellsLevelWith(source: string, fileName: string): boolean {
+  if (!PHRASE.test(source)) return false;
+  const kind = fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, false, kind);
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    const text = ts.isStringLiteralLike(node) || ts.isTemplateLiteralToken(node) || ts.isJsxText(node) ? node.text : null;
+    if (text !== null && PHRASE.test(text)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
 
 /**
  * ⛔ ONE HOME. "level with <prior window>" was spelled inline in three places —
@@ -21,15 +53,37 @@ describe("the level-with phrase has one home", () => {
         if (entry.isDirectory()) walk(full);
         else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) && full !== home) {
           scanned++;
-          if (fs.readFileSync(full, "utf8").includes("level with ${")) offenders.push(path.relative(src, full));
+          if (spellsLevelWith(fs.readFileSync(full, "utf8"), full)) offenders.push(path.relative(src, full));
         }
       }
     };
     walk(src);
     // guards the guard: a walk that read nothing would pass vacuously
     expect(scanned).toBeGreaterThan(100);
-    expect(fs.readFileSync(home, "utf8")).toContain("level with ${");
+    expect(spellsLevelWith(fs.readFileSync(home, "utf8"), home)).toBe(true);
     expect(offenders).toEqual([]);
+  });
+
+  describe("the guard reads code, not comments", () => {
+    test.each([
+      ["a template", "export const s = (p: string) => `level with ${p}`;"],
+      ["JSX text", "export const A = ({ p }: { p: string }) => <>level with {p}</>;"],
+      ["JSX text broken over a line", "export const A = ({ p }: { p: string }) => (\n  <span>\n    level\n    with {p}\n  </span>\n);"],
+      ["a string joined with +", 'export const s = (p: string) => "level with " + p;'],
+      ["a single-quoted string", "export const s = (p: string) => 'Level with ' + p;"],
+      ["an attribute", 'export const A = () => <svg aria-label="level with June 2026" />;'],
+    ])("it finds the phrase spelled as %s", (_, code) => {
+      expect(spellsLevelWith(code, "planted.tsx")).toBe(true);
+    });
+
+    test("a comment naming the phrase is not a copy of it", () => {
+      const code = [
+        "// was `level with ${priorLabel}`",
+        "/* 🔴 \"The 1 height sums to level with May 18, 2023.\" */",
+        "export const A = () => <p>{/* level with the window */}ok</p>;",
+      ].join("\n");
+      expect(spellsLevelWith(code, "planted.tsx")).toBe(false);
+    });
   });
 });
 
@@ -57,3 +111,4 @@ describe("a change against the prior window, in words", () => {
     expect(changeAgainstPriorText(-1_040, "Q1 2026")).toBe("-$10.40 against Q1 2026");
   });
 });
+
