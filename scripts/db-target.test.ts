@@ -53,6 +53,36 @@ describe("dbTargetFrom — the database a write script opens, named on its comma
   });
 });
 
+describe("⛔ the owner's ledger named from ANOTHER checkout — agents run in worktrees", () => {
+  const MAIN = "/Users/owner/dev/MoneyApp";
+  const WORKTREE = `${MAIN}/.claude/worktrees/wf-1`;
+  const OWNER_LEDGER = `${MAIN}/data/moneyapp.db`;
+
+  test("refused, in any spelling: `isReal` compares against <cwd>/data/moneyapp.db, so it would be read as a COPY", () => {
+    // 🔴 measured on the branch: from a worktree this was { isReal: false }, and import-statements would have
+    // archived the real import's originals into <main>/data/originals and pointed its storage_path there
+    for (const argv of [[`--db=${OWNER_LEDGER}`], ["--db=../../../data/moneyapp.db"]]) {
+      expect(() => dbTargetFrom(argv, opts({ cwd: WORKTREE }))).toThrow(DbTargetRefusal);
+      expect(() => dbTargetFrom(argv, opts({ cwd: WORKTREE }))).toThrow(
+        /\/Users\/owner\/dev\/MoneyApp\/data\/moneyapp\.db is a checkout's real ledger, not this checkout's/,
+      );
+    }
+    expect(() => dbTargetFrom([`--from=${OWNER_LEDGER}`], opts({ cwd: WORKTREE, flag: "--from" }))).toThrow(/a checkout's real ledger/);
+  });
+
+  test("a copy is never named like one — it would be refused the same way", () => {
+    expect(() => dbTargetFrom(["--db=/scratch/rehearsal/data/moneyapp.db"], opts())).toThrow(/a checkout's real ledger/);
+  });
+
+  test("the real ledger reached through another path to the SAME file is still the real ledger", () => {
+    const ALIAS = "/private/owner/dev/MoneyApp/data/moneyapp.db";
+    const sameFile = (a: string, b: string): boolean => [a, b].every((p) => p === OWNER_LEDGER || p === ALIAS);
+    expect(dbTargetFrom([`--db=${ALIAS}`], opts({ cwd: MAIN, sameFile }))).toEqual({ path: ALIAS, isReal: true });
+    // and a different file is not, whatever its name
+    expect(dbTargetFrom([`--db=${COPY}`], opts({ cwd: MAIN, sameFile }))).toEqual({ path: COPY, isReal: false });
+  });
+});
+
 describe("strayFlags — a flag the script does not know is refused, not ignored", () => {
   test("known flags pass, bare or with a value", () => {
     expect(strayFlags(["folder", "--confirm", `--db=${COPY}`, "--db"], ["--confirm", "--db"])).toEqual([]);

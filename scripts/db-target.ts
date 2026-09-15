@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { isRealDatabasePath } from "@/db/backup";
 
@@ -13,14 +14,15 @@ import { isRealDatabasePath } from "@/db/backup";
  *  - `--db <path>` with a space — the scripts read every non-flag argument as a
  *    statement folder, so the path would be imported and the flag ignored;
  *  - an empty value, or the flag given twice;
- *  - a flag the script requires, missing — it never defaults to the real file.
+ *  - a flag the script requires, missing — it never defaults to the real file;
+ *  - ANOTHER checkout's real ledger (see `dbTargetFrom`).
  */
 export class DbTargetRefusal extends Error {}
 
 export interface DbTarget {
   /** absolute */
   readonly path: string;
-  /** the owner's ledger (`data/moneyapp.db` under the working directory) rather than a copy */
+  /** the owner's ledger (`data/moneyapp.db` under the working directory, by any path to that file) rather than a copy */
   readonly isReal: boolean;
 }
 
@@ -29,6 +31,16 @@ export interface DbTargetOptions {
   readonly required: boolean;
   readonly cwd: string;
   readonly exists: (absolutePath: string) => boolean;
+  /** whether two paths name one file on disk — device and inode, by default */
+  readonly sameFile?: (a: string, b: string) => boolean;
+}
+
+const LEDGER = path.join("data", "moneyapp.db");
+
+function sameFileOnDisk(a: string, b: string): boolean {
+  const sa = fs.statSync(a, { throwIfNoEntry: false });
+  const sb = fs.statSync(b, { throwIfNoEntry: false });
+  return sa !== undefined && sb !== undefined && sa.dev === sb.dev && sa.ino === sb.ino;
 }
 
 export function dbTargetFrom(argv: readonly string[], options: DbTargetOptions): DbTarget {
@@ -44,11 +56,25 @@ export function dbTargetFrom(argv: readonly string[], options: DbTargetOptions):
   if (arg === undefined && options.required) {
     throw new DbTargetRefusal(`${prefix}<path> is required — this script never guesses which database to open`);
   }
-  const resolved = path.resolve(options.cwd, arg === undefined ? path.join("data", "moneyapp.db") : arg.slice(prefix.length));
+  const resolved = path.resolve(options.cwd, arg === undefined ? LEDGER : arg.slice(prefix.length));
   if (!options.exists(resolved)) {
     throw new DbTargetRefusal(`no database at ${resolved} — refusing to create an empty one`);
   }
-  return { path: resolved, isReal: isRealDatabasePath(resolved, options.cwd) };
+  const own = path.resolve(options.cwd, LEDGER);
+  const isReal = isRealDatabasePath(resolved, options.cwd) || (options.sameFile ?? sameFileOnDisk)(resolved, own);
+  /*
+   * 🔴 Measured by a second reader: `isRealDatabasePath` asks about <cwd>/data/moneyapp.db, and agents run in
+   * worktrees. From one, `--db=<main checkout>/data/moneyapp.db` came back `isReal: false` — so import-statements
+   * would have treated the owner's ledger as a copy: archived the real import's originals beside it, in
+   * data/originals/, and pointed the rows' storage_path there. A file named like a checkout's ledger that is
+   * not THIS checkout's is refused; no rehearsal copy is ever named data/moneyapp.db.
+   */
+  if (!isReal && resolved.endsWith(path.sep + LEDGER)) {
+    throw new DbTargetRefusal(
+      `${resolved} is a checkout's real ledger, not this checkout's (${own}) — run from the checkout it belongs to`,
+    );
+  }
+  return { path: resolved, isReal };
 }
 
 /**
