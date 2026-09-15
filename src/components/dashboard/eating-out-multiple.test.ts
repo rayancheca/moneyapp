@@ -194,6 +194,21 @@ describe("the eating-out card's multiple of groceries", () => {
     );
   });
 
+  /**
+   * 🔴 Two magnitudes whose ratio is under 0.05 printed "0.0×" — the measured
+   * zero the refusal exists to keep off the card, put back by `toFixed(1)`.
+   * One $1.00 dinner against $3,000.00 of groceries is 0.0003×.
+   */
+  test("a multiple too small for a tenth reads <0.1×, not 0.0×", () => {
+    addTxn("2026-07-02", -100, childId("Dining"));
+    addTxn("2026-06-02", -300000, childId("Groceries"));
+    const card = eatingOutCard(bundle.db, TODAY)!;
+    expect(card.isEmpty).toBe(false);
+    const t = text(renderToStaticMarkup(createElement(EatingOutCard, { data: card })));
+    expect(t).not.toContain("0.0×");
+    expect(t).toContain("<0.1× what you spend on groceries, which comes to $500.00 a month.");
+  });
+
   /** The branch the dashboard never shows (`isEmpty`), kept honest for the component's other readers. */
   test("a window with no grocery charge at all keeps its own sentence", () => {
     addTxn("2026-07-02", -5000, childId("Dining"));

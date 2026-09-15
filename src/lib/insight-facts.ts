@@ -285,6 +285,9 @@ export function shareFact(id: string, subject: string, value: number, ofLabel: s
   return { kind: "share", id, subject, value, ofLabel, display: render(value, "percent", false) };
 }
 
+/** Below this a multiple has no tenth to print — see `multipleFact`. */
+const MULTIPLE_TENTH_FLOOR = 0.05;
+
 /**
  * "4.2×" — how many times some other stated quantity this is.
  *
@@ -295,13 +298,22 @@ export function shareFact(id: string, subject: string, value: number, ofLabel: s
  * throw in a service test rather than as a sentence on his dashboard.
  *
  * A caller still holding the two quantities asks `multipleOfMagnitudes` first.
+ *
+ * 🔴 …and a multiple ABOVE zero still printed "0.0×" whenever it was under
+ * 0.05, because `toFixed(1)` rounds it there — the measured zero the refusal
+ * exists to prevent, over two magnitudes. It reads "<0.1×" instead:
+ * `renderPercent`'s floor, for a multiple. `times_the_usual` binds only a
+ * multiple of two or more, so no insight sentence can reach it; the eating-out
+ * card's ratio sentence can (one $1.00 dinner against $3,000.00 of groceries).
  */
 export function multipleFact(id: string, subject: string, value: number, ofLabel: string): MultipleFact {
   assertSlotId(id);
   assertLabel("subject", subject);
   assertLabel("ofLabel", ofLabel);
   if (!Number.isFinite(value) || value <= 0) throw new Error(`A multiple must be above zero, got ${value}`);
-  return { kind: "multiple", id, subject, value, ofLabel, display: `${value.toFixed(1)}×` };
+  // every double below 0.05 is below it exactly, so it is exactly the set `toFixed(1)` prints as "0.0"
+  const display = value < MULTIPLE_TENTH_FLOOR ? "<0.1×" : `${value.toFixed(1)}×`;
+  return { kind: "multiple", id, subject, value, ofLabel, display };
 }
 
 /**
@@ -420,7 +432,8 @@ export function trendFact(
  * twice on /investments; "Money in → Gifts & Donations · $10.43 · 0.0%".
  * Every one of those is money that really moved.
  *
- * The `<` and `>` here are the ONLY place a display carries them. Labels forbid
+ * The `<` and `>` here — and the `<` of `multipleFact`'s "<0.1×", the same floor
+ * for a multiple — are the ONLY places a display carries them. Labels forbid
  * both (`FORBIDDEN_IN_LABEL`) because a label could otherwise open a tag; a
  * display is written by this module, never by a caller or a model, and React
  * escapes it as a text node.

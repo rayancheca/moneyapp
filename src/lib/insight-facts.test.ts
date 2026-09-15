@@ -198,6 +198,23 @@ describe("a multiple", () => {
     expect(() => multipleFact("f1", "x", -3, "y")).toThrow(/above zero/);
     expect(() => multipleFact("f1", "x", Number.POSITIVE_INFINITY, "y")).toThrow(/above zero/);
   });
+
+  /**
+   * 🔴 The refusal keeps "0.0×" off a multiple at zero, and `toFixed(1)` put it
+   * straight back on every multiple ABOVE zero and under 0.05 — a measured zero
+   * printed over two magnitudes. `renderPercent`'s floor, applied to a multiple.
+   */
+  test("⛔ a multiple too small for a tenth reads <0.1×, never a measured 0.0×", () => {
+    expect(multipleFact("f1", "x", 0.03, "y").display).toBe("<0.1×");
+    expect(multipleFact("f1", "x", 0.049999, "y").display).toBe("<0.1×");
+    expect(multipleFact("f1", "x", 1e-318, "y").display).toBe("<0.1×");
+    // the first value `toFixed(1)` already rounds up to a tenth keeps its tenth
+    expect(multipleFact("f1", "x", 0.05, "y").display).toBe("0.1×");
+    expect(multipleFact("f1", "x", 0.3, "y").display).toBe("0.3×");
+    for (let v = 1e-6; v < 2; v *= 1.37) {
+      expect(multipleFact("f1", "x", v, "y").display).not.toBe("0.0×");
+    }
+  });
 });
 
 /**
