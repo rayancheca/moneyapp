@@ -8,6 +8,7 @@ import { Icon } from "@/components/shell/Icon";
 import { Money } from "@/components/ui/Money";
 import { SpendDelta } from "@/components/spending/SpendDelta";
 import { formatCents } from "@/lib/money";
+import type { SubcategoryItem } from "@/lib/subcategory-rows";
 
 /** Qualitative confidence label + tone for a 0..1 score (mirrors PredictBudgets). */
 function confidenceMeta(confidence: number): { label: string; tone: string } {
@@ -21,15 +22,18 @@ function confidenceMeta(confidence: number): { label: string; tone: string } {
  * The Spending tab's categories table (ux-overhaul-plan §5.4): a CategoryChip,
  * a share-of-period bar, a MoM delta, and expandable parents whose subcategories
  * and whose row both link to the category page — the entity that closes the
- * chain (recurring series, budget, trend). Uncategorized/Excluded live in their
- * own honesty section, so they never appear here.
+ * chain (recurring series, budget, trend). The expanded list also holds what was
+ * filed on the parent itself, unlinked, so it adds up to the parent's total.
+ * Uncategorized/Excluded live in their own honesty section, so they never appear
+ * here.
  */
 
-export interface CategoryTableChild {
-  categoryId: string;
-  name: string;
-  spentCents: number;
-}
+/**
+ * One expanded subcategory row — a child category, or the rows filed on the parent
+ * itself (`href: null`, never a link; see `lib/subcategory-rows`), so the expanded
+ * list adds up to the parent's total.
+ */
+export type CategoryTableChild = SubcategoryItem;
 
 /** Next-month forecast for one category (the /budgets prediction engine). */
 export interface CategoryForecastAnnotation {
@@ -161,17 +165,30 @@ export function SpendingCategoriesTable({
 
             {isOpen && hasChildren && (
               <ul className="mb-1 ml-7 space-y-0.5 border-l border-line pl-3">
-                {row.children.map((child) => (
-                  <li key={child.categoryId}>
-                    <Link
-                      href={`/categories/${child.categoryId}?${periodQuery}`}
-                      className="flex items-center justify-between gap-2 rounded py-1.5 pr-1 text-sm text-ink-muted hover:text-ink"
+                {/* ⛔ the parent's OWN row is not a link — a category filter
+                    takes the whole subtree, so it would open every child's rows
+                    too. It is here so the list adds up to the parent (S20). */}
+                {row.children.map((child) =>
+                  child.href === null ? (
+                    <li
+                      key={child.categoryId}
+                      className="flex items-center justify-between gap-2 py-1.5 pr-1 text-sm text-ink-muted"
                     >
                       <span className="truncate">{child.name}</span>
                       <Money cents={child.spentCents} className="shrink-0 text-xs" />
-                    </Link>
-                  </li>
-                ))}
+                    </li>
+                  ) : (
+                    <li key={child.categoryId}>
+                      <Link
+                        href={child.href}
+                        className="flex items-center justify-between gap-2 rounded py-1.5 pr-1 text-sm text-ink-muted hover:text-ink"
+                      >
+                        <span className="truncate">{child.name}</span>
+                        <Money cents={child.spentCents} className="shrink-0 text-xs" />
+                      </Link>
+                    </li>
+                  ),
+                )}
               </ul>
             )}
           </li>

@@ -16,6 +16,7 @@ import {
 } from "@/lib/period";
 import { WHERE_VIEW_SPEC } from "@/lib/massif-layout";
 import { resolveViewState, viewStateToParams } from "@/lib/view-state";
+import { spendingSubcategoryItems } from "@/lib/subcategory-rows";
 import { categoryBreakdown } from "@/services/analytics";
 import { cashEarningsReadings } from "@/services/cash-earnings";
 import { spendingSankey } from "@/services/sankey";
@@ -224,7 +225,9 @@ export default async function SpendingPage({
       sharePct: shareBase > 0 ? (Math.max(0, r.spentCents) / shareBase) * 100 : 0,
       momDeltaCents: prevBreakdown === null ? 0 : r.spentCents - (prevById.get(r.categoryId) ?? 0),
       forecast: forecastByCategory.get(r.categoryId!) ?? null,
-      children: r.children.map((c) => ({ categoryId: c.categoryId, name: c.name, spentCents: c.spentCents })),
+      // 🔴 S20: the children alone did not add up to the parent above them — the
+      // rows filed on the parent itself were in no row (`lib/subcategory-rows`)
+      children: spendingSubcategoryItems(r, (id) => `/categories/${id}?${query}`),
     }));
 
   // Categories with a confident next-month forecast (an upcoming recurring bill,

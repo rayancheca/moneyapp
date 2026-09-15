@@ -387,7 +387,20 @@ export interface BreakdownRow {
   name: string;
   spentCents: number;
   txnCount: number;
-  /** subcategory detail; direct-to-parent assignments count in the total only */
+  /**
+   * What was filed on the parent ITSELF, netted like `spentCents`; 0 for the
+   * Uncategorized bucket, whose rows have no parent to sit on.
+   *
+   * 🔴 S20. `children` skips these rows, and `/spending`'s expander listed the
+   * children alone under a total that counts them — measured on the real ledger
+   * 2026-09-15, `?period=2026-07` Travel $2,448.88 over Flights $2,394.89.
+   * ⛔ Accumulated directly, never taken as `spentCents − Σchildren`: a
+   * difference would silently absorb a child row this loop failed to count.
+   */
+  ownSpentCents: number;
+  /** the rows behind `ownSpentCents`, counted like `txnCount` (a split part is a row) */
+  ownTxnCount: number;
+  /** subcategory detail — rows filed on a child; rows filed on the parent are `ownSpentCents` */
   children: BreakdownChild[];
 }
 
@@ -405,11 +418,22 @@ export function categoryBreakdown(
     const topKey = bucket.categoryId ?? "∅";
     const top =
       tops.get(topKey) ??
-      ({ categoryId: bucket.categoryId, name: bucket.categoryName, spentCents: 0, txnCount: 0, children: [] } satisfies BreakdownRow);
+      ({
+        categoryId: bucket.categoryId,
+        name: bucket.categoryName,
+        spentCents: 0,
+        txnCount: 0,
+        ownSpentCents: 0,
+        ownTxnCount: 0,
+        children: [],
+      } satisfies BreakdownRow);
+    const isOwn = bucket.categoryId !== null && txn.categoryId === bucket.categoryId;
     tops.set(topKey, {
       ...top,
       spentCents: top.spentCents - txn.amountCents,
       txnCount: top.txnCount + 1,
+      ownSpentCents: isOwn ? top.ownSpentCents - txn.amountCents : top.ownSpentCents,
+      ownTxnCount: isOwn ? top.ownTxnCount + 1 : top.ownTxnCount,
     });
 
     if (txn.categoryId !== null && txn.categoryId !== bucket.categoryId) {

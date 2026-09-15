@@ -213,13 +213,46 @@ describe("categoryBreakdown", () => {
         name: "Food",
         spentCents: 14_600,
         txnCount: 4,
+        ownSpentCents: 600,
+        ownTxnCount: 1,
         children: [
           { categoryId: catId("Food > Groceries"), name: "Groceries", spentCents: 10_000, txnCount: 1 },
           { categoryId: catId("Food > Dining"), name: "Dining", spentCents: 4_000, txnCount: 2 },
         ],
       },
-      { categoryId: null, name: "Uncategorized", spentCents: 300, txnCount: 1, children: [] },
+      { categoryId: null, name: "Uncategorized", spentCents: 300, txnCount: 1, ownSpentCents: 0, ownTxnCount: 0, children: [] },
     ]);
+  });
+
+  /*
+   * 🔴 S20. `children` skips every row filed on the parent itself, so on
+   * `/spending` the expanded rows did not add up to the parent above them.
+   * Measured on the real ledger 2026-09-15, `?period=2026-07`: Travel $2,448.88
+   * over Flights $2,394.89. The own figure is accumulated directly, never taken
+   * as a difference — a difference would hide a child the loop failed to count.
+   */
+  test("the parent's own rows are carried beside the children, and the two add up to the total", () => {
+    insertTxn({ postedOn: "2026-07-02", amountCents: -4_000, category: "Food > Dining" });
+    insertTxn({ postedOn: "2026-07-04", amountCents: -10_000, category: "Food > Groceries" });
+    insertTxn({ postedOn: "2026-07-05", amountCents: -600, category: "Food" });
+    insertTxn({ postedOn: "2026-07-06", amountCents: 200, category: "Food" }); // a refund filed on Food itself
+
+    const [food] = categoryBreakdown(bundle.db, { from: "2026-07-01", to: "2026-07-31" });
+    expect(food!.ownSpentCents).toBe(400);
+    expect(food!.ownTxnCount).toBe(2);
+    expect(food!.children.reduce((s, c) => s + c.spentCents, 0) + food!.ownSpentCents).toBe(food!.spentCents);
+  });
+
+  test("a parent whose rows are all its own has no children and an own figure equal to its total", () => {
+    insertTxn({ postedOn: "2026-07-05", amountCents: -600, category: "Food" });
+    const [food] = categoryBreakdown(bundle.db, { from: "2026-07-01", to: "2026-07-31" });
+    expect(food).toMatchObject({ spentCents: 600, ownSpentCents: 600, ownTxnCount: 1, children: [] });
+  });
+
+  test("the Uncategorized bucket carries no own figure — its rows have no parent to sit on", () => {
+    insertTxn({ postedOn: "2026-07-06", amountCents: -300, category: null });
+    const [uncategorized] = categoryBreakdown(bundle.db, { from: "2026-07-01", to: "2026-07-31" });
+    expect(uncategorized).toMatchObject({ categoryId: null, ownSpentCents: 0, ownTxnCount: 0, children: [] });
   });
 });
 

@@ -2,8 +2,9 @@ import { eq } from "drizzle-orm";
 import { seriesDrawsAsRecurring, seriesRowLabel, type SeriesEvidence } from "@/lib/series-evidence";
 import type { AppDatabase } from "@/db/client";
 import { categories, type CategoryKind } from "@/db/schema/categories";
-import { addDays, monthKey, periodBounds } from "@/lib/dates";
+import { addDays, compareDates, monthKey, periodBounds } from "@/lib/dates";
 import { unreachedKind, type UnreachedKind } from "@/lib/empty-period";
+import { withOwnRow } from "@/lib/subcategory-rows";
 import {
   categorySpending,
   spendingTransactions,
@@ -225,19 +226,7 @@ export function categorySubcategorySplit(
     (t) => t.categoryId === categoryId,
   );
   const ownSpent = ownRows.reduce((sum, t) => sum - t.amountCents, 0);
-  const ownRow: CategorySubRow[] =
-    ownRows.length === 0
-      ? []
-      : [
-          {
-            categoryId,
-            name: `On ${node.name} itself`,
-            flowCents: sign * ownSpent,
-            txnCount: new Set(ownRows.map((t) => t.id)).size,
-            href: null,
-          },
-        ];
-  return ownRow.concat(children
+  const childRows: CategorySubRow[] = children
     .map((child) => {
       const { spentCents, txnCount } = categorySpending(db, { categoryId: child.id, from: range.from, to: range.to });
       // categorySpending returns -sum(amount); `categoryFlowSign` puts the row in
@@ -251,8 +240,15 @@ export function categorySubcategorySplit(
         href: ledgerHref({ category: child.id, from: range.from, to: range.to }),
       };
     })
-      .filter((r) => r.txnCount > 0))
-    .sort((a, b) => b.flowCents - a.flowCents || a.name.localeCompare(b.name));
+    .filter((r) => r.txnCount > 0);
+  // ⛔ the own row's name, its missing link and its place in the order are
+  // `lib/subcategory-rows`' — `/spending`'s expander reads the same rule
+  return withOwnRow<CategorySubRow>(
+    childRows,
+    { categoryId, name: node.name },
+    { rowCount: ownRows.length, fields: { flowCents: sign * ownSpent, txnCount: new Set(ownRows.map((t) => t.id)).size } },
+    (r) => r.flowCents,
+  );
 }
 
 // ── Recurring series in this category (closes the Stage-2 chain) ──────
