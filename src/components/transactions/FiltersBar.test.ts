@@ -81,6 +81,20 @@ describe("categorySelectOptions", () => {
     ]);
   });
 
+  /**
+   * 🔴 S22 — THE CARD SAID "income", THE PAGE IT OPENED SAID "earning". The owner
+   * renamed every income-kind positive population to Income (2026-09-14), and
+   * the Net card's aria-label became "View the income and spending behind it" —
+   * but its link, and the Savings-rate card's, land on `?category=cashflow`,
+   * whose select still read "All earning and spending": two words for one
+   * population across one click. /summary's narrow "Earned" is not this set.
+   */
+  it("names the cashflow population with the word the cards that open it use", () => {
+    const cashflow = CATEGORY_SENTINEL_OPTIONS.find((o) => o.id === "cashflow");
+    expect(cashflow?.label).toBe("All income and spending");
+    for (const option of CATEGORY_SENTINEL_OPTIONS) expect(option.label).not.toMatch(/earn/i);
+  });
+
   it("leaves the list alone when the applied value is already in it", () => {
     const sentinels = CATEGORY_SENTINEL_OPTIONS.length;
     expect(categorySelectOptions("coffee", tree)).toHaveLength(tree.length + sentinels);

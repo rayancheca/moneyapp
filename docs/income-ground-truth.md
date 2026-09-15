@@ -54,12 +54,16 @@ are cents-exact from `data/moneyapp.db` at the 2026-07-16 snapshot unless noted.
 > | **TOTAL** | **278** | **$117,924.62** |
 >
 > ⚠️ `Financial Aid` is the largest line and is **money in that was not earned** — it is excluded
-> from "Earned" everywhere the app prints that word. As of S22 (owner decision 2026-09-14) the only
-> surface that prints it is `/summary/[year]`, which puts aid under "Money in that you did not
-> earn". `/spending`, its heatmap, the cash-flow chart/table/graph and the dashboard bridge call
-> the all-income-kind figure **Income**, because aid is in it; before S22 they called it "Earned",
-> and that sentence was false on every one of them. Whether any of the aid is a loan rather than a
-> grant is still OPEN, and this document has never answered it.
+> from "Earned" everywhere the app prints that word over income-kind rows. As of S22 (owner decision
+> 2026-09-14) `/summary/[year]` is the only surface that prints "Earned" over income-kind
+> categories, and it puts aid under "Money in that you did not earn". `/spending`, its heatmap, the
+> cash-flow chart/table/graph, the dashboard bridge and the ledger filter those cards open
+> (`?category=cashflow`, "All income and spending") call the all-income-kind figure **Income**,
+> because aid is in it; before S22 they said "Earned" (the filter, "earning"), and that was false on
+> every one of them. The word still appears over a DIFFERENT population: the dashboard's "Earned vs
+> banked" card and its notes measure the confirmed cash-job schedule against deposits, which never
+> includes aid. Whether any of the aid is a loan rather than a grant is still OPEN, and this
+> document has never answered it.
 
 > **⚠️ PASS-45 UPDATE (2026-08-11) — GAMBLING WINNINGS ARE NO LONGER INCOME.**
 > Seven credits totalling **$1,053.82** sat in `Income > Other Income`. They are not earnings —

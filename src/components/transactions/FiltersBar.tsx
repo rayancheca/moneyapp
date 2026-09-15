@@ -37,12 +37,16 @@ export interface CategoryFilterOption {
  * not is worse than no sentinel at all: the rows would be filtered while the
  * control said "All categories", and the first edit of any other filter would
  * silently drop the scope.
+ *
+ * 🔴 S22: its label said "earning" after the cards that open it were renamed to
+ * "income" (owner decision 2026-09-14) — one population, two words, one click
+ * apart. /summary's narrow "Earned" is a different set and never lands here.
  */
 export const CATEGORY_SENTINEL_OPTIONS: readonly CategoryFilterOption[] = [
   { id: "uncategorized", label: "Uncategorized" },
   { id: "spending", label: "All spending" },
   { id: "income", label: "All income" },
-  { id: "cashflow", label: "All earning and spending" },
+  { id: "cashflow", label: "All income and spending" },
 ];
 
 /**

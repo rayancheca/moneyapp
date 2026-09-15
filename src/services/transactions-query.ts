@@ -115,7 +115,7 @@ export function filterConditions(
     // the one card of the four whose link had no scope at all. Measured on the
     // real ledger 2026-09-11: `/spending?period=2026` printed
     // "Net -$31,733.19" over a link opening 2,682 rows that sum to
-    // +$27,961.36. Its three sibling cards — Earned, Spent, Refunds — all
+    // +$27,961.36. Its three sibling cards — Earned (Income since S22), Spent, Refunds — all
     // opened exactly the rows behind them; Net and Savings rate opened the
     // whole ledger for the window, transfers, card payments and investment
     // flows included.
