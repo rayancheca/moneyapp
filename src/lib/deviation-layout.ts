@@ -193,6 +193,9 @@ export function computeDeviationLayout(
   };
 }
 
+/** The key `deviationRowsFrom` gives the Uncategorized bucket — published so no reader spells it again. */
+export const DEVIATION_UNCATEGORIZED_KEY = "__uncat";
+
 /** A per-category row as `categoryBreakdown` publishes it — the only fields a move needs. */
 export interface DeviationSourceRow {
   /** null = the explicit Uncategorized bucket */
@@ -224,7 +227,7 @@ export function deviationRowsFrom(
   current: readonly DeviationSourceRow[],
   previous: readonly DeviationSourceRow[],
 ): DeviationInput[] {
-  const keyOf = (r: DeviationSourceRow): string => r.categoryId ?? "__uncat";
+  const keyOf = (r: DeviationSourceRow): string => r.categoryId ?? DEVIATION_UNCATEGORIZED_KEY;
   const prevByKey = new Map(previous.map((r) => [keyOf(r), r]));
   const currentKeys = new Set(current.map(keyOf));
   return [

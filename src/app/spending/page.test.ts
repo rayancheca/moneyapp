@@ -33,6 +33,31 @@ function classNames(src: string): string[] {
 
 const isGrid = (cls: string) => cls.split(/\s+/).includes("grid");
 
+/**
+ * 🔴 ONE POPULATION for "Where it went". The List, the relief and the Table each
+ * mapped `breakdown` — THIS period's categories — and looked a prior figure up
+ * beside it, while "What moved" read the union of both windows. Measured on the
+ * owner's ledger 2026-09-15, `?period=2026-07`: What moved counted 15 categories
+ * and named Government's -$2,250.00 the largest move; the card below it had 12
+ * rows and a relief reading "+$588.75 against June 2026" over a change of
+ * -$2,057.14. `comparedCategories` reads What moved's rule; this gate keeps the
+ * page from growing a second mapping beside it. Source, not render: the page is
+ * an async server component that reads the database.
+ */
+describe("Where it went is cut from the comparison's one population", () => {
+  test("the relief, the Table and the List all read comparedCategories", () => {
+    expect(source).toContain('import { comparedCategories } from "@/lib/compared-categories";');
+    expect(source).toMatch(/const compared = comparedCategories\(breakdown, prevBreakdown\);/);
+    expect(source).toMatch(/const whereRows: WhereItWentRow\[\] = compared\.map\(/);
+    expect(source).toMatch(/const spentRows: CategoryTableRow\[\] = \(listCompares \? compared : .+\)\.map\(/);
+  });
+
+  test("no lens looks a prior figure up for this period's categories on its own", () => {
+    expect(source).not.toContain("prevById");
+    expect(source).not.toMatch(/breakdown\s*\.filter\(\(r\) => r\.categoryId !== null\)\s*\.map\(/);
+  });
+});
+
 describe("the spending page's tracks can shrink", () => {
   test("there are grids here to gate", () => {
     // guards the guard: a regex that silently matches nothing proves nothing

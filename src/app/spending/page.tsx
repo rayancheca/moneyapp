@@ -5,6 +5,7 @@ import { todayIso } from "@/lib/dates";
 import { emptyPeriodCopy, emptyPeriodReason } from "@/lib/empty-period";
 import { formatDayLong } from "@/lib/format-date";
 import { cashEarningsSectionNotes } from "@/lib/section-notes";
+import { comparedCategories } from "@/lib/compared-categories";
 import { deviationRowsFrom } from "@/lib/deviation-layout";
 import { paceWindowName } from "@/lib/pace-readout";
 import { spendingShareBase } from "@/lib/insight-facts";
@@ -160,7 +161,19 @@ export default async function SpendingPage({
   // and only where the two periods are compared WHOLE
   const breakdown = categoryBreakdown(db, range);
   const prevBreakdown = comparison.kind === "whole" ? categoryBreakdown(db, comparison.prior) : null;
-  const prevById = new Map((prevBreakdown ?? []).map((r) => [r.categoryId, r.spentCents]));
+  /*
+   * 🔴 THE CATEGORIES "Where it went" COMPARES — one population for its three
+   * lenses, and the one What moved reads (`lib/compared-categories`).
+   * Measured 2026-09-15, `?period=2026-07`: the card mapped July's categories
+   * alone, so Government ($2,250.00 in June, nothing in July), Personal Care and
+   * Gambling were in no lens of it, and the relief read "+$588.75 against June
+   * 2026" beneath a What moved counting 9 of 15 categories down. The change was
+   * -$2,057.14.
+   */
+  const compared = comparedCategories(breakdown, prevBreakdown);
+  // The List prints a change only month over month (`showDelta`). A List that
+  // prints none lists what THIS period spent, where a $0.00 row says nothing.
+  const listCompares = period.granularity === "month" && prevBreakdown !== null;
   /*
    * "What moved" reads the two windows the comparison names, over their UNION
    * (`deviationRowsFrom` owns that rule and its measurement): the whole periods —
@@ -215,21 +228,23 @@ export default async function SpendingPage({
   );
   const forecastMonthLabel = predictions[0]?.periodLabel ?? null;
 
-  const spentRows: CategoryTableRow[] = breakdown
-    .filter((r) => r.categoryId !== null)
-    .map((r) => ({
-      categoryId: r.categoryId!,
-      name: r.name,
-      hue: catMeta.get(r.categoryId!)?.color ?? null,
-      icon: catMeta.get(r.categoryId!)?.icon ?? null,
-      spentCents: r.spentCents,
-      sharePct: shareBase > 0 ? (Math.max(0, r.spentCents) / shareBase) * 100 : 0,
-      momDeltaCents: prevBreakdown === null ? 0 : r.spentCents - (prevById.get(r.categoryId) ?? 0),
-      forecast: forecastByCategory.get(r.categoryId!) ?? null,
+  // a category that stopped is a $0.00 row carrying its fall, where the List prints one
+  const spentRows: CategoryTableRow[] = (listCompares ? compared : compared.filter((c) => c.current !== null)).map(
+    (c) => ({
+      categoryId: c.categoryId,
+      name: c.name,
+      hue: catMeta.get(c.categoryId)?.color ?? null,
+      icon: catMeta.get(c.categoryId)?.icon ?? null,
+      spentCents: c.spentCents,
+      sharePct: shareBase > 0 ? (Math.max(0, c.spentCents) / shareBase) * 100 : 0,
+      momDeltaCents: c.priorCents === null ? 0 : c.spentCents - c.priorCents,
+      forecast: forecastByCategory.get(c.categoryId) ?? null,
       // 🔴 S20: the children alone did not add up to the parent above them — the
-      // rows filed on the parent itself were in no row (`lib/subcategory-rows`)
-      children: spendingSubcategoryItems(r, (id) => `/categories/${id}?${query}`),
-    }));
+      // rows filed on the parent itself were in no row (`lib/subcategory-rows`).
+      // A category with no row this period has no children in it either.
+      children: c.current === null ? [] : spendingSubcategoryItems(c.current, (id) => `/categories/${id}?${query}`),
+    }),
+  );
 
   // Categories with a confident next-month forecast (an upcoming recurring bill,
   // typically) but NO spend this period get no breakdown row — surface them as
@@ -256,23 +271,23 @@ export default async function SpendingPage({
     }));
   const categoryRows: CategoryTableRow[] = [...spentRows, ...upcomingRows];
 
-  // The relief/table lenses of the SAME card, cut from the SAME breakdown rows
-  // the list above is: this period against the previous one, with the entry
-  // count the footprint depth encodes. Forecast-only "upcoming" rows are not
-  // here on purpose — a category with no spend and no entries has no footprint,
-  // and the list lens still shows them.
-  const whereRows: WhereItWentRow[] = breakdown
-    .filter((r) => r.categoryId !== null)
-    .map((r) => ({
-      categoryId: r.categoryId!,
-      name: r.name,
-      hue: catMeta.get(r.categoryId!)?.color ?? null,
-      spentCents: r.spentCents,
-      // ⛔ null, never 0, when there is no comparable prior window: a zero is a
-      // measurement, and every block would rise by its whole spend
-      priorCents: prevBreakdown === null ? null : (prevById.get(r.categoryId) ?? 0),
-      txnCount: r.txnCount,
-    }));
+  // The relief/table lenses of the SAME card, cut from the SAME compared
+  // categories the list above is: this period against the previous one, with
+  // the entry count the footprint depth encodes. A category that stopped IS
+  // here — the Table prints it at $0.00 with its fall, and the relief counts the
+  // fall in its total and names it beside a plate it has no footprint on
+  // (`MassifLayout.absent`). Forecast-only "upcoming" rows are not: they were in
+  // neither window, and the list lens still shows them.
+  const whereRows: WhereItWentRow[] = compared.map((c) => ({
+    categoryId: c.categoryId,
+    name: c.name,
+    hue: catMeta.get(c.categoryId)?.color ?? null,
+    spentCents: c.spentCents,
+    // ⛔ null, never 0, when there is no comparable prior window: a zero is a
+    // measurement, and every block would rise by its whole spend
+    priorCents: c.priorCents,
+    txnCount: c.txnCount,
+  }));
   // The identity the relief states under itself, from the SAME two services the
   // stat cards use: Σ categories + uncategorized = gross spent − refunds.
   // categoryBreakdown books a refund as a negative in its category's bucket, so
@@ -477,7 +492,7 @@ export default async function SpendingPage({
               <SpendingCategoriesTable
                 rows={categoryRows}
                 periodQuery={query}
-                showDelta={period.granularity === "month" && prevBreakdown !== null}
+                showDelta={listCompares}
                 forecastMonthLabel={forecastMonthLabel}
               />
             </WhereItWentPanel>
