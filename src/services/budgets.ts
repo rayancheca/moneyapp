@@ -43,7 +43,7 @@ export type { BudgetTail, BudgetTailSeries };
 import { incomeBasis, levelledMonthlyCents, type IncomeBasis } from "@/lib/income-basis";
 import { daysNotImportedYet } from "@/lib/empty-period";
 import { frontierForSeries, ledgerOpens, observationFrontier, type ObservationFrontier } from "./observation-frontier";
-import { cashWalletIds } from "./manual-transactions";
+import { cashWalletIds } from "./cash-wallet-rule";
 
 /**
  * Budgets (master-plan Phase 5). One active budget per (category, period),

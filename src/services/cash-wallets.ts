@@ -7,7 +7,7 @@ import { isWithinFinancialWindow, MIN_OPENING_DATE } from "@/lib/date-window";
 import { addDays, compareDates, isValidIsoDate, todayIso } from "@/lib/dates";
 import { createAccount, getAccount, listAccounts, type AccountView } from "./accounts";
 import { addManualAnchor, listAnchors } from "./anchors";
-import { CASH_INSTITUTION_NAME, cashWalletIds, isCashWallet } from "./manual-transactions";
+import { CASH_INSTITUTION_NAME, cashWalletIds, isCashWallet } from "./cash-wallet-rule";
 
 /**
  * Cash wallets (ux-overhaul-plan §3.7): manual, import-free accounts for the

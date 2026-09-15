@@ -1,12 +1,9 @@
-import { and, eq, inArray, isNotNull, max, ne } from "drizzle-orm";
+import { and, eq, max, ne } from "drizzle-orm";
 import { z } from "zod";
 import { withPreMutationSnapshot } from "@/db/backup";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
-import { balanceAnchors } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
-import { statementPeriods } from "@/db/schema/imports";
-import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { transactionSplits } from "@/db/schema/transaction-splits";
 import { financialWindowMessage, isWithinFinancialWindow } from "@/lib/date-window";
@@ -15,6 +12,10 @@ import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { rebuildAccount } from "./derivation";
 import { accountsOfTransactions, restoreDuplicatesLosingTheirSurvivor } from "./duplicate-lifecycle";
+import { CASH_INSTITUTION_NAME, cashWalletIds, cashWalletInstitutionId, isCashWallet } from "./cash-wallet-rule";
+
+/** The wallet rule has its own module so the budgets page can ask it without importing db/backup (see cash-wallet-rule.ts). */
+export { CASH_INSTITUTION_NAME, cashWalletIds, cashWalletInstitutionId, isCashWallet } from "./cash-wallet-rule";
 
 /**
  * Manual transactions (ux-overhaul-plan §3.7): allowed ONLY on manual
@@ -44,91 +45,6 @@ export const manualTxnInputSchema = z
   })
   .strict();
 export type ManualTxnInput = z.infer<typeof manualTxnInputSchema>;
-
-/** The institution every intentional cash wallet lives under. */
-export const CASH_INSTITUTION_NAME = "Cash";
-
-/** The "Cash" institution's id, or null if none exists yet. */
-export function cashWalletInstitutionId(db: AppDatabase): string | null {
-  return (
-    db
-      .select({ id: institutions.id })
-      .from(institutions)
-      .where(eq(institutions.name, CASH_INSTITUTION_NAME))
-      .get()?.id ?? null
-  );
-}
-
-/**
- * A cash wallet is an INTENTIONAL manual wallet — one created under the "Cash"
- * institution — that also has NO external ground truth: no statement periods,
- * no import anchors (statement/ofx_ledger/live), and no imported transactions.
- * The institution marker is load-bearing: a structural-only check would
- * misclassify any freshly-created, not-yet-imported REGULAR bank account as a
- * cash wallet and let a manual row land on it, which would later break that
- * account's to-the-cent statement reconciliation. The structural checks then
- * stay as defense-in-depth (a "Cash" account never legitimately has imports).
- *
- * ⛔ The rule lives in `cashWalletIds`; this asks it about one account.
- */
-export function isCashWallet(db: AppDatabase, accountId: string): boolean {
-  return cashWalletIds(db).has(accountId);
-}
-
-/**
- * Every cash wallet in the ledger, by the rule `isCashWallet` states: under the
- * "Cash" institution, with no statement period, no import anchor and no
- * imported row.
- *
- * ⛔ ONE rule for both spellings. `/budgets` asks "which of the accounts this
- * category was spent from are wallets" on every row of the page, and a second,
- * batch copy of these checks beside `isCashWallet` would be two definitions of a
- * wallet that can drift — the write guard in `addManualTransaction` and a page
- * that leaves wallets out would then disagree about the same account.
- *
- * ⚠️ Archived wallets are included: archiving an account does not let an import
- * reach it, and a category spent from one inside a window is still spent from a
- * wallet.
- */
-export function cashWalletIds(db: AppDatabase): ReadonlySet<string> {
-  const cashInstId = cashWalletInstitutionId(db);
-  if (cashInstId === null) return new Set();
-  const underCash = db
-    .select({ id: accounts.id })
-    .from(accounts)
-    .where(eq(accounts.institutionId, cashInstId))
-    .all();
-  return new Set(underCash.map((a) => a.id).filter((id) => !hasImportGroundTruth(db, id)));
-}
-
-/** A statement period, an import anchor (statement/ofx_ledger/live) or an imported row on the account. */
-function hasImportGroundTruth(db: AppDatabase, accountId: string): boolean {
-  const period = db
-    .select({ id: statementPeriods.id })
-    .from(statementPeriods)
-    .where(eq(statementPeriods.accountId, accountId))
-    .get();
-  if (period) return true;
-
-  const importAnchor = db
-    .select({ id: balanceAnchors.id })
-    .from(balanceAnchors)
-    .where(
-      and(
-        eq(balanceAnchors.accountId, accountId),
-        inArray(balanceAnchors.source, ["statement", "ofx_ledger", "live"]),
-      ),
-    )
-    .get();
-  if (importAnchor) return true;
-
-  const importedTxn = db
-    .select({ id: transactions.id })
-    .from(transactions)
-    .where(and(eq(transactions.accountId, accountId), isNotNull(transactions.importFileId)))
-    .get();
-  return importedTxn !== undefined;
-}
 
 /** Inserts a manual row and rebuilds the wallet's derived balances. */
 export function addManualTransaction(db: AppDatabase, input: ManualTxnInput): string {
