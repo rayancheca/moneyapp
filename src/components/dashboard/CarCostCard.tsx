@@ -3,7 +3,6 @@ import { InfoTip } from "@/components/ui/InfoTip";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { RUNWAY_JARGON } from "@/lib/jargon";
-import { dayWindowLabel } from "@/lib/period";
 import { formatCents } from "@/lib/money";
 import type { CarCard as CarCardData } from "@/services/committed";
 
@@ -62,8 +61,10 @@ export function CarCostCard({ data }: { data: CarCardData }) {
               tiles away says out loud that insurance "is billed 5 times rather
               than throughout". The card already discloses the end date at the
               bottom — and a disclosure underneath does not undo a wrong label on
-              top. `monthlyCents` is the sum of ONE occurrence of each series,
-              which is exactly "a month while both are billed". */}
+              top. `monthlyCents` is the heaviest calendar month the book bills
+              (`heaviestMonthOutflowCents`), which is exactly "a month while both
+              are billed" — not one occurrence of each series, which priced a
+              one-payment balance as a second premium on 2026-09-15. */}
           {/* ⚠️ The qualifier goes on its OWN line, the shape the row beneath
               already uses. As one truncating line it rendered "Lease and
               insurance, a month while …" in the grid lens at 1024 — clipped at
@@ -123,11 +124,12 @@ export function CarCostCard({ data }: { data: CarCardData }) {
         </p>
       )}
 
-      {cost.evidencedThrough && (
-        <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
-          Insurance is evidenced through {dayWindowLabel(cost.evidencedThrough, cost.evidencedThrough)} — a renewal is not in the ledger, so the
-          monthly figure above stops being what you pay after that date.
-        </p>
+      {/* ⛔ Names the commitment it dates — `carEvidenceCaption`, the runway
+          card's own choice. It read "Insurance is evidenced through Nov 11,
+          2026" on 2026-09-15: the earliest end of any car series, under a
+          hard-coded word, beside a runway card saying Jan 11, 2027. */}
+      {data.evidenceCaption && (
+        <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">{data.evidenceCaption}</p>
       )}
     </SurfaceCard>
   );

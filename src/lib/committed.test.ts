@@ -2,6 +2,9 @@ import { describe, expect, test } from "vitest";
 import type { Cadence } from "@/db/schema/recurring";
 import {
   baselineCaption,
+  endingLead,
+  endingOthersClause,
+  heaviestMonthOutflowCents,
   COMMITTED_ORIGIN_LABEL,
   monthHorizon,
   shrinkCaption,
@@ -558,5 +561,64 @@ describe("shrinkCaption", () => {
       ],
     });
     expect(shrinkCaption(book)!).toContain("2 others");
+  });
+});
+
+/**
+ * The line `shrinkCaption` leads with, as a value — so a second surface can name
+ * the same commitment rather than pick its own. The car card picked the
+ * EARLIEST end date of any car series instead, and on 2026-09-15 printed the
+ * one-payment Nov 11 balance under the word "Insurance" beside a runway card
+ * leading with the premium's Jan 11, 2027.
+ */
+describe("endingLead", () => {
+  test("nothing ending is no lead", () => {
+    expect(endingLead(committedOutflows({ ...REAL, occurrences: occ("Rent", -228570, monthly("01"), null) }))).toBeNull();
+  });
+
+  test("the lead is the line that shrinks the rate most, not the one that ends first", () => {
+    const book = committedOutflows({
+      ...REAL,
+      occurrences: [
+        ...occ("Car insurance", -35758, ["2026-12-11", "2027-01-11"], null, { endsOn: "2027-01-11" }),
+        ...occ("Nov 11 balance", -7274, ["2026-11-11"], null, { endsOn: "2026-11-11" }),
+      ],
+    });
+    const lead = endingLead(book)!;
+    expect(lead.lead.name).toBe("Car insurance");
+    expect(lead.endsOn).toBe("2027-01-11");
+    expect(lead.others).toBe(1);
+  });
+
+  test("the others are counted in the words shrinkCaption uses", () => {
+    expect(endingOthersClause(0)).toBe("");
+    expect(endingOthersClause(1)).toBe(", and one other does too");
+    expect(endingOthersClause(2)).toBe(", and 2 others do too");
+  });
+});
+
+/**
+ * 🔴 The car card's "a month, while both are billed" summed the first
+ * occurrence of every series — $1,125.36 on the owner's ledger, a month no
+ * calendar holds. What a month bills is read off the months themselves.
+ */
+describe("heaviestMonthOutflowCents", () => {
+  test("no payments is no month", () => {
+    expect(heaviestMonthOutflowCents([])).toBe(0);
+  });
+
+  test("the month that bills the most, summed by calendar month", () => {
+    const occurrences = [
+      ...occ("Lease", -69504, ["2026-09-15", "2026-10-15", "2026-11-15", "2026-12-15"], null),
+      ...occ("Insurance", -35758, ["2026-12-11"], null),
+      ...occ("Balance", -7274, ["2026-11-11"], null),
+    ];
+    expect(heaviestMonthOutflowCents(occurrences)).toBe(69504 + 35758);
+  });
+
+  /* ⛔ money in is never netted against money out — the rule this module owns */
+  test("money in does not lower a month", () => {
+    const occurrences = [...occ("Lease", -69504, ["2026-09-15"], null), ...occ("Refund", 50000, ["2026-09-20"], null)];
+    expect(heaviestMonthOutflowCents(occurrences)).toBe(69504);
   });
 });

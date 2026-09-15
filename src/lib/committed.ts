@@ -359,23 +359,83 @@ export function shrinkCaption(book: {
   lines: readonly CommittedLine[];
   shortfallPerMonthCents: number;
 }): string | null {
+  const ending = endingLead(book);
+  if (ending === null) return null;
+  const { lead, endsOn, others } = ending;
+  const times = lead.occurrences === 1 ? "once" : `${lead.occurrences} times`;
+
+  return (
+    `${lead.name} stops inside that window — evidenced through ${dayWindowLabel(endsOn, endsOn)}, with no renewal ` +
+    `in the ledger${endingOthersClause(others)} — so it is billed ${times} rather than throughout, and counts ` +
+    `${formatCents(lead.perMonthCents)} a month here against the ${formatCents(lead.perOccurrenceCents)} ` +
+    `it charges. The rate above is ${formatCents(book.shortfallPerMonthCents)} a month lower for it.`
+  );
+}
+
+/** The commitment a book names as ending, and how many others end beside it. */
+export interface EndingLead {
+  lead: CommittedLine;
+  /** the lead's end day — never null, because only an ending line can lead */
+  endsOn: string;
+  /** the other lines that also stop inside the horizon, counted, not named */
+  others: number;
+}
+
+/**
+ * WHICH ending commitment a sentence about a book names — the choice
+ * `shrinkCaption` makes, as a value.
+ *
+ * 🔴 A SECOND SURFACE PICKED ITS OWN. The car card took the EARLIEST end date
+ * of any car series and printed it under the hard-coded word "Insurance".
+ * Measured on the owner's dashboard 2026-09-15 it read "Insurance is evidenced
+ * through Nov 11, 2026" — the one-payment balance left after a $1,000 early
+ * payment — beside the runway card's "Car insurance stops inside that window —
+ * evidenced through Jan 11, 2027". After Nov 11 he still pays the premium
+ * twice. Both sentences now name the line this returns.
+ *
+ * The lead is the line that lowers the rate MOST, not the one that ends first:
+ * it is the one whose end changes what the book says a month costs.
+ */
+export function endingLead(book: { lines: readonly CommittedLine[] }): EndingLead | null {
   const ending = book.lines
     .filter((l) => l.endsInHorizon && l.shortfallPerMonthCents > 0)
     .sort((a, b) => b.shortfallPerMonthCents - a.shortfallPerMonthCents);
   const lead = ending[0];
   if (lead === undefined || lead.endsOn === null) return null;
+  return { lead, endsOn: lead.endsOn, others: ending.length - 1 };
+}
 
-  const others = ending.length - 1;
-  const rest =
-    others === 0 ? "" : others === 1 ? ", and one other does too" : `, and ${others} others do too`;
-  const times = lead.occurrences === 1 ? "once" : `${lead.occurrences} times`;
+/** ", and one other does too" — the others `endingLead` counted, in one spelling. */
+export function endingOthersClause(others: number): string {
+  return others === 0 ? "" : others === 1 ? ", and one other does too" : `, and ${others} others do too`;
+}
 
-  return (
-    `${lead.name} stops inside that window — evidenced through ${dayWindowLabel(lead.endsOn, lead.endsOn)}, with no renewal ` +
-    `in the ledger${rest} — so it is billed ${times} rather than throughout, and counts ` +
-    `${formatCents(lead.perMonthCents)} a month here against the ${formatCents(lead.perOccurrenceCents)} ` +
-    `it charges. The rate above is ${formatCents(book.shortfallPerMonthCents)} a month lower for it.`
-  );
+/**
+ * The most money out any ONE calendar month of these occurrences bills.
+ *
+ * 🔴 "A month, while both are billed" was the FIRST occurrence of every series,
+ * summed. On the owner's ledger 2026-09-15 that priced the one-payment Nov 11
+ * insurance balance ($72.74) as a monthly bill beside the premium it is the
+ * remainder of: $1,125.36, a month no calendar holds — November bills $767.78,
+ * December and January $1,052.62.
+ *
+ * ⛔ AND NOT "drop every line billed once". A book cannot tell a one-off from a
+ * series on its LAST payment: on 2026-12-12 the real premium has one payment
+ * left (Jan 11) and would be dropped with the balance, printing the lease alone
+ * over a January that bills both. The months themselves can tell — so this
+ * reads them.
+ *
+ * ⛔ Money in is never netted against money out (this module's rule): an inflow
+ * does not lower a month.
+ */
+export function heaviestMonthOutflowCents(occurrences: readonly CommittedOccurrence[]): number {
+  const byMonth = new Map<string, number>();
+  for (const o of occurrences) {
+    if (o.amountCents >= 0) continue;
+    const month = monthKey(o.date);
+    byMonth.set(month, (byMonth.get(month) ?? 0) - o.amountCents);
+  }
+  return Math.max(0, ...byMonth.values());
 }
 
 /**

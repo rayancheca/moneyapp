@@ -1048,6 +1048,76 @@ describe("carCard", () => {
   });
 
   /**
+   * The owner's car as the 2026-09-14 decision left it: the lease, the premium
+   * on the 11th through the end of the policy, and the $72.74 still owed on
+   * Nov 11 after the $1,000 paid early — a ONE-payment series whose end date is
+   * its only date.
+   */
+  function ownersCar(): void {
+    const carId = createCarCategory();
+    addSeries({ name: "Car lease", kind: "bill", nextExpectedOn: "2026-09-15", amountCents: -69504, userCategoryId: carId, userEndsOn: "2028-08-15" });
+    addSeries({ name: "Car insurance", kind: "bill", nextExpectedOn: "2026-12-11", amountCents: -35758, userCategoryId: carId, userEndsOn: "2027-01-11" });
+    addSeries({
+      name: "Car insurance — Nov 11 balance after the $1,000 early payment",
+      kind: "bill",
+      nextExpectedOn: "2026-11-11",
+      amountCents: -7274,
+      userCategoryId: carId,
+      userEndsOn: "2026-11-11",
+    });
+  }
+
+  /**
+   * 🔴 "$1,379.53 a month, all in" over "Lease and insurance, a month while both
+   * are billed $1,125.36" — measured on the real ledger 2026-09-15. It summed
+   * the FIRST occurrence of every car series, so the one-payment balance was
+   * priced as a monthly bill beside the premium it is a remainder of. No month
+   * bills $1,125.36: Nov is $767.78, Dec and Jan are $1,052.62.
+   *
+   * ⚠️ Swept, because the obvious fix is wrong three months later: dropping
+   * every line "billed once" inside the horizon also drops the REAL premium on
+   * 2026-12-12, when Jan 11 is its only payment left, and prints the lease
+   * alone over a January that bills both.
+   */
+  test("a month while both are billed is the month both bill, not the first payment of every series", () => {
+    ownersCar();
+    const bothBilled = 69504 + 35758;
+    for (const today of ["2026-09-15", "2026-11-11", "2026-12-12", "2027-01-11"]) {
+      expect(carCard(bundle.db, today)!.cost.monthlyCents, today).toBe(bothBilled);
+    }
+    expect(carCard(bundle.db, "2026-09-15")!.cost.monthlyCents).not.toBe(69504 + 35758 + 7274);
+    // the day after the policy's last premium, only the lease is billed
+    expect(carCard(bundle.db, "2027-01-12")!.cost.monthlyCents).toBe(69504);
+  });
+
+  /**
+   * 🔴 "Insurance is evidenced through Nov 11, 2026" beside the runway card's
+   * "Car insurance stops inside that window — evidenced through Jan 11, 2027" —
+   * one dashboard, real ledger, 2026-09-15. The card took the EARLIEST end date
+   * of any car series and printed it under a hard-coded word; the earliest was
+   * the one-payment balance, and after it he still pays the premium twice.
+   */
+  test("names the commitment whose end it prints, the one the runway card leads with", () => {
+    ownersCar();
+    const c = carCard(bundle.db, "2026-09-15")!;
+    expect(c.cost.evidencedThrough).toBe("2027-01-11");
+    expect(c.evidenceCaption).toContain("Car insurance stops inside");
+    expect(c.evidenceCaption).toContain("Jan 11, 2027");
+    expect(c.evidenceCaption).toContain("one other does too");
+    expect(c.evidenceCaption).not.toContain("Nov 11, 2026");
+  });
+
+  /* A lease that outlives the horizon does not stop the monthly figure inside
+     it — the card printed its 2028 end date under the word "Insurance". */
+  test("an end date past the horizon is not a date the monthly figure stops being true", () => {
+    const carId = createCarCategory();
+    addSeries({ name: "Car lease", kind: "bill", nextExpectedOn: "2026-09-15", amountCents: -69504, userCategoryId: carId, userEndsOn: "2028-08-15" });
+    const c = carCard(bundle.db, "2026-09-15")!;
+    expect(c.cost.evidencedThrough).toBeNull();
+    expect(c.evidenceCaption).toBeNull();
+  });
+
+  /**
    * The share's denominator must not contain the car twice. On the real ledger
    * the baseline months predate every car row so the correction is zero today,
    * but it stops being zero once a car month enters the window.

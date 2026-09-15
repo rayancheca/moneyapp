@@ -1,9 +1,11 @@
 import { inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries, type Cadence } from "@/db/schema/recurring";
-import { carCost, type CarCost } from "@/lib/car-cost";
+import { carCost, carEvidenceCaption, type CarCost } from "@/lib/car-cost";
 import {
   committedOutflows,
+  endingLead,
+  heaviestMonthOutflowCents,
   monthHorizon,
   withinMonthHorizon,
   type CommittedOccurrence,
@@ -471,6 +473,8 @@ export interface CarCard {
   cost: CarCost;
   /** the car's own committed lines, largest first */
   book: CommittedOutflows;
+  /** when the monthly figure stops being true, naming the line — `carEvidenceCaption`; null when nothing ends */
+  evidenceCaption: string | null;
   /** the spend baseline the share is measured against, car spend removed */
   baseline: SpendBaseline;
   today: string;
@@ -521,25 +525,19 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
 
   /*
    * The recurring monthly bill, NOT `book.totalCents / months`. Insurance stops
-   * five payments into the twelve-month horizon, so the average ($710.51) and
-   * the bill he actually pays in September ($921.38) are different true numbers.
-   * Taking the first occurrence of each series is what "what does it cost a
-   * month" means.
+   * inside the twelve-month horizon, so the average and the bill he actually
+   * pays in a month both are billed are different true numbers.
+   *
+   * 🔴 AND NOT THE FIRST OCCURRENCE OF EVERY SERIES, which is what this summed
+   * until 2026-09-15. The owner's decision of 2026-09-14 registered the $72.74
+   * still owed on Nov 11 as its own one-payment series, and the card published
+   * "Lease and insurance, a month while both are billed $1,125.36" — $695.04 +
+   * $357.58 + $72.74, the premium's remainder priced as a second monthly
+   * premium. No month bills that: November is $767.78, December and January
+   * $1,052.62. `heaviestMonthOutflowCents` reads the months instead, and says
+   * why dropping every line "billed once" is the same defect three months on.
    */
-  /*
-   * ⚠️ Taking the FIRST occurrence per series is intent, not arithmetic: a
-   * mutation that took the last survived, because `projectOccurrences` copies
-   * one `nextExpectedAmountCents` onto every occurrence it emits, so a series'
-   * occurrences are all the same size and first and last cannot differ. An
-   * equivalent mutant, recorded rather than papered over with a test that would
-   * only assert the fixture back to itself. If per-occurrence amounts ever
-   * become real, "the next bill" is the answer this wants.
-   */
-  const firstByCadence = new Map<string, number>();
-  for (const o of occurrences) {
-    if (!firstByCadence.has(o.seriesId)) firstByCadence.set(o.seriesId, -o.amountCents);
-  }
-  const committedMonthlyCents = [...firstByCadence.values()].reduce((s, c) => s + c, 0);
+  const committedMonthlyCents = heaviestMonthOutflowCents(occurrences);
 
   // money already handed over: every posted row in the Car subtree that no
   // commitment accounts for
@@ -597,18 +595,17 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
     baseline.monthlyCents - Math.round(baselineCarCents / Math.max(1, baseline.months));
 
   /*
-   * The first date a car commitment runs out — the six-month insurance policy,
-   * not the lease. Past it the monthly figure above stops being what he pays,
-   * and a renewal is not in the ledger to replace it.
+   * The date a car commitment runs out inside the horizon — past it the monthly
+   * figure above stops being what he pays, and a renewal is not in the ledger.
+   *
+   * 🔴 It was the EARLIEST `userEndsOn` of any car series, printed under the
+   * hard-coded word "Insurance". On 2026-09-15 that was the one-payment Nov 11
+   * balance, beside a runway card naming the premium's Jan 11, 2027 — and a
+   * lease ending in 2028 would have been printed as "Insurance" too. The book
+   * already knows which lines stop inside it; `endingLead` is the runway card's
+   * own choice of which one to name.
    */
-  const ends = db
-    .select({ id: recurringSeries.id, endsOn: recurringSeries.userEndsOn })
-    .from(recurringSeries)
-    .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
-    .all()
-    .filter((r) => carSeries.has(r.id) && r.endsOn !== null)
-    .map((r) => r.endsOn as string)
-    .sort();
+  const ending = endingLead(book);
 
   return {
     cost: carCost({
@@ -618,9 +615,10 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
       upfrontCents,
       upfrontAmortisedOverMonths: CAR_LEASE_TERM_MONTHS,
       baselineMonthlySpendCents,
-      evidencedThrough: ends[0] ?? null,
+      evidencedThrough: ending?.endsOn ?? null,
     }),
     book,
+    evidenceCaption: carEvidenceCaption(book),
     baseline: { ...baseline, monthlyCents: baselineMonthlySpendCents },
     today,
   };

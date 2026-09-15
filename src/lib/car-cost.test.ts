@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { carCost, type CarCostInput } from "./car-cost";
+import { carCost, carEvidenceCaption, type CarCostInput } from "./car-cost";
+import { committedOutflows, type CommittedOccurrence } from "./committed";
 
 /**
  * The car, measured on the live ledger 2026-08-24.
@@ -139,5 +140,36 @@ describe("carCost — what it refuses to claim", () => {
     // monthly figure, nor the monthly figure from it.
     expect(c.committedCents).toBe(852613);
     expect(c.committedCents).not.toBe(c.monthlyCents * REAL.months);
+  });
+});
+
+/**
+ * 🔴 "Insurance is evidenced through Nov 11, 2026 — a renewal is not in the
+ * ledger, so the monthly figure above stops being what you pay after that date"
+ * — measured on the owner's dashboard 2026-09-15, beside a runway card saying
+ * the premium runs to Jan 11, 2027. The date was the earliest end of any car
+ * series (a one-payment balance), and the word was hard-coded.
+ */
+describe("carEvidenceCaption", () => {
+  const book = (occurrences: CommittedOccurrence[]) =>
+    committedOutflows({ from: "2026-09-15", to: "2027-09-15", months: 12, occurrences, overdue: [] });
+  const line = (name: string, cents: number, dates: string[], endsOn: string | null): CommittedOccurrence[] =>
+    dates.map((date) => ({ seriesId: name, name, date, amountCents: cents, lastMatchedOn: null, isStale: true, cadence: "monthly", endsOn }));
+
+  test("nothing ending inside the horizon is silence", () => {
+    expect(carEvidenceCaption(book(line("Car lease", -69504, ["2026-09-15"], "2028-08-15")))).toBeNull();
+  });
+
+  test("names the commitment it dates, and counts the others that end", () => {
+    const caption = carEvidenceCaption(
+      book([
+        ...line("Car lease", -69504, ["2026-09-15", "2026-10-15"], "2028-08-15"),
+        ...line("Car insurance", -35758, ["2026-12-11", "2027-01-11"], "2027-01-11"),
+        ...line("Nov 11 balance", -7274, ["2026-11-11"], "2026-11-11"),
+      ]),
+    )!;
+    expect(caption).toBe(
+      "Car insurance stops inside the next 12 months — evidenced through Jan 11, 2027, with no renewal in the ledger, and one other does too — so the monthly figure above stops being what you pay after that date.",
+    );
   });
 });

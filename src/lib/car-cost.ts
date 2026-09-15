@@ -12,6 +12,9 @@
  * evidence runs out is published rather than assumed past.
  */
 
+import { endingLead, endingOthersClause, type CommittedLine } from "@/lib/committed";
+import { dayWindowLabel } from "@/lib/period";
+
 export interface CarCostInput {
   /** the horizon the committed total spans, in whole months */
   months: number;
@@ -114,4 +117,29 @@ export function carCost(input: CarCostInput): CarCost {
     allInSharePct: share(allInMonthlyCents, allInProjectedMonthlySpendCents),
     evidencedThrough: input.evidencedThrough,
   };
+}
+
+/**
+ * The sentence under the car card that says when its monthly figure stops
+ * being true — about the commitment whose end it dates.
+ *
+ * 🔴 It read "Insurance is evidenced through Nov 11, 2026" on the owner's
+ * dashboard 2026-09-15: the earliest end date of any car series, under a
+ * hard-coded word. The earliest was a one-payment $72.74 balance; the premium
+ * runs to Jan 11, 2027, which is what the runway card two tiles away said.
+ *
+ * ⛔ THE RUNWAY CARD'S CHOICE, not a second one — `endingLead` picks the line
+ * and `endingOthersClause` counts the rest, so the two cards cannot name
+ * different commitments or different dates for one book. Null when nothing
+ * stops inside the horizon: an end date past it does not stop the monthly
+ * figure inside it.
+ */
+export function carEvidenceCaption(book: { lines: readonly CommittedLine[]; months: number }): string | null {
+  const ending = endingLead(book);
+  if (ending === null) return null;
+  return (
+    `${ending.lead.name} stops inside the next ${book.months} months — evidenced through ` +
+    `${dayWindowLabel(ending.endsOn, ending.endsOn)}, with no renewal in the ledger${endingOthersClause(ending.others)} — ` +
+    `so the monthly figure above stops being what you pay after that date.`
+  );
 }
