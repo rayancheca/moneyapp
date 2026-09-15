@@ -659,10 +659,30 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
     };
   }
 
-  const verdict: ProvenanceVerdict = isInvestment(account.type) ? "market_value" : BASIS_VERDICT[row.basis];
-
   // the anchor this day rests on — the same lookup a transaction's proof names
   const anchor = anchorOnOrBefore(db, accountId, row.day);
+  /*
+   * 🔴 A BALANCE TYPED BY HAND READ "ON A STATEMENT". Every `anchored` day was
+   * badged `sourced` and told "A statement records <acct>'s balance on <day>
+   * directly. This is the number the bank printed." — whichever document, or
+   * none, recorded it. Unreachable in practice while surfaces dated a balance by
+   * the rebuild day; once an account observed only by recorded balances is dated
+   * by the day one was recorded (S24), a checking account with one balance typed
+   * in on Sep 11 read exactly that on its /accounts/[id] header (scratch
+   * measurement, 2026-09-16). Not live on the real ledger: its one hand-typed
+   * balance (Cash on Hand, Aug 3, 2026) is not the day any surface asks about.
+   *
+   * ⛔ The winning anchor ON the day decides — `pickWinners`, so a statement and a
+   * hand-typed balance on one day read as the statement the replay uses. The
+   * badge and the sentence move together: "you entered it" is the app's word for
+   * the owner's own evidence (owner decision S33).
+   */
+  const recordedBy = row.basis === "anchored" && anchor?.anchor.anchoredOn === row.day ? anchor.anchor.source : null;
+  const verdict: ProvenanceVerdict = isInvestment(account.type)
+    ? "market_value"
+    : recordedBy === "manual"
+      ? "manual"
+      : BASIS_VERDICT[row.basis];
   const sources: ProvenanceSource[] = anchor ? [anchor.source] : [];
 
   // periods covering this day, and what each concluded
@@ -678,20 +698,28 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
 
   return {
     verdict,
-    headline: headlineForBalance(account.name, account.type, row.basis, row.day),
+    headline: headlineForBalance(account.name, account.type, row.basis, row.day, recordedBy),
     sources,
     checkedThrough: isInvestment(account.type) ? null : (lastClosed?.day ?? null),
     inputs: [],
   };
 }
 
-function headlineForBalance(name: string, type: string, basis: BalanceBasis, day: string): string {
+/** `recordedBy` — the source of the balance recorded ON an anchored day, or null */
+function headlineForBalance(name: string, type: string, basis: BalanceBasis, day: string, recordedBy: string | null): string {
   const on = readableDay(day);
   if (isInvestment(type)) {
     return `${name} is priced from its holdings on ${on}. A brokerage statement sets a value; it never proves the transactions add up.`;
   }
   switch (basis) {
     case "anchored":
+      if (recordedBy === "manual") {
+        return `You recorded ${name}'s balance on ${on} yourself. No statement carries it, so nothing else can confirm it.`;
+      }
+      if (recordedBy === "ofx_ledger") {
+        return `A bank export records ${name}'s balance on ${on} directly. This is the number the bank printed.`;
+      }
+      if (recordedBy === "live") return `A live reading records ${name}'s balance on ${on}.`;
       return `A statement records ${name}'s balance on ${on} directly. This is the number the bank printed.`;
     case "derived":
       return `Every transaction was replayed forward from a recorded balance and landed exactly on the next one, through ${on}.`;

@@ -265,12 +265,53 @@ describe("provenanceFor — an account balance", () => {
     expect(p.sources.map((s) => s.label)).toContain("20260801-statements-3522-.pdf");
   });
 
-  test("a hand-entered anchor says the owner is the source", () => {
+  /*
+   * 🔴 A BALANCE TYPED BY HAND READ "ON A STATEMENT". `headlineForBalance` said
+   * "A statement records <acct>'s balance on <day> directly. This is the number
+   * the bank printed." of EVERY anchored day, and `BASIS_VERDICT` badged it
+   * `sourced`, whichever document — or none — recorded it. Harmless while the
+   * account page dated a hand-recorded balance by the rebuild day ("carried");
+   * once an account observed only by recorded balances is dated by the day it
+   * was recorded (S24), a checking account with one balance typed in on Sep 11
+   * read "on a statement — A statement records Safe's balance on Sep 11, 2026
+   * directly" (scratch measurement, 2026-09-16). This test only asked about
+   * the source label, so the badge and the sentence could both be false.
+   *
+   * ⛔ Both halves together: fixing the sentence alone would put "You recorded
+   * it" under a badge still reading "on a statement".
+   */
+  test("a hand-entered anchor says the owner is the source — in the badge and the sentence", () => {
     const id = addAccount("a", "Cash on Hand", "cash");
     addDays(id, [{ day: "2026-08-01", basis: "anchored" }]);
     addAnchor(id, "2026-08-01", "manual");
     const p = provenanceFor(bundle.db, { kind: "accountBalance", accountId: id, day: "2026-08-01" })!;
     expect(p.sources.some((s) => s.label === "a balance you entered")).toBe(true);
+    expect(p.verdict).toBe("manual");
+    expect(p.headline).not.toMatch(/A statement records|bank printed/);
+    expect(p.headline).toContain("You recorded Cash on Hand's balance on Aug 1, 2026");
+  });
+
+  test("a balance a bank export recorded is not said to be a statement's", () => {
+    const id = addAccount("a", "Chase Checking", "checking");
+    const csv = addFile("f1", "Chase3522_Activity_20260710.CSV", "chase-deposit-csv");
+    addDays(id, [{ day: "2026-07-08", basis: "anchored" }]);
+    addAnchor(id, "2026-07-08", "ofx_ledger", csv);
+    const p = provenanceFor(bundle.db, { kind: "accountBalance", accountId: id, day: "2026-07-08" })!;
+    expect(p.verdict).toBe("sourced");
+    expect(p.headline).not.toMatch(/A statement records/);
+    expect(p.headline).toContain("A bank export records Chase Checking's balance on Jul 8, 2026 directly");
+  });
+
+  test("a statement and a hand-typed balance on one day read as the statement the replay uses", () => {
+    const id = addAccount("a", "Chase Checking", "checking");
+    const pdf = addFile("f1", "20260801-statements-3522-.pdf", "chase-checking-statement-pdf");
+    addDays(id, [{ day: "2026-08-01", basis: "anchored" }]);
+    addAnchor(id, "2026-08-01", "statement", pdf);
+    addAnchor(id, "2026-08-01", "manual");
+    // the replay uses the statement over a hand-typed balance on the same day
+    const p = provenanceFor(bundle.db, { kind: "accountBalance", accountId: id, day: "2026-08-01" })!;
+    expect(p.verdict).toBe("sourced");
+    expect(p.headline).toContain("A statement records Chase Checking's balance on Aug 1, 2026 directly");
   });
 
   test("an account with no derived balance says so rather than guessing", () => {
