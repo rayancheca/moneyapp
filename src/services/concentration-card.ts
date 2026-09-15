@@ -142,8 +142,13 @@ export interface ConcentrationRemainder {
   valueCents: number;
   portfolioPct: number;
   /**
-   * Its own share, printed — a PART, not a subtotal: the positions behind it
-   * are not on the card, so there is nothing printed for a reader to add.
+   * The SUM of the shares its positions print. They are not on the card, but
+   * each is a row on /investments, and one set of holdings reads one way on
+   * every page — so this is exactly the Share that ticking them there prints.
+   *
+   * 🔴 It was its own sum rounded once, "a part, not a subtotal": on the owner's
+   * ledger 2026-09-15 "5 smaller positions 18.4%" here, and "Share 18.3%" for
+   * ticking exactly those five holdings on /investments.
    */
   shareLabel: string;
 }
@@ -155,10 +160,10 @@ export interface ConcentrationKind {
   valueCents: number;
   portfolioPct: number;
   /**
-   * The SUM of the lines printed for this class — its named rows, plus the
-   * remainder line when every position behind it is of this class. When the
-   * remainder mixes classes no reader can split it, so the class prints its own
-   * share instead. See `kindShareLabel`.
+   * The SUM of the shares this class's positions print — named on the card or
+   * inside the remainder line. Its named lines plus a remainder wholly of this
+   * class add to it on the card, and ticking the class on /investments prints
+   * it. See `kindShareLabel`.
    */
   shareLabel: string;
   isSingleName: boolean;
@@ -347,7 +352,7 @@ export function concentrationCard(
           count: rest.length,
           valueCents: rest.reduce((s, p) => s + p.valueCents, 0),
           portfolioPct: remainderPct,
-          shareLabel: sharePercent(remainderPct),
+          shareLabel: sumOfPrintedShares(rest.map((p) => p.portfolioPct)),
         };
 
   const kindTotals = new Map<AssetType, { valueCents: number; portfolioPct: number }>();
@@ -360,32 +365,34 @@ export function concentrationCard(
   }
 
   /*
-   * What a reader can add up for one class: its named rows, and the remainder
-   * line only when every position behind that line is of this class.
+   * A class is the sum of the shares its positions print — every one of them,
+   * named on the card or inside the remainder line.
    *
    * 🔴 Measured on the owner's ledger 2026-09-15: "Individual stocks 51.5%"
    * under stock lines MSFT 18.2% · AMZN 8.2% · UNH 6.8% and "5 smaller
    * positions 18.4%" — all five of them stocks — which add to 51.6.
    *
+   * 🔴 …and then "51.6%" beside /investments' "Share 51.5%" for ticking those
+   * same eight stocks, because the remainder line was its own sum rounded once
+   * (second reader on uc/shares-rounding, 2026-09-15). The remainder is written
+   * as the sum of its positions now, so a class's named lines plus a remainder
+   * wholly of that class add to exactly this, and so does the tick bar.
+   *
    * ⚖️ Owner decision 2026-09-14 (F2): the sum of the rounded rows. A remainder
-   * that MIXES classes cannot be split by class on the card, so a class with a
-   * position inside it prints its own share: there is nothing printed to add.
-   * Not reachable on the owner's ledger today — AAPL, COKE, GOOG, META and WMT
-   * are all stocks.
+   * that MIXES classes cannot be split by class on the card, but each position
+   * inside it is a row on /investments, so the class is still that sum — never
+   * round(Σ), the figure F2 replaced. Not reachable on the owner's ledger today:
+   * AAPL, COKE, GOOG, META and WMT are all stocks.
    */
-  const remainderKinds = new Set(rest.map((p) => p.assetType));
-  const kindShareLabel = (assetType: AssetType, exactPct: number): string => {
-    const printed = named.filter((p) => p.assetType === assetType).map((p) => p.portfolioPct);
-    if (!remainderKinds.has(assetType)) return sumOfPrintedShares(printed);
-    return remainderKinds.size === 1 ? sumOfPrintedShares([...printed, remainderPct]) : sharePercent(exactPct);
-  };
+  const kindShareLabel = (assetType: AssetType): string =>
+    sumOfPrintedShares(positions.filter((p) => p.assetType === assetType).map((p) => p.portfolioPct));
   const byKind: ConcentrationKind[] = [...kindTotals.entries()]
     .map(([assetType, t]) => ({
       assetType,
       label: KIND_LABEL[assetType],
       valueCents: t.valueCents,
       portfolioPct: t.portfolioPct,
-      shareLabel: kindShareLabel(assetType, t.portfolioPct),
+      shareLabel: kindShareLabel(assetType),
       isSingleName: isSingleName(assetType),
     }))
     .sort((a, b) => b.valueCents - a.valueCents);

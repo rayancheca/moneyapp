@@ -8,8 +8,10 @@ import { seedDatabase } from "@/db/seed";
 import { dailyBalances } from "@/db/schema/balances";
 import { holdings, priceCache, type AssetType } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
+import { subtotalHoldings } from "@/lib/holding-subtotal";
 import { createAccount } from "./accounts";
-import { concentrationCard } from "./concentration-card";
+import { concentrationCard, type ConcentrationCard } from "./concentration-card";
+import { holdingRows, type HoldingRow } from "./portfolio";
 import { rebuildInvestmentHistory } from "./crypto-history";
 import { upsertHolding } from "./holdings";
 
@@ -341,28 +343,72 @@ describe("concentrationCard — what the portfolio is riding on", () => {
       ["NVDA", "9.0%"],
     ]);
     expect(c.remainder!.count).toBe(2);
-    expect(c.remainder!.shareLabel).toBe("3.9%");
+    // GOOG 2.04% and META 1.84% print 2.0% and 1.8% on /investments — where round(3.88) printed 3.9%
+    expect(c.remainder!.shareLabel).toBe("3.8%");
     const kind = (t: AssetType): string => c.byKind.find((k) => k.assetType === t)!.shareLabel;
-    // 15.0 + 12.0 + 9.0 + 3.9 — where round(40.00) printed 40.0%
-    expect(kind("stock")).toBe("39.9%");
+    // 15.0 + 12.0 + 9.0 + 3.8, the lines above — where round(40.00) printed 40.0%
+    expect(kind("stock")).toBe("39.8%");
     expect(kind("crypto")).toBe("40.0%");
     expect(kind("etf")).toBe("20.0%");
     // the fund sentence quotes the Funds line, not a fourth author
     expect(c.fundNote).toContain("$2,000.00, 20.0% of the portfolio");
   });
 
-  test("a remainder that mixes classes cannot be added by class, so those classes print their own share", () => {
+  test("a remainder that mixes classes still adds each class from its holdings as they print", () => {
     seedTail({ symbol: "VOO", assetType: "etf" });
 
     const c = concentrationCard(bundle.db, TODAY)!;
-    expect(c.remainder!.shareLabel).toBe("3.9%"); // GOOG 2.04 + VOO 1.84
+    expect(c.remainder!.shareLabel).toBe("3.8%"); // GOOG 2.0 + VOO 1.8
     const kind = (t: AssetType): string => c.byKind.find((k) => k.assetType === t)!.shareLabel;
-    // no reader can split "2 smaller positions 3.9%" by class, so these are the classes' own shares
-    expect(kind("stock")).toBe("38.2%"); // 15.04 + 12.04 + 9.04 + 2.04
-    expect(kind("etf")).toBe("21.8%"); // 20.00 + 1.84
-    // a class with nothing in the remainder is still the sum of its rows
+    // the card cannot split "2 smaller positions" by class, but /investments prints every
+    // holding inside it — each class is the sum of its holdings' printed shares, never round(Σ)
+    expect(kind("stock")).toBe("38.0%"); // 15.0 + 12.0 + 9.0 + 2.0, where round(38.16) printed 38.2%
+    expect(kind("etf")).toBe("21.8%"); // 20.0 + 1.8
     expect(kind("crypto")).toBe("40.0%");
     expect(c.fundNote).toContain("$2,184.00, 21.8% of the portfolio");
+  });
+
+  /**
+   * Every share on the card that stands for holdings, beside the Share
+   * /investments prints for ticking exactly those holdings — compared as the
+   * strings a reader sees.
+   */
+  function tickBarDisagreements(c: ConcentrationCard): { compared: number; mismatches: string[] } {
+    const legs = holdingRows(bundle.db).filter((r) => r.allocationPct !== null);
+    const tick = (keep: (r: HoldingRow) => boolean): string | null =>
+      subtotalHoldings(legs.filter(keep)).allocationShare;
+    const keyOf = (x: { assetType: AssetType; symbol: string }): string => `${x.assetType}|${x.symbol}`;
+    const named = new Set(c.positions.map(keyOf));
+    const figures: [string, string, string | null][] = [
+      ...c.positions.map((p): [string, string, string | null] => [p.symbol, p.shareLabel, tick((r) => keyOf(r) === keyOf(p))]),
+      ...c.byKind.map((k): [string, string, string | null] => [k.label, k.shareLabel, tick((r) => r.assetType === k.assetType)]),
+    ];
+    if (c.remainder) figures.push(["remainder", c.remainder.shareLabel, tick((r) => !named.has(keyOf(r)))]);
+    if (c.topTwo) figures.push(["top two", c.topTwo.shareLabel, tick((r) => c.topTwo!.symbols.includes(r.symbol))]);
+    return {
+      compared: figures.length,
+      mismatches: figures.filter(([, card, bar]) => card !== bar).map(([name, card, bar]) => `${name}: card ${card}, tick ${bar}`),
+    };
+  }
+
+  /**
+   * 🔴 One set of holdings, two pages, two shares. The remainder printed its own
+   * sum rounded once, so on the owner's ledger 2026-09-15 the dashboard read
+   * "5 smaller positions 18.4%" and "Individual stocks 51.6%" while ticking
+   * exactly those holdings on /investments read "Share 18.3%" and "Share 51.5%"
+   * (second reader on uc/shares-rounding). F2 keeps every holding's share
+   * identical everywhere; a figure MADE of those shares has to be as well, or
+   * the decision holds for the rows and breaks for their sums.
+   */
+  test.each([
+    ["wholly of one class", { symbol: "META", assetType: "stock" as AssetType }],
+    ["mixing classes", { symbol: "VOO", assetType: "etf" as AssetType }],
+  ])("every share on the card is the Share /investments prints for the same holdings — a remainder %s", (_, sixth) => {
+    seedTail(sixth);
+    const { compared, mismatches } = tickBarDisagreements(concentrationCard(bundle.db, TODAY)!);
+    expect(mismatches).toEqual([]);
+    // five named rows, three classes, the remainder and the top two
+    expect(compared).toBe(10);
   });
 
   test("a subtotal of slivers is a sliver, never a printed zero — and a near-whole never the whole", () => {
