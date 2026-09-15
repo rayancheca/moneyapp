@@ -1093,6 +1093,30 @@ export interface CategoryCoverage {
  * ⚠️ Known gap, the dashboard's own: a FIRST charge on an account the category
  * was never spent from in the window is not waited for.
  *
+ * ❓ A CASH WALLET HOLDS A ROW BACK FOR THE WHOLE WINDOW, and no import can
+ * release it. A wallet has no statements, so its frontier is its newest typed
+ * row, and a recorded count is not read (`observedThrough` reads anchors;
+ * `observationFrontier` does not). Measured 2026-09-15 on copies of the real
+ * ledger, with a $1.00 Car row added on Chase Checking and on Venture X on each
+ * day tested: Cash on Hand's one row (Aug 11, the $5,000 down payment, 77% of
+ * Car since March) reads Car "Awaiting statements · spending imported through
+ * Aug 11 · 13 days of this period unaccounted" on Oct 13, and "… Aug 11, 2026 ·
+ * 26 days" on Feb 26, 2027, with both cards imported through that day. Mar 1,
+ * 2027 is the first day it grades ("On track · 0% used"). No statement can end
+ * that wait — `services/statement-pulls` already says a wallet issues none.
+ * Not decided: keep it; leave wallets out of the frontier; or date a wallet by
+ * `observedThrough`, so a recorded count releases it. `budgets.test.ts` pins
+ * today's behaviour, so the choice flips a test.
+ *
+ * ❓ A SECOND SURFACE ASKS THIS QUESTION OF THE SAME CATEGORY AND MONTH, WITH
+ * THE WHOLE LEDGER'S DAY. `/categories/[id]`, the page each row links to, feeds
+ * `emptyPeriodReason` the ledger-wide `ledgerReaches`. Measured 2026-09-15:
+ * the Fees row reads "spending imported through Aug 12 · 15 days of this period
+ * unaccounted", and its September page "2 days of it have not been imported —
+ * the ledger is imported through Sun, Sep 13, 2026"; Car, Cash & ATM and Travel
+ * read the same sentence there. The ⛔ above rules out only the ledger's day on
+ * THIS page; whether that page should read this rule is not decided.
+ *
  * Deliberately NOT account coverage/verifiedThrough, which answers "which
  * periods reconcile", a stronger and more optimistic question (SoFi Checking
  * reports a verified 2026-07-31 against a last transaction of 2026-05-31, and

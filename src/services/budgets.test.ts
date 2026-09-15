@@ -14,6 +14,9 @@ import { levelledMonthlyCents } from "@/lib/income-basis";
 import { recurringSeries } from "@/db/schema/recurring";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import { createAccount } from "./accounts";
+import { addManualAnchor } from "./anchors";
+import { createCashWallet } from "./cash-wallets";
+import { addManualTransaction } from "./manual-transactions";
 import { setSplits } from "./transaction-splits";
 import { categorySpending, recurringSeriesIdsForCategory } from "./analytics";
 import {
@@ -1983,6 +1986,49 @@ describe("data coverage (uncoveredDays / importedThroughOn)", () => {
     expect(s.importedThroughOn).toBeNull();
     expect(s.spentFromAccounts).toBe(1);
     expect(s.uncoveredDays).toBe(11);
+  });
+
+  test("❓ a cash wallet holds a budget back until its row leaves the window, and a recorded count does not release it", () => {
+    /*
+     * PINNED, NOT DECIDED. A wallet has no statements, so its import frontier is
+     * its newest typed row, and nothing imported can move it. Measured
+     * 2026-09-15 on copies of the real ledger, with a $1.00 Car row added on
+     * Chase Checking and on Venture X on each day tested: Cash on Hand's one row
+     * (Aug 11, the $5,000 down payment, 77% of Car since March) keeps Car at
+     * "Awaiting statements · spending imported through Aug 11" on Oct 13 and on
+     * Feb 26, 2027; Mar 1, 2027 is the first day it grades. The owner has not
+     * chosen between keeping that, leaving wallets out of the frontier, or
+     * dating a wallet by `observedThrough` so a recorded count releases it.
+     * Either change flips an assertion here — that is the point of the pin.
+     */
+    const wallet = createCashWallet(bundle.db, { name: "Cash on Hand", openingOn: "2026-02-10", openingBalanceCents: 10_000 });
+    addManualTransaction(bundle.db, {
+      accountId: wallet,
+      postedOn: "2026-02-14",
+      amountCents: -5_000,
+      description: "CASH",
+      categoryId: catId("Food"),
+    });
+    // a count recorded after the row, agreeing with it — an observation this frontier does not read
+    addManualAnchor(bundle.db, { accountId: wallet, anchoredOn: "2026-08-20", enteredCents: 5_000 });
+    spend("2026-06-10", -2_000, "Food"); // the card, spent from inside both windows below
+    spend("2026-09-01", -1_000, "Food"); // …and imported through Sep 1
+    createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 100_000, startsOn: "2026-08-01" });
+    const food = (today: string) => budgetPaceStatuses(bundle.db, today).find((x) => x.categoryName === "Food")!;
+
+    // ⛔ two ends. Aug 31: the window opens Feb 1 and holds the wallet's Feb 14
+    const held = food("2026-08-31");
+    expect(held.spentFromAccounts).toBe(2);
+    expect(held.importedThroughOn).toBe("2026-02-14");
+    expect(held.uncoveredDays).toBe(31);
+    expect(budgetVerdict({ pace: held.pace, pct: held.pct, uncoveredDays: held.uncoveredDays }).withheld).toBe(true);
+
+    // Sep 1: the window opens Mar 1, the wallet drops out, and the card alone governs
+    const released = food("2026-09-01");
+    expect(released.spentFromAccounts).toBe(1);
+    expect(released.importedThroughOn).toBe("2026-09-01");
+    expect(released.uncoveredDays).toBe(0);
+    expect(budgetVerdict({ pace: released.pace, pct: released.pct, uncoveredDays: 0 }).withheld).toBe(false);
   });
 });
 
