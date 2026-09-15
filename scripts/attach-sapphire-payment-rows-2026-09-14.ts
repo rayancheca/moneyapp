@@ -83,11 +83,21 @@
  *    every period verdict, the quarantine (0 rows), the active sum, the live
  *    transfer groups (23 single, 754 two-leg) and 590 of 591 balance days
  *    unchanged, in either file order; `ledger-check` exits 0.
- *  - What a bump still changes, measured on that copy: the 06/30 row above
- *    comes back posted on its printed 06/30 (Sapphire 2026-06-30 −$29.11 →
- *    $70.89); all 34 attached rows come back under the statement's own text,
- *    "Payment Thank You-Mobile", on the same day and amount otherwise; and 108
- *    superseded rows keep the transfer group id their successor now carries.
+ *  - What a bump still changes, measured again on fresh copies once ownership
+ *    read the posted day (2026-09-15, either file order): 64 live Sapphire rows
+ *    are rewritten.
+ *      - The 06/30 row above comes back posted on its printed 06/30. Sapphire
+ *        2026-06-30 goes −$29.11 → $70.89, the one balance day that moves.
+ *      - All 34 attached rows come back under the statement's own text,
+ *        "Payment Thank You-Mobile", and 33 of them gain the printed
+ *        `transacted_on` they never had.
+ *      - `categorization_source` is re-derived on all 64 rows: 38
+ *        `transfer_detect` → `rule` and 26 `claude` → `merchant_map`. 30 of
+ *        them are not attached rows: 26 Claude-categorized purchases and 4
+ *        transfer-detected payments. No `category_id` or `merchant_id` moves,
+ *        so no figure does.
+ *      - 108 superseded rows keep the transfer group id their successor now
+ *        carries.
  *    The 06/30 posting day is still the owner's call: do not bump
  *    `chase-card-statement-pdf` before he has made it.
  *  - Un-importing any of the 12 statements hard-deletes the attached rows it

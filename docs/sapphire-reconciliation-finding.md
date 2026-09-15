@@ -114,13 +114,46 @@ Three lessons, in the order they cost time:
 
 ## 5. Still open
 
-> **Resolved 2026-09-15, in the importer rather than the parser.** A forced parser-version re-parse
-> of the Sapphire statements on a copy of the ledger put the four straddlers back on their printed
-> days — 5 periods to `gap`, 47 rows quarantined, identically in either file order. `importOneFile`
-> now stores a row dated outside its (non-investment) statement period on the nearest edge
-> (`postedInsidePeriod`, shared with the Discover parser), keeping the printed day as
-> `transacted_on`, and every match — identity, takeover, carry, ownership — still reads the day the
-> file prints, which is the mitigation below. The chase-card parser and its version are unchanged.
+### The straddler: fixed in the importer, 2026-09-15
+
+A forced parser-version re-parse of the Sapphire statements on a copy of the ledger put the four
+straddlers back on their printed days: 5 periods to `gap` and 47 rows quarantined, identically in
+either file order. What shipped is not the plan in the superseded subsection below. The parser was not
+changed, and the posted lens was not skipped.
+
+- **Placement.** `importOneFile` STORES a row dated outside its statement period on the nearest edge
+  and keeps the printed day as `transacted_on`, for every account whose periods must close to the cent
+  (not investment). The rule is `postedInsidePeriod` (`src/lib/statement-period.ts`); the Discover
+  parser's inline clamp calls it too. `chase-card-statement-profile.ts`, its version and its test at
+  line 91 are unchanged: the parser still reports the printed day.
+- **Matching another record of the same money reads the PRINTED row.** Identity (posted lens first,
+  then transacted), the takeover victim and the re-parse carry all look for a row on the day the file
+  prints. The posted lens never sees the placed day, so `LA GAVIOTA DELI GROCERY` cannot claim
+  `NEW BEST GOURMET DELI` on the opening day. That was the hazard the old plan's "skip the posted lens"
+  answered.
+- **Ownership reads the STORED row.** Ownership asks which source covers the day the row posted. Read on
+  the printed day (as first shipped), an export whose coverage ended on the previous statement's close
+  day dropped the charge as owned and the period gapped. An export whose coverage began on the posting
+  day did not own the charge, and the statement recorded it a second time. Takeover still asks about
+  the printed day, because that is where its victim sits.
+
+Two limits remain:
+
+- **An identity twin across the boundary.** Suppose the previous statement closed with a genuinely
+  distinct charge of the same amount, dated the day the straddler prints. Identity consumes that row's
+  slot, the straddler is counted as a cross-format dedupe and never stored, and its own period gaps.
+  This is not in today's Sapphire data: the forced re-parse produced no gap. A fix would stop identity
+  from consuming a row that sits inside a different, closed statement period of the same account.
+- **A version bump is still gated.** `scripts/attach-sapphire-payment-rows-2026-09-14.ts` forbids one
+  until the owner decides the 06/30 payment's posting day. Its header lists everything a bump still
+  changes.
+
+Also worth knowing: **0 of 25 synthetic `chase-card-*.pdf` fixtures match `isChaseCardStatementText`**
+— the golden acceptance test exercises a different profile entirely, so "the golden test is green" is
+false assurance for anything in this parser. The importer tests for the straddler drive
+`parseChaseCardLines` directly for that reason.
+
+### Superseded: the 2026-08-05 plan (kept for its measurements)
 
 **The parser is not fixed for FUTURE statements.** The clamp was applied to the 4 existing rows as
 data; `chase-card-statement-profile.ts` still records the printed transaction date as `posted_on`, so
