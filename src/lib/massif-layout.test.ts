@@ -13,6 +13,7 @@ import {
   type MassifCategoryInput,
   type MassifLayoutOptions,
 } from "./massif-layout";
+import { spendingShareBase } from "./insight-facts";
 import { resolveViewState } from "./view-state";
 
 /**
@@ -145,6 +146,135 @@ describe("computeMassifLayout — the figure sums to the ledger", () => {
     expect(layout.liftPerUnit).toBe(0);
     expect(layout.totalSpentCents).toBe(0);
     expect(layout.categoryCount).toBe(0);
+  });
+});
+
+/**
+ * 🔴 S17. A category that netted money back ranks LAST, so it lands in the tail
+ * whenever one forms — and `groupTail` summed it SIGNED into the aggregate
+ * before any clamp. Measured on the owner's ledger 2026-09-15, relief at the
+ * 8-block budget against the Table lens of the same card:
+ *
+ *     ?period=2025-02   rail "Travel 47.1%"   table 46.4%   widths ÷ $5,500.44, table ÷ $5,585.07
+ *                       rail "4 smaller categories 0.8% $44.31"   members 1.3 + 0.7 + 0.3
+ *     ?period=2024-05   rail "Food 43.3%"     table 42.1%
+ *                       rail "4 smaller categories — -$1,544.58", swallowing $60.53 of spending
+ *     ?period=2025-Q1   rail "Food 40.1%"     table 39.8%
+ *
+ * ⚖️ Owner decision 2026-09-14 (F1): a net-refunded category is never folded.
+ * It stands as its own "—" block with its own figure, exactly as the Table lens
+ * shows it, even past the plate's block budget; the tail folds only
+ * non-negative rows, and "at least two rows" is judged on that positive tail.
+ *
+ * ⛔ Every tail test above is all-positive or under the cap, which is why none
+ * of them could fail: these fixtures hold MORE rows than the cap, a refund that
+ * ranks into the tail, and two positive tail members beside it.
+ */
+describe("computeMassifLayout — a refund inside the tail", () => {
+  const overCap = (refundCents: number, dCents: number, eCents: number): MassifCategoryInput[] => [
+    cat({ id: "a", spentCents: 50_000 }),
+    cat({ id: "b", spentCents: 30_000 }),
+    cat({ id: "c", spentCents: 10_000 }),
+    cat({ id: "d", spentCents: dCents }),
+    cat({ id: "e", spentCents: eCents }),
+    cat({ id: "f", label: "Refunds", spentCents: refundCents, priorCents: 0, txnCount: 2 }),
+  ];
+  /** 2025-02's shape: a refund smaller than the tail siblings it was netted against */
+  const SMALL_REFUND = overCap(-4_000, 5_000, 3_000);
+  /** 2024-05's shape: a refund bigger than all of them together */
+  const BIG_REFUND = overCap(-20_000, 2_000, 1_000);
+
+  test("a refund no longer shrinks the denominator every width divides", () => {
+    const layout = computeMassifLayout(SMALL_REFUND, { ...OPTS, maxBlocks: 4 });
+
+    expect(layout.shareBaseCents).toBe(98_000);
+    expect(byId(layout.blocks, "a").share).toBeCloseTo(50_000 / 98_000, 12);
+    const refund = byId(layout.blocks, "f");
+    expect(refund.memberCount).toBe(1);
+    expect(refund.share).toBe(0);
+    expect(refund.spentCents).toBe(-4_000);
+    const other = byId(layout.blocks, MASSIF_OTHER_ID);
+    expect(other.memberCount).toBe(2);
+    expect(other.label).toBe("2 smaller categories");
+    expect(other.spentCents).toBe(8_000);
+    expect(other.share).toBeCloseTo(8_000 / 98_000, 12);
+    expect(layout.blocks.reduce((s, b) => s + b.share, 0)).toBeCloseTo(1, 12);
+    // past the budget by exactly the one refunded category
+    expect(layout.blocks).toHaveLength(5);
+  });
+
+  test("a refund no longer swallows the spending folded beside it", () => {
+    const layout = computeMassifLayout(BIG_REFUND, { ...OPTS, maxBlocks: 4 });
+
+    const other = byId(layout.blocks, MASSIF_OTHER_ID);
+    expect(other.spentCents).toBe(3_000);
+    expect(other.share).toBeCloseTo(3_000 / 93_000, 12);
+    expect(byId(layout.blocks, "f").spentCents).toBe(-20_000);
+    expect(layout.shareBaseCents).toBe(93_000);
+  });
+
+  test("the money still reconciles — a refund moved out of the tail is not a refund dropped", () => {
+    for (const rows of [SMALL_REFUND, BIG_REFUND]) {
+      const layout = computeMassifLayout(rows, { ...OPTS, maxBlocks: 4 });
+      expect(layout.blocks.reduce((s, b) => s + b.spentCents, 0)).toBe(layout.totalSpentCents);
+      expect(layout.blocks.reduce((s, b) => s + b.txnCount, 0)).toBe(layout.totalTxnCount);
+      expect(layout.blocks.reduce((s, b) => s + b.memberCount, 0)).toBe(rows.length);
+    }
+  });
+
+  test("every named block's share is the Table lens's — max(0, spent) over spendingShareBase", () => {
+    let checked = 0;
+    for (const rows of [SMALL_REFUND, BIG_REFUND]) {
+      const layout = computeMassifLayout(rows, { ...OPTS, maxBlocks: 4 });
+      const base = spendingShareBase(rows);
+      expect(layout.shareBaseCents).toBe(base);
+      const named = layout.blocks.filter((b) => b.id !== MASSIF_OTHER_ID);
+      expect(named.map((b) => b.id).sort()).toEqual(["a", "b", "c", "f"]);
+      for (const b of named) {
+        expect(b.share).toBe(Math.max(0, b.spentCents) / base);
+        checked++;
+      }
+    }
+    expect(checked).toBe(8);
+  });
+
+  test("no aggregate block ever nets money back, at any budget", () => {
+    const twoRefunds = [...SMALL_REFUND, cat({ id: "g", spentCents: -1_500 })];
+    let layouts = 0;
+    for (const rows of [SMALL_REFUND, BIG_REFUND, twoRefunds]) {
+      for (const maxBlocks of [2, 3, 4, 5]) {
+        const layout = computeMassifLayout(rows, { ...OPTS, maxBlocks });
+        expect(layout.blocks.filter((b) => b.memberCount > 1 && b.spentCents < 0)).toEqual([]);
+        for (const refunded of rows.filter((r) => r.spentCents < 0)) {
+          expect(byId(layout.blocks, refunded.id).memberCount).toBe(1);
+        }
+        layouts++;
+      }
+    }
+    expect(layouts).toBe(12);
+  });
+
+  test("the aggregate still stands for at least two rows — counted on the POSITIVE tail", () => {
+    const threeAndARefund = [
+      cat({ id: "a", spentCents: 50_000 }),
+      cat({ id: "b", spentCents: 30_000 }),
+      cat({ id: "c", spentCents: 10_000 }),
+      cat({ id: "f", spentCents: -4_000 }),
+    ];
+    // three positive rows fit a budget of three: nothing is folded, however long the list
+    const atCap = computeMassifLayout(threeAndARefund, { ...OPTS, maxBlocks: 3 });
+    expect(atCap.blocks.map((b) => b.id).sort()).toEqual(["a", "b", "c", "f"]);
+    expect(atCap.blocks.every((b) => b.memberCount === 1)).toBe(true);
+
+    // one positive row over: the aggregate appears and already stands for two
+    const overByOne = computeMassifLayout([...threeAndARefund, cat({ id: "d", spentCents: 5_000 })], {
+      ...OPTS,
+      maxBlocks: 3,
+    });
+    const other = byId(overByOne.blocks, MASSIF_OTHER_ID);
+    expect(other.memberCount).toBe(2);
+    expect(other.spentCents).toBe(15_000);
+    expect(byId(overByOne.blocks, "f").memberCount).toBe(1);
   });
 });
 

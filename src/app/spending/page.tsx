@@ -7,6 +7,7 @@ import { formatDayLong } from "@/lib/format-date";
 import { cashEarningsSectionNotes } from "@/lib/section-notes";
 import { deviationRowsFrom } from "@/lib/deviation-layout";
 import { paceWindowName } from "@/lib/pace-readout";
+import { spendingShareBase } from "@/lib/insight-facts";
 import {
   heatmapInitialMonth,
   periodParams as periodParamsOf,
@@ -184,9 +185,9 @@ export default async function SpendingPage({
   // (cashFlow.totals.spentCents) can be dragged below an individual category's
   // gross by refund/reimbursement-heavy categories that net to an inflow, which
   // would push shares past 100% or negative — so sum only the positive spends.
-  const shareBase = breakdown
-    .filter((r) => r.categoryId !== null)
-    .reduce((s, r) => s + Math.max(0, r.spentCents), 0);
+  // ⛔ `spendingShareBase`, the same author the Table lens and the relief divide
+  // by: three hand copies of this line existed, and the relief's diverged.
+  const shareBase = spendingShareBase(breakdown.filter((r) => r.categoryId !== null));
   // Next-month per-category forecast (recurring baseline + trend/seasonal
   // discretionary) — the SAME engine /budgets' Predict-budgets uses, surfaced
   // read-only here. Only meaningful when the page is on a month (the forecast

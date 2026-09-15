@@ -11,7 +11,27 @@ import {
   renderPercent,
   sharePercent,
   spendingShare,
+  spendingShareBase,
 } from "./insight-facts";
+
+/**
+ * 🔴 S17. Three hand copies of "a share of spending divides by the POSITIVE
+ * spend" existed — the relief's, the Table lens's and the List lens's — and the
+ * relief's summed its rows AFTER folding a refund into them, so on
+ * `/spending?period=2025-02` its widths divided $5,500.44 while the table beside
+ * it divided $5,585.07.
+ */
+describe("spendingShareBase — the one denominator of a share of spending", () => {
+  test("sums what was spent; a category that netted money back is dropped, not subtracted", () => {
+    expect(spendingShareBase([{ spentCents: 50_000 }, { spentCents: -4_000 }, { spentCents: 8_000 }])).toBe(58_000);
+  });
+
+  test("nothing spent is a zero base, and a refund alone does not make it negative", () => {
+    expect(spendingShareBase([])).toBe(0);
+    expect(spendingShareBase([{ spentCents: -1 }])).toBe(0);
+    expect(spendingShareBase([{ spentCents: 0 }])).toBe(0);
+  });
+});
 
 describe("a fact renders itself, and the caller cannot disagree with it", () => {
   test("display comes from value, so the words and the number cannot drift", () => {
@@ -245,14 +265,6 @@ describe("spendingShare — a refunded category took no share, not a zero one", 
     const s = spendingShare(-160_511, 0);
     expect(s.label).toBe("—");
     expect(s.title).toBe("took no share of spending — this category netted money back");
-  });
-
-  /** 🔴 the relief's "4 smaller categories" block was told "this category" */
-  test("an aggregate of several categories refuses in the plural", () => {
-    expect(spendingShare(-154_458, 0, 4).title).toBe(
-      "took no share of spending — together these 4 categories netted money back",
-    );
-    expect(spendingShare(-154_458, 0, 1).title).toContain("this category");
   });
 
   test("a category that really spent nothing keeps its measured zero", () => {

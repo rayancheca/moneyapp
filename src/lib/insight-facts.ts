@@ -449,25 +449,41 @@ export function sharePercent(pct: number): string {
  */
 export function spendingShare(
   spentCents: number,
-  sharePct: number,
   /**
-   * How many categories the figure sums. The relief folds its tail into one
-   * "N smaller categories" block, and the refusal first said "this category"
-   * of it — the only refusal the relief rendered anywhere on the ledger was on
-   * exactly that aggregate. A bundle netting money back says so in the plural.
+   * ⚠️ There is no member count. This once refused an aggregate "in the plural"
+   * — "together these 4 categories netted money back" — because the relief's
+   * tail was the only block that could net money back: it folded a refund in
+   * with the spending beside it. The tail never folds a refund now (`groupTail`,
+   * owner decision 2026-09-14), so no caller could reach that sentence, and a
+   * branch tested but never called is not a guard. `massif-layout.test.ts` pins
+   * the invariant that replaced it: no block with more than one member nets
+   * money back.
    */
-  memberCount = 1,
+  sharePct: number,
 ): { label: string; title: string | null } {
   if (spentCents < 0) {
-    return {
-      label: "—",
-      title:
-        memberCount > 1
-          ? `took no share of spending — together these ${memberCount} categories netted money back`
-          : "took no share of spending — this category netted money back",
-    };
+    return { label: "—", title: "took no share of spending — this category netted money back" };
   }
   return { label: sharePercent(sharePct), title: null };
+}
+
+/**
+ * The denominator of every share of spending: Σ max(0, spentCents).
+ *
+ * A category that netted money back is DROPPED from it, not subtracted — its
+ * refund is not a negative share of anybody else's spending, which is the
+ * other half of `spendingShare`'s refusal.
+ *
+ * 🔴 ONE author, because three hand copies diverged. The List lens (the
+ * /spending page), the Table lens and the relief each summed this themselves,
+ * and the relief summed its rows AFTER folding a refund into its tail. Measured
+ * on the owner's ledger 2026-09-15, `?period=2025-02`: the relief's widths
+ * divided $5,500.44 while the Table lens beside it divided $5,585.07.
+ */
+export function spendingShareBase(rows: readonly { spentCents: number }[]): number {
+  let total = 0;
+  for (const r of rows) total += Math.max(0, r.spentCents);
+  return total;
 }
 
 function ordinal(n: number): string {

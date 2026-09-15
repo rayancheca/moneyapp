@@ -1,6 +1,6 @@
 "use client";
 
-import { spendingShare } from "@/lib/insight-facts";
+import { spendingShare, spendingShareBase } from "@/lib/insight-facts";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -33,7 +33,10 @@ import {
  * spending card's SPATIAL lens: every category is a block pressed into or
  * embossed off a sheet of paper, and all three of its dimensions carry money.
  *
- *   footprint WIDTH  share of the period's spend (the table's own denominator)
+ *   footprint WIDTH  share of the period's spend — `spendingShareBase`, the
+ *                    Table lens's own denominator. Equal, not merely alike:
+ *                    a refunded category is never folded into the tail
+ *                    (`groupTail`), so the widths cannot divide a netted tail
  *   footprint DEPTH  grows with the number of ledger entries it holds
  *   HEIGHT           the change against the prior period — a block that SANK
  *                    below the plane cost less than it did last period. With
@@ -169,6 +172,11 @@ const DEFAULT_HEIGHT = 320;
  * budget the smallest categories are SUMMED into one block (never dropped), and
  * the rail says so — 12 footprints on a phone are a row of slivers, not a
  * figure. Deterministic in the measured width, so the layout stays stable.
+ *
+ * ⚠️ The budget counts categories that SPENT. One that netted money back is
+ * never folded and stands past it as its own "—" block (owner decision
+ * 2026-09-14) — one extra rail row per refunded category. Measured 2026-09-15
+ * on the owner's ledger: 3 of 73 periods at the 6- and 8-block budgets, 1 at 12.
  */
 function blockBudget(width: number): number {
   if (width < 560) return 6;
@@ -513,9 +521,9 @@ function MassifRail({
                 <span className="truncate text-sm">{block.label}</span>
                 <span
                   className="figures shrink-0 text-[11px] text-ink-faint"
-                  title={spendingShare(block.spentCents, block.share * 100, block.memberCount).title ?? undefined}
+                  title={spendingShare(block.spentCents, block.share * 100).title ?? undefined}
                 >
-                  {spendingShare(block.spentCents, block.share * 100, block.memberCount).label}
+                  {spendingShare(block.spentCents, block.share * 100).label}
                 </span>
               </span>
               <span className="block text-[11px] text-ink-faint">
@@ -597,7 +605,8 @@ function MassifTable({
   /** the window these rows were measured over — every row links with it */
   periodQuery: string;
 }) {
-  const shareBase = rows.reduce((s, r) => s + Math.max(0, r.spentCents), 0);
+  // the relief's widths divide this same author over these same rows (`computeMassifLayout`)
+  const shareBase = spendingShareBase(rows);
   const tableRows: MassifTableRow[] = rows.map((r) => ({
     ...r,
     share: shareBase > 0 ? Math.max(0, r.spentCents) / shareBase : 0,
@@ -708,17 +717,18 @@ function blockFill(hue: string | null): string {
  * read it.
  */
 export function massifCaptionKey(
-  active: { label: string; share: number; spentCents: number; memberCount?: number } | null,
+  active: { label: string; share: number; spentCents: number } | null,
   categoryCount: number,
   periodLabel: string,
 ): string {
   // ⛔ a refunded block took no share of the period — the readout says so
-  // rather than naming a clamped "0.0%" of it
+  // rather than naming a clamped "0.0%" of it. Always ONE category: the tail
+  // never folds a refund (`groupTail`), so no aggregate can reach this branch.
   if (active) {
     const s = spendingShare(active.spentCents, active.share * 100);
     return s.title === null
       ? `${active.label} · ${s.label} of ${periodLabel}`
-      : `${active.label} · no share of ${periodLabel} — ${(active.memberCount ?? 1) > 1 ? "together they" : "it"} netted money back`;
+      : `${active.label} · no share of ${periodLabel} — it netted money back`;
   }
   return `${periodLabel} · all ${categoryCount} categor${categoryCount === 1 ? "y" : "ies"}`;
 }

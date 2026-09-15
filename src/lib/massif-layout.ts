@@ -22,6 +22,7 @@
  * `reconcileMassif` proves that sum against the period totals the StatCards show.
  */
 
+import { spendingShareBase } from "./insight-facts";
 import { type ViewSpec } from "./view-state";
 
 // ── Inputs ───────────────────────────────────────────────────────────
@@ -160,8 +161,14 @@ export interface MassifLayout {
   /** Σ blocks — equal to Σ inputs by construction */
   totalSpentCents: number;
   /**
-   * The denominator the footprint WIDTHS divide — Σ max(0, spent) over the rows
-   * actually drawn, which is what the categories table uses too.
+   * The denominator the footprint WIDTHS divide — `spendingShareBase` over the
+   * categories fed in, the one the Table and List lenses divide too.
+   *
+   * 🔴 It was Σ max(0, spent) over the rows actually DRAWN, and a comment here
+   * said that was the table's figure. It was, until a refund was folded into the
+   * tail: then the clamp saw the netted tail instead of its members, and on
+   * `?period=2025-02&where=relief` the widths divided $5,500.44 beside a table
+   * dividing $5,585.07 (see `groupTail`).
    *
    * 🔴 Published because the chart's `<desc>` named `totalSpentCents` as "the
    * $X spent" whose share a width is, and the two are different numbers
@@ -249,10 +256,11 @@ export function computeMassifLayout(
   const height = Math.max(options.height, MIN_CANVAS);
   const rows = groupTail(inputs, options.maxBlocks ?? DEFAULT_MAX_BLOCKS);
 
+  // the WIDTH denominator — the Table lens's own author, over the same categories
+  const shareBaseCents = spendingShareBase(inputs);
   const totals = {
     totalSpentCents: sumBy(inputs, (r) => r.spentCents),
-    // the WIDTH denominator, from the drawn rows — see `buildWorld`
-    shareBaseCents: sumBy(rows, (r) => Math.max(0, r.spentCents)),
+    shareBaseCents,
     totalPriorCents: sumPriors(inputs),
     totalDeltaCents: deltaOf(sumBy(inputs, (r) => r.spentCents), sumPriors(inputs)),
     totalTxnCount: sumBy(inputs, (r) => r.txnCount),
@@ -263,7 +271,7 @@ export function computeMassifLayout(
     return { blocks: [], plane: null, width, height, liftPerUnit: 0, ...totals };
   }
 
-  const world = buildWorld(rows, {
+  const world = buildWorld(rows, shareBaseCents, {
     span: options.span ?? width * SPAN_RATIO,
     gap: options.gap ?? DEFAULT_GAP,
     maxDepth: options.maxDepth ?? Math.min(MAX_DEPTH_CAP, height * DEPTH_RATIO),
@@ -289,23 +297,42 @@ export function computeMassifLayout(
 }
 
 /**
- * Keep the largest `maxBlocks - 1` categories and fold everything past them into
- * ONE block that states how many it stands for. A truncation would make the
- * figure disagree with the ledger; a sum cannot. The aggregate always stands for
- * at least two rows: a list SHORTER than the cap is returned whole, so the tail
- * can never be a single category wearing the name "smaller categories".
+ * Keep the largest `maxBlocks - 1` categories that SPENT and fold the rest of
+ * them into ONE block that states how many it stands for. A truncation would
+ * make the figure disagree with the ledger; a sum cannot. The aggregate always
+ * stands for at least two rows: when the spending categories fit the cap they
+ * are returned whole, so the tail can never be a single category wearing the
+ * name "smaller categories".
+ *
+ * 🔴 A CATEGORY THAT NETTED MONEY BACK IS NEVER FOLDED. It ranks last, so it
+ * landed in the tail whenever one formed, and the tail summed it SIGNED — its
+ * refund netted against the spending beside it before any clamp could see it.
+ * Measured on the owner's ledger 2026-09-15, relief at the 8-block budget:
+ * `?period=2025-02` drew "4 smaller categories 0.8% $44.31" over members the
+ * Table lens prints at 1.3% + 0.7% + 0.3%, and every width divided $5,500.44
+ * where the table divides $5,585.07 — "Travel 47.1%" beside the table's 46.4%.
+ * `?period=2024-05`'s tail read -$1,544.58 and swallowed $60.53 of spending;
+ * `?period=2025-Q1` read "Food 40.1%" against 39.8%. Exactly the three periods
+ * whose tail held a refund.
+ *
+ * ⚖️ Owner decision 2026-09-14 (F1): each such category stands as its own "—"
+ * block with its own figure, exactly as the Table lens shows it, even past the
+ * budget. The tail then sums only non-negative members, so max(0, Σ tail) is
+ * Σ max(0, member) and no width can divide a different total from the table's.
  */
 function groupTail(
   inputs: readonly MassifCategoryInput[],
   maxBlocks: number,
 ): (MassifCategoryInput & { memberCount: number })[] {
-  const ranked = [...inputs].sort((a, b) => b.spentCents - a.spentCents);
-  const named = ranked.map((r) => ({ ...r, memberCount: 1 }));
-  if (maxBlocks < 1 || ranked.length <= maxBlocks) return named;
-  const head = named.slice(0, maxBlocks - 1);
-  const tail = ranked.slice(maxBlocks - 1);
+  const ranked = [...inputs]
+    .sort((a, b) => b.spentCents - a.spentCents)
+    .map((r) => ({ ...r, memberCount: 1 }));
+  if (maxBlocks < 1) return ranked;
+  const spent = ranked.filter((r) => r.spentCents >= 0);
+  if (spent.length <= maxBlocks) return ranked;
+  const tail = spent.slice(maxBlocks - 1);
   return [
-    ...head,
+    ...spent.slice(0, maxBlocks - 1),
     {
       id: MASSIF_OTHER_ID,
       label: `${tail.length} smaller categories`,
@@ -315,6 +342,8 @@ function groupTail(
       txnCount: sumBy(tail, (r) => r.txnCount),
       memberCount: tail.length,
     },
+    // ranked last already: the refunds follow the tail, never inside it
+    ...ranked.filter((r) => r.spentCents < 0),
   ];
 }
 
@@ -334,12 +363,16 @@ interface World {
 
 function buildWorld(
   rows: readonly (MassifCategoryInput & { memberCount: number })[],
+  /**
+   * The share denominator, passed in rather than summed here. `spendingShareBase`
+   * over the categories is the Table lens's own, and it equals the same sum over
+   * these drawn rows only because `groupTail` never folds a refund. Summed here
+   * over `rows`, it quietly divided a different total the moment one was folded.
+   * A category that net-refunded gets no footprint width; its figure still shows.
+   */
+  shareBase: number,
   geom: Geometry,
 ): World {
-  // The share denominator is the sum of POSITIVE spends — the same denominator
-  // the categories table uses, so the massif's percentages equal the table's.
-  // A category that net-refunded gets no footprint width; its figure still shows.
-  const shareBase = sumBy(rows, (r) => Math.max(0, r.spentCents));
   const maxEntries = Math.max(0, ...rows.map((r) => r.txnCount));
   const maxDelta = Math.max(0, ...rows.map((r) => Math.abs(deltaOf(r.spentCents, r.priorCents) ?? 0)));
   const reliefScale = maxDelta > 0 ? geom.maxRelief / maxDelta : 0;
