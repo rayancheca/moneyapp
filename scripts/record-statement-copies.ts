@@ -45,9 +45,9 @@ import { statementCopies, statementPeriods } from "@/db/schema/imports";
 import type { DuplicatePairSide } from "@/lib/hash";
 import { findAccountId, statementCopyLines, storedLines } from "@/services/import/service";
 import { copyHandOvers, recordStatementCopy } from "@/services/import/statement-copies";
-import { dbTargetFrom, unknownArguments } from "./db-target";
+import { dbTargetFrom, parseBackfillArgs } from "./db-target";
 import { onRehearsalCopy, sha256Json } from "./guarded-write-harness";
-import { LEDGER_TABLES, rereadImported, wholeNumberFlag } from "./reread-imported";
+import { LEDGER_TABLES, rereadImported } from "./reread-imported";
 
 const SNAPSHOT_LABEL = "record-statement-copies";
 
@@ -191,15 +191,13 @@ function writeAndGuard(bundle: DbBundle, planned: readonly PlannedCopy[], snapsh
   };
 }
 
-async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
-  const stray = unknownArguments(argv, ["--db", "--confirm", "--scratch", "--offset", "--limit"]);
-  if (stray.length > 0) throw new Error(`unknown argument(s): ${stray.join(" ")}`);
+export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
+  // ⛔ before anything is opened: every argument this script does not take is refused (`parseBackfillArgs`)
+  const args = parseBackfillArgs(argv);
   const target = dbTargetFrom(argv, { flag: "--db", required: true, cwd: process.cwd(), exists: fs.existsSync });
-  const scratch = argv.find((a) => a.startsWith("--scratch="))?.slice("--scratch=".length) ?? os.tmpdir();
+  const scratch = args.scratch ?? os.tmpdir();
   if (!fs.existsSync(scratch)) throw new Error(`no scratch directory at ${scratch}`);
-  const offset = wholeNumberFlag(argv, "offset", 0);
-  const limit = wholeNumberFlag(argv, "limit", Number.MAX_SAFE_INTEGER);
+  const { offset, limit } = args;
   const bundle = createDatabase(target.path);
   try {
     const scan = await scanCopies(bundle, offset, limit);
@@ -216,7 +214,7 @@ async function main(): Promise<void> {
     console.log(`\nREHEARSAL  ${rehearsal.failures.length === 0 ? "PASS" : `FAIL — ${rehearsal.failures.join("; ")}`}`);
     console.log(`  un-importing a statement's holder now keeps ${rehearsal.handedPeriods} periods and ${rehearsal.handedRows} rows under another download`);
     if (rehearsal.failures.length > 0) process.exitCode = 1;
-    if (!argv.includes("--confirm") || rehearsal.failures.length > 0) {
+    if (!args.confirm || rehearsal.failures.length > 0) {
       if (rehearsal.failures.length === 0) console.log("\nDry run. Re-run with --confirm to write.");
       return;
     }

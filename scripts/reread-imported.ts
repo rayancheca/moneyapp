@@ -67,15 +67,6 @@ export async function rereadImported(bundle: DbBundle, offset: number, limit: nu
   return result;
 }
 
-/** `--name=<whole number>`, or `fallback` when absent. */
-export function wholeNumberFlag(argv: readonly string[], name: string, fallback: number): number {
-  const raw = argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
-  if (raw === undefined) return fallback;
-  const n = Number(raw);
-  if (!Number.isSafeInteger(n) || n < 0) throw new Error(`--${name} must be a whole number, got ${raw}`);
-  return n;
-}
-
 /** Every table a record-only write must leave alone, hashed row by row. */
 export const LEDGER_TABLES = [
   "transactions",

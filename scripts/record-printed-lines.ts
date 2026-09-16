@@ -43,9 +43,9 @@ import { transactions } from "@/db/schema/transactions";
 import { findAccountId, storedLines } from "@/services/import/service";
 import { appendPrintedLines, printedLineOf, printerHandOvers, type PrintedLine } from "@/services/import/printed-lines";
 import { copyHandOvers } from "@/services/import/statement-copies";
-import { dbTargetFrom, unknownArguments } from "./db-target";
+import { dbTargetFrom, parseBackfillArgs } from "./db-target";
 import { onRehearsalCopy, sha256Json } from "./guarded-write-harness";
-import { LEDGER_TABLES, rereadImported, wholeNumberFlag } from "./reread-imported";
+import { LEDGER_TABLES, rereadImported } from "./reread-imported";
 
 const SNAPSHOT_LABEL = "record-printed-lines";
 
@@ -167,15 +167,13 @@ function writeAndGuard(bundle: DbBundle, planned: readonly PlannedLines[], snaps
   };
 }
 
-async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
-  const stray = unknownArguments(argv, ["--db", "--confirm", "--scratch", "--offset", "--limit"]);
-  if (stray.length > 0) throw new Error(`unknown argument(s): ${stray.join(" ")}`);
+export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
+  // ⛔ before anything is opened: every argument this script does not take is refused (`parseBackfillArgs`)
+  const args = parseBackfillArgs(argv);
   const target = dbTargetFrom(argv, { flag: "--db", required: true, cwd: process.cwd(), exists: fs.existsSync });
-  const scratch = argv.find((a) => a.startsWith("--scratch="))?.slice("--scratch=".length) ?? os.tmpdir();
+  const scratch = args.scratch ?? os.tmpdir();
   if (!fs.existsSync(scratch)) throw new Error(`no scratch directory at ${scratch}`);
-  const offset = wholeNumberFlag(argv, "offset", 0);
-  const limit = wholeNumberFlag(argv, "limit", Number.MAX_SAFE_INTEGER);
+  const { offset, limit } = args;
   const bundle = createDatabase(target.path);
   try {
     const scan = await scanPrintedLines(bundle, offset, limit);
@@ -193,7 +191,7 @@ async function main(): Promise<void> {
     console.log(`\nREHEARSAL  ${rehearsal.failures.length === 0 ? "PASS" : `FAIL — ${rehearsal.failures.join("; ")}`}`);
     console.log(`  un-importing any of ${rehearsal.filesKeeping} files now keeps rows another file prints (${rehearsal.rowsKept} rows in all)`);
     if (rehearsal.failures.length > 0) process.exitCode = 1;
-    if (!argv.includes("--confirm") || rehearsal.failures.length > 0) {
+    if (!args.confirm || rehearsal.failures.length > 0) {
       if (rehearsal.failures.length === 0) console.log("\nDry run. Re-run with --confirm to write.");
       return;
     }

@@ -39,9 +39,9 @@ import { institutions } from "@/db/schema/institutions";
 import { recordFormerNumber } from "@/services/import/account-numbers";
 import { findAccountId } from "@/services/import/service";
 import type { AccountHint } from "@/services/import/types";
-import { dbTargetFrom, unknownArguments } from "./db-target";
+import { dbTargetFrom, parseBackfillArgs } from "./db-target";
 import { onRehearsalCopy, sha256Json } from "./guarded-write-harness";
-import { LEDGER_TABLES, rereadImported, wholeNumberFlag } from "./reread-imported";
+import { LEDGER_TABLES, rereadImported } from "./reread-imported";
 
 const SNAPSHOT_LABEL = "record-account-numbers";
 
@@ -171,16 +171,15 @@ function writeAndGuard(bundle: DbBundle, planned: readonly PlannedNumber[], snap
   return failures;
 }
 
-async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
-  const stray = unknownArguments(argv, ["--db", "--confirm", "--scratch", "--offset", "--limit"]);
-  if (stray.length > 0) throw new Error(`unknown argument(s): ${stray.join(" ")}`);
+export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
+  // ⛔ before anything is opened: every argument this script does not take is refused (`parseBackfillArgs`)
+  const args = parseBackfillArgs(argv);
   const target = dbTargetFrom(argv, { flag: "--db", required: true, cwd: process.cwd(), exists: fs.existsSync });
-  const scratch = argv.find((a) => a.startsWith("--scratch="))?.slice("--scratch=".length) ?? os.tmpdir();
+  const scratch = args.scratch ?? os.tmpdir();
   if (!fs.existsSync(scratch)) throw new Error(`no scratch directory at ${scratch}`);
   const bundle = createDatabase(target.path);
   try {
-    const scan = await scanNumbers(bundle, wholeNumberFlag(argv, "offset", 0), wholeNumberFlag(argv, "limit", Number.MAX_SAFE_INTEGER));
+    const scan = await scanNumbers(bundle, args.offset, args.limit);
     console.log(`read ${scan.read} files; ${scan.alreadyRecorded} numbers already recorded; ${scan.planned.length} to record`);
     for (const s of scan.skipped) console.log(`  skipped  ${s}`);
     for (const p of scan.planned) {
@@ -197,7 +196,7 @@ async function main(): Promise<void> {
       process.exitCode = 1;
       return;
     }
-    if (!argv.includes("--confirm")) {
+    if (!args.confirm) {
       console.log("\nDry run. Re-run with --confirm to write.");
       return;
     }

@@ -87,13 +87,53 @@ export function strayFlags(argv: readonly string[], known: readonly string[]): s
   return argv.filter((a) => a.startsWith("--") && !known.some((flag) => a === flag || a.startsWith(`${flag}=`)));
 }
 
+/** What a record backfill (`scripts/record-*.ts`) is told besides `--db=<path>`, which `dbTargetFrom` reads. */
+export interface BackfillArgs {
+  readonly confirm: boolean;
+  readonly scratch: string | undefined;
+  readonly offset: number;
+  readonly limit: number;
+}
+
+const BACKFILL_SWITCHES = ["--confirm"] as const;
+const BACKFILL_VALUED = ["--db", "--scratch", "--offset", "--limit"] as const;
+
 /**
- * Every argument a script that takes ONLY flags does not know: a stray `--flag`, and anything else at all. 🔴 A
- * backfill ran a dry run and exited 0 on `-confirm` or a bare `confirm` (measured on a copy of the real ledger,
- * 2026-09-16), which reads like a write that happened.
+ * A record backfill's command line, read ONE way for the three of them. It takes only flags, each once: `--confirm`
+ * bare, and `--db`, `--scratch`, `--offset`, `--limit` with a value after `=`. Anything else is refused.
+ *
+ * 🔴 A backfill ran a dry run and exited 0 on `-confirm` or a bare `confirm` (measured on a copy of the real ledger,
+ * 2026-09-16), which reads like a write that happened — and then on `--confirm=yes`, which passed as the known flag
+ * while the write asked for a bare `--confirm` (the review of uc/final-integrate, 2026-09-16).
  */
-export function unknownArguments(argv: readonly string[], known: readonly string[]): string[] {
-  return argv.filter((a) => !a.startsWith("--") || strayFlags([a], known).length > 0);
+export function parseBackfillArgs(argv: readonly string[]): BackfillArgs {
+  const switches: readonly string[] = BACKFILL_SWITCHES;
+  const valued: readonly string[] = BACKFILL_VALUED;
+  const bare = argv.find((a) => valued.includes(a) || valued.some((f) => a === `${f}=`));
+  if (bare !== undefined) {
+    const flag = bare.replace(/=$/, "");
+    throw new DbTargetRefusal(`${flag} needs a value: ${flag}=<value>`);
+  }
+  const stray = argv.filter((a) => !switches.includes(a) && !valued.some((f) => a.startsWith(`${f}=`)));
+  if (stray.length > 0) throw new DbTargetRefusal(`unknown argument(s): ${stray.join(" ")}`);
+  for (const flag of [...switches, ...valued]) {
+    const given = argv.filter((a) => a === flag || a.startsWith(`${flag}=`)).length;
+    if (given > 1) throw new DbTargetRefusal(`${flag} given ${given} times`);
+  }
+  const value = (flag: string): string | undefined => argv.find((a) => a.startsWith(`${flag}=`))?.slice(flag.length + 1);
+  const whole = (flag: string, fallback: number): number => {
+    const raw = value(flag);
+    if (raw === undefined) return fallback;
+    const n = Number(raw);
+    if (!/^\d+$/.test(raw) || !Number.isSafeInteger(n)) throw new DbTargetRefusal(`${flag} must be a whole number, got ${raw}`);
+    return n;
+  };
+  return {
+    confirm: argv.includes("--confirm"),
+    scratch: value("--scratch"),
+    offset: whole("--offset", 0),
+    limit: whole("--limit", Number.MAX_SAFE_INTEGER),
+  };
 }
 
 /**

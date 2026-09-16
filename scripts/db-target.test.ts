@@ -1,6 +1,6 @@
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { DbTargetRefusal, dbTargetFrom, originalsDirFor, strayFlags, unknownArguments, type DbTargetOptions } from "./db-target";
+import { DbTargetRefusal, dbTargetFrom, originalsDirFor, parseBackfillArgs, strayFlags, type DbTargetOptions } from "./db-target";
 
 const CWD = "/repo";
 const REAL = path.join(CWD, "data", "moneyapp.db");
@@ -104,21 +104,46 @@ describe("strayFlags — a flag the script does not know is refused, not ignored
 /**
  * 🔴 A backfill takes no positional argument, and `strayFlags` refuses only what starts with `--`: on a copy of the real
  * ledger, 2026-09-16, `record-account-numbers.ts --db=<copy> -confirm` (and `… confirm`) ran a dry run and exited 0.
+ * 🔴 …and `--confirm=yes` passed as the known flag while the write asked for a bare `--confirm`: a dry run, exit 0
+ * (the review of uc/final-integrate, 2026-09-16).
  */
-describe("unknownArguments — a script that takes only flags refuses anything else", () => {
-  const KNOWN = ["--db", "--confirm", "--scratch"];
-
-  test("known flags pass, bare or with a value", () => {
-    expect(unknownArguments([`--db=${COPY}`, "--confirm", "--scratch=/tmp"], KNOWN)).toEqual([]);
+describe("parseBackfillArgs — a backfill takes only its own flags, each spelled one way", () => {
+  test("its flags, with their values", () => {
+    expect(parseBackfillArgs([`--db=${COPY}`, "--confirm", "--scratch=/tmp", "--offset=60", "--limit=30"])).toEqual({
+      confirm: true,
+      scratch: "/tmp",
+      offset: 60,
+      limit: 30,
+    });
+    expect(parseBackfillArgs([`--db=${COPY}`])).toEqual({ confirm: false, scratch: undefined, offset: 0, limit: Number.MAX_SAFE_INTEGER });
   });
 
-  test("a single-dash flag, a bare word and a misspelled flag are each refused", () => {
-    expect(unknownArguments([`--db=${COPY}`, "-confirm", "confirm", "--confrim", "—confirm"], KNOWN)).toEqual([
-      "-confirm",
-      "confirm",
-      "--confrim",
-      "—confirm",
-    ]);
+  test.each([
+    ["a single-dash flag", "-confirm"],
+    ["a bare word", "confirm"],
+    ["a misspelled flag", "--confrim"],
+    ["a dash that is not two hyphens", "—confirm"],
+    ["a value on the flag that takes none", "--confirm=yes"],
+    ["another value on it", "--confirm=true"],
+  ])("⛔ %s is refused: %s", (_, arg) => {
+    expect(() => parseBackfillArgs([`--db=${COPY}`, arg])).toThrow(DbTargetRefusal);
+    expect(() => parseBackfillArgs([`--db=${COPY}`, arg])).toThrow(`unknown argument(s): ${arg}`);
+  });
+
+  test.each([
+    ["--db", [`--db`, COPY]],
+    ["--scratch", ["--scratch", "/tmp"]],
+    ["--limit", ["--limit", "30"]],
+    ["--offset", ["--offset="]],
+  ])("⛔ %s without a value is refused, and its value is not left for anything else to read", (flag, argv) => {
+    expect(() => parseBackfillArgs(argv)).toThrow(`${flag} needs a value: ${flag}=<value>`);
+  });
+
+  test("⛔ a flag given twice, or a count that is not a whole number, is refused", () => {
+    expect(() => parseBackfillArgs(["--confirm", "--confirm"])).toThrow("--confirm given 2 times");
+    expect(() => parseBackfillArgs(["--limit=30", "--limit=60"])).toThrow("--limit given 2 times");
+    expect(() => parseBackfillArgs(["--limit=-1"])).toThrow("--limit must be a whole number, got -1");
+    expect(() => parseBackfillArgs(["--offset=1.5"])).toThrow("--offset must be a whole number, got 1.5");
   });
 });
 
