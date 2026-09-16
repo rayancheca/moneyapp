@@ -146,6 +146,18 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
    figure; closing it needs a "remainder of another series" marker.
 8. The all-time report's 16 questions (previous handoff §3) and B5 (Rent utilities & fees / annual fees have no
    user date) are still open.
+9. (from the queue-defect reviews, none reachable on your ledger today) the eating-out card in refund-only months:
+   headline "-$5.00 a month", "Average ticket -$30.00", "0.0 purchases a day", groceries row "-$20.00";
+   `renderMultiple` prints 1,000× and up without a separator ("2500.0×"), reachable by the eating-out card and the
+   times-the-usual notice.
+10. "against <window>" is still spelled inline in the /spending List column title + sr-only text, `massifTableCaption`,
+   `massifAbsentNote`, `massifEmptyState` (which can still write "the change is $0.00" on an empty plate — 0 of 17 on
+   your ledger); the one-home guard covers only "level with".
+11. `formatQuantityE8` still pulls `services/holdings` into AccountHoldingsTable / PortfolioHoldingsTable's browser
+   graph (it builds today); a same-named, different formatter lives in `lib/robinhood-holdings.ts` — one rule or two
+   is a code-reading question, decide before moving it (after `uc/agentic-two-accounts` lands, it owns that file).
+12. The client-bundle guard's forbidden list is pinned to a `next build` probe taken at `25b9435`; a Next/Turbopack
+   upgrade needs a fresh probe and row edits.
 
 **B. Waiting on an event:**
 - **The Wells Fargo ····5481 statement covering early September:** trial-import → import →
@@ -154,21 +166,19 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
   two-account build's runbook creates the Agentic brokerage account and reads positions (⏳).
 
 **C. Defects queued (no decision needed):**
-- Un-importing and re-importing 20260302 ends at a −$798.48 gap (restored retired duplicate twins the re-parse cannot
-  match) — duplicate lifecycle / import identity; 9 older Sapphire statements hold duplicate survivors (unmeasured).
-- Re-parse `supersedeFileContribution` rebuilds only the new parse's accounts (code-read; your background task
-  "Rebuild accounts whose only link to an unimported file is a period" may cover it).
-- No guard stops a "use client" component's import graph reaching `@/db/backup`/better-sqlite3 (six client files
-  import values from services) — move those helpers to `src/lib` or add a source-graph test.
-- Cash on Hand's balance popover says "Checked through 2026-08-03" about a balance typed by hand.
-- The forecast card's EOM-cash note prints its "$0.00 in the headline" half.
-- The eating-out card prints a multiple `multipleFact` would refuse when refunds exceed charges.
-- The "level with <prior window>" wording is spelled inline in three places (List phone line, massif rail,
-  massif description).
-- Chase-card parser bump: safe for periods and the quarantine now; still re-dates the 06/30 row unless the 06/30
-  re-date write lands first (⏳).
-- `scripts/attach-sapphire-payment-rows-2026-09-14.ts` refuses as a post-check on purpose (the $115 reversal
-  grouped a row it expects ungrouped) — do not use it as a check.
+- ⏳ (queue round 2, in flight) un-importing and re-importing 20260302 ends at a −$798.48 gap: un-import restores retired
+  duplicate twins the re-parse cannot match; 9 older Sapphire statements hold duplicate survivors → `uc/unimport-duplicate-twins`.
+- ⏳ (queue round 2) a parser-version re-read rebuilds only the NEW parse's accounts although `supersedeFileContribution`
+  deleted the old file's periods/anchors (the re-read sibling of `9cd7acb`) → `uc/reparse-rebuild-scope`.
+- ⏳ (queue round 2) Cash on Hand's popover says "Checked through 2026-08-03" about a balance you typed; an investment
+  account with no holding events still reads "priced from holdings" (reachable once the agent's book exists) →
+  `uc/provenance-manual-and-eventless`.
+- ✅ fixed on local main (`980ad69`): the client-bundle import guard, the EOM note's `$0.00` half, the eating-out
+  multiple, the "level with" wording.
+- The Chase card parser is at version 1; both things that made a bump unsafe have landed (the card re-parse boundary
+  and the 06/30 re-date write), so a future bump no longer breaks periods, quarantines payments or re-dates 06/30.
+- `scripts/attach-sapphire-payment-rows-2026-09-14.ts` and `scripts/mark-attached-sapphire-rows-2026-09-15.ts`
+  refuse when re-run, on purpose — do not use them as checks.
 
 ## 7. ⏳ IN FLIGHT AT WRITING (16:30) — finish these first
 
@@ -197,11 +207,13 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
    ledger.
 3. ✅ **DONE — your background task** "Rebuild accounts whose only link to an unimported file is a period"
    (`9cd7acb`, session 8bb0cb0a) is on main since `14759a7`; its branch holds nothing unmerged.
-3b. **Queue defects** (workflow running): the end-of-month note's `$0.00` half, the eating-out multiple, "level
-   with" wording given one home, and a unit guard that no client component's import graph reaches `better-sqlite3`
-   (the `97d7a5c` build break, §4). Branches `uc/eom-note-zero-half`, `uc/eating-out-multiple`,
-   `uc/level-with-one-home`, `uc/client-graph-guard`. The end-of-month fix will move the recurring and
-   recurring-calendar baselines — trace them before regenerating.
+3b. **Queue defects — merged on local main 17:05** (14 commits over `4e1c1c4`, each reviewed, every finding fixed):
+   the end-of-month note prints one amount when a half is `$0.00`; the eating-out and concentration multiples share
+   `renderMultiple` ("<0.1×" instead of "0.0×"); "level with" has one home with a parser-backed guard, and the relief
+   rail's change is dated to its own day; a unit guard walks every "use client" file's import graph for
+   `better-sqlite3`/`fs`, and four client components stopped carrying whole service graphs. The end-of-month fix moves
+   the 16 recurring and recurring-calendar baselines. `next build` ✓ · unit 304 files / 6,102 ✓ · tsc ✓ on `980ad69`.
+   Follow-ups: §6 items 9–12.
 4. After every merge batch: `pnpm exec next build` BEFORE the gate (§4).
 
 Session scratchpad (9ebfed64): `queue-after-merges.md` (the full queue with evidence), `hunt-result.json` +
