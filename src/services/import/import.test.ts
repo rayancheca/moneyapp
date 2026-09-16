@@ -1308,9 +1308,17 @@ describe("a parser-version re-read that no longer writes an account", () => {
         period: { start: "2026-03-01", end: "2026-03-31", beginCents: 10000, endCents: 6000 },
       },
     ],
+    // a declared range and no balance, as an OFX's DTSTART/DTEND: it ends on January's closing day and prints nothing
+    "2026-01 declared": [{ accountHint: checking(KEPT), txns: [], declaredRange: { start: "2026-01-01", end: "2026-01-31" } }],
     // a statement of part of March, on one account
     "2026-03 rival": [
       { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-03-10", end: "2026-03-20", beginCents: 50000, endCents: 50000 } },
+    ],
+    // imported only where a test says so: it shares January's closing day and March's opening day
+    "2026-02": [
+      { accountHint: checking(KEPT), txns: [], period: { start: "2026-02-01", end: "2026-02-28", beginCents: 1000, endCents: 1000 } },
+      { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-02-01", end: "2026-02-28", beginCents: 50000, endCents: 50000 } },
+      { accountHint: checking(WITH_ROWS), txns: [], period: { start: "2026-02-01", end: "2026-02-28", beginCents: 10000, endCents: 10000 } },
     ],
   };
 
@@ -1428,6 +1436,7 @@ describe("a parser-version re-read that no longer writes an account", () => {
     expectRebuilt(accountIdOf(KEPT));
   });
 
+  const FEBRUARY = statementFor("2026-02");
   /** March downloaded a second time: the same statement in different bytes */
   const MARCH_COPY: ImportInput = { name: `${PREFIX}2026-03 (1).txt`, buffer: Buffer.from("2026-03\n") };
 
@@ -1458,6 +1467,13 @@ describe("a parser-version re-read that no longer writes an account", () => {
       .select()
       .from(statementPeriods)
       .where(and(eq(statementPeriods.importFileId, fileId), eq(statementPeriods.accountId, accountId)))
+      .get();
+
+  const statementAnchorOn = (accountId: string, day: string) =>
+    bundle.db
+      .select()
+      .from(balanceAnchors)
+      .where(and(eq(balanceAnchors.accountId, accountId), eq(balanceAnchors.anchoredOn, day), eq(balanceAnchors.source, "statement")))
       .get();
 
   const HAND_NOTE = "the car, paid at the pump";
@@ -1728,6 +1744,126 @@ describe("a parser-version re-read that no longer writes an account", () => {
     expectRebuilt(anchorOnly);
   });
 
+  /**
+   * 🔴 A day two statements print — one's closing balance, the next one's opening — holds ONE anchor, owned by
+   * whichever statement was imported last. Taking that file's contribution away deleted the anchor while the other
+   * statement, still imported, prints the day. Measured on a copy of the real ledger, 2026-09-16: un-importing the July
+   * 2026 Robinhood PDF left Robinhood Agentic's Jun 30 and Jul 31 `derived_unverified` with June and August in place.
+   */
+  test("un-importing the statement that wrote a shared day last leaves the days its neighbours print anchored", async () => {
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    await importStatementFiles(bundle.db, [FEBRUARY]);
+    // imported after both, and closing on Jan 31 too — but it prints no balance to hand the day to
+    await importStatementFiles(bundle.db, [statementFor("2026-01 declared")]);
+    const kept = accountIdOf(KEPT);
+    const [january, february, march] = [JANUARY, FEBRUARY, MARCH].map((f) => liveFile(f).id) as [string, string, string];
+    // the premise: February, imported last, owns both days it shares
+    expect(statementAnchorOn(kept, "2026-01-31")!.importFileId).toBe(february);
+    expect(statementAnchorOn(kept, "2026-02-28")!.importFileId).toBe(february);
+
+    unimportFile(bundle.db, february);
+
+    // January still prints its closing balance, and March its opening one
+    expect(statementAnchorOn(kept, "2026-01-31")).toMatchObject({
+      balanceCents: 1000,
+      importFileId: january,
+      statementPeriodId: periodOf(january, kept)!.id,
+    });
+    expect(statementAnchorOn(kept, "2026-02-28")).toMatchObject({
+      balanceCents: 1000,
+      importFileId: march,
+      statementPeriodId: periodOf(march, kept)!.id,
+    });
+    for (const day of ["2026-01-31", "2026-02-28"]) expect(dayRow(kept, day)?.basis).toBe("anchored");
+    expectRebuilt(kept);
+  });
+
+  test("a re-read that withholds a section leaves the days the neighbouring statements print anchored", async () => {
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    await importStatementFiles(bundle.db, [FEBRUARY]);
+    const anchorOnly = accountIdOf(ANCHOR_ONLY);
+    expect(statementAnchorOn(anchorOnly, "2026-02-28")!.importFileId).toBe(liveFile(FEBRUARY).id);
+
+    threeSectionProfile.version = 2;
+    const [outcome] = await importStatementFiles(bundle.db, [FEBRUARY]);
+
+    expect(outcome!.status).toBe("parsed");
+    expect(outcome!.withheld.map((w) => w.accountId)).toContain(anchorOnly);
+    const [january, march] = [JANUARY, MARCH].map((f) => liveFile(f).id);
+    expect(statementAnchorOn(anchorOnly, "2026-01-31")).toMatchObject({ balanceCents: 50000, importFileId: january });
+    expect(statementAnchorOn(anchorOnly, "2026-02-28")).toMatchObject({ balanceCents: 50000, importFileId: march });
+    for (const day of ["2026-01-31", "2026-02-28"]) expect(dayRow(anchorOnly, day)?.basis).toBe("anchored");
+    expectRebuilt(anchorOnly);
+  });
+
+  /**
+   * The /imports confirmation says how many recorded balances an un-import removes. It counted every anchor the file
+   * owned, and a second download of a statement owns only balances its first download still prints.
+   */
+  test("the un-import confirmation counts the balances the un-import removes, not the ones another statement still prints", async () => {
+    const { balancesRemovedByFile } = await import("./printed-anchors");
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    await importStatementFiles(bundle.db, [FEBRUARY]);
+    await importStatementFiles(bundle.db, [MARCH_COPY]);
+    const recorded = () =>
+      new Set(bundle.db.select().from(balanceAnchors).all().map((a) => `${a.accountId}|${a.anchoredOn}|${a.source}`));
+    const removedBy = (fileId: string): { predicted: number; removed: number } => {
+      const predicted = balancesRemovedByFile(bundle.db).get(fileId) ?? 0;
+      const owned = bundle.db
+        .select()
+        .from(balanceAnchors)
+        .where(eq(balanceAnchors.importFileId, fileId))
+        .all()
+        .map((a) => `${a.accountId}|${a.anchoredOn}|${a.source}`);
+      unimportFile(bundle.db, fileId);
+      const left = recorded();
+      return { predicted, removed: owned.filter((key) => !left.has(key)).length };
+    };
+    const ids = [MARCH_COPY, FEBRUARY, JANUARY, MARCH].map((f) => liveFile(f).id);
+    // one at a time, each against the ledger the one before it left: [copy, February, January, March]
+    const steps = [removedBy(ids[0]!)];
+    // a day one statement closes on and the next opens after goes to the one that closes on it
+    expect(statementAnchorOn(accountIdOf(KEPT), "2026-02-28")!.importFileId).toBe(ids[1]);
+    steps.push(...ids.slice(1).map((id) => removedBy(id)));
+
+    for (const step of steps) expect(step.predicted).toBe(step.removed);
+    // not vacuous: the copy and February hand every day over; January, then March, are the last to print theirs
+    expect(steps.map((s) => s.removed)).toEqual([0, 0, 6, 6]);
+  });
+
+  /**
+   * The real ledger's shape, 2026-09-16: 59 statements imported twice in different bytes. Every row of the second
+   * copy deduped and it adopted the first copy's periods, so it owns nothing but anchors on days the first prints.
+   */
+  test("un-importing a second copy of a statement hands the days it printed back to the first copy", async () => {
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    await importStatementFiles(bundle.db, [MARCH_COPY]);
+    const march = liveFile(MARCH).id;
+    const copy = liveFile(MARCH_COPY).id;
+    // the premise: the copy wrote no row and no period, and took every day March prints
+    const copied = contributionOf(copy);
+    expect({ rows: copied.rows, periods: copied.periods }).toEqual({ rows: [], periods: [] });
+    expect(copied.anchors).toHaveLength(6);
+
+    unimportFile(bundle.db, copy);
+
+    for (const last4 of [KEPT, ANCHOR_ONLY, WITH_ROWS]) {
+      const accountId = accountIdOf(last4);
+      const period = periodOf(march, accountId)!;
+      expect(statementAnchorOn(accountId, "2026-02-28")).toMatchObject({
+        balanceCents: period.beginningBalanceCents,
+        importFileId: march,
+        statementPeriodId: period.id,
+      });
+      expect(statementAnchorOn(accountId, "2026-03-31")).toMatchObject({
+        balanceCents: period.endingBalanceCents,
+        importFileId: march,
+        statementPeriodId: period.id,
+      });
+      expect(dayRow(accountId, "2026-03-31")?.basis).toBe("anchored");
+      expectRebuilt(accountId);
+    }
+  });
 });
 
 /*

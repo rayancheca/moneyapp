@@ -25,7 +25,7 @@ export interface UnimportRadiusInput {
   /** which file, as the row names it (`importRowSubject`) */
   subject: string;
   counts: UnimportCounts;
-  /** recorded balances the file owns */
+  /** recorded balances un-importing the file removes — not the ones another statement still prints (`balancesRemovedByFile`) */
   balances: number;
   /** statement periods the file owns */
   periods: number;

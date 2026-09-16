@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
-import { count, desc, eq, isNotNull } from "drizzle-orm";
+import { count, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
-import { balanceAnchors } from "@/db/schema/balances";
 import { importFiles, statementPeriods, type ImportStatus } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { statementGaps } from "@/services/statement-gaps";
@@ -16,6 +15,7 @@ import { provenanceFor } from "@/services/provenance";
 import { statementPulls } from "@/services/statement-pulls";
 import { unimportAcknowledgement, unimportRadius } from "@/components/imports/unimport-radius";
 import { NO_UNIMPORT_ROWS, unimportCountsByFile, type UnimportCounts } from "@/services/import/unimport-counts";
+import { balancesRemovedByFile } from "@/services/import/printed-anchors";
 import { importRowQualifiers, importRowSubject, withheldNoticeOf } from "@/lib/import-file-label";
 import { dayWindowLabel } from "@/lib/period";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
@@ -89,16 +89,9 @@ export default async function ImportsPage({
   const withheldById = new Map(files.map((f) => [f.id, withheldNoticeOf(f)]));
 
   // the rest of what un-importing takes with it — counted per file rather than
-  // joined into the query above, where they would fan out against the rows
-  const anchorsByFile = new Map(
-    db
-      .select({ importFileId: balanceAnchors.importFileId, n: count() })
-      .from(balanceAnchors)
-      .where(isNotNull(balanceAnchors.importFileId))
-      .groupBy(balanceAnchors.importFileId)
-      .all()
-      .flatMap((r) => (r.importFileId === null ? [] : [[r.importFileId, r.n] as const])),
-  );
+  // joined into the query above, where they would fan out against the rows.
+  // A balance another statement still prints stays (`balancesRemovedByFile`).
+  const balancesRemoved = balancesRemovedByFile(db);
   const periodsByFile = new Map(
     db
       .select({ importFileId: statementPeriods.importFileId, n: count() })
@@ -421,7 +414,7 @@ export default async function ImportsPage({
                           radius={unimportRadius({
                             subject: importRowSubject(f.fileName, qualifierById.get(f.id) ?? null),
                             counts: countsOf(f.id),
-                            balances: anchorsByFile.get(f.id) ?? 0,
+                            balances: balancesRemoved.get(f.id) ?? 0,
                             periods: periodsByFile.get(f.id) ?? 0,
                           })}
                         />

@@ -31,6 +31,7 @@ import { detachTransferLegs, type StaleTransferLeg } from "../transfer-links";
 import { accountsOfTransactions, restoreDuplicatesLosingTheirSurvivor } from "../duplicate-lifecycle";
 import { accountSlug, institutionSlug } from "./account-slug";
 import { ATTACHED, detachAttachedRows, keepRetiredAttachedRows, parsedFromFile, reattachDetachedRows } from "./attached-rows";
+import { handOverPrintedAnchors } from "./printed-anchors";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
 import { extractLines } from "./profiles/pdf-profile";
@@ -1525,6 +1526,23 @@ function quarantinedIdsOn(db: AppDatabase, accountIds: readonly string[]): strin
 }
 
 /**
+ * Takes away a file's balances — its anchors and its periods — for both paths that remove a file's contribution:
+ * `supersedeFileContribution` and `unimportFile`. An anchor another file's period still prints is handed over
+ * (`handOverPrintedAnchors`), not deleted.
+ */
+function removeFileBalances(tx: AppDatabase, importFileId: string): void {
+  handOverPrintedAnchors(tx, importFileId);
+  tx.delete(balanceAnchors).where(eq(balanceAnchors.importFileId, importFileId)).run();
+  // anchors owned by OTHER files may reference this file's periods — detach
+  // them before the periods go (FK integrity under foreign_keys=ON)
+  tx.run(sql`
+    UPDATE balance_anchors SET statement_period_id = NULL
+    WHERE statement_period_id IN (SELECT id FROM statement_periods WHERE import_file_id = ${importFileId})
+  `);
+  tx.delete(statementPeriods).where(eq(statementPeriods.importFileId, importFileId)).run();
+}
+
+/**
  * Supersede everything an import file contributed (re-parse lifecycle). Returns every account it had written to —
  * read before anything moves — for the caller to rebuild.
  *
@@ -1543,13 +1561,7 @@ function supersedeFileContribution(db: AppDatabase, oldFileId: string): string[]
       .set({ status: "superseded" })
       .where(and(eq(transactions.importFileId, oldFileId), inArray(transactions.status, ["active", "quarantined", "excluded"])))
       .run();
-    tx.run(sql`
-      UPDATE balance_anchors SET statement_period_id = NULL
-      WHERE statement_period_id IN (SELECT id FROM statement_periods WHERE import_file_id = ${oldFileId})
-        AND import_file_id != ${oldFileId}
-    `);
-    tx.delete(balanceAnchors).where(eq(balanceAnchors.importFileId, oldFileId)).run();
-    tx.delete(statementPeriods).where(eq(statementPeriods.importFileId, oldFileId)).run();
+    removeFileBalances(tx, oldFileId);
     // a parsed file's error is only ever the sections it withheld (`importOneFile`); its successor reads them again
     // and says for itself what is still missing, so the retired row must not keep claiming a section is absent
     tx.update(importFiles).set({ status: "superseded", error: null }).where(eq(importFiles.id, oldFileId)).run();
@@ -1832,14 +1844,7 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
       // (the rows naming the groups are still here to be read)
       detachTransferLegs(tx, legsLeftAloneBy(tx, importFileId));
       tx.delete(transactions).where(parsedFromFile(importFileId)).run();
-      tx.delete(balanceAnchors).where(eq(balanceAnchors.importFileId, importFileId)).run();
-      // anchors owned by OTHER files may reference this file's periods — detach
-      // them before the periods go (FK integrity under foreign_keys=ON)
-      tx.run(sql`
-        UPDATE balance_anchors SET statement_period_id = NULL
-        WHERE statement_period_id IN (SELECT id FROM statement_periods WHERE import_file_id = ${importFileId})
-      `);
-      tx.delete(statementPeriods).where(eq(statementPeriods.importFileId, importFileId)).run();
+      removeFileBalances(tx, importFileId);
       tx.delete(importFiles).where(eq(importFiles.id, importFileId)).run();
     });
     const scope = [...new Set([...affected, ...accountsOfTransactions(db, restored)])];

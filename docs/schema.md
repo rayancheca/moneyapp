@@ -120,7 +120,11 @@ Liability status **derived** from `type='credit'`. Debit cards are intentionally
   carry only **fills** attributes that row lacks. The per-file `carriedForward` count in the
   import outcome makes every carry visible.
 - **Un-import** is a first-class operation: removes the rows the file **parsed**, its periods,
-  and its anchors atomically. Unlike a re-parse it is **destructive to user work** — those rows
+  and its anchors atomically. An anchor is written once per (account, day, source) and owned by
+  the file that wrote it last, so a statement anchor another file's printed period still prints
+  (the neighbouring statement's opening or closing day, or a second download of the same
+  statement) is handed to that period instead — on a re-parse as on an un-import — and the
+  confirmation counts only the balances that go. Unlike a re-parse it is **destructive to user work** — those rows
   leave the database, so their categories, notes, links and splits go with them (a pre-mutation
   snapshot is taken so the operation is recoverable).
   A row **attached** to the file (`file_link_source = 'attached'`: recorded without the document,
