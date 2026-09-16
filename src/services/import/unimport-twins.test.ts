@@ -14,7 +14,10 @@ import { transactions } from "@/db/schema/transactions";
 import { dedupeHash, duplicatePairKey, type DuplicatePairSide } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "@/services/accounts";
+import { flagDuplicateCandidates } from "@/services/duplicate-flags";
+import { resolveDuplicate } from "@/services/duplicate-resolution";
 import { importStatementFiles, unimportFile, type ImportInput } from "./service";
+import { unimportCountsByFile } from "./unimport-counts";
 
 /**
  * 🔴 Un-importing a statement and importing the same bytes again did not end
@@ -414,9 +417,10 @@ describe("un-importing a statement and importing it again ends where it started"
   });
 });
 
+const HEADER = "Card,Transaction Date,Post Date,Description,Category,Type,Amount,Memo";
+
 describe("genuinely distinct charges of the same amount stay distinct", () => {
   const NAME = "Chase7777_Activity_20260301_20260305.CSV";
-  const HEADER = "Card,Transaction Date,Post Date,Description,Category,Type,Amount,Memo";
   // the bank prints two identical $115.00 payments on one day
   const csv = (): ImportInput => ({
     name: NAME,
@@ -542,5 +546,142 @@ describe("genuinely distinct charges of the same amount stay distinct", () => {
     expect(row(mirror)!.status).toBe("superseded");
     expect(livePayments(card)).toHaveLength(2);
     expect(ledger()).toEqual(before);
+  });
+});
+
+/**
+ * A card export (priority 1) and a QFX (priority 0) for the same card: the QFX
+ * takes over the export's rows on the days it covers. A takeover moves a kept
+ * row's money onto a new row as surely as a re-parse does.
+ */
+describe("a takeover hands the owner's verdict to the row that takes over", () => {
+  const EXPORT = "Chase7777_Activity_20260301_20260305.CSV";
+  const QFX = "Chase7777_Activity_20260301_20260305.QFX";
+  const PAYMENT_CENTS = 11500;
+  const COFFEE_CENTS = -450;
+  const exportCsv = (): ImportInput => ({
+    name: EXPORT,
+    buffer: Buffer.from(
+      [
+        HEADER,
+        "7777,03/02/2026,03/02/2026,Payment Thank You-Mobile,,Payment,115.00,",
+        "7777,03/05/2026,03/05/2026,BLUE BOTTLE COFFEE,Food & Drink,Sale,-4.50,",
+        "",
+      ].join("\n"),
+    ),
+  });
+  /** A Chase card QFX for ····7777, covering March 1–5. */
+  const cardQfx = (lines: readonly { day: string; cents: number; name: string }[]): ImportInput => ({
+    name: QFX,
+    buffer: Buffer.from(
+      [
+        "OFXHEADER:100",
+        "",
+        "<OFX>",
+        "<SIGNONMSGSRSV1><SONRS><STATUS><CODE>0\n<SEVERITY>INFO\n</STATUS>\n<FI><ORG>B1\n</FI>\n<INTU.BID>10898\n</SONRS></SIGNONMSGSRSV1>",
+        "<CREDITCARDMSGSRSV1><CCSTMTTRNRS><CCSTMTRS>",
+        "<CCACCTFROM><ACCTID>00007777\n</CCACCTFROM>",
+        "<BANKTRANLIST>\n<DTSTART>20260301\n<DTEND>20260305",
+        ...lines.map(
+          (l, i) =>
+            `<STMTTRN>\n<TRNTYPE>${l.cents < 0 ? "DEBIT" : "CREDIT"}\n<DTPOSTED>${l.day.replaceAll("-", "")}\n<TRNAMT>${(l.cents / 100).toFixed(2)}\n<FITID>${i + 1}\n<NAME>${l.name}\n</STMTTRN>`,
+        ),
+        "</BANKTRANLIST>",
+        "<LEDGERBAL><BALAMT>0.00\n<DTASOF>20260305\n</LEDGERBAL>",
+        "</CCSTMTRS></CCSTMTTRNRS></CREDITCARDMSGSRSV1>",
+        "</OFX>",
+        "",
+      ].join("\n"),
+    ),
+  });
+  const bothLinesQfx = () =>
+    cardQfx([
+      { day: "2026-03-02", cents: PAYMENT_CENTS, name: "Payment Thank You - Web" },
+      { day: "2026-03-05", cents: COFFEE_CENTS, name: "BLUE BOTTLE COFFEE" },
+    ]);
+  const liveRows = (accountId: string): Row[] =>
+    bundle.db
+      .select()
+      .from(transactions)
+      .where(eq(transactions.accountId, accountId))
+      .all()
+      .filter((t) => t.status === "active" || t.status === "excluded");
+  const live = (accountId: string, cents: number): Row[] => liveRows(accountId).filter((t) => t.amountCents === cents);
+  const liveCents = (accountId: string): number => liveRows(accountId).reduce((sum, t) => sum + t.amountCents, 0);
+  const sides = (candidateId: string) => [candidate(candidateId).transactionIdA, candidate(candidateId).transactionIdB];
+
+  /**
+   * 🔴 The takeover superseded the export's payment and left the verdict naming
+   * it, so un-importing the export — which deletes its superseded rows too —
+   * restored the mirror beside the QFX's payment: $115.00 counted twice, on no
+   * queue, and re-importing the export did not undo it (its lines are the
+   * QFX's to print).
+   */
+  test("un-importing the taken-over export leaves one payment, and re-importing it adds none", async () => {
+    await importStatementFiles(bundle.db, [exportCsv()]);
+    const exported = fileNamed(EXPORT)!;
+    const line = rowsOfFile(exported.id).find((t) => t.amountCents === PAYMENT_CENTS)!;
+    const card = line.accountId;
+    const mirror = hand({ accountId: card, postedOn: "2026-03-03", amountCents: PAYMENT_CENTS, raw: "PAYMENT — Hand checking · 03/02" });
+    const candidateId = confirmPair(line.id, mirror, "card_payment_mirror");
+
+    const [takeover] = await importStatementFiles(bundle.db, [bothLinesQfx()]);
+    expect(takeover).toMatchObject({ status: "parsed", supersededTakeover: 2 });
+    expect(row(line.id)!.status).toBe("superseded");
+    const [qfxPayment] = live(card, PAYMENT_CENTS);
+    expect(live(card, PAYMENT_CENTS)).toHaveLength(1);
+    expect(qfxPayment!.importFileId).toBe(fileNamed(QFX)!.id);
+    // the verdict keeps the row that records the money now
+    expect(sides(candidateId)).toContain(qfxPayment!.id);
+    expect(candidate(candidateId)).toMatchObject({ resolution: "confirmed_duplicate", retiredTransactionId: mirror });
+    expect(liveCents(card)).toBe(PAYMENT_CENTS + COFFEE_CENTS);
+
+    unimportFile(bundle.db, exported.id);
+    expect(row(mirror)!.status).toBe("superseded");
+    expect(live(card, PAYMENT_CENTS).map((t) => t.id)).toEqual([qfxPayment!.id]);
+
+    const [again] = await importStatementFiles(bundle.db, [exportCsv()]);
+    expect(again).toMatchObject({ status: "parsed", inserted: 0, skippedOwned: 2 });
+    expect(row(mirror)!.status).toBe("superseded");
+    expect(liveCents(card)).toBe(PAYMENT_CENTS + COFFEE_CENTS);
+
+    // …and the QFX's own un-import hands the payment to the mirror, once
+    unimportFile(bundle.db, fileNamed(QFX)!.id);
+    expect(live(card, PAYMENT_CENTS).map((t) => t.id)).toEqual([mirror]);
+    await importStatementFiles(bundle.db, [bothLinesQfx()]);
+    expect(row(mirror)!.status).toBe("superseded");
+    expect(live(card, PAYMENT_CENTS)).toHaveLength(1);
+  });
+
+  /**
+   * A kept row can itself be retired later, as the copy of a third row: the
+   * owner's two verdicts say all three are one charge, and the third records
+   * it. Un-importing the kept row's export deletes a row that recorded no
+   * money, so there is nothing for the first copy to stand in for.
+   */
+  test("a kept row the owner retired in turn brings no copy back when its export is un-imported", async () => {
+    await importStatementFiles(bundle.db, [exportCsv()]);
+    const exported = fileNamed(EXPORT)!;
+    const coffee = rowsOfFile(exported.id).find((t) => t.amountCents === COFFEE_CENTS)!;
+    const card = coffee.accountId;
+    const first = hand({ accountId: card, postedOn: coffee.postedOn, amountCents: COFFEE_CENTS, raw: "BLUE BOTTLE COFFEE" });
+    confirmPair(coffee.id, first, "cross_source_same_day");
+    const third = hand({ accountId: card, postedOn: coffee.postedOn, amountCents: COFFEE_CENTS, raw: "BLUE BOTTLE COFFEE SF" });
+    flagDuplicateCandidates(bundle.db, [card]);
+    const open = bundle.db
+      .select()
+      .from(duplicateCandidates)
+      .all()
+      .find((c) => c.resolution === "unresolved" && [c.transactionIdA, c.transactionIdB].includes(third))!;
+    expect([open.transactionIdA, open.transactionIdB]).toContain(coffee.id);
+    resolveDuplicate(bundle.db, { candidateId: open.id, decision: "confirmed_duplicate", retiredTransactionId: coffee.id });
+    expect(live(card, COFFEE_CENTS).map((t) => t.id)).toEqual([third]);
+    // the confirmation must not promise a copy the un-import will not bring back
+    expect(unimportCountsByFile(bundle.db).get(exported.id)!.duplicateSurvivors).toBe(0);
+
+    unimportFile(bundle.db, exported.id);
+
+    expect(row(first)!.status).toBe("superseded");
+    expect(live(card, COFFEE_CENTS).map((t) => t.id)).toEqual([third]);
   });
 });

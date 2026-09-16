@@ -110,6 +110,15 @@ export function restoreDuplicatesLosingTheirSurvivor(
     const retired = rowById(db, retiredId);
     const survivor = rowById(db, survivorId);
     if (!retired || !survivor) continue;
+    // A superseded kept row records no money: a takeover or a re-parse moved it
+    // to another row (which the verdict now names, `moveKeptSide`), or the
+    // owner retired it in turn as the copy of a third row, which records the
+    // charge. Deleting it takes nothing out of the ledger, so the copy has
+    // nothing to stand in for, and restoring it would count the charge twice.
+    // A QUARANTINED kept row is not that — its charge is held for a statement's
+    // proof, recorded nowhere else — so with its file gone the copy records it,
+    // as it would had the file never been imported.
+    if (survivor.status === "superseded") continue;
     // 'active' only as the floor for a row retired before retired_from_status
     // existed. A status outside balance replay would put the row back in a state
     // the pair could never have held.
@@ -305,14 +314,19 @@ export function keptSidesAmong(db: AppDatabase, ids: readonly string[]): Set<str
 }
 
 /**
- * A re-parse moved a kept row's money onto its successor: the verdict follows it.
+ * A re-parse or a takeover moved a kept row's money onto its successor: the
+ * verdict follows it. (An owner's retire does not: the row it retires is the
+ * copy in a second verdict, and the first verdict stays on it —
+ * `restoreDuplicatesLosingTheirSurvivor` skips a superseded kept row.)
  *
  * 🔴 It stayed on the superseded row. A parser-version re-parse of
  * 20260302-statements-9805-.pdf carried its four payments' links onto the new
  * rows, and the four pairs went on naming the old ones — so un-importing the
  * new version deleted the payments and restored nothing, and the ledger
  * recorded them nowhere: `pnpm ledger-check` found 2026-01-02 → 2026-04-02 off
- * by $798.48 (a copy of the real ledger, 2026-09-16).
+ * by $798.48 (a copy of the real ledger, 2026-09-16). A takeover left it on
+ * its victim too, so un-importing the taken-over export restored the copy
+ * beside the row that had taken over: the charge counted twice.
  *
  * `toId` is a live row and a confirmed pair's copy is superseded, so the
  * successor is never the copy, and no other pair can already name the two.

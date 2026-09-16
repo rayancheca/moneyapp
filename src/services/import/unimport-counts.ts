@@ -102,9 +102,10 @@ export function unimportCountsByFile(db: AppDatabase): Map<string, UnimportCount
        *
        * Counted, never re-derived: the restore has slot conflicts and status
        * floors this page must not reimplement, so the confirmation names how
-       * many rows are in that shape and lets the reader weigh it.
+       * many rows are in that shape and lets the reader weigh it. A superseded
+       * kept row is not in it: it records no money, and the restore skips it.
        */
-      duplicateSurvivors: tally(sql`${deleted} AND exists (
+      duplicateSurvivors: tally(sql`${deleted} AND ${transactions.status} <> 'superseded' AND exists (
         select 1 from duplicate_candidates d
         where d.resolution = 'confirmed_duplicate'
           and d.retired_transaction_id is not null

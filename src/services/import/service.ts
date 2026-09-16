@@ -1215,7 +1215,12 @@ async function importOneFile(
               // the replacement's own dedupe hash. Covers both the freshly-
               // inserted and the deduped (existing active twin) branches.
               const replacement = liveRowByHash(tx, accountId, hash);
-              if (replacement) migrateSplits(tx, victim.id, replacement.id);
+              if (replacement) {
+                migrateSplits(tx, victim.id, replacement.id);
+                // …and the owner's duplicate verdict, as a re-parse hands it on
+                // (`landCarry`): the replacement records the victim's money now
+                moveKeptSide(tx, victim.id, replacement.id);
+              }
               // the carry lands last: same file lineage as the row the user
               // actually edited, so it outranks the victim's attributes
               if (carried && landCarry(tx, accountId, hash, carried, inserted)) {
