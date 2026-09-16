@@ -108,18 +108,24 @@ describe("the mark lives in the ledger it describes", () => {
   });
 
   test("restoring a snapshot from before the marks existed leaves none, so the next run records them afresh", () => {
-    // a snapshot one migration behind: the table and the migration that made it, both absent
-    const oldPath = path.join(dir, "older.db");
-    const old = createDatabase(oldPath);
-    const journal = JSON.parse(
-      fs.readFileSync(path.join(defaultMigrationsFolder(), "meta", "_journal.json"), "utf8"),
-    ) as { entries: { tag: string; when: number }[] };
-    const making = journal.entries.find((e) =>
-      fs.readFileSync(path.join(defaultMigrationsFolder(), `${e.tag}.sql`), "utf8").includes("CREATE TABLE `ledger_witness_marks`"),
+    // a snapshot from before the migration that made the table: migrated through the ones before it and no further.
+    // 🔴 It was made by dropping the table and that one migration's record from a current ledger — and once a later
+    // migration existed (0018_statement_positions), the migrator, which applies only migrations newer than the last
+    // one recorded, never made the table again: "no such table: ledger_witness_marks".
+    const folder = defaultMigrationsFolder();
+    const journal = JSON.parse(fs.readFileSync(path.join(folder, "meta", "_journal.json"), "utf8")) as {
+      entries: { tag: string; when: number }[];
+    };
+    const making = journal.entries.findIndex((e) =>
+      fs.readFileSync(path.join(folder, `${e.tag}.sql`), "utf8").includes("CREATE TABLE `ledger_witness_marks`"),
     );
-    expect(making).toBeDefined();
-    old.sqlite.exec("DROP TABLE ledger_witness_marks");
-    old.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at = ?").run(making!.when);
+    expect(making).toBeGreaterThan(0);
+    const beforeMarks = path.join(dir, "migrations-before-marks");
+    fs.cpSync(folder, beforeMarks, { recursive: true });
+    fs.writeFileSync(path.join(beforeMarks, "meta", "_journal.json"), JSON.stringify({ ...journal, entries: journal.entries.slice(0, making) }));
+    const oldPath = path.join(dir, "older.db");
+    const old = createDatabase(oldPath, beforeMarks);
+    expect(old.sqlite.prepare("SELECT name FROM sqlite_master WHERE name = 'ledger_witness_marks'").get()).toBeUndefined();
     old.sqlite.close();
 
     writeWitnessMarks(bundle.db, { "value-anchors": MARK });
