@@ -15,6 +15,7 @@ import { unimportAcknowledgement, unimportRadius } from "./unimport-radius";
 const VENTURE_X_AUG: UnimportCounts = {
   deleted: 50,
   handedOver: 0,
+  keptByPrinters: 0,
   kept: 0,
   keptRefiled: 0,
   userCategorizedDeleted: 8,
@@ -36,6 +37,7 @@ const VENTURE_X_AUG: UnimportCounts = {
 const SAPPHIRE_MAR: UnimportCounts = {
   deleted: 4,
   handedOver: 0,
+  keptByPrinters: 0,
   kept: 5,
   keptRefiled: 0,
   userCategorizedDeleted: 0,
@@ -52,6 +54,7 @@ const SAPPHIRE_MAR: UnimportCounts = {
 const SAPPHIRE_JUL: UnimportCounts = {
   deleted: 2,
   handedOver: 0,
+  keptByPrinters: 0,
   kept: 4,
   keptRefiled: 0,
   userCategorizedDeleted: 0,
@@ -72,6 +75,7 @@ const SAPPHIRE_JUL: UnimportCounts = {
 const SAPPHIRE_JUL_2025: UnimportCounts = {
   deleted: 11,
   handedOver: 0,
+  keptByPrinters: 0,
   kept: 2,
   keptRefiled: 0,
   userCategorizedDeleted: 1,
@@ -90,6 +94,7 @@ const valueOf = (r: BlastRadius, label: string) => r.lines?.find((l) => l.label 
 const labels = (r: BlastRadius) => (r.lines ?? []).map((l) => l.label);
 
 const KEPT = "Transactions kept, detached from the file";
+const PRINTED_ELSEWHERE = "Transactions kept under another file that prints them";
 
 describe("unimportRadius — what un-importing a statement deletes, and what stays", () => {
   test("a file with nothing attached keeps its headline, and counts the transfer legs it deletes", () => {
@@ -227,6 +232,34 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
     expect(r.reassurance).not.toContain("transfer detection");
     // no line where no note goes
     expect(labels(radius("x.pdf", VENTURE_X_AUG, 0, 1))).not.toContain("Notes on deleted transactions");
+  });
+
+  /**
+   * 🔴 An export whose rows record the lines of statements imported after it said it "deletes every row it brought in",
+   * and did: un-importing Spending Report PDF (1).pdf put 8 reconciled Chase Sapphire periods into gap (a copy of the
+   * real ledger, 2026-09-16). Those rows now stay under the statement that prints them, and the dialog says so.
+   */
+  test("rows another imported file prints are counted as kept under it, and the headline says so first", () => {
+    // Spending Report PDF (1).pdf, on a copy of the real ledger with the backfills applied, 2026-09-16
+    const report: UnimportCounts = { ...VENTURE_X_AUG, deleted: 0, keptByPrinters: 356, userCategorizedDeleted: 0, inflowCents: 0, outflowCents: 0, transferLegsDeleted: 0 };
+    const r = radius("Spending Report PDF (1).pdf", report, 0, 1);
+    expect(r.headline).toBe(
+      "Un-importing Spending Report PDF (1).pdf deletes no transactions: the 356 rows it brought in are printed by other imported files too, and stay, filed under them. There is no undo for this inside the app.",
+    );
+    expect(r.lines).toContainEqual({ label: PRINTED_ELSEWHERE, value: "356 transactions" });
+    expect(unimportAcknowledgement(report)).toBeUndefined();
+
+    // Discover-AllAvailable-20260710.csv, the same copy: some rows go, some stay
+    const discover: UnimportCounts = { ...VENTURE_X_AUG, deleted: 188, keptByPrinters: 437 };
+    expect(radius("Discover-AllAvailable-20260710.csv", discover, 0, 0).headline).toBe(
+      "Un-importing Discover-AllAvailable-20260710.csv deletes the 188 rows only it prints: the 437 other rows it brought in are printed by other imported files too, and stay, filed under them. There is no undo for this inside the app.",
+    );
+    // …and with rows filed by hand, and a download of the same statement, each clause keeps its place
+    const mixed: UnimportCounts = { ...SAPPHIRE_MAR, handedOver: 3, keptByPrinters: 1 };
+    expect(radius("x.pdf", mixed, 0, 1).headline).toBe(
+      "Un-importing x.pdf deletes the 4 rows only it brought in: another download of the same statement is still imported, and it keeps the 3 rows it also prints. The 5 other rows filed under it by hand stay, detached from the file. The 1 other row it brought in is printed by another imported file too, and stays, filed under it. There is no undo for this inside the app.",
+    );
+    expect(labels(radius("x.pdf", SAPPHIRE_MAR, 0, 1))).not.toContain(PRINTED_ELSEWHERE);
   });
 
   test("a download that owns no row says it deletes none", () => {

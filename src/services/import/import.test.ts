@@ -2671,14 +2671,14 @@ describe("a parser-version re-read that no longer writes an account", () => {
     const copy = liveFile(MARCH_COPY).id;
     const plans = copyHandOvers(bundle.db);
     const periods = unimportPeriodsByFile(bundle.db, plans);
-    expect(unimportCountsByFile(bundle.db, plans).get(march)).toMatchObject({ deleted: 0, handedOver: 1, kept: 1, keptRefiled: 1 });
+    expect(unimportCountsByFile(bundle.db, plans).get(march)).toMatchObject({ deleted: 0, handedOver: 1, keptByPrinters: 0, kept: 1, keptRefiled: 1 });
     expect(periods.get(march)).toEqual({ removed: 0, handedOver: 3 });
     expect(balancesRemovedByFile(bundle.db, plans).get(march) ?? 0).toBe(0);
 
     unimportFile(bundle.db, march);
 
     const after = copyHandOvers(bundle.db);
-    expect(unimportCountsByFile(bundle.db, after).get(copy)).toMatchObject({ deleted: 1, handedOver: 0, kept: 1, keptRefiled: 0 });
+    expect(unimportCountsByFile(bundle.db, after).get(copy)).toMatchObject({ deleted: 1, handedOver: 0, keptByPrinters: 0, kept: 1, keptRefiled: 0 });
     expect(unimportPeriodsByFile(bundle.db, after).get(copy)).toEqual({ removed: 3, handedOver: 0 });
     expect(balancesRemovedByFile(bundle.db, after).get(copy)).toBe(6);
   });
@@ -3618,6 +3618,7 @@ describe("un-import keeps a row attached to its file, and a re-import files it t
     expect(counts).toEqual({
       deleted: deleted.length,
       handedOver: 0,
+      keptByPrinters: 0,
       kept: 4,
       keptRefiled: 0,
       userCategorizedDeleted: deleted.filter((t) => t.categorizationSource === "user").length,

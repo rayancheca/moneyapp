@@ -43,6 +43,7 @@ import { accountSlug, institutionSlug } from "./account-slug";
 import { ATTACHED, detachAttachedRows, keepRetiredAttachedRows, parsedFromFile, reattachDetachedRows } from "./attached-rows";
 import { handOverPrintedAnchors } from "./printed-anchors";
 import { copyHandOvers, forgetStatementCopies, handOverToCopies, handedRowIds, recordStatementCopy } from "./statement-copies";
+import { appendPrintedLines, forgetPrintedLines, handOverToPrinters, printedLineOf, printerHandOvers, printerRowIds } from "./printed-lines";
 import { keepStayingLegsByContent, relinkReturningTransfers, rememberTransfersTakenApart } from "./unimported-transfers";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
@@ -283,7 +284,7 @@ function planLines(
 ): LinePlan[] {
   const taken = new Set<string>();
   const identity: number[] = [];
-  const plan = lines.map(({ printed: t, stored }, i): LinePlan => {
+  const plan = lines.map(({ printed: t, stored, hash }, i): LinePlan => {
     // `soleSource` rows opt out: the higher-fidelity source covers the
     // DAY but is documented not to carry this row type (CanonicalTxn)
     if (!t.soleSource && rangesCovering(ranges, stored.postedOn).some((r) => r.priority < myPriority)) return { kind: "owned" };
@@ -293,7 +294,7 @@ function planLines(
     // day, so the coverage asked about is the printed day's too.
     const lowerOwners = rangesCovering(ranges, t.postedOn).filter((r) => r.priority > myPriority);
     if (lowerOwners.length > 0) {
-      const victim = pickTakeoverVictim(tx, accountId, t, lowerOwners.map((r) => r.importFileId), taken);
+      const victim = pickTakeoverVictim(tx, accountId, t, hash, lowerOwners.map((r) => r.importFileId), taken);
       if (victim) {
         taken.add(victim.id);
         return { kind: "takeover", victimId: victim.id };
@@ -1304,6 +1305,8 @@ async function importOneFile(
     for (const old of stale) {
       for (const accountId of supersedeFileContribution(db, old.id)) retiredAccountIds.add(accountId);
     }
+    // a failed read's row is read again: what it prints is recorded afresh, with the statements below
+    forgetPrintedLines(db, fileRow.id);
     for (const statement of statements) {
       const accountId = resolveAccount(db, statement.accountHint);
       fileAccountIds.add(accountId);
@@ -1324,6 +1327,8 @@ async function importOneFile(
       const slots = existingIdentitySlots(db, accountId, fileRow.id, new Set(returning.map((s) => s.copy.id)));
 
       db.transaction((tx) => {
+        // every line the statement prints, whichever row ends up recording it (`printed-lines`)
+        appendPrintedLines(tx, fileRow.id, accountId, lines.map(({ printed, stored }) => printedLineOf(printed, stored)));
         // the hashes of the rows this statement inserts, in print order
         const written: string[] = [];
         // `t` is the row as printed, `stored` the row as written. Ownership asks
@@ -1673,11 +1678,18 @@ function withheldOutcome(db: AppDatabase, section: WithheldSection): WithheldOut
  * from lower-fidelity files, pick by description similarity with a
  * deterministic tie-break; no plausible match ⇒ no supersede (the fuzzy
  * review pass surfaces the residual pair instead of guessing).
+ *
+ * 🔴 …and a row this very line wrote before (the same `dedupe_hash`) first. Of two equal charges a line could retire
+ * the other one's row, then find its own still live under its hash and write nothing: one charge gone. A file's own
+ * rows sit under a lower-fidelity file once an un-import hands them to one that prints them (`printed-lines`); on a
+ * copy of the real ledger, 2026-09-16, re-importing Discover-AllAvailable-20260710.csv that way took Discover from
+ * 1,044 active rows to 1,039 and put three periods into gap.
  */
 function pickTakeoverVictim(
   tx: AppDatabase,
   accountId: string,
   t: CanonicalTxn,
+  hash: string,
   lowerFileIds: string[],
   // rows an earlier line of the same statement takes over
   taken: ReadonlySet<string>,
@@ -1700,9 +1712,10 @@ function pickTakeoverVictim(
   if (candidates.length === 1) return candidates[0];
 
   const incoming = normalizeDescription(t.rawDescription);
+  const sameLine = (c: typeof transactions.$inferSelect) => (c.dedupeHash === hash ? 1 : 0);
   const ranked = candidates
     .map((c) => ({ c, s: descriptionScore(c.normalizedDescription, incoming) }))
-    .sort((a, b) => b.s - a.s || a.c.id.localeCompare(b.c.id));
+    .sort((a, b) => sameLine(b.c) - sameLine(a.c) || b.s - a.s || a.c.id.localeCompare(b.c.id));
   return ranked[0]!.s > 0 ? ranked[0]!.c : undefined;
 }
 
@@ -1866,6 +1879,7 @@ function supersedeFileContribution(db: AppDatabase, oldFileId: string): string[]
     removeFileBalances(tx, oldFileId);
     // its successor records again what it prints as a copy — and hands nothing over (`statement-copies`)
     forgetStatementCopies(tx, oldFileId);
+    forgetPrintedLines(tx, oldFileId);
     // a parsed file's error is only ever the sections it withheld (`importOneFile`); its successor reads them again
     // and says for itself what is still missing, so the retired row must not keep claiming a section is absent
     tx.update(importFiles).set({ status: "superseded", error: null }).where(eq(importFiles.id, oldFileId)).run();
@@ -2115,8 +2129,11 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
   if (!file) return;
   const affected = accountsWrittenBy(db, importFileId);
   // a period another download of the statement also prints goes to it, with the rows it prints (`statement-copies`)
-  const handOvers = copyHandOvers(db, [importFileId]).get(importFileId) ?? [];
-  const handed = handedRowIds([handOvers]);
+  const copyPlans = copyHandOvers(db, [importFileId]);
+  const handOvers = copyPlans.get(importFileId) ?? [];
+  // …and a row another imported file prints goes to that file (`printed-lines`)
+  const printers = printerHandOvers(db, copyPlans, [importFileId]).get(importFileId) ?? [];
+  const handed = new Set([...handedRowIds([handOvers]), ...printerRowIds([printers])]);
 
   const doomedRows = db
     .select({ id: transactions.id, seriesId: transactions.recurringSeriesId })
@@ -2137,6 +2154,7 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
       // First: what the other download takes is no longer this file's, so nothing below reads it as the file's rows,
       // and the anchor hand-over below finds the period under its new file
       handOverToCopies(tx, handOvers);
+      handOverToPrinters(tx, printers);
       // A charge this file's rows are the SURVIVING copy of has a retired twin
       // sitting `superseded` in another file. Delete the survivor without putting
       // that twin back and the money is recorded by zero live rows: it vanishes
@@ -2161,6 +2179,7 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
       tx.delete(transactions).where(parsedFromFile(importFileId)).run();
       removeFileBalances(tx, importFileId);
       forgetStatementCopies(tx, importFileId);
+      forgetPrintedLines(tx, importFileId);
       tx.delete(importFiles).where(eq(importFiles.id, importFileId)).run();
     });
     const scope = [...new Set([...affected, ...accountsOfTransactions(db, restored)])];

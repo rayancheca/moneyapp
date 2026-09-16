@@ -83,12 +83,26 @@ const REASSURANCE =
   "The statement file itself stays on disk. Re-importing brings the rows back and re-runs the rules, the merchant map and recurring-series linking over them — but a charge links again only where its series still recognises it: by another charge with the same description, or as a registered commitment's first charge on its date and amount. A transfer is linked again once the same line and its other leg are both in the ledger again — the other leg kept, or imported again from its own statement — unless that leg was deleted by hand or linked elsewhere in the meantime. What is lost is the hand-categorization, the notes, and the recurring links you attached or removed by hand.";
 
 /**
+ * 🔴 An export whose rows record lines of statements imported after it "deleted every row it brought in", and did:
+ * un-importing Spending Report PDF (1).pdf put 8 reconciled Chase Sapphire periods into gap (a copy of the real ledger,
+ * 2026-09-16). Those rows stay under a file that prints them (`printed-lines`), and the headline says so.
+ */
+function printersClause({ deleted, handedOver, keptByPrinters }: UnimportCounts, alone: boolean): string {
+  if (keptByPrinters === 0) return "";
+  const rows = countPhrase(keptByPrinters, alone && deleted === 0 && handedOver === 0 ? "row" : "other row");
+  const [are, stay, them] = keptByPrinters === 1 ? ["is", "stays", "it"] : ["are", "stay", "them"];
+  const other = keptByPrinters === 1 ? "another imported file" : "other imported files";
+  return `the ${rows} it brought in ${are} printed by ${other} too, and ${stay}, filed under ${them}.`;
+}
+
+/**
  * 🔴 A statement downloaded twice keeps ONE period and one set of rows, filed under whichever download came first, and
  * un-importing that one said — and did — "deletes every row it brought in" while the other download still printed
  * them (20230810-statements-3522-.pdf, 2026-09-16). What another download prints goes to it (`statement-copies`), and
  * the headline says so first.
  */
-function handOverHeadline(subject: string, { deleted, kept, handedOver, keptRefiled }: UnimportCounts): string {
+function handOverHeadline(subject: string, counts: UnimportCounts): string {
+  const { deleted, kept, handedOver, keptRefiled } = counts;
   const takes = [
     ...(handedOver > 0 ? [`the ${countPhrase(handedOver, "row")} it also prints`] : []),
     ...(keptRefiled > 0 ? [`the ${countPhrase(keptRefiled, "row")} filed under this one by hand on its days`] : []),
@@ -99,12 +113,23 @@ function handOverHeadline(subject: string, { deleted, kept, handedOver, keptRefi
       ? ""
       : ` The ${countPhrase(detached, "other row")} filed under it by hand ${detached === 1 ? "stays" : "stay"}, detached from the file.`;
   const deletes = deleted === 0 ? "deletes no transactions" : `deletes the ${countPhrase(deleted, "row")} only it brought in`;
-  return `Un-importing ${subject} ${deletes}: another download of the same statement is still imported, and it keeps ${takes}.${rest} ${NO_UNDO}`;
+  const printers = printersClause(counts, false);
+  const printed = printers === "" ? "" : ` ${printers.charAt(0).toUpperCase()}${printers.slice(1)}`;
+  return `Un-importing ${subject} ${deletes}: another download of the same statement is still imported, and it keeps ${takes}.${rest}${printed} ${NO_UNDO}`;
+}
+
+function printersHeadline(subject: string, counts: UnimportCounts): string {
+  const { deleted, kept } = counts;
+  const deletes = deleted === 0 ? "deletes no transactions" : `deletes the ${countPhrase(deleted, "row")} only it prints`;
+  const detached =
+    kept === 0 ? "" : ` The ${countPhrase(kept, "row")} filed under it by hand ${kept === 1 ? "stays" : "stay"}, detached from the file.`;
+  return `Un-importing ${subject} ${deletes}: ${printersClause(counts, true)}${detached} ${NO_UNDO}`;
 }
 
 function headline(subject: string, counts: UnimportCounts): string {
   const { deleted, kept } = counts;
   if (counts.handedOver > 0 || counts.keptRefiled > 0) return handOverHeadline(subject, counts);
+  if (counts.keptByPrinters > 0) return printersHeadline(subject, counts);
   // a second download of a statement owns no row: "every row it brought in" read as if it had some
   if (kept === 0 && deleted === 0) return `Un-importing ${subject} deletes no transactions. ${NO_UNDO}`;
   if (kept === 0) return `Un-importing ${subject} deletes every row it brought in. ${NO_UNDO}`;
@@ -167,6 +192,10 @@ export function unimportRadius({ subject, counts, balances, periods, periodsHand
       ...optional(underCopy.length > 0, {
         label: "Transactions kept under another download of this statement",
         value: underCopy.join(" and "),
+      }),
+      ...optional(counts.keptByPrinters > 0, {
+        label: "Transactions kept under another file that prints them",
+        value: countPhrase(counts.keptByPrinters, "transaction"),
       }),
       ...optional(detached > 0, {
         label: "Transactions kept, detached from the file",

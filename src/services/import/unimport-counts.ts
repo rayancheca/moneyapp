@@ -3,6 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { attachedRow, parsedRow } from "./attached-rows";
+import { printerHandOvers, printerRowIds, type PrinterHandOver } from "./printed-lines";
 import { copyHandOvers, handedRowIds, type CopyHandOver } from "./statement-copies";
 
 /**
@@ -19,6 +20,13 @@ export interface UnimportCounts {
    * them — 85 rows of 20230810-statements-3522-.pdf that two other downloads print.
    */
   handedOver: number;
+  /**
+   * rows the file parsed that another imported file prints — not a download of the same statement: they stay, with
+   * everything on them, filed under that file (`printed-lines`). 🔴 Until 2026-09-16 the un-import deleted them —
+   * Spending Report PDF (1).pdf's rows that 8 Chase Sapphire statements print, and 75 rows of 3ab6c2a8-….csv that
+   * rh-redownload.csv prints.
+   */
+  keptByPrinters: number;
   /**
    * live rows attached to the file — detached and kept, with their money.
    * 🔴 A superseded attached row is history: no money in the ledger and no
@@ -63,6 +71,7 @@ export interface UnimportCounts {
 export const NO_UNIMPORT_ROWS: UnimportCounts = {
   deleted: 0,
   handedOver: 0,
+  keptByPrinters: 0,
   kept: 0,
   keptRefiled: 0,
   userCategorizedDeleted: 0,
@@ -77,13 +86,18 @@ export const NO_UNIMPORT_ROWS: UnimportCounts = {
 
 /**
  * Every import file's counts, in ONE grouped query; a file with no rows counts zero throughout. `plans` is what each
- * un-import hands to another download of its statement (`copyHandOvers`) — the plan `unimportFile` carries out.
+ * un-import hands to another download of its statement (`copyHandOvers`), and `printers` what it hands to the other
+ * files that print its rows (`printerHandOvers`) — the plans `unimportFile` carries out.
  */
 export function unimportCountsByFile(
   db: AppDatabase,
   plans: ReadonlyMap<string, readonly CopyHandOver[]> = copyHandOvers(db),
+  printers: ReadonlyMap<string, readonly PrinterHandOver[]> = printerHandOvers(db, plans),
 ): Map<string, UnimportCounts> {
-  const handedIds = JSON.stringify([...handedRowIds(plans.values())]);
+  const copyIds = JSON.stringify([...handedRowIds(plans.values())]);
+  const printerIds = JSON.stringify([...printerRowIds(printers.values())]);
+  // every parsed row the un-import keeps under another file
+  const handedIds = JSON.stringify([...handedRowIds(plans.values()), ...printerRowIds(printers.values())]);
   const refiledIds = JSON.stringify([...plans.values()].flatMap((list) => list.flatMap((p) => p.attachedRowIds)));
   const handed = sql`${transactions.id} IN (SELECT value FROM json_each(${handedIds}))`;
   // a left join's empty side has a NULL marker too, so a parsed row needs a row
@@ -94,7 +108,8 @@ export function unimportCountsByFile(
     .select({
       fileId: importFiles.id,
       deleted: tally(deleted),
-      handedOver: tally(sql`${transactions.id} IS NOT NULL AND ${parsedRow()} AND ${handed}`),
+      handedOver: tally(sql`${transactions.id} IS NOT NULL AND ${parsedRow()} AND ${transactions.id} IN (SELECT value FROM json_each(${copyIds}))`),
+      keptByPrinters: tally(sql`${transactions.id} IS NOT NULL AND ${parsedRow()} AND ${transactions.id} IN (SELECT value FROM json_each(${printerIds}))`),
       kept: tally(kept),
       keptRefiled: tally(sql`${kept} AND ${transactions.id} IN (SELECT value FROM json_each(${refiledIds}))`),
       userCategorizedDeleted: tally(sql`${deleted} AND ${transactions.categorizationSource} = 'user'`),

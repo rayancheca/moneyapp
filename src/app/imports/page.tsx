@@ -16,6 +16,7 @@ import { statementPulls } from "@/services/statement-pulls";
 import { unimportAcknowledgement, unimportRadius } from "@/components/imports/unimport-radius";
 import { NO_UNIMPORT_ROWS, unimportCountsByFile, unimportPeriodsByFile, type UnimportCounts } from "@/services/import/unimport-counts";
 import { balancesRemovedByFile } from "@/services/import/printed-anchors";
+import { printerHandOvers } from "@/services/import/printed-lines";
 import { copyHandOvers } from "@/services/import/statement-copies";
 import { importRowQualifiers, importRowSubject, withheldNoticeOf } from "@/lib/import-file-label";
 import { dayWindowLabel } from "@/lib/period";
@@ -99,7 +100,8 @@ export default async function ImportsPage({
   const periodsByFile = unimportPeriodsByFile(db, handOvers);
   // what un-importing each file deletes and what it keeps, counted with the
   // delete's own predicates — one grouped query, not one per row
-  const unimportCounts = unimportCountsByFile(db, handOvers);
+  // …and a row another imported file prints stays under that file (`printerHandOvers`, the same plan)
+  const unimportCounts = unimportCountsByFile(db, handOvers, printerHandOvers(db, handOvers));
   const countsOf = (fileId: string): UnimportCounts => unimportCounts.get(fileId) ?? NO_UNIMPORT_ROWS;
 
   const periods = db

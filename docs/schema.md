@@ -140,6 +140,16 @@ names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
   them kept) and the rows filed by hand on the period's days to the most recently imported
   other download that is still parsed; only un-importing the last download removes them. A
   re-parse hands nothing over — the new read writes the period and its rows again.
+  More generally, every import records **every line it prints** (`printed_lines`), whichever
+  row ends up recording it — its own, one another record already held (absorbed), or one a more
+  trusted file owns. Un-importing a file hands each of its parsed rows that a still-imported
+  file needs to another file that prints it (re-filed, every attribute kept): each such file's
+  lines are matched to the account's rows, and a line only the un-imported file's rows can record
+  takes one of them — a statement whose period holds the row's day first, then the most recently
+  imported. A line another record already holds takes nothing. So un-importing an export keeps
+  the rows the statements imported after it print, and those statements' periods stay
+  reconciled; importing the export again takes its rows back (a takeover retires the row the
+  same line wrote before — same `dedupe_hash` — first).
   A **transfer** the un-import takes apart (a deleted leg whose partner stays alone, or a pair
   whose legs were all the file's) is kept in `unimported_transfer_legs` — the deleted legs by
   content and the category the pair gave them, the staying leg by id — and linked again, with
@@ -170,6 +180,15 @@ different bytes). Written by the import when it adopts another file's period; re
 | id / import_file_id / account_id | | UNIQUE(import_file_id, account_id) |
 | period_start / period_end | date | the period's content key — never `statement_periods.id`, which a re-parse of the holder rewrites |
 | lines | JSON | what the copy prints on the account: `posted_on`, `transacted_on`, `amount_cents`, normalized description per line |
+
+### printed_lines
+Every line `import_file_id` prints on an account, recorded by the import (and, for the files
+imported before the table existed, by `scripts/record-printed-lines.ts`); read by un-import
+(`services/import/printed-lines`). Forgotten when the file is un-imported or retired by a re-read.
+| field | type | notes |
+|---|---|---|
+| id / import_file_id / account_id | | UNIQUE(import_file_id, account_id) |
+| lines | JSON | per line: `printedOn` (the day printed), `postedOn` (the day stored), `transactedOn`, `amountCents`, normalized description |
 
 ### statement_periods
 | field | type | notes |
