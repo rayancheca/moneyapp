@@ -167,7 +167,10 @@ names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
   elsewhere meanwhile ends it. A staying leg whose own file is un-imported (or re-read at a new
   parser version) is kept by content from then on, and a leg that comes back before the others
   takes back its category and waits by id — so both files of a pair can be round-tripped, in one
-  upload or one at a time.
+  upload or one at a time. A staying leg **filed by hand** is not its file's to retire: a re-read
+  that prints its line again carries it onto the row it writes, and the transfer waits by that
+  row; one that no longer reads its account keeps it, and the transfer waits by it still (owner,
+  2026-09-16).
   Unlike a re-parse it is **destructive to user work** — those rows
   leave the database, so their categories, notes, links and splits go with them (a pre-mutation
   snapshot is taken so the operation is recoverable).

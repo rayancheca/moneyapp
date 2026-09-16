@@ -69,7 +69,7 @@ import {
   recordStatementCopy,
 } from "./statement-copies";
 import { appendPrintedLines, forgetPrintedLines, handOverToPrinters, printedLineOf, printerHandOvers, printerRowIds } from "./printed-lines";
-import { keepStayingLegsByContent, relinkReturningTransfers, rememberTransfersTakenApart } from "./unimported-transfers";
+import { keepStayingLegsByContent, moveWaitingLeg, relinkReturningTransfers, rememberTransfersTakenApart } from "./unimported-transfers";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
 import { extractLines } from "./profiles/pdf-profile";
@@ -706,6 +706,8 @@ function landCarry(
   else fillFromCarry(tx, target, carry);
   // the row that now records the money is the one a duplicate verdict keeps
   moveKeptSide(tx, carry.id, target.id);
+  // …and the one a transfer taken apart by an un-import waits by (`unimported-transfers`)
+  moveWaitingLeg(tx, carry.id, target.id);
   return true;
 }
 

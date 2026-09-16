@@ -1960,6 +1960,8 @@ describe("a parser-version re-read that no longer writes an account", () => {
   let breaksMidFile = false;
   /** a later version that reads every section again, the last first */
   let readsInReverse = false;
+  /** a later version that reads the first section and leaves the others out without a word */
+  let stopsReadingOthers = false;
 
   /** Version 1 reads all three sections; a later version reads the first and withholds the other two. */
   const threeSectionProfile: ParserProfile = {
@@ -1973,6 +1975,7 @@ describe("a parser-version re-read that no longer writes an account", () => {
       if (threeSectionProfile.version > 1 && readsInReverse) return [kept!, ...rest].reverse();
       if (threeSectionProfile.version === 1 || readsEverySection) return [kept!, ...rest];
       if (breaksMidFile) return [kept!, ...BREAKS_MID_FILE];
+      if (stopsReadingOthers) return [kept!];
       return {
         statements: [kept!],
         withheld: rest.map((s) => ({
@@ -1990,6 +1993,7 @@ describe("a parser-version re-read that no longer writes an account", () => {
     readsEverySection = false;
     breaksMidFile = false;
     readsInReverse = false;
+    stopsReadingOthers = false;
     threeSectionProfile.version = 1;
     PROFILES.unshift(threeSectionProfile);
   });
@@ -2216,6 +2220,120 @@ describe("a parser-version re-read that no longer writes an account", () => {
     expect(periodOf(reread, withRows)!.reconciliation).toBe("reconciled");
     expect(dayRow(withRows, "2026-03-31")).toMatchObject({ basis: "anchored", balanceCents: 6000 });
     expectRebuilt(withRows);
+  });
+
+  /**
+   * ⚖️ Owner, 2026-09-16 (decision 16): when a newer parser version stops reading an account a statement used to give
+   * it, the rows filed under the statement by hand on that account are detached and kept — money, transfer, recurring
+   * link, category and note — as an un-import keeps them; they are not retired with the old read. Here the new
+   * version says nothing about the two sections it leaves out (no withheld notice), unlike the test above.
+   */
+  test("a re-read that stops reading an account, without a word, keeps the row filed under it by hand with everything on it", async () => {
+    const { withRows, handRow } = await marchWithARowFiledByHand();
+    const { id: chase } = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const other = createAccount(bundle.db, { institutionId: chase, name: "Hand savings", type: "savings" });
+    const raw = "FROM CHECKING — recorded by hand";
+    const partner = bundle.db
+      .insert(transactions)
+      .values({
+        accountId: other,
+        postedOn: "2026-03-12",
+        amountCents: 4000,
+        rawDescription: raw,
+        normalizedDescription: normalizeDescription(raw),
+        dedupeHash: dedupeHash({ accountId: other, postedOn: "2026-03-12", amountCents: 4000, rawDescription: raw, occurrenceIndex: 0 }),
+        transferGroupId: handRow,
+      })
+      .returning({ id: transactions.id })
+      .get().id;
+    const series = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "Fuel", kind: "bill", cadence: "monthly", status: "confirmed" })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    const groceries = bundle.db.select().from(categories).where(eq(categories.name, "Groceries")).get()!.id;
+    bundle.db
+      .update(transactions)
+      .set({ transferGroupId: handRow, recurringSeriesId: series, seriesLinkSource: "user", categoryId: groceries, categorizationSource: "user" })
+      .where(eq(transactions.id, handRow))
+      .run();
+    const kept = row(handRow)!;
+
+    threeSectionProfile.version = 2;
+    stopsReadingOthers = true;
+    const [outcome] = await importStatementFiles(bundle.db, [MARCH]);
+
+    // the premise: the new read left the section out and said nothing about it
+    expect(outcome).toMatchObject({ status: "parsed", withheld: [] });
+    expect(periodOf(liveFile(MARCH).id, withRows)).toBeUndefined();
+    // kept as an un-import keeps it: detached, and nothing else on it moved
+    expect(row(handRow)).toEqual({ ...kept, importFileId: null, updatedAt: row(handRow)!.updatedAt });
+    expect(row(partner)).toMatchObject({ status: "active", transferGroupId: handRow });
+    expect(dayRow(withRows, "2026-03-31")?.balanceCents).toBe(6000);
+    expectRebuilt(withRows);
+  });
+
+  /** A statement of another account printing the other leg of the hand row's transfer. */
+  const PARTNER_PREFIX = "transfer-partner-";
+  const partnerProfile: ParserProfile = {
+    id: "test-transfer-partner",
+    version: 1,
+    matches: (f) => f.name.startsWith(PARTNER_PREFIX),
+    parse: () => [
+      {
+        accountHint: checking("4106"),
+        txns: [{ postedOn: "2026-03-12", amountCents: 4000, rawDescription: "TRANSFER FROM 4103" }],
+        period: { start: "2026-03-01", end: "2026-03-31", beginCents: 0, endCents: 4000 },
+      },
+    ],
+  };
+  const PARTNER: ImportInput = { name: `${PARTNER_PREFIX}2026-03.txt`, buffer: Buffer.from("partner") };
+
+  /**
+   * The row filed by hand is one leg of a transfer whose other leg's statement was un-imported: the transfer waits for
+   * that line, by the hand row's id (`unimported-transfers`). A re-read of March then writes the hand row's line again
+   * (the carry moves the marker onto the row it writes) or stops reading its account (the row is kept); either way the
+   * other statement's return links the transfer again.
+   */
+  test.each([
+    ["stops reading the account", true],
+    ["reads the account again", false],
+  ])("a transfer waiting on the row filed by hand is linked again after a re-read that %s", async (_, stops) => {
+    PROFILES.unshift(partnerProfile);
+    try {
+      const { withRows, handRow } = await marchWithARowFiledByHand();
+      await importStatementFiles(bundle.db, [PARTNER]);
+      const leg = bundle.db.select().from(transactions).where(eq(transactions.accountId, accountIdOf("4106"))).get()!;
+      for (const id of [handRow, leg.id]) {
+        bundle.db.update(transactions).set({ transferGroupId: handRow }).where(eq(transactions.id, id)).run();
+      }
+      unimportFile(bundle.db, liveFile(PARTNER).id);
+      // the premise: the hand row is alone, and the transfer waits for the other leg's line
+      expect(row(handRow)!.transferGroupId).toBeNull();
+      expect(bundle.db.select().from(unimportedTransferLegs).all().map((k) => k.transactionId).sort()).toEqual([handRow, null].sort());
+
+      threeSectionProfile.version = 2;
+      stopsReadingOthers = stops;
+      readsEverySection = !stops;
+      await importStatementFiles(bundle.db, [MARCH]);
+      // the row that records the hand payment now, filed by hand: the kept row, or the row the re-read wrote for it
+      const [hand, ...more] = bundle.db
+        .select()
+        .from(transactions)
+        .where(and(eq(transactions.accountId, withRows), ne(transactions.status, "superseded")))
+        .all();
+      expect(more).toEqual([]);
+      expect(hand).toMatchObject({ amountCents: -4000, fileLinkSource: "attached", notes: HAND_NOTE, status: "active" });
+
+      await importStatementFiles(bundle.db, [PARTNER]);
+
+      const back = bundle.db.select().from(transactions).where(eq(transactions.accountId, accountIdOf("4106"))).get()!;
+      expect(back.transferGroupId).not.toBeNull();
+      expect(row(hand!.id)!.transferGroupId).toBe(back.transferGroupId);
+      expect(bundle.db.select().from(unimportedTransferLegs).all()).toEqual([]);
+    } finally {
+      PROFILES.splice(PROFILES.indexOf(partnerProfile), 1);
+    }
   });
 
   test("a row filed by hand that the retired read's gap held comes back active, and one the owner excluded stays excluded", async () => {

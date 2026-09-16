@@ -135,6 +135,20 @@ export function keepStayingLegsByContent(tx: AppDatabase, importFileId: string):
 }
 
 /**
+ * A kept transfer that waits by `fromId` waits by `toId` from now on: a re-read at a new parser version carried the
+ * row's money, and everything on it, onto `toId` (`landCarry`, services/import/service.ts).
+ *
+ * 🔴 A leg waiting by its row is one that stayed when its partner's file was un-imported, and only a PARSED row's
+ * record is kept by content when its file is re-read (`keepStayingLegsByContent`). A row filed by hand is not the
+ * file's to retire, and a re-read that still prints its line moves it — marker, note, links — onto the row it writes,
+ * leaving the record naming the retired row: importing the partner's statement again then forgot the transfer, and the
+ * owner's hand-linked pair stayed apart.
+ */
+export function moveWaitingLeg(tx: AppDatabase, fromId: string, toId: string): void {
+  tx.update(unimportedTransferLegs).set({ transactionId: toId }).where(eq(unimportedTransferLegs.transactionId, fromId)).run();
+}
+
+/**
  * Each lost leg claims one candidate: same account, posted day and amount first, then transaction day and amount. A leg
  * no candidate matches is left out of the result.
  */
