@@ -158,6 +158,15 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
    is a code-reading question, decide before moving it (after `uc/agentic-two-accounts` lands, it owns that file).
 12. The client-bundle guard's forbidden list is pinned to a `next build` probe taken at `25b9435`; a Next/Turbopack
    upgrade needs a fresh probe and row edits.
+13. (round 2, shipped the stricter default) Between two balances you COUNTED by hand (Cash on Hand), do rows imported
+   from a document make that span "checked"? Shipped: no — only a statement checks.
+14. (round 2) Net worth's "checked through" date while Cash on Hand rests only on your count: shipped (a) stop the
+   day before it goes unchecked; (b) would leave Cash on Hand out of that date and say so.
+15. (round 2, deferred) Un-importing the Wells Fargo PDF leaves the 39 Rocket Money rows it took over retired
+   (−$2,396.67 of net worth) although the Rocket Money export is still imported: bring them back on un-import, or
+   keep them retired.
+16. (round 2) When a newer parser version stops reading an account a statement used to give it, that account's
+   attached rows are retired with the old read: detach and keep them (as un-import now does), or retire them.
 
 **B. Waiting on an event:**
 - **The Wells Fargo ····5481 statement covering early September:** trial-import → import →
@@ -214,6 +223,18 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
    `better-sqlite3`/`fs`, and four client components stopped carrying whole service graphs. The end-of-month fix moves
    the 16 recurring and recurring-calendar baselines. `next build` ✓ · unit 304 files / 6,102 ✓ · tsc ✓ on `980ad69`.
    Follow-ups: §6 items 9–12.
+3c. **Queue round 2 — merged on local main** (10 commits over `a119119` → `b8881c2`; each implemented RED-first,
+   reviewed, fixed): a parser-version re-read rebuilds every account the retired file wrote, and a re-read the new
+   parser cannot finish no longer retires the old read first; removing a statement keeps an anchor a neighbour or a
+   second download still prints; un-import → re-import of Sapphire 20260302 closes (no −$798.48 gap: retired duplicate
+   twins stay retired), and a takeover's payment is not doubled by un-importing the export; Cash on Hand's typed
+   $5,000 is never "checked" / "closes" / "verifies" anywhere, and an event-less investment account is not "priced
+   from holdings". `next build` ✓ · unit **305 files / 6,156** ✓ · tsc ✓. Owner calls it raised: §6A 13–16.
+   ⏳ A second-reader verification (`moneyapp-import-lifecycle-verify-r3`: the real pending re-reads — Discover CSV
+   v1→v2 and ~30 Robinhood PDFs v3→v4 — 12+ round trips, provenance wording on all 13 accounts, mutants) and a fixer
+   for its findings plus the **double-download un-import** defect (59 statements downloaded twice: un-importing the
+   first download deletes rows and the period the second still prints — e.g. 20230810 Chase: 85 rows, −$1,636.84)
+   on `uc/import-lifecycle-r3`.
 4. After every merge batch: `pnpm exec next build` BEFORE the gate (§4).
 
 Session scratchpad (9ebfed64): `queue-after-merges.md` (the full queue with evidence), `hunt-result.json` +
