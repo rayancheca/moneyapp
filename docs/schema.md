@@ -215,7 +215,7 @@ a period boundary contributed by a different source, the importer proposes re-da
 | amount_cents | INTEGER | net-worth-signed |
 | raw_description | TEXT | byte-exact from the file, never modified |
 | normalized_description | TEXT | normalizer output (versioned; used for matching, **not** dedupe) |
-| bank_category | TEXT nullable | Chase/Discover/CapOne CSVs ship a category column — kept as a cheap prior for the categorization pipeline |
+| bank_category | TEXT nullable | Chase/Discover/CapOne CSVs ship a category column — kept as a cheap prior for the categorization pipeline; a line absorbed by another record gives it its bucket where that record has none |
 | merchant_id / category_id | FK nullable | |
 | categorization_source | enum nullable | `user` \| `rule` \| `merchant_map` \| `claude` \| `transfer_detect` \| `credit_match` |
 | categorization_confidence | REAL nullable | |

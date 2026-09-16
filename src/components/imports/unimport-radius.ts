@@ -79,8 +79,15 @@ const NO_UNDO = "There is no undo for this inside the app.";
  * the other leg's own round trip no longer breaks it (20260812-statements-3522-.pdf with Statement_082026_4208.pdf, on a
  * copy of the real ledger, 2026-09-16: two-leg groups 757 -> 755 before, 757 -> 757 after).
  */
+/*
+ * 🔴 …and "what is lost is the hand-categorization" left out the categories no import derives again: Claude's (an import
+ * never asks Claude) and those with no recorded source. On a copy of the real ledger, 2026-09-16, 13 files hold 586
+ * such rows, 24 of them in Statement_082026_4208.pdf. The rules and the merchant map run again, but over the words of
+ * whichever file's line records the charge now, so what they set can change too. A bank's bucket a line prints now
+ * reaches the row that records it (`fillBankCategory`).
+ */
 const REASSURANCE =
-  "The statement file itself stays on disk. Re-importing brings the rows back and re-runs the rules, the merchant map and recurring-series linking over them — but a charge links again only where its series still recognises it: by another charge with the same description, or as a registered commitment's first charge on its date and amount. A transfer is linked again once the same line and its other leg are both in the ledger again — the other leg kept, or imported again from its own statement — unless that leg was deleted by hand or linked elsewhere in the meantime. What is lost is the hand-categorization, the notes, and the recurring links you attached or removed by hand.";
+  "The statement file itself stays on disk. Re-importing brings the rows back and re-runs the rules, the merchant map, the bank's categories and recurring-series linking over them — over the words of whichever imported file records each charge, so a category they set can change — but a charge links again only where its series still recognises it: by another charge with the same description, or as a registered commitment's first charge on its date and amount. A transfer is linked again once the same line and its other leg are both in the ledger again — the other leg kept, or imported again from its own statement — unless that leg was deleted by hand or linked elsewhere in the meantime. What is lost is the hand-categorization, the categories Claude set, the categories with no recorded source, the notes, and the recurring links you attached or removed by hand.";
 
 /**
  * 🔴 An export whose rows record lines of statements imported after it "deleted every row it brought in", and did:
@@ -176,6 +183,11 @@ export function unimportRadius({ subject, counts, balances, periods, periodsHand
         value: countPhrase(counts.userCategorizedDeleted, "transaction"),
         irreversible: counts.userCategorizedDeleted > 0,
       },
+      ...optional(counts.notRederivedDeleted > 0, {
+        label: "Categorized by Claude, or with no recorded source",
+        value: countPhrase(counts.notRederivedDeleted, "transaction"),
+        irreversible: true,
+      }),
       ...optional(counts.notesDeleted > 0, {
         label: "Notes on deleted transactions",
         value: countPhrase(counts.notesDeleted, "note"),

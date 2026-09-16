@@ -42,6 +42,13 @@ export interface UnimportCounts {
   keptRefiled: number;
   /** deleted rows the owner categorized BY HAND: the work that cannot come back */
   userCategorizedDeleted: number;
+  /**
+   * deleted rows whose category no engine of an import derives again: Claude's (an import never asks Claude), and one
+   * with no recorded source. 🔴 The confirmation named the hand-set categories as the only ones lost; on a copy of the
+   * real ledger, 2026-09-16, 13 files hold 586 such rows (Statement_082026_4208.pdf: 24), and a round trip of
+   * Discover-AllAvailable-20260710.csv rewrote 442 of Claude's categories and left 2 of its rows with none.
+   */
+  notRederivedDeleted: number;
   /** deleted rows carrying a note — a note goes with its row, and no import writes it again */
   notesDeleted: number;
   /** the deleted rows' money in the ledger — active rows only */
@@ -75,6 +82,7 @@ export const NO_UNIMPORT_ROWS: UnimportCounts = {
   kept: 0,
   keptRefiled: 0,
   userCategorizedDeleted: 0,
+  notRederivedDeleted: 0,
   notesDeleted: 0,
   inflowCents: 0,
   outflowCents: 0,
@@ -113,6 +121,9 @@ export function unimportCountsByFile(
       kept: tally(kept),
       keptRefiled: tally(sql`${kept} AND ${transactions.id} IN (SELECT value FROM json_each(${refiledIds}))`),
       userCategorizedDeleted: tally(sql`${deleted} AND ${transactions.categorizationSource} = 'user'`),
+      notRederivedDeleted: tally(
+        sql`${deleted} AND ${transactions.categoryId} IS NOT NULL AND (${transactions.categorizationSource} IS NULL OR ${transactions.categorizationSource} = 'claude')`,
+      ),
       notesDeleted: tally(sql`${deleted} AND ${transactions.notes} IS NOT NULL`),
       /*
        * 🔴 The MONEY line names the ledger, and a superseded row is not in it.

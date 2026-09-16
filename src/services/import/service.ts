@@ -233,8 +233,10 @@ function identityWeight(line: CanonicalTxn, slot: IdentitySlot): number {
  * 2026-09-16, re-importing 20260602-statements-9805-.pdf and then Spending Report PDF (1).pdf left the charge counted
  * twice and all 86 of the statement's rows quarantined behind a $10.40 gap. A matching of the whole statement absorbs
  * every line some row records, whatever order the lines come in.
+ *
+ * Returns each absorbed line's index with the row that absorbs it.
  */
-function absorbedLines(lines: readonly CanonicalTxn[], slots: readonly IdentitySlot[]): Set<number> {
+function absorbedLines(lines: readonly CanonicalTxn[], slots: readonly IdentitySlot[]): Map<number, string> {
   const byAmount = new Map<number, IdentitySlot[]>();
   for (const slot of slots) byAmount.set(slot.amountCents, [...(byAmount.get(slot.amountCents) ?? []), slot]);
   const candidates = lines.map((line) =>
@@ -262,11 +264,11 @@ function absorbedLines(lines: readonly CanonicalTxn[], slots: readonly IdentityS
     .filter((i) => candidates[i]!.length > 0)
     .sort((a, b) => candidates[b]![0]!.weight - candidates[a]![0]!.weight || a - b);
   for (const line of order) place(line, new Set());
-  return new Set(holder.values());
+  return new Map([...holder].map(([id, line]) => [line, id] as const));
 }
 
 /** What the import does with one line of a statement, decided before anything is written. */
-type LinePlan = { kind: "owned" } | { kind: "takeover"; victimId: string } | { kind: "absorbed" } | { kind: "new" };
+type LinePlan = { kind: "owned" } | { kind: "takeover"; victimId: string } | { kind: "absorbed"; byId: string } | { kind: "new" };
 
 /**
  * Every line's fate, in print order: a higher-fidelity source owns its day; it takes over a lower-fidelity source's
@@ -305,7 +307,7 @@ function planLines(
   });
   // a row taken over leaves the ledger: it absorbs nothing
   const open = slots.filter((slot) => !taken.has(slot.id));
-  for (const k of absorbedLines(identity.map((i) => lines[i]!.printed), open)) plan[identity[k]!] = { kind: "absorbed" };
+  for (const [k, byId] of absorbedLines(identity.map((i) => lines[i]!.printed), open)) plan[identity[k]!] = { kind: "absorbed", byId };
   return plan;
 }
 
@@ -1394,6 +1396,8 @@ async function importOneFile(
               .get();
             if (exact) outcome.deduped += 1;
             else outcome.dedupedCrossFormat += 1;
+            // …and the bank's bucket the line prints goes to the record that keeps its money, where it has none
+            fillBankCategory(tx, fate.byId, t.bankCategory);
             // the survivor belongs to another file: fill only the attributes it
             // lacks, never overwrite (its own user category outranks ours). A
             // cross-format dedupe (hash miss) has no identifiable survivor, so
@@ -1717,6 +1721,23 @@ function pickTakeoverVictim(
     .map((c) => ({ c, s: descriptionScore(c.normalizedDescription, incoming) }))
     .sort((a, b) => sameLine(b.c) - sameLine(a.c) || b.s - a.s || a.c.id.localeCompare(b.c.id));
   return ranked[0]!.s > 0 ? ranked[0]!.c : undefined;
+}
+
+/**
+ * Gives an absorbed line's bank category to the row that absorbed it, where that row has none; `categorizeAll` then
+ * reads it as it reads any row's.
+ *
+ * 🔴 The category went with the line. Measured on a copy of the real ledger, 2026-09-16: un-importing
+ * 20260602-statements-9805-.pdf and Spending Report PDF (1).pdf, then importing the statement and then the report, took
+ * uncategorized 32 -> 86 — of the 80 May rows the round trip rewrote, 55 had held the report's bank category and 7 a
+ * hand one. With the bucket given to the statement's rows: 32 -> 32.
+ */
+function fillBankCategory(tx: AppDatabase, rowId: string, bankCategory: string | undefined): void {
+  if (bankCategory === undefined || bankCategory === "") return;
+  tx.update(transactions)
+    .set({ bankCategory })
+    .where(and(eq(transactions.id, rowId), isNull(transactions.bankCategory)))
+    .run();
 }
 
 /**

@@ -3622,6 +3622,7 @@ describe("un-import keeps a row attached to its file, and a re-import files it t
       kept: 4,
       keptRefiled: 0,
       userCategorizedDeleted: deleted.filter((t) => t.categorizationSource === "user").length,
+      notRederivedDeleted: deleted.filter((t) => t.categoryId !== null && (t.categorizationSource === null || t.categorizationSource === "claude")).length,
       notesDeleted: deleted.filter((t) => t.notes !== null).length,
       inflowCents: activeCents(1),
       outflowCents: activeCents(-1),

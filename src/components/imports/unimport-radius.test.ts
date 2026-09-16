@@ -11,7 +11,7 @@ import { unimportAcknowledgement, unimportRadius } from "./unimport-radius";
  * pinned in services/import/import.test.ts, over rows the importer produced.
  */
 
-/** Statement_082026_4208.pdf — nothing attached to it */
+/** Statement_082026_4208.pdf — nothing attached to it; 24 of its rows categorized by Claude (a copy of the ledger, 2026-09-16) */
 const VENTURE_X_AUG: UnimportCounts = {
   deleted: 50,
   handedOver: 0,
@@ -19,6 +19,7 @@ const VENTURE_X_AUG: UnimportCounts = {
   kept: 0,
   keptRefiled: 0,
   userCategorizedDeleted: 8,
+  notRederivedDeleted: 24,
   notesDeleted: 0,
   inflowCents: 1_302_366,
   outflowCents: 237_120,
@@ -41,6 +42,7 @@ const SAPPHIRE_MAR: UnimportCounts = {
   kept: 5,
   keptRefiled: 0,
   userCategorizedDeleted: 0,
+  notRederivedDeleted: 0,
   notesDeleted: 0,
   inflowCents: 79_848,
   outflowCents: 0,
@@ -58,6 +60,7 @@ const SAPPHIRE_JUL: UnimportCounts = {
   kept: 4,
   keptRefiled: 0,
   userCategorizedDeleted: 0,
+  notRederivedDeleted: 0,
   notesDeleted: 0,
   inflowCents: 5_102,
   outflowCents: 0,
@@ -79,6 +82,7 @@ const SAPPHIRE_JUL_2025: UnimportCounts = {
   kept: 2,
   keptRefiled: 0,
   userCategorizedDeleted: 1,
+  notRederivedDeleted: 1,
   notesDeleted: 0,
   inflowCents: 336_699,
   outflowCents: 0,
@@ -94,6 +98,7 @@ const valueOf = (r: BlastRadius, label: string) => r.lines?.find((l) => l.label 
 const labels = (r: BlastRadius) => (r.lines ?? []).map((l) => l.label);
 
 const KEPT = "Transactions kept, detached from the file";
+const NOT_REDERIVED = "Categorized by Claude, or with no recorded source";
 const PRINTED_ELSEWHERE = "Transactions kept under another file that prints them";
 
 describe("unimportRadius — what un-importing a statement deletes, and what stays", () => {
@@ -106,6 +111,7 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
     expect(valueOf(r, "Transactions deleted")).toBe("50 transactions");
     expect(valueOf(r, "Transfer legs deleted")).toBe("3 legs — a partner left alone in its transfer is unlinked, and linked again once the same line is imported again — unless by then the partner was deleted by hand or linked elsewhere");
     expect(valueOf(r, "Categorized by you")).toBe("8 transactions");
+    expect(r.lines).toContainEqual({ label: NOT_REDERIVED, value: "24 transactions", irreversible: true });
     expect(valueOf(r, "Money leaving the ledger")).toBe("$13,023.66 in · $2,371.20 out");
     expect(labels(r)).not.toContain(KEPT);
     expect(labels(r)).not.toContain("Transfer legs kept");
@@ -179,7 +185,7 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
    * 2026-09-16): 85 rows and one period, which two other downloads, still imported, print too.
    */
   test("a statement another download still prints deletes nothing it prints, and says where its rows and period go", () => {
-    const firstDownload: UnimportCounts = { ...VENTURE_X_AUG, deleted: 0, handedOver: 85, userCategorizedDeleted: 0, inflowCents: 0, outflowCents: 0, transferLegsDeleted: 0 };
+    const firstDownload: UnimportCounts = { ...VENTURE_X_AUG, deleted: 0, handedOver: 85, userCategorizedDeleted: 0, notRederivedDeleted: 0, inflowCents: 0, outflowCents: 0, transferLegsDeleted: 0 };
     const r = unimportRadius({ subject: "20230810-statements-3522-.pdf", counts: firstDownload, balances: 0, periods: 0, periodsHandedOver: 1 });
 
     expect(r.headline).toBe(
@@ -225,7 +231,9 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
     expect(valueOf(r, "Transfer legs deleted")).toBe(
       "3 legs — a partner left alone in its transfer is unlinked, and linked again once the same line is imported again — unless by then the partner was deleted by hand or linked elsewhere",
     );
-    expect(r.reassurance).toContain("What is lost is the hand-categorization, the notes, and the recurring links you attached or removed by hand.");
+    expect(r.reassurance).toContain(
+      "What is lost is the hand-categorization, the categories Claude set, the categories with no recorded source, the notes, and the recurring links you attached or removed by hand.",
+    );
     expect(r.reassurance).toContain(
       "A transfer is linked again once the same line and its other leg are both in the ledger again — the other leg kept, or imported again from its own statement — unless that leg was deleted by hand or linked elsewhere in the meantime.",
     );
@@ -241,7 +249,7 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
    */
   test("rows another imported file prints are counted as kept under it, and the headline says so first", () => {
     // Spending Report PDF (1).pdf, on a copy of the real ledger with the backfills applied, 2026-09-16
-    const report: UnimportCounts = { ...VENTURE_X_AUG, deleted: 0, keptByPrinters: 356, userCategorizedDeleted: 0, inflowCents: 0, outflowCents: 0, transferLegsDeleted: 0 };
+    const report: UnimportCounts = { ...VENTURE_X_AUG, deleted: 0, keptByPrinters: 356, userCategorizedDeleted: 0, notRederivedDeleted: 0, inflowCents: 0, outflowCents: 0, transferLegsDeleted: 0 };
     const r = radius("Spending Report PDF (1).pdf", report, 0, 1);
     expect(r.headline).toBe(
       "Un-importing Spending Report PDF (1).pdf deletes no transactions: the 356 rows it brought in are printed by other imported files too, and stay, filed under them. There is no undo for this inside the app.",
@@ -260,11 +268,12 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
       "Un-importing x.pdf deletes the 4 rows only it brought in: another download of the same statement is still imported, and it keeps the 3 rows it also prints. The 5 other rows filed under it by hand stay, detached from the file. The 1 other row it brought in is printed by another imported file too, and stays, filed under it. There is no undo for this inside the app.",
     );
     expect(labels(radius("x.pdf", SAPPHIRE_MAR, 0, 1))).not.toContain(PRINTED_ELSEWHERE);
+    expect(labels(radius("x.pdf", SAPPHIRE_MAR, 0, 1))).not.toContain(NOT_REDERIVED);
   });
 
   test("a download that owns no row says it deletes none", () => {
     // 20230810-statements-3522-.pdf's third download, on a copy of the real ledger, 2026-09-16
-    const nothing: UnimportCounts = { ...VENTURE_X_AUG, deleted: 0, userCategorizedDeleted: 0, inflowCents: 0, outflowCents: 0, transferLegsDeleted: 0 };
+    const nothing: UnimportCounts = { ...VENTURE_X_AUG, deleted: 0, userCategorizedDeleted: 0, notRederivedDeleted: 0, inflowCents: 0, outflowCents: 0, transferLegsDeleted: 0 };
     expect(radius("20230810-statements-3522-.pdf", nothing, 0, 0).headline).toBe(
       "Un-importing 20230810-statements-3522-.pdf deletes no transactions. There is no undo for this inside the app.",
     );
