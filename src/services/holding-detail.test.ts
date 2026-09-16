@@ -16,6 +16,7 @@ import { createAccount } from "./accounts";
 import { holdingDetail, UnknownHoldingError } from "./holding-detail";
 import { upsertHolding } from "./holdings";
 import { portfolioRealizedPl, realizedLegKey } from "./portfolio";
+import { provenanceFor } from "./provenance";
 import { matchingTransactionIds } from "./transactions-query";
 
 process.env.MONEYAPP_FAKE_PRICES = "1";
@@ -480,8 +481,11 @@ describe("the day-change figure names its own two days", () => {
  * Agentic, and are kept out of his own brokerage returns. A holding page is his holding's returns.
  */
 describe("⛔ the agent's book is not a leg of his holding page", () => {
+  const aaplProvenance = () => provenanceFor(bundle.db, { kind: "holding", symbol: "AAPL", assetType: "stock", day: "2026-03-04" });
+
   test("the same symbol held in the book paired with Robinhood Agentic leaves his AAPL page exactly as it was", () => {
     const before = holdingDetail(bundle.db, "stock", "AAPL", "2026-03-04");
+    const explained = aaplProvenance();
     const robinhood = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
     const agentic = createAccount(bundle.db, { institutionId: robinhood.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
     const book = createAccount(bundle.db, { institutionId: robinhood.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
@@ -490,5 +494,24 @@ describe("⛔ the agent's book is not a leg of his holding page", () => {
     upsertHolding(bundle.db, { accountId: book, symbol: "AAPL", assetType: "stock", quantityE8: 50_000_000, avgCostCents: 11_000, occurredOn: "2026-03-03" });
 
     expect(holdingDetail(bundle.db, "stock", "AAPL", "2026-03-04")).toEqual(before);
+    /*
+     * 🔴 …and the panel that explains the page's value says the same: it counted the book's shares and listed
+     * "Robinhood Agentic Brokerage" as a leg of his position — 0.662664 shares against the page's 0.412664 on the
+     * agent's constructed August (measured 2026-09-16).
+     */
+    expect(aaplProvenance()).toEqual(explained);
+    expect(explained!.headline).toMatch(new RegExp(`^${before.quantityE8 / 1e8} shares × `));
+    expect(explained!.inputs).toEqual([]); // one leg, his: legs are listed only when there are several
+  });
+
+  test("a symbol only the agent's book holds has no holding page, and no panel explaining one", () => {
+    const robinhood = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+    const agentic = createAccount(bundle.db, { institutionId: robinhood.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
+    const book = createAccount(bundle.db, { institutionId: robinhood.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
+    bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+    upsertHolding(bundle.db, { accountId: book, symbol: "WMT", assetType: "stock", quantityE8: 25_000_000, avgCostCents: 10_000, occurredOn: "2026-03-03" });
+
+    expect(() => holdingDetail(bundle.db, "stock", "WMT", "2026-03-04")).toThrow(UnknownHoldingError);
+    expect(provenanceFor(bundle.db, { kind: "holding", symbol: "WMT", assetType: "stock", day: "2026-03-04" })).toBeNull();
   });
 });
