@@ -15,6 +15,7 @@ const detail = (over: Partial<CoverageDetailInput> = {}): string =>
     unverifiedDays: 0,
     hasStatements: true,
     pricedFromHoldings: true,
+    countedOn: null,
     ...over,
   });
 
@@ -22,8 +23,10 @@ describe("an unverified account states BOTH halves", () => {
   test("what closes, and where it stops", () => {
     /*
      * ⛔ The shipped sentence was "nothing has checked this account since
-     * 2026-08-11", which is untrue of Cash on Hand: it closes to the cent
-     * through 2026-08-03 and exactly one day at the end does not.
+     * 2026-08-11", and this test was written believing Cash on Hand closes to
+     * the cent through 2026-08-03. It does not: Aug 3 is a balance he typed,
+     * and a count is not a check (see "a balance he counted" below). The input
+     * here is an account whose chain DOES close through Aug 3.
      *
      * 🔴 …and the tail of it was untrue too. This asserted "rests on an export
      * with no closing balance" of `Cash on Hand`, which has no statement
@@ -197,6 +200,62 @@ describe("a verified account", () => {
 
   test("a date with no day count still names the date", () => {
     expect(detail({ daysSinceVerified: null })).toBe("closes to the cent through Aug 12, 2026");
+  });
+});
+
+/**
+ * 🔴 "CLOSES TO THE CENT THROUGH AUG 3, 2026" OF A BALANCE HE TYPED. Measured
+ * 2026-09-16 on a copy of the real ledger, /imports' Cash on Hand row read
+ * "closes to the cent through Aug 3, 2026 (44 days ago), then carries that
+ * balance forward for 7 days; the first day it does not is Aug 11, 2026 — 1 day
+ * rests on entries alone, with no document to check them against". Aug 3 is his
+ * own count and nothing was ever replayed onto it. `accountCoverage` now leaves
+ * it out of `verifiedThrough` and publishes it as `countedOn`; the row says what
+ * the days stand on instead.
+ */
+describe("a balance he counted", () => {
+  const cashOnHand: Partial<CoverageDetailInput> = {
+    grade: "unverified",
+    verifiedThrough: null,
+    countedOn: "2026-08-03",
+    unverifiedSince: "2026-08-11",
+    uncheckedSince: "2026-08-11",
+    uncheckedRunDays: 1,
+    daysSinceVerified: null,
+    unverifiedDays: 1,
+    hasStatements: false,
+  };
+
+  test("is named as his count, never as a chain that closes", () => {
+    const text = detail(cashOnHand);
+    expect(text).toBe(
+      "nothing closes to the cent: it rests on the balance you counted on Aug 3, 2026, carried forward for 7 days; the first day past that count is Aug 11, 2026 — 1 day rests on entries alone, with no document to check them against",
+    );
+    expect(text).not.toContain("closes to the cent through");
+  });
+
+  test("a count the entries start from the next day carries nothing", () => {
+    expect(detail({ ...cashOnHand, countedOn: "2026-08-10" })).toBe(
+      "nothing closes to the cent: it rests on the balance you counted on Aug 10, 2026; the first day past that count is Aug 11, 2026 — 1 day rests on entries alone, with no document to check them against",
+    );
+  });
+
+  test("a count after a chain that closed names both", () => {
+    expect(detail({ ...cashOnHand, verifiedThrough: "2026-07-31", daysSinceVerified: 47, countedOn: "2026-08-01" })).toBe(
+      "closes to the cent through Jul 31, 2026 (47 days ago), then rests on the balance you counted on Aug 1, 2026, carried forward for 9 days; the first day past that count is Aug 11, 2026 — 1 day rests on entries alone, with no document to check them against",
+    );
+  });
+
+  test("a count with no unchecked day after it says nothing else checks it", () => {
+    expect(
+      detail({
+        ...cashOnHand,
+        unverifiedSince: null,
+        uncheckedSince: null,
+        uncheckedRunDays: 0,
+        unverifiedDays: 0,
+      }),
+    ).toBe("nothing closes to the cent: it rests on the balance you counted on Aug 3, 2026, and nothing else checks it");
   });
 });
 

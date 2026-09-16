@@ -8,6 +8,7 @@ import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { diffDays, todayIso } from "@/lib/dates";
 import { ACCOUNT_ORDER } from "./account-order";
+import { handTypedDays, pickWinners } from "./anchor-winners";
 
 /**
  * Per-account answer to "is this account's money actually checked, and through
@@ -62,9 +63,13 @@ export type CoverageGrade =
  * destructive, with no undo — then offered "Days that stop being verified: 1
  * day" for Cash on Hand's 2026-08-03 anchor, whose span is 1 anchored day, 7
  * carried and 1 unverified: the answer is 8, and /imports says so on the same
- * ledger ("closes to the cent through Aug 3, 2026, then carries that balance
- * forward for 7 days"). Measured 2026-09-08: 24 of the 220 recorded balances on
- * cash accounts understated their own blast radius, the worst by 61 days.
+ * ledger ("…then carries that balance forward for 7 days"). Measured
+ * 2026-09-08: 24 of the 220 recorded balances on cash accounts understated their
+ * own blast radius, the worst by 61 days.
+ *
+ * ⚠️ "Checked" here means the day RESTS on something — it is not a claim that
+ * anything closed. That Aug 3 balance is one he typed, and `closedChainDays`
+ * decides that it closes nothing.
  */
 export function basisIsChecked(basis: BalanceBasis): boolean {
   return basis === "anchored" || basis === "derived" || basis === "carried";
@@ -97,13 +102,69 @@ export function balanceDayIsExact(accountType: AccountType, basis: BalanceBasis)
   return basisIsChecked(basis);
 }
 
+/**
+ * The days whose balance rests on a CLOSED chain — `derived`, or `anchored` by a
+ * balance something other than the owner's own count stands behind.
+ *
+ * 🔴 EVERY `anchored` DAY COUNTED, including one he typed. Measured 2026-09-16
+ * on a copy of the real ledger: Cash on Hand's only balance is the $5,000.00 he
+ * typed for Aug 3, 2026 (no statement period, no import file), and nothing was
+ * ever replayed onto it — yet it was `verifiedThrough` 2026-08-03, so /imports
+ * read "closes to the cent through Aug 3, 2026 (44 days ago)" and the account's
+ * balance popover "Checked through 2026-08-03". A count is his evidence
+ * (`manual`, "you entered it"); it is not a check.
+ *
+ * ⛔ A typed balance IS checked when a closed span reaches it: the replay from
+ * the previous balance landed exactly on his number (`derived` the day before),
+ * or nothing posted and the previous balance agreed (`carried` the day before —
+ * which only ever sits between two recorded balances that agree) AND that
+ * previous balance was itself checked. Two counts of his agreeing check nothing.
+ * A day `pickWinners` gives to a statement or a bank export is theirs, not his.
+ *
+ * ⚠️ Conservative where the cache cannot say: when his balance is recorded the
+ * day right after another one (no day between), `deriveCashSpans` writes no
+ * row that shows whether the replay landed, so the day is not counted.
+ *
+ * Reads the stored rows as given, oldest first; the row before a day is the
+ * previous stored day.
+ */
+export function closedChainDays(
+  balances: readonly { day: string; basis: BalanceBasis }[],
+  handTyped: ReadonlySet<string>,
+): Set<string> {
+  const closed = new Set<string>();
+  let previousAnchorClosed = false;
+  balances.forEach((b, i) => {
+    if (b.basis === "derived") {
+      closed.add(b.day);
+      return;
+    }
+    if (b.basis !== "anchored") return;
+    const before = balances[i - 1]?.basis;
+    const isClosed =
+      !handTyped.has(b.day) || before === "derived" || (before === "carried" && previousAnchorClosed);
+    if (isClosed) closed.add(b.day);
+    previousAnchorClosed = isClosed;
+  });
+  return closed;
+}
+
 export interface AccountCoverage {
   accountId: string;
   accountName: string;
   accountType: string;
   grade: CoverageGrade;
-  /** last day whose balance rests on a closed arithmetic chain */
+  /** last day whose balance rests on a closed arithmetic chain — never a balance he typed that nothing checks */
   verifiedThrough: string | null;
+  /**
+   * The balance he TYPED that the account's newest days stand on, when no closed
+   * chain reaches it and nothing closes after it — the day he counted it. Null
+   * otherwise, and always for `manual`, `market_value` and `unknown` grades.
+   *
+   * Published so a sentence that used to say "closes to the cent through <day>"
+   * of that count can say what the day is instead (see `closedChainDays`).
+   */
+  countedOn: string | null;
   /**
    * The day the checked chain opens on: the account's first trusted day, which
    * is its first recorded balance. Null when nothing is checked at all.
@@ -169,9 +230,6 @@ export interface AccountCoverage {
   days: Record<BalanceBasis, number>;
 }
 
-/** basis values that represent a checked arithmetic chain, for cash accounts */
-const TRUSTED: ReadonlySet<BalanceBasis> = new Set<BalanceBasis>(["anchored", "derived"]);
-
 function emptyDays(): Record<BalanceBasis, number> {
   return { anchored: 0, derived: 0, derived_unverified: 0, carried: 0, gap: 0 };
 }
@@ -217,14 +275,15 @@ const accountCoverageCached = cache(function accountCoverageCached(
         .limit(1)
         .get()?.periodEnd ?? null;
 
-    const lastManualUpdate =
-      db
-        .select({ anchoredOn: balanceAnchors.anchoredOn })
-        .from(balanceAnchors)
-        .where(eq(balanceAnchors.accountId, account.id))
-        .orderBy(desc(balanceAnchors.anchoredOn))
-        .limit(1)
-        .get()?.anchoredOn ?? null;
+    // every recorded balance, newest first: the newest dates `lastManualUpdate`,
+    // and the day winners say which days rest on a balance he typed
+    const anchorRows = db
+      .select({ anchoredOn: balanceAnchors.anchoredOn, source: balanceAnchors.source })
+      .from(balanceAnchors)
+      .where(eq(balanceAnchors.accountId, account.id))
+      .orderBy(desc(balanceAnchors.anchoredOn))
+      .all();
+    const lastManualUpdate = anchorRows[0]?.anchoredOn ?? null;
 
     const base = {
       accountId: account.id,
@@ -233,6 +292,7 @@ const accountCoverageCached = cache(function accountCoverageCached(
       statementsThrough,
       lastManualUpdate,
       days,
+      countedOn: null,
     };
 
     /*
@@ -310,7 +370,9 @@ const accountCoverageCached = cache(function accountCoverageCached(
      * The break test is measured from the first TRUSTED day, so a mid-chain gap
      * still stops the walk exactly where it did.
      */
-    const firstTrusted = balances.find((b) => TRUSTED.has(b.basis));
+    const handTyped = handTypedDays(pickWinners(anchorRows));
+    const closed = closedChainDays(balances, handTyped);
+    const firstTrusted = balances.find((b) => closed.has(b.day));
     const firstBreak = firstTrusted
       ? balances.find(
           (b) =>
@@ -320,8 +382,15 @@ const accountCoverageCached = cache(function accountCoverageCached(
       : firstUntrusted;
     const verifiedThrough =
       balances
-        .filter((b) => TRUSTED.has(b.basis) && (!firstBreak || b.day < firstBreak.day))
+        .filter((b) => closed.has(b.day) && (!firstBreak || b.day < firstBreak.day))
         .at(-1)?.day ?? null;
+    // the newest count of his that nothing closes onto, when nothing closes after it
+    const lastClosed = [...closed].at(-1) ?? null;
+    const countedOn =
+      [...handTyped]
+        .filter((day) => !closed.has(day) && (lastClosed === null || day > lastClosed))
+        .sort()
+        .at(-1) ?? null;
 
     if (!hasTxn) {
       return {
@@ -337,12 +406,20 @@ const accountCoverageCached = cache(function accountCoverageCached(
       };
     }
 
-    const grade: CoverageGrade = days.gap > 0 ? "broken" : days.derived_unverified > 0 ? "unverified" : "verified";
+    /*
+     * ⛔ Nothing closed at all is not "verified" — an account whose only balance
+     * is one he typed, with rows only on that day, read "adds up against a
+     * document" in the net-worth count. With no unchecked day to point at, it is
+     * his count and nothing else (`countedOn`).
+     */
+    const grade: CoverageGrade =
+      days.gap > 0 ? "broken" : days.derived_unverified > 0 || closed.size === 0 ? "unverified" : "verified";
 
     return {
       ...base,
       grade,
       verifiedThrough,
+      countedOn,
       chainOpensOn: firstTrusted?.day ?? null,
       unverifiedSince: firstUntrusted?.day ?? null,
       brokenSince: firstGap?.day ?? null,

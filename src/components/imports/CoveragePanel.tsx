@@ -95,6 +95,7 @@ export function CoveragePanel({
                   // cannot say "no statements" and then blame an export
                   hasStatements: c.statementsThrough !== null,
                   pricedFromHoldings: pricedFromHoldingsIds.includes(c.accountId),
+                  countedOn: c.countedOn,
                 })}
               </p>
             </li>

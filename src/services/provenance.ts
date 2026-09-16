@@ -17,8 +17,17 @@ import { formatCents } from "@/lib/money";
 import { emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { activeTxnsInRange, loadCategoryIndex, spendingBucket, uncategorizedWhere } from "./analytics";
-import { accountCoverage, type AccountCoverage, type CoverageGrade } from "./coverage";
-import { derivesFromHoldings, heldBalanceAnchor, loadReplayInputs, pickWinners } from "./derivation";
+import { handTypedDays } from "./anchor-winners";
+import { accountCoverage, closedChainDays, type AccountCoverage, type CoverageGrade } from "./coverage";
+import {
+  derivesFromHoldings,
+  heldBalanceAnchor,
+  loadReplayAnchors,
+  loadReplayInputs,
+  pickWinners,
+  selectEndpoints,
+  type ReplayAnchor,
+} from "./derivation";
 import { VERDICT_PRESENTATION } from "@/lib/provenance-verdict";
 import { MIN_OCCURRENCES } from "./recurring";
 
@@ -294,6 +303,66 @@ function marketValueBadgeWord(pricedFromHoldings: boolean): string | undefined {
   return pricedFromHoldings ? undefined : VERDICT_PRESENTATION.market_value.word;
 }
 
+/**
+ * One account's stored chain, read the way `accountCoverage` grades it: which
+ * days close, the newest that does, and which recorded balance a day stands on.
+ *
+ * ⛔ `closedChainDays` is the rule, so a balance proof and a row's sheet cannot
+ * call a day checked that /imports and every total call unchecked. The anchors
+ * are the replay's own (`loadReplayAnchors`), so the balance a day is said to
+ * stand on is the one the rebuild used.
+ */
+interface ChainFacts {
+  winners: ReplayAnchor[];
+  closed: ReadonlySet<string>;
+  /** the newest day on a closed chain — what "checked through" may name */
+  lastClosed: string | null;
+}
+
+function chainFacts(db: AppDatabase, accountId: string): ChainFacts {
+  const winners = pickWinners(loadReplayAnchors(db, accountId));
+  const balances = db
+    .select({ day: dailyBalances.day, basis: dailyBalances.basis })
+    .from(dailyBalances)
+    .where(eq(dailyBalances.accountId, accountId))
+    .orderBy(asc(dailyBalances.day))
+    .all();
+  const closed = closedChainDays(balances, handTypedDays(winners));
+  return { winners, closed, lastClosed: [...closed].at(-1) ?? null };
+}
+
+/** The source of the balance recorded ON a day, when one was — the day's winner. */
+function recordedOn(chain: ChainFacts, day: string): string | null {
+  return chain.winners.find((w) => w.anchoredOn === day)?.source ?? null;
+}
+
+/**
+ * The recorded balance a cash day stands on: the newest replay endpoint on or
+ * before it. A bank export or a live reading is a moment the replay never
+ * carries while a statement or a balance he typed exists (`selectEndpoints`).
+ */
+function restingOn(chain: ChainFacts, day: string): Pick<ReplayAnchor, "anchoredOn" | "source"> | null {
+  return selectEndpoints(chain.winners).endpoints.filter((e) => e.anchoredOn <= day).at(-1) ?? null;
+}
+
+/**
+ * A cash day's balance in this service's vocabulary — ONE rule for an
+ * account's balance proof and the day line on a row's sheet.
+ *
+ * ⛔ A balance he typed is `manual`, and so is a day carried from it that no
+ * closed chain reaches: carried is "as proven as the balance it came from", and
+ * that balance is his count. Carried from a statement, or from a count the
+ * replay landed on, it still adds up.
+ */
+function cashDayVerdict(chain: ChainFacts, day: string, basis: BalanceBasis): ProvenanceVerdict {
+  if (basis === "anchored" && recordedOn(chain, day) === "manual") return "manual";
+  if (basis === "carried") {
+    const from = restingOn(chain, day);
+    if (from?.source === "manual" && !chain.closed.has(from.anchoredOn)) return "manual";
+  }
+  return BASIS_VERDICT[basis];
+}
+
 /** `2026-08-24` → `Aug 24, 2026`, for a sentence rather than a table cell. */
 function readableDay(day: string): string {
   return formatDayFull(day);
@@ -499,7 +568,14 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
         ? [
             {
               label: `${account.name} on ${readableDay(txn.postedOn)}`,
-              verdict: dayVerdict,
+              /*
+               * 🔴 The day's own line read "on a statement" (`BASIS_VERDICT`) of a
+               * balance he typed — the rule `accountBalanceProvenance` already
+               * refused. One rule for both: `cashDayVerdict`.
+               */
+              verdict: isInvestment(account.type)
+                ? dayVerdict
+                : cashDayVerdict(chainFacts(db, txn.accountId), txn.postedOn, day.basis),
               detail: `the day's balance is ${day.basis.replace(/_/g, " ")}`,
             },
           ]
@@ -555,6 +631,14 @@ function rowHeadline(f: RowHeadlineFacts): string {
   }
   if (f.grade === "broken" && f.brokenSince !== null) {
     return `${from}${ownBalance ?? ", which carries no balances of its own"} — but ${f.accountName}'s balance stopped adding up on ${readableDay(f.brokenSince)}, so nothing checks the total it sits in.`;
+  }
+  /*
+   * 🔴 A day only his typed balance anchors was "checked" — "…was recorded by
+   * you, so the total it sits in is checked" — with nothing replayed onto the
+   * count. It is his word, and the sentence says so (see `closedChainDays`).
+   */
+  if (f.anchorOfDay?.anchor.source === "manual") {
+    return `${from}${ownBalance ?? ", which carries no balances of its own"} — ${f.accountName}'s balance on this day was recorded by you, and nothing else confirms it, so nothing checks the total it sits in.`;
   }
   if (f.periodBalance) {
     return `${from}, which records a value for ${f.accountName} rather than proving the rows add up.`;
@@ -698,23 +782,24 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
    * the owner's own evidence (owner decision S33).
    */
   const recordedBy = row.basis === "anchored" && anchor?.anchor.anchoredOn === row.day ? anchor.anchor.source : null;
-  const verdict: ProvenanceVerdict = isInvestment(account.type)
-    ? "market_value"
-    : recordedBy === "manual"
-      ? "manual"
-      : BASIS_VERDICT[row.basis];
+  /*
+   * 🔴 …AND "CHECKED THROUGH" ONE. The last closed day was the newest `anchored`
+   * or `derived` row, so a balance he typed was a day the chain closed on.
+   * Measured 2026-09-16 on a copy of the real ledger: Cash on Hand's header asks
+   * about Aug 11, 2026, and its popover read "nothing checks it" over "Checked
+   * through 2026-08-03." — Aug 3 is his $5,000.00 count and nothing was replayed
+   * onto it. A day carried from that count read "adds up".
+   *
+   * ⛔ `chainFacts` reads the rule `accountCoverage` grades by, and the headline
+   * names the count for what it is: "the balance you recorded on Aug 3, 2026".
+   */
+  const chain = isInvestment(account.type) ? null : chainFacts(db, accountId);
+  const verdict: ProvenanceVerdict = chain === null ? "market_value" : cashDayVerdict(chain, row.day, row.basis);
+  const resting = chain === null ? null : restingOn(chain, row.day);
   const sources: ProvenanceSource[] = anchor ? [anchor.source] : [];
 
   // periods covering this day, and what each concluded
   for (const p of periodsCovering(db, accountId, row.day)) sources.push(periodSource(p));
-
-  // last day this account's chain was closed
-  const lastClosed = db
-    .select({ day: dailyBalances.day })
-    .from(dailyBalances)
-    .where(and(eq(dailyBalances.accountId, accountId), inArray(dailyBalances.basis, ["anchored", "derived"])))
-    .orderBy(desc(dailyBalances.day))
-    .get();
 
   /*
    * ⛔ `market_value` covers every investment account; "priced from holdings" is
@@ -737,9 +822,10 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
     headline: headlineForBalance(account.name, account.type, row.basis, row.day, recordedBy, {
       pricedFromHoldings,
       recordedOn: held?.anchoredOn ?? null,
+      countedOn: resting?.source === "manual" && resting.anchoredOn !== row.day ? resting.anchoredOn : null,
     }),
     sources,
-    checkedThrough: isInvestment(account.type) ? null : (lastClosed?.day ?? null),
+    checkedThrough: chain?.lastClosed ?? null,
     inputs: [],
     badgeWord: isInvestment(account.type) ? marketValueBadgeWord(pricedFromHoldings) : undefined,
   };
@@ -748,7 +834,8 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
 /**
  * `recordedBy` — the source of the balance recorded ON an anchored day, or null.
  * `value` — how an investment account's figure is known: priced from holdings, or a
- * recorded balance held forward (an account with no holding events).
+ * recorded balance held forward (an account with no holding events); and, for a
+ * cash day after one, the day of the balance HE typed that it stands on.
  */
 function headlineForBalance(
   name: string,
@@ -756,7 +843,7 @@ function headlineForBalance(
   basis: BalanceBasis,
   day: string,
   recordedBy: string | null,
-  value: { pricedFromHoldings: boolean; recordedOn: string | null },
+  value: { pricedFromHoldings: boolean; recordedOn: string | null; countedOn: string | null },
 ): string {
   const on = readableDay(day);
   if (isInvestment(type)) {
@@ -771,6 +858,8 @@ function headlineForBalance(
           : `the balance recorded on ${readableDay(value.recordedOn)}, held forward`;
     return `${name}'s value on ${on} is ${recorded}. No holdings price it, and no transaction arithmetic checks it.`;
   }
+  // a count of his is named as his, never as a "recorded balance" the reader could take for a statement
+  const counted = value.countedOn === null ? null : `the balance you recorded on ${readableDay(value.countedOn)}`;
   switch (basis) {
     case "anchored":
       if (recordedBy === "manual") {
@@ -784,9 +873,9 @@ function headlineForBalance(
     case "derived":
       return `Every transaction was replayed forward from a recorded balance and landed exactly on the next one, through ${on}.`;
     case "derived_unverified":
-      return `Replayed past the last recorded balance, so nothing checks ${name} on ${on}. The rows are real; the total is unconfirmed.`;
+      return `Replayed past ${counted ?? "the last recorded balance"}, so nothing checks ${name} on ${on}. The rows are real; the total is unconfirmed.`;
     case "carried":
-      return `${name} had no activity to replay on ${on}, so the last known balance was carried forward.`;
+      return `${name} had no activity to replay on ${on}, so ${counted ?? "the last known balance"} was carried forward.`;
     case "gap":
       return `The replay did NOT land on ${name}'s next recorded balance. Money is provably missing or double-counted around ${on}.`;
   }
@@ -921,7 +1010,15 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
         ? `adds up through ${readableDay(c.verifiedThrough)}`
         : c.grade === "broken" && c.brokenSince
           ? `stopped adding up on ${readableDay(c.brokenSince)}`
-          : /* 🔴 `uncheckedSince`, not `unverifiedSince`. The latter is the FIRST
+          : /* 🔴 "nothing checks it since Aug 11, 2026" of Cash on Hand, whose days
+               before Aug 11 stand on nothing but the $5,000.00 he typed for Aug 3
+               (real ledger copy, 2026-09-16) — "since" said something checked
+               them. The count is named as his. */
+            c.grade === "unverified" && c.countedOn
+            ? c.uncheckedSince
+              ? `you counted it on ${readableDay(c.countedOn)}, and nothing checks it since ${readableDay(c.uncheckedSince)}`
+              : `you counted it on ${readableDay(c.countedOn)}, and nothing else checks it`
+            : /* 🔴 `uncheckedSince`, not `unverifiedSince`. The latter is the FIRST
                unchecked day the account ever had, and pairing it with a count of
                all of them printed "Robinhood Cash — nothing checks it since
                Dec 5, 2023 · 52 days unchecked" of an account anchored 32 times,

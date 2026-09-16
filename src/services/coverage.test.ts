@@ -497,6 +497,143 @@ describe("verifiedThrough — a break, and what only looks like one", () => {
   });
 });
 
+function addAnchorRow(accountId: string, day: string, source: "manual" | "statement" | "ofx_ledger"): void {
+  const now = new Date().toISOString();
+  bundle.db
+    .insert(balanceAnchors)
+    .values({ accountId, anchoredOn: day, balanceCents: 500000, source, createdAt: now, updatedAt: now })
+    .run();
+}
+
+describe("a balance he typed checks nothing on its own", () => {
+  /*
+   * 🔴 CASH ON HAND "CLOSES TO THE CENT THROUGH AUG 3, 2026". Measured
+   * 2026-09-16 on a copy of the real ledger: one balance typed by hand on Aug 3
+   * ($5,000.00, `source = manual`, no statement period, no import file), carried
+   * Aug 4–10, and the hand-entered car down payment on Aug 11. Every `anchored`
+   * day counted as a closed chain, so `verifiedThrough` read 2026-08-03 and
+   * /imports printed "closes to the cent through Aug 3, 2026 (44 days ago)", the
+   * account's balance popover "Checked through 2026-08-03", and the proof beside
+   * "1 transaction landed in Cash on Hand" the same date. Nothing was replayed
+   * onto that balance; it is his count, and a count is not a check.
+   *
+   * ⛔ A typed balance the replay LANDS on is checked — by the arithmetic, not by
+   * him — and a statement recorded on the same day wins it (`pickWinners`).
+   */
+  test("an account whose only balance is one he typed closes through no day", () => {
+    const id = addAccount("a-coh", "Cash on Hand", "checking");
+    addAnchorRow(id, "2026-08-03", "manual");
+    addDays(id, [
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-04", basis: "carried" },
+      { day: "2026-08-10", basis: "carried" },
+      { day: "2026-08-11", basis: "derived_unverified" },
+    ]);
+    addTxn(id, "2026-08-11");
+
+    const c = only(id);
+    expect(c.grade).toBe("unverified");
+    expect(c.verifiedThrough).toBeNull();
+    expect(c.chainOpensOn).toBeNull();
+    expect(c.daysSinceVerified).toBeNull();
+    expect(c.countedOn).toBe("2026-08-03");
+    expect(c.uncheckedSince).toBe("2026-08-11");
+  });
+
+  test("a typed balance the replay lands on exactly is checked by that arithmetic", () => {
+    const id = addAccount("a-landed", "Chase Checking", "checking");
+    addAnchorRow(id, "2026-07-31", "statement");
+    addAnchorRow(id, "2026-08-03", "manual");
+    addDays(id, [
+      { day: "2026-07-31", basis: "anchored" },
+      { day: "2026-08-01", basis: "derived" },
+      { day: "2026-08-02", basis: "derived" },
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-04", basis: "carried" },
+    ]);
+    addTxn(id, "2026-08-01");
+
+    const c = only(id);
+    expect(c.grade).toBe("verified");
+    expect(c.verifiedThrough).toBe("2026-08-03");
+    expect(c.chainOpensOn).toBe("2026-07-31");
+    expect(c.countedOn).toBeNull();
+  });
+
+  test("a statement and a typed balance on one day close as the statement", () => {
+    const id = addAccount("a-tie", "Chase Checking", "checking");
+    addAnchorRow(id, "2026-08-03", "manual");
+    addAnchorRow(id, "2026-08-03", "statement");
+    addDays(id, [
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-04", basis: "derived_unverified" },
+    ]);
+    addTxn(id, "2026-08-04");
+
+    const c = only(id);
+    expect(c.verifiedThrough).toBe("2026-08-03");
+    expect(c.chainOpensOn).toBe("2026-08-03");
+    expect(c.countedOn).toBeNull();
+  });
+
+  test("a carry confirms a second count only when what it carries was checked", () => {
+    // his count, nothing posted, his same count again: the second rests on the first
+    const counted = addAccount("a-two-counts", "Safe", "checking");
+    addAnchorRow(counted, "2026-08-01", "manual");
+    addAnchorRow(counted, "2026-08-03", "manual");
+    addDays(counted, [
+      { day: "2026-08-01", basis: "anchored" },
+      { day: "2026-08-02", basis: "carried" },
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-04", basis: "derived_unverified" },
+    ]);
+    addTxn(counted, "2026-08-04");
+    expect(only(counted).verifiedThrough).toBeNull();
+    expect(only(counted).countedOn).toBe("2026-08-03");
+
+    // a statement, nothing posted, his count agreeing with it: the statement checks it
+    const stated = addAccount("a-stated", "Drawer", "checking");
+    addAnchorRow(stated, "2026-08-01", "statement");
+    addAnchorRow(stated, "2026-08-03", "manual");
+    addDays(stated, [
+      { day: "2026-08-01", basis: "anchored" },
+      { day: "2026-08-02", basis: "carried" },
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-04", basis: "derived_unverified" },
+    ]);
+    addTxn(stated, "2026-08-04");
+    expect(only(stated).verifiedThrough).toBe("2026-08-03");
+    expect(only(stated).countedOn).toBeNull();
+  });
+
+  test("rows only on the day he counted do not make the account add up", () => {
+    const id = addAccount("a-same-day", "Wallet", "checking");
+    addAnchorRow(id, "2026-08-03", "manual");
+    addDays(id, [
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-04", basis: "carried" },
+    ]);
+    addTxn(id, "2026-08-03");
+
+    const c = only(id);
+    expect(c.grade).toBe("unverified");
+    expect(c.verifiedThrough).toBeNull();
+    expect(c.countedOn).toBe("2026-08-03");
+  });
+
+  test("an anchored day with no typed balance behind it is unchanged", () => {
+    const id = addAccount("a-plain", "Plain", "checking");
+    addDays(id, [
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-04", basis: "carried" },
+    ]);
+    addTxn(id, "2026-08-03");
+    expect(only(id).grade).toBe("verified");
+    expect(only(id).verifiedThrough).toBe("2026-08-03");
+    expect(only(id).countedOn).toBeNull();
+  });
+});
+
 describe("basisIsChecked — the rule three surfaces were answering separately", () => {
   /**
    * 🔴 `/accounts/[id]`'s remove-balance confirmation kept a local

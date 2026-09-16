@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
-import { dailyBalances } from "@/db/schema/balances";
+import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
@@ -418,6 +418,39 @@ describe("trustCard — checked through", () => {
     expect(card.checkedThrough).toBe("2026-07-31");
     expect(card.daysSinceChecked).toBe(26);
     expect(card.checkedThroughAgo).toBe("26 days ago");
+  });
+
+  /*
+   * 🔴 A BALANCE HE TYPED BOUNDED THE PICTURE. Cash on Hand's only balance is
+   * one he counted on Aug 3, 2026 (real ledger, measured 2026-09-16), and every
+   * `anchored` day counted as a closed chain — so it entered "the first account
+   * that stops being checked" as if checked through Aug 3. Not live there only
+   * because SoFi's Jul 31 is older; with every other account newer, this card
+   * read "checked through Aug 3, 2026" of his own count.
+   */
+  test("a balance he typed is not a day the picture was checked through", () => {
+    addAccount("coh", "Cash on Hand", "checking");
+    bundle.db
+      .insert(balanceAnchors)
+      .values({ accountId: "coh", anchoredOn: "2026-08-03", balanceCents: 500000, source: "manual", createdAt: now(), updatedAt: now() })
+      .run();
+    addDays("coh", [
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-10", basis: "carried" },
+      { day: "2026-08-11", basis: "derived_unverified" },
+    ]);
+    addTxn("coh", "2026-08-11");
+    addAccount("b", "Chase Checking", "checking");
+    addDays("b", [
+      { day: "2026-08-24", basis: "anchored" },
+      { day: "2026-08-25", basis: "derived" },
+    ]);
+    addTxn("b", "2026-08-25");
+
+    const card = trustCard(bundle.db, TODAY)!;
+    expect(card.checkedThrough).toBe("2026-08-25");
+    const line = card.groups.flatMap((g) => g.accounts).find((a) => a.name === "Cash on Hand")!;
+    expect(line.detail).toBe("you counted it on Aug 3, 2026, and nothing checks it since Aug 11, 2026");
   });
 
   test("nothing verified means no date at all, never today", () => {

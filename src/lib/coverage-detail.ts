@@ -12,11 +12,14 @@ import { MONTHS_SHORT } from "./format-date";
  *     export with no closing balance
  *
  * Two defects in one line. **"1 days"** — the `broken` branch pluralised and
- * this one did not. And **"nothing has checked this account"** is simply
- * untrue: that account closes to the cent through 2026-08-03, and exactly one
- * day at the end does not. `verifiedThrough` was computed, carried on the
- * record, and then rendered only inside `case "verified"` — so the two states
- * that most need it were the two that could not show it.
+ * this one did not. And **"nothing has checked this account"** read as though
+ * nothing stood behind any of its days. `verifiedThrough` was computed, carried
+ * on the record, and then rendered only inside `case "verified"` — so the two
+ * states that most need it were the two that could not show it.
+ *
+ * ⚠️ The fix then said Cash on Hand "closes to the cent through Aug 3, 2026",
+ * and that was false too: Aug 3 is a balance he TYPED, and nothing was ever
+ * replayed onto it (2026-09-16). A count is named as a count (`countedOn`).
  *
  * Both halves of the fact belong in the sentence: **what closes, and where it
  * stops**. An account that closes through last week with one loose day is a
@@ -79,6 +82,19 @@ export interface CoverageDetailInput {
    * forgets reads `undefined`, and the row goes back to asserting holdings.
    */
   pricedFromHoldings: boolean;
+  /**
+   * `AccountCoverage.countedOn`: the balance he TYPED that the newest days stand
+   * on, when no closed chain reaches it. Read by `unverified`.
+   *
+   * 🔴 Cash on Hand's row read "closes to the cent through Aug 3, 2026 (44 days
+   * ago)" of the $5,000.00 he typed for that day (real ledger copy, 2026-09-16).
+   * `verifiedThrough` no longer names a count; this names it as one.
+   *
+   * ⛔ REQUIRED, like `pricedFromHoldings`: a forgotten field would drop the
+   * count and read "nothing closes to the cent from its first day" of days that
+   * stand on something.
+   */
+  countedOn: string | null;
 }
 
 const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
@@ -172,12 +188,11 @@ export function coverageDetail(input: CoverageDetailInput): string {
        * held forward, which the trust card already calls "as proven as that
        * balance, and not a gap". Naming it closes the hole without new data.
        */
-      const carried =
-        input.verifiedThrough === null || since === null
-          ? 0
-          : Math.max(0, diffDays(input.verifiedThrough, since) - 1);
-      const held =
-        carried === 0 ? "" : `, then carries that balance forward for ${carried} ${plural(carried, "day", "days")}`;
+      const counted = input.countedOn;
+      // the balance the carried days hold: his count when there is one after the chain, else the chain's last day
+      const heldFrom = counted ?? input.verifiedThrough;
+      const carried = heldFrom === null || since === null ? 0 : Math.max(0, diffDays(heldFrom, since) - 1);
+      const carriedDays = `${carried} ${plural(carried, "day", "days")}`;
       /*
        * ⛔ WHY the days are unchecked depends on what the account HAS. Robinhood
        * Cash has 33 statement anchors and its loose days really do rest on an
@@ -188,7 +203,26 @@ export function coverageDetail(input: CoverageDetailInput): string {
       const because = input.hasStatements
         ? "on an export with no closing balance"
         : "on entries alone, with no document to check them against";
-      return `${closesClause(input)}${held}; the first day it does not is ${first} — ${n} ${plural(n, "day rests", "days rest")} ${because}${inAll}`;
+      const tail = `${n} ${plural(n, "day rests", "days rest")} ${because}${inAll}`;
+      if (counted === null) {
+        const held = carried === 0 ? "" : `, then carries that balance forward for ${carriedDays}`;
+        return `${closesClause(input)}${held}; the first day it does not is ${first} — ${tail}`;
+      }
+      /*
+       * 🔴 HIS COUNT IS NOT A CLOSED CHAIN. Cash on Hand read "closes to the cent
+       * through Aug 3, 2026 (44 days ago), then carries that balance forward for
+       * 7 days; the first day it does not is Aug 11, 2026" of the $5,000.00 he
+       * typed for Aug 3 — nothing was ever replayed onto it (real ledger copy,
+       * 2026-09-16). The row now says what the days stand on.
+       */
+      const opening =
+        input.verifiedThrough === null
+          ? "nothing closes to the cent: it rests on"
+          : `${closesClause(input)}, then rests on`;
+      const count = `${opening} the balance you counted on ${dayWithYear(counted)}`;
+      if (since === null) return `${count}, and nothing else checks it`;
+      const held = carried === 0 ? "" : `, carried forward for ${carriedDays}`;
+      return `${count}${held}; the first day past that count is ${first} — ${tail}`;
     }
     case "market_value":
       return input.pricedFromHoldings

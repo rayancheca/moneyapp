@@ -608,19 +608,31 @@ describe("provenanceFor — a transaction", () => {
     expect(p.inputs[0]!.verdict).toBe("sourced");
   });
 
-  test("a day only a balance you entered anchors is checked by that balance, never through a statement", () => {
+  /*
+   * 🔴 THIS TEST PINNED THE DEFECT. It read "a day only a balance you entered
+   * anchors is checked by that balance" and asserted "adds up" and "so the total
+   * it sits in is checked" — of a row whose only neighbour is a balance he typed,
+   * with nothing replayed onto it. A count is not a check (2026-09-16: Cash on
+   * Hand's typed Aug 3 balance read "closes to the cent" and "Checked through").
+   * The row now grades as a total over it does — nothing checks it — and the
+   * day's own line wears the owner's word, not the statement's.
+   */
+  test("a day only a balance you entered anchors is named as yours, and checks nothing", () => {
     const id = addAccount("a", "Chase Checking", "checking");
     const csv = addFile("f1", "Chase3522_Activity.CSV", "chase-deposit-csv");
     addAnchor(id, "2026-07-10", "manual");
     addDays(id, [{ day: "2026-07-10", basis: "anchored" }]);
     const txn = addTxn(id, "2026-07-10", { importFileId: csv });
 
-    const p = provenanceFor(bundle.db, { kind: "transaction", id: txn })!;
-    expect(p.headline).not.toMatch(/nothing checks the total/i);
-    expect(p.headline).toMatch(/recorded by you/);
-    // no reconciled period stands behind the row, so no "checked through" date
-    expect(p.checkedThrough).toBeNull();
-    expect(p.verdict).toBe("derived");
+    const { sheet, total } = sheetAndTotal(txn, "2026-07-10");
+    expect(sheet.verdict).toBe(total.verdict);
+    expect(sheet.verdict).toBe("unverified");
+    expect(sheet.headline).toBe(
+      "This row came from Chase3522_Activity.CSV, which carries no balances of its own — Chase Checking's balance on this day was recorded by you, and nothing else confirms it, so nothing checks the total it sits in.",
+    );
+    expect(sheet.checkedThrough).toBeNull();
+    // the day's balance is his, never "on a statement"
+    expect(sheet.inputs[0]!.verdict).toBe("manual");
   });
 
   /*
@@ -765,8 +777,10 @@ describe("provenanceFor — a transaction", () => {
     const rocket = addFile("f2", "rocket-money-export.csv", "rocket-money-csv");
     addPeriod("p1", id, rocket, "2026-07-01", "2026-07-31", "not_applicable", { beginning: null, ending: null });
     addAnchor(id, "2026-07-10", "manual");
+    // the replay lands on his Jul 10 balance, so the arithmetic — not the balance — checks the day
     addDays(id, [
       { day: "2026-07-01", basis: "anchored" },
+      { day: "2026-07-09", basis: "derived" },
       { day: "2026-07-10", basis: "anchored" },
     ]);
     const txn = addTxn(id, "2026-07-10", { importFileId: csv });
@@ -2229,5 +2243,120 @@ describe("provenanceFor — market value that no holding prices", () => {
 
     const priced = provenanceFor(bundle.db, { kind: "statementPeriod", id: "priced-p" })!;
     expect(priced.badgeWord).toBeUndefined();
+  });
+});
+
+/* ── a balance he typed, and nothing more ─────────────────────────────── */
+
+/**
+ * 🔴 "CHECKED THROUGH 2026-08-03" OF A BALANCE HE TYPED. Measured 2026-09-16 on
+ * a copy of the real ledger: Cash on Hand is a checking account with no
+ * statement period and no import file, one balance typed by hand on Aug 3, 2026
+ * ($5,000.00), carried Aug 4–10, and the hand-entered car down payment on Aug
+ * 11. Its /accounts/[id] header asks about Aug 11, and the popover read "nothing
+ * checks it" above "Checked through 2026-08-03." — the only thing on Aug 3 is
+ * his own count. The proof beside "1 transaction landed in Cash on Hand since it
+ * opened" printed the same date, and a day carried from the count (Aug 5) read
+ * "adds up".
+ *
+ * ⛔ A count is the owner's evidence (`manual`, "you entered it"), never a check.
+ * What the popover says instead is what the day stands on: the balance he
+ * recorded, named by its date.
+ */
+describe("provenanceFor — a balance he typed checks nothing", () => {
+  function cashOnHand(): string {
+    const id = addAccount("coh", "Cash on Hand", "checking");
+    addAnchor(id, "2026-08-03", "manual");
+    addDays(id, [
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-05", basis: "carried" },
+      { day: "2026-08-11", basis: "derived_unverified" },
+    ]);
+    addTxn(id, "2026-08-11"); // entered by hand, as the car down payment was
+    return id;
+  }
+
+  const balance = (accountId: string, day: string) =>
+    provenanceFor(bundle.db, { kind: "accountBalance", accountId, day })!;
+
+  test("the newest day names the balance he recorded and dates no check", () => {
+    const p = balance(cashOnHand(), "2026-08-11");
+    expect(p.verdict).toBe("unverified");
+    expect(p.checkedThrough).toBeNull();
+    expect(p.headline).toBe(
+      "Replayed past the balance you recorded on Aug 3, 2026, so nothing checks Cash on Hand on Aug 11, 2026. The rows are real; the total is unconfirmed.",
+    );
+  });
+
+  test("a day carried from his count is as proven as the count — his, not 'adds up'", () => {
+    const p = balance(cashOnHand(), "2026-08-05");
+    expect(p.verdict).toBe("manual");
+    expect(p.checkedThrough).toBeNull();
+    expect(p.headline).toBe(
+      "Cash on Hand had no activity to replay on Aug 5, 2026, so the balance you recorded on Aug 3, 2026 was carried forward.",
+    );
+  });
+
+  test("the day he typed it is his, and dates no check either", () => {
+    const p = balance(cashOnHand(), "2026-08-03");
+    expect(p.verdict).toBe("manual");
+    expect(p.checkedThrough).toBeNull();
+  });
+
+  test("the count of its rows dates no check", () => {
+    const p = provenanceFor(bundle.db, { kind: "accountRows", accountId: cashOnHand() })!;
+    expect(p.verdict).toBe("manual");
+    expect(p.checkedThrough).toBeNull();
+  });
+
+  test("net worth is not checked through a day only his count stands on, and says what the day is", () => {
+    cashOnHand();
+    const sofi = addAccount("sofi", "SoFi Checking", "checking");
+    addDays(sofi, [
+      { day: "2026-08-20", basis: "anchored" },
+      { day: "2026-08-21", basis: "derived" },
+    ]);
+    addTxn(sofi, "2026-08-21");
+
+    const p = provenanceFor(bundle.db, { kind: "netWorth", day: "2026-09-16" })!;
+    expect(p.checkedThrough).toBe("2026-08-21");
+    expect(p.inputs.find((i) => i.label === "Cash on Hand")!.detail).toBe(
+      "you counted it on Aug 3, 2026, and nothing checks it since Aug 11, 2026",
+    );
+  });
+
+  test("a statement's balance carried forward still adds up, and dates its check", () => {
+    const id = addAccount("stmt", "Chase Checking", "checking");
+    const pdf = addFile("f1", "20260803-statements-3522-.pdf", "chase-checking-statement-pdf");
+    addAnchor(id, "2026-08-03", "statement", pdf);
+    addDays(id, [
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-05", basis: "carried" },
+    ]);
+    addTxn(id, "2026-08-03", { importFileId: pdf });
+
+    const p = balance(id, "2026-08-05");
+    expect(p.verdict).toBe("derived");
+    expect(p.checkedThrough).toBe("2026-08-03");
+    expect(p.headline).toBe("Chase Checking had no activity to replay on Aug 5, 2026, so the last known balance was carried forward.");
+  });
+
+  test("a balance he typed that the replay lands on is checked by the replay", () => {
+    const id = addAccount("landed", "Chase Checking", "checking");
+    const pdf = addFile("f1", "20260731-statements-3522-.pdf", "chase-checking-statement-pdf");
+    addAnchor(id, "2026-07-31", "statement", pdf);
+    addAnchor(id, "2026-08-03", "manual");
+    addDays(id, [
+      { day: "2026-07-31", basis: "anchored" },
+      { day: "2026-08-02", basis: "derived" },
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-05", basis: "carried" },
+    ]);
+    addTxn(id, "2026-08-02", { importFileId: pdf });
+
+    const carried = balance(id, "2026-08-05");
+    expect(carried.verdict).toBe("derived");
+    expect(carried.checkedThrough).toBe("2026-08-03");
+    expect(balance(id, "2026-08-03").checkedThrough).toBe("2026-08-03");
   });
 });

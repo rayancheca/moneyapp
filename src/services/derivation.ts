@@ -7,6 +7,7 @@ import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { splitMissing, type AccountOpening } from "@/lib/coverage-label";
 import { assertWithinFinancialWindow } from "@/lib/date-window";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
+import { pickWinners } from "./anchor-winners";
 import { basisIsChecked } from "./coverage";
 import { cutToObserved, observedThrough } from "./observation-frontier";
 import { rebuildInvestmentHistory } from "./crypto-history";
@@ -25,13 +26,8 @@ import { regradeStatementPeriods } from "./statement-periods";
  *   endpoints, exempt from exact closure (schema.md anchor precedence).
  */
 
-const ANCHOR_PRECEDENCE: Record<AnchorSource, number> = {
-  statement: 0,
-  ofx_ledger: 1,
-  manual: 2,
-  live: 3,
-};
-
+// precedence among same-day anchors lives in `./anchor-winners` (statement →
+// ofx_ledger → manual → live) — see that module for why it is a leaf
 const CHAIN_GRADE: ReadonlySet<AnchorSource> = new Set(["statement", "manual"]);
 
 /**
@@ -74,23 +70,8 @@ export interface DayRow {
   basis: BalanceBasis;
 }
 
-/**
- * Highest-precedence anchor per date.
- *
- * Generic so a caller holding whole `balance_anchors` rows gets those rows back
- * — `provenance` names the winning anchor's document, and must name the one this
- * replay used rather than whichever row SQLite returned first.
- */
-export function pickWinners<T extends Anchor>(anchors: readonly T[]): T[] {
-  const byDate = new Map<string, T>();
-  for (const a of anchors) {
-    const current = byDate.get(a.anchoredOn);
-    if (!current || ANCHOR_PRECEDENCE[a.source] < ANCHOR_PRECEDENCE[current.source]) {
-      byDate.set(a.anchoredOn, a);
-    }
-  }
-  return [...byDate.values()].sort((x, y) => compareDates(x.anchoredOn, y.anchoredOn));
-}
+/** Highest-precedence anchor per date — `./anchor-winners`, re-exported for every existing caller. */
+export { pickWinners };
 
 /**
  * Which anchors carry the curve, and which are only observations.
@@ -357,16 +338,7 @@ export function derivesFromHoldings(db: AppDatabase, account: { id: string; type
  * than a query of its own that could drift from this one.
  */
 export function loadReplayInputs(db: AppDatabase, accountId: string): ReplayInputs {
-  const anchors = db
-    .select({
-      id: balanceAnchors.id,
-      anchoredOn: balanceAnchors.anchoredOn,
-      balanceCents: balanceAnchors.balanceCents,
-      source: balanceAnchors.source,
-    })
-    .from(balanceAnchors)
-    .where(eq(balanceAnchors.accountId, accountId))
-    .all();
+  const anchors = loadReplayAnchors(db, accountId);
 
   const txns = db
     .select({ postedOn: transactions.postedOn, amountCents: transactions.amountCents })
@@ -385,6 +357,24 @@ export function loadReplayInputs(db: AppDatabase, accountId: string): ReplayInpu
     txnSumByDay.set(t.postedOn, (txnSumByDay.get(t.postedOn) ?? 0) + t.amountCents);
   }
   return { anchors, txnSumByDay };
+}
+
+/**
+ * The recorded balances `rebuildAccount` replays from — `loadReplayInputs`'
+ * half for a caller that reads the chain and never the transactions (a balance
+ * proof asked for on every dashboard render must not scan an account's rows).
+ */
+export function loadReplayAnchors(db: AppDatabase, accountId: string): ReplayAnchor[] {
+  return db
+    .select({
+      id: balanceAnchors.id,
+      anchoredOn: balanceAnchors.anchoredOn,
+      balanceCents: balanceAnchors.balanceCents,
+      source: balanceAnchors.source,
+    })
+    .from(balanceAnchors)
+    .where(eq(balanceAnchors.accountId, accountId))
+    .all();
 }
 
 /** An unbroken run of days, both ends inclusive. */
