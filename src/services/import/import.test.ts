@@ -18,7 +18,8 @@ import { listSplits, setSplits } from "@/services/transaction-splits";
 import { fidelityOf, importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, parseContextFor, reconcileAccounts, resolveAccount, type ImportInput } from "./service";
 import { PROFILES } from "./profiles";
 import { parseChaseCardLines } from "./profiles/chase-card-statement-profile";
-import type { ParserProfile } from "./types";
+import { ParseError, type AccountHint, type ParsedFile, type ParsedStatement, type ParserProfile } from "./types";
+import { provenanceFor } from "@/services/provenance";
 import { importFiles as importFilesTable } from "@/db/schema/imports";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
@@ -1261,6 +1262,168 @@ describe("re-parse lifecycle: a parser-version bump preserves user work", () => 
     expect(outcome!.carriedForward).toBe(0);
     expect(liveRow("STARBUCKS").notes).toBeNull();
     expect(liveRow("SHELL OIL").notes).toBeNull();
+  });
+});
+
+/*
+ * 🔴 A parser-version re-read supersedes everything the old version wrote — its
+ * rows, its periods, its anchors — and then rebuilt only the accounts the NEW
+ * version read. An account the old version wrote and the new one does not (a
+ * section it now withholds, as the Robinhood reader withholds #655929651's when
+ * it cannot prove it; or every account, when the new version cannot read the
+ * file at all) kept its daily_balances: `anchored` on a day no anchor names,
+ * provenance "checked through" a period that no longer exists, and a balance
+ * still counting rows that are superseded. The sibling of un-import's
+ * `accountsWrittenBy` (9cd7acb), which read the scope before the delete.
+ */
+describe("a parser-version re-read that no longer writes an account", () => {
+  const PREFIX = "three-section-statement-";
+  const KEPT = "4101";
+  const ANCHOR_ONLY = "4102";
+  const WITH_ROWS = "4103";
+  const checking = (last4: string): AccountHint => ({ institution: "Chase", type: "checking", last4 });
+
+  /** Each month's three sections, as version 1 reads them. January and March share no anchor day. */
+  const SECTIONS: Record<string, ParsedStatement[]> = {
+    "2026-01": [
+      {
+        accountHint: checking(KEPT),
+        txns: [{ postedOn: "2026-01-10", amountCents: 1000, rawDescription: "PAYROLL DEPOSIT JAN" }],
+        period: { start: "2026-01-01", end: "2026-01-31", beginCents: 0, endCents: 1000 },
+      },
+      { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-01-01", end: "2026-01-31", beginCents: 50000, endCents: 50000 } },
+      { accountHint: checking(WITH_ROWS), txns: [], period: { start: "2026-01-01", end: "2026-01-31", beginCents: 10000, endCents: 10000 } },
+    ],
+    "2026-03": [
+      {
+        accountHint: checking(KEPT),
+        txns: [{ postedOn: "2026-03-10", amountCents: 1000, rawDescription: "PAYROLL DEPOSIT MAR" }],
+        period: { start: "2026-03-01", end: "2026-03-31", beginCents: 1000, endCents: 2000 },
+      },
+      // a period and two anchors, and not one row
+      { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-03-01", end: "2026-03-31", beginCents: 50000, endCents: 50000 } },
+      {
+        accountHint: checking(WITH_ROWS),
+        txns: [{ postedOn: "2026-03-12", amountCents: -4000, rawDescription: "SHELL OIL 555 MIAMI FL" }],
+        period: { start: "2026-03-01", end: "2026-03-31", beginCents: 10000, endCents: 6000 },
+      },
+    ],
+  };
+
+  let unreadable = false;
+
+  /** Version 1 reads all three sections; a later version reads the first and withholds the other two. */
+  const threeSectionProfile: ParserProfile = {
+    id: "test-three-section-statement",
+    version: 1,
+    matches: (f) => f.name.startsWith(PREFIX),
+    parse: (f): ParsedStatement[] | ParsedFile => {
+      if (unreadable) throw new ParseError("test-three-section-statement", "this version cannot read the file");
+      const [kept, ...rest] = SECTIONS[f.text]!;
+      if (threeSectionProfile.version === 1) return [kept!, ...rest];
+      return {
+        statements: [kept!],
+        withheld: rest.map((s) => ({
+          accountHint: s.accountHint,
+          accountNumber: `XXXXXX${s.accountHint.last4}`,
+          period: { start: s.period!.start, end: s.period!.end },
+          reason: "this version cannot prove the section",
+        })),
+      };
+    },
+  };
+
+  beforeEach(() => {
+    unreadable = false;
+    threeSectionProfile.version = 1;
+    PROFILES.unshift(threeSectionProfile);
+  });
+
+  afterEach(() => {
+    PROFILES.splice(PROFILES.indexOf(threeSectionProfile), 1);
+  });
+
+  const statementFor = (month: string): ImportInput => ({ name: `${PREFIX}${month}.txt`, buffer: Buffer.from(month) });
+  const JANUARY = statementFor("2026-01");
+  const MARCH = statementFor("2026-03");
+
+  function accountIdOf(last4: string): string {
+    return bundle.db.select().from(accounts).where(eq(accounts.last4, last4)).get()!.id;
+  }
+
+  function dayRows(accountId: string) {
+    return bundle.db
+      .select({ day: dailyBalances.day, balanceCents: dailyBalances.balanceCents, basis: dailyBalances.basis })
+      .from(dailyBalances)
+      .where(eq(dailyBalances.accountId, accountId))
+      .orderBy(dailyBalances.day)
+      .all();
+  }
+
+  const dayRow = (accountId: string, day: string) => dayRows(accountId).find((r) => r.day === day);
+
+  /** The cache is exactly what a rebuild from what is left would write. */
+  function expectRebuilt(accountId: string): void {
+    const left = dayRows(accountId);
+    rebuildAccount(bundle.db, accountId);
+    expect(left).toEqual(dayRows(accountId));
+  }
+
+  test("an account the new version withholds is rebuilt: no anchored day it no longer has, no row it superseded", async () => {
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    const anchorOnly = accountIdOf(ANCHOR_ONLY);
+    const withRows = accountIdOf(WITH_ROWS);
+    // the premise: March gave one account only a period and anchors, the other a row as well, and both read checked
+    expect(bundle.db.select().from(transactions).where(eq(transactions.accountId, anchorOnly)).all()).toEqual([]);
+    expect(dayRow(anchorOnly, "2026-03-31")).toMatchObject({ basis: "anchored", balanceCents: 50000 });
+    expect(dayRow(withRows, "2026-03-31")).toMatchObject({ basis: "anchored", balanceCents: 6000 });
+    expect(provenanceFor(bundle.db, { kind: "accountBalance", accountId: anchorOnly })!.checkedThrough).toBe("2026-03-31");
+
+    threeSectionProfile.version = 2;
+    const [outcome] = await importStatementFiles(bundle.db, [MARCH]);
+
+    // the premise: a fresh read that left the two sections out, not a duplicate skip…
+    expect(outcome!.status).toBe("parsed");
+    expect(outcome!.withheld.map((w) => w.accountId)).toEqual([anchorOnly, withRows]);
+    // …so March's anchors on both accounts are gone, and January's stay
+    const anchorDays = (accountId: string) =>
+      bundle.db
+        .select({ day: balanceAnchors.anchoredOn })
+        .from(balanceAnchors)
+        .where(eq(balanceAnchors.accountId, accountId))
+        .all()
+        .map((a) => a.day)
+        .sort();
+    expect(anchorDays(anchorOnly)).toEqual(["2025-12-31", "2026-01-31"]);
+    expect(anchorDays(withRows)).toEqual(["2025-12-31", "2026-01-31"]);
+
+    // no day is still `anchored` on March's anchors…
+    expect(dayRow(anchorOnly, "2026-02-28")?.basis).not.toBe("anchored");
+    expect(dayRow(anchorOnly, "2026-03-31")?.basis).not.toBe("anchored");
+    expect(dayRow(withRows, "2026-03-31")?.basis).not.toBe("anchored");
+    // …the −$40.00 the re-read superseded is out of the balance…
+    expect(dayRow(withRows, "2026-03-31")?.balanceCents).toBe(10000);
+    // …and the chain is checked through January, the last statement the account still has
+    expect(provenanceFor(bundle.db, { kind: "accountBalance", accountId: anchorOnly })!.checkedThrough).toBe("2026-01-31");
+    expectRebuilt(anchorOnly);
+    expectRebuilt(withRows);
+    expectRebuilt(accountIdOf(KEPT));
+  });
+
+  /**
+   * Only the cache is asserted here, never what the failure leaves: today the retired file is superseded BEFORE the
+   * new version parses, so a parse that throws has already taken all three accounts' March away — and whatever a
+   * failed re-read leaves of the file, the balances must describe it.
+   */
+  test("a re-read the new version cannot parse leaves every account the retired file wrote as a rebuild would", async () => {
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+
+    threeSectionProfile.version = 2;
+    unreadable = true;
+    const [outcome] = await importStatementFiles(bundle.db, [MARCH]);
+
+    expect(outcome!.status).toBe("failed");
+    for (const last4 of [KEPT, ANCHOR_ONLY, WITH_ROWS]) expectRebuilt(accountIdOf(last4));
   });
 });
 

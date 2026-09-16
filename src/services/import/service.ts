@@ -1028,7 +1028,11 @@ async function importOneFile(
         .filter((f) => f.parserVersion < profile.version)
     : [];
   const carryPool = captureCarryForward(db, stale.map((f) => f.id));
-  for (const old of stale) supersedeFileContribution(db, old.id);
+  // touched whether or not the new parse reads them again, and before it runs: a parse that throws below has still
+  // taken these accounts' rows, periods and anchors away
+  for (const old of stale) {
+    for (const accountId of supersedeFileContribution(db, old.id)) touchedAccounts.add(accountId);
+  }
 
   const institution = guessInstitution(db, file);
   // basename neutralizes traversal; truncation + control-strip neutralizes
@@ -1474,9 +1478,21 @@ function quarantinedIdsOn(db: AppDatabase, accountIds: readonly string[]): strin
     .map((r) => r.id);
 }
 
-/** Supersede everything an import file contributed (re-parse lifecycle). */
-function supersedeFileContribution(db: AppDatabase, oldFileId: string): void {
-  db.transaction((tx) => {
+/**
+ * Supersede everything an import file contributed (re-parse lifecycle). Returns every account it had written to —
+ * read before anything moves — for the caller to rebuild.
+ *
+ * 🔴 The import rebuilt only the accounts the NEW parse read. An account the retired version wrote and the new one
+ * does not (a section it now withholds, or every account when the new version cannot read the file) lost its rows,
+ * periods and anchors here and kept its daily_balances: `anchored` on a day no anchor names, provenance "checked
+ * through" a period that no longer exists, and a balance still counting superseded rows. Measured on a copy of the
+ * real ledger, 2026-09-16: re-reading the August 2026 Robinhood brokerage PDF at a bumped version that withholds
+ * #655929651's section left Robinhood Agentic `anchored` on 2026-08-31 (anchors only Jun 30 / Jul 31) and checked
+ * through 2026-08-31. With the scope: 08-31 carried, checked through 2026-07-31.
+ */
+function supersedeFileContribution(db: AppDatabase, oldFileId: string): string[] {
+  return db.transaction((tx) => {
+    const written = accountsWrittenBy(tx, oldFileId);
     tx.update(transactions)
       .set({ status: "superseded" })
       .where(and(eq(transactions.importFileId, oldFileId), inArray(transactions.status, ["active", "quarantined", "excluded"])))
@@ -1491,6 +1507,7 @@ function supersedeFileContribution(db: AppDatabase, oldFileId: string): void {
     // a parsed file's error is only ever the sections it withheld (`importOneFile`); its successor reads them again
     // and says for itself what is still missing, so the retired row must not keep claiming a section is absent
     tx.update(importFiles).set({ status: "superseded", error: null }).where(eq(importFiles.id, oldFileId)).run();
+    return written;
   });
 }
 
@@ -1702,7 +1719,9 @@ function legsLeftAloneBy(tx: AppDatabase, importFileId: string): StaleTransferLe
 
 /**
  * Every account an import file wrote to: its rows, its periods, its anchors.
- * Read BEFORE the delete — afterwards nothing names the file.
+ * Read BEFORE the delete — afterwards nothing names the file. Both paths that
+ * take a file's contribution away read it: `unimportFile` and
+ * `supersedeFileContribution`.
  *
  * 🔴 The rebuild scope was the accounts the file had ROWS on. A statement that
  * gave an account a period and a balance anchor and nothing else lost both and
