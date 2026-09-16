@@ -684,4 +684,58 @@ describe("a takeover hands the owner's verdict to the row that takes over", () =
     expect(row(first)!.status).toBe("superseded");
     expect(live(card, COFFEE_CENTS).map((t) => t.id)).toEqual([third]);
   });
+
+  /**
+   * A kept line can come back through the takeover branch: the QFX that
+   * printed it was un-imported, an export covering the day was imported, and
+   * the QFX comes back and takes the export's row over.
+   */
+  test("a kept line that returns by taking over an export's row retires its copy again", async () => {
+    const [first] = await importStatementFiles(bundle.db, [bothLinesQfx()]);
+    expect(first!.status).toBe("parsed");
+    const qfxFile = fileNamed(QFX)!;
+    const payment = rowsOfFile(qfxFile.id).find((t) => t.amountCents === PAYMENT_CENTS)!;
+    const card = payment.accountId;
+    const mirror = hand({ accountId: card, postedOn: "2026-03-03", amountCents: PAYMENT_CENTS, raw: "PAYMENT — Hand checking · 03/02" });
+    const candidateId = confirmPair(payment.id, mirror, "card_payment_mirror");
+    unimportFile(bundle.db, qfxFile.id);
+    expect(row(mirror)!.status).toBe("active");
+    await importStatementFiles(bundle.db, [exportCsv()]);
+    // the export's words are not the QFX's, so its line is no return of the kept one
+    expect(row(mirror)!.status).toBe("active");
+
+    const [back] = await importStatementFiles(bundle.db, [bothLinesQfx()]);
+
+    expect(back).toMatchObject({ status: "parsed", supersededTakeover: 2 });
+    expect(row(mirror)!.status).toBe("superseded");
+    const [kept] = live(card, PAYMENT_CENTS);
+    expect(live(card, PAYMENT_CENTS)).toHaveLength(1);
+    expect(kept!.importFileId).toBe(fileNamed(QFX)!.id);
+    expect(sides(candidateId)).toContain(kept!.id);
+  });
+
+  /**
+   * Only the copies whose own line the statement prints leave the identity
+   * pool. A copy standing in for a line the statement does not print is still
+   * the ledger's record of that charge, and another source's line for the same
+   * money on the same day is that charge.
+   */
+  test("a copy standing in for a line the statement does not print still absorbs another source's line for its money", async () => {
+    await importStatementFiles(bundle.db, [exportCsv()]);
+    const exported = fileNamed(EXPORT)!;
+    const coffee = rowsOfFile(exported.id).find((t) => t.amountCents === COFFEE_CENTS)!;
+    const card = coffee.accountId;
+    const copy = hand({ accountId: card, postedOn: coffee.postedOn, amountCents: COFFEE_CENTS, raw: "BLUE BOTTLE COFFEE" });
+    confirmPair(coffee.id, copy, "cross_source_same_day");
+    unimportFile(bundle.db, exported.id);
+    expect(row(copy)!.status).toBe("active");
+
+    const [outcome] = await importStatementFiles(bundle.db, [
+      cardQfx([{ day: coffee.postedOn, cents: COFFEE_CENTS, name: "BLUE BOTTLE COFFEE SF" }]),
+    ]);
+
+    expect(outcome).toMatchObject({ status: "parsed", inserted: 0, dedupedCrossFormat: 1 });
+    expect(row(copy)!.status).toBe("active");
+    expect(live(card, COFFEE_CENTS).map((t) => t.id)).toEqual([copy]);
+  });
 });

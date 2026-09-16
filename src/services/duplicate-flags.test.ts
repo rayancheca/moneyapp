@@ -466,7 +466,7 @@ describe("the recorded pair", () => {
     expect(flagDuplicateCandidates(bundle.db, [accountId])).toBe(0);
     expect(candidates()[0]!.resolution).toBe("confirmed_duplicate");
 
-    // the retired row returns (undone by hand, or restored by an un-import)
+    // the retired row returns (undone by hand)
     bundle.db.update(transactions).set({ status: "active" }).where(eq(transactions.id, b)).run();
 
     flagDuplicateCandidates(bundle.db, [accountId]);

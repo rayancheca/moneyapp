@@ -1271,10 +1271,12 @@ async function importOneFile(
         // …and a copy is retired again only for a line that became a row
         // here, in this transaction, so the charge is never counted twice. A
         // line owned elsewhere or absorbed by another record leaves its copy
-        // standing in.
+        // standing in. `written` holds only hashes this loop inserted, and the
+        // partial unique index allows one live row per hash, so each resolves
+        // to the row inserted here.
         const fresh = written.flatMap((h) => {
           const r = liveRowByHash(tx, accountId, h);
-          return r !== undefined && r.importFileId === fileRow.id ? [r] : [];
+          return r === undefined ? [] : [r];
         });
         for (const { standIn, keptId } of claimKeptSides(accountId, fresh, returning)) {
           retireStandIn(tx, accountId, standIn, keptId);
