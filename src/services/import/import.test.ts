@@ -390,6 +390,122 @@ describe("structured imports", () => {
   });
 });
 
+/**
+ * 🔴 Un-importing a statement unlinked the partner of every transfer leg it deleted, and nothing linked the pair again
+ * when the same line came back: detection pairs only what it can prove, and these pairs were linked by hand because it
+ * could not. The returning leg also came back without its "Credit Card Payment" category, so the card payment counted
+ * as spending. Measured on a copy of the real ledger, 2026-09-16: a round trip of 20260812-statements-3522-.pdf lost 7
+ * pairs and put $12,975.87 of July card payments into "Uncategorized" spending.
+ */
+describe("a transfer pair an un-import takes apart", () => {
+  const QFX = () => load("chase", "Chase4321_Activity_2024-07-01_2024-09-30.QFX");
+  let seq = 0;
+
+  function hand(accountId: string, postedOn: string, amountCents: number, raw: string): string {
+    seq += 1;
+    return bundle.db
+      .insert(transactions)
+      .values({
+        accountId,
+        postedOn,
+        amountCents,
+        rawDescription: raw,
+        normalizedDescription: normalizeDescription(raw),
+        dedupeHash: dedupeHash({ accountId, postedOn, amountCents, rawDescription: raw, occurrenceIndex: 1000 + seq }),
+      })
+      .returning({ id: transactions.id })
+      .get().id;
+  }
+
+  const row = (id: string) => bundle.db.select().from(transactions).where(eq(transactions.id, id)).get();
+  const liveTwin = (of: typeof transactions.$inferSelect) =>
+    bundle.db
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.accountId, of.accountId), eq(transactions.dedupeHash, of.dedupeHash), ne(transactions.status, "superseded")))
+      .get();
+  const groupOf = (groupId: string | null) =>
+    groupId === null ? [] : bundle.db.select().from(transactions).where(eq(transactions.transferGroupId, groupId)).all().map((t) => t.id).sort();
+
+  /** The QFX's first ungrouped outflow, linked by hand to a card payment entered without a file. */
+  async function linkedByHand(): Promise<{ fileId: string; leg: typeof transactions.$inferSelect; partner: string }> {
+    const { linkTransferPair } = await import("@/services/transfer-links");
+    await importStatementFiles(bundle.db, [QFX()]);
+    const fileId = bundle.db.select().from(importFilesTable).all()[0]!.id;
+    const leg = bundle.db
+      .select()
+      .from(transactions)
+      .where(eq(transactions.importFileId, fileId))
+      .all()
+      .find((t) => t.amountCents < 0 && t.transferGroupId === null && t.status === "active")!;
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const card = createAccount(bundle.db, { institutionId: chase.id, name: "Hand card", type: "credit" });
+    const partner = hand(card, leg.postedOn, -leg.amountCents + 150, "PAYMENT THANK YOU");
+    linkTransferPair(bundle.db, leg.id, partner);
+    return { fileId, leg: row(leg.id)!, partner };
+  }
+
+  test("importing the same line again links it to its partner again, with the category the pair had", async () => {
+    const { fileId, leg, partner } = await linkedByHand();
+    expect(leg).toMatchObject({ transferGroupId: leg.id, categorizationSource: "user" });
+
+    unimportFile(bundle.db, fileId);
+    expect(row(partner)!.transferGroupId).toBeNull();
+    await importStatementFiles(bundle.db, [QFX()]);
+
+    const back = liveTwin(leg)!;
+    expect(back.id).not.toBe(leg.id);
+    expect(back).toMatchObject({ transferGroupId: back.id, categoryId: leg.categoryId, categorizationSource: "user", needsReview: false });
+    expect(row(partner)!.transferGroupId).toBe(back.id);
+    expect(groupOf(back.id)).toEqual([back.id, partner].sort());
+  });
+
+  test("a partner linked again by hand in the meantime is left as the owner linked it", async () => {
+    const { linkTransferPair } = await import("@/services/transfer-links");
+    const { fileId, leg, partner } = await linkedByHand();
+    unimportFile(bundle.db, fileId);
+    // not the same money: the returning line must not dedupe against it
+    const other = hand(leg.accountId, leg.postedOn, leg.amountCents - 1, "SOMETHING ELSE");
+    linkTransferPair(bundle.db, other, partner);
+
+    await importStatementFiles(bundle.db, [QFX()]);
+
+    expect(row(partner)!.transferGroupId).toBe(other);
+    expect(groupOf(other)).toEqual([other, partner].sort());
+    expect(liveTwin(leg)!.transferGroupId).not.toBe(other);
+  });
+
+  /** The leg's line as another export of the same account prints it — the Chase deposit CSV — at `amountCents`. */
+  function exportOf(leg: typeof transactions.$inferSelect, amountCents: number): ImportInput {
+    const [y, m, d] = leg.postedOn.split("-");
+    const amount = (amountCents / 100).toFixed(2);
+    return {
+      name: `Chase4321_Activity_${amountCents}.CSV`,
+      buffer: Buffer.from(
+        ["Details,Posting Date,Description,Amount,Type,Balance,Check or Slip #", `DEBIT,${m}/${d}/${y},${leg.rawDescription},${amount},ACH_DEBIT,,`].join("\n"),
+      ),
+    };
+  }
+
+  test("the same money printed by another export links the pair too; a line of other money does not", async () => {
+    const { fileId, leg, partner } = await linkedByHand();
+    unimportFile(bundle.db, fileId);
+
+    await importStatementFiles(bundle.db, [exportOf(leg, leg.amountCents - 1)]);
+    expect(row(partner)!.transferGroupId).toBeNull();
+
+    await importStatementFiles(bundle.db, [exportOf(leg, leg.amountCents)]);
+    const back = bundle.db
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.accountId, leg.accountId), eq(transactions.amountCents, leg.amountCents), eq(transactions.postedOn, leg.postedOn)))
+      .all();
+    expect(back).toHaveLength(1);
+    expect(row(partner)!.transferGroupId).toBe(back[0]!.id);
+    expect(back[0]).toMatchObject({ transferGroupId: back[0]!.id, categoryId: leg.categoryId, categorizationSource: "user" });
+  });
+});
+
 describe("resolveAccount preferName (P0.1 settlement-cash routing)", () => {
   const hint = {
     institution: "Robinhood",
@@ -2297,6 +2413,23 @@ describe("a parser-version re-read that no longer writes an account", () => {
 
     expect(bundle.db.select().from(statementPeriods).where(eq(statementPeriods.accountId, kept)).all().map((p) => p.periodStart)).toEqual(["2026-01-01"]);
     expect(bundle.db.select().from(transactions).where(eq(transactions.accountId, kept)).all().map((t) => t.postedOn)).toEqual(["2026-01-10"]);
+  });
+
+  test("a transfer pair whose two legs one statement printed comes back together when the statement does", async () => {
+    const { linkTransferPair } = await import("@/services/transfer-links");
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    const march = liveFile(MARCH).id;
+    const [payroll, fuel] = [KEPT, WITH_ROWS].map((last4) => contributionOf(march).rows.find((r) => r.accountId === accountIdOf(last4))!);
+    linkTransferPair(bundle.db, fuel!.id, payroll!.id);
+    const linkedCategory = row(fuel!.id)!.categoryId;
+    expect(row(payroll!.id)!.categoryId).toBe(linkedCategory);
+
+    unimportFile(bundle.db, march);
+    await importStatementFiles(bundle.db, [MARCH]);
+
+    const [payrollBack, fuelBack] = [KEPT, WITH_ROWS].map((last4) => contributionOf(liveFile(MARCH).id).rows.find((r) => r.accountId === accountIdOf(last4))!);
+    expect(fuelBack).toMatchObject({ transferGroupId: fuelBack!.id, categorizationSource: "user", categoryId: linkedCategory });
+    expect(payrollBack).toMatchObject({ transferGroupId: fuelBack!.id, categorizationSource: "user", categoryId: linkedCategory });
   });
 
   test("the un-import confirmation counts what the second download keeps as kept, and the last download's as removed", async () => {

@@ -43,6 +43,7 @@ import { accountSlug, institutionSlug } from "./account-slug";
 import { ATTACHED, detachAttachedRows, keepRetiredAttachedRows, parsedFromFile, reattachDetachedRows } from "./attached-rows";
 import { handOverPrintedAnchors } from "./printed-anchors";
 import { copyHandOvers, forgetStatementCopies, handOverToCopies, handedRowIds, recordStatementCopy } from "./statement-copies";
+import { relinkReturningTransfers, rememberTransfersTakenApart } from "./unimported-transfers";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
 import { extractLines } from "./profiles/pdf-profile";
@@ -937,6 +938,9 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
   // with the file's own rows, as it did before the un-import — and this call
   // did not insert it, so the linking below may not claim it.
   const refiled = new Set(reattachDetachedRows(db, [...touchedAccounts]));
+  // A transfer an un-import took apart is whole again once the lines it lost are back — before categorization and
+  // detection read the returning legs as unpaired rows (`unimported-transfers`)
+  relinkReturningTransfers(db, rowIdsOfFiles(db, writtenFileIds).filter((id) => !refiled.has(id)));
   for (const accountId of touchedAccounts) rebuildAccount(db, accountId);
   if (touchedAccounts.size > 0) {
     categorizeAll(db);
@@ -2102,6 +2106,8 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
       detachAttachedRows(tx, importFileId);
       // after the restore (a restored twin is a live leg) and before the delete
       // (the rows naming the groups are still here to be read)
+      // …kept first, so importing the same lines again links the transfer again (`unimported-transfers`)
+      rememberTransfersTakenApart(tx, importFileId);
       detachTransferLegs(tx, legsLeftAloneBy(tx, importFileId));
       tx.delete(transactions).where(parsedFromFile(importFileId)).run();
       removeFileBalances(tx, importFileId);

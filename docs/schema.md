@@ -140,6 +140,11 @@ names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
   them kept) and the rows filed by hand on the period's days to the most recently imported
   other download that is still parsed; only un-importing the last download removes them. A
   re-parse hands nothing over — the new read writes the period and its rows again.
+  A **transfer** the un-import takes apart (a deleted leg whose partner stays alone, or a pair
+  whose legs were all the file's) is kept in `unimported_transfer_legs` — the deleted legs by
+  content and the category the pair gave them, the staying leg by id — and linked again, with
+  that category, when an import writes the same lines; a staying leg the owner has linked
+  elsewhere meanwhile ends it.
   Unlike a re-parse it is **destructive to user work** — those rows
   leave the database, so their categories, notes, links and splits go with them (a pre-mutation
   snapshot is taken so the operation is recoverable).
