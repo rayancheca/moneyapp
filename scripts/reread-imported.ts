@@ -86,4 +86,7 @@ export const LEDGER_TABLES = [
   "accounts",
   "transaction_splits",
   "duplicate_candidates",
+  // what un-imports keep for a later import to give back — a backfill never touches it
+  "unimported_transfer_legs",
+  "unimported_row_attributes",
 ] as const;

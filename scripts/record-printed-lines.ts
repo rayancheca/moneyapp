@@ -43,7 +43,7 @@ import { transactions } from "@/db/schema/transactions";
 import { findAccountId, storedLines } from "@/services/import/service";
 import { appendPrintedLines, printedLineOf, printerHandOvers, type PrintedLine } from "@/services/import/printed-lines";
 import { copyHandOvers } from "@/services/import/statement-copies";
-import { dbTargetFrom, strayFlags } from "./db-target";
+import { dbTargetFrom, unknownArguments } from "./db-target";
 import { onRehearsalCopy, sha256Json } from "./guarded-write-harness";
 import { LEDGER_TABLES, rereadImported, wholeNumberFlag } from "./reread-imported";
 
@@ -169,8 +169,8 @@ function writeAndGuard(bundle: DbBundle, planned: readonly PlannedLines[], snaps
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  const stray = strayFlags(argv, ["--db", "--confirm", "--scratch", "--offset", "--limit"]);
-  if (stray.length > 0) throw new Error(`unknown flag(s): ${stray.join(" ")}`);
+  const stray = unknownArguments(argv, ["--db", "--confirm", "--scratch", "--offset", "--limit"]);
+  if (stray.length > 0) throw new Error(`unknown argument(s): ${stray.join(" ")}`);
   const target = dbTargetFrom(argv, { flag: "--db", required: true, cwd: process.cwd(), exists: fs.existsSync });
   const scratch = argv.find((a) => a.startsWith("--scratch="))?.slice("--scratch=".length) ?? os.tmpdir();
   if (!fs.existsSync(scratch)) throw new Error(`no scratch directory at ${scratch}`);

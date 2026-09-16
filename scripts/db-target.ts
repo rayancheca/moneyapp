@@ -88,6 +88,15 @@ export function strayFlags(argv: readonly string[], known: readonly string[]): s
 }
 
 /**
+ * Every argument a script that takes ONLY flags does not know: a stray `--flag`, and anything else at all. 🔴 A
+ * backfill ran a dry run and exited 0 on `-confirm` or a bare `confirm` (measured on a copy of the real ledger,
+ * 2026-09-16), which reads like a write that happened.
+ */
+export function unknownArguments(argv: readonly string[], known: readonly string[]): string[] {
+  return argv.filter((a) => !a.startsWith("--") || strayFlags([a], known).length > 0);
+}
+
+/**
  * Where an import against `target` archives the originals it reads.
  *
  * The real ledger archives where the service always has (`undefined`: its own

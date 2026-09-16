@@ -1,6 +1,6 @@
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { DbTargetRefusal, dbTargetFrom, originalsDirFor, strayFlags, type DbTargetOptions } from "./db-target";
+import { DbTargetRefusal, dbTargetFrom, originalsDirFor, strayFlags, unknownArguments, type DbTargetOptions } from "./db-target";
 
 const CWD = "/repo";
 const REAL = path.join(CWD, "data", "moneyapp.db");
@@ -97,6 +97,27 @@ describe("strayFlags — a flag the script does not know is refused, not ignored
       "--dbx=/a.db",
       "--confirmed",
       "--name=Robinhood Agentic Cash",
+    ]);
+  });
+});
+
+/**
+ * 🔴 A backfill takes no positional argument, and `strayFlags` refuses only what starts with `--`: on a copy of the real
+ * ledger, 2026-09-16, `record-account-numbers.ts --db=<copy> -confirm` (and `… confirm`) ran a dry run and exited 0.
+ */
+describe("unknownArguments — a script that takes only flags refuses anything else", () => {
+  const KNOWN = ["--db", "--confirm", "--scratch"];
+
+  test("known flags pass, bare or with a value", () => {
+    expect(unknownArguments([`--db=${COPY}`, "--confirm", "--scratch=/tmp"], KNOWN)).toEqual([]);
+  });
+
+  test("a single-dash flag, a bare word and a misspelled flag are each refused", () => {
+    expect(unknownArguments([`--db=${COPY}`, "-confirm", "confirm", "--confrim", "—confirm"], KNOWN)).toEqual([
+      "-confirm",
+      "confirm",
+      "--confrim",
+      "—confirm",
     ]);
   });
 });
