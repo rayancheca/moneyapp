@@ -18,7 +18,7 @@ import { emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { activeTxnsInRange, loadCategoryIndex, spendingBucket, uncategorizedWhere } from "./analytics";
 import { handTypedDays } from "./anchor-winners";
-import { accountCoverage, closedChainDays, type AccountCoverage, type CoverageGrade } from "./coverage";
+import { accountCoverage, chainFooting, footingThrough, type AccountCoverage, type CoverageGrade } from "./coverage";
 import {
   derivesFromHoldings,
   heldBalanceAnchor,
@@ -307,7 +307,7 @@ function marketValueBadgeWord(pricedFromHoldings: boolean): string | undefined {
  * One account's stored chain, read the way `accountCoverage` grades it: which
  * days close, the newest that does, and which recorded balance a day stands on.
  *
- * ⛔ `closedChainDays` is the rule, so a balance proof and a row's sheet cannot
+ * ⛔ `chainFooting` is the rule, so a balance proof and a row's sheet cannot
  * call a day checked that /imports and every total call unchecked. The anchors
  * are the replay's own (`loadReplayAnchors`), so the balance a day is said to
  * stand on is the one the rebuild used.
@@ -315,6 +315,8 @@ function marketValueBadgeWord(pricedFromHoldings: boolean): string | undefined {
 interface ChainFacts {
   winners: ReplayAnchor[];
   closed: ReadonlySet<string>;
+  /** days that stand on a count of his and nothing else — `chainFooting` */
+  counted: ReadonlySet<string>;
   /** the newest day on a closed chain — what "checked through" may name */
   lastClosed: string | null;
 }
@@ -327,8 +329,8 @@ function chainFacts(db: AppDatabase, accountId: string): ChainFacts {
     .where(eq(dailyBalances.accountId, accountId))
     .orderBy(asc(dailyBalances.day))
     .all();
-  const closed = closedChainDays(balances, handTypedDays(winners));
-  return { winners, closed, lastClosed: [...closed].at(-1) ?? null };
+  const { closed, counted } = chainFooting(balances, handTypedDays(winners));
+  return { winners, closed, counted, lastClosed: [...closed].at(-1) ?? null };
 }
 
 /** The source of the balance recorded ON a day, when one was — the day's winner. */
@@ -345,6 +347,11 @@ function restingOn(chain: ChainFacts, day: string): Pick<ReplayAnchor, "anchored
   return selectEndpoints(chain.winners).endpoints.filter((e) => e.anchoredOn <= day).at(-1) ?? null;
 }
 
+/** The replay endpoint after a day — where a replay across it lands. */
+function nextEndpoint(chain: ChainFacts, day: string): Pick<ReplayAnchor, "anchoredOn" | "source"> | null {
+  return selectEndpoints(chain.winners).endpoints.find((e) => e.anchoredOn > day) ?? null;
+}
+
 /**
  * A cash day's balance in this service's vocabulary — ONE rule for an
  * account's balance proof and the day line on a row's sheet.
@@ -353,9 +360,15 @@ function restingOn(chain: ChainFacts, day: string): Pick<ReplayAnchor, "anchored
  * closed chain reaches: carried is "as proven as the balance it came from", and
  * that balance is his count. Carried from a statement, or from a count the
  * replay landed on, it still adds up.
+ *
+ * 🔴 …and so is a replay from one of his counts onto another. It read "adds up"
+ * under "Every transaction was replayed forward from a recorded balance and
+ * landed exactly on the next one" when both balances were his (real ledger
+ * copy with a second Cash on Hand count, 2026-09-16).
  */
 function cashDayVerdict(chain: ChainFacts, day: string, basis: BalanceBasis): ProvenanceVerdict {
   if (basis === "anchored" && recordedOn(chain, day) === "manual") return "manual";
+  if (chain.counted.has(day)) return "manual";
   if (basis === "carried") {
     const from = restingOn(chain, day);
     if (from?.source === "manual" && !chain.closed.has(from.anchoredOn)) return "manual";
@@ -796,6 +809,11 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
   const chain = isInvestment(account.type) ? null : chainFacts(db, accountId);
   const verdict: ProvenanceVerdict = chain === null ? "market_value" : cashDayVerdict(chain, row.day, row.basis);
   const resting = chain === null ? null : restingOn(chain, row.day);
+  // a replay that stands on his counts alone names both of them
+  const countedReplay =
+    chain !== null && row.basis === "derived" && chain.counted.has(row.day) && resting !== null
+      ? { from: resting.anchoredOn, to: nextEndpoint(chain, row.day)?.anchoredOn ?? null }
+      : null;
   const sources: ProvenanceSource[] = anchor ? [anchor.source] : [];
 
   // periods covering this day, and what each concluded
@@ -823,6 +841,7 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
       pricedFromHoldings,
       recordedOn: held?.anchoredOn ?? null,
       countedOn: resting?.source === "manual" && resting.anchoredOn !== row.day ? resting.anchoredOn : null,
+      countedReplay,
     }),
     sources,
     checkedThrough: chain?.lastClosed ?? null,
@@ -843,7 +862,13 @@ function headlineForBalance(
   basis: BalanceBasis,
   day: string,
   recordedBy: string | null,
-  value: { pricedFromHoldings: boolean; recordedOn: string | null; countedOn: string | null },
+  value: {
+    pricedFromHoldings: boolean;
+    recordedOn: string | null;
+    countedOn: string | null;
+    /** a replay from one count of his onto the next: the two days he counted */
+    countedReplay: { from: string; to: string | null } | null;
+  },
 ): string {
   const on = readableDay(day);
   if (isInvestment(type)) {
@@ -871,6 +896,13 @@ function headlineForBalance(
       if (recordedBy === "live") return `A live reading records ${name}'s balance on ${on}.`;
       return `A statement records ${name}'s balance on ${on} directly. This is the number the bank printed.`;
     case "derived":
+      if (value.countedReplay !== null) {
+        const onto =
+          value.countedReplay.to === null
+            ? "the next balance you recorded"
+            : `the one you recorded on ${readableDay(value.countedReplay.to)}`;
+        return `Every transaction was replayed forward from the balance you recorded on ${readableDay(value.countedReplay.from)} and landed exactly on ${onto}. Both are your own counts, so nothing else confirms ${name} on ${on}.`;
+      }
       return `Every transaction was replayed forward from a recorded balance and landed exactly on the next one, through ${on}.`;
     case "derived_unverified":
       return `Replayed past ${counted ?? "the last recorded balance"}, so nothing checks ${name} on ${on}. The rows are real; the total is unconfirmed.`;
@@ -1101,20 +1133,29 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
    *
    * ⚠️ `market_value` and `manual` accounts stay out: neither has an arithmetic
    * chain to stop, which the same card says of them in their own words.
+   *
+   * 🔴 …and an account resting on his count stays IN, at the day before nothing
+   * stands under it — `footingThrough` has the rule and its measurement. That
+   * day is his word, so the sentence says whose it is.
    */
-  const closed = coverage
-    .filter((c) => (c.grade === "verified" || c.grade === "unverified" || c.grade === "broken") && c.verifiedThrough)
-    .map((c) => c.verifiedThrough!)
-    .sort();
+  const bounds = coverage
+    .map((c) => ({ name: c.accountName, bound: footingThrough(c) }))
+    .filter((b): b is { name: string; bound: { day: string; byCount: boolean } } => b.bound !== null)
+    .sort((a, b) => (a.bound.day < b.bound.day ? -1 : a.bound.day > b.bound.day ? 1 : 0));
+  // the OLDEST bound bounds the whole figure: the total cannot be proven past
+  // the first account that stops being checked
+  const checkedThrough = bounds[0]?.bound.day ?? null;
+  const countBound = bounds.find((b) => b.bound.day === checkedThrough && b.bound.byCount);
+  const countText = countBound
+    ? ` The date it is checked through, ${readableDay(countBound.bound.day)}, is the last day ${countBound.name} rests on the balance you counted — your word, not a check.`
+    : "";
 
   return {
     verdict,
     badgeWord: `${proven} of ${counted} add up`,
-    headline: `${parts.join(", ")}. A total is only as proven as its weakest part.${holeText ? ` ⚠️ ${holeText}.` : ""}`,
+    headline: `${parts.join(", ")}. A total is only as proven as its weakest part.${holeText ? ` ⚠️ ${holeText}.` : ""}${countText}`,
     sources: [],
-    // the OLDEST closed account bounds the whole figure: the total cannot be
-    // proven past the first account that stops being checked
-    checkedThrough: closed[0] ?? null,
+    checkedThrough,
     inputs,
   };
 }

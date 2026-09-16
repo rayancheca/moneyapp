@@ -447,10 +447,19 @@ describe("trustCard — checked through", () => {
     ]);
     addTxn("b", "2026-08-25");
 
+    /*
+     * 🔴 …and leaving it out of the comparison let the date run past the day this
+     * card calls unchecked: "checked through Aug 25" over "nothing checks it
+     * since Aug 11". His count stands through Aug 10, so that is the bound, and
+     * the card's sentence says whose word it is.
+     */
     const card = trustCard(bundle.db, TODAY)!;
-    expect(card.checkedThrough).toBe("2026-08-25");
+    expect(card.checkedThrough).toBe("2026-08-10");
     const line = card.groups.flatMap((g) => g.accounts).find((a) => a.name === "Cash on Hand")!;
     expect(line.detail).toBe("you counted it on Aug 3, 2026, and nothing checks it since Aug 11, 2026");
+    expect(card.summary).toMatch(
+      /The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check\.$/,
+    );
   });
 
   test("nothing verified means no date at all, never today", () => {

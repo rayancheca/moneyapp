@@ -48,11 +48,21 @@ export interface RemoveBalanceInput {
 }
 
 /**
- * What a recorded balance does to the days it reaches, in words. ⛔ Two sets,
- * chosen by the branch the derivation takes (`effect.isInvestment`), never by a
- * verdict: on a cash or credit account a balance closes transaction arithmetic
- * and VERIFIES those days; on an investment account with no holdings the curve is
- * its recorded balances held flat, and a balance only SETS a value.
+ * What a recorded balance does to the days it reaches, in words. ⛔ Chosen by the
+ * branch the derivation takes (`effect.isInvestment`), never by a verdict: on a
+ * cash or credit account a balance closes transaction arithmetic and VERIFIES
+ * those days; on an investment account with no holdings the curve is its
+ * recorded balances held flat, and a balance only SETS a value.
+ *
+ * ⛔ …and on a cash account, by what the lost days stood on (`lostCountedDays`,
+ * `chainFooting`'s rule): a count of his that nothing closes verifies nothing,
+ * so the days that lose it are said to lose his count.
+ *
+ * 🔴 Cash on Hand's only balance, the $5,000.00 he typed for Aug 3, 2026, read
+ * "This balance is what verifies Cash on Hand on Aug 3 – 10, 2026 · Days that
+ * stop being verified: 8 days" while the balance popover on the same page called
+ * Aug 3 and Aug 5 "you entered it" with no checked-through date (real ledger
+ * copy, 2026-09-16).
  *
  * 🔴 The investment dialog read "This balance is what verifies Bare holding on
  * Jul 1 – 4, 2026" and "Days that stop being verified: 4 days", while
@@ -93,8 +103,42 @@ const HELD_WORDS: RemovalWords = {
   restores: "Record the balance again to restore these days.",
 };
 
-const wordsFor = (effect: AnchorRemovalEffect): RemovalWords =>
-  !effect.pricedFromHoldings && effect.isInvestment ? HELD_WORDS : CHECKED_WORDS;
+const COUNTED_WORDS: RemovalWords = {
+  lostLabel: "Days that lose the balance you counted",
+  alone: (name, place) => `${name} rests on this balance on ${place}.`,
+  // a re-based day may stand on his count or on a check: name neither
+  rebasedDay: "day",
+  noneLost: CHECKED_WORDS.noneLost,
+  keeps: CHECKED_WORDS.keeps,
+  recordAgain: CHECKED_WORDS.recordAgain,
+  restores: "Record the balance again to restore these days.",
+};
+
+function wordsFor(effect: AnchorRemovalEffect): RemovalWords {
+  if (effect.pricedFromHoldings) return CHECKED_WORDS;
+  if (effect.isInvestment) return HELD_WORDS;
+  // every lost day stood on his count alone; a mix keeps the verified words and splits the count
+  return effect.lostDays > 0 && effect.lostCountedDays === effect.lostDays ? COUNTED_WORDS : CHECKED_WORDS;
+}
+
+/**
+ * The lost-day lines: one per footing the days had, so a day on his count is
+ * never added into "stop being verified".
+ */
+function lostLines(effect: AnchorRemovalEffect): BlastRadiusLine[] {
+  if (effect.pricedFromHoldings) {
+    return [{ label: CHECKED_WORDS.lostLabel, value: "none — the curve comes from holdings" }];
+  }
+  const words = wordsFor(effect);
+  if (words !== CHECKED_WORDS) return [{ label: words.lostLabel, value: countPhrase(effect.lostDays, "day") }];
+  const verified = {
+    label: CHECKED_WORDS.lostLabel,
+    value: countPhrase(effect.lostDays - effect.lostCountedDays, "day"),
+  };
+  return effect.lostCountedDays === 0
+    ? [verified]
+    : [verified, { label: COUNTED_WORDS.lostLabel, value: countPhrase(effect.lostCountedDays, "day") }];
+}
 
 export function removeBalanceRadius(input: RemoveBalanceInput): BlastRadius {
   const { effect } = input;
@@ -102,12 +146,7 @@ export function removeBalanceRadius(input: RemoveBalanceInput): BlastRadius {
     headline: removeBalanceHeadline(input.accountName, effect),
     lines: [
       { label: `${input.recorded.label}, as recorded`, value: input.recorded.value, irreversible: true },
-      {
-        label: wordsFor(effect).lostLabel,
-        value: effect.pricedFromHoldings
-          ? "none — the curve comes from holdings"
-          : countPhrase(effect.lostDays, "day"),
-      },
+      ...lostLines(effect),
       ...catchUpLines(effect),
       { label: "Recorded balances left on this account", value: countPhrase(input.balancesLeft, "balance") },
     ],
@@ -120,7 +159,7 @@ function removeBalanceHeadline(name: string, effect: AnchorRemovalEffect): strin
     return `${name} is priced from its holdings, so this recorded balance verifies nothing and plays no part in its curve.`;
   }
   const words = wordsFor(effect);
-  const alone = effect.lostDays > 0 ? `${words.alone(name, lostPlace(effect))} ` : "";
+  const alone = effect.lostDays > 0 ? `${aloneSentence(name, effect, words)} ` : "";
   if (effect.daysLeft === 0) {
     return `${alone}It is the only balance ${name} has, so removing it leaves nothing to derive a curve from, and every day comes off it.`;
   }
@@ -138,6 +177,18 @@ function removeBalanceHeadline(name: string, effect: AnchorRemovalEffect): strin
     return `${words.noneLost(name)}, but it sets the balance on ${countPhrase(effect.rebasedDays, words.rebasedDay)}, so removing it re-derives ${countPhrase(effect.changedDays, "day")} from the balances around it.`;
   }
   return `This balance pins no day of ${name} that another balance does not already pin, but removing it re-derives ${countPhrase(effect.changedDays, "day")} from the balances around it.`;
+}
+
+/**
+ * What the balance is to the days only it reaches. A mix of verified days and
+ * days on his count says both: the account rests on it there, and it verifies
+ * only some of them.
+ */
+function aloneSentence(name: string, effect: RemovalEffect, words: RemovalWords): string {
+  const place = lostPlace(effect);
+  if (words !== CHECKED_WORDS || effect.lostCountedDays === 0) return words.alone(name, place);
+  const verified = countPhrase(effect.lostDays - effect.lostCountedDays, "day");
+  return `${name} rests on this balance on ${place}, and it verifies ${verified} of them.`;
 }
 
 /** One run names its window; runs with a hole between them are a count within it. */

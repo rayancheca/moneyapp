@@ -6,7 +6,7 @@ import { balanceAnchors, dailyBalances, type BalanceBasis } from "@/db/schema/ba
 import { statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
-import { diffDays, todayIso } from "@/lib/dates";
+import { addDays, diffDays, todayIso } from "@/lib/dates";
 import { ACCOUNT_ORDER } from "./account-order";
 import { handTypedDays, pickWinners } from "./anchor-winners";
 
@@ -117,36 +117,129 @@ export function balanceDayIsExact(accountType: AccountType, basis: BalanceBasis)
  * ⛔ A typed balance IS checked when a closed span reaches it: the replay from
  * the previous balance landed exactly on his number (`derived` the day before),
  * or nothing posted and the previous balance agreed (`carried` the day before —
- * which only ever sits between two recorded balances that agree) AND that
- * previous balance was itself checked. Two counts of his agreeing check nothing.
- * A day `pickWinners` gives to a statement or a bank export is theirs, not his.
+ * which only ever sits between two recorded balances that agree) — AND, either
+ * way, that previous balance was itself checked. Two counts of his agreeing
+ * check nothing. A day `pickWinners` gives to a statement or a bank export is
+ * theirs, not his.
  *
  * ⚠️ Conservative where the cache cannot say: when his balance is recorded the
  * day right after another one (no day between), `deriveCashSpans` writes no
  * row that shows whether the replay landed, so the day is not counted.
  *
  * Reads the stored rows as given, oldest first; the row before a day is the
- * previous stored day.
+ * previous stored day. `chainFooting` is the rule; this is its closed half.
  */
 export function closedChainDays(
   balances: readonly { day: string; basis: BalanceBasis }[],
   handTyped: ReadonlySet<string>,
 ): Set<string> {
+  return chainFooting(balances, handTyped).closed;
+}
+
+/** What a cash account's stored days stand on — see `chainFooting`. */
+export interface ChainFooting {
+  /** days on a closed chain, oldest first — `closedChainDays` */
+  closed: Set<string>;
+  /**
+   * Days that stand on a count of his and nothing else: a count no closed span
+   * reaches, a replay from such a count onto another count of his, and a day
+   * carried from such a count. `carried` from a balance that closes is in
+   * neither set: it is checked (`basisIsChecked`) without being a closed day.
+   */
+  counted: Set<string>;
+}
+
+/**
+ * The ONE walk that decides which days close and which rest only on his count.
+ *
+ * 🔴 A SPAN BETWEEN TWO OF HIS COUNTS CLOSED. Every `derived` day counted, and
+ * so did his count at its end, so a count, a row he entered and a second count
+ * agreeing with them read as a checked chain. Measured 2026-09-16 on a copy of
+ * the real ledger: recording Cash on Hand at $0.00 for Aug 12, 2026 through
+ * `addManualAnchor` (after the $5,000.00 car down payment he entered by hand on
+ * Aug 11) made Aug 4–11 `derived`, and the account read `verified` through Aug
+ * 12 — "closes to the cent through Aug 12, 2026" on /imports, "8 of 13 accounts
+ * add up against a document" in net worth — with no document at all.
+ *
+ * ⛔ Decided per span, not per row: a replay closes unless it runs from a count
+ * of his that nothing closes onto another count of his — a balance he typed
+ * never reads "checked" on his own word, however many times he gives it. A
+ * replay onto a statement closes whatever it starts from; a replay from a
+ * balance that closed carries that check to the count it lands on — the rule
+ * `carried` already followed.
+ *
+ * ❓ The owner's call, still open: whether rows IMPORTED from a document between
+ * two of his counts make the span a check. This takes the conservative answer
+ * (they do not); the other is to close a span with at least one imported row.
+ *
+ * ⚠️ A replay with no recorded balance after it in the rows given (a sparse
+ * fixture; the rebuild never writes one) closes, as every `derived` day did.
+ */
+export function chainFooting(
+  balances: readonly { day: string; basis: BalanceBasis }[],
+  handTyped: ReadonlySet<string>,
+): ChainFooting {
   const closed = new Set<string>();
-  let previousAnchorClosed = false;
-  balances.forEach((b, i) => {
+  const counted = new Set<string>();
+  // whether the newest recorded balance closes; null before the first one
+  let anchorClosed: boolean | null = null;
+  let before: BalanceBasis | undefined;
+  let replay: string[] = [];
+  for (const b of balances) {
     if (b.basis === "derived") {
-      closed.add(b.day);
-      return;
+      replay = [...replay, b.day];
+      before = b.basis;
+      continue;
     }
-    if (b.basis !== "anchored") return;
-    const before = balances[i - 1]?.basis;
-    const isClosed =
-      !handTyped.has(b.day) || before === "derived" || (before === "carried" && previousAnchorClosed);
-    if (isClosed) closed.add(b.day);
-    previousAnchorClosed = isClosed;
-  });
-  return closed;
+    const onCount = b.basis === "anchored" && handTyped.has(b.day);
+    const replayCloses: boolean = !(anchorClosed === false && onCount);
+    for (const day of replay) (replayCloses ? closed : counted).add(day);
+    replay = [];
+    if (b.basis === "anchored") {
+      const isClosed: boolean =
+        !onCount || (before === "derived" && replayCloses) || (before === "carried" && anchorClosed === true);
+      (isClosed ? closed : counted).add(b.day);
+      anchorClosed = isClosed;
+    } else if (b.basis === "carried" && anchorClosed === false) {
+      counted.add(b.day);
+    }
+    before = b.basis;
+  }
+  for (const day of replay) closed.add(day);
+  return { closed, counted };
+}
+
+/**
+ * The last day an account's balances still stand on something, for a figure
+ * that "stops being proven at the first account that stops being checked" —
+ * and whether that day is his count's rather than a check's. Null for an
+ * account with no chain to stop (`market_value`, `manual`, `unknown`), and for
+ * one nothing ever stood under.
+ *
+ * 🔴 A COUNT LEFT THE COMPARISON ALTOGETHER. Once his count stopped being a
+ * `verifiedThrough`, net worth filtered Cash on Hand out of "the oldest
+ * account" and its date ran past the day the same popover calls unchecked.
+ * Measured 2026-09-16 on a copy of the real ledger with SoFi (the Jul 31 bound)
+ * set aside: "Checked through 2026-08-12" beside "Cash on Hand — you counted it
+ * on Aug 3, 2026, and nothing checks it since Aug 11, 2026".
+ *
+ * ⛔ A count bounds the picture at the day before nothing stands under it, and
+ * the sentence that prints the date says that day is his word (`netWorth`). An
+ * account resting on his count to its newest day bounds nothing, exactly as an
+ * account he counts outright (`manual`) does not.
+ *
+ * ❓ The owner's call, still open: the other answer keeps the count out of the
+ * date and has the sentence say an account nothing ever checked is left out.
+ * This one is taken because it never dates the picture past a day the same
+ * popover calls unchecked.
+ */
+export function footingThrough(c: AccountCoverage): { day: string; byCount: boolean } | null {
+  if (c.grade !== "verified" && c.grade !== "unverified" && c.grade !== "broken") return null;
+  if (c.verifiedThrough !== null) return { day: c.verifiedThrough, byCount: false };
+  if (c.countedOn !== null && c.uncheckedSince !== null) {
+    return { day: addDays(c.uncheckedSince, -1), byCount: true };
+  }
+  return null;
 }
 
 export interface AccountCoverage {

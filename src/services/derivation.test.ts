@@ -441,7 +441,7 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
         (nextExclusive === undefined || compareDates(r.day, nextExclusive) < 0),
     ).length;
 
-  const NO_LOST_DAYS = { lostDays: 0, lostRuns: [], lostTo: { unverified: 0, gap: 0, gone: 0 } };
+  const NO_LOST_DAYS = { lostDays: 0, lostRuns: [], lostTo: { unverified: 0, gap: 0, gone: 0 }, lostCountedDays: 0 };
   /** no day differs, so the account keeps every row it has */
   const nothing = (daysLeft: number) => ({
     ...NO_LOST_DAYS,
@@ -515,6 +515,9 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
       // every row goes: nothing is left to derive the account from, so the lost
       // days lose their balance outright — and the unverified Aug 11 – 14 go too
       lostTo: { unverified: 0, gap: 0, gone: 8 },
+      // 🔴 and not one of them was verified: the balance is one he typed, and
+      // nothing is replayed onto it (see `chainFooting`)
+      lostCountedDays: 8,
       rebasedDays: 0,
       daysLeft: 0,
       changedDays: 12,
@@ -560,6 +563,8 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
       lostDays: 8,
       lostRuns: [{ from: "2026-07-05", to: "2026-07-12" }],
       lostTo: { unverified: 8, gap: 0, gone: 0 },
+      // the statement's replay lands on his balance, so each of them was verified
+      lostCountedDays: 0,
       rebasedDays: 0,
       daysLeft: 12,
       changedDays: 8,
@@ -608,6 +613,7 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
       lostRuns: [{ from: today, to: today }],
       // the forward walk from Jul 1 still reaches today, unchecked
       lostTo: { unverified: 1, gap: 0, gone: 0 },
+      lostCountedDays: 0,
       rebasedDays: 0,
       daysLeft: 6,
       changedDays: 1,
@@ -679,6 +685,8 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
       lostRuns: [{ from: "2026-07-01", to: "2026-07-09" }],
       // the backward walk from Jul 10 still reaches every one of them
       lostTo: { unverified: 9, gap: 0, gone: 0 },
+      // Jul 1 is his count and nothing reaches it; Jul 2 – 9 close on the statement
+      lostCountedDays: 1,
       rebasedDays: 0,
       daysLeft: 14,
       changedDays: 9,
@@ -708,6 +716,7 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
       lostRuns: [{ from: "2026-07-01", to: "2026-07-09" }],
       // Jul 4 – 9 are walked back from Jul 10; Jul 1 – 3 are before the walk ends
       lostTo: { unverified: 6, gap: 0, gone: 3 },
+      lostCountedDays: 1,
       rebasedDays: 0,
       daysLeft: 9,
       changedDays: 9,
@@ -735,6 +744,7 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
       lostDays: 9,
       lostRuns: [{ from: "2026-07-02", to: "2026-07-10" }],
       lostTo: { unverified: 0, gap: 9, gone: 0 },
+      lostCountedDays: 0,
       rebasedDays: 0,
       daysLeft: 22,
       changedDays: 9,
@@ -753,6 +763,8 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
       lostDays: 4,
       lostRuns: [{ from: "2026-07-01", to: "2026-07-04" }],
       lostTo: { unverified: 0, gap: 0, gone: 4 },
+      // a step-held value is never a replay onto a count
+      lostCountedDays: 0,
       rebasedDays: 0,
       daysLeft: 4,
       changedDays: 4,
@@ -782,6 +794,8 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
         { from: "2026-06-09", to: "2026-06-26" },
       ],
       lostTo: { unverified: 0, gap: 18, gone: 1 },
+      // the exports are moments while his balance exists: every lost day stood on his count
+      lostCountedDays: 19,
       // Jun 27 – Jul 2: carried at $0.00, then at the export's $20.00
       rebasedDays: 6,
       daysLeft: 25,
@@ -806,6 +820,7 @@ describe("removalEffect — what removing a recorded balance un-verifies", () =>
         { from: "2026-07-09", to: "2026-07-11" },
       ],
       lostTo: { unverified: 3, gap: 3, gone: 0 },
+      lostCountedDays: 6,
       // Jul 8 and Jul 12 – 14 stay verified, at the readings' figures
       rebasedDays: 4,
       daysLeft: 15,

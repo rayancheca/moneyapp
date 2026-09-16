@@ -13,6 +13,7 @@ import { transactions } from "@/db/schema/transactions";
 import { BALANCE_BASES } from "@/db/schema/balances";
 import { ACCOUNT_TYPES } from "@/db/schema/accounts";
 import { accountCoverage, balanceDayIsExact, basisIsChecked } from "./coverage";
+import { rebuildAccount } from "./derivation";
 
 /**
  * Coverage grading exists because the two questions "is this account's money
@@ -631,6 +632,120 @@ describe("a balance he typed checks nothing on its own", () => {
     expect(only(id).grade).toBe("verified");
     expect(only(id).verifiedThrough).toBe("2026-08-03");
     expect(only(id).countedOn).toBeNull();
+  });
+});
+
+describe("two counts of his do not check each other, through the rebuild", () => {
+  /*
+   * 🔴 A SECOND COUNT BROUGHT "CLOSES TO THE CENT" BACK. Measured 2026-09-16 on
+   * a copy of the real ledger: recording Cash on Hand at $0.00 for Aug 12, 2026
+   * — the wallet after the $5,000.00 car down payment he entered by hand on Aug
+   * 11 — through `addManualAnchor` made Aug 4–11 `derived` and the account
+   * `verified` through Aug 12. /imports read "closes to the cent through Aug 12,
+   * 2026", the net-worth count "8 of 13 accounts add up against a document" and
+   * every balance proof "Checked through 2026-08-12", of an account with no
+   * document at all. His own row reconciling two of his own counts is his word
+   * three times, not a check.
+   *
+   * ⛔ A replay between two of his counts closes only when the count it starts
+   * from is itself closed — the rule a carry between them already followed.
+   */
+  const REBUILT_ON = "2026-09-16";
+
+  function anchorAt(accountId: string, day: string, source: "manual" | "statement", cents: number): void {
+    const now = new Date().toISOString();
+    bundle.db
+      .insert(balanceAnchors)
+      .values({ accountId, anchoredOn: day, balanceCents: cents, source, createdAt: now, updatedAt: now })
+      .run();
+  }
+
+  function rowAt(accountId: string, day: string, cents: number): void {
+    const now = new Date().toISOString();
+    txnSeq += 1;
+    bundle.db
+      .insert(transactions)
+      .values({
+        id: `txn-${txnSeq}`,
+        accountId,
+        postedOn: day,
+        amountCents: cents,
+        rawDescription: "CAR DOWN PAYMENT",
+        normalizedDescription: "car down payment",
+        status: "active",
+        needsReview: false,
+        occurrenceIndex: 0,
+        dedupeHash: `hash-${txnSeq}`,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+  }
+
+  const storedBasis = (accountId: string, day: string) =>
+    bundle.db
+      .select()
+      .from(dailyBalances)
+      .where(eq(dailyBalances.accountId, accountId))
+      .all()
+      .find((r) => r.day === day)?.basis;
+
+  const at = (accountId: string, today: string) =>
+    accountCoverage(bundle.db, today).find((c) => c.accountId === accountId)!;
+
+  test("a count, a row he entered, and a second count agreeing with them check nothing", () => {
+    const id = addAccount("a-recount", "Cash on Hand", "checking");
+    anchorAt(id, "2026-08-03", "manual", 500_000);
+    rowAt(id, "2026-08-11", -500_000);
+    anchorAt(id, "2026-08-12", "manual", 0);
+    rebuildAccount(bundle.db, id, REBUILT_ON);
+
+    // the replay did land: the fixture is the shape the real ledger took
+    expect(storedBasis(id, "2026-08-05")).toBe("derived");
+    expect(storedBasis(id, "2026-08-12")).toBe("anchored");
+
+    const c = at(id, REBUILT_ON);
+    expect(c.grade).toBe("unverified");
+    expect(c.verifiedThrough).toBeNull();
+    expect(c.chainOpensOn).toBeNull();
+    expect(c.daysSinceVerified).toBeNull();
+    expect(c.countedOn).toBe("2026-08-12");
+    expect(c.uncheckedSince).toBeNull();
+  });
+
+  test("a chain a statement opens still checks every count it reaches", () => {
+    const id = addAccount("a-stated-recount", "Chase Checking", "checking");
+    anchorAt(id, "2026-07-31", "statement", 500_000);
+    rowAt(id, "2026-08-01", -100_000);
+    anchorAt(id, "2026-08-03", "manual", 400_000);
+    rowAt(id, "2026-08-11", -400_000);
+    anchorAt(id, "2026-08-12", "manual", 0);
+    rebuildAccount(bundle.db, id, REBUILT_ON);
+
+    const c = at(id, REBUILT_ON);
+    expect(c.grade).toBe("verified");
+    expect(c.verifiedThrough).toBe("2026-08-12");
+    expect(c.chainOpensOn).toBe("2026-07-31");
+    expect(c.countedOn).toBeNull();
+  });
+
+  test("two counts then a statement: only the replay that lands on the statement closes", () => {
+    const TODAY_AUG_10 = "2026-08-10";
+    const id = addAccount("a-counts-then-statement", "Drawer", "checking");
+    anchorAt(id, "2026-08-01", "manual", 100_000);
+    rowAt(id, "2026-08-03", -10_000);
+    anchorAt(id, "2026-08-05", "manual", 90_000);
+    rowAt(id, "2026-08-07", -5_000);
+    anchorAt(id, "2026-08-10", "statement", 85_000);
+    rebuildAccount(bundle.db, id, TODAY_AUG_10);
+
+    const c = at(id, TODAY_AUG_10);
+    expect(c.grade).toBe("verified");
+    expect(c.verifiedThrough).toBe("2026-08-10");
+    // Aug 2–5 rest on his counts; the statement's replay opens on Aug 6
+    expect(c.chainOpensOn).toBe("2026-08-06");
+    // a count with a closed chain after it is not what the newest days stand on
+    expect(c.countedOn).toBeNull();
   });
 });
 

@@ -2309,8 +2309,57 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
     expect(p.checkedThrough).toBeNull();
   });
 
-  test("net worth is not checked through a day only his count stands on, and says what the day is", () => {
+  /*
+   * 🔴 …BUT A COUNT STILL BOUNDS THE PICTURE. Once his count stopped being a
+   * `verifiedThrough`, Cash on Hand left the "oldest account" comparison
+   * altogether, and the date ran past the day the same popover calls unchecked:
+   * measured 2026-09-16 on a copy of the real ledger with SoFi (the Jul 31
+   * bound) set aside, net worth read "Checked through 2026-08-12" beside
+   * "Cash on Hand — you counted it on Aug 3, 2026, and nothing checks it since
+   * Aug 11, 2026". The picture stands on his count through Aug 10 and on
+   * nothing after, and the sentence says the date is his count's, not a check.
+   */
+  test("net worth is bounded where his count stops standing, and says the date is his count's", () => {
     cashOnHand();
+    const sofi = addAccount("sofi", "SoFi Checking", "checking");
+    addDays(sofi, [
+      { day: "2026-08-20", basis: "anchored" },
+      { day: "2026-08-21", basis: "derived" },
+    ]);
+    addTxn(sofi, "2026-08-21");
+
+    const p = provenanceFor(bundle.db, { kind: "netWorth", day: "2026-09-16" })!;
+    expect(p.checkedThrough).toBe("2026-08-10");
+    expect(p.inputs.find((i) => i.label === "Cash on Hand")!.detail).toBe(
+      "you counted it on Aug 3, 2026, and nothing checks it since Aug 11, 2026",
+    );
+    expect(p.headline).toMatch(
+      / The date it is checked through, Aug 10, 2026, is the last day Cash on Hand rests on the balance you counted — your word, not a check\.$/,
+    );
+  });
+
+  test("a checked account older than his count keeps the date, and the count is not mentioned", () => {
+    cashOnHand();
+    const sofi = addAccount("sofi", "SoFi Checking", "checking");
+    addDays(sofi, [
+      { day: "2026-07-30", basis: "anchored" },
+      { day: "2026-07-31", basis: "derived" },
+    ]);
+    addTxn(sofi, "2026-07-31");
+
+    const p = provenanceFor(bundle.db, { kind: "netWorth", day: "2026-09-16" })!;
+    expect(p.checkedThrough).toBe("2026-07-31");
+    expect(p.headline).not.toMatch(/checked through|counted/);
+  });
+
+  test("an account resting on his count to its last day bounds nothing, like one he counts outright", () => {
+    const id = addAccount("coh", "Cash on Hand", "checking");
+    addAnchor(id, "2026-08-03", "manual");
+    addDays(id, [
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-09-16", basis: "carried" },
+    ]);
+    addTxn(id, "2026-08-03");
     const sofi = addAccount("sofi", "SoFi Checking", "checking");
     addDays(sofi, [
       { day: "2026-08-20", basis: "anchored" },
@@ -2321,8 +2370,70 @@ describe("provenanceFor — a balance he typed checks nothing", () => {
     const p = provenanceFor(bundle.db, { kind: "netWorth", day: "2026-09-16" })!;
     expect(p.checkedThrough).toBe("2026-08-21");
     expect(p.inputs.find((i) => i.label === "Cash on Hand")!.detail).toBe(
-      "you counted it on Aug 3, 2026, and nothing checks it since Aug 11, 2026",
+      "you counted it on Aug 3, 2026, and nothing else checks it",
     );
+  });
+
+  /*
+   * 🔴 A SECOND COUNT BROUGHT THE CHECK BACK. Measured 2026-09-16 on a copy of
+   * the real ledger: recording Cash on Hand at $0.00 for Aug 12 — after the
+   * $5,000.00 down payment he entered by hand on Aug 11 — made Aug 4–11
+   * `derived`, and every proof read "Checked through 2026-08-12", the carried
+   * days after it "adds up", and net worth "8 of 13 accounts add up against a
+   * document". His own row reconciling two of his own counts is his word.
+   */
+  function recounted(): string {
+    const id = addAccount("coh", "Cash on Hand", "checking");
+    addAnchor(id, "2026-08-03", "manual");
+    addAnchor(id, "2026-08-12", "manual");
+    addDays(id, [
+      { day: "2026-08-03", basis: "anchored" },
+      { day: "2026-08-05", basis: "derived" },
+      { day: "2026-08-11", basis: "derived" },
+      { day: "2026-08-12", basis: "anchored" },
+      { day: "2026-08-20", basis: "carried" },
+    ]);
+    return id;
+  }
+
+  test("a replay between two of his counts is his word, and dates no check", () => {
+    const id = recounted();
+    addTxn(id, "2026-08-11");
+    // an imported row on a replayed day, so its sheet has a day line to read
+    const csv = addFile("f-coh", "wallet-export.csv", "generic-csv");
+    const imported = addTxn(id, "2026-08-05", { importFileId: csv, cents: 0 });
+
+    const replayed = balance(id, "2026-08-05");
+    expect(replayed.verdict).toBe("manual");
+    expect(replayed.checkedThrough).toBeNull();
+    expect(replayed.headline).toBe(
+      "Every transaction was replayed forward from the balance you recorded on Aug 3, 2026 and landed exactly on the one you recorded on Aug 12, 2026. Both are your own counts, so nothing else confirms Cash on Hand on Aug 5, 2026.",
+    );
+    expect(balance(id, "2026-08-12").checkedThrough).toBeNull();
+
+    const carried = balance(id, "2026-08-20");
+    expect(carried.verdict).toBe("manual");
+    expect(carried.checkedThrough).toBeNull();
+    expect(carried.headline).toBe(
+      "Cash on Hand had no activity to replay on Aug 20, 2026, so the balance you recorded on Aug 12, 2026 was carried forward.",
+    );
+
+    expect(provenanceFor(bundle.db, { kind: "accountRows", accountId: id })!.checkedThrough).toBeNull();
+    const sheet = provenanceFor(bundle.db, { kind: "transaction", id: imported })!;
+    expect(sheet.inputs[0]!.verdict).toBe("manual");
+    expect(sheet.verdict).not.toBe("derived");
+  });
+
+  test("net worth does not count two of his counts as an account that adds up", () => {
+    const id = recounted();
+    addTxn(id, "2026-08-11");
+
+    const p = provenanceFor(bundle.db, { kind: "netWorth", day: "2026-09-16" })!;
+    const line = p.inputs.find((i) => i.label === "Cash on Hand")!;
+    expect(line.verdict).toBe("unverified");
+    expect(line.detail).toBe("you counted it on Aug 12, 2026, and nothing else checks it");
+    expect(p.headline).toMatch(/^0 of 1 accounts add up against a document/);
+    expect(p.checkedThrough).toBeNull();
   });
 
   test("a statement's balance carried forward still adds up, and dates its check", () => {

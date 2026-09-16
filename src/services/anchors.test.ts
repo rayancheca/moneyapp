@@ -259,6 +259,7 @@ describe("anchorRemovalEffects — the dialog's prediction equals what deleteAnc
       lostDays: 0,
       lostRuns: [],
       lostTo: { unverified: 0, gap: 0, gone: 0 },
+      lostCountedDays: 0,
       rebasedDays: 0,
       daysLeft: before.length,
       changedDays: 0,
@@ -305,8 +306,10 @@ describe("anchorRemovalEffects — the dialog's prediction equals what deleteAnc
       catchUpDays: 0,
       ...measured(before, after),
       lostRuns: [{ from: "2026-08-03", to: "2026-08-10" }],
-      // the eight verified days lose their balance outright; nothing is left to derive them from
+      // the eight days lose their balance outright; nothing is left to derive them from
       lostTo: { unverified: 0, gap: 0, gone: 8 },
+      // …and every one stood on his count alone, never on a check
+      lostCountedDays: 8,
       rebasedDays: 0,
       curveUnchanged: false,
     });
@@ -330,6 +333,8 @@ describe("anchorRemovalEffects — the dialog's prediction equals what deleteAnc
       lostRuns: [{ from: "2026-07-05", to: "2026-07-12" }],
       // a walk forward from Jul 1 still reaches every one of them, unchecked
       lostTo: { unverified: 8, gap: 0, gone: 0 },
+      // the statement's replay lands on his balance, so these were verified
+      lostCountedDays: 0,
       rebasedDays: 0,
       curveUnchanged: false,
     });
@@ -390,6 +395,7 @@ describe("anchorRemovalEffects — the dialog's prediction equals what deleteAnc
       lostDays: 0,
       lostRuns: [],
       lostTo: { unverified: 0, gap: 0, gone: 0 },
+      lostCountedDays: 0,
       // Jul 5 – 8 stay carried, at $1,000.00 instead of $1,200.00
       rebasedDays: 4,
       daysLeft: 8,

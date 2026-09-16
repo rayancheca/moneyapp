@@ -43,6 +43,7 @@ function dialog(
 
 const valueOf = (radius: BlastRadius, label: string) => radius.lines?.find((l) => l.label === label)?.value;
 const DAYS_LOST = "Days that stop being verified";
+const DAYS_COUNTED = "Days that lose the balance you counted";
 const VALUE_LOST = "Days that lose their balance";
 const CATCH_UP = "Days rebuilt up to today, with or without this balance";
 
@@ -64,10 +65,19 @@ describe("removeBalanceRadius — the lost days, by what becomes of them", () =>
       { catchUpDays: 34 },
     );
 
+    /*
+     * 🔴 …and "verifies" was false of it too. That balance is one he typed, and
+     * nothing is replayed onto it: the balance popover on the same page calls Aug
+     * 3 and Aug 5 "you entered it" with no checked-through date (measured
+     * 2026-09-16 on a copy of the real ledger, where this dialog still read
+     * "This balance is what verifies Cash on Hand on Aug 3 – 10, 2026").
+     */
     expect(radius.headline).toBe(
-      "This balance is what verifies Cash on Hand on Aug 3 – 10, 2026. It is the only balance Cash on Hand has, so removing it leaves nothing to derive a curve from, and every day comes off it.",
+      "Cash on Hand rests on this balance on Aug 3 – 10, 2026. It is the only balance Cash on Hand has, so removing it leaves nothing to derive a curve from, and every day comes off it.",
     );
-    expect(valueOf(radius, DAYS_LOST)).toBe("8 days");
+    expect(valueOf(radius, DAYS_COUNTED)).toBe("8 days");
+    expect(valueOf(radius, DAYS_LOST)).toBeUndefined();
+    expect(blastRadiusSentence(radius)).not.toMatch(/verif/);
     // a curve that goes away is not "brought up to today"
     expect(valueOf(radius, CATCH_UP)).toBeUndefined();
     expect(valueOf(radius, "Recorded balances left on this account")).toBe("no balances");
@@ -118,9 +128,49 @@ describe("removeBalanceRadius — the lost days, by what becomes of them", () =>
       "2026-07-12",
     );
 
+    /*
+     * ⛔ Jul 1 is his count and nothing reaches it, so removing it un-verifies
+     * only the eight days the statement's replay closed; the ninth loses his
+     * count. Each line says what it counts.
+     */
     expect(radius.headline).toBe(
-      "This balance is what verifies Checking on Jul 1 – 9, 2026. Removing it leaves 6 days to be derived from transactions alone and 3 days with no balance at all.",
+      "Checking rests on this balance on Jul 1 – 9, 2026, and it verifies 8 days of them. Removing it leaves 6 days to be derived from transactions alone and 3 days with no balance at all.",
     );
+    expect(valueOf(radius, DAYS_LOST)).toBe("8 days");
+    expect(valueOf(radius, DAYS_COUNTED)).toBe("1 day");
+    expect(radius.reassurance).toMatch(/Record the balance again to re-verify these days\.$/);
+  });
+
+  test("a second count he typed, joined to the first by his own row: every lost day was his count's", () => {
+    const radius = dialog(
+      "Cash on Hand",
+      [anchor("opening", "2026-08-03", 500_000, "manual"), anchor("recount", "2026-08-12", 0, "manual")],
+      "recount",
+      [["2026-08-11", -500_000]],
+      "2026-09-16",
+    );
+
+    expect(radius.headline).toBe(
+      "Cash on Hand rests on this balance on Aug 11 – Sep 16, 2026. Removing it leaves those days to be derived from transactions alone.",
+    );
+    expect(valueOf(radius, DAYS_COUNTED)).toBe("37 days");
+    expect(valueOf(radius, DAYS_LOST)).toBeUndefined();
+    expect(radius.reassurance).toBe(
+      "No transaction is touched — the balance curve is derived, so it rebuilds from what is left. Record the balance again to restore these days.",
+    );
+  });
+
+  test("a count a statement's replay lands on keeps the verified words", () => {
+    const radius = dialog(
+      "Checking",
+      [anchor("s-jul", "2026-07-31", 10_000, "statement"), anchor("manual", "2026-08-03", 8_000, "manual")],
+      "manual",
+      [["2026-08-01", -2_000]],
+      "2026-08-05",
+    );
+
+    expect(radius.headline).toMatch(/^This balance is what verifies Checking on /);
+    expect(valueOf(radius, DAYS_COUNTED)).toBeUndefined();
   });
 
   /**
@@ -193,13 +243,19 @@ describe("removeBalanceRadius — the lost days, by what becomes of them", () =>
       "2026-07-02",
     );
 
+    /*
+     * ⛔ While his $0.00 exists it is the only replay endpoint — the exports are
+     * moments — so the 19 days, and the 6 it re-bases, stand on his count: the
+     * balance popover calls them "you entered it", and the dialog agrees.
+     */
     expect(radius.headline).toBe(
-      "This balance is what verifies Checking on 19 days within Jun 7 – 26, 2026. Removing it leaves 18 days as a gap and 1 day with no balance at all. It also sets the balance on 6 other verified days.",
+      "Checking rests on this balance on 19 days within Jun 7 – 26, 2026. Removing it leaves 18 days as a gap and 1 day with no balance at all. It also sets the balance on 6 other days.",
     );
-    expect(valueOf(radius, DAYS_LOST)).toBe("19 days");
+    expect(valueOf(radius, DAYS_COUNTED)).toBe("19 days");
+    expect(valueOf(radius, DAYS_LOST)).toBeUndefined();
   });
 
-  test("live readings that take over: two runs, two fates, and the verified days they re-base", () => {
+  test("live readings that take over: two runs, two fates, and the days they re-base off his count", () => {
     const radius = dialog(
       "Checking",
       [
@@ -213,8 +269,9 @@ describe("removeBalanceRadius — the lost days, by what becomes of them", () =>
     );
 
     expect(radius.headline).toBe(
-      "This balance is what verifies Checking on 6 days within Jul 5 – 11, 2026. Removing it leaves 3 days to be derived from transactions alone and 3 days as a gap. It also sets the balance on 4 other verified days.",
+      "Checking rests on this balance on 6 days within Jul 5 – 11, 2026. Removing it leaves 3 days to be derived from transactions alone and 3 days as a gap. It also sets the balance on 4 other days.",
     );
+    expect(valueOf(radius, DAYS_COUNTED)).toBe("6 days");
   });
 });
 

@@ -7,8 +7,8 @@ import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { splitMissing, type AccountOpening } from "@/lib/coverage-label";
 import { assertWithinFinancialWindow } from "@/lib/date-window";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
-import { pickWinners } from "./anchor-winners";
-import { basisIsChecked } from "./coverage";
+import { handTypedDays, pickWinners } from "./anchor-winners";
+import { basisIsChecked, chainFooting } from "./coverage";
 import { cutToObserved, observedThrough } from "./observation-frontier";
 import { rebuildInvestmentHistory } from "./crypto-history";
 import { regradeStatementPeriods } from "./statement-periods";
@@ -404,6 +404,17 @@ export interface RemovalEffect {
   lostRuns: DayRun[];
   /** what becomes of each lost day — derived from transactions, a gap, or nothing */
   lostTo: LostDayFates;
+  /**
+   * Of `lostDays`, those that stood on a count of his and nothing else
+   * (`chainFooting`) — days the balance never VERIFIED, so the dialog must not
+   * say it did. Always 0 on the step-hold branch, which replays nothing.
+   *
+   * 🔴 Cash on Hand's typed $5,000.00 read "This balance is what verifies Cash on
+   * Hand on Aug 3 – 10, 2026 · Days that stop being verified: 8 days" while the
+   * balance popover on the same page called Aug 3 and Aug 5 "you entered it"
+   * with no checked-through date (real ledger copy, 2026-09-16).
+   */
+  lostCountedDays: number;
   /** days verified with the balance AND without it, at a different figure */
   rebasedDays: number;
   /** rows the account keeps without it; 0 when it is the account's only balance */
@@ -469,7 +480,8 @@ export function removalEffect(
   if (!anchors.some((a) => a.id === removedId)) {
     throw new Error(`removalEffect: balance ${removedId} is not among this account's recorded balances`);
   }
-  const before = deriveDailyRows(pickWinners(anchors), txnSumByDay, options);
+  const winners = pickWinners(anchors);
+  const before = deriveDailyRows(winners, txnSumByDay, options);
   const after = deriveDailyRows(
     pickWinners(anchors.filter((a) => a.id !== removedId)),
     txnSumByDay,
@@ -488,6 +500,10 @@ export function removalEffect(
   };
   const lostTo: LostDayFates = { unverified: 0, gap: 0, gone: 0 };
   for (const b of lost) lostTo[fateOf(b.day)] += 1;
+  // the account's own rule for which of its days rest on his count alone
+  const counted = options.isInvestment
+    ? new Set<string>()
+    : chainFooting(before, handTypedDays(winners)).counted;
 
   const rebasedDays = before.filter((b) => {
     const a = afterByDay.get(b.day);
@@ -499,6 +515,7 @@ export function removalEffect(
     lostDays: lost.length,
     lostRuns: dayRuns(lost.map((b) => b.day)),
     lostTo,
+    lostCountedDays: lost.filter((b) => counted.has(b.day)).length,
     rebasedDays,
     daysLeft: after.length,
     changedDays,
