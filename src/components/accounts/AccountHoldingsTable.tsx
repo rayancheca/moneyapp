@@ -72,10 +72,16 @@ const SORTERS: Record<string, (a: AccountHoldingRow, b: AccountHoldingRow) => nu
 export function AccountHoldingsTable({
   rows,
   today,
+  opensHoldingPages,
 }: {
   rows: readonly AccountHoldingRow[];
   /** Today, from the SERVER — see PortfolioHoldingsTable for why never `new Date()` here. */
   today: string;
+  /**
+   * Whether the holding page covers this account's shares. ⛔ It does not for the agent's brokerage book: that page
+   * is HIS holding (`holdingDetail`), so a row there opened a page about his shares, or a 404 when he held none.
+   */
+  opensHoldingPages: boolean;
 }) {
   const [sort, setSort] = useState<SortState>({ key: "value", dir: "desc" });
 
@@ -190,7 +196,7 @@ export function AccountHoldingsTable({
       caption="Holdings in this account"
       sort={sort}
       onSortChange={setSort}
-      rowHref={(r) => `/investments/${r.assetType}/${r.symbol}`}
+      rowHref={opensHoldingPages ? (r) => `/investments/${r.assetType}/${r.symbol}` : undefined}
     />
   );
 }

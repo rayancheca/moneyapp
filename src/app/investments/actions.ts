@@ -7,6 +7,7 @@ import { getDb } from "@/db/client";
 import { ASSET_TYPES } from "@/db/schema/holdings";
 import { isValidIsoDate } from "@/lib/dates";
 import { QuantityParseError, parseQuantityToE8, upsertHolding } from "@/services/holdings";
+import { getAccount, ownPortfolioAccountIds } from "@/services/accounts";
 import {
   pnlCalendarMonth,
   pnlDayDetail,
@@ -89,8 +90,21 @@ export async function addHoldingResultAction(
     avgCostCents = amount.data;
   }
 
+  /*
+   * ⛔ HIS books only — the ones the form offers (`ownPortfolioAccountIds`). The agent's brokerage book holds what its
+   * statements prove (owner, 2026-09-15), and a hand-entered share there is one the next statement contradicts.
+   */
+  const db = getDb();
+  const account = getAccount(db, parsed.data.accountId);
+  if (account?.type === "investment" && !ownPortfolioAccountIds(db).has(account.id)) {
+    return {
+      ok: false,
+      error: `${HOLDING_LABELS.accountId}: ${account.name} holds only what its statements prove — pick one of your own investment accounts`,
+    };
+  }
+
   try {
-    upsertHolding(getDb(), {
+    upsertHolding(db, {
       accountId: parsed.data.accountId,
       symbol: parsed.data.symbol,
       assetType: parsed.data.assetType,

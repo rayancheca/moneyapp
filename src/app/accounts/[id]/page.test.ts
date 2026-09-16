@@ -81,3 +81,14 @@ describe("/accounts/[id] — the header's day change", () => {
     expect(source).not.toMatch(/dayChangeLabel\(|series\[series\.length - 2\]/);
   });
 });
+
+/**
+ * ⚖️ The agent's brokerage book is kept out of his returns (owner, 2026-09-14), and the holding page shows his legs
+ * only (`holdingDetail`). 🔴 The book's page linked its rows there anyway: to a page about his shares, or a 404.
+ */
+describe("/accounts/[id] — the holdings table links to a holding page only for his books", () => {
+  test("the table is told by ownPortfolioAccountIds, the holding page's own rule", () => {
+    const table = source.match(/<AccountHoldingsTable[\s\S]*?\/>/)?.[0] ?? "";
+    expect(table).toMatch(/opensHoldingPages=\{ownPortfolioAccountIds\(db\)\.has\(id\)\}/);
+  });
+});

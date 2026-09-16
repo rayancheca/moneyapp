@@ -17,7 +17,7 @@ import { newestQuotedOn } from "@/lib/holding-price-age";
 import { benchmarkReturns } from "@/lib/portfolio-returns";
 import { carryForwardTo } from "@/lib/price-series";
 import { resolveViewState } from "@/lib/view-state";
-import { listAccounts } from "@/services/accounts";
+import { listAccounts, ownPortfolioAccountIds } from "@/services/accounts";
 import { portfolioSession } from "@/services/intraday";
 import { sessionView } from "@/lib/intraday-axis";
 import { readSettings } from "@/services/settings";
@@ -94,6 +94,8 @@ export default async function InvestmentsPage({
   };
   const today = todayIso();
   const investmentAccounts = listAccounts(db).filter((a) => a.type === "investment" && a.isActive);
+  // ⛔ the Add-holding form offers HIS books: the agent's holds only what its statements prove (owner, 2026-09-15)
+  const ownBooks = ownPortfolioAccountIds(db);
 
   if (investmentAccounts.length === 0) {
     return (
@@ -203,7 +205,9 @@ export default async function InvestmentsPage({
         <div className="flex items-center gap-2">
           <RefreshPricesButton />
           <HoldingActionsMenu
-            accounts={investmentAccounts.map((a) => ({ id: a.id, name: a.name, subtype: a.subtype }))}
+            accounts={investmentAccounts
+              .filter((a) => ownBooks.has(a.id))
+              .map((a) => ({ id: a.id, name: a.name, subtype: a.subtype }))}
             defaultDate={today}
           />
         </div>

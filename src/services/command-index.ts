@@ -6,6 +6,7 @@ import { holdings } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
 import { ACCOUNT_ORDER } from "./account-order";
+import { ownPortfolioAccountIds } from "./accounts";
 import { hrefCategoryId } from "./analytics";
 import { ledgerHref } from "@/lib/ledger-href";
 import { isIconName, type IconName } from "@/components/shell/Icon";
@@ -109,12 +110,17 @@ export function commandEntityGroups(db: AppDatabase): CommandPaletteGroup[] {
 
   // Holdings become searchable, opening the aggregated holding page. Deduped by
   // (assetType, symbol) since the same symbol can be held in more than one account.
+  // ⛔ HIS holdings only: that page reads his legs (`holdingDetail`, `ownPortfolioAccountIds`), so a symbol only the
+  // agent's brokerage book holds opened a 404 (owner, 2026-09-14: the agent is kept out of his returns). The book
+  // itself is still found, under Accounts.
+  const own = ownPortfolioAccountIds(db);
   const holdingRows = db
-    .select({ symbol: holdings.symbol, assetType: holdings.assetType })
+    .select({ accountId: holdings.accountId, symbol: holdings.symbol, assetType: holdings.assetType })
     .from(holdings)
     .where(eq(holdings.isActive, true))
     .orderBy(asc(holdings.symbol))
-    .all();
+    .all()
+    .filter((h) => own.has(h.accountId));
   const seen = new Set<string>();
   const uniqueHoldings = holdingRows.filter((h) => {
     const key = `${h.assetType}/${h.symbol}`;
