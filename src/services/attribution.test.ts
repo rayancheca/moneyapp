@@ -7,6 +7,7 @@ import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
+import { priceCache } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import type { TransactionStatus } from "@/db/schema/transactions";
@@ -15,6 +16,8 @@ import { createAccount } from "./accounts";
 import { addManualAnchor } from "./anchors";
 import { rebuildAccount, netWorthSeries } from "./derivation";
 import { netWorthAttribution, nonReplayingAccountIds } from "./attribution";
+import { upsertHolding } from "./holdings";
+import { investmentAccounts } from "./portfolio";
 
 let dir: string;
 let bundle: DbBundle;
@@ -342,5 +345,78 @@ describe("nonReplayingAccountIds — the divider that stops a double-count", () 
     expect(got.deltaCents).toBe(0);
     expect(got.bands.find((b) => b.key === "moved")!.cents).toBe(0);
     expect(got.closes).toBe(true);
+  });
+});
+
+/**
+ * ⚖️ Owner decisions: Robinhood Agentic is kept OUT of his own brokerage returns (2026-09-14), and what the agent buys
+ * sits in a brokerage book paired with it (2026-09-15). His RETURNS leave the book out; his NET WORTH does not.
+ *
+ * 🔴 The bridge's holdings side read his portfolio alone while net worth valued the book too, so the book's whole move
+ * landed in "Unexplained" — measured on the agent's constructed August, +$1.51 on a quiet window and +$27.73 (the
+ * book's entire value) on a window spanning its buy.
+ */
+describe("netWorthAttribution — the agent's brokerage book is in net worth, so its move is in a band", () => {
+  let fakeToday: string | undefined;
+  beforeEach(() => {
+    fakeToday = process.env.MONEYAPP_FAKE_TODAY;
+    process.env.MONEYAPP_FAKE_TODAY = "2026-10-05";
+  });
+  afterEach(() => {
+    if (fakeToday === undefined) delete process.env.MONEYAPP_FAKE_TODAY;
+    else process.env.MONEYAPP_FAKE_TODAY = fakeToday;
+  });
+
+  /** His brokerage holding 1 WMT since July, and the agent buying 0.25 WMT for $25.00 on Aug 20 — the rehearsal's month. */
+  function agentBuysWmt(): { book: string } {
+    const robinhood = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+    for (const [day, close] of [
+      ["2026-07-01", 111.2],
+      ["2026-08-20", 103.84],
+      ["2026-08-31", 104.87],
+      ["2026-09-30", 110.9],
+    ] as const) {
+      bundle.db.insert(priceCache).values({ symbol: "WMT", assetType: "stock", quotedOn: day, close, source: "yahoo", fetchedAt: `${day}T21:00:00.000Z` }).run();
+    }
+    const brokerage = createAccount(bundle.db, { institutionId: robinhood.id, name: "Robinhood Brokerage", type: "investment", subtype: "brokerage" });
+    upsertHolding(bundle.db, { accountId: brokerage, symbol: "WMT", assetType: "stock", quantityE8: 100_000_000, avgCostCents: 10_600, occurredOn: "2026-07-01" });
+
+    const agentic = createAccount(bundle.db, { institutionId: robinhood.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
+    const book = createAccount(bundle.db, { institutionId: robinhood.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
+    bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+    addManualAnchor(bundle.db, { accountId: agentic, anchoredOn: "2026-06-30", enteredCents: 2_664 });
+    post(agentic, "2026-08-20", -2_500, "Investments > Buys");
+    upsertHolding(bundle.db, { accountId: book, symbol: "WMT", assetType: "stock", quantityE8: 25_000_000, avgCostCents: 10_000, occurredOn: "2026-08-20" });
+
+    // the premise: the book is outside HIS portfolio, and net worth still values it
+    expect(investmentAccounts(bundle.db).map((a) => a.id)).toEqual([brokerage]);
+    return { book };
+  }
+
+  test("a window with no trade: the book's $26.22 → $27.73 is market, never unexplained", () => {
+    agentBuysWmt();
+
+    const got = bridgeOver("2026-08-31", "2026-10-05");
+
+    // his 1 WMT $104.87 → $110.90 = +$6.03, the book's 0.25 +$1.51 (0.25 × $110.90 = $27.725 → $27.73)
+    expect(got.deltaCents).toBe(603 + 151);
+    expect(got.bands.find((b) => b.key === "market")!.cents).toBe(603 + 151);
+    expect(got.bands.find((b) => b.key === "portfolioFlow")!.cents).toBe(0);
+    expect([got.unexplainedCents, got.unattributedCents, got.closes]).toEqual([0, 0, true]);
+  });
+
+  test("a window spanning the agent's buy: the $25.00 leaving Agentic is moved, the shares it bought are flow — nothing unaccounted", () => {
+    const { book } = agentBuysWmt();
+
+    const got = bridgeOver("2026-07-31", "2026-10-05");
+
+    // the book entered at 0.25 × $103.84 = $25.96 on the 20th, valued at that day's close
+    expect(got.bands.find((b) => b.key === "moved")!.cents).toBe(-2_500);
+    expect(got.bands.find((b) => b.key === "portfolioFlow")!.cents).toBe(2_596);
+    expect(got.deltaCents).toBe(nwOn("2026-10-05") - nwOn("2026-07-31"));
+    expect([got.unexplainedCents, got.unattributedCents, got.closes]).toEqual([0, 0, true]);
+    expect(got.restatements).toEqual([]);
+    // the book really is in the delta: without it the window moves by the cash and his shares alone
+    expect(bundle.db.select().from(accounts).where(eq(accounts.id, book)).get()!.isActive).toBe(true);
   });
 });
