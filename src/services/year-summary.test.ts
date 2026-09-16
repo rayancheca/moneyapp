@@ -562,3 +562,37 @@ describe("yearSummaryView — the agent's book stays out of HIS money-weighted r
     expect(yearSummaryView(bundle.db, YEAR, TODAY).moneyWeightedReturn).toEqual(his);
   });
 });
+
+/**
+ * ⚖️ Owner decision 2026-09-14: Robinhood Agentic is kept OUT of his own brokerage returns. A dividend the agent's
+ * shares pay posts to Agentic, filed Income > Dividends as the activity CSV files one.
+ *
+ * 🔴 The Investment section read its Dividends line from every account while its Realized line reads his books only
+ * (`realizedSalesByDay`): the agent's $0.06 dividend was his, the agent's sale was not (measured 2026-09-16).
+ */
+describe("yearSummaryView — the Investment section reads one scope: the agent's returns are not his", () => {
+  test("⛔ a dividend credited to the cash account of the agent's book is not in his Dividends line, as its sale is not in Realized", () => {
+    const rh = bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+    const robinhoodCash = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Cash", type: "checking" });
+    createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Brokerage", type: "investment", subtype: "brokerage" });
+    insert({ postedOn: "2025-03-14", amountCents: 700, rawDescription: "CASH DIV AAPL", categoryName: "Dividends", accountId: robinhoodCash });
+    const agentic = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic", type: "checking", last4: "9651" });
+    insert({ postedOn: "2025-09-08", amountCents: 6, rawDescription: "Cash Div: R/D 2025-08-21 P/D 2025-09-08 - 0.25 shares at 0.2475", categoryName: "Dividends", accountId: agentic });
+    const lines = () => yearSummaryView(bundle.db, YEAR, TODAY).summary.sections.find((sec) => sec.id === "investment")!.lines;
+
+    // no book yet: Agentic is a cash account like any other, and nothing says its money is not his
+    expect(lines().map((l) => [l.id, l.amountCents, l.rowCount])).toEqual([["dividends", 706, 2]]);
+
+    const book = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
+    bundle.db.update(accounts).set({ cashAccountId: agentic }).where(eq(accounts.id, book)).run();
+
+    const v = yearSummaryView(bundle.db, YEAR, TODAY);
+    expect(lines().map((l) => [l.id, l.amountCents, l.rowCount])).toEqual([["dividends", 700, 1]]);
+    expect(v.summary.investmentCents).toBe(700);
+    // a book linked to a cash account on HIS side is his, and so is what that account is paid
+    bundle.db.update(accounts).set({ cashAccountId: null }).where(eq(accounts.id, book)).run();
+    const hisBook = createAccount(bundle.db, { institutionId: rh.id, name: "Robinhood Cash Book", type: "investment", subtype: "brokerage" });
+    bundle.db.update(accounts).set({ cashAccountId: robinhoodCash }).where(eq(accounts.id, hisBook)).run();
+    expect(lines().map((l) => [l.id, l.amountCents, l.rowCount])).toEqual([["dividends", 706, 2]]);
+  });
+});

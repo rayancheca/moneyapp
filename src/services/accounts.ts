@@ -84,6 +84,20 @@ export function ownPortfolioAccountIds(db: AppDatabase): Set<string> {
   );
 }
 
+/**
+ * The cash accounts paired with a brokerage book that is NOT his portfolio (`ownPortfolioAccountIds`) — Robinhood
+ * Agentic, once the agent has bought. What the book's shares pay posts there (a dividend), and it is the agent's
+ * return, kept out of his as the book's positions and sales are.
+ */
+export function outsidePortfolioCashAccountIds(db: AppDatabase): Set<string> {
+  const own = ownPortfolioAccountIds(db);
+  return new Set(
+    accountSides(db)
+      .rows.filter((r) => r.cashAccountId !== null && !own.has(r.id))
+      .map((r) => r.cashAccountId as string),
+  );
+}
+
 /** Every account, with the one fact `isInvestmentSide` needs that its row does not carry. One read for both rules. */
 function accountSides(db: AppDatabase) {
   const rows = db
