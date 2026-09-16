@@ -31,6 +31,8 @@ import { detachTransferLegs, type StaleTransferLeg } from "../transfer-links";
 import {
   accountsOfTransactions,
   claimKeptSides,
+  keptSidesAmong,
+  moveKeptSide,
   restoreDuplicatesLosingTheirSurvivor,
   retireStandIn,
   standInsOn,
@@ -364,10 +366,12 @@ function captureCarryForward(db: AppDatabase, oldFileIds: readonly string[]): Ca
     )
     .all();
   // a split row carries even when its parent fields are empty: the parts are
-  // the user's work and must land on the successor
+  // the user's work and must land on the successor — and so does a row the
+  // owner's duplicate verdict keeps (`moveKeptSide`)
   const splitCounts = splitCountsByTxn(db, rows.map((r) => r.id));
+  const keptSides = keptSidesAmong(db, rows.map((r) => r.id));
   for (const row of rows) {
-    if (!hasCarryableAttributes(row) && (splitCounts.get(row.id) ?? 0) === 0) continue;
+    if (!hasCarryableAttributes(row) && (splitCounts.get(row.id) ?? 0) === 0 && !keptSides.has(row.id)) continue;
     bucketCarry(pool.byPosted, carryKey(row.accountId, row.postedOn, row.amountCents), row);
     if (row.transactedOn !== null) {
       bucketCarry(pool.byTransacted, carryKey(row.accountId, row.transactedOn, row.amountCents), row);
@@ -563,6 +567,8 @@ function landCarry(
   adoptCarriedSplits(tx, carry, target, fresh);
   if (fresh) applyCarry(tx, target.id, carry);
   else fillFromCarry(tx, target, carry);
+  // the row that now records the money is the one a duplicate verdict keeps
+  moveKeptSide(tx, carry.id, target.id);
   return true;
 }
 

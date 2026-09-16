@@ -278,6 +278,55 @@ export function retireStandIn(db: AppDatabase, accountId: string, standIn: Stand
   clearReviewIfSettled(db, [copy.id]);
 }
 
+/** Confirmed pairs that keep this row — it is their kept side, not their retired one. */
+function pairsKeeping(db: AppDatabase, ids: readonly string[]): Pair[] {
+  if (ids.length === 0) return [];
+  const set = new Set(ids);
+  return db
+    .select()
+    .from(duplicateCandidates)
+    .where(
+      and(
+        eq(duplicateCandidates.resolution, "confirmed_duplicate"),
+        isNotNull(duplicateCandidates.retiredTransactionId),
+        or(inArray(duplicateCandidates.transactionIdA, [...ids]), inArray(duplicateCandidates.transactionIdB, [...ids])),
+      ),
+    )
+    .all()
+    .filter((c) => {
+      const kept = keptSideOf(c);
+      return kept !== null && set.has(kept);
+    });
+}
+
+/** Which of these rows a confirmed duplicate keeps — a re-parse must hand that on like any user-set attribute. */
+export function keptSidesAmong(db: AppDatabase, ids: readonly string[]): Set<string> {
+  return new Set(pairsKeeping(db, ids).map((c) => keptSideOf(c)!));
+}
+
+/**
+ * A re-parse moved a kept row's money onto its successor: the verdict follows it.
+ *
+ * 🔴 It stayed on the superseded row. A parser-version re-parse of
+ * 20260302-statements-9805-.pdf carried its four payments' links onto the new
+ * rows, and the four pairs went on naming the old ones — so un-importing the
+ * new version deleted the payments and restored nothing, and the ledger
+ * recorded them nowhere: `pnpm ledger-check` found 2026-01-02 → 2026-04-02 off
+ * by $798.48 (a copy of the real ledger, 2026-09-16).
+ *
+ * `toId` is a live row and a confirmed pair's copy is superseded, so the
+ * successor is never the copy, and no other pair can already name the two.
+ */
+export function moveKeptSide(db: AppDatabase, fromId: string, toId: string): void {
+  for (const c of pairsKeeping(db, [fromId])) {
+    const [a, b] = [toId, c.retiredTransactionId!].sort() as [string, string];
+    db.update(duplicateCandidates)
+      .set({ transactionIdA: a, transactionIdB: b })
+      .where(eq(duplicateCandidates.id, c.id))
+      .run();
+  }
+}
+
 /**
  * Clear `needs_review` on a row only when nothing else is still asking about it.
  *

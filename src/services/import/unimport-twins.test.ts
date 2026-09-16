@@ -327,6 +327,66 @@ describe("un-importing a statement and importing it again ends where it started"
     expect(ledger()).toEqual(before);
   });
 
+  /**
+   * 🔴 A parser-version re-parse carried the kept line's link onto its new row
+   * and left the verdict naming the superseded one, so un-importing the new
+   * version deleted the payment and restored nothing: on a copy of the real
+   * ledger (2026-09-16) 20260302-statements-9805-.pdf's four payments were then
+   * recorded by no row, and `pnpm ledger-check` found 2026-01-02 → 2026-04-02
+   * off by $798.48.
+   */
+  test("after a parser-version re-parse, the verdict keeps the new row — un-importing it still keeps the money", async () => {
+    const s = await mirrorScene();
+    // the rows that record the $572.12 payment in the ledger — always exactly one
+    const payment = () =>
+      bundle.db
+        .select()
+        .from(transactions)
+        .where(eq(transactions.accountId, s.cardId))
+        .all()
+        .filter((t) => (t.status === "active" || t.status === "excluded") && t.amountCents === 57212);
+    expect(payment()).toHaveLength(1);
+    // the file as an older parser read it: the next import re-parses it
+    const old = fileNamed(VENTURE)!;
+    bundle.db.update(importFiles).set({ parserVersion: old.parserVersion - 1 }).where(eq(importFiles.id, old.id)).run();
+    const [bump] = await importStatementFiles(bundle.db, [venture()]);
+    expect(bump!.status).toBe("parsed");
+    const bumped = bundle.db.select().from(importFiles).where(eq(importFiles.status, "parsed")).get()!;
+    expect(bumped.id).not.toBe(old.id);
+    const kept = rowsOfFile(bumped.id).find((t) => t.amountCents > 0)!;
+    expect(kept.transferGroupId).toBe("group-payment");
+    expect(candidate(s.candidateId)).toMatchObject({ retiredTransactionId: s.mirror });
+    expect([candidate(s.candidateId).transactionIdA, candidate(s.candidateId).transactionIdB]).toContain(kept.id);
+    const afterBump = ledger();
+
+    unimportFile(bundle.db, bumped.id);
+    expect(payment().map((t) => t.id)).toEqual([s.mirror]);
+    await importStatementFiles(bundle.db, [venture()]);
+
+    expect(row(s.mirror)!.status).toBe("superseded");
+    expect(payment()).toHaveLength(1);
+    expect(ledger()).toEqual(afterBump);
+  });
+
+  test("a kept row with nothing else on it still hands its verdict to the row a re-parse makes", async () => {
+    await importStatementFiles(bundle.db, [venture()]);
+    const old = fileNamed(VENTURE)!;
+    const chevron = rowsOfFile(old.id).find((t) => t.rawDescription.startsWith("CHEVRON"))!;
+    // no user category, note, link, series, split or exclusion: only the verdict
+    expect(chevron).toMatchObject({ transferGroupId: null, notes: null, recurringSeriesId: null, status: "active" });
+    expect(chevron.categorizationSource).not.toBe("user");
+    const copy = hand({ accountId: chevron.accountId, postedOn: chevron.postedOn, amountCents: chevron.amountCents, raw: "CHEVRON BROOKLYN NY" });
+    const candidateId = confirmPair(chevron.id, copy, "cross_source_same_day");
+    bundle.db.update(importFiles).set({ parserVersion: old.parserVersion - 1 }).where(eq(importFiles.id, old.id)).run();
+    await importStatementFiles(bundle.db, [venture()]);
+    const bumped = bundle.db.select().from(importFiles).where(eq(importFiles.status, "parsed")).get()!;
+    const successor = rowsOfFile(bumped.id).find((t) => t.rawDescription.startsWith("CHEVRON"))!;
+
+    expect([candidate(candidateId).transactionIdA, candidate(candidateId).transactionIdB]).toContain(successor.id);
+    unimportFile(bundle.db, bumped.id);
+    expect(row(copy)!.status).toBe("active");
+  });
+
   test("only a CONFIRMED verdict comes back — an open question is never answered by a re-import", async () => {
     await importStatementFiles(bundle.db, [venture()]);
     const fileId = fileNamed(VENTURE)!.id;
