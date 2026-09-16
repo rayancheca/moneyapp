@@ -1920,6 +1920,11 @@ describe("a parser-version re-read that no longer writes an account", () => {
       { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-05-01", end: "2026-05-31", beginCents: 50000, endCents: 50000 } },
       { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-03-01", end: "2026-03-31", beginCents: 50000, endCents: 50000 } },
     ],
+    // one file, one account, two statements: March's window, then a May — read in the other order by `readsInReverse`
+    "2026-03 then 2026-05": [
+      { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-03-01", end: "2026-03-31", beginCents: 50000, endCents: 50000 } },
+      { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-05-01", end: "2026-05-31", beginCents: 50000, endCents: 50000 } },
+    ],
     // imported only where a test says so: it opens the day after March closes, on one account
     "2026-04": [
       { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-04-01", end: "2026-04-30", beginCents: 50000, endCents: 50000 } },
@@ -1953,6 +1958,8 @@ describe("a parser-version re-read that no longer writes an account", () => {
   let readsEverySection = false;
   /** a later version that reads the first section and then fails part-way through the file */
   let breaksMidFile = false;
+  /** a later version that reads every section again, the last first */
+  let readsInReverse = false;
 
   /** Version 1 reads all three sections; a later version reads the first and withholds the other two. */
   const threeSectionProfile: ParserProfile = {
@@ -1963,6 +1970,7 @@ describe("a parser-version re-read that no longer writes an account", () => {
       if (unreadable) throw new ParseError("test-three-section-statement", "this version cannot read the file");
       // trimmed: a second copy of a month is the same text with different bytes
       const [kept, ...rest] = SECTIONS[f.text.trim()]!;
+      if (threeSectionProfile.version > 1 && readsInReverse) return [kept!, ...rest].reverse();
       if (threeSectionProfile.version === 1 || readsEverySection) return [kept!, ...rest];
       if (breaksMidFile) return [kept!, ...BREAKS_MID_FILE];
       return {
@@ -1981,6 +1989,7 @@ describe("a parser-version re-read that no longer writes an account", () => {
     unreadable = false;
     readsEverySection = false;
     breaksMidFile = false;
+    readsInReverse = false;
     threeSectionProfile.version = 1;
     PROFILES.unshift(threeSectionProfile);
   });
@@ -2718,6 +2727,36 @@ describe("a parser-version re-read that no longer writes an account", () => {
     expect(contributionOf(copy).periods).toHaveLength(3);
   });
 
+  /**
+   * A re-read lends a month a copy prints to the copy (`lendToCopies`) and takes it back where it writes the month again
+   * (`reclaimFromCopy`) — unless the re-read already holds a period of its own on the account: a file holds one period
+   * per account (`ux_statement_periods_file_account`), so the month stays with the copy and the re-read becomes a copy
+   * of it. Taking it anyway broke the unique index and failed the whole re-read.
+   */
+  test("a re-read that writes another month of the account first leaves the lent month with the copy — one period per file and account", async () => {
+    const TWO = statementFor("2026-03 then 2026-05");
+    await importStatementFiles(bundle.db, [TWO]);
+    await importStatementFiles(bundle.db, [MARCH_COPY]);
+    const anchorOnly = accountIdOf(ANCHOR_ONLY);
+    const copy = liveFile(MARCH_COPY).id;
+    // the premise: the file holds March on the account, and the copy prints it
+    expect(periodOf(liveFile(TWO).id, anchorOnly)).toMatchObject({ periodStart: "2026-03-01" });
+    expect(periodOf(copy, anchorOnly)).toBeUndefined();
+    const march = periodOf(liveFile(TWO).id, anchorOnly)!;
+
+    threeSectionProfile.version = 2;
+    readsInReverse = true;
+    const [reread] = await importStatementFiles(bundle.db, [TWO]);
+
+    expect([reread!.status, reread!.error]).toEqual(["parsed", undefined]);
+    const two = liveFile(TWO).id;
+    expect(periodOf(two, anchorOnly)).toMatchObject({ periodStart: "2026-05-01" });
+    expect(periodOf(copy, anchorOnly)).toMatchObject({ id: march.id, periodStart: "2026-03-01", periodEnd: "2026-03-31" });
+    const recorded = bundle.db.select().from(statementCopies).where(eq(statementCopies.accountId, anchorOnly)).all();
+    expect(recorded.map((c) => [c.importFileId, c.periodStart]).sort()).toEqual([[copy, "2026-03-01"], [two, "2026-03-01"]].sort());
+    expectRebuilt(anchorOnly);
+  });
+
   test("a second download whose read failed part-way inherits nothing", async () => {
     await importStatementFiles(bundle.db, [JANUARY, MARCH]);
     threeSectionProfile.version = 2;
@@ -2861,6 +2900,32 @@ describe("a parser-version re-read that no longer writes an account", () => {
       for (const last4 of [KEPT, ANCHOR_ONLY, WITH_ROWS]) expectRebuilt(accountIdOf(last4));
     } finally {
       PROFILES.splice(PROFILES.indexOf(brokenProfile), 1);
+    }
+  });
+
+  /**
+   * A read turn (`importTurn`) archives each file's original before it parses it. 🔴 Outside the steps that report their
+   * own failure, a fault there — an institution folder the archive cannot write — left the upload: the files after it
+   * were never read and the ones before it never settled, as the review measured for a file's archive move.
+   */
+  test("a file whose original cannot be archived fails with its cause, and the rest of the upload is read and settled", async () => {
+    // named to sort before January, and for an institution whose archive folder cannot be written
+    const UNARCHIVABLE: ImportInput = { name: `${PREFIX}0-discover.txt`, buffer: Buffer.from("2026-01 discover") };
+    const unlock = lockedArchive("discover");
+    try {
+      const outcomes = await importStatementFiles(bundle.db, [UNARCHIVABLE, JANUARY]);
+
+      expect(outcomes.map((o) => [o.fileName, o.status])).toEqual([
+        [UNARCHIVABLE.name, "failed"],
+        [JANUARY.name, "parsed"],
+      ]);
+      expect(outcomes[0]!.error).toMatch(/^Unexpected: EACCES/);
+      // nothing was recorded for it: no row, so uploading it again reads it
+      expect(bundle.db.select().from(importFilesTable).where(eq(importFilesTable.fileName, UNARCHIVABLE.name)).all()).toEqual([]);
+      expect(periodOf(liveFile(JANUARY).id, accountIdOf(KEPT))!.reconciliation).toBe("reconciled");
+      for (const last4 of [KEPT, ANCHOR_ONLY, WITH_ROWS]) expectRebuilt(accountIdOf(last4));
+    } finally {
+      unlock();
     }
   });
 });

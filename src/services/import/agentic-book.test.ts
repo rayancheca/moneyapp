@@ -23,7 +23,8 @@ import { refreshPrices, type PriceProvider } from "@/services/prices";
 import { removeFileEvents, resolveBook, syncBookHoldings, writeStatementPositions } from "./brokerage-book";
 import { PROFILES } from "./profiles";
 import type { Line } from "./profiles/pdf-profile";
-import { importStatementFiles, parseContextFor, resolveAccount, unimportFile, type ImportInput } from "./service";
+import { findAccountId, importStatementFiles, parseContextFor, resolveAccount, unimportFile, type ImportInput } from "./service";
+import type { AccountHint } from "./types";
 
 /**
  * ⚖️ Owner, 2026-09-15: when Claude's agent buys a stock, show TWO accounts — "Robinhood Agentic" keeps the unspent
@@ -653,6 +654,29 @@ describe("⚖️ Robinhood Agentic's positions are read into a brokerage book pa
 describe("⛔ the import finds the agent's book by its link — never by a name", () => {
   const robinhoodId = (db: AppDatabase) => db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!.id;
   const allAccountIds = (db: AppDatabase) => db.select({ id: accounts.id }).from(accounts).orderBy(asc(accounts.id)).all();
+
+  /**
+   * 🔴 The read-only lookup the backfills file a statement's lines under (scripts/record-printed-lines.ts,
+   * record-statement-copies.ts) matched a book's section by type: `bookOf` carries no last4, so it answered with the
+   * first Robinhood brokerage account — his own Robinhood Brokerage — for the agent's book.
+   */
+  test("the read-only lookup a backfill files a book's lines under finds the linked book — never Robinhood Brokerage, and makes nothing", async () => {
+    const agenticId = ownersRobinhood(bundle.db);
+    const hint: AccountHint = { institution: "Robinhood", type: "investment", subtype: "brokerage", bookOf: "9651" };
+    const accountsBefore = allAccountIds(bundle.db);
+    // before the import made the book: no account — and none made
+    expect(findAccountId(bundle.db, hint)).toBeNull();
+    expect(allAccountIds(bundle.db)).toEqual(accountsBefore);
+
+    await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
+
+    const book = bookOf(bundle.db, agenticId)!;
+    expect(findAccountId(bundle.db, hint)).toBe(book.id);
+    expect(resolveAccount(bundle.db, hint)).toBe(book.id);
+    // a cash number no checking account carries names no book, where the import refuses
+    expect(findAccountId(bundle.db, { ...hint, bookOf: "0000" })).toBeNull();
+    expect(() => resolveAccount(bundle.db, { ...hint, bookOf: "0000" })).toThrow("a brokerage book needs exactly one checking account ····0000");
+  });
 
   test.each([
     ["with no other account", "none"],

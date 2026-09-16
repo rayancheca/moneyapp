@@ -1341,8 +1341,6 @@ interface ReadMember {
   parsed?: { readonly statements: readonly ParsedStatement[]; readonly withheld: readonly WithheldOutcome[] };
   /** the files whose older cash-only reads its positions were proven without (`reliedShas`) */
   reliedShas: readonly string[];
-  /** its outcome, once its read is written and settled — a later fault in the turn does not undo it */
-  settled?: FileOutcome;
 }
 
 /** Where a read stopped: the member that failed, what its outcome says, and what its row records. */
@@ -1649,11 +1647,8 @@ async function importTurn(db: AppDatabase, head: BatchItem, batch: BatchState): 
     return [...(failure === null ? writeTurn(db, batch, chain) : failRead(db, batch, chain, failure)), ...skipped];
   } catch (error: unknown) {
     // a fault outside the steps that report their own failure fails this turn's files, and the upload goes on
-    const members = chain.length > 0 ? chain : [{ item: head, recorded: undefined, settled: undefined }];
-    return [
-      ...members.map((m) => m.settled ?? failedUnexpectedly(db, m.item.file, m.recorded?.row.id, error)),
-      ...skipped,
-    ];
+    const members = chain.length > 0 ? chain : [{ item: head, recorded: undefined }];
+    return [...members.map((m) => failedUnexpectedly(db, m.item.file, m.recorded?.row.id, error)), ...skipped];
   }
 }
 
@@ -2000,9 +1995,7 @@ function settleMember(db: AppDatabase, member: ReadMember, { tally, accounts: fi
   if (finalPath !== row.storagePath) {
     db.update(importFiles).set({ storagePath: finalPath }).where(eq(importFiles.id, row.id)).run();
   }
-  const settled = { ...tally, withheld: [...(member.parsed?.withheld ?? [])] };
-  member.settled = settled;
-  return settled;
+  return { ...tally, withheld: [...(member.parsed?.withheld ?? [])] };
 }
 
 /**
@@ -2023,7 +2016,8 @@ function relocateArchiveOrStay(src: string, folder: string, archiveName: string)
 
 /**
  * An import that faulted outside the steps that report their own failure (a parse, a write): the file fails with its
- * cause, and the upload goes on. 🔴 The fault left the upload — the files after it were never read, and the ones before
+ * cause, and the upload goes on. A row already `parsed` stays parsed — its read is in the ledger — and only the
+ * outcome says what faulted. 🔴 The fault left the upload — the files after it were never read, and the ones before
  * it were never categorized, reconciled, linked or rebuilt (the review, 2026-09-16).
  */
 function failedUnexpectedly(db: AppDatabase, file: { name: string }, fileRowId: string | undefined, error: unknown): FileOutcome {
