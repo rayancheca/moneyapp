@@ -8,7 +8,7 @@ import { compareDates } from "@/lib/dates";
 import { loadCategoryIndex } from "./analytics";
 import { REPLAY_STATUSES } from "./derivation";
 import { inTransitAt } from "./in-flight";
-import { marketChangeBetween } from "./portfolio";
+import { marketChangeBetween, valuedInvestmentAccounts } from "./portfolio";
 
 /**
  * The measurements behind "net worth moved from X to Y, and here is why".
@@ -262,7 +262,14 @@ export function netWorthAttribution(
   const eligible = bridgeAccounts(db);
   const eligibleIds = new Set(eligible.map((a) => a.id));
   const totals = kindTotals(db, from, to, eligibleIds);
-  const market = marketChangeBetween(db, from, to);
+  /*
+   * ⛔ EVERY book net worth values, never his portfolio alone. The unscoped build is HIS returns
+   * (`investmentAccounts`), which leaves out the brokerage book paired with Robinhood Agentic — kept out of his own
+   * returns by the owner (2026-09-14) and still in net worth. Read unscoped, the book's whole move landed in
+   * "Unexplained": +$1.51 on a quiet window, its entire $27.73 on one spanning its first buy (measured 2026-09-16).
+   * Active-only, as `bridgeAccounts` and net worth are.
+   */
+  const market = marketChangeBetween(db, from, to, valuedInvestmentAccounts(db).map((a) => a.id));
 
   const restatements = restatementsIn(db, from, to, eligible);
   /*

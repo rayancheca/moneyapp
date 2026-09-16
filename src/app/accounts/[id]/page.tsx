@@ -12,7 +12,7 @@ import { formatCents, formatCentsSigned } from "@/lib/money";
 import { balanceDeltaAccent, balanceHeading, type BalanceDeltaAccent } from "@/lib/side-magnitude";
 import { accountDayChange } from "@/services/account-day-change";
 import { accountInsights } from "@/services/account-insights";
-import { getAccount, listAccounts, listInstitutions } from "@/services/accounts";
+import { getAccount, listAccounts, listInstitutions, ownPortfolioAccountIds } from "@/services/accounts";
 import { anchorRemovalEffects, listAnchors } from "@/services/anchors";
 import { observedSeries } from "@/services/derivation";
 import { listAccountHoldings } from "@/services/holdings";
@@ -340,7 +340,8 @@ export default async function AccountDetailPage({
                 market value <Money cents={holdingsValue} className="font-medium text-ink" />
               </span>
             </div>
-            <AccountHoldingsTable rows={holdings} today={today} />
+            {/* ⚖️ the holding page is HIS holding — the agent's book's rows would open a page about other shares */}
+            <AccountHoldingsTable rows={holdings} today={today} opensHoldingPages={ownPortfolioAccountIds(db).has(id)} />
           </SurfaceCard>
         )}
 

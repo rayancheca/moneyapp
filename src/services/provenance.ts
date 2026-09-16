@@ -16,6 +16,7 @@ import { isStaleClose } from "@/lib/holding-price-age";
 import { formatCents } from "@/lib/money";
 import { emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
+import { ownPortfolioAccountIds } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, spendingBucket, uncategorizedWhere } from "./analytics";
 import { handTypedDays } from "./anchor-winners";
 import { accountCoverage, chainFooting, footingThrough, type AccountCoverage, type CoverageGrade } from "./coverage";
@@ -1187,6 +1188,13 @@ function netWorthProvenance(db: AppDatabase, day: string | undefined): Provenanc
  * — the figure on screen is the position, not one account's leg of it.
  */
 function holdingProvenance(db: AppDatabase, symbol: string, assetType: AssetType, day: string | undefined): Provenance | null {
+  /*
+   * ⛔ HIS legs only — the ones `holdingDetail` reports, by the same rule (`ownPortfolioAccountIds`). The brokerage book
+   * paired with Robinhood Agentic is kept out of his returns (owner, 2026-09-14), and read from every account this
+   * panel explained his WMT page's $45.76 as 0.662664 shares — the agent's 0.25 counted in — and listed "Robinhood
+   * Agentic Brokerage" as a leg of his position (measured 2026-09-16).
+   */
+  const own = ownPortfolioAccountIds(db);
   const legs = db
     .select({
       accountId: holdings.accountId,
@@ -1197,7 +1205,8 @@ function holdingProvenance(db: AppDatabase, symbol: string, assetType: AssetType
     .from(holdings)
     .innerJoin(accounts, eq(accounts.id, holdings.accountId))
     .where(and(eq(holdings.symbol, symbol), eq(holdings.assetType, assetType)))
-    .all();
+    .all()
+    .filter((l) => own.has(l.accountId));
   if (legs.length === 0) return null;
 
   const asOf = day ?? todayIso();

@@ -2,6 +2,7 @@ import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { id, timestamps } from "./common";
 import { accounts } from "./accounts";
 import { ASSET_TYPES } from "./holdings";
+import { importFiles } from "./imports";
 
 /**
  * `trade` — a buy, a sell, or shares received (a dividend reinvestment is a
@@ -49,6 +50,15 @@ export const holdingEvents = sqliteTable(
      */
     eventKind: text("event_kind", { enum: HOLDING_EVENT_KINDS }).notNull().default("trade"),
     note: text("note"),
+    /**
+     * The statement file whose Account Activity printed this trade; null for every event a script or a hand edit
+     * wrote (the activity-CSV rebuild, the crypto backfills, `upsertHolding`).
+     *
+     * ⛔ It is what lets a statement's positions leave with the statement. Un-importing the file deletes these
+     * events, and a parser-version re-read supersedes them before reading the file again — without it, a re-read
+     * would add the month's shares a second time on top of the first.
+     */
+    importFileId: text("import_file_id").references(() => importFiles.id),
     ...timestamps(),
   },
   (table) => [
@@ -57,5 +67,6 @@ export const holdingEvents = sqliteTable(
       table.symbol,
       table.occurredOn,
     ),
+    index("ix_holding_events_import_file").on(table.importFileId),
   ],
 );

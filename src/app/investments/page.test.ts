@@ -76,3 +76,15 @@ describe("the 1D note's close", () => {
     expect(source).not.toMatch(/closeOn=\{overview\.asOf\}/);
   });
 });
+
+/**
+ * ⚖️ The agent's brokerage book holds what its statements prove (owner, 2026-09-15), and is kept out of his returns.
+ * 🔴 The Add-holding form offered it beside his own books (measured 2026-09-16 on the branch).
+ */
+describe("/investments — the Add-holding form offers his books only", () => {
+  test("its accounts are narrowed by ownPortfolioAccountIds, the rule its action refuses by", () => {
+    const menu = source.match(/<HoldingActionsMenu[\s\S]*?\/>/)?.[0] ?? "";
+    expect(menu).toMatch(/accounts=\{investmentAccounts\s*\.filter\(\(a\) => ownBooks\.has\(a\.id\)\)/);
+    expect(source).toMatch(/const ownBooks = ownPortfolioAccountIds\(db\);/);
+  });
+});

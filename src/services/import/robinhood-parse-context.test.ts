@@ -470,7 +470,7 @@ function stateOf(db: AppDatabase, accountName: string) {
 }
 
 describe("an unprovable Robinhood Agentic section is withheld, and the rest of the file imports", () => {
-  test("⛔ the agent buys: Robinhood Cash and Brokerage import exactly as a normal August, Robinhood Agentic is untouched, and the file says what it left out", async () => {
+  test("⛔ the agent buys a symbol no position in this ledger has held: Robinhood Cash and Brokerage import exactly as a normal August, Robinhood Agentic is untouched, and the file says what it left out", async () => {
     // the same ledger given the PROVABLE August, for comparison
     const normal = createDatabase(path.join(dir, "normal.db"));
     try {
@@ -496,11 +496,13 @@ describe("an unprovable Robinhood Agentic section is withheld, and the rest of t
           last4: "9651",
           periodStart: "2026-08-01",
           periodEnd: "2026-08-31",
-          reason: "it shows $26.22 of securities, and this account is read as cash only",
+          reason: "it holds WMT, and no position in this ledger records whether WMT is a stock or an ETF",
           notice:
-            "Not imported: Robinhood Agentic ····9651's statement for Aug 1 – 31, 2026 — it shows $26.22 of securities, " +
-            "and this account is read as cash only. Nothing from that section is in the ledger: the activity it lists is missing, " +
-            "and the account is not checked for those days unless a later statement's opening balance closes to the cent across them.",
+            "Not imported: Robinhood Agentic ····9651's statement for Aug 1 – 31, 2026 — it holds WMT, " +
+            "and no position in this ledger records whether WMT is a stock or an ETF. Nothing from that section is in the ledger: the activity it lists is missing, " +
+            "and the account is not checked for those days unless a later statement's opening balance closes to the cent across them. " +
+            "Importing the same file again changes nothing: the next statement parser version reads the section again, " +
+            "and positions it proves go into the account's brokerage book, which the import creates.",
         },
       ]);
       // durable, on the file's own row — what /imports reads
@@ -515,7 +517,7 @@ describe("an unprovable Robinhood Agentic section is withheld, and the rest of t
           last4: "9651",
           periodStart: "2026-08-01",
           periodEnd: "2026-08-31",
-          reason: "it shows $26.22 of securities, and this account is read as cash only",
+          reason: "it holds WMT, and no position in this ledger records whether WMT is a stock or an ETF",
         },
       ]);
 
@@ -653,7 +655,9 @@ describe("an unprovable Robinhood Agentic section is withheld, and the rest of t
       expect(withheldNoticeOf(file)).toBe(
         "Not imported: Robinhood Agentic ····9651's statement for Aug 1 – 31, 2026 — it prints no Total Funds Paid and Received line, " +
           "so its activity cannot be checked. Nothing from that section is in the ledger: the activity it lists is missing, " +
-          "and the account is not checked for those days unless a later statement's opening balance closes to the cent across them.",
+          "and the account is not checked for those days unless a later statement's opening balance closes to the cent across them. " +
+          "Importing the same file again changes nothing: the next statement parser version reads the section again, " +
+          "and positions it proves go into the account's brokerage book, which the import creates.",
       );
 
       const gaps = statementGaps(bundle.db).find((g) => g.accountId === agenticId);

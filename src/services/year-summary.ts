@@ -12,7 +12,7 @@ import {
 import type { CashFlow } from "@/lib/xirr";
 import { formatDayFull } from "@/lib/format-date";
 import { yearSummary, type YearLineInput, type YearSummary } from "@/lib/year-summary";
-import { investmentSideAccountIds } from "./accounts";
+import { investmentSideAccountIds, outsidePortfolioCashAccountIds } from "./accounts";
 import { portfolioSeries, realizedSalesByDay } from "./portfolio";
 
 /**
@@ -95,6 +95,8 @@ function lineFor(
      * credited anywhere else belonged to neither and was counted in no total.
      */
     accountNameNotIn?: readonly string[];
+    /** …and never these accounts, by id */
+    accountIdNotIn?: readonly string[];
     /** SQL LIKE against the raw descriptor, or its negation */
     descriptorLike?: string;
     descriptorNotLike?: string;
@@ -115,6 +117,9 @@ function lineFor(
   if (opts.accountName) where.push(eq(accounts.name, opts.accountName));
   if (opts.accountNameNotIn && opts.accountNameNotIn.length > 0) {
     where.push(notInArray(accounts.name, [...opts.accountNameNotIn]));
+  }
+  if (opts.accountIdNotIn && opts.accountIdNotIn.length > 0) {
+    where.push(notInArray(accounts.id, [...opts.accountIdNotIn]));
   }
   if (opts.descriptorLike) {
     where.push(sql`upper(${transactions.rawDescription}) LIKE ${opts.descriptorLike}`);
@@ -385,6 +390,13 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
     raw.rowCount === 0 ? null : { id, label, section, basis, caveat, ...raw, ...counter };
 
   const realized = realizedFor(db, year);
+  /*
+   * ⚖️ The Investment section is HIS returns, in one scope. Realized reads his books only (`realizedSalesByDay`), and
+   * the owner kept Robinhood Agentic out of his brokerage returns (2026-09-14) — so a dividend the agent's shares pay,
+   * credited to Agentic, is not his either. 🔴 Read from every account, the agent's $0.06 was in his Dividends while
+   * the agent's sale was not in his Realized (measured 2026-09-16).
+   */
+  const agentsCash = [...outsidePortfolioCashAccountIds(db)];
   // ONE decision for all three claims the cash-job line makes (see `cashJobNaming`)
   const cashJob = cashJobNaming(year);
 
@@ -423,7 +435,7 @@ export function yearSummaryView(db: AppDatabase, year: number, today: string): Y
       "Dividends",
       "investment",
       "Dividends credited inside the brokerage.",
-      lineFor(db, year, { categoryName: "Dividends" }),
+      lineFor(db, year, { categoryName: "Dividends", accountIdNotIn: agentsCash }),
     ),
     line(
       "brokerage-interest",

@@ -1,9 +1,10 @@
-import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { holdings, priceCache, priceIntraday, type AssetType } from "@/db/schema/holdings";
 import { addDays, todayIso } from "@/lib/dates";
 import { valueCentsOf } from "@/lib/holding-returns";
 import { intradayPortfolioGrid, type IntradayGrid, type SymbolTicks } from "@/lib/intraday-grid";
+import { ownPortfolioAccountIds } from "./accounts";
 import { getProvider, type IntradayTick, type ProviderLookup } from "./prices";
 
 /**
@@ -47,9 +48,11 @@ interface HeldSymbol {
   quantityE8: number;
 }
 
-/** Distinct held symbols with a positive quantity, summed across accounts —
- *  the same book the portfolio chart values, not a per-account list. */
+/** Distinct held symbols with a positive quantity, summed across HIS accounts —
+ *  the same book the portfolio chart values (`ownPortfolioAccountIds`), not a per-account list. */
 function heldSymbols(db: AppDatabase): HeldSymbol[] {
+  const own = [...ownPortfolioAccountIds(db)];
+  if (own.length === 0) return [];
   return db
     .select({
       symbol: holdings.symbol,
@@ -57,7 +60,7 @@ function heldSymbols(db: AppDatabase): HeldSymbol[] {
       quantityE8: sql<number>`sum(${holdings.quantityE8})`,
     })
     .from(holdings)
-    .where(eq(holdings.isActive, true))
+    .where(and(eq(holdings.isActive, true), inArray(holdings.accountId, own)))
     .groupBy(holdings.symbol, holdings.assetType)
     .having(sql`sum(${holdings.quantityE8}) > 0`)
     .all();

@@ -19,6 +19,7 @@ import {
   type RealizedSale,
 } from "@/lib/realized-pnl";
 import { ledgerHref } from "./analytics";
+import { ownPortfolioAccountIds } from "./accounts";
 import { adjustedHoldingEvents } from "./holding-timeline";
 import { holdingRows, realizedTradesByLeg } from "./portfolio";
 import { valueCentsOf } from "./holdings";
@@ -195,6 +196,8 @@ export function holdingDetail(
   if (!isAssetType(assetTypeInput)) throw new UnknownHoldingError(assetTypeInput, symbol);
   const assetType = assetTypeInput;
 
+  // ⚖️ his legs only — the book paired with Robinhood Agentic is kept out of his returns (`ownPortfolioAccountIds`)
+  const own = ownPortfolioAccountIds(db);
   const holdingLegs = db
     .select({
       accountId: holdings.accountId,
@@ -207,7 +210,8 @@ export function holdingDetail(
     .from(holdings)
     .innerJoin(accounts, eq(holdings.accountId, accounts.id))
     .where(and(eq(holdings.symbol, symbol), eq(holdings.assetType, assetType)))
-    .all();
+    .all()
+    .filter((leg) => own.has(leg.accountId));
 
   // the rows AS STORED — what he traded and what it cost. The trade history lists
   // these; nothing on this page VALUES them (that is `valued`, below)
@@ -216,7 +220,8 @@ export function holdingDetail(
     .from(holdingEvents)
     .where(and(eq(holdingEvents.symbol, symbol), eq(holdingEvents.assetType, assetType)))
     .orderBy(asc(holdingEvents.occurredOn), asc(holdingEvents.createdAt), asc(holdingEvents.id))
-    .all();
+    .all()
+    .filter((e) => own.has(e.accountId));
 
   if (holdingLegs.length === 0 && events.length === 0) {
     throw new UnknownHoldingError(assetType, symbol);
@@ -239,7 +244,7 @@ export function holdingDetail(
    * delta is zero, so it is neither a flow nor a trade mark.
    */
   const valued = adjustedHoldingEvents(db).filter(
-    (e) => e.assetType === assetType && e.symbol === symbol && e.eventKind !== "split",
+    (e) => own.has(e.accountId) && e.assetType === assetType && e.symbol === symbol && e.eventKind !== "split",
   );
 
   const closes = db

@@ -28,6 +28,36 @@ export function isInvestmentSide(account: AccountSideInput): boolean {
   return account.institutionHasInvestment && SETTLEMENT_NAME_RE.test(account.name);
 }
 
+export interface PortfolioBookInput {
+  /** accounts.type */
+  type: string;
+  /** the cash account `accounts.cash_account_id` pairs this account with, or null when it names none */
+  cashLeg: AccountSideInput | null;
+}
+
+/**
+ * Whether an investment account's positions are HIS portfolio: the value, returns, P/L and holdings that
+ * /investments, /summary and the dashboard's investments teaser report.
+ *
+ * ⚖️ Owner decisions. Robinhood #655929651 is tracked as "Robinhood Agentic" — Claude's agent trades it — and he chose
+ * that name so it is KEPT OUT of his own brokerage returns (2026-09-14). When the agent buys a stock, a second
+ * account holds the positions and Robinhood Agentic keeps the unspent cash, as Robinhood Cash and Robinhood Brokerage
+ * split #487513525 (2026-09-15). The book is paired with its cash account by a stored link (`cash_account_id`).
+ *
+ * ⛔ The book belongs to whichever side its CASH ACCOUNT is on, so the pair is never split across his boundary:
+ *  - the cash account outside his investment side (Robinhood Agentic, by the owner's naming): money moving to it is
+ *    an external flow out of his investments (`externalInvestmentFlows`) — so the book it buys with must be outside
+ *    his portfolio too, or the $26.64 would read as a withdrawal AND its positions as his gain.
+ *  - the cash account on his side: the move is internal, and the book is his.
+ *
+ * An investment account with no link is his, as every account was before the first book existed. Net worth, the
+ * account's own page and `pnpm ledger-check` still value a book that is not his — this says only whose RETURNS it is.
+ */
+export function isOwnPortfolioBook(book: PortfolioBookInput): boolean {
+  if (book.type !== "investment") return false;
+  return book.cashLeg === null || isInvestmentSide(book.cashLeg);
+}
+
 /**
  * What an account's balance is to "how long the money lasts":
  *

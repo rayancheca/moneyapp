@@ -40,6 +40,19 @@ import {
 } from "../duplicate-lifecycle";
 import { accountSlug, institutionSlug } from "./account-slug";
 import { ATTACHED, detachAttachedRows, keepRetiredAttachedRows, parsedFromFile, reattachDetachedRows } from "./attached-rows";
+import {
+  bookEventsByCashAccount,
+  cashOnlyStatementsByAccount,
+  equityAssetTypesOf,
+  laterBookStatements,
+  laterStatementsRefusal,
+  NegativePositionError,
+  removeEmptyBooks,
+  removeFileEvents,
+  resolveBook,
+  writeStatementPositions,
+  type LaterBookStatement,
+} from "./brokerage-book";
 import { handOverPrintedAnchors } from "./printed-anchors";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
@@ -648,22 +661,34 @@ function rangesCovering(ranges: readonly CoveredRange[], day: string): CoveredRa
  * a file that carries several accounts and must parse only the tracked ones. An
  * account with no last4 cannot be matched by number and is left out.
  */
-export function parseContextFor(db: AppDatabase): ParseContext {
+export function parseContextFor(db: AppDatabase, rereading: ReadonlySet<string> = new Set()): ParseContext {
   const rows = db
-    .select({ institution: institutions.name, last4: accounts.last4, type: accounts.type, subtype: accounts.subtype })
+    .select({ id: accounts.id, institution: institutions.name, last4: accounts.last4, type: accounts.type, subtype: accounts.subtype })
     .from(accounts)
     .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
     .all();
+  // a cash account's brokerage book, by the stored link — what a section's positions are proven against
+  const books = bookEventsByCashAccount(db);
+  // …and the cash account's statements that stand on no book — a positions month is never written under one
+  const readAsCash = cashOnlyStatementsByAccount(db, rereading);
   const knownAccounts: Partial<Record<AccountHint["institution"], KnownAccount[]>> = {};
   for (const r of rows) {
     if (r.last4 === null) continue;
     const institution = r.institution as AccountHint["institution"];
+    const events = books.get(r.id);
+    const cashOnly = readAsCash.get(r.id);
     knownAccounts[institution] = [
       ...(knownAccounts[institution] ?? []),
-      { last4: r.last4, type: r.type, subtype: r.subtype },
+      {
+        last4: r.last4,
+        type: r.type,
+        subtype: r.subtype,
+        ...(events === undefined ? {} : { book: { events } }),
+        ...(cashOnly === undefined ? {} : { cashOnlyStatements: cashOnly }),
+      },
     ];
   }
-  return { knownAccounts };
+  return { knownAccounts, equityAssetTypes: equityAssetTypesOf(db) };
 }
 
 /** Resolve (or create/upgrade) the account a parsed statement belongs to. */
@@ -674,6 +699,8 @@ export function resolveAccount(db: AppDatabase, hint: AccountHint): string {
     .where(eq(institutions.name, hint.institution))
     .get();
   if (!institution) throw new Error(`Unknown institution ${hint.institution}`);
+  // a cash account's brokerage book: by the stored link, never by name or type — see ./brokerage-book.ts
+  if (hint.bookOf !== undefined) return resolveBook(db, institution.id, hint.bookOf);
 
   const all = db.select().from(accounts).where(eq(accounts.institutionId, institution.id)).all();
   // an existing preferred account (the P0.1 settlement-cash ledger) wins over
@@ -838,16 +865,23 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
   const sniffed = files
     .map((f) => sniffFile(f.name, f.buffer))
     .sort((a, b) => FORMAT_PRIORITY[a.format] - FORMAT_PRIORITY[b.format] || a.name.localeCompare(b.name));
+  const selected: { file: ReturnType<typeof sniffFile>; selection: ProfileSelection }[] = [];
+  for (const file of sniffed) selected.push({ file, selection: await selectProfile(file) });
 
   const outcomes: FileOutcome[] = [];
   const touchedAccounts = new Set<string>();
   // the files this call wrote rows under — the only rows linking may claim
   const writtenFileIds = new Set<string>();
+  const rereads = rereadBatchOf(db, selected);
 
-  for (const file of sniffed) {
-    const outcome = await importOneFile(db, file, touchedAccounts, writtenFileIds);
+  for (const { file, selection } of oldestFirstWhereItMatters(selected)) {
+    const outcome = await importOneFile(db, file, selection, { touchedAccounts, writtenFileIds, rereads });
     outcomes.push(outcome);
   }
+
+  // A book this call left holding nothing — a re-read that no longer proves its month, a statement that failed after
+  // its book was made — leaves, as an un-import's does: a first read that withheld the section never made one.
+  for (const removed of removeEmptyBooks(db, [...touchedAccounts])) touchedAccounts.delete(removed);
 
   // A row an un-import detached is filed again under the statement that now
   // holds its day (`attached-rows`). Before the reconcile, so a gap holds it
@@ -895,12 +929,17 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
  * The document is extracted at most once, and only when some candidate asks
  * for it, so files with an unambiguous filename cost nothing extra.
  */
-async function selectProfile(
-  file: ReturnType<typeof sniffFile>,
-): Promise<{ profile: ParserProfile | undefined; unreadable: boolean }> {
+interface ProfileSelection {
+  readonly profile: ParserProfile | undefined;
+  readonly unreadable: boolean;
+  /** the text the content gates read — the file's own text, or a PDF's extraction when a gate asked for it */
+  readonly content: string;
+}
+
+async function selectProfile(file: ReturnType<typeof sniffFile>): Promise<ProfileSelection> {
   const candidates = PROFILES.filter((p) => p.matches(file));
-  if (candidates.length === 0) return { profile: undefined, unreadable: false };
-  if (!candidates.some((p) => p.matchesContent)) return { profile: candidates[0], unreadable: false };
+  if (candidates.length === 0) return { profile: undefined, unreadable: false, content: file.text };
+  if (!candidates.some((p) => p.matchesContent)) return { profile: candidates[0], unreadable: false, content: file.text };
 
   let content = file.text;
   if (file.format === "pdf") {
@@ -915,7 +954,31 @@ async function selectProfile(
     // a scanned/image-only statement is a different problem with a different
     // fix than one whose text simply matched no known layout — say which
     unreadable: file.format === "pdf" && content.trim() === "",
+    content,
   };
+}
+
+/**
+ * The batch in its import order, with the files of a profile that declares `orderKey` put OLDEST first among the
+ * places those files already held — every other file keeps its place.
+ *
+ * 🔴 A Robinhood brokerage statement's brokerage-book positions are proven by what the book held BEFORE the period.
+ * Robinhood names its files with UUIDs, so a September named b7d4e2f1… imported before an August named d41f0c83…,
+ * found no August shares to be proven by, and was withheld — and a withheld month is read again only by a version
+ * bump (agentic-book.test.ts). A key the profile cannot read leaves the file where the name put it.
+ */
+function oldestFirstWhereItMatters<T extends { file: ReturnType<typeof sniffFile>; selection: ProfileSelection }>(batch: readonly T[]): T[] {
+  const keyOf = (item: T): string | null => item.selection.profile?.orderKey?.(item.selection.content) ?? null;
+  const keyed = batch.flatMap((item, at) => {
+    const key = keyOf(item);
+    return key === null ? [] : [{ item, at, key }];
+  });
+  const byKey = [...keyed].sort((a, b) => a.key.localeCompare(b.key) || a.item.file.name.localeCompare(b.item.file.name));
+  const ordered = [...batch];
+  keyed.forEach(({ at }, i) => {
+    ordered[at] = (byKey[i] as (typeof byKey)[number]).item;
+  });
+  return ordered;
 }
 
 /**
@@ -1036,14 +1099,137 @@ function retiredReadsOf(db: AppDatabase, sha: string, version: number): (typeof 
 /** What a re-read that fails adds to its cause: it retired nothing. */
 const EARLIER_READ_KEPT = "nothing was changed; the earlier read of this file is still in place";
 
+/**
+ * What one call re-reads: the retired reads of each of its files, by the file's bytes, and the user-set attributes
+ * captured for a file whose retired reads an EARLIER file's re-read took (`planReread`).
+ */
+interface RereadBatch {
+  readonly staleBySha: ReadonlyMap<string, readonly string[]>;
+  readonly shaOfStale: ReadonlyMap<string, string>;
+  readonly retiredEarly: Map<string, CarryPool>;
+}
+
+function rereadBatchOf(db: AppDatabase, selected: readonly { file: ReturnType<typeof sniffFile>; selection: ProfileSelection }[]): RereadBatch {
+  const staleBySha = new Map<string, readonly string[]>();
+  for (const { file, selection } of selected) {
+    if (!selection.profile) continue;
+    const sha = fileSha256(file.buffer);
+    const stale = retiredReadsOf(db, sha, selection.profile.version).map((f) => f.id);
+    if (stale.length > 0) staleBySha.set(sha, stale);
+  }
+  const shaOfStale = new Map([...staleBySha].flatMap(([sha, ids]) => ids.map((id) => [id, sha] as const)));
+  return { staleBySha, shaOfStale, retiredEarly: new Map() };
+}
+
+/** Every later book statement of these files but themselves, newest first — each names ALL the later ones on its books. */
+function laterStatementsOf(db: AppDatabase, fileIds: readonly string[]): LaterBookStatement[] {
+  const found = fileIds.flatMap((id) => laterBookStatements(db, id)).filter((l) => !fileIds.includes(l.importFileId));
+  return [...new Map(found.map((l) => [l.importFileId, l])).values()].sort((a, b) => b.periodEnd.localeCompare(a.periodEnd));
+}
+
+/**
+ * A file's re-read, planned BEFORE it parses and without writing anything: the reads it will retire, the user-set
+ * attributes its fresh rows inherit, and the ledger the parser reads it against.
+ */
+interface RereadPlan {
+  /** the reads the write retires, newest first — the later statements on the same book this call also re-reads, then the file's own */
+  readonly retiring: readonly string[];
+  /** captured before anything moves: superseding the rows hides them from every lookup path */
+  readonly pool: CarryPool;
+  /** the attributes captured for each later file `retiring` takes, by its bytes — for that file's own turn */
+  readonly laterPools: ReadonlyMap<string, CarryPool>;
+  /** the parse context of the ledger as `retiring` leaves it */
+  readonly context: () => ParseContext;
+}
+
+/** Thrown to roll back a transaction that only reads the ledger as a retirement would leave it. */
+class DryRun extends Error {}
+
+/**
+ * What `read` finds in the ledger once `fileIds` are retired — the retirement run in a transaction that is always
+ * rolled back, so nothing is written. Throws what the retirement throws (`NegativePositionError`).
+ */
+function readAsRetired<T>(db: AppDatabase, fileIds: readonly string[], read: (tx: AppDatabase) => T): T {
+  let found: { value: T } | undefined;
+  try {
+    db.transaction((tx) => {
+      for (const id of fileIds) supersedeFileContribution(tx, id);
+      found = { value: read(tx) };
+      throw new DryRun();
+    });
+  } catch (error: unknown) {
+    if (!(error instanceof DryRun)) throw error;
+  }
+  if (found === undefined) throw new Error("the dry run of a re-read's retirement read nothing");
+  return found.value;
+}
+
+/**
+ * Plan a file's re-read (re-parse lifecycle) — or say why it is refused. Nothing is written either way: the write
+ * retires `retiring` in one transaction with everything the new read writes, and only once the new read has parsed.
+ *
+ * ⛔ A brokerage book's months come off newest first (`laterBookStatements`). A later statement on the same book that
+ * this call also re-reads is retired FIRST, by this file's write, and keeps its captured attributes for its own turn:
+ * re-read oldest first, each month is then proven by what the months before it gave back, and a month that no longer
+ * proves takes the later ones with it rather than leaving their sales standing alone. A later statement this call does
+ * NOT re-read refuses the re-read, because a re-read that did not give the shares back would leave its sale short —
+ * and so does a retirement that would walk a book below zero (`NegativePositionError`), found by a dry run.
+ *
+ * The parser reads the file against the ledger as the retirement will leave it (`readAsRetired`): the book events the
+ * retired reads wrote are not what the file is proven by — kept, a re-read's own trades would read as a second copy of
+ * its month.
+ *
+ * 🔴 Before this the stale version was retired alone, at its own turn: August's buy left while September's sale
+ * stood, and an August that no longer proved left the book at WMT −0.1 (measured, 2026-09-16: −$10.95 on Oct 5).
+ */
+function planReread(
+  db: AppDatabase,
+  sha: string,
+  profile: ParserProfile | undefined,
+  rereads: RereadBatch,
+): RereadPlan | { refused: string } {
+  // a file this upload reads again is read after this one when it matters (`oldestFirstWhereItMatters`)
+  const rereading = new Set(rereads.shaOfStale.keys());
+  const staleIds = profile ? retiredReadsOf(db, sha, profile.version).map((f) => f.id) : [];
+  if (staleIds.length === 0) {
+    const pool = rereads.retiredEarly.get(sha) ?? captureCarryForward(db, []);
+    return { retiring: [], pool, laterPools: new Map(), context: () => parseContextFor(db, rereading) };
+  }
+  const later = laterStatementsOf(db, staleIds);
+  const unread = later.filter((l) => !rereads.shaOfStale.has(l.importFileId));
+  if (unread.length > 0) return { refused: laterStatementsRefusal(unread, profile?.version) };
+
+  const laterShas = [...new Set(later.map((l) => rereads.shaOfStale.get(l.importFileId) as string))];
+  const retiring = [...new Set([...laterShas.flatMap((s) => rereads.staleBySha.get(s) ?? []), ...staleIds])];
+  let context: ParseContext;
+  try {
+    context = readAsRetired(db, retiring, (tx) => parseContextFor(tx, rereading));
+  } catch (error: unknown) {
+    if (error instanceof NegativePositionError) return { refused: error.message };
+    throw error;
+  }
+  return {
+    retiring,
+    pool: captureCarryForward(db, staleIds),
+    laterPools: new Map(laterShas.map((s) => [s, captureCarryForward(db, rereads.staleBySha.get(s) ?? [])])),
+    context: () => context,
+  };
+}
+
+interface BatchState {
+  readonly touchedAccounts: Set<string>;
+  readonly writtenFileIds: Set<string>;
+  readonly rereads: RereadBatch;
+}
+
 async function importOneFile(
   db: AppDatabase,
   file: ReturnType<typeof sniffFile>,
-  touchedAccounts: Set<string>,
-  writtenFileIds: Set<string>,
+  { profile, unreadable }: ProfileSelection,
+  batch: BatchState,
 ): Promise<FileOutcome> {
+  const { touchedAccounts, writtenFileIds } = batch;
   const sha = fileSha256(file.buffer);
-  const { profile, unreadable } = await selectProfile(file);
   const outcome: FileOutcome = {
     fileName: file.name,
     status: "parsed",
@@ -1066,6 +1252,12 @@ async function importOneFile(
   if (existing && !REIMPORTABLE_STATUSES.includes(existing.status)) {
     return { ...outcome, status: "skipped_duplicate" };
   }
+
+  // re-parse lifecycle (schema.md): what a newer parser version retires is planned here and retired only once it has
+  // read the file (`planReread`). A refusal comes before anything is written, the file's row included: the file stays
+  // read at the version it was.
+  const plan = planReread(db, sha, profile, batch.rereads);
+  if ("refused" in plan) return { ...outcome, status: "failed", error: plan.refused };
 
   const institution = guessInstitution(db, file);
   // basename neutralizes traversal; truncation + control-strip neutralizes
@@ -1115,11 +1307,11 @@ async function importOneFile(
   let statements: ParsedStatement[];
   let withheldSections: readonly WithheldSection[];
   try {
-    ({ statements, withheld: withheldSections } = asParsedFile(await profile.parse(file, parseContextFor(db))));
+    ({ statements, withheld: withheldSections } = asParsedFile(await profile.parse(file, plan.context())));
   } catch (error: unknown) {
     const cause = error instanceof ParseError ? error.message : `Unexpected: ${String(error)}`;
     // nothing has been retired yet: the read this version would replace is still the one in place
-    const message = retiredReadsOf(db, sha, profile.version).length > 0 ? `${cause} (${EARLIER_READ_KEPT})` : cause;
+    const message = plan.retiring.length > 0 ? `${cause} (${EARLIER_READ_KEPT})` : cause;
     db.update(importFiles)
       .set({ status: "failed", error: message, parserProfile: profile.id })
       .where(eq(importFiles.id, fileRow.id))
@@ -1139,17 +1331,20 @@ async function importOneFile(
   // un-importing the failed row brought none of it back. Measured on a copy of the real ledger, 2026-09-16: a throwing
   // re-read of the January 2026 Sapphire statement superseded its 4 attached payments ($1,223.54) and left the account
   // 8 rows and a period short.
-  const stale = retiredReadsOf(db, sha, profile.version);
-  // The old rows' user-set attributes are snapshotted FIRST — superseding them hides them from every lookup path, and
-  // the fresh rows inherit them by content match below. Without this a parser improvement would silently destroy
-  // every hand-set category, note, transfer link, exclusion and split on the file.
-  const carryPool = captureCarryForward(db, stale.map((f) => f.id));
+  //
+  // `retiring` is newest first: it holds the later statements on the same brokerage book that this upload also
+  // re-reads (`planReread`), so a later month's sale never stands without the buy it sold.
+  const { retiring, laterPools } = plan;
+  // The old rows' user-set attributes were snapshotted FIRST (`planReread`) — superseding them hides them from every
+  // lookup path, and the fresh rows inherit them by content match below. Without this a parser improvement would
+  // silently destroy every hand-set category, note, transfer link, exclusion and split on the file.
+  const carryPool = plan.pool;
   const untouched: FileOutcome = { ...outcome };
   const fileAccountIds = new Set<string>();
   const retiredAccountIds = new Set<string>();
   const writeRead = (): void => {
-    for (const old of stale) {
-      for (const accountId of supersedeFileContribution(db, old.id)) retiredAccountIds.add(accountId);
+    for (const id of retiring) {
+      for (const accountId of supersedeFileContribution(db, id)) retiredAccountIds.add(accountId);
     }
     for (const statement of statements) {
       const accountId = resolveAccount(db, statement.accountHint);
@@ -1350,6 +1545,12 @@ async function importOneFile(
           upsertAnchor(tx, accountId, statement.period.end, statement.period.endCents, "statement", fileRow.id, periodId);
           upsertAnchorAtDayBefore(tx, accountId, statement.period.start, statement.period.beginCents, fileRow.id, periodId);
         }
+        // a brokerage book's trades, in the same transaction as its value anchor — ./brokerage-book.ts
+        if (statement.positions) {
+          const asOf = statement.period?.end ?? statement.declaredRange?.end ?? statement.ledger?.asOf;
+          if (asOf === undefined) throw new Error("a positions statement carries no window to prove its positions through");
+          writeStatementPositions(tx, accountId, fileRow.id, statement.positions, asOf);
+        }
       });
     }
     // after every line has claimed what it carries: a row filed by hand that no line took over is the owner's, not the
@@ -1362,11 +1563,11 @@ async function importOneFile(
   try {
     // A fresh read keeps the statements it wrote before a failure, for un-import to remove. A re-read is all or
     // nothing, so a failure leaves in place the read it would have replaced.
-    if (stale.length === 0) writeRead();
+    if (retiring.length === 0) writeRead();
     else db.transaction(() => writeRead());
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    if (stale.length > 0) {
+    if (retiring.length > 0) {
       // rolled back: nothing to rebuild, and an account the read had resolved may no longer exist
       db.update(importFiles)
         .set({ status: "failed", error: `Failed mid-import (${EARLIER_READ_KEPT}): ${message}` })
@@ -1383,8 +1584,11 @@ async function importOneFile(
       .run();
     return { ...outcome, status: "failed", error: message };
   }
-  // whether or not the new read wrote to them again: the retired reads' rows, periods and anchors left these accounts
+  // whether or not the new read wrote to them again: the retired reads' rows, periods and anchors — and the shares a
+  // retired read held on a brokerage book — left these accounts
   for (const accountId of [...retiredAccountIds, ...fileAccountIds]) touchedAccounts.add(accountId);
+  // the later files this write retired are read at their own turns, inheriting what was captured before it
+  for (const [laterSha, laterPool] of laterPools) batch.rereads.retiredEarly.set(laterSha, laterPool);
 
   // relocate the archived original from the institution bucket into its resolved
   // per-account folder — the per-account storage the DB now points at
@@ -1613,7 +1817,11 @@ function removeFileBalances(tx: AppDatabase, importFileId: string): void {
 
 /**
  * Supersede everything an import file contributed (re-parse lifecycle). Returns every account it had written to —
- * read before anything moves — for the caller to rebuild.
+ * read before anything moves — and every brokerage book whose shares it held, for the caller to rebuild.
+ *
+ * ⛔ Its holding events are DELETED, not kept beside the re-read: the file's successor reads the same trades again,
+ * and events carry no status to retire them by — kept, a re-read would add every share a second time. A book the
+ * deletion would walk below zero throws (`NegativePositionError`) and the whole retirement rolls back.
  *
  * 🔴 The import rebuilt only the accounts the NEW parse read. An account the retired version wrote and the new one
  * does not (a section it now withholds, or one it no longer reads) lost its rows, periods and anchors here and kept
@@ -1626,6 +1834,7 @@ function removeFileBalances(tx: AppDatabase, importFileId: string): void {
 function supersedeFileContribution(db: AppDatabase, oldFileId: string): string[] {
   return db.transaction((tx) => {
     const written = accountsWrittenBy(tx, oldFileId);
+    const books = removeFileEvents(tx, oldFileId);
     tx.update(transactions)
       .set({ status: "superseded" })
       .where(and(eq(transactions.importFileId, oldFileId), inArray(transactions.status, ["active", "quarantined", "excluded"])))
@@ -1634,7 +1843,7 @@ function supersedeFileContribution(db: AppDatabase, oldFileId: string): string[]
     // a parsed file's error is only ever the sections it withheld (`importOneFile`); its successor reads them again
     // and says for itself what is still missing, so the retired row must not keep claiming a section is absent
     tx.update(importFiles).set({ status: "superseded", error: null }).where(eq(importFiles.id, oldFileId)).run();
-    return written;
+    return [...new Set([...written, ...books])];
   });
 }
 
@@ -1864,18 +2073,23 @@ function accountsWrittenBy(db: AppDatabase, importFileId: string): string[] {
     ...new Set([
       ...of(db.selectDistinct({ accountId: transactions.accountId }).from(transactions).where(eq(transactions.importFileId, importFileId)).all()),
       ...of(db.selectDistinct({ accountId: statementPeriods.accountId }).from(statementPeriods).where(eq(statementPeriods.importFileId, importFileId)).all()),
+      // ⚠️ a brokerage book the file wrote shares to is here through its period: every positions statement carries one
       ...of(db.selectDistinct({ accountId: balanceAnchors.accountId }).from(balanceAnchors).where(eq(balanceAnchors.importFileId, importFileId)).all()),
     ]),
   ];
 }
 
 /**
- * Un-import: removes what a file parsed, its periods and its anchors atomically,
- * and detaches the rows attached to it (`attached-rows`); derived state rebuilt.
+ * Un-import: removes what a file parsed, its periods, its anchors and the trades
+ * it wrote to a brokerage book atomically, and detaches the rows attached to it
+ * (`attached-rows`); derived state rebuilt.
  */
 export function unimportFile(db: AppDatabase, importFileId: string): void {
   const file = db.select().from(importFiles).where(eq(importFiles.id, importFileId)).get();
   if (!file) return;
+  // ⛔ a brokerage book's months come off newest first — refused before anything is snapshotted or written
+  const later = laterBookStatements(db, importFileId);
+  if (later.length > 0) throw new Error(laterStatementsRefusal(later));
   const affected = accountsWrittenBy(db, importFileId);
 
   const doomedRows = db
@@ -1892,6 +2106,8 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
   // gone. A row attached to the file stays, and a re-import files it again.
   withPreMutationSnapshot(db, "unimport-file", () => {
     let restored: string[] = [];
+    // the brokerage books whose shares the file held
+    let heldShares: string[] = [];
     db.transaction((tx) => {
       // A charge this file's rows are the SURVIVING copy of has a retired twin
       // sitting `superseded` in another file. Delete the survivor without putting
@@ -1914,9 +2130,14 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
       detachTransferLegs(tx, legsLeftAloneBy(tx, importFileId));
       tx.delete(transactions).where(parsedFromFile(importFileId)).run();
       removeFileBalances(tx, importFileId);
+      // the trades the file printed leave with it — before the file row, whose id they reference
+      heldShares = removeFileEvents(tx, importFileId);
       tx.delete(importFiles).where(eq(importFiles.id, importFileId)).run();
     });
-    const scope = [...new Set([...affected, ...accountsOfTransactions(db, restored)])];
+    // a book the file created and nothing else holds leaves too: the un-import restores the ledger it found
+    const written = [...new Set([...affected, ...heldShares])];
+    const removedBooks = new Set(removeEmptyBooks(db, written));
+    const scope = [...new Set([...written, ...accountsOfTransactions(db, restored)])].filter((id) => !removedBooks.has(id));
     const quarantinedBefore = quarantinedIdsOn(db, scope);
     reconcileAccounts(db, scope);
     // A restored twin, or a row whose gap this removal closed, is back in the

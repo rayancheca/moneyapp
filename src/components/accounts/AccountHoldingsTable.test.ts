@@ -40,8 +40,8 @@ const row = (
   allocationPct: 50,
 });
 
-const render = (rows: AccountHoldingRow[], today: string): string =>
-  renderToStaticMarkup(createElement(AccountHoldingsTable, { rows, today }));
+const render = (rows: AccountHoldingRow[], today: string, opensHoldingPages = true): string =>
+  renderToStaticMarkup(createElement(AccountHoldingsTable, { rows, today, opensHoldingPages }));
 
 /** the <th> whose text starts with the column's name */
 const header = (html: string, name: string): string =>
@@ -91,5 +91,24 @@ describe("AccountHoldingsTable dates each day move by its own two closes", () =>
       "2026-09-14",
     );
     expect(monday).not.toMatch(/today| vs /i);
+  });
+});
+
+/**
+ * ⚖️ Owner decisions 2026-09-14/15: the agent's positions sit in a brokerage book kept out of his own returns, and a
+ * holding page is HIS holding. 🔴 The book's own page linked every row to /investments/<type>/<symbol> — a page that
+ * shows only his shares, or a 404 when he holds none (measured 2026-09-16 on the branch).
+ */
+describe("AccountHoldingsTable opens a holding page only for an account that page covers", () => {
+  const rows = [row("WMT", "2026-09-14", "2026-09-11", 1.2, 2_773)];
+
+  test("his account's rows open their holding pages", () => {
+    expect(render(rows, "2026-09-15")).toContain('href="/investments/stock/WMT"');
+  });
+
+  test("⛔ the agent's book's rows open nothing — the page they would open is not about these shares", () => {
+    const html = render(rows, "2026-09-15", false);
+    expect(html).toContain("WMT");
+    expect(html).not.toContain("/investments/");
   });
 });

@@ -506,7 +506,7 @@ describe("a section tracked as a cash account", () => {
     expect(august[1]!.period).toEqual({ start: "2026-08-01", end: "2026-08-31", beginCents: 167993 + 45, endCents: 68 + 100033 });
   });
 
-  test("⛔ an Account Activity row that is not an ITRF — an agent's Buy — withholds the section, and only the section", () => {
+  test("⛔ a Buy whose shares the section does not print as held withholds the section, and only the section", () => {
     const buy = line("SPY Cash Buy 06/10/2026 0.016 $625.00000 $10.00", [
       ["SPY", 284.14],
       ["Cash", 347.25],
@@ -516,8 +516,12 @@ describe("a section tracked as a cash account", () => {
       ["$625.00000", 647.06],
       ["$10.00", 695.33],
     ]);
-    const withBuy = JUNE.flatMap((l) => (l === ITRF_CREDIT ? [l, buy] : [l]));
-    withheldFrom(withBuy, JUNE_PERIOD, /activity that is not a transfer \("SPY Cash Buy 06\/10\/2026 0\.016 \$625\.00000 \$10\.00"\)/);
+    // the totals add up — the Buy is really there — but Securities Held lists nothing and Total Securities reads $0.00
+    const withBuy = JUNE.flatMap((l) => {
+      if (l === ITRF_CREDIT) return [l, buy];
+      return l.text.startsWith("Total Funds Paid and Received") ? [totalFunds("$10.00", "$26.64", 695.33, 746.51)] : [l];
+    });
+    withheldFrom(withBuy, JUNE_PERIOD, /its positions are not what the ledger held before Jun 1, 2026 plus this month's trades \(SPY: it prints 0, the trades give 0\.016\)/);
   });
 
   test("⛔ a Crypto Money Movement in the agent's own section — a crypto buy through its linked account — withholds it", () => {
@@ -533,7 +537,8 @@ describe("a section tracked as a cash account", () => {
       if (l.text.startsWith("Description Symbol Acct Type")) return [l, coin];
       return l.text.startsWith("Total Funds Paid and Received") ? [totalFunds("$10.00", "$0.00", 685.13, 743.4)] : [l];
     });
-    withheldFrom(august, AUGUST_PERIOD, /activity that is not a transfer \("Crypto Money Movement Cash COIN 08\/12\/2026 \$10\.00"\)/);
+    // the owner, 2026-09-14: its linked crypto account #311407134147 is not tracked until it holds crypto
+    withheldFrom(august, AUGUST_PERIOD, /a crypto money movement \("Crypto Money Movement Cash COIN 08\/12\/2026 \$10\.00"\), and its crypto account is not tracked/);
   });
 
   /**
@@ -572,8 +577,9 @@ describe("a section tracked as a cash account", () => {
     line("Total Executed Trades Pending Settlement $0.00 $0.00"),
   ];
 
-  test("⛔ the rehearsal's month — the agent buys $25.00 of WMT — withholds #655929651's August and nothing else", () => {
-    withheldFrom([...AGENT_BUYS, ...AUGUST_BROKERAGE], AUGUST_PERIOD, /shows \$26\.22 of securities, and this account is read as cash only/);
+  test("⛔ the rehearsal's month, on a ledger where no position has ever been WMT, withholds #655929651's August and nothing else", () => {
+    // asset type is never guessed from a ticker: "ETH" is a coin and a listed fund, and stock vs ETF prices differently
+    withheldFrom([...AGENT_BUYS, ...AUGUST_BROKERAGE], AUGUST_PERIOD, /it holds WMT, and no position in this ledger records whether WMT is a stock or an ETF/);
   });
 
   test("⛔ rows that do not add up to the printed Total Funds Paid and Received withhold the section — a row the reader cannot see is there", () => {
@@ -586,12 +592,12 @@ describe("a section tracked as a cash account", () => {
     withheldFrom(julyWithoutTotals, JULY_PERIOD, /prints no Total Funds Paid and Received line/);
   });
 
-  test("⛔ a cash account that prints securities is withheld — including a first month whose opening is N/A", () => {
+  test("⛔ securities its Portfolio Summary does not list withhold the section — including a first month whose opening is N/A", () => {
     const julyHolding = swap(quietMonth("07/01/2026 to 07/31/2026"), "Total Securities $0.00 $0.00", line("Total Securities $0.00 $12.34"));
-    withheldFrom([...asLines(ERA_C), ...julyHolding], JULY_PERIOD, /shows \$12\.34 of securities/);
+    withheldFrom([...asLines(ERA_C), ...julyHolding], JULY_PERIOD, /its Portfolio Summary lists \$0\.00 of securities, but its Account Summary closes at \$12\.34/);
 
     const juneHolding = swap(JUNE, "Total Securities N/A $0.00", line("Total Securities N/A $12.34"));
-    withheldFrom(juneHolding, JUNE_PERIOD, /shows \$12\.34 of securities/);
+    withheldFrom(juneHolding, JUNE_PERIOD, /its Portfolio Summary lists \$0\.00 of securities, but its Account Summary closes at \$12\.34/);
   });
 
   test("⛔ a cash-account section that prints no Total Securities line is withheld — nothing then shows it holds only cash", () => {
@@ -608,7 +614,9 @@ describe("a section tracked as a cash account", () => {
   test("⛔ a file with no other tracked section is refused whole, as before — there is nothing beside the section to import", () => {
     const juneHolding = swap(JUNE, "Total Securities N/A $0.00", line("Total Securities N/A $12.34"));
     // the brokerage's #487513525 is untracked here, so #655929651 is the file's only tracked section
-    expect(() => robinhoodBrokerageStatements(juneHolding, [CRYPTO, AGENTIC])).toThrow(/#655929651 prints \$12\.34 of securities/);
+    expect(() => robinhoodBrokerageStatements(juneHolding, [CRYPTO, AGENTIC])).toThrow(
+      /#655929651's Portfolio Summary totals \$0\.00 of securities against an Account Summary closing of \$12\.34/,
+    );
   });
 
   /**
@@ -649,15 +657,45 @@ describe("a section tracked as a cash account", () => {
       return l.text.startsWith("Total Executed Trades Pending Settlement") ? [total] : [l];
     });
 
-  test("⛔ a trade pending settlement withholds the section, though Total Securities still reads $0.00 — the agent's first Buy", () => {
-    const pending = juneWithPending([pendingBuy], pendingTotal("$19.50", "$0.00"));
-    // named as the pending trade it is — not read as an Account Activity row, whose table ended above it
-    withheldFrom(pending, JUNE_PERIOD, /a trade waiting to settle \("SPY Cash Buy 06\/29\/2026/);
+  /**
+   * A trade executed on the last trading day settles in the NEXT month: it is in no other table this month — the
+   * settled cash has not moved, Securities Held does not list it — and next month's Account Activity lists it, dated
+   * by its trade date (measured on #487513525: July 2026 printed `Apple Margin Buy 07/31/2026 08/03/2026 5` pending,
+   * August's activity carries `AAPL Margin Buy 07/31/2026 5`). So it is read, checked against its own total, and
+   * noted beside the month — never posted, or next month would post it a second time.
+   */
+  test("⛔ a trade pending settlement is read and noted, never posted — the month's cash and positions exclude it", () => {
+    const { statements, withheld } = robinhoodBrokerageStatements(juneWithPending([pendingBuy], pendingTotal("$19.50", "$0.00")), TRACKED_ALL);
+    expect(withheld).toEqual([]);
+    const quietJune = robinhoodBrokerageStatements(JUNE, TRACKED_ALL).statements[2]!;
+    expect(statements).toHaveLength(3); // no book: nothing is held and nothing traded that settled
+    expect(statements[2]).toEqual({
+      ...quietJune,
+      pending: [
+        {
+          side: "Buy",
+          description: "SPY",
+          tradedOn: "2026-06-29",
+          settlesOn: "2026-07-01",
+          quantityE8: 3_000_000,
+          amountCents: -1950,
+          printed: "SPY Cash Buy 06/29/2026 07/01/2026 0.03 $650.00 $19.50",
+        },
+      ],
+    });
   });
 
   test("⛔ a pending row under $0.00 totals, and non-zero totals with no row, each withhold the section — either half is enough", () => {
-    withheldFrom(juneWithPending([pendingBuy], pendingTotal("$0.00", "$0.00")), JUNE_PERIOD, /a trade waiting to settle \("SPY Cash Buy/);
-    withheldFrom(juneWithPending([], pendingTotal("$0.00", "$19.50")), JUNE_PERIOD, /shows \$19\.50 of trades waiting to settle/);
+    withheldFrom(
+      juneWithPending([pendingBuy], pendingTotal("$0.00", "$0.00")),
+      JUNE_PERIOD,
+      /its trades waiting to settle add up to \$19\.50 out and \$0\.00 in, but it prints \$0\.00 out and \$0\.00 in/,
+    );
+    withheldFrom(
+      juneWithPending([], pendingTotal("$0.00", "$19.50")),
+      JUNE_PERIOD,
+      /its trades waiting to settle add up to \$0\.00 out and \$0\.00 in, but it prints \$0\.00 out and \$19\.50 in/,
+    );
   });
 
   test("⛔ a cash-account section that prints no pending-trades table is withheld — nothing then shows none is pending", () => {
@@ -681,6 +719,380 @@ describe("a section tracked as a cash account", () => {
     expect(() => robinhoodBrokerageStatements(JUNE, [BROKERAGE, savings])).toThrow(/#655929651.*savings/);
     const secondBrokerage: KnownAccount = { last4: "9651", type: "investment", subtype: "brokerage" };
     expect(() => robinhoodBrokerageStatements(JUNE, [BROKERAGE, secondBrokerage])).toThrow(/more than one.*brokerage/);
+  });
+
+  /*
+   * ⚖️ The owner, 2026-09-15: when the agent buys a stock, show TWO accounts — Robinhood Agentic keeps the unspent
+   * cash, and a brokerage book holds the positions, like Robinhood Cash + Robinhood Brokerage; every statement still
+   * proves the cash to the cent.
+   *
+   * The positions come from the section's own lines and nowhere else, and they must PROVE themselves: what the ledger
+   * held before the period, plus every Buy and Sell its Account Activity lists, must equal its Securities Held exactly
+   * — the arbiter that reproduces #487513525's printed positions in 24 of 25 consecutive months of the real archive
+   * (the miss is COKE's 10-for-1 split, which prints no row, and would be withheld rather than guessed).
+   */
+  const WMT: Readonly<Record<string, "stock" | "etf">> = { WMT: "stock" };
+  const bookHolding = (events: { symbol: string; occurredOn: string; quantityDeltaE8: number }[]): KnownAccount => ({ ...AGENTIC, book: { events } });
+  const BOUGHT_IN_AUGUST = [{ symbol: "WMT", occurredOn: "2026-08-20", quantityDeltaE8: 25_000_000 }];
+  const agentBook = { institution: "Robinhood", type: "investment", subtype: "brokerage", bookOf: "9651" };
+
+  /** CONSTRUCTED: #487513525 opening September where its real August closed, nothing moving. */
+  const SEPTEMBER_BROKERAGE = asLines([
+    "09/01/2026 to 09/30/2026",
+    "Individual Account #:487513525",
+    "Account Summary",
+    "Brokerage Cash Balance * $0.68 $0.68",
+    "Deposit Sweep Balance $1,000.33 $1,000.33",
+    "Total Securities ** $72,959.32 $72,959.32",
+    "Portfolio Value $73,960.33 $73,960.33",
+  ]);
+  const cdiv = line("Cash Div: R/D 2026-08-21 P/D 2026-09-08 - 0.25 shares at 0.2475 WMT Cash CDIV 09/08/2026 $0.06", [
+    ["Cash Div: R/D 2026-08-21 P/D 2026-09-08 - 0.25 shares at 0.2475", 36],
+    ["WMT", 269.66],
+    ["Cash", 341.55],
+    ["CDIV", 431.63],
+    ["09/08/2026", 534.56],
+    ["$0.06", 743.4],
+  ]);
+  const sell = line("WMT Cash Sell 09/15/2026 0.1 $110.00000 $11.00", [
+    ["WMT", 269.66],
+    ["Cash", 341.55],
+    ["Sell", 431.63],
+    ["09/15/2026", 534.56],
+    ["0.1", 586.28],
+    ["$110.00000", 630.19],
+    ["$11.00", 743.4],
+  ]);
+  /**
+   * CONSTRUCTED from #655929651's real August lines: September opens holding the 0.25 WMT bought in August, collects a
+   * $0.06 dividend on the 8th and sells 0.1 at $110.00 on the 15th. Cash $1.64 + $0.06 + $11.00 = $12.70; 0.15 WMT at
+   * $110.90 = $16.635, printed $16.64.
+   */
+  const AGENT_SELLS: Line[] = [
+    line("09/01/2026 to 09/30/2026"),
+    line("Individual Account #:655929651"),
+    line("Account Summary"),
+    line("Net Account Balance $1.64 $12.70"),
+    line("Total Securities $26.22 $16.64"),
+    line("Portfolio Value $27.86 $29.34"),
+    line("Portfolio Summary"),
+    line("Walmart"),
+    line("WMT Cash 0.15 $110.90000 $16.64 $0.14 56.71%"),
+    line("Estimated Yield: 0.84%"),
+    line("Total Securities $16.64 $0.14 56.71%"),
+    line("Brokerage Cash Balance $12.70 43.29%"),
+    line("Account Activity"),
+    headerAt(685.13, 743.4),
+    cdiv,
+    line("Walmart"),
+    sell,
+    line("CUSIP: 931142103"),
+    totalFunds("$0.00", "$11.06", 685.13, 743.4),
+    line("Executed Trades Pending Settlement"),
+    line("Total Executed Trades Pending Settlement $0.00 $0.00"),
+  ];
+
+  test("⛔ the rehearsal's month: Robinhood Agentic keeps the $1.64 of cash, its book holds the 0.25 WMT — both proven to the cent", () => {
+    const { statements, withheld } = robinhoodBrokerageStatements([...AGENT_BUYS, ...AUGUST_BROKERAGE], TRACKED_ALL, WMT);
+
+    expect(withheld).toEqual([]);
+    expect(statements).toHaveLength(4); // #655929651 prints first: its cash, its book, then #487513525's two
+    expect(statements[0]).toEqual({
+      accountHint: { institution: "Robinhood", last4: "9651" },
+      txns: [{ postedOn: "2026-08-20", amountCents: -2500, rawDescription: "Walmart", bankCategory: "Buy", categoryPath: "Investments > Buys" }],
+      period: { start: "2026-08-01", end: "2026-08-31", beginCents: 2664, endCents: 164 },
+    });
+    expect(statements[1]).toEqual({
+      // the book of the cash account ····9651 — by the stored link, never by a name
+      accountHint: agentBook,
+      txns: [],
+      // Total Securities, the value anchor `pnpm ledger-check` checks the book against
+      period: { start: "2026-08-01", end: "2026-08-31", beginCents: 0, endCents: 2622 },
+      positions: {
+        trades: [
+          {
+            symbol: "WMT",
+            assetType: "stock",
+            occurredOn: "2026-08-20",
+            tradedOn: "2026-08-20",
+            quantityDeltaE8: 25_000_000,
+            costCents: 2500,
+            printed: "WMT Cash Buy 08/20/2026 0.25 $100.00000 $25.00",
+          },
+        ],
+        held: [{ symbol: "WMT", assetType: "stock", quantityE8: 25_000_000, marketValueCents: 2622 }],
+      },
+    });
+    // #487513525's statements are exactly what the file gives with #655929651 untracked
+    expect(statements.slice(2)).toEqual(robinhoodBrokerageStatements([...AGENT_BUYS, ...AUGUST_BROKERAGE], [BROKERAGE, CRYPTO]).statements);
+  });
+
+  test("⛔ the next month: the ledger's 0.25 WMT, a Sell of 0.1 and a dividend prove September's 0.15 — the book sells, the cash receives", () => {
+    const { statements, withheld } = robinhoodBrokerageStatements([...SEPTEMBER_BROKERAGE, ...AGENT_SELLS], [BROKERAGE, CRYPTO, bookHolding(BOUGHT_IN_AUGUST)], WMT);
+
+    expect(withheld).toEqual([]);
+    expect(statements.slice(2)).toEqual([
+      {
+        accountHint: { institution: "Robinhood", last4: "9651" },
+        txns: [
+          {
+            postedOn: "2026-09-08",
+            amountCents: 6,
+            rawDescription: "Cash Div: R/D 2026-08-21 P/D 2026-09-08 - 0.25 shares at 0.2475",
+            bankCategory: "CDIV",
+            categoryPath: "Income > Dividends",
+          },
+          { postedOn: "2026-09-15", amountCents: 1100, rawDescription: "Walmart", bankCategory: "Sell", categoryPath: "Investments > Sells" },
+        ],
+        period: { start: "2026-09-01", end: "2026-09-30", beginCents: 164, endCents: 1270 },
+      },
+      {
+        accountHint: agentBook,
+        txns: [],
+        period: { start: "2026-09-01", end: "2026-09-30", beginCents: 2622, endCents: 1664 },
+        positions: {
+          // a sale records no cost: proceeds are not what the shares cost, and the book's average cost is walked from its buys
+          trades: [
+            {
+              symbol: "WMT",
+              assetType: "stock",
+              occurredOn: "2026-09-15",
+              tradedOn: "2026-09-15",
+              quantityDeltaE8: -10_000_000,
+              costCents: null,
+              printed: "WMT Cash Sell 09/15/2026 0.1 $110.00000 $11.00",
+            },
+          ],
+          held: [{ symbol: "WMT", assetType: "stock", quantityE8: 15_000_000, marketValueCents: 1664 }],
+        },
+      },
+    ]);
+  });
+
+  test("⛔ a Buy dated the previous month's last trading day, settled into this one, is a position from the period's first day", () => {
+    // August's pending Buy of 0.05 on Mon 08/31 settles 09/01: September's activity lists it by its TRADE date
+    const carried = line("WMT Cash Buy 08/31/2026 0.05 $104.00000 $5.20", [
+      ["WMT", 269.66],
+      ["Cash", 341.55],
+      ["Buy", 431.63],
+      ["08/31/2026", 534.56],
+      ["0.05", 586.28],
+      ["$104.00000", 630.19],
+      ["$5.20", 685.13],
+    ]);
+    const september = AGENT_SELLS.flatMap((l): Line[] => {
+      if (l === cdiv) return [line("Walmart"), carried, line("CUSIP: 931142103")];
+      if (l === sell) return [];
+      if (l.text === "Walmart" || l.text === "CUSIP: 931142103") return [];
+      if (l.text.startsWith("Net Account Balance")) return [line("Net Account Balance $6.84 $1.64")];
+      if (l.text.startsWith("Total Securities $26.22")) return [line("Total Securities $26.22 $33.27")];
+      if (l.text.startsWith("WMT Cash 0.15")) return [line("Walmart"), line("WMT Cash 0.3 $110.90000 $33.27 $0.28 95.30%")];
+      if (l.text.startsWith("Total Securities $16.64")) return [line("Total Securities $33.27 $0.28 95.30%")];
+      if (l.text.startsWith("Total Funds Paid and Received")) return [totalFunds("$5.20", "$0.00", 685.13, 743.4)];
+      return [l];
+    });
+
+    const { statements, withheld } = robinhoodBrokerageStatements([...SEPTEMBER_BROKERAGE, ...september], [BROKERAGE, CRYPTO, bookHolding(BOUGHT_IN_AUGUST)], WMT);
+
+    expect(withheld).toEqual([]);
+    // the cash row keeps the day it prints (the import files it inside the period); the shares arrive on the 1st,
+    // so neither August's printed 0.25 nor September's opening breaks
+    expect(statements[2]!.txns.map((t) => [t.postedOn, t.amountCents])).toEqual([["2026-08-31", -520]]);
+    expect(statements[3]!.positions!.trades.map((t) => [t.occurredOn, t.tradedOn, t.quantityDeltaE8])).toEqual([["2026-09-01", "2026-08-31", 5_000_000]]);
+  });
+
+  test("⛔ a pending Buy at the month's end: the month proves without it, and it is noted beside the cash", () => {
+    const pendingBuyLine = line("Cash Buy 09/30/2026 10/01/2026 0.05 $111.00000 $5.55", [
+      ["Cash", 190.65],
+      ["Buy", 329.1],
+      ["09/30/2026", 423.38],
+      ["10/01/2026", 511.28],
+      ["0.05", 601.09],
+      ["$111.00000", 641.33],
+      ["$5.55", 691.65],
+    ]);
+    const withPending = AGENT_SELLS.flatMap((l): Line[] => {
+      if (l.text === PENDING_TITLE) {
+        return [
+          l,
+          line("These transactions may not be reflected in the other summaries"),
+          line("Description Acct Type Transaction Trade Date Settle Date Qty Price Debit Credit", [
+            ["Debit", 691.65],
+            ["Credit", 745.05],
+          ]),
+          line("Walmart"),
+          pendingBuyLine,
+          line("CUSIP: 931142103"),
+        ];
+      }
+      return l.text.startsWith("Total Executed Trades Pending Settlement") ? [pendingTotal("$5.55", "$0.00")] : [l];
+    });
+    const tracked = [BROKERAGE, CRYPTO, bookHolding(BOUGHT_IN_AUGUST)];
+
+    const { statements, withheld } = robinhoodBrokerageStatements([...SEPTEMBER_BROKERAGE, ...withPending], tracked, WMT);
+
+    expect(withheld).toEqual([]);
+    const without = robinhoodBrokerageStatements([...SEPTEMBER_BROKERAGE, ...AGENT_SELLS], tracked, WMT).statements;
+    expect(statements[3]).toEqual(without[3]); // the book: no trade, no share
+    const { pending, ...cash } = statements[2]!;
+    expect(cash).toEqual(without[2]); // the cash: no row
+    expect(pending).toEqual([
+      {
+        side: "Buy",
+        description: "Walmart",
+        tradedOn: "2026-09-30",
+        settlesOn: "2026-10-01",
+        quantityE8: 5_000_000,
+        amountCents: -555,
+        printed: "Cash Buy 09/30/2026 10/01/2026 0.05 $111.00000 $5.55",
+      },
+    ]);
+  });
+
+  test("⛔ printed positions the ledger's shares plus this month's trades cannot reach are withheld — a split or a transfer is a question, not a guess", () => {
+    const september = [...SEPTEMBER_BROKERAGE, ...AGENT_SELLS];
+    // the ledger never received August's buy: 0 + (−0.1) is not the printed 0.15
+    const read = robinhoodBrokerageStatements(september, [BROKERAGE, CRYPTO, bookHolding([])], WMT);
+    expect(read.statements).toEqual(robinhoodBrokerageStatements(september, [BROKERAGE, CRYPTO], WMT).statements);
+    expect(read.withheld.map((w) => w.reason)).toEqual([
+      "its positions are not what the ledger held before Sep 1, 2026 plus this month's trades (WMT: it prints 0.15, the trades give -0.1) — a split, a transfer or a trade this reader cannot see",
+    ]);
+  });
+
+  test("⛔ a month whose trades the ledger already holds from another statement file is withheld, never counted twice", () => {
+    const september = [...SEPTEMBER_BROKERAGE, ...AGENT_SELLS];
+    const twice = [...BOUGHT_IN_AUGUST, { symbol: "WMT", occurredOn: "2026-09-15", quantityDeltaE8: -10_000_000 }];
+    const { withheld } = robinhoodBrokerageStatements(september, [BROKERAGE, CRYPTO, bookHolding(twice)], WMT);
+    expect(withheld.map((w) => w.reason)).toEqual([
+      "the ledger already holds this account's trades for Sep 1 – 30, 2026 from another statement, and a second copy would count its shares twice",
+    ]);
+  });
+
+  test("an Account Activity code this reader has no place for withholds the section", () => {
+    const ach = line("ACH Deposit Cash ACH 09/03/2026 $5.00", [
+      ["ACH Deposit", 36],
+      ["Cash", 341.55],
+      ["ACH", 431.63],
+      ["09/03/2026", 534.56],
+      ["$5.00", 743.4],
+    ]);
+    const september = AGENT_SELLS.flatMap((l) => (l === cdiv ? [l, ach] : [l]));
+    const { withheld } = robinhoodBrokerageStatements([...SEPTEMBER_BROKERAGE, ...september], [BROKERAGE, CRYPTO, bookHolding(BOUGHT_IN_AUGUST)], WMT);
+    expect(withheld.map((w) => w.reason)).toEqual(['it shows activity this reader has no place for ("ACH Deposit Cash ACH 09/03/2026 $5.00")']);
+  });
+
+  const septemberWith = (edit: (l: Line) => Line[]): Line[] => [...SEPTEMBER_BROKERAGE, ...AGENT_SELLS.flatMap(edit)];
+  const reasonsFor = (doc: Line[], events = BOUGHT_IN_AUGUST): string[] =>
+    robinhoodBrokerageStatements(doc, [BROKERAGE, CRYPTO, bookHolding(events)], WMT).withheld.map((w) => w.reason);
+
+  test("a position whose printed value its quantity and price do not make withholds the section — a misread column", () => {
+    const doc = septemberWith((l) => (l.text.startsWith("WMT Cash 0.15") ? [line("WMT Cash 0.15 $111.90000 $16.64 $0.14 56.71%")] : [l]));
+    expect(reasonsFor(doc)).toEqual([
+      'it shows WMT worth $16.64, which its printed quantity and price do not make ("WMT Cash 0.15 $111.90000 $16.64 $0.14 56.71%")',
+    ]);
+  });
+
+  test("⛔ positions that do not add up to the table's own Total Securities withhold the section — a position this reader cannot see is there", () => {
+    // both totals agree with each other; the one row this reader sees does not make them
+    const doc = septemberWith((l): Line[] => {
+      if (l.text.startsWith("Total Securities $26.22")) return [line("Total Securities $26.22 $20.00")];
+      return l.text.startsWith("Total Securities $16.64") ? [line("Total Securities $20.00 $0.17 61.16%")] : [l];
+    });
+    expect(reasonsFor(doc)).toEqual(["its positions add up to $16.64, but it prints $20.00 of securities — a position this reader cannot see is there"]);
+  });
+
+  test("⛔ a Sell printed in the Debit column withholds the section — the column is the only carrier of direction", () => {
+    const wrongColumn = line("WMT Cash Sell 09/15/2026 0.1 $110.00000 $11.00", [...sell.tokens.slice(0, 6).map((t): [string, number] => [t.str, t.x]), ["$11.00", 685.13]]);
+    const doc = septemberWith((l): Line[] => {
+      if (l === sell) return [wrongColumn];
+      return l.text.startsWith("Total Funds Paid and Received") ? [totalFunds("$11.00", "$0.06", 685.13, 743.4)] : [l];
+    });
+    expect(reasonsFor(doc)).toEqual(['it shows a sale in the wrong column ("WMT Cash Sell 09/15/2026 0.1 $110.00000 $11.00")']);
+  });
+
+  test("⛔ securities at the opening with no position in the ledger behind them withhold the section, even when nothing is left at the close", () => {
+    // everything the agent held left without a trade row — a transfer out, which Account Activity does not list
+    const doc = septemberWith((l): Line[] => {
+      if (l === cdiv || l === sell || l.text === "Walmart" || l.text === "CUSIP: 931142103") return [];
+      if (l.text.startsWith("WMT Cash 0.15") || l.text.startsWith("Estimated Yield")) return [];
+      if (l.text.startsWith("Net Account Balance")) return [line("Net Account Balance $1.64 $1.64")];
+      if (l.text.startsWith("Total Securities $26.22")) return [line("Total Securities $26.22 $0.00")];
+      if (l.text.startsWith("Total Securities $16.64")) return [line("Total Securities $0.00 $0.00 0.00%")];
+      return l.text.startsWith("Total Funds Paid and Received") ? [totalFunds("$0.00", "$0.00", 685.13, 743.4)] : [l];
+    });
+    expect(reasonsFor(doc, [])).toEqual(["it opens with $26.22 of securities, and the ledger holds no position for it before Sep 1, 2026"]);
+  });
+
+  /** September with nothing in it: no trade, no position, $0.00 of securities at both ends, the cash still $1.64. */
+  const quietSeptember = (): Line[] =>
+    septemberWith((l): Line[] => {
+      if (l === cdiv || l === sell || l.text === "Walmart" || l.text === "CUSIP: 931142103") return [];
+      if (l.text.startsWith("WMT Cash 0.15") || l.text.startsWith("Estimated Yield")) return [];
+      if (l.text.startsWith("Net Account Balance")) return [line("Net Account Balance $1.64 $1.64")];
+      if (l.text.startsWith("Total Securities $26.22")) return [line("Total Securities $0.00 $0.00")];
+      if (l.text.startsWith("Total Securities $16.64")) return [line("Total Securities $0.00 $0.00 0.00%")];
+      return l.text.startsWith("Total Funds Paid and Received") ? [totalFunds("$0.00", "$0.00", 685.13, 743.4)] : [l];
+    });
+  const SOLD_IN_AUGUST = [...BOUGHT_IN_AUGUST, { symbol: "WMT", occurredOn: "2026-08-25", quantityDeltaE8: -25_000_000 }];
+
+  test("⛔ a quiet month after the book sold everything is still the book's statement — its printed $0.00 stands on the sale", () => {
+    const { statements, withheld } = robinhoodBrokerageStatements(quietSeptember(), [BROKERAGE, CRYPTO, bookHolding(SOLD_IN_AUGUST)], WMT);
+
+    expect(withheld).toEqual([]);
+    expect(statements.slice(2).map((s) => s.accountHint)).toEqual([{ institution: "Robinhood", last4: "9651" }, agentBook]);
+    expect(statements[3]).toEqual({
+      accountHint: agentBook,
+      txns: [],
+      period: { start: "2026-09-01", end: "2026-09-30", beginCents: 0, endCents: 0 },
+      positions: { trades: [], held: [] },
+    });
+    // with no book event before it — no book, or one whose shares came later — the same month is cash, as it always was
+    for (const events of [[], [{ symbol: "WMT", occurredOn: "2026-10-02", quantityDeltaE8: 5_000_000 }]]) {
+      const read = robinhoodBrokerageStatements(quietSeptember(), [BROKERAGE, CRYPTO, bookHolding(events)], WMT);
+      expect([read.statements.length, read.withheld]).toEqual([3, []]);
+    }
+  });
+
+  test("⛔ a month proving positions before a later statement the ledger read as cash only is withheld, naming it", () => {
+    const october = { fileName: "0c6a9e57.pdf", start: "2026-10-01", end: "2026-10-31" };
+    const november = { fileName: "5b1d2e3f.pdf", start: "2026-11-01", end: "2026-11-30" };
+    const july = { fileName: "9e8d7c6b.pdf", start: "2026-07-01", end: "2026-07-31" };
+    const readAsCash = (...cashOnlyStatements: { fileName: string; start: string; end: string }[]) =>
+      robinhoodBrokerageStatements([...SEPTEMBER_BROKERAGE, ...AGENT_SELLS], [BROKERAGE, CRYPTO, { ...bookHolding(BOUGHT_IN_AUGUST), cashOnlyStatements }], WMT);
+
+    expect(readAsCash(july, october).withheld.map((w) => w.reason)).toEqual([
+      "the ledger read a later statement of this account, 0c6a9e57.pdf (Oct 1 – 31, 2026), as cash only before these shares were in it, and they would stand under it unchecked",
+    ]);
+    expect(readAsCash(october, november).withheld.map((w) => w.reason)).toEqual([
+      "the ledger read later statements of this account, 0c6a9e57.pdf (Oct 1 – 31, 2026), 5b1d2e3f.pdf (Nov 1 – 30, 2026), as cash only before these shares were in it, and they would stand under them unchecked",
+    ]);
+    // one that came before the month stands on nothing this month adds
+    expect(readAsCash(july).withheld).toEqual([]);
+    // and a month with no position in it is cash, whatever came later
+    const quiet = robinhoodBrokerageStatements(quietSeptember(), [BROKERAGE, CRYPTO, { ...AGENTIC, cashOnlyStatements: [october] }], WMT);
+    expect([quiet.statements.length, quiet.withheld]).toEqual([3, []]);
+  });
+
+  test("⛔ a month re-read while a LATER month's trades are in the ledger is proven by what came before it alone — a version bump re-reads in file order", () => {
+    const later = [...BOUGHT_IN_AUGUST, { symbol: "WMT", occurredOn: "2026-10-02", quantityDeltaE8: 5_000_000 }];
+    const { statements, withheld } = robinhoodBrokerageStatements([...SEPTEMBER_BROKERAGE, ...AGENT_SELLS], [BROKERAGE, CRYPTO, bookHolding(later)], WMT);
+    expect(withheld).toEqual([]);
+    expect(statements[3]!.positions!.held).toEqual([{ symbol: "WMT", assetType: "stock", quantityE8: 15_000_000, marketValueCents: 1664 }]);
+  });
+
+  test("a trade dated after the section's own period withholds it", () => {
+    const future = line("WMT Cash Sell 10/01/2026 0.1 $110.00000 $11.00", sell.tokens.map((t): [string, number] => [t.str === "09/15/2026" ? "10/01/2026" : t.str, t.x]));
+    expect(reasonsFor(septemberWith((l) => (l === sell ? [future] : [l])))).toEqual([
+      'it lists a trade dated after its own period ("WMT Cash Sell 10/01/2026 0.1 $110.00000 $11.00")',
+    ]);
+  });
+
+  test("a position line this reader cannot read withholds the section rather than dropping a share", () => {
+    const cusipOnly = AGENT_SELLS.map((l) => (l.text.startsWith("WMT Cash 0.15") ? line("931142103 Cash 0.15 $110.90000 $16.64 $0.14 56.71%") : l));
+    const { withheld } = robinhoodBrokerageStatements([...SEPTEMBER_BROKERAGE, ...cusipOnly], [BROKERAGE, CRYPTO, bookHolding(BOUGHT_IN_AUGUST)], WMT);
+    expect(withheld.map((w) => w.reason)).toEqual([
+      'it shows a line among its positions this reader cannot read ("931142103 Cash 0.15 $110.90000 $16.64 $0.14 56.71%")',
+    ]);
   });
 });
 

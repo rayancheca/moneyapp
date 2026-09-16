@@ -328,6 +328,41 @@ function splitDelta(row: ActivityRow, printedE8: bigint, heldE8: bigint): bigint
   return heldE8 * multiplier;
 }
 
+/**
+ * The average-cost rule, one step: what a position's basis is after one quantity change. ONE rule for every book —
+ * the activity-CSV rebuild of Robinhood Brokerage below, and a statement's trades imported into a brokerage book
+ * (services/import/brokerage-book.ts).
+ *
+ *  - a buy adds the cash it actually took (`paidCents`: the printed amount, not price × quantity — fees and the odd
+ *    penny live in the difference); a receipt with no amount changes the count, not the basis;
+ *  - a sell releases basis in proportion to the shares leaving, and records that release as its event cost.
+ *
+ * ⚠️ `heldE8` must be what stands BEFORE the change. A sell with nothing held releases nothing rather than dividing
+ * by zero; the callers refuse a position going negative before they get here (`syncBookHoldings` throws).
+ */
+export function nextCostBasis(
+  heldE8: bigint,
+  heldCostCents: number,
+  deltaE8: bigint,
+  paidCents: number | null,
+): { costCents: number; eventCostCents: number | null } {
+  if (deltaE8 > 0n) {
+    return paidCents === null
+      ? { costCents: heldCostCents, eventCostCents: null }
+      : { costCents: heldCostCents + paidCents, eventCostCents: paidCents };
+  }
+  if (deltaE8 < 0n && heldE8 > 0n) {
+    const released = Math.round((heldCostCents * Number(-deltaE8)) / Number(heldE8));
+    return { costCents: heldCostCents - released, eventCostCents: -released };
+  }
+  return { costCents: heldCostCents, eventCostCents: null };
+}
+
+/** A position's average cost per whole share, in cents; null with nothing held. */
+export function averageCostCents(costCents: number, quantityE8: bigint): number | null {
+  return quantityE8 > 0n ? Math.round((costCents * Number(E8)) / Number(quantityE8)) : null;
+}
+
 export interface ReconstructionResult {
   events: ShareEvent[];
   /** final position per symbol, including the ones now exited (quantity 0) */
@@ -380,19 +415,10 @@ export function reconstructHoldings(rows: readonly ActivityRow[]): Reconstructio
       );
     }
 
-    const heldCost = cost.get(row.symbol) ?? 0;
-    let eventCost: number | null = null;
-    if (row.amountCents !== null && delta > 0n) {
-      eventCost = -row.amountCents; // buys are printed negative — cash out
-      cost.set(row.symbol, heldCost + eventCost);
-    } else if (delta < 0n) {
-      // average-cost release: the fraction of the position leaving. `held` is
-      // necessarily positive here — a negative delta that exceeded it would
-      // have thrown above — so this division is safe without a zero guard.
-      const released = Math.round((heldCost * Number(-delta)) / Number(held));
-      eventCost = -released;
-      cost.set(row.symbol, heldCost - released);
-    }
+    // buys are printed negative — cash out — so what a buy paid is the amount's opposite
+    const step = nextCostBasis(held, cost.get(row.symbol) ?? 0, delta, row.amountCents === null ? null : -row.amountCents);
+    const eventCost = step.eventCostCents;
+    cost.set(row.symbol, step.costCents);
 
     quantity.set(row.symbol, nextQuantity);
     events.push({
@@ -412,8 +438,7 @@ export function reconstructHoldings(rows: readonly ActivityRow[]): Reconstructio
         symbol,
         quantityE8,
         costCents,
-        avgCostCents:
-          quantityE8 > 0n ? Math.round((costCents * Number(E8)) / Number(quantityE8)) : null,
+        avgCostCents: averageCostCents(costCents, quantityE8),
       };
     })
     .sort((a, b) => ascending(a.symbol, b.symbol));

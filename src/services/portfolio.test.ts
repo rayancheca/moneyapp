@@ -6,13 +6,14 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { addDays, todayIso } from "@/lib/dates";
 import { seedDatabase } from "@/db/seed";
+import { accounts } from "@/db/schema/accounts";
 import { priceCache } from "@/db/schema/holdings";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
-import { createAccount } from "./accounts";
+import { createAccount, ownPortfolioAccountIds } from "./accounts";
 import { rebuildInvestmentHistory } from "./crypto-history";
 import { upsertHolding } from "./holdings";
-import { hasBenchmark, holdingRows, marketChangeBetween, pnlCalendarMonth, pnlDayDetail, portfolioBenchmarkDays, portfolioDayChange, portfolioOverview, portfolioRealizedPl, portfolioReturnDays, portfolioSeries, realizedLegKey, topMovers } from "./portfolio";
+import { hasBenchmark, holdingRows, investmentAccounts, marketChangeBetween, pnlCalendarMonth, pnlDayDetail, portfolioBenchmarkDays, portfolioDayChange, portfolioOverview, portfolioRealizedPl, portfolioReturnDays, portfolioSeries, realizedLegKey, topMovers, valuedInvestmentAccounts } from "./portfolio";
 
 process.env.MONEYAPP_FAKE_PRICES = "1";
 
@@ -554,5 +555,127 @@ describe("benchmark reads honor (symbol, asset_type)", () => {
     const closes = portfolioBenchmarkDays(bundle.db, [D1, D2, D3], "SPY").map((d) => d.close);
     // D1/D2 = etf closes; D3 carries forward the latest etf close (510), not 999
     expect(closes).toEqual([500, 510, 510]);
+  });
+});
+
+/**
+ * ⚖️ Owner decisions: Robinhood #655929651 is "Robinhood Agentic", kept OUT of his own brokerage returns
+ * (2026-09-14), and when the agent buys a stock a second account holds the positions while Robinhood Agentic keeps
+ * the cash (2026-09-15). That book is paired with Robinhood Agentic by `accounts.cash_account_id`.
+ *
+ * It is still VALUED — net worth, its own account, and `pnpm ledger-check`'s witness ask for it by id — but nothing
+ * that reports HIS portfolio reads it: value, returns, realized and unrealized P/L, holdings, the P&L calendar.
+ */
+describe("⛔ the agent's book — paired with Robinhood Agentic — stays out of his portfolio", () => {
+  const robinhoodId = () => bundle.db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!.id;
+
+  /** A cash account at Robinhood. Which side it is on is `isInvestmentSide`'s call; which book is its, only a link says. */
+  function cashAccount(name: string, last4?: string): string {
+    return createAccount(bundle.db, { institutionId: robinhoodId(), name, type: "checking", ...(last4 === undefined ? {} : { last4 }) });
+  }
+
+  function pairedBook(cashName: string): { book: string; cash: string } {
+    const cash = cashAccount(cashName, "9651");
+    return { book: bookNamed(`${cashName} Brokerage`, cash), cash };
+  }
+
+  /** An investment account holding WMT and AAPL, linked by `cash_account_id` to `cash` — or to nothing, given null. */
+  function bookNamed(name: string, cash: string | null): string {
+    const book = createAccount(bundle.db, { institutionId: robinhoodId(), name, type: "investment", subtype: "brokerage" });
+    if (cash !== null) bundle.db.update(accounts).set({ cashAccountId: cash }).where(eq(accounts.id, book)).run();
+    // AAPL too, so a per-symbol view that merged legs would move
+    cache("WMT", "stock", D1, 100);
+    cache("WMT", "stock", D2, 104);
+    cache("WMT", "stock", D3, 110);
+    upsertHolding(bundle.db, { accountId: book, symbol: "WMT", assetType: "stock", quantityE8: 25_000_000, avgCostCents: 10_000, occurredOn: D2 });
+    upsertHolding(bundle.db, { accountId: book, symbol: "AAPL", assetType: "stock", quantityE8: 50_000_000, avgCostCents: 11_000, occurredOn: D2 });
+    // a sale, so realized P/L has something to pick up
+    upsertHolding(bundle.db, { accountId: book, symbol: "WMT", assetType: "stock", quantityE8: 10_000_000, occurredOn: D3 });
+    rebuildInvestmentHistory(bundle.db, book, TODAY);
+    return book;
+  }
+
+  const hisPortfolio = () => ({
+    series: portfolioSeries(bundle.db),
+    returnDays: portfolioReturnDays(bundle.db),
+    overview: portfolioOverview(bundle.db),
+    realized: [...portfolioRealizedPl(bundle.db).byLeg.entries()],
+    rows: holdingRows(bundle.db, TODAY),
+    calendar: pnlCalendarMonth(bundle.db, "2026-03", TODAY),
+    day: pnlDayDetail(bundle.db, D3),
+  });
+
+  test("everything his portfolio reports reads exactly what it read before the book existed", () => {
+    seedMixedBook();
+    const before = hisPortfolio();
+
+    pairedBook("Robinhood Agentic");
+
+    expect(hisPortfolio()).toEqual(before);
+  });
+
+  test("…and the book IS valued when asked for by id — the scope ledger-check's witness and the account use", () => {
+    seedMixedBook();
+    const { book } = pairedBook("Robinhood Agentic");
+    // D2: 0.25 WMT × $104 + 0.5 AAPL × $110; D3: 0.1 WMT × $110 + 0.5 AAPL × $120
+    expect(portfolioSeries(bundle.db, [book]).map((p) => [p.day, p.valueCents, p.complete])).toEqual([
+      [D2, 2_600 + 5_500, true],
+      [D3, 1_100 + 6_000, true],
+    ]);
+  });
+
+  test("a book paired with a cash account on his investment side IS his — the link decides, never the pairing alone", () => {
+    seedMixedBook();
+    const before = portfolioSeries(bundle.db).map((p) => p.valueCents);
+
+    pairedBook("Robinhood Cash");
+
+    expect(portfolioSeries(bundle.db).map((p) => p.valueCents)).toEqual([before[0], before[1]! + 8_100, before[2]! + 7_100]);
+  });
+
+  /*
+   * ⛔ The LINK decides, never a name. Every test above pairs "<cash>" with "<cash> Brokerage", and one of them is
+   * named "Robinhood Agentic" — so a scope that dropped any account named like the agent's, or found a book's cash
+   * account by name, passed them all (measured 2026-09-16 at c2c8df3: 169/169 green across the seven suites that read
+   * the scope, under either mutant). Here the names say the
+   * opposite of what the link says, and each account must land where the link puts it.
+   */
+  test("⛔ a book linked to a cash account outside his side stays out of his portfolio, though no name says Agentic", () => {
+    seedMixedBook();
+    const before = hisPortfolio();
+
+    // not settlement vocabulary, so outside his investment side — as Robinhood Agentic is
+    const book = bookNamed("Robinhood Individual", cashAccount("Claude Trading", "9651"));
+
+    expect([...ownPortfolioAccountIds(bundle.db)].sort()).toEqual([brokerage, crypto].sort());
+    expect(investmentAccounts(bundle.db).map((a) => a.name)).toEqual(["Robinhood Brokerage", "Robinhood Crypto"]);
+    expect(hisPortfolio()).toEqual(before);
+    // still valued: net worth and the account's own page read it by id
+    expect(valuedInvestmentAccounts(bundle.db).map((a) => a.name)).toEqual(["Robinhood Brokerage", "Robinhood Crypto", "Robinhood Individual"]);
+    expect(portfolioSeries(bundle.db, [book]).map((p) => [p.day, p.valueCents])).toEqual([
+      [D2, 8_100],
+      [D3, 7_100],
+    ]);
+  });
+
+  test.each([
+    ["linked to Robinhood Cash, on his side", "Robinhood Cash"],
+    ["linked to nothing", null],
+  ] as const)("⛔ a book named like the agent's is his when it is %s — with the real Robinhood Agentic beside it", (_how, cashName) => {
+    seedMixedBook();
+    const before = portfolioSeries(bundle.db).map((p) => p.valueCents);
+    // the account a name match would pair "Robinhood Agentic Brokerage" with
+    cashAccount("Robinhood Agentic", "9651");
+
+    const book = bookNamed("Robinhood Agentic Brokerage", cashName === null ? null : cashAccount(cashName));
+
+    expect(ownPortfolioAccountIds(bundle.db)).toEqual(new Set([brokerage, crypto, book]));
+    expect(investmentAccounts(bundle.db).map((a) => a.name)).toEqual(["Robinhood Agentic Brokerage", "Robinhood Brokerage", "Robinhood Crypto"]);
+    // D2: 0.25 WMT × $104 + 0.5 AAPL × $110; D3: 0.1 WMT × $110 + 0.5 AAPL × $120 — added to his own
+    expect(portfolioSeries(bundle.db).map((p) => p.valueCents)).toEqual([before[0], before[1]! + 8_100, before[2]! + 7_100]);
+    expect(holdingRows(bundle.db, TODAY).filter((r) => r.accountId === book).map((r) => [r.symbol, r.quantityE8])).toEqual([
+      ["AAPL", 50_000_000],
+      ["WMT", 10_000_000],
+    ]);
   });
 });
