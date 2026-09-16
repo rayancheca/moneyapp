@@ -98,13 +98,15 @@ export function rememberedRows(db: AppDatabase): Remembered[] {
   const seriesIds = idsIn(db.select({ id: recurringSeries.id }).from(recurringSeries).all());
   return records.map((r) => {
     const category = r.categoryId !== null && categoryIds.has(r.categoryId);
+    // "Uncategorized" picked by hand: no category, and the owner's word that it has none (`applyCorrection`)
+    const cleared = r.categoryId === null && r.categorizationSource === "user";
     const series = r.recurringSeriesId !== null && seriesIds.has(r.recurringSeriesId);
     const splits = r.splits === null ? [] : (JSON.parse(r.splits) as RememberedSplit[]);
     return {
       ...r,
       categoryId: category ? r.categoryId : null,
-      categorizationSource: category ? r.categorizationSource : null,
-      categorizationConfidence: category ? r.categorizationConfidence : null,
+      categorizationSource: category || cleared ? r.categorizationSource : null,
+      categorizationConfidence: category || cleared ? r.categorizationConfidence : null,
       needsReview: category ? r.needsReview : false,
       merchantId: r.merchantId !== null && merchantIds.has(r.merchantId) ? r.merchantId : null,
       recurringSeriesId: series ? r.recurringSeriesId : null,

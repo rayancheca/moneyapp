@@ -482,10 +482,22 @@ function engineCategoryColumns(carry: CarryAttributes): Partial<typeof transacti
   };
 }
 
+/**
+ * A category the owner set by hand — or his "Uncategorized", which `applyCorrection` writes as NO category with source
+ * `user`: every engine and Claude's queue leave such a row alone (`notUserOwned`), so it is his work like any other.
+ *
+ * 🔴 Only a hand category with an id travelled. A round trip of Statement_092026_4208.pdf brought KnockBox AI LLC
+ * (−$2.20) back as NULL/NULL, into categorization, transfer detection and Claude's queue, while the confirmation had
+ * counted it as given back (the review of uc/final-integrate, 2026-09-16, on a copy of the real ledger).
+ */
+function isHandCategory(row: Pick<CarryAttributes, "categorizationSource">): boolean {
+  return row.categorizationSource === "user";
+}
+
 /** Something a re-parse would otherwise destroy (splits handled separately). */
 function hasCarryableAttributes(row: CarryRow): boolean {
   return (
-    (row.categorizationSource === "user" && row.categoryId !== null) ||
+    isHandCategory(row) ||
     engineCategoryCarry(row) !== null ||
     row.notes !== null ||
     row.transferGroupId !== null ||
@@ -587,8 +599,11 @@ function rememberedOf(tx: AppDatabase, importFileId: string): RememberedInsert[]
   );
   return rows.flatMap((row): RememberedInsert[] => {
     const splits = parts.get(row.id) ?? [];
+    // 🔴 a transfer leg's hand category is the one the pair gave it (`linkTransferPair`), and `unimported-transfers`
+    // gives it back only with the pair — kept here too, it came back on a leg whose transfer the owner had ended since
+    // (linked elsewhere), as a transfer category that no total counts (the review of uc/final-integrate, 2026-09-16)
     const category =
-      (row.categorizationSource === "user" && row.categoryId !== null) || engineCategoryCarry({ ...row, transferGroupId: null }) === "fill";
+      (isHandCategory(row) && row.transferGroupId === null) || engineCategoryCarry({ ...row, transferGroupId: null }) === "fill";
     const anything = category || row.notes !== null || row.recurringSeriesId !== null || isDetach(row) || row.status === "excluded" || splits.length > 0;
     if (!anything) return [];
     return [
@@ -680,10 +695,9 @@ function takeCarry(pool: CarryPool, accountId: string, t: CanonicalTxn, hash: st
  * (`engineCategoryCarry`).
  */
 function applyCarry(tx: AppDatabase, txnId: string, carry: CarryAttributes): void {
-  const userCategory = carry.categorizationSource === "user" && carry.categoryId !== null;
   tx.update(transactions)
     .set({
-      ...(userCategory
+      ...(isHandCategory(carry)
         ? {
             categoryId: carry.categoryId,
             categorizationSource: "user" as const,
@@ -716,11 +730,7 @@ function applyCarry(tx: AppDatabase, txnId: string, carry: CarryAttributes): voi
  */
 function fillFromCarry(tx: AppDatabase, existing: typeof transactions.$inferSelect, carry: CarryAttributes): void {
   const set: Partial<typeof transactions.$inferInsert> = {};
-  if (
-    carry.categorizationSource === "user" &&
-    carry.categoryId !== null &&
-    existing.categorizationSource !== "user"
-  ) {
+  if (isHandCategory(carry) && existing.categorizationSource !== "user") {
     set.categoryId = carry.categoryId;
     set.categorizationSource = "user";
     set.categorizationConfidence = carry.categorizationConfidence;
@@ -1857,9 +1867,8 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
         // had put anything on it (claimed here so a row skipped as owned
         // above leaves its attributes for whichever row does materialize)…
         const prior = takeCarry(carryPool, accountId, t, hash);
-        // …else what the owner had set on the same line before an un-import removed it — never over a takeover
-        // victim, which is the live record of the money and holds his work since (`unimported-attributes`)
-        const recalled = prior === null && fate.kind !== "takeover" ? takeCarry(recall, accountId, t, hash, 1) : null;
+        // …else what the owner had set on the same line before an un-import removed it (`unimported-attributes`)
+        const recalled = prior === null ? takeCarry(recall, accountId, t, hash, 1) : null;
         const carried = prior ?? recalled;
         const landed = (fresh: boolean): void => {
           if (carried === null || !landCarry(tx, accountId, hash, carried, fresh)) return;
@@ -1878,7 +1887,7 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
           outcome.supersededTakeover += 1;
           // the re-parse carry wins over the victim: same file lineage, so
           // it is the row the user actually edited
-          const inserted = insertTxn(tx, db, accountId, fileRow.id, stored, hash, occurrenceIndex, carried ?? victim);
+          const inserted = insertTxn(tx, db, accountId, fileRow.id, stored, hash, occurrenceIndex, prior ?? victim);
           if (inserted) {
             outcome.inserted += 1;
             written.push(hash);
@@ -1898,8 +1907,14 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
             moveWaitingLeg(tx, victim.id, replacement.id);
           }
           // the carry lands last: same file lineage as the row the user
-          // actually edited, so it outranks the victim's attributes
-          landed(inserted);
+          // actually edited, so it outranks the victim's attributes. A record
+          // does not: the victim is the live record of the money and holds the
+          // owner's work since the un-import, so the record only fills what it
+          // left empty — and is spent, so a later un-import of this row keeps
+          // ONE record of the line, the newer one.
+          // 🔴 It was left waiting, and the next round trip gave back the older
+          // of two records of one line (review of uc/final-integrate, 2026-09-16).
+          landed(inserted && recalled === null);
           continue;
         }
 
@@ -2314,8 +2329,8 @@ function insertTxn(
   carryFrom: CarryAttributes | null,
 ): boolean {
   const categoryId = t.categoryPath ? categoryIdForPath(db, t.categoryPath) : null;
-  const carryUserCategory = carryFrom?.categorizationSource === "user" ? carryFrom.categoryId : null;
-  const engine = carryFrom === null || carryUserCategory ? null : engineCategoryCarry(carryFrom);
+  const carriesHand = carryFrom !== null && isHandCategory(carryFrom);
+  const engine = carryFrom === null || carriesHand ? null : engineCategoryCarry(carryFrom);
   // the parser's own category, unless an engine's travels over it (`engineCategoryCarry`) — or a hand-set one does,
   // with the merchant and confidence it came with, as `applyCarry` moves them.
   // 🔴 A takeover victim's hand category travelled alone, and categorizeAll never names a merchant on a categorized
@@ -2324,9 +2339,9 @@ function insertTxn(
   const category =
     carryFrom !== null && (engine === "overwrite" || (engine === "fill" && categoryId === null))
       ? { ...engineCategoryColumns(carryFrom), merchantId: carryFrom.merchantId }
-      : carryFrom !== null && carryUserCategory !== null
+      : carryFrom !== null && carriesHand
         ? {
-            categoryId: carryUserCategory,
+            categoryId: carryFrom.categoryId,
             categorizationSource: "user" as const,
             categorizationConfidence: carryFrom.categorizationConfidence,
             merchantId: carryFrom.merchantId,

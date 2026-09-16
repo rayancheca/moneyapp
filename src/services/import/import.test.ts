@@ -13,6 +13,7 @@ import { createAccount } from "@/services/accounts";
 import { recurringSeries } from "@/db/schema/recurring";
 import { statementCopies, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
+import { unimportedRowAttributes } from "@/db/schema/unimported-row-attributes";
 import { unimportedTransferLegs } from "@/db/schema/unimported-transfer-legs";
 import { latestBalances, netWorthSeries, rebuildAccount } from "@/services/derivation";
 import { listSplits, setSplits } from "@/services/transaction-splits";
@@ -638,6 +639,11 @@ describe("a transfer pair an un-import takes apart", () => {
     const [out] = rowsOf(CHECKING.name);
     expect(out!.transferGroupId).toBeNull();
     expect(bundle.db.select().from(unimportedTransferLegs).all()).toEqual([]);
+    // 🔴 …nor its category, which the pair gave it: it came back as "Credit Card Payment", by hand, out of every total
+    // and out of review, on a payment in no transfer (the review of uc/final-integrate, 2026-09-16). A bare import
+    // leaves this line uncategorized.
+    expect(out).toMatchObject({ categoryId: null, categorizationSource: null });
+    expect(bundle.db.select().from(unimportedRowAttributes).all()).toEqual([]);
   });
 });
 
@@ -1483,6 +1489,25 @@ describe("re-parse lifecycle: a parser-version bump preserves user work", () => 
     expect(parts.reduce((s, p) => s + p.amountCents, 0)).toBe(starbucks.amountCents);
     expect(starbucks.amountCents).toBe(before.starbucks.amountCents); // parent immutable
     expect(listSplits(bundle.db, before.starbucks.id)).toEqual([]); // and only once
+  });
+
+  /*
+   * "Uncategorized" picked by hand is written as no category with source `user` (`applyCorrection`), and every engine
+   * leaves such a row alone. 🔴 Only a hand category with an id travelled: the fresh row came back NULL/NULL and the bank's
+   * "Gas" bucket filled it (the review of uc/final-integrate, 2026-09-16, found the un-import's side of it).
+   */
+  test("an Uncategorized picked by hand survives, and no engine fills the row", async () => {
+    await importStatementFiles(bundle.db, [FILE]);
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: null, categorizationSource: "user", categorizationConfidence: 1, needsReview: false })
+      .where(eq(transactions.id, liveRow("SHELL OIL").id))
+      .run();
+
+    const [outcome] = await withBumpedParserVersion("chase-card-csv", () => importStatementFiles(bundle.db, [FILE]));
+
+    expect(outcome).toMatchObject({ status: "parsed", carriedForward: 1 });
+    expect(liveRow("SHELL OIL")).toMatchObject({ categoryId: null, categorizationSource: "user", categorizationConfidence: 1, needsReview: false });
   });
 
   test("idempotency: re-importing the identical file at the new version does not double-count", async () => {

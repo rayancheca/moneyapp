@@ -48,6 +48,8 @@ const LINES = {
   split: { postedOn: "2026-05-08", amountCents: -5000, rawDescription: "ZQX WAREHOUSE CLUB" },
   excluded: { postedOn: "2026-05-09", amountCents: -700, rawDescription: "ZQX REFUNDABLE DEPOSIT" },
   bare: { postedOn: "2026-05-10", amountCents: -100, rawDescription: "ZQX PLAIN THING" },
+  cleared: { postedOn: "2026-05-11", amountCents: -600, rawDescription: "ZQX GIFT WRAP COUNTER" },
+  detachOnly: { postedOn: "2026-05-12", amountCents: -3000, rawDescription: "ZQX FERN GYM GUEST PASS" },
 } as const;
 const LINE_CENTS = Object.values(LINES).reduce((n, l) => n + l.amountCents, 0);
 
@@ -136,8 +138,22 @@ async function statementWithWork(): Promise<{ series: string; snacks: string; bu
     .values({ name: "Fern gym", kind: "subscription", cadence: "monthly", status: "confirmed" })
     .returning({ id: recurringSeries.id })
     .get().id;
-  set(LINES.groceries.rawDescription, { categoryId: categoryNamed("Groceries"), categorizationSource: "user", categorizationConfidence: 1, notes: "for the party" });
-  set(LINES.claude.rawDescription, { categoryId: categoryNamed("Dining"), categorizationSource: "claude", categorizationConfidence: 0.62, needsReview: true });
+  // the merchant and the confidence a category came with are part of it
+  const starbucks = bundle.db.select().from(merchants).where(eq(merchants.canonicalName, "Starbucks")).get()!.id;
+  set(LINES.groceries.rawDescription, {
+    categoryId: categoryNamed("Groceries"),
+    categorizationSource: "user",
+    categorizationConfidence: 0.9,
+    merchantId: starbucks,
+    notes: "for the party",
+  });
+  set(LINES.claude.rawDescription, {
+    categoryId: categoryNamed("Dining"),
+    categorizationSource: "claude",
+    categorizationConfidence: 0.62,
+    merchantId: starbucks,
+    needsReview: true,
+  });
   set(LINES.noSource.rawDescription, { categoryId: snacks, categorizationSource: null, categorizationConfidence: null });
   set(LINES.linked.rawDescription, { recurringSeriesId: series, seriesLinkSource: "user" });
   set(LINES.detached.rawDescription, { recurringSeriesId: null, seriesLinkSource: "user", notes: "not the membership" });
@@ -146,6 +162,10 @@ async function statementWithWork(): Promise<{ series: string; snacks: string; bu
     { categoryId: bulk, amountCents: -1500 },
   ]);
   set(LINES.excluded.rawDescription, { status: "excluded" });
+  // "Uncategorized" picked by hand (`applyCorrection`): no category, and the owner's word that it has none
+  set(LINES.cleared.rawDescription, { categoryId: null, categorizationSource: "user", categorizationConfidence: 1, needsReview: false });
+  // "not this one", and nothing else on the row
+  set(LINES.detachOnly.rawDescription, { recurringSeriesId: null, seriesLinkSource: "user" });
   return { series, snacks, bulk };
 }
 
@@ -168,7 +188,7 @@ describe("a round trip gives back what the owner set on the rows it removed", ()
     expect(live()).toEqual([]);
     const [outcome] = await importStatementFiles(bundle.db, [STATEMENT]);
 
-    expect(outcome).toMatchObject({ status: "parsed", inserted: 8, givenBack: 7 });
+    expect(outcome).toMatchObject({ status: "parsed", inserted: 10, givenBack: 9 });
     expect(live().map(seen)).toEqual(before);
     expect(period()).toEqual(verdict);
     // the link counts the charge again
@@ -180,12 +200,12 @@ describe("a round trip gives back what the owner set on the rows it removed", ()
   test("a record waits for its own line: a charge of the same money in other words takes nothing", async () => {
     await statementWithWork();
     unimportFile(bundle.db, fileId(STATEMENT));
-    expect(bundle.db.select().from(unimportedRowAttributes).all()).toHaveLength(7);
+    expect(bundle.db.select().from(unimportedRowAttributes).all()).toHaveLength(9);
 
     const [stranger] = await importStatementFiles(bundle.db, [STRANGER]);
     expect(stranger).toMatchObject({ status: "parsed", inserted: 1, givenBack: 0 });
     expect(byWords("UNRELATED PHARMACY 7")).toMatchObject({ categorizationSource: null, notes: null });
-    expect(bundle.db.select().from(unimportedRowAttributes).all()).toHaveLength(7);
+    expect(bundle.db.select().from(unimportedRowAttributes).all()).toHaveLength(9);
 
     // the statement's own line takes it, though the stranger's row now sits on its day
     unimportFile(bundle.db, fileId(STRANGER));
@@ -231,11 +251,19 @@ describe("a round trip gives back what the owner set on the rows it removed", ()
     expect(bundle.db.select().from(transactions).where(eq(transactions.id, partner)).get()!.transferGroupId).toBe(back.transferGroupId);
   });
 
+  const records = () => bundle.db.select({ notes: unimportedRowAttributes.notes }).from(unimportedRowAttributes).all();
+
   /**
    * A line that takes over another file's row inherits that row's attributes (`insertTxn`): it is the live record of the
-   * money, and what the owner set on it since outranks what he had set before the un-import.
+   * money, and what the owner set on it since outranks what he had set before the un-import. The record only fills what
+   * that row leaves empty, and is spent.
+   *
+   * 🔴 The record was left waiting beside the row that took its line. Un-importing that row's file then wrote a second
+   * record of the same line, with the owner's newer work, and the next import gave back the OLDER one (the tie between
+   * two records of one line goes to the lower id, and ids grow with time): the review of uc/final-integrate, 2026-09-16,
+   * 12 runs of 12.
    */
-  test("a record is not given to a line that takes over another file's row: that row's newer work stays", async () => {
+  test("a line that takes over another file's row keeps that row's newer work, and spends the older record", async () => {
     await importStatementFiles(bundle.db, [OFX_STATEMENT]);
     set(LINES.groceries.rawDescription, { categoryId: categoryNamed("Groceries"), categorizationSource: "user", notes: "before" });
     unimportFile(bundle.db, fileId(OFX_STATEMENT));
@@ -244,10 +272,46 @@ describe("a round trip gives back what the owner set on the rows it removed", ()
 
     const [outcome] = await importStatementFiles(bundle.db, [OFX_STATEMENT]);
 
-    expect(outcome).toMatchObject({ status: "parsed", supersededTakeover: 1 });
+    expect(outcome).toMatchObject({ status: "parsed", supersededTakeover: 1, givenBack: 1 });
     expect(byWords(LINES.groceries.rawDescription)).toMatchObject({ categoryId: categoryNamed("Dining"), notes: "since" });
-    // the record still waits: no line wrote the money anew
-    expect(bundle.db.select({ notes: unimportedRowAttributes.notes }).from(unimportedRowAttributes).all()).toEqual([{ notes: "before" }]);
+    expect(records()).toEqual([]);
+
+    // the export's row it took over is history, and leaves no record with its file
+    unimportFile(bundle.db, fileId(EXPORT));
+    expect(records()).toEqual([]);
+
+    // the newer work is what the line's next round trip gives back
+    unimportFile(bundle.db, fileId(OFX_STATEMENT));
+    expect(records()).toEqual([{ notes: "since" }]);
+    await importStatementFiles(bundle.db, [OFX_STATEMENT]);
+    expect(byWords(LINES.groceries.rawDescription)).toMatchObject({ categoryId: categoryNamed("Dining"), categorizationSource: "user", notes: "since" });
+    expect(records()).toEqual([]);
+  });
+
+  test("…and a row it takes over with nothing set takes the older record whole", async () => {
+    await importStatementFiles(bundle.db, [OFX_STATEMENT]);
+    set(LINES.groceries.rawDescription, { categoryId: categoryNamed("Groceries"), categorizationSource: "user", notes: "before" });
+    unimportFile(bundle.db, fileId(OFX_STATEMENT));
+    await importStatementFiles(bundle.db, [EXPORT]);
+
+    const [outcome] = await importStatementFiles(bundle.db, [OFX_STATEMENT]);
+
+    expect(outcome).toMatchObject({ status: "parsed", supersededTakeover: 1, givenBack: 1 });
+    expect(byWords(LINES.groceries.rawDescription)).toMatchObject({ categoryId: categoryNamed("Groceries"), categorizationSource: "user", notes: "before" });
+    expect(records()).toEqual([]);
+  });
+
+  test("…and an Uncategorized picked by hand outranks the category an engine gave the row it takes over", async () => {
+    await importStatementFiles(bundle.db, [OFX_STATEMENT]);
+    set(LINES.groceries.rawDescription, { categoryId: null, categorizationSource: "user", categorizationConfidence: 1, needsReview: false });
+    unimportFile(bundle.db, fileId(OFX_STATEMENT));
+    await importStatementFiles(bundle.db, [EXPORT]);
+    set("HOLLOW MKT", { categoryId: categoryNamed("Dining"), categorizationSource: "rule", categorizationConfidence: 0.8 });
+
+    await importStatementFiles(bundle.db, [OFX_STATEMENT]);
+
+    expect(byWords(LINES.groceries.rawDescription)).toMatchObject({ categoryId: null, categorizationSource: "user", categorizationConfidence: 1 });
+    expect(records()).toEqual([]);
   });
 
   test("what was deleted meanwhile is not given back: a category, a series, a split's category", async () => {
