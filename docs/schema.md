@@ -72,6 +72,12 @@ budgets ── categories        rules (ordered)        ai_calls        app_sett
 
 Liability status **derived** from `type='credit'`. Debit cards are intentionally not accounts.
 
+### account_numbers
+A number, other than `accounts.last4`, that the account's statements print — a card reissued under
+a new number (Venture X: 9082, then 4147, now 4208). An import matches a statement's printed number
+to `accounts.last4` first, then to exactly one account here; a number two accounts once printed
+names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
+
 ### import_files — with an explicit lifecycle
 | field | type | notes |
 |---|---|---|

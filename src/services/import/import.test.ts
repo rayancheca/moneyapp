@@ -426,6 +426,107 @@ describe("parseContextFor — the accounts a multi-account file may parse", () =
   });
 });
 
+/**
+ * 🔴 Venture X is one card under three numbers: its statements through January 2026 print 9082, then 4147, and the
+ * account is 4208 (merged by hand, pass 12). The import matched a statement to an account by `accounts.last4` alone, so
+ * un-importing capitalone-venturex-statement-2026-03.pdf and importing the same bytes again created a second "Venture
+ * X" (····9082) with the statement's 195 rows and its period (a copy of the real ledger, 2026-09-16: net worth
+ * −$149.15).
+ */
+describe("a card reissued under a new number", () => {
+  const PREFIX = "reissued-card-statement-";
+  const statement = (last4: string, month: string, amountCents: number): ParsedStatement => ({
+    accountHint: { institution: "Capital One", type: "credit", last4, name: "Venture X" },
+    txns: [{ postedOn: `2026-${month}-10`, amountCents, rawDescription: `CARD PURCHASE ${month}` }],
+    period: { start: `2026-${month}-01`, end: `2026-${month}-28`, beginCents: 0, endCents: amountCents },
+  });
+  const profile: ParserProfile = {
+    id: "test-reissued-card-statement",
+    version: 1,
+    matches: (f) => f.name.startsWith(PREFIX),
+    parse: (f) => {
+      const [last4, month] = f.text.trim().split(" ") as [string, string];
+      return [statement(last4, month, month === "02" ? -1000 : -2000)];
+    },
+  };
+  const file = (last4: string, month: string): ImportInput => ({ name: `${PREFIX}${month}.txt`, buffer: Buffer.from(`${last4} ${month}`) });
+  const OLD_NUMBER = file("9082", "02");
+  const NEW_NUMBER = file("4208", "03");
+
+  beforeEach(() => {
+    PROFILES.unshift(profile);
+  });
+  afterEach(() => {
+    PROFILES.splice(PROFILES.indexOf(profile), 1);
+  });
+
+  /** The owner's merge: the account takes the new number, and keeps the one its earlier statement printed. */
+  async function reissued(): Promise<string> {
+    const { recordFormerNumber } = await import("./account-numbers");
+    await importStatementFiles(bundle.db, [OLD_NUMBER]);
+    const card = bundle.db.select().from(accounts).where(eq(accounts.last4, "9082")).get()!;
+    bundle.db.update(accounts).set({ last4: "4208" }).where(eq(accounts.id, card.id)).run();
+    expect(recordFormerNumber(bundle.db, card.id, "9082")).toBe(true);
+    await importStatementFiles(bundle.db, [NEW_NUMBER]);
+    return card.id;
+  }
+
+  test("a statement printed under an earlier number is filed under the card again after an un-import", async () => {
+    const card = await reissued();
+    const oldFile = bundle.db.select().from(importFilesTable).where(eq(importFilesTable.fileName, OLD_NUMBER.name)).get()!;
+
+    unimportFile(bundle.db, oldFile.id);
+    const [outcome] = await importStatementFiles(bundle.db, [OLD_NUMBER]);
+
+    expect(outcome!.status).toBe("parsed");
+    expect(bundle.db.select().from(accounts).all().filter((a) => a.name === "Venture X").map((a) => a.id)).toEqual([card]);
+    expect(bundle.db.select().from(statementPeriods).all().map((p) => [p.accountId, p.periodStart])).toEqual([
+      [card, "2026-03-01"],
+      [card, "2026-02-01"],
+    ]);
+    expect(bundle.db.select().from(transactions).all().every((t) => t.accountId === card)).toBe(true);
+  });
+
+  test("a multi-account profile is offered the earlier number, and a section withheld under it names the card", async () => {
+    const card = await reissued();
+    expect(parseContextFor(bundle.db).knownAccounts["Capital One"]).toEqual([
+      { last4: "4208", type: "credit", subtype: null },
+      { last4: "9082", type: "credit", subtype: null },
+    ]);
+    const WITHHOLDS = { name: `${PREFIX}withheld.txt`, buffer: Buffer.from("withheld") };
+    const withholding: ParserProfile = {
+      id: "test-reissued-card-withheld",
+      version: 1,
+      matches: (f) => f.name === WITHHOLDS.name,
+      parse: () => ({
+        statements: [],
+        withheld: [{ accountHint: { institution: "Capital One", type: "credit", last4: "9082" }, accountNumber: "XXXX9082", period: { start: "2026-04-01", end: "2026-04-28" }, reason: "cannot prove it" }],
+      }),
+    };
+    PROFILES.unshift(withholding);
+    try {
+      const [outcome] = await importStatementFiles(bundle.db, [WITHHOLDS]);
+      expect(outcome!.withheld.map((w) => w.accountId)).toEqual([card]);
+    } finally {
+      PROFILES.splice(PROFILES.indexOf(withholding), 1);
+    }
+  });
+
+  test("a number two accounts once printed names neither, and the current number always wins", async () => {
+    const { recordFormerNumber } = await import("./account-numbers");
+    const card = await reissued();
+    const other = resolveAccount(bundle.db, { institution: "Capital One", type: "credit", last4: "5555", name: "Quicksilver" });
+    expect(recordFormerNumber(bundle.db, other, "9082")).toBe(true);
+    // its own current number is never an earlier one
+    expect(recordFormerNumber(bundle.db, other, "5555")).toBe(false);
+    // another account's earlier number never takes a statement from the account that carries it now
+    expect(recordFormerNumber(bundle.db, other, "4208")).toBe(true);
+    expect(resolveAccount(bundle.db, { institution: "Capital One", type: "credit", last4: "4208" })).toBe(card);
+    const ambiguous = resolveAccount(bundle.db, { institution: "Capital One", type: "credit", last4: "9082" });
+    expect([card, other]).not.toContain(ambiguous);
+  });
+});
+
 describe("cross-format reconciliation dedupe (the DB is master)", () => {
   const cardCsv = (rows: string[]): string =>
     ["Card,Transaction Date,Post Date,Description,Category,Type,Amount,Memo", ...rows].join("\n");

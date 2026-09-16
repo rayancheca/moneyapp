@@ -37,18 +37,17 @@
  */
 import fs from "node:fs";
 import os from "node:os";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { withPreMutationSnapshot } from "@/db/backup";
 import { accounts } from "@/db/schema/accounts";
-import { importFiles, statementCopies, statementPeriods } from "@/db/schema/imports";
-import { fileSha256, type DuplicatePairSide } from "@/lib/hash";
-import { PROFILES } from "@/services/import/profiles";
-import { asParsedFile, findAccountId, parseContextFor, statementCopyLines, storedLines } from "@/services/import/service";
-import { sniffFile } from "@/services/import/sniff";
+import { statementCopies, statementPeriods } from "@/db/schema/imports";
+import type { DuplicatePairSide } from "@/lib/hash";
+import { findAccountId, statementCopyLines, storedLines } from "@/services/import/service";
 import { copyHandOvers, recordStatementCopy } from "@/services/import/statement-copies";
 import { dbTargetFrom, strayFlags } from "./db-target";
 import { onRehearsalCopy, sha256Json } from "./guarded-write-harness";
+import { LEDGER_TABLES, rereadImported, wholeNumberFlag } from "./reread-imported";
 
 const SNAPSHOT_LABEL = "record-statement-copies";
 
@@ -73,43 +72,10 @@ export interface CopyScan {
 /** Reads each file again with the profile and version that imported it, and names the periods it prints as a copy. */
 export async function scanCopies(bundle: DbBundle, offset: number, limit: number): Promise<CopyScan> {
   const { db } = bundle;
-  const files = db
-    .select()
-    .from(importFiles)
-    .where(inArray(importFiles.status, ["parsed", "parsed_with_claude"]))
-    .orderBy(asc(importFiles.importedAt), asc(importFiles.id))
-    .all()
-    .slice(offset, offset + limit);
-  const scan: CopyScan = { planned: [], alreadyRecorded: 0, skipped: [], read: 0 };
-  const context = parseContextFor(db);
-  for (const file of files) {
+  const { reads, skipped } = await rereadImported(bundle, offset, limit);
+  const scan: CopyScan = { planned: [], alreadyRecorded: 0, skipped, read: reads.length };
+  for (const { file, statements } of reads) {
     const skip = (why: string) => scan.skipped.push(`${file.fileName} (${file.id}): ${why}`);
-    const profile = PROFILES.find((p) => p.id === file.parserProfile);
-    if (profile === undefined) {
-      skip(`no profile ${file.parserProfile}`);
-      continue;
-    }
-    if (profile.version !== file.parserVersion) {
-      skip(`imported at ${profile.id} v${file.parserVersion}, the profile is v${profile.version} — its re-read records it`);
-      continue;
-    }
-    if (!fs.existsSync(file.storagePath)) {
-      skip(`no original at ${file.storagePath}`);
-      continue;
-    }
-    const buffer = fs.readFileSync(file.storagePath);
-    if (fileSha256(buffer) !== file.fileSha256) {
-      skip(`${file.storagePath} is not the imported bytes`);
-      continue;
-    }
-    let statements;
-    try {
-      ({ statements } = asParsedFile(await profile.parse(sniffFile(file.fileName, buffer), context)));
-    } catch (error: unknown) {
-      skip(`the profile cannot read it now: ${error instanceof Error ? error.message : String(error)}`);
-      continue;
-    }
-    scan.read += 1;
     const owned = new Set(
       db
         .select({ accountId: statementPeriods.accountId })
@@ -175,9 +141,8 @@ export async function scanCopies(bundle: DbBundle, offset: number, limit: number
 
 /** Every table the write must leave alone, hashed row by row. */
 function untouched(bundle: DbBundle): Record<string, string> {
-  const tables = ["transactions", "statement_periods", "balance_anchors", "daily_balances", "import_files", "accounts", "transaction_splits", "duplicate_candidates"];
   return Object.fromEntries(
-    tables.map((t) => [t, sha256Json(bundle.sqlite.prepare(`SELECT * FROM ${t} ORDER BY rowid`).all())]),
+    LEDGER_TABLES.map((t) => [t, sha256Json(bundle.sqlite.prepare(`SELECT * FROM ${t} ORDER BY rowid`).all())]),
   );
 }
 
@@ -226,14 +191,6 @@ function writeAndGuard(bundle: DbBundle, planned: readonly PlannedCopy[], snapsh
   };
 }
 
-function flagValue(argv: readonly string[], name: string, fallback: number): number {
-  const raw = argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
-  if (raw === undefined) return fallback;
-  const n = Number(raw);
-  if (!Number.isSafeInteger(n) || n < 0) throw new Error(`--${name} must be a whole number, got ${raw}`);
-  return n;
-}
-
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const stray = strayFlags(argv, ["--db", "--confirm", "--scratch", "--offset", "--limit"]);
@@ -241,8 +198,8 @@ async function main(): Promise<void> {
   const target = dbTargetFrom(argv, { flag: "--db", required: true, cwd: process.cwd(), exists: fs.existsSync });
   const scratch = argv.find((a) => a.startsWith("--scratch="))?.slice("--scratch=".length) ?? os.tmpdir();
   if (!fs.existsSync(scratch)) throw new Error(`no scratch directory at ${scratch}`);
-  const offset = flagValue(argv, "offset", 0);
-  const limit = flagValue(argv, "limit", Number.MAX_SAFE_INTEGER);
+  const offset = wholeNumberFlag(argv, "offset", 0);
+  const limit = wholeNumberFlag(argv, "limit", Number.MAX_SAFE_INTEGER);
   const bundle = createDatabase(target.path);
   try {
     const scan = await scanCopies(bundle, offset, limit);

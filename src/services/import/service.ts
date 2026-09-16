@@ -38,6 +38,7 @@ import {
   standInsOn,
   standInsReturnedBy,
 } from "../duplicate-lifecycle";
+import { accountsFormerlyNumbered, formerNumbers } from "./account-numbers";
 import { accountSlug, institutionSlug } from "./account-slug";
 import { ATTACHED, detachAttachedRows, keepRetiredAttachedRows, parsedFromFile, reattachDetachedRows } from "./attached-rows";
 import { handOverPrintedAnchors } from "./printed-anchors";
@@ -697,11 +698,18 @@ function rangesCovering(ranges: readonly CoveredRange[], day: string): CoveredRa
  * account with no last4 cannot be matched by number and is left out.
  */
 export function parseContextFor(db: AppDatabase): ParseContext {
-  const rows = db
-    .select({ institution: institutions.name, last4: accounts.last4, type: accounts.type, subtype: accounts.subtype })
+  const tracked = db
+    .select({ id: accounts.id, institution: institutions.name, last4: accounts.last4, type: accounts.type, subtype: accounts.subtype })
     .from(accounts)
     .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
     .all();
+  // a number an account's statements printed before its current one is that account's too (`account-numbers`)
+  const byId = new Map(tracked.map((r) => [r.id, r]));
+  const earlier = formerNumbers(db).flatMap(({ accountId, last4 }) => {
+    const account = byId.get(accountId);
+    return account === undefined ? [] : [{ ...account, last4 }];
+  });
+  const rows = [...tracked, ...earlier];
   const knownAccounts: Partial<Record<AccountHint["institution"], KnownAccount[]>> = {};
   for (const r of rows) {
     if (r.last4 === null) continue;
@@ -739,6 +747,11 @@ function matchAccount(db: AppDatabase, hint: AccountHint): { institutionId: stri
     hint.type !== undefined && a.type === hint.type && (hint.subtype === undefined || a.subtype === hint.subtype);
 
   let found = hint.last4 ? all.find((a) => a.last4 === hint.last4) : undefined;
+  if (!found && hint.last4) {
+    // a card reissued under a new number: its earlier statements print the old one (`account-numbers`)
+    const formerly = accountsFormerlyNumbered(db, all.map((a) => a.id), hint.last4);
+    if (formerly.length === 1) found = all.find((a) => a.id === formerly[0]);
+  }
   if (!found && !hint.last4) {
     // files without account numbers (Discover CSV, Robinhood activity, SoFi)
     found = all.find(typeMatch);
@@ -1581,15 +1594,20 @@ export function asParsedFile(parsed: ParsedStatement[] | ParsedFile): ParsedFile
  */
 function withheldOutcome(db: AppDatabase, section: WithheldSection): WithheldOutcome {
   const { institution, last4 } = section.accountHint;
-  const named =
+  const atInstitution =
     last4 === undefined
       ? []
       : db
-          .select({ id: accounts.id, name: accounts.name })
+          .select({ id: accounts.id, name: accounts.name, last4: accounts.last4 })
           .from(accounts)
           .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
-          .where(and(eq(institutions.name, institution), eq(accounts.last4, last4)))
+          .where(eq(institutions.name, institution))
           .all();
+  const current = atInstitution.filter((a) => a.last4 === last4);
+  // …or the number its statements printed before (`account-numbers`), as `resolveAccount` reads it
+  const formerly =
+    current.length > 0 || last4 === undefined ? [] : accountsFormerlyNumbered(db, atInstitution.map((a) => a.id), last4);
+  const named = current.length > 0 ? current : atInstitution.filter((a) => formerly.includes(a.id));
   const [only] = named.length === 1 ? named : [];
   const facts = {
     accountId: only?.id ?? null,
