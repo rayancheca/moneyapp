@@ -1,5 +1,6 @@
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
+import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
 import { importFiles, printedLines, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { descriptionScore } from "@/lib/description-score";
@@ -192,20 +193,79 @@ function pickHeir(heirs: readonly Heir[], row: Row): Heir {
   return [...heirs].sort((a, b) => holds(b) - holds(a) || b.importedAt.localeCompare(a.importedAt) || a.fileId.localeCompare(b.fileId))[0]!;
 }
 
+/**
+ * What a live file with no `printed_lines` record on the account is known to print without a live row of its own: the
+ * lines of its parsed rows a more trusted file took over (`superseded`). Not a retired read's rows — its file is not
+ * live — and not a copy the owner retired as a duplicate: un-importing the file of the row his verdict kept puts that
+ * copy back in its place (`restoreDuplicatesLosingTheirSurvivor`), which is his verdict's reading of the charge.
+ *
+ * ⚖️ Owner, 2026-09-16: when a file that took over rows is un-imported, the rows it replaced come back if their own
+ * file is still imported. 🔴 They came back only through the record, and a file imported before `printed_lines` existed
+ * has none where the backfill could not read it again at the version that imported it (on the real ledger,
+ * 2026-09-16: Discover-AllAvailable-20260710.csv and 36 Robinhood statements), so un-importing the file that took its
+ * rows over deleted them. The takeover moved everything the owner had set onto the row that took over (`insertTxn`), so
+ * that row is what stays, filed under the file whose line it records.
+ */
+function takenOverLines(db: AppDatabase, accountId: string, recordedFileIds: readonly string[]): Omit<Heir, "periods">[] {
+  const rows = db
+    .select({
+      fileId: importFiles.id,
+      importedAt: importFiles.importedAt,
+      postedOn: transactions.postedOn,
+      transactedOn: transactions.transactedOn,
+      amountCents: transactions.amountCents,
+      normalizedDescription: transactions.normalizedDescription,
+    })
+    .from(transactions)
+    .innerJoin(importFiles, eq(importFiles.id, transactions.importFileId))
+    .where(
+      and(
+        eq(transactions.accountId, accountId),
+        eq(transactions.status, "superseded"),
+        isNull(transactions.fileLinkSource),
+        inArray(importFiles.status, [...LIVE_FILE]),
+        notInArray(importFiles.id, [...recordedFileIds]),
+        notInArray(
+          transactions.id,
+          db
+            .select({ id: sql<string>`${duplicateCandidates.retiredTransactionId}` })
+            .from(duplicateCandidates)
+            .where(and(eq(duplicateCandidates.resolution, "confirmed_duplicate"), isNotNull(duplicateCandidates.retiredTransactionId))),
+        ),
+      ),
+    )
+    .orderBy(asc(transactions.id))
+    .all();
+  const heirs = new Map<string, Omit<Heir, "periods">>();
+  for (const { fileId, importedAt, ...row } of rows) {
+    const heir = heirs.get(fileId) ?? { fileId, importedAt, lines: [] };
+    heirs.set(fileId, { ...heir, lines: [...heir.lines, { printedOn: row.postedOn, ...row }] });
+  }
+  return [...heirs.values()];
+}
+
 function heirsOn(db: AppDatabase, accountId: string): Heir[] {
   const periods = db
     .select({ fileId: statementPeriods.importFileId, start: statementPeriods.periodStart, end: statementPeriods.periodEnd })
     .from(statementPeriods)
     .where(eq(statementPeriods.accountId, accountId))
     .all();
-  return db
+  const recorded = db
     .select({ fileId: printedLines.importFileId, importedAt: importFiles.importedAt, lines: printedLines.lines })
     .from(printedLines)
     .innerJoin(importFiles, eq(importFiles.id, printedLines.importFileId))
     .where(and(eq(printedLines.accountId, accountId), inArray(importFiles.status, [...LIVE_FILE])))
-    .orderBy(asc(printedLines.importFileId))
     .all()
-    .map((h) => ({ ...h, lines: JSON.parse(h.lines) as PrintedLine[], periods: periods.filter((p) => p.fileId === h.fileId) }));
+    .map((h) => ({ ...h, lines: JSON.parse(h.lines) as PrintedLine[] }));
+  // …and a live file the record says nothing about on this account, known by the rows it lost to a takeover
+  const known = takenOverLines(
+    db,
+    accountId,
+    recorded.map((h) => h.fileId),
+  );
+  return [...recorded, ...known]
+    .sort((a, b) => a.fileId.localeCompare(b.fileId))
+    .map((h) => ({ ...h, periods: periods.filter((p) => p.fileId === h.fileId) }));
 }
 
 function rowsOn(db: AppDatabase, accountId: string): Row[] {

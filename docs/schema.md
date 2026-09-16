@@ -153,7 +153,13 @@ names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
   imported. A line another record already holds takes nothing. So un-importing an export keeps
   the rows the statements imported after it print, and those statements' periods stay
   reconciled; importing the export again takes its rows back (a takeover retires the row the
-  same line wrote before — same `dedupe_hash` — first).
+  same line wrote before — same `dedupe_hash` — first). A **takeover** is the same case: the
+  file that took over a still-imported file's rows is un-imported, and the rows that took over
+  (carrying everything the owner had set on the rows they replaced) stay, filed under the file
+  that prints their lines (owner, 2026-09-16). A live file with no `printed_lines` record on the
+  account (imported before the table, and not readable again at its version) is known to print
+  at least the lines of its own parsed rows a takeover retired (not the copies a duplicate verdict
+  retired: the duplicate lifecycle puts those back).
   A **transfer** the un-import takes apart (a deleted leg whose partner stays alone, or a pair
   whose legs were all the file's) is kept in `unimported_transfer_legs` — the deleted legs by
   content and the category the pair gave them, the staying leg by id — and linked again, with

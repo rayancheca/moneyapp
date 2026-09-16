@@ -8,7 +8,8 @@ import { seedDatabase } from "@/db/seed";
 import { accounts } from "@/db/schema/accounts";
 import { dailyBalances } from "@/db/schema/balances";
 import { duplicateCandidates, type DuplicateReason } from "@/db/schema/duplicate-candidates";
-import { importFiles, statementPeriods } from "@/db/schema/imports";
+import { categories } from "@/db/schema/categories";
+import { importFiles, printedLines, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash, duplicatePairKey, type DuplicatePairSide } from "@/lib/hash";
@@ -662,6 +663,68 @@ describe("a takeover hands the owner's verdict to the row that takes over", () =
     await importStatementFiles(bundle.db, [bothLinesQfx()]);
     expect(row(mirror)!.status).toBe("superseded");
     expect(live(card, PAYMENT_CENTS)).toHaveLength(1);
+  });
+
+  /**
+   * ⚖️ Owner, 2026-09-16: when a file that TOOK OVER rows is un-imported, the rows it replaced come back if their own
+   * file is still imported.
+   *
+   * 🔴 They came back only through what the export was recorded to print (`printed_lines`), and a file imported before
+   * that record existed has none unless the backfill could read it again at the version that imported it — on the
+   * real ledger, 2026-09-16, it could not for Discover-AllAvailable-20260710.csv (v1, profile v2) or 36 Robinhood
+   * statements (v3/v4, profile v5). Un-importing a file that took over such a file's rows deleted them: here the
+   * payment and the coffee, with the owner's category and note. The rows a live file's lines lost to a takeover are
+   * lines it prints, whether or not its lines were recorded.
+   */
+  test("un-importing the file that took over an export's rows keeps them under the export, when nothing recorded what it prints", async () => {
+    await importStatementFiles(bundle.db, [exportCsv()]);
+    const exported = fileNamed(EXPORT)!;
+    const coffee = rowsOfFile(exported.id).find((t) => t.amountCents === COFFEE_CENTS)!;
+    const card = coffee.accountId;
+    // not what the merchant map says for BLUE BOTTLE (Food > Coffee): the owner's own call
+    const dining = bundle.db.select().from(categories).where(eq(categories.name, "Groceries")).get()!.id;
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: dining, categorizationSource: "user", notes: "met Sam" })
+      .where(eq(transactions.id, coffee.id))
+      .run();
+    // an export imported before its lines were recorded
+    bundle.db.delete(printedLines).where(eq(printedLines.importFileId, exported.id)).run();
+
+    const [takeover] = await importStatementFiles(bundle.db, [bothLinesQfx()]);
+    expect(takeover).toMatchObject({ status: "parsed", supersededTakeover: 2 });
+    const qfx = fileNamed(QFX)!;
+    expect(liveRows(card).map((t) => t.importFileId)).toEqual([qfx.id, qfx.id]);
+    // …and the confirmation says so before the un-import
+    expect(unimportCountsByFile(bundle.db).get(qfx.id)).toMatchObject({ deleted: 0, keptByPrinters: 2 });
+
+    unimportFile(bundle.db, qfx.id);
+
+    // both charges are still in the ledger, once each, filed under the export — with what the owner set on them
+    expect(liveRows(card).map((t) => t.importFileId)).toEqual([exported.id, exported.id]);
+    expect(liveCents(card)).toBe(PAYMENT_CENTS + COFFEE_CENTS);
+    expect(live(card, COFFEE_CENTS)[0]).toMatchObject({ categoryId: dining, categorizationSource: "user", notes: "met Sam", status: "active" });
+
+    // …and the QFX takes them over again, once
+    const [again] = await importStatementFiles(bundle.db, [bothLinesQfx()]);
+    expect(again).toMatchObject({ status: "parsed", supersededTakeover: 2, inserted: 2 });
+    expect(liveRows(card).map((t) => t.importFileId)).toEqual([fileNamed(QFX)!.id, fileNamed(QFX)!.id]);
+    expect(liveCents(card)).toBe(PAYMENT_CENTS + COFFEE_CENTS);
+    expect(live(card, COFFEE_CENTS)[0]).toMatchObject({ categoryId: dining, notes: "met Sam" });
+  });
+
+  test("a row a file took over from a file no longer imported is not brought back", async () => {
+    await importStatementFiles(bundle.db, [exportCsv()]);
+    const exported = fileNamed(EXPORT)!;
+    const card = rowsOfFile(exported.id)[0]!.accountId;
+    bundle.db.delete(printedLines).where(eq(printedLines.importFileId, exported.id)).run();
+    await importStatementFiles(bundle.db, [bothLinesQfx()]);
+    // the export's read is retired (a re-read at a new version would leave it so): its rows are history
+    bundle.db.update(importFiles).set({ status: "superseded" }).where(eq(importFiles.id, exported.id)).run();
+
+    unimportFile(bundle.db, fileNamed(QFX)!.id);
+
+    expect(liveRows(card)).toEqual([]);
   });
 
   /**
