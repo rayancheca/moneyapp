@@ -14,7 +14,9 @@ import { unimportAcknowledgement, unimportRadius } from "./unimport-radius";
 /** Statement_082026_4208.pdf — nothing attached to it */
 const VENTURE_X_AUG: UnimportCounts = {
   deleted: 50,
+  handedOver: 0,
   kept: 0,
+  keptRefiled: 0,
   userCategorizedDeleted: 8,
   inflowCents: 1_302_366,
   outflowCents: 237_120,
@@ -32,7 +34,9 @@ const VENTURE_X_AUG: UnimportCounts = {
  */
 const SAPPHIRE_MAR: UnimportCounts = {
   deleted: 4,
+  handedOver: 0,
   kept: 5,
+  keptRefiled: 0,
   userCategorizedDeleted: 0,
   inflowCents: 79_848,
   outflowCents: 0,
@@ -45,7 +49,9 @@ const SAPPHIRE_MAR: UnimportCounts = {
 /** 20260702-statements-9805-.pdf — 2 parsed rows, neither a transfer leg; 4 attached, all linked */
 const SAPPHIRE_JUL: UnimportCounts = {
   deleted: 2,
+  handedOver: 0,
   kept: 4,
+  keptRefiled: 0,
   userCategorizedDeleted: 0,
   inflowCents: 5_102,
   outflowCents: 0,
@@ -62,7 +68,9 @@ const SAPPHIRE_JUL: UnimportCounts = {
  */
 const SAPPHIRE_JUL_2025: UnimportCounts = {
   deleted: 11,
+  handedOver: 0,
   kept: 2,
+  keptRefiled: 0,
   userCategorizedDeleted: 1,
   inflowCents: 336_699,
   outflowCents: 0,
@@ -155,6 +163,43 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
     expect(r.headline).toContain("keeps the 1 row filed under it by hand");
     expect(r.reassurance).toContain("The 1 row filed under it by hand keeps its money");
     expect(valueOf(r, "Transfer legs kept")).toBe("1 leg, still linked");
+  });
+
+  /**
+   * 20230810-statements-3522-.pdf, the download holding the statement (read-only on a copy of the real ledger,
+   * 2026-09-16): 85 rows and one period, which two other downloads, still imported, print too.
+   */
+  test("a statement another download still prints deletes nothing it prints, and says where its rows and period go", () => {
+    const firstDownload: UnimportCounts = { ...VENTURE_X_AUG, deleted: 0, handedOver: 85, userCategorizedDeleted: 0, inflowCents: 0, outflowCents: 0, transferLegsDeleted: 0 };
+    const r = unimportRadius({ subject: "20230810-statements-3522-.pdf", counts: firstDownload, balances: 0, periods: 0, periodsHandedOver: 1 });
+
+    expect(r.headline).toBe(
+      "Un-importing 20230810-statements-3522-.pdf deletes no transactions: another download of the same statement is still imported, and it keeps the 85 rows it also prints. There is no undo for this inside the app.",
+    );
+    expect(valueOf(r, "Transactions deleted")).toBe("no transactions");
+    expect(valueOf(r, "Transactions kept under another download of this statement")).toBe("85 transactions it also prints");
+    expect(valueOf(r, "Statement periods removed")).toBe("no periods");
+    expect(valueOf(r, "Statement periods kept under another download")).toBe("1 period");
+    expect(labels(r)).not.toContain(KEPT);
+    expect(unimportAcknowledgement(firstDownload)).toBeUndefined();
+
+    // …a row filed by hand on its days goes with the period; one on another day stays detached, and only that one is
+    // promised a statement to file it under again
+    const mixed = unimportRadius({
+      subject: "x.pdf",
+      counts: { ...firstDownload, deleted: 2, handedOver: 3, kept: 3, keptRefiled: 2 },
+      balances: 0,
+      periods: 0,
+      periodsHandedOver: 1,
+    });
+    expect(mixed.headline).toBe(
+      "Un-importing x.pdf deletes the 2 rows only it brought in: another download of the same statement is still imported, and it keeps the 3 rows it also prints and the 2 rows filed under this one by hand on its days. The 1 other row filed under it by hand stays, detached from the file. There is no undo for this inside the app.",
+    );
+    expect(valueOf(mixed, "Transactions kept under another download of this statement")).toBe(
+      "3 transactions it also prints and 2 transactions filed by hand on its days",
+    );
+    expect(valueOf(mixed, KEPT)).toBe("1 transaction filed under it by hand");
+    expect(mixed.reassurance).toContain("The 1 row filed under it by hand keeps its money");
   });
 
   test("the sentence a screen reader hears carries both halves", () => {

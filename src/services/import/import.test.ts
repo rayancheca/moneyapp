@@ -11,7 +11,7 @@ import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { createAccount } from "@/services/accounts";
 import { recurringSeries } from "@/db/schema/recurring";
-import { statementPeriods } from "@/db/schema/imports";
+import { statementCopies, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { latestBalances, netWorthSeries, rebuildAccount } from "@/services/derivation";
 import { listSplits, setSplits } from "@/services/transaction-splits";
@@ -1314,6 +1314,16 @@ describe("a parser-version re-read that no longer writes an account", () => {
     "2026-03 rival": [
       { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-03-10", end: "2026-03-20", beginCents: 50000, endCents: 50000 } },
     ],
+    // March reissued: the same periods and balances, and no payroll line
+    "2026-03 reissue": [
+      { accountHint: checking(KEPT), txns: [], period: { start: "2026-03-01", end: "2026-03-31", beginCents: 1000, endCents: 2000 } },
+      { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-03-01", end: "2026-03-31", beginCents: 50000, endCents: 50000 } },
+      {
+        accountHint: checking(WITH_ROWS),
+        txns: [{ postedOn: "2026-03-12", amountCents: -4000, rawDescription: "SHELL OIL 555 MIAMI FL" }],
+        period: { start: "2026-03-01", end: "2026-03-31", beginCents: 10000, endCents: 6000 },
+      },
+    ],
     // imported only where a test says so: it shares January's closing day and March's opening day
     "2026-02": [
       { accountHint: checking(KEPT), txns: [], period: { start: "2026-02-01", end: "2026-02-28", beginCents: 1000, endCents: 1000 } },
@@ -1863,6 +1873,196 @@ describe("a parser-version re-read that no longer writes an account", () => {
       expect(dayRow(accountId, "2026-03-31")?.basis).toBe("anchored");
       expectRebuilt(accountId);
     }
+  });
+
+  /** Every period, row and balance day of the three accounts, by content — the file that owns each left out. */
+  function ledgerOf(): { periods: unknown[]; anchors: unknown[]; rows: unknown[]; days: unknown[] } {
+    const ids = [KEPT, ANCHOR_ONLY, WITH_ROWS].map(accountIdOf);
+    return {
+      periods: bundle.db
+        .select({
+          accountId: statementPeriods.accountId,
+          periodStart: statementPeriods.periodStart,
+          periodEnd: statementPeriods.periodEnd,
+          begin: statementPeriods.beginningBalanceCents,
+          end: statementPeriods.endingBalanceCents,
+          reconciliation: statementPeriods.reconciliation,
+          gapCents: statementPeriods.gapCents,
+        })
+        .from(statementPeriods)
+        .orderBy(statementPeriods.accountId, statementPeriods.periodStart)
+        .all(),
+      anchors: bundle.db
+        .select({ accountId: balanceAnchors.accountId, day: balanceAnchors.anchoredOn, source: balanceAnchors.source, balanceCents: balanceAnchors.balanceCents })
+        .from(balanceAnchors)
+        .orderBy(balanceAnchors.accountId, balanceAnchors.anchoredOn, balanceAnchors.source)
+        .all(),
+      rows: bundle.db
+        .select({
+          id: transactions.id,
+          status: transactions.status,
+          amountCents: transactions.amountCents,
+          postedOn: transactions.postedOn,
+          notes: transactions.notes,
+          categoryId: transactions.categoryId,
+          categorizationSource: transactions.categorizationSource,
+          fileLinkSource: transactions.fileLinkSource,
+          attachedToAFile: transactions.importFileId,
+        })
+        .from(transactions)
+        .orderBy(transactions.id)
+        .all()
+        .map((r) => ({ ...r, attachedToAFile: r.attachedToAFile !== null })),
+      days: ids.flatMap((id) => dayRows(id).map((d) => ({ id, ...d }))),
+    };
+  }
+
+  /**
+   * 🔴 A second download owns nothing: it adopted the first download's periods and each of its lines deduped against
+   * the first download's rows. Un-importing the FIRST download deleted the periods and the rows a still-imported file
+   * prints. Measured on a copy of the real ledger, 2026-09-16: un-importing one of the three downloads of
+   * 20230810-statements-3522-.pdf removed Chase Checking's reconciled period, 85 rows (−$1,636.84) and anchored days.
+   */
+  test("un-importing the first download of a statement downloaded twice keeps its periods and rows: the second still prints them", async () => {
+    const { march, withRows, handRow } = await marchWithARowFiledByHand();
+    const kept = accountIdOf(KEPT);
+    const payroll = contributionOf(march).rows.find((r) => r.fileLinkSource === null)!;
+    const userCategory = bundle.db.select().from(categories).all()[0]!.id;
+    bundle.db
+      .update(transactions)
+      .set({ notes: "march payroll", categoryId: userCategory, categorizationSource: "user" })
+      .where(eq(transactions.id, payroll.id))
+      .run();
+    await importStatementFiles(bundle.db, [MARCH_COPY]);
+    const copy = liveFile(MARCH_COPY).id;
+    // the premise: the copy wrote no row and no period
+    expect(contributionOf(copy)).toMatchObject({ rows: [], periods: [] });
+    const before = ledgerOf();
+
+    unimportFile(bundle.db, march);
+
+    // nothing about the ledger moved but which file holds it
+    expect(ledgerOf()).toEqual(before);
+    for (const accountId of [kept, accountIdOf(ANCHOR_ONLY), withRows]) {
+      expect(periodOf(copy, accountId)).toMatchObject({ periodStart: "2026-03-01", periodEnd: "2026-03-31" });
+      expect(statementAnchorOn(accountId, "2026-03-31")!.importFileId).toBe(copy);
+      expectRebuilt(accountId);
+    }
+    expect(row(payroll.id)).toMatchObject({ importFileId: copy, notes: "march payroll", categorizationSource: "user", fileLinkSource: null });
+    // the row filed by hand is filed under the statement that holds its day, as before
+    expect(row(handRow)).toMatchObject({ importFileId: copy, fileLinkSource: "attached", notes: HAND_NOTE });
+
+    // …and un-importing the last download removes them, as un-importing a statement always did
+    unimportFile(bundle.db, copy);
+    expect(row(payroll.id)).toBeUndefined();
+    expect(row(handRow)).toMatchObject({ importFileId: null, fileLinkSource: "attached", status: "active" });
+    for (const accountId of [kept, accountIdOf(ANCHOR_ONLY), withRows]) {
+      expect(bundle.db.select().from(statementPeriods).where(eq(statementPeriods.accountId, accountId)).all().map((p) => p.periodStart)).toEqual(["2026-01-01"]);
+      expectRebuilt(accountId);
+    }
+  });
+
+  test("the second download takes only the rows it prints: a line only the first download prints goes with it", async () => {
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    const REISSUE = statementFor("2026-03 reissue");
+    await importStatementFiles(bundle.db, [REISSUE]);
+    const march = liveFile(MARCH).id;
+    const reissue = liveFile(REISSUE).id;
+    const kept = accountIdOf(KEPT);
+    const withRows = accountIdOf(WITH_ROWS);
+    const marchRows = contributionOf(march).rows;
+    const payroll = marchRows.find((r) => r.accountId === kept)!;
+    const fuel = marchRows.find((r) => r.accountId === withRows)!;
+
+    unimportFile(bundle.db, march);
+
+    expect(row(payroll.id)).toBeUndefined();
+    expect(row(fuel.id)).toMatchObject({ importFileId: reissue, status: "active" });
+    // the reissue prints March's balances without the payroll deposit: its period on that account no longer closes
+    expect(periodOf(reissue, kept)).toMatchObject({ reconciliation: "gap", gapCents: expect.any(Number) });
+    expect(periodOf(reissue, withRows)).toMatchObject({ reconciliation: "reconciled" });
+  });
+
+  test("a parser-version re-read of the first download writes its period again, and the second download still inherits it", async () => {
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    await importStatementFiles(bundle.db, [MARCH_COPY]);
+    threeSectionProfile.version = 2;
+    readsEverySection = true;
+    const [reread] = await importStatementFiles(bundle.db, [MARCH]);
+    expect(reread!.status).toBe("parsed");
+    const march = liveFile(MARCH).id;
+    const copy = liveFile(MARCH_COPY).id;
+    // the premise: the re-read owns the periods and the rows again — nothing was handed to the copy
+    expect(contributionOf(march).periods).toHaveLength(3);
+    expect(contributionOf(copy)).toMatchObject({ rows: [], periods: [] });
+    expect(contributionOf(march).anchors).toHaveLength(6);
+    const { balancesRemovedByFile } = await import("./printed-anchors");
+    const { copyHandOvers } = await import("./statement-copies");
+    expect(balancesRemovedByFile(bundle.db, copyHandOvers(bundle.db)).get(march) ?? 0).toBe(0);
+    const before = ledgerOf();
+
+    unimportFile(bundle.db, march);
+
+    expect(ledgerOf()).toEqual(before);
+    expect(contributionOf(copy).anchors).toHaveLength(6);
+    expect(contributionOf(copy).periods).toHaveLength(3);
+    expect(contributionOf(copy).rows).toHaveLength(2);
+  });
+
+  test("a parser-version re-read of the second download records again what it prints, under its new read only", async () => {
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    await importStatementFiles(bundle.db, [MARCH_COPY]);
+    const retired = liveFile(MARCH_COPY).id;
+    threeSectionProfile.version = 2;
+    readsEverySection = true;
+    await importStatementFiles(bundle.db, [MARCH_COPY]);
+    const copy = liveFile(MARCH_COPY).id;
+    expect(copy).not.toBe(retired);
+    const recorded = bundle.db.select().from(statementCopies).all();
+    expect(recorded.map((c) => c.importFileId)).toEqual([copy, copy, copy]);
+    expect(new Set(recorded.map((c) => c.accountId))).toEqual(new Set([KEPT, ANCHOR_ONLY, WITH_ROWS].map(accountIdOf)));
+
+    const before = ledgerOf();
+    unimportFile(bundle.db, liveFile(MARCH).id);
+    expect(ledgerOf()).toEqual(before);
+    expect(contributionOf(copy).periods).toHaveLength(3);
+  });
+
+  test("a second download whose read failed part-way inherits nothing", async () => {
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    threeSectionProfile.version = 2;
+    breaksMidFile = true;
+    const [failed] = await importStatementFiles(bundle.db, [MARCH_COPY]);
+    // the premise: the copy's first section was written, and recorded, before the read failed
+    expect(failed!.status).toBe("failed");
+    expect(bundle.db.select().from(statementCopies).all()).toHaveLength(1);
+    const kept = accountIdOf(KEPT);
+
+    unimportFile(bundle.db, liveFile(MARCH).id);
+
+    expect(bundle.db.select().from(statementPeriods).where(eq(statementPeriods.accountId, kept)).all().map((p) => p.periodStart)).toEqual(["2026-01-01"]);
+    expect(bundle.db.select().from(transactions).where(eq(transactions.accountId, kept)).all().map((t) => t.postedOn)).toEqual(["2026-01-10"]);
+  });
+
+  test("the un-import confirmation counts what the second download keeps as kept, and the last download's as removed", async () => {
+    const { unimportCountsByFile, unimportPeriodsByFile } = await import("./unimport-counts");
+    const { balancesRemovedByFile } = await import("./printed-anchors");
+    const { copyHandOvers } = await import("./statement-copies");
+    const { march } = await marchWithARowFiledByHand();
+    await importStatementFiles(bundle.db, [MARCH_COPY]);
+    const copy = liveFile(MARCH_COPY).id;
+    const plans = copyHandOvers(bundle.db);
+    const periods = unimportPeriodsByFile(bundle.db, plans);
+    expect(unimportCountsByFile(bundle.db, plans).get(march)).toMatchObject({ deleted: 0, handedOver: 1, kept: 1, keptRefiled: 1 });
+    expect(periods.get(march)).toEqual({ removed: 0, handedOver: 3 });
+    expect(balancesRemovedByFile(bundle.db, plans).get(march) ?? 0).toBe(0);
+
+    unimportFile(bundle.db, march);
+
+    const after = copyHandOvers(bundle.db);
+    expect(unimportCountsByFile(bundle.db, after).get(copy)).toMatchObject({ deleted: 1, handedOver: 0, kept: 1, keptRefiled: 0 });
+    expect(unimportPeriodsByFile(bundle.db, after).get(copy)).toEqual({ removed: 3, handedOver: 0 });
+    expect(balancesRemovedByFile(bundle.db, after).get(copy)).toBe(6);
   });
 });
 
@@ -2705,7 +2905,9 @@ describe("un-import keeps a row attached to its file, and a re-import files it t
     expect(row(orphaned)!.transferGroupId).toBeNull();
     expect(counts).toEqual({
       deleted: deleted.length,
+      handedOver: 0,
       kept: 4,
+      keptRefiled: 0,
       userCategorizedDeleted: deleted.filter((t) => t.categorizationSource === "user").length,
       inflowCents: activeCents(1),
       outflowCents: activeCents(-1),

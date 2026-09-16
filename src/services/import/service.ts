@@ -41,6 +41,7 @@ import {
 import { accountSlug, institutionSlug } from "./account-slug";
 import { ATTACHED, detachAttachedRows, keepRetiredAttachedRows, parsedFromFile, reattachDetachedRows } from "./attached-rows";
 import { handOverPrintedAnchors } from "./printed-anchors";
+import { copyHandOvers, forgetStatementCopies, handOverToCopies, handedRowIds, recordStatementCopy } from "./statement-copies";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
 import { extractLines } from "./profiles/pdf-profile";
@@ -666,8 +667,13 @@ export function parseContextFor(db: AppDatabase): ParseContext {
   return { knownAccounts };
 }
 
-/** Resolve (or create/upgrade) the account a parsed statement belongs to. */
-export function resolveAccount(db: AppDatabase, hint: AccountHint): string {
+type AccountRow = typeof accounts.$inferSelect;
+
+/**
+ * The account a hint names, read-only: `preferred` when the hint's preferred account exists (it is never upgraded).
+ * The one matching rule for `resolveAccount` and for a read that must not create or change an account.
+ */
+function matchAccount(db: AppDatabase, hint: AccountHint): { institutionId: string; found?: AccountRow; preferred?: AccountRow } {
   const institution = db
     .select({ id: institutions.id })
     .from(institutions)
@@ -680,7 +686,7 @@ export function resolveAccount(db: AppDatabase, hint: AccountHint): string {
   // type matching; absent, the hint resolves exactly as before
   if (hint.preferName) {
     const preferred = all.find((a) => a.name === hint.preferName);
-    if (preferred) return preferred.id;
+    if (preferred) return { institutionId: institution.id, preferred };
   }
   const typeMatch = (a: (typeof all)[number]) =>
     hint.type !== undefined && a.type === hint.type && (hint.subtype === undefined || a.subtype === hint.subtype);
@@ -695,6 +701,19 @@ export function resolveAccount(db: AppDatabase, hint: AccountHint): string {
     // never create a duplicate for the same real-world account
     found = all.find((a) => a.last4 === null && typeMatch(a));
   }
+  return { institutionId: institution.id, found };
+}
+
+/** The account `resolveAccount` would file a hint under, or null where it would create one — read-only. */
+export function findAccountId(db: AppDatabase, hint: AccountHint): string | null {
+  const { found, preferred } = matchAccount(db, hint);
+  return (preferred ?? found)?.id ?? null;
+}
+
+/** Resolve (or create/upgrade) the account a parsed statement belongs to. */
+export function resolveAccount(db: AppDatabase, hint: AccountHint): string {
+  const { institutionId, found, preferred } = matchAccount(db, hint);
+  if (preferred) return preferred.id;
   if (found) {
     // upgrade auto-created stubs when a richer hint arrives (PDF names, OFX types)
     const isStub = /·{4}|\*{4}/.test(found.name);
@@ -711,7 +730,7 @@ export function resolveAccount(db: AppDatabase, hint: AccountHint): string {
   const created = db
     .insert(accounts)
     .values({
-      institutionId: institution.id,
+      institutionId,
       name: hint.name ?? `${hint.institution} ····${hint.last4 ?? "????"}`,
       type: hint.type ?? "checking",
       subtype: hint.subtype ?? null,
@@ -1017,6 +1036,15 @@ export function storedLines(accountId: string, account: { readonly type: string 
 }
 
 /**
+ * What a statement prints on an account, as `statement_copies.lines` records it (`recordStatementCopy`): each line as
+ * stored, in the columns an import matches a line by. ONE rule for the import that adopts another file's period and
+ * for the script that records the copies imported before the table existed (scripts/record-statement-copies.ts).
+ */
+export function statementCopyLines(lines: readonly StoredLine[]): DuplicatePairSide[] {
+  return lines.map(({ stored }) => writtenSide(stored));
+}
+
+/**
  * A file already imported at the parser version reading it now is skipped as a duplicate — unless its row is
  * one of these. Exported so a write that must know "would the import read this file again?" asks this rule
  * rather than restating it (scripts/robinhood-agentic-account.ts).
@@ -1316,6 +1344,16 @@ async function importOneFile(
           let periodId: string | null;
           if (duplicate) {
             periodId = duplicate.id;
+            // another download of the same statement owns the period: this file prints it too (`statement-copies`)
+            if (duplicate.importFileId !== fileRow.id) {
+              recordStatementCopy(tx, {
+                importFileId: fileRow.id,
+                accountId,
+                periodStart: duplicate.periodStart,
+                periodEnd: duplicate.periodEnd,
+                lines: statementCopyLines(lines),
+              });
+            }
             const balancesChanged =
               duplicate.beginningBalanceCents !== statement.period.beginCents ||
               duplicate.endingBalanceCents !== statement.period.endCents;
@@ -1631,6 +1669,8 @@ function supersedeFileContribution(db: AppDatabase, oldFileId: string): string[]
       .where(and(eq(transactions.importFileId, oldFileId), inArray(transactions.status, ["active", "quarantined", "excluded"])))
       .run();
     removeFileBalances(tx, oldFileId);
+    // its successor records again what it prints as a copy — and hands nothing over (`statement-copies`)
+    forgetStatementCopies(tx, oldFileId);
     // a parsed file's error is only ever the sections it withheld (`importOneFile`); its successor reads them again
     // and says for itself what is still missing, so the retired row must not keep claiming a section is absent
     tx.update(importFiles).set({ status: "superseded", error: null }).where(eq(importFiles.id, oldFileId)).run();
@@ -1872,17 +1912,23 @@ function accountsWrittenBy(db: AppDatabase, importFileId: string): string[] {
 /**
  * Un-import: removes what a file parsed, its periods and its anchors atomically,
  * and detaches the rows attached to it (`attached-rows`); derived state rebuilt.
+ * A period another download of the statement still prints goes to that download
+ * with the rows it prints, and is not removed (`statement-copies`).
  */
 export function unimportFile(db: AppDatabase, importFileId: string): void {
   const file = db.select().from(importFiles).where(eq(importFiles.id, importFileId)).get();
   if (!file) return;
   const affected = accountsWrittenBy(db, importFileId);
+  // a period another download of the statement also prints goes to it, with the rows it prints (`statement-copies`)
+  const handOvers = copyHandOvers(db, [importFileId]).get(importFileId) ?? [];
+  const handed = handedRowIds([handOvers]);
 
   const doomedRows = db
     .select({ id: transactions.id, seriesId: transactions.recurringSeriesId })
     .from(transactions)
     .where(parsedFromFile(importFileId))
-    .all();
+    .all()
+    .filter((r) => !handed.has(r.id));
   const doomed = doomedRows.map((r) => r.id);
   // every series about to lose a linked row: its stats describe the rows it had
   const seriesLosingRows = doomedRows.flatMap((r) => (r.seriesId === null ? [] : [r.seriesId]));
@@ -1893,6 +1939,9 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
   withPreMutationSnapshot(db, "unimport-file", () => {
     let restored: string[] = [];
     db.transaction((tx) => {
+      // First: what the other download takes is no longer this file's, so nothing below reads it as the file's rows,
+      // and the anchor hand-over below finds the period under its new file
+      handOverToCopies(tx, handOvers);
       // A charge this file's rows are the SURVIVING copy of has a retired twin
       // sitting `superseded` in another file. Delete the survivor without putting
       // that twin back and the money is recorded by zero live rows: it vanishes
@@ -1914,6 +1963,7 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
       detachTransferLegs(tx, legsLeftAloneBy(tx, importFileId));
       tx.delete(transactions).where(parsedFromFile(importFileId)).run();
       removeFileBalances(tx, importFileId);
+      forgetStatementCopies(tx, importFileId);
       tx.delete(importFiles).where(eq(importFiles.id, importFileId)).run();
     });
     const scope = [...new Set([...affected, ...accountsOfTransactions(db, restored)])];

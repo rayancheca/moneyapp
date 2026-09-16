@@ -124,7 +124,14 @@ Liability status **derived** from `type='credit'`. Debit cards are intentionally
   the file that wrote it last, so a statement anchor another file's printed period still prints
   (the neighbouring statement's opening or closing day, or a second download of the same
   statement) is handed to that period instead — on a re-parse as on an un-import — and the
-  confirmation counts only the balances that go. Unlike a re-parse it is **destructive to user work** — those rows
+  confirmation counts only the balances that go. A statement **downloaded twice** is kept once:
+  the second download adopts the first one's period and its lines dedupe against the first
+  one's rows, and it records what it prints (`statement_copies`). Un-importing the download that
+  holds the statement hands its period, the rows the other download prints (every attribute on
+  them kept) and the rows filed by hand on the period's days to the most recently imported
+  other download that is still parsed; only un-importing the last download removes them. A
+  re-parse hands nothing over — the new read writes the period and its rows again.
+  Unlike a re-parse it is **destructive to user work** — those rows
   leave the database, so their categories, notes, links and splits go with them (a pre-mutation
   snapshot is taken so the operation is recoverable).
   A row **attached** to the file (`file_link_source = 'attached'`: recorded without the document,
@@ -136,6 +143,16 @@ Liability status **derived** from `type='credit'`. Debit cards are intentionally
 - Imported transactions are **immutable** in amount/date/description. Corrections happen via
   re-parse or an explicit manual-adjustment transaction — never in-place edits (in-place
   edits would silently break dedupe and reconciliation).
+
+### statement_copies
+A statement another file already holds, printed again by `import_file_id` (a second download in
+different bytes). Written by the import when it adopts another file's period; read by un-import
+(`services/import/statement-copies`).
+| field | type | notes |
+|---|---|---|
+| id / import_file_id / account_id | | UNIQUE(import_file_id, account_id) |
+| period_start / period_end | date | the period's content key — never `statement_periods.id`, which a re-parse of the holder rewrites |
+| lines | JSON | what the copy prints on the account: `posted_on`, `transacted_on`, `amount_cents`, normalized description per line |
 
 ### statement_periods
 | field | type | notes |

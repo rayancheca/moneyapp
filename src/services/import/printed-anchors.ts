@@ -2,6 +2,7 @@ import { and, asc, count, desc, eq, exists, isNotNull, ne, not, or, sql, type SQ
 import type { AppDatabase } from "@/db/client";
 import { balanceAnchors } from "@/db/schema/balances";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
+import { copyHandOvers, type CopyHandOver } from "./statement-copies";
 
 /**
  * A balance a statement prints is recorded ONCE per account and day (`balance_anchors`), though two statements can
@@ -74,18 +75,37 @@ export function handOverPrintedAnchors(tx: AppDatabase, importFileId: string): v
 
 /**
  * How many recorded balances un-importing each file removes: the anchors it owns, less the ones another statement
- * still prints (`handOverPrintedAnchors`). One grouped query; a file that removes none is absent.
+ * still prints (`handOverPrintedAnchors`) — and less the ones its own period prints when that period goes to another
+ * download of the statement (`plans`, `statement-copies`: the un-import hands the period over first, so the anchor
+ * follows it). One grouped query; a file that removes none is absent.
  */
-export function balancesRemovedByFile(db: AppDatabase): Map<string, number> {
+export function balancesRemovedByFile(
+  db: AppDatabase,
+  plans: ReadonlyMap<string, readonly CopyHandOver[]> = copyHandOvers(db),
+): Map<string, number> {
+  const handedPeriodIds = JSON.stringify([...plans.values()].flatMap((list) => list.map((p) => p.periodId)));
   const printedElsewhere = db
     .select({ id: statementPeriods.id })
     .from(statementPeriods)
     .where(
-      printsTheDay({
-        accountId: balanceAnchors.accountId,
-        day: balanceAnchors.anchoredOn,
-        importFileId: balanceAnchors.importFileId,
-      }),
+      or(
+        printsTheDay({
+          accountId: balanceAnchors.accountId,
+          day: balanceAnchors.anchoredOn,
+          importFileId: balanceAnchors.importFileId,
+        }),
+        and(
+          sql`${statementPeriods.id} IN (SELECT value FROM json_each(${handedPeriodIds}))`,
+          eq(statementPeriods.accountId, balanceAnchors.accountId),
+          eq(statementPeriods.importFileId, balanceAnchors.importFileId),
+          isNotNull(statementPeriods.beginningBalanceCents),
+          isNotNull(statementPeriods.endingBalanceCents),
+          or(
+            eq(statementPeriods.periodEnd, balanceAnchors.anchoredOn),
+            sql`date(${statementPeriods.periodStart}, '-1 day') = ${balanceAnchors.anchoredOn}`,
+          ),
+        ),
+      ),
     );
   return new Map(
     db

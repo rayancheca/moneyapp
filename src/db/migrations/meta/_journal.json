@@ -127,6 +127,13 @@
       "when": 1789503464537,
       "tag": "0017_ledger_witness_marks",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1789574930992,
+      "tag": "0018_statement_copies",
+      "breakpoints": true
     }
   ]
 }

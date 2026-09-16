@@ -29,8 +29,10 @@ export interface UnimportRadiusInput {
   counts: UnimportCounts;
   /** recorded balances un-importing the file removes — not the ones another statement still prints (`balancesRemovedByFile`) */
   balances: number;
-  /** statement periods the file owns */
+  /** statement periods the un-import removes — not the ones another download of the statement takes */
   periods: number;
+  /** statement periods another download of the statement, still imported, takes (`unimportPeriodsByFile`) */
+  periodsHandedOver?: number;
 }
 
 const NO_UNDO = "There is no undo for this inside the app.";
@@ -68,7 +70,29 @@ const NO_UNDO = "There is no undo for this inside the app.";
 const REASSURANCE =
   "The statement file itself stays on disk. Re-importing brings the rows back and re-runs the rules, the merchant map, transfer detection and recurring-series linking over them — but a charge links again only where its series still recognises it: by another charge with the same description, or as a registered commitment's first charge on its date and amount. What is lost is the hand-categorization, and the recurring links you attached or removed by hand.";
 
-function headline(subject: string, { deleted, kept }: UnimportCounts): string {
+/**
+ * 🔴 A statement downloaded twice keeps ONE period and one set of rows, filed under whichever download came first, and
+ * un-importing that one said — and did — "deletes every row it brought in" while the other download still printed
+ * them (20230810-statements-3522-.pdf, 2026-09-16). What another download prints goes to it (`statement-copies`), and
+ * the headline says so first.
+ */
+function handOverHeadline(subject: string, { deleted, kept, handedOver, keptRefiled }: UnimportCounts): string {
+  const takes = [
+    ...(handedOver > 0 ? [`the ${countPhrase(handedOver, "row")} it also prints`] : []),
+    ...(keptRefiled > 0 ? [`the ${countPhrase(keptRefiled, "row")} filed under this one by hand on its days`] : []),
+  ].join(" and ");
+  const detached = kept - keptRefiled;
+  const rest =
+    detached === 0
+      ? ""
+      : ` The ${countPhrase(detached, "other row")} filed under it by hand ${detached === 1 ? "stays" : "stay"}, detached from the file.`;
+  const deletes = deleted === 0 ? "deletes no transactions" : `deletes the ${countPhrase(deleted, "row")} only it brought in`;
+  return `Un-importing ${subject} ${deletes}: another download of the same statement is still imported, and it keeps ${takes}.${rest} ${NO_UNDO}`;
+}
+
+function headline(subject: string, counts: UnimportCounts): string {
+  const { deleted, kept } = counts;
+  if (counts.handedOver > 0 || counts.keptRefiled > 0) return handOverHeadline(subject, counts);
   if (kept === 0) return `Un-importing ${subject} deletes every row it brought in. ${NO_UNDO}`;
   const keptRows = countPhrase(kept, "row");
   if (deleted === 0) {
@@ -85,14 +109,21 @@ function keptLegs({ transferLegsKept: legs, transferLegsKeptLinked: linked }: Un
   return `${phrase} — ${linked} still linked, ${legs - linked} not linked to any other leg`;
 }
 
-function keptClause({ kept }: UnimportCounts): string {
+function keptClause(counts: UnimportCounts): string {
+  // the rows another download's period takes are filed under it now, not waiting for a statement to come back
+  const kept = counts.kept - counts.keptRefiled;
   if (kept === 0) return "";
   const [keeps, them] = kept === 1 ? ["keeps its", "it"] : ["keep their", "them"];
   return ` The ${countPhrase(kept, "row")} filed under it by hand ${keeps} money, category, transfer and recurring links and notes, and importing a statement for the same period files ${them} under it again.`;
 }
 
-export function unimportRadius({ subject, counts, balances, periods }: UnimportRadiusInput): BlastRadius {
+export function unimportRadius({ subject, counts, balances, periods, periodsHandedOver = 0 }: UnimportRadiusInput): BlastRadius {
   const optional = (show: boolean, line: BlastRadiusLine): BlastRadiusLine[] => (show ? [line] : []);
+  const detached = counts.kept - counts.keptRefiled;
+  const underCopy = [
+    ...(counts.handedOver > 0 ? [`${countPhrase(counts.handedOver, "transaction")} it also prints`] : []),
+    ...(counts.keptRefiled > 0 ? [`${countPhrase(counts.keptRefiled, "transaction")} filed by hand on its days`] : []),
+  ];
   return {
     headline: headline(subject, counts),
     lines: [
@@ -114,9 +145,13 @@ export function unimportRadius({ subject, counts, balances, periods }: UnimportR
         label: "…of which comes back",
         value: `${countPhrase(counts.duplicateSurvivors, "row")} whose retired duplicate is restored`,
       }),
-      ...optional(counts.kept > 0, {
+      ...optional(underCopy.length > 0, {
+        label: "Transactions kept under another download of this statement",
+        value: underCopy.join(" and "),
+      }),
+      ...optional(detached > 0, {
         label: "Transactions kept, detached from the file",
-        value: `${countPhrase(counts.kept, "transaction")} filed under it by hand`,
+        value: `${countPhrase(detached, "transaction")} filed under it by hand`,
       }),
       ...optional(counts.transferLegsKept > 0, {
         label: "Transfer legs kept",
@@ -124,6 +159,10 @@ export function unimportRadius({ subject, counts, balances, periods }: UnimportR
       }),
       { label: "Recorded balances removed", value: countPhrase(balances, "balance") },
       { label: "Statement periods removed", value: countPhrase(periods, "period") },
+      ...optional(periodsHandedOver > 0, {
+        label: "Statement periods kept under another download",
+        value: countPhrase(periodsHandedOver, "period"),
+      }),
     ],
     reassurance: REASSURANCE + keptClause(counts),
   };

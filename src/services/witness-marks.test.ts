@@ -108,18 +108,19 @@ describe("the mark lives in the ledger it describes", () => {
   });
 
   test("restoring a snapshot from before the marks existed leaves none, so the next run records them afresh", () => {
-    // a snapshot one migration behind: the table and the migration that made it, both absent
+    // a snapshot from before the migration that made the table: it, and every migration after it, absent
     const oldPath = path.join(dir, "older.db");
     const old = createDatabase(oldPath);
     const journal = JSON.parse(
       fs.readFileSync(path.join(defaultMigrationsFolder(), "meta", "_journal.json"), "utf8"),
     ) as { entries: { tag: string; when: number }[] };
-    const making = journal.entries.find((e) =>
-      fs.readFileSync(path.join(defaultMigrationsFolder(), `${e.tag}.sql`), "utf8").includes("CREATE TABLE `ledger_witness_marks`"),
-    );
+    const sqlOf = (tag: string) => fs.readFileSync(path.join(defaultMigrationsFolder(), `${tag}.sql`), "utf8");
+    const making = journal.entries.find((e) => sqlOf(e.tag).includes("CREATE TABLE `ledger_witness_marks`"));
     expect(making).toBeDefined();
-    old.sqlite.exec("DROP TABLE ledger_witness_marks");
-    old.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at = ?").run(making!.when);
+    for (const later of journal.entries.filter((e) => e.when >= making!.when)) {
+      for (const [, table] of sqlOf(later.tag).matchAll(/CREATE TABLE `([a-z_]+)`/g)) old.sqlite.exec(`DROP TABLE ${table}`);
+    }
+    old.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at >= ?").run(making!.when);
     old.sqlite.close();
 
     writeWitnessMarks(bundle.db, { "value-anchors": MARK });

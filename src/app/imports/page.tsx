@@ -14,8 +14,9 @@ import { derivesFromHoldings } from "@/services/derivation";
 import { provenanceFor } from "@/services/provenance";
 import { statementPulls } from "@/services/statement-pulls";
 import { unimportAcknowledgement, unimportRadius } from "@/components/imports/unimport-radius";
-import { NO_UNIMPORT_ROWS, unimportCountsByFile, type UnimportCounts } from "@/services/import/unimport-counts";
+import { NO_UNIMPORT_ROWS, unimportCountsByFile, unimportPeriodsByFile, type UnimportCounts } from "@/services/import/unimport-counts";
 import { balancesRemovedByFile } from "@/services/import/printed-anchors";
+import { copyHandOvers } from "@/services/import/statement-copies";
 import { importRowQualifiers, importRowSubject, withheldNoticeOf } from "@/lib/import-file-label";
 import { dayWindowLabel } from "@/lib/period";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
@@ -91,18 +92,14 @@ export default async function ImportsPage({
   // the rest of what un-importing takes with it — counted per file rather than
   // joined into the query above, where they would fan out against the rows.
   // A balance another statement still prints stays (`balancesRemovedByFile`).
-  const balancesRemoved = balancesRemovedByFile(db);
-  const periodsByFile = new Map(
-    db
-      .select({ importFileId: statementPeriods.importFileId, n: count() })
-      .from(statementPeriods)
-      .groupBy(statementPeriods.importFileId)
-      .all()
-      .map((r) => [r.importFileId, r.n] as const),
-  );
+  // …and a period another download of the statement still prints goes to it, with the rows it prints — ONE plan,
+  // read once, for all three counts (`copyHandOvers`, the plan `unimportFile` carries out)
+  const handOvers = copyHandOvers(db);
+  const balancesRemoved = balancesRemovedByFile(db, handOvers);
+  const periodsByFile = unimportPeriodsByFile(db, handOvers);
   // what un-importing each file deletes and what it keeps, counted with the
   // delete's own predicates — one grouped query, not one per row
-  const unimportCounts = unimportCountsByFile(db);
+  const unimportCounts = unimportCountsByFile(db, handOvers);
   const countsOf = (fileId: string): UnimportCounts => unimportCounts.get(fileId) ?? NO_UNIMPORT_ROWS;
 
   const periods = db
@@ -415,7 +412,8 @@ export default async function ImportsPage({
                             subject: importRowSubject(f.fileName, qualifierById.get(f.id) ?? null),
                             counts: countsOf(f.id),
                             balances: balancesRemoved.get(f.id) ?? 0,
-                            periods: periodsByFile.get(f.id) ?? 0,
+                            periods: periodsByFile.get(f.id)?.removed ?? 0,
+                            periodsHandedOver: periodsByFile.get(f.id)?.handedOver ?? 0,
                           })}
                         />
                       </td>
