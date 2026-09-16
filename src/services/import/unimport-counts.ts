@@ -1,8 +1,12 @@
-import { count, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
+import { accounts as accountsTable } from "@/db/schema/accounts";
+import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
+import { derivesFromHoldings } from "@/services/derivation";
 import { attachedRow, parsedRow } from "./attached-rows";
+import { balancesRemovedByFileAndAccount } from "./printed-anchors";
 import { printerHandOvers, printerRowIds, type PrinterHandOver } from "./printed-lines";
 import { copyHandOvers, handedRowIds, type CopyHandOver } from "./statement-copies";
 
@@ -185,6 +189,68 @@ export function unimportCountsByFile(
     .groupBy(importFiles.id)
     .all();
   return new Map(rows.map(({ fileId, ...counts }) => [fileId, counts]));
+}
+
+/** An account an un-import leaves with transactions and no recorded balance: its balance leaves net worth. */
+export interface AccountLeavingNetWorth {
+  accountId: string;
+  name: string;
+  /** its latest balance now — what net worth loses */
+  balanceCents: number;
+  /** the live transactions it keeps, which no balance counts any more */
+  keptRows: number;
+}
+
+/**
+ * Per file: the accounts whose every recorded balance the un-import removes (`balancesRemovedByFileAndAccount`) while
+ * they keep live transactions — rows of other files, rows handed to a file that prints them, rows filed by hand. A
+ * balance is derived only from a recorded one, so such an account drops out of net worth with its whole balance, though
+ * no transaction leaves. An account valued from its holdings is not balanced by its recorded balances, and is left out.
+ *
+ * 🔴 The confirmation read "deletes no transactions" and "Money leaving the ledger: $0.00 in · $0.00 out" over
+ * 2026-08-25-everyday-checking.pdf, whose un-import takes Wells Fargo Everyday Checking's only two balances: the 39
+ * Rocket Money rows stay (owner, 2026-09-16), and net worth fell 11,312,501 → 11,072,834 cents (the review of
+ * uc/final-integrate, on a copy of the real ledger).
+ */
+export function accountsLeftWithoutBalance(
+  db: AppDatabase,
+  plans: ReadonlyMap<string, readonly CopyHandOver[]> = copyHandOvers(db),
+  printers: ReadonlyMap<string, readonly PrinterHandOver[]> = printerHandOvers(db, plans),
+): Map<string, AccountLeavingNetWorth[]> {
+  const removed = balancesRemovedByFileAndAccount(db, plans);
+  const recorded = new Map(
+    db
+      .select({ accountId: balanceAnchors.accountId, n: count() })
+      .from(balanceAnchors)
+      .groupBy(balanceAnchors.accountId)
+      .all()
+      .map((r) => [r.accountId, r.n] as const),
+  );
+  const handed = new Set([...handedRowIds(plans.values()), ...printerRowIds(printers.values())]);
+  const leaving = new Map<string, AccountLeavingNetWorth[]>();
+  for (const [fileId, accounts] of removed) {
+    for (const [accountId, n] of accounts) {
+      if ((recorded.get(accountId) ?? 0) > n) continue;
+      const account = db.select({ id: accountsTable.id, name: accountsTable.name, type: accountsTable.type }).from(accountsTable).where(eq(accountsTable.id, accountId)).get();
+      if (account === undefined || derivesFromHoldings(db, account)) continue;
+      const keptRows = db
+        .select({ id: transactions.id, importFileId: transactions.importFileId, fileLinkSource: transactions.fileLinkSource })
+        .from(transactions)
+        .where(and(eq(transactions.accountId, accountId), inArray(transactions.status, ["active", "quarantined", "excluded"])))
+        .all()
+        .filter((r) => r.importFileId !== fileId || r.fileLinkSource !== null || handed.has(r.id)).length;
+      if (keptRows === 0) continue;
+      const latest = db
+        .select({ balanceCents: dailyBalances.balanceCents })
+        .from(dailyBalances)
+        .where(and(eq(dailyBalances.accountId, accountId), ne(dailyBalances.basis, "gap")))
+        .orderBy(desc(dailyBalances.day))
+        .get();
+      if (latest === undefined) continue;
+      leaving.set(fileId, [...(leaving.get(fileId) ?? []), { accountId, name: account.name, balanceCents: latest.balanceCents, keptRows }]);
+    }
+  }
+  return leaving;
 }
 
 /** The statement periods un-importing a file removes, and the ones another download of the statement takes. */

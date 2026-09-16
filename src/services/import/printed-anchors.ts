@@ -87,6 +87,18 @@ export function balancesRemovedByFile(
   db: AppDatabase,
   plans: ReadonlyMap<string, readonly CopyHandOver[]> = copyHandOvers(db),
 ): Map<string, number> {
+  const byFile = new Map<string, number>();
+  for (const [fileId, accounts] of balancesRemovedByFileAndAccount(db, plans)) {
+    byFile.set(fileId, [...accounts.values()].reduce((n, k) => n + k, 0));
+  }
+  return byFile;
+}
+
+/** `balancesRemovedByFile`, per account: file → account → how many of its recorded balances the un-import removes. */
+export function balancesRemovedByFileAndAccount(
+  db: AppDatabase,
+  plans: ReadonlyMap<string, readonly CopyHandOver[]> = copyHandOvers(db),
+): Map<string, Map<string, number>> {
   const handedPeriodIds = JSON.stringify([...plans.values()].flatMap((list) => list.map((p) => p.periodId)));
   const printedElsewhere = db
     .select({ id: statementPeriods.id })
@@ -105,18 +117,20 @@ export function balancesRemovedByFile(
         ),
       ),
     );
-  return new Map(
-    db
-      .select({ importFileId: balanceAnchors.importFileId, n: count() })
-      .from(balanceAnchors)
-      .where(
-        and(
-          isNotNull(balanceAnchors.importFileId),
-          not(and(eq(balanceAnchors.source, "statement"), exists(printedElsewhere))!),
-        ),
-      )
-      .groupBy(balanceAnchors.importFileId)
-      .all()
-      .flatMap((r) => (r.importFileId === null ? [] : [[r.importFileId, r.n] as const])),
-  );
+  const removed = new Map<string, Map<string, number>>();
+  for (const r of db
+    .select({ importFileId: balanceAnchors.importFileId, accountId: balanceAnchors.accountId, n: count() })
+    .from(balanceAnchors)
+    .where(
+      and(
+        isNotNull(balanceAnchors.importFileId),
+        not(and(eq(balanceAnchors.source, "statement"), exists(printedElsewhere))!),
+      ),
+    )
+    .groupBy(balanceAnchors.importFileId, balanceAnchors.accountId)
+    .all()) {
+    if (r.importFileId === null) continue;
+    removed.set(r.importFileId, new Map([...(removed.get(r.importFileId) ?? []), [r.accountId, r.n]]));
+  }
+  return removed;
 }

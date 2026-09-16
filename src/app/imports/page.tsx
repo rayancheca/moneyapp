@@ -14,7 +14,13 @@ import { derivesFromHoldings } from "@/services/derivation";
 import { provenanceFor } from "@/services/provenance";
 import { statementPulls } from "@/services/statement-pulls";
 import { unimportAcknowledgement, unimportRadius } from "@/components/imports/unimport-radius";
-import { NO_UNIMPORT_ROWS, unimportCountsByFile, unimportPeriodsByFile, type UnimportCounts } from "@/services/import/unimport-counts";
+import {
+  NO_UNIMPORT_ROWS,
+  accountsLeftWithoutBalance,
+  unimportCountsByFile,
+  unimportPeriodsByFile,
+  type UnimportCounts,
+} from "@/services/import/unimport-counts";
 import { balancesRemovedByFile } from "@/services/import/printed-anchors";
 import { printerHandOvers } from "@/services/import/printed-lines";
 import { copyHandOvers } from "@/services/import/statement-copies";
@@ -101,7 +107,10 @@ export default async function ImportsPage({
   // what un-importing each file deletes and what it keeps, counted with the
   // delete's own predicates — one grouped query, not one per row
   // …and a row another imported file prints stays under that file (`printerHandOvers`, the same plan)
-  const unimportCounts = unimportCountsByFile(db, handOvers, printerHandOvers(db, handOvers));
+  const printers = printerHandOvers(db, handOvers);
+  const unimportCounts = unimportCountsByFile(db, handOvers, printers);
+  // …and an account left with its rows and no recorded balance drops out of net worth (`accountsLeftWithoutBalance`)
+  const leavingNetWorth = accountsLeftWithoutBalance(db, handOvers, printers);
   const countsOf = (fileId: string): UnimportCounts => unimportCounts.get(fileId) ?? NO_UNIMPORT_ROWS;
 
   const periods = db
@@ -407,7 +416,7 @@ export default async function ImportsPage({
                           title="Un-import this file"
                           tone="negative"
                           confirmLabel="Delete these transactions"
-                          acknowledgement={unimportAcknowledgement(countsOf(f.id))}
+                          acknowledgement={unimportAcknowledgement(countsOf(f.id), leavingNetWorth.get(f.id))}
                           // what the delete takes and what it keeps, counted with
                           // the delete's own predicates (`unimportCountsByFile`)
                           radius={unimportRadius({
@@ -416,6 +425,7 @@ export default async function ImportsPage({
                             balances: balancesRemoved.get(f.id) ?? 0,
                             periods: periodsByFile.get(f.id)?.removed ?? 0,
                             periodsHandedOver: periodsByFile.get(f.id)?.handedOver ?? 0,
+                            leavesNetWorth: leavingNetWorth.get(f.id) ?? [],
                           })}
                         />
                       </td>

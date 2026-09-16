@@ -14,7 +14,8 @@ import { normalizeDescription } from "@/lib/normalize";
 import { PROFILES } from "./profiles";
 import { importStatementFiles, unimportFile, type ImportInput } from "./service";
 import type { AccountHint, ParsedStatement, ParserProfile } from "./types";
-import { unimportCountsByFile } from "./unimport-counts";
+import { latestBalances } from "@/services/derivation";
+import { accountsLeftWithoutBalance, unimportCountsByFile } from "./unimport-counts";
 
 /**
  * A line another still-imported file prints is not deleted with the file whose row records it.
@@ -164,10 +165,26 @@ describe("a line a still-imported file prints survives the un-import of the file
     expect(live()).toEqual([]);
   });
 
-  test("un-importing a statement keeps the rows an export imported after it prints, under the export", async () => {
+  /**
+   * Wells Fargo's shape: the statement is the account's only balance, and the export prints its rows. The rows stay
+   * (owner, 2026-09-16), and a balance is derived only from a recorded one, so the account leaves net worth — which the
+   * confirmation says before, to the cent. 🔴 It read "deletes no transactions" and "$0.00 in · $0.00 out" while
+   * $2,396.67 left net worth (the review of uc/final-integrate, 2026-09-16).
+   */
+  test("un-importing a statement keeps the rows an export imported after it prints, under the export — and says the account leaves net worth", async () => {
     await importStatementFiles(bundle.db, [STATEMENT]);
     await importStatementFiles(bundle.db, [EXPORT]);
     expect(rowsOf(STATEMENT)).toHaveLength(2);
+    const balance = latestBalances(bundle.db).get(accountId())!.balanceCents!;
+    const netWorth = () => [...latestBalances(bundle.db).values()].reduce((n, b) => n + (b.balanceCents ?? 0), 0);
+    const before = netWorth();
+    expect(balance).toBe(10_000 + COFFEE.amountCents + GROCER.amountCents + LATE.amountCents);
+    const account = bundle.db.select().from(accounts).where(eq(accounts.id, accountId())).get()!;
+    expect(accountsLeftWithoutBalance(bundle.db).get(fileId(STATEMENT))).toEqual([
+      { accountId: accountId(), name: account.name, balanceCents: balance, keptRows: 3 },
+    ]);
+    // the export's own un-import leaves the statement's balances in place
+    expect(accountsLeftWithoutBalance(bundle.db).get(fileId(EXPORT))).toBeUndefined();
 
     unimportFile(bundle.db, fileId(STATEMENT));
 
@@ -176,6 +193,8 @@ describe("a line a still-imported file prints survives the un-import of the file
       [GROCER.postedOn, GROCER.amountCents, fileId(EXPORT)],
       [LATE.postedOn, LATE.amountCents, fileId(EXPORT)],
     ]);
+    expect(latestBalances(bundle.db).has(accountId())).toBe(false);
+    expect(netWorth()).toBe(before - balance);
   });
 
   test("an export downloaded twice: un-importing the first keeps every row, under the second, and importing the first again counts nothing twice", async () => {

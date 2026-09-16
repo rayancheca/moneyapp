@@ -276,6 +276,29 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
     expect(labels(radius("x.pdf", SAPPHIRE_MAR, 0, 1))).not.toContain(NOT_REDERIVED);
   });
 
+  /**
+   * 🔴 2026-08-25-everyday-checking.pdf read "deletes no transactions" and "$0.00 in · $0.00 out" while its un-import
+   * took Wells Fargo's only two balances and $2,396.67 out of net worth (the review of uc/final-integrate, 2026-09-16).
+   */
+  test("an account left with its rows and no balance is named, with the balance net worth loses", () => {
+    // the Wells Fargo statement, on a copy of the real ledger with the backfills applied, 2026-09-16
+    const wellsFargo: UnimportCounts = { ...VENTURE_X_AUG, deleted: 0, keptByPrinters: 39, userCategorizedDeleted: 0, notRederivedDeleted: 0, inflowCents: 0, outflowCents: 0, transferLegsDeleted: 0 };
+    const leaving = [{ name: "Wells Fargo Everyday Checking", balanceCents: 239_667, keptRows: 39 }];
+    const r = unimportRadius({ subject: "2026-08-25-everyday-checking.pdf", counts: wellsFargo, balances: 2, periods: 1, leavesNetWorth: leaving });
+    expect(r.headline).toBe(
+      "Un-importing 2026-08-25-everyday-checking.pdf deletes no transactions: the 39 rows it brought in are printed by other imported files too, and stay, filed under them. Wells Fargo Everyday Checking keeps 39 transactions and no balance, so its $2,396.67 leaves net worth — no file left prints its balance. There is no undo for this inside the app.",
+    );
+    expect(r.lines).toContainEqual({
+      label: "Leaving net worth",
+      value: "Wells Fargo Everyday Checking, $2,396.67 — no file left prints its balance, and its 39 kept transactions are in no balance",
+      irreversible: true,
+    });
+    expect(unimportAcknowledgement(wellsFargo, leaving)).toBe("I understand this balance leaves net worth");
+    // …and nothing is said where no account leaves
+    expect(labels(unimportRadius({ subject: "x.pdf", counts: wellsFargo, balances: 2, periods: 1 }))).not.toContain("Leaving net worth");
+    expect(unimportAcknowledgement(wellsFargo)).toBeUndefined();
+  });
+
   test("a download that owns no row says it deletes none", () => {
     // 20230810-statements-3522-.pdf's third download, on a copy of the real ledger, 2026-09-16
     const nothing: UnimportCounts = { ...VENTURE_X_AUG, deleted: 0, userCategorizedDeleted: 0, notRederivedDeleted: 0, inflowCents: 0, outflowCents: 0, transferLegsDeleted: 0 };

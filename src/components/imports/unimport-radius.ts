@@ -33,6 +33,21 @@ export interface UnimportRadiusInput {
   periods: number;
   /** statement periods another download of the statement, still imported, takes (`unimportPeriodsByFile`) */
   periodsHandedOver?: number;
+  /** accounts the un-import leaves with transactions and no recorded balance (`accountsLeftWithoutBalance`) */
+  leavesNetWorth?: readonly { name: string; balanceCents: number; keptRows: number }[];
+}
+
+/**
+ * 🔴 An account can leave net worth though no transaction leaves the ledger: its rows stay under another file that
+ * prints them, and the balances only the un-imported statement printed go. The confirmation of
+ * 2026-08-25-everyday-checking.pdf read "deletes no transactions" and "$0.00 in · $0.00 out" while Wells Fargo's
+ * $2,396.67 left net worth (the review of uc/final-integrate, 2026-09-16). A balance is derived only from a recorded
+ * one — the app will not work one out from the rows it exists to check — so it says so.
+ */
+function netWorthSentence(leaving: readonly { name: string; balanceCents: number; keptRows: number }[]): string {
+  if (leaving.length === 0) return "";
+  const each = leaving.map((a) => `${a.name} keeps ${countPhrase(a.keptRows, "transaction")} and no balance, so its ${formatCents(a.balanceCents)} leaves net worth`);
+  return ` ${each.join("; ")} — no file left prints its balance.`;
 }
 
 const NO_UNDO = "There is no undo for this inside the app.";
@@ -175,15 +190,17 @@ function kept(phrase: string, n: number): string {
   return n === 0 ? phrase : `${phrase} — ${GIVEN_BACK}`;
 }
 
-export function unimportRadius({ subject, counts, balances, periods, periodsHandedOver = 0 }: UnimportRadiusInput): BlastRadius {
+export function unimportRadius({ subject, counts, balances, periods, periodsHandedOver = 0, leavesNetWorth = [] }: UnimportRadiusInput): BlastRadius {
   const optional = (show: boolean, line: BlastRadiusLine): BlastRadiusLine[] => (show ? [line] : []);
+  const said = headline(subject, counts);
+  const netWorth = netWorthSentence(leavesNetWorth);
   const detached = counts.kept - counts.keptRefiled;
   const underCopy = [
     ...(counts.handedOver > 0 ? [`${countPhrase(counts.handedOver, "transaction")} it also prints`] : []),
     ...(counts.keptRefiled > 0 ? [`${countPhrase(counts.keptRefiled, "transaction")} filed by hand on its days`] : []),
   ];
   return {
-    headline: headline(subject, counts),
+    headline: netWorth === "" ? said : `${said.slice(0, -NO_UNDO.length - 1)}${netWorth} ${NO_UNDO}`,
     lines: [
       { label: "Transactions deleted", value: countPhrase(counts.deleted, "transaction"), irreversible: counts.deleted > 0 },
       ...optional(counts.transferLegsDeleted > 0, {
@@ -206,6 +223,13 @@ export function unimportRadius({ subject, counts, balances, periods, periodsHand
         label: "Money leaving the ledger",
         value: `${formatCents(counts.inflowCents)} in · ${formatCents(counts.outflowCents)} out`,
       },
+      ...optional(leavesNetWorth.length > 0, {
+        label: "Leaving net worth",
+        value: leavesNetWorth
+          .map((a) => `${a.name}, ${formatCents(a.balanceCents)} — no file left prints its balance, and its ${countPhrase(a.keptRows, "kept transaction")} are in no balance`)
+          .join("; "),
+        irreversible: true,
+      }),
       ...optional(counts.duplicateSurvivors > 0, {
         label: "…of which comes back",
         value: `${countPhrase(counts.duplicateSurvivors, "row")} whose retired duplicate is restored`,
@@ -237,7 +261,15 @@ export function unimportRadius({ subject, counts, balances, periods, periodsHand
   };
 }
 
-/** A file that deletes rows costs work to lose; one that deletes none does not earn a checkbox. */
-export function unimportAcknowledgement(counts: UnimportCounts): string | undefined {
-  return counts.deleted > 0 ? "I understand these transactions are deleted" : undefined;
+/**
+ * A file that deletes rows costs work to lose; one that deletes none does not earn a checkbox — unless an account's
+ * balance leaves net worth with it (`leavesNetWorth`).
+ */
+export function unimportAcknowledgement(
+  counts: UnimportCounts,
+  leavesNetWorth: UnimportRadiusInput["leavesNetWorth"] = [],
+): string | undefined {
+  if (counts.deleted > 0) return "I understand these transactions are deleted";
+  if (leavesNetWorth.length > 0) return "I understand this balance leaves net worth";
+  return undefined;
 }
