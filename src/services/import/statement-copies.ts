@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray, type SQL } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { importFiles, statementCopies, statementPeriods } from "@/db/schema/imports";
-import { transactions } from "@/db/schema/transactions";
+import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { descriptionScore } from "@/lib/description-score";
 import type { DuplicatePairSide } from "@/lib/hash";
 import { attachedRow, parsedRow } from "./attached-rows";
@@ -40,6 +40,8 @@ type CopyLine = DuplicatePairSide;
 
 const LIVE_FILE = ["parsed", "parsed_with_claude"] as const;
 const LIVE_ROW = ["active", "quarantined", "excluded"] as const;
+/** row ids per statement — well under SQLite's bound-parameter limit */
+const ROW_CHUNK = 500;
 
 /**
  * Records that `importFileId` prints an account's period another file owns, with the lines it prints there. Call it
@@ -252,6 +254,89 @@ export function lendToCopies(tx: AppDatabase, plans: readonly CopyHandOver[]): v
   for (const plan of plans) {
     tx.update(statementPeriods).set({ importFileId: plan.heirFileId }).where(eq(statementPeriods.id, plan.periodId)).run();
   }
+}
+
+/** A lent period's plan, read before the retirement, with the status each row it names had then. */
+export interface LentPeriod {
+  plan: CopyHandOver;
+  statuses: ReadonlyMap<string, TransactionStatus>;
+}
+
+/**
+ * What a re-read's retirement will lend (`lendToCopies`), read while the retired read's rows are still live — the rows
+ * the copy prints are the ones an un-import would hand it (`copyHandOvers`).
+ */
+export function lentPeriodsOf(tx: AppDatabase, fileId: string): LentPeriod[] {
+  const plans = copyHandOvers(tx, [fileId]).get(fileId) ?? [];
+  const ids = plans.flatMap((p) => p.rowIds);
+  const statuses = new Map<string, TransactionStatus>();
+  for (let i = 0; i < ids.length; i += ROW_CHUNK) {
+    for (const r of tx
+      .select({ id: transactions.id, status: transactions.status })
+      .from(transactions)
+      .where(inArray(transactions.id, ids.slice(i, i + ROW_CHUNK)))
+      .all()) {
+      statuses.set(r.id, r.status);
+    }
+  }
+  return plans.map((plan) => ({ plan, statuses }));
+}
+
+/**
+ * After a re-read is written: each month it lent a copy and did not take back is the copy's for good — with the rows the
+ * copy prints that no live row records now, as un-importing the retired read would have handed them over
+ * (`handOverToCopies`). They come back with the status they had, filed under the copy, and the copy is no longer a copy
+ * of the month. Returns the ids brought back. Call it inside the re-read's transaction, after every member is written.
+ *
+ * ⚖️ Owner, 2026-09-16 (decision 16): the rows filed by hand on an account the new version no longer reads are kept as
+ * un-import keeps them. 🔴 The re-read lent the copy the month alone, on the premise that the new read writes its rows
+ * again; a read that no longer reads the account does not, so the month went to gap under the copy and the payments
+ * filed by hand were filed there and quarantined. Measured on a copy of the real ledger, 2026-09-16 (the review of
+ * uc/final-integrate): 20260702-statements-9805-.pdf re-read at a version that stops reading Chase Sapphire left
+ * 2026-06-03 → 2026-07-02 at gap $51.02 under its second download and 4 hand-filed payments ($2,134.27) quarantined.
+ */
+export function settleLentPeriods(tx: AppDatabase, lent: readonly LentPeriod[]): string[] {
+  const restored: string[] = [];
+  for (const { plan, statuses } of lent) {
+    const period = tx.select({ importFileId: statementPeriods.importFileId }).from(statementPeriods).where(eq(statementPeriods.id, plan.periodId)).get();
+    // taken back by the new read (`reclaimFromCopy`), or gone
+    if (period?.importFileId !== plan.heirFileId || plan.rowIds.length === 0) continue;
+    const copy = tx
+      .select({ lines: statementCopies.lines })
+      .from(statementCopies)
+      .where(
+        and(
+          eq(statementCopies.importFileId, plan.heirFileId),
+          eq(statementCopies.accountId, plan.accountId),
+          eq(statementCopies.periodStart, plan.periodStart),
+          eq(statementCopies.periodEnd, plan.periodEnd),
+        ),
+      )
+      .get();
+    if (copy === undefined) continue;
+    const retired: RowForMatch[] = [];
+    for (let i = 0; i < plan.rowIds.length; i += ROW_CHUNK) {
+      const ids = plan.rowIds.slice(i, i + ROW_CHUNK);
+      retired.push(
+        ...rowsFor(tx, and(inArray(transactions.id, ids), eq(transactions.status, "superseded"), eq(transactions.importFileId, plan.fromFileId))!),
+      );
+    }
+    // every live row of the account records a line before a retired one may: the new read's, a row filed by hand, the copy's
+    const live = rowsFor(tx, and(eq(transactions.accountId, plan.accountId), inArray(transactions.status, [...LIVE_ROW]))!);
+    const back = claimedRows(JSON.parse(copy.lines) as CopyLine[], live, [], retired);
+    if (back.length === 0) continue;
+    for (const id of back) {
+      tx.update(transactions)
+        .set({ status: statuses.get(id) ?? "active", importFileId: plan.heirFileId })
+        .where(and(eq(transactions.id, id), eq(transactions.status, "superseded")))
+        .run();
+    }
+    tx.delete(statementCopies)
+      .where(and(eq(statementCopies.importFileId, plan.heirFileId), eq(statementCopies.accountId, plan.accountId)))
+      .run();
+    restored.push(...back);
+  }
+  return restored;
 }
 
 /**

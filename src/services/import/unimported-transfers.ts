@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, ne } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { merchants } from "@/db/schema/merchants";
@@ -149,6 +149,41 @@ export function keepStayingLegsByContent(tx: AppDatabase, importFileId: string):
  */
 export function moveWaitingLeg(tx: AppDatabase, fromId: string, toId: string): void {
   tx.update(unimportedTransferLegs).set({ transactionId: toId }).where(eq(unimportedTransferLegs.transactionId, fromId)).run();
+}
+
+/**
+ * A kept transfer's leg that was kept by its content when its row was retired (`keepStayingLegsByContent`) waits by
+ * that row again once the row is back in the ledger: a re-read's retirement that handed the row to a second download
+ * of its statement (`settleLentPeriods`). The row keeps the category the pair gave it, so the record keeps none —
+ * as a leg that comes back before the others waits.
+ *
+ * 🔴 Kept by content, the leg waited for an import to write its line, and none does while the copy's row records it:
+ * importing the partner's statement again left the owner's pair apart.
+ */
+export function waitByRowsAgain(tx: AppDatabase, rowIds: readonly string[]): void {
+  if (rowIds.length === 0) return;
+  const kept = tx.select().from(unimportedTransferLegs).where(isNull(unimportedTransferLegs.transactionId)).all();
+  if (kept.length === 0) return;
+  const taken = new Set<string>();
+  for (const id of rowIds) {
+    const row = tx.select().from(transactions).where(eq(transactions.id, id)).get();
+    if (row === undefined || row.status === "superseded" || row.transferGroupId !== null) continue;
+    const leg = kept.find(
+      (k) =>
+        !taken.has(k.id) &&
+        k.accountId === row.accountId &&
+        k.postedOn === row.postedOn &&
+        k.transactedOn === row.transactedOn &&
+        k.amountCents === row.amountCents &&
+        k.normalizedDescription === row.normalizedDescription,
+    );
+    if (leg === undefined) continue;
+    taken.add(leg.id);
+    tx.update(unimportedTransferLegs)
+      .set({ transactionId: row.id, categoryId: null, categorizationSource: null, categorizationConfidence: null, merchantId: null })
+      .where(eq(unimportedTransferLegs.id, leg.id))
+      .run();
+  }
 }
 
 /**

@@ -1983,6 +1983,15 @@ describe("a parser-version re-read that no longer writes an account", () => {
       { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-05-01", end: "2026-05-31", beginCents: 50000, endCents: 50000 } },
       { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-03-01", end: "2026-03-31", beginCents: 50000, endCents: 50000 } },
     ],
+    // …and the same on the account with a row
+    "2026-03 then 2026-05, with a row": [
+      {
+        accountHint: checking(WITH_ROWS),
+        txns: [{ postedOn: "2026-03-12", amountCents: -4000, rawDescription: "SHELL OIL 555 MIAMI FL" }],
+        period: { start: "2026-03-01", end: "2026-03-31", beginCents: 10000, endCents: 6000 },
+      },
+      { accountHint: checking(WITH_ROWS), txns: [], period: { start: "2026-05-01", end: "2026-05-31", beginCents: 6000, endCents: 6000 } },
+    ],
     // one file, one account, two statements: March's window, then a May — read in the other order by `readsInReverse`
     "2026-03 then 2026-05": [
       { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-03-01", end: "2026-03-31", beginCents: 50000, endCents: 50000 } },
@@ -2399,6 +2408,37 @@ describe("a parser-version re-read that no longer writes an account", () => {
     }
   });
 
+  test("a transfer waiting on a row a re-read hands to a second download is linked again when the other leg returns", async () => {
+    PROFILES.unshift(partnerProfile);
+    try {
+      await importStatementFiles(bundle.db, [JANUARY, MARCH, PARTNER]);
+      const withRows = accountIdOf(WITH_ROWS);
+      const shell = contributionOf(liveFile(MARCH).id).rows.find((r) => r.accountId === withRows)!;
+      const leg = bundle.db.select().from(transactions).where(eq(transactions.accountId, accountIdOf("4106"))).get()!;
+      const { linkTransferPair } = await import("@/services/transfer-links");
+      linkTransferPair(bundle.db, shell.id, leg.id);
+      unimportFile(bundle.db, liveFile(PARTNER).id);
+      await importStatementFiles(bundle.db, [MARCH_COPY]);
+      // the premise: the transfer waits by the statement's row
+      expect(bundle.db.select().from(unimportedTransferLegs).all().map((k) => k.transactionId).sort()).toEqual([shell.id, null].sort());
+
+      threeSectionProfile.version = 2;
+      stopsReadingOthers = true;
+      await importStatementFiles(bundle.db, [MARCH]);
+      expect(row(shell.id)).toMatchObject({ status: "active", importFileId: liveFile(MARCH_COPY).id });
+      expect(bundle.db.select().from(unimportedTransferLegs).all().map((k) => k.transactionId).sort()).toEqual([shell.id, null].sort());
+
+      await importStatementFiles(bundle.db, [PARTNER]);
+
+      const back = bundle.db.select().from(transactions).where(eq(transactions.accountId, accountIdOf("4106"))).get()!;
+      expect(row(shell.id)!.transferGroupId).toBe(shell.id);
+      expect(back.transferGroupId).toBe(shell.id);
+      expect(bundle.db.select().from(unimportedTransferLegs).all()).toEqual([]);
+    } finally {
+      PROFILES.splice(PROFILES.indexOf(partnerProfile), 1);
+    }
+  });
+
   test("a row filed by hand that the retired read's gap held comes back active, and one the owner excluded stays excluded", async () => {
     const { march, withRows, handRow } = await marchWithARowFiledByHand();
     // the retired period's verdict on a hand row, as `reconcileAccounts` leaves it after a gap
@@ -2590,6 +2630,86 @@ describe("a parser-version re-read that no longer writes an account", () => {
     expect(unimportPeriodsByFile(bundle.db).get(copy)).toEqual({ removed: 2, handedOver: 0 });
     unimportFile(bundle.db, copy);
     expect(bundle.db.select().from(statementPeriods).where(eq(statementPeriods.id, period.id)).get()).toBeUndefined();
+  });
+
+  /**
+   * ⚖️ Owner, 2026-09-16 (decision 16): the rows filed under the statement by hand on an account the new version no
+   * longer reads are detached and kept, exactly as un-import keeps them — and un-importing a statement a second download
+   * prints hands that download the period, the rows it prints and the rows filed by hand on its days.
+   *
+   * 🔴 The re-read lent the second download the period alone, on the premise that the new read writes the rows again.
+   * It did not write them: the period went to gap under the copy with its rows superseded, and the payments filed by
+   * hand were filed under the copy and quarantined. Measured on a copy of the real ledger, 2026-09-16 (the review of
+   * uc/final-integrate): 20260702-statements-9805-.pdf re-read at a version that stops reading Chase Sapphire left
+   * June–July at gap $51.02 under "20260702-statements-9805- (1).pdf" and 4 hand-filed payments ($2,134.27) quarantined.
+   */
+  test.each([
+    ["withholds the section", false],
+    ["stops reading it without a word", true],
+  ])("a re-read that %s hands a second download the rows it prints, and the rows filed by hand stay active", async (_, silent) => {
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    const march = liveFile(MARCH).id;
+    const withRows = accountIdOf(WITH_ROWS);
+    const shell = contributionOf(march).rows.find((r) => r.accountId === withRows)!;
+    bundle.db.update(transactions).set({ notes: "fuel for the trip", status: "excluded" }).where(eq(transactions.id, shell.id)).run();
+    // money in and out on one day, filed under March by hand: the period still closes
+    const byHand = [900, -900].map((amountCents, i) => {
+      const raw = `CASH ${i === 0 ? "IN" : "OUT"} — recorded by hand`;
+      return bundle.db
+        .insert(transactions)
+        .values({
+          accountId: withRows,
+          importFileId: march,
+          fileLinkSource: "attached",
+          postedOn: "2026-03-20",
+          amountCents,
+          rawDescription: raw,
+          normalizedDescription: normalizeDescription(raw),
+          dedupeHash: dedupeHash({ accountId: withRows, postedOn: "2026-03-20", amountCents, rawDescription: raw, occurrenceIndex: 0 }),
+          notes: HAND_NOTE,
+        })
+        .returning({ id: transactions.id })
+        .get().id;
+    });
+    await importStatementFiles(bundle.db, [MARCH_COPY]);
+    const copy = liveFile(MARCH_COPY).id;
+    reconcileAccounts(bundle.db, [withRows]);
+    rebuildAccount(bundle.db, withRows);
+    expect(periodOf(march, withRows)).toMatchObject({ reconciliation: "reconciled" });
+    const days = dayRows(withRows);
+
+    threeSectionProfile.version = 2;
+    stopsReadingOthers = silent;
+    const [outcome] = await importStatementFiles(bundle.db, [MARCH]);
+
+    expect(outcome!.status).toBe("parsed");
+    expect(outcome!.withheld.map((w) => w.accountId).includes(withRows)).toBe(!silent);
+    // as un-importing March leaves it: the copy holds the period, the row it prints and the rows filed by hand on its days
+    expect(periodOf(copy, withRows)).toMatchObject({ periodStart: "2026-03-01", reconciliation: "reconciled" });
+    expect(row(shell.id)).toMatchObject({ status: "excluded", importFileId: copy, notes: "fuel for the trip", fileLinkSource: null });
+    for (const id of byHand) expect(row(id)).toMatchObject({ status: "active", importFileId: copy, fileLinkSource: "attached", notes: HAND_NOTE });
+    expect(dayRows(withRows)).toEqual(days);
+    // …and the copy owns the period now: it is no longer recorded as a copy of it
+    expect(bundle.db.select().from(statementCopies).where(eq(statementCopies.accountId, withRows)).all()).toEqual([]);
+    expectRebuilt(withRows);
+
+    // a later version that reads the account again takes nothing twice: the copy's rows record its lines
+    stopsReadingOthers = false;
+    readsEverySection = true;
+    threeSectionProfile.version = 3;
+    await importStatementFiles(bundle.db, [MARCH]);
+    const live = bundle.db
+      .select({ amountCents: transactions.amountCents, status: transactions.status })
+      .from(transactions)
+      .where(and(eq(transactions.accountId, withRows), ne(transactions.status, "superseded")))
+      .orderBy(transactions.amountCents)
+      .all();
+    expect(live).toEqual([
+      { amountCents: -4000, status: "excluded" },
+      { amountCents: -900, status: "active" },
+      { amountCents: 900, status: "active" },
+    ]);
+    expect(dayRows(withRows)).toEqual(days);
   });
 
   test("a file that adopted a period while holding one of its own on the account does not take it — one period per file and account", async () => {
@@ -2936,6 +3056,37 @@ describe("a parser-version re-read that no longer writes an account", () => {
     const recorded = bundle.db.select().from(statementCopies).where(eq(statementCopies.accountId, anchorOnly)).all();
     expect(recorded.map((c) => [c.importFileId, c.periodStart]).sort()).toEqual([[copy, "2026-03-01"], [two, "2026-03-01"]].sort());
     expectRebuilt(anchorOnly);
+  });
+
+  /**
+   * The month stays lent where the re-read cannot take it back, and the re-read writes its line itself: the copy is
+   * handed no retired row for a line a live row records, or the charge would be counted twice.
+   */
+  test("a re-read that writes a lent month's line but cannot take the month back leaves the retired row retired", async () => {
+    const TWO = statementFor("2026-03 then 2026-05, with a row");
+    await importStatementFiles(bundle.db, [TWO]);
+    await importStatementFiles(bundle.db, [MARCH_COPY]);
+    const withRows = accountIdOf(WITH_ROWS);
+    const copy = liveFile(MARCH_COPY).id;
+    const [retired] = contributionOf(liveFile(TWO).id).rows;
+    const days = dayRows(withRows);
+
+    threeSectionProfile.version = 2;
+    readsInReverse = true;
+    const [reread] = await importStatementFiles(bundle.db, [TWO]);
+
+    expect(reread!.status).toBe("parsed");
+    const two = liveFile(TWO).id;
+    expect(periodOf(copy, withRows)).toMatchObject({ periodStart: "2026-03-01", reconciliation: "reconciled" });
+    expect(periodOf(two, withRows)).toMatchObject({ periodStart: "2026-05-01" });
+    expect(row(retired!.id)).toMatchObject({ status: "superseded" });
+    const live = bundle.db
+      .select({ amountCents: transactions.amountCents, importFileId: transactions.importFileId })
+      .from(transactions)
+      .where(and(eq(transactions.accountId, withRows), ne(transactions.status, "superseded")))
+      .all();
+    expect(live).toEqual([{ amountCents: -4000, importFileId: two }]);
+    expect(dayRows(withRows)).toEqual(days);
   });
 
   test("a second download whose read failed part-way inherits nothing", async () => {

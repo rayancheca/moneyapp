@@ -65,11 +65,20 @@ import {
   handOverToCopies,
   handedRowIds,
   lendToCopies,
+  lentPeriodsOf,
   reclaimFromCopy,
   recordStatementCopy,
+  settleLentPeriods,
+  type LentPeriod,
 } from "./statement-copies";
 import { appendPrintedLines, forgetPrintedLines, handOverToPrinters, printedLineOf, printerHandOvers, printerRowIds } from "./printed-lines";
-import { keepStayingLegsByContent, moveWaitingLeg, relinkReturningTransfers, rememberTransfersTakenApart } from "./unimported-transfers";
+import {
+  keepStayingLegsByContent,
+  moveWaitingLeg,
+  relinkReturningTransfers,
+  rememberTransfersTakenApart,
+  waitByRowsAgain,
+} from "./unimported-transfers";
 import {
   forgetRemembered,
   rememberRowAttributes,
@@ -1803,8 +1812,11 @@ function writeRead(
   const pools = members.map((m) => captureCarryForward(db, m.staleIds));
   onMember(-1);
   const retired = new Set<string>();
+  const lent: LentPeriod[] = [];
   for (const id of retiring) {
-    for (const accountId of supersedeFileContribution(db, id)) retired.add(accountId);
+    const retirement = supersedeFileContribution(db, id);
+    for (const accountId of retirement.accounts) retired.add(accountId);
+    lent.push(...retirement.lent);
   }
   // one pool for the whole read: a record is given back once
   const recall = recallPool(db);
@@ -1814,6 +1826,9 @@ function writeRead(
     writes.push(write);
     writeMember(db, member, pools[j] as CarryPool, recall, write);
   });
+  // a month lent to a copy that no member took back is the copy's, with the rows it prints (`settleLentPeriods`) —
+  // and a transfer waiting on one of them waits by that row again
+  waitByRowsAgain(db, settleLentPeriods(db, lent));
   return { retired, writes };
 }
 
@@ -2467,10 +2482,13 @@ function removeFileBalances(tx: AppDatabase, importFileId: string): void {
  * Robinhood Agentic `anchored` on 2026-08-31 (anchors only Jun 30 / Jul 31) and checked through 2026-08-31. With
  * the scope: 08-31 carried, checked through 2026-07-31.
  */
-function supersedeFileContribution(db: AppDatabase, oldFileId: string): string[] {
+function supersedeFileContribution(db: AppDatabase, oldFileId: string): { accounts: string[]; lent: LentPeriod[] } {
   return db.transaction((tx) => {
     const written = accountsWrittenBy(tx, oldFileId);
     const books = removeFileEvents(tx, oldFileId);
+    // what a copy of the statement prints, read while the rows are live (`settleLentPeriods` reads it once the new
+    // read is written)
+    const lent = lentPeriodsOf(tx, oldFileId);
     // a transfer an un-import took apart may be waiting on a row this retires: the re-read writes its line again
     keepStayingLegsByContent(tx, oldFileId);
     tx.update(transactions)
@@ -2479,7 +2497,10 @@ function supersedeFileContribution(db: AppDatabase, oldFileId: string): string[]
       .run();
     // a period another download of the statement prints stays, lent to that download — the period alone: the
     // successor writes the rows again, and takes the period back where it writes it again (`lendToCopies`)
-    lendToCopies(tx, copyHandOvers(tx, [oldFileId]).get(oldFileId) ?? []);
+    lendToCopies(
+      tx,
+      lent.map((l) => l.plan),
+    );
     removeFileBalances(tx, oldFileId);
     // its successor records again what it prints, as a copy or not (`statement-copies`, `printed-lines`)
     forgetStatementCopies(tx, oldFileId);
@@ -2487,7 +2508,7 @@ function supersedeFileContribution(db: AppDatabase, oldFileId: string): string[]
     // a parsed file's error is only ever the sections it withheld (`markParsed`); its successor reads them again
     // and says for itself what is still missing, so the retired row must not keep claiming a section is absent
     tx.update(importFiles).set({ status: "superseded", error: null }).where(eq(importFiles.id, oldFileId)).run();
-    return [...new Set([...written, ...books])];
+    return { accounts: [...new Set([...written, ...books])], lent };
   });
 }
 

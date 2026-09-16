@@ -143,7 +143,10 @@ names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
   other download that is still parsed; only un-importing the last download removes them. A
   re-parse hands over the period alone, and only lends it: the new read writes the rows again,
   takes the period back where it writes it again (the other download stays recorded as a copy),
-  and a period it no longer writes (a section it now withholds) stays with the other download.
+  and a period it no longer writes (a section it now withholds, an account it no longer reads)
+  stays with the other download — with the retired rows the other download prints that no live
+  row records, each back with the status it had, as an un-import hands them over; the rows filed
+  by hand on its days are filed under it too, and the other download is no longer a copy of it.
   One rule for every file, the agent's brokerage book included.
   More generally, every import records **every line it prints** (`printed_lines`), whichever
   row ends up recording it — its own, one another record already held (absorbed), or one a more
@@ -210,7 +213,7 @@ brokerage book removed with its last statement takes its records with it.
 |---|---|---|
 | id / account_id | | |
 | posted_on / transacted_on / amount_cents / normalized_description / dedupe_hash | | the line's identity, as the carry-forward matches it |
-| category_id / categorization_source / categorization_confidence / merchant_id / needs_review | | only a category no engine of an import sets again: `user`, `claude`, or no source |
+| category_id / categorization_source / categorization_confidence / merchant_id / needs_review | | only a category no engine of an import sets again: `user` (with no category: "Uncategorized" picked by hand), `claude`, or no source — never a transfer leg's hand category, which is the pair's (`unimported_transfer_legs`). A line that takes over another file's row spends the record: it only fills what that row, the live record with his work since, leaves empty |
 | notes / recurring_series_id / series_link_source | | a link, or a detach (no series, `user`) |
 | excluded | boolean | |
 | splits | JSON nullable | `[{ categoryId, amountCents, note, sortOrder }]` |
