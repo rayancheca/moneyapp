@@ -11,6 +11,7 @@ import { duplicateCandidates, type DuplicateReason } from "@/db/schema/duplicate
 import { categories } from "@/db/schema/categories";
 import { importFiles, printedLines, statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
+import { merchants } from "@/db/schema/merchants";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash, duplicatePairKey, type DuplicatePairSide } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
@@ -711,6 +712,30 @@ describe("a takeover hands the owner's verdict to the row that takes over", () =
     expect(liveRows(card).map((t) => t.importFileId)).toEqual([fileNamed(QFX)!.id, fileNamed(QFX)!.id]);
     expect(liveCents(card)).toBe(PAYMENT_CENTS + COFFEE_CENTS);
     expect(live(card, COFFEE_CENTS)[0]).toMatchObject({ categoryId: dining, notes: "met Sam" });
+  });
+
+  /**
+   * 🔴 A takeover moved a hand category onto the row that took over without the merchant and the confidence it came
+   * with (`applyCarry` moves all three; `insertTxn` moved one), and categorizeAll never names a merchant on a
+   * categorized row. Measured on a copy of the real ledger, 2026-09-16 (backfills applied): a round trip of
+   * Discover-AllAvailable-20260710.csv — whose re-import takes back the rows the statements kept — left 16
+   * hand-categorized charges with no merchant (9 of them CC Vending's) and no confidence.
+   */
+  test("the row that takes over keeps the hand category's merchant and confidence", async () => {
+    await importStatementFiles(bundle.db, [exportCsv()]);
+    const coffee = rowsOfFile(fileNamed(EXPORT)!.id).find((t) => t.amountCents === COFFEE_CENTS)!;
+    const groceries = bundle.db.select().from(categories).where(eq(categories.name, "Groceries")).get()!.id;
+    const merchant = bundle.db.select().from(merchants).where(eq(merchants.canonicalName, "Blue Bottle")).get()!.id;
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: groceries, categorizationSource: "user", categorizationConfidence: 0.8, merchantId: merchant })
+      .where(eq(transactions.id, coffee.id))
+      .run();
+
+    await importStatementFiles(bundle.db, [bothLinesQfx()]);
+
+    const [taken] = live(coffee.accountId, COFFEE_CENTS);
+    expect(taken).toMatchObject({ importFileId: fileNamed(QFX)!.id, categoryId: groceries, categorizationSource: "user", categorizationConfidence: 0.8, merchantId: merchant });
   });
 
   test("a row a file took over from a file no longer imported is not brought back", async () => {

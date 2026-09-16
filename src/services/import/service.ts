@@ -2313,11 +2313,22 @@ function insertTxn(
   const categoryId = t.categoryPath ? categoryIdForPath(db, t.categoryPath) : null;
   const carryUserCategory = carryFrom?.categorizationSource === "user" ? carryFrom.categoryId : null;
   const engine = carryFrom === null || carryUserCategory ? null : engineCategoryCarry(carryFrom);
-  // the parser's own category, unless an engine's travels over it (`engineCategoryCarry`)
+  // the parser's own category, unless an engine's travels over it (`engineCategoryCarry`) — or a hand-set one does,
+  // with the merchant and confidence it came with, as `applyCarry` moves them.
+  // 🔴 A takeover victim's hand category travelled alone, and categorizeAll never names a merchant on a categorized
+  // row: on a copy of the real ledger, 2026-09-16, a round trip of Discover-AllAvailable-20260710.csv (whose re-import
+  // takes back the rows the statements kept) left 16 hand-categorized charges with no merchant and no confidence.
   const category =
     carryFrom !== null && (engine === "overwrite" || (engine === "fill" && categoryId === null))
       ? { ...engineCategoryColumns(carryFrom), merchantId: carryFrom.merchantId }
-      : { categoryId: carryUserCategory ?? categoryId, categorizationSource: carryUserCategory ? ("user" as const) : categoryId ? ("rule" as const) : null };
+      : carryFrom !== null && carryUserCategory !== null
+        ? {
+            categoryId: carryUserCategory,
+            categorizationSource: "user" as const,
+            categorizationConfidence: carryFrom.categorizationConfidence,
+            merchantId: carryFrom.merchantId,
+          }
+        : { categoryId, categorizationSource: categoryId ? ("rule" as const) : null };
   const result = tx
     .insert(transactions)
     .values({
