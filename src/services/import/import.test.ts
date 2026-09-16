@@ -1308,6 +1308,10 @@ describe("a parser-version re-read that no longer writes an account", () => {
         period: { start: "2026-03-01", end: "2026-03-31", beginCents: 10000, endCents: 6000 },
       },
     ],
+    // a statement of part of March, on one account
+    "2026-03 rival": [
+      { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-03-10", end: "2026-03-20", beginCents: 50000, endCents: 50000 } },
+    ],
   };
 
   /** A section of a new account, and after it one the import cannot store: its institution is not one the app knows. */
@@ -1424,6 +1428,8 @@ describe("a parser-version re-read that no longer writes an account", () => {
     expectRebuilt(accountIdOf(KEPT));
   });
 
+  /** March downloaded a second time: the same statement in different bytes */
+  const MARCH_COPY: ImportInput = { name: `${PREFIX}2026-03 (1).txt`, buffer: Buffer.from("2026-03\n") };
 
   const row = (id: string) => bundle.db.select().from(transactions).where(eq(transactions.id, id)).get();
 
@@ -1625,6 +1631,101 @@ describe("a parser-version re-read that no longer writes an account", () => {
     for (const last4 of [KEPT, ANCHOR_ONLY, WITH_ROWS]) expectRebuilt(accountIdOf(last4));
     // "un-import to clean up" would be wrong: there is nothing to clean, and the read in place is the earlier one
     expect(failed!.error).toContain("the earlier read of this file is still in place");
+  });
+
+  /**
+   * 🔴 The rebuild scope reads three legs, and the tests above give every account the retired read wrote a period and
+   * anchors, so a scope that left out the rows leg — or read anchors alone — passed them all (the review, 2026-09-16).
+   * A read that gives an account only rows is an export, whose balance another file's statements anchor (on the real
+   * ledger: the Discover CSV and 4 Robinhood activity CSVs); one that gives it only a balance is an OFX ledger.
+   */
+  test("an account the retired read gave only rows, or only a ledger balance, is rebuilt when the new read stops reading it", async () => {
+    const EXPORT: ImportInput = { name: "three-section-activity.csv", buffer: Buffer.from("April activity") };
+    const LEDGER_ONLY = "4105";
+    const exportProfile: ParserProfile = {
+      id: "test-three-section-activity",
+      version: 1,
+      matches: (f) => f.name === EXPORT.name,
+      parse: (): ParsedStatement[] => {
+        const kept: ParsedStatement = {
+          accountHint: checking(KEPT),
+          txns: [{ postedOn: "2026-04-06", amountCents: 500, rawDescription: "INTEREST APR" }],
+        };
+        if (exportProfile.version > 1) return [kept];
+        return [
+          kept,
+          { accountHint: checking(WITH_ROWS), txns: [{ postedOn: "2026-04-05", amountCents: -1500, rawDescription: "COFFEE APR" }] },
+          // an account no statement anchors: a ledger balance carries the curve only where nothing chain-grade does
+          { accountHint: checking(LEDGER_ONLY), txns: [], ledger: { asOf: "2026-04-15", cents: 49000 } },
+        ];
+      },
+    };
+    PROFILES.unshift(exportProfile);
+    try {
+      await importStatementFiles(bundle.db, [JANUARY, MARCH, EXPORT]);
+      const withRows = accountIdOf(WITH_ROWS);
+      const ledgerOnly = accountIdOf(LEDGER_ONLY);
+      const exported = contributionOf(liveFile(EXPORT).id);
+      // the premise: the export gave one account a row and nothing else, the other a balance and nothing else
+      expect(exported.periods).toEqual([]);
+      expect(exported.rows.filter((t) => t.accountId === ledgerOnly)).toEqual([]);
+      expect(exported.anchors.map((a) => [a.accountId, a.source])).toEqual([[ledgerOnly, "ofx_ledger"]]);
+      expect(dayRow(withRows, "2026-04-05")?.balanceCents).toBe(4500);
+      expect(dayRow(ledgerOnly, "2026-04-15")).toMatchObject({ basis: "anchored", balanceCents: 49000 });
+
+      exportProfile.version = 2;
+      const [outcome] = await importStatementFiles(bundle.db, [EXPORT]);
+
+      expect(outcome!.status).toBe("parsed");
+      expect(dayRow(withRows, "2026-04-05")?.balanceCents).toBe(6000);
+      // no balance was ever recorded for it but the one the retired read took away
+      expect(dayRows(ledgerOnly)).toEqual([]);
+      expectRebuilt(withRows);
+      expectRebuilt(ledgerOnly);
+    } finally {
+      PROFILES.splice(PROFILES.indexOf(exportProfile), 1);
+    }
+  });
+
+  /**
+   * The third leg. A retired read can name an account by its period alone: it gave the account no row, and its two
+   * anchors belong to a second download imported after it. The account's balances do not move, but a row filed by
+   * hand that the retired period and another statement both held — ambiguous, so left detached — is held by one
+   * statement now, and the import files it again only on an account in its scope.
+   */
+  test("an account the retired read gave only a period is in the scope too: a row filed by hand that two statements held is filed under the one left", async () => {
+    const RIVAL = statementFor("2026-03 rival");
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    await importStatementFiles(bundle.db, [MARCH_COPY]);
+    await importStatementFiles(bundle.db, [RIVAL]);
+    const anchorOnly = accountIdOf(ANCHOR_ONLY);
+    const march = liveFile(MARCH).id;
+    // the premise: March names this account through its period and nothing else
+    expect(contributionOf(march).rows.filter((t) => t.accountId === anchorOnly)).toEqual([]);
+    expect(contributionOf(march).anchors.filter((a) => a.accountId === anchorOnly)).toEqual([]);
+    expect(periodOf(march, anchorOnly)).toBeDefined();
+    const raw = "CASH DEPOSIT — recorded by hand";
+    const handRow = bundle.db
+      .insert(transactions)
+      .values({
+        accountId: anchorOnly,
+        postedOn: "2026-03-15",
+        amountCents: 2500,
+        rawDescription: raw,
+        normalizedDescription: normalizeDescription(raw),
+        dedupeHash: dedupeHash({ accountId: anchorOnly, postedOn: "2026-03-15", amountCents: 2500, rawDescription: raw, occurrenceIndex: 0 }),
+        fileLinkSource: "attached",
+      })
+      .returning({ id: transactions.id })
+      .get().id;
+
+    threeSectionProfile.version = 2;
+    const [outcome] = await importStatementFiles(bundle.db, [MARCH]);
+
+    expect(outcome!.status).toBe("parsed");
+    // (its status is now the rival statement's verdict, which this fixture's balances do not close)
+    expect(row(handRow)).toMatchObject({ importFileId: liveFile(RIVAL).id, fileLinkSource: "attached" });
+    expectRebuilt(anchorOnly);
   });
 
 });
