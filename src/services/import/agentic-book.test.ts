@@ -15,7 +15,7 @@ import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { withheldSectionsOf } from "@/lib/import-file-label";
 import { statementDayValuation } from "@/lib/ledger-integrity";
-import { accountLiquidity, createAccount } from "@/services/accounts";
+import { accountLiquidity, createAccount, updateAccount } from "@/services/accounts";
 import { upsertHolding } from "@/services/holdings";
 import { portfolioSeries } from "@/services/portfolio";
 import { refreshPrices, type PriceProvider } from "@/services/prices";
@@ -633,6 +633,84 @@ describe("⚖️ Robinhood Agentic's positions are read into a brokerage book pa
     ]);
     expect(bundle.db.select().from(accounts).where(eq(accounts.cashAccountId, agenticId)).all()).toHaveLength(1);
     expect(stateOf(bundle.db, bookOf(bundle.db, agenticId)!.id).holdings.map((h) => h.quantityE8)).toEqual([15_000_000]);
+  });
+});
+
+/**
+ * ⛔ The pair is a stored LINK (`accounts.cash_account_id`), never a name. Every test above pairs "Robinhood Agentic"
+ * with the "Robinhood Agentic Brokerage" the import named, so a book found by that name passed them all (measured
+ * 2026-09-16 at c2c8df3: 167/167 green across the four import suites with `resolveBook` looking up `${name} Brokerage`,
+ * and again with the parse context's book events keyed that way). Here he has renamed the book through the account
+ * edit form, and another investment account carries the very name the import gives a book.
+ */
+describe("⛔ the import finds the agent's book by its link — never by a name", () => {
+  const robinhoodId = (db: AppDatabase) => db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!.id;
+  const allAccountIds = (db: AppDatabase) => db.select({ id: accounts.id }).from(accounts).orderBy(asc(accounts.id)).all();
+
+  test.each([
+    ["with no other account", "none"],
+    ["beside an unlinked account", "unlinked"],
+    ["beside a book linked to Robinhood Cash", "linked"],
+  ] as const)(
+    "renamed after August %s named as the import names a book, September is proven by and written to the linked book — and no account is added",
+    async (_how, lookAlikeKind) => {
+      const agenticId = ownersRobinhood(bundle.db);
+      await importStatementFiles(bundle.db, [pdf(JUNE_FILE, [...JUNE_BROKERAGE, ...JUNE_SECOND])]);
+      await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
+      const book = bookOf(bundle.db, agenticId)!;
+      updateAccount(bundle.db, book.id, { name: "Agent Picks" });
+      const lookAlike =
+        lookAlikeKind === "none"
+          ? null
+          : createAccount(bundle.db, { institutionId: robinhoodId(bundle.db), name: "Robinhood Agentic Brokerage", type: "investment", subtype: "brokerage" });
+      if (lookAlike !== null && lookAlikeKind === "linked") {
+        const cash = bundle.db.select().from(accounts).where(eq(accounts.name, "Robinhood Cash")).get()!;
+        bundle.db.update(accounts).set({ cashAccountId: cash.id }).where(eq(accounts.id, lookAlike)).run();
+      }
+      const accountsBefore = allAccountIds(bundle.db);
+      const lookAlikeBefore = lookAlike === null ? null : stateOf(bundle.db, lookAlike);
+
+      // what September's sale is proven against: the linked book's August buy, whatever either account is called
+      expect(parseContextFor(bundle.db).knownAccounts.Robinhood?.find((a) => a.last4 === "9651")?.book).toEqual({
+        events: [{ symbol: "WMT", occurredOn: "2026-08-20", quantityDeltaE8: 25_000_000 }],
+      });
+
+      const [september] = await importStatementFiles(bundle.db, [pdf(SEPTEMBER_FILE, [...SEPTEMBER_BROKERAGE, ...agentSells(false)])]);
+
+      expect([september!.status, september!.error, september!.withheld]).toEqual(["parsed", undefined, []]);
+      // the same book, under the name he gave it, holding the printed 0.15 WMT — $26.22 → $16.64
+      expect(bookOf(bundle.db, agenticId)).toMatchObject({ id: book.id, name: "Agent Picks" });
+      const held = stateOf(bundle.db, book.id);
+      expect(held.events.map((e) => [e.on, e.delta])).toEqual([
+        ["2026-08-20", 25_000_000],
+        ["2026-09-15", -10_000_000],
+      ]);
+      expect(held.holdings.map((h) => [h.symbol, h.quantityE8])).toEqual([["WMT", 15_000_000]]);
+      expect(held.periods.at(-1)).toEqual({ start: "2026-09-01", end: "2026-09-30", begin: 2622, endCents: 1664, reconciliation: "value_anchor" });
+      // the look-alike is exactly as it was, and no account was created or removed
+      expect(lookAlike === null ? null : stateOf(bundle.db, lookAlike)).toEqual(lookAlikeBefore);
+      expect(allAccountIds(bundle.db)).toEqual(accountsBefore);
+      // and Robinhood Agentic keeps September's cash beside it, proven to the cent: $1.64 → $12.70
+      expect(stateOf(bundle.db, agenticId).periods.at(-1)).toEqual({ start: "2026-09-01", end: "2026-09-30", begin: 164, endCents: 1270, reconciliation: "reconciled" });
+    },
+  );
+
+  test("one book per cash account: a later month adds no account, and the database refuses a second book", async () => {
+    const agenticId = ownersRobinhood(bundle.db);
+    await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
+    const afterAugust = allAccountIds(bundle.db);
+
+    const [september] = await importStatementFiles(bundle.db, [pdf(SEPTEMBER_FILE, [...SEPTEMBER_BROKERAGE, ...agentSells(false)])]);
+
+    expect(september!.status).toBe("parsed");
+    expect(allAccountIds(bundle.db)).toEqual(afterAugust);
+    expect(bundle.db.select({ id: accounts.id }).from(accounts).where(eq(accounts.cashAccountId, agenticId)).all()).toHaveLength(1);
+    expect(() =>
+      bundle.db
+        .insert(accounts)
+        .values({ institutionId: robinhoodId(bundle.db), name: "Agent Picks", type: "investment", subtype: "brokerage", cashAccountId: agenticId })
+        .run(),
+    ).toThrow(/UNIQUE constraint failed: accounts\.cash_account_id/);
   });
 });
 
