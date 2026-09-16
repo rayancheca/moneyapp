@@ -110,6 +110,13 @@ export interface BookEvent {
   readonly quantityDeltaE8: number;
 }
 
+/** A statement the ledger holds for a cash account and read as cash only: its file wrote nothing on the account's book. */
+export interface CashOnlyStatement {
+  readonly fileName: string;
+  readonly start: string;
+  readonly end: string;
+}
+
 export interface StatementPeriodInfo {
   start: string;
   end: string;
@@ -201,6 +208,11 @@ export interface KnownAccount {
   readonly subtype: AccountSubtype | null;
   /** a cash account's brokerage book (`accounts.cash_account_id`) and every quantity change it holds; absent when it has none */
   readonly book?: { readonly events: readonly BookEvent[] };
+  /**
+   * A checking account's statements the ledger read as cash only, oldest first; absent when there is none. A section
+   * that proves positions BEFORE one of them is withheld: that later month was never checked against those shares.
+   */
+  readonly cashOnlyStatements?: readonly CashOnlyStatement[];
 }
 
 /**

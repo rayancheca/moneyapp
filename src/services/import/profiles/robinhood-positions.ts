@@ -6,6 +6,7 @@ import {
   ParseError,
   type BookEvent,
   type CanonicalTxn,
+  type CashOnlyStatement,
   type EquityAssetType,
   type PendingTrade,
   type PositionTrade,
@@ -445,13 +446,21 @@ export interface PositionsInput {
   readonly trades: readonly TradeRow[];
   /** every quantity change the account's brokerage book already holds; empty when it has no book yet */
   readonly bookEvents: readonly BookEvent[];
+  /** the account's statements the ledger read as cash only — its file wrote nothing on the book */
+  readonly cashOnlyStatements: readonly CashOnlyStatement[];
   readonly assetTypes: Readonly<Record<string, EquityAssetType>>;
 }
 
 /**
  * The section's positions, PROVEN — or null for a month with no position in it at all: nothing held, nothing traded,
- * no opening securities, and nothing in the book before it. That month is cash, exactly as the cash reader always read
- * it.
+ * no opening securities, and no book event before it. That month is cash, exactly as the cash reader always read it.
+ *
+ * ⛔ A book event before it, not a position: a month after the agent sold everything is still its book's statement.
+ * Its printed $0.00 is what says the sold shares are gone — `laterBookStatements` finds it and refuses to take the
+ * sale from under it, and `pnpm ledger-check` checks the book's $0.00 against it. Read as cash only, nothing stood on
+ * the book after the sale: un-importing or re-reading the sale was never refused, and the sold 0.25 WMT came back
+ * into net worth while October's cash already held the $27.31 they sold for (measured 2026-09-16: $27.73 carried on
+ * Oct 31 on the branch fixture, +$27.37 of net worth on a real-ledger copy).
  *
  * The arbiter: for every symbol, what the book held before the period + this period's Buys − Sells = what Securities
  * Held prints at its end. Anything else is withheld with the symbol and both figures — a split (which prints no row),
@@ -465,6 +474,12 @@ export interface PositionsInput {
  *    guess prices it against the wrong series.
  */
 /*
+ * ⛔ Withheld, though: a month proving positions BEFORE a statement the ledger read as cash only. That later month
+ * was read with none of these shares in the book, so nothing ever checked it against them — October's $0.00
+ * uploaded before August's buy left the book holding the 0.25 WMT October says is gone, valued into net worth
+ * (measured 2026-09-16 on the branch fixture: $27.73 carried on Oct 31). A version bump reads both again, oldest
+ * first (`parseContextFor` leaves out a later month that the same upload reads again).
+ *
  * ⚠️ NOT withheld: a book that already holds LATER months. Only what came BEFORE the period proves it, so an earlier
  * month reads the same whatever follows, and a guard here against later trades refused the re-read of every month but
  * the last (measured, agentic-book.test.ts). Later months are the retirement's question, not the reader's: a version
@@ -479,9 +494,20 @@ export function provePositions(input: PositionsInput): StatementPositions | null
   for (const e of bookEvents) {
     if (e.occurredOn < period.start) before.set(e.symbol, (before.get(e.symbol) ?? 0n) + BigInt(e.quantityDeltaE8));
   }
+  const bookBefore = bookEvents.some((e) => e.occurredOn < period.start);
   const heldBefore = [...before.values()].some((q) => q !== 0n);
   const opening = input.openingSecuritiesCents ?? 0;
-  if (trades.length === 0 && held.length === 0 && opening === 0 && !heldBefore) return null;
+  if (trades.length === 0 && held.length === 0 && opening === 0 && !bookBefore) return null;
+
+  const readAsCash = input.cashOnlyStatements.filter((s) => s.end > period.end);
+  if (readAsCash.length > 0) {
+    const named = readAsCash.map((s) => `${s.fileName} (${dayWindowLabel(s.start, s.end)})`).join(", ");
+    const [statement, it] = readAsCash.length === 1 ? ["a later statement", "it"] : ["later statements", "them"];
+    throw new UnprovableSection(
+      `${who}'s positions would stand under ${statement} the ledger read as cash only — ${named} — refusing to write them unchecked`,
+      `the ledger read ${statement} of this account, ${named}, as cash only before these shares were in it, and they would stand under ${it} unchecked`,
+    );
+  }
 
   if (bookEvents.some((e) => e.occurredOn >= period.start && e.occurredOn <= period.end)) {
     throw new UnprovableSection(

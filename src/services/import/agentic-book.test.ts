@@ -1146,6 +1146,219 @@ describe("⛔ a book's months come off newest first — shares a later statement
   });
 });
 
+/** CONSTRUCTED: September sells all 0.25 WMT at $109.24 on 09/15 — cash $1.64 → $28.95, securities $26.22 → $0.00. */
+const AGENT_SELLS_ALL = [
+  line("09/01/2026 to 09/30/2026"),
+  line("Individual Account #:655929651"),
+  line("Account Summary"),
+  line("Net Account Balance $1.64 $28.95"),
+  line("Total Securities $26.22 $0.00"),
+  line("Portfolio Value $27.86 $28.95"),
+  line("Portfolio Summary"),
+  line("Total Securities $0.00 $0.00 0.00%"),
+  line("Brokerage Cash Balance $28.95 100.00%"),
+  line("Account Activity"),
+  header(685.13, 743.4),
+  line("Walmart"),
+  line("WMT Cash Sell 09/15/2026 0.25 $109.24000 $27.31", [
+    ["WMT", 269.66],
+    ["Cash", 341.55],
+    ["Sell", 431.63],
+    ["09/15/2026", 534.56],
+    ["0.25", 586.28],
+    ["$109.24000", 630.19],
+    ["$27.31", 743.4],
+  ]),
+  line("CUSIP: 931142103"),
+  totalFunds("$0.00", "$27.31"),
+  line("Executed Trades Pending Settlement"),
+  line("Total Executed Trades Pending Settlement $0.00 $0.00"),
+];
+
+/** AGENT_SELLS_ALL as a later parser version might read it: its Total Funds line off by a cent, so the section is withheld. */
+const AGENT_SELLS_ALL_UNPROVEN = AGENT_SELLS_ALL.map((l) => (l.text.startsWith("Total Funds Paid and Received") ? totalFunds("$0.00", "$27.32") : l));
+
+/** CONSTRUCTED: October after that sale — nothing held, nothing traded, the cash still $28.95. What a quiet month prints. */
+const AGENT_CASH_OCTOBER = [
+  line("10/01/2026 to 10/31/2026"),
+  line("Individual Account #:655929651"),
+  line("Account Summary"),
+  line("Net Account Balance $28.95 $28.95"),
+  line("Total Securities $0.00 $0.00"),
+  line("Portfolio Value $28.95 $28.95"),
+  line("Portfolio Summary"),
+  line("Total Securities $0.00 $0.00 0.00%"),
+  line("Brokerage Cash Balance $28.95 100.00%"),
+  line("Account Activity"),
+  header(685.13, 743.4),
+  totalFunds("$0.00", "$0.00"),
+  line("Executed Trades Pending Settlement"),
+  line("Total Executed Trades Pending Settlement $0.00 $0.00"),
+];
+
+/**
+ * ⛔ A month that follows the book's shares is a statement of the book, even when it holds nothing: its printed
+ * $0.00 is what says the sold shares are gone. Read as cash only, nothing on the book stood after the sale — so
+ * un-importing or re-reading the sale was never refused, and the sold 0.25 WMT came back into net worth while
+ * October's cash already held the $27.31 they sold for (measured 2026-09-16 on a real-ledger copy: +$27.37).
+ */
+describe("⛔ a month after the agent's shares is its book's statement — even one that holds nothing", () => {
+  const fileId = (db: AppDatabase, name: string) => db.select().from(importFiles).where(eq(importFiles.fileName, name)).get()!.id;
+  const OCTOBER = `${OCTOBER_FILE} (Oct 1 – 31, 2026)`;
+  const brokerageId = (db: AppDatabase) => db.select().from(accounts).where(eq(accounts.name, "Robinhood Brokerage")).get()!.id;
+
+  async function boughtSoldAndQuiet(db: AppDatabase) {
+    process.env.MONEYAPP_FAKE_TODAY = "2026-11-05";
+    const agenticId = ownersRobinhood(db);
+    const outcomes = await importStatementFiles(db, [
+      pdf(OCTOBER_FILE, [...OCTOBER_BROKERAGE, ...AGENT_CASH_OCTOBER]),
+      pdf(SEPTEMBER_FILE, [...SEPTEMBER_BROKERAGE, ...AGENT_SELLS_ALL]),
+      pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE]),
+    ]);
+    expect(outcomes.map((o) => [o.fileName, o.status, o.withheld])).toEqual([
+      [AGENT_BUYS_FILE, "parsed", []],
+      [SEPTEMBER_FILE, "parsed", []],
+      [OCTOBER_FILE, "parsed", []],
+    ]);
+    return { agenticId, bookId: bookOf(db, agenticId)!.id };
+  }
+
+  test("October after the sale of every share writes its $0.00 on the book — and un-importing September under it is refused, nothing changing", async () => {
+    const { agenticId, bookId } = await boughtSoldAndQuiet(bundle.db);
+    const book = stateOf(bundle.db, bookId);
+    expect(book.periods).toEqual([
+      { start: "2026-08-01", end: "2026-08-31", begin: 0, endCents: 2622, reconciliation: "value_anchor" },
+      { start: "2026-09-01", end: "2026-09-30", begin: 2622, endCents: 0, reconciliation: "value_anchor" },
+      { start: "2026-10-01", end: "2026-10-31", begin: 0, endCents: 0, reconciliation: "value_anchor" },
+    ]);
+    expect(book.events.map((e) => [e.on, e.delta])).toEqual([
+      ["2026-08-20", 25_000_000],
+      ["2026-09-15", -25_000_000],
+    ]);
+    expect(book.holdings.map((h) => [h.symbol, h.quantityE8, h.isActive])).toEqual([["WMT", 0, false]]);
+    // `pnpm ledger-check`'s witness now has October's printed $0.00 to check the book against
+    expect(statementDayValuation(portfolioSeries(bundle.db, [bookId]))("2026-10-31")).toBe(0);
+    expect(stateOf(bundle.db, agenticId).periods.at(-1)).toEqual({ start: "2026-10-01", end: "2026-10-31", begin: 2895, endCents: 2895, reconciliation: "reconciled" });
+    const before = wholeLedger(bundle.db);
+
+    expect(() => unimportFile(bundle.db, fileId(bundle.db, SEPTEMBER_FILE))).toThrow(
+      `Robinhood Agentic Brokerage still holds this statement's shares under a later statement — un-import ${OCTOBER} before it`,
+    );
+
+    expect(wholeLedger(bundle.db)).toEqual(before);
+    // the way the refusal names: October, then September, then August — and nothing is left
+    unimportFile(bundle.db, fileId(bundle.db, OCTOBER_FILE));
+    unimportFile(bundle.db, fileId(bundle.db, SEPTEMBER_FILE));
+    unimportFile(bundle.db, fileId(bundle.db, AGENT_BUYS_FILE));
+    expect(bookOf(bundle.db, agenticId)).toBeUndefined();
+  });
+
+  test("a re-read of September alone that no longer proves it is refused while October stands on its sale — the sold shares never come back", async () => {
+    const { bookId } = await boughtSoldAndQuiet(bundle.db);
+    const before = wholeLedger(bundle.db);
+
+    const [reread] = await reReadAtNextVersion(bundle.db, [pdf(SEPTEMBER_FILE, [...SEPTEMBER_BROKERAGE, ...AGENT_SELLS_ALL_UNPROVEN])]);
+
+    expect([reread!.status, reread!.error]).toEqual([
+      "failed",
+      `Robinhood Agentic Brokerage still holds this statement's shares under a later statement, and reading it again would take them away first — upload ${OCTOBER} with it to read them together`,
+    ]);
+    expect(wholeLedger(bundle.db)).toEqual(before);
+    expect(stateOf(bundle.db, bookId).holdings.map((h) => h.quantityE8)).toEqual([0]);
+  });
+
+  test("October read as cash before August's buy was in the ledger: August's section is withheld, naming October — no share stands under a month that prints none", async () => {
+    process.env.MONEYAPP_FAKE_TODAY = "2026-11-05";
+    const agenticId = ownersRobinhood(bundle.db);
+    const [october] = await importStatementFiles(bundle.db, [pdf(OCTOBER_FILE, [...OCTOBER_BROKERAGE, ...AGENT_CASH_OCTOBER])]);
+    expect([october!.status, october!.withheld]).toEqual(["parsed", []]);
+    const brokerageBefore = stateOf(bundle.db, brokerageId(bundle.db)).periods;
+
+    const [august] = await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
+
+    expect([august!.status, august!.withheld.map((w) => w.reason)]).toEqual([
+      "parsed",
+      [`the ledger read a later statement of this account, ${OCTOBER}, as cash only before these shares were in it, and they would stand under it unchecked`],
+    ]);
+    expect(bookOf(bundle.db, agenticId)).toBeUndefined();
+    expect(stateOf(bundle.db, agenticId).periods.map((p) => p.start)).toEqual(["2026-10-01"]);
+    // the rest of the file is read: Robinhood Brokerage's August lands beside the withheld section
+    expect(stateOf(bundle.db, brokerageId(bundle.db)).periods.map((p) => p.start)).toEqual([...brokerageBefore.map((p) => p.start), "2026-08-01"].sort());
+  });
+
+  test("the context names the cash account's months that stand on no book — and leaves out one the same upload reads again", async () => {
+    const agenticId = ownersRobinhood(bundle.db);
+    await importStatementFiles(bundle.db, [pdf(JUNE_FILE, [...JUNE_BROKERAGE, ...JUNE_SECOND])]);
+    await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
+    const agentic = (rereading?: Set<string>) =>
+      parseContextFor(bundle.db, rereading).knownAccounts.Robinhood?.find((a) => a.last4 === "9651");
+
+    // June was read before any share; August is the book's, so it is not cash only
+    expect(agentic()?.cashOnlyStatements).toEqual([{ fileName: JUNE_FILE, start: "2026-06-01", end: "2026-06-30" }]);
+    expect(agentic(new Set([fileId(bundle.db, JUNE_FILE)]))?.cashOnlyStatements).toBeUndefined();
+    // never an investment account's months, and never the book's own
+    expect(parseContextFor(bundle.db).knownAccounts.Robinhood?.find((a) => a.last4 === "3525")?.cashOnlyStatements).toBeUndefined();
+    expect(bookOf(bundle.db, agenticId)!.last4).toBeNull();
+  });
+
+  test("a month read out of order BEFORE the book's statement is proven as always — a book month is not one read as cash", async () => {
+    const agenticId = ownersRobinhood(bundle.db);
+    await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
+
+    const [june] = await importStatementFiles(bundle.db, [pdf(JUNE_FILE, [...JUNE_BROKERAGE, ...AGENT_ROUND_TRIP])]);
+
+    expect([june!.status, june!.withheld]).toEqual(["parsed", []]);
+    expect(stateOf(bundle.db, bookOf(bundle.db, agenticId)!.id).events.map((e) => [e.on, e.delta])).toEqual([
+      ["2026-06-10", 10_000_000],
+      ["2026-06-20", -10_000_000],
+      ["2026-08-20", 25_000_000],
+    ]);
+  });
+
+  test("the next parser version reads the three months together, oldest first — each proven, the book at $0.00, nothing withheld", async () => {
+    process.env.MONEYAPP_FAKE_TODAY = "2026-11-05";
+    const agenticId = ownersRobinhood(bundle.db);
+    const october = pdf(OCTOBER_FILE, [...OCTOBER_BROKERAGE, ...AGENT_CASH_OCTOBER]);
+    const august = pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE]);
+    const september = pdf(SEPTEMBER_FILE, [...SEPTEMBER_BROKERAGE, ...AGENT_SELLS_ALL]);
+    for (const file of [october, august, september]) await importStatementFiles(bundle.db, [file]);
+    // each later arrival is withheld against the October read as cash before it
+    expect(
+      bundle.db
+        .select()
+        .from(importFiles)
+        .all()
+        .map((f) => [f.fileName, withheldSectionsOf(f).length])
+        .sort(),
+    ).toEqual([
+      [OCTOBER_FILE, 0],
+      [SEPTEMBER_FILE, 1],
+      [AGENT_BUYS_FILE, 1],
+    ].sort());
+
+    // October's older read is read again AFTER August in the same upload, so it does not hold August back
+    const outcomes = await reReadAtNextVersion(bundle.db, [october, september, august]);
+
+    expect(outcomes.map((o) => [o.fileName, o.status, o.error, o.withheld])).toEqual([
+      [AGENT_BUYS_FILE, "parsed", undefined, []],
+      [SEPTEMBER_FILE, "parsed", undefined, []],
+      [OCTOBER_FILE, "parsed", undefined, []],
+    ]);
+    const book = stateOf(bundle.db, bookOf(bundle.db, agenticId)!.id);
+    expect(book.periods.map((p) => [p.start, p.begin, p.endCents])).toEqual([
+      ["2026-08-01", 0, 2622],
+      ["2026-09-01", 2622, 0],
+      ["2026-10-01", 0, 0],
+    ]);
+    expect(book.holdings.map((h) => [h.symbol, h.quantityE8, h.isActive])).toEqual([["WMT", 0, false]]);
+    expect(stateOf(bundle.db, agenticId).periods.map((p) => [p.start, p.begin, p.endCents, p.reconciliation])).toEqual([
+      ["2026-08-01", 2664, 164, "reconciled"],
+      ["2026-09-01", 164, 2895, "reconciled"],
+      ["2026-10-01", 2895, 2895, "reconciled"],
+    ]);
+  });
+});
+
 describe("writeStatementPositions — the positions are asked of the rows actually committed", () => {
   test("⛔ a book whose committed events do not make the printed positions throws, and the transaction rolls back", async () => {
     const agenticId = ownersRobinhood(bundle.db);

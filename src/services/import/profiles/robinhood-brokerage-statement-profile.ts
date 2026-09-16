@@ -781,8 +781,9 @@ function brokerageStatements(lines: readonly Line[], texts: readonly string[], s
  * out and Sell's cash in, dividends, interest, stock-lending pay — and its
  * period still has to close to the cent. The BOOK's statement carries the
  * positions, proven by `provePositions`, and Total Securities as its value
- * anchor. A month with no position in it yields the cash statement alone,
- * exactly as before.
+ * anchor. A month with no position in it and no book event before it yields
+ * the cash statement alone, exactly as before; a month after the book's shares
+ * is the book's statement even when it holds nothing (`provePositions`).
  *
  * The cash statement's hint names the account by last4 alone:
  *  - no `type`, so `resolveAccount` can never ADOPT Robinhood Cash (checking, no
@@ -825,6 +826,7 @@ function cashAccountStatements(
     held,
     trades: activity.trades,
     bookEvents: account.book?.events ?? [],
+    cashOnlyStatements: account.cashOnlyStatements ?? [],
     assetTypes,
   });
 

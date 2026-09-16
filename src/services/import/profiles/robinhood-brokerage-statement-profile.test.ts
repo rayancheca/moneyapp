@@ -1023,6 +1023,56 @@ describe("a section tracked as a cash account", () => {
     expect(reasonsFor(doc, [])).toEqual(["it opens with $26.22 of securities, and the ledger holds no position for it before Sep 1, 2026"]);
   });
 
+  /** September with nothing in it: no trade, no position, $0.00 of securities at both ends, the cash still $1.64. */
+  const quietSeptember = (): Line[] =>
+    septemberWith((l): Line[] => {
+      if (l === cdiv || l === sell || l.text === "Walmart" || l.text === "CUSIP: 931142103") return [];
+      if (l.text.startsWith("WMT Cash 0.15") || l.text.startsWith("Estimated Yield")) return [];
+      if (l.text.startsWith("Net Account Balance")) return [line("Net Account Balance $1.64 $1.64")];
+      if (l.text.startsWith("Total Securities $26.22")) return [line("Total Securities $0.00 $0.00")];
+      if (l.text.startsWith("Total Securities $16.64")) return [line("Total Securities $0.00 $0.00 0.00%")];
+      return l.text.startsWith("Total Funds Paid and Received") ? [totalFunds("$0.00", "$0.00", 685.13, 743.4)] : [l];
+    });
+  const SOLD_IN_AUGUST = [...BOUGHT_IN_AUGUST, { symbol: "WMT", occurredOn: "2026-08-25", quantityDeltaE8: -25_000_000 }];
+
+  test("⛔ a quiet month after the book sold everything is still the book's statement — its printed $0.00 stands on the sale", () => {
+    const { statements, withheld } = robinhoodBrokerageStatements(quietSeptember(), [BROKERAGE, CRYPTO, bookHolding(SOLD_IN_AUGUST)], WMT);
+
+    expect(withheld).toEqual([]);
+    expect(statements.slice(2).map((s) => s.accountHint)).toEqual([{ institution: "Robinhood", last4: "9651" }, agentBook]);
+    expect(statements[3]).toEqual({
+      accountHint: agentBook,
+      txns: [],
+      period: { start: "2026-09-01", end: "2026-09-30", beginCents: 0, endCents: 0 },
+      positions: { trades: [], held: [] },
+    });
+    // with no book event before it — no book, or one whose shares came later — the same month is cash, as it always was
+    for (const events of [[], [{ symbol: "WMT", occurredOn: "2026-10-02", quantityDeltaE8: 5_000_000 }]]) {
+      const read = robinhoodBrokerageStatements(quietSeptember(), [BROKERAGE, CRYPTO, bookHolding(events)], WMT);
+      expect([read.statements.length, read.withheld]).toEqual([3, []]);
+    }
+  });
+
+  test("⛔ a month proving positions before a later statement the ledger read as cash only is withheld, naming it", () => {
+    const october = { fileName: "0c6a9e57.pdf", start: "2026-10-01", end: "2026-10-31" };
+    const november = { fileName: "5b1d2e3f.pdf", start: "2026-11-01", end: "2026-11-30" };
+    const july = { fileName: "9e8d7c6b.pdf", start: "2026-07-01", end: "2026-07-31" };
+    const readAsCash = (...cashOnlyStatements: { fileName: string; start: string; end: string }[]) =>
+      robinhoodBrokerageStatements([...SEPTEMBER_BROKERAGE, ...AGENT_SELLS], [BROKERAGE, CRYPTO, { ...bookHolding(BOUGHT_IN_AUGUST), cashOnlyStatements }], WMT);
+
+    expect(readAsCash(july, october).withheld.map((w) => w.reason)).toEqual([
+      "the ledger read a later statement of this account, 0c6a9e57.pdf (Oct 1 – 31, 2026), as cash only before these shares were in it, and they would stand under it unchecked",
+    ]);
+    expect(readAsCash(october, november).withheld.map((w) => w.reason)).toEqual([
+      "the ledger read later statements of this account, 0c6a9e57.pdf (Oct 1 – 31, 2026), 5b1d2e3f.pdf (Nov 1 – 30, 2026), as cash only before these shares were in it, and they would stand under them unchecked",
+    ]);
+    // one that came before the month stands on nothing this month adds
+    expect(readAsCash(july).withheld).toEqual([]);
+    // and a month with no position in it is cash, whatever came later
+    const quiet = robinhoodBrokerageStatements(quietSeptember(), [BROKERAGE, CRYPTO, { ...AGENTIC, cashOnlyStatements: [october] }], WMT);
+    expect([quiet.statements.length, quiet.withheld]).toEqual([3, []]);
+  });
+
   test("⛔ a month re-read while a LATER month's trades are in the ledger is proven by what came before it alone — a version bump re-reads in file order", () => {
     const later = [...BOUGHT_IN_AUGUST, { symbol: "WMT", occurredOn: "2026-10-02", quantityDeltaE8: 5_000_000 }];
     const { statements, withheld } = robinhoodBrokerageStatements([...SEPTEMBER_BROKERAGE, ...AGENT_SELLS], [BROKERAGE, CRYPTO, bookHolding(later)], WMT);

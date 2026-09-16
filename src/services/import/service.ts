@@ -33,6 +33,7 @@ import { accountSlug, institutionSlug } from "./account-slug";
 import { detachAttachedRows, parsedFromFile, reattachDetachedRows } from "./attached-rows";
 import {
   bookEventsByCashAccount,
+  cashOnlyStatementsByAccount,
   equityAssetTypesOf,
   laterBookStatements,
   laterStatementsRefusal,
@@ -619,7 +620,7 @@ function rangesCovering(ranges: readonly CoveredRange[], day: string): CoveredRa
  * a file that carries several accounts and must parse only the tracked ones. An
  * account with no last4 cannot be matched by number and is left out.
  */
-export function parseContextFor(db: AppDatabase): ParseContext {
+export function parseContextFor(db: AppDatabase, rereading: ReadonlySet<string> = new Set()): ParseContext {
   const rows = db
     .select({ id: accounts.id, institution: institutions.name, last4: accounts.last4, type: accounts.type, subtype: accounts.subtype })
     .from(accounts)
@@ -627,14 +628,23 @@ export function parseContextFor(db: AppDatabase): ParseContext {
     .all();
   // a cash account's brokerage book, by the stored link — what a section's positions are proven against
   const books = bookEventsByCashAccount(db);
+  // …and the cash account's statements that stand on no book — a positions month is never written under one
+  const readAsCash = cashOnlyStatementsByAccount(db, rereading);
   const knownAccounts: Partial<Record<AccountHint["institution"], KnownAccount[]>> = {};
   for (const r of rows) {
     if (r.last4 === null) continue;
     const institution = r.institution as AccountHint["institution"];
     const events = books.get(r.id);
+    const cashOnly = readAsCash.get(r.id);
     knownAccounts[institution] = [
       ...(knownAccounts[institution] ?? []),
-      { last4: r.last4, type: r.type, subtype: r.subtype, ...(events === undefined ? {} : { book: { events } }) },
+      {
+        last4: r.last4,
+        type: r.type,
+        subtype: r.subtype,
+        ...(events === undefined ? {} : { book: { events } }),
+        ...(cashOnly === undefined ? {} : { cashOnlyStatements: cashOnly }),
+      },
     ];
   }
   return { knownAccounts, equityAssetTypes: equityAssetTypesOf(db) };
@@ -1213,7 +1223,9 @@ async function importOneFile(
   let statements: ParsedStatement[];
   let withheldSections: readonly WithheldSection[];
   try {
-    ({ statements, withheld: withheldSections } = asParsedFile(await profile.parse(file, parseContextFor(db))));
+    // a file this upload reads again is read after this one when it matters (`oldestFirstWhereItMatters`)
+    const rereading = new Set(batch.rereads.shaOfStale.keys());
+    ({ statements, withheld: withheldSections } = asParsedFile(await profile.parse(file, parseContextFor(db, rereading))));
   } catch (error: unknown) {
     const message = error instanceof ParseError ? error.message : `Unexpected: ${String(error)}`;
     db.update(importFiles)

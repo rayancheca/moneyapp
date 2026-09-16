@@ -11,7 +11,7 @@ import { transactions } from "@/db/schema/transactions";
 import { transferAmbiguities } from "@/db/schema/transfer-ambiguities";
 import { dayWindowLabel } from "@/lib/period";
 import { averageCostCents, nextCostBasis } from "@/lib/robinhood-holdings";
-import type { BookEvent, EquityAssetType, StatementPositions } from "./types";
+import type { BookEvent, CashOnlyStatement, EquityAssetType, StatementPositions } from "./types";
 
 /**
  * A cash account's BROKERAGE BOOK — the investment account that holds the positions its statement section proves.
@@ -229,8 +229,10 @@ export interface LaterBookStatement {
  * ⛔ A book's months come off newest first. Each month's positions were proven by the shares the book held before it
  * (`provePositions`), so a later month stands on an earlier month's buy: take the buy away and a later sale is left
  * alone, a short position no statement printed, valued into net worth (measured on the branch: WMT −0.1, −$11.09 a day
- * after un-importing August under September), and a later month that only holds prints shares the book no longer
- * has. An un-import or a re-read of a month with a later statement refuses and names these.
+ * after un-importing August under September), a later month that only holds prints shares the book no longer has,
+ * and a later month that holds NOTHING prints the sale gone while the book would hold its shares again. That last one
+ * is a book statement too — a month after any book event is (`provePositions`). An un-import or a re-read of a month
+ * with a later statement refuses and names these.
  *
  * ⚠️ Periods find both ends. Every book statement the import writes has a period row on its book — an account's first
  * statement, whose opening prints N/A, one with no balances (its declared range) — except a second copy of a month,
@@ -306,6 +308,46 @@ export function bookEventsByCashAccount(db: AppDatabase): Map<string, BookEvent[
     byCash.set(r.cashAccountId as string, list);
   }
   return byCash;
+}
+
+/**
+ * Every checking account's statements read as cash only — a period on the account from a file that wrote no period
+ * on the account's brokerage book — keyed by the account, oldest first. What `provePositions` withholds a month under.
+ *
+ * `rereading` names the files an upload reads again. Each is left out: the upload reads it AFTER the months before it
+ * (`orderKey`), against the book they leave, so its old read is not what it is about to be — kept, a version bump
+ * would withhold August again under the October it is about to read as the book's.
+ */
+export function cashOnlyStatementsByAccount(db: AppDatabase, rereading: ReadonlySet<string>): Map<string, CashOnlyStatement[]> {
+  const onBooks = new Set(
+    db
+      .select({ cashAccountId: accounts.cashAccountId, importFileId: statementPeriods.importFileId })
+      .from(statementPeriods)
+      .innerJoin(accounts, eq(accounts.id, statementPeriods.accountId))
+      .where(isNotNull(accounts.cashAccountId))
+      .all()
+      .map((r) => `${r.cashAccountId}|${r.importFileId}`),
+  );
+  const rows = db
+    .select({
+      accountId: statementPeriods.accountId,
+      importFileId: statementPeriods.importFileId,
+      fileName: importFiles.fileName,
+      start: statementPeriods.periodStart,
+      end: statementPeriods.periodEnd,
+    })
+    .from(statementPeriods)
+    .innerJoin(accounts, eq(accounts.id, statementPeriods.accountId))
+    .innerJoin(importFiles, eq(importFiles.id, statementPeriods.importFileId))
+    .where(eq(accounts.type, "checking"))
+    .orderBy(asc(statementPeriods.periodStart), asc(importFiles.fileName))
+    .all();
+  const byAccount = new Map<string, CashOnlyStatement[]>();
+  for (const r of rows) {
+    if (rereading.has(r.importFileId) || onBooks.has(`${r.accountId}|${r.importFileId}`)) continue;
+    byAccount.set(r.accountId, [...(byAccount.get(r.accountId) ?? []), { fileName: r.fileName, start: r.start, end: r.end }]);
+  }
+  return byAccount;
 }
 
 /**
