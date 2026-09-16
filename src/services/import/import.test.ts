@@ -3352,6 +3352,8 @@ describe("un-import keeps a row attached to its file, and a re-import files it t
     attach(s.unattached, s.fileId);
     // a kept leg whose only partner is a row the file parsed
     const doomed = rowsOf(s.fileId).find((t) => t.fileLinkSource === null && t.transferGroupId === null)!;
+    // a note on a row the un-import deletes goes with it
+    bundle.db.update(transactions).set({ notes: "lost with the row" }).where(eq(transactions.id, doomed.id)).run();
     const orphaned = hand(s.accountId, "2024-10-01", -777, "HAND LEG OF A PARSED ROW");
     attach(orphaned, s.fileId);
     group([orphaned, doomed.id], orphaned);
@@ -3389,6 +3391,7 @@ describe("un-import keeps a row attached to its file, and a re-import files it t
       kept: 4,
       keptRefiled: 0,
       userCategorizedDeleted: deleted.filter((t) => t.categorizationSource === "user").length,
+      notesDeleted: deleted.filter((t) => t.notes !== null).length,
       inflowCents: activeCents(1),
       outflowCents: activeCents(-1),
       duplicateSurvivors: 0,
@@ -3397,6 +3400,7 @@ describe("un-import keeps a row attached to its file, and a re-import files it t
       transferLegsKeptLinked: linkedNow.length,
     });
     // not vacuous: a leg does go, three kept rows are legs, and the one kept row is the owner's own categorization
+    expect(counts!.notesDeleted).toBeGreaterThan(0);
     expect(counts!.transferLegsDeleted).toBeGreaterThan(0);
     expect(counts!.transferLegsKept).toBe(3);
     expect(row(s.attached)!.categorizationSource).toBe("user");

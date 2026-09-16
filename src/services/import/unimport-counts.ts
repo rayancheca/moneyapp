@@ -34,6 +34,8 @@ export interface UnimportCounts {
   keptRefiled: number;
   /** deleted rows the owner categorized BY HAND: the work that cannot come back */
   userCategorizedDeleted: number;
+  /** deleted rows carrying a note — a note goes with its row, and no import writes it again */
+  notesDeleted: number;
   /** the deleted rows' money in the ledger — active rows only */
   inflowCents: number;
   outflowCents: number;
@@ -64,6 +66,7 @@ export const NO_UNIMPORT_ROWS: UnimportCounts = {
   kept: 0,
   keptRefiled: 0,
   userCategorizedDeleted: 0,
+  notesDeleted: 0,
   inflowCents: 0,
   outflowCents: 0,
   duplicateSurvivors: 0,
@@ -95,6 +98,7 @@ export function unimportCountsByFile(
       kept: tally(kept),
       keptRefiled: tally(sql`${kept} AND ${transactions.id} IN (SELECT value FROM json_each(${refiledIds}))`),
       userCategorizedDeleted: tally(sql`${deleted} AND ${transactions.categorizationSource} = 'user'`),
+      notesDeleted: tally(sql`${deleted} AND ${transactions.notes} IS NOT NULL`),
       /*
        * 🔴 The MONEY line names the ledger, and a superseded row is not in it.
        * `rocket-money-export-2026-08-25.csv` holds 39 rows, every one of them

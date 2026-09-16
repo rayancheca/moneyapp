@@ -67,8 +67,15 @@ const NO_UNDO = "There is no undo for this inside the app.";
  * the charge the owner said was not that bill comes back linked, if its series
  * still carries the description.
  */
+/*
+ * 🔴 …and it named the hand-categorization and the hand recurring links as the only losses, and listed transfer
+ * detection among what re-importing re-runs, as if the links came back that way. A round trip also deletes every note
+ * on the rows it takes (20260812-statements-3522-.pdf: 9, on a copy of the real ledger, 2026-09-16), and detection never
+ * paired the 7 transfers that file lost — the owner had linked them by hand because it could not. A transfer now comes
+ * back through its own lines (`unimported-transfers`), and the sentence says exactly when.
+ */
 const REASSURANCE =
-  "The statement file itself stays on disk. Re-importing brings the rows back and re-runs the rules, the merchant map, transfer detection and recurring-series linking over them — but a charge links again only where its series still recognises it: by another charge with the same description, or as a registered commitment's first charge on its date and amount. What is lost is the hand-categorization, and the recurring links you attached or removed by hand.";
+  "The statement file itself stays on disk. Re-importing brings the rows back and re-runs the rules, the merchant map and recurring-series linking over them — but a charge links again only where its series still recognises it: by another charge with the same description, or as a registered commitment's first charge on its date and amount. A transfer is linked again when the same line comes back and its other leg is still in the ledger and not linked elsewhere. What is lost is the hand-categorization, the notes, and the recurring links you attached or removed by hand.";
 
 /**
  * 🔴 A statement downloaded twice keeps ONE period and one set of rows, filed under whichever download came first, and
@@ -93,6 +100,8 @@ function handOverHeadline(subject: string, { deleted, kept, handedOver, keptRefi
 function headline(subject: string, counts: UnimportCounts): string {
   const { deleted, kept } = counts;
   if (counts.handedOver > 0 || counts.keptRefiled > 0) return handOverHeadline(subject, counts);
+  // a second download of a statement owns no row: "every row it brought in" read as if it had some
+  if (kept === 0 && deleted === 0) return `Un-importing ${subject} deletes no transactions. ${NO_UNDO}`;
   if (kept === 0) return `Un-importing ${subject} deletes every row it brought in. ${NO_UNDO}`;
   const keptRows = countPhrase(kept, "row");
   if (deleted === 0) {
@@ -130,13 +139,18 @@ export function unimportRadius({ subject, counts, balances, periods, periodsHand
       { label: "Transactions deleted", value: countPhrase(counts.deleted, "transaction"), irreversible: counts.deleted > 0 },
       ...optional(counts.transferLegsDeleted > 0, {
         label: "Transfer legs deleted",
-        value: `${countPhrase(counts.transferLegsDeleted, "leg")} — a partner left alone in its transfer is unlinked`,
+        value: `${countPhrase(counts.transferLegsDeleted, "leg")} — a partner left alone in its transfer is unlinked, and linked again when the same line is imported again`,
       }),
       {
         label: "Categorized by you",
         value: countPhrase(counts.userCategorizedDeleted, "transaction"),
         irreversible: counts.userCategorizedDeleted > 0,
       },
+      ...optional(counts.notesDeleted > 0, {
+        label: "Notes on deleted transactions",
+        value: countPhrase(counts.notesDeleted, "note"),
+        irreversible: true,
+      }),
       {
         label: "Money leaving the ledger",
         value: `${formatCents(counts.inflowCents)} in · ${formatCents(counts.outflowCents)} out`,

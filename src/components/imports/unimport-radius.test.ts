@@ -18,6 +18,7 @@ const VENTURE_X_AUG: UnimportCounts = {
   kept: 0,
   keptRefiled: 0,
   userCategorizedDeleted: 8,
+  notesDeleted: 0,
   inflowCents: 1_302_366,
   outflowCents: 237_120,
   duplicateSurvivors: 0,
@@ -38,6 +39,7 @@ const SAPPHIRE_MAR: UnimportCounts = {
   kept: 5,
   keptRefiled: 0,
   userCategorizedDeleted: 0,
+  notesDeleted: 0,
   inflowCents: 79_848,
   outflowCents: 0,
   duplicateSurvivors: 4,
@@ -53,6 +55,7 @@ const SAPPHIRE_JUL: UnimportCounts = {
   kept: 4,
   keptRefiled: 0,
   userCategorizedDeleted: 0,
+  notesDeleted: 0,
   inflowCents: 5_102,
   outflowCents: 0,
   duplicateSurvivors: 0,
@@ -72,6 +75,7 @@ const SAPPHIRE_JUL_2025: UnimportCounts = {
   kept: 2,
   keptRefiled: 0,
   userCategorizedDeleted: 1,
+  notesDeleted: 0,
   inflowCents: 336_699,
   outflowCents: 0,
   duplicateSurvivors: 8,
@@ -95,7 +99,7 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
       "Un-importing Statement_082026_4208.pdf deletes every row it brought in. There is no undo for this inside the app.",
     );
     expect(valueOf(r, "Transactions deleted")).toBe("50 transactions");
-    expect(valueOf(r, "Transfer legs deleted")).toBe("3 legs — a partner left alone in its transfer is unlinked");
+    expect(valueOf(r, "Transfer legs deleted")).toBe("3 legs — a partner left alone in its transfer is unlinked, and linked again when the same line is imported again");
     expect(valueOf(r, "Categorized by you")).toBe("8 transactions");
     expect(valueOf(r, "Money leaving the ledger")).toBe("$13,023.66 in · $2,371.20 out");
     expect(labels(r)).not.toContain(KEPT);
@@ -112,7 +116,7 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
     );
     expect(r.lines).toEqual([
       { label: "Transactions deleted", value: "4 transactions", irreversible: true },
-      { label: "Transfer legs deleted", value: "4 legs — a partner left alone in its transfer is unlinked" },
+      { label: "Transfer legs deleted", value: "4 legs — a partner left alone in its transfer is unlinked, and linked again when the same line is imported again" },
       { label: "Categorized by you", value: "no transactions", irreversible: false },
       { label: "Money leaving the ledger", value: "$798.48 in · $0.00 out" },
       { label: "…of which comes back", value: "4 rows whose retired duplicate is restored" },
@@ -200,6 +204,37 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
     );
     expect(valueOf(mixed, KEPT)).toBe("1 transaction filed under it by hand");
     expect(mixed.reassurance).toContain("The 1 row filed under it by hand keeps its money");
+  });
+
+  /**
+   * 🔴 The reassurance named the hand-categorization and the hand recurring links as the only losses, and said
+   * re-importing "re-runs … transfer detection" as if the links came back. A round trip also loses every note on the
+   * rows it deletes (20260812-statements-3522-.pdf: 9, on a copy of the real ledger, 2026-09-16), and a transfer comes
+   * back only through its own lines and its other leg — not through detection.
+   */
+  test("the notes a deletion takes are counted, and a transfer is promised back only with its lines and its partner", () => {
+    const withNotes: UnimportCounts = { ...VENTURE_X_AUG, notesDeleted: 9 };
+    const r = radius("20260812-statements-3522-.pdf", withNotes, 2, 1);
+
+    expect(r.lines).toContainEqual({ label: "Notes on deleted transactions", value: "9 notes", irreversible: true });
+    expect(valueOf(r, "Transfer legs deleted")).toBe(
+      "3 legs — a partner left alone in its transfer is unlinked, and linked again when the same line is imported again",
+    );
+    expect(r.reassurance).toContain("What is lost is the hand-categorization, the notes, and the recurring links you attached or removed by hand.");
+    expect(r.reassurance).toContain(
+      "A transfer is linked again when the same line comes back and its other leg is still in the ledger and not linked elsewhere.",
+    );
+    expect(r.reassurance).not.toContain("transfer detection");
+    // no line where no note goes
+    expect(labels(radius("x.pdf", VENTURE_X_AUG, 0, 1))).not.toContain("Notes on deleted transactions");
+  });
+
+  test("a download that owns no row says it deletes none", () => {
+    // 20230810-statements-3522-.pdf's third download, on a copy of the real ledger, 2026-09-16
+    const nothing: UnimportCounts = { ...VENTURE_X_AUG, deleted: 0, userCategorizedDeleted: 0, inflowCents: 0, outflowCents: 0, transferLegsDeleted: 0 };
+    expect(radius("20230810-statements-3522-.pdf", nothing, 0, 0).headline).toBe(
+      "Un-importing 20230810-statements-3522-.pdf deletes no transactions. There is no undo for this inside the app.",
+    );
   });
 
   test("the sentence a screen reader hears carries both halves", () => {
