@@ -73,9 +73,14 @@ const NO_UNDO = "There is no undo for this inside the app.";
  * on the rows it takes (20260812-statements-3522-.pdf: 9, on a copy of the real ledger, 2026-09-16), and detection never
  * paired the 7 transfers that file lost — the owner had linked them by hand because it could not. A transfer now comes
  * back through its own lines (`unimported-transfers`), and the sentence says exactly when.
+ *
+ * 🔴 …"its other leg is still in the ledger" did not hold when the other leg's statement was un-imported too, and the
+ * "Transfer legs deleted" line promised the link back with no condition at all. Both now name the same condition, and
+ * the other leg's own round trip no longer breaks it (20260812-statements-3522-.pdf with Statement_082026_4208.pdf, on a
+ * copy of the real ledger, 2026-09-16: two-leg groups 757 -> 755 before, 757 -> 757 after).
  */
 const REASSURANCE =
-  "The statement file itself stays on disk. Re-importing brings the rows back and re-runs the rules, the merchant map and recurring-series linking over them — but a charge links again only where its series still recognises it: by another charge with the same description, or as a registered commitment's first charge on its date and amount. A transfer is linked again when the same line comes back and its other leg is still in the ledger and not linked elsewhere. What is lost is the hand-categorization, the notes, and the recurring links you attached or removed by hand.";
+  "The statement file itself stays on disk. Re-importing brings the rows back and re-runs the rules, the merchant map and recurring-series linking over them — but a charge links again only where its series still recognises it: by another charge with the same description, or as a registered commitment's first charge on its date and amount. A transfer is linked again once the same line and its other leg are both in the ledger again — the other leg kept, or imported again from its own statement — unless that leg was deleted by hand or linked elsewhere in the meantime. What is lost is the hand-categorization, the notes, and the recurring links you attached or removed by hand.";
 
 /**
  * 🔴 A statement downloaded twice keeps ONE period and one set of rows, filed under whichever download came first, and
@@ -139,7 +144,7 @@ export function unimportRadius({ subject, counts, balances, periods, periodsHand
       { label: "Transactions deleted", value: countPhrase(counts.deleted, "transaction"), irreversible: counts.deleted > 0 },
       ...optional(counts.transferLegsDeleted > 0, {
         label: "Transfer legs deleted",
-        value: `${countPhrase(counts.transferLegsDeleted, "leg")} — a partner left alone in its transfer is unlinked, and linked again when the same line is imported again`,
+        value: `${countPhrase(counts.transferLegsDeleted, "leg")} — a partner left alone in its transfer is unlinked, and linked again once the same line is imported again — unless by then the partner was deleted by hand or linked elsewhere`,
       }),
       {
         label: "Categorized by you",

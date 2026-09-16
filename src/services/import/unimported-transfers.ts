@@ -20,6 +20,13 @@ import { parsedFromFile } from "./attached-rows";
  * The transfer is kept by its old group: each leg the un-import deletes by its content (the columns an import matches a
  * line by, and the category the pair gave it), each leg that stays by its row. A transfer that keeps two legs outside
  * the file is still a transfer and is not kept.
+ *
+ * 🔴 …and a leg kept by its row was lost with its own file. The first un-import unlinks the partner, so un-importing
+ * the partner's file found it in no transfer and kept nothing, and the next import found the kept row gone and dropped
+ * the record. Measured on a copy of the real ledger, 2026-09-16: un-importing 20260812-statements-3522-.pdf and
+ * Statement_082026_4208.pdf, then importing both again, took two-leg groups 757 -> 755 and left Chase Checking's
+ * $11,476.31 and $115.17 Venture X payments uncategorized. A kept leg whose row an un-import deletes is kept by its
+ * content from then on, and a leg that comes back before the others waits by its row.
  */
 
 const GROUP_CHUNK = 500;
@@ -48,6 +55,7 @@ function liveLegs(tx: AppDatabase, groupIds: readonly string[]): Row[] {
  * groups are still there to be read.
  */
 export function rememberTransfersTakenApart(tx: AppDatabase, importFileId: string): void {
+  keepStayingLegsByContent(tx, importFileId);
   const doomed = tx
     .select({ id: transactions.id, groupId: transactions.transferGroupId })
     .from(transactions)
@@ -83,8 +91,55 @@ export function rememberTransfersTakenApart(tx: AppDatabase, importFileId: strin
 
 type Kept = typeof unimportedTransferLegs.$inferSelect;
 
-/** Each lost leg claims one candidate: same account, posted day and amount first, then transaction day and amount. */
-function claim(lost: readonly Kept[], candidates: readonly Row[], taken: Set<string>): Map<string, Row> | null {
+/**
+ * A kept transfer names a leg that stayed by its row. When that row's file is un-imported, or retired by a re-read at
+ * a new parser version, the leg is kept by its content instead, with its category — unless the row was retired or
+ * linked elsewhere before, which ends the kept transfer (`relinkReturningTransfers` reads the same). Call it before
+ * the rows are deleted or retired.
+ */
+export function keepStayingLegsByContent(tx: AppDatabase, importFileId: string): void {
+  const kept = tx.select().from(unimportedTransferLegs).where(isNotNull(unimportedTransferLegs.transactionId)).all();
+  if (kept.length === 0) return;
+  const doomed = new Map(
+    tx
+      .select()
+      .from(transactions)
+      .where(parsedFromFile(importFileId))
+      .all()
+      .map((r) => [r.id, r] as const),
+  );
+  const ended = new Set<string>();
+  for (const leg of kept) {
+    const row = doomed.get(leg.transactionId!);
+    if (row === undefined) continue;
+    if (row.status === "superseded" || row.transferGroupId !== null) {
+      ended.add(leg.transferGroupId);
+      continue;
+    }
+    tx.update(unimportedTransferLegs)
+      .set({
+        transactionId: null,
+        accountId: row.accountId,
+        postedOn: row.postedOn,
+        transactedOn: row.transactedOn,
+        amountCents: row.amountCents,
+        normalizedDescription: row.normalizedDescription,
+        categoryId: row.categoryId,
+        categorizationSource: row.categorizationSource,
+        categorizationConfidence: row.categorizationConfidence,
+      })
+      .where(eq(unimportedTransferLegs.id, leg.id))
+      .run();
+  }
+  for (const groupId of ended) tx.delete(unimportedTransferLegs).where(eq(unimportedTransferLegs.transferGroupId, groupId)).run();
+}
+
+/**
+ * Each lost leg claims one candidate: same account, posted day and amount first, then transaction day and amount. A leg
+ * no candidate matches is left out of the result.
+ */
+function claim(lost: readonly Kept[], candidates: readonly Row[], taken: ReadonlySet<string>): Map<string, Row> {
+  const held = new Set(taken);
   const claimed = new Map<string, Row>();
   const lenses: ((k: Kept, r: Row) => boolean)[] = [
     (k, r) => k.postedOn === r.postedOn,
@@ -94,7 +149,7 @@ function claim(lost: readonly Kept[], candidates: readonly Row[], taken: Set<str
     let winner: Row | undefined;
     for (const sameDay of lenses) {
       winner = candidates
-        .filter((r) => !taken.has(r.id) && r.accountId === leg.accountId && r.amountCents === leg.amountCents && sameDay(leg, r))
+        .filter((r) => !held.has(r.id) && r.accountId === leg.accountId && r.amountCents === leg.amountCents && sameDay(leg, r))
         .sort(
           (a, b) =>
             descriptionScore(b.normalizedDescription, leg.normalizedDescription) -
@@ -102,19 +157,29 @@ function claim(lost: readonly Kept[], candidates: readonly Row[], taken: Set<str
         )[0];
       if (winner) break;
     }
-    if (!winner) return null;
-    taken.add(winner.id);
+    if (!winner) continue;
+    held.add(winner.id);
     claimed.set(leg.id, winner);
   }
   return claimed;
 }
 
+/** The category a kept leg takes back when its line returns: the one the pair gave it, if that category still exists. */
+function pairCategoryOf(leg: Kept, categoryIds: ReadonlySet<string>): Partial<Row> {
+  const isPairs =
+    leg.categoryId !== null && categoryIds.has(leg.categoryId) && leg.categorizationSource !== null && PAIR_SOURCES.has(leg.categorizationSource);
+  return isPairs
+    ? { categoryId: leg.categoryId, categorizationSource: leg.categorizationSource, categorizationConfidence: leg.categorizationConfidence }
+    : {};
+}
+
 /**
- * Links each kept transfer again once every leg it lost is among `candidateIds` (rows an import just wrote, not yet in
- * a transfer). A transfer whose staying leg is gone, retired or linked again since is forgotten: the owner moved on.
- * The group is keyed as every transfer path keys it — by its one outflow, else by the first returning leg — and a
- * returning leg takes back the category the pair gave it. Returns the ids linked. Call it before categorization and
- * transfer detection, which would otherwise read the returning legs as unpaired rows.
+ * Links each kept transfer again once every leg it lost is back among `candidateIds` (rows an import just wrote, not
+ * yet in a transfer). A leg that comes back before the others takes back its category and waits by its row for them
+ * (the files of a transfer's two legs, imported again one at a time). A transfer whose kept row is gone, retired or
+ * linked again since is forgotten: the owner moved on. The group is keyed as every transfer path keys it — by its one
+ * outflow, else by the first returning leg. Returns the ids linked. Call it before categorization and transfer
+ * detection, which would otherwise read the returning legs as unpaired rows.
  */
 export function relinkReturningTransfers(db: AppDatabase, candidateIds: readonly string[]): string[] {
   const kept = db.select().from(unimportedTransferLegs).all();
@@ -149,29 +214,28 @@ export function relinkReturningTransfers(db: AppDatabase, candidateIds: readonly
       }
       if (candidates.length === 0) continue;
       const lost = legs.filter((k) => k.transactionId === null);
-      const claimed = claim(lost, candidates, new Set(taken));
-      if (claimed === null) continue;
-      for (const row of claimed.values()) taken.add(row.id);
+      const claimed = claim(lost, candidates, taken);
+      if (claimed.size === 0) continue;
+      for (const [legId, row] of claimed) {
+        taken.add(row.id);
+        const category = pairCategoryOf(legs.find((k) => k.id === legId)!, categoryIds);
+        if (Object.keys(category).length > 0) tx.update(transactions).set(category).where(eq(transactions.id, row.id)).run();
+      }
+      if (claimed.size < lost.length) {
+        // the others are still out: a returned leg waits by its row, its category given back already
+        for (const [legId, row] of claimed) {
+          tx.update(unimportedTransferLegs)
+            .set({ transactionId: row.id, categoryId: null, categorizationSource: null, categorizationConfidence: null })
+            .where(eq(unimportedTransferLegs.id, legId))
+            .run();
+        }
+        continue;
+      }
       const members = [...(staying as Row[]), ...claimed.values()];
       const outflows = members.filter((m) => m.amountCents < 0);
       const key = outflows.length === 1 ? outflows[0]!.id : [...claimed.values()][0]!.id;
-      for (const member of staying as Row[]) {
+      for (const member of members) {
         tx.update(transactions).set({ transferGroupId: key, needsReview: false }).where(eq(transactions.id, member.id)).run();
-      }
-      for (const leg of lost) {
-        const row = claimed.get(leg.id)!;
-        const pairCategory =
-          leg.categoryId !== null && categoryIds.has(leg.categoryId) && leg.categorizationSource !== null && PAIR_SOURCES.has(leg.categorizationSource);
-        tx.update(transactions)
-          .set({
-            transferGroupId: key,
-            needsReview: false,
-            ...(pairCategory
-              ? { categoryId: leg.categoryId, categorizationSource: leg.categorizationSource, categorizationConfidence: leg.categorizationConfidence }
-              : {}),
-          })
-          .where(eq(transactions.id, row.id))
-          .run();
       }
       linked.push(...members.map((m) => m.id));
       forget();

@@ -13,6 +13,7 @@ import { createAccount } from "@/services/accounts";
 import { recurringSeries } from "@/db/schema/recurring";
 import { statementCopies, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
+import { unimportedTransferLegs } from "@/db/schema/unimported-transfer-legs";
 import { latestBalances, netWorthSeries, rebuildAccount } from "@/services/derivation";
 import { listSplits, setSplits } from "@/services/transaction-splits";
 import { asParsedFile, fidelityOf, importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, parseContextFor, reconcileAccounts, resolveAccount, type ImportInput } from "./service";
@@ -503,6 +504,102 @@ describe("a transfer pair an un-import takes apart", () => {
     expect(back).toHaveLength(1);
     expect(row(partner)!.transferGroupId).toBe(back[0]!.id);
     expect(back[0]).toMatchObject({ transferGroupId: back[0]!.id, categoryId: leg.categoryId, categorizationSource: "user" });
+  });
+
+  /*
+   * 🔴 The first un-import kept the partner by its row id and unlinked it. Un-importing the partner's own file then
+   * skipped it — it was in no transfer any more — so nothing kept its line, and the import that brought both lines
+   * back found the kept partner gone and dropped the record. Measured on a copy of the real ledger, 2026-09-16:
+   * un-importing 20260812-statements-3522-.pdf and Statement_082026_4208.pdf, then importing both again, took two-leg
+   * groups 757 -> 755 and left the $11,476.31 and $115.17 Venture X payments uncategorized on Chase Checking.
+   */
+  const CHECKING = { name: "Chase4321_Activity_hand-pair.CSV", buffer: Buffer.from(["Details,Posting Date,Description,Amount,Type,Balance,Check or Slip #", "DEBIT,03/02/2026,ONLINE PAYMENT TO CARD,-500.00,ACH_DEBIT,,"].join("\n")) };
+  // not the same money: detection cannot pair it, which is why the owner linked it by hand
+  const CARD = { name: "Chase1111_Activity_hand-pair.CSV", buffer: Buffer.from(["Card,Transaction Date,Post Date,Description,Category,Type,Amount,Memo", "1111,03/03/2026,03/03/2026,Payment Thank You-Mobile,,Payment,498.50,"].join("\n")) };
+  const fileNamed = (name: string) =>
+    bundle.db.select().from(importFilesTable).where(and(eq(importFilesTable.fileName, name), ne(importFilesTable.status, "superseded"))).get()!.id;
+  const rowsOf = (name: string) => bundle.db.select().from(transactions).where(eq(transactions.importFileId, fileNamed(name))).all();
+
+  async function pairAcrossTwoFiles() {
+    const { linkTransferPair } = await import("@/services/transfer-links");
+    await importStatementFiles(bundle.db, [CHECKING, CARD]);
+    const [out] = rowsOf(CHECKING.name);
+    const [inn] = rowsOf(CARD.name);
+    expect([out!.transferGroupId, inn!.transferGroupId]).toEqual([null, null]);
+    linkTransferPair(bundle.db, out!.id, inn!.id);
+    return { out: row(out!.id)!, inn: row(inn!.id)! };
+  }
+
+  function expectLinkedAgain(was: { out: typeof transactions.$inferSelect; inn: typeof transactions.$inferSelect }) {
+    const [out] = rowsOf(CHECKING.name);
+    const [inn] = rowsOf(CARD.name);
+    expect(out!.id).not.toBe(was.out.id);
+    expect(inn!.id).not.toBe(was.inn.id);
+    expect(out).toMatchObject({ transferGroupId: out!.id, categoryId: was.out.categoryId, categorizationSource: "user", needsReview: false });
+    expect(inn).toMatchObject({ transferGroupId: out!.id, categoryId: was.inn.categoryId, categorizationSource: "user", needsReview: false });
+    expect(groupOf(out!.id)).toEqual([out!.id, inn!.id].sort());
+  }
+
+  test("both files of a pair un-imported, then imported again in one upload, link the pair again", async () => {
+    const was = await pairAcrossTwoFiles();
+    expect(was.out.categoryId).not.toBeNull();
+    unimportFile(bundle.db, fileNamed(CHECKING.name));
+    unimportFile(bundle.db, fileNamed(CARD.name));
+
+    await importStatementFiles(bundle.db, [CHECKING, CARD]);
+    expectLinkedAgain(was);
+  });
+
+  test.each([
+    ["the card first", [CARD, CHECKING]],
+    ["the checking first", [CHECKING, CARD]],
+  ])("…and imported again one file at a time, %s", async (_, order) => {
+    const was = await pairAcrossTwoFiles();
+    unimportFile(bundle.db, fileNamed(CARD.name));
+    unimportFile(bundle.db, fileNamed(CHECKING.name));
+
+    await importStatementFiles(bundle.db, [order[0]!]);
+    // the first line back takes back its category at once, and waits unlinked for its partner
+    const [first] = rowsOf(order[0]!.name);
+    const firstWas = order[0] === CARD ? was.inn : was.out;
+    expect(first).toMatchObject({ transferGroupId: null, categoryId: firstWas.categoryId, categorizationSource: "user" });
+    await importStatementFiles(bundle.db, [order[1]!]);
+    expectLinkedAgain(was);
+  });
+
+  test("a leg back before its partner, un-imported again, is still kept by its line", async () => {
+    const was = await pairAcrossTwoFiles();
+    unimportFile(bundle.db, fileNamed(CARD.name));
+    unimportFile(bundle.db, fileNamed(CHECKING.name));
+    await importStatementFiles(bundle.db, [CHECKING]);
+    unimportFile(bundle.db, fileNamed(CHECKING.name));
+
+    await importStatementFiles(bundle.db, [CARD, CHECKING]);
+    expectLinkedAgain(was);
+  });
+
+  test("a partner whose statement is read again at a new parser version is kept by its line", async () => {
+    const was = await pairAcrossTwoFiles();
+    unimportFile(bundle.db, fileNamed(CHECKING.name));
+    await withBumpedParserVersion("chase-card-csv", () => importStatementFiles(bundle.db, [CARD]));
+    expect(bundle.db.select().from(transactions).where(eq(transactions.id, was.inn.id)).get()!.status).toBe("superseded");
+
+    await importStatementFiles(bundle.db, [CHECKING]);
+    expectLinkedAgain(was);
+  });
+
+  test("a partner linked elsewhere before its own file is un-imported is not kept for the old transfer", async () => {
+    const { linkTransferPair } = await import("@/services/transfer-links");
+    const was = await pairAcrossTwoFiles();
+    unimportFile(bundle.db, fileNamed(CHECKING.name));
+    const other = hand(was.out.accountId, "2026-03-04", -49_850, "SOMETHING ELSE");
+    linkTransferPair(bundle.db, other, was.inn.id);
+    unimportFile(bundle.db, fileNamed(CARD.name));
+
+    await importStatementFiles(bundle.db, [CHECKING, CARD]);
+    const [out] = rowsOf(CHECKING.name);
+    expect(out!.transferGroupId).toBeNull();
+    expect(bundle.db.select().from(unimportedTransferLegs).all()).toEqual([]);
   });
 });
 

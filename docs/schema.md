@@ -144,7 +144,10 @@ names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
   whose legs were all the file's) is kept in `unimported_transfer_legs` — the deleted legs by
   content and the category the pair gave them, the staying leg by id — and linked again, with
   that category, when an import writes the same lines; a staying leg the owner has linked
-  elsewhere meanwhile ends it.
+  elsewhere meanwhile ends it. A staying leg whose own file is un-imported (or re-read at a new
+  parser version) is kept by content from then on, and a leg that comes back before the others
+  takes back its category and waits by id — so both files of a pair can be round-tripped, in one
+  upload or one at a time.
   Unlike a re-parse it is **destructive to user work** — those rows
   leave the database, so their categories, notes, links and splits go with them (a pre-mutation
   snapshot is taken so the operation is recoverable).

@@ -7,7 +7,9 @@ import { CATEGORIZATION_SOURCES } from "./transactions";
  * The legs of a transfer an un-import took apart, kept until the same lines are imported again
  * (`services/import/unimported-transfers`). One row per leg, grouped by the transfer's old `transfer_group_id`: a leg
  * the un-import deleted is kept by its content — the columns an import matches a line by — and a leg that stayed is
- * kept by its row id (`transaction_id`, no foreign key: the row may be deleted later, and the record is then dropped).
+ * kept by its row id (`transaction_id`, no foreign key: the row may be deleted later — by an un-import or a re-read of its
+ * own file, and the leg is then kept by its content; any other way, and the record is dropped). A leg that comes back
+ * before the others is kept by its new row id until they do.
  *
  * 🔴 Un-importing a statement unlinked the partner of every leg it deleted, and nothing linked the pair again when the
  * same line came back — detection pairs only what it can prove, and a pair linked by hand is one it could not.
@@ -28,7 +30,7 @@ export const unimportedTransferLegs = sqliteTable(
     transactedOn: text("transacted_on"),
     amountCents: integer("amount_cents").notNull(),
     normalizedDescription: text("normalized_description").notNull(),
-    /** the deleted leg's category, given back with the link when it is the pair's (a hand-set or a detected one) */
+    /** the deleted leg's category, given back when its line returns if it is the pair's (a hand-set or a detected one) */
     categoryId: text("category_id"),
     categorizationSource: text("categorization_source", { enum: CATEGORIZATION_SOURCES }),
     categorizationConfidence: real("categorization_confidence"),

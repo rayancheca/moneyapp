@@ -43,7 +43,7 @@ import { accountSlug, institutionSlug } from "./account-slug";
 import { ATTACHED, detachAttachedRows, keepRetiredAttachedRows, parsedFromFile, reattachDetachedRows } from "./attached-rows";
 import { handOverPrintedAnchors } from "./printed-anchors";
 import { copyHandOvers, forgetStatementCopies, handOverToCopies, handedRowIds, recordStatementCopy } from "./statement-copies";
-import { relinkReturningTransfers, rememberTransfersTakenApart } from "./unimported-transfers";
+import { keepStayingLegsByContent, relinkReturningTransfers, rememberTransfersTakenApart } from "./unimported-transfers";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
 import { extractLines } from "./profiles/pdf-profile";
@@ -1857,6 +1857,8 @@ function removeFileBalances(tx: AppDatabase, importFileId: string): void {
 function supersedeFileContribution(db: AppDatabase, oldFileId: string): string[] {
   return db.transaction((tx) => {
     const written = accountsWrittenBy(tx, oldFileId);
+    // a transfer an un-import took apart may be waiting on a row this retires: the re-read writes its line again
+    keepStayingLegsByContent(tx, oldFileId);
     tx.update(transactions)
       .set({ status: "superseded" })
       .where(and(eq(transactions.importFileId, oldFileId), inArray(transactions.status, ["active", "quarantined", "excluded"])))

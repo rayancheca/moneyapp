@@ -99,7 +99,7 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
       "Un-importing Statement_082026_4208.pdf deletes every row it brought in. There is no undo for this inside the app.",
     );
     expect(valueOf(r, "Transactions deleted")).toBe("50 transactions");
-    expect(valueOf(r, "Transfer legs deleted")).toBe("3 legs — a partner left alone in its transfer is unlinked, and linked again when the same line is imported again");
+    expect(valueOf(r, "Transfer legs deleted")).toBe("3 legs — a partner left alone in its transfer is unlinked, and linked again once the same line is imported again — unless by then the partner was deleted by hand or linked elsewhere");
     expect(valueOf(r, "Categorized by you")).toBe("8 transactions");
     expect(valueOf(r, "Money leaving the ledger")).toBe("$13,023.66 in · $2,371.20 out");
     expect(labels(r)).not.toContain(KEPT);
@@ -116,7 +116,7 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
     );
     expect(r.lines).toEqual([
       { label: "Transactions deleted", value: "4 transactions", irreversible: true },
-      { label: "Transfer legs deleted", value: "4 legs — a partner left alone in its transfer is unlinked, and linked again when the same line is imported again" },
+      { label: "Transfer legs deleted", value: "4 legs — a partner left alone in its transfer is unlinked, and linked again once the same line is imported again — unless by then the partner was deleted by hand or linked elsewhere" },
       { label: "Categorized by you", value: "no transactions", irreversible: false },
       { label: "Money leaving the ledger", value: "$798.48 in · $0.00 out" },
       { label: "…of which comes back", value: "4 rows whose retired duplicate is restored" },
@@ -218,11 +218,11 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
 
     expect(r.lines).toContainEqual({ label: "Notes on deleted transactions", value: "9 notes", irreversible: true });
     expect(valueOf(r, "Transfer legs deleted")).toBe(
-      "3 legs — a partner left alone in its transfer is unlinked, and linked again when the same line is imported again",
+      "3 legs — a partner left alone in its transfer is unlinked, and linked again once the same line is imported again — unless by then the partner was deleted by hand or linked elsewhere",
     );
     expect(r.reassurance).toContain("What is lost is the hand-categorization, the notes, and the recurring links you attached or removed by hand.");
     expect(r.reassurance).toContain(
-      "A transfer is linked again when the same line comes back and its other leg is still in the ledger and not linked elsewhere.",
+      "A transfer is linked again once the same line and its other leg are both in the ledger again — the other leg kept, or imported again from its own statement — unless that leg was deleted by hand or linked elsewhere in the meantime.",
     );
     expect(r.reassurance).not.toContain("transfer detection");
     // no line where no note goes
