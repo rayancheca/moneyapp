@@ -69,6 +69,7 @@ budgets ── categories        rules (ordered)        ai_calls        app_sett
 | last4 | TEXT nullable | matches files to accounts |
 | currency | TEXT | `USD` |
 | is_active / display_order | | |
+| cash_account_id | FK→accounts nullable, UNIQUE | set on a **brokerage book** only: the cash account whose statement section proves the book's positions (Robinhood Agentic's book). The import creates the book and finds it by this link, never by name |
 
 Liability status **derived** from `type='credit'`. Debit cards are intentionally not accounts.
 
@@ -139,7 +140,10 @@ names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
   holds the statement hands its period, the rows the other download prints (every attribute on
   them kept) and the rows filed by hand on the period's days to the most recently imported
   other download that is still parsed; only un-importing the last download removes them. A
-  re-parse hands nothing over — the new read writes the period and its rows again.
+  re-parse hands over the period alone, and only lends it: the new read writes the rows again,
+  takes the period back where it writes it again (the other download stays recorded as a copy),
+  and a period it no longer writes (a section it now withholds) stays with the other download.
+  One rule for every file, the agent's brokerage book included.
   More generally, every import records **every line it prints** (`printed_lines`), whichever
   row ends up recording it — its own, one another record already held (absorbed), or one a more
   trusted file owns. Un-importing a file hands each of its parsed rows that a still-imported
@@ -359,8 +363,10 @@ lookup could silently price your crypto with an equity quote.)
 ### holding_events (Phase 7 addendum)
 `id · account_id FK→accounts (investment only) · symbol · asset_type (stock|etf|crypto) ·
 occurred_on date · quantity_delta_e8 INTEGER signed (buys positive, sells negative) ·
-cost_cents INTEGER nullable (event cost, P/L display only) · note nullable` — indexed on
-(account_id, symbol, occurred_on).
+cost_cents INTEGER nullable (event cost, P/L display only) · note nullable ·
+import_file_id FK→import_files nullable` — indexed on (account_id, symbol, occurred_on) and on
+import_file_id. `import_file_id` is set on a brokerage book's trades, filed under the statement
+that printed them: they leave with its un-import and are deleted (not kept beside) on its re-read.
 
 The quantity timeline behind **crypto history v1** (master plan Phase 7): the cumulative
 sum of deltas per (account, symbol) × cached daily closes derives the crypto account's
