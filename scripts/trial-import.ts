@@ -160,6 +160,7 @@ async function main(): Promise<void> {
   console.log(`\n  inserted   ${sum((o) => o.inserted)}`);
   console.log(`  deduped    ${sum((o) => o.deduped)}   (cross-format ${sum((o) => o.dedupedCrossFormat)})`);
   console.log(`  carried    ${sum((o) => o.carriedForward)}`);
+  console.log(`  given back ${sum((o) => o.givenBack)}   (what was set on a line before an un-import removed it)`);
   console.log(`  quarantined ${sum((o) => o.quarantined)}`);
   // The service calls this one "visible, never silent" — it was neither, and a
   // 32-file import that skipped 448 rows reported only "inserted 0".

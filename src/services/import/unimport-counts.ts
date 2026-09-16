@@ -40,16 +40,20 @@ export interface UnimportCounts {
   kept: number;
   /** of `kept`, the rows the other download's period takes: filed under that download rather than detached */
   keptRefiled: number;
-  /** deleted rows the owner categorized BY HAND: the work that cannot come back */
+  /**
+   * deleted rows the owner categorized BY HAND — kept, and given back when an import writes the same line again
+   * (`unimported-attributes`; before the owner's decision of 2026-09-16 the work that could not come back)
+   */
   userCategorizedDeleted: number;
   /**
    * deleted rows whose category no engine of an import derives again: Claude's (an import never asks Claude), and one
    * with no recorded source. 🔴 The confirmation named the hand-set categories as the only ones lost; on a copy of the
    * real ledger, 2026-09-16, 13 files hold 586 such rows (Statement_082026_4208.pdf: 24), and a round trip of
-   * Discover-AllAvailable-20260710.csv rewrote 442 of Claude's categories and left 2 of its rows with none.
+   * Discover-AllAvailable-20260710.csv rewrote 442 of Claude's categories and left 2 of its rows with none. Kept, and
+   * given back with the line, as a hand-set one is.
    */
   notRederivedDeleted: number;
-  /** deleted rows carrying a note — a note goes with its row, and no import writes it again */
+  /** deleted rows carrying a note — no import reads a note, so the un-import keeps it for the line's return */
   notesDeleted: number;
   /** the deleted rows' money in the ledger — active rows only */
   inflowCents: number;

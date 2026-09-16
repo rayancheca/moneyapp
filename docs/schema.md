@@ -109,9 +109,10 @@ names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
   feeds at most one new row. What travels:
   - `category_id` where `categorization_source='user'` (with its `merchant_id` and
     confidence, because categorizeAll never revisits a user-categorized row); where it is
-    `claude` (with its merchant, confidence and `needs_review`) onto a row the new parser gives
-    no category — an import never calls Claude; and where it is `transfer_detect` together with
-    the transfer group — detection pairs only ungrouped rows, so it never reads the row again
+    `claude` or has NO recorded source (with its merchant, confidence and `needs_review`) onto a
+    row the new parser gives no category — an import never calls Claude, and no engine sets a
+    sourceless one; and where it is `transfer_detect` together with the transfer group —
+    detection pairs only ungrouped rows, so it never reads the row again
   - `notes`, `transfer_group_id`, `recurring_series_id` + `series_link_source`
   - `status='excluded'` — a user's exclusion is a decision, not a parse artifact
   - `file_link_source='attached'`, onto the row the re-parse inserts for that money only — the
@@ -162,8 +163,8 @@ names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
   retired: the duplicate lifecycle puts those back).
   A **transfer** the un-import takes apart (a deleted leg whose partner stays alone, or a pair
   whose legs were all the file's) is kept in `unimported_transfer_legs` — the deleted legs by
-  content and the category the pair gave them, the staying leg by id — and linked again, with
-  that category, when an import writes the same lines; a staying leg the owner has linked
+  content and the category the pair gave them (with its merchant), the staying leg by id — and
+  linked again, with that category, when an import writes the same lines; a staying leg the owner has linked
   elsewhere meanwhile ends it. A staying leg whose own file is un-imported (or re-read at a new
   parser version) is kept by content from then on, and a leg that comes back before the others
   takes back its category and waits by id — so both files of a pair can be round-tripped, in one
@@ -171,9 +172,15 @@ names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
   that prints its line again carries it onto the row it writes, and the transfer waits by that
   row; one that no longer reads its account keeps it, and the transfer waits by it still (owner,
   2026-09-16).
-  Unlike a re-parse it is **destructive to user work** — those rows
-  leave the database, so their categories, notes, links and splits go with them (a pre-mutation
-  snapshot is taken so the operation is recoverable).
+  Those rows leave the database (a pre-mutation snapshot is taken so the operation is
+  recoverable), but what was set on them does not: each deleted live row carrying anything the
+  carry-forward moves — a category no engine of an import sets again, a note, a recurring link or
+  a "not this one", an exclusion, splits — is kept in `unimported_row_attributes`, and an import
+  that writes the same line again (same account, amount and posted — else transacted — day, and
+  the same `dedupe_hash` or words that describe the same charge) takes it back, as a re-parse
+  takes its predecessor's; the record is then spent. A takeover victim is not given a record's
+  attributes (it is the live record of the money), and a category or series deleted meanwhile is
+  not given back (owner, 2026-09-16).
   A row **attached** to the file (`file_link_source = 'attached'`: recorded without the document,
   then filed under the statement that prints it — the importer never writes the marker) is not
   the file's to delete. It is **detached**: `import_file_id` NULL, the marker kept, every other
@@ -193,6 +200,20 @@ different bytes). Written by the import when it adopts another file's period; re
 | id / import_file_id / account_id | | UNIQUE(import_file_id, account_id) |
 | period_start / period_end | date | the period's content key — never `statement_periods.id`, which a re-parse of the holder rewrites |
 | lines | JSON | what the copy prints on the account: `posted_on`, `transacted_on`, `amount_cents`, normalized description per line |
+
+### unimported_row_attributes
+What the owner had set on a row an un-import deleted, until an import writes the same line again
+(`services/import/unimported-attributes`). No foreign keys: a category, merchant, series or
+account may be deleted while a record waits; an import gives back what still exists, and a
+brokerage book removed with its last statement takes its records with it.
+| field | type | notes |
+|---|---|---|
+| id / account_id | | |
+| posted_on / transacted_on / amount_cents / normalized_description / dedupe_hash | | the line's identity, as the carry-forward matches it |
+| category_id / categorization_source / categorization_confidence / merchant_id / needs_review | | only a category no engine of an import sets again: `user`, `claude`, or no source |
+| notes / recurring_series_id / series_link_source | | a link, or a detach (no series, `user`) |
+| excluded | boolean | |
+| splits | JSON nullable | `[{ categoryId, amountCents, note, sortOrder }]` |
 
 ### printed_lines
 Every line `import_file_id` prints on an account, recorded by the import (and, for the files

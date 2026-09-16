@@ -70,6 +70,15 @@ import {
 } from "./statement-copies";
 import { appendPrintedLines, forgetPrintedLines, handOverToPrinters, printedLineOf, printerHandOvers, printerRowIds } from "./printed-lines";
 import { keepStayingLegsByContent, moveWaitingLeg, relinkReturningTransfers, rememberTransfersTakenApart } from "./unimported-transfers";
+import {
+  forgetRemembered,
+  rememberRowAttributes,
+  rememberedRows,
+  restoreRememberedSplits,
+  splitsOf,
+  type RememberedInsert,
+  type RememberedSplit,
+} from "./unimported-attributes";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
 import { extractLines } from "./profiles/pdf-profile";
@@ -171,6 +180,11 @@ export interface FileOutcome {
    * lifecycle, visible instead of silent
    */
   carriedForward: number;
+  /**
+   * rows that took back what the owner had set on the same line before an un-import removed it — a category no engine
+   * sets again, a note, a recurring link, an exclusion, splits (`unimported-attributes`)
+   */
+  givenBack: number;
   quarantined: number;
   periods: PeriodOutcome[];
 }
@@ -377,12 +391,17 @@ interface CarryAttributes {
   status: TransactionStatus;
 }
 
-/** A superseded prior-version row, still content-matchable to its successor. */
+/**
+ * A superseded prior-version row, still content-matchable to its successor — or a record of a row an un-import removed
+ * (`unimported-attributes`), whose id is the record's and whose split parts travel with it.
+ */
 interface CarryRow extends CarryAttributes {
   id: string;
   dedupeHash: string;
   normalizedDescription: string;
   transactedOn: string | null;
+  /** a record's split parts; a prior-version row's parts are its own row's (`adoptCarriedSplits`) */
+  splits?: readonly RememberedSplit[];
 }
 
 /**
@@ -428,7 +447,10 @@ function carriedLinkSource(
  * A category an engine gave the row that no engine of the import derives again, so a re-read that dropped it would move
  * the row — and how the successor takes it:
  *  - `claude` fills: Claude categorizes only a row no engine categorized, and an import never calls it. A category the
- *    new parser reads from the file outranks it, as it would have kept Claude away.
+ *    new parser reads from the file outranks it, as it would have kept Claude away. So does a category with NO recorded
+ *    source — set before sources were recorded, or by a write that recorded none: no engine sets it again either.
+ *    Measured on a copy of the real ledger, 2026-09-16: 216 live rows (215 on SoFi) hold one, and a round trip of
+ *    sofi-statement-2025-03.pdf moved 17 of them to Uncategorized (decision 18, `unimported-attributes`).
  *  - `transfer_detect` overwrites, with the transfer group it belongs to: detection pairs only rows with no group, and
  *    the group travels with the carry, so detection never reads the row again — its verdict on the pair stays.
  * Every other engine (rules, the merchant map, bank categories, credit matching) runs over the new row once the batch
@@ -443,7 +465,7 @@ function carriedLinkSource(
  */
 function engineCategoryCarry(row: Pick<CarryAttributes, "categoryId" | "categorizationSource" | "transferGroupId">): "fill" | "overwrite" | null {
   if (row.categoryId === null) return null;
-  if (row.categorizationSource === "claude") return "fill";
+  if (row.categorizationSource === "claude" || row.categorizationSource === null) return "fill";
   if (row.categorizationSource === "transfer_detect" && row.transferGroupId !== null) return "overwrite";
   return null;
 }
@@ -454,8 +476,9 @@ function engineCategoryColumns(carry: CarryAttributes): Partial<typeof transacti
     categoryId: carry.categoryId,
     categorizationSource: carry.categorizationSource,
     categorizationConfidence: carry.categorizationConfidence,
-    // Claude's verdict includes whether it was sure; a pair detection commits leaves the review queue
-    needsReview: carry.categorizationSource === "claude" ? carry.needsReview : false,
+    // Claude's verdict includes whether it was sure (and so does a category with no source); a pair detection commits
+    // leaves the review queue
+    needsReview: engineCategoryCarry(carry) === "fill" ? carry.needsReview : false,
   };
 }
 
@@ -512,6 +535,86 @@ function captureCarryForward(db: AppDatabase, oldFileIds: readonly string[]): Ca
 }
 
 /**
+ * What the owner had set on rows an un-import removed (`unimported-attributes`), as rows a line may claim — never a
+ * transfer (`unimported-transfers` keeps those) and never a row filed by hand (an un-import keeps those).
+ */
+function recallPool(db: AppDatabase): CarryPool {
+  const pool: CarryPool = { byPosted: new Map(), byTransacted: new Map(), taken: new Set() };
+  for (const r of rememberedRows(db)) {
+    const row: CarryRow = {
+      id: r.id,
+      dedupeHash: r.dedupeHash,
+      normalizedDescription: r.normalizedDescription,
+      transactedOn: r.transactedOn,
+      categoryId: r.categoryId,
+      categorizationSource: r.categorizationSource,
+      categorizationConfidence: r.categorizationConfidence,
+      merchantId: r.merchantId,
+      needsReview: r.needsReview,
+      notes: r.notes,
+      transferGroupId: null,
+      recurringSeriesId: r.recurringSeriesId,
+      seriesLinkSource: r.seriesLinkSource,
+      fileLinkSource: null,
+      status: r.excluded ? "excluded" : "active",
+      splits: r.splits,
+    };
+    bucketCarry(pool.byPosted, carryKey(r.accountId, r.postedOn, r.amountCents), row);
+    if (r.transactedOn !== null) bucketCarry(pool.byTransacted, carryKey(r.accountId, r.transactedOn, r.amountCents), row);
+  }
+  for (const map of [pool.byPosted, pool.byTransacted]) {
+    for (const bucket of map.values()) bucket.sort((a, b) => a.id.localeCompare(b.id));
+  }
+  return pool;
+}
+
+/**
+ * What an un-import keeps of the rows it is about to delete — the live rows `importFileId` parsed and hands to no
+ * other file — for an import to give back (`unimported-attributes`): a category no engine of an import sets again
+ * (a hand-set one, and `engineCategoryCarry`'s fill: Claude's, or one with no recorded source), the note, the
+ * recurring link or the owner's "not this one", the exclusion, the split parts. A transfer and its category are
+ * `unimported-transfers`' to keep; a duplicate verdict is `duplicate-lifecycle`'s.
+ */
+function rememberedOf(tx: AppDatabase, importFileId: string): RememberedInsert[] {
+  const rows = tx
+    .select()
+    .from(transactions)
+    .where(and(parsedFromFile(importFileId), ne(transactions.status, "superseded")))
+    .all();
+  const parts = splitsOf(
+    tx,
+    rows.map((r) => r.id),
+  );
+  return rows.flatMap((row): RememberedInsert[] => {
+    const splits = parts.get(row.id) ?? [];
+    const category =
+      (row.categorizationSource === "user" && row.categoryId !== null) || engineCategoryCarry({ ...row, transferGroupId: null }) === "fill";
+    const anything = category || row.notes !== null || row.recurringSeriesId !== null || isDetach(row) || row.status === "excluded" || splits.length > 0;
+    if (!anything) return [];
+    return [
+      {
+        accountId: row.accountId,
+        postedOn: row.postedOn,
+        transactedOn: row.transactedOn,
+        amountCents: row.amountCents,
+        normalizedDescription: row.normalizedDescription,
+        dedupeHash: row.dedupeHash,
+        categoryId: category ? row.categoryId : null,
+        categorizationSource: category ? row.categorizationSource : null,
+        categorizationConfidence: category ? row.categorizationConfidence : null,
+        merchantId: category ? row.merchantId : null,
+        needsReview: category ? row.needsReview : false,
+        notes: row.notes,
+        recurringSeriesId: row.recurringSeriesId,
+        seriesLinkSource: carriedLinkSource(row),
+        excluded: row.status === "excluded",
+        splits: splits.length > 0 ? JSON.stringify(splits) : null,
+      },
+    ];
+  });
+}
+
+/**
  * The rows filed under a retired read by hand (`attached-rows`) that no line of the new read claimed. Each is
  * bucketed once under its posted day, so the posted index lists every carry row exactly once.
  *
@@ -545,20 +648,23 @@ function bucketCarry(map: Map<string, CarryRow[]>, key: string, row: CarryRow): 
  * and Chase Checking's −$100.00 was left grouped with a superseded row while
  * `ledger-check` exited 0 (measured on a copy of the real ledger, 2026-09-15).
  * Exact days only, never a window: a window would hand one charge's work to a
- * neighbouring charge of the same amount.
+ * neighbouring charge of the same amount. `minScore` 1 claims only a row whose
+ * words describe the same charge — for a record ANY later import may claim
+ * (`recallPool`), not only the same file's next read.
  */
-function takeCarry(pool: CarryPool, accountId: string, t: CanonicalTxn, hash: string): CarryRow | null {
+function takeCarry(pool: CarryPool, accountId: string, t: CanonicalTxn, hash: string, minScore = 0): CarryRow | null {
   const incoming = normalizeDescription(t.rawDescription);
   const claim = (bucket: readonly CarryRow[] | undefined): CarryRow | null => {
-    const open = (bucket ?? []).filter((row) => !pool.taken.has(row.id));
-    if (open.length === 0) return null;
-    const winner = open
+    const open = (bucket ?? [])
+      .filter((row) => !pool.taken.has(row.id))
       .map((row) => ({
         row,
         // an unchanged dedupe hash is proof of the same parsed row
         score: row.dedupeHash === hash ? 4 : descriptionScore(row.normalizedDescription, incoming),
       }))
-      .sort((a, b) => b.score - a.score || a.row.id.localeCompare(b.row.id))[0]!.row;
+      .filter((c) => c.score >= minScore);
+    if (open.length === 0) return null;
+    const winner = open.sort((a, b) => b.score - a.score || a.row.id.localeCompare(b.row.id))[0]!.row;
     pool.taken.add(winner.id);
     return winner;
   };
@@ -662,7 +768,8 @@ function adoptCarriedSplits(
     if (target.categorizationSource === "user") return;
     if ((splitCountsByTxn(tx, [target.id]).get(target.id) ?? 0) > 0) return;
   }
-  migrateSplits(tx, carry.id, target.id);
+  if (carry.splits !== undefined) restoreRememberedSplits(tx, carry.splits, target.id);
+  else migrateSplits(tx, carry.id, target.id);
 }
 
 /** The live (non-superseded) row for an account's dedupe hash, if it exists. */
@@ -1071,6 +1178,8 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
     // 2026-09-14); a row the reconcile quarantined is not active and waits for
     // its gap to be accepted, which links it then.
     linkRowsMadeActive(db, [...rowIdsOfFiles(db, writtenFileIds).filter((id) => !refiled.has(id)), ...quarantinedBefore]);
+    // …and a series a record gave a link back to counts that charge again (`unimported-attributes`)
+    settleSeriesStats(db, batch.givenBackSeries);
     for (const accountId of touchedAccounts) rebuildAccount(db, accountId);
     // AFTER the reconcile, never before — but NOT to catch the rows the
     // reconcile promotes. reconcileAccounts only promotes when the gap
@@ -1289,6 +1398,8 @@ interface BatchItem {
 interface BatchState {
   readonly touchedAccounts: Set<string>;
   readonly writtenFileIds: Set<string>;
+  /** the recurring series a record gave a link back to (`MemberWrite.series`) */
+  readonly givenBackSeries: Set<string>;
   /** the reads each file of this call retires, by its bytes: its reads in place under an older parser version */
   readonly staleBySha: ReadonlyMap<string, readonly string[]>;
   /** …and the bytes of each such read */
@@ -1307,6 +1418,7 @@ function batchStateOf(db: AppDatabase, items: readonly BatchItem[]): BatchState 
   return {
     touchedAccounts: new Set(),
     writtenFileIds: new Set(),
+    givenBackSeries: new Set(),
     staleBySha,
     shaOfStale: new Map([...staleBySha].flatMap(([sha, ids]) => ids.map((id) => [id, sha] as const))),
     pending: [...items],
@@ -1362,6 +1474,7 @@ const blankOutcome = (fileName: string): FileOutcome => ({
   skippedOwned: 0,
   supersededTakeover: 0,
   carriedForward: 0,
+  givenBack: 0,
   quarantined: 0,
   periods: [],
 });
@@ -1469,9 +1582,10 @@ function contextFor(db: AppDatabase, chain: readonly ReadMember[], k: number, re
   let context: ParseContext | undefined;
   try {
     db.transaction((tx) => {
+      const dry = { writes: [] as MemberWrite[], series: new Set<string>() };
       writeRead(tx, chain.slice(0, k), retiring, (j) => {
         stage = j;
-      });
+      }, dry.writes, dry.series);
       context = parseContextFor(tx, rereading);
       throw new DryRun();
     });
@@ -1658,6 +1772,8 @@ async function importTurn(db: AppDatabase, head: BatchItem, batch: BatchState): 
 interface MemberWrite {
   readonly tally: FileOutcome;
   readonly accounts: Set<string>;
+  /** the recurring series a record gave a link back to — their stats settle once the batch has (`settleSeriesStats`) */
+  readonly series: Set<string>;
 }
 
 /**
@@ -1671,7 +1787,8 @@ function writeRead(
   members: readonly ReadMember[],
   retiring: readonly string[],
   onMember: (index: number) => void,
-  writes: MemberWrite[] = [],
+  writes: MemberWrite[],
+  series: Set<string>,
 ): { retired: Set<string>; writes: MemberWrite[] } {
   const pools = members.map((m) => captureCarryForward(db, m.staleIds));
   onMember(-1);
@@ -1679,17 +1796,19 @@ function writeRead(
   for (const id of retiring) {
     for (const accountId of supersedeFileContribution(db, id)) retired.add(accountId);
   }
+  // one pool for the whole read: a record is given back once
+  const recall = recallPool(db);
   members.forEach((member, j) => {
     onMember(j);
-    const write: MemberWrite = { tally: blankOutcome(member.item.file.name), accounts: new Set() };
+    const write: MemberWrite = { tally: blankOutcome(member.item.file.name), accounts: new Set(), series };
     writes.push(write);
-    writeMember(db, member, pools[j] as CarryPool, write);
+    writeMember(db, member, pools[j] as CarryPool, recall, write);
   });
   return { retired, writes };
 }
 
 /** One member's new read, statement by statement — each in a transaction of its own inside whatever encloses it. */
-function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, write: MemberWrite): void {
+function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, recall: CarryPool, write: MemberWrite): void {
   const { file } = member.item;
   const profile = member.item.selection.profile as ParserProfile;
   const fileRow = (member.recorded as RecordedFile).row;
@@ -1736,8 +1855,22 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
 
         // this file's own prior-version row for the same money, if the user
         // had put anything on it (claimed here so a row skipped as owned
-        // above leaves its attributes for whichever row does materialize)
-        const carried = takeCarry(carryPool, accountId, t, hash);
+        // above leaves its attributes for whichever row does materialize)…
+        const prior = takeCarry(carryPool, accountId, t, hash);
+        // …else what the owner had set on the same line before an un-import removed it — never over a takeover
+        // victim, which is the live record of the money and holds his work since (`unimported-attributes`)
+        const recalled = prior === null && fate.kind !== "takeover" ? takeCarry(recall, accountId, t, hash, 1) : null;
+        const carried = prior ?? recalled;
+        const landed = (fresh: boolean): void => {
+          if (carried === null || !landCarry(tx, accountId, hash, carried, fresh)) return;
+          if (recalled === null) {
+            outcome.carriedForward += 1;
+            return;
+          }
+          forgetRemembered(tx, recalled.id);
+          if (recalled.recurringSeriesId !== null) write.series.add(recalled.recurringSeriesId);
+          outcome.givenBack += 1;
+        };
 
         if (fate.kind === "takeover") {
           const victim = tx.select().from(transactions).where(eq(transactions.id, fate.victimId)).get()!;
@@ -1763,9 +1896,7 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
           }
           // the carry lands last: same file lineage as the row the user
           // actually edited, so it outranks the victim's attributes
-          if (carried && landCarry(tx, accountId, hash, carried, inserted)) {
-            outcome.carriedForward += 1;
-          }
+          landed(inserted);
           continue;
         }
 
@@ -1790,10 +1921,9 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
           // the survivor belongs to another file: fill only the attributes it
           // lacks, never overwrite (its own user category outranks ours). A
           // cross-format dedupe (hash miss) has no identifiable survivor, so
-          // that carry retires with its superseded row rather than guess.
-          if (carried && landCarry(tx, accountId, hash, carried, false)) {
-            outcome.carriedForward += 1;
-          }
+          // that carry retires with its superseded row rather than guess (a
+          // record waits for an import that writes its line).
+          landed(false);
           continue;
         }
 
@@ -1804,9 +1934,7 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
         } else outcome.deduped += 1;
         // `inserted === false` means an active twin already held this hash —
         // that row is not ours to overwrite, only to fill
-        if (carried && landCarry(tx, accountId, hash, carried, inserted)) {
-          outcome.carriedForward += 1;
-        }
+        landed(inserted);
       }
 
       // …and a copy is retired again only for a line that became a row
@@ -1933,7 +2061,7 @@ function writeTurn(db: AppDatabase, batch: BatchState, chain: readonly ReadMembe
   let retired: Set<string>;
   try {
     const run = () => {
-      const written = writeRead(db, chain, retiring, (j) => (stage = j), writes).retired;
+      const written = writeRead(db, chain, retiring, (j) => (stage = j), writes, batch.givenBackSeries).retired;
       // each file is `parsed` in the same write as what it read (`markParsed`)
       for (const member of chain) markParsed(db, member);
       return written;
@@ -2044,6 +2172,7 @@ function failedUnexpectedly(db: AppDatabase, file: { name: string }, fileRowId: 
     skippedOwned: 0,
     supersededTakeover: 0,
     carriedForward: 0,
+    givenBack: 0,
     quarantined: 0,
     periods: [],
   };
@@ -2632,6 +2761,8 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
       // (the rows naming the groups are still here to be read)
       // …kept first, so importing the same lines again links the transfer again (`unimported-transfers`)
       rememberTransfersTakenApart(tx, importFileId);
+      // …and what the owner set on the rows, given back to the same lines by a later import (`unimported-attributes`)
+      rememberRowAttributes(tx, rememberedOf(tx, importFileId));
       detachTransferLegs(tx, legsLeftAloneBy(tx, importFileId));
       tx.delete(transactions).where(parsedFromFile(importFileId)).run();
       removeFileBalances(tx, importFileId);

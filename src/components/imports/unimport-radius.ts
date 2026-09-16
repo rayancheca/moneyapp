@@ -86,8 +86,16 @@ const NO_UNDO = "There is no undo for this inside the app.";
  * whichever file's line records the charge now, so what they set can change too. A bank's bucket a line prints now
  * reaches the row that records it (`fillBankCategory`).
  */
+/*
+ * ⚖️ …and since the owner's decision of 2026-09-16 (18) none of that is lost: an un-import keeps what was set on the
+ * rows it deletes, and an import that writes the same line again gives it back (`unimported-attributes`). The sentence
+ * said "What is lost is …" over a SoFi 2025-03 round trip that had moved 27 rows to Uncategorized.
+ */
 const REASSURANCE =
-  "The statement file itself stays on disk. Re-importing brings the rows back and re-runs the rules, the merchant map, the bank's categories and recurring-series linking over them — over the words of whichever imported file records each charge, so a category they set can change — but a charge links again only where its series still recognises it: by another charge with the same description, or as a registered commitment's first charge on its date and amount. A transfer is linked again once the same line and its other leg are both in the ledger again — the other leg kept, or imported again from its own statement — unless that leg was deleted by hand or linked elsewhere in the meantime. What is lost is the hand-categorization, the categories Claude set, the categories with no recorded source, the notes, and the recurring links you attached or removed by hand.";
+  "The statement file itself stays on disk. Re-importing brings the rows back. What was set on them is kept, and given back to each charge when an import writes the same line again: the categories you set, the ones Claude set and the ones with no recorded source, the notes, the splits, the exclusions, the recurring links and the ones you removed by hand — whichever of those categories and series still exist then. Over the other rows the rules, the merchant map, the bank's categories and recurring-series linking run again — over the words of whichever imported file records each charge, so a category they set can change — and a charge links again only where its series still recognises it: by another charge with the same description, or as a registered commitment's first charge on its date and amount. A transfer is linked again once the same line and its other leg are both in the ledger again — the other leg kept, or imported again from its own statement — unless that leg was deleted by hand or linked elsewhere in the meantime.";
+
+/** What a count of kept work says: it comes back with its line. */
+const GIVEN_BACK = "given back when the same lines are imported again";
 
 /**
  * 🔴 An export whose rows record lines of statements imported after it "deleted every row it brought in", and did:
@@ -163,6 +171,10 @@ function keptClause(counts: UnimportCounts): string {
   return ` The ${countPhrase(kept, "row")} filed under it by hand ${keeps} money, category, transfer and recurring links and notes, and importing a statement for the same period files ${them} under it again.`;
 }
 
+function kept(phrase: string, n: number): string {
+  return n === 0 ? phrase : `${phrase} — ${GIVEN_BACK}`;
+}
+
 export function unimportRadius({ subject, counts, balances, periods, periodsHandedOver = 0 }: UnimportRadiusInput): BlastRadius {
   const optional = (show: boolean, line: BlastRadiusLine): BlastRadiusLine[] => (show ? [line] : []);
   const detached = counts.kept - counts.keptRefiled;
@@ -180,18 +192,15 @@ export function unimportRadius({ subject, counts, balances, periods, periodsHand
       }),
       {
         label: "Categorized by you",
-        value: countPhrase(counts.userCategorizedDeleted, "transaction"),
-        irreversible: counts.userCategorizedDeleted > 0,
+        value: kept(countPhrase(counts.userCategorizedDeleted, "transaction"), counts.userCategorizedDeleted),
       },
       ...optional(counts.notRederivedDeleted > 0, {
         label: "Categorized by Claude, or with no recorded source",
-        value: countPhrase(counts.notRederivedDeleted, "transaction"),
-        irreversible: true,
+        value: kept(countPhrase(counts.notRederivedDeleted, "transaction"), counts.notRederivedDeleted),
       }),
       ...optional(counts.notesDeleted > 0, {
         label: "Notes on deleted transactions",
-        value: countPhrase(counts.notesDeleted, "note"),
-        irreversible: true,
+        value: kept(countPhrase(counts.notesDeleted, "note"), counts.notesDeleted),
       }),
       {
         label: "Money leaving the ledger",

@@ -13,6 +13,7 @@ import { withheldSectionsOf } from "@/lib/import-file-label";
 import { dayWindowLabel } from "@/lib/period";
 import { averageCostCents, nextCostBasis } from "@/lib/robinhood-holdings";
 import type { BookEvent, CashOnlyStatement, EquityAssetType, StatementPositions } from "./types";
+import { forgetRememberedOn } from "./unimported-attributes";
 
 /**
  * A cash account's BROKERAGE BOOK — the investment account that holds the positions its statement section proves.
@@ -225,6 +226,8 @@ export function removeEmptyBooks(db: AppDatabase, accountIds: readonly string[])
     tx.delete(holdings).where(inArray(holdings.accountId, empty)).run();
     tx.delete(dailyBalances).where(inArray(dailyBalances.accountId, empty)).run();
     tx.delete(balanceAnchors).where(and(inArray(balanceAnchors.accountId, empty), eq(balanceAnchors.source, "live"))).run();
+    // what an un-import kept of the book's rows goes with the book (`unimported-attributes`)
+    forgetRememberedOn(tx, empty);
     tx.delete(accounts).where(inArray(accounts.id, empty)).run();
   });
   return empty;

@@ -34,6 +34,8 @@ export const unimportedTransferLegs = sqliteTable(
     categoryId: text("category_id"),
     categorizationSource: text("categorization_source", { enum: CATEGORIZATION_SOURCES }),
     categorizationConfidence: real("categorization_confidence"),
+    /** …and the merchant that category came with (no foreign key: the merchant may be deleted while the leg waits) */
+    merchantId: text("merchant_id"),
     ...timestamps(),
   },
   (table) => [

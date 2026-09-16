@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
+import { merchants } from "@/db/schema/merchants";
 import { transactions } from "@/db/schema/transactions";
 import { unimportedTransferLegs } from "@/db/schema/unimported-transfer-legs";
 import { descriptionScore } from "@/lib/description-score";
@@ -83,6 +84,7 @@ export function rememberTransfersTakenApart(tx: AppDatabase, importFileId: strin
           categoryId: doomedIds.has(l.id) ? l.categoryId : null,
           categorizationSource: doomedIds.has(l.id) ? l.categorizationSource : null,
           categorizationConfidence: doomedIds.has(l.id) ? l.categorizationConfidence : null,
+          merchantId: doomedIds.has(l.id) ? l.merchantId : null,
         })),
       )
       .run();
@@ -127,6 +129,7 @@ export function keepStayingLegsByContent(tx: AppDatabase, importFileId: string):
         categoryId: row.categoryId,
         categorizationSource: row.categorizationSource,
         categorizationConfidence: row.categorizationConfidence,
+        merchantId: row.merchantId,
       })
       .where(eq(unimportedTransferLegs.id, leg.id))
       .run();
@@ -178,13 +181,25 @@ function claim(lost: readonly Kept[], candidates: readonly Row[], taken: Readonl
   return claimed;
 }
 
-/** The category a kept leg takes back when its line returns: the one the pair gave it, if that category still exists. */
-function pairCategoryOf(leg: Kept, categoryIds: ReadonlySet<string>): Partial<Row> {
+/**
+ * The category a kept leg takes back when its line returns: the one the pair gave it, if that category still exists —
+ * with the merchant it had, if that still exists.
+ *
+ * 🔴 …the merchant stayed behind. categorizeAll names a row's merchant only while the row has no category, and the
+ * category given back here comes first, so the returning leg was left with none. Measured on a copy of the real
+ * ledger, 2026-09-16 (backfills applied): a round trip of 20260812-statements-3522-.pdf brought back 3 card payments
+ * ($300.00 to Discover, $233.75 to Sapphire, $556.62 to Discover) with their transfer and category and no merchant.
+ */
+function pairCategoryOf(leg: Kept, categoryIds: ReadonlySet<string>, merchantIds: ReadonlySet<string>): Partial<Row> {
   const isPairs =
     leg.categoryId !== null && categoryIds.has(leg.categoryId) && leg.categorizationSource !== null && PAIR_SOURCES.has(leg.categorizationSource);
-  return isPairs
-    ? { categoryId: leg.categoryId, categorizationSource: leg.categorizationSource, categorizationConfidence: leg.categorizationConfidence }
-    : {};
+  if (!isPairs) return {};
+  return {
+    categoryId: leg.categoryId,
+    categorizationSource: leg.categorizationSource,
+    categorizationConfidence: leg.categorizationConfidence,
+    ...(leg.merchantId !== null && merchantIds.has(leg.merchantId) ? { merchantId: leg.merchantId } : {}),
+  };
 }
 
 /**
@@ -210,6 +225,7 @@ export function relinkReturningTransfers(db: AppDatabase, candidateIds: readonly
     );
   }
   const categoryIds = new Set(db.select({ id: categories.id }).from(categories).all().map((c) => c.id));
+  const merchantIds = new Set(db.select({ id: merchants.id }).from(merchants).all().map((m) => m.id));
   const byGroup = new Map<string, Kept[]>();
   for (const k of kept) byGroup.set(k.transferGroupId, [...(byGroup.get(k.transferGroupId) ?? []), k]);
   const linked: string[] = [];
@@ -232,14 +248,14 @@ export function relinkReturningTransfers(db: AppDatabase, candidateIds: readonly
       if (claimed.size === 0) continue;
       for (const [legId, row] of claimed) {
         taken.add(row.id);
-        const category = pairCategoryOf(legs.find((k) => k.id === legId)!, categoryIds);
+        const category = pairCategoryOf(legs.find((k) => k.id === legId)!, categoryIds, merchantIds);
         if (Object.keys(category).length > 0) tx.update(transactions).set(category).where(eq(transactions.id, row.id)).run();
       }
       if (claimed.size < lost.length) {
         // the others are still out: a returned leg waits by its row, its category given back already
         for (const [legId, row] of claimed) {
           tx.update(unimportedTransferLegs)
-            .set({ transactionId: row.id, categoryId: null, categorizationSource: null, categorizationConfidence: null })
+            .set({ transactionId: row.id, categoryId: null, categorizationSource: null, categorizationConfidence: null, merchantId: null })
             .where(eq(unimportedTransferLegs.id, legId))
             .run();
         }

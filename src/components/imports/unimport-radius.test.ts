@@ -100,6 +100,7 @@ const labels = (r: BlastRadius) => (r.lines ?? []).map((l) => l.label);
 const KEPT = "Transactions kept, detached from the file";
 const NOT_REDERIVED = "Categorized by Claude, or with no recorded source";
 const PRINTED_ELSEWHERE = "Transactions kept under another file that prints them";
+const GIVEN_BACK = "given back when the same lines are imported again";
 
 describe("unimportRadius — what un-importing a statement deletes, and what stays", () => {
   test("a file with nothing attached keeps its headline, and counts the transfer legs it deletes", () => {
@@ -110,8 +111,9 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
     );
     expect(valueOf(r, "Transactions deleted")).toBe("50 transactions");
     expect(valueOf(r, "Transfer legs deleted")).toBe("3 legs — a partner left alone in its transfer is unlinked, and linked again once the same line is imported again — unless by then the partner was deleted by hand or linked elsewhere");
-    expect(valueOf(r, "Categorized by you")).toBe("8 transactions");
-    expect(r.lines).toContainEqual({ label: NOT_REDERIVED, value: "24 transactions", irreversible: true });
+    // ⚖️ owner, 2026-09-16 (decision 18): what was set on the rows comes back with their lines — none of it is irreversible
+    expect(r.lines).toContainEqual({ label: "Categorized by you", value: `8 transactions — ${GIVEN_BACK}` });
+    expect(r.lines).toContainEqual({ label: NOT_REDERIVED, value: `24 transactions — ${GIVEN_BACK}` });
     expect(valueOf(r, "Money leaving the ledger")).toBe("$13,023.66 in · $2,371.20 out");
     expect(labels(r)).not.toContain(KEPT);
     expect(labels(r)).not.toContain("Transfer legs kept");
@@ -128,7 +130,7 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
     expect(r.lines).toEqual([
       { label: "Transactions deleted", value: "4 transactions", irreversible: true },
       { label: "Transfer legs deleted", value: "4 legs — a partner left alone in its transfer is unlinked, and linked again once the same line is imported again — unless by then the partner was deleted by hand or linked elsewhere" },
-      { label: "Categorized by you", value: "no transactions", irreversible: false },
+      { label: "Categorized by you", value: "no transactions" },
       { label: "Money leaving the ledger", value: "$798.48 in · $0.00 out" },
       { label: "…of which comes back", value: "4 rows whose retired duplicate is restored" },
       { label: KEPT, value: "5 transactions filed under it by hand" },
@@ -227,13 +229,16 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
     const withNotes: UnimportCounts = { ...VENTURE_X_AUG, notesDeleted: 9 };
     const r = radius("20260812-statements-3522-.pdf", withNotes, 2, 1);
 
-    expect(r.lines).toContainEqual({ label: "Notes on deleted transactions", value: "9 notes", irreversible: true });
+    expect(r.lines).toContainEqual({ label: "Notes on deleted transactions", value: `9 notes — ${GIVEN_BACK}` });
     expect(valueOf(r, "Transfer legs deleted")).toBe(
       "3 legs — a partner left alone in its transfer is unlinked, and linked again once the same line is imported again — unless by then the partner was deleted by hand or linked elsewhere",
     );
+    // ⚖️ …and the sentence that called them lost says they come back, and when
+    expect(r.reassurance).not.toContain("What is lost");
     expect(r.reassurance).toContain(
-      "What is lost is the hand-categorization, the categories Claude set, the categories with no recorded source, the notes, and the recurring links you attached or removed by hand.",
+      "What was set on them is kept, and given back to each charge when an import writes the same line again: the categories you set, the ones Claude set and the ones with no recorded source, the notes, the splits, the exclusions, the recurring links and the ones you removed by hand — whichever of those categories and series still exist then.",
     );
+    expect(r.lines!.filter((l) => l.irreversible === true).map((l) => l.label)).toEqual(["Transactions deleted"]);
     expect(r.reassurance).toContain(
       "A transfer is linked again once the same line and its other leg are both in the ledger again — the other leg kept, or imported again from its own statement — unless that leg was deleted by hand or linked elsewhere in the meantime.",
     );
