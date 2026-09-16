@@ -1893,6 +1893,9 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
             // …and the owner's duplicate verdict, as a re-parse hands it on
             // (`landCarry`): the replacement records the victim's money now
             moveKeptSide(tx, victim.id, replacement.id);
+            // …and a transfer an un-import took apart waits by the replacement now, as a re-parse moves it (`landCarry`).
+            // 🔴 Without it the next relink found the waiting row superseded and forgot the owner's hand-linked pair.
+            moveWaitingLeg(tx, victim.id, replacement.id);
           }
           // the carry lands last: same file lineage as the row the user
           // actually edited, so it outranks the victim's attributes

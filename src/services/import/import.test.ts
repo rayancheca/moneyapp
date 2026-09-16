@@ -588,6 +588,44 @@ describe("a transfer pair an un-import takes apart", () => {
     expectLinkedAgain(was);
   });
 
+  /*
+   * 🔴 The takeover moved the waiting partner's note, category and links onto the row that took it over, and left the
+   * kept transfer naming the retired row: importing the checking statement again then forgot the transfer, and the
+   * owner's hand-linked pair stayed apart (the review of uc/final-integrate, 2026-09-16).
+   */
+  test("a partner taken over by a more trusted file while it waits keeps the transfer", async () => {
+    const was = await pairAcrossTwoFiles();
+    unimportFile(bundle.db, fileNamed(CHECKING.name));
+    const OFX = { name: "hand-pair-card.ofx", buffer: Buffer.from("<OFX> hand-pair-card") };
+    const cardOfx: ParserProfile = {
+      id: "test-hand-pair-card-ofx",
+      version: 1,
+      matches: (f) => f.name === OFX.name,
+      parse: () => [
+        {
+          accountHint: { institution: "Chase", last4: "1111", type: "credit" },
+          txns: [{ postedOn: "2026-03-03", transactedOn: "2026-03-03", amountCents: 49_850, rawDescription: "Payment Thank You-Mobile" }],
+        },
+      ],
+    };
+    PROFILES.unshift(cardOfx);
+    try {
+      const [taken] = await importStatementFiles(bundle.db, [OFX]);
+      expect(taken).toMatchObject({ status: "parsed", supersededTakeover: 1 });
+    } finally {
+      PROFILES.splice(PROFILES.indexOf(cardOfx), 1);
+    }
+    expect(row(was.inn.id)!.status).toBe("superseded");
+
+    await importStatementFiles(bundle.db, [CHECKING]);
+    const [out] = rowsOf(CHECKING.name);
+    const [inn] = rowsOf(OFX.name);
+    expect(out).toMatchObject({ transferGroupId: out!.id, categoryId: was.out.categoryId, categorizationSource: "user" });
+    expect(inn).toMatchObject({ transferGroupId: out!.id, categoryId: was.inn.categoryId, categorizationSource: "user" });
+    expect(groupOf(out!.id)).toEqual([out!.id, inn!.id].sort());
+    expect(bundle.db.select().from(unimportedTransferLegs).all()).toEqual([]);
+  });
+
   test("a partner linked elsewhere before its own file is un-imported is not kept for the old transfer", async () => {
     const { linkTransferPair } = await import("@/services/transfer-links");
     const was = await pairAcrossTwoFiles();
