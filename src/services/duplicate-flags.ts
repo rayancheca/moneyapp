@@ -34,7 +34,7 @@ import { formatCents } from "@/lib/money";
  */
 
 /**
- * Money identity, mirroring `consumeIdentity` in import/service.ts: same
+ * Money identity, mirroring `identityWeight` in import/service.ts: same
  * account, same amount, and both rows claim the SAME DAY — post-to-post, or
  * transaction-to-transaction when both carry one.
  *

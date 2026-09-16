@@ -672,6 +672,139 @@ describe("cross-format reconciliation dedupe (the DB is master)", () => {
     expect(activeTxnStats("6001")).toEqual(before); // count AND sum unchanged
   });
 
+  /**
+   * 🔴 A card statement prints each charge's TRANSACTION day; the Spending Report export posts it 2–3 days later and
+   * carries both days. A line was matched to the first unused record on its posted day, then on its transaction day,
+   * one line at a time — so the export's 05-11 post (a charge made 05-08) took the statement's 05-11 charge, and the
+   * export's 05-13 post (the 05-11 charge) found nothing left and was stored a second time. Measured on a copy of the
+   * real ledger, 2026-09-16: un-importing 20260602-statements-9805-.pdf and Spending Report PDF (1).pdf, then importing
+   * the statement and then the report, left RAM`S VILLAGE −$10.40 counted twice and all 86 of the statement's rows
+   * quarantined behind a $10.40 gap.
+   */
+  describe("three same-amount charges an export posts days after the statement's transaction days", () => {
+    const PREFIX = "ram-village-";
+    const RAM = "RAM`S VILLAGE";
+    const statementLines = ["2026-05-05", "2026-05-08", "2026-05-11"].map((day) => ({ postedOn: day, transactedOn: day, amountCents: -1040, rawDescription: `${RAM} BRONX NY` }));
+    const exportLines = [
+      ["2026-05-07", "2026-05-05"],
+      ["2026-05-11", "2026-05-08"],
+      ["2026-05-13", "2026-05-11"],
+    ].map(([postedOn, transactedOn]) => ({ postedOn: postedOn!, transactedOn, amountCents: -1040, rawDescription: RAM }));
+    const savedStatement = [...statementLines];
+    const savedExport = [...exportLines];
+    const hint: AccountHint = { institution: "Chase", type: "credit", last4: "7805", name: "Sapphire test" };
+    const profile: ParserProfile = {
+      id: "test-ram-village",
+      version: 1,
+      matches: (f) => f.name.startsWith(PREFIX),
+      parse: (f): ParsedStatement[] => {
+        if (f.text.trim() === "statement") {
+          return [{ accountHint: hint, txns: statementLines, period: { start: "2026-05-03", end: "2026-06-02", beginCents: 0, endCents: statementLines.reduce((n, l) => n + l.amountCents, 0) } }];
+        }
+        // a lower-fidelity export's one row, and a higher-fidelity file's two charges of that amount that day
+        if (f.text.trim() === "lower") return [{ accountHint: hint, txns: [{ postedOn: "2026-05-25", amountCents: -900, rawDescription: "GAS STATION" }] }];
+        if (f.text.includes("higher")) {
+          return [
+            {
+              accountHint: hint,
+              txns: [
+                { postedOn: "2026-05-25", amountCents: -900, rawDescription: "GAS STATION 1" },
+                { postedOn: "2026-05-25", amountCents: -900, rawDescription: "PHARMACY" },
+              ],
+            },
+          ];
+        }
+        return [{ accountHint: hint, txns: exportLines }];
+      },
+    };
+    const STATEMENT: ImportInput = { name: `${PREFIX}statement.txt`, buffer: Buffer.from("statement") };
+    const EXPORT: ImportInput = { name: `${PREFIX}export.txt`, buffer: Buffer.from("export") };
+
+    beforeEach(() => {
+      PROFILES.unshift(profile);
+    });
+    afterEach(() => {
+      PROFILES.splice(PROFILES.indexOf(profile), 1);
+    });
+
+    const liveMoney = () => {
+      const card = bundle.db.select().from(accounts).where(eq(accounts.last4, "7805")).get()!;
+      const rows = bundle.db.select().from(transactions).where(eq(transactions.accountId, card.id)).all();
+      return {
+        active: rows.filter((r) => r.status === "active").reduce((n, r) => n + r.amountCents, 0),
+        quarantined: rows.filter((r) => r.status === "quarantined").length,
+        period: bundle.db.select().from(statementPeriods).where(eq(statementPeriods.accountId, card.id)).get()!.reconciliation,
+      };
+    };
+
+    test("the statement first, then the export: every export line is the statement's own charge", async () => {
+      await importStatementFiles(bundle.db, [STATEMENT]);
+      const [exported] = await importStatementFiles(bundle.db, [EXPORT]);
+
+      expect(exported).toMatchObject({ inserted: 0, dedupedCrossFormat: 3 });
+      expect(liveMoney()).toEqual({ active: -3120, quarantined: 0, period: "reconciled" });
+    });
+
+    test("a line whose surest record another line needs more moves to its next record, rather than leave a line stored twice", async () => {
+      // the statement: one charge on 05-20, and one it prints on 05-20 that was made on 05-18
+      statementLines.splice(0, statementLines.length, ...[
+        { postedOn: "2026-05-20", transactedOn: "2026-05-20", amountCents: -500, rawDescription: "DELI" },
+        { postedOn: "2026-05-20", transactedOn: "2026-05-18", amountCents: -500, rawDescription: "DELI" },
+      ]);
+      // the export: the 05-20 charge, and one made on 05-20 that it posts on 05-22
+      exportLines.splice(0, exportLines.length, ...[
+        { postedOn: "2026-05-20", transactedOn: "2026-05-20", amountCents: -500, rawDescription: "DELI BRONX NY" },
+        { postedOn: "2026-05-22", transactedOn: "2026-05-20", amountCents: -500, rawDescription: "DELI BRONX NY" },
+      ]);
+      try {
+        await importStatementFiles(bundle.db, [STATEMENT]);
+        const [exported] = await importStatementFiles(bundle.db, [EXPORT]);
+        expect(exported).toMatchObject({ inserted: 0, dedupedCrossFormat: 2 });
+      } finally {
+        statementLines.splice(0, statementLines.length, ...savedStatement);
+        exportLines.splice(0, exportLines.length, ...savedExport);
+      }
+    });
+
+    test("when two lines claim one record, the one made that day is it, and the one only posted that day is stored", async () => {
+      statementLines.splice(0, statementLines.length, { postedOn: "2026-05-15", transactedOn: "2026-05-15", amountCents: -700, rawDescription: "CAFE" });
+      exportLines.splice(0, exportLines.length, ...[
+        // another charge, made on 05-13, that the export posts on the statement's day
+        { postedOn: "2026-05-15", transactedOn: "2026-05-13", amountCents: -700, rawDescription: "CAFE NY" },
+        // the statement's charge, posted two days later
+        { postedOn: "2026-05-17", transactedOn: "2026-05-15", amountCents: -700, rawDescription: "CAFE NY" },
+      ]);
+      try {
+        await importStatementFiles(bundle.db, [STATEMENT]);
+        const [exported] = await importStatementFiles(bundle.db, [EXPORT]);
+        expect(exported).toMatchObject({ inserted: 1, dedupedCrossFormat: 1 });
+        const stored = bundle.db.select().from(transactions).where(eq(transactions.rawDescription, "CAFE NY")).all();
+        expect(stored.map((r) => [r.postedOn, r.transactedOn])).toEqual([["2026-05-15", "2026-05-13"]]);
+      } finally {
+        statementLines.splice(0, statementLines.length, ...savedStatement);
+        exportLines.splice(0, exportLines.length, ...savedExport);
+      }
+    });
+
+    test("a row one line takes over records no other line of the file", async () => {
+      await importStatementFiles(bundle.db, [{ name: `${PREFIX}lower.txt`, buffer: Buffer.from("lower") }]);
+      // OFX-headed bytes: a file the import trusts more than the export
+      const [higher] = await importStatementFiles(bundle.db, [{ name: `${PREFIX}higher.ofx`, buffer: Buffer.from("OFXHEADER higher") }]);
+
+      expect(higher).toMatchObject({ supersededTakeover: 1, inserted: 2, dedupedCrossFormat: 0 });
+      const live = bundle.db.select().from(transactions).where(and(eq(transactions.postedOn, "2026-05-25"), ne(transactions.status, "superseded"))).all();
+      expect(live.map((r) => r.rawDescription).sort()).toEqual(["GAS STATION 1", "PHARMACY"]);
+    });
+
+    test("the export first, then the statement: the same ledger", async () => {
+      await importStatementFiles(bundle.db, [EXPORT]);
+      const [statement] = await importStatementFiles(bundle.db, [STATEMENT]);
+
+      expect(statement).toMatchObject({ inserted: 0, dedupedCrossFormat: 3 });
+      expect(liveMoney()).toEqual({ active: -3120, quarantined: 0, period: "reconciled" });
+    });
+  });
+
   test("multiset matching: a second same-day equal-amount row that is genuinely new still imports", async () => {
     const primary = cardCsv([
       "6002,06/01/2026,06/01/2026,STARBUCKS STORE 00123 SEATTLE WA,Food & Drink,Sale,-5.75,",
@@ -1586,8 +1719,8 @@ describe("re-parse lifecycle: a parser-version bump preserves user work", () => 
    * 20260702-statements-9805-.pdf on 2026-09-15) came back from a version bump
    * as a fresh 06/30 row with no transfer link and no note, and Chase Checking's
    * −$100.00 was left grouped with a superseded row — while `ledger-check` stayed
-   * green. Measured on a copy of the real ledger, 2026-09-15. `consumeIdentity`
-   * already falls back to the transaction day for this reason; the carry did not.
+   * green. Measured on a copy of the real ledger, 2026-09-15. The identity match
+   * (`identityWeight`) already reads the transaction day for this reason; the carry did not.
    */
   test("a re-parse carries onto the row the file dates by its transaction day, when the old row was posted later", async () => {
     await importStatementFiles(bundle.db, [FILE]);

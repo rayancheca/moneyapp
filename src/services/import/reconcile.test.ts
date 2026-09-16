@@ -22,7 +22,7 @@ import { reconcileAccounts } from "./service";
  * reconciliation through a fixture import, and no fixture reproduces the shape
  * that broke the Chase Sapphire card. A payment recorded twice — once as the
  * line the bank printed, once as a hand-entered mirror carrying the bank's post
- * date a couple of days later — is invisible to `consumeIdentity` (both of its
+ * date a couple of days later — is invisible to the import's identity match (`identityWeight`: both of its
  * lenses key on an EXACT day) and shows up only here, as a period that will not
  * close. These tests pin that it does not close, so the next such pair is caught
  * by the suite rather than by reading a chart with 323 blank days in it.

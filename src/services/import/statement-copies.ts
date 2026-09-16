@@ -84,7 +84,7 @@ interface RowForMatch {
 /**
  * The heir's lines each claim one row: the heir's own rows first (a line it wrote itself is not the other file's),
  * then the rows filed by hand, then the rows the file parsed — on the posted day, then on the transaction day, as
- * `consumeIdentity` absorbs a line; the description only ranks rows that already match on money and day.
+ * the import absorbs a line (`identityWeight`); the description only ranks rows that already match on money and day.
  * Returns the ids of `parsed` rows claimed.
  *
  * ⚠️ Known limit: at the heir's import a line could also have been absorbed by a third source's row (an export, a

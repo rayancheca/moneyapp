@@ -158,16 +158,14 @@ interface CoveredRange {
 
 /**
  * Cross-format reconciliation dedupe (the DB is master): the account's
- * balance-affecting rows from OTHER sources, indexed by amount under BOTH the
- * dates they carry. An incoming row whose exact hash misses still dedupes when
- * this pool holds an unconsumed match — the same money described with
- * different raw text, or dated differently, by another export format.
- * One slot per existing row, taken at most once no matter which index found
- * it, so two genuinely identical same-day charges stay distinct: each existing
- * row absorbs at most one incoming row.
- * Quarantined rows stay out of the pool (they don't affect balances, so an
- * incoming balance-affecting row must not vanish against one), and superseded
- * rows are history.
+ * balance-affecting rows from OTHER sources. An incoming row whose exact hash
+ * misses still dedupes when one of these records the same money — described
+ * with different raw text, or dated differently, by another export format.
+ * Each existing row absorbs at most one incoming row, so two genuinely
+ * identical same-day charges stay distinct.
+ * Quarantined rows stay out (they don't affect balances, so an incoming
+ * balance-affecting row must not vanish against one), and superseded rows are
+ * history.
  *
  * `retiredAgain` leaves out the copies this statement retires again
  * (`standInsReturnedBy`): each is a retired row the un-import of this
@@ -175,20 +173,20 @@ interface CoveredRange {
  * the un-import it was out of this pool, and a same-day copy left in would
  * absorb the very line it was retired for.
  */
-interface IdentityPool {
-  /** one slot per existing row, consumed at most once however it is matched */
-  used: boolean[];
-  byPosted: Map<string, number[]>;
-  byTransacted: Map<string, number[]>;
+interface IdentitySlot {
+  id: string;
+  postedOn: string;
+  transactedOn: string | null;
+  amountCents: number;
 }
 
-function existingIdentityPool(
+function existingIdentitySlots(
   db: AppDatabase,
   accountId: string,
   excludeFileId: string,
   retiredAgain: ReadonlySet<string>,
-): IdentityPool {
-  const rows = db
+): IdentitySlot[] {
+  return db
     .select({
       id: transactions.id,
       postedOn: transactions.postedOn,
@@ -205,53 +203,109 @@ function existingIdentityPool(
     )
     .all()
     .filter((r) => !retiredAgain.has(r.id));
-
-  const pool: IdentityPool = { used: rows.map(() => false), byPosted: new Map(), byTransacted: new Map() };
-  rows.forEach((r, i) => {
-    index(pool.byPosted, identityKey(r.postedOn, r.amountCents), i);
-    if (r.transactedOn !== null) index(pool.byTransacted, identityKey(r.transactedOn, r.amountCents), i);
-  });
-  return pool;
-}
-
-function index(map: Map<string, number[]>, key: string, i: number): void {
-  const bucket = map.get(key);
-  if (bucket) bucket.push(i);
-  else map.set(key, [i]);
-}
-
-function identityKey(day: string, amountCents: number): string {
-  return `${day}\x1f${amountCents}`;
-}
-
-function takeSlot(pool: IdentityPool, map: Map<string, number[]>, key: string): boolean {
-  for (const i of map.get(key) ?? []) {
-    if (pool.used[i]) continue;
-    pool.used[i] = true;
-    return true;
-  }
-  return false;
 }
 
 /**
- * Consume one existing row that records this same money; false when none is
- * left. Posted-vs-posted is tried first, so behaviour is unchanged wherever
- * the two sources agree on the date.
+ * How surely an existing row records a line's money: same amount, and the same TRANSACTION day (2), the same posted
+ * day (1), or both (3); 0 is no match. Exact days only, never a window — a window would merge genuinely distinct
+ * same-amount charges (measured: 43 such pairs on Chase Sapphire).
  *
- * The fallback exists because a source can date the SAME charge differently:
- * a Chase card statement prints the TRANSACTION date, while the rows already
- * stored from the Spending Report export carry the POST date, typically one
- * to three days later. Keyed only on posted_on, re-stating a card period
- * inserted a duplicate of nearly every row in it. Matching transacted-to-
- * transacted bridges that without widening into a fuzzy date window — a window
- * would merge genuinely distinct same-amount charges (measured: 43 such pairs
- * on this one card), whereas this only ever matches two records that claim the
- * same transaction day.
+ * The transaction day exists because a source can date the SAME charge differently: a Chase card statement prints the
+ * TRANSACTION day, while the Spending Report export posts it one to three days later. Keyed only on posted_on,
+ * re-stating a card period inserted a duplicate of nearly every row in it.
  */
-function consumeIdentity(pool: IdentityPool, postedOn: string, transactedOn: string | undefined, amountCents: number): boolean {
-  if (takeSlot(pool, pool.byPosted, identityKey(postedOn, amountCents))) return true;
-  if (transactedOn === undefined) return false;
-  return takeSlot(pool, pool.byTransacted, identityKey(transactedOn, amountCents));
+function identityWeight(line: CanonicalTxn, slot: IdentitySlot): number {
+  if (line.amountCents !== slot.amountCents) return 0;
+  const sameTransactionDay = line.transactedOn !== undefined && slot.transactedOn !== null && line.transactedOn === slot.transactedOn;
+  return (sameTransactionDay ? 2 : 0) + (line.postedOn === slot.postedOn ? 1 : 0);
+}
+
+/**
+ * Which of a statement's lines another record of the same money absorbs: a MAXIMUM matching of lines to existing rows
+ * (each row absorbs at most one line), each line trying its surest rows first (`identityWeight`), the lines with the
+ * surest match placed first. Returns the indexes of the absorbed lines.
+ *
+ * 🔴 Lines were matched one at a time to the first unused row on the posted day, then on the transaction day. A
+ * statement prints RAM`S VILLAGE −$10.40 on 05-05, 05-08 and 05-11; the Spending Report posts the same three on 05-07,
+ * 05-11 and 05-13. Read second, the report's 05-11 post (the 05-08 charge) took the statement's 05-11 charge, and its
+ * 05-13 post (the 05-11 charge) found nothing left and was stored a second time: on a copy of the real ledger,
+ * 2026-09-16, re-importing 20260602-statements-9805-.pdf and then Spending Report PDF (1).pdf left the charge counted
+ * twice and all 86 of the statement's rows quarantined behind a $10.40 gap. A matching of the whole statement absorbs
+ * every line some row records, whatever order the lines come in.
+ */
+function absorbedLines(lines: readonly CanonicalTxn[], slots: readonly IdentitySlot[]): Set<number> {
+  const byAmount = new Map<number, IdentitySlot[]>();
+  for (const slot of slots) byAmount.set(slot.amountCents, [...(byAmount.get(slot.amountCents) ?? []), slot]);
+  const candidates = lines.map((line) =>
+    (byAmount.get(line.amountCents) ?? [])
+      .map((slot) => ({ slot, weight: identityWeight(line, slot) }))
+      .filter((c) => c.weight > 0)
+      .sort((a, b) => b.weight - a.weight || a.slot.id.localeCompare(b.slot.id))
+      .map((c) => ({ id: c.slot.id, weight: c.weight })),
+  );
+  const holder = new Map<string, number>();
+  const place = (line: number, seen: Set<string>): boolean => {
+    for (const { id } of candidates[line]!) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const other = holder.get(id);
+      if (other === undefined || place(other, seen)) {
+        holder.set(id, line);
+        return true;
+      }
+    }
+    return false;
+  };
+  const order = lines
+    .map((_, i) => i)
+    .filter((i) => candidates[i]!.length > 0)
+    .sort((a, b) => candidates[b]![0]!.weight - candidates[a]![0]!.weight || a - b);
+  for (const line of order) place(line, new Set());
+  return new Set(holder.values());
+}
+
+/** What the import does with one line of a statement, decided before anything is written. */
+type LinePlan = { kind: "owned" } | { kind: "takeover"; victimId: string } | { kind: "absorbed" } | { kind: "new" };
+
+/**
+ * Every line's fate, in print order: a higher-fidelity source owns its day; it takes over a lower-fidelity source's
+ * row (which then records nothing, so no line may be absorbed by it); another record of the same money absorbs it
+ * (`absorbedLines`); or it is new. Read-only — `pickTakeoverVictim` is told which rows earlier lines already took, as
+ * the loop that follows will have superseded them.
+ */
+function planLines(
+  tx: AppDatabase,
+  accountId: string,
+  lines: readonly StoredLine[],
+  ranges: readonly CoveredRange[],
+  myPriority: number,
+  slots: readonly IdentitySlot[],
+): LinePlan[] {
+  const taken = new Set<string>();
+  const identity: number[] = [];
+  const plan = lines.map(({ printed: t, stored }, i): LinePlan => {
+    // `soleSource` rows opt out: the higher-fidelity source covers the
+    // DAY but is documented not to carry this row type (CanonicalTxn)
+    if (!t.soleSource && rangesCovering(ranges, stored.postedOn).some((r) => r.priority < myPriority)) return { kind: "owned" };
+    // takeover: a lower-fidelity source covers the day this row PRINTS —
+    // replace its best-matching row (schema.md: date, amount, description
+    // similarity). `pickTakeoverVictim` looks for that row on the printed
+    // day, so the coverage asked about is the printed day's too.
+    const lowerOwners = rangesCovering(ranges, t.postedOn).filter((r) => r.priority > myPriority);
+    if (lowerOwners.length > 0) {
+      const victim = pickTakeoverVictim(tx, accountId, t, lowerOwners.map((r) => r.importFileId), taken);
+      if (victim) {
+        taken.add(victim.id);
+        return { kind: "takeover", victimId: victim.id };
+      }
+    }
+    identity.push(i);
+    return { kind: "new" };
+  });
+  // a row taken over leaves the ledger: it absorbs nothing
+  const open = slots.filter((slot) => !taken.has(slot.id));
+  for (const k of absorbedLines(identity.map((i) => lines[i]!.printed), open)) plan[identity[k]!] = { kind: "absorbed" };
+  return plan;
 }
 
 /**
@@ -431,7 +485,7 @@ function captureCarryForward(db: AppDatabase, oldFileIds: readonly string[]): Ca
  * bucketed once under its posted day, so the posted index lists every carry row exactly once.
  *
  * A claim is the new read printing the same money — same account, same day, same amount, by the lenses
- * `consumeIdentity` absorbs a line by — so an unclaimed row is money the new read does not record: a section it
+ * `absorbedLines` absorbs a line by — so an unclaimed row is money the new read does not record: a section it
  * withholds, an account it no longer reads, a line it no longer prints. A claimed row follows the carry: onto the
  * row that now records its money, or out with its superseded row when another source's row records it.
  */
@@ -453,7 +507,7 @@ function bucketCarry(map: Map<string, CarryRow[]>, key: string, row: CarryRow): 
  * migrate onto at most one successor.
  *
  * Posted day first, then transaction day to transaction day — the fallback
- * `consumeIdentity` already makes, for the same reason: a card statement prints
+ * `identityWeight` already makes, for the same reason: a card statement prints
  * the TRANSACTION day. 🔴 Keyed on the posted day alone, Chase Sapphire's
  * +$100.00 payment (posted 2026-07-01, transacted and printed 06/30) lost its
  * transfer link and its note to a version bump of 20260702-statements-9805-.pdf,
@@ -1037,8 +1091,8 @@ interface PlacedTxn {
  * The stored row posts on `postedInsidePeriod`, keeping the printed day as its
  * transaction day. The printed row is kept too, because a search for ANOTHER
  * record of the same money (identity, takeover victim, carry) must look on the
- * day the file prints: pass 38 measured that `consumeIdentity`'s posted lens,
- * tried first and blind to descriptions, would hand LA GAVIOTA DELI GROCERY's
+ * day the file prints: pass 38 measured that the identity match's posted lens,
+ * blind to descriptions, would hand LA GAVIOTA DELI GROCERY's
  * charge to NEW BEST GOURMET DELI's on the opening day.
  *
  * Ownership is the one decision that reads the stored row. It asks which source
@@ -1267,7 +1321,7 @@ async function importOneFile(
         lines.map(({ stored }) => writtenSide(stored)),
         standInsOn(db, accountId),
       );
-      const identityPool = existingIdentityPool(db, accountId, fileRow.id, new Set(returning.map((s) => s.copy.id)));
+      const slots = existingIdentitySlots(db, accountId, fileRow.id, new Set(returning.map((s) => s.copy.id)));
 
       db.transaction((tx) => {
         // the hashes of the rows this statement inserts, in print order
@@ -1276,10 +1330,10 @@ async function importOneFile(
         // who covers the day the row POSTED, so it reads `stored`; takeover,
         // identity and carry look for another row recording the same money,
         // which sits on the day the file prints, so they read `t`.
-        for (const { printed: t, stored, occurrenceIndex, hash } of lines) {
-          // `soleSource` rows opt out: the higher-fidelity source covers the
-          // DAY but is documented not to carry this row type (CanonicalTxn)
-          if (!t.soleSource && rangesCovering(ranges, stored.postedOn).some((r) => r.priority < myPriority)) {
+        const plan = planLines(tx, accountId, lines, ranges, myPriority, slots);
+        for (const [i, { printed: t, stored, occurrenceIndex, hash }] of lines.entries()) {
+          const fate = plan[i]!;
+          if (fate.kind === "owned") {
             outcome.skippedOwned += 1; // owned by higher fidelity — visible, never silent
             continue;
           }
@@ -1289,47 +1343,37 @@ async function importOneFile(
           // above leaves its attributes for whichever row does materialize)
           const carried = takeCarry(carryPool, accountId, t, hash);
 
-          // takeover: a lower-fidelity source covers the day this row PRINTS —
-          // replace its best-matching row (schema.md: date, amount, description
-          // similarity). `pickTakeoverVictim` looks for that row on the printed
-          // day, so the coverage asked about is the printed day's too.
-          const lowerOwners = rangesCovering(ranges, t.postedOn).filter((r) => r.priority > myPriority);
-          if (lowerOwners.length > 0) {
-            const victim = pickTakeoverVictim(tx, accountId, t, lowerOwners.map((r) => r.importFileId));
-            if (victim) {
-              tx.update(transactions).set({ status: "superseded" }).where(eq(transactions.id, victim.id)).run();
-              outcome.supersededTakeover += 1;
-              // the victim leaves the ledger — release its identity so a later
-              // same-day equal-amount row can't consume the superseded slot
-              if (victim.status !== "quarantined") consumeIdentity(identityPool, t.postedOn, t.transactedOn, t.amountCents);
-              // the re-parse carry wins over the victim: same file lineage, so
-              // it is the row the user actually edited
-              const inserted = insertTxn(tx, db, accountId, fileRow.id, stored, hash, occurrenceIndex, carried ?? victim);
-              if (inserted) {
-                outcome.inserted += 1;
-                written.push(hash);
-              } else outcome.deduped += 1;
-              // move any user-entered splits off the superseded victim onto its
-              // replacement (the SAME real charge, so amounts match) — found by
-              // the replacement's own dedupe hash. Covers both the freshly-
-              // inserted and the deduped (existing active twin) branches.
-              const replacement = liveRowByHash(tx, accountId, hash);
-              if (replacement) {
-                migrateSplits(tx, victim.id, replacement.id);
-                // …and the owner's duplicate verdict, as a re-parse hands it on
-                // (`landCarry`): the replacement records the victim's money now
-                moveKeptSide(tx, victim.id, replacement.id);
-              }
-              // the carry lands last: same file lineage as the row the user
-              // actually edited, so it outranks the victim's attributes
-              if (carried && landCarry(tx, accountId, hash, carried, inserted)) {
-                outcome.carriedForward += 1;
-              }
-              continue;
+          if (fate.kind === "takeover") {
+            const victim = tx.select().from(transactions).where(eq(transactions.id, fate.victimId)).get()!;
+            tx.update(transactions).set({ status: "superseded" }).where(eq(transactions.id, victim.id)).run();
+            outcome.supersededTakeover += 1;
+            // the re-parse carry wins over the victim: same file lineage, so
+            // it is the row the user actually edited
+            const inserted = insertTxn(tx, db, accountId, fileRow.id, stored, hash, occurrenceIndex, carried ?? victim);
+            if (inserted) {
+              outcome.inserted += 1;
+              written.push(hash);
+            } else outcome.deduped += 1;
+            // move any user-entered splits off the superseded victim onto its
+            // replacement (the SAME real charge, so amounts match) — found by
+            // the replacement's own dedupe hash. Covers both the freshly-
+            // inserted and the deduped (existing active twin) branches.
+            const replacement = liveRowByHash(tx, accountId, hash);
+            if (replacement) {
+              migrateSplits(tx, victim.id, replacement.id);
+              // …and the owner's duplicate verdict, as a re-parse hands it on
+              // (`landCarry`): the replacement records the victim's money now
+              moveKeptSide(tx, victim.id, replacement.id);
             }
+            // the carry lands last: same file lineage as the row the user
+            // actually edited, so it outranks the victim's attributes
+            if (carried && landCarry(tx, accountId, hash, carried, inserted)) {
+              outcome.carriedForward += 1;
+            }
+            continue;
           }
 
-          if (consumeIdentity(identityPool, t.postedOn, t.transactedOn, t.amountCents)) {
+          if (fate.kind === "absorbed") {
             // another source already records this money movement — classify by
             // whether the raw text matched exactly (visible, never silent)
             const exact = tx
@@ -1635,6 +1679,8 @@ function pickTakeoverVictim(
   accountId: string,
   t: CanonicalTxn,
   lowerFileIds: string[],
+  // rows an earlier line of the same statement takes over
+  taken: ReadonlySet<string>,
 ): typeof transactions.$inferSelect | undefined {
   const candidates = tx
     .select()
@@ -1648,7 +1694,8 @@ function pickTakeoverVictim(
         inArray(transactions.importFileId, lowerFileIds),
       ),
     )
-    .all();
+    .all()
+    .filter((c) => !taken.has(c.id));
   if (candidates.length === 0) return undefined;
   if (candidates.length === 1) return candidates[0];
 
