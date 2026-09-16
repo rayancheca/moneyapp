@@ -23,9 +23,9 @@ import type { CanonicalTxn } from "./types";
  *
  * ⚖️ The rule `statement-copies` set for a second download, for every file: a row a still-imported file prints is
  * handed to it — re-filed, every attribute kept — not deleted. Which rows: each such file's lines are matched to the
- * account's rows, its own rows first, then every other row the un-import leaves; a line only the un-imported file's
- * rows can record takes one of them. So a line another record already holds (a row entered by hand, a third file's)
- * takes nothing, and the un-imported file's copy of it goes.
+ * account's rows — its own, and every other row the un-import leaves — and a line only the un-imported file's rows can
+ * record takes one of them. So a line another record already holds (the file's own row, a row entered by hand, a third
+ * file's) takes nothing, and the un-imported file's copy of it goes.
  */
 
 export interface PrintedLine {
