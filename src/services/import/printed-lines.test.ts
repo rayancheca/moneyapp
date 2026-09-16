@@ -358,6 +358,76 @@ describe("an export read again takes back its rows from the statement that kept 
 });
 
 /**
+ * A file with no record of what it prints is known to print the lines of its PARSED rows a takeover retired
+ * (`takenOverLines`). A retired row filed by hand is not one: `redate-sapphire-0630-payment-2026-09-15.ts` leaves the
+ * reconstructed payment's old row (posted 07-01) superseded under 20260702-statements-9805-.pdf beside its successor
+ * (06-30), and the statement prints no line on 07-01. 🔴 Nothing failed if such a row counted: the statement became the
+ * heir of another file's charge of the same money on that day (the review of uc/final-integrate, 2026-09-16).
+ */
+describe("a retired row filed by hand makes its file the heir of nothing", () => {
+  const PAYMENT = { amountCents: 10_000, rawDescription: "Payment Thank You-Mobile" };
+  const STATEMENT_NAME = `${PREFIX}redated-statement.csv`;
+  const OTHER_NAME = `${PREFIX}redated-other.csv`;
+  const byName: ParserProfile = {
+    id: "test-printed-lines-redated",
+    version: 1,
+    matches: (f) => f.name === STATEMENT_NAME || f.name === OTHER_NAME,
+    parse: (f) =>
+      f.name === STATEMENT_NAME
+        ? [
+            {
+              accountHint: CHECKING,
+              txns: [{ ...PAYMENT, postedOn: "2026-06-30" }],
+              period: { start: "2026-06-03", end: "2026-07-02", beginCents: 0, endCents: 10_000 },
+            },
+          ]
+        : // another charge of the same money, a day later, in words of its own
+          [{ accountHint: CHECKING, txns: [{ amountCents: 10_000, postedOn: "2026-07-01", rawDescription: "REFUND FROM THE GYM" }] }],
+  };
+  const STATEMENT: ImportInput = { name: STATEMENT_NAME, buffer: Buffer.from("redated statement") };
+  const OTHER: ImportInput = { name: OTHER_NAME, buffer: Buffer.from("redated other") };
+
+  beforeEach(() => {
+    PROFILES.unshift(byName);
+  });
+  afterEach(() => {
+    PROFILES.splice(PROFILES.indexOf(byName), 1);
+  });
+
+  test("un-importing another file deletes its charge on the day the retired row was", async () => {
+    await importStatementFiles(bundle.db, [STATEMENT]);
+    const statement = fileId(STATEMENT);
+    const [line] = rowsOf(STATEMENT);
+    // the redate's shape: the statement's line is the owner's reconstruction, filed by hand, and its first row is retired
+    bundle.db.update(transactions).set({ fileLinkSource: "attached" }).where(eq(transactions.id, line!.id)).run();
+    const raw = "PAYMENT — reconstructed";
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId: accountId(),
+        importFileId: statement,
+        fileLinkSource: "attached",
+        status: "superseded",
+        postedOn: "2026-07-01",
+        amountCents: PAYMENT.amountCents,
+        rawDescription: raw,
+        normalizedDescription: normalizeDescription(raw),
+        dedupeHash: dedupeHash({ accountId: accountId(), postedOn: "2026-07-01", amountCents: PAYMENT.amountCents, rawDescription: raw, occurrenceIndex: 0 }),
+      })
+      .run();
+    // a statement imported before its lines were recorded
+    bundle.db.delete(printedLines).where(eq(printedLines.importFileId, statement)).run();
+    await importStatementFiles(bundle.db, [OTHER]);
+    expect(rowsOf(OTHER)).toHaveLength(1);
+    expect(unimportCountsByFile(bundle.db).get(fileId(OTHER))).toMatchObject({ deleted: 1, keptByPrinters: 0 });
+
+    unimportFile(bundle.db, fileId(OTHER));
+
+    expect(live().map((r) => [r.postedOn, r.importFileId])).toEqual([["2026-06-30", statement]]);
+  });
+});
+
+/**
  * A statement line printed before its period opens is stored on the period's first day, with the printed day as its
  * transaction day (`placeInsidePeriod`). An export printing the same charge on the printed day, with no transaction day,
  * is the file whose row that line took over.

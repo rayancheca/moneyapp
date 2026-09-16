@@ -40,7 +40,7 @@ import {
 } from "../duplicate-lifecycle";
 import { accountsFormerlyNumbered, formerNumbers } from "./account-numbers";
 import { accountSlug, institutionSlug } from "./account-slug";
-import { ATTACHED, detachAttachedRows, keepRetiredAttachedRows, parsedFromFile, reattachDetachedRows } from "./attached-rows";
+import { ATTACHED, detachAttachedRows, keepRetiredAttachedRows, parsedFromFile, parsedRow, reattachDetachedRows } from "./attached-rows";
 import {
   bookEventsByCashAccount,
   cashOnlyReadsOn,
@@ -2286,6 +2286,10 @@ function pickTakeoverVictim(
         eq(transactions.amountCents, t.amountCents),
         inArray(transactions.status, ["active", "quarantined"]),
         inArray(transactions.importFileId, lowerFileIds),
+        // ⚖️ a row filed under the file by hand is the owner's, never the file's parse (owner, 2026-09-15): it absorbs
+        // the line as any row entered by hand does. 🔴 Taken over, it was retired behind the new line, and un-importing
+        // the more trusted file deleted the payment where its statement had no record of what it prints.
+        parsedRow(),
       ),
     )
     .all()

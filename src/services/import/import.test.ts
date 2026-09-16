@@ -2962,6 +2962,30 @@ describe("a parser-version re-read that no longer writes an account", () => {
     }
   });
 
+  /**
+   * The heir owns the periods it takes, so it is no longer a copy of them; the first download imported again adopts them
+   * and is the copy. 🔴 Nothing failed if the heir stayed recorded as a copy: the first download's next import then took
+   * the periods back (`reclaimFromCopy`) and left the rows under the heir (the review of uc/final-integrate, 2026-09-16:
+   * the SoFi 2025-03 round trip on a copy of the real ledger).
+   */
+  test("the download that takes the periods is no longer a copy of them, and the first download imported again is", async () => {
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    await importStatementFiles(bundle.db, [MARCH_COPY]);
+    const copy = liveFile(MARCH_COPY).id;
+    const copiesBy = () => bundle.db.select({ fileId: statementCopies.importFileId }).from(statementCopies).all().map((c) => c.fileId);
+    expect(copiesBy()).toEqual([copy, copy, copy]);
+
+    unimportFile(bundle.db, liveFile(MARCH).id);
+    expect(copiesBy()).toEqual([]);
+
+    await importStatementFiles(bundle.db, [MARCH]);
+    const march = liveFile(MARCH).id;
+    expect(copiesBy()).toEqual([march, march, march]);
+    expect(contributionOf(copy).periods).toHaveLength(3);
+    expect(contributionOf(copy).rows).toHaveLength(2);
+    expect(contributionOf(march)).toMatchObject({ rows: [], periods: [] });
+  });
+
   test("the second download takes only the rows it prints: a line only the first download prints goes with it", async () => {
     await importStatementFiles(bundle.db, [JANUARY, MARCH]);
     const REISSUE = statementFor("2026-03 reissue");
@@ -3958,6 +3982,51 @@ describe("un-import keeps a row attached to its file, and a re-import files it t
     const left = bundle.db.select().from(transactions).where(eq(transactions.accountId, s.accountId)).all();
     expect(left.map((t) => t.id).sort()).toEqual([s.attached, s.unattached].sort());
     expect(fileNamed()).toBeUndefined();
+  });
+
+  /**
+   * ⚖️ Owner, 2026-09-15: a row filed under a statement by hand was never the file's to take. A more trusted file
+   * printing its line is absorbed by it, as by any row entered by hand — it does not take it over.
+   *
+   * 🔴 The takeover read the row's file id as the statement's parse and retired the owner's row behind the new line;
+   * un-importing the more trusted file then deleted the payment where the statement had no record of what it prints
+   * (found while pinning `takenOverLines`, 2026-09-16: a $50.00 hand payment gone, the statement's period in gap).
+   */
+  test("a more trusted file's line is absorbed by a row filed by hand, and un-importing that file keeps it", async () => {
+    const s = await scene();
+    const kept = row(s.attached)!;
+    const account = bundle.db.select().from(accounts).where(eq(accounts.id, s.accountId)).get()!;
+    const institution = bundle.db.select().from(institutions).where(eq(institutions.id, account.institutionId)).get()!;
+    const OFX: ImportInput = { name: "hand-row-takeover.ofx", buffer: Buffer.from("<OFX> hand row takeover") };
+    const trusted: ParserProfile = {
+      id: "test-hand-row-takeover",
+      version: 1,
+      matches: (f) => f.name === OFX.name,
+      parse: () => [
+        {
+          accountHint: { institution: institution.name as AccountHint["institution"], type: account.type, last4: account.last4! },
+          txns: [{ postedOn: kept.postedOn, amountCents: kept.amountCents, rawDescription: "CAPITAL ONE ONLINE PYMT" }],
+        },
+      ],
+    };
+    PROFILES.unshift(trusted);
+    try {
+      const [outcome] = await importStatementFiles(bundle.db, [OFX]);
+      expect(outcome).toMatchObject({ status: "parsed", inserted: 0, supersededTakeover: 0, dedupedCrossFormat: 1 });
+    } finally {
+      PROFILES.splice(PROFILES.indexOf(trusted), 1);
+    }
+    const { importFileId: _f, updatedAt: _u, ...carried } = kept;
+    expect(row(s.attached)).toMatchObject({ ...carried, importFileId: s.fileId });
+    expect(periodOf(s.fileId)!.reconciliation).toBe("reconciled");
+
+    // a statement imported before its lines were recorded
+    const { printedLines } = await import("@/db/schema/imports");
+    bundle.db.delete(printedLines).where(eq(printedLines.importFileId, s.fileId)).run();
+    unimportFile(bundle.db, bundle.db.select().from(importFilesTable).where(eq(importFilesTable.fileName, OFX.name)).get()!.id);
+
+    expect(row(s.attached)).toMatchObject({ ...carried, importFileId: s.fileId, status: "active" });
+    expect(periodOf(s.fileId)!.reconciliation).toBe("reconciled");
   });
 
   test("a kept row its statement's gap had quarantined comes back active — the verdict left with the period", async () => {
