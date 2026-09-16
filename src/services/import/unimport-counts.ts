@@ -92,8 +92,10 @@ export function unimportCountsByFile(db: AppDatabase): Map<string, UnimportCount
       /*
        * ⛔ …and some of what leaves comes straight back. `unimportFile` calls
        * `restoreDuplicatesLosingTheirSurvivor` BEFORE its delete, so a row that
-       * is the surviving half of a confirmed duplicate hands its money to the
-       * retired twin instead of taking it out of the ledger. All 12 rows of
+       * is the surviving half of a confirmed duplicate hands its money (and a
+       * transfer link the twin lacks) to the retired twin instead of taking it
+       * out of the ledger, and re-importing the file retires the twin again for
+       * the line that brings it back. All 12 rows of
        * `20250302-statements-9805-.pdf` were survivors when this was written,
        * and their twins summed to the same $4,619.92 the confirmation called
        * money leaving.

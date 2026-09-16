@@ -13,7 +13,7 @@ import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { createAccount } from "./accounts";
 import { flagDuplicateCandidates } from "./duplicate-flags";
-import { restoreDuplicatesLosingTheirSurvivor } from "./duplicate-lifecycle";
+import { restoreDuplicatesLosingTheirSurvivor, retireStandIn, standInsOn } from "./duplicate-lifecycle";
 import { unimportFile } from "./import/service";
 import {
   listDuplicatePairs,
@@ -404,7 +404,42 @@ describe("a hard delete must not take the money with it", () => {
     // without this the charge would be recorded by ZERO live rows: `a` deleted,
     // `b` still superseded, and the money gone from net worth with no error
     expect(statusOf(b)).toBe("active");
-    expect(candidate(candidateId).resolution).toBe("unresolved");
+    // 🔴 the pair used to be re-opened here — a question with one side about to
+    // be NULL, on no queue — and the owner's verdict was gone, so re-importing
+    // `a`'s statement counted the charge twice (duplicate-lifecycle). The copy
+    // stands in for `a` and the verdict stays, naming it.
+    expect(candidate(candidateId)).toMatchObject({ resolution: "confirmed_duplicate", retiredTransactionId: b });
+  });
+
+  test("retired again beside a kept row that has a link of its own, the copy leaves no partner alone in its group", () => {
+    const { a, b, candidateId } = flaggedPair();
+    resolveDuplicate(bundle.db, { candidateId, decision: "confirmed_duplicate", retiredTransactionId: b });
+    const partner = insertTxn({ importFileId: fileB, amountCents: 125, description: "PARTNER LEG", transferGroupId: "group-a" });
+    bundle.db.update(transactions).set({ transferGroupId: "group-a" }).where(eq(transactions.id, a)).run();
+    bundle.db.transaction((tx) => {
+      restoreDuplicatesLosingTheirSurvivor(tx, [a]);
+      tx.delete(transactions).where(eq(transactions.id, a)).run();
+    });
+    const [standIn] = standInsOn(bundle.db, accountId);
+    expect(standIn!.copy.id).toBe(b);
+    // the line comes back already linked elsewhere
+    const back = insertTxn({ description: "CPI CANTEEN VENDING MIAMI", transferGroupId: "group-other" });
+
+    retireStandIn(bundle.db, accountId, standIn!, back);
+
+    expect(bundle.db.select().from(transactions).where(eq(transactions.id, back)).get()!.transferGroupId).toBe("group-other");
+    expect(bundle.db.select().from(transactions).where(eq(transactions.id, b)).get()).toMatchObject({ status: "superseded", transferGroupId: null });
+    expect(bundle.db.select().from(transactions).where(eq(transactions.id, partner)).get()!.transferGroupId).toBeNull();
+  });
+
+  test("the restored copy takes the kept row's transfer link when it has none", () => {
+    const { a, b, candidateId } = flaggedPair();
+    resolveDuplicate(bundle.db, { candidateId, decision: "confirmed_duplicate", retiredTransactionId: b });
+    bundle.db.update(transactions).set({ transferGroupId: "group-a" }).where(eq(transactions.id, a)).run();
+
+    restoreDuplicatesLosingTheirSurvivor(bundle.db, [a]);
+
+    expect(bundle.db.select().from(transactions).where(eq(transactions.id, b)).get()!.transferGroupId).toBe("group-a");
   });
 
   test("does nothing when the RETIRED copy is the one being deleted", () => {

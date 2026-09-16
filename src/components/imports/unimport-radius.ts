@@ -11,9 +11,11 @@ import type { UnimportCounts } from "@/services/import/unimport-counts";
  * 2026-09-15 a statement can hold rows it never brought in — 34 Chase Sapphire
  * payments are filed under 12 of its statements — and un-importing keeps them
  * (owner's decision). 20260302-statements-9805-.pdf reads "4 rows deleted, 5
- * kept", and the transfer legs on each side are counted: the four deleted legs
- * each leave a Chase Checking partner that loses its link, the five kept stay
- * linked.
+ * kept", and the transfer legs on each side are counted: the five kept stay
+ * linked, and a deleted leg's partner is unlinked only if nothing is left in
+ * its transfer — all four of that file's deleted legs are surviving
+ * duplicates, whose restored copies take their links (duplicate-lifecycle,
+ * 2026-09-16), so their Chase Checking partners stay linked.
  *
  * 🔴 …"5 legs, still linked" was a claim about every kept leg, and on 2026-09-15
  * one of those five (+$115.00, 2026-03-02) was alone in its transfer group, as

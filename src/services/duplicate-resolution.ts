@@ -1,4 +1,4 @@
-import { and, eq, inArray, ne, or, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { AppDatabase } from "@/db/client";
 import { withPreMutationSnapshot } from "@/db/backup";
@@ -13,6 +13,8 @@ import { isReplayStatus, rebuildAccount } from "./derivation";
 // definition and can never drift apart.
 import { openDuplicateCount, STILL_ASKABLE } from "./duplicate-count";
 import { flagDuplicateCandidates } from "./duplicate-flags";
+// the same "nothing else still asks about it" a re-import asks when it retires a copy again
+import { clearReviewIfSettled } from "./duplicate-lifecycle";
 import { reconcileAccounts } from "./import/service";
 import { hasSplits } from "./transaction-splits";
 
@@ -106,30 +108,6 @@ function isProvenByReconciliation(db: AppDatabase, side: PairSide): boolean {
        AND ${side.postedOn} BETWEEN p.period_start AND p.period_end
   `);
   return (proven?.n ?? 0) > 0;
-}
-
-/**
- * Clear `needs_review` on a row only when nothing else is still asking about it.
- *
- * Retiring one side used to leave the SURVIVOR flagged forever: it drops out of
- * the duplicates queue (its partner is gone) but stays in the review queue with
- * no partner and no reason — an orphan the owner cannot act on or explain.
- */
-function clearReviewIfSettled(db: AppDatabase, ids: readonly string[]): void {
-  for (const id of ids) {
-    const stillOpen = db
-      .select({ id: duplicateCandidates.id })
-      .from(duplicateCandidates)
-      .where(
-        and(
-          eq(duplicateCandidates.resolution, "unresolved"),
-          or(eq(duplicateCandidates.transactionIdA, id), eq(duplicateCandidates.transactionIdB, id)),
-        ),
-      )
-      .get();
-    if (stillOpen) continue;
-    db.update(transactions).set({ needsReview: false }).where(eq(transactions.id, id)).run();
-  }
 }
 
 export interface ResolveDuplicateResult {

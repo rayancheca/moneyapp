@@ -17,7 +17,7 @@ import {
 } from "@/db/schema/transactions";
 import { migrateSplits, splitCountsByTxn } from "../transaction-splits";
 import { descriptionScore } from "@/lib/description-score";
-import { assignOccurrenceIndexes, dedupeHash, fileSha256 } from "@/lib/hash";
+import { assignOccurrenceIndexes, dedupeHash, fileSha256, type DuplicatePairSide } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { sumCents } from "@/lib/money";
 import { RECONCILE_STATUSES, periodVerdict } from "@/lib/reconciliation";
@@ -28,7 +28,14 @@ import { rebuildAccount } from "../derivation";
 import { flagDuplicateCandidates } from "../duplicate-flags";
 import { linkRowsMadeActive, settleSeriesStats } from "../recurring-import-links";
 import { detachTransferLegs, type StaleTransferLeg } from "../transfer-links";
-import { accountsOfTransactions, restoreDuplicatesLosingTheirSurvivor } from "../duplicate-lifecycle";
+import {
+  accountsOfTransactions,
+  claimKeptSides,
+  restoreDuplicatesLosingTheirSurvivor,
+  retireStandIn,
+  standInsOn,
+  standInsReturnedBy,
+} from "../duplicate-lifecycle";
 import { accountSlug, institutionSlug } from "./account-slug";
 import { ATTACHED, detachAttachedRows, keepRetiredAttachedRows, parsedFromFile, reattachDetachedRows } from "./attached-rows";
 import { handOverPrintedAnchors } from "./printed-anchors";
@@ -155,6 +162,12 @@ interface CoveredRange {
  * Quarantined rows stay out of the pool (they don't affect balances, so an
  * incoming balance-affecting row must not vanish against one), and superseded
  * rows are history.
+ *
+ * `retiredAgain` leaves out the copies this statement retires again
+ * (`standInsReturnedBy`): each is a retired row the un-import of this
+ * statement put back, standing in for a line the statement now prints. Before
+ * the un-import it was out of this pool, and a same-day copy left in would
+ * absorb the very line it was retired for.
  */
 interface IdentityPool {
   /** one slot per existing row, consumed at most once however it is matched */
@@ -163,9 +176,15 @@ interface IdentityPool {
   byTransacted: Map<string, number[]>;
 }
 
-function existingIdentityPool(db: AppDatabase, accountId: string, excludeFileId: string): IdentityPool {
+function existingIdentityPool(
+  db: AppDatabase,
+  accountId: string,
+  excludeFileId: string,
+  retiredAgain: ReadonlySet<string>,
+): IdentityPool {
   const rows = db
     .select({
+      id: transactions.id,
       postedOn: transactions.postedOn,
       transactedOn: transactions.transactedOn,
       amountCents: transactions.amountCents,
@@ -178,7 +197,8 @@ function existingIdentityPool(db: AppDatabase, accountId: string, excludeFileId:
         sql`(${transactions.importFileId} IS NULL OR ${transactions.importFileId} != ${excludeFileId})`,
       ),
     )
-    .all();
+    .all()
+    .filter((r) => !retiredAgain.has(r.id));
 
   const pool: IdentityPool = { used: rows.map(() => false), byPosted: new Map(), byTransacted: new Map() };
   rows.forEach((r, i) => {
@@ -1134,9 +1154,19 @@ async function importOneFile(
 
       const lines = storedLines(accountId, account, statement);
 
-      const identityPool = existingIdentityPool(db, accountId, fileRow.id);
+      // ⚖️ the owner's confirmed duplicates whose kept line this statement
+      // prints again: an un-import of it put their retired copies back
+      // (`duplicate-lifecycle`), and the lines they stand in for are here
+      const returning = standInsReturnedBy(
+        accountId,
+        lines.map(({ stored }) => writtenSide(stored)),
+        standInsOn(db, accountId),
+      );
+      const identityPool = existingIdentityPool(db, accountId, fileRow.id, new Set(returning.map((s) => s.copy.id)));
 
       db.transaction((tx) => {
+        // the hashes of the rows this statement inserts, in print order
+        const written: string[] = [];
         // `t` is the row as printed, `stored` the row as written. Ownership asks
         // who covers the day the row POSTED, so it reads `stored`; takeover,
         // identity and carry look for another row recording the same money,
@@ -1170,8 +1200,10 @@ async function importOneFile(
               // the re-parse carry wins over the victim: same file lineage, so
               // it is the row the user actually edited
               const inserted = insertTxn(tx, db, accountId, fileRow.id, stored, hash, occurrenceIndex, carried ?? victim);
-              if (inserted) outcome.inserted += 1;
-              else outcome.deduped += 1;
+              if (inserted) {
+                outcome.inserted += 1;
+                written.push(hash);
+              } else outcome.deduped += 1;
               // move any user-entered splits off the superseded victim onto its
               // replacement (the SAME real charge, so amounts match) — found by
               // the replacement's own dedupe hash. Covers both the freshly-
@@ -1214,13 +1246,27 @@ async function importOneFile(
           }
 
           const inserted = insertTxn(tx, db, accountId, fileRow.id, stored, hash, occurrenceIndex, carried);
-          if (inserted) outcome.inserted += 1;
-          else outcome.deduped += 1;
+          if (inserted) {
+            outcome.inserted += 1;
+            written.push(hash);
+          } else outcome.deduped += 1;
           // `inserted === false` means an active twin already held this hash —
           // that row is not ours to overwrite, only to fill
           if (carried && landCarry(tx, accountId, hash, carried, inserted)) {
             outcome.carriedForward += 1;
           }
+        }
+
+        // …and a copy is retired again only for a line that became a row
+        // here, in this transaction, so the charge is never counted twice. A
+        // line owned elsewhere or absorbed by another record leaves its copy
+        // standing in.
+        const fresh = written.flatMap((h) => {
+          const r = liveRowByHash(tx, accountId, h);
+          return r !== undefined && r.importFileId === fileRow.id ? [r] : [];
+        });
+        for (const { standIn, keptId } of claimKeptSides(accountId, fresh, returning)) {
+          retireStandIn(tx, accountId, standIn, keptId);
         }
 
         // anchors: point-in-time ledger observations and statement balances
@@ -1421,6 +1467,19 @@ function pickTakeoverVictim(
   return ranked[0]!.s > 0 ? ranked[0]!.c : undefined;
 }
 
+/**
+ * The columns `insertTxn` writes that a duplicate pair's key reads — asked
+ * before a line lands, so the importer knows which retired copies it returns.
+ */
+function writtenSide(t: CanonicalTxn): DuplicatePairSide {
+  return {
+    postedOn: t.postedOn,
+    transactedOn: t.transactedOn ?? null,
+    amountCents: t.amountCents,
+    normalizedDescription: normalizeDescription(t.rawDescription),
+  };
+}
+
 function insertTxn(
   tx: AppDatabase,
   db: AppDatabase,
@@ -1440,11 +1499,8 @@ function insertTxn(
     .values({
       accountId,
       importFileId,
-      postedOn: t.postedOn,
-      transactedOn: t.transactedOn ?? null,
-      amountCents: t.amountCents,
+      ...writtenSide(t),
       rawDescription: t.rawDescription,
-      normalizedDescription: normalizeDescription(t.rawDescription),
       bankCategory: t.bankCategory ?? null,
       fitid: t.fitid ?? null,
       occurrenceIndex,

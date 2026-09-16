@@ -307,8 +307,9 @@ export function flagDuplicateCandidates(
     } else if (existing.resolution === "confirmed_duplicate") {
       // Already settled by retiring one side. BOTH_IN_REPLAY cannot see a
       // superseded row, so re-deriving this pair means the retired side came
-      // back — undone by hand, or restored by unimportFile when the survivor's
-      // file was removed. Either way the question is open again, and the stale
+      // back beside the side that was kept. (A copy unimportFile restores is
+      // not that: its kept side is deleted, so no pair of two live ids names
+      // it — duplicate-lifecycle.) The question is open again, and the stale
       // 'confirmed' verdict would otherwise hide it from the queue forever.
       db.update(duplicateCandidates)
         .set({ resolution: "unresolved", resolvedAt: null, retiredTransactionId: null })
