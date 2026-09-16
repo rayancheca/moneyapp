@@ -208,6 +208,58 @@ describe("restoreSnapshotAction", () => {
     expect(readSettings(getDb()).priceStalenessHours).toBe(36);
   });
 
+  /**
+   * 🔴 A migration creates the import records empty, so every snapshot taken before the records existed came back with
+   * the files and none of the records, and the next un-import deleted what another file still prints (the review of
+   * uc/final-integrate, 2026-09-16: 20230810-statements-3522-.pdf, 85 rows and a reconciled period). The restore
+   * records them again from the originals.
+   */
+  test("a snapshot older than the import records comes back with them recorded", async () => {
+    const { PROFILES } = await import("@/services/import/profiles");
+    const { importStatementFiles } = await import("@/services/import/service");
+    const { printedLines, statementCopies } = await import("@/db/schema/imports");
+    const Database = (await import("better-sqlite3")).default;
+    process.env.MONEYAPP_ORIGINALS_DIR = path.join(dir, "originals");
+    const profile = {
+      id: "test-settings-restore-records",
+      version: 1,
+      matches: (f: { name: string }) => f.name.startsWith("restore-records-"),
+      parse: () => [
+        {
+          accountHint: { institution: "Chase" as const, type: "checking" as const, last4: "6060" },
+          txns: [{ postedOn: "2026-02-10", amountCents: -1200, rawDescription: "RESTORE RECORDS LINE" }],
+          period: { start: "2026-02-01", end: "2026-02-28", beginCents: 5000, endCents: 3800 },
+        },
+      ],
+    };
+    PROFILES.unshift(profile);
+    try {
+      // a statement, and a second download of it
+      await importStatementFiles(getDb(), [
+        { name: "restore-records-2026-02.txt", buffer: Buffer.from("february") },
+        { name: "restore-records-2026-02 (1).txt", buffer: Buffer.from("february\n") },
+      ]);
+      const recorded = () => ({
+        lines: getDb().select().from(printedLines).all().length,
+        copies: getDb().select().from(statementCopies).all().length,
+      });
+      expect(recorded()).toEqual({ lines: 2, copies: 1 });
+      const name = await snapshotNow();
+      // the snapshot as one taken before the records existed holds it
+      const old = new Database(path.join(dir, "backups", name));
+      old.exec("DELETE FROM printed_lines; DELETE FROM statement_copies; DELETE FROM account_numbers;");
+      old.close();
+
+      const result = await restoreSnapshotAction({ name, confirmation: "RESTORE" });
+
+      expect(result.ok === true && result.data.filesUnrecorded).toBe(0);
+      expect(recorded()).toEqual({ lines: 2, copies: 1 });
+    } finally {
+      PROFILES.splice(PROFILES.indexOf(profile), 1);
+      delete process.env.MONEYAPP_ORIGINALS_DIR;
+    }
+  });
+
   test("a snapshot that is not in the archive reports it instead of throwing", async () => {
     const result = await restoreSnapshotAction({
       name: "daily-1999-01-01.db",

@@ -63,6 +63,7 @@ import { formatCents } from "@/lib/money";
 import { isRealDatabasePath } from "@/db/backup";
 import { type LedgerCheckMode, WitnessFlagRefusal, compareToMarks, ledgerCheckMode, planLowering } from "@/lib/witness-floor";
 import { readWitnessMarks, writeWitnessMarks } from "@/services/witness-marks";
+import { filesWithoutPrintedLines } from "@/services/import/import-records";
 
 /**
  * The ledger as of 2026-08-17, pass 59, AFTER the crypto-movement migration.
@@ -358,6 +359,28 @@ for (const [name, list] of Object.entries(valueAnchors)) {
   for (const d of list) console.log(`  ${name} ${d.on}  off by ${formatCents(d.offByCents)}`);
 }
 
+/*
+ * 5. IMPORT RECORDS — what each imported file prints (`import-records`). A migration creates the record tables empty,
+ * so a ledger restored from a snapshot older than the records has the files and none of the records, and an un-import
+ * then deletes what another file still prints. 🔴 This check printed the same on such a ledger as on a whole one, and
+ * exited 0 (the review of uc/final-integrate, 2026-09-16). A restore from Settings records them again itself; any other
+ * way back to an older ledger needs the three backfills, in this order.
+ */
+const unrecorded = filesWithoutPrintedLines(db);
+console.log(`import records: ${unrecorded.length} parsed file(s) read at their profile's current version with no record of what they print`);
+const recordFailures =
+  unrecorded.length === 0
+    ? []
+    : [
+        `${unrecorded.length} imported file(s) have no record of what they print (${unrecorded
+          .slice(0, 3)
+          .map((f) => f.fileName)
+          .join(", ")}${unrecorded.length > 3 ? ", …" : ""}) — a ledger older than its records. Before any un-import, run:\n` +
+          "    pnpm tsx scripts/record-account-numbers.ts --db=<ledger> --confirm\n" +
+          "    pnpm tsx scripts/record-statement-copies.ts --db=<ledger> --confirm\n" +
+          "    pnpm tsx scripts/record-printed-lines.ts --db=<ledger> --confirm",
+      ];
+
 const observation: LedgerObservation = {
   accounts: accounts.map((a) => a.name),
   // the witness floor keys by id, so a renamed account is the same account
@@ -402,9 +425,10 @@ console.log(floor.summary);
 
 // the floor's findings come last, so every finding the check made before it prints where it always did
 const failures = [...compareToBaseline(observation, BASELINE), ...floor.failures];
-if (failures.length > 0) {
-  console.error(`\nLEDGER CHECK FAILED — ${failures.length} finding(s):`);
-  console.error(formatLedgerFailures(failures));
+if (failures.length > 0 || recordFailures.length > 0) {
+  console.error(`\nLEDGER CHECK FAILED — ${failures.length + recordFailures.length} finding(s):`);
+  if (failures.length > 0) console.error(formatLedgerFailures(failures));
+  for (const line of recordFailures) console.error(`  ${line}`);
   process.exit(1);
 }
 console.log("\nledger matches the recorded baseline, and no stored verdict has gone stale");

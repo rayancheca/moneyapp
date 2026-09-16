@@ -90,16 +90,23 @@ export function BackupsManager({
 
   function restore(row: BackupRow, confirmation: string): void {
     void run(() => restoreSnapshotAction({ name: row.name, confirmation }), {
-      onSuccess: ({ restoredFrom, preRestoreName }) => {
+      onSuccess: ({ restoredFrom, preRestoreName, filesUnrecorded }) => {
         setTarget(null);
         refresh();
+        const saved =
+          preRestoreName === null
+            ? "No restore point was saved for this database."
+            : `The state you replaced is saved as ${preRestoreName}.`;
+        // a snapshot older than the import records: what could not be read again is not safe to un-import yet
+        const unrecorded =
+          filesUnrecorded === 0
+            ? ""
+            : ` ${filesUnrecorded} imported ${filesUnrecorded === 1 ? "file has" : "files have"} no record of what ${filesUnrecorded === 1 ? "it prints" : "they print"} — don’t un-import until the record backfills have run.`;
         toast({
           title: `Restored ${restoredFrom}`,
-          description:
-            preRestoreName === null
-              ? "No restore point was saved for this database."
-              : `The state you replaced is saved as ${preRestoreName}.`,
+          description: `${saved}${unrecorded}`,
           durationMs: 12_000,
+          ...(filesUnrecorded === 0 ? {} : { tone: "negative" as const }),
         });
       },
       onError: (message) => toast({ title: message, tone: "negative" }),

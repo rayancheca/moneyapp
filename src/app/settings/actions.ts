@@ -5,7 +5,8 @@ import path from "node:path";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { defaultBackupsDir, getDb, getDbBundle } from "@/db/client";
+import { defaultBackupsDir, getDb, getDbBundle, type DbBundle } from "@/db/client";
+import { filesWithoutPrintedLines, recordImportedFiles } from "@/services/import/import-records";
 import {
   manualSnapshot,
   resolveSnapshotPath,
@@ -274,6 +275,26 @@ export interface RestoreSnapshotData {
   preRestoreName: string | null;
   transactionsBefore: number | null;
   transactionsAfter: number | null;
+  /**
+   * Imported files the restored ledger still has no record of what they print, after the restore recorded what it
+   * could (`recordImportedFiles`) — 0 when the snapshot's records were whole or are now.
+   */
+  filesUnrecorded: number;
+}
+
+/**
+ * A snapshot older than the import records brings back the files without the records (`import-records`); they are
+ * read from the originals again here, as the three backfills read them. A failure to record leaves the restore in
+ * place and is counted, never thrown: the ledger is already the snapshot's.
+ */
+async function recordRestoredImports(bundle: DbBundle): Promise<number> {
+  if (filesWithoutPrintedLines(bundle.db).length === 0) return 0;
+  try {
+    await recordImportedFiles(bundle);
+  } catch (error: unknown) {
+    console.error("[restore] recording what the restored files print failed", error);
+  }
+  return filesWithoutPrintedLines(bundle.db).length;
 }
 
 /**
@@ -296,6 +317,7 @@ export async function restoreSnapshotAction(input: {
   try {
     const full = resolveSnapshotPath(defaultBackupsDir(), parsed.data);
     const result = restoreFromSnapshot(getDbBundle(), full);
+    const filesUnrecorded = await recordRestoredImports(result.reopened);
     // every screen in the app is now looking at a different ledger
     revalidatePath("/", "layout");
     return {
@@ -306,6 +328,7 @@ export async function restoreSnapshotAction(input: {
           result.preRestorePath === null ? null : path.basename(result.preRestorePath),
         transactionsBefore: result.transactionsBefore,
         transactionsAfter: result.transactionsAfter,
+        filesUnrecorded,
       },
     };
   } catch (error: unknown) {
