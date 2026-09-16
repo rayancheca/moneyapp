@@ -102,17 +102,29 @@ function indexRows(rows: readonly Row[]): Map<string, Row[]> {
   return index;
 }
 
+/**
+ * The day a row must have been TRANSACTED on to record a line: the line's own transaction day — or, for a line that
+ * prints one day and no transaction day, that day. A statement line printed before its period opens is stored on the
+ * period's first day with the printed day as its transaction day (`placeInsidePeriod`), and an export printing that
+ * charge on the printed day is the file whose row it took over (`pickTakeoverVictim` looks on the printed day).
+ *
+ * 🔴 Only the posted day was asked of such a line, so un-importing the statement deleted a charge the still-imported
+ * export prints (the review of uc/final-integrate, 2026-09-16).
+ */
+function transactionDayOf(line: PrintedLine): string {
+  return line.transactedOn ?? line.printedOn;
+}
+
 /** How surely a row records a line: the same money, and the same transaction day (2) and/or posted day (1). */
 function weight(line: PrintedLine, row: Row): number {
   const sameDay = row.postedOn === line.printedOn || row.postedOn === line.postedOn ? 1 : 0;
-  const sameTransactionDay = line.transactedOn !== null && row.transactedOn === line.transactedOn ? 2 : 0;
+  const sameTransactionDay = row.transactedOn === transactionDayOf(line) ? 2 : 0;
   return sameDay + sameTransactionDay;
 }
 
 /** The rows that may record a line, surest first. */
 function candidatesFor(line: PrintedLine, index: ReadonlyMap<string, Row[]>): Row[] {
-  const keys = [`${line.amountCents}|p|${line.printedOn}`, `${line.amountCents}|p|${line.postedOn}`];
-  if (line.transactedOn !== null) keys.push(`${line.amountCents}|t|${line.transactedOn}`);
+  const keys = [`${line.amountCents}|p|${line.printedOn}`, `${line.amountCents}|p|${line.postedOn}`, `${line.amountCents}|t|${transactionDayOf(line)}`];
   const unique = new Map(keys.flatMap((k) => index.get(k) ?? []).map((r) => [r.id, r] as const));
   return [...unique.values()].sort(
     (a, b) =>

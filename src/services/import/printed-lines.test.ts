@@ -356,3 +356,59 @@ describe("an export read again takes back its rows from the statement that kept 
     expect(period.reconciliation).toBe("reconciled");
   });
 });
+
+/**
+ * A statement line printed before its period opens is stored on the period's first day, with the printed day as its
+ * transaction day (`placeInsidePeriod`). An export printing the same charge on the printed day, with no transaction day,
+ * is the file whose row that line took over.
+ *
+ * 🔴 The export's line was matched only against rows POSTED on its day, never against the row stored inside the
+ * period: un-importing the statement deleted a charge the still-imported export prints (the review of
+ * uc/final-integrate, 2026-09-16). No file of the real ledger reaches it today — its moved lines sit on card accounts,
+ * whose exports carry a transaction day — and any checking export that prints such a line would.
+ */
+describe("a statement line stored inside its period is kept under the export that prints it", () => {
+  const LINE = { amountCents: -2500, rawDescription: "ZQX HOLLOW MARKET 12" };
+  const CSV: ImportInput = { name: `${PREFIX}straddle-export.csv`, buffer: Buffer.from("straddle export") };
+  const OFX: ImportInput = { name: `${PREFIX}straddle-statement.ofx`, buffer: Buffer.from("<OFX> straddle statement") };
+  let printedOn = "";
+  const byName: ParserProfile = {
+    id: "test-printed-lines-straddle",
+    version: 1,
+    matches: (f) => f.name === CSV.name || f.name === OFX.name,
+    parse: (f) => [
+      {
+        accountHint: CHECKING,
+        txns: [{ ...LINE, postedOn: printedOn }],
+        ...(f.name === OFX.name ? { period: { start: "2026-05-03", end: "2026-05-31", beginCents: 10_000, endCents: 7_500 } } : {}),
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    PROFILES.unshift(byName);
+  });
+  afterEach(() => {
+    PROFILES.splice(PROFILES.indexOf(byName), 1);
+  });
+
+  test.each([
+    ["printed the day before the period opens, recorded", "2026-05-02", ["2026-05-03", "2026-05-02"], true],
+    ["printed the day before the period opens, known by the row it lost", "2026-05-02", ["2026-05-03", "2026-05-02"], false],
+    ["printed inside the period", "2026-05-04", ["2026-05-04", null], true],
+  ])("%s", async (_, day, stored, recorded) => {
+    printedOn = day;
+    await importStatementFiles(bundle.db, [CSV]);
+    const exported = fileId(CSV);
+    bundle.db.update(transactions).set({ notes: "mine" }).where(eq(transactions.id, rowsOf(CSV)[0]!.id)).run();
+    if (!recorded) bundle.db.delete(printedLines).where(eq(printedLines.importFileId, exported)).run();
+    const [taken] = await importStatementFiles(bundle.db, [OFX]);
+    expect(taken).toMatchObject({ status: "parsed", supersededTakeover: 1 });
+    expect(live().map((r) => [r.postedOn, r.transactedOn])).toEqual([stored]);
+    expect(unimportCountsByFile(bundle.db).get(fileId(OFX))).toMatchObject({ deleted: 0, keptByPrinters: 1 });
+
+    unimportFile(bundle.db, fileId(OFX));
+
+    expect(live().map((r) => [r.amountCents, r.importFileId, r.notes, r.status])).toEqual([[LINE.amountCents, exported, "mine", "active"]]);
+  });
+});
