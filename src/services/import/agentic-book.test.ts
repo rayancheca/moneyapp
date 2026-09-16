@@ -1113,6 +1113,82 @@ describe("⛔ a book's months come off newest first — shares a later statement
     expect(stateOf(bundle.db, bookOf(bundle.db, agenticId)!.id).holdings.map((h) => h.quantityE8)).toEqual([15_000_000]);
   });
 
+  /**
+   * ⛔ A re-read parses BEFORE it retires anything (round 2, 8bf21ac), and a book month's retirement takes the later
+   * months this upload also re-reads with it. Before the two met, August's turn retired September and August first and
+   * then parsed: a version that could not read August left the book with neither month's shares, and September was then
+   * read on an empty book.
+   */
+  test("a re-read of both months that cannot parse August retires nothing — September is read again on the August in place, the book as it was", async () => {
+    const { agenticId, bookId, august } = await augustAndSeptember(bundle.db);
+    const before = { book: stateOf(bundle.db, bookId), agentic: stateOf(bundle.db, agenticId) };
+    const profile = PROFILES.find((p) => p.id === "robinhood-brokerage-statement-pdf")!;
+    const parse = profile.parse.bind(profile);
+    const cannotReadAugust = vi.spyOn(profile, "parse").mockImplementation(async (file, context) => {
+      if (file.name === AGENT_BUYS_FILE) throw new Error("this version cannot read August");
+      return parse(file, context);
+    });
+    let outcomes;
+    try {
+      outcomes = await reReadAtNextVersion(bundle.db, [
+        pdf(SEPTEMBER_FILE, [...SEPTEMBER_BROKERAGE, ...agentSells(false)]),
+        pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE]),
+      ]);
+    } finally {
+      cannotReadAugust.mockRestore();
+    }
+
+    expect(outcomes.map((o) => [o.fileName, o.status, o.withheld])).toEqual([
+      [AGENT_BUYS_FILE, "failed", []],
+      [SEPTEMBER_FILE, "parsed", []],
+    ]);
+    expect(outcomes[0]!.error).toBe(
+      "Unexpected: Error: this version cannot read August (nothing was changed; the earlier read of this file is still in place)",
+    );
+    // August's older read is the one in place; only September's was retired, by September's own re-read
+    const live = bundle.db.select().from(importFiles).where(eq(importFiles.status, "parsed")).all();
+    expect(live.find((f) => f.fileName === AGENT_BUYS_FILE)!.id).toBe(august);
+    expect(bundle.db.select({ name: importFiles.fileName }).from(importFiles).where(eq(importFiles.status, "superseded")).all()).toEqual([
+      { name: SEPTEMBER_FILE },
+    ]);
+    expect(stateOf(bundle.db, bookId)).toEqual(before.book);
+    expect(stateOf(bundle.db, agenticId)).toEqual(before.agentic);
+  });
+
+  test("a re-read of both months whose August write fails retires nothing — September's read is not taken with it", async () => {
+    const { august, september } = await augustAndSeptember(bundle.db);
+    const { importFiles: filesBefore, ...before } = wholeLedger(bundle.db);
+
+    const fault = "the positions write failed";
+    WRITE_FAULT.message = fault;
+    let outcomes;
+    try {
+      outcomes = await reReadAtNextVersion(bundle.db, [
+        pdf(SEPTEMBER_FILE, [...SEPTEMBER_BROKERAGE, ...agentSells(false)]),
+        pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE]),
+      ]);
+    } finally {
+      WRITE_FAULT.message = null;
+    }
+
+    expect(outcomes.map((o) => [o.fileName, o.status])).toEqual([
+      [AGENT_BUYS_FILE, "failed"],
+      [SEPTEMBER_FILE, "failed"],
+    ]);
+    const { importFiles: filesAfter, ...after } = wholeLedger(bundle.db);
+    expect(after).toEqual(before);
+    // both older reads stay in place; each new read is a failed row that says so
+    expect(bundle.db.select({ id: importFiles.id }).from(importFiles).where(eq(importFiles.status, "parsed")).all().map((f) => f.id).sort()).toEqual(
+      [august, september].sort(),
+    );
+    const failed = bundle.db.select().from(importFiles).where(eq(importFiles.status, "failed")).all();
+    expect(failed.map((f) => f.error)).toEqual([
+      `Failed mid-import (nothing was changed; the earlier read of this file is still in place): ${fault}`,
+      `Failed mid-import (nothing was changed; the earlier read of this file is still in place): ${fault}`,
+    ]);
+    expect(filesAfter).toHaveLength(filesBefore.length + 2);
+  });
+
   test("a re-read whose retirement would walk the book below zero is refused with the walk's own words — nothing retired", async () => {
     const agenticId = ownersRobinhood(bundle.db);
     const august = pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE]);
