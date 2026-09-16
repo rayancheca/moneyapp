@@ -107,7 +107,7 @@ export function importRowSubject(fileName: string, qualifier: string | null): st
  * A section of a parsed file that was NOT imported — what the import records, and what every reader reads back.
  *
  * ⛔ STORED AS FACTS, NOT AS A SENTENCE. A parsed file's `import_files.error` holds `recordWithheldSections` of these,
- * and nothing else (`importOneFile`); the sentence is built from them when it is read (`withheldNoticeOf`). Three
+ * and nothing else (`settleMember`, services/import/service.ts); the sentence is built from them when it is read (`withheldNoticeOf`). Three
  * readers need the account and the window, not the words:
  *
  *  - `/imports` says which account's statement a file left out;

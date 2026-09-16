@@ -42,7 +42,9 @@ import { accountSlug, institutionSlug } from "./account-slug";
 import { ATTACHED, detachAttachedRows, keepRetiredAttachedRows, parsedFromFile, reattachDetachedRows } from "./attached-rows";
 import {
   bookEventsByCashAccount,
+  cashOnlyReadsOn,
   cashOnlyStatementsByAccount,
+  copiesWithheldFor,
   equityAssetTypesOf,
   laterBookStatements,
   laterStatementsRefusal,
@@ -50,10 +52,11 @@ import {
   removeEmptyBooks,
   removeFileEvents,
   resolveBook,
+  withheldCopiesRefusal,
   writeStatementPositions,
   type LaterBookStatement,
 } from "./brokerage-book";
-import { handOverPrintedAnchors } from "./printed-anchors";
+import { handOverAdoptedPeriods, handOverPrintedAnchors } from "./printed-anchors";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
 import { extractLines } from "./profiles/pdf-profile";
@@ -454,6 +457,25 @@ function takeCarry(pool: CarryPool, accountId: string, t: CanonicalTxn, hash: st
 }
 
 /**
+ * The category transfer detection gave a carried row WITH its link — travelling with the link, as the link's.
+ *
+ * 🔴 The carry took the link and left the category, and `detectTransfers` never looks at a linked row again: the fresh
+ * leg took whatever the rules gave it, so one transfer carried two categories. Measured on a copy of the real ledger,
+ * 2026-09-16, re-reading the 33 Robinhood statements at parser v5: Robinhood Agentic's +$26.64 of 2026-06-05 went from
+ * Investment Contribution to Internal Transfer (merchant map) while Robinhood Cash's leg stayed a contribution, and
+ * /summary's 2026 money-weighted return dropped the flow (33.87% → 33.81%).
+ */
+function detectedTransferCategory(carry: CarryAttributes): Partial<typeof transactions.$inferInsert> | null {
+  if (carry.transferGroupId === null || carry.categorizationSource !== "transfer_detect" || carry.categoryId === null) return null;
+  return {
+    categoryId: carry.categoryId,
+    categorizationSource: "transfer_detect",
+    categorizationConfidence: carry.categorizationConfidence,
+    needsReview: false,
+  };
+}
+
+/**
  * Stamp carried attributes onto a row THIS file just inserted (it owns the row,
  * so a full overwrite is safe and idempotent).
  */
@@ -469,7 +491,7 @@ function applyCarry(tx: AppDatabase, txnId: string, carry: CarryAttributes): voi
             merchantId: carry.merchantId,
             needsReview: false,
           }
-        : {}),
+        : (detectedTransferCategory(carry) ?? {})),
       notes: carry.notes,
       // a self-group (user-marked transfer with no counterparty) keeps pointing
       // at the retired row's id — still a valid marker, and analytics must never
@@ -869,14 +891,16 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
   for (const file of sniffed) selected.push({ file, selection: await selectProfile(file) });
 
   const outcomes: FileOutcome[] = [];
-  const touchedAccounts = new Set<string>();
+  const batch = batchStateOf(
+    db,
+    oldestFirstWhereItMatters(selected).map(({ file, selection }) => ({ file, selection, sha: fileSha256(file.buffer) })),
+  );
   // the files this call wrote rows under — the only rows linking may claim
-  const writtenFileIds = new Set<string>();
-  const rereads = rereadBatchOf(db, selected);
+  const { touchedAccounts, writtenFileIds } = batch;
 
-  for (const { file, selection } of oldestFirstWhereItMatters(selected)) {
-    const outcome = await importOneFile(db, file, selection, { touchedAccounts, writtenFileIds, rereads });
-    outcomes.push(outcome);
+  // each turn reads a file and every file it must be read with (`importTurn`), and takes those out of the queue
+  for (let head = batch.pending.shift(); head !== undefined; head = batch.pending.shift()) {
+    outcomes.push(...(await importTurn(db, head, batch)));
   }
 
   // A book this call left holding nothing — a re-read that no longer proves its month, a statement that failed after
@@ -1052,7 +1076,7 @@ export interface StoredLine {
 }
 
 /**
- * Every row a statement prints, placed, numbered and hashed exactly as `importOneFile` stores it. ONE rule: a
+ * Every row a statement prints, placed, numbered and hashed exactly as `writeMember` stores it. ONE rule: a
  * write that must give a ledger row the identity the parser gives its printed line asks this, rather than
  * restating `placeInsidePeriod`, the occurrence numbering and which fields the hash reads
  * (scripts/redate-sapphire-0630-payment-2026-09-15.ts).
@@ -1098,27 +1122,41 @@ function retiredReadsOf(db: AppDatabase, sha: string, version: number): (typeof 
 
 /** What a re-read that fails adds to its cause: it retired nothing. */
 const EARLIER_READ_KEPT = "nothing was changed; the earlier read of this file is still in place";
+/** …and what a first read that fails inside a read of several files adds: it wrote nothing. */
+const NOTHING_WRITTEN = "nothing was written";
 
-/**
- * What one call re-reads: the retired reads of each of its files, by the file's bytes, and the user-set attributes
- * captured for a file whose retired reads an EARLIER file's re-read took (`planReread`).
- */
-interface RereadBatch {
-  readonly staleBySha: ReadonlyMap<string, readonly string[]>;
-  readonly shaOfStale: ReadonlyMap<string, string>;
-  readonly retiredEarly: Map<string, CarryPool>;
+/** One file of a call, with the bytes it is known by. */
+interface BatchItem {
+  readonly file: ReturnType<typeof sniffFile>;
+  readonly selection: ProfileSelection;
+  readonly sha: string;
 }
 
-function rereadBatchOf(db: AppDatabase, selected: readonly { file: ReturnType<typeof sniffFile>; selection: ProfileSelection }[]): RereadBatch {
+interface BatchState {
+  readonly touchedAccounts: Set<string>;
+  readonly writtenFileIds: Set<string>;
+  /** the reads each file of this call retires, by its bytes: its reads in place under an older parser version */
+  readonly staleBySha: ReadonlyMap<string, readonly string[]>;
+  /** …and the bytes of each such read */
+  readonly shaOfStale: ReadonlyMap<string, string>;
+  /** the files whose turn has not come yet, in import order — a read takes the files it needs from here */
+  readonly pending: BatchItem[];
+}
+
+function batchStateOf(db: AppDatabase, items: readonly BatchItem[]): BatchState {
   const staleBySha = new Map<string, readonly string[]>();
-  for (const { file, selection } of selected) {
+  for (const { selection, sha } of items) {
     if (!selection.profile) continue;
-    const sha = fileSha256(file.buffer);
     const stale = retiredReadsOf(db, sha, selection.profile.version).map((f) => f.id);
     if (stale.length > 0) staleBySha.set(sha, stale);
   }
-  const shaOfStale = new Map([...staleBySha].flatMap(([sha, ids]) => ids.map((id) => [id, sha] as const)));
-  return { staleBySha, shaOfStale, retiredEarly: new Map() };
+  return {
+    touchedAccounts: new Set(),
+    writtenFileIds: new Set(),
+    staleBySha,
+    shaOfStale: new Map([...staleBySha].flatMap(([sha, ids]) => ids.map((id) => [id, sha] as const))),
+    pending: [...items],
+  };
 }
 
 /** Every later book statement of these files but themselves, newest first — each names ALL the later ones on its books. */
@@ -1127,138 +1165,182 @@ function laterStatementsOf(db: AppDatabase, fileIds: readonly string[]): LaterBo
   return [...new Map(found.map((l) => [l.importFileId, l])).values()].sort((a, b) => b.periodEnd.localeCompare(a.periodEnd));
 }
 
-/**
- * A file's re-read, planned BEFORE it parses and without writing anything: the reads it will retire, the user-set
- * attributes its fresh rows inherit, and the ledger the parser reads it against.
- */
-interface RereadPlan {
-  /** the reads the write retires, newest first — the later statements on the same book this call also re-reads, then the file's own */
-  readonly retiring: readonly string[];
-  /** captured before anything moves: superseding the rows hides them from every lookup path */
-  readonly pool: CarryPool;
-  /** the attributes captured for each later file `retiring` takes, by its bytes — for that file's own turn */
-  readonly laterPools: ReadonlyMap<string, CarryPool>;
-  /** the parse context of the ledger as `retiring` leaves it */
-  readonly context: () => ParseContext;
-}
-
-/** Thrown to roll back a transaction that only reads the ledger as a retirement would leave it. */
-class DryRun extends Error {}
-
-/**
- * What `read` finds in the ledger once `fileIds` are retired — the retirement run in a transaction that is always
- * rolled back, so nothing is written. Throws what the retirement throws (`NegativePositionError`).
- */
-function readAsRetired<T>(db: AppDatabase, fileIds: readonly string[], read: (tx: AppDatabase) => T): T {
-  let found: { value: T } | undefined;
-  try {
-    db.transaction((tx) => {
-      for (const id of fileIds) supersedeFileContribution(tx, id);
-      found = { value: read(tx) };
-      throw new DryRun();
-    });
-  } catch (error: unknown) {
-    if (!(error instanceof DryRun)) throw error;
-  }
-  if (found === undefined) throw new Error("the dry run of a re-read's retirement read nothing");
-  return found.value;
+/** The row a file's read is recorded under, and where its original was archived. */
+interface RecordedFile {
+  readonly row: typeof importFiles.$inferSelect;
+  readonly institutionName: string;
+  readonly archiveName: string;
+  readonly currentPath: string;
 }
 
 /**
- * Plan a file's re-read (re-parse lifecycle) — or say why it is refused. Nothing is written either way: the write
- * retires `retiring` in one transaction with everything the new read writes, and only once the new read has parsed.
- *
- * ⛔ A brokerage book's months come off newest first (`laterBookStatements`). A later statement on the same book that
- * this call also re-reads is retired FIRST, by this file's write, and keeps its captured attributes for its own turn:
- * re-read oldest first, each month is then proven by what the months before it gave back, and a month that no longer
- * proves takes the later ones with it rather than leaving their sales standing alone. A later statement this call does
- * NOT re-read refuses the re-read, because a re-read that did not give the shares back would leave its sale short —
- * and so does a retirement that would walk a book below zero (`NegativePositionError`), found by a dry run.
- *
- * The parser reads the file against the ledger as the retirement will leave it (`readAsRetired`): the book events the
- * retired reads wrote are not what the file is proven by — kept, a re-read's own trades would read as a second copy of
- * its month.
- *
- * 🔴 Before this the stale version was retired alone, at its own turn: August's buy left while September's sale
- * stood, and an August that no longer proved left the book at WMT −0.1 (measured, 2026-09-16: −$10.95 on Oct 5).
+ * One file of a READ — the files one turn of an import reads together, all or nothing (`importTurn`). Filled in as the
+ * turn goes: recorded once its parse context is known, parsed after that.
  */
-function planReread(
+interface ReadMember {
+  readonly item: BatchItem;
+  /** the row of an earlier attempt at this read that failed or was retired — reused, never duplicated */
+  readonly existing: typeof importFiles.$inferSelect | undefined;
+  /** the file's reads under an older parser version — what writing it retires */
+  readonly staleIds: readonly string[];
+  /** the files this read must take with it: the later statements on the books its older reads wrote */
+  readonly laterShas: readonly string[];
+  recorded?: RecordedFile;
+  parsed?: { readonly statements: readonly ParsedStatement[]; readonly withheld: readonly WithheldOutcome[] };
+  /** the files whose older cash-only reads its positions were proven without (`reliedShas`) */
+  reliedShas: readonly string[];
+}
+
+/** Where a read stopped: the member that failed, what its outcome says, and what its row records. */
+interface ReadFailure {
+  readonly at: number;
+  readonly outcomeError: string;
+  readonly recordedError?: string;
+}
+
+const blankOutcome = (fileName: string): FileOutcome => ({
+  fileName,
+  status: "parsed",
+  withheld: [],
+  inserted: 0,
+  deduped: 0,
+  dedupedCrossFormat: 0,
+  skippedOwned: 0,
+  supersededTakeover: 0,
+  carriedForward: 0,
+  quarantined: 0,
+  periods: [],
+});
+
+/** What a member that failed on its own says it kept. */
+const keptBy = (member: ReadMember): string => (member.staleIds.length > 0 ? EARLIER_READ_KEPT : NOTHING_WRITTEN);
+
+/**
+ * A file's turn opened: skipped as a duplicate, or a member of the read — with the reason it is refused, if it is.
+ * Nothing is written either way.
+ *
+ * ⛔ A brokerage book's months come off newest first (`laterBookStatements`). A later statement on a book the file's
+ * older read wrote is read in the same turn when this call re-reads it too; one it does not re-read refuses the re-read,
+ * because a re-read that did not give the shares back would leave that statement's sale short. So does one this call
+ * DID upload whose own turn already came and went: its re-read failed or was refused, its older read is in place, and
+ * that read stands on the shares this one would take away.
+ */
+function openMember(
   db: AppDatabase,
-  sha: string,
-  profile: ParserProfile | undefined,
-  rereads: RereadBatch,
-): RereadPlan | { refused: string } {
-  // a file this upload reads again is read after this one when it matters (`oldestFirstWhereItMatters`)
-  const rereading = new Set(rereads.shaOfStale.keys());
-  const staleIds = profile ? retiredReadsOf(db, sha, profile.version).map((f) => f.id) : [];
-  if (staleIds.length === 0) {
-    const pool = rereads.retiredEarly.get(sha) ?? captureCarryForward(db, []);
-    return { retiring: [], pool, laterPools: new Map(), context: () => parseContextFor(db, rereading) };
-  }
-  const later = laterStatementsOf(db, staleIds);
-  const unread = later.filter((l) => !rereads.shaOfStale.has(l.importFileId));
-  if (unread.length > 0) return { refused: laterStatementsRefusal(unread, profile?.version) };
-
-  const laterShas = [...new Set(later.map((l) => rereads.shaOfStale.get(l.importFileId) as string))];
-  const retiring = [...new Set([...laterShas.flatMap((s) => rereads.staleBySha.get(s) ?? []), ...staleIds])];
-  let context: ParseContext;
-  try {
-    context = readAsRetired(db, retiring, (tx) => parseContextFor(tx, rereading));
-  } catch (error: unknown) {
-    if (error instanceof NegativePositionError) return { refused: error.message };
-    throw error;
-  }
-  return {
-    retiring,
-    pool: captureCarryForward(db, staleIds),
-    laterPools: new Map(laterShas.map((s) => [s, captureCarryForward(db, rereads.staleBySha.get(s) ?? [])])),
-    context: () => context,
-  };
-}
-
-interface BatchState {
-  readonly touchedAccounts: Set<string>;
-  readonly writtenFileIds: Set<string>;
-  readonly rereads: RereadBatch;
-}
-
-async function importOneFile(
-  db: AppDatabase,
-  file: ReturnType<typeof sniffFile>,
-  { profile, unreadable }: ProfileSelection,
+  item: BatchItem,
   batch: BatchState,
-): Promise<FileOutcome> {
-  const { touchedAccounts, writtenFileIds } = batch;
-  const sha = fileSha256(file.buffer);
-  const outcome: FileOutcome = {
-    fileName: file.name,
-    status: "parsed",
-    withheld: [],
-    inserted: 0,
-    deduped: 0,
-    dedupedCrossFormat: 0,
-    skippedOwned: 0,
-    supersededTakeover: 0,
-    carriedForward: 0,
-    quarantined: 0,
-    periods: [],
-  };
-
+  chain: readonly ReadMember[],
+): { skipped: FileOutcome } | { member: ReadMember; refusal: string | null } {
+  const { profile } = item.selection;
   const existing = db
     .select()
     .from(importFiles)
-    .where(and(eq(importFiles.fileSha256, sha), eq(importFiles.parserVersion, profile?.version ?? 0)))
+    .where(and(eq(importFiles.fileSha256, item.sha), eq(importFiles.parserVersion, profile?.version ?? 0)))
     .get();
   if (existing && !REIMPORTABLE_STATUSES.includes(existing.status)) {
-    return { ...outcome, status: "skipped_duplicate" };
+    return { skipped: { ...blankOutcome(item.file.name), status: "skipped_duplicate" } };
   }
+  const staleIds = profile ? retiredReadsOf(db, item.sha, profile.version).map((f) => f.id) : [];
+  const later = laterStatementsOf(db, staleIds);
+  const waiting = (staleId: string): string | undefined => {
+    const sha = batch.shaOfStale.get(staleId);
+    if (sha === undefined) return undefined;
+    return batch.pending.some((i) => i.sha === sha) || chain.some((m) => m.item.sha === sha) ? sha : undefined;
+  };
+  const unread = later.filter((l) => waiting(l.importFileId) === undefined);
+  const member: ReadMember = {
+    item,
+    existing,
+    staleIds,
+    laterShas: [...new Set(later.flatMap((l) => waiting(l.importFileId) ?? []))],
+    reliedShas: [],
+  };
+  const uploaded = new Set(batch.shaOfStale.keys());
+  return { member, refusal: unread.length === 0 ? null : laterStatementsRefusal(unread, profile?.version, uploaded) };
+}
 
-  // re-parse lifecycle (schema.md): what a newer parser version retires is planned here and retired only once it has
-  // read the file (`planReread`). A refusal comes before anything is written, the file's row included: the file stays
-  // read at the version it was.
-  const plan = planReread(db, sha, profile, batch.rereads);
-  if ("refused" in plan) return { ...outcome, status: "failed", error: plan.refused };
+/** The reads this call has yet to retire — the files still waiting for their turn, and the members of this one. */
+function rereadingIds(batch: BatchState, chain: readonly ReadMember[]): Set<string> {
+  return new Set([...batch.pending, ...chain.map((m) => m.item)].flatMap((i) => batch.staleBySha.get(i.sha) ?? []));
+}
 
+/** Every older read a read retires, newest first: its members' own, the last member's first. */
+function retirementOf(chain: readonly ReadMember[]): string[] {
+  return [...chain].reverse().flatMap((m) => m.staleIds);
+}
+
+/**
+ * Take into the read, in import order, the waiting files it needs (`laterShas`, `reliedShas`) — and every waiting file
+ * of the same parser before the last of them, the months in between, so each month is read on the ones before it.
+ * Returns where the read stops if a file it takes is refused.
+ */
+function pullNeeded(db: AppDatabase, batch: BatchState, chain: ReadMember[], skipped: FileOutcome[]): ReadFailure | null {
+  const profileId = chain[0]?.item.selection.profile?.id;
+  for (;;) {
+    const inChain = new Set(chain.map((m) => m.item.sha));
+    const needed = new Set(chain.flatMap((m) => [...m.laterShas, ...m.reliedShas]).filter((sha) => !inChain.has(sha)));
+    if (needed.size === 0) return null;
+    const lastNeeded = batch.pending.findLastIndex((i) => needed.has(i.sha));
+    const at = batch.pending.findIndex((i, n) => n <= lastNeeded && (needed.has(i.sha) || i.selection.profile?.id === profileId));
+    if (at === -1) return { at: 0, outcomeError: `the files this one is read with are no longer in the upload (${keptBy(chain[0] as ReadMember)})` };
+    const [item] = batch.pending.splice(at, 1) as [BatchItem];
+    const opened = openMember(db, item, batch, chain);
+    if ("skipped" in opened) {
+      skipped.push(opened.skipped);
+      continue;
+    }
+    chain.push(opened.member);
+    if (opened.refusal !== null) return { at: chain.length - 1, outcomeError: opened.refusal };
+  }
+}
+
+/** Thrown to roll back a transaction that only reads the ledger as a read would leave it. */
+class DryRun extends Error {}
+
+const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/**
+ * The ledger member `k` of a read is parsed against: every older read the read retires, retired, and the members before
+ * it written — in a transaction that is always rolled back, so nothing is written. A write that fails there stops the
+ * read at the member that wrote it; a retirement that would walk a book below zero refuses member `k`
+ * (`NegativePositionError`).
+ *
+ * The book events the retired reads wrote are not what a member is proven by — kept, a re-read's own trades would read
+ * as a second copy of its month; and a later month is proven by the months before it, as they are read now.
+ */
+function contextFor(db: AppDatabase, chain: readonly ReadMember[], k: number, rereading: ReadonlySet<string>): { context: ParseContext } | ReadFailure {
+  const retiring = retirementOf(chain);
+  if (k === 0 && retiring.length === 0) return { context: parseContextFor(db, rereading) };
+  let stage = -1;
+  let context: ParseContext | undefined;
+  try {
+    db.transaction((tx) => {
+      writeRead(tx, chain.slice(0, k), retiring, (j) => {
+        stage = j;
+      });
+      context = parseContextFor(tx, rereading);
+      throw new DryRun();
+    });
+  } catch (error: unknown) {
+    if (!(error instanceof DryRun)) {
+      if (stage >= 0) {
+        const failed = chain[stage] as ReadMember;
+        return { at: stage, outcomeError: messageOf(error), recordedError: `Failed mid-import (${keptBy(failed)}): ${messageOf(error)}` };
+      }
+      if (error instanceof NegativePositionError) return { at: k, outcomeError: error.message };
+      throw error;
+    }
+  }
+  if (context === undefined) throw new Error("the dry run of a read's retirement read nothing");
+  return { context };
+}
+
+/** Record the file's read: the row it is known by, and its original archived. Before its parse, after its refusals. */
+function recordFile(db: AppDatabase, member: ReadMember): RecordedFile {
+  if (member.recorded) return member.recorded;
+  const { existing } = member;
+  const { file, sha, selection } = member.item;
+  const { profile } = selection;
   const institution = guessInstitution(db, file);
   // basename neutralizes traversal; truncation + control-strip neutralizes
   // pathological names (ENAMETOOLONG would abort the batch)
@@ -1271,11 +1353,8 @@ async function importOneFile(
   // parse failure; a successful single-account parse relocates it to the
   // per-account folder once the account is known. A re-parse keeps the physical
   // file wherever the prior import left it.
-  const currentPath = existing
-    ? existing.storagePath
-    : archiveTo(institutionSlug(institution.name), archiveName, file.buffer);
-
-  const fileRow =
+  const currentPath = existing ? existing.storagePath : archiveTo(institutionSlug(institution.name), archiveName, file.buffer);
+  const row =
     existing ??
     db
       .insert(importFiles)
@@ -1292,307 +1371,434 @@ async function importOneFile(
       })
       .returning()
       .get();
+  const recorded = { row, institutionName: institution.name, archiveName, currentPath };
+  member.recorded = recorded;
+  return recorded;
+}
+
+/**
+ * The files whose older cash-only reads a member's positions were proven WITHOUT: later statements of the cash
+ * account its book is paired with, left out of its parse context because this call reads them again
+ * (`cashOnlyStatementsByAccount`). They are read with it — a month is proven under a later month read as cash only
+ * only because that month is about to be read again.
+ */
+function reliedShas(db: AppDatabase, batch: BatchState, statements: readonly ParsedStatement[], rereading: ReadonlySet<string>): string[] {
+  const shas = new Set<string>();
+  for (const statement of statements) {
+    const { positions, accountHint } = statement;
+    const end = statement.period?.end ?? statement.declaredRange?.end ?? statement.ledger?.asOf;
+    if (!positions || accountHint.bookOf === undefined || end === undefined) continue;
+    const cash = db
+      .select({ id: accounts.id })
+      .from(accounts)
+      .innerJoin(institutions, eq(institutions.id, accounts.institutionId))
+      .where(and(eq(institutions.name, accountHint.institution), eq(accounts.last4, accountHint.bookOf), eq(accounts.type, "checking")))
+      .all();
+    for (const read of cash.length === 1 ? cashOnlyReadsOn(db, (cash[0] as { id: string }).id) : []) {
+      const sha = batch.shaOfStale.get(read.importFileId);
+      if (read.end > end && rereading.has(read.importFileId) && sha !== undefined) shas.add(sha);
+    }
+  }
+  return [...shas];
+}
+
+/** Parse member `k` of a read against the ledger the read leaves before it, and take in the files it needs. */
+async function readMember(db: AppDatabase, batch: BatchState, chain: ReadMember[], k: number, skipped: FileOutcome[]): Promise<ReadFailure | null> {
+  const member = chain[k] as ReadMember;
+  const { file, selection } = member.item;
+  const { profile, unreadable } = selection;
+  const rereading = rereadingIds(batch, chain);
+  const planned = contextFor(db, chain, k, rereading);
+  if ("at" in planned) return planned;
+  const { row } = recordFile(db, member);
 
   if (!profile) {
     const message = unreadable
       ? "No text could be extracted — this looks like a scanned or image-only PDF"
       : "No parser profile matched this file";
-    db.update(importFiles)
-      .set({ status: "failed", error: message })
-      .where(eq(importFiles.id, fileRow.id))
-      .run();
-    return { ...outcome, status: "failed", error: message };
+    return { at: k, outcomeError: message };
   }
-
-  let statements: ParsedStatement[];
-  let withheldSections: readonly WithheldSection[];
   try {
-    ({ statements, withheld: withheldSections } = asParsedFile(await profile.parse(file, plan.context())));
+    const { statements, withheld } = asParsedFile(await profile.parse(file, planned.context));
+    // named BEFORE anything is written, and read-only — a section that was not imported must not change which accounts exist
+    member.parsed = { statements, withheld: withheld.map((section) => withheldOutcome(db, section)) };
   } catch (error: unknown) {
     const cause = error instanceof ParseError ? error.message : `Unexpected: ${String(error)}`;
     // nothing has been retired yet: the read this version would replace is still the one in place
-    const message = plan.retiring.length > 0 ? `${cause} (${EARLIER_READ_KEPT})` : cause;
-    db.update(importFiles)
-      .set({ status: "failed", error: message, parserProfile: profile.id })
-      .where(eq(importFiles.id, fileRow.id))
-      .run();
-    return { ...outcome, status: "failed", error: message };
+    const message = member.staleIds.length > 0 ? `${cause} (${EARLIER_READ_KEPT})` : cause;
+    db.update(importFiles).set({ parserProfile: profile.id }).where(eq(importFiles.id, row.id)).run();
+    return { at: k, outcomeError: message };
   }
+  member.reliedShas = reliedShas(db, batch, member.parsed.statements, rereading);
+  return pullNeeded(db, batch, chain, skipped);
+}
 
-  // named BEFORE anything is written, and read-only — a section that was not imported must not change which accounts exist
-  const withheld = withheldSections.map((section) => withheldOutcome(db, section));
-
-  // Re-parse lifecycle (schema.md): a newer parser version retires the old version's entire contribution — AFTER the
-  // new version has read the file, and in one transaction with everything it writes.
-  //
-  // 🔴 The retired read was superseded before the new version parsed, and each statement committed on its own. A
-  // version that could not read the file, or failed part-way through it, had already taken the file's rows, periods
-  // and anchors away — the rows the owner filed under it by hand with them — and uploading the bytes again or
-  // un-importing the failed row brought none of it back. Measured on a copy of the real ledger, 2026-09-16: a throwing
-  // re-read of the January 2026 Sapphire statement superseded its 4 attached payments ($1,223.54) and left the account
-  // 8 rows and a period short.
-  //
-  // `retiring` is newest first: it holds the later statements on the same brokerage book that this upload also
-  // re-reads (`planReread`), so a later month's sale never stands without the buy it sold.
-  const { retiring, laterPools } = plan;
-  // The old rows' user-set attributes were snapshotted FIRST (`planReread`) — superseding them hides them from every
-  // lookup path, and the fresh rows inherit them by content match below. Without this a parser improvement would
-  // silently destroy every hand-set category, note, transfer link, exclusion and split on the file.
-  const carryPool = plan.pool;
-  const untouched: FileOutcome = { ...outcome };
-  const fileAccountIds = new Set<string>();
-  const retiredAccountIds = new Set<string>();
-  const writeRead = (): void => {
-    for (const id of retiring) {
-      for (const accountId of supersedeFileContribution(db, id)) retiredAccountIds.add(accountId);
+/**
+ * A read that stopped at member `at`: it and every member before it fail — none of them wrote anything — and the
+ * members after it wait for turns of their own, read on the older reads still in place.
+ */
+function failRead(db: AppDatabase, batch: BatchState, chain: readonly ReadMember[], failure: ReadFailure): FileOutcome[] {
+  const failed = chain[failure.at] as ReadMember;
+  const outcomes = chain.slice(0, failure.at + 1).map((member, j) => {
+    const again = member.staleIds.length > 0 ? "again " : "";
+    const error =
+      j === failure.at
+        ? failure.outcomeError
+        : `${failed.item.file.name} failed, and this statement is read ${again}only together with it (${keptBy(member)})`;
+    const recorded = j === failure.at ? (failure.recordedError ?? error) : error;
+    if (member.recorded) {
+      db.update(importFiles).set({ status: "failed", error: recorded }).where(eq(importFiles.id, member.recorded.row.id)).run();
     }
-    for (const statement of statements) {
-      const accountId = resolveAccount(db, statement.accountHint);
-      fileAccountIds.add(accountId);
-      const ranges = coveredRanges(db, accountId).filter((r) => r.importFileId !== fileRow.id);
-      const myPriority = fidelityOf(file.format, profile.id);
-      const account = db.select({ type: accounts.type }).from(accounts).where(eq(accounts.id, accountId)).get()!;
+    return { ...blankOutcome(member.item.file.name), status: "failed" as const, error };
+  });
+  batch.pending.unshift(...chain.slice(failure.at + 1).map((m) => m.item));
+  return outcomes;
+}
 
-      const lines = storedLines(accountId, account, statement);
+/**
+ * One turn of an import: the file whose turn it is, and every file it must be read WITH — all read, or none.
+ *
+ * Re-parse lifecycle (schema.md): a newer parser version retires the old version's entire contribution — AFTER the
+ * new version has read the file, and in one transaction with everything it writes.
+ *
+ * 🔴 The retired read was superseded before the new version parsed, and each statement committed on its own. A
+ * version that could not read the file, or failed part-way through it, had already taken the file's rows, periods
+ * and anchors away — the rows the owner filed under it by hand with them — and uploading the bytes again or
+ * un-importing the failed row brought none of it back. Measured on a copy of the real ledger, 2026-09-16: a throwing
+ * re-read of the January 2026 Sapphire statement superseded its 4 attached payments ($1,223.54) and left the account
+ * 8 rows and a period short.
+ *
+ * ⛔ A brokerage book's months are ONE read (`openMember`, `pullNeeded`):
+ *  - a re-read of a month takes the later months on the same book that this call also re-reads, and the write
+ *    retires them newest first, so a later month's sale never stands without the buy it sold;
+ *  - a month proven under a later month read as cash only — left out of its parse context because this call reads
+ *    that month again — takes that month (`reliedShas`);
+ *  - and each takes the months of the same parser in between, so every month is proven by the ones before it as
+ *    they are read now (`contextFor`).
+ * If any of them cannot be read or written, none is. 🔴 Before, the earliest month's write retired the later ones and
+ * each later month was read at its own turn: a September the new version could not read left August's re-read in
+ * place and September's older read gone (measured 2026-09-16: Robinhood Agentic's Sep 30 from $12.70 anchored to $1.64
+ * carried, the book from 0.15 to 0.25 WMT, the owner's note and filed row superseded for good); and an October that
+ * could not be read kept its cash-only read over the August shares already written under it ($56.68 where $28.95 is
+ * true).
+ */
+async function importTurn(db: AppDatabase, head: BatchItem, batch: BatchState): Promise<FileOutcome[]> {
+  const opened = openMember(db, head, batch, []);
+  if ("skipped" in opened) return [opened.skipped];
+  const chain: ReadMember[] = [opened.member];
+  const skipped: FileOutcome[] = [];
+  // a refusal comes before anything is written, the file's row included: the file stays read at the version it was
+  let failure: ReadFailure | null = opened.refusal === null ? pullNeeded(db, batch, chain, skipped) : { at: 0, outcomeError: opened.refusal };
+  for (let k = 0; failure === null && k < chain.length; k++) failure = await readMember(db, batch, chain, k, skipped);
+  return [...(failure === null ? writeTurn(db, batch, chain) : failRead(db, batch, chain, failure)), ...skipped];
+}
 
-      // ⚖️ the owner's confirmed duplicates whose kept line this statement
-      // prints again: an un-import of it put their retired copies back
-      // (`duplicate-lifecycle`), and the lines they stand in for are here
-      const returning = standInsReturnedBy(
-        accountId,
-        lines.map(({ stored }) => writtenSide(stored)),
-        standInsOn(db, accountId),
-      );
-      const identityPool = existingIdentityPool(db, accountId, fileRow.id, new Set(returning.map((s) => s.copy.id)));
+/** What one member's write did: its tallies, and the accounts it resolved. */
+interface MemberWrite {
+  readonly tally: FileOutcome;
+  readonly accounts: Set<string>;
+}
 
-      db.transaction((tx) => {
-        // the hashes of the rows this statement inserts, in print order
-        const written: string[] = [];
-        // `t` is the row as printed, `stored` the row as written. Ownership asks
-        // who covers the day the row POSTED, so it reads `stored`; takeover,
-        // identity and carry look for another row recording the same money,
-        // which sits on the day the file prints, so they read `t`.
-        for (const { printed: t, stored, occurrenceIndex, hash } of lines) {
-          // `soleSource` rows opt out: the higher-fidelity source covers the
-          // DAY but is documented not to carry this row type (CanonicalTxn)
-          if (!t.soleSource && rangesCovering(ranges, stored.postedOn).some((r) => r.priority < myPriority)) {
-            outcome.skippedOwned += 1; // owned by higher fidelity — visible, never silent
-            continue;
-          }
+/**
+ * Retire `retiring`, newest first, then write each member's new read. The old rows' user-set attributes are
+ * snapshotted FIRST — superseding them hides them from every lookup path, and the fresh rows inherit them by content
+ * match. Without this a parser improvement would silently destroy every hand-set category, note, transfer link,
+ * exclusion and split on the file. `onMember` hears which member is being written (−1 while retiring).
+ */
+function writeRead(
+  db: AppDatabase,
+  members: readonly ReadMember[],
+  retiring: readonly string[],
+  onMember: (index: number) => void,
+  writes: MemberWrite[] = [],
+): { retired: Set<string>; writes: MemberWrite[] } {
+  const pools = members.map((m) => captureCarryForward(db, m.staleIds));
+  onMember(-1);
+  const retired = new Set<string>();
+  for (const id of retiring) {
+    for (const accountId of supersedeFileContribution(db, id)) retired.add(accountId);
+  }
+  members.forEach((member, j) => {
+    onMember(j);
+    const write: MemberWrite = { tally: blankOutcome(member.item.file.name), accounts: new Set() };
+    writes.push(write);
+    writeMember(db, member, pools[j] as CarryPool, write);
+  });
+  return { retired, writes };
+}
 
-          // this file's own prior-version row for the same money, if the user
-          // had put anything on it (claimed here so a row skipped as owned
-          // above leaves its attributes for whichever row does materialize)
-          const carried = takeCarry(carryPool, accountId, t, hash);
+/** One member's new read, statement by statement — each in a transaction of its own inside whatever encloses it. */
+function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, write: MemberWrite): void {
+  const { file } = member.item;
+  const profile = member.item.selection.profile as ParserProfile;
+  const fileRow = (member.recorded as RecordedFile).row;
+  const statements = member.parsed?.statements ?? [];
+  const outcome = write.tally;
+  const fileAccountIds = write.accounts;
+  for (const statement of statements) {
+    const accountId = resolveAccount(db, statement.accountHint);
+    fileAccountIds.add(accountId);
+    const ranges = coveredRanges(db, accountId).filter((r) => r.importFileId !== fileRow.id);
+    const myPriority = fidelityOf(file.format, profile.id);
+    const account = db.select({ type: accounts.type }).from(accounts).where(eq(accounts.id, accountId)).get()!;
 
-          // takeover: a lower-fidelity source covers the day this row PRINTS —
-          // replace its best-matching row (schema.md: date, amount, description
-          // similarity). `pickTakeoverVictim` looks for that row on the printed
-          // day, so the coverage asked about is the printed day's too.
-          const lowerOwners = rangesCovering(ranges, t.postedOn).filter((r) => r.priority > myPriority);
-          if (lowerOwners.length > 0) {
-            const victim = pickTakeoverVictim(tx, accountId, t, lowerOwners.map((r) => r.importFileId));
-            if (victim) {
-              tx.update(transactions).set({ status: "superseded" }).where(eq(transactions.id, victim.id)).run();
-              outcome.supersededTakeover += 1;
-              // the victim leaves the ledger — release its identity so a later
-              // same-day equal-amount row can't consume the superseded slot
-              if (victim.status !== "quarantined") consumeIdentity(identityPool, t.postedOn, t.transactedOn, t.amountCents);
-              // the re-parse carry wins over the victim: same file lineage, so
-              // it is the row the user actually edited
-              const inserted = insertTxn(tx, db, accountId, fileRow.id, stored, hash, occurrenceIndex, carried ?? victim);
-              if (inserted) {
-                outcome.inserted += 1;
-                written.push(hash);
-              } else outcome.deduped += 1;
-              // move any user-entered splits off the superseded victim onto its
-              // replacement (the SAME real charge, so amounts match) — found by
-              // the replacement's own dedupe hash. Covers both the freshly-
-              // inserted and the deduped (existing active twin) branches.
-              const replacement = liveRowByHash(tx, accountId, hash);
-              if (replacement) {
-                migrateSplits(tx, victim.id, replacement.id);
-                // …and the owner's duplicate verdict, as a re-parse hands it on
-                // (`landCarry`): the replacement records the victim's money now
-                moveKeptSide(tx, victim.id, replacement.id);
-              }
-              // the carry lands last: same file lineage as the row the user
-              // actually edited, so it outranks the victim's attributes
-              if (carried && landCarry(tx, accountId, hash, carried, inserted)) {
-                outcome.carriedForward += 1;
-              }
-              continue;
+    const lines = storedLines(accountId, account, statement);
+
+    // ⚖️ the owner's confirmed duplicates whose kept line this statement
+    // prints again: an un-import of it put their retired copies back
+    // (`duplicate-lifecycle`), and the lines they stand in for are here
+    const returning = standInsReturnedBy(
+      accountId,
+      lines.map(({ stored }) => writtenSide(stored)),
+      standInsOn(db, accountId),
+    );
+    const identityPool = existingIdentityPool(db, accountId, fileRow.id, new Set(returning.map((s) => s.copy.id)));
+
+    db.transaction((tx) => {
+      // the hashes of the rows this statement inserts, in print order
+      const written: string[] = [];
+      // `t` is the row as printed, `stored` the row as written. Ownership asks
+      // who covers the day the row POSTED, so it reads `stored`; takeover,
+      // identity and carry look for another row recording the same money,
+      // which sits on the day the file prints, so they read `t`.
+      for (const { printed: t, stored, occurrenceIndex, hash } of lines) {
+        // `soleSource` rows opt out: the higher-fidelity source covers the
+        // DAY but is documented not to carry this row type (CanonicalTxn)
+        if (!t.soleSource && rangesCovering(ranges, stored.postedOn).some((r) => r.priority < myPriority)) {
+          outcome.skippedOwned += 1; // owned by higher fidelity — visible, never silent
+          continue;
+        }
+
+        // this file's own prior-version row for the same money, if the user
+        // had put anything on it (claimed here so a row skipped as owned
+        // above leaves its attributes for whichever row does materialize)
+        const carried = takeCarry(carryPool, accountId, t, hash);
+
+        // takeover: a lower-fidelity source covers the day this row PRINTS —
+        // replace its best-matching row (schema.md: date, amount, description
+        // similarity). `pickTakeoverVictim` looks for that row on the printed
+        // day, so the coverage asked about is the printed day's too.
+        const lowerOwners = rangesCovering(ranges, t.postedOn).filter((r) => r.priority > myPriority);
+        if (lowerOwners.length > 0) {
+          const victim = pickTakeoverVictim(tx, accountId, t, lowerOwners.map((r) => r.importFileId));
+          if (victim) {
+            tx.update(transactions).set({ status: "superseded" }).where(eq(transactions.id, victim.id)).run();
+            outcome.supersededTakeover += 1;
+            // the victim leaves the ledger — release its identity so a later
+            // same-day equal-amount row can't consume the superseded slot
+            if (victim.status !== "quarantined") consumeIdentity(identityPool, t.postedOn, t.transactedOn, t.amountCents);
+            // the re-parse carry wins over the victim: same file lineage, so
+            // it is the row the user actually edited
+            const inserted = insertTxn(tx, db, accountId, fileRow.id, stored, hash, occurrenceIndex, carried ?? victim);
+            if (inserted) {
+              outcome.inserted += 1;
+              written.push(hash);
+            } else outcome.deduped += 1;
+            // move any user-entered splits off the superseded victim onto its
+            // replacement (the SAME real charge, so amounts match) — found by
+            // the replacement's own dedupe hash. Covers both the freshly-
+            // inserted and the deduped (existing active twin) branches.
+            const replacement = liveRowByHash(tx, accountId, hash);
+            if (replacement) {
+              migrateSplits(tx, victim.id, replacement.id);
+              // …and the owner's duplicate verdict, as a re-parse hands it on
+              // (`landCarry`): the replacement records the victim's money now
+              moveKeptSide(tx, victim.id, replacement.id);
             }
-          }
-
-          if (consumeIdentity(identityPool, t.postedOn, t.transactedOn, t.amountCents)) {
-            // another source already records this money movement — classify by
-            // whether the raw text matched exactly (visible, never silent)
-            const exact = tx
-              .select({ id: transactions.id })
-              .from(transactions)
-              .where(
-                and(
-                  eq(transactions.accountId, accountId),
-                  eq(transactions.dedupeHash, hash),
-                  sql`${transactions.status} != 'superseded'`,
-                ),
-              )
-              .get();
-            if (exact) outcome.deduped += 1;
-            else outcome.dedupedCrossFormat += 1;
-            // the survivor belongs to another file: fill only the attributes it
-            // lacks, never overwrite (its own user category outranks ours). A
-            // cross-format dedupe (hash miss) has no identifiable survivor, so
-            // that carry retires with its superseded row rather than guess.
-            if (carried && landCarry(tx, accountId, hash, carried, false)) {
+            // the carry lands last: same file lineage as the row the user
+            // actually edited, so it outranks the victim's attributes
+            if (carried && landCarry(tx, accountId, hash, carried, inserted)) {
               outcome.carriedForward += 1;
             }
             continue;
           }
-
-          const inserted = insertTxn(tx, db, accountId, fileRow.id, stored, hash, occurrenceIndex, carried);
-          if (inserted) {
-            outcome.inserted += 1;
-            written.push(hash);
-          } else outcome.deduped += 1;
-          // `inserted === false` means an active twin already held this hash —
-          // that row is not ours to overwrite, only to fill
-          if (carried && landCarry(tx, accountId, hash, carried, inserted)) {
-            outcome.carriedForward += 1;
-          }
         }
 
-        // …and a copy is retired again only for a line that became a row
-        // here, in this transaction, so the charge is never counted twice. A
-        // line owned elsewhere or absorbed by another record leaves its copy
-        // standing in. `written` holds only hashes this loop inserted, and the
-        // partial unique index allows one live row per hash, so each resolves
-        // to the row inserted here.
-        const fresh = written.flatMap((h) => {
-          const r = liveRowByHash(tx, accountId, h);
-          return r === undefined ? [] : [r];
-        });
-        for (const { standIn, keptId } of claimKeptSides(accountId, fresh, returning)) {
-          retireStandIn(tx, accountId, standIn, keptId);
-        }
-
-        // anchors: point-in-time ledger observations and statement balances
-        if (statement.ledger) {
-          upsertAnchor(tx, accountId, statement.ledger.asOf, statement.ledger.cents, "ofx_ledger", fileRow.id, null);
-        }
-        if (statement.declaredRange && !statement.period) {
-          // OFX DTSTART/DTEND: coverage without balances (covered-range rule)
-          tx.insert(statementPeriods)
-            .values({
-              importFileId: fileRow.id,
-              accountId,
-              periodStart: statement.declaredRange.start,
-              periodEnd: statement.declaredRange.end,
-              reconciliation: "not_applicable",
-            })
-            .onConflictDoNothing()
-            .run();
-        }
-        if (statement.period) {
-          // a re-downloaded statement of the SAME period adopts the existing
-          // row instead of duplicating it; reissued balances win and re-reconcile
-          const duplicate = tx
-            .select()
-            .from(statementPeriods)
+        if (consumeIdentity(identityPool, t.postedOn, t.transactedOn, t.amountCents)) {
+          // another source already records this money movement — classify by
+          // whether the raw text matched exactly (visible, never silent)
+          const exact = tx
+            .select({ id: transactions.id })
+            .from(transactions)
             .where(
               and(
-                eq(statementPeriods.accountId, accountId),
-                eq(statementPeriods.periodStart, statement.period.start),
-                eq(statementPeriods.periodEnd, statement.period.end),
+                eq(transactions.accountId, accountId),
+                eq(transactions.dedupeHash, hash),
+                sql`${transactions.status} != 'superseded'`,
               ),
             )
             .get();
-          let periodId: string | null;
-          if (duplicate) {
-            periodId = duplicate.id;
-            const balancesChanged =
-              duplicate.beginningBalanceCents !== statement.period.beginCents ||
-              duplicate.endingBalanceCents !== statement.period.endCents;
-            if (balancesChanged) {
-              tx.update(statementPeriods)
-                .set({
-                  beginningBalanceCents: statement.period.beginCents,
-                  endingBalanceCents: statement.period.endCents,
-                  reconciliation: "not_applicable",
-                  gapCents: null,
-                })
-                .where(eq(statementPeriods.id, duplicate.id))
-                .run();
-            }
-          } else {
-            periodId =
-              tx
-                .insert(statementPeriods)
-                .values({
-                  importFileId: fileRow.id,
-                  accountId,
-                  periodStart: statement.period.start,
-                  periodEnd: statement.period.end,
-                  beginningBalanceCents: statement.period.beginCents,
-                  endingBalanceCents: statement.period.endCents,
-                  reconciliation: "not_applicable", // reconciled after batch settles
-                })
-                .onConflictDoNothing()
-                .returning({ id: statementPeriods.id })
-                .get()?.id ?? null;
+          if (exact) outcome.deduped += 1;
+          else outcome.dedupedCrossFormat += 1;
+          // the survivor belongs to another file: fill only the attributes it
+          // lacks, never overwrite (its own user category outranks ours). A
+          // cross-format dedupe (hash miss) has no identifiable survivor, so
+          // that carry retires with its superseded row rather than guess.
+          if (carried && landCarry(tx, accountId, hash, carried, false)) {
+            outcome.carriedForward += 1;
           }
-          upsertAnchor(tx, accountId, statement.period.end, statement.period.endCents, "statement", fileRow.id, periodId);
-          upsertAnchorAtDayBefore(tx, accountId, statement.period.start, statement.period.beginCents, fileRow.id, periodId);
+          continue;
         }
-        // a brokerage book's trades, in the same transaction as its value anchor — ./brokerage-book.ts
-        if (statement.positions) {
-          const asOf = statement.period?.end ?? statement.declaredRange?.end ?? statement.ledger?.asOf;
-          if (asOf === undefined) throw new Error("a positions statement carries no window to prove its positions through");
-          writeStatementPositions(tx, accountId, fileRow.id, statement.positions, asOf);
+
+        const inserted = insertTxn(tx, db, accountId, fileRow.id, stored, hash, occurrenceIndex, carried);
+        if (inserted) {
+          outcome.inserted += 1;
+          written.push(hash);
+        } else outcome.deduped += 1;
+        // `inserted === false` means an active twin already held this hash —
+        // that row is not ours to overwrite, only to fill
+        if (carried && landCarry(tx, accountId, hash, carried, inserted)) {
+          outcome.carriedForward += 1;
         }
+      }
+
+      // …and a copy is retired again only for a line that became a row
+      // here, in this transaction, so the charge is never counted twice. A
+      // line owned elsewhere or absorbed by another record leaves its copy
+      // standing in. `written` holds only hashes this loop inserted, and the
+      // partial unique index allows one live row per hash, so each resolves
+      // to the row inserted here.
+      const fresh = written.flatMap((h) => {
+        const r = liveRowByHash(tx, accountId, h);
+        return r === undefined ? [] : [r];
       });
-    }
-    // after every line has claimed what it carries: a row filed by hand that no line took over is the owner's, not the
-    // retired read's (`keepRetiredAttachedRows`)
-    keepRetiredAttachedRows(db, unclaimedAttachedRows(carryPool));
-  };
+      for (const { standIn, keptId } of claimKeptSides(accountId, fresh, returning)) {
+        retireStandIn(tx, accountId, standIn, keptId);
+      }
+
+      // anchors: point-in-time ledger observations and statement balances
+      if (statement.ledger) {
+        upsertAnchor(tx, accountId, statement.ledger.asOf, statement.ledger.cents, "ofx_ledger", fileRow.id, null);
+      }
+      if (statement.declaredRange && !statement.period) {
+        // OFX DTSTART/DTEND: coverage without balances (covered-range rule)
+        tx.insert(statementPeriods)
+          .values({
+            importFileId: fileRow.id,
+            accountId,
+            periodStart: statement.declaredRange.start,
+            periodEnd: statement.declaredRange.end,
+            reconciliation: "not_applicable",
+          })
+          .onConflictDoNothing()
+          .run();
+      }
+      if (statement.period) {
+        // a re-downloaded statement of the SAME period adopts the existing
+        // row instead of duplicating it; reissued balances win and re-reconcile
+        const duplicate = tx
+          .select()
+          .from(statementPeriods)
+          .where(
+            and(
+              eq(statementPeriods.accountId, accountId),
+              eq(statementPeriods.periodStart, statement.period.start),
+              eq(statementPeriods.periodEnd, statement.period.end),
+            ),
+          )
+          .get();
+        let periodId: string | null;
+        if (duplicate) {
+          periodId = duplicate.id;
+          const balancesChanged =
+            duplicate.beginningBalanceCents !== statement.period.beginCents ||
+            duplicate.endingBalanceCents !== statement.period.endCents;
+          if (balancesChanged) {
+            tx.update(statementPeriods)
+              .set({
+                beginningBalanceCents: statement.period.beginCents,
+                endingBalanceCents: statement.period.endCents,
+                reconciliation: "not_applicable",
+                gapCents: null,
+              })
+              .where(eq(statementPeriods.id, duplicate.id))
+              .run();
+          }
+        } else {
+          periodId =
+            tx
+              .insert(statementPeriods)
+              .values({
+                importFileId: fileRow.id,
+                accountId,
+                periodStart: statement.period.start,
+                periodEnd: statement.period.end,
+                beginningBalanceCents: statement.period.beginCents,
+                endingBalanceCents: statement.period.endCents,
+                reconciliation: "not_applicable", // reconciled after batch settles
+              })
+              .onConflictDoNothing()
+              .returning({ id: statementPeriods.id })
+              .get()?.id ?? null;
+        }
+        upsertAnchor(tx, accountId, statement.period.end, statement.period.endCents, "statement", fileRow.id, periodId);
+        upsertAnchorAtDayBefore(tx, accountId, statement.period.start, statement.period.beginCents, fileRow.id, periodId);
+      }
+      // a brokerage book's trades, in the same transaction as its value anchor — ./brokerage-book.ts
+      if (statement.positions) {
+        const asOf = statement.period?.end ?? statement.declaredRange?.end ?? statement.ledger?.asOf;
+        if (asOf === undefined) throw new Error("a positions statement carries no window to prove its positions through");
+        writeStatementPositions(tx, accountId, fileRow.id, statement.positions, asOf);
+      }
+    });
+  }
+  // after every line has claimed what it carries: a row filed by hand that no line took over is the owner's, not the
+  // retired read's (`keepRetiredAttachedRows`)
+  keepRetiredAttachedRows(db, unclaimedAttachedRows(carryPool));
+}
+
+/**
+ * Write a read whose members all parsed. A fresh read of one file keeps the statements it wrote before a failure, for
+ * un-import to remove; a read that retires anything, or reads several files, is all or nothing, so a failure leaves in
+ * place every read it would have replaced.
+ */
+function writeTurn(db: AppDatabase, batch: BatchState, chain: readonly ReadMember[]): FileOutcome[] {
+  const { touchedAccounts, writtenFileIds } = batch;
+  const retiring = retirementOf(chain);
+  // a read of several files always retires something: every file a read takes in is needed by a re-read (`pullNeeded`)
+  const whole = retiring.length > 0;
   // before the write: a statement that fails mid-file leaves its earlier
   // statements' rows committed and active, and those are this upload's rows too
-  writtenFileIds.add(fileRow.id);
+  for (const member of chain) writtenFileIds.add((member.recorded as RecordedFile).row.id);
+  let stage = -1;
+  const writes: MemberWrite[] = [];
+  let retired: Set<string>;
   try {
-    // A fresh read keeps the statements it wrote before a failure, for un-import to remove. A re-read is all or
-    // nothing, so a failure leaves in place the read it would have replaced.
-    if (retiring.length === 0) writeRead();
-    else db.transaction(() => writeRead());
+    const run = () => writeRead(db, chain, retiring, (j) => (stage = j), writes).retired;
+    retired = whole ? db.transaction(() => run()) : run();
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (retiring.length > 0) {
+    const message = messageOf(error);
+    const at = Math.max(stage, 0);
+    const failed = chain[at] as ReadMember;
+    if (whole) {
       // rolled back: nothing to rebuild, and an account the read had resolved may no longer exist
-      db.update(importFiles)
-        .set({ status: "failed", error: `Failed mid-import (${EARLIER_READ_KEPT}): ${message}` })
-        .where(eq(importFiles.id, fileRow.id))
-        .run();
-      return { ...untouched, status: "failed", error: message };
+      return failRead(db, batch, chain, { at, outcomeError: message, recordedError: `Failed mid-import (${keptBy(failed)}): ${message}` });
     }
     // statement-level failure: earlier statements' committed rows remain and
     // are removable via un-import; the file is marked failed with the cause
-    for (const accountId of fileAccountIds) touchedAccounts.add(accountId);
+    for (const accountId of writes[0]?.accounts ?? []) touchedAccounts.add(accountId);
     db.update(importFiles)
       .set({ status: "failed", error: `Failed mid-import (un-import to clean up): ${message}` })
-      .where(eq(importFiles.id, fileRow.id))
+      .where(eq(importFiles.id, (failed.recorded as RecordedFile).row.id))
       .run();
-    return { ...outcome, status: "failed", error: message };
+    return [{ ...(writes[0]?.tally ?? blankOutcome(failed.item.file.name)), status: "failed", error: message }];
   }
-  // whether or not the new read wrote to them again: the retired reads' rows, periods and anchors — and the shares a
+  // whether or not a new read wrote to them again: the retired reads' rows, periods and anchors — and the shares a
   // retired read held on a brokerage book — left these accounts
-  for (const accountId of [...retiredAccountIds, ...fileAccountIds]) touchedAccounts.add(accountId);
-  // the later files this write retired are read at their own turns, inheriting what was captured before it
-  for (const [laterSha, laterPool] of laterPools) batch.rereads.retiredEarly.set(laterSha, laterPool);
+  for (const accountId of retired) touchedAccounts.add(accountId);
+  return chain.map((member, j) => settleMember(db, batch, member, writes[j] as MemberWrite));
+}
+
+/** A member written: its accounts touched, its original archived beside them, its row parsed. */
+function settleMember(db: AppDatabase, batch: BatchState, member: ReadMember, { tally, accounts: fileAccountIds }: MemberWrite): FileOutcome {
+  const profile = member.item.selection.profile as ParserProfile;
+  const { row, institutionName, archiveName, currentPath } = member.recorded as RecordedFile;
+  const withheld = member.parsed?.withheld ?? [];
+  for (const accountId of fileAccountIds) batch.touchedAccounts.add(accountId);
 
   // relocate the archived original from the institution bucket into its resolved
   // per-account folder — the per-account storage the DB now points at
-  const finalFolder = resolveArchiveFolder(db, [...fileAccountIds], institution.name);
+  const finalFolder = resolveArchiveFolder(db, [...fileAccountIds], institutionName);
   const finalPath = relocateArchive(currentPath, finalFolder, archiveName);
 
   db.update(importFiles)
@@ -1605,9 +1811,9 @@ async function importOneFile(
       parserVersion: profile.version,
       storagePath: finalPath,
     })
-    .where(eq(importFiles.id, fileRow.id))
+    .where(eq(importFiles.id, row.id))
     .run();
-  return { ...outcome, withheld };
+  return { ...tally, withheld: [...withheld] };
 }
 
 /**
@@ -1800,10 +2006,12 @@ function quarantinedIdsOn(db: AppDatabase, accountIds: readonly string[]): strin
 
 /**
  * Takes away a file's balances — its anchors and its periods — for both paths that remove a file's contribution:
- * `supersedeFileContribution` and `unimportFile`. An anchor another file's period still prints is handed over
+ * `supersedeFileContribution` and `unimportFile`. A period another file adopted goes to that file
+ * (`handOverAdoptedPeriods`), and an anchor another file's period still prints is handed over
  * (`handOverPrintedAnchors`), not deleted.
  */
 function removeFileBalances(tx: AppDatabase, importFileId: string): void {
+  handOverAdoptedPeriods(tx, importFileId);
   handOverPrintedAnchors(tx, importFileId);
   tx.delete(balanceAnchors).where(eq(balanceAnchors.importFileId, importFileId)).run();
   // anchors owned by OTHER files may reference this file's periods — detach
@@ -1840,7 +2048,7 @@ function supersedeFileContribution(db: AppDatabase, oldFileId: string): string[]
       .where(and(eq(transactions.importFileId, oldFileId), inArray(transactions.status, ["active", "quarantined", "excluded"])))
       .run();
     removeFileBalances(tx, oldFileId);
-    // a parsed file's error is only ever the sections it withheld (`importOneFile`); its successor reads them again
+    // a parsed file's error is only ever the sections it withheld (`settleMember`); its successor reads them again
     // and says for itself what is still missing, so the retired row must not keep claiming a section is absent
     tx.update(importFiles).set({ status: "superseded", error: null }).where(eq(importFiles.id, oldFileId)).run();
     return [...new Set([...written, ...books])];
@@ -2090,6 +2298,9 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
   // ⛔ a brokerage book's months come off newest first — refused before anything is snapshotted or written
   const later = laterBookStatements(db, importFileId);
   if (later.length > 0) throw new Error(laterStatementsRefusal(later));
+  // …and a second download that withheld the month this file reads comes off first (`copiesWithheldFor`)
+  const copies = copiesWithheldFor(db, importFileId);
+  if (copies.length > 0) throw new Error(withheldCopiesRefusal(copies));
   const affected = accountsWrittenBy(db, importFileId);
 
   const doomedRows = db

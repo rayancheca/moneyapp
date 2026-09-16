@@ -1314,6 +1314,15 @@ describe("a parser-version re-read that no longer writes an account", () => {
     "2026-03 rival": [
       { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-03-10", end: "2026-03-20", beginCents: 50000, endCents: 50000 } },
     ],
+    // one file, one account, two statements: a May of its own, then March's window again
+    "2026-05 and 2026-03": [
+      { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-05-01", end: "2026-05-31", beginCents: 50000, endCents: 50000 } },
+      { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-03-01", end: "2026-03-31", beginCents: 50000, endCents: 50000 } },
+    ],
+    // imported only where a test says so: it opens the day after March closes, on one account
+    "2026-04": [
+      { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-04-01", end: "2026-04-30", beginCents: 50000, endCents: 50000 } },
+    ],
     // imported only where a test says so: it shares January's closing day and March's opening day
     "2026-02": [
       { accountHint: checking(KEPT), txns: [], period: { start: "2026-02-01", end: "2026-02-28", beginCents: 1000, endCents: 1000 } },
@@ -1705,14 +1714,19 @@ describe("a parser-version re-read that no longer writes an account", () => {
 
   /**
    * The third leg. A retired read can name an account by its period alone: it gave the account no row, and its two
-   * anchors belong to a second download imported after it. The account's balances do not move, but a row filed by
-   * hand that the retired period and another statement both held — ambiguous, so left detached — is held by one
-   * statement now, and the import files it again only on an account in its scope.
+   * anchors belong to the statements on either side of it, imported after it (the day before it opens is February's
+   * closing day, the day it closes is the day before April opens). The account's balances do not move, but a row
+   * filed by hand that the retired period and another statement both held — ambiguous, so left detached — is held by
+   * one statement now, and the import files it again only on an account in its scope.
+   *
+   * (A second download imported after it would own those anchors too — and it prints the month, so the period goes to
+   * it: `handOverAdoptedPeriods`, the test after this one.)
    */
   test("an account the retired read gave only a period is in the scope too: a row filed by hand that two statements held is filed under the one left", async () => {
     const RIVAL = statementFor("2026-03 rival");
     await importStatementFiles(bundle.db, [JANUARY, MARCH]);
-    await importStatementFiles(bundle.db, [MARCH_COPY]);
+    await importStatementFiles(bundle.db, [FEBRUARY]);
+    await importStatementFiles(bundle.db, [statementFor("2026-04")]);
     await importStatementFiles(bundle.db, [RIVAL]);
     const anchorOnly = accountIdOf(ANCHOR_ONLY);
     const march = liveFile(MARCH).id;
@@ -1742,6 +1756,80 @@ describe("a parser-version re-read that no longer writes an account", () => {
     // (its status is now the rival statement's verdict, which this fixture's balances do not close)
     expect(row(handRow)).toMatchObject({ importFileId: liveFile(RIVAL).id, fileLinkSource: "attached" });
     expectRebuilt(anchorOnly);
+  });
+
+  /**
+   * 🔴 A second download adopts the first download's period and takes over every balance it prints. Retiring or
+   * un-importing the first took the period away while the copy, still imported, printed the month — its balances left
+   * standing with nothing to reconcile them, and a brokerage book's month no longer standing on the months before it
+   * (agentic-book.test.ts).
+   */
+  test("a re-read that no longer writes an account hands the period to a second download that prints it", async () => {
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    await importStatementFiles(bundle.db, [MARCH_COPY]);
+    const anchorOnly = accountIdOf(ANCHOR_ONLY);
+    const copy = liveFile(MARCH_COPY).id;
+    // the premise: the copy owns March's balances on the account and no period
+    expect(statementAnchorOn(anchorOnly, "2026-03-31")!.importFileId).toBe(copy);
+    expect(periodOf(copy, anchorOnly)).toBeUndefined();
+    const period = periodOf(liveFile(MARCH).id, anchorOnly)!;
+
+    threeSectionProfile.version = 2;
+    const [outcome] = await importStatementFiles(bundle.db, [MARCH]);
+
+    expect(outcome!.withheld.map((w) => w.accountId)).toContain(anchorOnly);
+    // the same period, the copy's now — with the balances it owned
+    expect(periodOf(copy, anchorOnly)).toMatchObject({ id: period.id, periodStart: "2026-03-01", periodEnd: "2026-03-31" });
+    expect(statementAnchorOn(anchorOnly, "2026-03-31")).toMatchObject({ importFileId: copy, statementPeriodId: period.id });
+    expect(provenanceFor(bundle.db, { kind: "accountBalance", accountId: anchorOnly })!.checkedThrough).toBe("2026-03-31");
+    expectRebuilt(anchorOnly);
+
+    // …and the /imports confirmation of the copy counts the periods its un-import now removes: both withheld accounts'
+    const { periodsRemovedByFile } = await import("./printed-anchors");
+    expect(periodsRemovedByFile(bundle.db).get(copy)).toBe(2);
+    unimportFile(bundle.db, copy);
+    expect(bundle.db.select().from(statementPeriods).where(eq(statementPeriods.id, period.id)).get()).toBeUndefined();
+  });
+
+  test("a file that adopted a period while holding one of its own on the account does not take it — one period per file and account", async () => {
+    const { periodsRemovedByFile } = await import("./printed-anchors");
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    const TWO = statementFor("2026-05 and 2026-03");
+    await importStatementFiles(bundle.db, [TWO]);
+    const anchorOnly = accountIdOf(ANCHOR_ONLY);
+    const [march, two] = [MARCH, TWO].map((f) => liveFile(f).id) as [string, string];
+    // the premise: it owns May, and March's closing balance is its
+    expect(periodOf(two, anchorOnly)).toMatchObject({ periodStart: "2026-05-01" });
+    expect(statementAnchorOn(anchorOnly, "2026-03-31")).toMatchObject({ importFileId: two, statementPeriodId: periodOf(march, anchorOnly)!.id });
+    expect(periodsRemovedByFile(bundle.db).get(march)).toBe(3);
+
+    unimportFile(bundle.db, march);
+
+    const starts = bundle.db
+      .select({ start: statementPeriods.periodStart, file: statementPeriods.importFileId })
+      .from(statementPeriods)
+      .where(eq(statementPeriods.accountId, anchorOnly))
+      .orderBy(statementPeriods.periodStart)
+      .all();
+    expect(starts).toEqual([
+      { start: "2026-01-01", file: liveFile(JANUARY).id },
+      { start: "2026-05-01", file: two },
+    ]);
+  });
+
+  test("the un-import confirmation counts a period another download adopted as staying", async () => {
+    const { periodsRemovedByFile } = await import("./printed-anchors");
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    await importStatementFiles(bundle.db, [MARCH_COPY]);
+    const [january, march, copy] = [JANUARY, MARCH, MARCH_COPY].map((f) => liveFile(f).id) as [string, string, string];
+    const periods = () => bundle.db.select().from(statementPeriods).all().length;
+
+    // January's three go; March's three stay with the copy; the copy owns none
+    expect([january, march, copy].map((id) => periodsRemovedByFile(bundle.db).get(id) ?? 0)).toEqual([3, 0, 0]);
+    const before = periods();
+    unimportFile(bundle.db, march);
+    expect(periods()).toBe(before);
+    expect(periodsRemovedByFile(bundle.db).get(copy)).toBe(3);
   });
 
   /**

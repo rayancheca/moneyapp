@@ -69,7 +69,7 @@ function addPeriod(accountId: string, start: string, end: string): void {
     .run();
 }
 
-/** A file that imported WITHOUT this account's section — the record `importOneFile` writes on its row. */
+/** A file that imported WITHOUT this account's section — the record `settleMember` writes on its row. */
 function addWithheldFile(accountId: string, start: string, end: string, status: "parsed" | "superseded" | "failed" = "parsed"): string {
   seq += 1;
   const fileName = `w-${seq}.pdf`;

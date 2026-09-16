@@ -9,6 +9,7 @@ import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { transferAmbiguities } from "@/db/schema/transfer-ambiguities";
+import { withheldSectionsOf } from "@/lib/import-file-label";
 import { dayWindowLabel } from "@/lib/period";
 import { averageCostCents, nextCostBasis } from "@/lib/robinhood-holdings";
 import type { BookEvent, CashOnlyStatement, EquityAssetType, StatementPositions } from "./types";
@@ -271,18 +272,71 @@ export function laterBookStatements(db: AppDatabase, importFileId: string): Late
 
 /**
  * Why a book's month cannot come off yet, naming the later statements newest first — an un-import says to take them
- * off first; a re-read at `rereadAt` says to upload them with it when every one of them is read by an older version,
- * so the same upload reads them all again, and to un-import them first otherwise.
+ * off first; a re-read at `rereadAt` says which of them the same upload carried and could not read again (`uploaded`
+ * names the older reads the upload re-reads), to upload them with it when every one of them is read by an older
+ * version, so the same upload reads them all again, and to un-import them first otherwise.
  */
-export function laterStatementsRefusal(later: readonly LaterBookStatement[], rereadAt?: number): string {
+export function laterStatementsRefusal(later: readonly LaterBookStatement[], rereadAt?: number, uploaded: ReadonlySet<string> = new Set()): string {
   const books = [...new Set(later.map((l) => l.bookName))].join(" and ");
   const statements = later.length === 1 ? "a later statement" : "later statements";
-  const named = later.map((l) => `${l.fileName} (${dayWindowLabel(l.periodStart, l.periodEnd)})`);
+  const name = (l: LaterBookStatement) => `${l.fileName} (${dayWindowLabel(l.periodStart, l.periodEnd)})`;
+  const named = later.map(name);
   const holds = `${books} still holds this statement's shares under ${statements}`;
   if (rereadAt === undefined) return `${holds} — un-import ${named.join(", then ")} before it`;
   const why = `${holds}, and reading it again would take them away first`;
+  const failed = later.filter((l) => uploaded.has(l.importFileId));
+  if (failed.length > 0) return `${why} — ${failed.map(name).join(" and ")} could not be read again in this upload`;
   if (later.every((l) => l.parserVersion < rereadAt)) return `${why} — upload ${named.join(" and ")} with it to read them together`;
   return `${why} — un-import ${named.join(", then ")} before reading it again`;
+}
+
+/** A still-imported file that left out a cash account's section for a month another file writes to its book. */
+export interface WithheldCopy {
+  readonly fileName: string;
+  readonly accountName: string | null;
+  readonly last4: string | null;
+  readonly periodStart: string;
+  readonly periodEnd: string;
+}
+
+/**
+ * The still-imported files that withheld the cash account's section for exactly a month this file wrote to the
+ * account's book — a second download of the same statement, which `provePositions` withholds whole (cash included)
+ * because the book already holds the month's trades.
+ *
+ * ⛔ Take this file away and neither reads the month, and the other cannot read it again: its bytes at its parser
+ * version are a duplicate. 🔴 Un-importing the first download was allowed: measured 2026-09-16 on the branch fixture,
+ * no book and no August on Robinhood Agentic, the copy still `parsed` saying the ledger held the trades, and uploading
+ * it again skipped as a duplicate. An un-import refuses while one stands, naming it.
+ */
+export function copiesWithheldFor(db: AppDatabase, importFileId: string): WithheldCopy[] {
+  const months = db
+    .select({ cashAccountId: accounts.cashAccountId, start: statementPeriods.periodStart, end: statementPeriods.periodEnd })
+    .from(statementPeriods)
+    .innerJoin(accounts, eq(accounts.id, statementPeriods.accountId))
+    .where(and(eq(statementPeriods.importFileId, importFileId), isNotNull(accounts.cashAccountId)))
+    .all();
+  if (months.length === 0) return [];
+  const others = db
+    .select({ fileName: importFiles.fileName, status: importFiles.status, error: importFiles.error })
+    .from(importFiles)
+    .where(and(ne(importFiles.id, importFileId), eq(importFiles.status, "parsed"), isNotNull(importFiles.error)))
+    .orderBy(asc(importFiles.fileName))
+    .all();
+  return others.flatMap((file) =>
+    withheldSectionsOf(file)
+      .filter((s) => months.some((m) => m.cashAccountId === s.accountId && m.start === s.periodStart && m.end === s.periodEnd))
+      .map((s) => ({ fileName: file.fileName, accountName: s.accountName, last4: s.last4, periodStart: s.periodStart, periodEnd: s.periodEnd })),
+  );
+}
+
+/** Why a book month cannot come off while a withheld copy of it stands — an un-import names the copies to take off first. */
+export function withheldCopiesRefusal(copies: readonly WithheldCopy[]): string {
+  const [first] = copies;
+  const account = first?.accountName ?? `the account ····${first?.last4 ?? "????"}`;
+  const named = copies.map((c) => `${c.fileName} (${dayWindowLabel(c.periodStart, c.periodEnd)})`).join(" and ");
+  const files = copies.map((c) => c.fileName).join(", then ");
+  return `${named} left out ${account}'s section of the month this statement reads — un-import ${files} before it, or neither reads the month`;
 }
 
 /** Every book's events, keyed by the cash account it is paired with — what the parser proves a section's positions by. */
@@ -319,6 +373,27 @@ export function bookEventsByCashAccount(db: AppDatabase): Map<string, BookEvent[
  * would withhold August again under the October it is about to read as the book's.
  */
 export function cashOnlyStatementsByAccount(db: AppDatabase, rereading: ReadonlySet<string>): Map<string, CashOnlyStatement[]> {
+  const byAccount = new Map<string, CashOnlyStatement[]>();
+  for (const r of cashOnlyReads(db)) {
+    if (rereading.has(r.importFileId)) continue;
+    byAccount.set(r.accountId, [...(byAccount.get(r.accountId) ?? []), { fileName: r.fileName, start: r.start, end: r.end }]);
+  }
+  return byAccount;
+}
+
+/** A statement read as cash only, with the file that read it. */
+interface CashOnlyRead extends CashOnlyStatement {
+  readonly accountId: string;
+  readonly importFileId: string;
+}
+
+/** One checking account's statements read as cash only, oldest first (`cashOnlyStatementsByAccount`). */
+export function cashOnlyReadsOn(db: AppDatabase, accountId: string): CashOnlyRead[] {
+  return cashOnlyReads(db, accountId);
+}
+
+/** Every checking account's statement periods from a file that wrote no period on the account's book, oldest first. */
+function cashOnlyReads(db: AppDatabase, accountId?: string): CashOnlyRead[] {
   const onBooks = new Set(
     db
       .select({ cashAccountId: accounts.cashAccountId, importFileId: statementPeriods.importFileId })
@@ -328,7 +403,7 @@ export function cashOnlyStatementsByAccount(db: AppDatabase, rereading: Readonly
       .all()
       .map((r) => `${r.cashAccountId}|${r.importFileId}`),
   );
-  const rows = db
+  return db
     .select({
       accountId: statementPeriods.accountId,
       importFileId: statementPeriods.importFileId,
@@ -339,15 +414,10 @@ export function cashOnlyStatementsByAccount(db: AppDatabase, rereading: Readonly
     .from(statementPeriods)
     .innerJoin(accounts, eq(accounts.id, statementPeriods.accountId))
     .innerJoin(importFiles, eq(importFiles.id, statementPeriods.importFileId))
-    .where(eq(accounts.type, "checking"))
+    .where(and(eq(accounts.type, "checking"), accountId === undefined ? undefined : eq(accounts.id, accountId)))
     .orderBy(asc(statementPeriods.periodStart), asc(importFiles.fileName))
-    .all();
-  const byAccount = new Map<string, CashOnlyStatement[]>();
-  for (const r of rows) {
-    if (rereading.has(r.importFileId) || onBooks.has(`${r.accountId}|${r.importFileId}`)) continue;
-    byAccount.set(r.accountId, [...(byAccount.get(r.accountId) ?? []), { fileName: r.fileName, start: r.start, end: r.end }]);
-  }
-  return byAccount;
+    .all()
+    .filter((r) => !onBooks.has(`${r.accountId}|${r.importFileId}`));
 }
 
 /**

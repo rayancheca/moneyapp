@@ -18,8 +18,9 @@ import { statementDayValuation } from "@/lib/ledger-integrity";
 import { accountLiquidity, createAccount, updateAccount } from "@/services/accounts";
 import { upsertHolding } from "@/services/holdings";
 import { portfolioSeries } from "@/services/portfolio";
+import { addManualAnchor } from "@/services/anchors";
 import { refreshPrices, type PriceProvider } from "@/services/prices";
-import { removeFileEvents, writeStatementPositions } from "./brokerage-book";
+import { removeFileEvents, resolveBook, syncBookHoldings, writeStatementPositions } from "./brokerage-book";
 import { PROFILES } from "./profiles";
 import type { Line } from "./profiles/pdf-profile";
 import { importStatementFiles, parseContextFor, resolveAccount, unimportFile, type ImportInput } from "./service";
@@ -34,15 +35,21 @@ import { importStatementFiles, parseContextFor, resolveAccount, unimportFile, ty
  * extractions with only what the constructed trades change — no statement for this account has printed a position.
  */
 
-const { DOCUMENTS, WRITE_FAULT } = vi.hoisted(() => ({ DOCUMENTS: new Map<string, Line[]>(), WRITE_FAULT: { message: null as string | null } }));
+const { DOCUMENTS, WRITE_FAULT } = vi.hoisted(() => ({
+  DOCUMENTS: new Map<string, Line[]>(),
+  WRITE_FAULT: { message: null as string | null, through: null as string | null },
+}));
 
-// a fault in the positions write, for the one test that needs a book statement's transaction to roll back
+// a fault in the positions write — every one, or only the one proving a book through `through` — for the tests that
+// need a book statement's transaction to roll back
 vi.mock("./brokerage-book", async (importOriginal) => {
   const original = await importOriginal<typeof import("./brokerage-book")>();
   return {
     ...original,
     writeStatementPositions: (...args: Parameters<typeof original.writeStatementPositions>) => {
-      if (WRITE_FAULT.message !== null) throw new Error(WRITE_FAULT.message);
+      if (WRITE_FAULT.message !== null && (WRITE_FAULT.through === null || args[4] === WRITE_FAULT.through)) {
+        throw new Error(WRITE_FAULT.message);
+      }
       original.writeStatementPositions(...args);
     },
   };
@@ -745,6 +752,39 @@ async function reReadAtNextVersion(db: AppDatabase, files: ImportInput[]) {
   }
 }
 
+/** Run `act` with the brokerage parser throwing `message` for the file named `fileName` — every other file reads as always. */
+async function withParseFailing<T>(fileName: string, message: string, act: () => Promise<T>): Promise<T> {
+  const profile = PROFILES.find((p) => p.id === "robinhood-brokerage-statement-pdf")!;
+  const parse = profile.parse.bind(profile);
+  const failing = vi.spyOn(profile, "parse").mockImplementation(async (file, context) => {
+    if (file.name === fileName) throw new Error(message);
+    return parse(file, context);
+  });
+  try {
+    return await act();
+  } finally {
+    failing.mockRestore();
+  }
+}
+
+/** The ids of the import files in place — read and not retired — sorted. */
+const filesInPlace = (db: AppDatabase) =>
+  db
+    .select({ id: importFiles.id })
+    .from(importFiles)
+    .where(eq(importFiles.status, "parsed"))
+    .all()
+    .map((f) => f.id)
+    .sort();
+
+/** Every row of the ledger but the import files' own, whose failed re-reads are rows too. */
+function ledgerBesideFiles(db: AppDatabase) {
+  const { importFiles: _files, ...rest } = wholeLedger(db);
+  return rest;
+}
+
+const EARLIER_READ_KEPT = "nothing was changed; the earlier read of this file is still in place";
+
 describe("⛔ the book leaves with the last statement that proved it — a price refresh does not keep it", () => {
   test("un-importing the month after a price refresh restores the ledger it found — the book and its live value leave", async () => {
     const agenticId = ownersRobinhood(bundle.db);
@@ -950,12 +990,16 @@ describe("⛔ a book's months come off newest first — shares a later statement
     return { agenticId, bookId: bookOf(db, agenticId)!.id, august: fileId(AGENT_BUYS_FILE), september: fileId(SEPTEMBER_FILE) };
   }
 
-  test("un-importing August while September stands on its 0.25 is refused, naming September — and nothing changes", async () => {
+  test("un-importing August while September stands on its 0.25 is refused, naming September — and nothing changes, no restore point either", async () => {
     const { agenticId, bookId, august, september } = await augustAndSeptember(bundle.db);
     const before = wholeLedger(bundle.db);
+    // a restore point is a full copy of the ledger and prunes older ones — a refused click must not take one
+    const restorePoints = () => (fs.existsSync(path.join(dir, "backups")) ? fs.readdirSync(path.join(dir, "backups")) : []);
+    expect(restorePoints()).toEqual([]);
 
     expect(() => unimportFile(bundle.db, august)).toThrow(`${UNDER_SEPTEMBER} — un-import ${SEPTEMBER} before it`);
 
+    expect(restorePoints()).toEqual([]);
     expect(wholeLedger(bundle.db)).toEqual(before);
     expect(stateOf(bundle.db, bookId).holdings).toEqual([{ symbol: "WMT", assetType: "stock", quantityE8: 15_000_000, avgCostCents: 10_000, isActive: true }]);
 
@@ -1187,6 +1231,150 @@ describe("⛔ a book's months come off newest first — shares a later statement
       `Failed mid-import (nothing was changed; the earlier read of this file is still in place): ${fault}`,
     ]);
     expect(filesAfter).toHaveLength(filesBefore.length + 2);
+  });
+
+  /**
+   * ⛔ A re-read of several book months is ONE read. August's write retires September with it, so a September the new
+   * version cannot read must leave August's older read in place too. 🔴 Before, September's older read left with
+   * August's write, and September's own turn had nothing left to keep: measured 2026-09-16 on the branch fixture,
+   * Agentic's Sep 30 went from $12.70 anchored to $1.64 carried, the book from 0.15 to 0.25 WMT ($16.64 → $27.73), and
+   * the owner's note and the row he filed under September were superseded — for good, a re-upload brought neither back.
+   */
+  async function withOwnersWorkOnSeptember(db: AppDatabase) {
+    const books = await augustAndSeptember(db);
+    const agenticRow = (on: string) =>
+      db.select().from(transactions).where(and(eq(transactions.accountId, books.agenticId), eq(transactions.postedOn, on), eq(transactions.status, "active"))).get()!;
+    const sale = agenticRow("2026-09-15").id;
+    const dividend = agenticRow("2026-09-08").id;
+    db.update(transactions).set({ notes: "the agent's first sale" }).where(eq(transactions.id, sale)).run();
+    db.update(transactions).set({ fileLinkSource: "attached" }).where(eq(transactions.id, dividend)).run();
+    const row = (id: string) => db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+    return { ...books, sale, dividend, row };
+  }
+
+  const SEPTEMBER_FAILED = `${SEPTEMBER_FILE} failed, and this statement is read again only together with it (${EARLIER_READ_KEPT})`;
+
+  test("a re-read of both months that cannot parse September retires nothing — both older reads stay, with the owner's note and the row he filed", async () => {
+    const { august, september, sale, dividend, row } = await withOwnersWorkOnSeptember(bundle.db);
+    const before = ledgerBesideFiles(bundle.db);
+
+    const outcomes = await withParseFailing(SEPTEMBER_FILE, "this version cannot read September", () =>
+      reReadAtNextVersion(bundle.db, [
+        pdf(SEPTEMBER_FILE, [...SEPTEMBER_BROKERAGE, ...agentSells(false)]),
+        pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE]),
+      ]),
+    );
+
+    expect(outcomes.map((o) => [o.fileName, o.status, o.error])).toEqual([
+      [AGENT_BUYS_FILE, "failed", SEPTEMBER_FAILED],
+      [SEPTEMBER_FILE, "failed", `Unexpected: Error: this version cannot read September (${EARLIER_READ_KEPT})`],
+    ]);
+    expect(ledgerBesideFiles(bundle.db)).toEqual(before);
+    expect(filesInPlace(bundle.db)).toEqual([august, september].sort());
+    expect(row(sale)).toMatchObject({ status: "active", importFileId: september, notes: "the agent's first sale" });
+    expect(row(dividend)).toMatchObject({ status: "active", importFileId: september, fileLinkSource: "attached" });
+
+    // …and once the version reads September, the upload reads both, the owner's work with them
+    const again = await reReadAtNextVersion(bundle.db, [
+      pdf(SEPTEMBER_FILE, [...SEPTEMBER_BROKERAGE, ...agentSells(false)]),
+      pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE]),
+    ]);
+    expect(again.map((o) => [o.fileName, o.status, o.error])).toEqual([
+      [AGENT_BUYS_FILE, "parsed", undefined],
+      [SEPTEMBER_FILE, "parsed", undefined],
+    ]);
+    expect(ledgerBesideFiles(bundle.db).transactions.filter((t) => t.status !== "superseded").map((t) => [t.postedOn, t.amountCents, t.notes, t.fileLinkSource])).toContainEqual([
+      "2026-09-15",
+      1100,
+      "the agent's first sale",
+      null,
+    ]);
+  });
+
+  test("September's turn before August's: its failed re-read keeps its older read, and August's re-read is refused rather than retire it", async () => {
+    const { august, september } = await withOwnersWorkOnSeptember(bundle.db);
+    const before = ledgerBesideFiles(bundle.db);
+    // a September whose order the reader cannot key keeps its name's place — b7d4… before d41f…
+    const profile = PROFILES.find((p) => p.id === "robinhood-brokerage-statement-pdf")!;
+    const orderKey = profile.orderKey!.bind(profile);
+    const unkeyed = vi.spyOn(profile, "orderKey").mockImplementation((content) => (content.includes("09/01/2026 to 09/30/2026") ? null : orderKey(content)));
+    let outcomes;
+    try {
+      outcomes = await withParseFailing(SEPTEMBER_FILE, "this version cannot read September", () =>
+        reReadAtNextVersion(bundle.db, [
+          pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE]),
+          pdf(SEPTEMBER_FILE, [...SEPTEMBER_BROKERAGE, ...agentSells(false)]),
+        ]),
+      );
+    } finally {
+      unkeyed.mockRestore();
+    }
+
+    expect(outcomes.map((o) => [o.fileName, o.status, o.error])).toEqual([
+      [SEPTEMBER_FILE, "failed", `Unexpected: Error: this version cannot read September (${EARLIER_READ_KEPT})`],
+      [AGENT_BUYS_FILE, "failed", `${UNDER_SEPTEMBER}, and reading it again would take them away first — ${SEPTEMBER} could not be read again in this upload`],
+    ]);
+    expect(ledgerBesideFiles(bundle.db)).toEqual(before);
+    expect(filesInPlace(bundle.db)).toEqual([august, september].sort());
+  });
+
+  test("an earlier month read as cash, still waiting its turn, is not read with the book's months — its failure leaves them read", async () => {
+    const { august, september } = await augustAndSeptember(bundle.db);
+    // June read as cash, in a file whose name puts it after both — and whose order the reader cannot key
+    const LATE_NAMED_JUNE = "f1e2d3c4-5b6a-4978-8a9b-0c1d2e3f4a5b.pdf";
+    const june = pdf(LATE_NAMED_JUNE, [...JUNE_BROKERAGE, ...JUNE_SECOND]);
+    await importStatementFiles(bundle.db, [june]);
+    const profile = PROFILES.find((p) => p.id === "robinhood-brokerage-statement-pdf")!;
+    const orderKey = profile.orderKey!.bind(profile);
+    const unkeyed = vi.spyOn(profile, "orderKey").mockImplementation((content) => (content.includes("06/01/2026 to 06/30/2026") ? null : orderKey(content)));
+    let outcomes;
+    try {
+      outcomes = await withParseFailing(LATE_NAMED_JUNE, "this version cannot read June", () =>
+        reReadAtNextVersion(bundle.db, [
+          june,
+          pdf(SEPTEMBER_FILE, [...SEPTEMBER_BROKERAGE, ...agentSells(false)]),
+          pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE]),
+        ]),
+      );
+    } finally {
+      unkeyed.mockRestore();
+    }
+
+    expect(outcomes.map((o) => [o.fileName, o.status])).toEqual([
+      [AGENT_BUYS_FILE, "parsed"],
+      [SEPTEMBER_FILE, "parsed"],
+      [LATE_NAMED_JUNE, "failed"],
+    ]);
+    expect(filesInPlace(bundle.db)).not.toContain(august);
+    expect(filesInPlace(bundle.db)).not.toContain(september);
+  });
+
+  test("a re-read of both months whose September write fails retires nothing — August's write is not kept without it", async () => {
+    const { august, september, sale, row } = await withOwnersWorkOnSeptember(bundle.db);
+    const before = ledgerBesideFiles(bundle.db);
+
+    const fault = "the positions write failed";
+    Object.assign(WRITE_FAULT, { message: fault, through: "2026-09-30" });
+    let outcomes;
+    try {
+      outcomes = await reReadAtNextVersion(bundle.db, [
+        pdf(SEPTEMBER_FILE, [...SEPTEMBER_BROKERAGE, ...agentSells(false)]),
+        pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE]),
+      ]);
+    } finally {
+      Object.assign(WRITE_FAULT, { message: null, through: null });
+    }
+
+    expect(outcomes.map((o) => [o.fileName, o.status, o.error])).toEqual([
+      [AGENT_BUYS_FILE, "failed", SEPTEMBER_FAILED],
+      [SEPTEMBER_FILE, "failed", fault],
+    ]);
+    expect(ledgerBesideFiles(bundle.db)).toEqual(before);
+    expect(filesInPlace(bundle.db)).toEqual([august, september].sort());
+    expect(row(sale)).toMatchObject({ status: "active", importFileId: september, notes: "the agent's first sale" });
+    expect(bundle.db.select({ error: importFiles.error }).from(importFiles).where(eq(importFiles.status, "failed")).all().map((f) => f.error).sort()).toEqual(
+      [SEPTEMBER_FAILED, `Failed mid-import (${EARLIER_READ_KEPT}): ${fault}`].sort(),
+    );
   });
 
   test("a re-read whose retirement would walk the book below zero is refused with the walk's own words — nothing retired", async () => {
@@ -1433,6 +1621,170 @@ describe("⛔ a month after the agent's shares is its book's statement — even 
       ["2026-10-01", 2895, 2895, "reconciled"],
     ]);
   });
+
+  /**
+   * ⛔ August is proven under October only because the same upload reads October again — so the two are one read.
+   * 🔴 Before, a version that could not read October kept its cash-only read, and August's shares were already written
+   * under it: measured 2026-09-16 on the branch fixture, the book at $27.73 beside Agentic's $28.95 — $56.68 where the
+   * agent sold everything and holds $28.95.
+   */
+  test("a re-read of October and August that cannot parse October writes no August shares under October's cash-only read — nothing changes", async () => {
+    process.env.MONEYAPP_FAKE_TODAY = "2026-11-05";
+    const agenticId = ownersRobinhood(bundle.db);
+    const october = pdf(OCTOBER_FILE, [...OCTOBER_BROKERAGE, ...AGENT_CASH_OCTOBER]);
+    const august = pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE]);
+    for (const file of [october, august, pdf(SEPTEMBER_FILE, [...SEPTEMBER_BROKERAGE, ...AGENT_SELLS_ALL])]) await importStatementFiles(bundle.db, [file]);
+    const inPlace = filesInPlace(bundle.db);
+    const before = ledgerBesideFiles(bundle.db);
+
+    const outcomes = await withParseFailing(OCTOBER_FILE, "this version cannot read October", () => reReadAtNextVersion(bundle.db, [october, august]));
+
+    expect(outcomes.map((o) => [o.fileName, o.status, o.error])).toEqual([
+      [AGENT_BUYS_FILE, "failed", `${OCTOBER_FILE} failed, and this statement is read again only together with it (${EARLIER_READ_KEPT})`],
+      [OCTOBER_FILE, "failed", `Unexpected: Error: this version cannot read October (${EARLIER_READ_KEPT})`],
+    ]);
+    expect(bookOf(bundle.db, agenticId)).toBeUndefined();
+    expect(ledgerBesideFiles(bundle.db)).toEqual(before);
+    expect(filesInPlace(bundle.db)).toEqual(inPlace);
+  });
+
+  test("a fresh August uploaded with an October re-read that cannot parse is not written under October's cash-only read — and can be uploaded again", async () => {
+    process.env.MONEYAPP_FAKE_TODAY = "2026-11-05";
+    const agenticId = ownersRobinhood(bundle.db);
+    const october = pdf(OCTOBER_FILE, [...OCTOBER_BROKERAGE, ...AGENT_CASH_OCTOBER]);
+    const august = pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE]);
+    await importStatementFiles(bundle.db, [october]);
+    const inPlace = filesInPlace(bundle.db);
+    const before = ledgerBesideFiles(bundle.db);
+
+    const outcomes = await withParseFailing(OCTOBER_FILE, "this version cannot read October", () => reReadAtNextVersion(bundle.db, [october, august]));
+
+    expect(outcomes.map((o) => [o.fileName, o.status, o.error])).toEqual([
+      [AGENT_BUYS_FILE, "failed", `${OCTOBER_FILE} failed, and this statement is read only together with it (nothing was written)`],
+      [OCTOBER_FILE, "failed", `Unexpected: Error: this version cannot read October (${EARLIER_READ_KEPT})`],
+    ]);
+    expect(bookOf(bundle.db, agenticId)).toBeUndefined();
+    expect(ledgerBesideFiles(bundle.db)).toEqual(before);
+    expect(filesInPlace(bundle.db)).toEqual(inPlace);
+
+    // a failed read is read again: August on its own is withheld under the October still read as cash
+    const [alone] = await reReadAtNextVersion(bundle.db, [august]);
+    expect([alone!.status, alone!.withheld.map((w) => w.periodStart)]).toEqual(["parsed", ["2026-08-01"]]);
+    expect(bookOf(bundle.db, agenticId)).toBeUndefined();
+  });
+
+  test("fresh August and September uploaded with October's re-read are each proven — the upload reads October after them", async () => {
+    process.env.MONEYAPP_FAKE_TODAY = "2026-11-05";
+    const agenticId = ownersRobinhood(bundle.db);
+    const october = pdf(OCTOBER_FILE, [...OCTOBER_BROKERAGE, ...AGENT_CASH_OCTOBER]);
+    await importStatementFiles(bundle.db, [october]);
+
+    const outcomes = await reReadAtNextVersion(bundle.db, [
+      october,
+      pdf(SEPTEMBER_FILE, [...SEPTEMBER_BROKERAGE, ...AGENT_SELLS_ALL]),
+      pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE]),
+    ]);
+
+    expect(outcomes.map((o) => [o.fileName, o.status, o.error, o.withheld])).toEqual([
+      [AGENT_BUYS_FILE, "parsed", undefined, []],
+      [SEPTEMBER_FILE, "parsed", undefined, []],
+      [OCTOBER_FILE, "parsed", undefined, []],
+    ]);
+    const book = stateOf(bundle.db, bookOf(bundle.db, agenticId)!.id);
+    expect(book.periods.map((p) => [p.start, p.begin, p.endCents])).toEqual([
+      ["2026-08-01", 0, 2622],
+      ["2026-09-01", 2622, 0],
+      ["2026-10-01", 0, 0],
+    ]);
+    expect(book.holdings.map((h) => [h.symbol, h.quantityE8])).toEqual([["WMT", 0]]);
+  });
+});
+
+/**
+ * A statement downloaded twice is imported twice: the second copy adopts the first copy's period and takes over the
+ * balances it prints (`upsertAnchor`), and a second copy of a month with trades is withheld (`provePositions`).
+ */
+describe("⛔ a book month downloaded twice — un-importing one copy leaves the month with the other", () => {
+  const fileId = (db: AppDatabase, name: string) => db.select().from(importFiles).where(eq(importFiles.fileName, name)).get()!.id;
+
+  /**
+   * 🔴 The book's month was known only by its period, and the first copy owned it. Un-importing that copy took the
+   * period away while the second copy stayed imported, printing the month: measured 2026-09-16 on a real-ledger copy,
+   * un-importing October was then not refused, the sold shares came back ($27.37 on Oct 31 where $16.42 is true), and
+   * `pnpm ledger-check` exited 1 on Agentic's Sep 30 → Oct 31.
+   */
+  test("October downloaded twice: un-importing the first copy hands the month to the second — and September under it is still refused", async () => {
+    const agenticId = ownersRobinhood(bundle.db);
+    await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
+    await importStatementFiles(bundle.db, [pdf(SEPTEMBER_FILE, [...SEPTEMBER_BROKERAGE, ...agentSells(false)])]);
+    process.env.MONEYAPP_FAKE_TODAY = "2026-11-05";
+    const COPY = "0c6a9e57-1d2b-4f83-a7c4-5e9b0d1f2a63 (1).pdf";
+    const [first] = await importStatementFiles(bundle.db, [pdf(OCTOBER_FILE, [...OCTOBER_BROKERAGE, ...AGENT_HOLDS_OCTOBER])]);
+    const [second] = await importStatementFiles(bundle.db, [pdf(COPY, [...OCTOBER_BROKERAGE, ...AGENT_HOLDS_OCTOBER])]);
+    expect([first!.withheld, second!.status, second!.withheld]).toEqual([[], "parsed", []]);
+    const bookId = bookOf(bundle.db, agenticId)!.id;
+    const before = { book: stateOf(bundle.db, bookId), agentic: stateOf(bundle.db, agenticId) };
+
+    unimportFile(bundle.db, fileId(bundle.db, OCTOBER_FILE));
+
+    // the copy prints October: the month is its now, on the book and on Agentic, and nothing else moved
+    expect(stateOf(bundle.db, bookId)).toEqual(before.book);
+    expect(stateOf(bundle.db, agenticId)).toEqual(before.agentic);
+    const owners = bundle.db
+      .select({ file: importFiles.fileName })
+      .from(statementPeriods)
+      .innerJoin(importFiles, eq(importFiles.id, statementPeriods.importFileId))
+      .where(eq(statementPeriods.periodStart, "2026-10-01"))
+      .all();
+    // Robinhood Brokerage's, Robinhood Cash's, Agentic's and the book's
+    expect(owners.map((o) => o.file)).toEqual([COPY, COPY, COPY, COPY]);
+    const ledger = wholeLedger(bundle.db);
+
+    expect(() => unimportFile(bundle.db, fileId(bundle.db, SEPTEMBER_FILE))).toThrow(
+      `Robinhood Agentic Brokerage still holds this statement's shares under a later statement — un-import ${COPY} (Oct 1 – 31, 2026) before it`,
+    );
+    expect(wholeLedger(bundle.db)).toEqual(ledger);
+  });
+
+  /**
+   * 🔴 The second copy of a month with trades withholds the agent's section because the first copy holds its trades.
+   * Un-importing the first copy was allowed, and the month was then read by neither: measured 2026-09-16, no book and no
+   * August on Agentic, the copy still `parsed` with a reason that was no longer true, and uploading it again skipped as
+   * a duplicate.
+   */
+  test("August downloaded twice: the copy is withheld, and un-importing the first copy is refused while the copy stands — nothing changes", async () => {
+    const agenticId = ownersRobinhood(bundle.db);
+    await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
+    const COPY = "d41f0c83-5a7e-4b2c-9e61-3f8a2b7c9d10 (1).pdf";
+    const [copy] = await importStatementFiles(bundle.db, [pdf(COPY, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
+    expect([copy!.status, copy!.withheld.map((w) => w.reason)]).toEqual([
+      "parsed",
+      ["the ledger already holds this account's trades for Aug 1 – 31, 2026 from another statement, and a second copy would count its shares twice"],
+    ]);
+    const before = wholeLedger(bundle.db);
+
+    expect(() => unimportFile(bundle.db, fileId(bundle.db, AGENT_BUYS_FILE))).toThrow(
+      `${COPY} (Aug 1 – 31, 2026) left out Robinhood Agentic's section of the month this statement reads — un-import ${COPY} before it, or neither reads the month`,
+    );
+    expect(wholeLedger(bundle.db)).toEqual(before);
+
+    // the way the refusal names: the copy, then the month — and nothing is left
+    unimportFile(bundle.db, fileId(bundle.db, COPY));
+    unimportFile(bundle.db, fileId(bundle.db, AGENT_BUYS_FILE));
+    expect(bookOf(bundle.db, agenticId)).toBeUndefined();
+  });
+
+  test("a later month of the account withheld for its own reason does not hold the month — only one of the same window does", async () => {
+    const agenticId = ownersRobinhood(bundle.db);
+    await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
+    const unproven = agentSells(false).map((l) => (l.text.startsWith("Total Funds Paid and Received") ? totalFunds("$0.00", "$11.07") : l));
+    const [september] = await importStatementFiles(bundle.db, [pdf(SEPTEMBER_FILE, [...SEPTEMBER_BROKERAGE, ...unproven])]);
+    expect(september!.withheld.map((w) => [w.accountId, w.periodStart])).toEqual([[agenticId, "2026-09-01"]]);
+
+    unimportFile(bundle.db, fileId(bundle.db, AGENT_BUYS_FILE));
+
+    expect(bookOf(bundle.db, agenticId)).toBeUndefined();
+  });
 });
 
 describe("writeStatementPositions — the positions are asked of the rows actually committed", () => {
@@ -1456,5 +1808,122 @@ describe("writeStatementPositions — the positions are asked of the rows actual
     expect(stateOf(bundle.db, book.id)).toEqual(before);
     // …and positions never go to an account that is not a book
     expect(() => bundle.db.transaction((tx) => writeStatementPositions(tx, agenticId, file.id, positions, "2026-09-30"))).toThrow(/is not one/);
+  });
+});
+
+describe("⛔ the agent's book holds only what its statements prove", () => {
+  /**
+   * 🔴 The Add-holding form refused the book, and the account page's "Record a balance" did not: the typed value had
+   * no effect while statements valued the book, then kept the book alive after the last one was un-imported, with the
+   * typed figure in net worth (measured 2026-09-16 on a real-ledger copy: +$500.00).
+   */
+  test("a hand-typed balance on the book is refused — his own investment account still takes one", async () => {
+    const agenticId = ownersRobinhood(bundle.db);
+    await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
+    const book = bookOf(bundle.db, agenticId)!;
+    const before = wholeLedger(bundle.db);
+
+    expect(() => addManualAnchor(bundle.db, { accountId: book.id, anchoredOn: "2026-09-14", enteredCents: 50_000 })).toThrow(
+      "Robinhood Agentic Brokerage holds only what its statements prove — a balance typed here would outlive them",
+    );
+    expect(wholeLedger(bundle.db)).toEqual(before);
+
+    const brokerage = bundle.db.select().from(accounts).where(eq(accounts.name, "Robinhood Brokerage")).get()!;
+    addManualAnchor(bundle.db, { accountId: brokerage.id, anchoredOn: "2026-09-14", enteredCents: 50_000 });
+    expect(
+      bundle.db.select().from(balanceAnchors).where(and(eq(balanceAnchors.accountId, brokerage.id), eq(balanceAnchors.source, "manual"))).all(),
+    ).toHaveLength(1);
+  });
+
+  /**
+   * ⚠️ A backstop no statement reaches today: a book's events filed under a file with no period and no balance on the
+   * book. Retiring or un-importing that file still restates the book and takes it away once it holds nothing.
+   */
+  async function bookEventUnderJune(db: AppDatabase) {
+    const agenticId = ownersRobinhood(db);
+    const june = pdf(JUNE_FILE, [...JUNE_BROKERAGE, ...JUNE_SECOND]);
+    await importStatementFiles(db, [june]);
+    const juneId = db.select().from(importFiles).where(eq(importFiles.fileName, JUNE_FILE)).get()!.id;
+    const robinhood = db.select().from(institutions).where(eq(institutions.name, "Robinhood")).get()!;
+    const bookId = resolveBook(db, robinhood.id, "9651");
+    db.insert(holdingEvents)
+      .values({ accountId: bookId, symbol: "WMT", assetType: "stock", occurredOn: "2026-06-10", quantityDeltaE8: 10_000_000, costCents: 1000, eventKind: "trade", importFileId: juneId })
+      .run();
+    syncBookHoldings(db, bookId);
+    await refresh(db);
+    expect(liveAnchors(db, bookId)).toHaveLength(1);
+    return { agenticId, bookId, june, juneId };
+  }
+
+  test("un-importing a file whose only mark on the book is its events takes the book away", async () => {
+    const { agenticId, bookId, juneId } = await bookEventUnderJune(bundle.db);
+
+    unimportFile(bundle.db, juneId);
+
+    expect(bookOf(bundle.db, agenticId)).toBeUndefined();
+    expect(bundle.db.select().from(holdings).where(eq(holdings.accountId, bookId)).all()).toEqual([]);
+    expect(bundle.db.select().from(dailyBalances).where(eq(dailyBalances.accountId, bookId)).all()).toEqual([]);
+  });
+
+  test("a re-read of a file whose only mark on the book is its events takes the book away", async () => {
+    const { agenticId, bookId, june } = await bookEventUnderJune(bundle.db);
+
+    const [reread] = await reReadAtNextVersion(bundle.db, [june]);
+
+    expect([reread!.status, reread!.withheld]).toEqual(["parsed", []]);
+    expect(bookOf(bundle.db, agenticId)).toBeUndefined();
+    expect(bundle.db.select().from(dailyBalances).where(eq(dailyBalances.accountId, bookId)).all()).toEqual([]);
+  });
+});
+
+/**
+ * ⚖️ Money moving to Robinhood Agentic is an external flow out of his investments (lib/account-side), so the detector
+ * files the pair as an Investment Contribution. 🔴 A parser-version re-read carried the link onto the fresh row and not
+ * the category the detector gave with it, and the detector never looks at a linked row again: the merchant map filed
+ * the fresh leg as an Internal Transfer, and /summary's 2026 money-weighted return dropped the $26.64 flow (measured
+ * 2026-09-16 on a real-ledger copy re-read at v5: 33.87% → 33.81%).
+ */
+describe("⛔ a re-read keeps an auto-detected transfer's category with its link", () => {
+  test("the $26.64 to Agentic stays an Investment Contribution on both legs after a version bump", async () => {
+    const agenticId = ownersRobinhood(bundle.db);
+    const cash = bundle.db.select().from(accounts).where(eq(accounts.name, "Robinhood Cash")).get()!;
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId: cash.id,
+        postedOn: "2026-06-05",
+        amountCents: -2664,
+        rawDescription: "Transfer to Brokerage",
+        normalizedDescription: "transfer to brokerage",
+        dedupeHash: "hand:robinhood-cash:2026-06-05:-2664",
+      })
+      .run();
+    const june = pdf(JUNE_FILE, [...JUNE_BROKERAGE, ...JUNE_SECOND]);
+    await importStatementFiles(bundle.db, [june]);
+    const legs = () =>
+      bundle.db
+        .select({
+          account: transactions.accountId,
+          cents: transactions.amountCents,
+          group: transactions.transferGroupId,
+          category: categories.name,
+          source: transactions.categorizationSource,
+        })
+        .from(transactions)
+        .leftJoin(categories, eq(categories.id, transactions.categoryId))
+        .where(and(eq(transactions.postedOn, "2026-06-05"), ne(transactions.status, "superseded")))
+        .orderBy(asc(transactions.amountCents))
+        .all();
+    const detected = legs();
+    expect(detected.map((l) => [l.account, l.cents, l.category, l.source])).toEqual([
+      [cash.id, -2664, "Investment Contribution", "transfer_detect"],
+      [agenticId, 2664, "Investment Contribution", "transfer_detect"],
+    ]);
+    expect(detected[0]!.group).not.toBeNull();
+    expect(detected[1]!.group).toBe(detected[0]!.group);
+
+    await reReadAtNextVersion(bundle.db, [june]);
+
+    expect(legs()).toEqual(detected);
   });
 });

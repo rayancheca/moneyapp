@@ -15,7 +15,7 @@
  * without it) or after it closed. The printed day is kept by the caller as the
  * transaction day, which is what it is.
  *
- * ONE rule, two callers: the Discover statement parser and `importOneFile`.
+ * ONE rule, two callers: the Discover statement parser and `writeMember` (services/import/service.ts).
  */
 export function postedInsidePeriod(day: string, period: { readonly start: string; readonly end: string }): string {
   if (day < period.start) return period.start;

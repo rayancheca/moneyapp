@@ -484,7 +484,7 @@ export interface PositionsInput {
  * month reads the same whatever follows, and a guard here against later trades refused the re-read of every month but
  * the last (measured, agentic-book.test.ts). Later months are the retirement's question, not the reader's: a version
  * bump retires a book's later months that it re-reads too BEFORE the earlier one, and refuses a re-read that would
- * leave a later month standing on shares it took away (`retireForReread` in ../service.ts). A later month that an
+ * leave a later month standing on shares it took away (`openMember` and `importTurn` in ../service.ts). A later month that an
  * earlier month's shares would contradict is contradicted on the statement's own day: `pnpm ledger-check`'s
  * value-anchor witness checks every book period's printed Total Securities against the app's valuation of the book.
  */

@@ -26,7 +26,7 @@ import type { ParsedStatement } from "./types";
  * ledger tracks, because the 2026-08 statement printed #655929651 ($26.64)
  * FIRST. That choice depends on two links, and until this file no test went
  * through either one:
- *   1. `importOneFile` → `profile.parse(file, parseContextFor(db))`
+ *   1. `readMember` → `profile.parse(file, parseContextFor(db, rereading))`
  *   2. the profile's `parse` → the section choice, fed from `context.knownAccounts`
  *
  * 🔴 Measured by a second reader: mutating link 1 to `profile.parse(file)`, or

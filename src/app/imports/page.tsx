@@ -15,7 +15,7 @@ import { provenanceFor } from "@/services/provenance";
 import { statementPulls } from "@/services/statement-pulls";
 import { unimportAcknowledgement, unimportRadius } from "@/components/imports/unimport-radius";
 import { NO_UNIMPORT_ROWS, unimportCountsByFile, type UnimportCounts } from "@/services/import/unimport-counts";
-import { balancesRemovedByFile } from "@/services/import/printed-anchors";
+import { balancesRemovedByFile, periodsRemovedByFile } from "@/services/import/printed-anchors";
 import { importRowQualifiers, importRowSubject, withheldNoticeOf } from "@/lib/import-file-label";
 import { dayWindowLabel } from "@/lib/period";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
@@ -92,14 +92,8 @@ export default async function ImportsPage({
   // joined into the query above, where they would fan out against the rows.
   // A balance another statement still prints stays (`balancesRemovedByFile`).
   const balancesRemoved = balancesRemovedByFile(db);
-  const periodsByFile = new Map(
-    db
-      .select({ importFileId: statementPeriods.importFileId, n: count() })
-      .from(statementPeriods)
-      .groupBy(statementPeriods.importFileId)
-      .all()
-      .map((r) => [r.importFileId, r.n] as const),
-  );
+  // …and a period another download of the statement adopted stays, with that download (`periodsRemovedByFile`)
+  const periodsByFile = periodsRemovedByFile(db);
   // what un-importing each file deletes and what it keeps, counted with the
   // delete's own predicates — one grouped query, not one per row
   const unimportCounts = unimportCountsByFile(db);
