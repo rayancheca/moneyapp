@@ -100,8 +100,11 @@ Liability status **derived** from `type='credit'`. Debit cards are intentionally
   fix that reads the description differently — with the normalized description only *ranking*
   candidates when a day holds several equal amounts, and multiset consumption so one old row
   feeds at most one new row. What travels:
-  - `category_id` **only** where `categorization_source='user'` (with its `merchant_id` and
-    confidence, because categorizeAll never revisits a user-categorized row)
+  - `category_id` where `categorization_source='user'` (with its `merchant_id` and
+    confidence, because categorizeAll never revisits a user-categorized row); where it is
+    `claude` (with its merchant, confidence and `needs_review`) onto a row the new parser gives
+    no category — an import never calls Claude; and where it is `transfer_detect` together with
+    the transfer group — detection pairs only ungrouped rows, so it never reads the row again
   - `notes`, `transfer_group_id`, `recurring_series_id` + `series_link_source`
   - `status='excluded'` — a user's exclusion is a decision, not a parse artifact
   - `file_link_source='attached'`, onto the row the re-parse inserts for that money only — the
@@ -113,7 +116,7 @@ Liability status **derived** from `type='credit'`. Debit cards are intentionally
   - `transaction_splits`, moved wholesale onto the new parent (same amount ⇒ the parts still sum;
     the parent stays immutable)
 
-  What does **not** travel: a detected category (rule/merchant/bank/transfer — re-derived once
+  What does **not** travel: a detected category (rule/merchant/bank/credit — re-derived once
   the batch settles, so carrying one would freeze a stale guess), `needs_review`, and
   `quarantined` status (a reconciliation verdict on the *old* file's period). A user category is
   never downgraded: when the new row's money is already represented by another file's row, the

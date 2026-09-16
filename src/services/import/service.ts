@@ -137,9 +137,10 @@ export interface FileOutcome {
   skippedOwned: number;
   supersededTakeover: number;
   /**
-   * rows that inherited user-set attributes (category/notes/transfer link/
-   * recurring link/exclusion/splits) from this same file's prior parser
-   * version — the re-parse lifecycle, visible instead of silent
+   * rows that inherited attributes the parser cannot re-derive (a hand-set
+   * or Claude's category, a note, a transfer or recurring link, an exclusion,
+   * splits) from this same file's prior parser version — the re-parse
+   * lifecycle, visible instead of silent
    */
   carriedForward: number;
   quarantined: number;
@@ -255,12 +256,15 @@ function consumeIdentity(pool: IdentityPool, postedOn: string, transactedOn: str
  * The user-set attributes a row owns — everything the parser cannot re-derive.
  * They belong to the MONEY, not to the parse, so a re-parse at a new parser
  * version must move them onto the fresh row (schema.md lifecycle rule).
- * `categorizationSource` decides whether the category itself travels: only a
- * `user` category is user-set — rule/merchant/bank/transfer categories are
+ * `categorizationSource` decides whether the category itself travels: a
+ * `user` category always, with its merchant, because categorizeAll never
+ * revisits a user-categorized row; an engine's only where no engine of the
+ * import derives it again (`engineCategoryCarry`: Claude's, and transfer
+ * detection's with its group) — rule/merchant/bank/credit categories are
  * re-derived by categorizeAll once the batch settles, so carrying one would
- * freeze a stale guess. A user category takes its merchant along, because
- * categorizeAll never revisits a user-categorized row.
- * Deliberately NOT carried: needs_review (re-derived every import) and
+ * freeze a stale guess.
+ * Deliberately NOT carried: needs_review (re-derived every import — except
+ * with Claude's category, whose verdict it is) and
  * quarantined status (a reconciliation verdict on the OLD file's period —
  * the new file reconciles for itself).
  *
@@ -279,6 +283,8 @@ interface CarryAttributes {
   categorizationSource: CategorizationSource | null;
   categorizationConfidence: number | null;
   merchantId: string | null;
+  /** travels only with an engine's category (`engineCategoryCarry`) */
+  needsReview: boolean;
   notes: string | null;
   transferGroupId: string | null;
   recurringSeriesId: string | null;
@@ -334,10 +340,43 @@ function carriedLinkSource(
   return carry.recurringSeriesId !== null || isDetach(carry) ? carry.seriesLinkSource : null;
 }
 
+/**
+ * A category an engine gave the row that no engine of the import derives again, so a re-read that dropped it would move
+ * the row — and how the successor takes it:
+ *  - `claude` fills: Claude categorizes only a row no engine categorized, and an import never calls it. A category the
+ *    new parser reads from the file outranks it, as it would have kept Claude away.
+ *  - `transfer_detect` overwrites, with the transfer group it belongs to: detection pairs only rows with no group, and
+ *    the group travels with the carry, so detection never reads the row again — its verdict on the pair stays.
+ * Every other engine (rules, the merchant map, bank categories, credit matching) runs over the new row once the batch
+ * settles, and carrying its answer would freeze a stale guess.
+ *
+ * 🔴 Only a hand-set category travelled. Measured on a copy of the real ledger, 2026-09-16: re-reading the Discover CSV
+ * (v1 → v2, the money identical) re-derived 485 Claude and transfer-detection categories through the merchant map,
+ * moved 7 of them — two to none — and took the uncategorized count from 38 to 40.
+ */
+function engineCategoryCarry(row: Pick<CarryAttributes, "categoryId" | "categorizationSource" | "transferGroupId">): "fill" | "overwrite" | null {
+  if (row.categoryId === null) return null;
+  if (row.categorizationSource === "claude") return "fill";
+  if (row.categorizationSource === "transfer_detect" && row.transferGroupId !== null) return "overwrite";
+  return null;
+}
+
+/** The category columns an engine's category travels with. */
+function engineCategoryColumns(carry: CarryAttributes): Partial<typeof transactions.$inferInsert> {
+  return {
+    categoryId: carry.categoryId,
+    categorizationSource: carry.categorizationSource,
+    categorizationConfidence: carry.categorizationConfidence,
+    // Claude's verdict includes whether it was sure; a pair detection commits leaves the review queue
+    needsReview: carry.categorizationSource === "claude" ? carry.needsReview : false,
+  };
+}
+
 /** Something a re-parse would otherwise destroy (splits handled separately). */
 function hasCarryableAttributes(row: CarryRow): boolean {
   return (
     (row.categorizationSource === "user" && row.categoryId !== null) ||
+    engineCategoryCarry(row) !== null ||
     row.notes !== null ||
     row.transferGroupId !== null ||
     row.recurringSeriesId !== null ||
@@ -492,6 +531,14 @@ function fillFromCarry(tx: AppDatabase, existing: typeof transactions.$inferSele
     set.categorizationConfidence = carry.categorizationConfidence;
     set.merchantId = existing.merchantId ?? carry.merchantId;
     set.needsReview = false;
+  }
+  if (existing.categorizationSource !== "user" && set.categoryId === undefined) {
+    const engine = engineCategoryCarry(carry);
+    // Claude's fills an uncategorized survivor; detection's comes with the group it fills below
+    const fills =
+      (engine === "fill" && existing.categoryId === null) ||
+      (engine === "overwrite" && existing.transferGroupId === null);
+    if (fills) Object.assign(set, engineCategoryColumns(carry), { merchantId: existing.merchantId ?? carry.merchantId });
   }
   if (existing.notes === null && carry.notes !== null) set.notes = carry.notes;
   if (existing.transferGroupId === null && carry.transferGroupId !== null) {
@@ -1617,6 +1664,12 @@ function insertTxn(
 ): boolean {
   const categoryId = t.categoryPath ? categoryIdForPath(db, t.categoryPath) : null;
   const carryUserCategory = carryFrom?.categorizationSource === "user" ? carryFrom.categoryId : null;
+  const engine = carryFrom === null || carryUserCategory ? null : engineCategoryCarry(carryFrom);
+  // the parser's own category, unless an engine's travels over it (`engineCategoryCarry`)
+  const category =
+    carryFrom !== null && (engine === "overwrite" || (engine === "fill" && categoryId === null))
+      ? { ...engineCategoryColumns(carryFrom), merchantId: carryFrom.merchantId }
+      : { categoryId: carryUserCategory ?? categoryId, categorizationSource: carryUserCategory ? ("user" as const) : categoryId ? ("rule" as const) : null };
   const result = tx
     .insert(transactions)
     .values({
@@ -1628,8 +1681,7 @@ function insertTxn(
       fitid: t.fitid ?? null,
       occurrenceIndex,
       dedupeHash: hash,
-      categoryId: carryUserCategory ?? categoryId,
-      categorizationSource: carryUserCategory ? "user" : categoryId ? "rule" : null,
+      ...category,
       notes: carryFrom?.notes ?? null,
       transferGroupId: carryFrom?.transferGroupId ?? null,
       recurringSeriesId: carryFrom?.recurringSeriesId ?? null,

@@ -15,7 +15,8 @@ import { statementCopies, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { latestBalances, netWorthSeries, rebuildAccount } from "@/services/derivation";
 import { listSplits, setSplits } from "@/services/transaction-splits";
-import { fidelityOf, importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, parseContextFor, reconcileAccounts, resolveAccount, type ImportInput } from "./service";
+import { asParsedFile, fidelityOf, importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, parseContextFor, reconcileAccounts, resolveAccount, type ImportInput } from "./service";
+import { merchants } from "@/db/schema/merchants";
 import { PROFILES } from "./profiles";
 import { parseChaseCardLines } from "./profiles/chase-card-statement-profile";
 import { ParseError, type AccountHint, type ParsedFile, type ParsedStatement, type ParserProfile } from "./types";
@@ -1031,6 +1032,13 @@ describe("re-parse lifecycle: a parser-version bump preserves user work", () => 
       .set({ categoryId: detectedCategory, categorizationSource: "bank_category", notes: "keep me" })
       .where(eq(transactions.id, shell.id))
       .run();
+    // …and detection's category on a row it no longer groups: detection reads that row again
+    const starbucks = liveRow("STARBUCKS");
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: detectedCategory, categorizationSource: "transfer_detect" })
+      .where(eq(transactions.id, starbucks.id))
+      .run();
 
     const [outcome] = await withBumpedParserVersion("chase-card-csv", () =>
       importStatementFiles(bundle.db, [FILE]),
@@ -1040,6 +1048,152 @@ describe("re-parse lifecycle: a parser-version bump preserves user work", () => 
     const fresh = liveRow("SHELL OIL");
     expect(fresh.notes).toBe("keep me");
     expect(fresh.categorizationSource).not.toBe("user"); // re-derived, never upgraded
+    // re-derived from what the engines say today, not the stale label
+    for (const row of [fresh, liveRow("STARBUCKS")]) {
+      expect(row.categorizationSource).not.toBe("bank_category");
+      expect(row.categorizationSource).not.toBe("transfer_detect");
+      expect(row.categoryId).not.toBe(detectedCategory);
+    }
+  });
+
+  /**
+   * 🔴 Only a hand-set category travelled, and everything else was left to the import's engines to derive again. Two of
+   * them never read the row again: Claude (an import never calls it, and it fills only rows no engine categorized) and
+   * transfer detection (it pairs only rows with no group, and the group travels). Measured on a copy of the real
+   * ledger, 2026-09-16: re-reading the Discover CSV (v1 → v2, the money identical) moved 7 rows' categories — two to
+   * none — and re-labelled 485, uncategorized 38 → 40.
+   */
+  test("a category no import engine derives again — Claude's, or transfer detection's with its pair — is kept", async () => {
+    await importStatementFiles(bundle.db, [FILE]);
+    const [claudeCategory, transferCategory] = expenseCategoryIds(2) as [string, string];
+    const merchantId = bundle.db.insert(merchants).values({ canonicalName: "Claude named this one" }).returning({ id: merchants.id }).get().id;
+    const shell = liveRow("SHELL OIL");
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: claudeCategory, categorizationSource: "claude", categorizationConfidence: 0.62, needsReview: true, merchantId })
+      .where(eq(transactions.id, shell.id))
+      .run();
+    const amazon = liveRow("AMZN MKTP");
+    const checking = resolveAccount(bundle.db, { institution: "Chase", type: "checking", last4: "9990" });
+    const raw = "PAYMENT TO CHASE CARD ENDING IN 7777";
+    const partner = bundle.db
+      .insert(transactions)
+      .values({
+        accountId: checking,
+        postedOn: amazon.postedOn,
+        amountCents: 6000,
+        rawDescription: raw,
+        normalizedDescription: normalizeDescription(raw),
+        dedupeHash: dedupeHash({ accountId: checking, postedOn: amazon.postedOn, amountCents: 6000, rawDescription: raw, occurrenceIndex: 0 }),
+      })
+      .returning({ id: transactions.id })
+      .get().id;
+    bundle.db
+      .update(transactions)
+      .set({ transferGroupId: amazon.id, categoryId: transferCategory, categorizationSource: "transfer_detect", categorizationConfidence: 0.95 })
+      .where(inArray(transactions.id, [amazon.id, partner]))
+      .run();
+
+    const [outcome] = await withBumpedParserVersion("chase-card-csv", () => importStatementFiles(bundle.db, [FILE]));
+
+    expect(outcome!.inserted).toBe(4);
+    expect(liveRow("SHELL OIL")).toMatchObject({
+      categoryId: claudeCategory,
+      categorizationSource: "claude",
+      categorizationConfidence: 0.62,
+      needsReview: true,
+      merchantId,
+    });
+    const fresh = liveRow("AMZN MKTP");
+    expect(fresh).toMatchObject({ transferGroupId: amazon.id, categoryId: transferCategory, categorizationSource: "transfer_detect" });
+    expect(fresh.id).not.toBe(amazon.id);
+  });
+
+  test("an engine's category fills the other record of the money a re-read's line dedupes against — only where it is empty", async () => {
+    await importStatementFiles(bundle.db, [FILE]);
+    const [claudeCategory, transferCategory, handCategory] = expenseCategoryIds(3) as [string, string, string];
+    const shell = liveRow("SHELL OIL");
+    const amazon = liveRow("AMZN MKTP");
+    const starbucks = liveRow("STARBUCKS");
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: claudeCategory, categorizationSource: "claude", categorizationConfidence: 0.4, needsReview: true })
+      .where(inArray(transactions.id, [shell.id, starbucks.id]))
+      .run();
+    bundle.db
+      .update(transactions)
+      .set({ transferGroupId: amazon.id, categoryId: transferCategory, categorizationSource: "transfer_detect" })
+      .where(eq(transactions.id, amazon.id))
+      .run();
+    // the new version reads both lines' words differently; each is already recorded by a row entered without a file,
+    // under the words the new version reads — the SHELL one uncategorized, the AMZN one categorized by an engine
+    const reworded = (raw: string) => `${raw} (v2)`;
+    const recordedBy = (row: typeof shell, categoryId: string | null) => {
+      const raw = reworded(row.rawDescription);
+      return bundle.db
+        .insert(transactions)
+        .values({
+          accountId: row.accountId,
+          postedOn: row.postedOn,
+          transactedOn: row.transactedOn,
+          amountCents: row.amountCents,
+          rawDescription: raw,
+          normalizedDescription: normalizeDescription(raw),
+          dedupeHash: dedupeHash({ accountId: row.accountId, postedOn: row.postedOn, amountCents: row.amountCents, rawDescription: raw, occurrenceIndex: 0 }),
+          categoryId,
+          categorizationSource: categoryId === null ? null : "rule",
+        })
+        .returning({ id: transactions.id })
+        .get().id;
+    };
+    const shellRecord = recordedBy(shell, null);
+    const amazonRecord = recordedBy(amazon, handCategory);
+    const starbucksRecord = recordedBy(starbucks, handCategory);
+    const csv = PROFILES.find((p) => p.id === "chase-card-csv")!;
+    const parse = csv.parse;
+    csv.parse = async (file, context) =>
+      asParsedFile(await parse(file, context)).statements.map((s) => ({
+        ...s,
+        txns: s.txns.map((t) => (/SHELL OIL|AMZN MKTP|STARBUCKS/.test(t.rawDescription) ? { ...t, rawDescription: reworded(t.rawDescription) } : t)),
+      }));
+    try {
+      await withBumpedParserVersion("chase-card-csv", () => importStatementFiles(bundle.db, [FILE]));
+    } finally {
+      csv.parse = parse;
+    }
+
+    const row = (id: string) => bundle.db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+    expect(row(shellRecord)).toMatchObject({ categoryId: claudeCategory, categorizationSource: "claude", needsReview: true, status: "active" });
+    // detection's category comes with the group it fills
+    expect(row(amazonRecord)).toMatchObject({ transferGroupId: amazon.id, categoryId: transferCategory, categorizationSource: "transfer_detect" });
+    // Claude's never replaces a category the other record already has
+    expect(row(starbucksRecord)).toMatchObject({ categoryId: handCategory, categorizationSource: "rule", needsReview: false });
+  });
+
+  test("a Claude category never outranks one the new parser reads from the file", async () => {
+    await importStatementFiles(bundle.db, [FILE]);
+    const [categoryId] = expenseCategoryIds(1) as [string];
+    const parserPath = "Fees > Bank Fees";
+    bundle.db
+      .update(transactions)
+      .set({ categoryId, categorizationSource: "claude", categorizationConfidence: 0.5 })
+      .where(eq(transactions.id, liveRow("SHELL OIL").id))
+      .run();
+    const csv = PROFILES.find((p) => p.id === "chase-card-csv")!;
+    const parse = csv.parse;
+    csv.parse = async (file, context) =>
+      asParsedFile(await parse(file, context)).statements.map((s) => ({
+        ...s,
+        txns: s.txns.map((t) => (t.rawDescription.includes("SHELL OIL") ? { ...t, categoryPath: parserPath } : t)),
+      }));
+    try {
+      await withBumpedParserVersion("chase-card-csv", () => importStatementFiles(bundle.db, [FILE]));
+    } finally {
+      csv.parse = parse;
+    }
+    const fresh = liveRow("SHELL OIL");
+    expect(fresh.categorizationSource).toBe("rule");
+    expect(fresh.categoryId).not.toBe(categoryId);
   });
 
   test("two same-day equal-amount rows keep their OWN work — carries never swap", async () => {
