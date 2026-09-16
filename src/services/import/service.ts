@@ -38,6 +38,7 @@ import {
   standInsOn,
   standInsReturnedBy,
 } from "../duplicate-lifecycle";
+import { accountsFormerlyNumbered, formerNumbers } from "./account-numbers";
 import { accountSlug, institutionSlug } from "./account-slug";
 import { ATTACHED, detachAttachedRows, keepRetiredAttachedRows, parsedFromFile, reattachDetachedRows } from "./attached-rows";
 import {
@@ -46,6 +47,7 @@ import {
   cashOnlyStatementsByAccount,
   copiesWithheldFor,
   equityAssetTypesOf,
+  findBook,
   laterBookStatements,
   laterStatementsRefusal,
   NegativePositionError,
@@ -56,7 +58,18 @@ import {
   writeStatementPositions,
   type LaterBookStatement,
 } from "./brokerage-book";
-import { handOverAdoptedPeriods, handOverPrintedAnchors } from "./printed-anchors";
+import { handOverPrintedAnchors } from "./printed-anchors";
+import {
+  copyHandOvers,
+  forgetStatementCopies,
+  handOverToCopies,
+  handedRowIds,
+  lendToCopies,
+  reclaimFromCopy,
+  recordStatementCopy,
+} from "./statement-copies";
+import { appendPrintedLines, forgetPrintedLines, handOverToPrinters, printedLineOf, printerHandOvers, printerRowIds } from "./printed-lines";
+import { keepStayingLegsByContent, relinkReturningTransfers, rememberTransfersTakenApart } from "./unimported-transfers";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
 import { extractLines } from "./profiles/pdf-profile";
@@ -152,9 +165,10 @@ export interface FileOutcome {
   skippedOwned: number;
   supersededTakeover: number;
   /**
-   * rows that inherited user-set attributes (category/notes/transfer link/
-   * recurring link/exclusion/splits) from this same file's prior parser
-   * version — the re-parse lifecycle, visible instead of silent
+   * rows that inherited attributes the parser cannot re-derive (a hand-set
+   * or Claude's category, a note, a transfer or recurring link, an exclusion,
+   * splits) from this same file's prior parser version — the re-parse
+   * lifecycle, visible instead of silent
    */
   carriedForward: number;
   quarantined: number;
@@ -170,16 +184,14 @@ interface CoveredRange {
 
 /**
  * Cross-format reconciliation dedupe (the DB is master): the account's
- * balance-affecting rows from OTHER sources, indexed by amount under BOTH the
- * dates they carry. An incoming row whose exact hash misses still dedupes when
- * this pool holds an unconsumed match — the same money described with
- * different raw text, or dated differently, by another export format.
- * One slot per existing row, taken at most once no matter which index found
- * it, so two genuinely identical same-day charges stay distinct: each existing
- * row absorbs at most one incoming row.
- * Quarantined rows stay out of the pool (they don't affect balances, so an
- * incoming balance-affecting row must not vanish against one), and superseded
- * rows are history.
+ * balance-affecting rows from OTHER sources. An incoming row whose exact hash
+ * misses still dedupes when one of these records the same money — described
+ * with different raw text, or dated differently, by another export format.
+ * Each existing row absorbs at most one incoming row, so two genuinely
+ * identical same-day charges stay distinct.
+ * Quarantined rows stay out (they don't affect balances, so an incoming
+ * balance-affecting row must not vanish against one), and superseded rows are
+ * history.
  *
  * `retiredAgain` leaves out the copies this statement retires again
  * (`standInsReturnedBy`): each is a retired row the un-import of this
@@ -187,20 +199,20 @@ interface CoveredRange {
  * the un-import it was out of this pool, and a same-day copy left in would
  * absorb the very line it was retired for.
  */
-interface IdentityPool {
-  /** one slot per existing row, consumed at most once however it is matched */
-  used: boolean[];
-  byPosted: Map<string, number[]>;
-  byTransacted: Map<string, number[]>;
+interface IdentitySlot {
+  id: string;
+  postedOn: string;
+  transactedOn: string | null;
+  amountCents: number;
 }
 
-function existingIdentityPool(
+function existingIdentitySlots(
   db: AppDatabase,
   accountId: string,
   excludeFileId: string,
   retiredAgain: ReadonlySet<string>,
-): IdentityPool {
-  const rows = db
+): IdentitySlot[] {
+  return db
     .select({
       id: transactions.id,
       postedOn: transactions.postedOn,
@@ -217,65 +229,126 @@ function existingIdentityPool(
     )
     .all()
     .filter((r) => !retiredAgain.has(r.id));
-
-  const pool: IdentityPool = { used: rows.map(() => false), byPosted: new Map(), byTransacted: new Map() };
-  rows.forEach((r, i) => {
-    index(pool.byPosted, identityKey(r.postedOn, r.amountCents), i);
-    if (r.transactedOn !== null) index(pool.byTransacted, identityKey(r.transactedOn, r.amountCents), i);
-  });
-  return pool;
-}
-
-function index(map: Map<string, number[]>, key: string, i: number): void {
-  const bucket = map.get(key);
-  if (bucket) bucket.push(i);
-  else map.set(key, [i]);
-}
-
-function identityKey(day: string, amountCents: number): string {
-  return `${day}\x1f${amountCents}`;
-}
-
-function takeSlot(pool: IdentityPool, map: Map<string, number[]>, key: string): boolean {
-  for (const i of map.get(key) ?? []) {
-    if (pool.used[i]) continue;
-    pool.used[i] = true;
-    return true;
-  }
-  return false;
 }
 
 /**
- * Consume one existing row that records this same money; false when none is
- * left. Posted-vs-posted is tried first, so behaviour is unchanged wherever
- * the two sources agree on the date.
+ * How surely an existing row records a line's money: same amount, and the same TRANSACTION day (2), the same posted
+ * day (1), or both (3); 0 is no match. Exact days only, never a window — a window would merge genuinely distinct
+ * same-amount charges (measured: 43 such pairs on Chase Sapphire).
  *
- * The fallback exists because a source can date the SAME charge differently:
- * a Chase card statement prints the TRANSACTION date, while the rows already
- * stored from the Spending Report export carry the POST date, typically one
- * to three days later. Keyed only on posted_on, re-stating a card period
- * inserted a duplicate of nearly every row in it. Matching transacted-to-
- * transacted bridges that without widening into a fuzzy date window — a window
- * would merge genuinely distinct same-amount charges (measured: 43 such pairs
- * on this one card), whereas this only ever matches two records that claim the
- * same transaction day.
+ * The transaction day exists because a source can date the SAME charge differently: a Chase card statement prints the
+ * TRANSACTION day, while the Spending Report export posts it one to three days later. Keyed only on posted_on,
+ * re-stating a card period inserted a duplicate of nearly every row in it.
  */
-function consumeIdentity(pool: IdentityPool, postedOn: string, transactedOn: string | undefined, amountCents: number): boolean {
-  if (takeSlot(pool, pool.byPosted, identityKey(postedOn, amountCents))) return true;
-  if (transactedOn === undefined) return false;
-  return takeSlot(pool, pool.byTransacted, identityKey(transactedOn, amountCents));
+function identityWeight(line: CanonicalTxn, slot: IdentitySlot): number {
+  if (line.amountCents !== slot.amountCents) return 0;
+  const sameTransactionDay = line.transactedOn !== undefined && slot.transactedOn !== null && line.transactedOn === slot.transactedOn;
+  return (sameTransactionDay ? 2 : 0) + (line.postedOn === slot.postedOn ? 1 : 0);
+}
+
+/**
+ * Which of a statement's lines another record of the same money absorbs: a MAXIMUM matching of lines to existing rows
+ * (each row absorbs at most one line), each line trying its surest rows first (`identityWeight`), the lines with the
+ * surest match placed first. Returns the indexes of the absorbed lines.
+ *
+ * 🔴 Lines were matched one at a time to the first unused row on the posted day, then on the transaction day. A
+ * statement prints RAM`S VILLAGE −$10.40 on 05-05, 05-08 and 05-11; the Spending Report posts the same three on 05-07,
+ * 05-11 and 05-13. Read second, the report's 05-11 post (the 05-08 charge) took the statement's 05-11 charge, and its
+ * 05-13 post (the 05-11 charge) found nothing left and was stored a second time: on a copy of the real ledger,
+ * 2026-09-16, re-importing 20260602-statements-9805-.pdf and then Spending Report PDF (1).pdf left the charge counted
+ * twice and all 86 of the statement's rows quarantined behind a $10.40 gap. A matching of the whole statement absorbs
+ * every line some row records, whatever order the lines come in.
+ *
+ * Returns each absorbed line's index with the row that absorbs it.
+ */
+function absorbedLines(lines: readonly CanonicalTxn[], slots: readonly IdentitySlot[]): Map<number, string> {
+  const byAmount = new Map<number, IdentitySlot[]>();
+  for (const slot of slots) byAmount.set(slot.amountCents, [...(byAmount.get(slot.amountCents) ?? []), slot]);
+  const candidates = lines.map((line) =>
+    (byAmount.get(line.amountCents) ?? [])
+      .map((slot) => ({ slot, weight: identityWeight(line, slot) }))
+      .filter((c) => c.weight > 0)
+      .sort((a, b) => b.weight - a.weight || a.slot.id.localeCompare(b.slot.id))
+      .map((c) => ({ id: c.slot.id, weight: c.weight })),
+  );
+  const holder = new Map<string, number>();
+  const place = (line: number, seen: Set<string>): boolean => {
+    for (const { id } of candidates[line]!) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const other = holder.get(id);
+      if (other === undefined || place(other, seen)) {
+        holder.set(id, line);
+        return true;
+      }
+    }
+    return false;
+  };
+  const order = lines
+    .map((_, i) => i)
+    .filter((i) => candidates[i]!.length > 0)
+    .sort((a, b) => candidates[b]![0]!.weight - candidates[a]![0]!.weight || a - b);
+  for (const line of order) place(line, new Set());
+  return new Map([...holder].map(([id, line]) => [line, id] as const));
+}
+
+/** What the import does with one line of a statement, decided before anything is written. */
+type LinePlan = { kind: "owned" } | { kind: "takeover"; victimId: string } | { kind: "absorbed"; byId: string } | { kind: "new" };
+
+/**
+ * Every line's fate, in print order: a higher-fidelity source owns its day; it takes over a lower-fidelity source's
+ * row (which then records nothing, so no line may be absorbed by it); another record of the same money absorbs it
+ * (`absorbedLines`); or it is new. Read-only — `pickTakeoverVictim` is told which rows earlier lines already took, as
+ * the loop that follows will have superseded them.
+ */
+function planLines(
+  tx: AppDatabase,
+  accountId: string,
+  lines: readonly StoredLine[],
+  ranges: readonly CoveredRange[],
+  myPriority: number,
+  slots: readonly IdentitySlot[],
+): LinePlan[] {
+  const taken = new Set<string>();
+  const identity: number[] = [];
+  const plan = lines.map(({ printed: t, stored, hash }, i): LinePlan => {
+    // `soleSource` rows opt out: the higher-fidelity source covers the
+    // DAY but is documented not to carry this row type (CanonicalTxn)
+    if (!t.soleSource && rangesCovering(ranges, stored.postedOn).some((r) => r.priority < myPriority)) return { kind: "owned" };
+    // takeover: a lower-fidelity source covers the day this row PRINTS —
+    // replace its best-matching row (schema.md: date, amount, description
+    // similarity). `pickTakeoverVictim` looks for that row on the printed
+    // day, so the coverage asked about is the printed day's too.
+    const lowerOwners = rangesCovering(ranges, t.postedOn).filter((r) => r.priority > myPriority);
+    if (lowerOwners.length > 0) {
+      const victim = pickTakeoverVictim(tx, accountId, t, hash, lowerOwners.map((r) => r.importFileId), taken);
+      if (victim) {
+        taken.add(victim.id);
+        return { kind: "takeover", victimId: victim.id };
+      }
+    }
+    identity.push(i);
+    return { kind: "new" };
+  });
+  // a row taken over leaves the ledger: it absorbs nothing
+  const open = slots.filter((slot) => !taken.has(slot.id));
+  for (const [k, byId] of absorbedLines(identity.map((i) => lines[i]!.printed), open)) plan[identity[k]!] = { kind: "absorbed", byId };
+  return plan;
 }
 
 /**
  * The user-set attributes a row owns — everything the parser cannot re-derive.
  * They belong to the MONEY, not to the parse, so a re-parse at a new parser
  * version must move them onto the fresh row (schema.md lifecycle rule).
- * `categorizationSource` decides whether the category itself travels: only a
- * `user` category is user-set — rule/merchant/bank/transfer categories are
+ * `categorizationSource` decides whether the category itself travels: a
+ * `user` category always, with its merchant, because categorizeAll never
+ * revisits a user-categorized row; an engine's only where no engine of the
+ * import derives it again (`engineCategoryCarry`: Claude's, and transfer
+ * detection's with its group) — rule/merchant/bank/credit categories are
  * re-derived by categorizeAll once the batch settles, so carrying one would
- * freeze a stale guess. A user category takes its merchant along, because
- * categorizeAll never revisits a user-categorized row.
- * Deliberately NOT carried: needs_review (re-derived every import) and
+ * freeze a stale guess.
+ * Deliberately NOT carried: needs_review (re-derived every import — except
+ * with Claude's category, whose verdict it is) and
  * quarantined status (a reconciliation verdict on the OLD file's period —
  * the new file reconciles for itself).
  *
@@ -294,6 +367,8 @@ interface CarryAttributes {
   categorizationSource: CategorizationSource | null;
   categorizationConfidence: number | null;
   merchantId: string | null;
+  /** travels only with an engine's category (`engineCategoryCarry`) */
+  needsReview: boolean;
   notes: string | null;
   transferGroupId: string | null;
   recurringSeriesId: string | null;
@@ -349,10 +424,46 @@ function carriedLinkSource(
   return carry.recurringSeriesId !== null || isDetach(carry) ? carry.seriesLinkSource : null;
 }
 
+/**
+ * A category an engine gave the row that no engine of the import derives again, so a re-read that dropped it would move
+ * the row — and how the successor takes it:
+ *  - `claude` fills: Claude categorizes only a row no engine categorized, and an import never calls it. A category the
+ *    new parser reads from the file outranks it, as it would have kept Claude away.
+ *  - `transfer_detect` overwrites, with the transfer group it belongs to: detection pairs only rows with no group, and
+ *    the group travels with the carry, so detection never reads the row again — its verdict on the pair stays.
+ * Every other engine (rules, the merchant map, bank categories, credit matching) runs over the new row once the batch
+ * settles, and carrying its answer would freeze a stale guess.
+ *
+ * 🔴 Only a hand-set category travelled. Measured on a copy of the real ledger, 2026-09-16: re-reading the Discover CSV
+ * (v1 → v2, the money identical) re-derived 485 Claude and transfer-detection categories through the merchant map,
+ * moved 7 of them — two to none — and took the uncategorized count from 38 to 40. And the same day, re-reading the 33
+ * Robinhood statements at parser v5: the carry took Robinhood Agentic's +$26.64 link and left detection's category, so
+ * the leg went from Investment Contribution to Internal Transfer (merchant map) while Robinhood Cash's leg stayed a
+ * contribution, and /summary's 2026 money-weighted return dropped the flow (33.87% → 33.81%).
+ */
+function engineCategoryCarry(row: Pick<CarryAttributes, "categoryId" | "categorizationSource" | "transferGroupId">): "fill" | "overwrite" | null {
+  if (row.categoryId === null) return null;
+  if (row.categorizationSource === "claude") return "fill";
+  if (row.categorizationSource === "transfer_detect" && row.transferGroupId !== null) return "overwrite";
+  return null;
+}
+
+/** The category columns an engine's category travels with. */
+function engineCategoryColumns(carry: CarryAttributes): Partial<typeof transactions.$inferInsert> {
+  return {
+    categoryId: carry.categoryId,
+    categorizationSource: carry.categorizationSource,
+    categorizationConfidence: carry.categorizationConfidence,
+    // Claude's verdict includes whether it was sure; a pair detection commits leaves the review queue
+    needsReview: carry.categorizationSource === "claude" ? carry.needsReview : false,
+  };
+}
+
 /** Something a re-parse would otherwise destroy (splits handled separately). */
 function hasCarryableAttributes(row: CarryRow): boolean {
   return (
     (row.categorizationSource === "user" && row.categoryId !== null) ||
+    engineCategoryCarry(row) !== null ||
     row.notes !== null ||
     row.transferGroupId !== null ||
     row.recurringSeriesId !== null ||
@@ -405,7 +516,7 @@ function captureCarryForward(db: AppDatabase, oldFileIds: readonly string[]): Ca
  * bucketed once under its posted day, so the posted index lists every carry row exactly once.
  *
  * A claim is the new read printing the same money — same account, same day, same amount, by the lenses
- * `consumeIdentity` absorbs a line by — so an unclaimed row is money the new read does not record: a section it
+ * `absorbedLines` absorbs a line by — so an unclaimed row is money the new read does not record: a section it
  * withholds, an account it no longer reads, a line it no longer prints. A claimed row follows the carry: onto the
  * row that now records its money, or out with its superseded row when another source's row records it.
  */
@@ -427,7 +538,7 @@ function bucketCarry(map: Map<string, CarryRow[]>, key: string, row: CarryRow): 
  * migrate onto at most one successor.
  *
  * Posted day first, then transaction day to transaction day — the fallback
- * `consumeIdentity` already makes, for the same reason: a card statement prints
+ * `identityWeight` already makes, for the same reason: a card statement prints
  * the TRANSACTION day. 🔴 Keyed on the posted day alone, Chase Sapphire's
  * +$100.00 payment (posted 2026-07-01, transacted and printed 06/30) lost its
  * transfer link and its note to a version bump of 20260702-statements-9805-.pdf,
@@ -457,27 +568,10 @@ function takeCarry(pool: CarryPool, accountId: string, t: CanonicalTxn, hash: st
 }
 
 /**
- * The category transfer detection gave a carried row WITH its link — travelling with the link, as the link's.
- *
- * 🔴 The carry took the link and left the category, and `detectTransfers` never looks at a linked row again: the fresh
- * leg took whatever the rules gave it, so one transfer carried two categories. Measured on a copy of the real ledger,
- * 2026-09-16, re-reading the 33 Robinhood statements at parser v5: Robinhood Agentic's +$26.64 of 2026-06-05 went from
- * Investment Contribution to Internal Transfer (merchant map) while Robinhood Cash's leg stayed a contribution, and
- * /summary's 2026 money-weighted return dropped the flow (33.87% → 33.81%).
- */
-function detectedTransferCategory(carry: CarryAttributes): Partial<typeof transactions.$inferInsert> | null {
-  if (carry.transferGroupId === null || carry.categorizationSource !== "transfer_detect" || carry.categoryId === null) return null;
-  return {
-    categoryId: carry.categoryId,
-    categorizationSource: "transfer_detect",
-    categorizationConfidence: carry.categorizationConfidence,
-    needsReview: false,
-  };
-}
-
-/**
  * Stamp carried attributes onto a row THIS file just inserted (it owns the row,
- * so a full overwrite is safe and idempotent).
+ * so a full overwrite is safe and idempotent). An engine's category is not
+ * stamped here: `insertTxn` wrote it with the row, against the parser's own
+ * (`engineCategoryCarry`).
  */
 function applyCarry(tx: AppDatabase, txnId: string, carry: CarryAttributes): void {
   const userCategory = carry.categorizationSource === "user" && carry.categoryId !== null;
@@ -491,7 +585,7 @@ function applyCarry(tx: AppDatabase, txnId: string, carry: CarryAttributes): voi
             merchantId: carry.merchantId,
             needsReview: false,
           }
-        : (detectedTransferCategory(carry) ?? {})),
+        : {}),
       notes: carry.notes,
       // a self-group (user-marked transfer with no counterparty) keeps pointing
       // at the retired row's id — still a valid marker, and analytics must never
@@ -526,6 +620,14 @@ function fillFromCarry(tx: AppDatabase, existing: typeof transactions.$inferSele
     set.categorizationConfidence = carry.categorizationConfidence;
     set.merchantId = existing.merchantId ?? carry.merchantId;
     set.needsReview = false;
+  }
+  if (existing.categorizationSource !== "user" && set.categoryId === undefined) {
+    const engine = engineCategoryCarry(carry);
+    // Claude's fills an uncategorized survivor; detection's comes with the group it fills below
+    const fills =
+      (engine === "fill" && existing.categoryId === null) ||
+      (engine === "overwrite" && existing.transferGroupId === null);
+    if (fills) Object.assign(set, engineCategoryColumns(carry), { merchantId: existing.merchantId ?? carry.merchantId });
   }
   if (existing.notes === null && carry.notes !== null) set.notes = carry.notes;
   if (existing.transferGroupId === null && carry.transferGroupId !== null) {
@@ -684,11 +786,18 @@ function rangesCovering(ranges: readonly CoveredRange[], day: string): CoveredRa
  * account with no last4 cannot be matched by number and is left out.
  */
 export function parseContextFor(db: AppDatabase, rereading: ReadonlySet<string> = new Set()): ParseContext {
-  const rows = db
+  const tracked = db
     .select({ id: accounts.id, institution: institutions.name, last4: accounts.last4, type: accounts.type, subtype: accounts.subtype })
     .from(accounts)
     .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
     .all();
+  // a number an account's statements printed before its current one is that account's too (`account-numbers`)
+  const byId = new Map(tracked.map((r) => [r.id, r]));
+  const earlier = formerNumbers(db).flatMap(({ accountId, last4 }) => {
+    const account = byId.get(accountId);
+    return account === undefined ? [] : [{ ...account, last4 }];
+  });
+  const rows = [...tracked, ...earlier];
   // a cash account's brokerage book, by the stored link — what a section's positions are proven against
   const books = bookEventsByCashAccount(db);
   // …and the cash account's statements that stand on no book — a positions month is never written under one
@@ -713,28 +822,42 @@ export function parseContextFor(db: AppDatabase, rereading: ReadonlySet<string> 
   return { knownAccounts, equityAssetTypes: equityAssetTypesOf(db) };
 }
 
-/** Resolve (or create/upgrade) the account a parsed statement belongs to. */
-export function resolveAccount(db: AppDatabase, hint: AccountHint): string {
+type AccountRow = typeof accounts.$inferSelect;
+
+/** The institution a hint names; an unknown one is a parser defect. */
+function institutionIdOf(db: AppDatabase, hint: AccountHint): string {
   const institution = db
     .select({ id: institutions.id })
     .from(institutions)
     .where(eq(institutions.name, hint.institution))
     .get();
   if (!institution) throw new Error(`Unknown institution ${hint.institution}`);
-  // a cash account's brokerage book: by the stored link, never by name or type — see ./brokerage-book.ts
-  if (hint.bookOf !== undefined) return resolveBook(db, institution.id, hint.bookOf);
+  return institution.id;
+}
 
-  const all = db.select().from(accounts).where(eq(accounts.institutionId, institution.id)).all();
+/**
+ * The account a hint names, read-only: `preferred` when the hint's preferred account exists (it is never upgraded).
+ * The one matching rule for `resolveAccount` and for a read that must not create or change an account. A book's hint
+ * (`bookOf`) is not matched here: a book is found by the stored link alone (`findBook`, `resolveBook`).
+ */
+function matchAccount(db: AppDatabase, hint: AccountHint): { institutionId: string; found?: AccountRow; preferred?: AccountRow } {
+  const institutionId = institutionIdOf(db, hint);
+  const all = db.select().from(accounts).where(eq(accounts.institutionId, institutionId)).all();
   // an existing preferred account (the P0.1 settlement-cash ledger) wins over
   // type matching; absent, the hint resolves exactly as before
   if (hint.preferName) {
     const preferred = all.find((a) => a.name === hint.preferName);
-    if (preferred) return preferred.id;
+    if (preferred) return { institutionId, preferred };
   }
   const typeMatch = (a: (typeof all)[number]) =>
     hint.type !== undefined && a.type === hint.type && (hint.subtype === undefined || a.subtype === hint.subtype);
 
   let found = hint.last4 ? all.find((a) => a.last4 === hint.last4) : undefined;
+  if (!found && hint.last4) {
+    // a card reissued under a new number: its earlier statements print the old one (`account-numbers`)
+    const formerly = accountsFormerlyNumbered(db, all.map((a) => a.id), hint.last4);
+    if (formerly.length === 1) found = all.find((a) => a.id === formerly[0]);
+  }
   if (!found && !hint.last4) {
     // files without account numbers (Discover CSV, Robinhood activity, SoFi)
     found = all.find(typeMatch);
@@ -744,6 +867,22 @@ export function resolveAccount(db: AppDatabase, hint: AccountHint): string {
     // never create a duplicate for the same real-world account
     found = all.find((a) => a.last4 === null && typeMatch(a));
   }
+  return { institutionId, found };
+}
+
+/** The account `resolveAccount` would file a hint under, or null where it would create one — read-only. */
+export function findAccountId(db: AppDatabase, hint: AccountHint): string | null {
+  if (hint.bookOf !== undefined) return findBook(db, institutionIdOf(db, hint), hint.bookOf);
+  const { found, preferred } = matchAccount(db, hint);
+  return (preferred ?? found)?.id ?? null;
+}
+
+/** Resolve (or create/upgrade) the account a parsed statement belongs to. */
+export function resolveAccount(db: AppDatabase, hint: AccountHint): string {
+  // a cash account's brokerage book: by the stored link, never by name or type — see ./brokerage-book.ts
+  if (hint.bookOf !== undefined) return resolveBook(db, institutionIdOf(db, hint), hint.bookOf);
+  const { institutionId, found, preferred } = matchAccount(db, hint);
+  if (preferred) return preferred.id;
   if (found) {
     // upgrade auto-created stubs when a richer hint arrives (PDF names, OFX types)
     const isStub = /·{4}|\*{4}/.test(found.name);
@@ -760,7 +899,7 @@ export function resolveAccount(db: AppDatabase, hint: AccountHint): string {
   const created = db
     .insert(accounts)
     .values({
-      institutionId: institution.id,
+      institutionId,
       name: hint.name ?? `${hint.institution} ····${hint.last4 ?? "????"}`,
       type: hint.type ?? "checking",
       subtype: hint.subtype ?? null,
@@ -898,7 +1037,8 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
   // the files this call wrote rows under — the only rows linking may claim
   const { touchedAccounts, writtenFileIds } = batch;
 
-  // each turn reads a file and every file it must be read with (`importTurn`), and takes those out of the queue
+  // each turn reads a file and every file it must be read with (`importTurn`), and takes those out of the queue — and a
+  // turn that faults fails its own files only (`failedUnexpectedly`)
   for (let head = batch.pending.shift(); head !== undefined; head = batch.pending.shift()) {
     outcomes.push(...(await importTurn(db, head, batch)));
   }
@@ -912,6 +1052,9 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
   // with the file's own rows, as it did before the un-import — and this call
   // did not insert it, so the linking below may not claim it.
   const refiled = new Set(reattachDetachedRows(db, [...touchedAccounts]));
+  // A transfer an un-import took apart is whole again once the lines it lost are back — before categorization and
+  // detection read the returning legs as unpaired rows (`unimported-transfers`)
+  relinkReturningTransfers(db, rowIdsOfFiles(db, writtenFileIds).filter((id) => !refiled.has(id)));
   for (const accountId of touchedAccounts) rebuildAccount(db, accountId);
   if (touchedAccounts.size > 0) {
     categorizeAll(db);
@@ -1037,8 +1180,8 @@ interface PlacedTxn {
  * The stored row posts on `postedInsidePeriod`, keeping the printed day as its
  * transaction day. The printed row is kept too, because a search for ANOTHER
  * record of the same money (identity, takeover victim, carry) must look on the
- * day the file prints: pass 38 measured that `consumeIdentity`'s posted lens,
- * tried first and blind to descriptions, would hand LA GAVIOTA DELI GROCERY's
+ * day the file prints: pass 38 measured that the identity match's posted lens,
+ * blind to descriptions, would hand LA GAVIOTA DELI GROCERY's
  * charge to NEW BEST GOURMET DELI's on the opening day.
  *
  * Ownership is the one decision that reads the stored row. It asks which source
@@ -1101,6 +1244,15 @@ export function storedLines(accountId: string, account: { readonly type: string 
       occurrenceIndex,
     }),
   }));
+}
+
+/**
+ * What a statement prints on an account, as `statement_copies.lines` records it (`recordStatementCopy`): each line as
+ * stored, in the columns an import matches a line by. ONE rule for the import that adopts another file's period and
+ * for the script that records the copies imported before the table existed (scripts/record-statement-copies.ts).
+ */
+export function statementCopyLines(lines: readonly StoredLine[]): DuplicatePairSide[] {
+  return lines.map(({ stored }) => writtenSide(stored));
 }
 
 /**
@@ -1189,6 +1341,8 @@ interface ReadMember {
   parsed?: { readonly statements: readonly ParsedStatement[]; readonly withheld: readonly WithheldOutcome[] };
   /** the files whose older cash-only reads its positions were proven without (`reliedShas`) */
   reliedShas: readonly string[];
+  /** its outcome, once its read is written and settled — a later fault in the turn does not undo it */
+  settled?: FileOutcome;
 }
 
 /** Where a read stopped: the member that failed, what its outcome says, and what its row records. */
@@ -1483,14 +1637,24 @@ function failRead(db: AppDatabase, batch: BatchState, chain: readonly ReadMember
  * true).
  */
 async function importTurn(db: AppDatabase, head: BatchItem, batch: BatchState): Promise<FileOutcome[]> {
-  const opened = openMember(db, head, batch, []);
-  if ("skipped" in opened) return [opened.skipped];
-  const chain: ReadMember[] = [opened.member];
+  const chain: ReadMember[] = [];
   const skipped: FileOutcome[] = [];
-  // a refusal comes before anything is written, the file's row included: the file stays read at the version it was
-  let failure: ReadFailure | null = opened.refusal === null ? pullNeeded(db, batch, chain, skipped) : { at: 0, outcomeError: opened.refusal };
-  for (let k = 0; failure === null && k < chain.length; k++) failure = await readMember(db, batch, chain, k, skipped);
-  return [...(failure === null ? writeTurn(db, batch, chain) : failRead(db, batch, chain, failure)), ...skipped];
+  try {
+    const opened = openMember(db, head, batch, []);
+    if ("skipped" in opened) return [opened.skipped];
+    chain.push(opened.member);
+    // a refusal comes before anything is written, the file's row included: the file stays read at the version it was
+    let failure: ReadFailure | null = opened.refusal === null ? pullNeeded(db, batch, chain, skipped) : { at: 0, outcomeError: opened.refusal };
+    for (let k = 0; failure === null && k < chain.length; k++) failure = await readMember(db, batch, chain, k, skipped);
+    return [...(failure === null ? writeTurn(db, batch, chain) : failRead(db, batch, chain, failure)), ...skipped];
+  } catch (error: unknown) {
+    // a fault outside the steps that report their own failure fails this turn's files, and the upload goes on
+    const members = chain.length > 0 ? chain : [{ item: head, recorded: undefined, settled: undefined }];
+    return [
+      ...members.map((m) => m.settled ?? failedUnexpectedly(db, m.item.file, m.recorded?.row.id, error)),
+      ...skipped,
+    ];
+  }
 }
 
 /** What one member's write did: its tallies, and the accounts it resolved. */
@@ -1535,6 +1699,8 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
   const statements = member.parsed?.statements ?? [];
   const outcome = write.tally;
   const fileAccountIds = write.accounts;
+  // a failed read's row is read again: what it prints is recorded afresh, with the statements below
+  forgetPrintedLines(db, fileRow.id);
   for (const statement of statements) {
     const accountId = resolveAccount(db, statement.accountHint);
     fileAccountIds.add(accountId);
@@ -1552,19 +1718,21 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
       lines.map(({ stored }) => writtenSide(stored)),
       standInsOn(db, accountId),
     );
-    const identityPool = existingIdentityPool(db, accountId, fileRow.id, new Set(returning.map((s) => s.copy.id)));
+    const slots = existingIdentitySlots(db, accountId, fileRow.id, new Set(returning.map((s) => s.copy.id)));
 
     db.transaction((tx) => {
+      // every line the statement prints, whichever row ends up recording it (`printed-lines`)
+      appendPrintedLines(tx, fileRow.id, accountId, lines.map(({ printed, stored }) => printedLineOf(printed, stored)));
       // the hashes of the rows this statement inserts, in print order
       const written: string[] = [];
       // `t` is the row as printed, `stored` the row as written. Ownership asks
       // who covers the day the row POSTED, so it reads `stored`; takeover,
       // identity and carry look for another row recording the same money,
       // which sits on the day the file prints, so they read `t`.
-      for (const { printed: t, stored, occurrenceIndex, hash } of lines) {
-        // `soleSource` rows opt out: the higher-fidelity source covers the
-        // DAY but is documented not to carry this row type (CanonicalTxn)
-        if (!t.soleSource && rangesCovering(ranges, stored.postedOn).some((r) => r.priority < myPriority)) {
+      const plan = planLines(tx, accountId, lines, ranges, myPriority, slots);
+      for (const [i, { printed: t, stored, occurrenceIndex, hash }] of lines.entries()) {
+        const fate = plan[i]!;
+        if (fate.kind === "owned") {
           outcome.skippedOwned += 1; // owned by higher fidelity — visible, never silent
           continue;
         }
@@ -1574,47 +1742,37 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
         // above leaves its attributes for whichever row does materialize)
         const carried = takeCarry(carryPool, accountId, t, hash);
 
-        // takeover: a lower-fidelity source covers the day this row PRINTS —
-        // replace its best-matching row (schema.md: date, amount, description
-        // similarity). `pickTakeoverVictim` looks for that row on the printed
-        // day, so the coverage asked about is the printed day's too.
-        const lowerOwners = rangesCovering(ranges, t.postedOn).filter((r) => r.priority > myPriority);
-        if (lowerOwners.length > 0) {
-          const victim = pickTakeoverVictim(tx, accountId, t, lowerOwners.map((r) => r.importFileId));
-          if (victim) {
-            tx.update(transactions).set({ status: "superseded" }).where(eq(transactions.id, victim.id)).run();
-            outcome.supersededTakeover += 1;
-            // the victim leaves the ledger — release its identity so a later
-            // same-day equal-amount row can't consume the superseded slot
-            if (victim.status !== "quarantined") consumeIdentity(identityPool, t.postedOn, t.transactedOn, t.amountCents);
-            // the re-parse carry wins over the victim: same file lineage, so
-            // it is the row the user actually edited
-            const inserted = insertTxn(tx, db, accountId, fileRow.id, stored, hash, occurrenceIndex, carried ?? victim);
-            if (inserted) {
-              outcome.inserted += 1;
-              written.push(hash);
-            } else outcome.deduped += 1;
-            // move any user-entered splits off the superseded victim onto its
-            // replacement (the SAME real charge, so amounts match) — found by
-            // the replacement's own dedupe hash. Covers both the freshly-
-            // inserted and the deduped (existing active twin) branches.
-            const replacement = liveRowByHash(tx, accountId, hash);
-            if (replacement) {
-              migrateSplits(tx, victim.id, replacement.id);
-              // …and the owner's duplicate verdict, as a re-parse hands it on
-              // (`landCarry`): the replacement records the victim's money now
-              moveKeptSide(tx, victim.id, replacement.id);
-            }
-            // the carry lands last: same file lineage as the row the user
-            // actually edited, so it outranks the victim's attributes
-            if (carried && landCarry(tx, accountId, hash, carried, inserted)) {
-              outcome.carriedForward += 1;
-            }
-            continue;
+        if (fate.kind === "takeover") {
+          const victim = tx.select().from(transactions).where(eq(transactions.id, fate.victimId)).get()!;
+          tx.update(transactions).set({ status: "superseded" }).where(eq(transactions.id, victim.id)).run();
+          outcome.supersededTakeover += 1;
+          // the re-parse carry wins over the victim: same file lineage, so
+          // it is the row the user actually edited
+          const inserted = insertTxn(tx, db, accountId, fileRow.id, stored, hash, occurrenceIndex, carried ?? victim);
+          if (inserted) {
+            outcome.inserted += 1;
+            written.push(hash);
+          } else outcome.deduped += 1;
+          // move any user-entered splits off the superseded victim onto its
+          // replacement (the SAME real charge, so amounts match) — found by
+          // the replacement's own dedupe hash. Covers both the freshly-
+          // inserted and the deduped (existing active twin) branches.
+          const replacement = liveRowByHash(tx, accountId, hash);
+          if (replacement) {
+            migrateSplits(tx, victim.id, replacement.id);
+            // …and the owner's duplicate verdict, as a re-parse hands it on
+            // (`landCarry`): the replacement records the victim's money now
+            moveKeptSide(tx, victim.id, replacement.id);
           }
+          // the carry lands last: same file lineage as the row the user
+          // actually edited, so it outranks the victim's attributes
+          if (carried && landCarry(tx, accountId, hash, carried, inserted)) {
+            outcome.carriedForward += 1;
+          }
+          continue;
         }
 
-        if (consumeIdentity(identityPool, t.postedOn, t.transactedOn, t.amountCents)) {
+        if (fate.kind === "absorbed") {
           // another source already records this money movement — classify by
           // whether the raw text matched exactly (visible, never silent)
           const exact = tx
@@ -1630,6 +1788,8 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
             .get();
           if (exact) outcome.deduped += 1;
           else outcome.dedupedCrossFormat += 1;
+          // …and the bank's bucket the line prints goes to the record that keeps its money, where it has none
+          fillBankCategory(tx, fate.byId, t.bankCategory);
           // the survivor belongs to another file: fill only the attributes it
           // lacks, never overwrite (its own user category outranks ours). A
           // cross-format dedupe (hash miss) has no identifiable survivor, so
@@ -1700,6 +1860,17 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
         let periodId: string | null;
         if (duplicate) {
           periodId = duplicate.id;
+          // another download of the same statement owns the period: this file prints it too (`statement-copies`) —
+          // unless the owner holds it only as a copy, and gives it back to the file that writes it (`reclaimFromCopy`)
+          if (duplicate.importFileId !== fileRow.id && !reclaimFromCopy(tx, duplicate, fileRow.id)) {
+            recordStatementCopy(tx, {
+              importFileId: fileRow.id,
+              accountId,
+              periodStart: duplicate.periodStart,
+              periodEnd: duplicate.periodEnd,
+              lines: statementCopyLines(lines),
+            });
+          }
           const balancesChanged =
             duplicate.beginningBalanceCents !== statement.period.beginCents ||
             duplicate.endingBalanceCents !== statement.period.endCents;
@@ -1764,7 +1935,12 @@ function writeTurn(db: AppDatabase, batch: BatchState, chain: readonly ReadMembe
   const writes: MemberWrite[] = [];
   let retired: Set<string>;
   try {
-    const run = () => writeRead(db, chain, retiring, (j) => (stage = j), writes).retired;
+    const run = () => {
+      const written = writeRead(db, chain, retiring, (j) => (stage = j), writes).retired;
+      // each file is `parsed` in the same write as what it read (`markParsed`)
+      for (const member of chain) markParsed(db, member);
+      return written;
+    };
     retired = whole ? db.transaction(() => run()) : run();
   } catch (error: unknown) {
     const message = messageOf(error);
@@ -1784,23 +1960,23 @@ function writeTurn(db: AppDatabase, batch: BatchState, chain: readonly ReadMembe
     return [{ ...(writes[0]?.tally ?? blankOutcome(failed.item.file.name)), status: "failed", error: message }];
   }
   // whether or not a new read wrote to them again: the retired reads' rows, periods and anchors — and the shares a
-  // retired read held on a brokerage book — left these accounts
-  for (const accountId of retired) touchedAccounts.add(accountId);
-  return chain.map((member, j) => settleMember(db, batch, member, writes[j] as MemberWrite));
+  // retired read held on a brokerage book — left these accounts; and every account a member resolved
+  for (const accountId of [...retired, ...writes.flatMap((w) => [...w.accounts])]) touchedAccounts.add(accountId);
+  return chain.map((member, j) => settleMember(db, member, writes[j] as MemberWrite));
 }
 
-/** A member written: its accounts touched, its original archived beside them, its row parsed. */
-function settleMember(db: AppDatabase, batch: BatchState, member: ReadMember, { tally, accounts: fileAccountIds }: MemberWrite): FileOutcome {
+/**
+ * A member's row `parsed`, in the same write as what it read: in the read's transaction, or straight after a fresh
+ * read's last statement.
+ *
+ * 🔴 It was marked `parsed` only after the original had been moved into its account's folder. A move that threw
+ * (EACCES) left a re-read's rows, periods and anchors live under a file still marked `failed` with no error, the read
+ * it replaced already retired — measured on a copy of the real ledger, 2026-09-16: the Feb 2026 Robinhood PDF
+ * (v3 → v4), 25 live rows under a "Failed" file and `[stale-verdict]` on both Robinhood accounts.
+ */
+function markParsed(db: AppDatabase, member: ReadMember): void {
   const profile = member.item.selection.profile as ParserProfile;
-  const { row, institutionName, archiveName, currentPath } = member.recorded as RecordedFile;
   const withheld = member.parsed?.withheld ?? [];
-  for (const accountId of fileAccountIds) batch.touchedAccounts.add(accountId);
-
-  // relocate the archived original from the institution bucket into its resolved
-  // per-account folder — the per-account storage the DB now points at
-  const finalFolder = resolveArchiveFolder(db, [...fileAccountIds], institutionName);
-  const finalPath = relocateArchive(currentPath, finalFolder, archiveName);
-
   db.update(importFiles)
     .set({
       status: "parsed",
@@ -1809,11 +1985,72 @@ function settleMember(db: AppDatabase, batch: BatchState, member: ReadMember, { 
       error: withheld.length === 0 ? null : recordWithheldSections(withheld),
       parserProfile: profile.id,
       parserVersion: profile.version,
-      storagePath: finalPath,
     })
-    .where(eq(importFiles.id, row.id))
+    .where(eq(importFiles.id, (member.recorded as RecordedFile).row.id))
     .run();
-  return { ...tally, withheld: [...withheld] };
+}
+
+/** A member written and parsed: its original archived beside its accounts, its outcome settled. */
+function settleMember(db: AppDatabase, member: ReadMember, { tally, accounts: fileAccountIds }: MemberWrite): FileOutcome {
+  const { row, institutionName, archiveName, currentPath } = member.recorded as RecordedFile;
+  // relocate the archived original from the institution bucket into its resolved
+  // per-account folder — the per-account storage the DB now points at
+  const finalFolder = resolveArchiveFolder(db, [...fileAccountIds], institutionName);
+  const finalPath = relocateArchiveOrStay(currentPath, finalFolder, archiveName);
+  if (finalPath !== row.storagePath) {
+    db.update(importFiles).set({ storagePath: finalPath }).where(eq(importFiles.id, row.id)).run();
+  }
+  const settled = { ...tally, withheld: [...(member.parsed?.withheld ?? [])] };
+  member.settled = settled;
+  return settled;
+}
+
+/**
+ * `relocateArchive`, never fatal: the read is in the ledger by now, and the original is archived where it lies. A move
+ * that fails leaves `storage_path` naming wherever the file is — the destination, if the move got that far — and says
+ * why on the server log.
+ */
+function relocateArchiveOrStay(src: string, folder: string, archiveName: string): string {
+  try {
+    return relocateArchive(src, folder, archiveName);
+  } catch (error: unknown) {
+    const dest = path.join(statementsRoot(), folder, archiveName);
+    const restingPlace = !fs.existsSync(src) && fs.existsSync(dest) ? dest : src;
+    console.error(`[import] ${archiveName} stays archived at ${restingPlace}: moving it into ${folder}/ failed`, error);
+    return restingPlace;
+  }
+}
+
+/**
+ * An import that faulted outside the steps that report their own failure (a parse, a write): the file fails with its
+ * cause, and the upload goes on. 🔴 The fault left the upload — the files after it were never read, and the ones before
+ * it were never categorized, reconciled, linked or rebuilt (the review, 2026-09-16).
+ */
+function failedUnexpectedly(db: AppDatabase, file: { name: string }, fileRowId: string | undefined, error: unknown): FileOutcome {
+  const cause = `Unexpected: ${error instanceof Error ? error.message : String(error)}`;
+  const row = fileRowId === undefined ? undefined : db.select().from(importFiles).where(eq(importFiles.id, fileRowId)).get();
+  if (row !== undefined && row.status !== "parsed") {
+    // nothing was written: a read of these bytes at an older version is still the one in place
+    const kept = retiredReadsOf(db, row.fileSha256, row.parserVersion).length > 0;
+    db.update(importFiles)
+      .set({ status: "failed", error: kept ? `${cause} (${EARLIER_READ_KEPT})` : cause })
+      .where(eq(importFiles.id, row.id))
+      .run();
+  }
+  return {
+    fileName: file.name,
+    status: "failed",
+    error: cause,
+    withheld: [],
+    inserted: 0,
+    deduped: 0,
+    dedupedCrossFormat: 0,
+    skippedOwned: 0,
+    supersededTakeover: 0,
+    carriedForward: 0,
+    quarantined: 0,
+    periods: [],
+  };
 }
 
 /**
@@ -1834,15 +2071,20 @@ export function asParsedFile(parsed: ParsedStatement[] | ParsedFile): ParsedFile
  */
 function withheldOutcome(db: AppDatabase, section: WithheldSection): WithheldOutcome {
   const { institution, last4 } = section.accountHint;
-  const named =
+  const atInstitution =
     last4 === undefined
       ? []
       : db
-          .select({ id: accounts.id, name: accounts.name })
+          .select({ id: accounts.id, name: accounts.name, last4: accounts.last4 })
           .from(accounts)
           .innerJoin(institutions, eq(accounts.institutionId, institutions.id))
-          .where(and(eq(institutions.name, institution), eq(accounts.last4, last4)))
+          .where(eq(institutions.name, institution))
           .all();
+  const current = atInstitution.filter((a) => a.last4 === last4);
+  // …or the number its statements printed before (`account-numbers`), as `resolveAccount` reads it
+  const formerly =
+    current.length > 0 || last4 === undefined ? [] : accountsFormerlyNumbered(db, atInstitution.map((a) => a.id), last4);
+  const named = current.length > 0 ? current : atInstitution.filter((a) => formerly.includes(a.id));
   const [only] = named.length === 1 ? named : [];
   const facts = {
     accountId: only?.id ?? null,
@@ -1860,12 +2102,21 @@ function withheldOutcome(db: AppDatabase, section: WithheldSection): WithheldOut
  * from lower-fidelity files, pick by description similarity with a
  * deterministic tie-break; no plausible match ⇒ no supersede (the fuzzy
  * review pass surfaces the residual pair instead of guessing).
+ *
+ * 🔴 …and a row this very line wrote before (the same `dedupe_hash`) first. Of two equal charges a line could retire
+ * the other one's row, then find its own still live under its hash and write nothing: one charge gone. A file's own
+ * rows sit under a lower-fidelity file once an un-import hands them to one that prints them (`printed-lines`); on a
+ * copy of the real ledger, 2026-09-16, re-importing Discover-AllAvailable-20260710.csv that way took Discover from
+ * 1,044 active rows to 1,039 and put three periods into gap.
  */
 function pickTakeoverVictim(
   tx: AppDatabase,
   accountId: string,
   t: CanonicalTxn,
+  hash: string,
   lowerFileIds: string[],
+  // rows an earlier line of the same statement takes over
+  taken: ReadonlySet<string>,
 ): typeof transactions.$inferSelect | undefined {
   const candidates = tx
     .select()
@@ -1879,15 +2130,34 @@ function pickTakeoverVictim(
         inArray(transactions.importFileId, lowerFileIds),
       ),
     )
-    .all();
+    .all()
+    .filter((c) => !taken.has(c.id));
   if (candidates.length === 0) return undefined;
   if (candidates.length === 1) return candidates[0];
 
   const incoming = normalizeDescription(t.rawDescription);
+  const sameLine = (c: typeof transactions.$inferSelect) => (c.dedupeHash === hash ? 1 : 0);
   const ranked = candidates
     .map((c) => ({ c, s: descriptionScore(c.normalizedDescription, incoming) }))
-    .sort((a, b) => b.s - a.s || a.c.id.localeCompare(b.c.id));
+    .sort((a, b) => sameLine(b.c) - sameLine(a.c) || b.s - a.s || a.c.id.localeCompare(b.c.id));
   return ranked[0]!.s > 0 ? ranked[0]!.c : undefined;
+}
+
+/**
+ * Gives an absorbed line's bank category to the row that absorbed it, where that row has none; `categorizeAll` then
+ * reads it as it reads any row's.
+ *
+ * 🔴 The category went with the line. Measured on a copy of the real ledger, 2026-09-16: un-importing
+ * 20260602-statements-9805-.pdf and Spending Report PDF (1).pdf, then importing the statement and then the report, took
+ * uncategorized 32 -> 86 — of the 80 May rows the round trip rewrote, 55 had held the report's bank category and 7 a
+ * hand one. With the bucket given to the statement's rows: 32 -> 32.
+ */
+function fillBankCategory(tx: AppDatabase, rowId: string, bankCategory: string | undefined): void {
+  if (bankCategory === undefined || bankCategory === "") return;
+  tx.update(transactions)
+    .set({ bankCategory })
+    .where(and(eq(transactions.id, rowId), isNull(transactions.bankCategory)))
+    .run();
 }
 
 /**
@@ -1917,6 +2187,12 @@ function insertTxn(
 ): boolean {
   const categoryId = t.categoryPath ? categoryIdForPath(db, t.categoryPath) : null;
   const carryUserCategory = carryFrom?.categorizationSource === "user" ? carryFrom.categoryId : null;
+  const engine = carryFrom === null || carryUserCategory ? null : engineCategoryCarry(carryFrom);
+  // the parser's own category, unless an engine's travels over it (`engineCategoryCarry`)
+  const category =
+    carryFrom !== null && (engine === "overwrite" || (engine === "fill" && categoryId === null))
+      ? { ...engineCategoryColumns(carryFrom), merchantId: carryFrom.merchantId }
+      : { categoryId: carryUserCategory ?? categoryId, categorizationSource: carryUserCategory ? ("user" as const) : categoryId ? ("rule" as const) : null };
   const result = tx
     .insert(transactions)
     .values({
@@ -1928,8 +2204,7 @@ function insertTxn(
       fitid: t.fitid ?? null,
       occurrenceIndex,
       dedupeHash: hash,
-      categoryId: carryUserCategory ?? categoryId,
-      categorizationSource: carryUserCategory ? "user" : categoryId ? "rule" : null,
+      ...category,
       notes: carryFrom?.notes ?? null,
       transferGroupId: carryFrom?.transferGroupId ?? null,
       recurringSeriesId: carryFrom?.recurringSeriesId ?? null,
@@ -2006,12 +2281,11 @@ function quarantinedIdsOn(db: AppDatabase, accountIds: readonly string[]): strin
 
 /**
  * Takes away a file's balances — its anchors and its periods — for both paths that remove a file's contribution:
- * `supersedeFileContribution` and `unimportFile`. A period another file adopted goes to that file
- * (`handOverAdoptedPeriods`), and an anchor another file's period still prints is handed over
- * (`handOverPrintedAnchors`), not deleted.
+ * `supersedeFileContribution` and `unimportFile`. Each hands a period another download of the statement prints to that
+ * download first (`statement-copies`: `lendToCopies`, `handOverToCopies`), so what is left here is the file's own; an
+ * anchor another file's period still prints is handed over (`handOverPrintedAnchors`), not deleted.
  */
 function removeFileBalances(tx: AppDatabase, importFileId: string): void {
-  handOverAdoptedPeriods(tx, importFileId);
   handOverPrintedAnchors(tx, importFileId);
   tx.delete(balanceAnchors).where(eq(balanceAnchors.importFileId, importFileId)).run();
   // anchors owned by OTHER files may reference this file's periods — detach
@@ -2043,12 +2317,20 @@ function supersedeFileContribution(db: AppDatabase, oldFileId: string): string[]
   return db.transaction((tx) => {
     const written = accountsWrittenBy(tx, oldFileId);
     const books = removeFileEvents(tx, oldFileId);
+    // a transfer an un-import took apart may be waiting on a row this retires: the re-read writes its line again
+    keepStayingLegsByContent(tx, oldFileId);
     tx.update(transactions)
       .set({ status: "superseded" })
       .where(and(eq(transactions.importFileId, oldFileId), inArray(transactions.status, ["active", "quarantined", "excluded"])))
       .run();
+    // a period another download of the statement prints stays, lent to that download — the period alone: the
+    // successor writes the rows again, and takes the period back where it writes it again (`lendToCopies`)
+    lendToCopies(tx, copyHandOvers(tx, [oldFileId]).get(oldFileId) ?? []);
     removeFileBalances(tx, oldFileId);
-    // a parsed file's error is only ever the sections it withheld (`settleMember`); its successor reads them again
+    // its successor records again what it prints, as a copy or not (`statement-copies`, `printed-lines`)
+    forgetStatementCopies(tx, oldFileId);
+    forgetPrintedLines(tx, oldFileId);
+    // a parsed file's error is only ever the sections it withheld (`markParsed`); its successor reads them again
     // and says for itself what is still missing, so the retired row must not keep claiming a section is absent
     tx.update(importFiles).set({ status: "superseded", error: null }).where(eq(importFiles.id, oldFileId)).run();
     return [...new Set([...written, ...books])];
@@ -2290,7 +2572,10 @@ function accountsWrittenBy(db: AppDatabase, importFileId: string): string[] {
 /**
  * Un-import: removes what a file parsed, its periods, its anchors and the trades
  * it wrote to a brokerage book atomically, and detaches the rows attached to it
- * (`attached-rows`); derived state rebuilt.
+ * (`attached-rows`); derived state rebuilt. A period another download of the
+ * statement still prints goes to that download with the rows it prints, and is
+ * not removed (`statement-copies`); a row another imported file prints goes to
+ * that file (`printed-lines`).
  */
 export function unimportFile(db: AppDatabase, importFileId: string): void {
   const file = db.select().from(importFiles).where(eq(importFiles.id, importFileId)).get();
@@ -2302,12 +2587,19 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
   const copies = copiesWithheldFor(db, importFileId);
   if (copies.length > 0) throw new Error(withheldCopiesRefusal(copies));
   const affected = accountsWrittenBy(db, importFileId);
+  // a period another download of the statement also prints goes to it, with the rows it prints (`statement-copies`)
+  const copyPlans = copyHandOvers(db, [importFileId]);
+  const handOvers = copyPlans.get(importFileId) ?? [];
+  // …and a row another imported file prints goes to that file (`printed-lines`)
+  const printers = printerHandOvers(db, copyPlans, [importFileId]).get(importFileId) ?? [];
+  const handed = new Set([...handedRowIds([handOvers]), ...printerRowIds([printers])]);
 
   const doomedRows = db
     .select({ id: transactions.id, seriesId: transactions.recurringSeriesId })
     .from(transactions)
     .where(parsedFromFile(importFileId))
-    .all();
+    .all()
+    .filter((r) => !handed.has(r.id));
   const doomed = doomedRows.map((r) => r.id);
   // every series about to lose a linked row: its stats describe the rows it had
   const seriesLosingRows = doomedRows.flatMap((r) => (r.seriesId === null ? [] : [r.seriesId]));
@@ -2320,6 +2612,10 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
     // the brokerage books whose shares the file held
     let heldShares: string[] = [];
     db.transaction((tx) => {
+      // First: what the other download takes is no longer this file's, so nothing below reads it as the file's rows,
+      // and the anchor hand-over below finds the period under its new file
+      handOverToCopies(tx, handOvers);
+      handOverToPrinters(tx, printers);
       // A charge this file's rows are the SURVIVING copy of has a retired twin
       // sitting `superseded` in another file. Delete the survivor without putting
       // that twin back and the money is recorded by zero live rows: it vanishes
@@ -2338,11 +2634,15 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
       detachAttachedRows(tx, importFileId);
       // after the restore (a restored twin is a live leg) and before the delete
       // (the rows naming the groups are still here to be read)
+      // …kept first, so importing the same lines again links the transfer again (`unimported-transfers`)
+      rememberTransfersTakenApart(tx, importFileId);
       detachTransferLegs(tx, legsLeftAloneBy(tx, importFileId));
       tx.delete(transactions).where(parsedFromFile(importFileId)).run();
       removeFileBalances(tx, importFileId);
       // the trades the file printed leave with it — before the file row, whose id they reference
       heldShares = removeFileEvents(tx, importFileId);
+      forgetStatementCopies(tx, importFileId);
+      forgetPrintedLines(tx, importFileId);
       tx.delete(importFiles).where(eq(importFiles.id, importFileId)).run();
     });
     // a book the file created and nothing else holds leaves too: the un-import restores the ledger it found

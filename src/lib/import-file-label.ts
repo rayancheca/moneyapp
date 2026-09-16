@@ -22,7 +22,8 @@
  * un-verifies an account. (Since 2026-09-16 a balance another statement still
  * prints is handed to it and not counted as removed, so on a copy of the ledger
  * that day all three read "no balances" — and the first still differs by the
- * one statement period it removes.) The page's own comment beside that trigger cites
+ * one statement period it removes, until `statement_copies` records that the
+ * other two print it and the first hands it and its 85 rows over.) The page's own comment beside that trigger cites
  * WCAG 2.5.3 and says the name "adds only which row it acts on"; with a
  * repeated name it does not say which row at all.
  *

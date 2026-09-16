@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text, uniqueIndex, type AnySQLiteColumn } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text, uniqueIndex, type AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import { id, timestamps } from "./common";
 import { accounts } from "./accounts";
 import { institutions } from "./institutions";
@@ -77,4 +77,70 @@ export const statementPeriods = sqliteTable(
     ...timestamps(),
   },
   (table) => [uniqueIndex("ux_statement_periods_file_account").on(table.importFileId, table.accountId)],
+);
+
+/**
+ * A statement another file already put in the ledger, printed again by `import_file_id`: a second download of it,
+ * in different bytes. The import keeps ONE `statement_periods` row for an account's period, and every line of the
+ * second download that the first one's rows already record is not written again, so without this row nothing says
+ * the second file prints anything — and un-importing the FIRST download deleted a period and rows a still-imported
+ * file prints (the real ledger, 2026-09-16: 20230810-statements-3522-.pdf, 85 rows, −$1,636.84, downloaded three
+ * times). `services/import/statement-copies`.
+ *
+ * Keyed by the period's CONTENT (account, first day, last day), never by `statement_periods.id`: a parser-version
+ * re-read of the first download deletes its period and writes it again, and this file still prints it.
+ *
+ * `lines` is what the copy prints on the account, in the columns an import matches a line by (`DuplicatePairSide`,
+ * JSON) — so a copy that differs from the first download (a reissue) takes over only the rows it prints.
+ */
+export const statementCopies = sqliteTable(
+  "statement_copies",
+  {
+    id: id(),
+    importFileId: text("import_file_id")
+      .notNull()
+      .references(() => importFiles.id),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    periodStart: text("period_start").notNull(),
+    periodEnd: text("period_end").notNull(),
+    lines: text("lines").notNull(),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("ux_statement_copies_file_account").on(table.importFileId, table.accountId),
+    index("ix_statement_copies_period").on(table.accountId, table.periodStart, table.periodEnd),
+  ],
+);
+
+/**
+ * Every line `import_file_id` prints on an account, whichever row records it now — its own, another file's, one
+ * entered or filed by hand (`services/import/printed-lines`). One row per file and account; `lines` is JSON
+ * (`PrintedLine[]`): the day the file prints, the day the import stored it on, the transaction day, the amount and the
+ * words.
+ *
+ * 🔴 A line another record of the same money already held was absorbed, not written, so nothing said the file prints
+ * it, and un-importing the file whose row held it deleted money a still-imported file prints. Measured on a copy of the
+ * real ledger, 2026-09-16: un-importing Spending Report PDF (1).pdf put Chase Sapphire's 8 reconciled periods from
+ * 2025-12-03 to 2026-08-02 into gap, and un-importing 3ab6c2a8-….csv took 75 rows that rh-redownload.csv prints.
+ * An un-import now hands such a row to the file that prints it.
+ */
+export const printedLines = sqliteTable(
+  "printed_lines",
+  {
+    id: id(),
+    importFileId: text("import_file_id")
+      .notNull()
+      .references(() => importFiles.id),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    lines: text("lines").notNull(),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("ux_printed_lines_file_account").on(table.importFileId, table.accountId),
+    index("ix_printed_lines_account").on(table.accountId),
+  ],
 );

@@ -1,8 +1,10 @@
-import { eq, sql } from "drizzle-orm";
+import { count, eq, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
-import { importFiles } from "@/db/schema/imports";
+import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { attachedRow, parsedRow } from "./attached-rows";
+import { printerHandOvers, printerRowIds, type PrinterHandOver } from "./printed-lines";
+import { copyHandOvers, handedRowIds, type CopyHandOver } from "./statement-copies";
 
 /**
  * What un-importing a file does to its rows, counted on the rows `unimportFile`
@@ -10,8 +12,21 @@ import { attachedRow, parsedRow } from "./attached-rows";
  * /imports confirmation's numbers, with the same predicates the delete uses.
  */
 export interface UnimportCounts {
-  /** rows the file parsed — every one is deleted */
+  /** rows the file parsed that no other download of its statement prints — every one is deleted */
   deleted: number;
+  /**
+   * rows the file parsed that another download of the same statement, still imported, also prints: they stay, with
+   * everything on them, filed under that download (`statement-copies`). 🔴 Until 2026-09-16 the un-import deleted
+   * them — 85 rows of 20230810-statements-3522-.pdf that two other downloads print.
+   */
+  handedOver: number;
+  /**
+   * rows the file parsed that another imported file prints — not a download of the same statement: they stay, with
+   * everything on them, filed under that file (`printed-lines`). 🔴 Until 2026-09-16 the un-import deleted them —
+   * Spending Report PDF (1).pdf's rows that 8 Chase Sapphire statements print, and 75 rows of 3ab6c2a8-….csv that
+   * rh-redownload.csv prints.
+   */
+  keptByPrinters: number;
   /**
    * live rows attached to the file — detached and kept, with their money.
    * 🔴 A superseded attached row is history: no money in the ledger and no
@@ -23,8 +38,19 @@ export interface UnimportCounts {
    * "5 rows" over 20260702-statements-9805-.pdf's 4 (review, 2026-09-15).
    */
   kept: number;
+  /** of `kept`, the rows the other download's period takes: filed under that download rather than detached */
+  keptRefiled: number;
   /** deleted rows the owner categorized BY HAND: the work that cannot come back */
   userCategorizedDeleted: number;
+  /**
+   * deleted rows whose category no engine of an import derives again: Claude's (an import never asks Claude), and one
+   * with no recorded source. 🔴 The confirmation named the hand-set categories as the only ones lost; on a copy of the
+   * real ledger, 2026-09-16, 13 files hold 586 such rows (Statement_082026_4208.pdf: 24), and a round trip of
+   * Discover-AllAvailable-20260710.csv rewrote 442 of Claude's categories and left 2 of its rows with none.
+   */
+  notRederivedDeleted: number;
+  /** deleted rows carrying a note — a note goes with its row, and no import writes it again */
+  notesDeleted: number;
   /** the deleted rows' money in the ledger — active rows only */
   inflowCents: number;
   outflowCents: number;
@@ -51,8 +77,13 @@ export interface UnimportCounts {
 /** A file with no rows: nothing deleted, nothing kept. */
 export const NO_UNIMPORT_ROWS: UnimportCounts = {
   deleted: 0,
+  handedOver: 0,
+  keptByPrinters: 0,
   kept: 0,
+  keptRefiled: 0,
   userCategorizedDeleted: 0,
+  notRederivedDeleted: 0,
+  notesDeleted: 0,
   inflowCents: 0,
   outflowCents: 0,
   duplicateSurvivors: 0,
@@ -61,18 +92,39 @@ export const NO_UNIMPORT_ROWS: UnimportCounts = {
   transferLegsKeptLinked: 0,
 };
 
-/** Every import file's counts, in ONE grouped query; a file with no rows counts zero throughout. */
-export function unimportCountsByFile(db: AppDatabase): Map<string, UnimportCounts> {
+/**
+ * Every import file's counts, in ONE grouped query; a file with no rows counts zero throughout. `plans` is what each
+ * un-import hands to another download of its statement (`copyHandOvers`), and `printers` what it hands to the other
+ * files that print its rows (`printerHandOvers`) — the plans `unimportFile` carries out.
+ */
+export function unimportCountsByFile(
+  db: AppDatabase,
+  plans: ReadonlyMap<string, readonly CopyHandOver[]> = copyHandOvers(db),
+  printers: ReadonlyMap<string, readonly PrinterHandOver[]> = printerHandOvers(db, plans),
+): Map<string, UnimportCounts> {
+  const copyIds = JSON.stringify([...handedRowIds(plans.values())]);
+  const printerIds = JSON.stringify([...printerRowIds(printers.values())]);
+  // every parsed row the un-import keeps under another file
+  const handedIds = JSON.stringify([...handedRowIds(plans.values()), ...printerRowIds(printers.values())]);
+  const refiledIds = JSON.stringify([...plans.values()].flatMap((list) => list.flatMap((p) => p.attachedRowIds)));
+  const handed = sql`${transactions.id} IN (SELECT value FROM json_each(${handedIds}))`;
   // a left join's empty side has a NULL marker too, so a parsed row needs a row
-  const deleted = sql`(${transactions.id} IS NOT NULL AND ${parsedRow()})`;
+  const deleted = sql`(${transactions.id} IS NOT NULL AND ${parsedRow()} AND NOT ${handed})`;
   const kept = sql`(${attachedRow()} AND ${transactions.status} <> 'superseded')`;
   const tally = (when: ReturnType<typeof sql>) => sql<number>`coalesce(sum(case when ${when} then 1 else 0 end), 0)`;
   const rows = db
     .select({
       fileId: importFiles.id,
       deleted: tally(deleted),
+      handedOver: tally(sql`${transactions.id} IS NOT NULL AND ${parsedRow()} AND ${transactions.id} IN (SELECT value FROM json_each(${copyIds}))`),
+      keptByPrinters: tally(sql`${transactions.id} IS NOT NULL AND ${parsedRow()} AND ${transactions.id} IN (SELECT value FROM json_each(${printerIds}))`),
       kept: tally(kept),
+      keptRefiled: tally(sql`${kept} AND ${transactions.id} IN (SELECT value FROM json_each(${refiledIds}))`),
       userCategorizedDeleted: tally(sql`${deleted} AND ${transactions.categorizationSource} = 'user'`),
+      notRederivedDeleted: tally(
+        sql`${deleted} AND ${transactions.categoryId} IS NOT NULL AND (${transactions.categorizationSource} IS NULL OR ${transactions.categorizationSource} = 'claude')`,
+      ),
+      notesDeleted: tally(sql`${deleted} AND ${transactions.notes} IS NOT NULL`),
       /*
        * 🔴 The MONEY line names the ledger, and a superseded row is not in it.
        * `rocket-money-export-2026-08-25.csv` holds 39 rows, every one of them
@@ -120,7 +172,8 @@ export function unimportCountsByFile(db: AppDatabase): Map<string, UnimportCount
         where o.transfer_group_id = ${transactions.transferGroupId}
           and o.id <> ${transactions.id}
           and o.status <> 'superseded'
-          and not (o.import_file_id IS ${importFiles.id} and o.file_link_source IS NULL)
+          and not (o.import_file_id IS ${importFiles.id} and o.file_link_source IS NULL
+            and o.id NOT IN (SELECT value FROM json_each(${handedIds})))
       )`),
     })
     .from(importFiles)
@@ -128,4 +181,28 @@ export function unimportCountsByFile(db: AppDatabase): Map<string, UnimportCount
     .groupBy(importFiles.id)
     .all();
   return new Map(rows.map(({ fileId, ...counts }) => [fileId, counts]));
+}
+
+/** The statement periods un-importing a file removes, and the ones another download of the statement takes. */
+export interface UnimportPeriods {
+  removed: number;
+  handedOver: number;
+}
+
+/** Per file that owns a period; `plans` as `unimportCountsByFile` takes them. */
+export function unimportPeriodsByFile(
+  db: AppDatabase,
+  plans: ReadonlyMap<string, readonly CopyHandOver[]> = copyHandOvers(db),
+): Map<string, UnimportPeriods> {
+  return new Map(
+    db
+      .select({ importFileId: statementPeriods.importFileId, n: count() })
+      .from(statementPeriods)
+      .groupBy(statementPeriods.importFileId)
+      .all()
+      .map(({ importFileId, n }) => {
+        const handedOver = plans.get(importFileId)?.length ?? 0;
+        return [importFileId, { removed: n - handedOver, handedOver }] as const;
+      }),
+  );
 }

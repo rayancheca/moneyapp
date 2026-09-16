@@ -645,7 +645,18 @@ describe("a takeover hands the owner's verdict to the row that takes over", () =
     expect(row(mirror)!.status).toBe("superseded");
     expect(liveCents(card)).toBe(PAYMENT_CENTS + COFFEE_CENTS);
 
-    // …and the QFX's own un-import hands the payment to the mirror, once
+    // …and the QFX's own un-import keeps its payment, filed under the export that prints it too (`printed-lines`):
+    // the mirror stays retired, and the charge is counted once
+    unimportFile(bundle.db, fileNamed(QFX)!.id);
+    expect(live(card, PAYMENT_CENTS).map((t) => [t.id, t.importFileId])).toEqual([[qfxPayment!.id, fileNamed(EXPORT)!.id]]);
+    expect(row(mirror)!.status).toBe("superseded");
+    expect(liveCents(card)).toBe(PAYMENT_CENTS + COFFEE_CENTS);
+    await importStatementFiles(bundle.db, [bothLinesQfx()]);
+    expect(row(mirror)!.status).toBe("superseded");
+    expect(live(card, PAYMENT_CENTS)).toHaveLength(1);
+
+    // …and once no other file prints it, the QFX's un-import hands the payment to the mirror, once
+    unimportFile(bundle.db, fileNamed(EXPORT)!.id);
     unimportFile(bundle.db, fileNamed(QFX)!.id);
     expect(live(card, PAYMENT_CENTS).map((t) => t.id)).toEqual([mirror]);
     await importStatementFiles(bundle.db, [bothLinesQfx()]);

@@ -123,7 +123,7 @@ export function keepRetiredAttachedRows(
  * statement, import it again, and the row is where it was.
  *
  * ⛔ Only rows carrying the marker. An import ABSORBS a file-less row that
- * already records one of its lines (`consumeIdentity`), and absorbing is not
+ * already records one of its lines (`absorbedLines`), and absorbing is not
  * attaching: that row stays the owner's, with no file, as imports always left it.
  *
  * ⛔ Printed-balance periods only (a beginning AND an ending balance). An

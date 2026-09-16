@@ -134,6 +134,34 @@
       "when": 1789507393839,
       "tag": "0018_statement_positions",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1789574930992,
+      "tag": "0019_statement_copies",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1789576582417,
+      "tag": "0020_account_numbers",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1789577112647,
+      "tag": "0021_unimported_transfer_legs",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1789580961650,
+      "tag": "0022_printed_lines",
+      "breakpoints": true
     }
   ]
 }

@@ -30,8 +30,8 @@ import type { BookEvent, CashOnlyStatement, EquityAssetType, StatementPositions 
  * admits one book per cash account, and a section withheld for any reason creates nothing.
  */
 
-/** The book paired with the cash account ····`cashLast4` at this institution — created on first use. */
-export function resolveBook(db: AppDatabase, institutionId: string, cashLast4: string): string {
+/** The one checking account ····`cashLast4` at this institution a book pairs with, or why there is none. */
+function cashAccountFor(db: AppDatabase, institutionId: string, cashLast4: string): typeof accounts.$inferSelect | string {
   const cash = db
     .select()
     .from(accounts)
@@ -39,10 +39,27 @@ export function resolveBook(db: AppDatabase, institutionId: string, cashLast4: s
     .all();
   const [account] = cash;
   if (cash.length !== 1 || account === undefined || account.type !== "checking") {
-    throw new Error(`a brokerage book needs exactly one checking account ····${cashLast4} to pair with — found ${cash.length}`);
+    return `a brokerage book needs exactly one checking account ····${cashLast4} to pair with — found ${cash.length}`;
   }
-  const existing = db.select({ id: accounts.id }).from(accounts).where(eq(accounts.cashAccountId, account.id)).get();
-  if (existing) return existing.id;
+  return account;
+}
+
+function bookIdOf(db: AppDatabase, cashAccountId: string): string | null {
+  return db.select({ id: accounts.id }).from(accounts).where(eq(accounts.cashAccountId, cashAccountId)).get()?.id ?? null;
+}
+
+/** The book `resolveBook` would file a statement under, or null where it would create one (or refuse) — read-only. */
+export function findBook(db: AppDatabase, institutionId: string, cashLast4: string): string | null {
+  const account = cashAccountFor(db, institutionId, cashLast4);
+  return typeof account === "string" ? null : bookIdOf(db, account.id);
+}
+
+/** The book paired with the cash account ····`cashLast4` at this institution — created on first use. */
+export function resolveBook(db: AppDatabase, institutionId: string, cashLast4: string): string {
+  const account = cashAccountFor(db, institutionId, cashLast4);
+  if (typeof account === "string") throw new Error(account);
+  const existing = bookIdOf(db, account.id);
+  if (existing !== null) return existing;
   return db
     .insert(accounts)
     .values({

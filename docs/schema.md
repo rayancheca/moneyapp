@@ -72,6 +72,12 @@ budgets ── categories        rules (ordered)        ai_calls        app_sett
 
 Liability status **derived** from `type='credit'`. Debit cards are intentionally not accounts.
 
+### account_numbers
+A number, other than `accounts.last4`, that the account's statements print — a card reissued under
+a new number (Venture X: 9082, then 4147, now 4208). An import matches a statement's printed number
+to `accounts.last4` first, then to exactly one account here; a number two accounts once printed
+names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
+
 ### import_files — with an explicit lifecycle
 | field | type | notes |
 |---|---|---|
@@ -100,8 +106,11 @@ Liability status **derived** from `type='credit'`. Debit cards are intentionally
   fix that reads the description differently — with the normalized description only *ranking*
   candidates when a day holds several equal amounts, and multiset consumption so one old row
   feeds at most one new row. What travels:
-  - `category_id` **only** where `categorization_source='user'` (with its `merchant_id` and
-    confidence, because categorizeAll never revisits a user-categorized row)
+  - `category_id` where `categorization_source='user'` (with its `merchant_id` and
+    confidence, because categorizeAll never revisits a user-categorized row); where it is
+    `claude` (with its merchant, confidence and `needs_review`) onto a row the new parser gives
+    no category — an import never calls Claude; and where it is `transfer_detect` together with
+    the transfer group — detection pairs only ungrouped rows, so it never reads the row again
   - `notes`, `transfer_group_id`, `recurring_series_id` + `series_link_source`
   - `status='excluded'` — a user's exclusion is a decision, not a parse artifact
   - `file_link_source='attached'`, onto the row the re-parse inserts for that money only — the
@@ -113,7 +122,7 @@ Liability status **derived** from `type='credit'`. Debit cards are intentionally
   - `transaction_splits`, moved wholesale onto the new parent (same amount ⇒ the parts still sum;
     the parent stays immutable)
 
-  What does **not** travel: a detected category (rule/merchant/bank/transfer — re-derived once
+  What does **not** travel: a detected category (rule/merchant/bank/credit — re-derived once
   the batch settles, so carrying one would freeze a stale guess), `needs_review`, and
   `quarantined` status (a reconciliation verdict on the *old* file's period). A user category is
   never downgraded: when the new row's money is already represented by another file's row, the
@@ -124,7 +133,32 @@ Liability status **derived** from `type='credit'`. Debit cards are intentionally
   the file that wrote it last, so a statement anchor another file's printed period still prints
   (the neighbouring statement's opening or closing day, or a second download of the same
   statement) is handed to that period instead — on a re-parse as on an un-import — and the
-  confirmation counts only the balances that go. Unlike a re-parse it is **destructive to user work** — those rows
+  confirmation counts only the balances that go. A statement **downloaded twice** is kept once:
+  the second download adopts the first one's period and its lines dedupe against the first
+  one's rows, and it records what it prints (`statement_copies`). Un-importing the download that
+  holds the statement hands its period, the rows the other download prints (every attribute on
+  them kept) and the rows filed by hand on the period's days to the most recently imported
+  other download that is still parsed; only un-importing the last download removes them. A
+  re-parse hands nothing over — the new read writes the period and its rows again.
+  More generally, every import records **every line it prints** (`printed_lines`), whichever
+  row ends up recording it — its own, one another record already held (absorbed), or one a more
+  trusted file owns. Un-importing a file hands each of its parsed rows that a still-imported
+  file needs to another file that prints it (re-filed, every attribute kept): each such file's
+  lines are matched to the account's rows, and a line only the un-imported file's rows can record
+  takes one of them — a statement whose period holds the row's day first, then the most recently
+  imported. A line another record already holds takes nothing. So un-importing an export keeps
+  the rows the statements imported after it print, and those statements' periods stay
+  reconciled; importing the export again takes its rows back (a takeover retires the row the
+  same line wrote before — same `dedupe_hash` — first).
+  A **transfer** the un-import takes apart (a deleted leg whose partner stays alone, or a pair
+  whose legs were all the file's) is kept in `unimported_transfer_legs` — the deleted legs by
+  content and the category the pair gave them, the staying leg by id — and linked again, with
+  that category, when an import writes the same lines; a staying leg the owner has linked
+  elsewhere meanwhile ends it. A staying leg whose own file is un-imported (or re-read at a new
+  parser version) is kept by content from then on, and a leg that comes back before the others
+  takes back its category and waits by id — so both files of a pair can be round-tripped, in one
+  upload or one at a time.
+  Unlike a re-parse it is **destructive to user work** — those rows
   leave the database, so their categories, notes, links and splits go with them (a pre-mutation
   snapshot is taken so the operation is recoverable).
   A row **attached** to the file (`file_link_source = 'attached'`: recorded without the document,
@@ -136,6 +170,25 @@ Liability status **derived** from `type='credit'`. Debit cards are intentionally
 - Imported transactions are **immutable** in amount/date/description. Corrections happen via
   re-parse or an explicit manual-adjustment transaction — never in-place edits (in-place
   edits would silently break dedupe and reconciliation).
+
+### statement_copies
+A statement another file already holds, printed again by `import_file_id` (a second download in
+different bytes). Written by the import when it adopts another file's period; read by un-import
+(`services/import/statement-copies`).
+| field | type | notes |
+|---|---|---|
+| id / import_file_id / account_id | | UNIQUE(import_file_id, account_id) |
+| period_start / period_end | date | the period's content key — never `statement_periods.id`, which a re-parse of the holder rewrites |
+| lines | JSON | what the copy prints on the account: `posted_on`, `transacted_on`, `amount_cents`, normalized description per line |
+
+### printed_lines
+Every line `import_file_id` prints on an account, recorded by the import (and, for the files
+imported before the table existed, by `scripts/record-printed-lines.ts`); read by un-import
+(`services/import/printed-lines`). Forgotten when the file is un-imported or retired by a re-read.
+| field | type | notes |
+|---|---|---|
+| id / import_file_id / account_id | | UNIQUE(import_file_id, account_id) |
+| lines | JSON | per line: `printedOn` (the day printed), `postedOn` (the day stored), `transactedOn`, `amountCents`, normalized description |
 
 ### statement_periods
 | field | type | notes |
@@ -162,7 +215,7 @@ a period boundary contributed by a different source, the importer proposes re-da
 | amount_cents | INTEGER | net-worth-signed |
 | raw_description | TEXT | byte-exact from the file, never modified |
 | normalized_description | TEXT | normalizer output (versioned; used for matching, **not** dedupe) |
-| bank_category | TEXT nullable | Chase/Discover/CapOne CSVs ship a category column — kept as a cheap prior for the categorization pipeline |
+| bank_category | TEXT nullable | Chase/Discover/CapOne CSVs ship a category column — kept as a cheap prior for the categorization pipeline; a line absorbed by another record gives it its bucket where that record has none |
 | merchant_id / category_id | FK nullable | |
 | categorization_source | enum nullable | `user` \| `rule` \| `merchant_map` \| `claude` \| `transfer_detect` \| `credit_match` |
 | categorization_confidence | REAL nullable | |

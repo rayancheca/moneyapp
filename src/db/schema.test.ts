@@ -25,13 +25,14 @@ afterEach(() => {
 });
 
 describe("migrations from zero", () => {
-  test("all 24 tables exist", () => {
+  test("all 28 tables exist", () => {
     const rows = bundle.sqlite
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__drizzle%'")
       .all() as { name: string }[];
     const names = rows.map((r) => r.name).sort();
     expect(names).toEqual(
       [
+        "account_numbers",
         "accounts",
         "ai_calls",
         "app_settings",
@@ -52,10 +53,13 @@ describe("migrations from zero", () => {
         "price_intraday",
         "recurring_series",
         "rules",
+        "printed_lines",
+        "statement_copies",
         "statement_periods",
         "transaction_splits",
         "transactions",
         "transfer_ambiguities",
+        "unimported_transfer_legs",
       ].sort(),
     );
   });

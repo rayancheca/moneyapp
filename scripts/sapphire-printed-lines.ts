@@ -4,7 +4,7 @@
  *
  * The identity is the importer's own: same amount, and the row claims the
  * printed day as its POSTED day or, failing that, as its TRANSACTION day
- * (`consumeIdentity` in services/import/service.ts). Chase prints one date per
+ * (`identityWeight` in services/import/service.ts). Chase prints one date per
  * row and it is the transaction date, which is why the second lens exists: the
  * reconstructed $100.00 payment posted 2026-07-01 is printed as `06/30`.
  *
