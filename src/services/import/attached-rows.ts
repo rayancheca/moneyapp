@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { statementPeriods } from "@/db/schema/imports";
-import { transactions, type FileLinkSource } from "@/db/schema/transactions";
+import { transactions, type FileLinkSource, type TransactionStatus } from "@/db/schema/transactions";
 
 /**
  * Rows filed under a statement they were not parsed from (`file_link_source`).
@@ -31,10 +31,11 @@ import { transactions, type FileLinkSource } from "@/db/schema/transactions";
  *  - `statement_period_id` is an FK into the periods the un-import deletes.
  *
  * The marker belongs to the MONEY, like a note: a parser-version re-parse
- * supersedes an attached row with the rest of its file, and the carry puts the
- * marker on the fresh row that inherits its note and links (`CarryAttributes`,
- * services/import/service.ts). Without it, un-importing after a bump deleted
- * that row as parsed.
+ * that prints the row's line supersedes the attached row with the rest of its
+ * file, and the carry puts the marker on the fresh row that inherits its note
+ * and links (`CarryAttributes`, services/import/service.ts). Without it,
+ * un-importing after a bump deleted that row as parsed. A re-parse that does
+ * not print the line keeps the row itself, detached (`keepRetiredAttachedRows`).
  */
 export const ATTACHED: FileLinkSource = "attached";
 
@@ -83,6 +84,36 @@ export function detachAttachedRows(tx: AppDatabase, importFileId: string): strin
     .run();
   tx.update(transactions).set({ importFileId: null }).where(ofFile).run();
   return ids;
+}
+
+/**
+ * Keeps rows a parser-version re-read retired with their file when no line of the new read took them over
+ * (`unclaimedAttachedRows`, services/import/service.ts): each comes back as `detachAttachedRows` leaves a row —
+ * `import_file_id` NULL, the marker kept, the status it had before the re-read, except that a quarantine (the retired
+ * period's verdict) comes back `active`. Nothing else moves. The same import then files each one again under the
+ * statement that holds its day, if exactly one does (`reattachDetachedRows`). Call it inside the re-read's
+ * transaction, after the new read's lines are written. Returns the ids kept.
+ *
+ * 🔴 An attached row survived a re-read only through the carry, which lands on a row the new read inserts, so a read
+ * that withholds the row's section, no longer reads its account or no longer prints its line superseded the owner's
+ * money with no successor. Measured on a copy of the real ledger, 2026-09-16: the January 2026 Sapphire statement
+ * re-read with Sapphire's section withheld reported `parsed` and superseded its 4 attached payments ($1,223.54).
+ */
+export function keepRetiredAttachedRows(
+  tx: AppDatabase,
+  rows: readonly { id: string; status: TransactionStatus; fileLinkSource: FileLinkSource | null }[],
+): string[] {
+  const kept: string[] = [];
+  for (const row of rows) {
+    if (row.fileLinkSource !== ATTACHED || row.status === "superseded") continue;
+    const changes = tx
+      .update(transactions)
+      .set({ importFileId: null, status: row.status === "quarantined" ? "active" : row.status })
+      .where(and(eq(transactions.id, row.id), eq(transactions.status, "superseded"), attachedRow()))
+      .run().changes;
+    if (changes === 1) kept.push(row.id);
+  }
+  return kept;
 }
 
 /**

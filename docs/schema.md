@@ -89,8 +89,11 @@ Liability status **derived** from `type='credit'`. Debit cards are intentionally
 - The idempotency no-op applies per **(file_sha256, parser_version)** — a byte-identical file at
   the same parser version is a `skipped_duplicate`, and a fixed parser can always re-parse it.
 - **Re-parse** (a higher `parser_version` for the same `file_sha256`): the old file's periods and
-  anchors are deleted, its transactions become `superseded` (retained as history, never deleted),
-  the old import_file row becomes `superseded`, and the file is parsed fresh.
+  anchors are removed, its transactions become `superseded` (retained as history, never deleted),
+  the old import_file row becomes `superseded`, and the file's fresh rows are written — all in ONE
+  transaction, and only once the new version has read the file. A version that cannot read the
+  file, or fails part-way through it, changes nothing: the old read stays in place beside the
+  `failed` row, which says so.
 - **Carry-forward is what makes a re-parse safe.** The old rows' user-set attributes are
   snapshotted *before* they are superseded, then re-attached to the new rows by content match:
   same **(account, posted_on, amount_cents)** — the money's identity, which survives a parser
@@ -103,7 +106,10 @@ Liability status **derived** from `type='credit'`. Debit cards are intentionally
   - `status='excluded'` — a user's exclusion is a decision, not a parse artifact
   - `file_link_source='attached'`, onto the row the re-parse inserts for that money only — the
     owner's reconstruction stays his, so a later un-import still keeps it (never filled onto
-    another file's row, never taken from a takeover victim)
+    another file's row, never taken from a takeover victim). An attached row no line of the
+    re-parse claims (a section it withholds, an account or a line it no longer reads) is not
+    superseded at all: it is detached as an un-import detaches it, and filed again under the
+    statement that holds its day.
   - `transaction_splits`, moved wholesale onto the new parent (same amount ⇒ the parts still sum;
     the parent stays immutable)
 

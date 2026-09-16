@@ -30,7 +30,7 @@ import { linkRowsMadeActive, settleSeriesStats } from "../recurring-import-links
 import { detachTransferLegs, type StaleTransferLeg } from "../transfer-links";
 import { accountsOfTransactions, restoreDuplicatesLosingTheirSurvivor } from "../duplicate-lifecycle";
 import { accountSlug, institutionSlug } from "./account-slug";
-import { detachAttachedRows, parsedFromFile, reattachDetachedRows } from "./attached-rows";
+import { ATTACHED, detachAttachedRows, keepRetiredAttachedRows, parsedFromFile, reattachDetachedRows } from "./attached-rows";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
 import { extractLines } from "./profiles/pdf-profile";
@@ -247,7 +247,8 @@ function consumeIdentity(pool: IdentityPool, postedOn: string, transactedOn: str
  * un-import deleted the owner's reconstruction as a parsed row (the review,
  * 2026-09-15). It never fills another source's row (`fillFromCarry`): that row
  * is filed under the file that parsed it. A takeover victim belongs to another
- * file, so `insertTxn` does not take it from one.
+ * file, so `insertTxn` does not take it from one. An attached row no line of the
+ * new read claims is not retired at all (`unclaimedAttachedRows`).
  */
 interface CarryAttributes {
   categoryId: string | null;
@@ -356,6 +357,19 @@ function captureCarryForward(db: AppDatabase, oldFileIds: readonly string[]): Ca
     for (const bucket of map.values()) bucket.sort((a, b) => a.id.localeCompare(b.id));
   }
   return pool;
+}
+
+/**
+ * The rows filed under a retired read by hand (`attached-rows`) that no line of the new read claimed. Each is
+ * bucketed once under its posted day, so the posted index lists every carry row exactly once.
+ *
+ * A claim is the new read printing the same money — same account, same day, same amount, by the lenses
+ * `consumeIdentity` absorbs a line by — so an unclaimed row is money the new read does not record: a section it
+ * withholds, an account it no longer reads, a line it no longer prints. A claimed row follows the carry: onto the
+ * row that now records its money, or out with its superseded row when another source's row records it.
+ */
+function unclaimedAttachedRows(pool: CarryPool): CarryRow[] {
+  return [...pool.byPosted.values()].flat().filter((row) => row.fileLinkSource === ATTACHED && !pool.taken.has(row.id));
 }
 
 function bucketCarry(map: Map<string, CarryRow[]>, key: string, row: CarryRow): void {
@@ -982,6 +996,19 @@ export function storedLines(accountId: string, account: { readonly type: string 
  */
 export const REIMPORTABLE_STATUSES: readonly ImportStatus[] = ["superseded", "failed"];
 
+/** The reads of these bytes in place under an older parser version — what a read at `version` retires. */
+function retiredReadsOf(db: AppDatabase, sha: string, version: number): (typeof importFiles.$inferSelect)[] {
+  return db
+    .select()
+    .from(importFiles)
+    .where(and(eq(importFiles.fileSha256, sha), inArray(importFiles.status, ["parsed", "parsed_with_claude"])))
+    .all()
+    .filter((f) => f.parserVersion < version);
+}
+
+/** What a re-read that fails adds to its cause: it retired nothing. */
+const EARLIER_READ_KEPT = "nothing was changed; the earlier read of this file is still in place";
+
 async function importOneFile(
   db: AppDatabase,
   file: ReturnType<typeof sniffFile>,
@@ -1011,27 +1038,6 @@ async function importOneFile(
     .get();
   if (existing && !REIMPORTABLE_STATUSES.includes(existing.status)) {
     return { ...outcome, status: "skipped_duplicate" };
-  }
-
-  // re-parse lifecycle (schema.md): a newer parser version supersedes the old
-  // version's entire contribution atomically before importing fresh. The old
-  // rows' user-set attributes are snapshotted FIRST — superseding them hides
-  // them from every lookup path, and the fresh rows inherit them by content
-  // match below. Without this a parser improvement would silently destroy every
-  // hand-set category, note, transfer link, exclusion and split on the file.
-  const stale = profile
-    ? db
-        .select()
-        .from(importFiles)
-        .where(and(eq(importFiles.fileSha256, sha), inArray(importFiles.status, ["parsed", "parsed_with_claude"])))
-        .all()
-        .filter((f) => f.parserVersion < profile.version)
-    : [];
-  const carryPool = captureCarryForward(db, stale.map((f) => f.id));
-  // touched whether or not the new parse reads them again, and before it runs: a parse that throws below has still
-  // taken these accounts' rows, periods and anchors away
-  for (const old of stale) {
-    for (const accountId of supersedeFileContribution(db, old.id)) touchedAccounts.add(accountId);
   }
 
   const institution = guessInstitution(db, file);
@@ -1084,7 +1090,9 @@ async function importOneFile(
   try {
     ({ statements, withheld: withheldSections } = asParsedFile(await profile.parse(file, parseContextFor(db))));
   } catch (error: unknown) {
-    const message = error instanceof ParseError ? error.message : `Unexpected: ${String(error)}`;
+    const cause = error instanceof ParseError ? error.message : `Unexpected: ${String(error)}`;
+    // nothing has been retired yet: the read this version would replace is still the one in place
+    const message = retiredReadsOf(db, sha, profile.version).length > 0 ? `${cause} (${EARLIER_READ_KEPT})` : cause;
     db.update(importFiles)
       .set({ status: "failed", error: message, parserProfile: profile.id })
       .where(eq(importFiles.id, fileRow.id))
@@ -1095,14 +1103,29 @@ async function importOneFile(
   // named BEFORE anything is written, and read-only — a section that was not imported must not change which accounts exist
   const withheld = withheldSections.map((section) => withheldOutcome(db, section));
 
+  // Re-parse lifecycle (schema.md): a newer parser version retires the old version's entire contribution — AFTER the
+  // new version has read the file, and in one transaction with everything it writes.
+  //
+  // 🔴 The retired read was superseded before the new version parsed, and each statement committed on its own. A
+  // version that could not read the file, or failed part-way through it, had already taken the file's rows, periods
+  // and anchors away — the rows the owner filed under it by hand with them — and uploading the bytes again or
+  // un-importing the failed row brought none of it back. Measured on a copy of the real ledger, 2026-09-16: a throwing
+  // re-read of the January 2026 Sapphire statement superseded its 4 attached payments ($1,223.54) and left the account
+  // 8 rows and a period short.
+  const stale = retiredReadsOf(db, sha, profile.version);
+  // The old rows' user-set attributes are snapshotted FIRST — superseding them hides them from every lookup path, and
+  // the fresh rows inherit them by content match below. Without this a parser improvement would silently destroy
+  // every hand-set category, note, transfer link, exclusion and split on the file.
+  const carryPool = captureCarryForward(db, stale.map((f) => f.id));
+  const untouched: FileOutcome = { ...outcome };
   const fileAccountIds = new Set<string>();
-  // before the loop: a statement that fails mid-file leaves its earlier
-  // statements' rows committed and active, and those are this upload's rows too
-  writtenFileIds.add(fileRow.id);
-  try {
+  const retiredAccountIds = new Set<string>();
+  const writeRead = (): void => {
+    for (const old of stale) {
+      for (const accountId of supersedeFileContribution(db, old.id)) retiredAccountIds.add(accountId);
+    }
     for (const statement of statements) {
       const accountId = resolveAccount(db, statement.accountHint);
-      touchedAccounts.add(accountId);
       fileAccountIds.add(accountId);
       const ranges = coveredRanges(db, accountId).filter((r) => r.importFileId !== fileRow.id);
       const myPriority = fidelityOf(file.format, profile.id);
@@ -1269,16 +1292,39 @@ async function importOneFile(
         }
       });
     }
+    // after every line has claimed what it carries: a row filed by hand that no line took over is the owner's, not the
+    // retired read's (`keepRetiredAttachedRows`)
+    keepRetiredAttachedRows(db, unclaimedAttachedRows(carryPool));
+  };
+  // before the write: a statement that fails mid-file leaves its earlier
+  // statements' rows committed and active, and those are this upload's rows too
+  writtenFileIds.add(fileRow.id);
+  try {
+    // A fresh read keeps the statements it wrote before a failure, for un-import to remove. A re-read is all or
+    // nothing, so a failure leaves in place the read it would have replaced.
+    if (stale.length === 0) writeRead();
+    else db.transaction(() => writeRead());
   } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (stale.length > 0) {
+      // rolled back: nothing to rebuild, and an account the read had resolved may no longer exist
+      db.update(importFiles)
+        .set({ status: "failed", error: `Failed mid-import (${EARLIER_READ_KEPT}): ${message}` })
+        .where(eq(importFiles.id, fileRow.id))
+        .run();
+      return { ...untouched, status: "failed", error: message };
+    }
     // statement-level failure: earlier statements' committed rows remain and
     // are removable via un-import; the file is marked failed with the cause
-    const message = error instanceof Error ? error.message : String(error);
+    for (const accountId of fileAccountIds) touchedAccounts.add(accountId);
     db.update(importFiles)
       .set({ status: "failed", error: `Failed mid-import (un-import to clean up): ${message}` })
       .where(eq(importFiles.id, fileRow.id))
       .run();
     return { ...outcome, status: "failed", error: message };
   }
+  // whether or not the new read wrote to them again: the retired reads' rows, periods and anchors left these accounts
+  for (const accountId of [...retiredAccountIds, ...fileAccountIds]) touchedAccounts.add(accountId);
 
   // relocate the archived original from the institution bucket into its resolved
   // per-account folder — the per-account storage the DB now points at
@@ -1483,12 +1529,12 @@ function quarantinedIdsOn(db: AppDatabase, accountIds: readonly string[]): strin
  * read before anything moves — for the caller to rebuild.
  *
  * 🔴 The import rebuilt only the accounts the NEW parse read. An account the retired version wrote and the new one
- * does not (a section it now withholds, or every account when the new version cannot read the file) lost its rows,
- * periods and anchors here and kept its daily_balances: `anchored` on a day no anchor names, provenance "checked
- * through" a period that no longer exists, and a balance still counting superseded rows. Measured on a copy of the
- * real ledger, 2026-09-16: re-reading the August 2026 Robinhood brokerage PDF at a bumped version that withholds
- * #655929651's section left Robinhood Agentic `anchored` on 2026-08-31 (anchors only Jun 30 / Jul 31) and checked
- * through 2026-08-31. With the scope: 08-31 carried, checked through 2026-07-31.
+ * does not (a section it now withholds, or one it no longer reads) lost its rows, periods and anchors here and kept
+ * its daily_balances: `anchored` on a day no anchor names, provenance "checked through" a period that no longer
+ * exists, and a balance still counting superseded rows. Measured on a copy of the real ledger, 2026-09-16:
+ * re-reading the August 2026 Robinhood brokerage PDF at a bumped version that withholds #655929651's section left
+ * Robinhood Agentic `anchored` on 2026-08-31 (anchors only Jun 30 / Jul 31) and checked through 2026-08-31. With
+ * the scope: 08-31 carried, checked through 2026-07-31.
  */
 function supersedeFileContribution(db: AppDatabase, oldFileId: string): string[] {
   return db.transaction((tx) => {

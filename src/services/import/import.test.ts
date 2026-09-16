@@ -1270,11 +1270,11 @@ describe("re-parse lifecycle: a parser-version bump preserves user work", () => 
  * rows, its periods, its anchors — and then rebuilt only the accounts the NEW
  * version read. An account the old version wrote and the new one does not (a
  * section it now withholds, as the Robinhood reader withholds #655929651's when
- * it cannot prove it; or every account, when the new version cannot read the
- * file at all) kept its daily_balances: `anchored` on a day no anchor names,
- * provenance "checked through" a period that no longer exists, and a balance
- * still counting rows that are superseded. The sibling of un-import's
- * `accountsWrittenBy` (9cd7acb), which read the scope before the delete.
+ * it cannot prove it; or one it no longer reads) kept its daily_balances:
+ * `anchored` on a day no anchor names, provenance "checked through" a period
+ * that no longer exists, and a balance still counting rows that are
+ * superseded. The sibling of un-import's `accountsWrittenBy` (9cd7acb), which
+ * read the scope before the delete.
  */
 describe("a parser-version re-read that no longer writes an account", () => {
   const PREFIX = "three-section-statement-";
@@ -1310,7 +1310,17 @@ describe("a parser-version re-read that no longer writes an account", () => {
     ],
   };
 
+  /** A section of a new account, and after it one the import cannot store: its institution is not one the app knows. */
+  const BREAKS_MID_FILE: ParsedStatement[] = [
+    { accountHint: checking("4104"), txns: [{ postedOn: "2026-03-15", amountCents: -700, rawDescription: "NEW ACCOUNT CHARGE" }] },
+    { accountHint: { institution: "Nowhere Bank" as AccountHint["institution"], type: "checking", last4: "4199" }, txns: [] },
+  ];
+
   let unreadable = false;
+  /** a later version that reads every section again */
+  let readsEverySection = false;
+  /** a later version that reads the first section and then fails part-way through the file */
+  let breaksMidFile = false;
 
   /** Version 1 reads all three sections; a later version reads the first and withholds the other two. */
   const threeSectionProfile: ParserProfile = {
@@ -1319,8 +1329,10 @@ describe("a parser-version re-read that no longer writes an account", () => {
     matches: (f) => f.name.startsWith(PREFIX),
     parse: (f): ParsedStatement[] | ParsedFile => {
       if (unreadable) throw new ParseError("test-three-section-statement", "this version cannot read the file");
-      const [kept, ...rest] = SECTIONS[f.text]!;
-      if (threeSectionProfile.version === 1) return [kept!, ...rest];
+      // trimmed: a second copy of a month is the same text with different bytes
+      const [kept, ...rest] = SECTIONS[f.text.trim()]!;
+      if (threeSectionProfile.version === 1 || readsEverySection) return [kept!, ...rest];
+      if (breaksMidFile) return [kept!, ...BREAKS_MID_FILE];
       return {
         statements: [kept!],
         withheld: rest.map((s) => ({
@@ -1335,6 +1347,8 @@ describe("a parser-version re-read that no longer writes an account", () => {
 
   beforeEach(() => {
     unreadable = false;
+    readsEverySection = false;
+    breaksMidFile = false;
     threeSectionProfile.version = 1;
     PROFILES.unshift(threeSectionProfile);
   });
@@ -1410,21 +1424,209 @@ describe("a parser-version re-read that no longer writes an account", () => {
     expectRebuilt(accountIdOf(KEPT));
   });
 
+
+  const row = (id: string) => bundle.db.select().from(transactions).where(eq(transactions.id, id)).get();
+
+  /** The one read of a file in place — neither superseded nor failed. */
+  function liveFile(input: ImportInput): typeof importFilesTable.$inferSelect {
+    const live = bundle.db
+      .select()
+      .from(importFilesTable)
+      .where(and(eq(importFilesTable.fileName, input.name), eq(importFilesTable.status, "parsed")))
+      .all();
+    expect(live).toHaveLength(1);
+    return live[0]!;
+  }
+
+  /** Everything one read of a file wrote: its rows, its periods, its anchors. */
+  function contributionOf(fileId: string) {
+    return {
+      rows: bundle.db.select().from(transactions).where(eq(transactions.importFileId, fileId)).orderBy(transactions.id).all(),
+      periods: bundle.db.select().from(statementPeriods).where(eq(statementPeriods.importFileId, fileId)).orderBy(statementPeriods.id).all(),
+      anchors: bundle.db.select().from(balanceAnchors).where(eq(balanceAnchors.importFileId, fileId)).orderBy(balanceAnchors.id).all(),
+    };
+  }
+
+  const periodOf = (fileId: string, accountId: string) =>
+    bundle.db
+      .select()
+      .from(statementPeriods)
+      .where(and(eq(statementPeriods.importFileId, fileId), eq(statementPeriods.accountId, accountId)))
+      .get();
+
+  const HAND_NOTE = "the car, paid at the pump";
+
   /**
-   * Only the cache is asserted here, never what the failure leaves: today the retired file is superseded BEFORE the
-   * new version parses, so a parse that throws has already taken all three accounts' March away — and whatever a
-   * failed re-read leaves of the file, the balances must describe it.
+   * The owner's shape (scripts/attach-sapphire-payment-rows-2026-09-14.ts): a payment recorded by hand absorbs March's
+   * line for the same money, and is then filed under March.
    */
-  test("a re-read the new version cannot parse leaves every account the retired file wrote as a rebuild would", async () => {
-    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+  async function marchWithARowFiledByHand(): Promise<{ march: string; withRows: string; handRow: string }> {
+    await importStatementFiles(bundle.db, [JANUARY]);
+    const withRows = accountIdOf(WITH_ROWS);
+    const raw = "FUEL — recorded by hand";
+    const handRow = bundle.db
+      .insert(transactions)
+      .values({
+        accountId: withRows,
+        postedOn: "2026-03-12",
+        amountCents: -4000,
+        rawDescription: raw,
+        normalizedDescription: normalizeDescription(raw),
+        dedupeHash: dedupeHash({ accountId: withRows, postedOn: "2026-03-12", amountCents: -4000, rawDescription: raw, occurrenceIndex: 0 }),
+        notes: HAND_NOTE,
+      })
+      .returning({ id: transactions.id })
+      .get().id;
+    const [outcome] = await importStatementFiles(bundle.db, [MARCH]);
+    expect(outcome!.dedupedCrossFormat).toBe(1);
+    const march = liveFile(MARCH).id;
+    bundle.db.update(transactions).set({ importFileId: march, fileLinkSource: "attached" }).where(eq(transactions.id, handRow)).run();
+    expect(periodOf(march, withRows)!.reconciliation).toBe("reconciled");
+    expect(dayRow(withRows, "2026-03-31")).toMatchObject({ basis: "anchored", balanceCents: 6000 });
+    return { march, withRows, handRow };
+  }
+
+  /**
+   * 🔴 The retired read was superseded BEFORE the new version parsed, so a version that cannot read the file had
+   * already taken the file's rows, periods and anchors away — the rows the owner filed under it by hand with them,
+   * against his 2026-09-15 rule. Uploading the bytes again failed again, and un-importing the failed row brought
+   * nothing back. Measured on a copy of the real ledger, 2026-09-16 (the review of uc/reparse-rebuild-scope): a
+   * throwing re-read of the January 2026 Sapphire statement superseded its 4 attached payments ($1,223.54).
+   */
+  test("a re-read the new version cannot parse changes nothing: the read it would replace stays, with the row filed under it by hand", async () => {
+    const { march, withRows, handRow } = await marchWithARowFiledByHand();
+    const before = contributionOf(march);
+    expect(before.rows.map((r) => r.id)).toContain(handRow);
 
     threeSectionProfile.version = 2;
     unreadable = true;
     const [outcome] = await importStatementFiles(bundle.db, [MARCH]);
 
     expect(outcome!.status).toBe("failed");
+    expect(liveFile(MARCH).id).toBe(march);
+    expect(contributionOf(march)).toEqual(before);
+    expect(row(handRow)).toMatchObject({ status: "active", importFileId: march, fileLinkSource: "attached", notes: HAND_NOTE });
+    expect(dayRow(withRows, "2026-03-31")).toMatchObject({ basis: "anchored", balanceCents: 6000 });
+    for (const last4 of [KEPT, ANCHOR_ONLY, WITH_ROWS]) expectRebuilt(accountIdOf(last4));
+    // …and the failure says so, beside the read still in place
+    expect(outcome!.error).toContain("the earlier read of this file is still in place");
+
+    // the failed attempt is no obstacle: once the version reads the file, the same bytes replace the read
+    unreadable = false;
+    readsEverySection = true;
+    const [again] = await importStatementFiles(bundle.db, [MARCH]);
+
+    expect(again!.status).toBe("parsed");
+    expect(liveFile(MARCH).id).not.toBe(march);
+    const recording = bundle.db
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.accountId, withRows), ne(transactions.status, "superseded")))
+      .all();
+    expect(recording).toHaveLength(1);
+    expect(recording[0]).toMatchObject({ amountCents: -4000, fileLinkSource: "attached", notes: HAND_NOTE, status: "active" });
     for (const last4 of [KEPT, ANCHOR_ONLY, WITH_ROWS]) expectRebuilt(accountIdOf(last4));
   });
+
+  /**
+   * 🔴 A row filed under a statement by hand survived a re-read only through the carry, which lands on a row the new
+   * read inserts — so a read that withholds the section superseded it with no successor. Measured on a copy of the
+   * real ledger, 2026-09-16: the January 2026 Sapphire statement re-read with Sapphire's section withheld reported
+   * `parsed` and superseded the same 4 payments.
+   */
+  test("a re-read that withholds a section keeps the row filed under it by hand, detached, and a read of the section files it there again", async () => {
+    const { withRows, handRow } = await marchWithARowFiledByHand();
+
+    threeSectionProfile.version = 2;
+    const [outcome] = await importStatementFiles(bundle.db, [MARCH]);
+
+    expect(outcome!.status).toBe("parsed");
+    expect(outcome!.withheld.map((w) => w.accountId)).toContain(withRows);
+    // kept as an un-import keeps it: no statement in place holds March 12 on this account now
+    expect(row(handRow)).toMatchObject({ status: "active", importFileId: null, fileLinkSource: "attached", notes: HAND_NOTE });
+    // …and its money is still in the balance
+    expect(dayRow(withRows, "2026-03-31")?.balanceCents).toBe(6000);
+    expectRebuilt(withRows);
+
+    threeSectionProfile.version = 3;
+    readsEverySection = true;
+    const [again] = await importStatementFiles(bundle.db, [MARCH]);
+
+    expect(again!.status).toBe("parsed");
+    const reread = liveFile(MARCH).id;
+    // the section's line is absorbed by the kept row, which is filed under the section again — once
+    expect(row(handRow)).toMatchObject({ status: "active", importFileId: reread, fileLinkSource: "attached", notes: HAND_NOTE });
+    const recording = bundle.db
+      .select({ id: transactions.id })
+      .from(transactions)
+      .where(and(eq(transactions.accountId, withRows), ne(transactions.status, "superseded")))
+      .all();
+    expect(recording.map((t) => t.id)).toEqual([handRow]);
+    expect(periodOf(reread, withRows)!.reconciliation).toBe("reconciled");
+    expect(dayRow(withRows, "2026-03-31")).toMatchObject({ basis: "anchored", balanceCents: 6000 });
+    expectRebuilt(withRows);
+  });
+
+  test("a row filed by hand that the retired read's gap held comes back active, and one the owner excluded stays excluded", async () => {
+    const { march, withRows, handRow } = await marchWithARowFiledByHand();
+    // the retired period's verdict on a hand row, as `reconcileAccounts` leaves it after a gap
+    bundle.db.update(transactions).set({ status: "quarantined" }).where(eq(transactions.id, handRow)).run();
+    const raw = "PARKING — recorded by hand";
+    const excluded = bundle.db
+      .insert(transactions)
+      .values({
+        accountId: withRows,
+        postedOn: "2026-03-20",
+        amountCents: -900,
+        rawDescription: raw,
+        normalizedDescription: normalizeDescription(raw),
+        dedupeHash: dedupeHash({ accountId: withRows, postedOn: "2026-03-20", amountCents: -900, rawDescription: raw, occurrenceIndex: 0 }),
+        status: "excluded",
+        importFileId: march,
+        fileLinkSource: "attached",
+      })
+      .returning({ id: transactions.id })
+      .get().id;
+
+    threeSectionProfile.version = 2;
+    await importStatementFiles(bundle.db, [MARCH]);
+
+    expect(row(handRow)).toMatchObject({ status: "active", importFileId: null, fileLinkSource: "attached" });
+    expect(row(excluded)).toMatchObject({ status: "excluded", importFileId: null, fileLinkSource: "attached" });
+    expectRebuilt(withRows);
+  });
+
+  /**
+   * A re-read that fails part-way through the file wrote its earlier sections and had already retired the read they
+   * replace, and "un-import to clean up" removed the partial read without bringing the retired one back.
+   */
+  test("a re-read that fails part-way through the file keeps none of it, and the read it would replace stays in place", async () => {
+    await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+    const march = liveFile(MARCH).id;
+    const before = contributionOf(march);
+
+    threeSectionProfile.version = 2;
+    breaksMidFile = true;
+    const [outcome] = await importStatementFiles(bundle.db, [MARCH]);
+
+    expect(outcome!.status).toBe("failed");
+    expect(outcome!.error).toContain("Unknown institution Nowhere Bank");
+    const [failed, ...more] = bundle.db
+      .select()
+      .from(importFilesTable)
+      .where(and(eq(importFilesTable.fileName, MARCH.name), eq(importFilesTable.status, "failed")))
+      .all();
+    expect(more).toEqual([]);
+    expect(contributionOf(failed!.id)).toEqual({ rows: [], periods: [], anchors: [] });
+    expect(liveFile(MARCH).id).toBe(march);
+    expect(contributionOf(march)).toEqual(before);
+    // the section of a new account was written inside the same failed read: its account is not left behind either
+    expect(bundle.db.select().from(accounts).where(eq(accounts.last4, "4104")).get()).toBeUndefined();
+    for (const last4 of [KEPT, ANCHOR_ONLY, WITH_ROWS]) expectRebuilt(accountIdOf(last4));
+    // "un-import to clean up" would be wrong: there is nothing to clean, and the read in place is the earlier one
+    expect(failed!.error).toContain("the earlier read of this file is still in place");
+  });
+
 });
 
 /*
