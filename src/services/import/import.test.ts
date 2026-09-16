@@ -2064,6 +2064,98 @@ describe("a parser-version re-read that no longer writes an account", () => {
     expect(unimportPeriodsByFile(bundle.db, after).get(copy)).toEqual({ removed: 3, handedOver: 0 });
     expect(balancesRemovedByFile(bundle.db, after).get(copy)).toBe(6);
   });
+
+  /** An archive root whose per-account folder cannot be written — the move into it fails with EACCES. */
+  function lockedArchive(folder: string): () => void {
+    const root = path.join(dir, "locked-archive");
+    fs.mkdirSync(path.join(root, folder), { recursive: true });
+    fs.chmodSync(path.join(root, folder), 0o555);
+    process.env.MONEYAPP_ORIGINALS_DIR = root;
+    return () => fs.chmodSync(path.join(root, folder), 0o755);
+  }
+
+  /**
+   * 🔴 The re-read committed, then moved the original into its account's folder, then marked its file `parsed`. A move
+   * that threw (EACCES) left the retired read superseded and the new read's rows, periods and anchors live under a file
+   * still marked `failed` with no error — and the throw left the upload: nothing after it was read, nothing before it
+   * was categorized, reconciled or rebuilt. Measured on a copy of the real ledger, 2026-09-16 (the Feb 2026 Robinhood
+   * PDF, v3 → v4): a "Failed" file holding 25 live rows, `[stale-verdict]` on both Robinhood accounts.
+   */
+  test("a re-read whose original cannot be moved into its account folder is still parsed, and the original stays where it was archived", async () => {
+    await importStatementFiles(bundle.db, [JANUARY]);
+    const retired = liveFile(JANUARY).id;
+    const unlock = lockedArchive("chase-combined");
+    try {
+      threeSectionProfile.version = 2;
+      readsEverySection = true;
+      const [outcome] = await importStatementFiles(bundle.db, [JANUARY]);
+
+      expect(outcome!.status).toBe("parsed");
+      const reread = liveFile(JANUARY);
+      expect(reread.id).not.toBe(retired);
+      expect(reread).toMatchObject({ error: null, parserVersion: 2 });
+      expect(fs.readFileSync(reread.storagePath)).toEqual(JANUARY.buffer);
+      expect(bundle.db.select().from(importFilesTable).where(eq(importFilesTable.id, retired)).get()!.status).toBe("superseded");
+      expect(contributionOf(reread.id).periods).toHaveLength(3);
+      for (const last4 of [KEPT, ANCHOR_ONLY, WITH_ROWS]) expectRebuilt(accountIdOf(last4));
+    } finally {
+      unlock();
+    }
+  });
+
+  test("an upload goes on past a file whose original cannot be moved, and settles every file in it", async () => {
+    await importStatementFiles(bundle.db, [JANUARY]);
+    const unlock = lockedArchive("chase-combined");
+    try {
+      threeSectionProfile.version = 2;
+      readsEverySection = true;
+      const outcomes = await importStatementFiles(bundle.db, [JANUARY, MARCH]);
+
+      expect(outcomes.map((o) => o.status)).toEqual(["parsed", "parsed"]);
+      for (const input of [JANUARY, MARCH]) expect(fs.existsSync(liveFile(input).storagePath)).toBe(true);
+      // the settle step ran: March's periods are graded and every account rebuilt from what is there
+      expect(periodOf(liveFile(MARCH).id, accountIdOf(KEPT))!.reconciliation).toBe("reconciled");
+      for (const last4 of [KEPT, ANCHOR_ONLY, WITH_ROWS]) expectRebuilt(accountIdOf(last4));
+    } finally {
+      unlock();
+    }
+  });
+
+  test("a fault in one file of an upload fails that file, with its cause, and the rest of the upload is read and settled", async () => {
+    // named to sort before January: the fault comes first, and what follows it must still be read
+    const BROKEN: ImportInput = { name: `${PREFIX}0-broken.txt`, buffer: Buffer.from("broken") };
+    const brokenProfile: ParserProfile = {
+      id: "test-broken-statement",
+      version: 1,
+      matches: (f) => f.name === BROKEN.name,
+      // a parse that returns, and then faults when the importer reads what it withheld
+      parse: (): ParsedFile => ({
+        statements: [],
+        withheld: new Proxy([], {
+          get: () => {
+            throw new Error("disk I/O error");
+          },
+        }),
+      }),
+    };
+    PROFILES.unshift(brokenProfile);
+    try {
+      const outcomes = await importStatementFiles(bundle.db, [BROKEN, JANUARY]);
+
+      expect(outcomes.map((o) => [o.fileName, o.status])).toEqual([
+        [BROKEN.name, "failed"],
+        [JANUARY.name, "parsed"],
+      ]);
+      expect(outcomes[0]!.error).toContain("disk I/O error");
+      const broken = bundle.db.select().from(importFilesTable).where(eq(importFilesTable.fileName, BROKEN.name)).get()!;
+      expect(broken).toMatchObject({ status: "failed" });
+      expect(broken.error).toContain("disk I/O error");
+      expect(periodOf(liveFile(JANUARY).id, accountIdOf(KEPT))!.reconciliation).toBe("reconciled");
+      for (const last4 of [KEPT, ANCHOR_ONLY, WITH_ROWS]) expectRebuilt(accountIdOf(last4));
+    } finally {
+      PROFILES.splice(PROFILES.indexOf(brokenProfile), 1);
+    }
+  });
 });
 
 /*

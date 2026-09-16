@@ -864,8 +864,12 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
   const writtenFileIds = new Set<string>();
 
   for (const file of sniffed) {
-    const outcome = await importOneFile(db, file, touchedAccounts, writtenFileIds);
-    outcomes.push(outcome);
+    const current: { fileRowId?: string } = {};
+    try {
+      outcomes.push(await importOneFile(db, file, touchedAccounts, writtenFileIds, current));
+    } catch (error: unknown) {
+      outcomes.push(failedUnexpectedly(db, file, current.fileRowId, error));
+    }
   }
 
   // A row an un-import detached is filed again under the statement that now
@@ -1069,6 +1073,8 @@ async function importOneFile(
   file: ReturnType<typeof sniffFile>,
   touchedAccounts: Set<string>,
   writtenFileIds: Set<string>,
+  // the file's row, once there is one — for `failedUnexpectedly`
+  current: { fileRowId?: string },
 ): Promise<FileOutcome> {
   const sha = fileSha256(file.buffer);
   const { profile, unreadable } = await selectProfile(file);
@@ -1128,6 +1134,7 @@ async function importOneFile(
       })
       .returning()
       .get();
+  current.fileRowId = fileRow.id;
 
   if (!profile) {
     const message = unreadable
@@ -1394,14 +1401,41 @@ async function importOneFile(
     // retired read's (`keepRetiredAttachedRows`)
     keepRetiredAttachedRows(db, unclaimedAttachedRows(carryPool));
   };
+  // The file is `parsed` in the same write as what it read: in the re-read's transaction, or straight after a fresh
+  // read's last statement.
+  //
+  // 🔴 It was marked `parsed` only after the original had been moved into its account's folder. A move that threw
+  // (EACCES) left a re-read's rows, periods and anchors live under a file still marked `failed` with no error, the read
+  // it replaced already retired — measured on a copy of the real ledger, 2026-09-16: the Feb 2026 Robinhood PDF
+  // (v3 → v4), 25 live rows under a "Failed" file and `[stale-verdict]` on both Robinhood accounts.
+  const markParsed = (): void => {
+    db.update(importFiles)
+      .set({
+        status: "parsed",
+        // ⛔ durable and visible: a file that left a section out must not read as if every account in it were read.
+        // FACTS, not the sentence — see `WithheldSectionFacts` for the three readers that need the window.
+        error: withheld.length === 0 ? null : recordWithheldSections(withheld),
+        parserProfile: profile.id,
+        parserVersion: profile.version,
+      })
+      .where(eq(importFiles.id, fileRow.id))
+      .run();
+  };
   // before the write: a statement that fails mid-file leaves its earlier
   // statements' rows committed and active, and those are this upload's rows too
   writtenFileIds.add(fileRow.id);
   try {
     // A fresh read keeps the statements it wrote before a failure, for un-import to remove. A re-read is all or
     // nothing, so a failure leaves in place the read it would have replaced.
-    if (stale.length === 0) writeRead();
-    else db.transaction(() => writeRead());
+    if (stale.length === 0) {
+      writeRead();
+      markParsed();
+    } else {
+      db.transaction(() => {
+        writeRead();
+        markParsed();
+      });
+    }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     if (stale.length > 0) {
@@ -1427,21 +1461,59 @@ async function importOneFile(
   // relocate the archived original from the institution bucket into its resolved
   // per-account folder — the per-account storage the DB now points at
   const finalFolder = resolveArchiveFolder(db, [...fileAccountIds], institution.name);
-  const finalPath = relocateArchive(currentPath, finalFolder, archiveName);
-
-  db.update(importFiles)
-    .set({
-      status: "parsed",
-      // ⛔ durable and visible: a file that left a section out must not read as if every account in it were read.
-      // FACTS, not the sentence — see `WithheldSectionFacts` for the three readers that need the window.
-      error: withheld.length === 0 ? null : recordWithheldSections(withheld),
-      parserProfile: profile.id,
-      parserVersion: profile.version,
-      storagePath: finalPath,
-    })
-    .where(eq(importFiles.id, fileRow.id))
-    .run();
+  const finalPath = relocateArchiveOrStay(currentPath, finalFolder, archiveName);
+  if (finalPath !== fileRow.storagePath) {
+    db.update(importFiles).set({ storagePath: finalPath }).where(eq(importFiles.id, fileRow.id)).run();
+  }
   return { ...outcome, withheld };
+}
+
+/**
+ * `relocateArchive`, never fatal: the read is in the ledger by now, and the original is archived where it lies. A move
+ * that fails leaves `storage_path` naming wherever the file is — the destination, if the move got that far — and says
+ * why on the server log.
+ */
+function relocateArchiveOrStay(src: string, folder: string, archiveName: string): string {
+  try {
+    return relocateArchive(src, folder, archiveName);
+  } catch (error: unknown) {
+    const dest = path.join(statementsRoot(), folder, archiveName);
+    const restingPlace = !fs.existsSync(src) && fs.existsSync(dest) ? dest : src;
+    console.error(`[import] ${archiveName} stays archived at ${restingPlace}: moving it into ${folder}/ failed`, error);
+    return restingPlace;
+  }
+}
+
+/**
+ * An import that faulted outside the steps that report their own failure (a parse, a write): the file fails with its
+ * cause, and the upload goes on. 🔴 The fault left the upload — the files after it were never read, and the ones before
+ * it were never categorized, reconciled, linked or rebuilt (the review, 2026-09-16).
+ */
+function failedUnexpectedly(db: AppDatabase, file: { name: string }, fileRowId: string | undefined, error: unknown): FileOutcome {
+  const cause = `Unexpected: ${error instanceof Error ? error.message : String(error)}`;
+  const row = fileRowId === undefined ? undefined : db.select().from(importFiles).where(eq(importFiles.id, fileRowId)).get();
+  if (row !== undefined && row.status !== "parsed") {
+    // nothing was written: a read of these bytes at an older version is still the one in place
+    const kept = retiredReadsOf(db, row.fileSha256, row.parserVersion).length > 0;
+    db.update(importFiles)
+      .set({ status: "failed", error: kept ? `${cause} (${EARLIER_READ_KEPT})` : cause })
+      .where(eq(importFiles.id, row.id))
+      .run();
+  }
+  return {
+    fileName: file.name,
+    status: "failed",
+    error: cause,
+    withheld: [],
+    inserted: 0,
+    deduped: 0,
+    dedupedCrossFormat: 0,
+    skippedOwned: 0,
+    supersededTakeover: 0,
+    carriedForward: 0,
+    quarantined: 0,
+    periods: [],
+  };
 }
 
 /**
