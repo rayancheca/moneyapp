@@ -13,7 +13,7 @@ import { balanceDeltaAccent, balanceHeading, type BalanceDeltaAccent } from "@/l
 import { accountDayChange } from "@/services/account-day-change";
 import { accountInsights } from "@/services/account-insights";
 import { getAccount, listAccounts, listInstitutions, ownPortfolioAccountIds } from "@/services/accounts";
-import { anchorRemovalEffects, listAnchors } from "@/services/anchors";
+import { anchorRemovalEffects, listAnchors, takesTypedBalance } from "@/services/anchors";
 import { observedSeries } from "@/services/derivation";
 import { listAccountHoldings } from "@/services/holdings";
 import { CASH_INSTITUTION_NAME } from "@/services/manual-transactions";
@@ -362,15 +362,18 @@ export default async function AccountDetailPage({
           </section>
         )}
 
-        <SurfaceCard>
-          <h2 className="mb-1 text-sm font-medium">Record a balance</h2>
-          <p className="mb-4 text-xs text-ink-muted">
-            {liability
-              ? "Enter the amount you owe — it counts against your net worth."
-              : "A known balance on a known date anchors this account's history."}
-          </p>
-          <AnchorForm accountId={id} isCredit={liability} defaultDate={today} />
-        </SurfaceCard>
+        {/* ⛔ a brokerage book is valued by what its statements prove — a typed balance is refused (`takesTypedBalance`) */}
+        {takesTypedBalance(account) && (
+          <SurfaceCard>
+            <h2 className="mb-1 text-sm font-medium">Record a balance</h2>
+            <p className="mb-4 text-xs text-ink-muted">
+              {liability
+                ? "Enter the amount you owe — it counts against your net worth."
+                : "A known balance on a known date anchors this account's history."}
+            </p>
+            <AnchorForm accountId={id} isCredit={liability} defaultDate={today} />
+          </SurfaceCard>
+        )}
 
         <SurfaceCard>
           <h2 className="mb-3 text-sm font-medium">Recorded balances</h2>

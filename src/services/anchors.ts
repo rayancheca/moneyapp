@@ -38,10 +38,27 @@ export const manualAnchorInputSchema = z.object({
 });
 export type ManualAnchorInput = z.infer<typeof manualAnchorInputSchema>;
 
+/**
+ * Whether the owner may type a balance for this account. ⛔ Not for a brokerage book (`cash_account_id`): the import
+ * creates it, values it from the positions its statements prove, and removes it once no statement stands on it
+ * (services/import/brokerage-book.ts). The account page and `addManualAnchor` ask this one rule.
+ *
+ * 🔴 The Add-holding form refused the agent's book and "Record a balance" did not. The typed figure changed nothing
+ * while statements valued the book, and then kept the book alive after its last statement was un-imported, in net
+ * worth — measured 2026-09-16 on a copy of the real ledger: $500.00 typed on 2026-09-14, net worth +$500.00 and
+ * investable cash +$500.00 once both constructed months were un-imported.
+ */
+export function takesTypedBalance(account: { readonly cashAccountId: string | null }): boolean {
+  return account.cashAccountId === null;
+}
+
 export function addManualAnchor(db: AppDatabase, input: ManualAnchorInput): string {
   const parsed = manualAnchorInputSchema.parse(input);
   const account = getAccount(db, parsed.accountId);
   if (!account) throw new Error(`Unknown account ${parsed.accountId}`);
+  if (!takesTypedBalance(account)) {
+    throw new Error(`${account.name} holds only what its statements prove — a balance typed here would outlive them`);
+  }
   if (isLiability(account.type) && parsed.enteredCents < 0) {
     throw new Error("Enter credit-card balances as the positive amount owed");
   }
