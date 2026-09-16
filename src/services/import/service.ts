@@ -823,6 +823,10 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
     outcomes.push(outcome);
   }
 
+  // A book this call left holding nothing — a re-read that no longer proves its month, a statement that failed after
+  // its book was made — leaves, as an un-import's does: a first read that withheld the section never made one.
+  for (const removed of removeEmptyBooks(db, [...touchedAccounts])) touchedAccounts.delete(removed);
+
   // A row an un-import detached is filed again under the statement that now
   // holds its day (`attached-rows`). Before the reconcile, so a gap holds it
   // with the file's own rows, as it did before the un-import — and this call

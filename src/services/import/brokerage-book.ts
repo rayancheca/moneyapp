@@ -1,4 +1,4 @@
-import { and, asc, count, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
@@ -156,11 +156,17 @@ export function removeFileEvents(tx: AppDatabase, importFileId: string): string[
 
 /**
  * Delete the books among `accountIds` that hold nothing at all any more — no event, statement period, balance, row,
- * duplicate question, transfer question or series — with their derived cache and holding rows; their ids.
+ * duplicate question, transfer question or series — with their derived cache, holding rows and live values; their ids.
  *
  * An un-import restores the ledger it found: a book exists only to hold what a statement proved, and the import that
- * created it is the one being removed. ⛔ Never a book that still holds anything, and never an account that is not a
- * book (no `cash_account_id`).
+ * created it is the one being removed. So does a re-read that no longer proves the month, and a statement that failed
+ * after its book was made: a first read that withheld the section would never have made one. ⛔ Never a book that
+ * still holds anything, and never an account that is not a book (no `cash_account_id`).
+ *
+ * 🔴 A `live` anchor is not something the book holds. `refreshPrices` writes one on every investment account holding
+ * a position — the book included, the moment its first statement lands — and it prices what the book held, which
+ * the statements proved. Counted as a balance, it kept a book whose every statement had been un-imported, carrying
+ * its last live value into net worth (measured: $27.37 after un-importing the only month, 2026-09-16).
  */
 export function removeEmptyBooks(db: AppDatabase, accountIds: readonly string[]): string[] {
   if (accountIds.length === 0) return [];
@@ -174,7 +180,7 @@ export function removeEmptyBooks(db: AppDatabase, accountIds: readonly string[])
     [
       db.select({ n: count() }).from(holdingEvents).where(eq(holdingEvents.accountId, id)).get(),
       db.select({ n: count() }).from(statementPeriods).where(eq(statementPeriods.accountId, id)).get(),
-      db.select({ n: count() }).from(balanceAnchors).where(eq(balanceAnchors.accountId, id)).get(),
+      db.select({ n: count() }).from(balanceAnchors).where(and(eq(balanceAnchors.accountId, id), ne(balanceAnchors.source, "live"))).get(),
       db.select({ n: count() }).from(transactions).where(eq(transactions.accountId, id)).get(),
       db.select({ n: count() }).from(duplicateCandidates).where(eq(duplicateCandidates.accountId, id)).get(),
       db.select({ n: count() }).from(transferAmbiguities).where(eq(transferAmbiguities.accountId, id)).get(),
@@ -185,6 +191,7 @@ export function removeEmptyBooks(db: AppDatabase, accountIds: readonly string[])
   db.transaction((tx) => {
     tx.delete(holdings).where(inArray(holdings.accountId, empty)).run();
     tx.delete(dailyBalances).where(inArray(dailyBalances.accountId, empty)).run();
+    tx.delete(balanceAnchors).where(and(inArray(balanceAnchors.accountId, empty), eq(balanceAnchors.source, "live"))).run();
     tx.delete(accounts).where(inArray(accounts.id, empty)).run();
   });
   return empty;

@@ -18,6 +18,7 @@ import { statementDayValuation } from "@/lib/ledger-integrity";
 import { accountLiquidity, createAccount } from "@/services/accounts";
 import { upsertHolding } from "@/services/holdings";
 import { portfolioSeries } from "@/services/portfolio";
+import { refreshPrices, type PriceProvider } from "@/services/prices";
 import { writeStatementPositions } from "./brokerage-book";
 import { PROFILES } from "./profiles";
 import type { Line } from "./profiles/pdf-profile";
@@ -33,7 +34,19 @@ import { importStatementFiles, parseContextFor, resolveAccount, unimportFile, ty
  * extractions with only what the constructed trades change — no statement for this account has printed a position.
  */
 
-const { DOCUMENTS } = vi.hoisted(() => ({ DOCUMENTS: new Map<string, Line[]>() }));
+const { DOCUMENTS, WRITE_FAULT } = vi.hoisted(() => ({ DOCUMENTS: new Map<string, Line[]>(), WRITE_FAULT: { message: null as string | null } }));
+
+// a fault in the positions write, for the one test that needs a book statement's transaction to roll back
+vi.mock("./brokerage-book", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./brokerage-book")>();
+  return {
+    ...original,
+    writeStatementPositions: (...args: Parameters<typeof original.writeStatementPositions>) => {
+      if (WRITE_FAULT.message !== null) throw new Error(WRITE_FAULT.message);
+      original.writeStatementPositions(...args);
+    },
+  };
+});
 
 vi.mock("./profiles/pdf-profile", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./profiles/pdf-profile")>()),
@@ -616,6 +629,94 @@ describe("⚖️ Robinhood Agentic's positions are read into a brokerage book pa
     ]);
     expect(bundle.db.select().from(accounts).where(eq(accounts.cashAccountId, agenticId)).all()).toHaveLength(1);
     expect(stateOf(bundle.db, bookOf(bundle.db, agenticId)!.id).holdings.map((h) => h.quantityE8)).toEqual([15_000_000]);
+  });
+});
+
+/**
+ * What the /investments Refresh button and the runbook's step 3 do after an import, without the network: WMT quoted at
+ * $109.46 on the suite's today, no closes to backfill. `refreshPrices` then writes a `live` anchor on every investment
+ * account holding something — the book included.
+ */
+const QUOTES: PriceProvider = {
+  source: "yahoo",
+  getDailyCloses: async () => [],
+  getIntradayTicks: async () => [],
+  getQuotes: async (items) => items.map((item) => ({ ...item, price: 109.46, asOfDay: "2026-10-05" })),
+};
+const refresh = (db: AppDatabase) => refreshPrices(db, { now: new Date(2026, 9, 5, 12), providers: () => QUOTES, force: true });
+
+/** AGENT_BUYS as a later parser version might read it: WMT's value no longer adds up to the printed Total Securities, so the section is withheld. */
+const AGENT_BUYS_UNPROVEN = AGENT_BUYS.map((l) => (l.text.startsWith("WMT Cash 0.25") ? line("WMT Cash 0.25 $104.87000 $26.21 $0.24 94.11%") : l));
+
+const liveAnchors = (db: AppDatabase, accountId: string) =>
+  db.select({ on: balanceAnchors.anchoredOn, cents: balanceAnchors.balanceCents }).from(balanceAnchors).where(and(eq(balanceAnchors.accountId, accountId), eq(balanceAnchors.source, "live"))).all();
+
+/** Re-read `files` as the next parser version would. */
+async function reReadAtNextVersion(db: AppDatabase, files: ImportInput[]) {
+  const profile = PROFILES.find((p) => p.id === "robinhood-brokerage-statement-pdf")!;
+  const { version } = profile;
+  profile.version = version + 1;
+  try {
+    return await importStatementFiles(db, files);
+  } finally {
+    profile.version = version;
+  }
+}
+
+describe("⛔ the book leaves with the last statement that proved it — a price refresh does not keep it", () => {
+  test("un-importing the month after a price refresh restores the ledger it found — the book and its live value leave", async () => {
+    const agenticId = ownersRobinhood(bundle.db);
+    await importStatementFiles(bundle.db, [pdf(JUNE_FILE, [...JUNE_BROKERAGE, ...JUNE_SECOND])]);
+    await refresh(bundle.db);
+    const prior = wholeLedger(bundle.db);
+
+    await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
+    await refresh(bundle.db);
+    const book = bookOf(bundle.db, agenticId)!;
+    // 0.25 × $109.46 = $27.365 — the refresh priced the book like every investment account holding something
+    expect(liveAnchors(bundle.db, book.id)).toEqual([{ on: "2026-10-05", cents: 2737 }]);
+
+    unimportFile(bundle.db, bundle.db.select().from(importFiles).where(eq(importFiles.fileName, AGENT_BUYS_FILE)).get()!.id);
+
+    expect(bookOf(bundle.db, agenticId)).toBeUndefined();
+    expect(liveAnchors(bundle.db, book.id)).toEqual([]);
+    expect(wholeLedger(bundle.db)).toEqual(prior);
+  });
+
+  test("a re-read that no longer proves the month, after a price refresh, takes the book and its live value away — as a first read that withheld it would never have made one", async () => {
+    const agenticId = ownersRobinhood(bundle.db);
+    await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
+    await refresh(bundle.db);
+    const book = bookOf(bundle.db, agenticId)!;
+    expect(liveAnchors(bundle.db, book.id)).toEqual([{ on: "2026-10-05", cents: 2737 }]);
+    const accountsBefore = bundle.db.select().from(accounts).all().length;
+
+    const [reread] = await reReadAtNextVersion(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS_UNPROVEN, ...AUGUST_BROKERAGE])]);
+
+    expect([reread!.status, reread!.withheld.map((w) => w.reason)]).toEqual([
+      "parsed",
+      ["its positions add up to $26.21, but it prints $26.22 of securities — a position this reader cannot see is there"],
+    ]);
+    expect(bookOf(bundle.db, agenticId)).toBeUndefined();
+    expect(bundle.db.select().from(accounts).all()).toHaveLength(accountsBefore - 1);
+    expect(liveAnchors(bundle.db, book.id)).toEqual([]);
+    expect(bundle.db.select().from(dailyBalances).where(eq(dailyBalances.accountId, book.id)).all()).toEqual([]);
+  });
+
+  test("a statement that fails after its book was made leaves no empty book behind", async () => {
+    const agenticId = ownersRobinhood(bundle.db);
+    const prior = bundle.db.select().from(accounts).all().length;
+    // the book is resolved before the statement's transaction, and a positions write that throws rolls that transaction back
+    WRITE_FAULT.message = "the book's WMT through 2026-08-31 is 0e-8 after writing, the statement prints 25000000e-8";
+    try {
+      const [outcome] = await importStatementFiles(bundle.db, [pdf(AGENT_BUYS_FILE, [...AGENT_BUYS, ...AUGUST_BROKERAGE])]);
+      expect([outcome!.status, outcome!.error]).toEqual(["failed", WRITE_FAULT.message]);
+    } finally {
+      WRITE_FAULT.message = null;
+    }
+
+    expect(bookOf(bundle.db, agenticId)).toBeUndefined();
+    expect(bundle.db.select().from(accounts).all()).toHaveLength(prior);
   });
 });
 
