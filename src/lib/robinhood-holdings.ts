@@ -338,7 +338,7 @@ function splitDelta(row: ActivityRow, printedE8: bigint, heldE8: bigint): bigint
  *  - a sell releases basis in proportion to the shares leaving, and records that release as its event cost.
  *
  * ⚠️ `heldE8` must be what stands BEFORE the change. A sell with nothing held releases nothing rather than dividing
- * by zero; the callers refuse a position going negative before they get here.
+ * by zero; the callers refuse a position going negative before they get here (`syncBookHoldings` throws).
  */
 export function nextCostBasis(
   heldE8: bigint,

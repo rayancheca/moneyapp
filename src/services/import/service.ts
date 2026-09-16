@@ -34,10 +34,14 @@ import { detachAttachedRows, parsedFromFile, reattachDetachedRows } from "./atta
 import {
   bookEventsByCashAccount,
   equityAssetTypesOf,
+  laterBookStatements,
+  laterStatementsRefusal,
+  NegativePositionError,
   removeEmptyBooks,
   removeFileEvents,
   resolveBook,
   writeStatementPositions,
+  type LaterBookStatement,
 } from "./brokerage-book";
 import { sniffFile } from "./sniff";
 import { PROFILES } from "./profiles";
@@ -817,9 +821,10 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
   const touchedAccounts = new Set<string>();
   // the files this call wrote rows under — the only rows linking may claim
   const writtenFileIds = new Set<string>();
+  const rereads = rereadBatchOf(db, selected);
 
   for (const { file, selection } of oldestFirstWhereItMatters(selected)) {
-    const outcome = await importOneFile(db, file, selection, touchedAccounts, writtenFileIds);
+    const outcome = await importOneFile(db, file, selection, { touchedAccounts, writtenFileIds, rereads });
     outcomes.push(outcome);
   }
 
@@ -1030,13 +1035,100 @@ export function storedLines(accountId: string, account: { readonly type: string 
  */
 export const REIMPORTABLE_STATUSES: readonly ImportStatus[] = ["superseded", "failed"];
 
+/** The versions of these bytes a parser at `version` reads again: parsed by an older one (re-parse lifecycle). */
+function staleVersionsOf(db: AppDatabase, sha: string, version: number): (typeof importFiles.$inferSelect)[] {
+  return db
+    .select()
+    .from(importFiles)
+    .where(and(eq(importFiles.fileSha256, sha), inArray(importFiles.status, ["parsed", "parsed_with_claude"])))
+    .all()
+    .filter((f) => f.parserVersion < version);
+}
+
+/**
+ * What one call re-reads: the stale versions of each of its files, by the file's bytes, and the user-set attributes
+ * captured for a file whose stale versions an EARLIER file's turn retired (`retireForReread`).
+ */
+interface RereadBatch {
+  readonly staleBySha: ReadonlyMap<string, readonly string[]>;
+  readonly shaOfStale: ReadonlyMap<string, string>;
+  readonly retiredEarly: Map<string, CarryPool>;
+}
+
+function rereadBatchOf(db: AppDatabase, selected: readonly { file: ReturnType<typeof sniffFile>; selection: ProfileSelection }[]): RereadBatch {
+  const staleBySha = new Map<string, readonly string[]>();
+  for (const { file, selection } of selected) {
+    if (!selection.profile) continue;
+    const sha = fileSha256(file.buffer);
+    const stale = staleVersionsOf(db, sha, selection.profile.version).map((f) => f.id);
+    if (stale.length > 0) staleBySha.set(sha, stale);
+  }
+  const shaOfStale = new Map([...staleBySha].flatMap(([sha, ids]) => ids.map((id) => [id, sha] as const)));
+  return { staleBySha, shaOfStale, retiredEarly: new Map() };
+}
+
+/** Every later book statement of these files but themselves, newest first — each names ALL the later ones on its books. */
+function laterStatementsOf(db: AppDatabase, fileIds: readonly string[]): LaterBookStatement[] {
+  const found = fileIds.flatMap((id) => laterBookStatements(db, id)).filter((l) => !fileIds.includes(l.importFileId));
+  return [...new Map(found.map((l) => [l.importFileId, l])).values()].sort((a, b) => b.periodEnd.localeCompare(a.periodEnd));
+}
+
+/**
+ * Retire a file's stale versions for its re-read (re-parse lifecycle) — its user-set attributes captured first — and
+ * report the carry pool its fresh rows inherit from, or why it was refused.
+ *
+ * ⛔ A brokerage book's months come off newest first (`laterBookStatements`). A later statement on the same book that
+ * this call also re-reads is retired FIRST, in the same transaction, and keeps its captured attributes for its own
+ * turn: re-read oldest first, each month is then proven by what the months before it gave back, and a month that no
+ * longer proves takes the later ones with it rather than leaving their sales standing alone. A later statement this
+ * call does NOT re-read refuses the re-read — nothing is retired — because a re-read that did not give the shares
+ * back would leave its sale short.
+ *
+ * 🔴 Before this the stale version was retired alone, at its own turn: August's buy left while September's sale
+ * stood, and an August that no longer proved left the book at WMT −0.1 (measured, 2026-09-16: −$10.95 on Oct 5).
+ */
+function retireForReread(
+  db: AppDatabase,
+  sha: string,
+  staleIds: readonly string[],
+  version: number,
+  { rereads, touchedAccounts }: BatchState,
+): { pool: CarryPool } | { refused: string } {
+  if (staleIds.length === 0) return { pool: rereads.retiredEarly.get(sha) ?? captureCarryForward(db, []) };
+  const later = laterStatementsOf(db, staleIds);
+  const unread = later.filter((l) => !rereads.shaOfStale.has(l.importFileId));
+  if (unread.length > 0) return { refused: laterStatementsRefusal(unread, version) };
+
+  const laterShas = [...new Set(later.map((l) => rereads.shaOfStale.get(l.importFileId) as string))];
+  const pools = new Map(laterShas.map((s) => [s, captureCarryForward(db, rereads.staleBySha.get(s) ?? [])]));
+  const pool = captureCarryForward(db, staleIds);
+  const newestFirst = [...new Set([...laterShas.flatMap((s) => rereads.staleBySha.get(s) ?? []), ...staleIds])];
+  try {
+    db.transaction((tx) => {
+      // a book whose shares a retired file held is rebuilt with the batch, whether or not the re-read gives them back
+      for (const id of newestFirst) for (const book of supersedeFileContribution(tx, id)) touchedAccounts.add(book);
+    });
+  } catch (error: unknown) {
+    if (error instanceof NegativePositionError) return { refused: error.message };
+    throw error;
+  }
+  for (const [s, p] of pools) rereads.retiredEarly.set(s, p);
+  return { pool };
+}
+
+interface BatchState {
+  readonly touchedAccounts: Set<string>;
+  readonly writtenFileIds: Set<string>;
+  readonly rereads: RereadBatch;
+}
+
 async function importOneFile(
   db: AppDatabase,
   file: ReturnType<typeof sniffFile>,
   { profile, unreadable }: ProfileSelection,
-  touchedAccounts: Set<string>,
-  writtenFileIds: Set<string>,
+  batch: BatchState,
 ): Promise<FileOutcome> {
+  const { touchedAccounts, writtenFileIds } = batch;
   const sha = fileSha256(file.buffer);
   const outcome: FileOutcome = {
     fileName: file.name,
@@ -1067,17 +1159,11 @@ async function importOneFile(
   // them from every lookup path, and the fresh rows inherit them by content
   // match below. Without this a parser improvement would silently destroy every
   // hand-set category, note, transfer link, exclusion and split on the file.
-  const stale = profile
-    ? db
-        .select()
-        .from(importFiles)
-        .where(and(eq(importFiles.fileSha256, sha), inArray(importFiles.status, ["parsed", "parsed_with_claude"])))
-        .all()
-        .filter((f) => f.parserVersion < profile.version)
-    : [];
-  const carryPool = captureCarryForward(db, stale.map((f) => f.id));
-  // a book whose shares the retired file held is rebuilt with the batch, whether or not the re-read gives them back
-  for (const old of stale) for (const book of supersedeFileContribution(db, old.id)) touchedAccounts.add(book);
+  const stale = profile ? staleVersionsOf(db, sha, profile.version) : [];
+  const retirement = retireForReread(db, sha, stale.map((f) => f.id), profile?.version ?? 0, batch);
+  // refused before anything was written: the file stays read at the version it was
+  if ("refused" in retirement) return { ...outcome, status: "failed", error: retirement.refused };
+  const carryPool = retirement.pool;
 
   const institution = guessInstitution(db, file);
   // basename neutralizes traversal; truncation + control-strip neutralizes
@@ -1793,6 +1879,9 @@ function accountsWrittenBy(db: AppDatabase, importFileId: string): string[] {
 export function unimportFile(db: AppDatabase, importFileId: string): void {
   const file = db.select().from(importFiles).where(eq(importFiles.id, importFileId)).get();
   if (!file) return;
+  // ⛔ a brokerage book's months come off newest first — refused before anything is snapshotted or written
+  const later = laterBookStatements(db, importFileId);
+  if (later.length > 0) throw new Error(laterStatementsRefusal(later));
   const affected = accountsWrittenBy(db, importFileId);
 
   const doomedRows = db

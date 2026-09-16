@@ -1,14 +1,15 @@
-import { and, asc, count, eq, inArray, isNotNull, ne } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, isNotNull, ne } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { balanceAnchors, dailyBalances } from "@/db/schema/balances";
 import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings } from "@/db/schema/holdings";
-import { statementPeriods } from "@/db/schema/imports";
+import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { transferAmbiguities } from "@/db/schema/transfer-ambiguities";
+import { dayWindowLabel } from "@/lib/period";
 import { averageCostCents, nextCostBasis } from "@/lib/robinhood-holdings";
 import type { BookEvent, EquityAssetType, StatementPositions } from "./types";
 
@@ -112,17 +113,31 @@ function eventsOf(db: AppDatabase, accountId: string) {
     .all();
 }
 
+/** A book's events walk a position below zero: a later statement sells shares that are no longer there. */
+export class NegativePositionError extends Error {}
+
 /**
  * A book's `holdings` rows, restated from its events: the quantity their sum, the average cost walked by the one rule
  * the Robinhood rebuild uses (`nextCostBasis`), inactive at zero, and no row for a symbol with no event left.
+ *
+ * ⛔ Never below zero, on any day. No statement prints a short position, so a walk that goes negative is a later
+ * statement's sale standing without the shares an earlier statement bought — what taking a month off from under a
+ * later one leaves. It throws, and the transaction that asked rolls back. The callers refuse first
+ * (`laterBookStatements`); this is the rule that holds if they did not.
  */
 export function syncBookHoldings(tx: AppDatabase, accountId: string): void {
   const walked = new Map<string, { assetType: (typeof holdingEvents.$inferSelect)["assetType"]; quantityE8: bigint; costCents: number }>();
   for (const e of eventsOf(tx, accountId)) {
     const current = walked.get(e.symbol) ?? { assetType: e.assetType, quantityE8: 0n, costCents: 0 };
     const delta = BigInt(e.quantityDeltaE8);
+    const quantityE8 = current.quantityE8 + delta;
+    if (quantityE8 < 0n) {
+      throw new NegativePositionError(
+        `the book's ${e.symbol} would stand at ${quantityE8}e-8 on ${e.occurredOn} — a sale of shares it does not hold; its later statements come off first`,
+      );
+    }
     const step = nextCostBasis(current.quantityE8, current.costCents, delta, delta > 0n ? e.costCents : null);
-    walked.set(e.symbol, { assetType: e.assetType, quantityE8: current.quantityE8 + delta, costCents: step.costCents });
+    walked.set(e.symbol, { assetType: e.assetType, quantityE8, costCents: step.costCents });
   }
   const existing = tx.select().from(holdings).where(eq(holdings.accountId, accountId)).all();
   for (const row of existing) {
@@ -195,6 +210,77 @@ export function removeEmptyBooks(db: AppDatabase, accountIds: readonly string[])
     tx.delete(accounts).where(inArray(accounts.id, empty)).run();
   });
   return empty;
+}
+
+/** Another file's statement on a book, reaching past a given file's — one that may stand on that file's shares. */
+export interface LaterBookStatement {
+  readonly importFileId: string;
+  readonly fileName: string;
+  readonly parserVersion: number;
+  readonly bookName: string;
+  readonly periodStart: string;
+  readonly periodEnd: string;
+}
+
+/**
+ * The statements on the books an import file wrote to that come AFTER it — a period on the book ending past the
+ * file's reach there — newest first.
+ *
+ * ⛔ A book's months come off newest first. Each month's positions were proven by the shares the book held before it
+ * (`provePositions`), so a later month stands on an earlier month's buy: take the buy away and a later sale is left
+ * alone, a short position no statement printed, valued into net worth (measured on the branch: WMT −0.1, −$11.09 a day
+ * after un-importing August under September), and a later month that only holds prints shares the book no longer
+ * has. An un-import or a re-read of a month with a later statement refuses and names these.
+ *
+ * ⚠️ Periods find both ends. Every book statement the import writes has a period row on its book — an account's first
+ * statement, whose opening prints N/A, one with no balances (its declared range) — except a second copy of a month,
+ * which adopts the first copy's row; and a second copy whose trades the book already holds is withheld
+ * (`provePositions`). Only two copies of one month that disagree about its trades could leave shares under a file
+ * with no period of its own, and `syncBookHoldings` still refuses the short position that removing them would leave.
+ */
+export function laterBookStatements(db: AppDatabase, importFileId: string): LaterBookStatement[] {
+  const reach = db
+    .select({ bookId: statementPeriods.accountId, day: statementPeriods.periodEnd })
+    .from(statementPeriods)
+    .innerJoin(accounts, eq(accounts.id, statementPeriods.accountId))
+    .where(and(eq(statementPeriods.importFileId, importFileId), isNotNull(accounts.cashAccountId)))
+    .all();
+
+  const later = reach.flatMap(({ bookId, day }) =>
+    db
+      .select({
+        importFileId: importFiles.id,
+        fileName: importFiles.fileName,
+        parserVersion: importFiles.parserVersion,
+        bookName: accounts.name,
+        periodStart: statementPeriods.periodStart,
+        periodEnd: statementPeriods.periodEnd,
+      })
+      .from(statementPeriods)
+      .innerJoin(importFiles, eq(importFiles.id, statementPeriods.importFileId))
+      .innerJoin(accounts, eq(accounts.id, statementPeriods.accountId))
+      .where(and(eq(statementPeriods.accountId, bookId), gt(statementPeriods.periodEnd, day), ne(statementPeriods.importFileId, importFileId)))
+      .all(),
+  );
+  // one period per file and account (`ux_statement_periods_file_account`); a file on two books is named once
+  const unique = [...new Map(later.map((l) => [l.importFileId, l])).values()];
+  return unique.sort((a, b) => b.periodEnd.localeCompare(a.periodEnd) || a.fileName.localeCompare(b.fileName));
+}
+
+/**
+ * Why a book's month cannot come off yet, naming the later statements newest first — an un-import says to take them
+ * off first; a re-read at `rereadAt` says to upload them with it when every one of them is read by an older version,
+ * so the same upload reads them all again, and to un-import them first otherwise.
+ */
+export function laterStatementsRefusal(later: readonly LaterBookStatement[], rereadAt?: number): string {
+  const books = [...new Set(later.map((l) => l.bookName))].join(" and ");
+  const statements = later.length === 1 ? "a later statement" : "later statements";
+  const named = later.map((l) => `${l.fileName} (${dayWindowLabel(l.periodStart, l.periodEnd)})`);
+  const holds = `${books} still holds this statement's shares under ${statements}`;
+  if (rereadAt === undefined) return `${holds} — un-import ${named.join(", then ")} before it`;
+  const why = `${holds}, and reading it again would take them away first`;
+  if (later.every((l) => l.parserVersion < rereadAt)) return `${why} — upload ${named.join(" and ")} with it to read them together`;
+  return `${why} — un-import ${named.join(", then ")} before reading it again`;
 }
 
 /** Every book's events, keyed by the cash account it is paired with — what the parser proves a section's positions by. */
