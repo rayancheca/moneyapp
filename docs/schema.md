@@ -140,7 +140,9 @@ names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
   one's rows, and it records what it prints (`statement_copies`). Un-importing the download that
   holds the statement hands its period, the rows the other download prints (every attribute on
   them kept) and the rows filed by hand on the period's days to the most recently imported
-  other download that is still parsed; only un-importing the last download removes them. A
+  other download that is still parsed, which is no longer a copy on that account (on another
+  account it may still be a copy of a different file's period); only un-importing the last
+  download removes them. A
   re-parse hands over the period alone, and only lends it: the new read writes the rows again,
   takes the period back where it writes it again (the other download stays recorded as a copy),
   and a period it no longer writes (a section it now withholds, an account it no longer reads)
@@ -186,8 +188,8 @@ names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
   (the row is the live record of the money and holds the owner's work since; a re-parse carry
   fills an absorbing row the same way). A row filed under the file because the file prints its
   money (another file wrote it) is kept in the words of the line the file prints for it. A
-  transfer leg's hand category is the pair's and is not kept here; a category or series deleted
-  meanwhile is not given back (owner, 2026-09-16).
+  transfer leg's hand category is the pair's and is not kept here; a category, merchant or series
+  deleted meanwhile is not given back (owner, 2026-09-16).
   A row **filed by hand** (`attached`) is never a takeover victim: like any row entered by hand,
   it absorbs the more trusted file's line.
   A row **attached** to the file (`file_link_source = 'attached'`: recorded without the document,

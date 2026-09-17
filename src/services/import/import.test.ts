@@ -2046,6 +2046,17 @@ describe("a parser-version re-read that no longer writes an account", () => {
         period: { start: "2026-03-01", end: "2026-03-31", beginCents: 10000, endCents: 6000 },
       },
     ],
+    // imported only where a test says so: March of one account, as a statement of that account alone
+    "2026-03 kept only": [
+      {
+        accountHint: checking(KEPT),
+        txns: [{ postedOn: "2026-03-10", amountCents: 1000, rawDescription: "PAYROLL DEPOSIT MAR" }],
+        period: { start: "2026-03-01", end: "2026-03-31", beginCents: 1000, endCents: 2000 },
+      },
+    ],
+    "2026-03 anchor only": [
+      { accountHint: checking(ANCHOR_ONLY), txns: [], period: { start: "2026-03-01", end: "2026-03-31", beginCents: 50000, endCents: 50000 } },
+    ],
     // imported only where a test says so: it shares January's closing day and March's opening day
     "2026-02": [
       { accountHint: checking(KEPT), txns: [], period: { start: "2026-02-01", end: "2026-02-28", beginCents: 1000, endCents: 1000 } },
@@ -3019,6 +3030,47 @@ describe("a parser-version re-read that no longer writes an account", () => {
     expect(contributionOf(copy).periods).toHaveLength(3);
     expect(contributionOf(copy).rows).toHaveLength(2);
     expect(contributionOf(march)).toMatchObject({ rows: [], periods: [] });
+  });
+
+  /**
+   * A download can be a copy of one file's month on one account and of another file's month on another. Un-importing
+   * the first hands it the month on that account only: on the other it is still the second file's copy. 🔴 Nothing
+   * failed if the hand-over forgot the download's copy records on every account: un-importing the second file then
+   * deleted that account's March statement period, which the download still prints (a mutation check of
+   * `handOverToCopies`, 2026-09-17).
+   */
+  test("a download printing two files' months takes one of them and stays a copy of the other", async () => {
+    const KEPT_MARCH = statementFor("2026-03 kept only");
+    const ANCHOR_MARCH = statementFor("2026-03 anchor only");
+    await importStatementFiles(bundle.db, [JANUARY, KEPT_MARCH, ANCHOR_MARCH]);
+    await importStatementFiles(bundle.db, [MARCH]);
+    const march = liveFile(MARCH).id;
+    const kept = accountIdOf(KEPT);
+    const anchorOnly = accountIdOf(ANCHOR_ONLY);
+    const copies = () =>
+      bundle.db
+        .select({ fileId: statementCopies.importFileId, accountId: statementCopies.accountId })
+        .from(statementCopies)
+        .orderBy(statementCopies.accountId)
+        .all();
+    const copyOn = (...accountIds: string[]) => [...accountIds].sort().map((accountId) => ({ fileId: march, accountId }));
+    // the premise: March owns only the month no other file prints, and is a copy of each of the other two
+    expect(contributionOf(march).periods.map((p) => p.accountId)).toEqual([accountIdOf(WITH_ROWS)]);
+    expect(copies()).toEqual(copyOn(kept, anchorOnly));
+
+    unimportFile(bundle.db, liveFile(KEPT_MARCH).id);
+
+    expect(periodOf(march, kept)).toMatchObject({ periodStart: "2026-03-01", periodEnd: "2026-03-31" });
+    expect(copies()).toEqual(copyOn(anchorOnly));
+
+    unimportFile(bundle.db, liveFile(ANCHOR_MARCH).id);
+
+    expect(periodOf(march, anchorOnly)).toMatchObject({ periodStart: "2026-03-01", periodEnd: "2026-03-31" });
+    expect(statementAnchorOn(anchorOnly, "2026-03-31")?.importFileId).toBe(march);
+    expect(dayRow(anchorOnly, "2026-03-31")).toMatchObject({ basis: "anchored", balanceCents: 50000 });
+    expect(copies()).toEqual([]);
+    expectRebuilt(kept);
+    expectRebuilt(anchorOnly);
   });
 
   test("the second download takes only the rows it prints: a line only the first download prints goes with it", async () => {

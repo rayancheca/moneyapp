@@ -456,12 +456,20 @@ describe("a round trip gives back what the owner set on the rows it removed", ()
     expect(records()).toEqual([]);
   });
 
-  test("what was deleted meanwhile is not given back: a category, a series, a split's category", async () => {
+  /*
+   * 🔴 Nothing failed if a record gave back a merchant deleted while it waited (scripts/unlink-unknown-merchant.ts deletes
+   * merchants): the row's merchant is a foreign key, so the statement's next import failed ("FOREIGN KEY constraint
+   * failed") and wrote none of its 10 lines (a mutation check of `rememberedRows`, 2026-09-17).
+   */
+  test("what was deleted meanwhile is not given back: a category, a merchant, a series, a split's category", async () => {
     const { series, snacks, bulk } = await statementWithWork();
+    const stall = bundle.db.insert(merchants).values({ canonicalName: "ZQX Bridge Stall" }).returning({ id: merchants.id }).get().id;
+    set(LINES.groceries.rawDescription, { merchantId: stall });
     unimportFile(bundle.db, fileId(STATEMENT));
     bundle.db.delete(recurringSeries).where(eq(recurringSeries.id, series)).run();
     bundle.db.delete(categories).where(eq(categories.id, snacks)).run();
     bundle.db.delete(categories).where(eq(categories.id, bulk)).run();
+    bundle.db.delete(merchants).where(eq(merchants.id, stall)).run();
 
     const [outcome] = await importStatementFiles(bundle.db, [STATEMENT]);
 
@@ -469,7 +477,13 @@ describe("a round trip gives back what the owner set on the rows it removed", ()
     expect(byWords(LINES.linked.rawDescription)).toMatchObject({ recurringSeriesId: null });
     expect(byWords(LINES.noSource.rawDescription)).toMatchObject({ categoryId: null });
     expect(seen(byWords(LINES.split.rawDescription)).splits).toEqual([]);
-    // what still exists comes back all the same
+    // what still exists comes back all the same, without the merchant that is gone
+    expect(byWords(LINES.groceries.rawDescription)).toMatchObject({
+      categoryId: categoryNamed("Groceries"),
+      categorizationSource: "user",
+      merchantId: null,
+      notes: "for the party",
+    });
     expect(byWords(LINES.split.rawDescription)).toMatchObject({ categoryId: categoryNamed("Groceries"), categorizationSource: "user" });
     expect(byWords(LINES.detached.rawDescription)).toMatchObject({ recurringSeriesId: null, seriesLinkSource: "user", notes: "not the membership" });
   });
