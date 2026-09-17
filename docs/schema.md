@@ -181,9 +181,12 @@ names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
   a "not this one", an exclusion, splits — is kept in `unimported_row_attributes`, and an import
   that writes the same line again (same account, amount and posted — else transacted — day, and
   the same `dedupe_hash` or words that describe the same charge) takes it back, as a re-parse
-  takes its predecessor's; the record is then spent. A takeover victim is not given a record's
-  attributes (it is the live record of the money), and a category or series deleted meanwhile is
-  not given back (owner, 2026-09-16).
+  takes its predecessor's; the record is then spent. A line that takes over another file's row
+  spends the record too, but only fills what that row leaves empty (the row is the live record of
+  the money and holds the owner's work since); a transfer leg's hand category is the pair's and
+  is not kept here; a category or series deleted meanwhile is not given back (owner, 2026-09-16).
+  A row **filed by hand** (`attached`) is never a takeover victim: like any row entered by hand,
+  it absorbs the more trusted file's line.
   A row **attached** to the file (`file_link_source = 'attached'`: recorded without the document,
   then filed under the statement that prints it — the importer never writes the marker) is not
   the file's to delete. It is **detached**: `import_file_id` NULL, the marker kept, every other
@@ -222,6 +225,14 @@ brokerage book removed with its last statement takes its records with it.
 Every line `import_file_id` prints on an account, recorded by the import (and, for the files
 imported before the table existed, by `scripts/record-printed-lines.ts`); read by un-import
 (`services/import/printed-lines`). Forgotten when the file is un-imported or retired by a re-read.
+A line printed with no transaction day also matches a row TRANSACTED on its day (a statement line
+printed before its period opens is stored on the period's first day).
+The three records (`account_numbers`, `statement_copies`, `printed_lines`) are not filled by a
+migration: a Settings restore of a snapshot older than them records them again from the
+originals (`services/import/import-records`), and `pnpm ledger-check` fails while a parsed file
+read at its profile's current version has no `printed_lines` record, naming the three backfills.
+Each backfill opens — and so migrates — the ledger itself; run them in that order (account
+numbers, copies, lines), then `pnpm ledger-check`.
 | field | type | notes |
 |---|---|---|
 | id / import_file_id / account_id | | UNIQUE(import_file_id, account_id) |
