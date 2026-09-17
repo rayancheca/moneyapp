@@ -10,6 +10,7 @@ import { balanceAnchors } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
+import { unimportedTransferLegs } from "@/db/schema/unimported-transfer-legs";
 import { normalizeDescription } from "@/lib/normalize";
 import { balancesRemovedByFile } from "./printed-anchors";
 import { heldForPrinters, printerHandOvers, settleHeldRows, type PrinterHandOver } from "./printed-lines";
@@ -40,6 +41,9 @@ let bundle: DbBundle;
 
 const PREFIX = "kept-by-printers-";
 const CHECKING: AccountHint = { institution: "Chase", type: "checking", last4: "4501" };
+/** the account the other leg of his hand-linked transfer sits in */
+const SAVINGS: AccountHint = { institution: "Chase", type: "savings", last4: "9001" };
+const SENT = { postedOn: "2026-03-05", amountCents: 1000, rawDescription: "TRANSFER TO CHECKING" };
 const COFFEE = { postedOn: "2026-03-05", amountCents: -1000, rawDescription: "COFFEE ROASTERS 12" };
 const GROCER = { postedOn: "2026-03-12", amountCents: -2500, rawDescription: "CORNER GROCER" };
 const LATE = { postedOn: "2026-04-02", amountCents: -700, rawDescription: "LATE NIGHT TACOS" };
@@ -60,6 +64,8 @@ const SECTIONS: Record<string, ParsedStatement[]> = {
   "part movie": [{ accountHint: CHECKING, txns: [MOVIE] }],
   // …and one that prints the coffee in the statement's words
   "export miami": [{ accountHint: CHECKING, txns: [{ ...COFFEE, rawDescription: "COFFEE ROASTERS #12 MIAMI FL" }] }],
+  // the savings side of the transfer he linked by hand
+  partner: [{ accountHint: SAVINGS, txns: [SENT] }],
   // a statement over both months: two of its lines are one download's, the third the other's
   "statement q1": [
     {
@@ -111,6 +117,7 @@ const PART_COFFEE = file("part-coffee", "part coffee");
 const PART_CD = file("part-cd", "part cd");
 const PART_MOVIE = file("part-movie", "part movie");
 const MIAMI = file("export-miami", "export miami");
+const PARTNER = file("partner", "partner");
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-kept-by-printers-"));
@@ -692,5 +699,41 @@ describe("a line two files print takes one row back, not one each", () => {
     expect(back.flatMap((p) => p.rowIds)).toHaveLength(3);
     expect(live()).toHaveLength(3);
     expect(live().reduce((n, r) => n + r.amountCents, 0)).toBe(COFFEE.amountCents + GROCER.amountCents + LATE.amountCents);
+  });
+});
+
+/**
+ * A transfer an un-import took apart waits by the row that stayed (`unimported-transfers`). A re-read of that row's
+ * file retires it and the record is kept by its content (`keepStayingLegsByContent`); when a printer takes the row
+ * back, the record must name it again (`waitByRowsAgain`) — otherwise it waits for an import that writes its line
+ * while a live row already records it, and importing the partner's file again leaves his pair apart.
+ */
+describe("a held row that is a transfer leg waits by that row again", () => {
+  test("the kept leg names the row the printer took back", async () => {
+    await importStatementFiles(bundle.db, [EXPORT]);
+    await importStatementFiles(bundle.db, [EXPORT_AGAIN]);
+    await importStatementFiles(bundle.db, [PARTNER]);
+    const coffee = live().find((r) => r.amountCents === COFFEE.amountCents)!;
+    const other = bundle.db.select().from(transactions).where(eq(transactions.importFileId, fileId(PARTNER))).get()!;
+    // his pair, linked by hand — the one detection could not prove
+    for (const id of [coffee.id, other.id]) {
+      bundle.db.update(transactions).set({ transferGroupId: "g-by-hand" }).where(eq(transactions.id, id)).run();
+    }
+    const waiting = () => bundle.db.select().from(unimportedTransferLegs).all();
+
+    // taken apart: the leg that stays waits by its row
+    unimportFile(bundle.db, fileId(PARTNER));
+    expect(waiting().map((l) => l.transactionId).filter((id) => id !== null)).toEqual([coffee.id]);
+
+    profile.version = 2;
+    atVersion2 = { export: [] };
+    await importStatementFiles(bundle.db, [EXPORT]);
+
+    // the row came back under the re-download — the same row — and the record names it again
+    expect(live().find((r) => r.amountCents === COFFEE.amountCents)).toMatchObject({
+      id: coffee.id,
+      importFileId: fileId(EXPORT_AGAIN),
+    });
+    expect(waiting().map((l) => l.transactionId).filter((id) => id !== null)).toEqual([coffee.id]);
   });
 });
