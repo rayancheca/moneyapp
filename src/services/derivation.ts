@@ -1,13 +1,13 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts, type AccountType } from "@/db/schema/accounts";
-import { balanceAnchors, dailyBalances, type AnchorSource, type BalanceBasis } from "@/db/schema/balances";
+import { KEPT_OPENING_SOURCE, balanceAnchors, dailyBalances, type AnchorSource, type BalanceBasis } from "@/db/schema/balances";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { splitMissing, type AccountOpening } from "@/lib/coverage-label";
 import { assertWithinFinancialWindow } from "@/lib/date-window";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
-import { handTypedDays, pickWinners } from "./anchor-winners";
+import { handTypedDays, keptOpeningOf, pickWinners } from "./anchor-winners";
 import { basisIsChecked, chainFooting } from "./coverage";
 import { cutToObserved, observedThrough } from "./observation-frontier";
 import { rebuildInvestmentHistory } from "./crypto-history";
@@ -24,6 +24,10 @@ import { regradeStatementPeriods } from "./statement-periods";
  *   closure is checked between consecutive ones.
  * - moment (ofx_ledger, live): point-in-time observations — never chain
  *   endpoints, exempt from exact closure (schema.md anchor precedence).
+ * - kept opening (unimported_statement): the opening a statement he un-imported
+ *   printed — neither an endpoint nor a moment. The replay starts from it only
+ *   when the account records no other balance, and every day it carries is
+ *   `derived_unverified` (`keptOpeningOf`, owner decision 20).
  */
 
 // precedence among same-day anchors lives in `./anchor-winners` (statement →
@@ -83,15 +87,20 @@ export { pickWinners };
  * separate breaks around a `live` reading the derivation never treats as an
  * endpoint at all, and the real picture was one break of a different size.
  */
-export function selectEndpoints(winners: readonly Anchor[]): {
-  endpoints: Anchor[];
-  moments: Anchor[];
+export function selectEndpoints<T extends Anchor>(winners: readonly T[]): {
+  endpoints: T[];
+  moments: T[];
 } {
-  const chain = winners.filter((w) => CHAIN_GRADE.has(w.source));
-  const moments = winners.filter((w) => !CHAIN_GRADE.has(w.source));
+  // ⛔ a kept opening is no evidence: never an endpoint, never a moment, never a witness `ledger-check` counts
+  const recorded = winners.filter((w) => w.source !== KEPT_OPENING_SOURCE);
+  const chain = recorded.filter((w) => CHAIN_GRADE.has(w.source));
+  const moments = recorded.filter((w) => !CHAIN_GRADE.has(w.source));
   // moment anchors only carry the curve when nothing chain-grade exists
   return { endpoints: chain.length > 0 ? chain : moments, moments };
 }
+
+/** The opening kept from a statement he un-imported that the replay starts from — `./anchor-winners`, re-exported. */
+export { keptOpeningOf };
 
 /** The `live` reading on `day` — the one moment that wins a day's display, and only on the rebuild's today. */
 function liveMomentOn(moments: readonly Anchor[], day: string): Anchor | undefined {
@@ -144,6 +153,9 @@ export function deriveDailyRows(
   const { isInvestment, today } = options;
   if (winners.length === 0) return [];
 
+  const kept = keptOpeningOf(winners);
+  if (kept) return isInvestment ? [] : deriveFromKeptOpening(kept, txnSumByDay, today);
+
   const { endpoints, moments } = selectEndpoints(winners);
 
   const rows = new Map<string, DayRow>();
@@ -176,6 +188,29 @@ export function deriveDailyRows(
   const liveToday = liveMomentOn(moments, today);
   if (liveToday) put(today, liveToday.balanceCents, "anchored");
 
+  return [...rows.values()].sort((a, b) => compareDates(a.day, b.day));
+}
+
+/**
+ * An account whose only balance is an opening kept from a statement he un-imported: the rows replay from it, forward
+ * to today and back to the day before the earliest row, and EVERY day — the opening's own included — is
+ * `derived_unverified`. Nothing he has now prints that balance, so no day is `anchored`, `carried` or `derived`, the
+ * three bases every surface reads as checked (`basisIsChecked`).
+ *
+ * ⚠️ An investment account never gets one (`services/import/kept-openings`): rows do not move a recorded value.
+ */
+function deriveFromKeptOpening(kept: Anchor, txnSumByDay: ReadonlyMap<string, number>, today: string): DayRow[] {
+  const firstTxnDay = [...txnSumByDay.keys()].sort(compareDates)[0];
+  assertLoopBounds(kept, kept, firstTxnDay, today);
+  const rows = new Map<string, DayRow>();
+  const put = (day: string, balanceCents: number) => rows.set(day, { day, balanceCents, basis: "derived_unverified" });
+  put(kept.anchoredOn, kept.balanceCents);
+  deriveBackward(kept, txnSumByDay, firstTxnDay, put);
+  let balance = kept.balanceCents;
+  for (let d = addDays(kept.anchoredOn, 1); compareDates(d, today) <= 0; d = addDays(d, 1)) {
+    balance += txnSumByDay.get(d) ?? 0;
+    put(d, balance);
+  }
   return [...rows.values()].sort((a, b) => compareDates(a.day, b.day));
 }
 

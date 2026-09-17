@@ -327,8 +327,9 @@ reconciliation is the backstop.
 | id / account_id | | |
 | anchored_on | date | |
 | balance_cents | INTEGER | net-worth-signed |
-| source | enum | `statement` \| `ofx_ledger` \| `manual` \| `live` |
+| source | enum | `statement` \| `ofx_ledger` \| `manual` \| `live` \| `unimported_statement` |
 | statement_period_id | FK nullable | |
+| import_file_id | FK nullable | the file the anchor dies with on un-import |
 
 UNIQUE(account_id, anchored_on, source).
 **Precedence on the same date: `statement > ofx_ledger > manual > live`.** Only the winning
@@ -337,6 +338,25 @@ conflict above a small cent-threshold surfaces in the review queue (e.g. your Ph
 hand-entered balance vs the statement that later covers that date). `ofx_ledger` and `live`
 anchors are **moments, not end-of-day values** — they are excluded from exact chain-closure
 checks (tolerance = that day's activity) and `live` is only ever written for *today*.
+
+**`unimported_statement` — a kept opening (owner decision 20, 2026-09-17).** Un-importing a
+statement whose rows stay under another still-imported file (`printed_lines`), and which leaves
+the account with no other anchor, keeps the OPENING balance that statement printed (its own
+period's beginning balance, on `period_start − 1`) as one anchor of this source, owned
+(`import_file_id`) by the file that keeps the most of its rows, with no `statement_period_id`.
+Never a closing, never a balance no statement printed, never on an investment account, and
+never for a file with no printed period. It ranks below `live`, and it is neither an endpoint
+nor a moment: the replay starts from it only when the account has no other anchor, and every
+day it carries — its own included — is `derived_unverified`, so no surface reads it as checked
+and `ledger-check` counts it as no witness. It goes when an import records its day again
+(re-importing the statement), when the file that owns it is un-imported, and when a re-read of
+that file no longer writes a row on the account (a re-read that still does moves it to the
+successor). Wells Fargo Everyday Checking: un-importing `2026-08-25-everyday-checking.pdf`
+keeps its $0.00 opening for 2026-07-26 under `rocket-money-export-2026-08-25.csv`, and net
+worth stays 11,312,501 cents (a backfilled copy of the real ledger); `ledger-check` then fails
+on exactly the two statement anchors, one window and one period that left (the kept opening is
+not counted) — a removal he asked for, so the case `--lower-marks=chain-endpoints,chain-windows,statement-periods`
+exists for, and only once he has actually un-imported it.
 
 ### daily_balances (derived cache — rebuildable at any time)
 | field | type | notes |

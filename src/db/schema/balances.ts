@@ -3,8 +3,18 @@ import { id, timestamps } from "./common";
 import { accounts } from "./accounts";
 import { importFiles, statementPeriods } from "./imports";
 
-export const ANCHOR_SOURCES = ["statement", "ofx_ledger", "manual", "live"] as const;
+export const ANCHOR_SOURCES = ["statement", "ofx_ledger", "manual", "live", "unimported_statement"] as const;
 export type AnchorSource = (typeof ANCHOR_SOURCES)[number];
+
+/**
+ * ⚖️ `unimported_statement` — the OPENING balance a statement printed, kept when the owner un-imported that statement
+ * while another still-imported file keeps its rows and nothing else records the account's balance (owner decision 20,
+ * 2026-09-17). Owned by the file that keeps the rows (`import_file_id`), so un-importing that file takes it too; a
+ * document that records the same day again replaces it. It is never evidence: the replay stands on it only when the
+ * account has no other recorded balance, and every day it carries is `derived_unverified`
+ * (`services/import/kept-openings`, `deriveDailyRows`). Never a closing, never a number no statement printed.
+ */
+export const KEPT_OPENING_SOURCE = "unimported_statement" as const satisfies AnchorSource;
 
 /**
  * Ground-truth balances at known dates (net-worth-signed). Same-date

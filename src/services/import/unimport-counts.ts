@@ -6,6 +6,7 @@ import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { derivesFromHoldings } from "@/services/derivation";
 import { attachedRow, parsedRow } from "./attached-rows";
+import { keptOpeningPlans, type KeptOpeningPlan } from "./kept-openings";
 import { balancesRemovedByFileAndAccount } from "./printed-anchors";
 import { printerHandOvers, printerRowIds, type PrinterHandOver } from "./printed-lines";
 import { copyHandOvers, handedRowIds, type CopyHandOver } from "./statement-copies";
@@ -201,22 +202,38 @@ export interface AccountLeavingNetWorth {
   keptRows: number;
 }
 
+/** An account an un-import leaves with transactions and no recorded balance of its own, but the opening it keeps. */
+export interface KeptOpening {
+  accountId: string;
+  name: string;
+  /** the day before the statement's period opens, and the opening it printed for it (`kept-openings`) */
+  day: string;
+  balanceCents: number;
+  /** the live transactions it keeps, which replay from that opening, unchecked */
+  keptRows: number;
+  /** the still-imported file that keeps the rows and the opening */
+  heirFileName: string;
+}
+
+interface LosingEveryBalance extends AccountLeavingNetWorth {
+  opening: KeptOpeningPlan | null;
+}
+
 /**
  * Per file: the accounts whose every recorded balance the un-import removes (`balancesRemovedByFileAndAccount`) while
  * they keep live transactions — rows of other files, rows handed to a file that prints them, rows filed by hand. A
  * balance is derived only from a recorded one, so such an account drops out of net worth with its whole balance, though
- * no transaction leaves. An account valued from its holdings is not balanced by its recorded balances, and is left out.
+ * no transaction leaves — unless it keeps the opening the statement printed (`keptOpeningPlans`, owner decision 20).
+ * An account valued from its holdings is not balanced by its recorded balances, and is left out.
  *
- * 🔴 The confirmation read "deletes no transactions" and "Money leaving the ledger: $0.00 in · $0.00 out" over
- * 2026-08-25-everyday-checking.pdf, whose un-import takes Wells Fargo Everyday Checking's only two balances: the 39
- * Rocket Money rows stay (owner, 2026-09-16), and net worth fell 11,312,501 → 11,072,834 cents (the review of
- * uc/final-integrate, on a copy of the real ledger).
+ * ⛔ ONE walk for both halves the confirmation prints (`accountsLeftWithoutBalance`, `openingsKeptByFile`), with the
+ * plan `unimportFile` keeps the opening by.
  */
-export function accountsLeftWithoutBalance(
+function accountsLosingEveryBalance(
   db: AppDatabase,
-  plans: ReadonlyMap<string, readonly CopyHandOver[]> = copyHandOvers(db),
-  printers: ReadonlyMap<string, readonly PrinterHandOver[]> = printerHandOvers(db, plans),
-): Map<string, AccountLeavingNetWorth[]> {
+  plans: ReadonlyMap<string, readonly CopyHandOver[]>,
+  printers: ReadonlyMap<string, readonly PrinterHandOver[]>,
+): Map<string, LosingEveryBalance[]> {
   const removed = balancesRemovedByFileAndAccount(db, plans);
   const recorded = new Map(
     db
@@ -227,8 +244,14 @@ export function accountsLeftWithoutBalance(
       .map((r) => [r.accountId, r.n] as const),
   );
   const handed = new Set([...handedRowIds(plans.values()), ...printerRowIds(printers.values())]);
-  const leaving = new Map<string, AccountLeavingNetWorth[]>();
+  const losing = new Map<string, LosingEveryBalance[]>();
   for (const [fileId, accounts] of removed) {
+    const openings = keptOpeningPlans(
+      db,
+      fileId,
+      printers.get(fileId) ?? [],
+      new Set((plans.get(fileId) ?? []).map((p) => p.periodId)),
+    );
     for (const [accountId, n] of accounts) {
       if ((recorded.get(accountId) ?? 0) > n) continue;
       const account = db.select({ id: accountsTable.id, name: accountsTable.name, type: accountsTable.type }).from(accountsTable).where(eq(accountsTable.id, accountId)).get();
@@ -247,10 +270,70 @@ export function accountsLeftWithoutBalance(
         .orderBy(desc(dailyBalances.day))
         .get();
       if (latest === undefined) continue;
-      leaving.set(fileId, [...(leaving.get(fileId) ?? []), { accountId, name: account.name, balanceCents: latest.balanceCents, keptRows }]);
+      const opening = openings.find((o) => o.accountId === accountId) ?? null;
+      losing.set(fileId, [...(losing.get(fileId) ?? []), { accountId, name: account.name, balanceCents: latest.balanceCents, keptRows, opening }]);
     }
   }
-  return leaving;
+  return losing;
+}
+
+/** What an un-import does to the balances net worth counts, per file: the two halves the confirmation prints. */
+export interface NetWorthEffects {
+  /** accounts that keep no opening — their whole balance leaves net worth (`accountsLeftWithoutBalance`) */
+  leaving: Map<string, AccountLeavingNetWorth[]>;
+  /** accounts that keep the opening the statement printed — they stay, unchecked (`openingsKeptByFile`) */
+  keeping: Map<string, KeptOpening[]>;
+}
+
+/** Both halves from one walk (`accountsLosingEveryBalance`) — /imports asks for both on every render. */
+export function netWorthEffectsByFile(
+  db: AppDatabase,
+  plans: ReadonlyMap<string, readonly CopyHandOver[]> = copyHandOvers(db),
+  printers: ReadonlyMap<string, readonly PrinterHandOver[]> = printerHandOvers(db, plans),
+): NetWorthEffects {
+  const leaving = new Map<string, AccountLeavingNetWorth[]>();
+  const keeping = new Map<string, KeptOpening[]>();
+  for (const [fileId, accounts] of accountsLosingEveryBalance(db, plans, printers)) {
+    const gone = accounts.flatMap(({ opening, ...a }) => (opening === null ? [a] : []));
+    if (gone.length > 0) leaving.set(fileId, gone);
+    const kept = accounts.flatMap(({ accountId, name, keptRows, opening }) => {
+      if (opening === null) return [];
+      const heir = db.select({ fileName: importFiles.fileName }).from(importFiles).where(eq(importFiles.id, opening.heirFileId)).get();
+      return [{ accountId, name, day: opening.day, balanceCents: opening.balanceCents, keptRows, heirFileName: heir?.fileName ?? "another file" }];
+    });
+    if (kept.length > 0) keeping.set(fileId, kept);
+  }
+  return { leaving, keeping };
+}
+
+/**
+ * Per file: the accounts `accountsLosingEveryBalance` finds that keep no opening — their whole balance leaves net
+ * worth.
+ *
+ * 🔴 The confirmation read "deletes no transactions" and "Money leaving the ledger: $0.00 in · $0.00 out" over
+ * 2026-08-25-everyday-checking.pdf, whose un-import took Wells Fargo Everyday Checking's only two balances: the 39
+ * Rocket Money rows stay (owner, 2026-09-16), and net worth fell 11,312,501 → 11,072,834 cents (the review of
+ * uc/final-integrate, on a copy of the real ledger). That file now keeps its opening (`openingsKeptByFile`); an
+ * account a file without a printed opening leaves (an export, a bank export) still goes.
+ */
+export function accountsLeftWithoutBalance(
+  db: AppDatabase,
+  plans: ReadonlyMap<string, readonly CopyHandOver[]> = copyHandOvers(db),
+  printers: ReadonlyMap<string, readonly PrinterHandOver[]> = printerHandOvers(db, plans),
+): Map<string, AccountLeavingNetWorth[]> {
+  return netWorthEffectsByFile(db, plans, printers).leaving;
+}
+
+/**
+ * Per file: the accounts `accountsLosingEveryBalance` finds that keep the opening the statement printed — they stay in
+ * net worth on it, unchecked (owner decision 20, 2026-09-17).
+ */
+export function openingsKeptByFile(
+  db: AppDatabase,
+  plans: ReadonlyMap<string, readonly CopyHandOver[]> = copyHandOvers(db),
+  printers: ReadonlyMap<string, readonly PrinterHandOver[]> = printerHandOvers(db, plans),
+): Map<string, KeptOpening[]> {
+  return netWorthEffectsByFile(db, plans, printers).keeping;
 }
 
 /** The statement periods un-importing a file removes, and the ones another download of the statement takes. */

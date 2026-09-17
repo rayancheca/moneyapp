@@ -279,24 +279,51 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
   /**
    * 🔴 2026-08-25-everyday-checking.pdf read "deletes no transactions" and "$0.00 in · $0.00 out" while its un-import
    * took Wells Fargo's only two balances and $2,396.67 out of net worth (the review of uc/final-integrate, 2026-09-16).
+   * Since the owner's decision 20 (2026-09-17) that file keeps its opening; a file that printed none still takes the
+   * balance, and says so.
    */
   test("an account left with its rows and no balance is named, with the balance net worth loses", () => {
-    // the Wells Fargo statement, on a copy of the real ledger with the backfills applied, 2026-09-16
-    const wellsFargo: UnimportCounts = { ...VENTURE_X_AUG, deleted: 0, keptByPrinters: 39, userCategorizedDeleted: 0, notRederivedDeleted: 0, inflowCents: 0, outflowCents: 0, transferLegsDeleted: 0 };
+    const noOpening: UnimportCounts = { ...VENTURE_X_AUG, deleted: 0, keptByPrinters: 39, userCategorizedDeleted: 0, notRederivedDeleted: 0, inflowCents: 0, outflowCents: 0, transferLegsDeleted: 0 };
     const leaving = [{ name: "Wells Fargo Everyday Checking", balanceCents: 239_667, keptRows: 39 }];
-    const r = unimportRadius({ subject: "2026-08-25-everyday-checking.pdf", counts: wellsFargo, balances: 2, periods: 1, leavesNetWorth: leaving });
+    const r = unimportRadius({ subject: "everyday-checking.qfx", counts: noOpening, balances: 1, periods: 0, leavesNetWorth: leaving });
     expect(r.headline).toBe(
-      "Un-importing 2026-08-25-everyday-checking.pdf deletes no transactions: the 39 rows it brought in are printed by other imported files too, and stay, filed under them. Wells Fargo Everyday Checking keeps 39 transactions and no balance, so its $2,396.67 leaves net worth — no file left prints its balance. There is no undo for this inside the app.",
+      "Un-importing everyday-checking.qfx deletes no transactions: the 39 rows it brought in are printed by other imported files too, and stay, filed under them. Wells Fargo Everyday Checking keeps 39 transactions and no balance, so its $2,396.67 leaves net worth — no file left prints its balance. There is no undo for this inside the app.",
     );
     expect(r.lines).toContainEqual({
       label: "Leaving net worth",
       value: "Wells Fargo Everyday Checking, $2,396.67 — no file left prints its balance, and its 39 kept transactions are in no balance",
       irreversible: true,
     });
-    expect(unimportAcknowledgement(wellsFargo, leaving)).toBe("I understand this balance leaves net worth");
+    expect(unimportAcknowledgement(noOpening, leaving)).toBe("I understand this balance leaves net worth");
     // …and nothing is said where no account leaves
-    expect(labels(unimportRadius({ subject: "x.pdf", counts: wellsFargo, balances: 2, periods: 1 }))).not.toContain("Leaving net worth");
-    expect(unimportAcknowledgement(wellsFargo)).toBeUndefined();
+    expect(labels(unimportRadius({ subject: "x.pdf", counts: noOpening, balances: 2, periods: 1 }))).not.toContain("Leaving net worth");
+    expect(unimportAcknowledgement(noOpening)).toBeUndefined();
+  });
+
+  /**
+   * ⚖️ Owner decision 20, 2026-09-17: the Wells Fargo statement's un-import keeps the $0.00 opening it printed for Jul
+   * 26, 2026, and the 39 rows the Rocket Money export keeps replay from it — net worth stays 11,312,501 cents on a
+   * backfilled copy of the real ledger. The dialog says the balance stays, and that nothing checks it.
+   */
+  test("an account that keeps the opening its statement printed stays in net worth, and the dialog says nothing checks it", () => {
+    // the Wells Fargo statement, on a backfilled copy of the real ledger, 2026-09-17
+    const wellsFargo: UnimportCounts = { ...VENTURE_X_AUG, deleted: 0, keptByPrinters: 39, userCategorizedDeleted: 0, notRederivedDeleted: 0, inflowCents: 0, outflowCents: 0, transferLegsDeleted: 0 };
+    const keeping = [
+      { name: "Wells Fargo Everyday Checking", day: "2026-07-26", balanceCents: 0, keptRows: 39, heirFileName: "rocket-money-export-2026-08-25.csv" },
+    ];
+    const r = unimportRadius({ subject: "2026-08-25-everyday-checking.pdf", counts: wellsFargo, balances: 2, periods: 1, keepsOpening: keeping });
+    expect(r.headline).toBe(
+      "Un-importing 2026-08-25-everyday-checking.pdf deletes no transactions: the 39 rows it brought in are printed by other imported files too, and stay, filed under them. Wells Fargo Everyday Checking keeps the $0.00 opening balance this statement printed for Jul 26, 2026, so its 39 kept transactions stay in net worth — replayed from a statement you un-imported, which nothing checks until it is imported again. There is no undo for this inside the app.",
+    );
+    expect(r.headline).not.toContain("leaves net worth");
+    expect(r.lines).toContainEqual({
+      label: "Balance kept, unchecked",
+      value:
+        "Wells Fargo Everyday Checking — the $0.00 opening this statement printed for Jul 26, 2026, kept under rocket-money-export-2026-08-25.csv; its 39 kept transactions replay from it, and nothing checks the balance",
+    });
+    expect(labels(r)).not.toContain("Leaving net worth");
+    // nothing is deleted and nothing leaves net worth: no checkbox
+    expect(unimportAcknowledgement(wellsFargo, [])).toBeUndefined();
   });
 
   test("a download that owns no row says it deletes none", () => {

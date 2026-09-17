@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import type { AnchorSource } from "@/db/schema/balances";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
@@ -47,11 +48,13 @@ export const dynamic = "force-dynamic";
 
 const RECENT_TXN_LIMIT = 10;
 
-const SOURCE_LABEL: Record<string, string> = {
+const SOURCE_LABEL: Record<AnchorSource, string> = {
   statement: "statement",
   ofx_ledger: "bank export",
   manual: "manual",
   live: "live",
+  // ⚖️ owner decision 20: the opening of a statement he un-imported, kept — never read as a statement that checks
+  unimported_statement: "opening of a statement you un-imported · not checked",
 };
 
 const BASIS_LABEL: Record<string, string> = {

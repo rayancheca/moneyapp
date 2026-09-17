@@ -95,6 +95,13 @@ export interface CoverageDetailInput {
    * stand on something.
    */
   countedOn: string | null;
+  /**
+   * `AccountCoverage.keptOpeningOn`: the opening balance kept from a statement he un-imported that every day stands on
+   * (owner decision 20). Read by `unverified`, before anything else — the account has no other balance.
+   *
+   * ⛔ REQUIRED, like `countedOn`: a forgotten field reads "rests on entries alone" of rows an export printed.
+   */
+  keptOpeningOn: string | null;
 }
 
 const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
@@ -167,6 +174,16 @@ export function coverageDetail(input: CoverageDetailInput): string {
       return `${closesClause(input)}; the chain first fails ${where} — ${n} ${plural(n, "day", "days")} cannot be trusted`;
     }
     case "unverified": {
+      /*
+       * ⚖️ An account whose only balance is the opening of a statement he un-imported (owner decision 20,
+       * 2026-09-17): Wells Fargo Everyday Checking, once 2026-08-25-everyday-checking.pdf is un-imported, keeps its
+       * rows under the Rocket Money export and replays them from the $0.00 that statement printed for Jul 26, 2026.
+       * Every day is unchecked, and the row says on what, never "closes".
+       */
+      if (input.keptOpeningOn !== null) {
+        const n = input.unverifiedDays;
+        return `nothing closes to the cent: it rests on the opening balance of a statement you un-imported, printed for ${dayWithYear(input.keptOpeningOn)} — ${n} ${plural(n, "day rests", "days rest")} on it, and nothing checks ${plural(n, "it", "them")}`;
+      }
       const run = input.uncheckedRunDays > 0;
       const n = run ? input.uncheckedRunDays : input.unverifiedDays;
       const since = run ? input.uncheckedSince : input.unverifiedSince;

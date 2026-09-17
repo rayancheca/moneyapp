@@ -1,4 +1,4 @@
-import type { AnchorSource } from "@/db/schema/balances";
+import { KEPT_OPENING_SOURCE, type AnchorSource } from "@/db/schema/balances";
 import { compareDates } from "@/lib/dates";
 
 /**
@@ -17,6 +17,8 @@ const ANCHOR_PRECEDENCE: Record<AnchorSource, number> = {
   ofx_ledger: 1,
   manual: 2,
   live: 3,
+  // a balance kept from a statement he un-imported loses every day to anything recorded now (schema: KEPT_OPENING_SOURCE)
+  unimported_statement: 4,
 };
 
 /** The two fields precedence reads — a whole `balance_anchors` row satisfies it. */
@@ -41,6 +43,21 @@ export function pickWinners<T extends RankedAnchor>(anchors: readonly T[]): T[] 
     }
   }
   return [...byDate.values()].sort((x, y) => compareDates(x.anchoredOn, y.anchoredOn));
+}
+
+/**
+ * The opening balance kept from a statement he un-imported (`KEPT_OPENING_SOURCE`) that an account's replay starts
+ * from — only when the account records no other balance, the oldest when there are several. Null otherwise: beside
+ * anything recorded now it is inert. Here, in the leaf, because `coverage` asks it too.
+ *
+ * ⚖️ Owner decision 20, 2026-09-17: un-importing 2026-08-25-everyday-checking.pdf keeps Wells Fargo's 39 rows under
+ * the Rocket Money export and takes both of its balances, and a balance is derived only from a recorded one — net
+ * worth fell 11,312,501 → 11,072,834 cents on a copy of the real ledger. The $0.00 opening the statement printed for
+ * Jul 26, 2026 stays, and the kept rows replay from it — unchecked (`deriveDailyRows`).
+ */
+export function keptOpeningOf<T extends RankedAnchor>(winners: readonly T[]): T | null {
+  if (winners.some((w) => w.source !== KEPT_OPENING_SOURCE)) return null;
+  return [...winners].sort((x, y) => compareDates(x.anchoredOn, y.anchoredOn))[0] ?? null;
 }
 
 /**

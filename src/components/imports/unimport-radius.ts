@@ -1,4 +1,5 @@
 import { countPhrase, type BlastRadius, type BlastRadiusLine } from "@/components/ui/blast-radius";
+import { formatDayFull } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 import type { UnimportCounts } from "@/services/import/unimport-counts";
 
@@ -35,6 +36,17 @@ export interface UnimportRadiusInput {
   periodsHandedOver?: number;
   /** accounts the un-import leaves with transactions and no recorded balance (`accountsLeftWithoutBalance`) */
   leavesNetWorth?: readonly { name: string; balanceCents: number; keptRows: number }[];
+  /** accounts that keep, instead, the opening balance the statement printed (`openingsKeptByFile`) */
+  keepsOpening?: readonly KeptOpeningLine[];
+}
+
+/** An account that keeps the opening its un-imported statement printed — `KeptOpening`, as the dialog reads it. */
+export interface KeptOpeningLine {
+  name: string;
+  day: string;
+  balanceCents: number;
+  keptRows: number;
+  heirFileName: string;
 }
 
 /**
@@ -48,6 +60,21 @@ function netWorthSentence(leaving: readonly { name: string; balanceCents: number
   if (leaving.length === 0) return "";
   const each = leaving.map((a) => `${a.name} keeps ${countPhrase(a.keptRows, "transaction")} and no balance, so its ${formatCents(a.balanceCents)} leaves net worth`);
   return ` ${each.join("; ")} — no file left prints its balance.`;
+}
+
+/**
+ * ⚖️ …and since the owner's decision of 2026-09-17 (20) that is not what happens to 2026-08-25-everyday-checking.pdf:
+ * Wells Fargo keeps the $0.00 opening that statement printed for Jul 26, 2026, its 39 kept rows replay from it, and net
+ * worth does not move (a backfilled copy of the real ledger stays at 11,312,501 cents). The balance is no longer
+ * checked by anything, and the sentence says that instead of "leaves net worth".
+ */
+function keptOpeningSentence(keeping: readonly KeptOpeningLine[]): string {
+  if (keeping.length === 0) return "";
+  const each = keeping.map(
+    (a) =>
+      `${a.name} keeps the ${formatCents(a.balanceCents)} opening balance this statement printed for ${formatDayFull(a.day)}, so its ${countPhrase(a.keptRows, "kept transaction")} stay in net worth — replayed from a statement you un-imported, which nothing checks until it is imported again`,
+  );
+  return ` ${each.join("; ")}.`;
 }
 
 const NO_UNDO = "There is no undo for this inside the app.";
@@ -190,10 +217,18 @@ function kept(phrase: string, n: number): string {
   return n === 0 ? phrase : `${phrase} — ${GIVEN_BACK}`;
 }
 
-export function unimportRadius({ subject, counts, balances, periods, periodsHandedOver = 0, leavesNetWorth = [] }: UnimportRadiusInput): BlastRadius {
+export function unimportRadius({
+  subject,
+  counts,
+  balances,
+  periods,
+  periodsHandedOver = 0,
+  leavesNetWorth = [],
+  keepsOpening = [],
+}: UnimportRadiusInput): BlastRadius {
   const optional = (show: boolean, line: BlastRadiusLine): BlastRadiusLine[] => (show ? [line] : []);
   const said = headline(subject, counts);
-  const netWorth = netWorthSentence(leavesNetWorth);
+  const netWorth = `${keptOpeningSentence(keepsOpening)}${netWorthSentence(leavesNetWorth)}`;
   const detached = counts.kept - counts.keptRefiled;
   const underCopy = [
     ...(counts.handedOver > 0 ? [`${countPhrase(counts.handedOver, "transaction")} it also prints`] : []),
@@ -229,6 +264,15 @@ export function unimportRadius({ subject, counts, balances, periods, periodsHand
           .map((a) => `${a.name}, ${formatCents(a.balanceCents)} — no file left prints its balance, and its ${countPhrase(a.keptRows, "kept transaction")} are in no balance`)
           .join("; "),
         irreversible: true,
+      }),
+      ...optional(keepsOpening.length > 0, {
+        label: "Balance kept, unchecked",
+        value: keepsOpening
+          .map(
+            (a) =>
+              `${a.name} — the ${formatCents(a.balanceCents)} opening this statement printed for ${formatDayFull(a.day)}, kept under ${a.heirFileName}; its ${countPhrase(a.keptRows, "kept transaction")} replay from it, and nothing checks the balance`,
+          )
+          .join("; "),
       }),
       ...optional(counts.duplicateSurvivors > 0, {
         label: "…of which comes back",

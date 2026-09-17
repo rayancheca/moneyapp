@@ -1,10 +1,10 @@
-import { and, asc, count, desc, eq, inArray, lte, gte, sum } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, lte, gte, ne, sum } from "drizzle-orm";
 import { formatDayFull } from "@/lib/format-date";
 import type { AppDatabase } from "@/db/client";
 import { accounts, type AccountType } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { merchants } from "@/db/schema/merchants";
-import { balanceAnchors, dailyBalances, type BalanceBasis } from "@/db/schema/balances";
+import { KEPT_OPENING_SOURCE, balanceAnchors, dailyBalances, type BalanceBasis } from "@/db/schema/balances";
 import { budgets, type BudgetPeriodKind } from "@/db/schema/budgets";
 import { holdingEvents } from "@/db/schema/holding-events";
 import { holdings, priceCache, type AssetType } from "@/db/schema/holdings";
@@ -18,7 +18,7 @@ import { emptyPeriodReason } from "@/lib/empty-period";
 import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { ownPortfolioAccountIds } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, spendingBucket, uncategorizedWhere } from "./analytics";
-import { handTypedDays } from "./anchor-winners";
+import { handTypedDays, keptOpeningOf } from "./anchor-winners";
 import { accountCoverage, chainFooting, footingThrough, type AccountCoverage, type CoverageGrade } from "./coverage";
 import {
   derivesFromHoldings,
@@ -493,7 +493,14 @@ function transactionProvenance(db: AppDatabase, id: string): Provenance | null {
   const fileAnchor = db
     .select({ anchoredOn: balanceAnchors.anchoredOn })
     .from(balanceAnchors)
-    .where(and(eq(balanceAnchors.importFileId, txn.importFileId), eq(balanceAnchors.accountId, txn.accountId)))
+    .where(
+      and(
+        eq(balanceAnchors.importFileId, txn.importFileId),
+        eq(balanceAnchors.accountId, txn.accountId),
+        // ⛔ the file that keeps an opening from a statement he un-imported never printed that balance (`kept-openings`)
+        ne(balanceAnchors.source, KEPT_OPENING_SOURCE),
+      ),
+    )
     .orderBy(desc(balanceAnchors.anchoredOn))
     .get();
   const dayVerdict: ProvenanceVerdict =
@@ -705,6 +712,21 @@ function anchorOnOrBefore(db: AppDatabase, accountId: string, day: string): DayA
       .all(),
   );
   if (!anchor) return null;
+  /*
+   * ⚖️ An opening kept from a statement he un-imported (owner decision 20) is owned by the file that keeps the rows,
+   * which never printed it: naming that file would put the balance in the mouth of an export that carries none.
+   */
+  if (anchor.source === KEPT_OPENING_SOURCE) {
+    return {
+      anchor,
+      source: {
+        kind: "anchor",
+        label: "a statement you un-imported",
+        detail: `the opening balance it printed for ${readableDay(anchor.anchoredOn)} — kept when you un-imported it, and nothing checks it`,
+        on: anchor.anchoredOn,
+      },
+    };
+  }
   const file = anchor.importFileId
     ? db.select().from(importFiles).where(eq(importFiles.id, anchor.importFileId)).get()
     : undefined;
@@ -843,6 +865,7 @@ function accountBalanceProvenance(db: AppDatabase, accountId: string, day: strin
       recordedOn: held?.anchoredOn ?? null,
       countedOn: resting?.source === "manual" && resting.anchoredOn !== row.day ? resting.anchoredOn : null,
       countedReplay,
+      keptOpeningOn: chain === null ? null : (keptOpeningOf(chain.winners)?.anchoredOn ?? null),
     }),
     sources,
     checkedThrough: chain?.lastClosed ?? null,
@@ -869,6 +892,8 @@ function headlineForBalance(
     countedOn: string | null;
     /** a replay from one count of his onto the next: the two days he counted */
     countedReplay: { from: string; to: string | null } | null;
+    /** the opening kept from a statement he un-imported that every day replays from (`keptOpeningOf`) */
+    keptOpeningOn: string | null;
   },
 ): string {
   const on = readableDay(day);
@@ -906,6 +931,9 @@ function headlineForBalance(
       }
       return `Every transaction was replayed forward from a recorded balance and landed exactly on the next one, through ${on}.`;
     case "derived_unverified":
+      if (value.keptOpeningOn !== null) {
+        return `Replayed from the opening balance of a statement you un-imported, printed for ${readableDay(value.keptOpeningOn)}, so nothing checks ${name} on ${on}. The rows are real; the total is unconfirmed.`;
+      }
       return `Replayed past ${counted ?? "the last recorded balance"}, so nothing checks ${name} on ${on}. The rows are real; the total is unconfirmed.`;
     case "carried":
       return `${name} had no activity to replay on ${on}, so ${counted ?? "the last known balance"} was carried forward.`;

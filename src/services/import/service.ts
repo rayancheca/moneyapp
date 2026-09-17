@@ -5,7 +5,7 @@ import { withPreMutationSnapshot } from "@/db/backup";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
-import { balanceAnchors } from "@/db/schema/balances";
+import { KEPT_OPENING_SOURCE, balanceAnchors } from "@/db/schema/balances";
 import { importFiles, statementPeriods, type FileFormat, type ImportStatus } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import {
@@ -16,6 +16,7 @@ import {
   type TransactionStatus,
 } from "@/db/schema/transactions";
 import { migrateSplits, splitCountsByTxn } from "../transaction-splits";
+import { addDays } from "@/lib/dates";
 import { descriptionScore } from "@/lib/description-score";
 import { assignOccurrenceIndexes, dedupeHash, fileSha256, type DuplicatePairSide } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
@@ -59,6 +60,7 @@ import {
   type LaterBookStatement,
 } from "./brokerage-book";
 import { handOverPrintedAnchors } from "./printed-anchors";
+import { keepOpenings, keptOpeningPlans, replaceKeptOpening, settleKeptOpenings } from "./kept-openings";
 import {
   copyHandOvers,
   forgetStatementCopies,
@@ -1838,6 +1840,8 @@ function writeRead(
     const write: MemberWrite = { tally: blankOutcome(member.item.file.name), accounts: new Set(), series };
     writes.push(write);
     writeMember(db, member, pools[j] as CarryPool, recall, write);
+    // an opening a retired read kept for a statement he un-imported follows the rows it keeps (`kept-openings`)
+    settleKeptOpenings(db, member.staleIds, (member.recorded as RecordedFile).row.id);
   });
   // a month lent to a copy that no member took back is the copy's, with the rows it prints (`settleLentPeriods`) —
   // and a transfer waiting on one of them waits by that row again
@@ -2417,6 +2421,8 @@ function upsertAnchor(
   importFileId: string,
   statementPeriodId: string | null,
 ): void {
+  // a document records the day again: an opening kept from an un-imported statement makes way (`kept-openings`)
+  replaceKeptOpening(tx, accountId, anchoredOn);
   tx.insert(balanceAnchors)
     .values({ accountId, anchoredOn, balanceCents, source, importFileId, statementPeriodId })
     .onConflictDoUpdate({
@@ -2437,6 +2443,8 @@ function upsertAnchorAtDayBefore(
   importFileId: string,
   statementPeriodId: string | null,
 ): void {
+  // the statement is imported again: the opening kept when it was un-imported makes way (`kept-openings`)
+  replaceKeptOpening(tx, accountId, addDays(periodStart, -1));
   tx.run(sql`
     INSERT INTO balance_anchors (id, account_id, anchored_on, balance_cents, source, import_file_id, statement_period_id, created_at, updated_at)
     VALUES (${crypto.randomUUID()}, ${accountId}, date(${periodStart}, '-1 day'), ${balanceCents}, 'statement', ${importFileId}, ${statementPeriodId}, datetime('now'), datetime('now'))
@@ -2474,10 +2482,15 @@ function quarantinedIdsOn(db: AppDatabase, accountIds: readonly string[]): strin
  * `supersedeFileContribution` and `unimportFile`. Each hands a period another download of the statement prints to that
  * download first (`statement-copies`: `lendToCopies`, `handOverToCopies`), so what is left here is the file's own; an
  * anchor another file's period still prints is handed over (`handOverPrintedAnchors`), not deleted.
+ *
+ * An opening the file keeps for a statement he un-imported (`kept-openings`) goes with it — except while a re-read
+ * retires the file (`keepOpenings`): the successor takes it once it is written (`settleKeptOpenings`).
  */
-function removeFileBalances(tx: AppDatabase, importFileId: string): void {
+function removeFileBalances(tx: AppDatabase, importFileId: string, { keepOpenings: keep = false } = {}): void {
   handOverPrintedAnchors(tx, importFileId);
-  tx.delete(balanceAnchors).where(eq(balanceAnchors.importFileId, importFileId)).run();
+  tx.delete(balanceAnchors)
+    .where(and(eq(balanceAnchors.importFileId, importFileId), keep ? ne(balanceAnchors.source, KEPT_OPENING_SOURCE) : undefined))
+    .run();
   // anchors owned by OTHER files may reference this file's periods — detach
   // them before the periods go (FK integrity under foreign_keys=ON)
   tx.run(sql`
@@ -2522,7 +2535,8 @@ function supersedeFileContribution(db: AppDatabase, oldFileId: string): { accoun
       tx,
       lent.map((l) => l.plan),
     );
-    removeFileBalances(tx, oldFileId);
+    // …but an opening it keeps for a statement he un-imported waits for the successor (`settleKeptOpenings`)
+    removeFileBalances(tx, oldFileId, { keepOpenings: true });
     // its successor records again what it prints, as a copy or not (`statement-copies`, `printed-lines`)
     forgetStatementCopies(tx, oldFileId);
     forgetPrintedLines(tx, oldFileId);
@@ -2812,6 +2826,9 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
       // and the anchor hand-over below finds the period under its new file
       handOverToCopies(tx, handOvers);
       handOverToPrinters(tx, printers);
+      // ⚖️ owner, 2026-09-17: an account whose rows another file keeps keeps the opening this statement printed, when
+      // nothing else records its balance — read while the file's own periods are still here (`kept-openings`)
+      const openings = keptOpeningPlans(tx, importFileId, printers);
       // A charge this file's rows are the SURVIVING copy of has a retired twin
       // sitting `superseded` in another file. Delete the survivor without putting
       // that twin back and the money is recorded by zero live rows: it vanishes
@@ -2837,6 +2854,7 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
       detachTransferLegs(tx, legsLeftAloneBy(tx, importFileId));
       tx.delete(transactions).where(parsedFromFile(importFileId)).run();
       removeFileBalances(tx, importFileId);
+      keepOpenings(tx, openings);
       // the trades the file printed leave with it — before the file row, whose id they reference
       heldShares = removeFileEvents(tx, importFileId);
       forgetStatementCopies(tx, importFileId);

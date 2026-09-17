@@ -42,7 +42,8 @@
  *   pnpm ledger-check --lower-marks=value-anchors --confirm  # lowers it to what is seen now
  */
 import { createDatabase } from "@/db/client";
-import { pickWinners, selectEndpoints } from "@/services/derivation";
+import type { AnchorSource } from "@/db/schema/balances";
+import { keptOpeningOf, pickWinners, selectEndpoints } from "@/services/derivation";
 import { RECONCILE_STATUSES, isVerdictStale, periodVerdict } from "@/lib/reconciliation";
 import {
   type ChainBreak,
@@ -212,6 +213,8 @@ const chainWindows: Record<string, ChainWindow[]> = {};
 /** every endpoint the chain is measured from — a lone anchor bounds no window, and is one all the same */
 const chainEndpoints: Record<string, string[]> = {};
 const syntheticNetCents: Record<string, number> = {};
+/** accounts whose balance stands only on the opening of a statement he un-imported (owner decision 20) — said, not counted */
+const keptOpenings: Record<string, string> = {};
 const staleVerdicts: StaleVerdict[] = [];
 /** every period re-graded, agreeing or not — what tells a removed period from one that still agrees */
 const gradedPeriods: Record<string, GradedPeriod[]> = {};
@@ -228,9 +231,12 @@ for (const account of accounts) {
         `SELECT anchored_on AS anchoredOn, balance_cents AS balanceCents, source
            FROM balance_anchors WHERE account_id = ? ORDER BY anchored_on`,
       )
-      .all(account.id) as { anchoredOn: string; balanceCents: number; source: string }[];
+      .all(account.id) as { anchoredOn: string; balanceCents: number; source: AnchorSource }[];
 
-    const { endpoints } = selectEndpoints(pickWinners(anchors as never));
+    // ⛔ an opening kept from a statement he un-imported is no endpoint and no witness (`selectEndpoints`)
+    const { endpoints } = selectEndpoints(pickWinners(anchors));
+    const kept = keptOpeningOf(pickWinners(anchors));
+    if (kept) keptOpenings[account.name] = kept.anchoredOn;
     chainEndpoints[account.name] = endpoints.map((e) => e.anchoredOn);
     const pairs = [];
     for (let i = 0; i + 1 < endpoints.length; i += 1) {
@@ -316,6 +322,9 @@ for (const [name, found] of Object.entries(breaks)) {
 }
 for (const [name, cents] of Object.entries(syntheticNetCents)) {
   console.log(`${name}: ${formatCents(cents)} in the balance chain has no source document`);
+}
+for (const [name, day] of Object.entries(keptOpenings)) {
+  console.log(`${name}: stands only on the opening of a statement you un-imported (${day}) — unchecked, and no witness`);
 }
 console.log(`stale verdicts: ${staleVerdicts.length}`);
 

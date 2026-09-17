@@ -23,11 +23,13 @@ import {
   deriveDailyRows,
   heldBalanceAnchor,
   isReplayStatus,
+  keptOpeningOf,
   latestBalances,
   netWorthSeries,
   pickWinners,
   rebuildAccount,
   removalEffect,
+  selectEndpoints,
 } from "./derivation";
 import { addManualAnchor } from "./anchors";
 import { createAccount } from "./accounts";
@@ -252,6 +254,60 @@ describe("deriveDailyRows — cash accounts", () => {
     );
     expect(withIt).toEqual(withoutIt);
     expect(withIt.find((r) => r.day === "2026-07-07")?.balanceCents).toBe(7_500);
+  });
+});
+
+/**
+ * ⚖️ Owner decision 20, 2026-09-17: the opening a statement he un-imported printed stays when another file keeps its
+ * rows and nothing else records the balance. The rows replay from it and no day is checked.
+ */
+describe("deriveDailyRows — an opening kept from a statement he un-imported", () => {
+  const opts = { isInvestment: false, today: TODAY };
+  const kept = { anchoredOn: "2026-07-02", balanceCents: 10_000, source: "unimported_statement" as const };
+
+  test("the only balance: every day replays from it, the opening's own included, and none is checked", () => {
+    const rows = deriveDailyRows(
+      [kept],
+      new Map([
+        ["2026-07-01", -300],
+        ["2026-07-04", -1_000],
+        ["2026-07-06", 250],
+      ]),
+      opts,
+    );
+    expect(rows).toEqual([
+      { day: "2026-06-30", balanceCents: 10_300, basis: "derived_unverified" },
+      { day: "2026-07-01", balanceCents: 10_000, basis: "derived_unverified" },
+      { day: "2026-07-02", balanceCents: 10_000, basis: "derived_unverified" },
+      { day: "2026-07-03", balanceCents: 10_000, basis: "derived_unverified" },
+      { day: "2026-07-04", balanceCents: 9_000, basis: "derived_unverified" },
+      { day: "2026-07-05", balanceCents: 9_000, basis: "derived_unverified" },
+      { day: "2026-07-06", balanceCents: 9_250, basis: "derived_unverified" },
+      { day: "2026-07-07", balanceCents: 9_250, basis: "derived_unverified" },
+      { day: "2026-07-08", balanceCents: 9_250, basis: "derived_unverified" },
+    ]);
+    expect(rows.some((r) => basisIsChecked(r.basis))).toBe(false);
+  });
+
+  test("beside any recorded balance it is inert: no endpoint, no moment, nothing moves", () => {
+    const sums = new Map([["2026-07-04", -1_000]]);
+    for (const source of ["statement", "ofx_ledger", "manual", "live"] as const) {
+      const recorded = { anchoredOn: "2026-07-05", balanceCents: 9_000, source };
+      expect(deriveDailyRows([kept, recorded], sums, opts)).toEqual(deriveDailyRows([recorded], sums, opts));
+      expect(selectEndpoints([kept, recorded])).toEqual(selectEndpoints([recorded]));
+      expect(keptOpeningOf([kept, recorded])).toBeNull();
+    }
+    // …and on its own day, anything recorded wins it
+    expect(pickWinners([kept, { ...kept, source: "live" as const, balanceCents: 1 }])).toEqual([{ ...kept, source: "live", balanceCents: 1 }]);
+  });
+
+  test("never an endpoint or a moment, even alone — the witness floor never counts it", () => {
+    expect(selectEndpoints([kept])).toEqual({ endpoints: [], moments: [] });
+    expect(keptOpeningOf([kept, { ...kept, anchoredOn: "2026-06-01" }])?.anchoredOn).toBe("2026-06-01");
+  });
+
+  test("an investment account derives nothing from one", () => {
+    expect(deriveDailyRows([kept], new Map([["2026-07-04", -1_000]]), { isInvestment: true, today: TODAY })).toEqual([]);
   });
 });
 

@@ -16,7 +16,7 @@ import { statementPulls } from "@/services/statement-pulls";
 import { unimportAcknowledgement, unimportRadius } from "@/components/imports/unimport-radius";
 import {
   NO_UNIMPORT_ROWS,
-  accountsLeftWithoutBalance,
+  netWorthEffectsByFile,
   unimportCountsByFile,
   unimportPeriodsByFile,
   type UnimportCounts,
@@ -110,7 +110,8 @@ export default async function ImportsPage({
   const printers = printerHandOvers(db, handOvers);
   const unimportCounts = unimportCountsByFile(db, handOvers, printers);
   // …and an account left with its rows and no recorded balance drops out of net worth (`accountsLeftWithoutBalance`)
-  const leavingNetWorth = accountsLeftWithoutBalance(db, handOvers, printers);
+  // …unless it keeps the opening the statement printed, unchecked (`openingsKeptByFile`, owner decision 20)
+  const { leaving: leavingNetWorth, keeping: keepingOpening } = netWorthEffectsByFile(db, handOvers, printers);
   const countsOf = (fileId: string): UnimportCounts => unimportCounts.get(fileId) ?? NO_UNIMPORT_ROWS;
 
   const periods = db
@@ -426,6 +427,7 @@ export default async function ImportsPage({
                             periods: periodsByFile.get(f.id)?.removed ?? 0,
                             periodsHandedOver: periodsByFile.get(f.id)?.handedOver ?? 0,
                             leavesNetWorth: leavingNetWorth.get(f.id) ?? [],
+                            keepsOpening: keepingOpening.get(f.id) ?? [],
                           })}
                         />
                       </td>

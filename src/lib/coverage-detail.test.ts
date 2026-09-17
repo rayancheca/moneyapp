@@ -16,6 +16,7 @@ const detail = (over: Partial<CoverageDetailInput> = {}): string =>
     hasStatements: true,
     pricedFromHoldings: true,
     countedOn: null,
+    keptOpeningOn: null,
     ...over,
   });
 
@@ -213,6 +214,37 @@ describe("a verified account", () => {
  * it out of `verifiedThrough` and publishes it as `countedOn`; the row says what
  * the days stand on instead.
  */
+/**
+ * ⚖️ Owner decision 20, 2026-09-17: an account whose statement he un-imported keeps the opening it printed, and its
+ * kept rows replay from it — unchecked. Wells Fargo Everyday Checking's shape: no statement left, rows under an export.
+ */
+describe("an opening kept from a statement he un-imported", () => {
+  const keptOpening: Partial<CoverageDetailInput> = {
+    grade: "unverified",
+    verifiedThrough: null,
+    daysSinceVerified: null,
+    keptOpeningOn: "2026-07-26",
+    unverifiedSince: "2026-07-26",
+    uncheckedSince: "2026-07-26",
+    uncheckedRunDays: 54,
+    unverifiedDays: 54,
+    hasStatements: false,
+  };
+
+  test("is named as what every day rests on, never as a chain that closes or as his entries", () => {
+    const text = detail(keptOpening);
+    expect(text).toBe(
+      "nothing closes to the cent: it rests on the opening balance of a statement you un-imported, printed for Jul 26, 2026 — 54 days rest on it, and nothing checks them",
+    );
+    expect(text).not.toContain("closes to the cent through");
+    expect(text).not.toContain("entries");
+  });
+
+  test("one day reads in the singular", () => {
+    expect(detail({ ...keptOpening, unverifiedDays: 1 })).toContain("— 1 day rests on it, and nothing checks it");
+  });
+});
+
 describe("a balance he counted", () => {
   const cashOnHand: Partial<CoverageDetailInput> = {
     grade: "unverified",

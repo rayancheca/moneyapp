@@ -2,13 +2,13 @@ import { cache } from "react";
 import { desc, eq } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts, type AccountType } from "@/db/schema/accounts";
-import { balanceAnchors, dailyBalances, type BalanceBasis } from "@/db/schema/balances";
+import { KEPT_OPENING_SOURCE, balanceAnchors, dailyBalances, type BalanceBasis } from "@/db/schema/balances";
 import { statementPeriods } from "@/db/schema/imports";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { addDays, diffDays, todayIso } from "@/lib/dates";
 import { ACCOUNT_ORDER } from "./account-order";
-import { handTypedDays, pickWinners } from "./anchor-winners";
+import { handTypedDays, keptOpeningOf, pickWinners } from "./anchor-winners";
 
 /**
  * Per-account answer to "is this account's money actually checked, and through
@@ -259,6 +259,12 @@ export interface AccountCoverage {
    */
   countedOn: string | null;
   /**
+   * The day of the opening balance kept from a statement he un-imported that the account's days stand on — the only
+   * balance it records (`keptOpeningOf`, owner decision 20). Every day it carries is `derived_unverified`, so the
+   * grade is `unverified` and nothing is `verifiedThrough`; this names what the days rest on. Null otherwise.
+   */
+  keptOpeningOn: string | null;
+  /**
    * The day the checked chain opens on: the account's first trusted day, which
    * is its first recorded balance. Null when nothing is checked at all.
    *
@@ -376,7 +382,8 @@ const accountCoverageCached = cache(function accountCoverageCached(
       .where(eq(balanceAnchors.accountId, account.id))
       .orderBy(desc(balanceAnchors.anchoredOn))
       .all();
-    const lastManualUpdate = anchorRows[0]?.anchoredOn ?? null;
+    // ⛔ an opening kept from a statement he un-imported is nobody's update
+    const lastManualUpdate = anchorRows.find((a) => a.source !== KEPT_OPENING_SOURCE)?.anchoredOn ?? null;
 
     const base = {
       accountId: account.id,
@@ -386,6 +393,7 @@ const accountCoverageCached = cache(function accountCoverageCached(
       lastManualUpdate,
       days,
       countedOn: null,
+      keptOpeningOn: keptOpeningOf(pickWinners(anchorRows))?.anchoredOn ?? null,
     };
 
     /*
