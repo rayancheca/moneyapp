@@ -1,27 +1,31 @@
-# Handoff — the 09-15 queue drained, two real writes, a one-caller hunt, and your four answers
+# Handoff — the queue drained, the agent's book, an import lifecycle that survives a round trip, and your ten answers
 
-> Written 16:30 EDT while two builds were still running — §7 names them exactly. Superseded by a later
-> update of this file if one exists.
+> Written 2026-09-17. `origin/main` = **`f0ad619`** · **225 commits** since `995e0bc` (two handoffs ago), **54**
+> since yesterday's push · unit **317 files / 6,415 tests** · e2e **602 passed** at `maxDiffPixels: 0` ·
+> `next build` ✓ · tsc ✓ · `pnpm ledger-check` exit 0.
 >
-> `origin/main` pushed at **`543e583`** (⏳ final SHA; earlier pushes `14759a7`, `9c0f956`, `93169e3`, `97d7a5c`) · **137 commits since `995e0bc`** (the previous handoff) ·
-> latest push: e2e gate **602 passed** and unit **299 files / 5,975 tests** (tsc clean) on `543e583` ·
-> e2e gate **602 passed** (`E2E_GATE=1`, fresh `next build`) on `14759a7` · unit suite **280 files / 5,646 tests**
-> green at `9cd7acb` (measured by session 8bb0cb0a; `a7bd7af`'s two test fixes are inside it) · tsc clean ·
-> `pnpm ledger-check` exit 0 after every write.
-> Ledger: **10,320 active rows · 38 uncategorized** (NULL or the system category) · **13 accounts** · 42 recurring
-> series · net worth **$113,125.01** (sum of each account's latest daily balance, 2026-09-15).
+> Your ledger: **13 accounts · 10,320 active rows · 32 uncategorized · 255 statement periods · 309 anchors ·
+> 42 recurring series · 24 migrations** · net worth **$110,914.77** (latest balance of each account, with this
+> morning's live prices; $113,125.01 at the last statement closes). Witness marks unchanged: value anchors 43 ·
+> chain endpoints 221 · chain windows 211 · statement periods 255 · accounts 13.
+> New record tables: 2 account numbers · 105 statement copies · 305 printed-line records.
 
 ---
 
 ## 0. THE JOB — what is next
 
-1. **§7 first** (two builds in flight), then **§6**, the queue, in order.
-2. **Your four answers of 2026-09-15 are recorded** (memory `moneyapp-owner-decisions-2026-09-15`) — do not re-ask.
+1. **§6 is the queue**, in order. Nothing is in flight: every branch this session opened is merged and pushed.
+2. **Your ten answers (2026-09-15 → 09-17) are recorded** in memory `moneyapp-owner-decisions-2026-09-15` and in
+   §3 / §6A — do not re-ask. One question is open and waiting for you: **§6A 21** (a re-read that drops a line a
+   still-imported re-download prints — bring it back, or make the loss visible).
 3. **When the Wells Fargo ····5481 statement covering early September arrives** — before October's lands:
-   `pnpm trial-import` it → import it → `pnpm tsx scripts/link-car-payments-2026-09.ts --db=data/moneyapp.db` (dry run:
-   Car lease ← one −$695.04 row posted Sep 1–18; Car insurance ← one −$1,000.00 Progressive row) → `--confirm`. The
-   early lease payment falls outside the ±3-day window and, left unlinked, blocks every later lease charge (audit,
-   measured on copies). Memory `moneyapp-car-lease-and-insurance`.
+   `pnpm trial-import` it → import it → `pnpm tsx scripts/link-car-payments-2026-09.ts --db=data/moneyapp.db` (dry
+   run: Car lease ← one −$695.04 row posted Sep 1–18; Car insurance ← one −$1,000.00 Progressive row) → `--confirm`.
+   The early lease payment falls outside the ±3-day window and, left unlinked, blocks every later lease charge.
+   Memory `moneyapp-car-lease-and-insurance`.
+4. **The next time you drop a statement file**, the import re-reads what is pending: the Discover CSV (v1 → v2) and
+   33 Robinhood brokerage PDFs (v3/v4 → v5). Both were rehearsed on copies this session: no figure moves, hand-set
+   attributes carry, `ledger-check` stays green.
 
 ## 1. WHAT LANDED (all pushed in `14759a7`)
 
@@ -65,6 +69,8 @@
 
 | 6 | **The Sapphire +$100.00 payment re-dated to its printed 06/30** (your answer): row 019f4ea0-240b-700b retired, successor 01a0a6b6-ca20… posted/transacted 2026-06-30 with the parser's hash, same group, statement, `attached` marker and note | 13/13 guards; Sapphire 2026-06-30 −$29.11 → $70.89 and no other day; net worth $113,125.01; re-run ALREADY APPLIED; ledger-check exit 0 | `scratchpad/redate-real/pre-write.db`; the script's `pre-*-redate-sapphire-0630-payment.db` |
 
+| 7 | **Migrations 0018–0023 + the three record-keeping backfills** (your answer 19), 2026-09-17 | the first script's open applied 0018 `statement_positions`, 0019 `statement_copies`, 0020 `account_numbers`, 0021 `unimported_transfer_legs`, 0022 `printed_lines`, 0023 `unimported_row_attributes` (18 → 24 migrations; the two new columns are NULL on every existing row, and every old column is byte-identical). Then `record-account-numbers` (2: Venture X ····4208 also printed ····9082 and ····4147), `record-statement-copies` (105 — "keeps 103 periods and 3,269 rows under another download"), `record-printed-lines` ×6 chunks (305 records, 23,071 lines). Each: dry run first, own restore point, re-run = "Nothing to do" | every figure compared before/after: net worth, per-account latest balance, daily_balances digest, periods by verdict + gap, anchors by source, active rows + sum, categories by source, notes, transfer groups, attached rows, marks — **only the migration count moved**; `pnpm ledger-check` exit 0 with "import records: 0 parsed file(s) … with no record" | `data/backups/pre-2026-09-17-migrations-0018-0023.db` (WAL-inclusive, integrity ok, 25 tables identical) + each script's own `pre-*.db` |
+
 ⚠️ `scripts/attach-sapphire-payment-rows-2026-09-14.ts` and `scripts/mark-attached-sapphire-rows-2026-09-15.ts` now refuse when re-run — on purpose: the $115 reversal grouped a row its after-state expects ungrouped. ⚠️ Un-importing 20260302 still ends in a −$798.48 gap (restored retired duplicate twins the re-import cannot match) — queued, not fixed.
 
 ## 3. ❓ YOUR ANSWERS, 2026-09-15 (closed — do not re-ask)
@@ -84,6 +90,18 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
   own; sessions handle it, never him (⏳ uc/ledger-check-witness-floor).
 - Not asked, shipped as measured: categories that stopped spending get no relief block (their fall is in the total
   and named in a note) — drawing zero-width wells would let the deepest set every block's height.
+
+### Your answers of 2026-09-16 / 09-17 (closed — do not re-ask)
+
+- Un-importing a file that TOOK OVER rows brings those rows back when their own file is still imported.
+- A re-read that stops reading an account DETACHES and keeps that account's attached rows.
+- An un-import → re-import round trip gives back your hand categories, notes and recurring links.
+- The agent's dividends stay OUT of /summary's investment income (interest on its cash still shows under
+  "Interest on other accounts").
+- Run the three record-keeping backfills on the real ledger (done — §2 row 7).
+- After un-importing the Wells Fargo PDF, Wells Fargo keeps the opening balance that statement printed ($0.00,
+  Jul 26) labelled as from a statement you un-imported; net worth does not move; it reads unverified until the
+  statement is back.
 
 ## 3c. The Robinhood Agentic positions design (read-only, 2026-09-15)
 
@@ -117,6 +135,27 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
   (3) Dead agents' worktrees hold branches, so fixers pushed to `-v2`/`-r2`.
 - **The 3pm session limit killed 6 agents mid-review.** Nothing was lost because each stage returns structured
   results; the resume workflow re-ran only the dead stages. Never merge a branch whose reviewer died.
+
+- **A gate run under load invents failures.** The gate beside the full unit suite and six stalled agents: 2.7 h,
+  36 failed — 16 real, 20 "element is not stable" / 30 s click timeouts, single tests taking 10–17 min. The same
+  tree then passed 602 in 8.6 min. Read the failure KIND before chasing one; never regenerate a baseline from a
+  loaded run. And read a gate's own `gate rc=` line: a wrapper ending in `grep` reports the grep's exit.
+- **A migration collision is not fixed by renumbering.** drizzle applies only migrations whose journal `when` is
+  later than the last applied, so a branch renamed to a higher number but generated EARLIER is skipped silently.
+  Renumber AND give it a later `when`, rebuild the snapshot cumulatively on the one before it.
+- **A 16-finding fix list kills an agent.** Two workflows lost a fixer to "no progress for 180000ms"; the survivor
+  had made 8 commits on a detached HEAD. Split fix stages into small sequential agents, tell them to run anything
+  over 60 s detached and poll it, and recover a dead agent's work with `git -C <worktree> log <branch>..HEAD`.
+- **Per-commit cherry-picks cannot resolve a semantic merge.** Two branches had each rewritten the same re-read
+  step; picking commit by commit meant resolving it repeatedly. One merge of the final states, by an agent that
+  ran both sides' tests, was right.
+- **`sqlite3 -readonly` cannot open the ledger when it has no `-shm`** (WAL mode, nothing else attached):
+  `sqlite3 "file:data/moneyapp.db?immutable=1" ".backup …"`. But an immutable read IGNORES the WAL — check for a
+  `-wal` file first, and take restore points through a `mode=ro` connection so the WAL is included. This session's
+  first restore point missed your 09:40 price refresh for exactly that reason.
+- **An agent wiped shared scratch** with `rm -f *.db` at the top of the session scratchpad. Every cited restore
+  point survived (they live in subdirectories and in `data/backups`), but prompts now say: own `mktemp -d`, never
+  wildcard-delete a shared directory.
 
 ## 5. ✅ CHECKED AND FOUND RIGHT — do not re-litigate
 
@@ -217,80 +256,26 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
 - `scripts/attach-sapphire-payment-rows-2026-09-14.ts` and `scripts/mark-attached-sapphire-rows-2026-09-15.ts`
   refuse when re-run, on purpose — do not use them as checks.
 
-## 7. ⏳ IN FLIGHT AT WRITING (16:30) — finish these first
+## 7. ✅ WHAT LANDED AFTER THE CHECKPOINT (all pushed, `4e1c1c4` → `f0ad619`)
 
-1. ✅ **DONE 16:35 — `uc/ledger-check-witness-floor` merged** (your answer: the pre-commit check fails when its
-   count of witnesses drops; growth raises the mark on its own). The migration was renumbered to
-   `0017_ledger_witness_marks`; the first real `ledger-check` applied it (18 migration rows) and recorded marks
-   INSIDE the ledger — value anchors 43 · chain endpoints 221 · chain windows 211 · statement periods 255 ·
-   accounts 13 — and a second run held (exit 0). A drop now fails the hook and names what left; after a removal you
-   approved: `pnpm ledger-check --lower-marks=<kind> --confirm`. A lone chain-grade anchor (Cash on Hand's $5,000)
-   is its own witness now. Known limits: a swap (one witness out, a different one in) passes; editing a balance
-   changes no count; a moment-only account's first statement can drop endpoints. Restore point:
-   `data/backups/pre-2026-09-15-migration-0017.db`.
-2. **The agent's brokerage book** (your answer: two accounts when the agent buys stock) — `uc/agentic-two-accounts-r2`
-   (11 commits): migration **0018** `accounts.cash_account_id` (UNIQUE) + `holding_events.import_file_id`;
-   `isOwnPortfolioBook` keeps the book out of YOUR returns and in net worth; parser v5 reads a #…9651 section that
-   proves positions into a book the import creates by the stored link. Two review rounds, every HIGH/MEDIUM fixed:
-   a refreshed-then-un-imported book stayed in net worth at $27.37; un-importing an earlier month left −0.1 WMT;
-   name-match mutants survived; the net-worth bridge called the book "Unexplained"; a quiet later month let a sold
-   0.25 WMT come back ($27.73); your WMT page counted the agent's shares; /summary counted the agent's dividend;
-   links from the book opened your holding page or a 404 and the Add-holding form offered the book. 14/14 lifecycle
-   mutants killed. Nothing changes on your ledger today (no book exists; 0 linked accounts).
-   ✅ The migration hazard is gone: the branch's rebase renumbered it to 0018 with a later `when` and a chained
-   snapshot (the renumber script is not needed). Restore point before 0018 reaches the real ledger:
-   `data/backups/pre-2026-09-16-migration-0018.db` (18 migrations, 10,320 active, integrity ok).
-   ⏳ Cherry-picking hit a semantic conflict with round 2's re-read/un-import lifecycle, so main was returned to
-   `67f7726` and workflow `agentic-integrate-with-round2` merges the branch once (both lifecycles kept), proves
-   real-ledger parity, and runs two adversarial reviews + a fix on `uc/agentic-integrate`.
-   Deferred LOWs: the book's side follows the cash account's CURRENT name (renaming "Robinhood Agentic" would move
-   it into your returns — your naming rule, pinned by a test); after the agent sells everything the book keeps a
-   stale live price reading; six book-lifecycle mutants survive; the /imports un-import preview does not warn about
-   the new "un-import the later statement first" refusal (it shows as the action's error).
-3. ✅ **DONE — your background task** "Rebuild accounts whose only link to an unimported file is a period"
-   (`9cd7acb`, session 8bb0cb0a) is on main since `14759a7`; its branch holds nothing unmerged.
-3b. **Queue defects — merged on local main 17:05** (14 commits over `4e1c1c4`, each reviewed, every finding fixed):
-   the end-of-month note prints one amount when a half is `$0.00`; the eating-out and concentration multiples share
-   `renderMultiple` ("<0.1×" instead of "0.0×"); "level with" has one home with a parser-backed guard, and the relief
-   rail's change is dated to its own day; a unit guard walks every "use client" file's import graph for
-   `better-sqlite3`/`fs`, and four client components stopped carrying whole service graphs. The end-of-month fix moves
-   the 16 recurring and recurring-calendar baselines. `next build` ✓ · unit 304 files / 6,102 ✓ · tsc ✓ on `980ad69`.
-   Follow-ups: §6 items 9–12.
-3c. **Queue round 2 — merged on local main** (10 commits over `a119119` → `b8881c2`; each implemented RED-first,
-   reviewed, fixed): a parser-version re-read rebuilds every account the retired file wrote, and a re-read the new
-   parser cannot finish no longer retires the old read first; removing a statement keeps an anchor a neighbour or a
-   second download still prints; un-import → re-import of Sapphire 20260302 closes (no −$798.48 gap: retired duplicate
-   twins stay retired), and a takeover's payment is not doubled by un-importing the export; Cash on Hand's typed
-   $5,000 is never "checked" / "closes" / "verifies" anywhere, and an event-less investment account is not "priced
-   from holdings". `next build` ✓ · unit **305 files / 6,156** ✓ · tsc ✓. Owner calls it raised: §6A 13–16.
-   ✅ Round 3 (second reader on round 2, then fixes; `uc/import-lifecycle-r3`, 11 commits, not merged yet): 24
-   verifier findings + the final review's 4, all fixed — un-importing the first of two downloads deleted 85 rows
-   and the period the other still prints (59 such statements; now kept under the other copy); a re-read whose
-   archive move failed left 25 rows under a "Failed" file and stopped the upload; the Discover CSV v1→v2 re-read
-   moved 7 of Claude's categories (2 to none); re-importing a pre-reissue Venture X statement created a second
-   "Venture X"; round trips lost hand-linked transfers ($11,476.31 when both sides round-trip) and counted
-   $12,975.87 of card payments as spending; un-importing Spending Report PDF (1) put 8 reconciled Sapphire
-   statements into gap; un-importing an activity CSV deleted 75 rows a re-download still prints; the confirmation
-   now says what a round trip loses. New migrations 0018–0021 (to be renumbered 0019–0022) and three backfill
-   scripts (your answer 19).
-   Its LOWs: a truncated PDF is reported "scanned or image-only" and a failed Robinhood upload is filed under Chase
-   (every Robinhood brokerage `import_files` row records institution Chase); round trips move boundary-anchor
-   ownership; the trust card says Cash on Hand has "nothing checks it since Aug 11"; `migrateStorageLayout` still
-   reads only rows + periods; the Chase checking parser drops 20250312's "02/28 Zelle Payment From …" line when
-   footer digits merge onto it (+$33.99 gap if Chase3522_Activity_20260710.CSV is un-imported — an agent raised a
-   suggested-task card for it; start it only after this merge lands, a parser bump re-reads every Chase statement).
-3d. ✅ **Final integration merged on local main** (`67f7726` → `b88184b`, 53 commits): round 3's import lifecycle
-   merged onto the agent's book with ONE rule for who keeps a month a second download prints (migrations renumbered
-   0019–0022, plus 0023 `unimported_row_attributes`); your answers 15, 16, 18 and 20 built; three review lenses
-   (2 HIGH + 14 MEDIUM, all fixed), a final review (2 MEDIUM, fixed), then a last reviewer on the two commits nobody
-   had read — it found 2 HIGH (a kept opening deleted while ANOTHER download still keeps the account's rows, on
-   un-import and on a re-read) and 4 MEDIUM, all fixed except §6A 21. Unpinned mutants left: the per-member
-   `keptByPrinters` tally (needs a two-member book chain), `stillHeld`'s two filters (may be unreachable), and
-   `windowsRead`'s row span (reachable only through an investment book).
-   Checks on the merged tip: tsc ✓ · `next build` ✓ · unit **317 files / 6,404** ✓ (before the last 3 commits) ·
-   e2e **602** ✓ on `e04508d` + the tracing config. The ledger runbook (§2 below) has not run yet.
+| what | evidence |
+|---|---|
+| **The witness floor** (your answer): `pnpm ledger-check` fails when its count of witnesses DROPS, raises the mark on its own when one appears, and `--lower-marks=<kind> --confirm` lowers it after a removal you approved | migration `0017_ledger_witness_marks`; the first real run recorded 43 · 221 · 211 · 255 · 13 and every run since holds |
+| **Four queue defects**: the EOM note prints one amount instead of a `$0.00` half; eating-out and concentration share `renderMultiple` ("<0.1×", never "0.0×"); "level with" has ONE home behind a TypeScript-parser guard, and the relief rail dates a day's change to its own day; a unit guard walks every `"use client"` import graph for `better-sqlite3`/`fs`, and four client components stopped carrying whole service graphs | 14 commits; 16 recurring baselines traced by crop before regenerating |
+| **Round 2 — the import lifecycle**: a parser-version re-read rebuilds every account the retired file wrote; a re-read the new parser cannot finish keeps the old read; removing a statement keeps an anchor a neighbour or a second download still prints; Sapphire 20260302's round trip closes (no −$798.48 gap); a takeover's payment is not doubled; Cash on Hand's typed $5,000 is never "checked"; an event-less investment account is not "priced from holdings" | 10 commits, each RED-first, reviewed and fixed |
+| **Round 3 — what a round trip must not lose**: un-importing the first of two downloads no longer deletes 85 rows and a period the other prints (59 such statements); a failed archive move no longer leaves rows under a "Failed" file or stops the upload; the Discover re-read keeps Claude's categories; a pre-reissue Venture X statement no longer creates a second account; round trips keep hand-linked transfers ($11,476.31 when both sides round-trip) and no longer count $12,975.87 of card payments as spending; un-importing Spending Report PDF (1) no longer puts 8 reconciled Sapphire periods into gap; the confirmation says what a round trip really does | 11 commits; 24 verifier findings + 4 from the final review, all fixed |
+| **The agent's brokerage book** (your answer: two accounts): migration 0018 pairs a book to its cash account by a stored link (`accounts.cash_account_id`, UNIQUE); `isOwnPortfolioBook` keeps the agent's positions OUT of your returns and IN net worth; parser v5 reads a #…9651 section that proves positions; the book is created only by a statement that proves them | 11 commits over two review rounds: a refreshed-then-un-imported book stayed in net worth at $27.37; −0.1 WMT after an un-import; name-match mutants survived; the bridge called the book "Unexplained"; a quiet later month let a sold 0.25 WMT return; your WMT page counted the agent's shares; /summary counted its dividend; links opened your page or a 404 — all fixed, 14/14 lifecycle mutants killed |
+| **The final integration**: both lifecycles in one merge, ONE rule for who keeps a month a second download prints, migrations renumbered 0019–0022, your answers 15/16/18/20 built, the backfills rehearsed | 2 HIGH + 14 MEDIUM from three review lenses, 2 MEDIUM from the final review, then 2 HIGH + 4 MEDIUM from a last reviewer on the two commits nobody had read — all fixed but §6A 21 |
+| **The build stopped shipping your money**: every server trace listed `data/moneyapp.db`, the backups, `data/statements` and `data/inbox` (630 entries per route) | `outputFileTracingExcludes` clears all 23 route traces; the instrumentation trace still lists 1,258 → §6C, hosting phase |
+| **Your background task** "Rebuild accounts whose only link to an unimported file is a period" | `9cd7acb`, merged in `14759a7` |
 
-4. After every merge batch: `pnpm exec next build` BEFORE the gate (§4).
+**Owner-visible behaviour that changed today** (nothing moves on your ledger until you act):
+- Un-importing a statement whose rows another still-imported file prints keeps those rows, and keeps the opening
+  balance the removed statement printed (labelled "from a statement you un-imported", never "checked").
+- Un-import → re-import gives back your categories, notes, recurring links, splits, exclusions and transfer links.
+- Un-importing a statement while a LATER statement of the same brokerage book exists is refused, naming the later
+  month to remove first.
+- The /imports confirmation now counts what is kept, what is detached and what is lost, honestly.
 
 Session scratchpad (9ebfed64): `queue-after-merges.md` (the full queue with evidence), `hunt-result.json` +
 `hunt-overflow-verdicts.json` (the one-caller hunt), `agentic-design.json`, the rehearsal copies and runbooks
