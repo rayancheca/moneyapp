@@ -1510,6 +1510,41 @@ describe("re-parse lifecycle: a parser-version bump preserves user work", () => 
     expect(liveRow("SHELL OIL")).toMatchObject({ categoryId: null, categorizationSource: "user", categorizationConfidence: 1, needsReview: false });
   });
 
+  /*
+   * A line the new read prints can be absorbed by a row the owner entered by hand on its day (the same money, other
+   * words). That row is the live record of the money now: the note he left on the retired row fills it — only what the
+   * row leaves empty, never over his category there.
+   * 🔴 The carry retired with its superseded row, and the note was gone (2026-09-17).
+   */
+  test("a line a hand-entered row absorbs gives that row the retired row's note, and nothing over what it holds", async () => {
+    await importStatementFiles(bundle.db, [FILE]);
+    const shell = liveRow("SHELL OIL");
+    bundle.db.update(transactions).set({ notes: "family car" }).where(eq(transactions.id, shell.id)).run();
+    const [categoryId] = expenseCategoryIds(1) as [string];
+    const raw = "GAS PAID BY HAND";
+    const byHand = bundle.db
+      .insert(transactions)
+      .values({
+        accountId: shell.accountId,
+        postedOn: shell.postedOn,
+        amountCents: shell.amountCents,
+        rawDescription: raw,
+        normalizedDescription: normalizeDescription(raw),
+        dedupeHash: dedupeHash({ accountId: shell.accountId, postedOn: shell.postedOn, amountCents: shell.amountCents, rawDescription: raw, occurrenceIndex: 0 }),
+        categoryId,
+        categorizationSource: "user",
+        categorizationConfidence: 1,
+      })
+      .returning({ id: transactions.id })
+      .get().id;
+
+    const [outcome] = await withBumpedParserVersion("chase-card-csv", () => importStatementFiles(bundle.db, [FILE]));
+
+    expect(outcome).toMatchObject({ status: "parsed", dedupedCrossFormat: 1, carriedForward: 1 });
+    expect(liveRow("GAS PAID BY HAND")).toMatchObject({ id: byHand, notes: "family car", categoryId, categorizationSource: "user" });
+    expect(() => liveRow("SHELL OIL")).toThrow();
+  });
+
   test("idempotency: re-importing the identical file at the new version does not double-count", async () => {
     await seedUserWork();
     await withBumpedParserVersion("chase-card-csv", async () => {

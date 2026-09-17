@@ -71,7 +71,15 @@ import {
   settleLentPeriods,
   type LentPeriod,
 } from "./statement-copies";
-import { appendPrintedLines, forgetPrintedLines, handOverToPrinters, printedLineOf, printerHandOvers, printerRowIds } from "./printed-lines";
+import {
+  appendPrintedLines,
+  forgetPrintedLines,
+  handOverToPrinters,
+  printedLineOf,
+  printedWordsOfRows,
+  printerHandOvers,
+  printerRowIds,
+} from "./printed-lines";
 import {
   keepStayingLegsByContent,
   moveWaitingLeg,
@@ -606,6 +614,8 @@ function rememberedOf(tx: AppDatabase, importFileId: string): RememberedInsert[]
     tx,
     rows.map((r) => r.id),
   );
+  // a row another file wrote, filed here because this file prints its money, waits for this file's line, in its words
+  const printedWords = printedWordsOfRows(tx, importFileId, rows);
   return rows.flatMap((row): RememberedInsert[] => {
     const splits = parts.get(row.id) ?? [];
     // 🔴 a transfer leg's hand category is the one the pair gave it (`linkTransferPair`), and `unimported-transfers`
@@ -621,7 +631,7 @@ function rememberedOf(tx: AppDatabase, importFileId: string): RememberedInsert[]
         postedOn: row.postedOn,
         transactedOn: row.transactedOn,
         amountCents: row.amountCents,
-        normalizedDescription: row.normalizedDescription,
+        normalizedDescription: printedWords.get(row.id) ?? row.normalizedDescription,
         dedupeHash: row.dedupeHash,
         categoryId: category ? row.categoryId : null,
         categorizationSource: category ? row.categorizationSource : null,
@@ -816,7 +826,8 @@ function liveRowByHash(
  * `fresh` — we inserted that row ourselves, so it is ours to stamp outright;
  * otherwise the row predates this file and only its EMPTY attributes fill in.
  * Returns false when nothing represents the money (the carry simply retires
- * with its superseded row).
+ * with its superseded row). `onto` names the row that records the money when
+ * no row has this line's hash: the row that absorbed the line.
  */
 function landCarry(
   tx: AppDatabase,
@@ -824,8 +835,10 @@ function landCarry(
   hash: string,
   carry: CarryRow,
   fresh: boolean,
+  onto?: string,
 ): boolean {
-  const target = liveRowByHash(tx, accountId, hash);
+  const target =
+    liveRowByHash(tx, accountId, hash) ?? (onto === undefined ? undefined : tx.select().from(transactions).where(eq(transactions.id, onto)).get());
   if (!target) return false;
   adoptCarriedSplits(tx, carry, target, fresh);
   if (fresh) applyCarry(tx, target.id, carry);
@@ -1885,8 +1898,8 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
         // …else what the owner had set on the same line before an un-import removed it (`unimported-attributes`)
         const recalled = prior === null ? takeCarry(recall, accountId, t, hash, 1) : null;
         const carried = prior ?? recalled;
-        const landed = (fresh: boolean): void => {
-          if (carried === null || !landCarry(tx, accountId, hash, carried, fresh)) return;
+        const landed = (fresh: boolean, onto?: string): void => {
+          if (carried === null || !landCarry(tx, accountId, hash, carried, fresh, onto)) return;
           if (recalled === null) {
             outcome.carriedForward += 1;
             return;
@@ -1952,11 +1965,15 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
           // …and the bank's bucket the line prints goes to the record that keeps its money, where it has none
           fillBankCategory(tx, fate.byId, t.bankCategory);
           // the survivor belongs to another file: fill only the attributes it
-          // lacks, never overwrite (its own user category outranks ours). A
-          // cross-format dedupe (hash miss) has no identifiable survivor, so
-          // that carry retires with its superseded row rather than guess (a
-          // record waits for an import that writes its line).
-          landed(false);
+          // lacks, never overwrite (its own user category outranks ours). On a
+          // cross-format dedupe (hash miss) the survivor is the row that
+          // absorbed the line (`absorbedLines`) — the live record of the money,
+          // as a takeover victim is. A record landed there is spent, so the line
+          // keeps ONE record: the one that row leaves when it goes.
+          // 🔴 The carry retired with its superseded row and a record waited
+          // beside the survivor: a re-read lost the owner's note, and a later
+          // round trip gave back the older of two records of the line (2026-09-17).
+          landed(false, fate.byId);
           continue;
         }
 

@@ -66,6 +66,40 @@ const SECTIONS: Record<string, ParsedStatement[]> = {
   stranger: [{ accountHint: CARD, txns: [{ postedOn: "2026-05-03", amountCents: -2500, rawDescription: "UNRELATED PHARMACY 7" }] }],
   // an export of the account, less trusted than the statement's OFX, printing the groceries charge in its own words
   export: [{ accountHint: CARD, txns: [{ postedOn: "2026-05-03", amountCents: -2500, rawDescription: "HOLLOW MKT" }] }],
+  // a statement printing two charges of the same money on one day
+  twin: [
+    {
+      accountHint: CARD,
+      txns: [
+        { postedOn: "2026-05-03", amountCents: -2500, rawDescription: "ZQX HOLLOW MARKET 12" },
+        { postedOn: "2026-05-03", amountCents: -2500, rawDescription: "ZQX SECOND COUNTER" },
+      ],
+    },
+  ],
+  // two charges of the same money on one day, the first printed with no transaction day…
+  pair: [
+    {
+      accountHint: CARD,
+      txns: [
+        { postedOn: "2026-05-20", amountCents: -4200, rawDescription: "ZQX KIOSK NORTH" },
+        { postedOn: "2026-05-20", transactedOn: "2026-05-20", amountCents: -4200, rawDescription: "ALPHA BAKERY 3" },
+      ],
+    },
+  ],
+  // …and another file printing the first in its own words, with no transaction day either
+  partner: [{ accountHint: CARD, txns: [{ postedOn: "2026-05-20", amountCents: -4200, rawDescription: "KIOSK N" }] }],
+  // the same, the other way round: the charge with the row of its own printed first, and the other file printing the
+  // second charge with its transaction day
+  pairReversed: [
+    {
+      accountHint: CARD,
+      txns: [
+        { postedOn: "2026-05-25", transactedOn: "2026-05-24", amountCents: -5100, rawDescription: "ALPHA BAKERY 3" },
+        { postedOn: "2026-05-25", transactedOn: "2026-05-25", amountCents: -5100, rawDescription: "ZQX KIOSK NORTH" },
+      ],
+    },
+  ],
+  partnerReversed: [{ accountHint: CARD, txns: [{ postedOn: "2026-05-25", transactedOn: "2026-05-25", amountCents: -5100, rawDescription: "KIOSK N" }] }],
 };
 SECTIONS["<OFX> statement"] = SECTIONS.statement!;
 
@@ -80,6 +114,11 @@ const file = (name: string): ImportInput => ({ name: `${PREFIX}${name}.csv`, buf
 const STATEMENT = file("statement");
 const STRANGER = file("stranger");
 const EXPORT = file("export");
+const TWIN = file("twin");
+const PAIR = file("pair");
+const PARTNER = file("partner");
+const PAIR_REVERSED = file("pairReversed");
+const PARTNER_REVERSED = file("partnerReversed");
 /** the statement in a format more trusted than any CSV (`FORMAT_PRIORITY`) */
 const OFX_STATEMENT: ImportInput = { name: `${PREFIX}statement.ofx`, buffer: Buffer.from("<OFX> statement") };
 
@@ -311,6 +350,109 @@ describe("a round trip gives back what the owner set on the rows it removed", ()
     await importStatementFiles(bundle.db, [OFX_STATEMENT]);
 
     expect(byWords(LINES.groceries.rawDescription)).toMatchObject({ categoryId: null, categorizationSource: "user", categorizationConfidence: 1 });
+    expect(records()).toEqual([]);
+  });
+
+  /*
+   * A line another file's row ABSORBS (the same money, a file as trusted, other words) is the takeover's case without
+   * the takeover: that row is the live record of the money. It takes the record — only what it leaves empty — and the
+   * record is spent; and once that row is filed under the statement that prints the line, its record waits for that
+   * line, in the line's words.
+   *
+   * 🔴 The record was left waiting beside the row that absorbed its line. Un-importing the export handed that row, with
+   * the owner's newer work, to the statement; un-importing the statement wrote a second record of the line, in the
+   * export's words; and the statement's next import gave back the OLDER record (hash match) and left the newer one
+   * waiting for words no line prints (found while checking the review of uc/final-integrate, 2026-09-17).
+   */
+  test("a line another file's row absorbs keeps that row's newer work, spends the older record, and its next round trip gives back the newer", async () => {
+    await importStatementFiles(bundle.db, [STATEMENT]);
+    set(LINES.groceries.rawDescription, { categoryId: categoryNamed("Groceries"), categorizationSource: "user", notes: "before" });
+    unimportFile(bundle.db, fileId(STATEMENT));
+    await importStatementFiles(bundle.db, [EXPORT]);
+    set("HOLLOW MKT", { categoryId: categoryNamed("Dining"), categorizationSource: "user", notes: "since" });
+
+    const [outcome] = await importStatementFiles(bundle.db, [STATEMENT]);
+
+    expect(outcome).toMatchObject({ status: "parsed", dedupedCrossFormat: 1, givenBack: 1 });
+    expect(byWords("HOLLOW MKT")).toMatchObject({ categoryId: categoryNamed("Dining"), notes: "since" });
+    expect(records()).toEqual([]);
+
+    // the export's row is the statement's now (it prints the line), and leaves no record with the export
+    unimportFile(bundle.db, fileId(EXPORT));
+    expect(byWords("HOLLOW MKT")).toMatchObject({ importFileId: fileId(STATEMENT), notes: "since" });
+    expect(records()).toEqual([]);
+
+    // the newer work is what the statement's line gets back on its next round trip
+    unimportFile(bundle.db, fileId(STATEMENT));
+    expect(records()).toEqual([{ notes: "since" }]);
+    const [back] = await importStatementFiles(bundle.db, [STATEMENT]);
+    expect(back).toMatchObject({ status: "parsed", givenBack: 1 });
+    expect(byWords(LINES.groceries.rawDescription)).toMatchObject({ categoryId: categoryNamed("Dining"), categorizationSource: "user", notes: "since" });
+    expect(records()).toEqual([]);
+  });
+
+  test("…and a row that absorbs it with nothing set takes the record whole", async () => {
+    await importStatementFiles(bundle.db, [STATEMENT]);
+    set(LINES.groceries.rawDescription, { categoryId: categoryNamed("Groceries"), categorizationSource: "user", notes: "before" });
+    unimportFile(bundle.db, fileId(STATEMENT));
+    await importStatementFiles(bundle.db, [EXPORT]);
+
+    const [outcome] = await importStatementFiles(bundle.db, [STATEMENT]);
+
+    expect(outcome).toMatchObject({ status: "parsed", dedupedCrossFormat: 1, givenBack: 1 });
+    expect(byWords("HOLLOW MKT")).toMatchObject({ categoryId: categoryNamed("Groceries"), categorizationSource: "user", notes: "before" });
+    expect(records()).toEqual([]);
+  });
+
+  /*
+   * A file's own row keeps its own words in the record, though another line of the same money and day has no row of
+   * the file (another row absorbed it): the record of the second charge must not wait for the first charge's words.
+   * 🔴 Matched line by line, the first charge took the only row of that money, and its next import filled the owner's
+   * note onto the row that had absorbed the first charge (2026-09-17, while checking the absorbed-line record).
+   */
+  test("a file's own row is remembered in its own words beside a charge of the same money another row absorbs", async () => {
+    await importStatementFiles(bundle.db, [STRANGER]);
+    const [first] = await importStatementFiles(bundle.db, [TWIN]);
+    expect(first).toMatchObject({ status: "parsed", inserted: 1, dedupedCrossFormat: 1 });
+    set("ZQX SECOND COUNTER", { notes: "mine" });
+    unimportFile(bundle.db, fileId(TWIN));
+    expect(bundle.db.select({ notes: unimportedRowAttributes.notes, words: unimportedRowAttributes.normalizedDescription }).from(unimportedRowAttributes).all()).toEqual([
+      { notes: "mine", words: normalizeDescription("ZQX SECOND COUNTER") },
+    ]);
+
+    const [back] = await importStatementFiles(bundle.db, [TWIN]);
+
+    expect(back).toMatchObject({ status: "parsed", inserted: 1, dedupedCrossFormat: 1, givenBack: 1 });
+    expect(byWords("ZQX SECOND COUNTER")).toMatchObject({ notes: "mine" });
+    expect(byWords("UNRELATED PHARMACY 7")).toMatchObject({ notes: null });
+    expect(records()).toEqual([]);
+  });
+
+  /*
+   * The row a line wrote is never taken from it for another line of the same money and day, though that line would
+   * record it more surely by its days: the other line has the row it was handed over for.
+   * 🔴 Grown into one maximum matching, the second line took the first line's own row and handed the first line the
+   * other file's row: each record waited for the other charge's words, and each charge came back with the other's note
+   * (2026-09-17, while checking the absorbed-line record).
+   */
+  test.each([
+    ["the charge another file wrote printed first", PAIR, PARTNER],
+    ["the charge with a row of its own printed first", PAIR_REVERSED, PARTNER_REVERSED],
+  ])("each of two charges of the same money gets back its own note, where one of them is a row another file wrote: %s", async (_, pair, partner) => {
+    await importStatementFiles(bundle.db, [partner]);
+    const [read] = await importStatementFiles(bundle.db, [pair]);
+    expect(read).toMatchObject({ status: "parsed", inserted: 1, dedupedCrossFormat: 1 });
+    unimportFile(bundle.db, fileId(partner));
+    expect(byWords("KIOSK N")).toMatchObject({ importFileId: fileId(pair) });
+    set("KIOSK N", { notes: "the kiosk" });
+    set("ALPHA BAKERY 3", { notes: "the bakery" });
+
+    unimportFile(bundle.db, fileId(pair));
+    const [back] = await importStatementFiles(bundle.db, [pair]);
+
+    expect(back).toMatchObject({ status: "parsed", inserted: 2, givenBack: 2 });
+    expect(byWords("ZQX KIOSK NORTH")).toMatchObject({ notes: "the kiosk" });
+    expect(byWords("ALPHA BAKERY 3")).toMatchObject({ notes: "the bakery" });
     expect(records()).toEqual([]);
   });
 

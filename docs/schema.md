@@ -181,10 +181,13 @@ names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
   a "not this one", an exclusion, splits — is kept in `unimported_row_attributes`, and an import
   that writes the same line again (same account, amount and posted — else transacted — day, and
   the same `dedupe_hash` or words that describe the same charge) takes it back, as a re-parse
-  takes its predecessor's; the record is then spent. A line that takes over another file's row
-  spends the record too, but only fills what that row leaves empty (the row is the live record of
-  the money and holds the owner's work since); a transfer leg's hand category is the pair's and
-  is not kept here; a category or series deleted meanwhile is not given back (owner, 2026-09-16).
+  takes its predecessor's; the record is then spent. A line that takes over another file's row,
+  or that another row absorbs, spends the record too, but only fills what that row leaves empty
+  (the row is the live record of the money and holds the owner's work since; a re-parse carry
+  fills an absorbing row the same way). A row filed under the file because the file prints its
+  money (another file wrote it) is kept in the words of the line the file prints for it. A
+  transfer leg's hand category is the pair's and is not kept here; a category or series deleted
+  meanwhile is not given back (owner, 2026-09-16).
   A row **filed by hand** (`attached`) is never a takeover victim: like any row entered by hand,
   it absorbs the more trusted file's line.
   A row **attached** to the file (`file_link_source = 'attached'`: recorded without the document,
@@ -215,8 +218,8 @@ brokerage book removed with its last statement takes its records with it.
 | field | type | notes |
 |---|---|---|
 | id / account_id | | |
-| posted_on / transacted_on / amount_cents / normalized_description / dedupe_hash | | the line's identity, as the carry-forward matches it |
-| category_id / categorization_source / categorization_confidence / merchant_id / needs_review | | only a category no engine of an import sets again: `user` (with no category: "Uncategorized" picked by hand), `claude`, or no source — never a transfer leg's hand category, which is the pair's (`unimported_transfer_legs`). A line that takes over another file's row spends the record: it only fills what that row, the live record with his work since, leaves empty |
+| posted_on / transacted_on / amount_cents / normalized_description / dedupe_hash | | the line's identity, as the carry-forward matches it — the words are the ones the un-imported file prints for the row's line (`printedWordsOfRows`), which differ from the row's only for a row another file wrote |
+| category_id / categorization_source / categorization_confidence / merchant_id / needs_review | | only a category no engine of an import sets again: `user` (with no category: "Uncategorized" picked by hand), `claude`, or no source — never a transfer leg's hand category, which is the pair's (`unimported_transfer_legs`). A line that takes over another file's row, or that another row absorbs, spends the record: it only fills what that row, the live record with his work since, leaves empty |
 | notes / recurring_series_id / series_link_source | | a link, or a detach (no series, `user`) |
 | excluded | boolean | |
 | splits | JSON nullable | `[{ categoryId, amountCents, note, sortOrder }]` |

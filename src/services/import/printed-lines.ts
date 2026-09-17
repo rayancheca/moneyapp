@@ -348,6 +348,50 @@ export function printerHandOvers(
   return plans;
 }
 
+/** A row an un-import deletes, as `printedWordsOfRows` reads it. */
+export interface RowToRemember {
+  id: string;
+  accountId: string;
+  postedOn: string;
+  transactedOn: string | null;
+  amountCents: number;
+  normalizedDescription: string;
+}
+
+/**
+ * The words the file `importFileId` prints for the line each of its rows records. For a row the file wrote, its own
+ * words; for a row another file wrote, handed to this file because this file prints its money (`handOverToPrinters`),
+ * the words of the line it records. A row the file prints no line for is left out.
+ *
+ * A record of what the owner set on a row the un-import deletes waits for an import that writes its line
+ * (`unimported-attributes`), and a line claims a record by its words. 🔴 A row handed over in the export's words left a
+ * record no line of the statement could claim: the statement's next import gave the owner's newer work back to nothing
+ * (found while checking the review of uc/final-integrate, 2026-09-17).
+ */
+export function printedWordsOfRows(db: AppDatabase, importFileId: string, rows: readonly RowToRemember[]): Map<string, string> {
+  const words = new Map<string, string>();
+  const records = db.select().from(printedLines).where(eq(printedLines.importFileId, importFileId)).all();
+  for (const record of records) {
+    const lines = JSON.parse(record.lines) as PrintedLine[];
+    const mine: Row[] = rows
+      .filter((r) => r.accountId === record.accountId)
+      .map(({ accountId: _a, ...r }) => ({ ...r, importFileId, parsed: true }));
+    if (mine.length === 0 || lines.length === 0) continue;
+    const index = indexRows(mine);
+    const candidates = lines.map((line) => candidatesFor(line, index));
+    const m: Matching = { lineOf: new Map(), rowOf: new Map() };
+    // each line's own row first — the one it wrote, in its words — and never taken from it; then, for each line left,
+    // a row another file wrote. 🔴 Matched in one pass, a line another row absorbed took the file's own row of the same
+    // money and day, and the record waited for that line's words — and a line of the same money could claim it.
+    const own = candidates.map((rows, i) => rows.filter((r) => r.normalizedDescription === lines[i]!.normalizedDescription));
+    for (let i = 0; i < lines.length; i++) augment(i, own, () => true, m, new Set());
+    const wrote = new Set(m.lineOf.keys());
+    for (let i = 0; i < lines.length; i++) if (!m.rowOf.has(i)) augment(i, candidates, (r) => !wrote.has(r.id), m, new Set());
+    for (const [rowId, line] of m.lineOf) words.set(rowId, lines[line]!.normalizedDescription);
+  }
+  return words;
+}
+
 /** Files each planned row under its heir. Call it inside the un-import's transaction, before anything reads "the file's rows". */
 export function handOverToPrinters(tx: AppDatabase, plans: readonly PrinterHandOver[]): void {
   for (const plan of plans) {
