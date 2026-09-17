@@ -60,7 +60,14 @@ import {
   type LaterBookStatement,
 } from "./brokerage-book";
 import { handOverPrintedAnchors } from "./printed-anchors";
-import { keepOpenings, keptOpeningPlans, replaceKeptOpening, settleKeptOpenings } from "./kept-openings";
+import {
+  followingOpeningsByFile,
+  handOverKeptOpenings,
+  keepOpenings,
+  keptOpeningPlans,
+  replaceKeptOpening,
+  settleKeptOpenings,
+} from "./kept-openings";
 import {
   copyHandOvers,
   forgetStatementCopies,
@@ -2829,6 +2836,8 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
       // ⚖️ owner, 2026-09-17: an account whose rows another file keeps keeps the opening this statement printed, when
       // nothing else records its balance — read while the file's own periods are still here (`kept-openings`)
       const openings = keptOpeningPlans(tx, importFileId, printers);
+      // …and an opening this file keeps for a statement he un-imported goes with the rows it carries
+      handOverKeptOpenings(tx, followingOpeningsByFile(tx, new Map([[importFileId, printers]])).get(importFileId) ?? []);
       // A charge this file's rows are the SURVIVING copy of has a retired twin
       // sitting `superseded` in another file. Delete the survivor without putting
       // that twin back and the money is recorded by zero live rows: it vanishes

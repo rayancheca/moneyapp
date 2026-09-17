@@ -102,12 +102,13 @@ export default async function ImportsPage({
   // …and a period another download of the statement still prints goes to it, with the rows it prints — ONE plan,
   // read once, for all three counts (`copyHandOvers`, the plan `unimportFile` carries out)
   const handOvers = copyHandOvers(db);
-  const balancesRemoved = balancesRemovedByFile(db, handOvers);
+  // …and a row another imported file prints stays under that file (`printerHandOvers`, the same plan), with an opening
+  // kept for an un-imported statement that those rows carry
+  const printers = printerHandOvers(db, handOvers);
+  const balancesRemoved = balancesRemovedByFile(db, handOvers, printers);
   const periodsByFile = unimportPeriodsByFile(db, handOvers);
   // what un-importing each file deletes and what it keeps, counted with the
   // delete's own predicates — one grouped query, not one per row
-  // …and a row another imported file prints stays under that file (`printerHandOvers`, the same plan)
-  const printers = printerHandOvers(db, handOvers);
   const unimportCounts = unimportCountsByFile(db, handOvers, printers);
   // …and an account left with its rows and no recorded balance drops out of net worth (`accountsLeftWithoutBalance`)
   // …unless it keeps the opening the statement printed, unchecked (`openingsKeptByFile`, owner decision 20)

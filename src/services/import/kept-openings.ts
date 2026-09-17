@@ -21,8 +21,9 @@ import type { PrinterHandOver } from "./printed-lines";
  * - Only for rows another file keeps: a statement whose rows all leave with it keeps nothing.
  * - Never for an investment account: its rows do not move a recorded value.
  * - It goes when a document records the day again (`replaceKeptOpening` — importing the statement again), when the
- *   file that keeps the rows is un-imported (`removeFileBalances` deletes the anchors a file owns), and when a re-read
- *   of that file no longer writes a row on the account (`settleKeptOpenings`).
+ *   file that keeps the rows is un-imported and no other file prints them (`removeFileBalances` deletes the anchors a
+ *   file owns; where another file prints them, the rows and the opening go to it together — `handOverKeptOpenings`),
+ *   and when a re-read of that file no longer writes a row on the account (`settleKeptOpenings`).
  *
  * 🔴 Un-importing 2026-08-25-everyday-checking.pdf kept Wells Fargo Everyday Checking's 39 rows under
  * rocket-money-export-2026-08-25.csv and took both of its balances, and a balance is derived only from a recorded
@@ -50,15 +51,8 @@ export function keptOpeningPlans(
   printers: readonly PrinterHandOver[],
   handedPeriodIds: ReadonlySet<string> = new Set(),
 ): KeptOpeningPlan[] {
-  const heirs = new Map<string, { heirFileId: string; rows: number }>();
-  for (const p of printers) {
-    if (p.fromFileId !== fileId || p.rowIds.length === 0) continue;
-    const best = heirs.get(p.accountId);
-    const better = !best || p.rowIds.length > best.rows || (p.rowIds.length === best.rows && p.heirFileId < best.heirFileId);
-    if (better) heirs.set(p.accountId, { heirFileId: p.heirFileId, rows: p.rowIds.length });
-  }
   const plans: KeptOpeningPlan[] = [];
-  for (const [accountId, heir] of heirs) {
+  for (const [accountId, heirFileId] of heirsByAccount(fileId, printers)) {
     const account = db.select({ type: accounts.type }).from(accounts).where(eq(accounts.id, accountId)).get();
     if (account === undefined || account.type === "investment") continue;
     const opening = db
@@ -76,9 +70,80 @@ export function keptOpeningPlans(
       .all()
       .find((p) => !handedPeriodIds.has(p.id));
     if (opening === undefined || opening.begin === null) continue;
-    plans.push({ accountId, day: addDays(opening.periodStart, -1), balanceCents: opening.begin, heirFileId: heir.heirFileId });
+    plans.push({ accountId, day: addDays(opening.periodStart, -1), balanceCents: opening.begin, heirFileId });
   }
   return plans;
+}
+
+/**
+ * Per account where `printers` keep rows of `fileId`: the file that keeps the most of them — the lower id on a tie. ONE
+ * choice of who owns a kept opening, for an opening kept and for one that follows its rows.
+ */
+export function heirsByAccount(fileId: string, printers: readonly PrinterHandOver[]): Map<string, string> {
+  const heirs = new Map<string, { heirFileId: string; rows: number }>();
+  for (const p of printers) {
+    if (p.fromFileId !== fileId || p.rowIds.length === 0) continue;
+    const best = heirs.get(p.accountId);
+    const better = !best || p.rowIds.length > best.rows || (p.rowIds.length === best.rows && p.heirFileId < best.heirFileId);
+    if (better) heirs.set(p.accountId, { heirFileId: p.heirFileId, rows: p.rowIds.length });
+  }
+  return new Map([...heirs].map(([accountId, h]) => [accountId, h.heirFileId] as const));
+}
+
+/** An opening a file keeps for a statement he un-imported, and the file its rows go to. */
+export interface FollowingOpening extends KeptOpeningPlan {
+  anchorId: string;
+  /** the file that holds the opening now */
+  fromFileId: string;
+}
+
+/**
+ * Per file: the openings it keeps for a statement he un-imported (`keepOpenings`) that follow its rows when it is
+ * un-imported — to the file that keeps the most of them on the account (`printers`, `heirsByAccount`). An opening on an
+ * account where no row of the file stays is not here: it goes with the file (`removeFileBalances`). Read-only — ONE
+ * plan for the un-import and for its /imports confirmation.
+ */
+export function followingOpeningsByFile(
+  db: AppDatabase,
+  printers: ReadonlyMap<string, readonly PrinterHandOver[]>,
+): Map<string, FollowingOpening[]> {
+  const byFile = new Map<string, FollowingOpening[]>();
+  const kept = db
+    .select({
+      anchorId: balanceAnchors.id,
+      accountId: balanceAnchors.accountId,
+      day: balanceAnchors.anchoredOn,
+      balanceCents: balanceAnchors.balanceCents,
+      fromFileId: balanceAnchors.importFileId,
+    })
+    .from(balanceAnchors)
+    .where(and(eq(balanceAnchors.source, KEPT_OPENING_SOURCE), isNotNull(balanceAnchors.importFileId)))
+    .orderBy(asc(balanceAnchors.id))
+    .all();
+  for (const opening of kept) {
+    const fromFileId = opening.fromFileId!;
+    const heirFileId = heirsByAccount(fromFileId, printers.get(fromFileId) ?? []).get(opening.accountId);
+    if (heirFileId === undefined) continue;
+    byFile.set(fromFileId, [...(byFile.get(fromFileId) ?? []), { ...opening, fromFileId, heirFileId }]);
+  }
+  return byFile;
+}
+
+/**
+ * Files each following opening under the file its rows go to. Call it inside the un-import's transaction, before the
+ * file's balances are removed.
+ *
+ * 🔴 An opening kept for an un-imported statement went with the file that held it, though its rows stayed under
+ * another file that prints them: un-importing the Rocket Money export after the Wells Fargo statement, with the export
+ * downloaded twice, kept the 39 rows and took Wells Fargo out of net worth (the review of uc/final-integrate, 2026-09-17).
+ */
+export function handOverKeptOpenings(tx: AppDatabase, following: readonly FollowingOpening[]): void {
+  for (const opening of following) {
+    tx.update(balanceAnchors)
+      .set({ importFileId: opening.heirFileId })
+      .where(and(eq(balanceAnchors.id, opening.anchorId), eq(balanceAnchors.source, KEPT_OPENING_SOURCE)))
+      .run();
+  }
 }
 
 /**

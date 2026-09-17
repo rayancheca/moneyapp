@@ -2,6 +2,8 @@ import { and, asc, count, desc, eq, exists, isNotNull, ne, not, or, sql, type SQ
 import type { AppDatabase } from "@/db/client";
 import { balanceAnchors } from "@/db/schema/balances";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
+import { followingOpeningsByFile } from "./kept-openings";
+import { printerHandOvers, type PrinterHandOver } from "./printed-lines";
 import { copyHandOvers, type CopyHandOver } from "./statement-copies";
 
 /**
@@ -79,22 +81,29 @@ export function handOverPrintedAnchors(tx: AppDatabase, importFileId: string): v
 
 /**
  * How many recorded balances un-importing each file removes: the anchors it owns, less the ones another statement
- * still prints (`handOverPrintedAnchors`) — and less the ones its own period prints when that period goes to another
+ * still prints (`handOverPrintedAnchors`) — less the ones its own period prints when that period goes to another
  * download of the statement (`plans`, `statement-copies`: the un-import hands the period over first, so the anchor
- * follows it). One grouped query; a file that removes none is absent.
+ * follows it) — and less an opening kept for a statement he un-imported that follows its rows to a file that prints
+ * them (`printers`, `followingOpeningsByFile`). A file that removes none is absent.
  */
 export function balancesRemovedByFile(
   db: AppDatabase,
   plans: ReadonlyMap<string, readonly CopyHandOver[]> = copyHandOvers(db),
+  printers: ReadonlyMap<string, readonly PrinterHandOver[]> = printerHandOvers(db, plans),
 ): Map<string, number> {
+  const following = followingOpeningsByFile(db, printers);
   const byFile = new Map<string, number>();
   for (const [fileId, accounts] of balancesRemovedByFileAndAccount(db, plans)) {
-    byFile.set(fileId, [...accounts.values()].reduce((n, k) => n + k, 0));
+    const n = [...accounts.values()].reduce((sum, k) => sum + k, 0) - (following.get(fileId)?.length ?? 0);
+    if (n > 0) byFile.set(fileId, n);
   }
   return byFile;
 }
 
-/** `balancesRemovedByFile`, per account: file → account → how many of its recorded balances the un-import removes. */
+/**
+ * `balancesRemovedByFile`, per account: file → account → how many of the recorded balances it owns the un-import takes
+ * from the account — an opening that follows its rows (`followingOpeningsByFile`) counted in, for the caller to weigh.
+ */
 export function balancesRemovedByFileAndAccount(
   db: AppDatabase,
   plans: ReadonlyMap<string, readonly CopyHandOver[]> = copyHandOvers(db),

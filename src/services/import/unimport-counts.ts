@@ -6,7 +6,7 @@ import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { derivesFromHoldings } from "@/services/derivation";
 import { attachedRow, parsedRow } from "./attached-rows";
-import { keptOpeningPlans, type KeptOpeningPlan } from "./kept-openings";
+import { followingOpeningsByFile, keptOpeningPlans, type KeptOpeningPlan } from "./kept-openings";
 import { balancesRemovedByFileAndAccount } from "./printed-anchors";
 import { printerHandOvers, printerRowIds, type PrinterHandOver } from "./printed-lines";
 import { copyHandOvers, handedRowIds, type CopyHandOver } from "./statement-copies";
@@ -244,14 +244,20 @@ function accountsLosingEveryBalance(
       .map((r) => [r.accountId, r.n] as const),
   );
   const handed = new Set([...handedRowIds(plans.values()), ...printerRowIds(printers.values())]);
+  // an opening the file keeps for a statement he un-imported, and that follows its rows (`handOverKeptOpenings`)
+  const following = followingOpeningsByFile(db, printers);
   const losing = new Map<string, LosingEveryBalance[]>();
   for (const [fileId, accounts] of removed) {
-    const openings = keptOpeningPlans(
-      db,
-      fileId,
-      printers.get(fileId) ?? [],
-      new Set((plans.get(fileId) ?? []).map((p) => p.periodId)),
-    );
+    // the opening that follows first: the un-import keeps no second one beside it (`keepOpenings`)
+    const openings: KeptOpeningPlan[] = [
+      ...(following.get(fileId) ?? []),
+      ...keptOpeningPlans(
+        db,
+        fileId,
+        printers.get(fileId) ?? [],
+        new Set((plans.get(fileId) ?? []).map((p) => p.periodId)),
+      ),
+    ];
     for (const [accountId, n] of accounts) {
       if ((recorded.get(accountId) ?? 0) > n) continue;
       const account = db.select({ id: accountsTable.id, name: accountsTable.name, type: accountsTable.type }).from(accountsTable).where(eq(accountsTable.id, accountId)).get();

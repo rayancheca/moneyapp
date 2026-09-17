@@ -349,9 +349,10 @@ never for a file with no printed period. It ranks below `live`, and it is neithe
 nor a moment: the replay starts from it only when the account has no other anchor, and every
 day it carries — its own included — is `derived_unverified`, so no surface reads it as checked
 and `ledger-check` counts it as no witness. It goes when an import records its day again
-(re-importing the statement), when the file that owns it is un-imported, and when a re-read of
-that file no longer writes a row on the account (a re-read that still does moves it to the
-successor). Wells Fargo Everyday Checking: un-importing `2026-08-25-everyday-checking.pdf`
+(re-importing the statement), when the file that owns it is un-imported and no other
+still-imported file prints its rows (where one does, the opening goes to it with the rows — the
+file that keeps the most of them), and when a re-read of that file no longer writes a row on the
+account (a re-read that still does moves it to the successor). Wells Fargo Everyday Checking: un-importing `2026-08-25-everyday-checking.pdf`
 keeps its $0.00 opening for 2026-07-26 under `rocket-money-export-2026-08-25.csv`, and net
 worth stays 11,312,501 cents (a backfilled copy of the real ledger); `ledger-check` then fails
 on exactly the two statement anchors, one window and one period that left (the kept opening is
