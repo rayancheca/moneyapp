@@ -20,10 +20,13 @@ import type { PrinterHandOver } from "./printed-lines";
  * - Only for an account left with nothing: an account that keeps any other recorded balance keeps no opening.
  * - Only for rows another file keeps: a statement whose rows all leave with it keeps nothing.
  * - Never for an investment account: its rows do not move a recorded value.
- * - It goes when a document records the day again (`replaceKeptOpening` — importing the statement again), when the
- *   file that keeps the rows is un-imported and no other file prints them (`removeFileBalances` deletes the anchors a
- *   file owns; where another file prints them, the rows and the opening go to it together — `handOverKeptOpenings`),
- *   and when a re-read of that file no longer writes a row on the account (`settleKeptOpenings`).
+ * - It goes when a document records the day again (`replaceKeptOpening` — importing the statement again), and when no
+ *   row it carries stays: the file that keeps the rows is un-imported and no other file prints them
+ *   (`removeFileBalances` deletes the anchors a file owns), or a re-read of that file no longer writes a row on the
+ *   account and no other file prints them (`settleKeptOpenings`). Where another file prints them, the rows and the
+ *   opening go to it together (`handOverKeptOpenings`, `settleKeptOpenings`).
+ * - A re-read that stops reading an account keeps the opening its retired read printed, as un-importing that read
+ *   would (`retiredOpenings`, `keepRetiredOpenings`).
  *
  * 🔴 Un-importing 2026-08-25-everyday-checking.pdf kept Wells Fargo Everyday Checking's 39 rows under
  * rocket-money-export-2026-08-25.csv and took both of its balances, and a balance is derived only from a recorded
@@ -188,13 +191,23 @@ export function replaceKeptOpening(tx: AppDatabase, accountId: string, day: stri
 
 /**
  * A re-read retired `staleIds` and wrote `successorId`: an opening one of them kept follows the rows to the successor
- * — or goes, where the successor writes no live row on the account any more. Call it once the successor is written,
- * inside the same transaction; the retirement left those openings in place (`removeFileBalances`).
+ * — or, where the successor writes no live row on the account any more, to the file that took back the most of the
+ * retired read's rows there (`heldBack`, `settleHeldRows`) — or goes, where no row stays. Call it once the read is
+ * written and its held rows settled, inside the same transaction; the retirement left those openings in place
+ * (`removeFileBalances`).
+ *
+ * 🔴 It went whenever the successor wrote nothing on the account, though the rows stayed under a re-download that
+ * prints them (the review of uc/final-integrate, 2026-09-17).
  */
-export function settleKeptOpenings(tx: AppDatabase, staleIds: readonly string[], successorId: string): void {
+export function settleKeptOpenings(
+  tx: AppDatabase,
+  staleIds: readonly string[],
+  successorId: string,
+  heldBack: readonly PrinterHandOver[] = [],
+): void {
   if (staleIds.length === 0) return;
   const openings = tx
-    .select({ id: balanceAnchors.id, accountId: balanceAnchors.accountId })
+    .select({ id: balanceAnchors.id, accountId: balanceAnchors.accountId, fileId: balanceAnchors.importFileId })
     .from(balanceAnchors)
     .where(and(inArray(balanceAnchors.importFileId, [...staleIds]), eq(balanceAnchors.source, KEPT_OPENING_SOURCE)))
     .all();
@@ -211,7 +224,40 @@ export function settleKeptOpenings(tx: AppDatabase, staleIds: readonly string[],
       )
       .limit(1)
       .get();
-    if (keepsRows) tx.update(balanceAnchors).set({ importFileId: successorId }).where(eq(balanceAnchors.id, opening.id)).run();
+    const heir = keepsRows ? successorId : heirsByAccount(opening.fileId!, heldBack).get(opening.accountId);
+    if (heir !== undefined) tx.update(balanceAnchors).set({ importFileId: heir }).where(eq(balanceAnchors.id, opening.id)).run();
     else tx.delete(balanceAnchors).where(eq(balanceAnchors.id, opening.id)).run();
   }
+}
+
+/** An opening a re-read would keep for a retired read (`keptOpeningPlans`), before it knows which file keeps the rows. */
+export interface RetiredOpening {
+  fileId: string;
+  plan: KeptOpeningPlan;
+}
+
+/**
+ * Read before a re-read retires `fileIds`: the opening each retired read printed, per account where an un-import of it
+ * would keep rows under another file (`held`). `copyPeriodIds` are the months its copies take (`statement-copies`).
+ */
+export function retiredOpenings(
+  db: AppDatabase,
+  fileIds: readonly string[],
+  held: readonly PrinterHandOver[],
+  copyPeriodIds: ReadonlySet<string>,
+): RetiredOpening[] {
+  return fileIds.flatMap((fileId) => keptOpeningPlans(db, fileId, held, copyPeriodIds).map((plan) => ({ fileId, plan })));
+}
+
+/**
+ * ⚖️ Owner decision 20 on a re-read: an account the new read leaves with rows held back for another file
+ * (`settleHeldRows`) and no recorded balance keeps the opening the retired read printed, under the file that took back
+ * the most of its rows — as un-importing the retired read would have. Call it after `settleKeptOpenings`.
+ */
+export function keepRetiredOpenings(tx: AppDatabase, openings: readonly RetiredOpening[], heldBack: readonly PrinterHandOver[]): string[] {
+  const plans = openings.flatMap(({ fileId, plan }) => {
+    const heirFileId = heirsByAccount(fileId, heldBack).get(plan.accountId);
+    return heirFileId === undefined ? [] : [{ ...plan, heirFileId }];
+  });
+  return keepOpenings(tx, plans);
 }

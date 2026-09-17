@@ -64,8 +64,10 @@ import {
   followingOpeningsByFile,
   handOverKeptOpenings,
   keepOpenings,
+  keepRetiredOpenings,
   keptOpeningPlans,
   replaceKeptOpening,
+  retiredOpenings,
   settleKeptOpenings,
 } from "./kept-openings";
 import {
@@ -78,16 +80,19 @@ import {
   reclaimFromCopy,
   recordStatementCopy,
   settleLentPeriods,
+  type CopyHandOver,
   type LentPeriod,
 } from "./statement-copies";
 import {
   appendPrintedLines,
   forgetPrintedLines,
   handOverToPrinters,
+  heldForPrinters,
   printedLineOf,
   printedWordsOfRows,
   printerHandOvers,
   printerRowIds,
+  settleHeldRows,
 } from "./printed-lines";
 import {
   keepStayingLegsByContent,
@@ -211,6 +216,11 @@ export interface FileOutcome {
    * sets again, a note, a recurring link, an exclusion, splits (`unimported-attributes`)
    */
   givenBack: number;
+  /**
+   * rows the retired read held that the new read no longer writes and another still-imported file prints: kept, with
+   * everything on them, filed under that file — as un-importing the retired read keeps them (`settleHeldRows`)
+   */
+  keptByPrinters: number;
   quarantined: number;
   periods: PeriodOutcome[];
 }
@@ -1516,6 +1526,7 @@ const blankOutcome = (fileName: string): FileOutcome => ({
   supersededTakeover: 0,
   carriedForward: 0,
   givenBack: 0,
+  keptByPrinters: 0,
   quarantined: 0,
   periods: [],
 });
@@ -1833,6 +1844,11 @@ function writeRead(
 ): { retired: Set<string>; writes: MemberWrite[] } {
   const pools = members.map((m) => captureCarryForward(db, m.staleIds));
   onMember(-1);
+  // what un-importing the retired reads would keep under another still-imported file, and the openings it would keep
+  // with those rows — read while their rows and periods are live (`settleHeldRows`, `keepRetiredOpenings`)
+  const copyPlans = retiring.length === 0 ? new Map<string, CopyHandOver[]>() : copyHandOvers(db, retiring);
+  const held = heldForPrinters(db, copyPlans, retiring);
+  const openings = retiredOpenings(db, retiring, held.plans, new Set([...copyPlans.values()].flat().map((p) => p.periodId)));
   const retired = new Set<string>();
   const lent: LentPeriod[] = [];
   for (const id of retiring) {
@@ -1847,12 +1863,29 @@ function writeRead(
     const write: MemberWrite = { tally: blankOutcome(member.item.file.name), accounts: new Set(), series };
     writes.push(write);
     writeMember(db, member, pools[j] as CarryPool, recall, write);
-    // an opening a retired read kept for a statement he un-imported follows the rows it keeps (`kept-openings`)
-    settleKeptOpenings(db, member.staleIds, (member.recorded as RecordedFile).row.id);
   });
   // a month lent to a copy that no member took back is the copy's, with the rows it prints (`settleLentPeriods`) —
   // and a transfer waiting on one of them waits by that row again
   waitByRowsAgain(db, settleLentPeriods(db, lent));
+  // ⚖️ owner decisions 15, 16, 20: a row the new read no longer writes that another still-imported file prints stays,
+  // under that file, as the retired read's un-import keeps it — and so does the opening kept with such rows.
+  // 🔴 A re-read that stopped reading Wells Fargo retired its 39 rows the Rocket Money export prints, and its balances:
+  // net worth 11,312,501 → 11,072,834 cents (the review of uc/final-integrate, 2026-09-17).
+  const heldBack = settleHeldRows(
+    db,
+    held,
+    members.map((m) => ({ successorId: (m.recorded as RecordedFile).row.id, staleIds: m.staleIds })),
+  );
+  waitByRowsAgain(db, heldBack.flatMap((p) => p.rowIds));
+  members.forEach((member, j) => {
+    const stale = new Set(member.staleIds);
+    (writes[j] as MemberWrite).tally.keptByPrinters = heldBack
+      .filter((p) => stale.has(p.fromFileId))
+      .reduce((n, p) => n + p.rowIds.length, 0);
+    // an opening a retired read kept for a statement he un-imported follows the rows it keeps (`kept-openings`)
+    settleKeptOpenings(db, member.staleIds, (member.recorded as RecordedFile).row.id, heldBack);
+  });
+  keepRetiredOpenings(db, openings, heldBack);
   return { retired, writes };
 }
 
@@ -2234,6 +2267,7 @@ function failedUnexpectedly(db: AppDatabase, file: { name: string }, fileRowId: 
     supersededTakeover: 0,
     carriedForward: 0,
     givenBack: 0,
+    keptByPrinters: 0,
     quarantined: 0,
     periods: [],
   };

@@ -166,6 +166,17 @@ names neither. `id` · `account_id` FK · `last4` · UNIQUE(account_id, last4).
   account (imported before the table, and not readable again at its version) is known to print
   at least the lines of its own parsed rows a takeover retired (not the copies a duplicate verdict
   retired: the duplicate lifecycle puts those back).
+  A **re-read** at a new parser version keeps what that un-import keeps (owner decisions 15, 16,
+  20): once the new read is written, a retired row an un-import of the retired reads (weighed
+  together) would have handed to another file comes back — with the status it had, filed under
+  that file — for each of that file's lines no live row records now, on a day the re-read no
+  longer answers for. A member whose new read still reads the account answers for the days it
+  reads now and the days its retired read covered: a version that dates or prices a line
+  differently writes it again there, and a line it drops shows in its own period's gap. The
+  upload outcome counts the rows kept (`keptByPrinters`). Wells Fargo: re-reading
+  `2026-08-25-everyday-checking.pdf` at a version that reads no statement keeps its 39 rows
+  under the Rocket Money export, and its opening (`unimported_statement`), as un-importing it
+  does.
   A **transfer** the un-import takes apart (a deleted leg whose partner stays alone, or a pair
   whose legs were all the file's) is kept in `unimported_transfer_legs` — the deleted legs by
   content and the category the pair gave them (with its merchant), the staying leg by id — and
@@ -229,7 +240,8 @@ brokerage book removed with its last statement takes its records with it.
 ### printed_lines
 Every line `import_file_id` prints on an account, recorded by the import (and, for the files
 imported before the table existed, by `scripts/record-printed-lines.ts`); read by un-import
-(`services/import/printed-lines`). Forgotten when the file is un-imported or retired by a re-read.
+(`services/import/printed-lines`), and by a re-read before it retires a read. Forgotten when the
+file is un-imported or retired by a re-read.
 A line printed with no transaction day also matches a row TRANSACTED on its day (a statement line
 printed before its period opens is stored on the period's first day). Of rows of the line's money,
 one posted on the day the import stored the line on outranks one posted on the day it prints: a
@@ -349,10 +361,13 @@ never for a file with no printed period. It ranks below `live`, and it is neithe
 nor a moment: the replay starts from it only when the account has no other anchor, and every
 day it carries — its own included — is `derived_unverified`, so no surface reads it as checked
 and `ledger-check` counts it as no witness. It goes when an import records its day again
-(re-importing the statement), when the file that owns it is un-imported and no other
-still-imported file prints its rows (where one does, the opening goes to it with the rows — the
-file that keeps the most of them), and when a re-read of that file no longer writes a row on the
-account (a re-read that still does moves it to the successor). Wells Fargo Everyday Checking: un-importing `2026-08-25-everyday-checking.pdf`
+(re-importing the statement), and when no row it carries stays: the file that owns it is
+un-imported, or re-read at a version that no longer writes a row on the account, and no other
+still-imported file prints those rows. Where one does, the opening goes to it with the rows (the
+file that keeps the most of them); a re-read that still writes the account moves it to the
+successor. A re-read that stops reading an account keeps the opening its retired read printed,
+as un-importing that read would.
+Wells Fargo Everyday Checking: un-importing `2026-08-25-everyday-checking.pdf`
 keeps its $0.00 opening for 2026-07-26 under `rocket-money-export-2026-08-25.csv`, and net
 worth stays 11,312,501 cents (a backfilled copy of the real ledger); `ledger-check` then fails
 on exactly the two statement anchors, one window and one period that left (the kept opening is

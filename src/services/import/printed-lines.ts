@@ -1,8 +1,8 @@
-import { and, asc, eq, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, max, min, notInArray, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
-import { importFiles, printedLines, statementPeriods } from "@/db/schema/imports";
-import { transactions } from "@/db/schema/transactions";
+import { importFiles, printedLines, statementCopies, statementPeriods } from "@/db/schema/imports";
+import { transactions, type TransactionStatus } from "@/db/schema/transactions";
 import { descriptionScore } from "@/lib/description-score";
 import { normalizeDescription } from "@/lib/normalize";
 import type { CopyHandOver } from "./statement-copies";
@@ -179,19 +179,21 @@ function matchHeir(lines: readonly PrintedLine[], index: ReadonlyMap<string, Row
 }
 
 /**
- * The rows of `fromFileId` the heir's lines cannot do without: the lines those rows hold are placed again on every
- * other row (Kuhn — a line that finds no path now finds none later), and a line left over takes the row it had.
+ * The rows of the files in `fromFileIds` the heir's lines cannot do without: the lines those rows hold are placed again
+ * on every other row (Kuhn — a line that finds no path now finds none later), and a line left over takes the row it had.
+ * The files go together — an un-import's one file, or every read a re-read retires — so a line two of them record is
+ * held by one of their rows.
  */
-function rowsOnlyFromFile(
+function rowsOnlyFromFiles(
   heirFileId: string,
-  fromFileId: string,
+  fromFileIds: ReadonlySet<string>,
   kept: ReadonlySet<string>,
   { m, candidates }: { m: Matching; candidates: Row[][] },
   rowsById: ReadonlyMap<string, Row>,
 ): string[] {
-  const doomed = (row: Row) => row.importFileId === fromFileId && row.parsed && !kept.has(row.id);
+  const doomed = (row: Row) => row.importFileId !== null && fromFileIds.has(row.importFileId) && row.parsed && !kept.has(row.id);
   const freed = [...m.lineOf].filter(([rowId]) => doomed(rowsById.get(rowId)!));
-  if (freed.length === 0 || fromFileId === heirFileId) return [];
+  if (freed.length === 0 || fromFileIds.has(heirFileId)) return [];
   const copy: Matching = { lineOf: new Map(m.lineOf), rowOf: new Map(m.rowOf) };
   for (const [rowId, line] of freed) {
     copy.lineOf.delete(rowId);
@@ -317,15 +319,51 @@ function accountsInScope(db: AppDatabase, fileIds?: readonly string[]): string[]
   return db.selectDistinct({ accountId: transactions.accountId }).from(transactions).where(where).all().map((r) => r.accountId);
 }
 
+/** The account's heirs, each with its lines matched to the account's rows. */
+type MatchedHeir = { heir: Heir; matching: { m: Matching; candidates: Row[][] } };
+
+/**
+ * On one account: what removing the parsed rows of `fromFileIds` together hands to the heirs that print them — each
+ * row to one heir (`pickHeir`), under the file it came from. `copyPlans` rows stay under another download anyway.
+ */
+function handOversOn(
+  accountId: string,
+  matched: readonly MatchedHeir[],
+  rowsById: ReadonlyMap<string, Row>,
+  fromFileIds: ReadonlySet<string>,
+  copyPlans: ReadonlyMap<string, readonly CopyHandOver[]>,
+): PrinterHandOver[] {
+  const kept = new Set([...fromFileIds].flatMap((f) => (copyPlans.get(f) ?? []).flatMap((p) => p.rowIds)));
+  const claims = new Map<string, Heir[]>();
+  for (const { heir, matching } of matched) {
+    for (const rowId of rowsOnlyFromFiles(heir.fileId, fromFileIds, kept, matching, rowsById)) {
+      claims.set(rowId, [...(claims.get(rowId) ?? []), heir]);
+    }
+  }
+  const byPair = new Map<string, PrinterHandOver>();
+  for (const [rowId, claimants] of claims) {
+    const row = rowsById.get(rowId)!;
+    const heir = pickHeir(claimants, row);
+    const key = `${row.importFileId}\x1f${heir.fileId}`;
+    const plan = byPair.get(key) ?? { fromFileId: row.importFileId!, heirFileId: heir.fileId, accountId, rowIds: [] };
+    byPair.set(key, { ...plan, rowIds: [...plan.rowIds, rowId] });
+  }
+  return [...byPair.values()].map((p) => ({ ...p, rowIds: [...p.rowIds].sort() }));
+}
+
 /**
  * For each file (all files, or `fileIds`), what un-importing it hands to the files that print its rows. `copyPlans` is
  * what the same un-import hands to another download of its statement (`copyHandOvers`): those rows stay, under that
  * download, so every heir may count on them. Read-only — ONE plan for the un-import and for its /imports confirmation.
+ *
+ * `together`: the files in `fileIds` go at once (a re-read retiring several reads), so no heir counts on another of
+ * their rows; otherwise each file is weighed alone, as un-importing it alone would be.
  */
 export function printerHandOvers(
   db: AppDatabase,
   copyPlans: ReadonlyMap<string, readonly CopyHandOver[]>,
   fileIds?: readonly string[],
+  { together = false }: { together?: boolean } = {},
 ): Map<string, PrinterHandOver[]> {
   const plans = new Map<string, PrinterHandOver[]>();
   for (const accountId of accountsInScope(db, fileIds)) {
@@ -338,24 +376,205 @@ export function printerHandOvers(
       (f) => fileIds === undefined || fileIds.includes(f),
     );
     const matched = heirs.map((heir) => ({ heir, matching: matchHeir(heir.lines, index) }));
-    for (const fromFileId of fromFiles) {
-      const kept = new Set((copyPlans.get(fromFileId) ?? []).flatMap((p) => p.rowIds));
-      const claims = new Map<string, Heir[]>();
-      for (const { heir, matching } of matched) {
-        for (const rowId of rowsOnlyFromFile(heir.fileId, fromFileId, kept, matching, rowsById)) {
-          claims.set(rowId, [...(claims.get(rowId) ?? []), heir]);
-        }
+    const groups = together ? [new Set(fromFiles)] : fromFiles.map((f) => new Set([f]));
+    for (const group of groups) {
+      for (const plan of handOversOn(accountId, matched, rowsById, group, copyPlans)) {
+        plans.set(plan.fromFileId, [...(plans.get(plan.fromFileId) ?? []), plan]);
       }
-      const byHeir = new Map<string, string[]>();
-      for (const [rowId, claimants] of claims) {
-        const heir = pickHeir(claimants, rowsById.get(rowId)!);
-        byHeir.set(heir.fileId, [...(byHeir.get(heir.fileId) ?? []), rowId]);
-      }
-      const list = [...byHeir].map(([heirFileId, rowIds]) => ({ fromFileId, heirFileId, accountId, rowIds: rowIds.sort() }));
-      if (list.length > 0) plans.set(fromFileId, [...(plans.get(fromFileId) ?? []), ...list]);
     }
   }
   return plans;
+}
+
+/** A span of days, both ends included. */
+interface Window {
+  start: string;
+  end: string;
+}
+
+/**
+ * The days `fileIds` still read on the account: each statement period they hold or print as a copy, and — for a file
+ * with neither there, an export — the span of its live rows.
+ */
+function windowsRead(tx: AppDatabase, fileIds: readonly string[], accountId: string): Window[] {
+  if (fileIds.length === 0) return [];
+  const periods = [
+    ...tx
+      .select({ fileId: statementPeriods.importFileId, start: statementPeriods.periodStart, end: statementPeriods.periodEnd })
+      .from(statementPeriods)
+      .where(and(inArray(statementPeriods.importFileId, [...fileIds]), eq(statementPeriods.accountId, accountId)))
+      .all(),
+    ...tx
+      .select({ fileId: statementCopies.importFileId, start: statementCopies.periodStart, end: statementCopies.periodEnd })
+      .from(statementCopies)
+      .where(and(inArray(statementCopies.importFileId, [...fileIds]), eq(statementCopies.accountId, accountId)))
+      .all(),
+  ];
+  const withPeriod = new Set(periods.map((p) => p.fileId));
+  const spans = tx
+    .select({ fileId: transactions.importFileId, start: min(transactions.postedOn), end: max(transactions.postedOn) })
+    .from(transactions)
+    .where(and(inArray(transactions.importFileId, [...fileIds]), eq(transactions.accountId, accountId), inArray(transactions.status, [...LIVE_ROW])))
+    .groupBy(transactions.importFileId)
+    .all()
+    .flatMap((s) => (s.fileId === null || withPeriod.has(s.fileId) || s.start === null || s.end === null ? [] : [{ start: s.start, end: s.end }]));
+  return [...periods.map(({ start, end }) => ({ start, end })), ...spans];
+}
+
+/**
+ * What retiring reads would take from the files that print their rows — the rows an un-import of them would keep
+ * (`printerHandOvers`, the reads together) — with the status each row has, read while they are live.
+ */
+export interface HeldForPrinters {
+  plans: readonly PrinterHandOver[];
+  statuses: ReadonlyMap<string, TransactionStatus>;
+  /** the days each retiring read covered on each account the plans name (`windowsRead`), by `readKey` */
+  windows: ReadonlyMap<string, readonly Window[]>;
+}
+
+const readKey = (fileId: string, accountId: string): string => `${fileId}\x1f${accountId}`;
+
+/** Read before a re-read retires `fileIds`; `copyPlans` are the months their copies take (`copyHandOvers`). */
+export function heldForPrinters(
+  db: AppDatabase,
+  copyPlans: ReadonlyMap<string, readonly CopyHandOver[]>,
+  fileIds: readonly string[],
+): HeldForPrinters {
+  if (fileIds.length === 0) return { plans: [], statuses: new Map(), windows: new Map() };
+  const plans = [...printerHandOvers(db, copyPlans, fileIds, { together: true }).values()].flat();
+  const windows = new Map(
+    [...new Set(plans.map((p) => p.accountId))].flatMap((accountId) =>
+      fileIds.map((fileId) => [readKey(fileId, accountId), windowsRead(db, [fileId], accountId)] as const),
+    ),
+  );
+  const ids = plans.flatMap((p) => p.rowIds);
+  const statuses = new Map<string, TransactionStatus>();
+  for (let i = 0; i < ids.length; i += ROW_CHUNK) {
+    for (const r of db
+      .select({ id: transactions.id, status: transactions.status })
+      .from(transactions)
+      .where(inArray(transactions.id, ids.slice(i, i + ROW_CHUNK)))
+      .all()) {
+      statuses.set(r.id, r.status);
+    }
+  }
+  return { plans, statuses, windows };
+}
+
+/** One member of a re-read: the read it wrote, and the reads it retired. */
+export interface RereadMember {
+  successorId: string;
+  staleIds: readonly string[];
+}
+
+/**
+ * The days a re-read still answers for on an account: for each member whose new read still reads the account, the days
+ * it reads now and the days its retired reads covered. A member that no longer reads the account answers for none of
+ * them — those days are the ones an un-import of its retired reads would have left to the files that print them.
+ */
+function daysAnsweredFor(tx: AppDatabase, held: HeldForPrinters, members: readonly RereadMember[], accountId: string): Window[] {
+  return members.flatMap(({ successorId, staleIds }) => {
+    const now = windowsRead(tx, [successorId], accountId);
+    if (now.length === 0) return [];
+    return [...now, ...staleIds.flatMap((id) => held.windows.get(readKey(id, accountId)) ?? [])];
+  });
+}
+
+/** The held rows a retirement superseded, still under the read it retired. */
+function stillHeld(tx: AppDatabase, plans: readonly PrinterHandOver[]): Row[] {
+  const held: Row[] = [];
+  for (const plan of plans) {
+    for (let i = 0; i < plan.rowIds.length; i += ROW_CHUNK) {
+      held.push(
+        ...tx
+          .select({
+            id: transactions.id,
+            importFileId: transactions.importFileId,
+            postedOn: transactions.postedOn,
+            transactedOn: transactions.transactedOn,
+            amountCents: transactions.amountCents,
+            normalizedDescription: transactions.normalizedDescription,
+          })
+          .from(transactions)
+          .where(
+            and(
+              inArray(transactions.id, plan.rowIds.slice(i, i + ROW_CHUNK)),
+              eq(transactions.status, "superseded"),
+              eq(transactions.importFileId, plan.fromFileId),
+              isNull(transactions.fileLinkSource),
+            ),
+          )
+          .all()
+          .map((r) => ({ ...r, parsed: true })),
+      );
+    }
+  }
+  return held;
+}
+
+/**
+ * The held rows `heir`'s lines take back: its lines are matched to the account's live rows first, and a line left over
+ * takes a held row — one `usable` allows. Each row taken is one more line no live row records (Kuhn).
+ */
+function takenBack(heir: Heir, index: ReadonlyMap<string, Row[]>, isLive: (id: string) => boolean, usable: (id: string) => boolean): string[] {
+  const candidates = heir.lines.map((line) => candidatesFor(line, index));
+  const m: Matching = { lineOf: new Map(), rowOf: new Map() };
+  const live = (row: Row) => isLive(row.id);
+  for (let i = 0; i < heir.lines.length; i++) augment(i, candidates, live, m, new Set());
+  for (let i = 0; i < heir.lines.length; i++) {
+    if (!m.rowOf.has(i)) augment(i, candidates, (row) => live(row) || usable(row.id), m, new Set());
+  }
+  return [...m.lineOf.keys()].filter((id) => !isLive(id));
+}
+
+/**
+ * After a re-read is written: a held row comes back — with the status it had, filed under a file that prints it — for
+ * each line of that file no live row records now, on a day the re-read no longer answers for (`daysAnsweredFor`). A
+ * line another record holds takes nothing, and neither does a day a member that still reads the account covers, now or
+ * before: it answers for its own window, and a version that dates or prices a line differently writes it again there.
+ * Returns what came back, as hand-overs. Call it inside the re-read's transaction, after every member is written and
+ * the lent months are settled (`settleLentPeriods`).
+ *
+ * ⚖️ Owner decisions 15 and 16 (2026-09-16): what an un-import of the retired read keeps, a re-read that no longer reads
+ * the account — or the month — keeps.
+ */
+export function settleHeldRows(tx: AppDatabase, holding: HeldForPrinters, members: readonly RereadMember[]): PrinterHandOver[] {
+  const { plans, statuses } = holding;
+  const back = new Map<string, PrinterHandOver>();
+  for (const accountId of [...new Set(plans.map((p) => p.accountId))]) {
+    const onAccount = plans.filter((p) => p.accountId === accountId);
+    const read = daysAnsweredFor(tx, holding, members, accountId);
+    const held = stillHeld(tx, onAccount).filter((r) => !read.some((w) => w.start <= r.postedOn && r.postedOn <= w.end));
+    if (held.length === 0) continue;
+    // an heir is a file still imported, with what it prints now
+    const heirs = new Map(heirsOn(tx, accountId).map((h) => [h.fileId, h] as const));
+    const index = indexRows([...rowsOn(tx, accountId), ...held]);
+    const heldIds = new Set(held.map((r) => r.id));
+    const waiting = new Map(held.map((r) => [r.id, r] as const));
+    const isLive = (id: string) => !heldIds.has(id) || !waiting.has(id);
+    const planned = new Map(onAccount.flatMap((p) => p.rowIds.map((id) => [id, p.heirFileId] as const)));
+    const heirIds = [...new Set(onAccount.map((p) => p.heirFileId))];
+    // each heir takes the rows planned for it first, then any row still waiting
+    for (const anyRow of [false, true]) {
+      for (const heirFileId of heirIds) {
+        const heir = heirs.get(heirFileId);
+        if (heir === undefined) continue;
+        const usable = (id: string) => waiting.has(id) && (anyRow || planned.get(id) === heirFileId);
+        for (const id of takenBack(heir, index, isLive, usable)) {
+          const fromFileId = waiting.get(id)!.importFileId!;
+          waiting.delete(id);
+          tx.update(transactions)
+            .set({ status: statuses.get(id) ?? "active", importFileId: heirFileId })
+            .where(and(eq(transactions.id, id), eq(transactions.status, "superseded"), eq(transactions.importFileId, fromFileId)))
+            .run();
+          const key = `${fromFileId}\x1f${heirFileId}\x1f${accountId}`;
+          const to = back.get(key) ?? { fromFileId, heirFileId, accountId, rowIds: [] };
+          back.set(key, { ...to, rowIds: [...to.rowIds, id] });
+        }
+      }
+    }
+  }
+  return [...back.values()];
 }
 
 /** A row an un-import deletes, as `printedWordsOfRows` reads it. */
