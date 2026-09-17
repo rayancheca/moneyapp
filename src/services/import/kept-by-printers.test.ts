@@ -10,6 +10,7 @@ import { balanceAnchors } from "@/db/schema/balances";
 import { categories } from "@/db/schema/categories";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
+import { normalizeDescription } from "@/lib/normalize";
 import { balancesRemovedByFile } from "./printed-anchors";
 import { heldForPrinters, printerHandOvers, settleHeldRows, type PrinterHandOver } from "./printed-lines";
 import { latestBalances } from "@/services/derivation";
@@ -57,6 +58,8 @@ const SECTIONS: Record<string, ParsedStatement[]> = {
   // …and two later downloads of the same account, of two rows and of one
   "part cd": [{ accountHint: CHECKING, txns: [MOVIE, BOOKS] }],
   "part movie": [{ accountHint: CHECKING, txns: [MOVIE] }],
+  // …and one that prints the coffee in the statement's words
+  "export miami": [{ accountHint: CHECKING, txns: [{ ...COFFEE, rawDescription: "COFFEE ROASTERS #12 MIAMI FL" }] }],
   // a statement over both months: two of its lines are one download's, the third the other's
   "statement q1": [
     {
@@ -107,6 +110,7 @@ const PART_GROCER = file("part-grocer", "part grocer");
 const PART_COFFEE = file("part-coffee", "part coffee");
 const PART_CD = file("part-cd", "part cd");
 const PART_MOVIE = file("part-movie", "part movie");
+const MIAMI = file("export-miami", "export miami");
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-kept-by-printers-"));
@@ -616,5 +620,77 @@ describe("the opening stays while the account keeps a row, whichever file keeps 
     expect(byFile()).toEqual([[LATE.postedOn, LATE.amountCents, "active", fileId(PART_B)]]);
     expect(anchors()).toEqual(keptOpening(PART_B));
     expect(balance()).toBe(10_000 + LATE.amountCents);
+  });
+});
+
+/**
+ * Which file a held row comes back under is the plan's choice (`printerHandOvers`, `pickHeir`), not the first heir that
+ * prints its line: each heir takes the rows planned for it before it takes any other one still waiting.
+ */
+describe("a held row comes back under the file the plan names", () => {
+  test("the heir that prints both lines takes only the one planned for it", async () => {
+    await importStatementFiles(bundle.db, [PART_A]); // writes the coffee and the grocer
+    await importStatementFiles(bundle.db, [EXPORT]); // prints both, and writes the late night tacos
+    await importStatementFiles(bundle.db, [PART_GROCER]); // prints the grocer, and is the last file that does
+    const coffee = live().find((r) => r.amountCents === COFFEE.amountCents)!;
+    const grocer = live().find((r) => r.amountCents === GROCER.amountCents)!;
+    // the premise: the coffee is planned for the export, the grocer for the download imported last
+    const planned = new Map(heldForPrinters(bundle.db, new Map(), [fileId(PART_A)]).plans.map((p) => [p.heirFileId, p.rowIds] as const));
+    expect(planned.get(fileId(EXPORT))).toEqual([coffee.id]);
+    expect(planned.get(fileId(PART_GROCER))).toEqual([grocer.id]);
+    expect(planned.size).toBe(2);
+
+    profile.version = 2;
+    atVersion2 = { "part a": [] };
+    const [outcome] = await importStatementFiles(bundle.db, [PART_A]);
+
+    expect(outcome).toMatchObject({ status: "parsed", inserted: 0, keptByPrinters: 2 });
+    expect(byFile()).toEqual([
+      [COFFEE.postedOn, COFFEE.amountCents, "active", fileId(EXPORT)],
+      [GROCER.postedOn, GROCER.amountCents, "active", fileId(PART_GROCER)],
+      [LATE.postedOn, LATE.amountCents, "active", fileId(EXPORT)],
+    ]);
+    // the same rows, not fresh ones
+    expect(live().map((r) => r.id)).toContain(coffee.id);
+    expect(live().map((r) => r.id)).toContain(grocer.id);
+  });
+});
+
+/**
+ * Two files print the same line while two reads retired together each hold a row of it: ONE row comes back. A row a
+ * printer has already taken back records the line, as any live row does — otherwise the second printer takes the second
+ * row and the charge is counted twice.
+ */
+describe("a line two files print takes one row back, not one each", () => {
+  test("the second printer's line is recorded by the row the first took back", async () => {
+    await importStatementFiles(bundle.db, [EXPORT]);
+    await importStatementFiles(bundle.db, [STATEMENT]);
+    // the statement holds a second record of the coffee, in its own words — as a read that absorbed nothing wrote it
+    const coffee = live().find((r) => r.amountCents === COFFEE.amountCents)!;
+    const { id: _id, dedupeHash, ...rest } = coffee;
+    const miamiWords = "COFFEE ROASTERS #12 MIAMI FL";
+    bundle.db
+      .insert(transactions)
+      .values({
+        ...rest,
+        importFileId: fileId(STATEMENT),
+        rawDescription: miamiWords,
+        normalizedDescription: normalizeDescription(miamiWords),
+        dedupeHash: `${dedupeHash}-second-record`,
+      })
+      .run();
+    await importStatementFiles(bundle.db, [EXPORT_AGAIN]); // prints the export's three lines
+    await importStatementFiles(bundle.db, [MIAMI]); // …and this one prints the coffee in the statement's words
+    const both = [fileId(EXPORT), fileId(STATEMENT)];
+    const held = heldForPrinters(bundle.db, new Map(), both);
+    // the premise: the two reads are weighed together, so all four rows are planned — a coffee for each printer
+    expect(held.plans.flatMap((p) => p.rowIds)).toHaveLength(4);
+
+    for (const id of both) bundle.db.update(transactions).set({ status: "superseded" }).where(eq(transactions.importFileId, id)).run();
+    const back = settleHeldRows(bundle.db, held, []);
+
+    expect(back.flatMap((p) => p.rowIds)).toHaveLength(3);
+    expect(live()).toHaveLength(3);
+    expect(live().reduce((n, r) => n + r.amountCents, 0)).toBe(COFFEE.amountCents + GROCER.amountCents + LATE.amountCents);
   });
 });
