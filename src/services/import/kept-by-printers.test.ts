@@ -42,11 +42,33 @@ const CHECKING: AccountHint = { institution: "Chase", type: "checking", last4: "
 const COFFEE = { postedOn: "2026-03-05", amountCents: -1000, rawDescription: "COFFEE ROASTERS 12" };
 const GROCER = { postedOn: "2026-03-12", amountCents: -2500, rawDescription: "CORNER GROCER" };
 const LATE = { postedOn: "2026-04-02", amountCents: -700, rawDescription: "LATE NIGHT TACOS" };
+const MOVIE = { postedOn: "2026-05-01", amountCents: -1500, rawDescription: "CINEMA DOWNTOWN" };
+const BOOKS = { postedOn: "2026-05-02", amountCents: -800, rawDescription: "BOOKS AND MORE" };
 const OPENED = "2026-02-28";
 
 /** Each file's sections, by its text. The statement prints two of the export's lines, in its own words. */
 const SECTIONS: Record<string, ParsedStatement[]> = {
   export: [{ accountHint: CHECKING, txns: [COFFEE, GROCER, LATE] }],
+  // the export split in two: each download prints part of what one export prints
+  "part a": [{ accountHint: CHECKING, txns: [COFFEE, GROCER] }],
+  "part b": [{ accountHint: CHECKING, txns: [LATE] }],
+  "part grocer": [{ accountHint: CHECKING, txns: [GROCER] }],
+  "part coffee": [{ accountHint: CHECKING, txns: [COFFEE] }],
+  // …and two later downloads of the same account, of two rows and of one
+  "part cd": [{ accountHint: CHECKING, txns: [MOVIE, BOOKS] }],
+  "part movie": [{ accountHint: CHECKING, txns: [MOVIE] }],
+  // a statement over both months: two of its lines are one download's, the third the other's
+  "statement q1": [
+    {
+      accountHint: CHECKING,
+      txns: [
+        { ...COFFEE, rawDescription: "COFFEE ROASTERS #12 MIAMI FL" },
+        { ...GROCER, rawDescription: "CORNER GROCER MIAMI FL" },
+        { ...LATE, rawDescription: "LATE NIGHT TACOS MIAMI FL" },
+      ],
+      period: { start: "2026-03-01", end: "2026-04-30", beginCents: 10_000, endCents: 5_800 },
+    },
+  ],
   "statement 2026-03": [
     {
       accountHint: CHECKING,
@@ -77,6 +99,14 @@ const EXPORT = file("export", "export");
 /** the export downloaded again: the same lines in different bytes */
 const EXPORT_AGAIN = file("export (1)", "export\n");
 const STATEMENT = file("statement-2026-03", "statement 2026-03");
+const STATEMENT_Q1 = file("statement-q1", "statement q1");
+/** two downloads that split the export's lines between them, and two that print one line each */
+const PART_A = file("part-a", "part a");
+const PART_B = file("part-b", "part b");
+const PART_GROCER = file("part-grocer", "part grocer");
+const PART_COFFEE = file("part-coffee", "part coffee");
+const PART_CD = file("part-cd", "part cd");
+const PART_MOVIE = file("part-movie", "part movie");
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-kept-by-printers-"));
@@ -421,5 +451,170 @@ describe("un-importing the file that holds a kept opening hands it to the file i
 
     expect(live()).toEqual([]);
     expect(anchors()).toEqual([]);
+  });
+});
+
+/**
+ * The account's rows are split between two downloads, and only one of them prints what the file holding the opening
+ * holds. The opening belongs to the rows, not to the file: while ANY still-imported file keeps a live row on the
+ * account, the opening goes to that file.
+ *
+ * 🔴 It was deleted with its holder whenever no file printed that holder's own rows. On a backfilled copy of the real
+ * ledger, 2026-09-17: the Rocket Money export split in two, both halves imported, the statement and the whole export
+ * un-imported, and un-importing the first half left Wells Fargo Everyday Checking with 19 active rows under the second
+ * half, no anchor, net worth 11,312,501 → 11,072,834 cents and lastPoint complete=false. Re-reading that half at a
+ * version that reads nothing did the same, with an outcome that said inserted 0, keptByPrinters 0.
+ */
+describe("the opening stays while the account keeps a row, whichever file keeps it", () => {
+  test("R1: un-importing the download that holds it leaves it with the download that keeps the last row", async () => {
+    await importStatementFiles(bundle.db, [STATEMENT]);
+    await importStatementFiles(bundle.db, [PART_A]);
+    await importStatementFiles(bundle.db, [PART_B]);
+    unimportFile(bundle.db, fileId(STATEMENT));
+    // part a keeps two of the statement's rows and part b none: the opening goes to the file that keeps the most
+    expect(anchors()).toEqual(keptOpening(PART_A));
+    expect(balance()).toBe(10_000 + COFFEE.amountCents + GROCER.amountCents + LATE.amountCents);
+
+    // the confirmation: the account keeps its opening, under part b, and no balance is removed
+    const effects = netWorthEffectsByFile(bundle.db);
+    expect(effects.leaving.get(fileId(PART_A))).toBeUndefined();
+    expect(effects.keeping.get(fileId(PART_A))).toEqual([
+      { accountId: accountId(), name: accountName(), day: OPENED, balanceCents: 10_000, keptRows: 1, heirFileName: PART_B.name },
+    ]);
+    expect(balancesRemovedByFile(bundle.db).get(fileId(PART_A)) ?? 0).toBe(0);
+
+    unimportFile(bundle.db, fileId(PART_A));
+
+    // its own two rows go with it — no file prints them — and the third stays, on the opening
+    expect(byFile()).toEqual([[LATE.postedOn, LATE.amountCents, "active", fileId(PART_B)]]);
+    expect(anchors()).toEqual(keptOpening(PART_B));
+    expect(balance()).toBe(10_000 + LATE.amountCents);
+
+    // …and the file that keeps the last row takes the opening with it
+    unimportFile(bundle.db, fileId(PART_B));
+    expect(live()).toEqual([]);
+    expect(anchors()).toEqual([]);
+  });
+
+  /** Two downloads print the statement's rows, one more of them than the other. */
+  test("…to the download that keeps the most of the statement's own rows", async () => {
+    await importStatementFiles(bundle.db, [STATEMENT_Q1]);
+    await importStatementFiles(bundle.db, [PART_A]); // prints two of its three lines
+    await importStatementFiles(bundle.db, [PART_B]); // …and this one the third
+
+    unimportFile(bundle.db, fileId(STATEMENT_Q1));
+
+    expect(byFile()).toEqual([
+      [COFFEE.postedOn, COFFEE.amountCents, "active", fileId(PART_A)],
+      [GROCER.postedOn, GROCER.amountCents, "active", fileId(PART_A)],
+      [LATE.postedOn, LATE.amountCents, "active", fileId(PART_B)],
+    ]);
+    expect(anchors()).toEqual(keptOpening(PART_A));
+  });
+
+  test("…and on a tie, to the lower file id", async () => {
+    await importStatementFiles(bundle.db, [STATEMENT]);
+    await importStatementFiles(bundle.db, [PART_COFFEE]);
+    await importStatementFiles(bundle.db, [PART_GROCER]);
+
+    unimportFile(bundle.db, fileId(STATEMENT));
+
+    // one row each: the tie
+    expect(byFile()).toEqual([
+      [COFFEE.postedOn, COFFEE.amountCents, "active", fileId(PART_COFFEE)],
+      [GROCER.postedOn, GROCER.amountCents, "active", fileId(PART_GROCER)],
+    ]);
+    const lower = [fileId(PART_COFFEE), fileId(PART_GROCER)].sort()[0]!;
+    expect(anchors()).toEqual([{ anchoredOn: OPENED, balanceCents: 10_000, source: "unimported_statement", importFileId: lower }]);
+  });
+
+  /** The holder's own rows are printed by nobody, and two other downloads keep rows: the opening goes to the larger. */
+  test("…to the file that keeps the most of the account's rows", async () => {
+    await importStatementFiles(bundle.db, [STATEMENT]);
+    await importStatementFiles(bundle.db, [PART_A]);
+    await importStatementFiles(bundle.db, [PART_B]); // one row
+    await importStatementFiles(bundle.db, [PART_CD]); // two
+    unimportFile(bundle.db, fileId(STATEMENT));
+    expect(anchors()).toEqual(keptOpening(PART_A));
+
+    unimportFile(bundle.db, fileId(PART_A));
+
+    expect(anchors()).toEqual(keptOpening(PART_CD));
+    expect(balance()).toBe(10_000 + LATE.amountCents + MOVIE.amountCents + BOOKS.amountCents);
+
+    // …and when that file goes too, to the one that keeps the last row
+    unimportFile(bundle.db, fileId(PART_CD));
+    expect(anchors()).toEqual(keptOpening(PART_B));
+  });
+
+  /** A row he filed under a file by hand stays when that file goes (`detachAttachedRows`): it keeps nothing for it. */
+  test("…counting only the rows a file parsed, never the ones filed under it by hand", async () => {
+    await importStatementFiles(bundle.db, [STATEMENT]);
+    await importStatementFiles(bundle.db, [PART_A]);
+    await importStatementFiles(bundle.db, [PART_B]); // one parsed row
+    await importStatementFiles(bundle.db, [PART_CD]); // two, filed there by hand below
+    bundle.db
+      .update(transactions)
+      .set({ fileLinkSource: "attached" })
+      .where(eq(transactions.importFileId, fileId(PART_CD)))
+      .run();
+    unimportFile(bundle.db, fileId(STATEMENT));
+    expect(anchors()).toEqual(keptOpening(PART_A));
+
+    unimportFile(bundle.db, fileId(PART_A));
+
+    expect(anchors()).toEqual(keptOpening(PART_B));
+    expect(live()).toHaveLength(3);
+  });
+
+  test("…and on a tie between two files that keep the account's other rows, to the lower file id", async () => {
+    await importStatementFiles(bundle.db, [STATEMENT]);
+    await importStatementFiles(bundle.db, [PART_A]);
+    await importStatementFiles(bundle.db, [PART_B]);
+    await importStatementFiles(bundle.db, [PART_MOVIE]);
+    unimportFile(bundle.db, fileId(STATEMENT));
+
+    unimportFile(bundle.db, fileId(PART_A));
+
+    const lower = [fileId(PART_B), fileId(PART_MOVIE)].sort()[0]!;
+    expect(anchors()).toEqual([{ anchoredOn: OPENED, balanceCents: 10_000, source: "unimported_statement", importFileId: lower }]);
+  });
+
+  /**
+   * The re-read still writes the statement's lines, so none of its rows is held back for the download that prints
+   * them — but it prints no period any more, and the account records no balance. The opening it printed stays, under
+   * the file that keeps the account's other rows; never under the successor, which is the file read again.
+   */
+  test("a re-read that stops printing the statement's period keeps its opening under a file that keeps rows", async () => {
+    await importStatementFiles(bundle.db, [STATEMENT]);
+    await importStatementFiles(bundle.db, [PART_A]); // prints both of the statement's lines
+    await importStatementFiles(bundle.db, [PART_B]); // …and writes the late night tacos
+    expect(anchors().map((a) => a.source)).toEqual(["statement", "statement"]);
+
+    profile.version = 2;
+    atVersion2 = { "statement 2026-03": [{ accountHint: CHECKING, txns: SECTIONS["statement 2026-03"]![0]!.txns }] };
+    const [outcome] = await importStatementFiles(bundle.db, [STATEMENT]);
+
+    expect(outcome).toMatchObject({ status: "parsed", inserted: 2, keptByPrinters: 0 });
+    expect(live()).toHaveLength(3);
+    expect(anchors()).toEqual(keptOpening(PART_B));
+    expect(balance()).toBe(10_000 + COFFEE.amountCents + GROCER.amountCents + LATE.amountCents);
+  });
+
+  test("R2: reading the holder again at a version that reads nothing leaves it with the download that keeps a row", async () => {
+    await importStatementFiles(bundle.db, [STATEMENT]);
+    await importStatementFiles(bundle.db, [PART_A]);
+    await importStatementFiles(bundle.db, [PART_B]);
+    unimportFile(bundle.db, fileId(STATEMENT));
+    expect(anchors()).toEqual(keptOpening(PART_A));
+
+    profile.version = 2;
+    atVersion2 = { "part a": [] };
+    const [outcome] = await importStatementFiles(bundle.db, [PART_A]);
+
+    expect(outcome).toMatchObject({ status: "parsed", inserted: 0 });
+    expect(byFile()).toEqual([[LATE.postedOn, LATE.amountCents, "active", fileId(PART_B)]]);
+    expect(anchors()).toEqual(keptOpening(PART_B));
+    expect(balance()).toBe(10_000 + LATE.amountCents);
   });
 });

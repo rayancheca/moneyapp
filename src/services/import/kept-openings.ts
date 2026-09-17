@@ -1,8 +1,8 @@
-import { and, asc, count, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { KEPT_OPENING_SOURCE, balanceAnchors } from "@/db/schema/balances";
-import { statementPeriods } from "@/db/schema/imports";
+import { importFiles, statementPeriods } from "@/db/schema/imports";
 import { transactions } from "@/db/schema/transactions";
 import { addDays } from "@/lib/dates";
 import type { PrinterHandOver } from "./printed-lines";
@@ -20,11 +20,11 @@ import type { PrinterHandOver } from "./printed-lines";
  * - Only for an account left with nothing: an account that keeps any other recorded balance keeps no opening.
  * - Only for rows another file keeps: a statement whose rows all leave with it keeps nothing.
  * - Never for an investment account: its rows do not move a recorded value.
- * - It goes when a document records the day again (`replaceKeptOpening` — importing the statement again), and when no
- *   row it carries stays: the file that keeps the rows is un-imported and no other file prints them
- *   (`removeFileBalances` deletes the anchors a file owns), or a re-read of that file no longer writes a row on the
- *   account and no other file prints them (`settleKeptOpenings`). Where another file prints them, the rows and the
- *   opening go to it together (`handOverKeptOpenings`, `settleKeptOpenings`).
+ * - It goes when a document records the day again (`replaceKeptOpening` — importing the statement again), and when the
+ *   account is left with no live row at all: the file that holds it is un-imported (`removeFileBalances` deletes the
+ *   anchors a file owns) or read again at a version that writes nothing there (`settleKeptOpenings`). While ANY file
+ *   keeps a live row on the account the opening goes to that file — the one that prints the holder's own rows first
+ *   (`heirsByAccount`), else the one that keeps the most of the account's rows (`keeperOfRows`).
  * - A re-read that stops reading an account keeps the opening its retired read printed, as un-importing that read
  *   would (`retiredOpenings`, `keepRetiredOpenings`).
  *
@@ -78,9 +78,50 @@ export function keptOpeningPlans(
   return plans;
 }
 
+/** A file still imported — its rows are in the ledger. */
+const LIVE_FILE = ["parsed", "parsed_with_claude"] as const;
+/** A row still in the ledger. */
+const LIVE_ROW = ["active", "quarantined", "excluded"] as const;
+
+/**
+ * Where no file prints the rows of the file the opening leaves with (`heirsByAccount`): the still-imported file that
+ * keeps the most parsed rows on the account once `going`'s are gone — the lower id on a tie, the same choice. The rows
+ * a removal hands to a file that prints them are already filed under it when this is read (`handOverToPrinters`,
+ * `settleHeldRows`); a row filed by hand under a file is not the file's to keep, and counts for none.
+ *
+ * ⚖️ Owner decision 20: an account that keeps live rows and records no balance keeps the opening, and an anchor is
+ * owned by a file. A file a read is writing is not `parsed` until the whole read is (`markParsed`, called after this),
+ * so it is never the keeper; a caller that must not name it says so in `going` too, and does not lean on that order.
+ * 🔴 The opening was deleted with the file that held it whenever no file printed THAT file's rows,
+ * though another download kept the account's rows: un-importing one half of a split export left Wells Fargo Everyday
+ * Checking with 19 rows, no balance and net worth 11,312,501 → 11,072,834 cents; a re-read of that half at a version
+ * that reads nothing did the same, with nothing in the upload outcome (the review of uc/final-integrate, 2026-09-17).
+ */
+export function keeperOfRows(db: AppDatabase, accountId: string, going: readonly string[]): string | undefined {
+  const rows = new Map<string, number>();
+  for (const r of db
+    .select({ fileId: transactions.importFileId, n: count() })
+    .from(transactions)
+    .innerJoin(importFiles, eq(importFiles.id, transactions.importFileId))
+    .where(
+      and(
+        eq(transactions.accountId, accountId),
+        inArray(transactions.status, [...LIVE_ROW]),
+        isNull(transactions.fileLinkSource),
+        inArray(importFiles.status, [...LIVE_FILE]),
+      ),
+    )
+    .groupBy(transactions.importFileId)
+    .all()) {
+    if (r.fileId !== null && !going.includes(r.fileId)) rows.set(r.fileId, r.n);
+  }
+  return [...rows].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
+}
+
 /**
  * Per account where `printers` keep rows of `fileId`: the file that keeps the most of them — the lower id on a tie. ONE
- * choice of who owns a kept opening, for an opening kept and for one that follows its rows.
+ * choice of who owns a kept opening, for an opening kept and for one that follows its rows. Where no file prints them,
+ * the caller falls back to the file that keeps the account's other rows (`keeperOfRows`).
  */
 export function heirsByAccount(fileId: string, printers: readonly PrinterHandOver[]): Map<string, string> {
   const heirs = new Map<string, { heirFileId: string; rows: number }>();
@@ -102,9 +143,10 @@ export interface FollowingOpening extends KeptOpeningPlan {
 
 /**
  * Per file: the openings it keeps for a statement he un-imported (`keepOpenings`) that follow its rows when it is
- * un-imported — to the file that keeps the most of them on the account (`printers`, `heirsByAccount`). An opening on an
- * account where no row of the file stays is not here: it goes with the file (`removeFileBalances`). Read-only — ONE
- * plan for the un-import and for its /imports confirmation.
+ * un-imported — to the file that keeps the most of them on the account (`printers`, `heirsByAccount`), or, where no
+ * file prints them, to the one that keeps the account's other rows (`keeperOfRows`). An opening on an account where NO
+ * live row stays is not here: it goes with the file (`removeFileBalances`). Read-only — ONE plan for the un-import and
+ * for its /imports confirmation.
  */
 export function followingOpeningsByFile(
   db: AppDatabase,
@@ -125,7 +167,9 @@ export function followingOpeningsByFile(
     .all();
   for (const opening of kept) {
     const fromFileId = opening.fromFileId!;
-    const heirFileId = heirsByAccount(fromFileId, printers.get(fromFileId) ?? []).get(opening.accountId);
+    const printed = printers.get(fromFileId) ?? [];
+    const heirFileId =
+      heirsByAccount(fromFileId, printed).get(opening.accountId) ?? keeperOfRows(db, opening.accountId, [fromFileId]);
     if (heirFileId === undefined) continue;
     byFile.set(fromFileId, [...(byFile.get(fromFileId) ?? []), { ...opening, fromFileId, heirFileId }]);
   }
@@ -192,12 +236,13 @@ export function replaceKeptOpening(tx: AppDatabase, accountId: string, day: stri
 /**
  * A re-read retired `staleIds` and wrote `successorId`: an opening one of them kept follows the rows to the successor
  * — or, where the successor writes no live row on the account any more, to the file that took back the most of the
- * retired read's rows there (`heldBack`, `settleHeldRows`) — or goes, where no row stays. Call it once the read is
- * written and its held rows settled, inside the same transaction; the retirement left those openings in place
- * (`removeFileBalances`).
+ * retired read's rows there (`heldBack`, `settleHeldRows`), or to the file that keeps the account's other rows
+ * (`keeperOfRows`) — or goes, where no live row stays. Call it once the read is written and its held rows settled,
+ * inside the same transaction; the retirement left those openings in place (`removeFileBalances`).
  *
  * 🔴 It went whenever the successor wrote nothing on the account, though the rows stayed under a re-download that
- * prints them (the review of uc/final-integrate, 2026-09-17).
+ * prints them (the review of uc/final-integrate, 2026-09-17) — and again where the rows another download keeps are
+ * its own, not the retired read's, with nothing in the upload outcome (the review of uc/last-two-fixes, 2026-09-17).
  */
 export function settleKeptOpenings(
   tx: AppDatabase,
@@ -224,7 +269,10 @@ export function settleKeptOpenings(
       )
       .limit(1)
       .get();
-    const heir = keepsRows ? successorId : heirsByAccount(opening.fileId!, heldBack).get(opening.accountId);
+    const heir = keepsRows
+      ? successorId
+      : (heirsByAccount(opening.fileId!, heldBack).get(opening.accountId) ??
+        keeperOfRows(tx, opening.accountId, [opening.fileId!, successorId]));
     if (heir !== undefined) tx.update(balanceAnchors).set({ importFileId: heir }).where(eq(balanceAnchors.id, opening.id)).run();
     else tx.delete(balanceAnchors).where(eq(balanceAnchors.id, opening.id)).run();
   }
@@ -252,11 +300,21 @@ export function retiredOpenings(
 /**
  * ⚖️ Owner decision 20 on a re-read: an account the new read leaves with rows held back for another file
  * (`settleHeldRows`) and no recorded balance keeps the opening the retired read printed, under the file that took back
- * the most of its rows — as un-importing the retired read would have. Call it after `settleKeptOpenings`.
+ * the most of its rows — or, where none came back, under the file that keeps the account's other rows
+ * (`keeperOfRows`) — as un-importing the retired read would have. Never under a `successorId` of this read: the
+ * opening is kept as a statement the ledger no longer reads, and the successor is the file read again. Call it after
+ * `settleKeptOpenings`.
  */
-export function keepRetiredOpenings(tx: AppDatabase, openings: readonly RetiredOpening[], heldBack: readonly PrinterHandOver[]): string[] {
+export function keepRetiredOpenings(
+  tx: AppDatabase,
+  openings: readonly RetiredOpening[],
+  heldBack: readonly PrinterHandOver[],
+  successorIds: readonly string[] = [],
+): string[] {
   const plans = openings.flatMap(({ fileId, plan }) => {
-    const heirFileId = heirsByAccount(fileId, heldBack).get(plan.accountId);
+    const heirFileId =
+      heirsByAccount(fileId, heldBack).get(plan.accountId) ??
+      keeperOfRows(tx, plan.accountId, [fileId, ...successorIds]);
     return heirFileId === undefined ? [] : [{ ...plan, heirFileId }];
   });
   return keepOpenings(tx, plans);

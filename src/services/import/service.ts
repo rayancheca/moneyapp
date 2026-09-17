@@ -1885,7 +1885,12 @@ function writeRead(
     // an opening a retired read kept for a statement he un-imported follows the rows it keeps (`kept-openings`)
     settleKeptOpenings(db, member.staleIds, (member.recorded as RecordedFile).row.id, heldBack);
   });
-  keepRetiredOpenings(db, openings, heldBack);
+  keepRetiredOpenings(
+    db,
+    openings,
+    heldBack,
+    members.map((m) => (m.recorded as RecordedFile).row.id),
+  );
   return { retired, writes };
 }
 
