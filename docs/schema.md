@@ -231,7 +231,9 @@ Every line `import_file_id` prints on an account, recorded by the import (and, f
 imported before the table existed, by `scripts/record-printed-lines.ts`); read by un-import
 (`services/import/printed-lines`). Forgotten when the file is un-imported or retired by a re-read.
 A line printed with no transaction day also matches a row TRANSACTED on its day (a statement line
-printed before its period opens is stored on the period's first day).
+printed before its period opens is stored on the period's first day). Of rows of the line's money,
+one posted on the day the import stored the line on outranks one posted on the day it prints: a
+statement's lines all posted inside its period.
 The three records (`account_numbers`, `statement_copies`, `printed_lines`) are not filled by a
 migration: a Settings restore of a snapshot older than them records them again from the
 originals (`services/import/import-records`), and `pnpm ledger-check` fails while a parsed file

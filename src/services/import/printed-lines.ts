@@ -115,11 +115,21 @@ function transactionDayOf(line: PrintedLine): string {
   return line.transactedOn ?? line.printedOn;
 }
 
-/** How surely a row records a line: the same money, and the same transaction day (2) and/or posted day (1). */
+/**
+ * How surely a row records a line: the same money, and the same transaction day (2) and/or the posted day the file's
+ * own import stored the line on (1). A row posted on the day the line PRINTS is still a candidate (`candidatesFor`), and
+ * ranks after one posted on the stored day: a statement's lines all posted inside its period, and a line printed before
+ * the period opens is stored on its first day (`placeInsidePeriod`), so a row posted on the printed day is a charge that
+ * posted before the period. For every other line the two days are one.
+ *
+ * 🔴 The two days weighed alike. Un-importing a more trusted file that printed two purchases of one shop and one day,
+ * one posted that day and one the next, kept the charge posted before the period under the statement whose line the
+ * other had taken over, deleted that other one, and put the reconciled period into a −$25.00 gap (found 2026-09-17).
+ */
 function weight(line: PrintedLine, row: Row): number {
-  const sameDay = row.postedOn === line.printedOn || row.postedOn === line.postedOn ? 1 : 0;
+  const storedDay = row.postedOn === line.postedOn ? 1 : 0;
   const sameTransactionDay = row.transactedOn === transactionDayOf(line) ? 2 : 0;
-  return sameDay + sameTransactionDay;
+  return storedDay + sameTransactionDay;
 }
 
 /** The rows that may record a line, surest first. */

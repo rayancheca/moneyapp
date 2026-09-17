@@ -501,3 +501,61 @@ describe("a statement line stored inside its period is kept under the export tha
     expect(live().map((r) => [r.amountCents, r.importFileId, r.notes, r.status])).toEqual([[LINE.amountCents, exported, "mine", "active"]]);
   });
 });
+
+/**
+ * A statement line printed before its period opens is stored on the period's first day (`placeInsidePeriod`), and a
+ * more trusted file printing that charge on the day it posted takes the row over (`pickTakeoverVictim`). That file may
+ * print a second charge of the same money, bought the same day and posted the day before — outside the statement's
+ * period, in the same words. The statement's line is the charge posted inside its period: the day the statement's own
+ * import stored it on.
+ *
+ * 🔴 A row posted on the line's printed day and one posted on its stored day weighed alike, so the older row won the
+ * tie: un-importing the more trusted file kept the charge posted before the period under the statement, deleted the
+ * one inside it, and put the reconciled period into a −$25.00 gap (found 2026-09-17 while checking that a file with a
+ * record is not also known by the rows it lost, `takenOverLines`).
+ */
+describe("a statement line stored inside its period keeps the row posted on its stored day", () => {
+  const LINE = { amountCents: -2500, rawDescription: "ZQX HOLLOW MARKET 12" };
+  const STATEMENT_CSV: ImportInput = { name: `${PREFIX}inside-statement.csv`, buffer: Buffer.from("inside statement") };
+  const OFX: ImportInput = { name: `${PREFIX}inside-activity.ofx`, buffer: Buffer.from("<OFX> inside activity") };
+  const PERIOD = { start: "2026-05-03", end: "2026-05-31", beginCents: 10_000, endCents: 7_500 };
+  const byName: ParserProfile = {
+    id: "test-printed-lines-inside",
+    version: 1,
+    matches: (f) => f.name === STATEMENT_CSV.name || f.name === OFX.name,
+    parse: (f) =>
+      f.name === STATEMENT_CSV.name
+        ? [{ accountHint: CHECKING, txns: [{ ...LINE, postedOn: "2026-05-02" }], period: PERIOD }]
+        : [
+            {
+              accountHint: CHECKING,
+              // two purchases in one shop on 05-02: the first posted that day, the second the next
+              txns: [
+                { ...LINE, postedOn: "2026-05-02", transactedOn: "2026-05-02" },
+                { ...LINE, postedOn: "2026-05-03", transactedOn: "2026-05-02" },
+              ],
+            },
+          ],
+  };
+  const period = () => bundle.db.select().from(statementPeriods).where(eq(statementPeriods.periodStart, PERIOD.start)).get()!;
+
+  beforeEach(() => {
+    PROFILES.unshift(byName);
+  });
+  afterEach(() => {
+    PROFILES.splice(PROFILES.indexOf(byName), 1);
+  });
+
+  test("un-importing the more trusted file keeps the charge posted inside the period, and the period still closes", async () => {
+    await importStatementFiles(bundle.db, [STATEMENT_CSV]);
+    const [taken] = await importStatementFiles(bundle.db, [OFX]);
+    expect(taken).toMatchObject({ status: "parsed", inserted: 2, supersededTakeover: 1 });
+    expect(period().reconciliation).toBe("reconciled");
+    expect(unimportCountsByFile(bundle.db).get(fileId(OFX))).toMatchObject({ deleted: 1, keptByPrinters: 1 });
+
+    unimportFile(bundle.db, fileId(OFX));
+
+    expect(live().map((r) => [r.postedOn, r.transactedOn, r.importFileId])).toEqual([["2026-05-03", "2026-05-02", fileId(STATEMENT_CSV)]]);
+    expect(period()).toMatchObject({ reconciliation: "reconciled", gapCents: null });
+  });
+});
