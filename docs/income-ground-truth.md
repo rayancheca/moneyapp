@@ -87,6 +87,13 @@ are cents-exact from `data/moneyapp.db` at the 2026-07-16 snapshot unless noted.
 
 > **⚠️ PASS-18 UPDATE (2026-07-18):** the user's situation changed. He **moved Bronx → Miami** in early 2026,
 > **Fordham work-study ENDED** (last 2026-05-13) and **Knack tutoring ENDED** (last 2026-05-21), and he now earns
+> ⚠️ **SUPERSEDED on 2026-09-22: the weekly rate is $1,141.92, not $1,046/$1,047.** FICA was being withheld and
+> should not have been; now that it is not, his weekly pay is $1,141.92 (his words). Applied to the one row that
+> holds it (`recurring_series.user_amount_cents`) by `scripts/set-cash-job-weekly-pay-2026-09-22.ts`. Levelled
+> monthly income $4,537.00 → $4,948.32. He also said **five weeks of pay land on Thursday 2026-09-24** — expect one
+> deposit near $5,709.60 in the statement that covers it, not five weekly rows. Everything below is the older
+> measurement, kept because it is what the July/August figures were read against.
+
 > from a **cash job (~$1,046/week)**. Per his instruction, the cash-job deposits were categorized `Income › Salary`,
 > so **"Salary" is no longer pure Fordham** — it is Fordham wages ($42,679.76) + the cash job. A confirmed weekly
 > paycheck series ("Cash job (weekly pay)" $1,046/wk) drives the forecast; Fordham + Knack are `ended` series. Also:
