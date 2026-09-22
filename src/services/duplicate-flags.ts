@@ -35,8 +35,8 @@ import { formatCents } from "@/lib/money";
 
 /**
  * Money identity, mirroring `identityWeight` in import/service.ts: same
- * account, same amount, and both rows claim the SAME DAY — post-to-post, or
- * transaction-to-transaction when both carry one.
+ * account, same amount, and both rows claim the SAME DAY — transaction-to-
+ * transaction where both carry one, post-to-post where either does not.
  *
  * Three looser rules were measured against the owner's real 9,827-row ledger
  * and every one of them invents duplicates out of ordinary repeat spending:
@@ -48,11 +48,12 @@ import { formatCents } from "@/lib/money";
  *    next fare's transaction date — 10 rows, mostly false;
  *  - dropping the description gate pairs a $4,000 Microsoft buy with a $4,000
  *    crypto cash settlement that landed the same day.
- * With every clause in place — including the reconciliation exemption below —
- * the rule fires on ZERO rows of the real ledger. That is the right answer, not
- * a weak one: it holds 0 quarantined rows and 0 gap periods, so there is no
- * detectable cross-source duplicate in it today. The one pair that survives
- * every OTHER clause is two real vending charges (see NOT_ALREADY_PROVEN).
+ * With every clause in place the rule fires on ZERO rows of the real ledger —
+ * and, since 2026-09-17, on zero before the reconciliation exemption below is
+ * applied at all. That is the right answer, not a weak one: the ledger holds 0
+ * quarantined rows and 0 gap periods, so there is no detectable cross-source
+ * duplicate in it today. The one pair that used to survive every other clause
+ * is two real vending charges, and the transaction-day clause now refuses it.
  *
  * `IS NOT` rather than `!=` is load-bearing: 172 rows are hand-entered and
  * carry a NULL import_file_id, and `NULL != 'x'` is NULL, not true — the pass

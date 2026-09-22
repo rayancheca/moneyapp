@@ -12,6 +12,18 @@
  * `report-first` and `statement-first` un-import the report and both downloads of the August statement, then read the
  * two files back in the named order — the ledger they leave must be the same one, and the digests printed here are
  * what says so.
+ *
+ * Measured on a copy of the real ledger, 2026-09-17, with `identityWeight` scoring a shared posted day alone:
+ *
+ *   reread          charges 10319 · 2026-07-03..08-02 gap −$1.25, 72 quarantined, 17 live · ledger-check FAILED
+ *                   (Chase Sapphire 2026-07-02 → 2026-08-02 off by $185.78)
+ *   report-first    charges 10320 · reconciled
+ *   statement-first charges 10320 · reconciled
+ *
+ * — the same two files, read in three sequences, leaving two different amounts of money. With the transaction-day
+ * clause all three give `charges 10320 7d7df1ab675b4862` and pass `ledger-check`; the re-read leaves `transactions`
+ * and `balance_anchors` byte-identical to the ledger it started from, and `statement-first` differs from the other two
+ * only in which source's row dates a charge both files print, which is by design.
  */
 import fs from "node:fs";
 import path from "node:path";
