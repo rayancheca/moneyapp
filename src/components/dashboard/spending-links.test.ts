@@ -129,7 +129,13 @@ describe("a dashboard card's Spending link opens the months the card read", () =
     const markup = renderToStaticMarkup(createElement(RunwayCard, { data: runwayCard(bundle.db, TODAY) }));
     expect(hrefOfLink(markup, "Spending →")).toBe(WINDOW_HREF);
     expect(hrefOfLink(markup, "What you spend a month")).toBe(WINDOW_HREF);
-    // the income term is this month's, so its link still opens this month
-    expect(hrefOfLink(markup, "What you earn a month")).toBe("/spending");
+    /*
+     * The income term is this month's, so its link still opens this month. The
+     * ROW LABEL is now the one `incomeBasis` earned: this fixture has no income
+     * series at all, so the basis is "calendar" — money already in plus pay
+     * still due — and calling that "what you earn a month" was the same
+     * mis-naming a five-week lump exposed on the "banked" basis.
+     */
+    expect(hrefOfLink(markup, "Income expected this window")).toBe("/spending");
   });
 });

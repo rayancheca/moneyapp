@@ -1,3 +1,4 @@
+import type { IncomeBasisKind } from "./income-basis";
 import { formatCents } from "./money";
 
 /**
@@ -67,8 +68,24 @@ export interface RunwayInput {
   cardCreditCents?: number;
   /** what liquidating the portfolio would add; negative (margin) adds nothing */
   investableCents: number;
-  /** the income RATE per month — see `incomeBasis` */
+  /** the income figure per month — see `incomeBasis`, and `incomeBasisKind` below */
   monthlyIncomeCents: number;
+  /**
+   * WHICH of `incomeBasis`' three arithmetics produced `monthlyIncomeCents`.
+   *
+   * 🔴 Without it this module wrote one sentence for all three and asserted the
+   * opposite of what it had divided by. A five-week lump pushes `postedCents`
+   * past the levelled rate, `incomeBasis` switches to kind "banked", and the
+   * card went on saying "the earning is a rate from your confirmed pay rather
+   * than what has landed" — while the tooltip mounted on that very row said
+   * "Income that has already arrived in this window". The figure is chosen in
+   * one place and must be DESCRIBED by the branch that chose it, exactly as
+   * `budgetVerdict` and `incomeBasis` each write their own words.
+   *
+   * Defaults to "levelled", the only kind that existed when this was written
+   * and the one every existing caller passing nothing already meant.
+   */
+  incomeBasisKind?: IncomeBasisKind;
   /** measured total spend per month, positive magnitude */
   monthlySpendCents: number;
 }
@@ -122,6 +139,42 @@ export interface Runway {
   assumptions: RunwayAssumption[];
 }
 
+/**
+ * What the income term IS, said three ways because it is three things.
+ *
+ * ⛔ One entry per `IncomeBasisKind`, and the row label lives here too. "What
+ * you earn a month" over a five-week catch-up deposit is the same lie as the
+ * explanation's, printed on the line the figure sits on.
+ *
+ * ⚠️ The "levelled" wording is byte-identical to the single sentence this
+ * module used to publish for every kind: it is the only one that was ever true,
+ * it is the live one on the owner's ledger in an ordinary month, and changing
+ * it would churn pixels for no reading.
+ */
+const INCOME_TERM: Record<IncomeBasisKind, { label: string; burning: string; covered: string }> = {
+  levelled: {
+    label: "What you earn a month",
+    burning:
+      "the earning is a rate from your confirmed pay rather than what has landed, so this holds only for as long as both do.",
+    covered:
+      "You earn more than you spend each month, so this cash is not running down. There is no date to count towards.",
+  },
+  banked: {
+    label: "Income that has landed this window",
+    burning:
+      "the earning is income that has already landed in this window, lump payments and catch-ups included — a measurement of one window and not a rate, so a quieter window shortens this.",
+    covered:
+      "What has already landed in this window comes to more than you spend in a month, so this cash is not running down. That figure is one window's arrivals, lump payments and catch-ups included, and not a rate — the date to count towards comes back if the next window brings in less.",
+  },
+  calendar: {
+    label: "Income expected this window",
+    burning:
+      "the earning is what this window has brought in plus the pay still due before it ends, and not a rate, so it moves with the calendar.",
+    covered:
+      "What this window has brought in plus the pay still due before it ends comes to more than you spend in a month, so this cash is not running down. That is this window's arithmetic and not a rate — it moves with the calendar.",
+  },
+};
+
 /** How a duration is said, with precision proportional to its magnitude. */
 function durationLabel(months: number): { label: string; isBeyondHorizon: boolean } {
   if (months <= 0) return { label: "none left", isBeyondHorizon: false };
@@ -155,6 +208,7 @@ export function runway(input: RunwayInput): Runway {
   // Margin debt is representable but must never LENGTHEN the runway: selling a
   // portfolio you owe more than cannot fund a month of groceries.
   const investableCents = Math.max(0, input.investableCents);
+  const term = INCOME_TERM[input.incomeBasisKind ?? "levelled"];
   const netBurnCents = monthlySpendCents - monthlyIncomeCents;
   const netCashCents = liquidCents - cardDebtCents;
   /*
@@ -179,7 +233,7 @@ export function runway(input: RunwayInput): Runway {
       cents: cardDebtCents,
     },
     { id: "spend", label: "What you spend a month", cents: monthlySpendCents },
-    { id: "income", label: "What you earn a month", cents: monthlyIncomeCents },
+    { id: "income", label: term.label, cents: monthlyIncomeCents },
     { id: "investments", label: "What selling investments would add", cents: investableCents },
   ];
 
@@ -206,9 +260,7 @@ export function runway(input: RunwayInput): Runway {
       liquid,
       withInvestments,
       headline: "Your income covers your spending",
-      explanation:
-        "You earn more than you spend each month, so this cash is not running down. " +
-        "There is no date to count towards.",
+      explanation: term.covered,
       assumptions,
     };
   }
@@ -227,11 +279,14 @@ export function runway(input: RunwayInput): Runway {
      * the posted figure runs well below it — eleven paydays were silent when
      * pass 60 measured. Describing both as "what already happened" quietly
      * lent the rate the authority of a measurement.
+     *
+     * 🔴 And the earning half is now written by the BASIS that produced it
+     * (`INCOME_TERM`). One sentence for three arithmetics denied the card's own
+     * tooltip the day a five-week lump switched the basis to "banked".
      */
     explanation:
       "You spend more than you earn each month. The spending is measured from months " +
-      "already closed; the earning is a rate from your confirmed pay rather than what " +
-      "has landed, so this holds only for as long as both do.",
+      `already closed; ${term.burning}`,
     assumptions,
   };
 }

@@ -285,3 +285,64 @@ describe("runway — the horizons cannot disagree", () => {
     expect(r.withInvestments.months).toBe(r.liquid.months);
   });
 });
+
+/**
+ * 🔴 THE CARD DENIED ITS OWN ARITHMETIC. Five weeks of back pay in one deposit
+ * pushes `postedCents` past the levelled rate, `incomeBasis` returns kind
+ * "banked", and that one-off catch-up becomes the monthly income term. The
+ * explanation went on asserting the opposite of what had happened — "the
+ * earning is a rate from your confirmed pay rather than what has landed" —
+ * while the tooltip on the very same row read "Income that has already arrived
+ * in this window" (`BUDGET_JARGON.expectedIncomeBanked`). Two definitions of
+ * one number on one card, and the row calling a five-week lump "What you earn
+ * a month".
+ *
+ * Measured on a COPY of the real ledger at today 2026-09-30, holding a
+ * REHEARSAL of the five-week deposit — a payday that has not landed yet:
+ * income assumption $4,948.32 → $5,709.68, net burn $4,351.49 → $3,590.13,
+ * headline "29 days of cash" → "1.1 months of cash".
+ *
+ * ⛔ This fixes the WORDS, not the arithmetic. Whether a lump may raise the
+ * runway's income term at all is the owner's call and is still open.
+ */
+describe("runway — the explanation names the income term it actually divided by", () => {
+  const lump: RunwayInput = { ...REAL, monthlyIncomeCents: 570968, incomeBasisKind: "banked" };
+
+  test("a banked term is money that has landed, and the sentence says so", () => {
+    const r = runway(lump);
+    expect(r.kind).toBe("burning");
+    expect(r.explanation).toMatch(/already landed in this window/i);
+    expect(r.explanation).not.toMatch(/rather than what has landed/i);
+  });
+
+  test("a banked term is not called a rate, because a lump is not one", () => {
+    expect(runway(lump).explanation).not.toMatch(/a rate from your confirmed pay/i);
+    expect(runway(lump).explanation).toMatch(/not a rate/i);
+  });
+
+  test("the row is labelled what it is rather than 'what you earn a month'", () => {
+    const income = runway(lump).assumptions.find((a) => a.id === "income")!;
+    expect(income.label).toBe("Income that has landed this window");
+    expect(income.cents).toBe(570968);
+  });
+
+  test("the covered branch cannot claim a lump is what you earn each month", () => {
+    const r = runway({ ...lump, monthlySpendCents: 100000 });
+    expect(r.kind).toBe("covered");
+    expect(r.explanation).toMatch(/already landed in this window/i);
+    expect(r.explanation).not.toMatch(/You earn more than you spend each month/);
+  });
+
+  test("a levelled term keeps the rate wording, and is the default", () => {
+    const levelled = runway({ ...REAL, incomeBasisKind: "levelled" });
+    expect(levelled.explanation).toBe(runway(REAL).explanation);
+    expect(levelled.explanation).toMatch(/a rate from your confirmed pay/i);
+    expect(levelled.assumptions.find((a) => a.id === "income")!.label).toBe("What you earn a month");
+  });
+
+  test("a calendar term says which window it measured, not that it is a rate", () => {
+    const r = runway({ ...REAL, incomeBasisKind: "calendar" });
+    expect(r.explanation).toMatch(/this window/i);
+    expect(r.explanation).not.toMatch(/a rate from your confirmed pay/i);
+  });
+});

@@ -465,6 +465,10 @@ export function runwayCard(db: AppDatabase, today: string = todayIso()): RunwayC
       cardCreditCents: cash.cardCreditCents,
       investableCents: cash.investableCents,
       monthlyIncomeCents: income.basis.cents,
+      // ⛔ The figure and the WORD for how it was chosen travel together. Sending
+      // the cents alone let the card's body text contradict the tooltip mounted
+      // on the same row the first time a lump switched the basis to "banked".
+      incomeBasisKind: income.basis.kind,
       monthlySpendCents: spend.monthlyCents,
     }),
     committed: committedBook(db, today),
