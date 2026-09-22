@@ -175,7 +175,24 @@ export function isChaseCheckingStatementText(text: string): boolean {
 
 export const chaseCheckingStatementPdf: ParserProfile = {
   id: PROFILE_ID,
-  version: 1,
+  /**
+   * v2: the right-margin statement identifier is dropped before parsing
+   * (`stripMarginIdentifier`). Every file already in the ledger was read
+   * without that rule, so the bump is what makes the archive re-readable — a
+   * parser fix never reaches an already-imported file, and
+   * `ux_import_files_sha_parser` would skip an unbumped re-import as a
+   * duplicate.
+   *
+   * What the re-read changes, measured over all 48 statements in
+   * data/originals: one row appears (2025-02-28 +$33.99, the Zelle deposit the
+   * merged line dropped) and 20 descriptions across 17 files lose the margin
+   * digits they had swallowed. No period, no Beginning/Ending Balance and no
+   * other row moves. Carried attributes survive: `takeCarry` claims the
+   * prior-version row by account + posted day + amount and uses the
+   * description only to rank several equal amounts on one day, so a
+   * description-only change carries cleanly.
+   */
+  version: 2,
   matches: (f) => f.format === "pdf",
   matchesContent: isChaseCheckingStatementText,
   parse: async (f): Promise<ParsedStatement[]> => {

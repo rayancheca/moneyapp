@@ -238,6 +238,41 @@ describe("the 20-digit margin statement identifier", () => {
     expect(parsed.endingBalanceCents).toBe(1500);
   });
 
+  /**
+   * The sweep that found this defect asked one question of all 48 statements:
+   * does anything the parser emits still carry the margin digits? This is that
+   * question as a guard — the identifier put on every kind of line it was
+   * measured landing on, at once.
+   */
+  test("no parsed field carries the margin digits, whatever line they land on", () => {
+    const parsed = parseChaseCheckingLines([
+      "February 13, 2025 through March 12, 2025",
+      "Account Number: 000000889063522",
+      "Beginning Balance $308.00 11790210202000000060",
+      "*start*transaction detail",
+      "DATE DESCRIPTION AMOUNT BALANCE",
+      "02/28 Zelle Payment From Oliver Denna Fontaine 23892926660 34.00 342.00",
+      "02/28 Zelle Payment From Joshua A Zuchowski Mntdkak9Lezz 33.99 375.99 11790210202000000062",
+      "03/01 Card Purchase 02/28 Kfc K273018 Bronx NY Card -10.00 365.99",
+      "7782 11790210202000000063",
+      "03/02 Card Purchase 03/01 Target 00033803 New York NY Card -5.00 360.99",
+      "11790210202000000064",
+      "7782",
+      "Ending Balance $360.99 11790210202000000065",
+      "*end*transaction detail 11790210202000000066",
+    ]);
+    const digits = /\d{20}/;
+    expect(parsed.txns.filter((t) => digits.test(t.rawDescription))).toEqual([]);
+    expect(parsed.txns).toHaveLength(4);
+    expect(parsed.beginningBalanceCents).toBe(30800);
+    expect(parsed.endingBalanceCents).toBe(36099);
+    const sum = parsed.txns.reduce((a, t) => a + t.amountCents, 0);
+    expect(parsed.beginningBalanceCents + sum).toBe(parsed.endingBalanceCents);
+    // the two wrapped card numbers still reach the rows they belong to
+    expect(parsed.txns.at(-2)!.rawDescription.endsWith("Card 7782")).toBe(true);
+    expect(parsed.txns.at(-1)!.rawDescription.endsWith("Card 7782")).toBe(true);
+  });
+
   test("leaves the 15-digit account number and shorter reference numbers alone", () => {
     const parsed = parseChaseCheckingLines([
       ...HEAD,
