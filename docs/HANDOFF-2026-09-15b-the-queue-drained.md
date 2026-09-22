@@ -71,6 +71,8 @@
 
 | 7 | **Migrations 0018–0023 + the three record-keeping backfills** (your answer 19), 2026-09-17 | the first script's open applied 0018 `statement_positions`, 0019 `statement_copies`, 0020 `account_numbers`, 0021 `unimported_transfer_legs`, 0022 `printed_lines`, 0023 `unimported_row_attributes` (18 → 24 migrations; the two new columns are NULL on every existing row, and every old column is byte-identical). Then `record-account-numbers` (2: Venture X ····4208 also printed ····9082 and ····4147), `record-statement-copies` (105 — "keeps 103 periods and 3,269 rows under another download"), `record-printed-lines` ×6 chunks (305 records, 23,071 lines). Each: dry run first, own restore point, re-run = "Nothing to do" | every figure compared before/after: net worth, per-account latest balance, daily_balances digest, periods by verdict + gap, anchors by source, active rows + sum, categories by source, notes, transfer groups, attached rows, marks — **only the migration count moved**; `pnpm ledger-check` exit 0 with "import records: 0 parsed file(s) … with no record" | `data/backups/pre-2026-09-17-migrations-0018-0023.db` (WAL-inclusive, integrity ok, 25 tables identical) + each script's own `pre-*.db` |
 
+| 8 | **The cash job's weekly pay $1,047.00 → $1,141.92** (your word, 2026-09-22: FICA should never have been withheld), 2026-09-22 | one UPDATE on `recurring_series` `019f72da-1fbc…`'s `user_amount_cents`; 14 guards — every other series, transactions, daily_balances, anchors, periods, budgets, accounts, holdings, holding_events and net worth byte-identical. Levelled monthly **$4,537.00 → $4,948.32**; income-card rate follows; runway **26 → 29 days of cash**; /budgets September $4,188.00 → $4,567.68 (4 paydays), October $5,235.00 → $5,709.60 (5). Re-run = nothing to do; ledger-check exit 0 | `data/backups/pre-2026-09-22-weekly-pay.db` + the script's own `pre-*-set-cash-job-weekly-pay.db` |
+
 ⚠️ `scripts/attach-sapphire-payment-rows-2026-09-14.ts` and `scripts/mark-attached-sapphire-rows-2026-09-15.ts` now refuse when re-run — on purpose: the $115 reversal grouped a row its after-state expects ungrouped. ⚠️ Un-importing 20260302 still ends in a −$798.48 gap (restored retired duplicate twins the re-import cannot match) — queued, not fixed.
 
 ## 3. ❓ YOUR ANSWERS, 2026-09-15 (closed — do not re-ask)
@@ -225,6 +227,23 @@ Second round (memory `moneyapp-owner-decisions-2026-09-15`, same file):
    back under the still-imported printer (risk: a line the new version deliberately re-dated could be counted
    twice — the rule cannot tell "dropped" from "re-dated"); (b) leave it out but make it VISIBLE — count it in the
    upload outcome and raise a ledger-check finding. Nothing is silent-safe today.
+22. ❓ OPEN — **your budgets still add up to the OLD income.** The eleven were sized from $4,537.00 a month
+   (`lib/income-budget`: income sets the size, trailing spend sets the shape). Your pay is now $4,948.32 levelled,
+   so /budgets shows $411.32 more unallocated every month. (a) leave them and let the surplus show as unallocated,
+   or (b) re-propose them against the new income (same rule, bigger pool) — say which and it is one guarded write.
+23. ❓ OPEN — **the 13 Chase rows that still carry the statement's margin digits.** The parser fix (below) cleans
+   what it READS, but those rows came from 27 older byte-copies of the same months, imported at v1, whose sha is
+   not the archive copy. The ONLY run that corrects them is re-dropping `data/statements/chase-checking-3522/`
+   (75 files). Measured on a copy with the fix in place: **16 ledger lines move** — the 13 descriptions plus three
+   Fordham rows the merchant map re-derives `Financial Aid → Education` — 0 quarantined, net worth unchanged at
+   $110,914.77, nothing crossed, ledger-check byte-identical. Cosmetic side effect: those files' recorded names
+   gain their sha prefix. (a) run it (trial-import first, then import, behind a restore point), or (b) leave the
+   13 descriptions as they are.
+24. ❓ OPEN (from the identity fix's reviewer, MEDIUM) — **13 Chase Sapphire charges and 4 daily balances still
+   depend on which file was read first.** The fix stops a re-read absorbing a line whose transaction day
+   disagrees; full order-independence would mean letting a later, better-dated read RE-DATE a charge an earlier
+   file already recorded. That is a behavioural widening with its own double-count risk. (a) widen it, or
+   (b) keep today's rule and accept that the first file to print a charge owns its day.
 
 **B. Waiting on an event:**
 - **The Wells Fargo ····5481 statement covering early September:** trial-import → import →
