@@ -26,6 +26,34 @@ const ACCOUNT_RE = /^Account Number:\s*(\d+)$/;
 /** MM/DD <desc> <amount> <running-balance> — amount/balance are the last two money tokens */
 const ROW_RE = /^(\d{2})\/(\d{2}) (.+?) (-\s*)?([\d,]+\.\d{2}) (-\s*)?([\d,]+\.\d{2})$/;
 const BALANCE_RE = /^(?:Beginning|Ending) Balance (-?)\$([\d,]+\.\d{2})$/;
+/** the right-margin statement identifier Chase prints once per page */
+const MARGIN_ID_RE = /^\d{20}$/;
+
+/**
+ * Drop the right-margin statement identifier.
+ *
+ * Chase prints a 20-digit identifier in the right margin of one line per page.
+ * unpdf clusters text by BASELINE, not by column, so that identifier joins
+ * whatever printed line happens to share its y — and the joined line then no
+ * longer ends in the running balance. ROW_RE stops matching (the row is
+ * dropped AND its whole text folds into the description of the row above),
+ * BALANCE_RE stops matching, and a wrapped continuation carries the digits
+ * into a description. When it lands on a blank baseline it becomes a line of
+ * its own, which the fold then appends to whichever description is open.
+ *
+ * Measured over all 48 real Chase checking statements: 89 identifiers, every
+ * one exactly 20 digits printed at x = 605.7, while the widest token in the
+ * printed content column anywhere in the corpus sits at x = 535.4 — a 70pt
+ * gap, and no other 20-digit token exists. The account number is 15 digits and
+ * Zelle/ACH references are 10-12 characters, so removing a trailing 20-digit
+ * token cannot reach printed content. The stripped remainder may be empty;
+ * an empty line folds nothing and leaves the open description untouched.
+ */
+function stripMarginIdentifier(text: string): string {
+  const cut = text.lastIndexOf(" ");
+  const tail = cut === -1 ? text : text.slice(cut + 1);
+  return MARGIN_ID_RE.test(tail) ? text.slice(0, Math.max(cut, 0)) : text;
+}
 
 function toIso(year: number, monthNum: number, day: number): string {
   const iso = `${year}-${String(monthNum).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
@@ -57,7 +85,8 @@ export interface ChaseCheckingParse {
 }
 
 /** Pure text-level core, exported for unit tests. */
-export function parseChaseCheckingLines(texts: readonly string[]): ChaseCheckingParse {
+export function parseChaseCheckingLines(printed: readonly string[]): ChaseCheckingParse {
+  const texts = printed.map(stripMarginIdentifier);
   const periodLine = texts.find((t) => PERIOD_RE.test(t));
   const pm = periodLine ? PERIOD_RE.exec(periodLine) : null;
   if (!pm) throw new ParseError(PROFILE_ID, "No 'Month D, YYYY through Month D, YYYY' period found");
