@@ -1962,6 +1962,43 @@ describe("re-parse lifecycle: a parser-version bump preserves user work", () => 
     expect(liveRow("STARBUCKS").notes).toBeNull();
     expect(liveRow("SHELL OIL").notes).toBeNull();
   });
+
+  /**
+   * 🔴 A day that prints the SAME amount twice crossed the owner's work. The carry pool held only the rows he had put
+   * something on, so a bucket of two charges could hold one row — the OTHER charge's — and the first line printed
+   * claimed it on nothing more than a shared prefix (`descriptionScore` 1: "ZELLE PAYMENT FROM ", "CARD PURCHASE ").
+   * His category landed on the wrong charge and the right one came back blank. Measured on a copy of the real ledger
+   * (2026-09-22): re-reading the archive at the bumped Chase-checking version crossed four pairs, among them the
+   * 2023-10-18 +$20.00 Zelle from Adam Godina (Reimbursements, hand-set), which came back on the +$20.00 from Lukas M
+   * Iera printed above it.
+   */
+  test("two charges of one amount on one day keep their own category and note through a re-read", async () => {
+    const TWINS: ImportInput = {
+      name: "Chase7778_Activity_2026.CSV",
+      buffer: Buffer.from(
+        cardCsv([
+          "7778,03/09/2026,03/09/2026,ZELLE PAYMENT FROM LUKAS M IERA 18760352890,Shopping,Sale,-20.00,",
+          "7778,03/09/2026,03/09/2026,ZELLE PAYMENT FROM ADAM GODINA BACLGIXKTRYL,Shopping,Sale,-20.00,",
+        ]),
+      ),
+    };
+    await importStatementFiles(bundle.db, [TWINS]);
+    const [categoryId] = expenseCategoryIds(1) as [string];
+    bundle.db
+      .update(transactions)
+      .set({ categoryId, categorizationSource: "user", categorizationConfidence: 1, needsReview: false, notes: "Adam paid me back" })
+      .where(eq(transactions.id, liveRow("ADAM GODINA").id))
+      .run();
+
+    const [outcome] = await withBumpedParserVersion("chase-card-csv", () => importStatementFiles(bundle.db, [TWINS]));
+
+    expect(outcome).toMatchObject({ status: "parsed", carriedForward: 1 });
+    expect(liveRow("ADAM GODINA")).toMatchObject({ categoryId, categorizationSource: "user", notes: "Adam paid me back" });
+    const lukas = liveRow("LUKAS M IERA");
+    expect(lukas.notes).toBeNull();
+    expect(lukas.categorizationSource).not.toBe("user");
+    expect(lukas.categoryId).not.toBe(categoryId);
+  });
 });
 
 /*

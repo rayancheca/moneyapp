@@ -438,10 +438,15 @@ interface CarryRow extends CarryAttributes {
   transactedOn: string | null;
   /** a record's split parts; a prior-version row's parts are its own row's (`adoptCarriedSplits`) */
   splits?: readonly RememberedSplit[];
+  /**
+   * A prior-version row the owner had put NOTHING on. It is in the pool only to hold its seat in its bucket, so the
+   * line that prints its charge claims it instead of its neighbour's work (`claimCarry`); claiming it carries nothing.
+   */
+  blank?: true;
 }
 
 /**
- * Carryable rows bucketed by (account, day, amount) — the money's identity —
+ * Prior-version rows bucketed by (account, day, amount) — the money's identity —
  * under the day each was POSTED and, when it has one, the day it was
  * TRANSACTED. One claim per old row, whichever index found it.
  */
@@ -569,10 +574,13 @@ function captureCarryForward(db: AppDatabase, oldFileIds: readonly string[]): Ca
   const splitCounts = splitCountsByTxn(db, rows.map((r) => r.id));
   const keptSides = keptSidesAmong(db, rows.map((r) => r.id));
   for (const row of rows) {
-    if (!hasCarryableAttributes(row) && (splitCounts.get(row.id) ?? 0) === 0 && !keptSides.has(row.id)) continue;
-    bucketCarry(pool.byPosted, carryKey(row.accountId, row.postedOn, row.amountCents), row);
+    // 🔴 A row with nothing on it used to be dropped here, and its bucket then held only its NEIGHBOUR's row: on a day
+    // that prints one amount twice, the first line claimed the other charge's work (`claimCarry`). It stays, blank.
+    const carries = hasCarryableAttributes(row) || (splitCounts.get(row.id) ?? 0) > 0 || keptSides.has(row.id);
+    const seat: CarryRow = carries ? row : { ...row, blank: true };
+    bucketCarry(pool.byPosted, carryKey(row.accountId, row.postedOn, row.amountCents), seat);
     if (row.transactedOn !== null) {
-      bucketCarry(pool.byTransacted, carryKey(row.accountId, row.transactedOn, row.amountCents), row);
+      bucketCarry(pool.byTransacted, carryKey(row.accountId, row.transactedOn, row.amountCents), seat);
     }
   }
   // deterministic order so two runs consume identical buckets identically
@@ -686,44 +694,95 @@ function bucketCarry(map: Map<string, CarryRow[]>, key: string, row: CarryRow): 
   else map.set(key, [row]);
 }
 
+/** A candidate on the posted day outranks every candidate on the transaction day, as claiming one at a time did. */
+const POSTED_DAY_TIER = 8;
+
+/** One line of a statement, as `claimCarry` weighs it against the prior-version rows. */
+interface ClaimingLine {
+  index: number;
+  printed: CanonicalTxn;
+  hash: string;
+}
+
 /**
- * Claim the prior-version row for this incoming row, if any. Same account, same
- * day, same amount — that is the same money even when a fixed parser now reads
- * the description differently; the description only RANKS candidates when a day
- * holds several equal amounts. Multiset consumption: each old row's attributes
- * migrate onto at most one successor.
+ * Which prior-version row each of a statement's lines claims. Same account, same day, same amount — that is the same
+ * money even when a fixed parser now reads the description differently; the description only RANKS candidates when a
+ * day holds several equal amounts. Multiset consumption: each old row's attributes migrate onto at most one successor.
  *
- * Posted day first, then transaction day to transaction day — the fallback
- * `identityWeight` already makes, for the same reason: a card statement prints
- * the TRANSACTION day. 🔴 Keyed on the posted day alone, Chase Sapphire's
- * +$100.00 payment (posted 2026-07-01, transacted and printed 06/30) lost its
- * transfer link and its note to a version bump of 20260702-statements-9805-.pdf,
- * and Chase Checking's −$100.00 was left grouped with a superseded row while
- * `ledger-check` exited 0 (measured on a copy of the real ledger, 2026-09-15).
- * Exact days only, never a window: a window would hand one charge's work to a
- * neighbouring charge of the same amount. `minScore` 1 claims only a row whose
- * words describe the same charge — for a record ANY later import may claim
- * (`recallPool`), not only the same file's next read.
+ * A MAXIMUM matching of lines to rows, as `absorbedLines` matches lines to the rows that already record their money:
+ * each row claimed by at most one line, every line trying its surest rows first (an unchanged dedupe hash, then the
+ * words, then the seat the charge held in its bucket), the lines with the surest match placed first.
+ *
+ * 🔴 Lines claimed one at a time, first come first served, and a day that prints one amount twice crossed the owner's
+ * work: `descriptionScore` hands out a 1 for nothing more than a shared prefix ("CARD PURCHASE ", "ZELLE PAYMENT
+ * FROM "), so the first line printed took whatever row was left in the bucket. Measured on a copy of the real ledger
+ * (2026-09-22), re-reading the Chase checking archive at v2 crossed four pairs — among them the 2023-10-18 +$20.00
+ * Zelle from Adam Godina, whose hand-set Reimbursements landed on the +$20.00 from Lukas M Iera printed above it while
+ * Adam's row came back blank, and `pnpm ledger-check` exited 0 either way.
+ *
+ * Posted day first, then transaction day to transaction day — the fallback `identityWeight` already makes, for the
+ * same reason: a card statement prints the TRANSACTION day. 🔴 Keyed on the posted day alone, Chase Sapphire's
+ * +$100.00 payment (posted 2026-07-01, transacted and printed 06/30) lost its transfer link and its note to a version
+ * bump of 20260702-statements-9805-.pdf, and Chase Checking's −$100.00 was left grouped with a superseded row while
+ * `ledger-check` exited 0 (measured on a copy of the real ledger, 2026-09-15). Exact days only, never a window: a
+ * window would hand one charge's work to a neighbouring charge of the same amount. `minScore` 1 claims only a row
+ * whose words describe the same charge — for a record ANY later import may claim (`recallPool`), not only the same
+ * file's next read.
  */
-function takeCarry(pool: CarryPool, accountId: string, t: CanonicalTxn, hash: string, minScore = 0): CarryRow | null {
-  const incoming = normalizeDescription(t.rawDescription);
-  const claim = (bucket: readonly CarryRow[] | undefined): CarryRow | null => {
-    const open = (bucket ?? [])
-      .filter((row) => !pool.taken.has(row.id))
-      .map((row) => ({
-        row,
+function claimCarry(pool: CarryPool, accountId: string, lines: readonly ClaimingLine[], minScore: number): Map<number, CarryRow> {
+  const claimed = new Map<number, CarryRow>();
+  if (lines.length === 0) return claimed;
+  // the seat each line takes in a bucket, in print order: a line and the row that held the same seat in the old read
+  // describe the same charge, which is the only thing left to go on once the words say nothing
+  const seats = new Map<string, number>();
+  const candidates = lines.map(({ printed, hash }) => {
+    const incoming = normalizeDescription(printed.rawDescription);
+    const best = new Map<string, { row: CarryRow; weight: number; near: number }>();
+    const weigh = (key: string, tier: number): void => {
+      const bucket = (tier === POSTED_DAY_TIER ? pool.byPosted : pool.byTransacted).get(key);
+      if (bucket === undefined) return;
+      const seat = seats.get(key) ?? 0;
+      seats.set(key, seat + 1);
+      bucket.forEach((row, place) => {
+        if (pool.taken.has(row.id)) return;
         // an unchanged dedupe hash is proof of the same parsed row
-        score: row.dedupeHash === hash ? 4 : descriptionScore(row.normalizedDescription, incoming),
-      }))
-      .filter((c) => c.score >= minScore);
-    if (open.length === 0) return null;
-    const winner = open.sort((a, b) => b.score - a.score || a.row.id.localeCompare(b.row.id))[0]!.row;
-    pool.taken.add(winner.id);
-    return winner;
+        const score = row.dedupeHash === hash ? 4 : descriptionScore(row.normalizedDescription, incoming);
+        if (score < minScore) return;
+        const held = best.get(row.id);
+        const weight = tier + score;
+        const near = Math.abs(seat - place);
+        if (held === undefined || weight > held.weight || (weight === held.weight && near < held.near)) {
+          best.set(row.id, { row, weight, near });
+        }
+      });
+    };
+    weigh(carryKey(accountId, printed.postedOn, printed.amountCents), POSTED_DAY_TIER);
+    if (printed.transactedOn !== undefined) weigh(carryKey(accountId, printed.transactedOn, printed.amountCents), 0);
+    return [...best.values()].sort((a, b) => b.weight - a.weight || a.near - b.near || a.row.id.localeCompare(b.row.id));
+  });
+  const holder = new Map<string, number>();
+  const place = (slot: number, seen: Set<string>): boolean => {
+    for (const { row } of candidates[slot]!) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      const other = holder.get(row.id);
+      if (other === undefined || place(other, seen)) {
+        holder.set(row.id, slot);
+        return true;
+      }
+    }
+    return false;
   };
-  const posted = claim(pool.byPosted.get(carryKey(accountId, t.postedOn, t.amountCents)));
-  if (posted !== null || t.transactedOn === undefined) return posted;
-  return claim(pool.byTransacted.get(carryKey(accountId, t.transactedOn, t.amountCents)));
+  const order = candidates
+    .map((_, i) => i)
+    .filter((i) => candidates[i]!.length > 0)
+    .sort((a, b) => candidates[b]![0]!.weight - candidates[a]![0]!.weight || a - b);
+  for (const slot of order) place(slot, new Set());
+  for (const [rowId, slot] of holder) {
+    pool.taken.add(rowId);
+    claimed.set(lines[slot]!.index, candidates[slot]!.find((c) => c.row.id === rowId)!.row);
+  }
+  return claimed;
 }
 
 /**
@@ -1933,6 +1992,21 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
       // identity and carry look for another row recording the same money,
       // which sits on the day the file prints, so they read `t`.
       const plan = planLines(tx, accountId, lines, ranges, myPriority, slots);
+      // Every line that will materialize a row claims its prior-version row TOGETHER (`claimCarry`), so a day that
+      // prints one amount twice cannot hand one charge's work to the other. A line skipped as owned below claims
+      // nothing, leaving its attributes for whichever row does materialize.
+      const claiming: ClaimingLine[] = lines
+        .map(({ printed, hash }, index) => ({ index, printed, hash }))
+        .filter(({ index }) => plan[index]!.kind !== "owned");
+      // this file's own prior-version row for the same money, if the user had put anything on it…
+      const priors = claimCarry(carryPool, accountId, claiming, 0);
+      const priorOf = (index: number): CarryRow | null => {
+        const row = priors.get(index);
+        // a blank row is a seat, not work: its line carries nothing, and falls through to the record below
+        return row === undefined || row.blank === true ? null : row;
+      };
+      // …else what the owner had set on the same line before an un-import removed it (`unimported-attributes`)
+      const recalls = claimCarry(recall, accountId, claiming.filter(({ index }) => priorOf(index) === null), 1);
       for (const [i, { printed: t, stored, occurrenceIndex, hash }] of lines.entries()) {
         const fate = plan[i]!;
         if (fate.kind === "owned") {
@@ -1940,12 +2014,8 @@ function writeMember(db: AppDatabase, member: ReadMember, carryPool: CarryPool, 
           continue;
         }
 
-        // this file's own prior-version row for the same money, if the user
-        // had put anything on it (claimed here so a row skipped as owned
-        // above leaves its attributes for whichever row does materialize)…
-        const prior = takeCarry(carryPool, accountId, t, hash);
-        // …else what the owner had set on the same line before an un-import removed it (`unimported-attributes`)
-        const recalled = prior === null ? takeCarry(recall, accountId, t, hash, 1) : null;
+        const prior = priorOf(i);
+        const recalled = prior === null ? (recalls.get(i) ?? null) : null;
         const carried = prior ?? recalled;
         const landed = (fresh: boolean, onto?: string): void => {
           if (carried === null || !landCarry(tx, accountId, hash, carried, fresh, onto)) return;
